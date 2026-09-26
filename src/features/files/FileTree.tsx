@@ -16,10 +16,20 @@ import { ask, pickLocalFile, pickSavePath, promptText } from "../../ui/dialogs";
 import { openFileTab, useUi } from "../../app/store";
 import { fileVisual, formatSize, isEditableFile } from "./fileTypes";
 import {
+  HOME,
+  baseName,
+  crumbsOf,
+  joinPath,
+  normalizeTypedPath,
+  parentOf,
+} from "./pathUtils";
+import {
   IconArrowUp,
   IconChevronDown,
   IconChevronRight,
+  IconClose,
   IconDownload,
+  IconEdit,
   IconFilePlus,
   IconFoldAll,
   IconFolderPlus,
@@ -30,74 +40,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-/**
- * 初始根目录。
- *
- * `~` 现在**本地会话与 SSH 会话都由后端展开**（`transport/local.rs` 用 `dirs::home_dir()`，
- * `transport/ssh.rs` 用 SFTP `realpath(".")`），所以正常情况会直接落在用户家目录。
- *
- * 但仍要保留降级路径：WinRM 之类没有家目录概念的通道、以及将来可能出现的后端实现，
- * 都可能在 `~` 上直接报错。碰到就干脆地退到 `/`，**并且把家目录入口关掉** ——
- * 否则点了「回到家目录」会被立刻打回 `/`，看上去就是按钮坏了。
- */
-const HOME = "~";
-
-/* ── 路径工具 ──────────────────────────────────────────────────────────── */
-
-/** 后端在 Windows 本地会话上给的是 `C:\Users\x\y`，统一成正斜杠再算路径。 */
-function norm(path: string): string {
-  return path.replace(/\\/g, "/");
-}
-
-/** 到顶了没有：类 Unix 的 `/` 或盘符根 `C:/`。 */
-function isRoot(path: string): boolean {
-  const p = norm(path);
-  return p === "/" || /^[A-Za-z]:\/$/.test(p);
-}
-
-function joinPath(dir: string, name: string): string {
-  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
-}
-
-/** 上一级；到根返回 null。`~` 的上一级是 `/`（允许从家目录向上浏览整机）。 */
-function parentOf(path: string): string | null {
-  const p = norm(path);
-  if (isRoot(p)) return null;
-  if (p === HOME) return "/";
-  const i = p.lastIndexOf("/");
-  if (i <= 0) return "/";
-  const parent = p.slice(0, i);
-  // `C:` 要补回盘符根的形式，否则下一次 list 会落到"当前盘的工作目录"
-  return /^[A-Za-z]:$/.test(parent) ? `${parent}/` : parent;
-}
-
-function baseName(path: string): string {
-  return norm(path).split("/").filter(Boolean).pop() ?? path;
-}
-
-/** 面包屑：`/`、`~`、盘符根都作为首段，每段可点击跳转。 */
-function crumbsOf(path: string): { label: string; path: string }[] {
-  const p = norm(path);
-  if (p.startsWith("~")) {
-    const out = [{ label: "~", path: HOME }];
-    let acc = HOME;
-    for (const s of p.slice(1).split("/").filter(Boolean)) {
-      acc = joinPath(acc, s);
-      out.push({ label: s, path: acc });
-    }
-    return out;
-  }
-  const drive = /^([A-Za-z]):/.exec(p);
-  const rootLabel = drive ? `${drive[1]}:` : "/";
-  const rootPath = drive ? `${drive[1]}:/` : "/";
-  const out = [{ label: rootLabel, path: rootPath }];
-  let acc = rootPath;
-  for (const s of p.slice(rootPath.length).split("/").filter(Boolean)) {
-    acc = joinPath(acc, s);
-    out.push({ label: s, path: acc });
-  }
-  return out;
-}
+/* ── 路径工具见 ./pathUtils（与宽幅文件浏览器共用） ───────────────────── */
 
 /** 目录在前、其余按名称排序（贴近 ls / 文件管理器的习惯）。 */
 function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
@@ -119,6 +62,30 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   /** 后端认不认 `~`。探测到不认就置 false，家目录入口随之关闭（见 HOME 的注释）。 */
   const [homeSupported, setHomeSupported] = useState(true);
+  /** 路径栏的「直接输入路径」模式：只能在面包屑之间挪是不够用的。 */
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const beginEdit = () => {
+    setDraft(root);
+    setEditing(true);
+  };
+
+  /**
+   * 提交手输路径。
+   *
+   * 归一化后去掉尾斜杠；空输入当取消；`/` 单独保留（否则会被尾斜杠正则吃成空串）。
+   * 显式跳转时清掉旧的展开与选中 —— 那是另一棵子树的浏览状态，留着会连带发出
+   * 一堆无关目录的请求。
+   */
+  const commitEdit = () => {
+    setEditing(false);
+    const next = normalizeTypedPath(draft);
+    if (!next || next === root) return;
+    setExpanded([]);
+    setSelected(null);
+    setRoot(next);
+  };
 
   /** 需要加载的目录 = 根 + 所有展开项（含根，保证根被展开时也在列表里）。 */
   const dirs = useMemo(
@@ -366,20 +333,56 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         >
           <IconArrowUp size={12} />
         </button>
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-          {crumbs.map((c, i) => (
-            <span key={c.path} className="flex shrink-0 items-center gap-0.5">
-              {i > 0 && <span className="text-neutral-600">/</span>}
-              <button
-                className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
-                onClick={() => setRoot(c.path)}
-                title={c.path}
-              >
-                {c.label}
-              </button>
-            </span>
-          ))}
-        </div>
+        {editing ? (
+          <input
+            className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
+            autoFocus
+            spellCheck={false}
+            value={draft}
+            placeholder="输入路径后回车（支持 ~ 与 C:/）"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void commitEdit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setEditing(false);
+              }
+            }}
+            onBlur={() => setEditing(false)}
+          />
+        ) : (
+          <div
+            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+            onClick={(e) => {
+              // 点面包屑后面的空白处 = 直接改路径（和资源管理器一样的手感）；
+              // 点到具体的段上仍然是跳转那一段。
+              if (e.target === e.currentTarget) beginEdit();
+            }}
+            title="点空白处可直接输入路径"
+          >
+            {crumbs.map((c, i) => (
+              <span key={c.path} className="flex shrink-0 items-center gap-0.5">
+                {i > 0 && <span className="text-neutral-600">/</span>}
+                <button
+                  className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
+                  onClick={() => setRoot(c.path)}
+                  title={c.path}
+                >
+                  {c.label}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <button
+          className="nx-tree-caret"
+          title={editing ? "取消编辑（Esc）" : "输入路径跳转"}
+          onClick={() => (editing ? setEditing(false) : beginEdit())}
+        >
+          {editing ? <IconClose size={11} /> : <IconEdit size={11} />}
+        </button>
         <button
           className="nx-tree-caret"
           title={

@@ -7,7 +7,9 @@ import { fsApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type FsProgressEvent } from "../../ipc/events";
 import { openFileTab, useUi } from "../../app/store";
 import { fileVisual, formatSize, isEditableFile } from "./fileTypes";
+import { HOME, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
 import {
+  IconAlert,
   IconArrowUp,
   IconDownload,
   IconFolder,
@@ -20,7 +22,10 @@ import {
 export function FileBrowser({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
-  const [path, setPath] = useState("/");
+  // 根与左栏文件树保持一致（`~` 由后端展开），否则同一个会话在两处看到的不是同一个目录
+  const [path, setPath] = useState(HOME);
+  /** 地址栏的草稿：**不能**边打边 setPath —— 那会每个字符发一次 fs_list。 */
+  const [draft, setDraft] = useState(HOME);
   const [selected, setSelected] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -46,11 +51,20 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     };
   }, []);
 
-  const enter = (name: string, kind: string) => {
-    if (kind !== "dir") return;
-    const next = path.endsWith("/") ? path + name : `${path}/${name}`;
+  /** 路径变了就同步草稿（点面包屑、进目录、上一级都会走这里）。 */
+  useEffect(() => {
+    setDraft(path);
+  }, [path]);
+
+  const goto = (next: string | null) => {
+    if (!next || next === path) return;
     setPath(next);
     setSelected(null);
+  };
+
+  const enter = (name: string, kind: string) => {
+    if (kind !== "dir") return;
+    goto(joinPath(path, name));
   };
 
   /** 双击文件：能编辑的开编辑器标签，不能编辑的提示走下载。 */
@@ -66,11 +80,10 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     openFileTab(sessionId, entry.path);
   };
 
+  /** 上一级；盘符根与 `/` 就停住（`parentOf` 认识 `C:/` 与 `~`）。 */
   const up = () => {
-    if (path === "/") return;
-    const parts = path.split("/").filter(Boolean);
-    parts.pop();
-    setPath("/" + parts.join("/"));
+    const parent = parentOf(path);
+    if (parent) goto(parent);
   };
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId, path] });
@@ -138,7 +151,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         <button
           className="nx-icon-btn"
           onClick={up}
-          disabled={path === "/"}
+          disabled={!parentOf(path)}
           title="上一级目录"
         >
           <IconArrowUp size={14} />
@@ -149,9 +162,23 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           </span>
           <input
             className="nx-input nx-input-sm font-mono"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && refresh()}
+            value={draft}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                // 先跳转（跳不动就当作刷新）；回车同时给"再查一次当前目录"留个入口
+                const next = normalizeTypedPath(draft);
+                if (next && next !== path) goto(next);
+                else refresh();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setDraft(path);
+              }
+            }}
+            onBlur={() => setDraft(path)}
+            placeholder="输入路径后回车，支持 ~ 与 C:/"
             title="直接输入路径后回车跳转"
           />
         </div>
@@ -205,6 +232,19 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
         {entries.isLoading ? (
           <div className="nx-hint p-4 text-center">加载中…</div>
+        ) : entries.isError ? (
+          // 失败不能伪装成空目录（react-query 的 error 不会冒到 window.onerror）
+          <div className="nx-alert nx-alert-danger m-3 flex items-start gap-2">
+            <IconAlert size={14} className="mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="break-words">
+                {String((entries.error as { message?: string })?.message ?? entries.error)}
+              </div>
+              <button className="nx-link mt-1 text-[11px]" onClick={refresh}>
+                重试
+              </button>
+            </div>
+          </div>
         ) : list.length === 0 ? (
           <div className="nx-empty">这个目录是空的</div>
         ) : (
