@@ -1,47 +1,1315 @@
 @import "tailwindcss";
 
-:root {
-  color-scheme: dark;
+/* ============================================================================
+ * NexTerm 视觉系统
+ *
+ * 设计语言参考 同类工具：微冷深灰分层、极浅明度差做层次（而不是靠硬边框）、
+ * 单一冷静蓝强调色、圆角统一、状态用低饱和 pill 表达、密度高但安静。
+ *
+ * 四层结构：
+ *   1) @theme             —— 设计令牌。重定义整套灰阶，全站既有中性色类自动换肤。
+ *   2) @layer base        —— 全局基线（字体/焦点/滚动条/过渡）。
+ *   3) @layer components  —— 语义类（.nx-btn / .nx-input / .nx-tab / ...）。
+ *                            新面板直接用语义类，不再散写长串原子类。
+ *   4) 末尾               —— xterm / CodeMirror 的画布适配。
+ * ========================================================================== */
+
+@theme {
+  /* ── 中性灰阶：去掉纯黑，压低对比，层级靠明度差不靠边框 ────────────── */
+  --color-neutral-950: #17191e; /* 应用 chrome：图标栏 / 标题栏 / 标签栏 / 状态栏 / 侧栏 */
+  --color-neutral-900: #1d2026; /* 内容面板底 */
+  --color-neutral-800: #252932; /* 填充块 / 输入框 / 悬浮底 */
+  --color-neutral-700: #31363f; /* 描边 / hover 填充 */
+  --color-neutral-600: #3e444f; /* 弱化图标 */
+  --color-neutral-500: #616877; /* 三级文字 */
+  --color-neutral-400: #8a919f; /* 次级文字 */
+  --color-neutral-300: #b3bac6; /* 正文 */
+  --color-neutral-200: #d3d8e1; /* 强调正文 */
+  --color-neutral-100: #eef1f6; /* 标题 */
+
+  /* ── 终端 / 代码画布：比面板更深，形成"井"感 ─────────────────────── */
+  --color-term: #101217;
+
+  /* ── 强调色：全站唯一的高饱和色，只在关键动作与选中态出现 ───────────
+     色相取自应用图标的靛蓝（图标头发/窗口框 #242454→#3c3c9c、轨迹 #3c54b4），
+     取它的中段提亮到可用亮度，得到 #516cd6。
+     注意图标上最扎眼的那支荧光青（#00F0FF）是**小面积点缀**，不是主色，
+     拿它铺满选中态和主按钮会非常刺眼 —— 别用。
+     下面这 7 行是一整套，**换色时一起改**（同一套色板的另一个用途见
+     `界面强调色候选-NexTerm.png`，那张图记录了这个决定的备选）。
+     blue-50 必须显式定义：不写它会落到 Tailwind 默认调色板，
+     换强调色时这一档不跟着变（AI 侧栏的对话气泡文字就在用它）。 */
+  --color-accent: #516cd6;
+  --color-blue-50: #f2f3f8;
+  --color-blue-300: #acb9ec;
+  --color-blue-400: #8b9de4;
+  --color-blue-500: #516cd6;
+  --color-blue-600: #3c59cc;
+  --color-blue-700: #3d509e;
+  --color-blue-900: #293461;
+
+  /* ── 语义状态色：统一降饱和，避免荧光感 ─────────────────────────── */
+  --color-green-300: #7fd6a4;
+  --color-green-400: #55c483;
+  --color-green-500: #37a86a;
+  --color-green-600: #2b8b57;
+  --color-green-700: #226e46;
+  --color-red-300: #f0a0a0;
+  --color-red-400: #e87b7b;
+  --color-red-500: #db5b5b;
+  --color-red-600: #c94848;
+  --color-red-900: #6b2626;
+  --color-red-950: #3a1719;
+  --color-amber-300: #e9c489;
+  --color-amber-400: #dfae57;
+  --color-amber-500: #cc9639;
+  --color-amber-600: #a87a2c;
+  --color-purple-300: #b79ce8;
+  --color-purple-400: #a184e4;
+  --color-purple-500: #8b6ae0;
+
+  /* ── 圆角：统一一套，比默认略大，观感更柔和 ─────────────────────── */
+  --radius: 6px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* ── 字体 ──────────────────────────────────────────────────────── */
+  --font-sans:
+    "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-mono:
+    "Cascadia Mono", "JetBrains Mono", "Cascadia Code", Consolas,
+    "SFMono-Regular", "Courier New", monospace;
+
+  /* ── 阴影 ──────────────────────────────────────────────────────── */
+  --shadow-pop:
+    0 18px 48px -16px rgb(0 0 0 / 0.75), 0 4px 12px -4px rgb(0 0 0 / 0.5);
+  --shadow-soft: 0 6px 20px -10px rgb(0 0 0 / 0.6);
 }
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-  background: #0d0f14;
-  color: #d7dae0;
-  font-family:
-    "Segoe UI",
-    system-ui,
-    -apple-system,
-    "Microsoft YaHei",
-    sans-serif;
-  overflow: hidden;
+/* ==========================================================================
+ * 基线
+ * ======================================================================== */
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--color-neutral-950);
+    color: var(--color-neutral-300);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.55;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 让所有交互态平滑过渡，消除"跳变"的廉价感 */
+  button,
+  input,
+  select,
+  textarea,
+  a,
+  [role="button"],
+  [role="tab"] {
+    transition:
+      background-color 0.14s ease,
+      color 0.14s ease,
+      border-color 0.14s ease,
+      box-shadow 0.14s ease,
+      opacity 0.14s ease,
+      transform 0.14s ease;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  /* 键盘焦点：统一用强调色描边；鼠标点击不触发 */
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 72%, transparent);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 34%, transparent);
+    color: #fff;
+  }
+
+  /* 细滚动条：默认几乎隐形，悬停才显形 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-neutral-700) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border: 3px solid transparent;
+    border-radius: 8px;
+    background-clip: padding-box;
+  }
+  *:hover::-webkit-scrollbar-thumb,
+  *:focus-within::-webkit-scrollbar-thumb {
+    background: var(--color-neutral-700);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-neutral-600);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
-/* 细滚动条 */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: #2f3441;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
+/* ==========================================================================
+ * 语义组件类
+ * ======================================================================== */
+
+@layer components {
+  /* ── 面板 ────────────────────────────────────────────────────────── */
+
+  /* 面板容器：统一底/正文色/纵向布局 */
+  .nx-pane {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
+    background: var(--color-neutral-900);
+    color: var(--color-neutral-300);
+    font-size: 13px;
+  }
+
+  /* 面板顶栏（工具条） */
+  .nx-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 0 10px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    background: color-mix(in srgb, var(--color-neutral-950) 40%, transparent);
+  }
+
+  .nx-toolbar-title {
+    color: var(--color-neutral-200);
+    font-size: 12.5px;
+    font-weight: 550;
+    letter-spacing: 0.01em;
+  }
+
+  /* 工具条内的竖直分隔 */
+  .nx-divider-v {
+    width: 1px;
+    height: 14px;
+    flex: 0 0 auto;
+    margin: 0 2px;
+    background: var(--color-neutral-700);
+  }
+
+  /* 弹性占位 */
+  .nx-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* ── 按钮 ────────────────────────────────────────────────────────── */
+
+  .nx-btn {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-200);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-btn:hover:not(:disabled) {
+    background: var(--color-neutral-700);
+    color: var(--color-neutral-100);
+  }
+  .nx-btn:active:not(:disabled) {
+    transform: translateY(0.5px);
+  }
+  .nx-btn:disabled {
+    opacity: 0.42;
+  }
+
+  /* 主按钮：全站唯一的实心强调色 */
+  .nx-btn-primary {
+    background: var(--color-blue-600);
+    color: #fff;
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.08) inset;
+  }
+  .nx-btn-primary:hover:not(:disabled) {
+    background: var(--color-blue-500);
+    color: #fff;
+  }
+
+  /* 幽灵按钮：工具栏里最常用，默认不显形 */
+  .nx-btn-ghost {
+    background: transparent;
+    color: var(--color-neutral-400);
+  }
+  .nx-btn-ghost:hover:not(:disabled) {
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
+  }
+
+  /* 描边按钮 */
+  .nx-btn-outline {
+    background: transparent;
+    border-color: var(--color-neutral-700);
+    color: var(--color-neutral-300);
+  }
+  .nx-btn-outline:hover:not(:disabled) {
+    border-color: var(--color-neutral-600);
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
+  }
+
+  /* 危险按钮 */
+  .nx-btn-danger {
+    background: transparent;
+    color: var(--color-red-400);
+  }
+  .nx-btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 16%, transparent);
+    color: var(--color-red-300);
+  }
+  .nx-btn-danger-solid {
+    background: var(--color-red-600);
+    color: #fff;
+  }
+  .nx-btn-danger-solid:hover:not(:disabled) {
+    background: var(--color-red-500);
+    color: #fff;
+  }
+
+  /* 尺寸 */
+  .nx-btn-sm {
+    height: 25px;
+    padding: 0 9px;
+    font-size: 11.5px;
+  }
+  .nx-btn-xs {
+    height: 22px;
+    padding: 0 7px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  /* 方形纯图标按钮 */
+  .nx-icon-btn {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-neutral-400);
+    cursor: pointer;
+  }
+  .nx-icon-btn:hover:not(:disabled) {
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
+  }
+  .nx-icon-btn:disabled {
+    opacity: 0.35;
+  }
+  .nx-icon-btn.is-active {
+    background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+    color: var(--color-blue-300);
+  }
+  .nx-icon-btn.is-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 16%, transparent);
+    color: var(--color-red-300);
+  }
+  .nx-icon-btn-sm {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* ── 输入 ────────────────────────────────────────────────────────── */
+
+  .nx-input,
+  .nx-select,
+  .nx-textarea {
+    width: 100%;
+    min-width: 0;
+    height: 30px;
+    padding: 0 9px;
+    border: 1px solid var(--color-neutral-700);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-neutral-950) 55%, transparent);
+    color: var(--color-neutral-100);
+    font-size: 12.5px;
+    outline: none;
+  }
+  .nx-input::placeholder,
+  .nx-textarea::placeholder {
+    color: var(--color-neutral-500);
+  }
+  .nx-input:hover,
+  .nx-select:hover,
+  .nx-textarea:hover {
+    border-color: var(--color-neutral-600);
+  }
+  .nx-input:focus,
+  .nx-select:focus,
+  .nx-textarea:focus {
+    border-color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-neutral-950) 75%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+    outline: none;
+  }
+  .nx-input:disabled,
+  .nx-select:disabled {
+    opacity: 0.5;
+  }
+
+  .nx-textarea {
+    height: auto;
+    padding: 7px 9px;
+    line-height: 1.5;
+    resize: none;
+  }
+
+  .nx-select {
+    padding-right: 24px;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position:
+      right 12px center,
+      right 8px center;
+    background-size:
+      4px 4px,
+      4px 4px;
+    background-repeat: no-repeat;
+  }
+  .nx-select option {
+    background: var(--color-neutral-900);
+    color: var(--color-neutral-100);
+  }
+
+  .nx-input-sm {
+    height: 26px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  /* 表单标签 */
+  .nx-label {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--color-neutral-500);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  /* 带前缀图标的输入框外壳 */
+  .nx-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+  }
+  .nx-field-icon {
+    position: absolute;
+    left: 8px;
+    display: flex;
+    color: var(--color-neutral-500);
+    pointer-events: none;
+  }
+  .nx-field .nx-input {
+    padding-left: 28px;
+  }
+
+  /* 复选框：跟随强调色 */
+  .nx-check {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    accent-color: var(--color-accent);
+    cursor: pointer;
+  }
+
+  /* ── 标签页 ──────────────────────────────────────────────────────── */
+
+  /* ── 标签栏（两级共用底座） ──────────────────────────────────────── */
+
+  .nx-tabstrip {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 3px;
+    min-height: 34px;
+    padding: 0 8px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+    background: var(--color-neutral-950);
+    /* 工作区一多就得横向滚，但不想要滚动条占高度 */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .nx-tabstrip::-webkit-scrollbar {
+    height: 0;
+  }
+
+  /* 一级：工作区标签条。比二级略高，视觉上是"窗口的标签" */
+  .nx-tabstrip.is-top {
+    min-height: 36px;
+    padding: 0 6px 0 8px;
+  }
+
+  /* 二级：面板标签条。底色跟着内容面板走，不跟 chrome 走 */
+  .nx-tabstrip.is-sub {
+    background: color-mix(in srgb, var(--color-neutral-900) 94%, var(--color-neutral-950));
+  }
+
+  /* 激活的那一栏：顶部一条强调线；另一栏的标签压暗（按钮不动，免得像禁用） */
+  .nx-tabstrip.is-sub.is-split.is-active-pane {
+    box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--color-accent) 58%, transparent);
+  }
+  .nx-tabstrip.is-sub.is-split:not(.is-active-pane) {
+    background: var(--color-neutral-950);
+  }
+  .nx-tabstrip.is-sub.is-split:not(.is-active-pane) .nx-tab {
+    color: var(--color-neutral-500);
+  }
+
+  /* ── 上下分屏的分割条 ────────────────────────────────────────────── */
+
+  .nx-split-handle {
+    position: relative;
+    height: 6px;
+    flex: 0 0 auto;
+    background: var(--color-neutral-950);
+    cursor: row-resize;
+  }
+  .nx-split-grip {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    transform: translateY(-50%);
+    background: color-mix(in srgb, var(--color-neutral-800) 90%, transparent);
+  }
+  .nx-split-handle:hover .nx-split-grip,
+  .nx-split-handle:active .nx-split-grip {
+    height: 2px;
+    background: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  }
+
+  /* 一级标签：浏览器标签页的样子，激活项与下方内容连成一体 */
+  .nx-ws {
+    display: inline-flex;
+    max-width: 200px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--color-neutral-400);
+    font-size: 12.5px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-ws:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 55%, transparent);
+    color: var(--color-neutral-200);
+  }
+  .nx-ws.is-active {
+    border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
+    font-weight: 500;
+  }
+
+  /* 工作区的连接状态点：唯一带颜色的地方 */
+  .nx-ws-dot {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--color-neutral-600);
+  }
+  .nx-ws-dot.is-ok {
+    background: var(--color-green-500);
+  }
+  .nx-ws-dot.is-warn {
+    background: var(--color-amber-500);
+  }
+  .nx-ws-dot.is-bad {
+    background: var(--color-red-500);
+  }
+
+  .nx-tab {
+    display: inline-flex;
+    max-width: 220px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px 0 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--color-neutral-400);
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-tab:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+    color: var(--color-neutral-200);
+  }
+  .nx-tab.is-active {
+    border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset;
+  }
+
+  .nx-tab-close {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 4px;
+    color: var(--color-neutral-500);
+  }
+  .nx-tab:hover .nx-tab-close,
+  .nx-tab.is-active .nx-tab-close,
+  .nx-ws:hover .nx-tab-close,
+  .nx-ws.is-active .nx-tab-close {
+    display: inline-flex;
+  }
+  .nx-tab-close:hover {
+    background: color-mix(in srgb, var(--color-red-500) 22%, transparent);
+    color: var(--color-red-300);
+  }
+
+  /* ── 徽章 / 标签块 ───────────────────────────────────────────────── */
+
+  .nx-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 5px;
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-400);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  .nx-badge-green {
+    background: color-mix(in srgb, var(--color-green-500) 18%, transparent);
+    color: var(--color-green-300);
+  }
+  .nx-badge-amber {
+    background: color-mix(in srgb, var(--color-amber-500) 18%, transparent);
+    color: var(--color-amber-300);
+  }
+  .nx-badge-red {
+    background: color-mix(in srgb, var(--color-red-500) 18%, transparent);
+    color: var(--color-red-300);
+  }
+  .nx-badge-blue {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-blue-300);
+  }
+  .nx-badge-purple {
+    background: color-mix(in srgb, var(--color-purple-500) 20%, transparent);
+    color: var(--color-purple-300);
+  }
+
+  /* 计数徽章 */
+  .nx-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-500);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 上下文 / 元信息 chip */
+  .nx-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 21px;
+    padding: 0 7px;
+    border: 1px solid
+      color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
+    color: var(--color-neutral-400);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+  .nx-chip-accent {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+    color: var(--color-blue-300);
+  }
+
+  /* 状态圆点 */
+  .nx-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .nx-dot-pulse {
+    animation: nx-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes nx-pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  /* ── 表格 ────────────────────────────────────────────────────────── */
+
+  /* 表头不铺重底色，只用一条浅分割线 + 小号字距 */
+  .nx-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+  }
+  /*
+   * 固定表格布局：让「有 width 的列」严格按宽度走，剩下那一列吃掉剩余空间。
+   * 用在不加就会出现横向溢出的表（比如审计日志的 JSON 详情列）——
+   * 默认的自动布局会按内容最长的那一行把表格撑得比容器还宽。
+   */
+  .nx-table-fixed {
+    table-layout: fixed;
+  }
+  .nx-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--color-neutral-800);
+    background: var(--color-neutral-900);
+    color: var(--color-neutral-500);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .nx-table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
+    color: var(--color-neutral-300);
+    vertical-align: middle;
+  }
+  .nx-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .nx-table tbody tr:hover td {
+    background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
+  }
+  .nx-table .nx-mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--color-neutral-400);
+  }
+  .nx-table .nx-right {
+    text-align: right;
+  }
+
+  /* 表格空态 */
+  .nx-table-empty {
+    padding: 40px 16px;
+    color: var(--color-neutral-500);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  /* ── 列表行 ──────────────────────────────────────────────────────── */
+
+  .nx-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--color-neutral-300);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .nx-row:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+  }
+  .nx-row.is-selected {
+    background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+    color: var(--color-neutral-100);
+  }
+  .nx-row-actions {
+    display: none;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+  }
+  .nx-row:hover .nx-row-actions,
+  .nx-row.is-selected .nx-row-actions {
+    display: flex;
+  }
+
+  /* ── 卡片 ────────────────────────────────────────────────────────── */
+
+  .nx-card {
+    border: 1px solid color-mix(in srgb, var(--color-neutral-800) 90%, transparent);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--color-neutral-950) 35%, transparent);
+    padding: 16px;
+  }
+
+  .nx-card-title {
+    color: var(--color-neutral-100);
+    font-size: 13px;
+    font-weight: 550;
+    letter-spacing: 0.01em;
+  }
+
+  /* ── 左侧图标导航栏 ──────────────────────────────────────────────── */
+
+  .nx-rail {
+    display: flex;
+    width: 48px;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 0;
+    border-right: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+    background: var(--color-neutral-950);
+  }
+
+  .nx-rail-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-neutral-500);
+    cursor: pointer;
+  }
+  .nx-rail-btn:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
+    color: var(--color-neutral-200);
+  }
+  .nx-rail-btn.is-active {
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+    color: var(--color-blue-300);
+  }
+  /* 激活项左侧指示条（rail 左右各留 7px，故 -7px 恰好贴到 rail 左边缘） */
+  .nx-rail-btn.is-active::before {
+    content: "";
+    position: absolute;
+    left: -7px;
+    top: 50%;
+    width: 3px;
+    height: 16px;
+    transform: translateY(-50%);
+    border-radius: 0 3px 3px 0;
+    background: var(--color-accent);
+  }
+
+  /* ── 模态 ────────────────────────────────────────────────────────── */
+
+  .nx-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgb(8 9 12 / 0.56);
+    backdrop-filter: blur(2px);
+  }
+
+  .nx-modal {
+    width: 100%;
+    max-height: 100%;
+    overflow: auto;
+    border: 1px solid var(--color-neutral-700);
+    border-radius: var(--radius-xl);
+    background: var(--color-neutral-900);
+    box-shadow: var(--shadow-pop);
+  }
+
+  .nx-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 18px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+  }
+
+  .nx-modal-body {
+    padding: 16px 18px;
+  }
+
+  .nx-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    background: color-mix(in srgb, var(--color-neutral-950) 30%, transparent);
+  }
+
+  /* ── 命令面板 ────────────────────────────────────────────────────── */
+
+  .nx-command-input {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    background: transparent;
+    padding: 15px 18px;
+    color: var(--color-neutral-100);
+    font-size: 13.5px;
+    outline: none;
+  }
+  .nx-command-input::placeholder {
+    color: var(--color-neutral-500);
+  }
+
+  .nx-command-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 10px;
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    color: var(--color-neutral-300);
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .nx-command-item:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
+  }
+  .nx-command-item.is-active {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-neutral-100);
+  }
+
+  /* ── 分段控件 ────────────────────────────────────────────────────── */
+
+  .nx-segment {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-neutral-950) 55%, transparent);
+  }
+  .nx-segment-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm);
+    color: var(--color-neutral-400);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .nx-segment-item:hover {
+    color: var(--color-neutral-200);
+  }
+  .nx-segment-item.is-active {
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+  }
+
+  /* ── 其它小件 ────────────────────────────────────────────────────── */
+
+  .nx-hint {
+    color: var(--color-neutral-500);
+    font-size: 11.5px;
+    line-height: 1.6;
+  }
+
+  .nx-kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 19px;
+    padding: 0 6px;
+    border: 1px solid var(--color-neutral-700);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    color: var(--color-neutral-400);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .nx-form-row {
+    margin-bottom: 12px;
+  }
+
+  /* 文本链接按钮 */
+  .nx-link {
+    color: var(--color-neutral-400);
+    cursor: pointer;
+  }
+  .nx-link:hover {
+    color: var(--color-neutral-100);
+  }
+
+  /* 代码块（等宽 + 井底） */
+  .nx-pre {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--color-term);
+    color: var(--color-neutral-300);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: auto;
+  }
+
+  .nx-code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--color-neutral-400);
+  }
+
+  /* 细进度条 */
+  .nx-progress {
+    height: 3px;
+    width: 100%;
+    overflow: hidden;
+    background: var(--color-neutral-800);
+  }
+  .nx-progress-bar {
+    height: 100%;
+    background: var(--color-accent);
+    transition: width 0.2s ease;
+  }
+
+  /* 空态 */
+  .nx-empty {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 32px 20px;
+    color: var(--color-neutral-500);
+    font-size: 12px;
+    text-align: center;
+  }
+  .nx-empty-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    color: var(--color-neutral-500);
+  }
+
+  /* 警告框（确认卡片 / 提示） */
+  .nx-alert {
+    border: 1px solid color-mix(in srgb, var(--color-amber-500) 34%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-amber-500) 9%, transparent);
+    padding: 10px 12px;
+    color: var(--color-amber-300);
+    font-size: 11.8px;
+    line-height: 1.6;
+  }
+  .nx-alert-danger {
+    border-color: color-mix(in srgb, var(--color-red-500) 34%, transparent);
+    background: color-mix(in srgb, var(--color-red-500) 10%, transparent);
+    color: var(--color-red-300);
+  }
+  .nx-alert-info {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+    color: var(--color-blue-300);
+  }
+
+  /* ── 标签栏末尾的「+」 ──────────────────────────────────────────────── */
+
+  .nx-tab-new {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-left: 2px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--color-neutral-400);
+    cursor: pointer;
+  }
+  .nx-tab-new:hover {
+    border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
+    background: color-mix(in srgb, var(--color-neutral-800) 85%, transparent);
+    color: var(--color-neutral-100);
+  }
+
+  /* ── 左栏文件树：路径面包屑 ────────────────────────────────────────── */
+
+  .nx-pathbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    height: 27px;
+    padding: 0 6px;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    font-size: 11.5px;
+  }
+
+  .nx-path-crumb {
+    padding: 2px 5px;
+    border-radius: 4px;
+    color: var(--color-neutral-400);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .nx-path-crumb:hover {
+    background: color-mix(in srgb, var(--color-neutral-800) 85%, transparent);
+    color: var(--color-neutral-100);
+  }
+  /* 当前目录：整条面包屑里唯一带强调色底的一小段 */
+  .nx-path-crumb.is-current {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-neutral-100);
+    font-weight: 500;
+  }
+
+  /* 树节点的展开箭头（也复用为面包屑两侧的小按钮） */
+  .nx-tree-caret {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    color: var(--color-neutral-500);
+    cursor: pointer;
+  }
+  .nx-tree-caret:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-neutral-700) 90%, transparent);
+    color: var(--color-neutral-100);
+  }
+  .nx-tree-caret:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
 }
 
-/* CodeMirror 深色适配 */
+/* ==========================================================================
+ * 终端 / 编辑器画布
+ * ======================================================================== */
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-700);
+  background-clip: padding-box;
+}
+
+/* CodeMirror 6：与终端同色，视觉上是一块连续的工作区 */
 .cm-editor {
   height: 100%;
+  background: var(--color-term) !important;
 }
 .cm-editor.cm-focused {
   outline: none !important;
 }
+.cm-editor .cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.65;
+}
 .cm-gutters {
-  background: #12141a !important;
-  border-right: 1px solid #232733 !important;
-  color: #5c6370 !important;
+  background: var(--color-term) !important;
+  border-right: 1px solid
+    color-mix(in srgb, var(--color-neutral-800) 60%, transparent) !important;
+  color: var(--color-neutral-600) !important;
+}
+.cm-activeLineGutter {
+  background: color-mix(in srgb, var(--color-neutral-800) 55%, transparent) !important;
+  color: var(--color-neutral-300) !important;
+}
+.cm-activeLine {
+  background: color-mix(in srgb, var(--color-neutral-800) 32%, transparent) !important;
+}
+.cm-cursor {
+  border-left-color: var(--color-accent) !important;
+}
+.cm-selectionBackground,
+.cm-editor ::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent) !important;
+}
+.cm-tooltip {
+  border: 1px solid var(--color-neutral-700) !important;
+  background: var(--color-neutral-900) !important;
+}
+
+/*
+ * CodeMirror 搜索面板：内置样式是浅色的（#f5f5f5 底 + 深色字），
+ * 直接落在 #101217 画布上会像贴了一张白纸。这里整套换成深色输入条。
+ */
+.cm-editor .cm-panels {
+  background: var(--color-neutral-950) !important;
+  color: var(--color-neutral-300) !important;
+}
+.cm-editor .cm-panels.cm-panels-bottom {
+  border-top: 1px solid color-mix(in srgb, var(--color-neutral-800) 80%, transparent) !important;
+}
+.cm-editor .cm-panels.cm-panels-top {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 80%, transparent) !important;
+}
+.cm-editor .cm-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+.cm-editor .cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-neutral-400) !important;
+  font-size: 11.5px;
+}
+.cm-editor .cm-search input[type="checkbox"] {
+  accent-color: var(--color-accent);
+}
+.cm-editor .cm-textfield {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--color-neutral-700) !important;
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-800) !important;
+  color: var(--color-neutral-100) !important;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.cm-editor .cm-textfield:focus {
+  border-color: var(--color-accent) !important;
+  outline: none !important;
+}
+.cm-editor .cm-button {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--color-neutral-700) !important;
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-800) !important;
+  background-image: none !important;
+  color: var(--color-neutral-200) !important;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cm-editor .cm-button:hover {
+  background: var(--color-neutral-700) !important;
+  color: var(--color-neutral-100) !important;
+}
+.cm-editor .cm-search [name="close"] {
+  padding: 0 6px;
+  border: none !important;
+  background: transparent !important;
+  color: var(--color-neutral-400) !important;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.cm-editor .cm-search [name="close"]:hover {
+  color: var(--color-neutral-100) !important;
+}
+/* 命中高亮：低饱和琥珀，不与选中态的强调蓝打架 */
+.cm-editor .cm-searchMatch {
+  background: color-mix(in srgb, var(--color-amber-400) 26%, transparent);
+  outline: none;
+}
+.cm-editor .cm-searchMatch-selected {
+  background: color-mix(in srgb, var(--color-amber-400) 52%, transparent);
+}
+.cm-editor .cm-selectionMatch {
+  background: color-mix(in srgb, var(--color-neutral-600) 45%, transparent);
 }

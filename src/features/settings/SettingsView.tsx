@@ -2,7 +2,20 @@
 import { useEffect, useState } from "react";
 import { aiApi, vaultApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { DEMO } from "../../demo";
 import { McpSection } from "./McpSection";
+import {
+  IconCheckCircle,
+  IconInfo,
+  IconKey,
+  IconLock,
+  IconRefresh,
+  IconSettings,
+  IconSparkles,
+  IconUnlock,
+  IconXCircle,
+  IconZap,
+} from "../../ui/icons";
 
 export function SettingsView() {
   const { pushToast } = useUi();
@@ -18,7 +31,9 @@ export function SettingsView() {
     stream: true,
   });
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ modelsOk: boolean; chatOk: boolean; detail: string } | null>(
+    null,
+  );
 
   // 凭据库
   const [vault, setVault] = useState<{
@@ -67,17 +82,19 @@ export function SettingsView() {
     }
   };
 
+  const payload = () => ({
+    baseUrl: cfg.baseUrl,
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    temperature: cfg.temperature,
+    contextWindow: cfg.contextWindow,
+    proxy: cfg.proxy || null,
+    stream: cfg.stream,
+  });
+
   const save = async () => {
     try {
-      await aiApi.setProvider({
-        baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
-        model: cfg.model,
-        temperature: cfg.temperature,
-        contextWindow: cfg.contextWindow,
-        proxy: cfg.proxy || null,
-        stream: cfg.stream,
-      });
+      await aiApi.setProvider(payload());
       pushToast("success", "AI 配置已保存");
     } catch (e) {
       pushToast("error", String(e));
@@ -89,205 +106,295 @@ export function SettingsView() {
     setTestResult(null);
     try {
       // 两步测试：模型列表 + 实际对话（§8.7）
-      await aiApi.setProvider({
-        baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
-        model: cfg.model,
-        temperature: cfg.temperature,
-        contextWindow: cfg.contextWindow,
-        proxy: cfg.proxy || null,
-        stream: cfg.stream,
-      });
+      await aiApi.setProvider(payload());
       const r = await aiApi.testProvider();
-      setTestResult(
-        `模型列表: ${r.modelsOk ? "✓ 可用" : `✕ ${r.modelsError ?? "失败"}`}\n实际对话: ${r.chatOk ? "✓ 可用" : `✕ ${r.chatError ?? "失败"}`}`,
-      );
+      setTestResult({
+        modelsOk: r.modelsOk,
+        chatOk: r.chatOk,
+        detail: [
+          `模型列表：${r.modelsOk ? "可用" : `失败 — ${r.modelsError ?? "未知错误"}`}`,
+          `实际对话：${r.chatOk ? "可用" : `失败 — ${r.chatError ?? "未知错误"}`}`,
+        ].join("\n"),
+      });
     } catch (e) {
-      setTestResult(`测试失败: ${String(e)}`);
+      setTestResult({ modelsOk: false, chatOk: false, detail: `测试失败: ${String(e)}` });
     } finally {
       setTesting(false);
     }
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-neutral-900 p-6 text-sm text-neutral-300">
-      <h2 className="mb-4 text-lg font-medium text-neutral-100">设置</h2>
-
-      {/* AI */}
-      <section className="mb-8 max-w-2xl rounded-lg border border-neutral-800 p-4">
-        <h3 className="mb-3 font-medium">AI 模型（OpenAI 兼容协议 · BYOK）</h3>
-        <div className="mb-3 flex flex-wrap gap-1">
-          {presets.map((p) => (
-            <button
-              key={p}
-              className={`rounded px-2 py-0.5 text-xs ${
-                preset === p ? "bg-blue-600 text-white" : "bg-neutral-800 hover:bg-neutral-700"
-              }`}
-              onClick={() => applyPreset(p)}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-        <label className="mb-1 block text-xs text-neutral-500">Base URL</label>
-        <input
-          className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-          value={cfg.baseUrl}
-          onChange={(e) => setCfg({ ...cfg, baseUrl: e.target.value })}
-          placeholder="https://api.deepseek.com/v1"
-        />
-        <label className="mb-1 block text-xs text-neutral-500">API Key（仅存本机加密库）</label>
-        <input
-          type="password"
-          className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-          value={cfg.apiKey}
-          onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
-        />
-        <div className="mb-2 flex gap-2">
-          <div className="flex-1">
-            <label className="mb-1 block text-xs text-neutral-500">模型</label>
-            <input
-              className="w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-              value={cfg.model}
-              onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-            />
-          </div>
-          <div className="w-36">
-            <label className="mb-1 block text-xs text-neutral-500">上下文窗口 (1k–2M)</label>
-            <input
-              type="number"
-              className="w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-              value={cfg.contextWindow}
-              onChange={(e) => setCfg({ ...cfg, contextWindow: Number(e.target.value) })}
-            />
-          </div>
-          <div className="w-24">
-            <label className="mb-1 block text-xs text-neutral-500">温度</label>
-            <input
-              type="number"
-              step="0.1"
-              className="w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-              value={cfg.temperature}
-              onChange={(e) => setCfg({ ...cfg, temperature: Number(e.target.value) })}
-            />
-          </div>
-        </div>
-        <label className="mb-1 block text-xs text-neutral-500">代理（留空 = 跟随系统）</label>
-        <input
-          className="mb-3 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-          value={cfg.proxy}
-          onChange={(e) => setCfg({ ...cfg, proxy: e.target.value })}
-          placeholder="http://127.0.0.1:7890"
-        />
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded bg-blue-600 px-4 py-1.5 text-white hover:bg-blue-500"
-            onClick={() => void save()}
-          >
-            保存
-          </button>
-          <button
-            className="rounded bg-neutral-700 px-4 py-1.5 hover:bg-neutral-600 disabled:opacity-50"
-            disabled={testing}
-            onClick={() => void test()}
-          >
-            {testing ? "测试中…" : "连通性测试（两步）"}
-          </button>
-        </div>
-        {testResult && (
-          <pre className="mt-3 rounded bg-neutral-950 p-2 font-mono text-xs text-neutral-300">
-            {testResult}
-          </pre>
+    <div className="nx-pane h-full overflow-y-auto">
+      <div className="nx-toolbar">
+        <IconSettings size={14} className="text-neutral-500" />
+        <span className="nx-toolbar-title">设置</span>
+        <div className="nx-spacer" />
+        {DEMO && (
+          <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，不会连真实服务">
+            演示模式
+          </span>
         )}
-      </section>
+      </div>
 
-      {/* 凭据库 */}
-      <section className="mb-8 max-w-2xl rounded-lg border border-neutral-800 p-4">
-        <h3 className="mb-3 font-medium">凭据库</h3>
-        <div className="mb-3 text-xs text-neutral-500">
-          状态：{vault ? (vault.initialized ? `已初始化（${vault.mode}）` : "未初始化") : "…"}
-          {vault?.initialized && (vault.unlocked ? " · 已解锁" : " · 已锁定")}
-        </div>
-        {!vault?.initialized && (
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <input
-              type="password"
-              className="w-56 rounded bg-neutral-800 px-2 py-1 outline-none"
-              placeholder="设置主密码（≥8 位）"
-              value={masterPwd}
-              onChange={(e) => setMasterPwd(e.target.value)}
-            />
-            <button
-              className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500 disabled:opacity-50"
-              disabled={masterPwd.length < 8}
-              onClick={() =>
-                void vaultApi
-                  .initMaster(masterPwd)
-                  .then(() => {
-                    pushToast("success", "凭据库已初始化（主密码模式）");
-                    return vaultApi.status().then(setVault);
-                  })
-                  .catch((e) => pushToast("error", String(e)))
-              }
-            >
-              初始化（主密码模式）
-            </button>
-            <button
-              className="rounded bg-neutral-700 px-3 py-1 hover:bg-neutral-600"
-              onClick={() =>
-                void vaultApi
-                  .initDpapi()
-                  .then(() => {
-                    pushToast("success", "凭据库已初始化（DPAPI 模式）");
-                    return vaultApi.status().then(setVault);
-                  })
-                  .catch((e) => pushToast("error", String(e)))
-              }
-            >
-              初始化（Windows DPAPI，无主密码）
-            </button>
-          </div>
+      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-4 p-5">
+        {DEMO && (
+          <section className="nx-alert nx-alert-info flex items-start gap-2.5">
+            <IconInfo size={15} className="mt-0.5 shrink-0" />
+            <div>
+              <b>当前是演示模式。</b>
+              资产、容器、数据库、终端、AI 回复全部来自前端内置的假数据，不会连接任何真实服务器，
+              输入的内容也不会外发。想接真实后端请在 Tauri 里启动（URL 加 <span className="nx-code">?demo=0</span> 可关闭）。
+            </div>
+          </section>
         )}
-        {vault?.initialized && !vault.unlocked && vault.mode === "master" && (
+
+        {/* AI 提供方 */}
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconSparkles size={15} className="text-blue-300" />
+            <span className="nx-card-title">AI 模型</span>
+            <span className="nx-badge">OpenAI 兼容协议 · BYOK</span>
+          </div>
+          <p className="nx-hint mb-3.5">
+            密钥只存在本机加密凭据库里，不会上传；模型可换成本地 Ollama / LM Studio / vLLM。
+          </p>
+
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            {presets.map((p) => (
+              <button
+                key={p}
+                className={`nx-chip ${preset === p ? "nx-chip-accent" : ""}`}
+                onClick={() => applyPreset(p)}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+
+          <div className="nx-form-row">
+            <label className="nx-label">Base URL</label>
+            <input
+              className="nx-input font-mono"
+              value={cfg.baseUrl}
+              onChange={(e) => setCfg({ ...cfg, baseUrl: e.target.value })}
+              placeholder="https://api.deepseek.com/v1"
+            />
+          </div>
+
+          <div className="nx-form-row">
+            <label className="nx-label">API Key（仅本机加密存储）</label>
+            <div className="nx-field">
+              <span className="nx-field-icon">
+                <IconKey size={13} />
+              </span>
+              <input
+                type="password"
+                className="nx-input"
+                value={cfg.apiKey}
+                onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
+                placeholder="sk-…"
+              />
+            </div>
+          </div>
+
+          <div className="mb-3 flex flex-wrap gap-2">
+            <div className="min-w-[180px] flex-1">
+              <label className="nx-label">模型</label>
+              <input
+                className="nx-input font-mono"
+                value={cfg.model}
+                onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
+              />
+            </div>
+            <div className="w-[150px]">
+              <label className="nx-label">上下文窗口 (1k–2M)</label>
+              <input
+                type="number"
+                className="nx-input"
+                value={cfg.contextWindow}
+                onChange={(e) => setCfg({ ...cfg, contextWindow: Number(e.target.value) })}
+              />
+            </div>
+            <div className="w-[92px]">
+              <label className="nx-label">温度</label>
+              <input
+                type="number"
+                step="0.1"
+                className="nx-input"
+                value={cfg.temperature}
+                onChange={(e) => setCfg({ ...cfg, temperature: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          <div className="nx-form-row">
+            <label className="nx-label">代理（留空 = 跟随系统；注意不要让它影响 SSH 认证）</label>
+            <input
+              className="nx-input font-mono"
+              value={cfg.proxy}
+              onChange={(e) => setCfg({ ...cfg, proxy: e.target.value })}
+              placeholder="http://127.0.0.1:7890"
+            />
+          </div>
+
           <div className="flex items-center gap-2">
-            <input
-              type="password"
-              className="w-56 rounded bg-neutral-800 px-2 py-1 outline-none"
-              placeholder="主密码"
-              value={unlockPwd}
-              onChange={(e) => setUnlockPwd(e.target.value)}
-            />
+            <button className="nx-btn nx-btn-primary" onClick={() => void save()}>
+              保存
+            </button>
+            <button className="nx-btn nx-btn-outline" disabled={testing} onClick={() => void test()}>
+              {testing ? <IconRefresh size={13} className="animate-spin" /> : <IconZap size={13} />}
+              {testing ? "测试中…" : "连通性测试（两步）"}
+            </button>
+          </div>
+
+          {testResult && (
+            <div
+              className={`mt-3.5 nx-alert ${testResult.modelsOk && testResult.chatOk ? "" : "nx-alert-danger"}`}
+            >
+              <div className="mb-1 flex items-center gap-1.5 font-semibold">
+                {testResult.modelsOk && testResult.chatOk ? (
+                  <IconCheckCircle size={13} />
+                ) : (
+                  <IconXCircle size={13} />
+                )}
+                测试结果
+              </div>
+              <pre className="whitespace-pre-wrap font-mono text-[11px]">{testResult.detail}</pre>
+            </div>
+          )}
+        </section>
+
+        {/* 凭据库 */}
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconLock size={15} className="text-neutral-400" />
+            <span className="nx-card-title">凭据库</span>
+            <span
+              className={`nx-badge ${
+                vault?.unlocked ? "nx-badge-green" : vault?.initialized ? "nx-badge-amber" : ""
+              }`}
+            >
+              {vault ? (vault.initialized ? (vault.unlocked ? "已解锁" : "已锁定") : "未初始化") : "读取中…"}
+            </span>
+          </div>
+          <p className="nx-hint mb-3.5">
+            主密码 → Argon2id 派生 KEK → 包裹 DEK；凭据用 XChaCha20-Poly1305 加密。
+            也可以走 Windows DPAPI 免主密码模式。
+          </p>
+
+          {!vault?.initialized && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="password"
+                className="nx-input max-w-[240px]"
+                placeholder="设置主密码（≥8 位）"
+                value={masterPwd}
+                onChange={(e) => setMasterPwd(e.target.value)}
+              />
+              <button
+                className="nx-btn nx-btn-primary"
+                disabled={masterPwd.length < 8}
+                onClick={() =>
+                  void vaultApi
+                    .initMaster(masterPwd)
+                    .then(() => {
+                      pushToast("success", "凭据库已初始化（主密码模式）");
+                      return vaultApi.status().then(setVault);
+                    })
+                    .catch((e) => pushToast("error", String(e)))
+                }
+              >
+                初始化（主密码）
+              </button>
+              <button
+                className="nx-btn nx-btn-outline"
+                onClick={() =>
+                  void vaultApi
+                    .initDpapi()
+                    .then(() => {
+                      pushToast("success", "凭据库已初始化（DPAPI 模式）");
+                      return vaultApi.status().then(setVault);
+                    })
+                    .catch((e) => pushToast("error", String(e)))
+                }
+              >
+                初始化（Windows DPAPI，无主密码）
+              </button>
+            </div>
+          )}
+
+          {vault?.initialized && !vault.unlocked && vault.mode === "master" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="password"
+                className="nx-input max-w-[240px]"
+                placeholder="主密码"
+                value={unlockPwd}
+                onChange={(e) => setUnlockPwd(e.target.value)}
+              />
+              <button
+                className="nx-btn nx-btn-primary"
+                onClick={() =>
+                  void vaultApi
+                    .unlock(unlockPwd)
+                    .then(() => {
+                      pushToast("success", "已解锁");
+                      return vaultApi.status().then(setVault);
+                    })
+                    .catch((e) => pushToast("error", String(e)))
+                }
+              >
+                <IconUnlock size={13} />
+                解锁
+              </button>
+            </div>
+          )}
+
+          {vault?.unlocked && (
             <button
-              className="rounded bg-green-600 px-3 py-1 text-white hover:bg-green-500"
+              className="nx-btn nx-btn-outline nx-btn-sm"
               onClick={() =>
                 void vaultApi
-                  .unlock(unlockPwd)
-                  .then(() => {
-                    pushToast("success", "已解锁");
-                    return vaultApi.status().then(setVault);
-                  })
+                  .lock()
+                  .then(() => vaultApi.status().then(setVault))
                   .catch((e) => pushToast("error", String(e)))
               }
             >
-              解锁
+              <IconLock size={13} />
+              立即锁定
             </button>
+          )}
+        </section>
+
+        <McpSection />
+
+        {/* 快捷键速查 */}
+        <section className="nx-card">
+          <div className="mb-3 flex items-center gap-2">
+            <IconSettings size={15} className="text-neutral-400" />
+            <span className="nx-card-title">快捷键</span>
           </div>
-        )}
-        {vault?.unlocked && (
-          <button
-            className="rounded bg-neutral-700 px-3 py-1 text-xs hover:bg-neutral-600"
-            onClick={() =>
-              void vaultApi
-                .lock()
-                .then(() => vaultApi.status().then(setVault))
-                .catch((e) => pushToast("error", String(e)))
-            }
-          >
-            立即锁定
-          </button>
-        )}
-      </section>
-      <McpSection />
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+            {(
+              [
+                ["Ctrl+Shift+P / Ctrl+K", "命令面板"],
+                ["Ctrl+T", "新建本地终端"],
+                ["Ctrl+B", "收起 / 展开资产树"],
+                ["Ctrl+J", "收起 / 展开 AI 侧栏"],
+                ["Ctrl+W", "关闭当前标签"],
+                ["Ctrl+F", "终端内搜索"],
+                ["Esc", "AI 接管中一键夺回"],
+                ["Ctrl+Enter", "SQL 编辑器内运行"],
+              ] as [string, string][]
+            ).map(([k, label]) => (
+              <div key={k} className="flex items-center gap-2 text-xs text-neutral-400">
+                <span className="nx-kbd">{k}</span>
+                <span>{label}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

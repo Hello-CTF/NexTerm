@@ -1,13 +1,30 @@
 // 文件编辑器（M1-T7）：CodeMirror 6，打开/编辑/保存 + 备份确认 + GBK 解码。
+//
+// 工具条对齐参考实现：保存 / 撤销 / 重做 / 查找 / 缩放 / 换行符 / 编码。
+// 其中「换行符」是真的转换（重写整篇文档的换行），「编码」是真的换解码器
+// （会重新读盘），不是只显示一个标签。
 import { useEffect, useRef, useState } from "react";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
-import { keymap } from "@codemirror/view";
-import { indentWithTab } from "@codemirror/commands";
+import { indentWithTab, redo, undo } from "@codemirror/commands";
+import { openSearchPanel, search } from "@codemirror/search";
 import { ask } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { nxHighlight } from "../../ui/editorTheme";
+import {
+  IconClose,
+  IconLocate,
+  IconMinus,
+  IconPlus,
+  IconRedo,
+  IconRefresh,
+  IconSave,
+  IconSearch,
+  IconUndo,
+} from "../../ui/icons";
+import { fileVisual } from "./fileTypes";
 
 // 轻量语法高亮：按扩展名选 legacy mode
 import { StreamLanguage } from "@codemirror/language";
@@ -16,6 +33,7 @@ import { nginx } from "@codemirror/legacy-modes/mode/nginx";
 import { yaml } from "@codemirror/legacy-modes/mode/yaml";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { javascript } from "@codemirror/legacy-modes/mode/javascript";
+import { python } from "@codemirror/legacy-modes/mode/python";
 import { sql } from "@codemirror/lang-sql";
 
 export interface FileEditorProps {
@@ -26,40 +44,60 @@ export interface FileEditorProps {
 
 function modeFor(path: string) {
   const lower = path.toLowerCase();
-  if (lower.endsWith(".sh") || lower.endsWith(".bashrc") || lower.endsWith(".zshrc"))
+  if (lower.endsWith(".py")) return StreamLanguage.define(python);
+  if (lower.endsWith(".sh") || lower.endsWith(".bash") || lower.endsWith(".bashrc") || lower.endsWith(".zshrc") || lower.endsWith(".profile"))
     return StreamLanguage.define(shell);
   if (lower.includes("nginx")) return StreamLanguage.define(nginx);
   if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return StreamLanguage.define(yaml);
   if (lower.endsWith(".ini") || lower.endsWith(".conf") || lower.endsWith(".env"))
     return StreamLanguage.define(properties);
-  if (lower.endsWith(".js") || lower.endsWith(".json") || lower.endsWith(".ts"))
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".json") || lower.endsWith(".ts"))
     return StreamLanguage.define(javascript);
   if (lower.endsWith(".sql")) return sql();
   return undefined;
 }
 
-function decodeContent(bytes: Uint8Array): { text: string; encoding: string } {
-  // UTF-8 优先，失败回退 GBK（§5.4：GBK 文件不乱码）
+type EncChoice = "auto" | "utf-8" | "gbk";
+
+const ENC_LABEL: Record<EncChoice, string> = {
+  auto: "自动",
+  "utf-8": "UTF-8",
+  gbk: "GBK",
+};
+
+function decodeContent(bytes: Uint8Array, choice: EncChoice): { text: string; encoding: string } {
+  if (choice === "gbk") return { text: new TextDecoder("gbk").decode(bytes), encoding: "gbk" };
+  if (choice === "utf-8") return { text: new TextDecoder("utf-8").decode(bytes), encoding: "utf-8" };
+  // 自动：UTF-8 优先，失败回退 GBK（§5.4：GBK 文件不乱码）
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return { text, encoding: "utf-8" };
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), encoding: "utf-8" };
   } catch {
-    const text = new TextDecoder("gbk").decode(bytes);
-    return { text, encoding: "gbk" };
+    return { text: new TextDecoder("gbk").decode(bytes), encoding: "gbk" };
   }
 }
+
+/** 字号档位（工具条上的 -/+ 在这几个值之间走）。 */
+const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
 export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   const { pushToast } = useUi();
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState<{ encoding: string; size: number } | null>(null);
+  const [zoom, setZoom] = useState(2);
+  /** 换行符：从文档内容实时推导，工具条上那个 LF / CRLF 就是它。 */
+  const [eol, setEol] = useState<"LF" | "CRLF">("LF");
+  const [enc, setEnc] = useState<EncChoice>("auto");
+  const [reloadKey, setReloadKey] = useState(0);
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const saveRef = useRef<() => void>(() => undefined);
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const res = await fsApi.read(sessionId, path);
         if (cancelled) return;
@@ -68,30 +106,37 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           onClose?.();
           return;
         }
-        const { text, encoding } = decodeContent(bin);
+        if (cancelled) return;
+        const { text, encoding } = decodeContent(bin, enc);
         setMeta({ encoding, size: res.size });
-        if (hostRef.current && !viewRef.current) {
-          const view = new EditorView({
+        setEol(text.includes("\r\n") ? "CRLF" : "LF");
+        setDirty(false);
+        if (hostRef.current) {
+          // 换编码会重建视图，所以旧实例必须显式销毁（否则会叠加两个画布）
+          viewRef.current?.destroy();
+          viewRef.current = null;
+          const mode = modeFor(path);
+          viewRef.current = new EditorView({
             state: EditorState.create({
               doc: text,
               extensions: [
                 basicSetup,
-                ...(() => {
-                  const m = modeFor(path);
-                  return m ? [m] : [];
-                })(),
+                // 顶部搜索面板（basicSetup 只带了快捷键，面板本身要显式装）
+                search({ top: true }),
+                ...(mode ? [mode] : []),
                 keymap.of([indentWithTab]),
+                nxHighlight,
                 EditorView.updateListener.of((u) => {
-                  if (u.docChanged) setDirty(true);
-                }),
-                EditorView.theme({
-                  "&": { fontSize: "13px", backgroundColor: "#12141a", color: "#d7dae0" },
+                  if (u.docChanged) {
+                    setDirty(true);
+                    const s = u.state.doc.toString();
+                    setEol(s.includes("\r\n") ? "CRLF" : "LF");
+                  }
                 }),
               ],
             }),
             parent: hostRef.current,
           });
-          viewRef.current = view;
         }
       } catch (e) {
         pushToast("error", `打开失败: ${String(e)}`);
@@ -103,11 +148,21 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-      }, [sessionId, path]);
+    // enc / reloadKey 变化 = 重新读盘重解码
+  }, [sessionId, path, enc, reloadKey]);
 
   const save = async () => {
     const view = viewRef.current;
     if (!view) return;
+    // 非 UTF-8 解码的文件没法按原编码写回（前端没有 GBK 编码器），
+    // 所以这里必须显式告知，而不是悄悄写成 UTF-8。
+    if (meta && meta.encoding !== "utf-8") {
+      const ok = await ask(
+        `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，非 ASCII 字符的字节会变。继续？`,
+        { title: "编码会改变", kind: "warning" },
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       const text = view.state.doc.toString();
@@ -127,32 +182,192 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       setSaving(false);
     }
   };
+  saveRef.current = () => void save();
+
+  // Ctrl/Cmd+S 保存
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const withView = (fn: (v: EditorView) => void) => {
+    const v = viewRef.current;
+    if (v) fn(v);
+  };
+
+  /** LF ⇄ CRLF：整篇转换（脏标记由 updateListener 自动接上）。 */
+  const toggleEol = () => {
+    withView((v) => {
+      const src = v.state.doc.toString();
+      const next = eol === "LF" ? src.replace(/\r?\n/g, "\r\n") : src.replace(/\r\n/g, "\n");
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: next } });
+      setEol(eol === "LF" ? "CRLF" : "LF");
+      pushToast("info", `换行符已转为 ${eol === "LF" ? "CRLF" : "LF"}，记得保存`);
+    });
+  };
+
+  /** 切换解码方式：有未保存改动时先确认（会重新读盘）。 */
+  const switchEnc = async (next: EncChoice) => {
+    if (dirtyRef.current && !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？"))) {
+      return;
+    }
+    setEnc(next);
+  };
+
+  const { Icon: FileIcon, tone } = fileVisual(path, "file");
+  const steps = ZOOM_STEPS.length - 1;
+  const fontPx = ZOOM_STEPS[zoom] ?? 13;
 
   return (
-    <div className="flex h-full flex-col bg-[#12141a]">
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-1.5 text-xs text-neutral-400">
-        <span className="font-mono text-neutral-300">{path}</span>
-        {dirty && <span className="text-amber-400">● 未保存</span>}
-        {meta && (
-          <span className="text-neutral-600">
-            {meta.encoding} · {(meta.size / 1024).toFixed(1)} KB
+    <div className="nx-pane bg-term">
+      <div className="nx-toolbar">
+        <FileIcon size={14} className={`shrink-0 ${tone}`} />
+        <span className="nx-toolbar-title truncate font-mono">{path}</span>
+        {dirty && (
+          <span className="nx-badge nx-badge-amber shrink-0">
+            <span className="nx-dot" />
+            未保存
           </span>
         )}
-        <div className="flex-1" />
+        <div className="nx-spacer" />
+
+        {/* 编辑动作 */}
         <button
-          className="rounded bg-blue-600 px-3 py-0.5 text-white hover:bg-blue-500 disabled:opacity-50"
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="撤销 (Ctrl+Z)"
+          onClick={() => withView(undo)}
+        >
+          <IconUndo size={13} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="重做 (Ctrl+Shift+Z)"
+          onClick={() => withView(redo)}
+        >
+          <IconRedo size={13} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="查找 / 替换 (Ctrl+F)"
+          onClick={() => withView(openSearchPanel)}
+        >
+          <IconSearch size={13} />
+        </button>
+
+        <span className="nx-divider-v" />
+
+        {/* 缩放 */}
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="缩小字号"
+          disabled={zoom <= 0}
+          onClick={() => setZoom((z) => Math.max(0, z - 1))}
+        >
+          <IconMinus size={13} />
+        </button>
+        <span
+          className="w-[22px] shrink-0 text-center text-[10.5px] text-neutral-500"
+          title="当前字号"
+        >
+          {fontPx}
+        </span>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="放大字号"
+          disabled={zoom >= steps}
+          onClick={() => setZoom((z) => Math.min(steps, z + 1))}
+        >
+          <IconPlus size={13} />
+        </button>
+
+        <span className="nx-divider-v" />
+
+        {/* 换行符 / 编码 */}
+        <button
+          className="nx-btn nx-btn-ghost nx-btn-xs font-mono"
+          title={`当前换行符 ${eol}，点击转换`}
+          onClick={toggleEol}
+        >
+          {eol}
+        </button>
+        <label
+          className="nx-btn nx-btn-ghost nx-btn-xs relative font-mono"
+          title={`解码方式：${ENC_LABEL[enc]}${
+            meta && enc === "auto" ? `（实测 ${meta.encoding.toUpperCase()}）` : ""
+          }`}
+        >
+          {enc === "auto" && meta ? meta.encoding.toUpperCase() : ENC_LABEL[enc]}
+          <select
+            className="absolute h-0 w-0 opacity-0"
+            value={enc}
+            onChange={(e) => void switchEnc(e.target.value as EncChoice)}
+          >
+            {(Object.keys(ENC_LABEL) as EncChoice[]).map((k) => (
+              <option key={k} value={k}>
+                {ENC_LABEL[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="重新读取（丢弃未保存改动）"
+          onClick={() => {
+            if (!dirtyRef.current) {
+              setReloadKey((k) => k + 1);
+              return;
+            }
+            void ask("重新读取会丢弃未保存的改动。继续？").then((ok) => {
+              if (ok) setReloadKey((k) => k + 1);
+            });
+          }}
+        >
+          <IconRefresh size={13} />
+        </button>
+
+        <span className="nx-divider-v" />
+
+        <button
+          className={`nx-btn nx-btn-sm ${dirty ? "nx-btn-primary" : "nx-btn-ghost"}`}
           disabled={!dirty || saving}
           onClick={() => void save()}
+          title="保存（远端自动留一份 .nexterm-bak 备份）"
         >
-          {saving ? "保存中…" : "保存 (Ctrl+S)"}
+          <IconSave size={13} />
+          {saving ? "保存中…" : "保存"}
+          <span className="nx-kbd border-white/25 text-white/70">Ctrl S</span>
         </button>
         {onClose && (
-          <button className="rounded px-2 hover:bg-neutral-800" onClick={onClose}>
-            ✕
+          <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器">
+            <IconClose size={14} />
           </button>
         )}
       </div>
-      <div ref={hostRef} className="min-h-0 flex-1 overflow-auto" />
+
+      {meta && (
+        <div className="flex h-[22px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 text-[10.5px] text-neutral-500">
+          <IconLocate size={10} />
+          <span>{(meta.size / 1024).toFixed(1)} KB</span>
+          <span className="text-neutral-700">|</span>
+          <span>{meta.encoding.toUpperCase()}</span>
+          <span className="text-neutral-700">|</span>
+          <span>{eol}</span>
+          <div className="nx-spacer" />
+          <span>保存前自动备份为 .nexterm-bak</span>
+        </div>
+      )}
+
+      <div
+        ref={hostRef}
+        className="min-h-0 flex-1 overflow-auto"
+        style={{ fontSize: fontPx }}
+      />
     </div>
   );
 }

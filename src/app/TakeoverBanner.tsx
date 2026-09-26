@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { useUi } from "./store";
 import { aiApi } from "../ipc/commands";
+import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
 
 /** 夺回：取消模型请求 + 退出接管 + 清横幅。幂等，可被按钮与 Esc 同时触发。 */
 async function stealBack(reason = "用户夺回控制权") {
@@ -55,21 +56,24 @@ export function TakeoverBanner() {
   const ss = String(elapsed % 60).padStart(2, "0");
 
   return (
-    <div className="flex h-8 shrink-0 items-center gap-3 border-b border-red-900 bg-red-950 px-3 text-xs text-red-100">
-      <span className="flex h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
-      <span className="shrink-0 font-medium text-red-200">AI 正在操作此终端</span>
-      <span className="shrink-0 rounded bg-red-900/80 px-1.5 py-0.5 text-[10px] text-red-200">
+    <div className="flex h-[34px] shrink-0 items-center gap-2.5 border-b border-red-500/40 bg-red-950 px-3 text-xs text-red-100">
+      <span className="flex items-center gap-1.5 font-semibold text-red-100">
+        <IconAlert size={14} className="text-red-300" />
+        AI 正在操作此终端
+      </span>
+      <span className={`nx-badge ${takeover.allowWrite ? "nx-badge-red" : ""}`}>
+        <IconShield size={10} />
         {takeover.allowWrite ? "可写" : "只读"}
       </span>
       <span className="min-w-0 flex-1 truncate text-red-200/80" title={takeover.task}>
         {takeover.task}
       </span>
-      <span className="shrink-0 tabular-nums text-red-300/80">{mm}:{ss}</span>
-      <span className="shrink-0 text-red-300/60">Esc 夺回</span>
-      <button
-        className="shrink-0 rounded bg-red-600 px-2 py-0.5 font-medium text-white hover:bg-red-500"
-        onClick={() => void stealBack()}
-      >
+      <span className="shrink-0 font-mono tabular-nums text-red-200">{mm}:{ss}</span>
+      <span className="shrink-0 text-red-300/70">
+        按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">Esc</span> 随时夺回
+      </span>
+      <button className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0" onClick={() => void stealBack()}>
+        <IconGamepad size={12} />
         立即夺回
       </button>
     </div>

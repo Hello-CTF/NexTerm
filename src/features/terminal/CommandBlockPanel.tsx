@@ -1,9 +1,10 @@
-// 命令块面板（M1-T9 v1）—— 块分隔 / 输出折叠 / 复制输出。
+// 命令块面板（M1-T9）—— 块分隔 / 输出折叠 / 复制输出。
 //
 // 为什么「折叠」在这里而不在终端画布上：xterm.js 没有删除缓冲行的 API，
 // 在画布上折叠只能涂白留空。所以折叠语义落在本面板：每块默认收起，展开看输出预览。
 import { useState } from "react";
 import type { CommandBlock } from "./commandBlocks";
+import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconTrash } from "../../ui/icons";
 
 export interface CommandBlockPanelProps {
   blocks: CommandBlock[];
@@ -65,25 +66,26 @@ export function CommandBlockPanel({
   };
 
   return (
-    <div className="flex h-full w-[300px] shrink-0 flex-col border-l border-neutral-800 bg-neutral-950/80">
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-2 py-1 text-xs">
-        <span className="font-medium text-neutral-300">命令块</span>
-        <span className="text-neutral-500">{blocks.length}</span>
-        <div className="flex-1" />
+    <div className="flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950/70">
+      <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
+        <IconList size={13} className="text-neutral-500" />
+        <span className="text-[11.5px] font-semibold text-neutral-200">命令块</span>
+        <span className="nx-count">{blocks.length}</span>
+        <div className="nx-spacer" />
         <button
-          className="rounded px-1.5 py-0.5 text-neutral-400 hover:bg-neutral-800"
+          className="nx-icon-btn nx-icon-btn-sm"
           title="清空块记录（不影响终端内容）"
           onClick={onClear}
         >
-          清空
+          <IconTrash size={12} />
         </button>
       </div>
 
       {blocks.length === 0 ? (
-        <div className="p-3 text-xs leading-relaxed text-neutral-600">
+        <div className="nx-hint p-3">
           还没有命令块。
           <br />
-          在终端里执行命令后，每个命令会成为一个可折叠的块。
+          在终端里执行命令后，每条命令会成为一个可折叠的块 —— 可复制输出、可定位回终端。
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -92,48 +94,51 @@ export function CommandBlockPanel({
             const body = preview[b.index] ?? "";
             const lines = body ? body.split("\n") : [];
             const shown = lines.slice(0, PREVIEW_LINES).join("\n");
+            const running = b.endedAt === null;
             return (
-              <div key={b.index} className="border-b border-neutral-900">
-                <div className="flex items-start gap-1 px-2 py-1.5">
+              <div
+                key={b.index}
+                className={`border-b border-neutral-800/40 ${running ? "bg-blue-500/[0.06]" : ""}`}
+              >
+                <div className="flex items-start gap-1.5 px-2.5 py-1.5">
                   <button
-                    className="mt-0.5 w-4 shrink-0 text-left text-[10px] text-neutral-500 hover:text-neutral-300"
+                    className="mt-0.5 shrink-0 text-neutral-500 hover:text-neutral-200"
                     onClick={() => toggle(b.index)}
-                    title={open ? "收起" : "展开输出预览"}
+                    title={open ? "收起输出预览" : "展开输出预览"}
                   >
-                    {open ? "▾" : "▸"}
+                    {open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
                   </button>
-                  <span className="mt-0.5 w-6 shrink-0 text-right text-[10px] tabular-nums text-blue-400/70">
+                  <span className="mt-0.5 w-5 shrink-0 text-right font-mono text-[10.5px] text-blue-300/70">
                     #{b.index}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div
-                      className="truncate font-mono text-[11px] text-neutral-200"
-                      title={b.command}
-                    >
+                    <div className="truncate font-mono text-[11.5px] text-neutral-200" title={b.command}>
                       {b.command}
-                      {!b.reliable && <span className="ml-1 text-amber-400/80">?</span>}
+                      {!b.reliable && <span className="ml-1 text-amber-300/80">?</span>}
                     </div>
-                    <div className="mt-0.5 text-[10px] text-neutral-500">
+                    <div className="mt-0.5 font-mono text-[10px] text-neutral-600">
                       {clockOf(b.startedAt)} · {durationOf(b)}
                     </div>
                   </div>
-                  <button
-                    className="shrink-0 rounded px-1 text-[10px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
-                    title="定位到此块"
-                    onClick={() => onLocate(b.index)}
-                  >
-                    定位
-                  </button>
-                  <button
-                    className="shrink-0 rounded px-1 text-[10px] text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
-                    title="复制该块（命令 + 输出）"
-                    onClick={() => void copy(b.index)}
-                  >
-                    复制
-                  </button>
+                  <span className="mt-0.5 flex shrink-0 items-center gap-0.5">
+                    <button
+                      className="nx-icon-btn nx-icon-btn-sm"
+                      title="定位到此块"
+                      onClick={() => onLocate(b.index)}
+                    >
+                      <IconLocate size={11} />
+                    </button>
+                    <button
+                      className="nx-icon-btn nx-icon-btn-sm"
+                      title="复制该块（命令 + 输出）"
+                      onClick={() => void copy(b.index)}
+                    >
+                      <IconCopy size={11} />
+                    </button>
+                  </span>
                 </div>
                 {open && (
-                  <pre className="max-h-64 overflow-auto border-t border-neutral-900 bg-[#0e1015] px-2 py-1 font-mono text-[10px] leading-snug whitespace-pre-wrap text-neutral-400">
+                  <pre className="max-h-64 overflow-auto border-t border-neutral-800/40 bg-term px-2.5 py-1.5 font-mono text-[10.5px] leading-snug whitespace-pre-wrap text-neutral-400">
                     {shown || "（无输出）"}
                     {lines.length > PREVIEW_LINES
                       ? `\n… 还有 ${lines.length - PREVIEW_LINES} 行（复制可取全文）`

@@ -9,23 +9,48 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import { createBinaryChannel } from "../../ipc/events";
-import { terminalApi } from "../../ipc/commands";
+import { dockerApi, terminalApi } from "../../ipc/commands";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 
+// 终端配色：与 styles.css 的令牌保持一致（画布 #101217），
+// 前景与 ANSI 十六色统一压低饱和度，和整体界面（微冷深灰）同调。
+//
+// 光标色不写死：它是**强调色**，而强调色是可能整体换掉的设计令牌
+// （见 styles.css 的 --color-accent）。写死在这里的话，换色时终端光标会
+// 偷偷留在旧颜色上——这种"只漏一处"的不一致最难发现。
+//
+// 但 blue / brightBlue **故意不等于强调色**：它们是 ANSI 语义色（`ls` 的目录、
+// git 输出都靠它），要比强调色亮一档才读得清；跟着强调色一起变会变暗。
+// 所以换强调色时**不要**顺手同步这两个值。
 const THEME = {
-  background: "#12141a",
-  foreground: "#d7dae0",
-  cursor: "#4f9cf9",
+  background: "#101217",
+  foreground: "#c6cbd6",
+  cursorAccent: "#101217",
   selectionBackground: "#2c3e5d",
-  black: "#12141a",
-  red: "#e06c75",
-  green: "#98c379",
-  yellow: "#e5c07b",
-  blue: "#61afef",
-  magenta: "#c678dd",
-  cyan: "#56b6c2",
-  white: "#d7dae0",
+  black: "#101217",
+  brightBlack: "#5c6472",
+  red: "#e87b7b",
+  brightRed: "#f0a0a0",
+  green: "#7fd6a4",
+  brightGreen: "#a3e6bd",
+  yellow: "#e9c489",
+  brightYellow: "#f0d6a4",
+  blue: "#79a8f8",
+  brightBlue: "#9dc0fb",
+  magenta: "#b79ce8",
+  brightMagenta: "#cdb9f0",
+  cyan: "#7fc7d6",
+  brightCyan: "#a3dbe6",
+  white: "#c6cbd6",
+  brightWhite: "#eef1f6",
 };
+
+/** 运行期从 CSS 令牌读强调色，读不到再退回一个安全值（仅样式表还没生效时会走到）。 */
+function accentColor(): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
+  // 兜底值要跟着 styles.css 的 --color-accent 一起改，否则极端情况下会退回旧色
+  return v || "#516cd6";
+}
 
 /** 终端操作句柄：由 XtermView 建立后交给 TerminalPane 的工具条/块面板使用。 */
 export interface TerminalHandle {
@@ -39,6 +64,8 @@ export interface XtermViewProps {
   sessionId: string;
   tabId: string;
   winrm?: boolean;
+  /** 非空表示这是一个「容器内终端」，attach 走 docker exec 而不是 SSH PTY。 */
+  containerId?: string;
   /**
    * 所在标签是否处于激活状态（§4.4）。
    *
@@ -89,7 +116,7 @@ export function XtermView(props: XtermViewProps) {
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 13,
       cursorBlink: true,
-      theme: THEME,
+      theme: { ...THEME, cursor: accentColor() },
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -132,11 +159,20 @@ export function XtermView(props: XtermViewProps) {
       try {
         const cols = term.cols;
         const rows = term.rows;
-        const id = props.winrm
-          ? await import("../../ipc/commands").then((m) =>
-              m.sessionApi.openLineTab(props.sessionId, cols, rows, channel),
+        // 三种执行通道：容器内 exec / WinRM 行模式 / 服务器 PTY
+        const id = props.containerId
+          ? await dockerApi.execAttach(
+              props.sessionId,
+              props.containerId,
+              cols,
+              rows,
+              channel,
             )
-          : await terminalApi.attach(props.sessionId, cols, rows, channel);
+          : props.winrm
+            ? await import("../../ipc/commands").then((m) =>
+                m.sessionApi.openLineTab(props.sessionId, cols, rows, channel),
+              )
+            : await terminalApi.attach(props.sessionId, cols, rows, channel);
         if (disposed) return;
         kernelTabId = id;
         kernelTabIdRef.current = id;
@@ -199,7 +235,7 @@ export function XtermView(props: XtermViewProps) {
       term.dispose();
       termRef.current = null;
     };
-      }, [props.sessionId]);
+      }, [props.sessionId, props.containerId]);
 
   // ── 标签激活状态 → 可见性 + 重新 fit（§4.4）──
   // 切标签时组件不再卸载（见 App.tsx 的「全部挂载、隐藏非激活」），

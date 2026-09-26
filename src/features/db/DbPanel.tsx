@@ -1,63 +1,105 @@
 // DB 面板（M3）：MySQL（SQL 编辑器 + 结果表格 + 库表浏览）+ Redis（SCAN + 查看器 + 命令台 + TTL）。
-import { useRef, useState } from "react";
-import { EditorView } from "@codemirror/view";
+import { useEffect, useRef, useState } from "react";
+import { EditorView, placeholder } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { sql as sqlLang } from "@codemirror/lang-sql";
 import { promptText } from "../../ui/dialogs";
+import { nxHighlight } from "../../ui/editorTheme";
+import { DEMO } from "../../demo";
 import { dbApi, type QueryResult } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import {
+  IconDatabase,
+  IconHistory,
+  IconLayers,
+  IconList,
+  IconPlay,
+  IconRefresh,
+  IconSearch,
+  IconSettings,
+  IconTable,
+} from "../../ui/icons";
 
 export function DbPanel({ connId, kind }: { connId: string; kind: "mysql" | "redis" }) {
   return kind === "mysql" ? <MysqlView connId={connId} /> : <RedisView connId={connId} />;
 }
 
-// ───────────────── MySQL ─────────────────
+/* ───────────────────────── MySQL ───────────────────────── */
 
 function MysqlView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
-  const [schema, setSchema] = useState<string>("");
+  const [schema, setSchema] = useState("");
+  const [schemas, setSchemas] = useState<string[]>([]);
   const [tables, setTables] = useState<string[]>([]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
+  /** 底部条：看表清单还是看表结构。 */
+  const [browse, setBrowse] = useState<"tables" | "columns">("tables");
+  const [activeTable, setActiveTable] = useState<string | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
 
-  const loadSchemas = async () => {
+  const SYSTEM_SCHEMAS = ["information_schema", "mysql", "performance_schema", "sys"];
+
+  const loadSchema = async (next: string) => {
+    setSchema(next);
     try {
-      const schemas = await dbApi.schemas(connId);
-      const pick = schemas.find((s) => !["information_schema", "mysql", "performance_schema", "sys"].includes(s)) ?? schemas[0] ?? "";
-      setSchema(pick);
-      setTables(pick ? await dbApi.tables(connId, pick) : []);
+      setTables(await dbApi.tables(connId, next));
     } catch (e) {
       pushToast("error", String(e));
     }
   };
-  void loadSchemas();
 
-  if (!viewRef.current && hostRef.current) {
-    viewRef.current = new EditorView({
+  // 只在挂载时拉一次库列表；不再放在渲染体里（旧版每次重渲染都会重发请求）
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await dbApi.schemas(connId);
+        setSchemas(list);
+        const pick = list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "";
+        if (pick) await loadSchema(pick);
+      } catch (e) {
+        pushToast("error", String(e));
+      }
+    })();
+  }, [connId]);
+
+  // CodeMirror 实例只建一次
+  useEffect(() => {
+    if (!hostRef.current || viewRef.current) return;
+    const view = new EditorView({
       state: EditorState.create({
-        doc: "SELECT 1\n",
+        // 真机上不要塞演示语料：早先这里写死了 `orders` 表的示例 SQL，
+        // 连真实库打开面板就提示"演示数据已就绪"，对着一个不存在的表。
+        doc: DEMO
+          ? "-- 演示模式：数据都是假的。试试：\nSELECT channel, COUNT(*) AS orders\nFROM orders GROUP BY channel;\n"
+          : "",
         extensions: [
           basicSetup,
           sqlLang(),
-          EditorView.theme({ "&": { fontSize: "13px", backgroundColor: "#12141a", color: "#d7dae0" } }),
+          nxHighlight,
+          // 只在空文档时显示，演示模式下有初值所以不会出现
+          placeholder("在这里写 SQL，然后点右上角「执行」"),
         ],
       }),
       parent: hostRef.current,
     });
-  }
+    viewRef.current = view;
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, []);
 
   const run = async () => {
     const view = viewRef.current;
     if (!view) return;
-    const selection = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-    const text = selection.trim() || view.state.doc.toString();
+    const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+    const text = sel.trim() || view.state.doc.toString();
     setRunning(true);
     try {
-      const r = await dbApi.query(connId, text);
-      setResult(r);
+      setResult(await dbApi.query(connId, text));
     } catch (e) {
       pushToast("error", String(e));
     } finally {
@@ -65,131 +107,212 @@ function MysqlView({ connId }: { connId: string }) {
     }
   };
 
+  const fillQuery = (t: string) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const sql = `SELECT * FROM ${t} LIMIT 200;`;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: sql } });
+    view.focus();
+  };
+
+  const showColumns = async (t: string) => {
+    setActiveTable(t);
+    try {
+      const { columns, indexes } = await dbApi.columns(connId, t, schema);
+      setResult({
+        columns: ["字段", "类型", "可空", "键", "默认值", "额外"],
+        rows: [
+          ...columns.map((c) => [
+            c.name,
+            c.type,
+            c.nullable ? "YES" : "NO",
+            c.key || "—",
+            c.default ?? "NULL",
+            c.extra || "—",
+          ]),
+          // 索引跟在字段后面，一眼能看到主键与联合索引
+          ...indexes.map((ix) => [
+            `↳ ${ix.name}`,
+            ix.unique ? "UNIQUE" : "INDEX",
+            "—",
+            `seq ${ix.seq}`,
+            "—",
+            ix.column,
+          ]),
+        ],
+        rowsAffected: 0,
+        durationMs: 8,
+        truncated: false,
+        error: null,
+      });
+    } catch (e) {
+      pushToast("error", String(e));
+    }
+  };
+
   return (
-    <div className="flex h-full flex-col bg-neutral-900 text-sm text-neutral-300">
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-1.5 text-xs">
-        <span className="font-medium text-neutral-200">MySQL</span>
+    <div className="nx-pane">
+      <div className="nx-toolbar">
+        <IconDatabase size={14} className="text-neutral-500" />
+        <span className="nx-toolbar-title">MySQL</span>
         <select
-          className="rounded bg-neutral-800 px-2 py-0.5 outline-none"
+          className="nx-select nx-input-sm w-[168px]"
           value={schema}
-          onChange={async (e) => {
-            setSchema(e.target.value);
-            setTables(await dbApi.tables(connId, e.target.value));
-          }}
+          onChange={(e) => void loadSchema(e.target.value)}
         >
-          {(tables.length || schema) && <option value={schema}>{schema || "选择库"}</option>}
+          {schemas.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
         </select>
-        <span className="text-neutral-500">{tables.length} 表</span>
-        <div className="flex-1" />
+        <span className="nx-count">{tables.length}</span>
+        <span className="nx-hint">张表</span>
+        <div className="nx-spacer" />
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（M3 规划中）" disabled>
+          <IconHistory size={13} />
+          历史
+        </button>
         <button
-          className="rounded bg-green-600 px-3 py-0.5 text-white hover:bg-green-500 disabled:opacity-50"
+          className="nx-btn nx-btn-primary nx-btn-sm"
           disabled={running}
           onClick={() => void run()}
+          title="执行整段 SQL，或只执行选中部分"
         >
-          {running ? "执行中…" : "运行 (Ctrl+Enter)"}
+          {running ? <IconRefresh size={13} className="animate-spin" /> : <IconPlay size={12} />}
+          {running ? "执行中…" : "运行"}
+          <span className="nx-kbd border-white/30 text-white/75">Ctrl ↵</span>
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="h-40 shrink-0 border-b border-neutral-800" ref={hostRef} />
-        {result && (
-          <ResultTable result={result} />
-        )}
-      </div>
-      <TableSidebar connId={connId} tables={tables} />
-    </div>
-  );
-}
 
-function TableSidebar({ connId, tables }: { connId: string; tables: string[] }) {
-  const { pushToast } = useUi();
-  const [ddl, setDdl] = useState<string | null>(null);
-  return (
-    <>
-      {tables.length > 0 && (
-        <div className="flex flex-wrap gap-1 border-t border-neutral-800 px-3 py-1.5">
-          {tables.slice(0, 40).map((t) => (
+      <div
+        ref={hostRef}
+        className="h-[188px] shrink-0 overflow-auto border-b border-neutral-800/60 bg-term"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            void run();
+          }
+        }}
+      />
+
+      <div className="min-h-0 flex-1 overflow-auto">
+        {result ? <ResultTable result={result} /> : <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行</div>}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1.5">
+        <div className="nx-segment">
+          <button
+            className={`nx-segment-item ${browse === "tables" ? "is-active" : ""}`}
+            onClick={() => setBrowse("tables")}
+            title="点表名把 SELECT 填进编辑器"
+          >
+            <IconTable size={12} />
+            表
+          </button>
+          <button
+            className={`nx-segment-item ${browse === "columns" ? "is-active" : ""}`}
+            onClick={() => setBrowse("columns")}
+            title="点表名查看字段结构"
+          >
+            <IconList size={12} />
+            结构
+          </button>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {tables.slice(0, 60).map((t) => (
             <button
               key={t}
-              className="rounded bg-neutral-800 px-2 py-0.5 font-mono text-[11px] hover:bg-neutral-700"
-              onClick={async () => {
-                try {
-                  const d = await dbApi.columns(connId, t);
-                  setDdl(JSON.stringify(d, null, 2));
-                } catch (e) {
-                  pushToast("error", String(e));
-                }
-              }}
+              className={`nx-chip shrink-0 font-mono ${
+                activeTable === t && browse === "columns" ? "nx-chip-accent" : ""
+              }`}
+              onClick={() => (browse === "tables" ? fillQuery(t) : void showColumns(t))}
+              title={browse === "tables" ? `填入 SELECT * FROM ${t}` : `查看 ${t} 的字段`}
             >
               {t}
             </button>
           ))}
+          {tables.length > 60 && <span className="nx-hint shrink-0">+{tables.length - 60}</span>}
+          {tables.length === 0 && <span className="nx-hint">这个库里没有表</span>}
         </div>
-      )}
-      {ddl && (
-        <div className="max-h-40 overflow-auto border-t border-neutral-800 bg-[#12141a] p-2 font-mono text-[11px] text-neutral-300">
-          <pre>{ddl}</pre>
-        </div>
-      )}
-    </>
+      </div>
+    </div>
   );
 }
 
 function ResultTable({ result }: { result: QueryResult }) {
   if (result.error) {
     return (
-      <div className="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs text-red-400">
-        SQL 错误：{result.error}
+      <div className="p-3 font-mono text-xs leading-relaxed text-red-300">
+        <span className="nx-badge nx-badge-red mr-2">SQL 错误</span>
+        {result.error}
       </div>
     );
   }
   if (!result.columns.length) {
     return (
-      <div className="min-h-0 flex-1 overflow-auto p-3 text-xs text-neutral-500">
-        执行成功，{result.rowsAffected} 行受影响，耗时 {result.durationMs}ms
+      <div className="p-3 text-xs text-neutral-400">
+        <span className="nx-badge nx-badge-green mr-2">执行成功</span>
+        {result.rowsAffected} 行受影响 · 耗时 {result.durationMs}ms
       </div>
     );
   }
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-neutral-800 text-neutral-300">
+    <div>
+      <table className="nx-table">
+        <thead>
           <tr>
             {result.columns.map((c) => (
-              <th key={c} className="px-2 py-1 text-left font-medium">
-                {c}
-              </th>
+              <th key={c}>{c}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {result.rows.map((row, i) => (
-            <tr key={i} className="border-t border-neutral-800/50 hover:bg-neutral-800/40">
+            <tr key={i}>
               {row.map((cell, j) => (
-                <td key={j} className="max-w-64 truncate px-2 py-1 font-mono text-neutral-400">
-                  {cell === null ? "NULL" : String(cell)}
+                <td key={j} className="nx-mono max-w-64 truncate" title={String(cell ?? "NULL")}>
+                  {cell === null ? <span className="text-neutral-600">NULL</span> : String(cell)}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="px-3 py-1 text-[11px] text-neutral-500">
-        {result.rows.length} 行 · {result.durationMs}ms
-        {result.truncated && <span className="ml-2 text-amber-400">结果已截断</span>}
+      <div className="flex items-center gap-3 px-3 py-2 text-[11px] text-neutral-500">
+        <span>
+          {result.rows.length} 行 · {result.durationMs}ms
+        </span>
+        {result.truncated && <span className="text-amber-300">结果已截断</span>}
+        <span className="nx-spacer" />
+        <button className="nx-link" onClick={() => void copyAsCsv(result)}>
+          复制 CSV
+        </button>
       </div>
     </div>
   );
 }
 
-// ───────────────── Redis ─────────────────
+async function copyAsCsv(result: QueryResult) {
+  const lines = [
+    result.columns.join(","),
+    ...result.rows.map((r) =>
+      r.map((c) => (c === null ? "" : `"${String(c).replace(/"/g, '""')}"`)).join(","),
+    ),
+  ];
+  await navigator.clipboard.writeText(lines.join("\n"));
+}
+
+/* ───────────────────────── Redis ───────────────────────── */
 
 function RedisView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
   const [pattern, setPattern] = useState("*");
   const [keys, setKeys] = useState<string[]>([]);
   const [cursor, setCursor] = useState(0);
+  const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<import("../../ipc/types").RedisKeyViewDto | null>(null);
-  const [cmdText, setCmdText] = useState("PING");
+  const [cmdText, setCmdText] = useState("INFO memory");
   const [cmdOut, setCmdOut] = useState("");
 
   const doScan = async (c: number) => {
@@ -202,7 +325,12 @@ function RedisView({ connId }: { connId: string }) {
     }
   };
 
+  useEffect(() => {
+    void doScan(0);
+  }, [connId]);
+
   const inspect = async (key: string) => {
+    setSelected(key);
     try {
       setView(await dbApi.redisInspect(connId, key));
     } catch (e) {
@@ -211,9 +339,9 @@ function RedisView({ connId }: { connId: string }) {
   };
 
   const runCmd = async () => {
+    if (!cmdText.trim()) return;
     try {
-      const args = cmdText.trim().split(/\s+/);
-      setCmdOut(await dbApi.redisCommand(connId, args));
+      setCmdOut(await dbApi.redisCommand(connId, cmdText.trim().split(/\s+/)));
     } catch (e) {
       setCmdOut(`(error) ${String(e)}`);
     }
@@ -221,7 +349,7 @@ function RedisView({ connId }: { connId: string }) {
 
   const editTtl = async () => {
     if (!view) return;
-    const input = await promptText(`设置 TTL 秒数（当前 ${String(view.ttl)}，-1 持久化）`, String(view.ttl));
+    const input = await promptText(`设置 TTL 秒数（当前 ${String(view.ttl)}，-1 表示持久化）`, String(view.ttl));
     if (input === null) return;
     await dbApi.redisSetTtl(connId, String(view.key), Number(input));
     pushToast("success", "TTL 已更新");
@@ -229,71 +357,90 @@ function RedisView({ connId }: { connId: string }) {
   };
 
   return (
-    <div className="flex h-full bg-neutral-900 text-sm text-neutral-300">
-      <div className="flex w-72 min-w-0 flex-col border-r border-neutral-800">
-        <div className="flex items-center gap-1 border-b border-neutral-800 p-2">
+    <div className="nx-pane flex-row">
+      {/* 键列表 */}
+      <div className="flex w-[272px] shrink-0 flex-col border-r border-neutral-800/60">
+        <div className="flex h-[38px] shrink-0 items-center gap-1.5 px-2.5">
+          <IconSearch size={13} className="shrink-0 text-neutral-500" />
           <input
-            className="min-w-0 flex-1 rounded bg-neutral-800 px-2 py-1 font-mono text-xs outline-none"
+            className="nx-input nx-input-sm font-mono"
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void doScan(0)}
+            placeholder="匹配模式，如 products:*"
           />
-          <button className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700" onClick={() => void doScan(0)}>
+          <button className="nx-btn nx-btn-sm" title="按 SCAN 分页拉取" onClick={() => void doScan(0)}>
             SCAN
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-1">
+        <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
           {keys.map((k) => (
             <div
               key={k}
-              className="cursor-pointer truncate rounded px-2 py-1 font-mono text-xs hover:bg-neutral-800"
+              className={`nx-row font-mono text-[11.5px] ${selected === k ? "is-selected" : ""}`}
               onClick={() => void inspect(k)}
             >
-              {k}
+              <span className="min-w-0 flex-1 truncate">{k}</span>
             </div>
           ))}
+          {keys.length === 0 && <div className="nx-hint p-3">没有匹配的键</div>}
         </div>
         {cursor > 0 && (
-          <button className="border-t border-neutral-800 px-2 py-1 text-xs text-blue-400 hover:bg-neutral-800" onClick={() => void doScan(cursor)}>
-            下一页 (cursor={cursor})
+          <button
+            className="shrink-0 border-t border-neutral-800/60 px-2.5 py-1.5 text-left text-[11.5px] text-blue-300 hover:bg-neutral-800/50"
+            onClick={() => void doScan(cursor)}
+          >
+            下一页（cursor={cursor}）
           </button>
         )}
       </div>
+
+      {/* 值 + 命令台 */}
       <div className="flex min-w-0 flex-1 flex-col">
         {view ? (
-          <div className="min-h-0 flex-1 overflow-auto p-3">
-            <div className="mb-2 flex items-center gap-2 text-xs">
-              <span className="rounded bg-blue-500/20 px-2 py-0.5 text-blue-300">{String(view.keyType)}</span>
-              <span className="font-mono text-neutral-300">{String(view.key)}</span>
-              <span className="text-neutral-500">TTL {String(view.ttl)}</span>
-              <button className="rounded px-2 py-0.5 hover:bg-neutral-800" onClick={() => void editTtl()}>
+          <>
+            <div className="nx-toolbar">
+              <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
+              <span className="nx-toolbar-title truncate font-mono">{String(view.key)}</span>
+              <span className="nx-hint">
+                TTL {String(view.ttl) === "-1" ? "持久化" : `${String(view.ttl)}s`}
+              </span>
+              <div className="nx-spacer" />
+              <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void editTtl()}>
+                <IconSettings size={13} />
                 改 TTL
               </button>
             </div>
-            <pre className="whitespace-pre-wrap rounded bg-[#12141a] p-2 font-mono text-xs text-neutral-300">
+            <pre className="nx-pre min-h-0 flex-1 overflow-auto rounded-none bg-term">
               {JSON.stringify(view.value, null, 2)}
             </pre>
-          </div>
+          </>
         ) : (
-          <div className="flex flex-1 items-center justify-center text-xs text-neutral-600">SCAN 后点击键查看</div>
+          <div className="nx-empty">
+            <span className="nx-empty-icon">
+              <IconLayers size={18} />
+            </span>
+            从左侧选一个键查看内容
+          </div>
         )}
-        <div className="border-t border-neutral-800 p-2">
-          <div className="mb-1 text-xs text-neutral-500">命令台（写命令会弹确认）</div>
-          <div className="flex gap-1">
+
+        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
+          <div className="mb-1.5 text-[11px] text-neutral-500">
+            命令台 · 写命令会弹确认（§6.5 安全护栏）
+          </div>
+          <div className="flex items-center gap-1.5">
             <input
-              className="min-w-0 flex-1 rounded bg-neutral-800 px-2 py-1 font-mono text-xs outline-none"
+              className="nx-input nx-input-sm font-mono"
               value={cmdText}
               onChange={(e) => setCmdText(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void runCmd()}
             />
-            <button className="rounded bg-neutral-700 px-3 py-1 text-xs hover:bg-neutral-600" onClick={() => void runCmd()}>
+            <button className="nx-btn nx-btn-sm" onClick={() => void runCmd()}>
               执行
             </button>
           </div>
           {cmdOut && (
-            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-[#12141a] p-2 font-mono text-[11px] text-neutral-300">
-              {cmdOut}
-            </pre>
+            <pre className="nx-pre mt-1.5 max-h-40 overflow-auto text-[11px]">{cmdOut}</pre>
           )}
         </div>
       </div>

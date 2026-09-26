@@ -1,9 +1,20 @@
-// AI 侧栏（M2-T7）：对话 + 流式事件 + 工具调用卡片 + 确认卡片 + 接管横幅。
+// AI 侧栏（M2-T7）：对话 + 流式事件 + 工具调用卡片 + 确认卡片 + 接管。
 import { useEffect, useRef, useState } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi } from "../../ipc/commands";
 import { createAiChannel } from "../../ipc/events";
 import { useUi } from "../../app/store";
+import {
+  IconAlert,
+  IconBot,
+  IconCheck,
+  IconChevronRight,
+  IconGamepad,
+  IconLoader,
+  IconShield,
+  IconSparkles,
+  IconXCircle,
+} from "../../ui/icons";
 
 type ChatItem =
   | { role: "user"; text: string }
@@ -12,20 +23,37 @@ type ChatItem =
   | { role: "tool"; name: string; display: string; summary?: string; ok?: boolean; exitCode?: number | null }
   | { role: "confirm"; jobId: string; callId: string; tool: string; rendered: string };
 
+/** 空态时给的几个"问一句就能看出能力"的例子。 */
+const EXAMPLES = [
+  "api-server 好像挂了，帮我排查",
+  "这台机器内存够不够？",
+  "nginx 配置有没有问题",
+  "重启 mysql-prod",
+];
+
 export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
   const { rightOpen, setRightOpen, aiBusy, setAiBusy, pushToast } = useUi();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [confirmCard, setConfirmCard] = useState<Extract<ChatItem, { role: "confirm" }> | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [model, setModel] = useState("");
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   /** 接管状态来自全局 store（§8.6）：顶部横幅与这里读的是同一份。 */
   const takeover = useUi((s) => s.takeover);
+  const sessions = useUi((s) => s.sessions);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [items]);
+
+  useEffect(() => {
+    void aiApi
+      .getProvider()
+      .then((c) => setModel(c.model))
+      .catch(() => undefined);
+  }, []);
 
   const send = async () => {
     const message = input.trim();
@@ -172,6 +200,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         };
         setConfirmCard(card);
         setItems((prev) => [...prev, card]);
+      } else if (type === "delta") {
+        setItems((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "assistant") {
+            return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
+          }
+          return [...prev, { role: "assistant", text: ev.text as string }];
+        });
       } else if (type === "done") {
         setAiBusy(false);
         setConfirmCard(null);
@@ -208,83 +244,122 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  if (!rightOpen) {
-    return (
-      <button
-        className="h-full w-8 shrink-0 rounded text-neutral-400 hover:bg-neutral-800"
-        onClick={() => setRightOpen(true)}
-        title="展开 AI 助手"
-      >
-        ◂
-      </button>
-    );
-  }
+  if (!rightOpen) return null;
+
+  const sessionName = sessions.find((s) => s.id === sessionId)?.name;
 
   return (
-    <div className="flex h-full w-[380px] shrink-0 flex-col border-l border-neutral-800 bg-neutral-950/60">
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-2 text-sm">
-        <span className="font-medium text-neutral-200">AI 助手</span>
-        {aiBusy && <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />}
-        <div className="flex-1" />
+    <aside className="flex h-full w-[352px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950">
+      <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-2.5 pl-3">
+        <IconSparkles size={15} className="text-blue-300" />
+        <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
+        {model && <span className="nx-badge">{model}</span>}
+        {aiBusy && <IconLoader size={13} className="animate-spin text-blue-300" />}
+        <div className="nx-spacer" />
         {takeover && (
-          <span className="rounded bg-red-500/20 px-2 py-0.5 text-[10px] text-red-300">
-            接管中（顶部横幅可夺回）
+          <span className="nx-badge nx-badge-red">
+            <span className="nx-dot nx-dot-pulse" />
+            接管中
           </span>
         )}
         <button
-          className="rounded px-1.5 text-xs text-neutral-400 hover:bg-neutral-800"
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="收起 AI 侧栏 (Ctrl+J)"
           onClick={() => setRightOpen(false)}
         >
-          ✕
+          <IconChevronRight size={14} />
         </button>
       </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
         {items.length === 0 && (
-          <div className="mt-10 text-center text-xs text-neutral-600">
-            问点什么，比如
-            <div className="mt-2 text-neutral-500">「nginx 起不来，帮我排查」</div>
+          <div className="flex flex-col items-center gap-3 px-2 pt-8 text-center">
+            <span className="nx-empty-icon">
+              <IconBot size={19} />
+            </span>
+            <div className="text-xs text-neutral-400">
+              问点什么吧。AI 跑过的每条命令都会出现在你眼前的终端里，不是黑盒。
+            </div>
+            <div className="flex w-full flex-col gap-1.5">
+              {EXAMPLES.map((ex) => (
+                <button
+                  key={ex}
+                  className="nx-chip w-full justify-start text-left hover:border-neutral-600 hover:text-neutral-200"
+                  onClick={() => setInput(ex)}
+                >
+                  <IconChevronRight size={11} className="shrink-0" />
+                  <span className="truncate">{ex}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {items.map((item, i) => (
           <ChatBubble key={i} item={item} />
         ))}
       </div>
+
       {confirmCard && (
-        <div className="m-2 rounded border border-amber-600/50 bg-amber-500/10 p-2 text-xs">
-          <div className="mb-1 font-medium text-amber-300">⚠ 需要确认</div>
-          <pre className="mb-2 max-h-24 overflow-auto whitespace-pre-wrap text-neutral-300">
-            {confirmCard.rendered}
-          </pre>
-          <div className="flex gap-1">
-            <button className="rounded bg-green-600 px-2 py-1 text-white" onClick={() => void confirm("allow")}>
-              允许一次
-            </button>
-            <button
-              className="rounded bg-green-700/70 px-2 py-1 text-white"
-              onClick={() => void confirm("allow_session")}
-            >
-              本会话允许此类
-            </button>
-            <button className="rounded bg-neutral-700 px-2 py-1 text-white" onClick={() => void confirm("deny")}>
-              拒绝
-            </button>
+        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950 p-2.5">
+          <div className="nx-alert">
+            <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+              <IconAlert size={13} />
+              需要你确认
+              <span className="nx-spacer" />
+              <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
+            </div>
+            <pre className="mb-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
+              {confirmCard.rendered}
+            </pre>
+            <div className="flex gap-1.5">
+              <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={() => void confirm("allow")}>
+                允许一次
+              </button>
+              <button
+                className="nx-btn nx-btn-outline nx-btn-xs"
+                onClick={() => void confirm("allow_session")}
+              >
+                本会话允许此类
+              </button>
+              <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void confirm("deny")}>
+                拒绝
+              </button>
+            </div>
           </div>
         </div>
       )}
-      <div className="border-t border-neutral-800 p-2">
+
+      <div className="shrink-0 border-t border-neutral-800/60 p-2.5">
+        <div className="mb-2 flex items-center gap-1.5 overflow-x-auto">
+          <span className="shrink-0 text-[10.5px] text-neutral-500">上下文</span>
+          {sessionName ? (
+            <span className="nx-chip nx-chip-accent shrink-0">
+              <IconShield size={10} />
+              {sessionName}
+            </span>
+          ) : (
+            <span className="nx-chip shrink-0">未连接会话</span>
+          )}
+          {tabId && <span className="nx-chip shrink-0">终端最近 80 行</span>}
+          <span className="nx-chip shrink-0">环境侦察快照</span>
+        </div>
+
         {tabId && (
           <button
-            className="mb-2 w-full rounded border border-red-500/40 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10"
+            className="nx-btn nx-btn-danger mb-2 w-full nx-btn-sm"
             onClick={() => void runTakeover()}
             disabled={aiBusy}
+            title="AI 直接在真 PTY 里操作这台机器，你随时可按 Esc 夺回"
           >
-            🎮 AI 接管此终端
+            <IconGamepad size={13} />
+            AI 接管此终端
           </button>
         )}
-        <div className="flex items-end gap-1">
+
+        <div className="flex items-end gap-1.5">
           <textarea
-            className="max-h-32 min-h-[38px] flex-1 resize-none rounded bg-neutral-800 px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-            placeholder={sessionId ? "询问当前会话 / 请求排障…" : "未连接会话（仍可全局提问）"}
+            className="nx-textarea max-h-32 min-h-[46px] flex-1"
+            placeholder={sessionId ? "询问当前会话 / 请求排障…（Enter 发送，Shift+Enter 换行）" : "未连接会话（仍可全局提问）"}
             value={input}
             rows={2}
             onChange={(e) => setInput(e.target.value)}
@@ -296,56 +371,64 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             }}
           />
           <button
-            className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-40"
+            className="nx-btn nx-btn-primary shrink-0"
             disabled={aiBusy || !input.trim()}
             onClick={() => void send()}
           >
+            {aiBusy ? <IconLoader size={13} className="animate-spin" /> : null}
             发送
           </button>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
 
 function ChatBubble({ item }: { item: ChatItem }) {
   if (item.role === "user") {
     return (
-      <div className="ml-8 rounded-lg rounded-br-sm bg-blue-600/80 px-3 py-1.5 text-sm text-white">
+      <div className="ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-blue-50">
         {item.text}
       </div>
     );
   }
   if (item.role === "assistant") {
     return (
-      <div className="rounded-lg rounded-bl-sm bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200">
-        <pre className="whitespace-pre-wrap font-sans">{item.text}</pre>
+      <div className="mr-2 rounded-[10px] rounded-bl-[3px] border border-neutral-800 bg-neutral-800 px-3 py-2 text-[12.3px] leading-relaxed text-neutral-200">
+        <pre className="font-sans whitespace-pre-wrap">{item.text}</pre>
       </div>
     );
   }
   if (item.role === "reasoning") {
     return (
-      <div className="ml-2 border-l-2 border-neutral-700 pl-2 text-xs italic text-neutral-500">
+      <div className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500 italic">
         {item.text.length > 200 ? `${item.text.slice(0, 200)}…` : item.text}
       </div>
     );
   }
+  if (item.role === "confirm") return null;
   if (item.role === "tool") {
+    const running = item.summary === undefined;
     return (
-      <div className="rounded border border-neutral-800 bg-neutral-900/80 px-2 py-1.5 text-xs">
-        <div className="flex items-center gap-1">
-          <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] text-purple-300">
-            {item.name}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
+        <div className="flex items-center gap-1.5">
+          <span className="nx-badge nx-badge-purple font-mono">{item.name}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
+            {item.display}
           </span>
-          <span className="text-neutral-400">{item.display}</span>
-          {"ok" in item && item.ok !== undefined && (
-            <span className={item.ok ? "text-green-400" : "text-red-400"}>
-              {item.ok ? "✓" : "✕"} {item.exitCode !== null && item.exitCode !== undefined ? `(${item.exitCode})` : ""}
-            </span>
+          {running ? (
+            <IconLoader size={11} className="animate-spin text-amber-300" />
+          ) : item.ok ? (
+            <IconCheck size={12} className="text-green-300" />
+          ) : (
+            <IconXCircle size={12} className="text-red-300" />
+          )}
+          {!running && item.exitCode !== null && item.exitCode !== undefined && (
+            <span className="font-mono text-[10px] text-neutral-500">{item.exitCode}</span>
           )}
         </div>
         {item.summary && (
-          <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap text-neutral-500">
+          <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-500">
             {item.summary}
           </pre>
         )}

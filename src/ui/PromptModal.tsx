@@ -11,38 +11,56 @@ export function PromptModal() {
   useEffect(() => {
     if (prompt) {
       setValue(prompt.value);
-      setTimeout(() => inputRef.current?.focus(), 30);
+      const t = window.setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 30);
+      return () => window.clearTimeout(t);
     }
   }, [prompt]);
 
   if (!prompt) return null;
   const submit = () => closeTextPrompt(value);
 
+  const multiLine = prompt.message.includes("\n") || prompt.value.length > 60;
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-      <div className="w-96 rounded-lg border border-neutral-700 bg-neutral-900 p-4 shadow-xl">
-        <div className="mb-2 text-sm text-neutral-200">{prompt.message}</div>
-        <input
-          ref={inputRef}
-          className="mb-3 w-full rounded bg-neutral-800 px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-blue-500"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-            if (e.key === "Escape") closeTextPrompt(null);
-          }}
-        />
-        <div className="flex justify-end gap-2">
-          <button
-            className="rounded px-3 py-1 text-sm text-neutral-400 hover:bg-neutral-800"
-            onClick={() => closeTextPrompt(null)}
-          >
+    <div className="nx-overlay z-[60]" onClick={() => closeTextPrompt(null)}>
+      <div className="nx-modal max-w-[440px]" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-body">
+          <div className="mb-3 text-[12.5px] leading-relaxed whitespace-pre-wrap text-neutral-200">
+            {prompt.message}
+          </div>
+          {multiLine ? (
+            <textarea
+              autoFocus
+              rows={4}
+              className="nx-textarea"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
+                if (e.key === "Escape") closeTextPrompt(null);
+              }}
+            />
+          ) : (
+            <input
+              ref={inputRef}
+              className="nx-input"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+                if (e.key === "Escape") closeTextPrompt(null);
+              }}
+            />
+          )}
+        </div>
+        <div className="nx-modal-footer">
+          <button className="nx-btn nx-btn-ghost" onClick={() => closeTextPrompt(null)}>
             取消
           </button>
-          <button
-            className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-500"
-            onClick={submit}
-          >
+          <button className="nx-btn nx-btn-primary" onClick={submit}>
             确定
           </button>
         </div>

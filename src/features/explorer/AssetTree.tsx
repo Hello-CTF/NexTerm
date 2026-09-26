@@ -1,22 +1,36 @@
 // 资产树（M1-T1）：分组 + 资产 + 搜索 + 双击连接 + 右键菜单。
+//
+// UI 要点：类型图标来自统一映射表（不再用 emoji）；行内操作只在 hover 时出现；
+// 分组用 chevron + 计数徽章；折叠状态由外壳的图标栏控制，这里不再自带展开按钮。
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, useUi } from "../../app/store";
+import {
+  assetIcon,
+  IconChevronDown,
+  IconChevronRight,
+  IconClose,
+  IconFolder,
+  IconPlay,
+  IconPlus,
+  IconSearch,
+} from "../../ui/icons";
 
-const KIND_ICON: Record<string, string> = {
-  ssh: "🖥",
-  winrm: "🪟",
-  local: "💻",
-  docker: "🐳",
-  mysql: "🐬",
-  redis: "🟥",
+/** 资产类型 → 中文名（新建弹窗与提示里用）。 */
+const KIND_LABEL: Record<string, string> = {
+  ssh: "SSH (Linux)",
+  winrm: "WinRM (Windows)",
+  local: "本地终端",
+  docker: "Docker 主机",
+  mysql: "MySQL",
+  redis: "Redis",
 };
 
 export function AssetTree() {
   const qc = useQueryClient();
-  const { pushToast, leftOpen, setLeftOpen } = useUi();
+  const { pushToast, leftOpen } = useUi();
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
 
@@ -55,44 +69,45 @@ export function AssetTree() {
     pushToast("info", "已删除");
   };
 
-  if (!leftOpen) {
-    return (
-      <button
-        className="flex h-full w-8 items-center justify-center rounded text-neutral-400 hover:bg-neutral-800"
-        onClick={() => setLeftOpen(true)}
-        title="展开资产树"
-      >
-        ▸
-      </button>
-    );
-  }
+  if (!leftOpen) return null;
 
   return (
-    <div className="relative flex h-full w-56 flex-col border-r border-neutral-800 bg-neutral-950/60">
-      <div className="flex items-center gap-1 p-2">
-        <input
-          className="min-w-0 flex-1 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none focus:ring-1 focus:ring-blue-500"
-          placeholder="搜索资产 (Ctrl+K)"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+    <div className="flex h-full w-[236px] shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950">
+      <div className="flex h-[34px] shrink-0 items-center gap-1 px-2.5">
+        <span className="text-xs font-semibold tracking-wide text-neutral-200">资产</span>
+        <div className="nx-spacer" />
         <button
-          className="rounded bg-neutral-800 px-1.5 py-1 text-xs hover:bg-neutral-700"
+          className="nx-icon-btn nx-icon-btn-sm"
           title="新建资产"
           onClick={() => setEditing("asset")}
         >
-          +
+          <IconPlus size={14} />
         </button>
         <button
-          className="rounded bg-neutral-800 px-1.5 py-1 text-xs hover:bg-neutral-700"
+          className="nx-icon-btn nx-icon-btn-sm"
           title="新建分组"
           onClick={() => setEditing("group")}
         >
-          📁+
+          <IconFolder size={14} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
-        {byGroup.get(null)?.map((a) => (
+
+      <div className="px-2 pb-2">
+        <div className="nx-field">
+          <span className="nx-field-icon">
+            <IconSearch size={13} />
+          </span>
+          <input
+            className="nx-input nx-input-sm"
+            placeholder="搜索资产 / 主机 / 用户"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+        {(byGroup.get(null) ?? []).map((a) => (
           <AssetRow key={a.id} asset={a} onDelete={() => void onDelete(a)} />
         ))}
         {(groups.data ?? []).map((g: AssetGroup) => (
@@ -104,11 +119,12 @@ export function AssetTree() {
           />
         ))}
         {filtered.length === 0 && (
-          <div className="px-2 py-6 text-center text-xs text-neutral-500">
-            {query ? "无匹配资产" : "还没有资产，点 + 新建"}
+          <div className="nx-hint px-2 py-8 text-center">
+            {query ? "没有匹配的资产" : "还没有资产 — 点右上角的 + 新建一个"}
           </div>
         )}
       </div>
+
       {editing !== "none" && (
         <AssetEditor
           kind={editing}
@@ -125,35 +141,40 @@ export function AssetTree() {
 }
 
 function AssetRow({ asset, onDelete }: { asset: Asset; onDelete: () => void }) {
-  const label = `${asset.name}${asset.host ? ` (${asset.host}${asset.port ? `:${asset.port}` : ""})` : ""}`;
+  const Icon = assetIcon(asset.kind);
+  const label = asset.name;
+  const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
   return (
     <div
-      className="group flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 hover:bg-neutral-800"
+      className="nx-row group"
       onDoubleClick={() => void connectAsset(asset)}
-      title="双击连接"
+      title={target ? `${asset.name} · ${target} · 双击连接` : `${asset.name} · 双击连接`}
     >
-      <span>{KIND_ICON[asset.kind] ?? "•"}</span>
-      <span className="flex-1 truncate text-neutral-300">{label}</span>
-      <button
-        className="hidden rounded px-1 text-[10px] text-green-400 hover:bg-green-500/10 group-hover:block"
-        onClick={(e) => {
-          e.stopPropagation();
-          void connectAsset(asset);
-        }}
-        title="连接"
-      >
-        连接
-      </button>
-      <button
-        className="hidden rounded px-1 text-xs text-neutral-500 hover:text-red-400 group-hover:block"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        title="删除"
-      >
-        ✕
-      </button>
+      <Icon size={14} className="shrink-0 text-neutral-500" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>}
+      <span className="nx-row-actions">
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="连接"
+          onClick={(e) => {
+            e.stopPropagation();
+            void connectAsset(asset);
+          }}
+        >
+          <IconPlay size={12} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm is-danger"
+          title="删除"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        >
+          <IconClose size={12} />
+        </button>
+      </span>
     </div>
   );
 }
@@ -169,20 +190,28 @@ function GroupNode({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <div className="mb-1">
+    <div className="mb-0.5">
       <button
-        className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-xs font-medium text-neutral-400 hover:bg-neutral-800"
+        className="nx-row w-full text-neutral-400"
         onClick={() => setOpen((v) => !v)}
       >
-        <span>{open ? "▾" : "▸"}</span>
-        <span>📁 {group.name}</span>
-        <span className="ml-auto text-[10px] text-neutral-600">{assets.length}</span>
+        {open ? (
+          <IconChevronDown size={12} className="shrink-0" />
+        ) : (
+          <IconChevronRight size={12} className="shrink-0" />
+        )}
+        <IconFolder size={13} className="shrink-0 text-neutral-500" />
+        <span className="min-w-0 flex-1 truncate text-left text-xs font-medium">{group.name}</span>
+        <span className="nx-count">{assets.length}</span>
       </button>
       {open && (
-        <div className="ml-3">
+        <div className="ml-3.5">
           {assets.map((a) => (
             <AssetRow key={a.id} asset={a} onDelete={() => onDelete(a)} />
           ))}
+          {assets.length === 0 && (
+            <div className="px-2 py-1.5 text-[11px] text-neutral-600">（空分组）</div>
+          )}
         </div>
       )}
     </div>
@@ -240,120 +269,164 @@ function AssetEditor({
     }
   };
 
+  const isDb = groupKind === "mysql" || groupKind === "redis";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="w-80 rounded-lg border border-neutral-700 bg-neutral-900 p-4 text-sm shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="mb-3 font-medium text-neutral-200">
-          {kind === "group" ? "新建分组" : "新建资产"}
-        </h3>
-        {kind === "asset" && (
-          <>
-            <label className="mb-1 block text-xs text-neutral-400">类型</label>
-            <select
-              className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-              value={groupKind}
-              onChange={(e) => {
-                setGroupKind(e.target.value as "ssh" | "winrm" | "local" | "mysql" | "redis");
-                if (e.target.value === "winrm") setPort(5985);
-                else if (e.target.value === "ssh") setPort(22);
-              }}
-            >
-              <option value="ssh">SSH (Linux)</option>
-              <option value="winrm">WinRM (Windows)</option>
-              <option value="local">本地终端</option>
-              <option value="mysql">MySQL</option>
-              <option value="redis">Redis</option>
-            </select>
-          </>
-        )}
-        <label className="mb-1 block text-xs text-neutral-400">名称</label>
-        <input
-          className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="web-01"
-        />
-        {kind === "asset" && groupKind !== "local" && (
-          <>
-            <div className="mb-2 flex gap-2">
-              <div className="flex-1">
-                <label className="mb-1 block text-xs text-neutral-400">主机</label>
-                <input
-                  className="w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-                  value={host}
-                  onChange={(e) => setHost(e.target.value)}
-                  placeholder="1.2.3.4"
-                />
-              </div>
-              <div className="w-20">
-                <label className="mb-1 block text-xs text-neutral-400">端口</label>
-                <input
-                  type="number"
-                  className="w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-                  value={port}
-                  onChange={(e) => setPort(Number(e.target.value))}
-                />
-              </div>
+    <div className="nx-overlay" onClick={onClose}>
+      <div className="nx-modal max-w-[380px]" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-header">
+          <span className="text-[13px] font-semibold text-neutral-100">
+            {kind === "group" ? "新建分组" : "新建资产"}
+          </span>
+        </div>
+        <div className="nx-modal-body">
+          {kind === "asset" && (
+            <div className="nx-form-row">
+              <label className="nx-label">类型</label>
+              <select
+                className="nx-select"
+                value={groupKind}
+                onChange={(e) => {
+                  const v = e.target.value as typeof groupKind;
+                  setGroupKind(v);
+                  if (v === "winrm") setPort(5985);
+                  else if (v === "mysql") setPort(3306);
+                  else if (v === "redis") setPort(6379);
+                  else setPort(22);
+                }}
+              >
+                {Object.entries(KIND_LABEL).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             </div>
-            <label className="mb-1 block text-xs text-neutral-400">用户名</label>
+          )}
+
+          <div className="nx-form-row">
+            <label className="nx-label">名称</label>
             <input
-              className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              className="nx-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="web-01"
             />
-            {groupKind !== "mysql" && groupKind !== "redis" && (
-              <>
-                <label className="mb-1 block text-xs text-neutral-400">认证方式</label>
-                <select
-                  className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-                  value={authKind}
-                  onChange={(e) => setAuthKind(e.target.value)}
-                >
-                  <option value="password">密码</option>
-                  <option value="key">私钥文件</option>
-                  <option value="agent">SSH Agent</option>
-                </select>
-                {authKind === "key" ? (
+          </div>
+
+          {kind === "asset" && groupKind !== "local" && (
+            <>
+              <div className="mb-3 flex gap-2">
+                <div className="min-w-0 flex-1">
+                  <label className="nx-label">主机</label>
+                  <input
+                    className="nx-input"
+                    value={host}
+                    onChange={(e) => setHost(e.target.value)}
+                    placeholder="1.2.3.4"
+                  />
+                </div>
+                <div className="w-[86px] shrink-0">
+                  <label className="nx-label">端口</label>
+                  <input
+                    type="number"
+                    className="nx-input"
+                    value={port}
+                    onChange={(e) => setPort(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              {!isDb && (
+                <>
+                  <div className="nx-form-row">
+                    <label className="nx-label">用户名</label>
+                    <input
+                      className="nx-input"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                    />
+                  </div>
+                  <div className="nx-form-row">
+                    <label className="nx-label">认证方式</label>
+                    <select
+                      className="nx-select"
+                      value={authKind}
+                      onChange={(e) => setAuthKind(e.target.value)}
+                    >
+                      <option value="password">密码</option>
+                      <option value="key">私钥文件</option>
+                      <option value="agent">SSH Agent</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              {isDb && (
+                <div className="nx-form-row">
+                  <label className="nx-label">用户名</label>
+                  <input
+                    className="nx-input"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {!isDb &&
+                (authKind === "key" ? (
                   <>
-                    <label className="mb-1 block text-xs text-neutral-400">私钥路径</label>
-                    <input
-                      className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-                      value={keyPath}
-                      onChange={(e) => setKeyPath(e.target.value)}
-                      placeholder="C:\Users\you\.ssh\id_ed25519"
-                    />
-                    <label className="mb-1 block text-xs text-neutral-400">私钥口令（可选，加密保存）</label>
-                    <input
-                      type="password"
-                      className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
+                    <div className="nx-form-row">
+                      <label className="nx-label">私钥路径</label>
+                      <input
+                        className="nx-input"
+                        value={keyPath}
+                        onChange={(e) => setKeyPath(e.target.value)}
+                        placeholder="C:\Users\you\.ssh\id_ed25519"
+                      />
+                    </div>
+                    <div className="nx-form-row">
+                      <label className="nx-label">私钥口令（可选，加密保存）</label>
+                      <input
+                        type="password"
+                        className="nx-input"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                    </div>
                   </>
                 ) : (
-                  <>
-                    <label className="mb-1 block text-xs text-neutral-400">密码（加密保存）</label>
+                  <div className="nx-form-row">
+                    <label className="nx-label">密码（加密保存到本机凭据库）</label>
                     <input
                       type="password"
-                      className="mb-2 w-full rounded bg-neutral-800 px-2 py-1 outline-none"
+                      className="nx-input"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
-                  </>
-                )}
-              </>
-            )}
-          </>
-        )}
-        <div className="mt-3 flex justify-end gap-2">
-          <button className="rounded px-3 py-1 text-neutral-400 hover:bg-neutral-800" onClick={onClose}>
+                  </div>
+                ))}
+
+              {isDb && (
+                <div className="nx-form-row">
+                  <label className="nx-label">密码（加密保存到本机凭据库）</label>
+                  <input
+                    type="password"
+                    className="nx-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="nx-modal-footer">
+          <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             取消
           </button>
           <button
-            className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-500 disabled:opacity-50"
+            className="nx-btn nx-btn-primary"
             disabled={!name.trim()}
             onClick={() => void save()}
           >

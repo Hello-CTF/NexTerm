@@ -1,9 +1,14 @@
 packages:
   - "."
 
+# pnpm 12 起，依赖的构建脚本白名单从 package.json 的 pnpm 字段迁到这里，
+# 且从"列表"改成了"名字 → 布尔"的映射。值必须是真正的布尔，
+# 否则 pnpm 会在跑任何脚本前直接以 ERR_PNPM_IGNORED_BUILDS 退出（连 typecheck 都到不了）。
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+  "@tailwindcss/oxide": true
 
+# 旧字段：pnpm 10/11 读它，pnpm 12 已忽略。留着是为了让老版本也能装上。
 onlyBuiltDependencies:
   - esbuild
   - "@tailwindcss/oxide"
