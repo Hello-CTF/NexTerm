@@ -232,10 +232,27 @@ impl Transport for LocalTransport {
 /// 本地文件系统实现。
 pub struct LocalFs;
 
+/// 把 `~` 展开成本机用户目录。
+///
+/// 前端左栏文件树的第一发请求固定是 `~`（"先看这台机器的家目录"），
+/// 而 `dirs::home_dir()` 是唯一同时覆盖 Windows（`C:\Users\x`）与
+/// Unix（`/home/x`）的取法。不展开的话每个本地会话都要先白等一次失败、
+/// 再退到文件系统根（Windows 上就是 `C:\`，满屏系统目录）。
+fn real(path: &str) -> std::path::PathBuf {
+    if path == "~" || path.starts_with("~/") || path.starts_with("~\\") {
+        if let Some(home) = dirs::home_dir() {
+            let rest = path[1..].trim_start_matches(['/', '\\']);
+            return if rest.is_empty() { home } else { home.join(rest) };
+        }
+    }
+    std::path::PathBuf::from(path)
+}
+
 #[async_trait]
 impl FileSystem for LocalFs {
     async fn list(&self, path: &str) -> AppResult<Vec<FileEntry>> {
-        let mut rd = tokio::fs::read_dir(path).await?;
+        let path = real(path);
+        let mut rd = tokio::fs::read_dir(&path).await?;
         let mut out = Vec::new();
         while let Some(entry) = rd.next_entry().await? {
             let meta = entry.metadata().await;
@@ -281,7 +298,8 @@ impl FileSystem for LocalFs {
     }
 
     async fn read_file(&self, path: &str, max_bytes: u64) -> AppResult<Vec<u8>> {
-        let meta = tokio::fs::metadata(path).await?;
+        let path = real(path);
+        let meta = tokio::fs::metadata(&path).await?;
         if meta.len() > max_bytes {
             return Err(AppError::param(format!(
                 "文件超过读取上限（{} > {} 字节）",
@@ -289,33 +307,35 @@ impl FileSystem for LocalFs {
                 max_bytes
             )));
         }
-        Ok(tokio::fs::read(path).await?)
+        Ok(tokio::fs::read(&path).await?)
     }
 
     async fn write_file(&self, path: &str, data: &[u8], backup: bool) -> AppResult<()> {
-        if backup && tokio::fs::try_exists(path).await.unwrap_or(false) {
-            let backup_path = format!("{path}.nexterm-bak");
-            tokio::fs::copy(path, &backup_path).await?;
+        let path = real(path);
+        if backup && tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            let backup_path = std::path::PathBuf::from(format!("{}.nexterm-bak", path.display()));
+            tokio::fs::copy(&path, &backup_path).await?;
         }
-        tokio::fs::write(path, data).await?;
+        tokio::fs::write(&path, data).await?;
         Ok(())
     }
 
     async fn mkdir(&self, path: &str) -> AppResult<()> {
-        tokio::fs::create_dir_all(path).await?;
+        tokio::fs::create_dir_all(real(path)).await?;
         Ok(())
     }
 
     async fn rename(&self, from: &str, to: &str) -> AppResult<()> {
-        tokio::fs::rename(from, to).await?;
+        tokio::fs::rename(real(from), real(to)).await?;
         Ok(())
     }
 
     async fn delete(&self, path: &str, is_dir: bool) -> AppResult<()> {
+        let path = real(path);
         if is_dir {
-            tokio::fs::remove_dir_all(path).await?;
+            tokio::fs::remove_dir_all(&path).await?;
         } else {
-            tokio::fs::remove_file(path).await?;
+            tokio::fs::remove_file(&path).await?;
         }
         Ok(())
     }
@@ -325,7 +345,7 @@ impl FileSystem for LocalFs {
     }
 
     async fn checksum(&self, path: &str, algo: &str) -> AppResult<String> {
-        let data = tokio::fs::read(path).await?;
+        let data = tokio::fs::read(real(path)).await?;
         Ok(match algo.to_ascii_lowercase().as_str() {
             "md5" => {
                 use md5::Digest;
@@ -344,15 +364,15 @@ impl FileSystem for LocalFs {
     }
 
     async fn exists(&self, path: &str) -> AppResult<bool> {
-        Ok(tokio::fs::try_exists(path).await?)
+        Ok(tokio::fs::try_exists(real(path)).await?)
     }
 
     async fn size(&self, path: &str) -> AppResult<u64> {
-        Ok(tokio::fs::metadata(path).await?.len())
+        Ok(tokio::fs::metadata(real(path)).await?.len())
     }
 
     async fn open_read(&self, path: &str) -> AppResult<Box<dyn super::RemoteRead>> {
-        let file = tokio::fs::File::open(path).await?;
+        let file = tokio::fs::File::open(real(path)).await?;
         let size = file.metadata().await?.len();
         Ok(Box::new(LocalReader { file, size }))
     }
@@ -363,7 +383,7 @@ impl FileSystem for LocalFs {
             .write(true)
             .append(append)
             .truncate(!append)
-            .open(path)
+            .open(real(path))
             .await?;
         Ok(Box::new(LocalWriter { file }))
     }

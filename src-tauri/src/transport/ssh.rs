@@ -303,6 +303,15 @@ impl SshTransport {
         }
         let handle = self.handle().await;
         let channel = handle.channel_open_session().await?;
+        // 必须先显式请求 sftp 子系统，再把它当字节流交给 SftpSession。
+        // 少了这一步，服务端那个 channel 后面没有任何进程接着（既不是 shell 也不是
+        // sftp-server），我们发出去的 SFTP INIT 包不会有任何回应 —— 表现就是
+        // 卡满一个超时周期后报「SFTP 初始化失败: Timeout」，而同一个连接上的终端一切正常。
+        // 参照 russh-sftp 自带的 examples/client.rs。
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| AppError::Sftp(format!("SFTP 子系统请求失败: {e}")))?;
         let stream = channel.into_stream();
         let sftp = SftpSession::new(stream)
             .await
@@ -468,6 +477,28 @@ pub struct SftpFs {
 }
 
 impl SftpFs {
+    /// 把 `~` 展开成远端家目录。
+    ///
+    /// SFTP 协议本身不认 `~`（那是 shell 的语法糖），OpenSSH 的 sftp-server 会把会话工作
+    /// 目录设成用户家目录，所以 `realpath(".")` 拿到的就是家目录。
+    /// 前端左栏文件树的第一发请求就是 `~`，不做这一步每个 SSH 会话都要先白等一次失败。
+    async fn real(&self, path: &str) -> AppResult<String> {
+        if !path.starts_with('~') {
+            return Ok(path.to_string());
+        }
+        let home = self
+            .sftp
+            .canonicalize(".")
+            .await
+            .map_err(|e| AppError::Sftp(format!("无法确定远端家目录: {e}")))?;
+        let rest = path[1..].trim_start_matches('/');
+        Ok(if rest.is_empty() {
+            home
+        } else {
+            format!("{}/{}", home.trim_end_matches('/'), rest)
+        })
+    }
+
     fn entry_from(
         name: String,
         path: String,
@@ -500,9 +531,10 @@ impl SftpFs {
 #[async_trait]
 impl FileSystem for SftpFs {
     async fn list(&self, path: &str) -> AppResult<Vec<FileEntry>> {
+        let path = self.real(path).await?;
         let rd = self
             .sftp
-            .read_dir(path)
+            .read_dir(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("列目录失败: {e}")))?;
         let mut out = Vec::new();
@@ -527,9 +559,10 @@ impl FileSystem for SftpFs {
     }
 
     async fn read_file(&self, path: &str, max_bytes: u64) -> AppResult<Vec<u8>> {
+        let path = self.real(path).await?;
         let meta = self
             .sftp
-            .metadata(path)
+            .metadata(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("stat 失败: {e}")))?;
         let size = meta.size.unwrap_or(0);
@@ -540,7 +573,7 @@ impl FileSystem for SftpFs {
         }
         let mut file = self
             .sftp
-            .open(path)
+            .open(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("打开失败: {e}")))?;
         use tokio::io::AsyncReadExt;
@@ -552,11 +585,12 @@ impl FileSystem for SftpFs {
     }
 
     async fn write_file(&self, path: &str, data: &[u8], backup: bool) -> AppResult<()> {
-        if backup && self.exists(path).await? {
+        let path = self.real(path).await?;
+        if backup && self.exists(&path).await? {
             let backup_path = format!("{path}.nexterm-bak");
             let src = self
                 .sftp
-                .open(path)
+                .open(&path)
                 .await
                 .map_err(|e| AppError::Sftp(e.to_string()))?;
             let dst = self
@@ -579,7 +613,7 @@ impl FileSystem for SftpFs {
         }
         let mut file = self
             .sftp
-            .create(path)
+            .create(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("创建失败: {e}")))?;
         use tokio::io::AsyncWriteExt;
@@ -594,35 +628,40 @@ impl FileSystem for SftpFs {
     }
 
     async fn mkdir(&self, path: &str) -> AppResult<()> {
+        let path = self.real(path).await?;
         self.sftp
-            .create_dir(path)
+            .create_dir(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("mkdir 失败: {e}")))
     }
 
     async fn rename(&self, from: &str, to: &str) -> AppResult<()> {
+        let from = self.real(from).await?;
+        let to = self.real(to).await?;
         self.sftp
-            .rename(from, to)
+            .rename(&from, &to)
             .await
             .map_err(|e| AppError::Sftp(format!("重命名失败: {e}")))
     }
 
     async fn delete(&self, path: &str, is_dir: bool) -> AppResult<()> {
+        let path = self.real(path).await?;
         let r = if is_dir {
-            self.sftp.remove_dir(path).await
+            self.sftp.remove_dir(&path).await
         } else {
-            self.sftp.remove_file(path).await
+            self.sftp.remove_file(&path).await
         };
         r.map_err(|e| AppError::Sftp(format!("删除失败: {e}")))
     }
 
     async fn chmod(&self, path: &str, mode: u32) -> AppResult<()> {
+        let path = self.real(path).await?;
         let meta = russh_sftp::client::fs::Metadata {
             permissions: Some(mode),
             ..Default::default()
         };
         self.sftp
-            .set_metadata(path, meta)
+            .set_metadata(&path, meta)
             .await
             .map_err(|e| AppError::Sftp(format!("chmod 失败: {e}")))
     }
@@ -648,22 +687,25 @@ impl FileSystem for SftpFs {
     }
 
     async fn exists(&self, path: &str) -> AppResult<bool> {
-        Ok(self.sftp.try_exists(path).await.unwrap_or(false))
+        let path = self.real(path).await?;
+        Ok(self.sftp.try_exists(&path).await.unwrap_or(false))
     }
 
     async fn size(&self, path: &str) -> AppResult<u64> {
+        let path = self.real(path).await?;
         let meta = self
             .sftp
-            .metadata(path)
+            .metadata(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("stat 失败: {e}")))?;
         Ok(meta.size.unwrap_or(0))
     }
 
     async fn open_read(&self, path: &str) -> AppResult<Box<dyn super::RemoteRead>> {
+        let path = self.real(path).await?;
         let file = self
             .sftp
-            .open(path)
+            .open(&path)
             .await
             .map_err(|e| AppError::Sftp(format!("打开失败: {e}")))?;
         let size = file.metadata().await.ok().and_then(|m| m.size).unwrap_or(0);
@@ -671,12 +713,13 @@ impl FileSystem for SftpFs {
     }
 
     async fn open_write(&self, path: &str, append: bool) -> AppResult<Box<dyn super::RemoteWrite>> {
+        let path = self.real(path).await?;
         let file = if append {
             use tokio::io::AsyncSeekExt;
             let mut f = self
                 .sftp
                 .open_with_flags(
-                    path,
+                    &path,
                     russh_sftp::protocol::OpenFlags::WRITE
                         | russh_sftp::protocol::OpenFlags::CREATE,
                 )
@@ -686,7 +729,7 @@ impl FileSystem for SftpFs {
             f
         } else {
             self.sftp
-                .create(path)
+                .create(&path)
                 .await
                 .map_err(|e| AppError::Sftp(format!("创建失败: {e}")))?
         };

@@ -27,55 +27,73 @@ import {
   IconRefresh,
   IconTrash,
   IconUpload,
+  IconXCircle,
 } from "../../ui/icons";
 
 /**
  * 初始根目录。
  *
- * 真机实测（2026-09-26）：**后端并不展开 `~`** —— `fs_list("~")` 直接返回
- * `io / 系统找不到指定的路径 (os error 3)`，`session_cwd` 对本地与 SSH 会话也返回
- * `null`。所以 `~` 只能当作"试试看"，不认就必须干脆地退到 `/`，
- * 并且**把家目录入口关掉**，否则用户点了「回到家目录」会被立刻打回 `/`，
- * 看上去就是按钮坏了。
+ * `~` 现在**本地会话与 SSH 会话都由后端展开**（`transport/local.rs` 用 `dirs::home_dir()`，
+ * `transport/ssh.rs` 用 SFTP `realpath(".")`），所以正常情况会直接落在用户家目录。
+ *
+ * 但仍要保留降级路径：WinRM 之类没有家目录概念的通道、以及将来可能出现的后端实现，
+ * 都可能在 `~` 上直接报错。碰到就干脆地退到 `/`，**并且把家目录入口关掉** ——
+ * 否则点了「回到家目录」会被立刻打回 `/`，看上去就是按钮坏了。
  */
 const HOME = "~";
 
 /* ── 路径工具 ──────────────────────────────────────────────────────────── */
 
+/** 后端在 Windows 本地会话上给的是 `C:\Users\x\y`，统一成正斜杠再算路径。 */
+function norm(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+/** 到顶了没有：类 Unix 的 `/` 或盘符根 `C:/`。 */
+function isRoot(path: string): boolean {
+  const p = norm(path);
+  return p === "/" || /^[A-Za-z]:\/$/.test(p);
+}
+
 function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
 }
 
-/** 上一级；`~` 的上一级是根目录（允许从家目录向上浏览整机）。 */
+/** 上一级；到根返回 null。`~` 的上一级是 `/`（允许从家目录向上浏览整机）。 */
 function parentOf(path: string): string | null {
-  if (path === "/") return null;
-  if (path === HOME) return "/";
-  const i = path.lastIndexOf("/");
+  const p = norm(path);
+  if (isRoot(p)) return null;
+  if (p === HOME) return "/";
+  const i = p.lastIndexOf("/");
   if (i <= 0) return "/";
-  return path.slice(0, i);
+  const parent = p.slice(0, i);
+  // `C:` 要补回盘符根的形式，否则下一次 list 会落到"当前盘的工作目录"
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}/` : parent;
 }
 
 function baseName(path: string): string {
-  return path.split("/").filter(Boolean).pop() ?? path;
+  return norm(path).split("/").filter(Boolean).pop() ?? path;
 }
 
-/** 面包屑：`/` 与 `~` 都作为首段，每段可点击跳转。 */
+/** 面包屑：`/`、`~`、盘符根都作为首段，每段可点击跳转。 */
 function crumbsOf(path: string): { label: string; path: string }[] {
-  if (path.startsWith("~")) {
-    const rest = path.slice(1).split("/").filter(Boolean);
+  const p = norm(path);
+  if (p.startsWith("~")) {
     const out = [{ label: "~", path: HOME }];
     let acc = HOME;
-    for (const s of rest) {
-      acc = `${acc}/${s}`;
+    for (const s of p.slice(1).split("/").filter(Boolean)) {
+      acc = joinPath(acc, s);
       out.push({ label: s, path: acc });
     }
     return out;
   }
-  const segs = path.split("/").filter(Boolean);
-  const out = [{ label: "/", path: "/" }];
-  let acc = "";
-  for (const s of segs) {
-    acc += `/${s}`;
+  const drive = /^([A-Za-z]):/.exec(p);
+  const rootLabel = drive ? `${drive[1]}:` : "/";
+  const rootPath = drive ? `${drive[1]}:/` : "/";
+  const out = [{ label: rootLabel, path: rootPath }];
+  let acc = rootPath;
+  for (const s of p.slice(rootPath.length).split("/").filter(Boolean)) {
+    acc = joinPath(acc, s);
     out.push({ label: s, path: acc });
   }
   return out;
@@ -138,20 +156,43 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     // results 每次渲染都是新数组，这里按内容较浅地依赖即可
   }, [dirs, results]);
 
+  /**
+   * 每个目录的读失败原因。
+   *
+   * 必须显式拿出来：react-query 的 error 不会冒到 window.onerror，
+   * 之前所有失败都被渲染成「这个目录是空的」—— 一次 SFTP 握手超时看起来就只是"空目录"，
+   * SSH 下整个文件树废了却完全看不出原因。
+   */
+  const dirErrors = useMemo(() => {
+    const map = new Map<string, string>();
+    dirs.forEach((dir, i) => {
+      const err = results[i]?.error;
+      if (err) map.set(dir, String((err as { message?: string })?.message ?? err));
+    });
+    return map;
+  }, [dirs, results]);
+
   /** 扁平化成可渲染的行（只有展开的目录才会展开其子项）。 */
   const rows = useMemo(() => {
-    const out: { entry: FileEntryDto; depth: number }[] = [];
+    const out: { entry?: FileEntryDto; depth: number; error?: string; dir: string }[] = [];
     const walk = (dir: string, depth: number) => {
       for (const entry of dirMap.get(dir) ?? []) {
-        out.push({ entry, depth });
+        out.push({ entry, depth, dir });
         if (entry.kind === "dir" && expanded.includes(entry.path)) {
           walk(entry.path, depth + 1);
         }
       }
+      const err = dirErrors.get(dir);
+      if (err) out.push({ depth, error: err, dir });
     };
     walk(root, 0);
     return out;
-  }, [dirMap, root, expanded]);
+  }, [dirMap, root, expanded, dirErrors]);
+
+  /** 重试某个目录（失败后点「重试」）。 */
+  const retryDir = (dir: string) => {
+    void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
+  };
 
   const findEntry = (path: string): FileEntryDto | undefined => {
     for (const list of dirMap.values()) {
@@ -357,7 +398,29 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
       {/* 目录树 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
-        {rows.map(({ entry, depth }) => {
+        {rows.map(({ entry, depth, error, dir }) => {
+          // 失败的行：把后端的原话摆出来，而不是假装"空目录"
+          if (error) {
+            return (
+              <div
+                key={`err:${dir}`}
+                className="mx-1 my-0.5 flex items-start gap-1.5 rounded border border-red-500/30 bg-red-950/30 px-2 py-1.5"
+                style={{ marginLeft: 2 + depth * 12 }}
+              >
+                <IconXCircle size={12} className="mt-0.5 shrink-0 text-red-300" />
+                <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
+                  <div className="break-words">{error}</div>
+                  <button
+                    className="nx-link mt-0.5 text-[11px]"
+                    onClick={() => retryDir(dir)}
+                  >
+                    重试
+                  </button>
+                </div>
+              </div>
+            );
+          }
+          if (!entry) return null;
           const isDir = entry.kind === "dir";
           const open = expanded.includes(entry.path);
           const isSel = selected === entry.path;
@@ -416,7 +479,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         })}
 
         {loading && rows.length === 0 && <div className="nx-hint px-2 py-6 text-center">加载中…</div>}
-        {!loading && rows.length === 0 && (
+        {!loading && rows.length === 0 && dirErrors.size === 0 && (
           <div className="nx-hint px-2 py-6 text-center">
             这个目录是空的
             <br />
@@ -427,7 +490,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
       {/* 底栏：数量 + 选中详情 */}
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
-        <span>{rows.length} 项</span>
+        <span>{rows.filter((r) => r.entry).length} 项</span>
         {selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>

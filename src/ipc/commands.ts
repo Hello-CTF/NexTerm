@@ -164,9 +164,24 @@ export const assetApi = {
 
 // ───────── fs ─────────
 
+/**
+ * Windows 本地会话返回的路径是 `C:\Users\x\y`，而前端（左栏文件树、宽幅浏览器、
+ * 面包屑）一律按 `/` 做路径算术。混用两种分隔符的后果是：`Users\WinCore` 被当成一段、
+ * `parentOf` 找不到分隔符就跳回根。这里统一成 `/` ——
+ * Windows 的文件 API 本来就接受正斜杠，回传也不会有问题。
+ */
+function normEntryPath<T extends { path: string }>(e: T): T {
+  return { ...e, path: e.path.replace(/\\/g, "/") };
+}
+
 export const fsApi = {
-  list: (sessionId: string, path: string) =>
-    call<import("./types").FileEntryDto[]>("fs_list", { sessionId, path }),
+  list: async (sessionId: string, path: string) => {
+    const list = await call<import("./types").FileEntryDto[]>("fs_list", {
+      sessionId,
+      path,
+    });
+    return list.map(normEntryPath);
+  },
   read: (sessionId: string, path: string, maxBytes?: number) =>
     call<{ path: string; size: number; contentBase64: string }>("fs_read", {
       sessionId,
