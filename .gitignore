@@ -1,6 +1,9 @@
 node_modules
 dist
 target
+# 备用构建目录：当 target/debug/.cargo-build-lock 被占用时用
+# CARGO_TARGET_DIR=target-alt 绕过
+target-alt
 src-tauri/target
 src-tauri/gen/schemas
 *.log
