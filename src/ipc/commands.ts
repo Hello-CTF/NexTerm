@@ -1,6 +1,7 @@
 // 与 Rust 的唯一接口层：类型化命令包装（§6）。
 // 类型来自 ts-rs 生成（cargo test 导出），见 types.ts。
 import { invoke } from "@tauri-apps/api/core";
+import { DEMO } from "../demo";
 
 // ───────── 通用 ─────────
 
@@ -17,8 +18,19 @@ export function toAppError(e: unknown): AppError {
   return { code: "internal", message: String(e) };
 }
 
+/**
+ * 唯一的 IPC 出海口。演示模式下改走内存实现（`src/demo/mock.ts`），
+ * 因此所有面板代码都不需要为"没有后端"这件事做任何适配。
+ *
+ * mock 用动态 import：让假数据 + 虚拟 shell 独立成一个 chunk，
+ * Tauri 生产包不会加载它。
+ */
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
+    if (DEMO) {
+      const { mockInvoke } = await import("../demo/mock");
+      return (await mockInvoke(cmd, args)) as T;
+    }
     return await invoke<T>(cmd, args);
   } catch (e) {
     throw toAppError(e);
@@ -270,6 +282,30 @@ export interface QueryResult {
   error: string | null;
 }
 
+/** 表字段（对应 Rust 侧 information_schema.columns 的投影）。 */
+export interface TableColumn {
+  name: string;
+  type: string;
+  nullable: boolean;
+  key: string;
+  default: string | null;
+  extra: string;
+}
+
+/** 表索引（对应 information_schema.statistics）。 */
+export interface TableIndex {
+  name: string;
+  unique: boolean;
+  column: string;
+  seq: number;
+}
+
+/** db_columns 的返回：字段 + 索引。 */
+export interface TableDescribe {
+  columns: TableColumn[];
+  indexes: TableIndex[];
+}
+
 export const dbApi = {
   connect: (assetId?: string, inline?: Record<string, unknown>) =>
     call<{ connId: string }>("db_connect", { args: { assetId, inline } }),
@@ -278,7 +314,7 @@ export const dbApi = {
   tables: (connId: string, schema?: string) =>
     call<string[]>("db_tables", { connId, schema }),
   columns: (connId: string, table: string, schema?: string) =>
-    call<Record<string, unknown>>("db_columns", { connId, table, schema }),
+    call<TableDescribe>("db_columns", { connId, table, schema }),
   query: (connId: string, sql: string, timeoutMs?: number) =>
     call<QueryResult>("db_query", { connId, sql, timeoutMs }),
   redisScan: (connId: string, cursor?: number, pattern?: string, count?: number) =>
