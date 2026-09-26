@@ -204,6 +204,9 @@ export function XtermView(props: XtermViewProps) {
   // ── 标签激活状态 → 可见性 + 重新 fit（§4.4）──
   // 切标签时组件不再卸载（见 App.tsx 的「全部挂载、隐藏非激活」），
   // 所以这里必须显式把可见性同步给内核，并在重新可见时补一次 fit。
+  //
+  // 依赖里带 props.tabId：attach 是延迟发的，若 attach 完成时标签已被切走，
+  // kernelTabIdRef 才刚有值，需要靠 tabId 变化再补一次同步。
   useEffect(() => {
     const visible = props.visible !== false;
     const tabId = kernelTabIdRef.current;
@@ -216,7 +219,7 @@ export function XtermView(props: XtermViewProps) {
       fitIfSized();
     });
     return () => cancelAnimationFrame(raf);
-  }, [props.visible]);
+  }, [props.visible, props.tabId]);
 
   return <div ref={hostRef} className="h-full w-full min-h-0" />;
 }
