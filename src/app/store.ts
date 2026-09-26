@@ -103,7 +103,15 @@ export const useUi = create<UiState>((set, get) => ({
       (t) =>
         t.id === tab.id ||
         (t.tabId && tab.tabId && t.tabId === tab.tabId) ||
-        (t.kind === tab.kind && t.sessionId === tab.sessionId && !t.tabId && !tab.tabId && t.path === tab.path),
+        // 终端标签**永不复用**：同一个会话上必须能开多个独立 shell。
+        // （否则刚开第二个终端时它还没有内核 tabId，会被误判成同一个标签而合并掉。）
+        // 其余面板（文件 / Docker / 挂载）按 kind+session+path 复用，避免重复开同一页。
+        (tab.kind !== "terminal" &&
+          t.kind === tab.kind &&
+          t.sessionId === tab.sessionId &&
+          !t.tabId &&
+          !tab.tabId &&
+          t.path === tab.path),
     );
     if (exists) {
       set({ activeTabId: exists.id });

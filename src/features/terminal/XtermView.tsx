@@ -39,6 +39,14 @@ export interface XtermViewProps {
   sessionId: string;
   tabId: string;
   winrm?: boolean;
+  /**
+   * 所在标签是否处于激活状态（§4.4）。
+   *
+   * 由标签激活状态驱动而不是 IntersectionObserver：容器 `display:none` 时
+   * 高度算出 0，FitAddon 会提出 2x1 这种尺寸并**连带把远端 PTY 也改小**，
+   * 所以隐藏期间绝不能 fit。
+   */
+  visible?: boolean;
   onClosed?: () => void;
   onAttach?: (kernelTabId: string) => void;
   registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;
@@ -54,11 +62,22 @@ export function XtermView(props: XtermViewProps) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
+  /** 内核标签 id（跨 effect 访问，主 effect 里的局部变量取不到）。 */
+  const kernelTabIdRef = useRef<string>("");
   // 回调放 ref：避免它们进入 effect 依赖导致终端被反复重建
   const onBlocksRef = useRef(props.onBlocks);
   const onHandleRef = useRef(props.onHandle);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
+
+  /** 只在容器有真实尺寸时 fit —— 隐藏容器的 computed 高度是 0。 */
+  const fitIfSized = () => {
+    const host = hostRef.current;
+    const fit = fitRef.current;
+    if (!host || !fit) return;
+    if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
+    fit.fit();
+  };
 
   useEffect(() => {
     if (!hostRef.current || termRef.current) return;
@@ -91,7 +110,7 @@ export function XtermView(props: XtermViewProps) {
         // 软件渲染兜底
       }
     }
-    fit.fit();
+    fitIfSized();
 
     let kernelTabId = "";
     let disposed = false;
@@ -120,12 +139,21 @@ export function XtermView(props: XtermViewProps) {
           : await terminalApi.attach(props.sessionId, cols, rows, channel);
         if (disposed) return;
         kernelTabId = id;
+        kernelTabIdRef.current = id;
         props.onAttach?.(id);
       } catch (e) {
         term.writeln(`\r\n\x1b[31m[attach 失败] ${String(e)}\x1b[0m`);
       }
     };
-    void doAttach();
+    // attach 延迟到一个宏任务再发。
+    //
+    // React StrictMode 在开发模式下会「挂载 → 卸载 → 再挂载」，同步 attach 会开出
+    // **两个 PTY**：第一个的 cleanup 只做 detach（不断开内核，通道没人收但泵照跑），
+    // 于是远端多出一个泄漏的 shell。放进宏任务后，第一次的 timer 会在 cleanup 里被清掉，
+    // 最终只 attach 一次。生产构建没有 StrictMode 双调用，行为不变（只是晚 0ms）。
+    const attachTimer = window.setTimeout(() => {
+      void doAttach();
+    }, 0);
 
     // ── 输入：onData → 命令块记账 + terminal_write（§4.5）──
     const dataDisposable = term.onData((data) => {
@@ -145,40 +173,50 @@ export function XtermView(props: XtermViewProps) {
     });
 
     // ── 可见性降频（§4.4）──
-    const observer = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (kernelTabId) {
-          void terminalApi.setVisible(kernelTabId, e.isIntersecting).catch(() => undefined);
-        }
-        if (e.isIntersecting) {
-          fitRef.current?.fit();
-        }
-      }
-    }, { threshold: 0.05 });
-    observer.observe(hostRef.current);
-
+    // 注意：这里**不再**用 IntersectionObserver 做 fit。fit 只由 props.visible 驱动，
+    // 否则「隐藏容器算出 0 高 → fit 出 2x1 → 连带改小远端 PTY」会把 shell 布局搞坏。
     props.registerSearch?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
     });
 
-    const ro = new ResizeObserver(() => fit.fit());
+    const ro = new ResizeObserver(() => fitIfSized());
     ro.observe(hostRef.current);
 
     return () => {
       disposed = true;
-      observer.disconnect();
+      window.clearTimeout(attachTimer);
       ro.disconnect();
       dataDisposable.dispose();
       resizeDisposable.dispose();
       blocks.dispose();
       if (kernelTabId) {
+        // 只 detach（断开前端通道），不 close —— 内核标签的生命周期由 store.closeTab
+        // 显式调用 terminal_close_tab 来管（§7：关标签 ≠ 断连，但关标签要回收 PTY）。
         void terminalApi.detach(kernelTabId).catch(() => undefined);
       }
+      kernelTabIdRef.current = "";
       term.dispose();
       termRef.current = null;
     };
       }, [props.sessionId]);
+
+  // ── 标签激活状态 → 可见性 + 重新 fit（§4.4）──
+  // 切标签时组件不再卸载（见 App.tsx 的「全部挂载、隐藏非激活」），
+  // 所以这里必须显式把可见性同步给内核，并在重新可见时补一次 fit。
+  useEffect(() => {
+    const visible = props.visible !== false;
+    const tabId = kernelTabIdRef.current;
+    if (tabId) {
+      void terminalApi.setVisible(tabId, visible).catch(() => undefined);
+    }
+    if (!visible) return;
+    // display 生效后再量尺寸，否则量到的仍是 0
+    const raf = requestAnimationFrame(() => {
+      fitIfSized();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [props.visible]);
 
   return <div ref={hostRef} className="h-full w-full min-h-0" />;
 }

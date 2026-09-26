@@ -6,21 +6,22 @@ import { dockerApi, type ContainerSummary, type ImageSummary } from "../../ipc/c
 import { useUi } from "../../app/store";
 import { XtermView } from "../terminal/XtermView";
 
-export function DockerPanel({ sessionId }: { sessionId: string }) {
+export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
   const qc = useQueryClient();
   const { addTab, pushToast } = useUi();
   const [tab, setTab] = useState<"containers" | "images">("containers");
   const [attached, setAttached] = useState<{ container: string; kind: "logs" | "exec"; tabId: string } | null>(null);
 
+  // 标签不可见时停掉轮询（切标签不再卸载面板，所以要显式 gate）
   const containers = useQuery({
     queryKey: ["docker-ps", sessionId],
     queryFn: () => dockerApi.ps(sessionId),
-    refetchInterval: 5000,
+    refetchInterval: visible ? 5000 : false,
   });
   const images = useQuery({
     queryKey: ["docker-images", sessionId],
     queryFn: () => dockerApi.images(sessionId),
-    refetchInterval: 30000,
+    refetchInterval: visible ? 30000 : false,
   });
 
   const act = async (c: ContainerSummary, action: string) => {

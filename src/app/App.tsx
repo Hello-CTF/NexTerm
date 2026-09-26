@@ -1,6 +1,6 @@
 // 应用外壳（§5.1）：三栏布局 + 标签栏 + 命令面板 + 全局快捷键 + 状态栏。
 import { useEffect, useState } from "react";
-import { useUi, openTerminalTab } from "./store";
+import { useUi, openTerminalTab, type AppTab } from "./store";
 import { sessionApi, vaultApi } from "../ipc/commands";
 import { AssetTree } from "../features/explorer/AssetTree";
 import { TerminalPane } from "../features/terminal/TerminalPane";
@@ -192,38 +192,21 @@ export default function App() {
         </button>
 
         <main className="min-w-0 flex-1">
-          {active ? (
-            active.kind === "terminal" && active.sessionId ? (
-              <TerminalPane
-                key={active.id}
-                sessionId={active.sessionId}
-                title={active.title}
-              />
-            ) : active.kind === "mount" && active.sessionId ? (
-              <MountPanel sessionId={active.sessionId} />
-            ) : active.kind === "files" && active.sessionId ? (
-              active.path ? (
-                <FileEditor
-                  sessionId={active.sessionId}
-                  path={active.path}
-                  onClose={() => void closeTab(active.id)}
-                />
-              ) : (
-                <FileBrowser sessionId={active.sessionId} />
-              )
-            ) : active.kind === "docker" && active.sessionId ? (
-              <DockerPanel sessionId={active.sessionId} />
-            ) : active.kind === "db" && active.connId ? (
-              <DbPanel connId={active.connId} kind="mysql" />
-            ) : active.kind === "settings" ? (
-              <SettingsView />
-            ) : active.kind === "audit" ? (
-              <AuditView />
-            ) : (
-              <EmptyState />
-            )
-          ) : (
+          {/*
+            关键：**所有标签都保持挂载**，非激活的用 `hidden` 藏起来。
+            以前是 `key={active.id}` + 条件渲染，切标签会卸载/重建组件 →
+            新终端实例重新调 terminal_attach → 内核每次都 open_pty 开一个新 shell：
+            既“刷新”了界面（确实是换了新 shell），又把旧 shell 泄漏在远端。
+            挂在 DOM 上还顺带保住了滚动位置、选中内容与命令块。
+          */}
+          {tabs.length === 0 ? (
             <EmptyState />
+          ) : (
+            tabs.map((t) => (
+              <div key={t.id} className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}>
+                <PaneForTab tab={t} active={t.id === activeTabId} onClose={() => void closeTab(t.id)} />
+              </div>
+            ))
           )}
         </main>
 
@@ -287,6 +270,54 @@ export default function App() {
       <PromptModal />
     </div>
   );
+}
+
+/** 单标签内容分发。由 App 的标签映射调用，保持挂载（生命周期与标签一致）。 */
+function PaneForTab({
+  tab,
+  active,
+  onClose,
+}: {
+  tab: AppTab;
+  active: boolean;
+  onClose: () => void;
+}) {
+  switch (tab.kind) {
+    case "terminal":
+      return tab.sessionId ? (
+        <TerminalPane
+          sessionId={tab.sessionId}
+          title={tab.title}
+          storeTabId={tab.id}
+          visible={active}
+        />
+      ) : (
+        <EmptyState />
+      );
+    case "mount":
+      return tab.sessionId ? <MountPanel sessionId={tab.sessionId} /> : <EmptyState />;
+    case "files":
+      if (!tab.sessionId) return <EmptyState />;
+      return tab.path ? (
+        <FileEditor sessionId={tab.sessionId} path={tab.path} onClose={onClose} />
+      ) : (
+        <FileBrowser sessionId={tab.sessionId} />
+      );
+    case "docker":
+      return tab.sessionId ? (
+        <DockerPanel sessionId={tab.sessionId} visible={active} />
+      ) : (
+        <EmptyState />
+      );
+    case "db":
+      return tab.connId ? <DbPanel connId={tab.connId} kind="mysql" /> : <EmptyState />;
+    case "settings":
+      return <SettingsView />;
+    case "audit":
+      return <AuditView />;
+    default:
+      return <EmptyState />;
+  }
 }
 
 function EmptyState() {

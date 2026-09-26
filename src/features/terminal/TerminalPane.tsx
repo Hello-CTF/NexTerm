@@ -10,11 +10,15 @@ export interface TerminalPaneProps {
   sessionId: string;
   title: string;
   winrm?: boolean;
+  /** store 里的标签 id：attach 成功后要把内核 tabId 写回该标签，关闭时才能回收 PTY。 */
+  storeTabId: string;
+  /** 所在标签是否激活（切标签不再卸载组件，靠它同步可见性）。 */
+  visible?: boolean;
 }
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 
-export function TerminalPane({ sessionId, title, winrm }: TerminalPaneProps) {
+export function TerminalPane({ sessionId, title, winrm, storeTabId, visible }: TerminalPaneProps) {
   const [kernelTabId, setKernelTabId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -144,7 +148,13 @@ export function TerminalPane({ sessionId, title, winrm }: TerminalPaneProps) {
             sessionId={sessionId}
             tabId={kernelTabId ?? "pending"}
             winrm={winrm}
-            onAttach={(id) => setKernelTabId(id)}
+            visible={visible}
+            onAttach={(id) => {
+              setKernelTabId(id);
+              // 必须写回 store：store.closeTab 只有拿到内核 tabId 才会调
+              // terminal_close_tab 回收 PTY，否则关标签会泄漏远端 shell。
+              useUi.getState().updateTab(storeTabId, { tabId: id });
+            }}
             onBlocks={blocksSupported ? setBlocks : undefined}
             onHandle={(h) => {
               handleRef.current = h;
