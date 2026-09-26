@@ -1,0 +1,20 @@
+[workspace]
+members = ["src-tauri"]
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = true
+codegen-units = 16
+panic = "abort"
+
+[profile.bench]
+opt-level = 3
+strip = false
+
+[profile.dev.package.vt100]
+opt-level = 2
+
+[profile.dev.package.russh]
+opt-level = 1

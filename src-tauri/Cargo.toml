@@ -1,0 +1,84 @@
+[package]
+name = "nexterm"
+version = "0.1.0"
+description = "NexTerm — 一体化开发运维终端"
+authors = ["NexTerm"]
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+name = "nexterm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "io-util", "io-std", "sync", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+futures = "0.3"
+thiserror = "2"
+regex = "1"
+base64 = "0.22"
+ulid = "1"
+chrono = { version = "0.4", features = ["serde"] }
+encoding_rs = "0.8"
+dirs = "6"
+
+# 日志：按天滚动
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# 存储
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "migrate", "macros", "chrono"] }
+redis = { version = "0.27", features = ["tokio-comp"] }
+
+# 加密
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+rand = "0.8"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+] }
+
+# 传输
+russh = "0.63"
+russh-sftp = "2"
+portable-pty = "0.9"
+vt100 = "0.16"
+winrm-rs = "1.2"
+
+# AI / HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "socks"] }
+
+# TS 类型生成（§6.1）：所有跨 IPC 类型只定义一份
+ts-rs = { version = "10", features = ["serde-compat", "serde-json-impl", "no-serde-warnings"] }
+
+# SSH 代理（§5.2：socks5 / http connect）
+tokio-socks = "0.5"
+
+# 校验和（fs_checksum：MD5/SHA256，§5.4 文件能力）
+md-5 = "0.10"
+sha2 = "0.10"
+
+# MCP 对外 HTTP 通道
+axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bench]]
+name = "terminal_throughput"
+harness = false

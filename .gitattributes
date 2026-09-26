@@ -1,0 +1,13 @@
+# 统一换行：源码一律 LF，避免 Windows 上 autocrlf 造成的全仓抖动
+* text=auto eol=lf
+
+# 二进制/生成物不参与换行转换
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.woff2 binary
+
+# 锁文件不参与 diff 统计
+Cargo.lock -diff
+pnpm-lock.yaml -diff

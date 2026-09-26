@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #0d0f14;
+  color: #d7dae0;
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    "Microsoft YaHei",
+    sans-serif;
+  overflow: hidden;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2f3441;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* CodeMirror 深色适配 */
+.cm-editor {
+  height: 100%;
+}
+.cm-editor.cm-focused {
+  outline: none !important;
+}
+.cm-gutters {
+  background: #12141a !important;
+  border-right: 1px solid #232733 !important;
+  color: #5c6370 !important;
+}
