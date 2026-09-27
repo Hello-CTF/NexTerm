@@ -8,7 +8,15 @@
 import { create } from "zustand";
 import { dbApi, sessionApi, terminalApi, type SessionInfo } from "../ipc/commands";
 
-export type PaneKind = "terminal" | "files" | "mount" | "docker" | "db" | "settings" | "audit";
+export type PaneKind =
+  | "terminal"
+  | "files"
+  | "mount"
+  | "forward"
+  | "docker"
+  | "db"
+  | "settings"
+  | "audit";
 
 /** 左栏形态。资产列表是"管理"入口，文件树是"干活"入口。 */
 export type LeftMode = "assets" | "files";
@@ -24,6 +32,14 @@ export interface AppTab {
   /** db 标签特有的驱动类型（同一套面板，两种视图）。 */
   dbKind?: "mysql" | "redis";
   path?: string;
+  /**
+   * 标签落地后立刻执行的命令（不带换行）。
+   *
+   * 目前只用在右键「在终端打开」：新终端要 cd 到某个目录，但 attach 是异步的，
+   * 创建标签这一刻还没有内核 tabId 可写 —— 于是先挂在这里，
+   * 等 XtermView attach 成功后再取出来执行（见 takePendingCommand）。
+   */
+  pendingCommand?: string;
   closable: boolean;
 }
 
@@ -81,6 +97,14 @@ export interface ToastItem {
 export interface TextPromptState {
   message: string;
   value: string;
+  /**
+   * 强制使用多行输入框。
+   *
+   * 不传时由 PromptModal 按内容猜（消息里带换行 / 初始值够长）——
+   * 但「AI 接管任务描述」恰好是反例：提示语很短、初始值为空，
+   * 用户真要写的东西却有十几行，猜不出来。
+   */
+  multiLine?: boolean;
   resolve: (v: string | null) => void;
 }
 
@@ -117,6 +141,16 @@ interface UiState {
   textPrompt: TextPromptState | null;
   openTextPrompt: (s: TextPromptState) => void;
   closeTextPrompt: (v: string | null) => void;
+
+  /**
+   * 「向 AI 提问」的待发送内容。
+   *
+   * 终端里选中一段文本右键提问时灌进来，AiSidebar 消费后清空 —— 两端隔着
+   * 组件树（TerminalPane 在内容区、AiSidebar 在右栏），走 store 比层层传
+   * props 干净，也顺带让"提问"这个动作用一次即可从任何地方发起。
+   */
+  pendingAsk: string | null;
+  setPendingAsk: (v: string | null) => void;
 
   setLeftOpen: (v: boolean) => void;
   setLeftMode: (m: LeftMode) => void;
@@ -177,6 +211,9 @@ export const useUi = create<UiState>((set, get) => ({
     cur?.resolve(v);
     set({ textPrompt: null });
   },
+
+  pendingAsk: null,
+  setPendingAsk: (v) => set({ pendingAsk: v }),
 
   setLeftOpen: (v) => set({ leftOpen: v }),
   setLeftMode: (m) => set({ leftMode: m }),
@@ -543,8 +580,14 @@ export function useActiveWorkspace(): Workspace | null {
  * 便捷：建立终端标签（连接复用，§7）。
  *
  * `paneId` 用于指定落到哪一栏（分屏时"给新面板开一个终端"要用）。
+ * `options.command` 是「落地即执行」的命令（右键「在终端打开」的 cd 走这里）。
  */
-export async function openTerminalTab(session: SessionInfo, title?: string, paneId?: string) {
+export async function openTerminalTab(
+  session: SessionInfo,
+  title?: string,
+  paneId?: string,
+  options?: { command?: string },
+) {
   const wsId = useUi.getState().ensureWorkspace({
     kind: "session",
     sessionId: session.id,
@@ -561,10 +604,71 @@ export async function openTerminalTab(session: SessionInfo, title?: string, pane
       kind: "terminal",
       title: title ?? `终端 ${n + 1}`,
       sessionId: session.id,
+      pendingCommand: options?.command,
       closable: true,
     },
     paneId,
   );
+}
+
+/**
+ * 取出并清空某标签的「落地即执行」命令。
+ *
+ * 取出即清空（而不是读一遍）：XtermView 的 attach effect 在开发模式下会被
+ * StrictMode 跑两轮，读而不清的话同一条 `cd` 会往远端发两遍。
+ */
+export function takePendingCommand(storeTabId: string): string | null {
+  const st = useUi.getState();
+  for (const w of st.workspaces) {
+    for (const p of w.panes) {
+      const tab = p.tabs.find((t) => t.id === storeTabId);
+      if (tab?.pendingCommand) {
+        const cmd = tab.pendingCommand;
+        st.updateTab(storeTabId, { pendingCommand: undefined });
+        return cmd;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 生成一条 `cd <path>` 命令。
+ *
+ * 引号按路径形态选：`C:\...` / `C:/...` 是 Windows 目标（PowerShell 里单引号
+ * 用 `''` 转义），其余按 POSIX shell（`'` 用 `'\''` 收尾再开）。
+ * 不做转义的话，路径里一个空格就会把命令拆成两条 —— 这是最容易踩的坑。
+ */
+export function cdCommandFor(path: string): string {
+  if (/^[A-Za-z]:[\\/]/.test(path)) {
+    return `cd '${path.replace(/'/g, "''")}'`;
+  }
+  return `cd '${path.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * 找某会话下「可以被写命令」的终端：优先该栏的激活标签，其次是这一栏里
+ * 任意一个已 attach 完成的终端。返回 null 表示这个会话还没有可用的终端。
+ *
+ * 为什么按"激活标签优先、但不强求"来排：用户右键一个目录时，多半就是想
+ * 在眼前这个终端里跳过去；但若当前激活的是文件编辑器标签，仍应退而用
+ * 同一栏里那个终端，而不是干巴巴地报"没有终端"。
+ */
+export function findWritableTerminal(sessionId: string): string | null {
+  const st = useUi.getState();
+  for (const w of st.workspaces) {
+    if (w.sessionId !== sessionId) continue;
+    for (const p of w.panes) {
+      const ordered = [
+        ...p.tabs.filter((t) => t.id === p.activeTabId),
+        ...p.tabs.filter((t) => t.id !== p.activeTabId),
+      ];
+      for (const t of ordered) {
+        if (t.kind === "terminal" && t.tabId) return t.tabId;
+      }
+    }
+  }
+  return null;
 }
 
 /**

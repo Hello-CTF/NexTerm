@@ -11,7 +11,6 @@ import {
   IconChevronRight,
   IconGamepad,
   IconLoader,
-  IconShield,
   IconSparkles,
   IconXCircle,
 } from "../../ui/icons";
@@ -41,8 +40,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   /** 接管状态来自全局 store（§8.6）：顶部横幅与这里读的是同一份。 */
   const takeover = useUi((s) => s.takeover);
-  const sessions = useUi((s) => s.sessions);
+  const pendingAsk = useUi((s) => s.pendingAsk);
+  const setPendingAsk = useUi((s) => s.setPendingAsk);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -54,6 +55,21 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       .then((c) => setModel(c.model))
       .catch(() => undefined);
   }, []);
+
+  /**
+   * 终端里「向 AI 提问」把选中的那段输出灌进来。
+   *
+   * 只预填、不自动发送：选中的多半是一段报错，用户通常还要补一句
+   * 「这是什么问题 / 怎么修」—— 替他把消息发出去等于替他提问，很容易答非所问。
+   * 光标落在末尾并聚焦，接着打字就能发。
+   */
+  useEffect(() => {
+    if (!pendingAsk) return;
+    setInput((prev) => (prev.trim() ? `${prev}\n\n${pendingAsk}\n` : `${pendingAsk}\n\n`));
+    setPendingAsk(null);
+    const t = window.setTimeout(() => inputRef.current?.focus(), 30);
+    return () => window.clearTimeout(t);
+  }, [pendingAsk, setPendingAsk]);
 
   const send = async () => {
     const message = input.trim();
@@ -160,7 +176,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("error", "接管需要先打开一个终端标签");
       return;
     }
-    const instruction = await promptText("AI 接管任务描述（例如：安装 nginx 并启动）");
+    // 接管任务通常是好几行的步骤描述（先装什么、再改哪个配置、最后重启什么），
+    // 单行输入框写不下 —— 显式要求多行。
+    const instruction = await promptText(
+      "AI 接管任务描述（例如：安装 nginx 并启动）",
+      "",
+      { multiLine: true },
+    );
     if (!instruction) return;
     const allowWrite = await ask(
       "是否允许 AI 写操作（发送按键）？\n\n确定 = 允许写入\n取消 = 只读接管（send_keys 全被拒绝）",
@@ -246,8 +268,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   if (!rightOpen) return null;
 
-  const sessionName = sessions.find((s) => s.id === sessionId)?.name;
-
   return (
     <aside className="flex h-full w-[352px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950">
       <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-2.5 pl-3">
@@ -330,20 +350,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       )}
 
       <div className="shrink-0 border-t border-neutral-800/60 p-2.5">
-        <div className="mb-2 flex items-center gap-1.5 overflow-x-auto">
-          <span className="shrink-0 text-[10.5px] text-neutral-500">上下文</span>
-          {sessionName ? (
-            <span className="nx-chip nx-chip-accent shrink-0">
-              <IconShield size={10} />
-              {sessionName}
-            </span>
-          ) : (
-            <span className="nx-chip shrink-0">未连接会话</span>
-          )}
-          {tabId && <span className="nx-chip shrink-0">终端最近 80 行</span>}
-          <span className="nx-chip shrink-0">环境侦察快照</span>
-        </div>
-
         {tabId && (
           <button
             className="nx-btn nx-btn-danger mb-2 w-full nx-btn-sm"
@@ -358,6 +364,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
         <div className="flex items-end gap-1.5">
           <textarea
+            ref={inputRef}
             className="nx-textarea max-h-32 min-h-[46px] flex-1"
             placeholder={sessionId ? "询问当前会话 / 请求排障…（Enter 发送，Shift+Enter 换行）" : "未连接会话（仍可全局提问）"}
             value={input}

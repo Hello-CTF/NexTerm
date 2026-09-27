@@ -8,12 +8,20 @@
 //   · 单击选中整行；双击目录展开/收起，双击文件开编辑器标签；
 //   · 目录列表按需加载（react-query 按目录缓存，与宽幅文件浏览器共用同一 key）；
 //   · 工具栏与右键无关，一切动作都能从工具栏或行内 hover 完成。
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
-import { fsApi } from "../../ipc/commands";
+import { fsApi, terminalApi } from "../../ipc/commands";
 import { ask, pickLocalFile, pickSavePath, promptText } from "../../ui/dialogs";
-import { openFileTab, useUi } from "../../app/store";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { describeError } from "../../ui/errorText";
+import {
+  cdCommandFor,
+  findWritableTerminal,
+  openFileTab,
+  openTerminalTab,
+  useUi,
+} from "../../app/store";
 import { fileVisual, formatSize, isEditableFile } from "./fileTypes";
 import {
   HOME,
@@ -32,9 +40,11 @@ import {
   IconEdit,
   IconFilePlus,
   IconFoldAll,
+  IconFolderOpen,
   IconFolderPlus,
   IconHome,
   IconRefresh,
+  IconTerminal,
   IconTrash,
   IconUpload,
   IconXCircle,
@@ -65,6 +75,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   /** 路径栏的「直接输入路径」模式：只能在面包屑之间挪是不够用的。 */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  /** 行右键菜单（见 openRowMenu）。 */
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
   const beginEdit = () => {
     setDraft(root);
@@ -265,6 +277,100 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     }
   };
 
+  /* ── 右键菜单 ──────────────────────────────────────────────────────── */
+
+  /**
+   * 「在终端打开」：新开一个终端标签，并让它落地后 cd 到该目录。
+   *
+   * cd 不在这里直接写 —— 此刻还没有内核 tabId（attach 是异步的）。
+   * 命令挂到标签的 pendingCommand 上，等 XtermView attach 成功再发出去。
+   */
+  const openTerminalAt = (dir: string) => {
+    const session = useUi.getState().sessions.find((s) => s.id === sessionId);
+    if (!session) {
+      pushToast("error", "当前会话已不在，无法打开终端");
+      return;
+    }
+    void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
+  };
+
+  /** 「前进到当前目录」：让已有终端 cd 过去；一个终端都没有就退化成新开一个。 */
+  const cdTerminalTo = (dir: string) => {
+    const kernelTabId = findWritableTerminal(sessionId);
+    if (!kernelTabId) {
+      pushToast("info", "当前工作区还没有终端，已改为新开一个");
+      openTerminalAt(dir);
+      return;
+    }
+    void terminalApi
+      .write(kernelTabId, new TextEncoder().encode(`${cdCommandFor(dir)}\n`))
+      .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+  };
+
+  /**
+   * 行右键。目录落到它自己，文件落到它**所在的目录** ——
+   * 对文件路径本身执行 cd 是没有意义的。
+   */
+  const openRowMenu = (e: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected(entry.path); // 右键顺手选中，符合直觉
+    const isDir = entry.kind === "dir";
+    const dir = isDir ? entry.path : (parentOf(entry.path) ?? root);
+    const open = expanded.includes(entry.path);
+    const items: MenuItem[] = [
+      { kind: "group", label: "终端" },
+      {
+        kind: "item",
+        label: "在终端打开",
+        icon: <IconTerminal size={13} />,
+        hint: "新标签",
+        onSelect: () => openTerminalAt(dir),
+      },
+      {
+        kind: "item",
+        label: "前进到当前目录",
+        icon: <IconFolderOpen size={13} />,
+        hint: "现有终端",
+        onSelect: () => cdTerminalTo(dir),
+      },
+      { kind: "separator" },
+      { kind: "group", label: isDir ? "目录" : "文件" },
+      isDir
+        ? {
+            kind: "item",
+            label: open ? "收起" : "展开",
+            onSelect: () => toggle(entry.path),
+          }
+        : {
+            kind: "item",
+            label: "编辑",
+            disabled: !isEditableFile(entry.name),
+            onSelect: () => openFile(entry),
+          },
+    ];
+    if (!isDir) {
+      items.push({
+        kind: "item",
+        label: "下载到本机",
+        icon: <IconDownload size={13} />,
+        onSelect: () => void download(entry.path),
+      });
+    }
+    items.push(
+      { kind: "separator" },
+      { kind: "group", label: "危险操作" },
+      {
+        kind: "item",
+        label: "删除",
+        icon: <IconTrash size={13} />,
+        danger: true,
+        onSelect: () => void remove(entry.path),
+      },
+    );
+    setMenu({ x: e.clientX, y: e.clientY, title: entry.path, items });
+  };
+
   if (!leftOpen) return null;
 
   const crumbs = crumbsOf(root);
@@ -435,6 +541,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               style={{ paddingLeft: 2 + depth * 12 }}
               onClick={() => setSelected(entry.path)}
               onDoubleClick={() => (isDir ? toggle(entry.path) : openFile(entry))}
+              onContextMenu={(e) => openRowMenu(e, entry)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
             >
               {isDir ? (
@@ -503,6 +610,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           </>
         )}
       </div>
+
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </aside>
   );
 }

@@ -296,8 +296,10 @@ pub struct ForwardSpecDto {
     pub id: String,
     pub session_id: String,
     pub listen_port: u16,
-    pub target_host: String,
-    pub target_port: u16,
+    /// 静态转发的目标；SOCKS5 动态转发没有固定目标 → `null`。
+    pub target_host: Option<String>,
+    pub target_port: Option<u16>,
+    /// `local` 或 `socks`。
     pub kind: String,
     #[ts(type = "number")]
     pub created_at: u64,

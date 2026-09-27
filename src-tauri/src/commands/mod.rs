@@ -27,6 +27,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         session::session_open_line_tab,
         session::session_line_exec,
         session::session_cwd,
+        session::session_reconnect,
         // terminal
         terminal::terminal_attach,
         terminal::terminal_write,
@@ -41,6 +42,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         terminal::terminal_switch_encoding,
         terminal::terminal_record_start,
         terminal::terminal_record_stop,
+        terminal::terminal_export_log,
         // fs
         fs::fs_list,
         fs::fs_read,
@@ -81,6 +83,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         db::redis_set_ttl,
         // forward
         forward::forward_create,
+        forward::forward_create_socks,
         forward::forward_list,
         forward::forward_remove,
         // ai

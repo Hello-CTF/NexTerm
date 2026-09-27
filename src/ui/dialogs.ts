@@ -44,7 +44,16 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
   return save({ defaultPath: defaultName });
 }
 
-type PromptFn = (message: string, value: string) => Promise<string | null>;
+export type PromptOptions = {
+  /** 强制多行输入框。不传则由弹窗按内容自动判断。 */
+  multiLine?: boolean;
+};
+
+type PromptFn = (
+  message: string,
+  value: string,
+  options: PromptOptions,
+) => Promise<string | null>;
 
 let promptHandler: PromptFn | null = null;
 
@@ -54,9 +63,13 @@ export function registerPromptHandler(fn: PromptFn) {
 }
 
 /** 文本输入弹窗（替代 window.prompt）。取消返回 null。 */
-export function promptText(message: string, value = ""): Promise<string | null> {
+export function promptText(
+  message: string,
+  value = "",
+  options: PromptOptions = {},
+): Promise<string | null> {
   if (!promptHandler) {
     return Promise.resolve(DEMO ? window.prompt(message, value) : null);
   }
-  return promptHandler(message, value);
+  return promptHandler(message, value, options);
 }

@@ -1,11 +1,12 @@
 // 命令面板（§5.1 Ctrl+Shift+P）：动作中心注册表。
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useUi, connectAsset, openTerminalTab } from "./store";
+import { useUi, connectAsset, nextTabId, openTerminalTab } from "./store";
 import { assetApi, dbApi, sessionApi } from "../ipc/commands";
 import {
   IconDatabase,
   IconFolderOpen,
   IconHistory,
+  IconNetwork,
   IconSearch,
   IconSettings,
   IconSplitH,
@@ -107,6 +108,19 @@ export function CommandPalette({
         hint: "含体积 / 修改时间列",
         icon: IconFolderOpen,
         run: () => onOpenFiles?.(),
+      },
+      {
+        id: "port-forward",
+        label: "打开端口转发",
+        hint: "本地 / SOCKS5",
+        icon: IconNetwork,
+        run: () =>
+          addTab({
+            id: nextTabId("forward-cmd"),
+            kind: "forward",
+            title: "端口转发",
+            closable: true,
+          }),
       },
       {
         id: "settings",

@@ -1021,8 +1021,9 @@ export const forwards: {
   id: string;
   sessionId: string;
   listenPort: number;
-  targetHost: string;
-  targetPort: number;
+  /** SOCKS5 动态转发没有固定目标 → null。 */
+  targetHost: string | null;
+  targetPort: number | null;
   kind: string;
   createdAt: number;
 }[] = [
@@ -1034,6 +1035,16 @@ export const forwards: {
     targetPort: 3306,
     kind: "local",
     createdAt: NOW - HOUR,
+  },
+  {
+    // 演示模式给一条 SOCKS5 的现成数据，面板一进去就能看到两种形态的区别
+    id: "f2",
+    sessionId: "s-web01",
+    listenPort: 1080,
+    targetHost: null,
+    targetPort: null,
+    kind: "socks",
+    createdAt: NOW - 40 * MIN,
   },
 ];
 

@@ -313,12 +313,30 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "session_disconnect": {
       const i = sessions.findIndex((s) => s.id === str(a.sessionId));
-      if (i >= 0) sessions.splice(i, 1);
+      if (i >= 0) {
+        const [gone] = sessions.splice(i, 1);
+        // 不发这条事件的话，前端的状态徽标会一直停在「已连接」，
+        // 于是「重新连接」永远是禁用态 —— 演示模式里这条路径就验不了。
+        emit("session://status", { sessionId: gone.id, status: "disconnected", error: null });
+      }
       return null;
     }
 
     case "session_probe":
       return { open: true };
+
+    case "session_reconnect": {
+      // 演示模式没有真实传输层，就演一遍状态机：connecting → connected
+      const s = sessions.find((x) => x.id === str(a.sessionId));
+      if (!s) return false;
+      s.status = "connecting";
+      emit("session://status", { sessionId: s.id, status: "connecting", error: null });
+      later(600, () => {
+        s.status = "connected";
+        emit("session://status", { sessionId: s.id, status: "connected", error: null });
+      });
+      return true;
+    }
 
     case "session_cwd":
       return "/data/app";
@@ -412,6 +430,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "terminal_record_stop":
       return 184_320;
+
+    case "terminal_export_log":
+      // 演示模式不落盘，按回滚缓冲的字符数回一个"字节数"
+      return 4096;
 
     /* ─────────────── asset / group / snippet ─────────────── */
     case "asset_list":
@@ -1013,6 +1035,21 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         targetHost: str(a.targetHost, "127.0.0.1"),
         targetPort: num(a.targetPort, 3306),
         kind: "local",
+        createdAt: Date.now(),
+      };
+      forwards.push(f);
+      return { ...f };
+    }
+
+    case "forward_create_socks": {
+      // 演示模式不真起监听，只把这条记录塞进列表 —— 面板行为与真机一致
+      const f = {
+        id: uid("f"),
+        sessionId: str(a.sessionId),
+        listenPort: num(a.listenPort, 1080),
+        targetHost: null,
+        targetPort: null,
+        kind: "socks",
         createdAt: Date.now(),
       };
       forwards.push(f);

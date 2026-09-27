@@ -1,20 +1,33 @@
-// 文件浏览器（M1-T6）：目录列表 + 上传/下载 + 常用操作 + 虚拟滚动。
-import { useEffect, useRef, useState } from "react";
+// 文件浏览器（M1-T6）：目录列表 + 上传/下载 + 常用操作 + 虚拟滚动 + 右键菜单。
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ask, pickLocalFile, pickSavePath, promptText } from "../../ui/dialogs";
-import { fsApi } from "../../ipc/commands";
+import { fsApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type FsProgressEvent } from "../../ipc/events";
-import { openFileTab, useUi } from "../../app/store";
+import type { FileEntryDto } from "../../ipc/types";
+import {
+  cdCommandFor,
+  findWritableTerminal,
+  openFileTab,
+  openTerminalTab,
+  useUi,
+} from "../../app/store";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { describeError } from "../../ui/errorText";
 import { fileVisual, formatSize, isEditableFile } from "./fileTypes";
-import { HOME, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
+import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
 import {
   IconAlert,
   IconArrowUp,
+  IconCopy,
   IconDownload,
+  IconEdit,
   IconFolder,
   IconFolderOpen,
+  IconFolderPlus,
   IconRefresh,
+  IconTerminal,
   IconTrash,
   IconUpload,
 } from "../../ui/icons";
@@ -27,6 +40,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   /** 地址栏的草稿：**不能**边打边 setPath —— 那会每个字符发一次 fs_list。 */
   const [draft, setDraft] = useState(HOME);
   const [selected, setSelected] = useState<string | null>(null);
+  /** 行 / 空白处右键菜单（见 openRowMenu / openBlankMenu）。 */
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const entries = useQuery({
@@ -87,60 +102,225 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   };
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId, path] });
+  /** 刷别处：右键往某个子目录上传/新建之后，要失效的是那个目录而不是当前目录。 */
+  const refreshDir = (dir: string) =>
+    void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
 
-  const upload = async () => {
+  const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();
     if (!file) return;
-    const remote = (path.endsWith("/") ? path : path + "/") + file.split(/[\\/]/).pop();
+    const remote = joinPath(dir, file.split(/[\\/]/).pop() ?? "upload.bin");
     pushToast("info", "开始上传…");
     try {
-      await fsApi.upload(sessionId, file, remote, false);
-      refresh();
-      pushToast("success", `已上传到 ${remote}`);
+      const bytes = await fsApi.upload(sessionId, file, remote, false);
+      refreshDir(dir);
+      pushToast("success", `已上传 ${bytes} 字节 → ${remote}`);
     } catch (e) {
-      pushToast("error", `上传失败: ${String(e)}`);
+      pushToast("error", `上传失败：${describeError(e)}`);
     }
   };
 
-  const download = async () => {
-    if (!selected) return;
-    const target = await pickSavePath(selected.split("/").pop() ?? "download");
+  const downloadToLocal = async (remotePath: string) => {
+    const target = await pickSavePath(baseName(remotePath));
     if (!target) return;
     pushToast("info", "开始下载…");
     try {
-      await fsApi.download(sessionId, selected, target);
-      pushToast("success", `已下载到 ${target}`);
+      const bytes = await fsApi.download(sessionId, remotePath, target);
+      pushToast("success", `已下载 ${bytes} 字节 → ${target}`);
     } catch (e) {
-      pushToast("error", `下载失败: ${String(e)}`);
+      pushToast("error", `下载失败：${describeError(e)}`);
     }
   };
 
-  const deleteSelected = async () => {
-    if (!selected) return;
-    const entry = list.find((e) => e.path === selected);
-    const isDir = entry?.kind === "dir";
-    if (!(await ask(`删除 ${selected}？${isDir ? "\n\n目录会被递归删除，不可恢复。" : ""}`))) return;
+  const removePath = async (remotePath: string, isDir: boolean) => {
+    const tip = isDir ? "\n\n目录会被递归删除，不可恢复。" : "";
+    if (!(await ask(`删除 ${remotePath}？${tip}`))) return;
     try {
-      await fsApi.delete(sessionId, selected, isDir);
-      setSelected(null);
+      await fsApi.delete(sessionId, remotePath, isDir);
+      if (selected === remotePath) setSelected(null);
       refresh();
       pushToast("success", "已删除");
     } catch (e) {
-      pushToast("error", `删除失败: ${String(e)}`);
+      pushToast("error", `删除失败：${describeError(e)}`);
     }
   };
 
-  const mkDir = async () => {
+  const mkDirIn = async (dir: string) => {
     const name = await promptText("新建文件夹名");
     if (!name) return;
-    const p = (path.endsWith("/") ? path : path + "/") + name;
+    const p = joinPath(dir, name);
     try {
       await fsApi.mkdir(sessionId, p);
-      refresh();
+      refreshDir(dir);
       pushToast("success", `已创建 ${p}`);
     } catch (e) {
-      pushToast("error", `创建失败: ${String(e)}`);
+      pushToast("error", `创建失败：${describeError(e)}`);
     }
+  };
+
+  const copyPath = async (p: string) => {
+    try {
+      await navigator.clipboard.writeText(p);
+      pushToast("success", "路径已复制");
+    } catch (e) {
+      pushToast("error", `复制失败：${describeError(e)}`);
+    }
+  };
+
+  /**
+   * 「在终端打开」：新开一个终端标签并 cd 过去。
+   *
+   * cd 不在这里直接写 —— 此刻 attach 还没完成，没有内核 tabId 可写。
+   * 命令挂到标签的 pendingCommand 上，等 XtermView attach 成功再发（与左栏文件树同一套）。
+   */
+  const openTerminalAt = (dir: string) => {
+    const session = useUi.getState().sessions.find((s) => s.id === sessionId);
+    if (!session) {
+      pushToast("error", "当前会话已不在，无法打开终端");
+      return;
+    }
+    void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
+  };
+
+  /** 「前进到当前目录」：让已有终端 cd 过去；一个终端都没有就退化成新开一个。 */
+  const cdTerminalTo = (dir: string) => {
+    const kernelTabId = findWritableTerminal(sessionId);
+    if (!kernelTabId) {
+      pushToast("info", "当前工作区还没有终端，已改为新开一个");
+      openTerminalAt(dir);
+      return;
+    }
+    void terminalApi
+      .write(kernelTabId, new TextEncoder().encode(`${cdCommandFor(dir)}\n`))
+      .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+  };
+
+  /* ── 右键菜单 ──────────────────────────────────────────────────────── */
+
+  /** 行右键：目录落到它自己，文件落到它**所在的目录**（对文件路径 cd 没有意义）。 */
+  const openRowMenu = (ev: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setSelected(entry.path); // 右键顺手选中，符合直觉
+    const isDir = entry.kind === "dir";
+    const dir = isDir ? entry.path : (parentOf(entry.path) ?? path);
+    const items: MenuItem[] = [
+      { kind: "group", label: "终端" },
+      {
+        kind: "item",
+        label: "在终端打开",
+        icon: <IconTerminal size={13} />,
+        hint: "新标签",
+        onSelect: () => openTerminalAt(dir),
+      },
+      {
+        kind: "item",
+        label: "前进到当前目录",
+        icon: <IconFolderOpen size={13} />,
+        hint: "现有终端",
+        onSelect: () => cdTerminalTo(dir),
+      },
+      { kind: "separator" },
+      { kind: "group", label: isDir ? "目录" : "文件" },
+    ];
+    if (isDir) {
+      items.push(
+        {
+          kind: "item",
+          label: "进入目录",
+          icon: <IconFolderOpen size={13} />,
+          onSelect: () => goto(entry.path),
+        },
+        {
+          kind: "item",
+          label: "上传到该目录",
+          icon: <IconUpload size={13} />,
+          onSelect: () => void uploadTo(entry.path),
+        },
+        {
+          kind: "item",
+          label: "新建子文件夹",
+          icon: <IconFolderPlus size={13} />,
+          onSelect: () => void mkDirIn(entry.path),
+        },
+      );
+    } else {
+      items.push(
+        {
+          kind: "item",
+          label: "打开（编辑器）",
+          icon: <IconEdit size={13} />,
+          disabled: !isEditableFile(entry.name),
+          onSelect: () => openEntry(entry),
+        },
+        {
+          kind: "item",
+          label: "下载到本机",
+          icon: <IconDownload size={13} />,
+          onSelect: () => void downloadToLocal(entry.path),
+        },
+        {
+          kind: "item",
+          label: "复制路径",
+          icon: <IconCopy size={13} />,
+          onSelect: () => void copyPath(entry.path),
+        },
+      );
+    }
+    items.push(
+      { kind: "separator" },
+      { kind: "group", label: "危险操作" },
+      {
+        kind: "item",
+        label: "删除",
+        icon: <IconTrash size={13} />,
+        danger: true,
+        onSelect: () => void removePath(entry.path, isDir),
+      },
+    );
+    setMenu({ x: ev.clientX, y: ev.clientY, title: entry.path, items });
+  };
+
+  /**
+   * 空白处右键：所有动作都作用于「当前目录」本身。
+   *
+   * 列表是虚拟滚动的，行之外还有大片空白和"空目录"提示 —— 那些地方同样该能用，
+   * 否则用户会以为这块面板不支持右键。
+   */
+  const openBlankMenu = (ev: ReactMouseEvent<HTMLDivElement>) => {
+    ev.preventDefault();
+    const items: MenuItem[] = [
+      { kind: "group", label: "当前目录" },
+      {
+        kind: "item",
+        label: "上传到当前目录",
+        icon: <IconUpload size={13} />,
+        onSelect: () => void uploadTo(path),
+      },
+      {
+        kind: "item",
+        label: "新建文件夹",
+        icon: <IconFolderPlus size={13} />,
+        onSelect: () => void mkDirIn(path),
+      },
+      { kind: "item", label: "刷新", icon: <IconRefresh size={13} />, onSelect: refresh },
+      { kind: "separator" },
+      {
+        kind: "item",
+        label: "在终端打开当前目录",
+        icon: <IconTerminal size={13} />,
+        hint: "新标签",
+        onSelect: () => openTerminalAt(path),
+      },
+      {
+        kind: "item",
+        label: "前进到当前目录",
+        icon: <IconFolderOpen size={13} />,
+        hint: "现有终端",
+        onSelect: () => cdTerminalTo(path),
+      },
+    ];
+    setMenu({ x: ev.clientX, y: ev.clientY, title: path, items });
   };
 
   const selectedEntry = list.find((e) => e.path === selected);
@@ -186,27 +366,31 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           <IconRefresh size={14} />
         </button>
         <span className="nx-divider-v" />
-        <button className="nx-btn nx-btn-sm" onClick={() => void upload()} title="上传本地文件到当前目录">
+        <button
+          className="nx-btn nx-btn-sm"
+          onClick={() => void uploadTo(path)}
+          title="上传本地文件到当前目录"
+        >
           <IconUpload size={13} />
           上传
         </button>
         <button
           className="nx-btn nx-btn-sm"
           disabled={!selected}
-          onClick={() => void download()}
+          onClick={() => selected && void downloadToLocal(selected)}
           title="下载选中的文件"
         >
           <IconDownload size={13} />
           下载
         </button>
-        <button className="nx-btn nx-btn-sm" onClick={() => void mkDir()} title="新建文件夹">
+        <button className="nx-btn nx-btn-sm" onClick={() => void mkDirIn(path)} title="新建文件夹">
           <IconFolder size={13} />
           新建
         </button>
         <button
           className="nx-btn nx-btn-danger nx-btn-sm"
           disabled={!selected}
-          onClick={() => void deleteSelected()}
+          onClick={() => selected && void removePath(selected, selectedEntry?.kind === "dir")}
         >
           <IconTrash size={13} />
           删除
@@ -229,7 +413,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         <span className="w-40 text-right">修改时间</span>
       </div>
 
-      <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto" onContextMenu={openBlankMenu}>
         {entries.isLoading ? (
           <div className="nx-hint p-4 text-center">加载中…</div>
         ) : entries.isError ? (
@@ -263,6 +447,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)`, position: "absolute", top: 0, left: 0, right: 0 }}
                   onClick={() => setSelected(e.path)}
                   onDoubleClick={() => openEntry(e)}
+                  onContextMenu={(ev) => openRowMenu(ev, e)}
                   title={isDir ? e.path : `${e.path} · 双击用内置编辑器打开`}
                 >
                   <Icon size={14} className={`shrink-0 ${tone}`} />
@@ -295,6 +480,9 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           </>
         )}
       </div>
+
+      {/* 菜单 fixed 定位，不占布局 */}
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }

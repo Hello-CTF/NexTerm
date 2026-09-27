@@ -27,7 +27,7 @@ export type FileEntryDto = { name: string, path: string,
  */
 kind: string, size: number, mode: string, owner: string | null, group: string | null, mtime: number, symlinkTarget: string | null, };
 
-export type ForwardSpecDto = { id: string, sessionId: string, listenPort: number, targetHost: string, targetPort: number, kind: string, createdAt: number, };
+export type ForwardSpecDto = { id: string, sessionId: string, listenPort: number, targetHost: string | null, targetPort: number | null, kind: string, createdAt: number, };
 
 export type ImageSummaryDto = { id: string, repository: string, tag: string, size: string, createdSince: string, };
 

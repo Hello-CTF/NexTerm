@@ -406,6 +406,19 @@
     resize: none;
   }
 
+  /*
+   * 多行输入（AI 接管任务描述这类「要写一大段」的场景）。
+   * 起始高度给足，并允许用户自己往下拖 —— 默认的 resize:none 在
+   * "三行都嫌窄"的地方是不合适的。max-height 用 vh，免得矮窗口下
+   * 弹窗被撑到屏幕外。
+   */
+  .nx-textarea-grow {
+    min-height: 132px;
+    max-height: 46vh;
+    resize: vertical;
+    line-height: 1.62;
+  }
+
   .nx-select {
     padding-right: 24px;
     appearance: none;
@@ -874,6 +887,152 @@
     transform: translateY(-50%);
     border-radius: 0 3px 3px 0;
     background: var(--color-accent);
+  }
+
+  /* ── 右键菜单 ────────────────────────────────────────────────────── */
+  /*
+   * 自绘菜单（src/ui/ContextMenu.tsx）。z-index 比模态的 50 高：
+   * 菜单也可能从模态内部唤起，压在下层会点不到。
+   */
+  .nx-menu {
+    position: fixed;
+    z-index: 80;
+    min-width: 188px;
+    max-width: 340px;
+    padding: 4px;
+    border: 1px solid var(--color-neutral-700);
+    border-radius: var(--radius-md);
+    background: var(--color-neutral-900);
+    box-shadow: var(--shadow-pop);
+    user-select: none;
+  }
+
+  .nx-menu-title {
+    margin-bottom: 3px;
+    padding: 6px 10px 5px;
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
+    color: var(--color-neutral-500);
+    font-size: 10.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nx-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--color-neutral-200);
+    font-size: 12.5px;
+    text-align: left;
+    cursor: default;
+  }
+
+  .nx-menu-item:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-neutral-100);
+  }
+
+  .nx-menu-item.is-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red-500) 20%, transparent);
+    color: var(--color-red-300);
+  }
+
+  .nx-menu-item:disabled {
+    color: var(--color-neutral-600);
+  }
+
+  .nx-menu-icon {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    color: var(--color-neutral-500);
+  }
+
+  .nx-menu-item:hover:not(:disabled) .nx-menu-icon {
+    color: var(--color-blue-300);
+  }
+
+  .nx-menu-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nx-menu-hint {
+    flex-shrink: 0;
+    color: var(--color-neutral-500);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+  }
+
+  .nx-menu-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
+  }
+
+  /* 分组小标题（同类工具 那种「操作」）：只做视觉分段，不可点 */
+  .nx-menu-group {
+    padding: 6px 10px 3px;
+    color: var(--color-neutral-500);
+    font-size: 10.5px;
+  }
+
+  /* 每一行的容器：子菜单要相对它定位 */
+  .nx-menu-row {
+    position: relative;
+  }
+
+  /* 快捷键提示：右侧等宽灰字，和 label 之间靠 margin-left:auto 撑开 */
+  .nx-menu-accel {
+    flex-shrink: 0;
+    margin-left: auto;
+    padding-left: 14px;
+    color: var(--color-neutral-500);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+  }
+
+  .nx-menu-arrow {
+    flex-shrink: 0;
+    color: var(--color-neutral-500);
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  /* 子菜单：复用主菜单外观，默认贴父项右侧 */
+  .nx-submenu {
+    position: absolute;
+    top: -5px;
+    left: 100%;
+    z-index: 1;
+    min-width: 176px;
+    max-width: 340px;
+    margin-left: 2px;
+    padding: 4px;
+    border: 1px solid var(--color-neutral-700);
+    border-radius: var(--radius-md);
+    background: var(--color-neutral-900);
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* 右边实在放不下就翻到左侧（由 SubMenu 量完尺寸后加 .is-flip） */
+  .nx-submenu.is-flip {
+    right: 100%;
+    left: auto;
+    margin-right: 2px;
+    margin-left: 0;
   }
 
   /* ── 模态 ────────────────────────────────────────────────────────── */

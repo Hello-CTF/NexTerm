@@ -23,6 +23,7 @@ import { FileBrowser } from "../features/files/FileBrowser";
 import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
 import { MountPanel } from "../features/files/MountPanel";
+import { ForwardPanel } from "../features/forward/ForwardPanel";
 import { FileEditor } from "../features/files/FileEditor";
 import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
@@ -67,6 +68,7 @@ const TAB_ICON = {
   terminal: IconTerminal,
   files: IconFolderOpen,
   mount: IconDrive,
+  forward: IconNetwork,
   docker: IconBox,
   db: IconDatabase,
   settings: IconSettings,
@@ -161,6 +163,23 @@ export default function App() {
       closable: true,
     });
   }, [activeSessionId, needSession]);
+
+  /**
+   * 端口转发面板。
+   *
+   * 和其它会话级面板不同，它**不要求**先有会话：转发表是全局的，
+   * 用户经常是"回来看一眼我开过哪些口子 / 关掉一条忘了关的"。
+   * 没有会话时面板会提示去连机器，只是"创建"按钮禁用。
+   */
+  const openForward = useCallback(() => {
+    useUi.getState().addTab({
+      id: nextTabId(`forward-${activeSessionId ?? "none"}`),
+      kind: "forward",
+      title: "端口转发",
+      sessionId: activeSessionId ?? undefined,
+      closable: true,
+    });
+  }, [activeSessionId]);
 
   const openDocker = useCallback(() => {
     if (!activeSessionId) return needSession();
@@ -270,10 +289,10 @@ export default function App() {
   /* ── 全局文本输入弹窗（替代 window.prompt） ─────────────────────────── */
 
   useEffect(() => {
-    registerPromptHandler((message, value) => {
+    registerPromptHandler((message, value, options) => {
       const { openTextPrompt } = useUi.getState();
       return new Promise<string | null>((resolve) => {
-        openTextPrompt({ message, value, resolve });
+        openTextPrompt({ message, value, ...options, resolve });
       });
     });
   }, []);
@@ -372,6 +391,7 @@ export default function App() {
     { key: "docker", label: "容器", icon: IconBox, onClick: openDocker },
     { key: "db", label: "数据库", icon: IconDatabase, onClick: () => void openDatabase() },
     { key: "mount", label: "磁盘挂载", icon: IconDrive, onClick: openMount },
+    { key: "forward", label: "端口转发", icon: IconNetwork, onClick: openForward },
   ];
 
   const railBottom = [
@@ -594,16 +614,18 @@ export default function App() {
                 ));
                 return (
                   <div key={w.id} className={wsActive ? "h-full min-h-0" : "hidden"}>
-                    {split ? (
-                      <SplitStack
-                        ratio={w.splitRatio}
-                        onRatio={(r) => setSplitRatio(r, w.id)}
-                        top={groups[0]}
-                        bottom={groups[1]}
-                      />
-                    ) : (
-                      groups[0]
-                    )}
+                    {/*
+                      永远走 SplitStack（未分屏时 bottom 为 undefined）——
+                      别改回「split ? <SplitStack/> : groups[0]」。
+                      那会让取消分屏时 div 的子节点类型发生切换，React 卸载重建
+                      整棵子树，终端被迫重新 attach（详见 SplitStack 的注释）。
+                    */}
+                    <SplitStack
+                      ratio={w.splitRatio}
+                      onRatio={(r) => setSplitRatio(r, w.id)}
+                      top={groups[0]}
+                      bottom={groups[1]}
+                    />
                   </div>
                 );
               })
@@ -817,7 +839,18 @@ function PaneGroup({
   );
 }
 
-/** 上下分屏容器：一条可拖拽的分割条，上下各放一个面板。 */
+/**
+ * 上下分屏容器：一条可拖拽的分割条，上下各放一个面板。
+ *
+ * ★ 未分屏时它**依然挂在树上**，只是不渲染第二栏和分割条。
+ *
+ * 这点是必须的。以前是「分屏时渲 `<SplitStack>`，不分屏时直接渲 `groups[0]`」，
+ * 于是取消分屏会让那个 div 的子节点类型从 `SplitStack` 变成 `PaneGroup` ——
+ * React 判定类型不同，整棵子树卸载重建，里面所有 XtermView 重新走一遍
+ * `terminal_attach`：丢滚动内容、在远端泄漏一个 shell，运气不好还会直接 attach
+ * 失败（表现为终端里那句「[attach 失败] [object Object]」，只能重起工作区才恢复）。
+ * 保持结构恒定，React 就能按 key 复用同一个 PaneGroup 实例。
+ */
 function SplitStack({
   ratio,
   onRatio,
@@ -828,7 +861,8 @@ function SplitStack({
   ratio: number;
   onRatio: (r: number) => void;
   top: ReactNode;
-  bottom: ReactNode;
+  /** 为空表示未分屏：此时只渲染上栏。 */
+  bottom?: ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
@@ -860,26 +894,32 @@ function SplitStack({
     };
   }, []);
 
+  const split = bottom != null;
+
   return (
     <div ref={boxRef} className="flex h-full min-h-0 flex-col">
       <div
         className="flex min-h-[60px] flex-col"
-        style={{ flex: `0 0 calc(${ratio * 100}% - 3px)` }}
+        style={split ? { flex: `0 0 calc(${ratio * 100}% - 3px)` } : { flex: "1 1 auto" }}
       >
         {top}
       </div>
-      <div
-        className="nx-split-handle"
-        title="拖动调整上下比例"
-        onPointerDown={() => {
-          dragging.current = true;
-          document.body.style.cursor = "row-resize";
-          document.body.style.userSelect = "none";
-        }}
-      >
-        <span className="nx-split-grip" />
-      </div>
-      <div className="flex min-h-[60px] flex-1 flex-col">{bottom}</div>
+      {split && (
+        <>
+          <div
+            className="nx-split-handle"
+            title="拖动调整上下比例"
+            onPointerDown={() => {
+              dragging.current = true;
+              document.body.style.cursor = "row-resize";
+              document.body.style.userSelect = "none";
+            }}
+          >
+            <span className="nx-split-grip" />
+          </div>
+          <div className="flex min-h-[60px] flex-1 flex-col">{bottom}</div>
+        </>
+      )}
     </div>
   );
 }
@@ -909,6 +949,8 @@ function PaneForTab({
       );
     case "mount":
       return tab.sessionId ? <MountPanel sessionId={tab.sessionId} /> : <EmptyState />;
+    case "forward":
+      return <ForwardPanel sessionId={tab.sessionId} />;
     case "files":
       if (!tab.sessionId) return <EmptyState />;
       return tab.path ? (

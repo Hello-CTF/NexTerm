@@ -80,3 +80,39 @@ export function normalizeTypedPath(input: string): string | null {
   const trimmed = norm(typed).replace(/\/+$/, "");
   return trimmed === "" ? "/" : trimmed;
 }
+
+/**
+ * 把「用户随手敲出来的」路径落成绝对路径。
+ *
+ * 终端里输入的路径天然是相对当前目录的（`./a.log` / `logs/x.log` / 裸文件名），
+ * 而内核的 fs_* 系列要的是一个它认得的位置串。所以相对路径一律按 cwd 拼；
+ * cwd 拿不到（本地会话、刚重连）时保持原样 —— 让内核自己按它自己的当前目录解释，
+ * 比前端瞎猜一个前缀靠谱。
+ */
+export function resolveRemotePath(cwd: string | null, input: string): string {
+  const typed = input.trim();
+  const raw = norm(typed);
+  if (!raw) return raw;
+  // 已经是绝对路径：POSIX 根、家目录、Windows 盘符
+  if (raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:[\\/]/.test(typed)) return raw;
+  const base = cwd ? norm(cwd).replace(/\/+$/, "") : "";
+  const rel = raw.replace(/^\.\//, "");
+  if (!base) return rel;
+  return joinPath(base, rel);
+}
+
+/**
+ * 一段终端选区「像不像一个路径」。
+ *
+ * 只做粗筛：单行、不含中文标点与空白包裹 —— 够用来决定要不要把它预填进
+ * 「下载哪个文件」的输入框，判错也只是预填了个要改的值，不会做错事。
+ */
+export function looksLikePath(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 512) return false;
+  if (t.includes("\n")) return false;
+  // 有空格的行更像一句命令；但不否定「带空格的目录名」，所以只挡明显的命令式
+  if (/[\s;|&><`]/.test(t)) return false;
+  return true;
+}
+

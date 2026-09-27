@@ -10,6 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { createBinaryChannel } from "../../ipc/events";
 import { dockerApi, terminalApi } from "../../ipc/commands";
+import { describeError } from "../../ui/errorText";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 
 // 终端配色：与 styles.css 的令牌保持一致（画布 #101217），
@@ -58,6 +59,10 @@ export interface TerminalHandle {
   scrollToBlock: (index: number) => void;
   navigateBlock: (dir: "prev" | "next") => number | null;
   clearBlocks: () => void;
+  /** 清屏（只清视口，滚回去还能看到 —— 和 shell 的 clear 语义一致）。 */
+  clear: () => void;
+  /** 当前选中的文本（没选中时是空串）。右键「向 AI 提问」用它取内容。 */
+  getSelection: () => string;
 }
 
 export interface XtermViewProps {
@@ -149,6 +154,8 @@ export function XtermView(props: XtermViewProps) {
       scrollToBlock: (index) => blocks.scrollTo(index),
       navigateBlock: (dir) => blocks.navigate(dir),
       clearBlocks: () => blocks.clear(),
+      clear: () => term.clear(),
+      getSelection: () => term.getSelection(),
     });
 
     // ── attach：输出走 Channel 二进制（L1）──
@@ -178,7 +185,10 @@ export function XtermView(props: XtermViewProps) {
         kernelTabIdRef.current = id;
         props.onAttach?.(id);
       } catch (e) {
-        term.writeln(`\r\n\x1b[31m[attach 失败] ${String(e)}\x1b[0m`);
+        // 不能用 String(e)：内核抛的 AppError 是 { code, message } 对象，
+        // String() 只会印出 "[object Object]"，真正的原因（会话没了？PTY 开不出来？）
+        // 当场丢失，排查时等于什么都没说。
+        term.writeln(`\r\n\x1b[31m[attach 失败] ${describeError(e)}\x1b[0m`);
       }
     };
     // attach 延迟到一个宏任务再发。

@@ -35,6 +35,21 @@ void listenEvent<{ code: string; message: string }>(EVENTS.appError, (p) => {
   useUi.getState().pushToast("error", p.message);
 });
 
+// ── 全局右键：干掉 WebView 自带的浏览器菜单 ──
+// Tauri 下弹的是「返回 / 前进 / 重新加载 / 检查元素」，在运维终端里毫无意义，
+// 还会盖住我们自己的菜单（src/ui/ContextMenu.tsx）。
+//
+// 输入类控件要放行：复制 / 粘贴 / 全选在那里是刚需，自绘一套反而丢功能。
+// 但 xterm 的 `.xterm-helper-textarea`（那个透明输入代理）本身就是 textarea，
+// 而终端恰恰是最需要自绘菜单的地方 —— 所以得先看它在不在 .xterm 里。
+window.addEventListener("contextmenu", (e) => {
+  const el = e.target as HTMLElement | null;
+  const inEditable = el?.closest("input, textarea, [contenteditable='true']");
+  const inTerminal = el?.closest(".xterm");
+  if (inEditable && !inTerminal) return;
+  e.preventDefault();
+});
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

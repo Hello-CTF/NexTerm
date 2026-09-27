@@ -143,3 +143,26 @@ pub async fn terminal_record_stop(state: ManagedState<'_>, tab_id: String) -> Ap
 pub async fn terminal_close_tab(state: ManagedState<'_>, tab_id: String) -> AppResult<()> {
     crate::session::close_tab(&state, &tab_id).await
 }
+
+/// 把当前回滚输出写到本地文件（右键「保存为日志」）。
+///
+/// 为什么走内核而不是前端：前端只装了 dialog 插件（能选路径），没有 fs 插件，
+/// 落盘只能靠内核这一条路。这里就是一次 `std::fs::write`，
+/// 为它单独引一个 tauri-plugin-fs 不划算。
+///
+/// `max_bytes` 默认 4 MiB：终端 scrollback 上限是 10 万行，
+/// 不设上限时一次 dump 出十几兆写盘对用户毫无意义。
+#[tauri::command]
+pub async fn terminal_export_log(
+    state: ManagedState<'_>,
+    tab_id: String,
+    path: String,
+    max_bytes: Option<usize>,
+) -> AppResult<u64> {
+    let tab = state.sessions.get_tab(&tab_id).await?;
+    let bytes = tab.dump(max_bytes.unwrap_or(4 * 1024 * 1024));
+    let len = bytes.len() as u64;
+    std::fs::write(&path, &bytes)
+        .map_err(|e| crate::error::AppError::param(format!("写入 {path} 失败: {e}")))?;
+    Ok(len)
+}

@@ -55,6 +55,13 @@ export const sessionApi = {
   connectLocal: () => call<SessionInfo>("session_connect_local"),
   disconnect: (sessionId: string) =>
     call<void>("session_disconnect", { sessionId }),
+  /**
+   * 重连一个已断开的会话（§7）。
+   *
+   * 返回 false 不是错误 —— 表示「这个会话天然不可重连」（本地快速会话没有
+   * assetId，或会话已被显式断开后从内核里摘掉了）。调用方按提示处理即可。
+   */
+  reconnect: (sessionId: string) => call<boolean>("session_reconnect", { sessionId }),
   list: () => call<SessionInfo[]>("session_list"),
   probe: (host: string, port: number, timeoutMs?: number) =>
     call<{ open: boolean; error?: string }>("session_probe", {
@@ -92,6 +99,14 @@ export const terminalApi = {
   recordStart: (tabId: string, path: string) =>
     call<void>("terminal_record_start", { tabId, path }),
   recordStop: (tabId: string) => call<number>("terminal_record_stop", { tabId }),
+  /**
+   * 把当前回滚输出写到本地文件，返回写入字节数。
+   *
+   * 走内核而不是前端：前端只装了 dialog 插件（能选路径），没装 fs 插件 ——
+   * 浏览器里没有任何办法把一段文字落到用户磁盘上。
+   */
+  exportLog: (tabId: string, path: string, maxBytes?: number) =>
+    call<number>("terminal_export_log", { tabId, path, maxBytes }),
   closeTab: (tabId: string) => call<void>("terminal_close_tab", { tabId }),
 };
 
@@ -473,6 +488,16 @@ export const forwardApi = {
       listenPort,
       targetHost,
       targetPort,
+    }),
+  /**
+   * SOCKS5 动态转发：本地起一个 SOCKS5 代理，目标由客户端当场指定。
+   *
+   * 只有 SSH 会话能建（内置的代理无认证，所以内核只监听 127.0.0.1）。
+   */
+  createSocks: (sessionId: string, listenPort: number) =>
+    call<import("./types").ForwardSpecDto>("forward_create_socks", {
+      sessionId,
+      listenPort,
     }),
   list: () => call<import("./types").ForwardSpecDto[]>("forward_list"),
   remove: (id: string) => call<void>("forward_remove", { id }),

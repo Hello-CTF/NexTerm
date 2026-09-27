@@ -137,6 +137,15 @@ pub async fn session_cwd(state: ManagedState<'_>, session_id: String) -> AppResu
     Ok(s.transport().await.cwd())
 }
 
+/// 重连一个会话（§7）：重建底层传输、替换进 Session、为每个标签重开 PTY。
+///
+/// `session::reconnect::try_reconnect` 在核心里一直存在，只是从没暴露成命令 ——
+/// 所以之前断开之后只能关掉工作区重开。返回 true 表示重连成功。
+#[tauri::command]
+pub async fn session_reconnect(state: ManagedState<'_>, session_id: String) -> AppResult<bool> {
+    session::reconnect::try_reconnect(&state, &session_id).await
+}
+
 /// 屏蔽未使用告警。
 #[allow(dead_code)]
 fn _unused(_s: State<'_, ()>) {}
