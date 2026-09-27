@@ -242,7 +242,11 @@ fn real(path: &str) -> std::path::PathBuf {
     if path == "~" || path.starts_with("~/") || path.starts_with("~\\") {
         if let Some(home) = dirs::home_dir() {
             let rest = path[1..].trim_start_matches(['/', '\\']);
-            return if rest.is_empty() { home } else { home.join(rest) };
+            return if rest.is_empty() {
+                home
+            } else {
+                home.join(rest)
+            };
         }
     }
     std::path::PathBuf::from(path)

@@ -40,6 +40,38 @@ impl ChatMessage {
             ..Default::default()
         }
     }
+
+    /// 带图片的用户消息（多模态输入）。
+    ///
+    /// content 走 OpenAI 的数组形态：一个 text 块 + 若干 `image_url` 块，
+    /// 图片用 data URI **内联** —— 不依赖图床，截图也不用离开本机。
+    ///
+    /// 没图时故意退回 `user()`：部分兼容实现只认字符串形态的 content，
+    /// 手上没图就别去赌那个数组分支。
+    pub fn user_with_images(text: impl Into<String>, images: &[String]) -> Self {
+        let text = text.into();
+        if images.is_empty() {
+            return Self::user(text);
+        }
+        let mut parts = vec![serde_json::json!({ "type": "text", "text": text })];
+        for img in images {
+            // 前端可能给裸 base64，也可能给完整 data URI —— 两种都收
+            let url = if img.starts_with("data:") {
+                img.clone()
+            } else {
+                format!("data:image/png;base64,{img}")
+            };
+            parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": url }
+            }));
+        }
+        Self {
+            role: "user".into(),
+            content: serde_json::Value::Array(parts),
+            ..Default::default()
+        }
+    }
     pub fn assistant(text: impl Into<String>) -> Self {
         Self {
             role: "assistant".into(),
@@ -104,6 +136,10 @@ pub struct Completion {
     pub finish_reason: String,
     pub tokens_in: u64,
     pub tokens_out: u64,
+    /// 输入里命中 prompt cache 的 token（`tokens_in` 的子集）。
+    ///
+    /// 取不到就是 0 —— 不是所有提供方都会回报缓存命中，缺字段不等于"没命中"。
+    pub tokens_cached: u64,
 }
 
 /// 流式片段（agent 消费）。
@@ -234,14 +270,14 @@ impl LlmClient {
                     Err(_) => continue,
                 };
                 if let Some(usage) = v.get("usage") {
-                    completion.tokens_in = usage
-                        .get("prompt_tokens")
-                        .and_then(|x| x.as_u64())
-                        .unwrap_or(0);
-                    completion.tokens_out = usage
-                        .get("completion_tokens")
-                        .and_then(|x| x.as_u64())
-                        .unwrap_or(0);
+                    // 兼容各家口径（含缓存字段）。只在真的解析出用量时覆盖 ——
+                    // 有的网关会在中间分片里塞一个空的 usage，别把最终值冲掉。
+                    let u = crate::ai::usage::parse_usage(usage);
+                    if u.has_data() {
+                        completion.tokens_in = u.prompt_tokens;
+                        completion.tokens_out = u.completion_tokens;
+                        completion.tokens_cached = u.cached_tokens;
+                    }
                 }
                 let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
                     continue;
@@ -349,20 +385,15 @@ impl LlmClient {
             .and_then(|f| f.as_str())
             .unwrap_or("")
             .to_string();
-        let usage = v.get("usage").cloned().unwrap_or_default();
+        let usage = crate::ai::usage::parse_usage(&v.get("usage").cloned().unwrap_or_default());
         Ok(Completion {
             content,
             reasoning,
             tool_calls,
             finish_reason,
-            tokens_in: usage
-                .get("prompt_tokens")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
-            tokens_out: usage
-                .get("completion_tokens")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
+            tokens_in: usage.prompt_tokens,
+            tokens_out: usage.completion_tokens,
+            tokens_cached: usage.cached_tokens,
         })
     }
 

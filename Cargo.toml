@@ -7,7 +7,15 @@ opt-level = "s"
 lto = "thin"
 strip = true
 codegen-units = 16
-panic = "abort"
+
+# panic 策略刻意保持 unwind（默认值），**不要改回 abort**。
+#
+# abort 能省一点体积，代价却是：AI 任务跑在 tokio worker 线程上，那里任何一次
+# panic 都会当场终止整个进程 —— 没有日志、没有错误提示，用户只看到「用到一半退出了」。
+# 2026-09-28 就是这么丢掉一次真实会话的（agent.rs 一处阻塞读误用）。
+# 改成 unwind 后，tokio 会把任务里的 panic 收进 JoinError，我们就能把「出错了」
+# 推给界面、让进程活着（见 commands/ai.rs 的 spawn 包装）。
+panic = "unwind"
 
 # ── dev（开发版）体积 / 链接时间收敛 ──────────────────────────────────
 #

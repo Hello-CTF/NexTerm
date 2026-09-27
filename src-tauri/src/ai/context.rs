@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::ai::provider::ChatMessage;
 use crate::state::AppState;
 use crate::transport::Transport;
 
@@ -75,6 +76,68 @@ pub async fn build(
 
     trim_to_budget(&mut bundle);
     bundle
+}
+
+/// 「稳定前缀 + 易变后缀」的拆分结果（P0-5 上下文缓存）。
+///
+/// prompt cache 的命中的前提是**前缀字节级稳定**：只要最前面那段每次都不一样，
+/// 后面再长也没用。而会话目录、终端输出这些东西天然每轮在变，绝不能进前缀。
+#[derive(Debug, Clone, Default)]
+pub struct SplitPrompt {
+    /// 稳定前缀：角色设定 + 工具使用规范，同一进程内每次调用完全相同。
+    /// 调用方应把它作为第一条 `system` 消息的内容。
+    pub stable: String,
+    /// 易变后缀：会话 / 目录 / 终端输出 / 侦察 / 选中文本。
+    /// 调用方应把它追加到消息数组**末尾**（真实提问之前），不要放回 system。
+    pub volatile: String,
+}
+
+impl SplitPrompt {
+    /// 易变后缀是否为空（没有会话、没有选中文本等，纯全局提问时为空）。
+    pub fn is_volatile_empty(&self) -> bool {
+        self.volatile.trim().is_empty()
+    }
+
+    /// 把易变后缀包成一条独立的 `user` 消息。
+    ///
+    /// 建议插在**真实提问那条 user 消息之前**（即数组倒数第二个位置）：这样
+    /// 环境上下文与提问贴在一起、容易被模型关联上，同时不污染前面那条稳定前缀。
+    /// 为空时返回 `None`，调用方直接跳过即可。
+    pub fn volatile_message(&self) -> Option<ChatMessage> {
+        if self.is_volatile_empty() {
+            None
+        } else {
+            Some(ChatMessage::user(format!(
+                "[环境上下文]\n{}",
+                self.volatile
+            )))
+        }
+    }
+}
+
+/// 装配上下文并拆成「稳定前缀 / 易变后缀」。
+///
+/// 等价于旧的 `system_prompt_base() + "\n\n" + render(&build(..))` 那一段：
+/// `stable + "\n\n" + volatile` 与旧写法逐字节相同，只是把两段分开交给调用方，
+/// 让易变内容可以挪到消息数组尾部、把 system 前缀留住给 prompt cache 命中。
+///
+/// 与 [`build`] 一样是 async（要读会话 / 侦察快照）；`build()` 的签名与行为保持不变，
+/// 本函数内部复用它，旧调用点不会断。
+pub async fn build_split(
+    state: &AppState,
+    scope: &crate::ai::AiScope,
+    selection: Option<String>,
+) -> SplitPrompt {
+    let bundle = build(state, scope, selection).await;
+    split_rendered(&bundle)
+}
+
+/// [`build_split`] 的纯函数内核：不碰 IO，方便单测证明「前缀稳定」这件事。
+pub fn split_rendered(bundle: &ContextBundle) -> SplitPrompt {
+    SplitPrompt {
+        stable: crate::ai::system_prompt_base().to_string(),
+        volatile: render(bundle),
+    }
 }
 
 /// 渲染为 system 附加文本。
@@ -235,5 +298,70 @@ mod tests {
         };
         trim_to_budget(&mut bundle);
         assert!(bundle.selection.is_none(), "selection 应最先被裁");
+    }
+
+    #[test]
+    fn split_stable_prefix_is_byte_identical() {
+        // 两份内容天差地别的上下文包：稳定前缀必须逐字节相同，否则 prompt cache
+        // 永远命中不了。这正是这次拆分的全部意义。
+        let a = ContextBundle {
+            session: Some(SessionBrief {
+                name: "web-01".into(),
+                kind: "ssh".into(),
+                host: Some("1.2.3.4:22".into()),
+                username: None,
+                cwd: Some("/data/app".into()),
+            }),
+            tail: vec!["line1".into()],
+            ..Default::default()
+        };
+        let b = ContextBundle {
+            session: Some(SessionBrief {
+                name: "db-02".into(),
+                kind: "ssh".into(),
+                host: Some("10.0.0.5:22".into()),
+                username: None,
+                cwd: Some("/var/lib/mysql".into()),
+            }),
+            selection: Some("一段选中的文本".into()),
+            ..Default::default()
+        };
+        let sa = split_rendered(&a);
+        let sb = split_rendered(&b);
+        assert_eq!(sa.stable, sb.stable, "稳定前缀必须与上下文内容无关");
+        assert_eq!(sa.stable, crate::ai::system_prompt_base());
+        assert_ne!(sa.volatile, sb.volatile, "易变后缀应随上下文变化");
+    }
+
+    #[test]
+    fn split_reassembles_to_old_layout() {
+        // 与旧写法 `system_prompt_base() + "\n\n" + render(bundle)` 完全等价。
+        let bundle = ContextBundle {
+            tail: vec!["hello".into()],
+            recon: Some("$ uname\nLinux".into()),
+            ..Default::default()
+        };
+        let s = split_rendered(&bundle);
+        let reassembled = format!("{}\n\n{}", s.stable, s.volatile);
+        let old = format!("{}\n\n{}", crate::ai::system_prompt_base(), render(&bundle));
+        assert_eq!(reassembled, old);
+    }
+
+    #[test]
+    fn volatile_message_skips_empty_context() {
+        let empty = split_rendered(&ContextBundle::default());
+        assert!(empty.is_volatile_empty());
+        assert!(empty.volatile_message().is_none());
+
+        let with_ctx = split_rendered(&ContextBundle {
+            tail: vec!["x".into()],
+            ..Default::default()
+        });
+        let msg = with_ctx.volatile_message().expect("非空上下文应有消息");
+        assert_eq!(msg.role, "user");
+        assert!(matches!(
+            msg.content,
+            serde_json::Value::String(ref t) if t.starts_with("[环境上下文]")
+        ));
     }
 }

@@ -30,7 +30,7 @@ const KIND_LABEL: Record<string, string> = {
 
 export function AssetTree() {
   const qc = useQueryClient();
-  const { pushToast, leftOpen } = useUi();
+  const { pushToast, leftOpen, leftWidth } = useUi();
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
 
@@ -72,7 +72,10 @@ export function AssetTree() {
   if (!leftOpen) return null;
 
   return (
-    <div className="flex h-full w-[236px] shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950">
+    <div
+      className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
+      style={{ width: leftWidth }}
+    >
       <div className="flex h-[34px] shrink-0 items-center gap-1 px-2.5">
         <span className="text-xs font-semibold tracking-wide text-neutral-200">资产</span>
         <div className="nx-spacer" />

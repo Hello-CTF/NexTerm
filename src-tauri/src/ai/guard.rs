@@ -1,17 +1,112 @@
-//! AI 护栏（§8.3）：三级风险分类。
+//! AI 护栏（§8.3）：风险分类 + 权限档位决策。
 //!
 //! **必须在工具层拦截，不能只靠提示词。** 第一层为确定性正则/前缀规则；
 //! 第二层模型复核为可选增强（v1 默认关，接口预留）。
+//!
+//! 分两层看：
+//!   · `classify_*` 只回答「这个动作有多危险」（风险，与用户设置无关）；
+//!   · `decide_*` 再结合**档位**回答「这次放不放行」（决策）。
+//! 拆开是因为风险是客观的、档位是用户选的 —— 混在一起后，
+//! "改档位"和"改分类"会互相牵动，测试也没法单独写。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Risk {
+    /// 只读、无副作用。
     Safe,
+    /// 有副作用但可控、常见。
     NeedsConfirm,
+    /// 危险命令（内置危险表或**用户自定义表**命中）—— 任何档位都要问用户。
+    Danger,
+    /// 硬底线 —— 任何档位都不执行，且**不询问**。
+    ///
+    /// 不询问是刻意的：弹了确认就等于给了入口，用户手滑一下世界就没了。
+    /// 这一档也不允许用户配置（见 `HARD_FORBIDDEN`）。
     Forbidden,
+}
+
+/// 常规 AI 的权限档位。
+///
+/// ⚠️ 这里**不含终端接管**：接管是把终端整个交出去，属于完全权限，
+/// 是独立模块（`takeover.rs`），既不随档位变化，也不因接管而改变档位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
+    /// 只读：只放行只读动作，任何写/执行**直接拒绝**（不是"多问几次"）。
+    ReadOnly,
+    /// 读写（默认）：只读放行；有副作用的动作问用户。
+    #[default]
+    ReadWrite,
+    /// 完全静默：只有危险命令才问用户，其余一路放行。
+    Silent,
+}
+
+/// 一次决策的结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    Ask,
+    Deny,
+}
+
+/// 权限配置：档位 + 用户自定义危险规则（存 sqlite）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionConfig {
+    pub mode: PermissionMode,
+    /// 用户自定义的危险规则，**按子串匹配**（大小写不敏感）。
+    ///
+    /// 刻意不收正则：让用户写正则等于把"少个括号就整条失效"的风险
+    /// 交给非工程用户；子串足够表达「kubectl delete」「我们的发布脚本」
+    /// 这类意图，错了也能一眼看出来。
+    #[serde(default)]
+    pub danger_rules: Vec<String>,
+}
+
+impl Default for PermissionConfig {
+    fn default() -> Self {
+        Self {
+            mode: PermissionMode::ReadWrite,
+            danger_rules: Vec::new(),
+        }
+    }
+}
+
+/// 分类 + 决策的完整结论。
+#[derive(Debug, Clone)]
+pub struct Ruling {
+    pub decision: Decision,
+    pub risk: Risk,
+    /// 风险类别（供「本会话允许此类」的记忆使用）。
+    pub kind: Option<&'static str>,
+    /// 说明文案：既要给用户看（确认卡片），也要给模型看（拒绝理由）。
+    pub reason: String,
+}
+
+/// 档位 × 风险的决策表。
+///
+/// 顺序刻意写成「先看风险、再看档位」：硬底线与危险命令**优先于档位**，
+/// 否则"完全静默"会连 `rm -rf /` 都放过去。
+pub fn decide(mode: PermissionMode, risk: Risk) -> Decision {
+    match risk {
+        // 硬底线：与档位无关，永不执行、也不弹确认
+        Risk::Forbidden => Decision::Deny,
+        // 危险命令：静默档也照样问（探宝明确要求）
+        Risk::Danger => match mode {
+            PermissionMode::ReadOnly => Decision::Deny,
+            _ => Decision::Ask,
+        },
+        // 只读动作：三档都放行
+        Risk::Safe => Decision::Allow,
+        Risk::NeedsConfirm => match mode {
+            PermissionMode::ReadOnly => Decision::Deny,
+            PermissionMode::ReadWrite => Decision::Ask,
+            PermissionMode::Silent => Decision::Allow,
+        },
+    }
 }
 
 /// 风险类别名（用于“本会话允许此类”的记忆）。
@@ -29,13 +124,19 @@ pub const KIND_SHELL_PIPE: RuleKind = RuleKind("shell_pipe");
 pub const KIND_PERM: RuleKind = RuleKind("perm");
 pub const KIND_UNKNOWN: RuleKind = RuleKind("unknown");
 
+/// 危险命令的类别名（静默档也照样问的那一类）。
+pub const KIND_DANGER: &str = "danger";
+
 /// 分类结果：风险级别 + 类别（供会话级放行记忆使用）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub risk: Risk,
     pub kind: Option<&'static str>,
     /// 命中的规则说明（给确认卡片展示）。
-    pub reason: &'static str,
+    ///
+    /// 是 `String` 而不是 `&'static str`：用户自定义规则命中时要带上规则原文，
+    /// 那是运行期数据，静态串装不下。
+    pub reason: String,
 }
 
 impl Verdict {
@@ -43,13 +144,27 @@ impl Verdict {
         Self {
             risk: Risk::Safe,
             kind: None,
-            reason: "只读白名单命令",
+            reason: "只读白名单命令".into(),
         }
     }
     fn confirm(kind: &'static str, reason: &'static str) -> Self {
         Self {
             risk: Risk::NeedsConfirm,
             kind: Some(kind),
+            reason: reason.into(),
+        }
+    }
+    fn danger(reason: &'static str) -> Self {
+        Self {
+            risk: Risk::Danger,
+            kind: Some(KIND_DANGER),
+            reason: reason.into(),
+        }
+    }
+    fn danger_dyn(reason: String) -> Self {
+        Self {
+            risk: Risk::Danger,
+            kind: Some(KIND_DANGER),
             reason,
         }
     }
@@ -57,13 +172,16 @@ impl Verdict {
         Self {
             risk: Risk::Forbidden,
             kind: None,
-            reason,
+            reason: reason.into(),
         }
     }
 }
 
 struct Rules {
+    /// 硬底线：不可配置，任何档位都不执行。
     forbidden: Vec<(regex::Regex, &'static str)>,
+    /// 危险命令（内置表）：任何档位都要问用户。
+    danger: Vec<(regex::Regex, &'static str)>,
     confirm: Vec<(regex::Regex, &'static str, &'static str)>,
     safe_prefixes: Vec<&'static str>,
     safe_first_tokens: Vec<&'static str>,
@@ -94,8 +212,11 @@ fn word_boundary_re(pattern: &str) -> regex::Regex {
 fn rules() -> &'static Rules {
     static RULES: OnceLock<Rules> = OnceLock::new();
     RULES.get_or_init(|| {
-        // ── Forbidden（默认直接拒绝，除非设置里显式解锁且仍需确认）──
-        let forbidden_patterns: &[(&str, &'static str)] = &[
+        // ── 硬底线：任何档位都不执行，也不弹确认，用户不可配置 ──
+        //
+        // 判据是「不可逆 + 大概率不是本意」：删库、格式化、块设备直写、fork 炸弹。
+        // 这些东西弹确认没有意义 —— 用户手滑点一下的代价太大，不如连入口都不给。
+        let hard_forbidden: &[(&str, &'static str)] = &[
             // rm 递归作用于根/家/关键目录
             (
                 r#"(?i)\brm\b[^|;&]*(?:^|[\s])-{1,2}[a-z-]*(r|--recursive)[a-z]*[\s]+(?:['"])?(/~|/\*|/etc|/usr|/var|/boot|/bin|/sbin|/lib|/opt|/dev|/proc|/sys|[a-z]:\\|[a-z]:/|/)(?:['"])?(\s|/|\*|$)"#,
@@ -104,15 +225,23 @@ fn rules() -> &'static Rules {
             (r"(?i)\bmkfs(\.\w+)?\b", "格式化文件系统"),
             (r"(?i)\bdd\b[^|;&]*\bof=/dev/", "dd 直写块设备"),
             (r"(?i)>\s*/dev/(sd[a-z]|nvme|hd[a-z])", "重定向覆写块设备"),
-            (r"(?i)\b(shutdown|poweroff|halt)\b|\breboot\b|\binit\s+[06]\b", "关机/重启"),
             (r"(?i)\bformat\b[^|;&]*[a-z]:|\bformat\s+/|\bformat\s+/q", "Windows format 格式化"),
             (
                 r"(?i)\b(rd|rmdir)\b[^|;&]*\/s[^|;&]*\s+[a-z]:?(\\|/)?\s*$|\bdel\b[^|;&]*\/[sq][^|;&]*\s+[a-z]:\\",
                 "Windows 递归删除盘根",
             ),
             (r"(?i)\bdrop\s+(database|schema)\b", "DROP DATABASE/SCHEMA"),
-            (r"(?i)\btruncate\s+table\b", "TRUNCATE TABLE"),
-            // docker 删除“全部”容器/镜像（-f 配合 $(docker ps -aq) / --all / 通配）
+            (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;", "fork 炸弹"),
+        ];
+
+        // ── 危险命令：用户可能真的要做，所以**问**而不是**拒** ──
+        //
+        // 静默档也照样问这一批 —— 这是「完全静默」这个档位的边界所在。
+        let danger_patterns: &[(&str, &'static str)] = &[
+            (
+                r"(?i)\b(shutdown|poweroff|halt)\b|\breboot\b|\binit\s+[06]\b",
+                "关机/重启",
+            ),
             (
                 r"(?i)\bdocker\s+rm\b[^|;&]*-(f|force)[^|;&]*(\$\(|--all|-a\b|\*)",
                 "docker 强制删除全部容器",
@@ -121,8 +250,11 @@ fn rules() -> &'static Rules {
                 r"(?i)\bdocker\s+(system\s+)?prune\b[^|;&]*-(a|all)\b",
                 "docker prune 全量清理",
             ),
-            (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;", "fork 炸弹"),
-            (r"(?i)\bchmod\b[^|;&]*-R\b?[^|;&]*\s+777\s+/(?:\s|$)", "对根做 777"),
+            (
+                r"(?i)\bchmod\b[^|;&]*-R\b?[^|;&]*\s+777\s+/(?:\s|$)",
+                "对根做 777",
+            ),
+            (r"(?i)\btruncate\s+table\b", "TRUNCATE TABLE"),
         ];
 
         // ── NeedsConfirm ──
@@ -254,7 +386,11 @@ fn rules() -> &'static Rules {
         ];
 
         Rules {
-            forbidden: forbidden_patterns
+            forbidden: hard_forbidden
+                .iter()
+                .map(|(p, reason)| (word_boundary_re(p), *reason))
+                .collect(),
+            danger: danger_patterns
                 .iter()
                 .map(|(p, reason)| (word_boundary_re(p), *reason))
                 .collect(),
@@ -298,8 +434,13 @@ pub fn normalize_command(raw: &str) -> String {
     s
 }
 
-/// 对单条 shell 命令分级（第一层规则引擎）。
+/// 对单条 shell 命令分级（第一层规则引擎，仅内置规则）。
 pub fn classify_command(raw: &str) -> Verdict {
+    classify_command_with(raw, &[])
+}
+
+/// 同上，但带上用户自定义的危险规则。
+pub fn classify_command_with(raw: &str, extra_danger: &[String]) -> Verdict {
     let cmd = normalize_command(raw);
     if cmd.is_empty() {
         return Verdict::safe();
@@ -318,7 +459,7 @@ pub fn classify_command(raw: &str) -> Verdict {
         if seg.is_empty() {
             continue;
         }
-        if let Some(v) = classify_segment(&seg, r) {
+        if let Some(v) = classify_segment(&seg, r, extra_danger) {
             return v;
         }
     }
@@ -386,19 +527,46 @@ fn split_segments(cmd: &str) -> Vec<String> {
         .collect()
 }
 
-fn classify_segment(seg: &str, r: &'static Rules) -> Option<Verdict> {
+fn classify_segment(seg: &str, r: &'static Rules, extra: &[String]) -> Option<Verdict> {
     let low = seg.to_ascii_lowercase();
+    // 1) 硬底线：最高优先级
     for (re, reason) in &r.forbidden {
         if re.is_match(&low) {
             return Some(Verdict::forbid(reason));
         }
     }
+    // 2) 用户自定义危险规则：**优先于内置规则** ——
+    //    用户加规则就是为了盖过默认判断，排在后面等于白加。
+    if let Some(hit) = matches_user_danger(&low, extra) {
+        return Some(Verdict::danger_dyn(format!("命中自定义危险规则「{hit}」")));
+    }
+    // 3) 内置危险表
+    for (re, reason) in &r.danger {
+        if re.is_match(&low) {
+            return Some(Verdict::danger(reason));
+        }
+    }
+    // 4) 常规需确认
     for (re, kind, reason) in &r.confirm {
         if re.is_match(&low) {
             return Some(Verdict::confirm(kind, reason));
         }
     }
     None
+}
+
+/// 用户自定义危险规则：**子串匹配**（大小写不敏感），返回命中的那条原文。
+///
+/// 用子串而不是正则 —— 让用户写正则等于把"少个括号就整条失效"的风险
+/// 交给非工程用户；子串足够表达「kubectl delete」「我们的发布脚本」这类意图，
+/// 而且写错了能一眼看出来。
+fn matches_user_danger(cmd_lower: &str, extra: &[String]) -> Option<String> {
+    extra
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .find(|s| cmd_lower.contains(&s.to_ascii_lowercase()))
+        .map(str::to_string)
 }
 
 fn is_whitelisted(cmd: &str, r: &'static Rules) -> bool {
@@ -411,8 +579,27 @@ fn is_whitelisted(cmd: &str, r: &'static Rules) -> bool {
     r.safe_first_tokens.contains(&base)
 }
 
+/// 风险严重度排序，用于「复合命令取最严的那段」。
+fn rank(r: Risk) -> u8 {
+    match r {
+        Risk::Safe => 0,
+        Risk::NeedsConfirm => 1,
+        Risk::Danger => 2,
+        Risk::Forbidden => 3,
+    }
+}
+
 /// 工具级分类（§8.3）：结合工具名与参数。
 pub fn classify_tool(tool: &str, args: &serde_json::Value) -> Verdict {
+    classify_tool_with(tool, args, &[])
+}
+
+/// 同上，但带上用户自定义的危险规则。
+pub fn classify_tool_with(
+    tool: &str,
+    args: &serde_json::Value,
+    extra_danger: &[String],
+) -> Verdict {
     match tool {
         "exec_commands" => {
             let cmds = args
@@ -422,12 +609,12 @@ pub fn classify_tool(tool: &str, args: &serde_json::Value) -> Verdict {
                 .unwrap_or_default();
             let mut worst = Verdict::safe();
             for c in cmds.iter().filter_map(|v| v.as_str()) {
-                let v = classify_command(c);
-                if v.risk == Risk::Forbidden {
-                    return v;
-                }
-                if v.risk == Risk::NeedsConfirm && worst.risk != Risk::NeedsConfirm {
+                let v = classify_command_with(c, extra_danger);
+                if rank(v.risk) > rank(worst.risk) {
                     worst = v;
+                }
+                if worst.risk == Risk::Forbidden {
+                    return worst;
                 }
             }
             worst
@@ -436,12 +623,18 @@ pub fn classify_tool(tool: &str, args: &serde_json::Value) -> Verdict {
         | "docker_ps" | "docker_logs" | "docker_inspect" | "db_list_tables" | "db_describe"
         | "list_processes" | "list_ports" | "get_context" => Verdict::safe(),
         "write_file" => Verdict::confirm(KIND_WRITE_FS.0, "写入远端文件（保存前自动备份）"),
+        // edit_file 与 write_file 同属「改远端文件」，用同一个 kind ——
+        // 用户允许过写文件之后，编辑不该再问一遍。
+        "edit_file" => Verdict::confirm(KIND_WRITE_FS.0, "编辑远端文件（保存前自动备份）"),
+        // 这两条只动「本次任务自己的状态」，不碰远端一个字节。
+        // 每次更新清单都弹确认卡，只会把用户训练成无脑点允许。
+        "todo_write" | "exit_plan_mode" => Verdict::safe(),
         "send_keys" => {
             let keys = args.get("keys").and_then(|v| v.as_str()).unwrap_or("");
             if args.get("enter").and_then(|v| v.as_bool()).unwrap_or(false) {
-                classify_command(keys)
+                classify_command_with(keys, extra_danger)
             } else {
-                // 不带回车的按键（Tab/方向键/部分输入）视为低风险
+                // 不带回车的按键（Tab/方向键、往行内补字）视为低风险
                 Verdict::safe()
             }
         }
@@ -485,6 +678,35 @@ pub fn classify_tool(tool: &str, args: &serde_json::Value) -> Verdict {
         }
         "ask_user" | "open_tab" => Verdict::safe(),
         _ => Verdict::confirm(KIND_UNKNOWN.0, "未知工具，默认需要确认"),
+    }
+}
+
+/// 分类 + 决策一次完成：调用方不需要知道「风险 × 档位」怎么组合。
+///
+/// 抽成一个入口是为了让 agent 侧只有**一条**判断路径 ——
+/// 散着写 `match risk` 的话，档位一多就会变成一坨互相缠绕的分支，
+/// 而且每加一档都要回头改三处。
+pub fn judge(
+    mode: PermissionMode,
+    cfg_danger: &[String],
+    tool: &str,
+    args: &serde_json::Value,
+) -> Ruling {
+    let v = classify_tool_with(tool, args, cfg_danger);
+    let decision = decide(mode, v.risk);
+    // 拒绝时把「为什么」说清楚：模型要据此换路子，用户要知道是档位还是底线拦的
+    let reason = match decision {
+        Decision::Deny => match v.risk {
+            Risk::Forbidden => format!("{}（硬底线，任何档位都不执行）", v.reason),
+            _ => format!("{}（当前是「只读」档，需先切换档位）", v.reason),
+        },
+        _ => v.reason.clone(),
+    };
+    Ruling {
+        decision,
+        risk: v.risk,
+        kind: v.kind,
+        reason,
     }
 }
 
@@ -533,6 +755,9 @@ mod tests {
     fn confirm(cmd: &str) -> bool {
         classify_command(cmd).risk == Risk::NeedsConfirm
     }
+    fn danger(cmd: &str) -> bool {
+        classify_command(cmd).risk == Risk::Danger
+    }
     fn forbid(cmd: &str) -> bool {
         classify_command(cmd).risk == Risk::Forbidden
     }
@@ -572,13 +797,15 @@ mod tests {
     }
 
     #[test]
-    fn t04_mkfs_dd_shutdown_forbidden() {
+    fn t04_mkfs_dd_forbidden_shutdown_is_danger() {
+        // 格式化 / 块设备直写：硬底线，永不执行
         assert!(forbid("mkfs.ext4 /dev/sda1"));
         assert!(forbid("dd if=/dev/zero of=/dev/sda"));
-        assert!(forbid("shutdown -h now"));
-        assert!(forbid("reboot"));
-        assert!(forbid("init 0"));
-        assert!(forbid("init 6"));
+        // 关机重启：危险但用户可能真的要做 —— 问，不拒
+        assert!(danger("shutdown -h now"));
+        assert!(danger("reboot"));
+        assert!(danger("init 0"));
+        assert!(danger("init 6"));
     }
 
     #[test]
@@ -615,7 +842,8 @@ mod tests {
         assert!(confirm("docker stop web"));
         assert!(confirm("docker restart web"));
         assert!(confirm("docker rm web"));
-        assert!(forbid("docker rm -f $(docker ps -aq)"));
+        // 批量强删：危险（要问），但不是硬底线（不拒）
+        assert!(danger("docker rm -f $(docker ps -aq)"));
         assert!(confirm("docker pull nginx:latest") || safe("docker pull nginx:latest"));
         // pull 未列入 confirm 规则 -> 落默认
     }
@@ -647,7 +875,10 @@ mod tests {
 
     #[test]
     fn t13_composite_command_worst_segment_wins() {
-        assert_eq!(classify_command("ls; sudo reboot").risk, Risk::Forbidden);
+        // reboot 是危险命令，比 sudo 的「需确认」更严
+        assert_eq!(classify_command("ls; sudo reboot").risk, Risk::Danger);
+        // 硬底线压过一切
+        assert_eq!(classify_command("ls; sudo rm -rf /").risk, Risk::Forbidden);
         assert_eq!(
             classify_command("cat a && docker stop web").risk,
             Risk::NeedsConfirm
@@ -685,7 +916,7 @@ mod tests {
             "exec_commands",
             &json!({"commands": ["ls", "shutdown now"]}),
         );
-        assert_eq!(v2.risk, Risk::Forbidden);
+        assert_eq!(v2.risk, Risk::Danger);
     }
 
     #[test]
@@ -696,7 +927,7 @@ mod tests {
             "send_keys",
             &json!({"keys": "sudo reboot\n", "enter": true}),
         );
-        assert_eq!(v2.risk, Risk::Forbidden);
+        assert_eq!(v2.risk, Risk::Danger);
         let v3 = classify_tool("send_keys", &json!({"keys": "y"}));
         assert_eq!(v3.risk, Risk::Safe);
     }
@@ -728,5 +959,69 @@ mod tests {
     fn t22_case_insensitive() {
         assert!(forbid("RM -RF /"));
         assert!(confirm("SUDO apt install htop"));
+    }
+
+    /* ── 权限档位（本轮新增）────────────────────────────────────────── */
+
+    #[test]
+    fn t23_mode_readonly_denies_everything_mutating() {
+        use PermissionMode::*;
+        assert_eq!(decide(ReadOnly, Risk::Safe), Decision::Allow);
+        // 只读档不是"多问几次"，是**直接不让做**
+        assert_eq!(decide(ReadOnly, Risk::NeedsConfirm), Decision::Deny);
+        assert_eq!(decide(ReadOnly, Risk::Danger), Decision::Deny);
+        assert_eq!(decide(ReadOnly, Risk::Forbidden), Decision::Deny);
+    }
+
+    #[test]
+    fn t24_silent_only_asks_on_danger() {
+        use PermissionMode::*;
+        // 读写：只读放行、有副作用要问
+        assert_eq!(decide(ReadWrite, Risk::Safe), Decision::Allow);
+        assert_eq!(decide(ReadWrite, Risk::NeedsConfirm), Decision::Ask);
+        assert_eq!(decide(ReadWrite, Risk::Danger), Decision::Ask);
+        // 静默：日常动作不再打扰……
+        assert_eq!(decide(Silent, Risk::Safe), Decision::Allow);
+        assert_eq!(decide(Silent, Risk::NeedsConfirm), Decision::Allow);
+        // ……但危险命令照样问 —— 这是静默档唯一保留的那道刹车
+        assert_eq!(decide(Silent, Risk::Danger), Decision::Ask);
+    }
+
+    #[test]
+    fn t25_hard_forbidden_never_asks_in_any_mode() {
+        use PermissionMode::*;
+        // 硬底线在任何档位都是「拒绝」而不是「询问」——
+        // 弹了确认就等于给了入口
+        for m in [ReadOnly, ReadWrite, Silent] {
+            assert_eq!(decide(m, Risk::Forbidden), Decision::Deny);
+        }
+    }
+
+    /* ── 用户自定义危险规则 ─────────────────────────────────────────── */
+
+    #[test]
+    fn t26_user_rules_take_priority_and_are_case_insensitive() {
+        let rules = vec!["kubectl delete".to_string()];
+        let v = classify_command_with("kubectl delete pod web-1", &rules);
+        assert_eq!(v.risk, Risk::Danger);
+        assert!(v.reason.contains("kubectl delete"));
+        assert_eq!(
+            classify_command_with("KUBECTL DELETE pod x", &rules).risk,
+            Risk::Danger
+        );
+        // 没命中的照旧走内置规则
+        assert_eq!(
+            classify_command_with("kubectl get pods", &rules).risk,
+            Risk::Safe
+        );
+    }
+
+    #[test]
+    fn t27_empty_user_rule_must_not_match_everything() {
+        // `contains("")` 恒为真 —— 面板上多留一行空输入框就够让每条命令
+        // 都变危险命令。空规则必须在匹配这一层就被挡掉。
+        let rules = vec!["".to_string(), "   ".to_string()];
+        assert_eq!(classify_command_with("ls -la", &rules).risk, Risk::Safe);
+        assert!(matches_user_danger("ls -la", &rules).is_none());
     }
 }

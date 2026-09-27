@@ -142,19 +142,20 @@ interface UiState {
   openTextPrompt: (s: TextPromptState) => void;
   closeTextPrompt: (v: string | null) => void;
 
-  /**
-   * 「向 AI 提问」的待发送内容。
-   *
-   * 终端里选中一段文本右键提问时灌进来，AiSidebar 消费后清空 —— 两端隔着
-   * 组件树（TerminalPane 在内容区、AiSidebar 在右栏），走 store 比层层传
-   * props 干净，也顺带让"提问"这个动作用一次即可从任何地方发起。
-   */
-  pendingAsk: string | null;
-  setPendingAsk: (v: string | null) => void;
-
   setLeftOpen: (v: boolean) => void;
   setLeftMode: (m: LeftMode) => void;
   setRightOpen: (v: boolean) => void;
+
+  /**
+   * 两侧栏宽度（px）：拖拽调整，落盘到 localStorage。
+   *
+   * 放 store 而不是各自组件里的 useState —— 宽度是**布局级**状态，
+   * 左栏在 FileTree / AssetTree 之间切换时不该让刚拖好的宽度跳回去。
+   */
+  leftWidth: number;
+  rightWidth: number;
+  setLeftWidth: (w: number) => void;
+  setRightWidth: (w: number) => void;
 
   /** 建/取工作区：sessionId 或 connId 命中已有工作区就复用并激活，返回它的 id。 */
   ensureWorkspace: (spec: WorkspaceSpec) => string;
@@ -163,6 +164,13 @@ interface UiState {
 
   /** 上下分屏：给工作区再挂一个面板（会话工作区会给新面板开一个终端）。 */
   splitWorkspace: (workspaceId?: string) => void;
+  /**
+   * 在下方分屏面板里打开一个标签；还没有下方面板就先分屏。
+   *
+   * 与 splitWorkspace 的分工：这个方法**不预开终端** —— 「在下方编辑」的意思是
+   * "上边留住原来的东西，下边给我个编辑器"，硬塞终端进去等于把下方占掉了。
+   */
+  openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
   /** 取消分屏：关掉该面板（含里面的终端）。只剩一个面板时是空操作。 */
   unsplitWorkspace: (paneId?: string, workspaceId?: string) => Promise<void>;
   setActivePane: (paneId: string, workspaceId?: string) => void;
@@ -190,14 +198,67 @@ let tabSeq = 1;
  * （或任何"点两下 + 号"）会在同一毫秒内连开两个，id 相同 →
  * 被 addTab 的 `t.id === tab.id` 判定成同一个标签，第二个直接消失。
  */
+/* ── 侧栏宽度 ─────────────────────────────────────────────────────────── */
+
+/** 左栏再窄就放不下文件名，右栏再窄对话就没法读了。 */
+const LEFT_MIN = 180;
+const LEFT_MAX = 560;
+const RIGHT_MIN = 300;
+const RIGHT_MAX = 760;
+const LEFT_DEFAULT = 248;
+const RIGHT_DEFAULT = 352;
+const LAYOUT_KEY = "nexterm.layout.v1";
+
+function clampWidth(w: number, min: number, max: number): number {
+  if (!Number.isFinite(w)) return min;
+  return Math.min(max, Math.max(min, Math.round(w)));
+}
+
+/** 拖拽手柄要用的边界与复位值（和上面的 setter 共用一份，别在两处各写一遍）。 */
+export const LEFT_WIDTH_RANGE = { min: LEFT_MIN, max: LEFT_MAX, default: LEFT_DEFAULT };
+export const RIGHT_WIDTH_RANGE = { min: RIGHT_MIN, max: RIGHT_MAX, default: RIGHT_DEFAULT };
+
+/**
+ * 读回上次拖好的宽度。
+ *
+ * 整体包在 try 里：无痕模式 / 禁用存储时 `localStorage` 会直接抛错。
+ * 布局偏好丢了无所谓，但绝不能让应用起不来。
+ */
+function loadLayout(): { leftWidth: number; rightWidth: number } {
+  const fallback = { leftWidth: LEFT_DEFAULT, rightWidth: RIGHT_DEFAULT };
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return fallback;
+    const o = JSON.parse(raw) as { leftWidth?: number; rightWidth?: number };
+    return {
+      leftWidth: clampWidth(o.leftWidth ?? LEFT_DEFAULT, LEFT_MIN, LEFT_MAX),
+      rightWidth: clampWidth(o.rightWidth ?? RIGHT_DEFAULT, RIGHT_MIN, RIGHT_MAX),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveLayout(w: { leftWidth: number; rightWidth: number }): void {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(w));
+  } catch {
+    /* 存不下就算了，不影响使用 */
+  }
+}
+
 export function nextTabId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${tabSeq++}`;
 }
+
+const initialLayout = loadLayout();
 
 export const useUi = create<UiState>((set, get) => ({
   leftOpen: true,
   leftMode: "assets",
   rightOpen: true,
+  leftWidth: initialLayout.leftWidth,
+  rightWidth: initialLayout.rightWidth,
   workspaces: [],
   activeWorkspaceId: null,
   sessions: [],
@@ -212,12 +273,19 @@ export const useUi = create<UiState>((set, get) => ({
     set({ textPrompt: null });
   },
 
-  pendingAsk: null,
-  setPendingAsk: (v) => set({ pendingAsk: v }),
-
   setLeftOpen: (v) => set({ leftOpen: v }),
   setLeftMode: (m) => set({ leftMode: m }),
   setRightOpen: (v) => set({ rightOpen: v }),
+  setLeftWidth: (w) => {
+    const next = clampWidth(w, LEFT_MIN, LEFT_MAX);
+    set({ leftWidth: next });
+    saveLayout({ leftWidth: next, rightWidth: get().rightWidth });
+  },
+  setRightWidth: (w) => {
+    const next = clampWidth(w, RIGHT_MIN, RIGHT_MAX);
+    set({ rightWidth: next });
+    saveLayout({ leftWidth: get().leftWidth, rightWidth: next });
+  },
 
   ensureWorkspace: (spec) => {
     const { workspaces } = get();
@@ -287,6 +355,26 @@ export const useUi = create<UiState>((set, get) => ({
     // "一边敲命令，一边看着日志/另一个 shell"，空面板等于还要多点一次。
     const session = st.sessions.find((x) => x.id === w.sessionId);
     if (session) void openTerminalTab(session, undefined, pane.id);
+  },
+
+  openInLowerPane: (tab, workspaceId) => {
+    const st = get();
+    const id = workspaceId ?? st.activeWorkspaceId ?? st.workspaces[st.workspaces.length - 1]?.id;
+    if (!id) return;
+    const w = st.workspaces.find((x) => x.id === id);
+    if (!w) return;
+    // 已经分屏了：直接用下方面板，别再多挂一个
+    if (w.panes.length >= 2) {
+      get().addTab(tab, w.panes[1].id);
+      return;
+    }
+    const pane = makePane();
+    set((s2) => ({
+      workspaces: s2.workspaces.map((x) =>
+        x.id === id ? { ...x, panes: [x.panes[0], pane], activePaneId: pane.id } : x,
+      ),
+    }));
+    get().addTab(tab, pane.id);
   },
 
   unsplitWorkspace: async (paneId, workspaceId) => {
@@ -679,14 +767,29 @@ export function findWritableTerminal(sessionId: string): string | null {
  */
 export function openFileTab(sessionId: string, path: string) {
   const name = path.split("/").filter(Boolean).pop() ?? path;
-  useUi.getState().addTab({
+  useUi.getState().addTab(fileTabSpec(sessionId, path, name));
+}
+
+/**
+ * 在下方分屏面板里打开编辑器（「在下方编辑」）。
+ *
+ * 和 openFileTab 用**同一个标签 id**：同一个文件不该因为"这次想在下面看"
+ * 就出现两个编辑器标签，同时改两遍。已经开着时 addTab 会把它激活。
+ */
+export function openFileTabInSplit(sessionId: string, path: string) {
+  const name = path.split("/").filter(Boolean).pop() ?? path;
+  useUi.getState().openInLowerPane(fileTabSpec(sessionId, path, name));
+}
+
+function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
+  return {
     id: `file-${sessionId}-${path}`,
     kind: "files",
     title: name,
     sessionId,
     path,
     closable: true,
-  });
+  };
 }
 
 export async function connectAsset(asset: {

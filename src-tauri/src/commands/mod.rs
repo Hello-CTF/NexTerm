@@ -8,6 +8,7 @@ pub mod docker;
 pub mod forward;
 pub mod fs;
 pub mod mcp;
+pub mod models;
 pub mod mount;
 pub mod session;
 pub mod terminal;
@@ -54,6 +55,8 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         fs::fs_checksum,
         fs::fs_upload,
         fs::fs_download,
+        fs::fs_pack_download,
+        fs::fs_extract,
         // mount
         mount::mount_list,
         mount::mount_create,
@@ -94,7 +97,16 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         ai::ai_test_provider,
         ai::ai_set_provider,
         ai::ai_get_provider,
+        ai::ai_get_permission,
+        ai::ai_set_permission,
         ai::ai_presets,
+        // models（多模型档案，P0-3）
+        models::ai_model_profiles,
+        models::ai_model_save,
+        models::ai_model_delete,
+        models::ai_model_activate,
+        models::ai_model_refresh,
+        models::ai_model_preset,
         ai::ai_takeover_enter,
         ai::ai_takeover_run,
         ai::ai_takeover_exit,

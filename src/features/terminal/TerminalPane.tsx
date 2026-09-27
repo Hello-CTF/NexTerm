@@ -3,33 +3,26 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import type { CommandBlock } from "./commandBlocks";
-import { sessionApi, fsApi, terminalApi } from "../../ipc/commands";
-import { openTerminalTab, takePendingCommand, useUi } from "../../app/store";
-import { pickLocalFile, pickSavePath, promptText } from "../../ui/dialogs";
+import { sessionApi, terminalApi } from "../../ipc/commands";
+import { takePendingCommand, useUi } from "../../app/store";
+import { pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
-import { baseName, looksLikePath, resolveRemotePath } from "../files/pathUtils";
 import {
   IconArrowDown,
   IconArrowUp,
-  IconBot,
   IconClose,
-  IconCode,
   IconCommand,
   IconCopy,
-  IconDownload,
   IconEdit,
   IconList,
   IconMergeH,
-  IconPlay,
   IconPlug,
-  IconPlus,
   IconRefresh,
   IconSave,
   IconSearch,
   IconSplitH,
   IconStop,
-  IconUpload,
 } from "../../ui/icons";
 
 export interface TerminalPaneProps {
@@ -133,28 +126,6 @@ export function TerminalPane({
     }
   };
 
-  /** 把整段回滚输出搬到剪贴板（走内核 dump，不受当前视口限制）。 */
-  const copyAllOutput = async () => {
-    if (!kernelTabId) return;
-    try {
-      const text = await terminalApi.dump(kernelTabId);
-      await navigator.clipboard.writeText(text);
-      pushToast("success", `已复制 ${text.length} 字符`);
-    } catch (e) {
-      pushToast("error", `复制失败：${describeError(e)}`);
-    }
-  };
-
-  /** 复用当前连接再开一个终端标签。 */
-  const newTabHere = () => {
-    const session = useUi.getState().sessions.find((s) => s.id === sessionId);
-    if (!session) {
-      pushToast("error", "会话已不在，无法新开标签");
-      return;
-    }
-    void openTerminalTab(session);
-  };
-
   const disconnectSession = async () => {
     try {
       await sessionApi.disconnect(sessionId);
@@ -229,59 +200,6 @@ export function TerminalPane({
     }
   };
 
-  /** 文件的落点要用终端的当前目录 —— 拿不到就返回 null，让路径保持原样。 */
-  const remoteCwd = async (): Promise<string | null> => {
-    try {
-      return await sessionApi.cwd(sessionId);
-    } catch {
-      return null;
-    }
-  };
-
-  /** SCP 上传：本地文件 → 终端当前目录。 */
-  const scpUpload = async () => {
-    const file = await pickLocalFile();
-    if (!file) return;
-    const remote = resolveRemotePath(
-      await remoteCwd(),
-      file.split(/[\\/]/).pop() ?? "upload.bin",
-    );
-    pushToast("info", `开始上传 → ${remote}…`);
-    try {
-      const bytes = await fsApi.upload(sessionId, file, remote, false);
-      pushToast("success", `已上传 ${bytes} 字节 → ${remote}`);
-    } catch (e) {
-      pushToast("error", `上传失败：${describeError(e)}`);
-    }
-  };
-
-  /**
-   * SCP 下载：远程文件 → 本机。
-   *
-   * 远程路径允许手输，但如果终端里正好选中了一段"像路径"的文字（`ls` 出来的
-   * 结果通常就是），就把它预填进去 —— 省掉一次手打，又不会替用户做决定。
-   */
-  const scpDownload = async () => {
-    const selected = (handleRef.current?.getSelection() ?? "").trim();
-    const remote = await promptText(
-      "要下载的远程文件（相对路径按终端当前目录解析）",
-      looksLikePath(selected) ? selected : "",
-      // 路径就该是单行；不显式指定的话，预填的长路径会被弹窗自动判成多行
-      { multiLine: false },
-    );
-    if (!remote) return;
-    const abs = resolveRemotePath(await remoteCwd(), remote);
-    const target = await pickSavePath(baseName(abs));
-    if (!target) return;
-    pushToast("info", `开始下载 ${abs}…`);
-    try {
-      const bytes = await fsApi.download(sessionId, abs, target);
-      pushToast("success", `已下载 ${bytes} 字节 → ${target}`);
-    } catch (e) {
-      pushToast("error", `下载失败：${describeError(e)}`);
-    }
-  };
-
   /**
    * 终端右键菜单。
    *
@@ -301,19 +219,6 @@ export function TerminalPane({
 
     return [
       { kind: "group", label: "操作" },
-      {
-        kind: "item",
-        label: "向 AI 提问",
-        icon: <IconBot size={13} />,
-        hint: hasSel ? `${selected.length} 字` : undefined,
-        disabled: !hasSel,
-        onSelect: () => {
-          const { setPendingAsk, setRightOpen } = useUi.getState();
-          setPendingAsk(selected);
-          // 侧栏收起时先展开：不然点了「提问」什么都没发生，像坏了
-          setRightOpen(true);
-        },
-      },
       {
         kind: "item",
         label: "复制",
@@ -360,33 +265,9 @@ export function TerminalPane({
       { kind: "group", label: "终端" },
       {
         kind: "item",
-        label: "复用连接打开新标签",
-        icon: <IconPlus size={13} />,
-        onSelect: newTabHere,
-      },
-      {
-        kind: "item",
         label: "清屏",
         disabled: !kernelTabId,
         onSelect: () => handleRef.current?.clear(),
-      },
-      {
-        kind: "item",
-        label: `编码 (${encoding.toUpperCase()})`,
-        icon: <IconCode size={13} />,
-        submenu: ENCODINGS.map((enc) => ({
-          kind: "item" as const,
-          label: enc,
-          hint: enc === encoding ? "当前" : undefined,
-          onSelect: () => void applyEncoding(enc),
-        })),
-      },
-      {
-        kind: "item",
-        label: "复制全部输出",
-        icon: <IconCopy size={13} />,
-        disabled: !kernelTabId,
-        onSelect: () => void copyAllOutput(),
       },
       {
         kind: "item",
@@ -413,22 +294,6 @@ export function TerminalPane({
         onSelect: () => void disconnectSession(),
       },
       { kind: "separator" },
-      { kind: "group", label: "文件传输 (SCP)" },
-      {
-        kind: "item",
-        label: "上传本地文件",
-        icon: <IconUpload size={13} />,
-        hint: "→ 当前目录",
-        onSelect: () => void scpUpload(),
-      },
-      {
-        kind: "item",
-        label: "下载远程文件",
-        icon: <IconDownload size={13} />,
-        hint: "→ 本机",
-        onSelect: () => void scpDownload(),
-      },
-      { kind: "separator" },
       { kind: "group", label: "分屏" },
       {
         kind: "item",
@@ -441,15 +306,6 @@ export function TerminalPane({
           if (isSplit) void cur.unsplitWorkspace(ws.panes[1].id, ws.id);
           else cur.splitWorkspace(ws.id);
         },
-      },
-      { kind: "separator" },
-      { kind: "group", label: "会话记录" },
-      {
-        kind: "item",
-        label: recording ? "停止录制" : "开始录制到文件",
-        icon: recording ? <IconStop size={13} /> : <IconPlay size={13} />,
-        disabled: !kernelTabId,
-        onSelect: () => void toggleRecord(),
       },
     ];
   };

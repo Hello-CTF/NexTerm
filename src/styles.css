@@ -186,6 +186,269 @@
  * ======================================================================== */
 
 @layer components {
+  /* ── 侧栏宽度拖拽手柄 ─────────────────────────────────────────────── */
+
+  /* 本体只有 5px，靠 ::after 往两侧各扩 3px 撑命中区 ——
+     贴着边框的一条细线不扩命中区的话，得瞄准才拖得到。 */
+  .nx-resize-handle {
+    position: relative;
+    z-index: 10;
+    flex: 0 0 5px;
+    width: 5px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background-color 120ms ease;
+  }
+
+  .nx-resize-handle::after {
+    content: "";
+    position: absolute;
+    inset: 0 -3px;
+  }
+
+  .nx-resize-handle:hover,
+  .nx-resize-handle.is-dragging {
+    background: color-mix(in srgb, var(--color-blue-400) 55%, transparent);
+  }
+
+  /* ── Diff 专用配色 ──────────────────────────────────────────────────
+     AI「变更记录」用。刻意**不复用**通用成功/危险色：那两套色在本界面里还
+     承担着"操作成功 / 操作危险"的含义，而 diff 的增删只说明"内容变了"，
+     借同一套色会被读成价值判断（像是删掉就是坏事）。独立成 token 之后，
+     两边也能各自调，不会牵一发动全身。 */
+  .nx-diff-add {
+    color: #7fd8c4;
+    background: rgba(45, 212, 191, 0.13);
+  }
+  .nx-diff-del {
+    color: #f0a878;
+    background: rgba(249, 115, 22, 0.13);
+  }
+
+  /* ── AI 回答的 Markdown ──────────────────────────────────────────────
+     侧栏只有 350px 上下，所以节奏压得很紧：块间距 6px、代码块横向滚动不换行。
+     代码块单独给一条带语言标签的标题条 —— 模型给的命令用户多半要原样复制。 */
+  .nx-md {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .nx-md > :first-child {
+    margin-top: 0;
+  }
+  .nx-md-p {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .nx-md-h1,
+  .nx-md-h2,
+  .nx-md-h3,
+  .nx-md-h4 {
+    font-weight: 600;
+    color: var(--color-neutral-100);
+  }
+  .nx-md-h1 {
+    font-size: 13.5px;
+  }
+  .nx-md-h2 {
+    font-size: 13px;
+  }
+  .nx-md-h3 {
+    font-size: 12.5px;
+  }
+  .nx-md-h4 {
+    font-size: 12.3px;
+    color: var(--color-neutral-300);
+  }
+  .nx-md-bold {
+    font-weight: 600;
+    color: var(--color-neutral-50);
+  }
+  .nx-md-em {
+    font-style: italic;
+    color: var(--color-neutral-300);
+  }
+  .nx-md-link {
+    color: var(--color-blue-300);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .nx-md-code {
+    padding: 0 3px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.07);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.92em;
+    color: #a5d8f3;
+    word-break: break-all;
+  }
+  .nx-md-pre {
+    border: 1px solid var(--color-neutral-800);
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--color-neutral-950);
+  }
+  .nx-md-pre-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 4px 1px 8px;
+    border-bottom: 1px solid var(--color-neutral-800);
+    background: var(--color-neutral-900);
+  }
+  .nx-md-pre-lang {
+    flex: 1;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-neutral-500);
+  }
+  .nx-md-pre-body {
+    margin: 0;
+    padding: 6px 8px;
+    overflow-x: auto;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10.5px;
+    line-height: 1.65;
+    color: var(--color-neutral-300);
+    white-space: pre;
+  }
+  .nx-md-ul,
+  .nx-md-ol {
+    margin: 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .nx-md-ul {
+    list-style: disc;
+  }
+  .nx-md-ol {
+    list-style: decimal;
+  }
+  .nx-md-ul li::marker,
+  .nx-md-ol li::marker {
+    color: var(--color-neutral-500);
+  }
+  .nx-md-quote {
+    margin: 0;
+    padding-left: 8px;
+    border-left: 2px solid var(--color-neutral-700);
+    color: var(--color-neutral-400);
+    white-space: pre-wrap;
+  }
+  .nx-md-hr {
+    margin: 2px 0;
+    border: 0;
+    border-top: 1px solid var(--color-neutral-800);
+  }
+  /* 表格：窄侧栏放不下就横向滚动 —— 把列压到换行会读成一字一行，
+     比滚动难用得多。单元格 `nowrap` 是为了让"滚动"成为唯一的溢出处理。 */
+  .nx-md-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--color-neutral-800);
+    border-radius: 7px;
+  }
+  .nx-md-table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  .nx-md-table th,
+  .nx-md-table td {
+    padding: 3px 8px;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--color-neutral-800);
+  }
+  .nx-md-table th {
+    background: var(--color-neutral-900);
+    color: var(--color-neutral-300);
+    font-weight: 600;
+  }
+  .nx-md-table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* ── AI 侧栏：发送钮 / 引用 chip / 图片附件 ───────────────────────── */
+
+  /* 圆形发送钮（功能行最右） */
+  .nx-send-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in srgb, var(--color-neutral-700) 70%, transparent);
+    background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
+    color: var(--color-neutral-300);
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .nx-send-btn:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--color-blue-400) 60%, transparent);
+    background: color-mix(in srgb, var(--color-blue-500) 35%, transparent);
+    color: var(--color-neutral-50);
+  }
+
+  .nx-send-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* 引用 chip 上的小叉 */
+  .nx-chip-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 2px;
+    border-radius: 9999px;
+    opacity: 0.65;
+  }
+
+  .nx-chip-x:hover {
+    opacity: 1;
+  }
+
+  /* 粘贴的图片缩略图 */
+  .nx-attach {
+    position: relative;
+    display: inline-block;
+    width: 46px;
+    height: 46px;
+    overflow: hidden;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--color-neutral-700) 70%, transparent);
+  }
+
+  .nx-attach img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .nx-attach-x {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 9999px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+  }
+
   /* ── 面板 ────────────────────────────────────────────────────────── */
 
   /* 面板容器：统一底/正文色/纵向布局 */

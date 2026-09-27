@@ -45,6 +45,32 @@ export function isEditableFile(name: string): boolean {
   return !BINARY_EXT.has(extOf(name));
 }
 
+/**
+ * 内核**能解压**的归档后缀。
+ *
+ * 必须与 `src-tauri/src/fs/mod.rs` 的 `extract_command` 一一对应 ——
+ * 两边不一致的后果是菜单给了「解压」、点了报"不支持的压缩格式"。
+ * 判定用完整后缀而不是 `extOf`：`.tar.gz` 的最后一段是 `gz`，只看它会把
+ * 普通 `.gz` 单文件也当成能解压的包。
+ */
+const EXTRACTABLE_SUFFIX = [
+  ".tar.gz",
+  ".tgz",
+  ".tar.bz2",
+  ".tbz2",
+  ".tbz",
+  ".tar.xz",
+  ".txz",
+  ".tar",
+  ".zip",
+];
+
+/** 是否是内核能解压的归档。 */
+export function isExtractableArchive(name: string): boolean {
+  const lower = name.toLowerCase();
+  return EXTRACTABLE_SUFFIX.some((s) => lower.endsWith(s));
+}
+
 /** 后端支持在编辑时保留备份的扩展名（保存提示里会区分文案）。 */
 const SCRIPT_EXT = new Set(["sh", "bash", "zsh", "fish", "py", "pl", "rb", "ps1", "bat", "cmd"]);
 const CODE_EXT = new Set([

@@ -496,6 +496,12 @@ impl super::Store {
     }
 
     pub async fn conv_delete(&self, id: &str) -> AppResult<()> {
+        // 消息必须先删：只删会话的话，这些消息会变成永远查不到的孤儿 ——
+        // 会话列表里没有它，`ai_messages` 也再不会指向它，只能手写 SQL 才清得掉。
+        sqlx::query("DELETE FROM ai_message WHERE conversation_id = ?")
+            .bind(id)
+            .execute(self.pool())
+            .await?;
         sqlx::query("DELETE FROM ai_conversation WHERE id = ?")
             .bind(id)
             .execute(self.pool())

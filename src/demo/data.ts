@@ -1089,6 +1089,73 @@ export const providerConfig = {
   stream: true,
 };
 
+/**
+ * 演示模式的多模型档案（BYOK）。
+ *
+ * 用可变对象承载：演示模式下切换激活 / 增删档案都要立刻在界面上体现出来，
+ * 跟真机走 sqlite 的行为对齐。
+ */
+export const modelState: {
+  profiles: {
+    id: string;
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    temperature: number;
+    contextWindow: number;
+    proxy: string | null;
+    stream: boolean;
+  }[];
+  activeId: string;
+} = {
+  profiles: [
+    {
+      id: "m-deepseek",
+      name: "DeepSeek 主力",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "sk-demo-0000000000000000000000000000",
+      model: "deepseek-chat",
+      temperature: 0.3,
+      contextWindow: 64000,
+      proxy: null,
+      stream: true,
+    },
+    {
+      id: "m-glm",
+      name: "智谱备用",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      apiKey: "sk-demo-1111111111111111111111111111",
+      model: "glm-4-flash",
+      temperature: 0.3,
+      contextWindow: 128000,
+      proxy: null,
+      stream: true,
+    },
+    {
+      id: "m-local",
+      name: "本机 Ollama",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "",
+      model: "qwen2.5:7b",
+      temperature: 0.3,
+      contextWindow: 32000,
+      proxy: null,
+      stream: true,
+    },
+  ],
+  activeId: "m-deepseek",
+};
+
+/** 演示模式的权限配置：在权限面板里改完立即生效，用来试三档的差别。 */
+export const permissionConfig: {
+  mode: "read_only" | "read_write" | "silent";
+  dangerRules: string[];
+} = {
+  mode: "read_write",
+  dangerRules: ["kubectl delete"],
+};
+
 export const conversations: {
   id: string;
   title: string;
@@ -1103,4 +1170,104 @@ export const conversations: {
     createdAt: NOW - 20 * MIN,
     updatedAt: NOW - 2 * MIN,
   },
+  {
+    id: "conv-2",
+    title: "看看机器运行的服务",
+    scope: { sessionId: "s-web01", tabId: null, connId: null, assetId: "a-web01" },
+    createdAt: NOW - 90 * MIN,
+    updatedAt: NOW - 88 * MIN,
+  },
 ];
+
+/**
+ * 演示：会话的历史消息。
+ *
+ * 形状与内核 `MessageDto` **严格一致** —— 尤其 `content` 是**结构**不是字符串
+ * （库里存的是 JSON 文本，内核解成结构后才给前端；这里直接给结构，
+ * 免得演示模式和真机的行为对不上，白验一场）。
+ */
+export const conversationMessages: Record<
+  string,
+  {
+    id: string;
+    role: string;
+    content: unknown;
+    tokensIn: number | null;
+    tokensOut: number | null;
+    createdAt: number;
+  }[]
+> = {
+  "conv-1": [
+    {
+      id: "msg-1",
+      role: "user",
+      content: { role: "user", content: "api-server 一直 502，帮我看看", imageCount: 0 },
+      tokensIn: null,
+      tokensOut: null,
+      createdAt: NOW - 20 * MIN,
+    },
+    {
+      id: "msg-2",
+      role: "assistant",
+      content: {
+        role: "assistant",
+        content:
+          "定位到了，**不是 nginx 的问题**。\n\n" +
+          "1. `mysql-prod` 在 12 分钟前被 OOM Killer 干掉（退出码 137），`api-server` 连不上库。\n" +
+          "2. 机器 7.7G 内存已被占满，`api-server` 日志里能看到 `pool exhausted`。\n\n" +
+          "| 容器 | 状态 | 说明 |\n| --- | --- | --- |\n| `mysql-prod` | 已退出 (137) | 被 OOM Killer 干掉 |\n| `api-server` | 运行中 | 连不上库 → 对外一直 502 |",
+      },
+      tokensIn: 8414,
+      tokensOut: 927,
+      createdAt: NOW - 19 * MIN,
+    },
+    {
+      id: "msg-3",
+      role: "user",
+      content: { role: "user", content: "那先把它拉起来", imageCount: 0 },
+      tokensIn: null,
+      tokensOut: null,
+      createdAt: NOW - 3 * MIN,
+    },
+    {
+      id: "msg-4",
+      role: "assistant",
+      content: {
+        role: "assistant",
+        content:
+          "好。**先加上限再拉起来**，否则大概率又被 OOM 挑中：\n\n" +
+          "```bash\n$ docker update --memory 2g api-server\n$ docker start mysql-prod\n```\n" +
+          "起来后盯 5 分钟 `docker ps`，看它会不会再退。",
+      },
+      tokensIn: 2988,
+      tokensOut: 282,
+      createdAt: NOW - 2 * MIN,
+    },
+  ],
+  "conv-2": [
+    {
+      id: "msg-5",
+      role: "user",
+      content: { role: "user", content: "帮我看看机器运行的服务", imageCount: 0 },
+      tokensIn: null,
+      tokensOut: null,
+      createdAt: NOW - 90 * MIN,
+    },
+    {
+      id: "msg-6",
+      role: "assistant",
+      content: {
+        role: "assistant",
+        content:
+          "这台机器（linuxcore）当前运行的服务：\n\n" +
+          "- `docker` / `containerd` — 容器运行时\n" +
+          "- `1panel` — 1Panel 面板\n" +
+          "- `ssh` / `tailscaled` / `openvpn-client@linuxcore`\n\n" +
+          "✅ 没有失败单元。",
+      },
+      tokensIn: 2988,
+      tokensOut: 312,
+      createdAt: NOW - 88 * MIN,
+    },
+  ],
+};

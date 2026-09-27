@@ -12,6 +12,7 @@ import {
   containerStats,
   containers,
   conversations,
+  conversationMessages,
   fakeQuery,
   forwards,
   fsFileContent,
@@ -24,6 +25,8 @@ import {
   mysqlIndexes,
   mysqlSchemas,
   mysqlTables,
+  modelState,
+  permissionConfig,
   providerConfig,
   providerPresets,
   redisKeys,
@@ -63,6 +66,8 @@ const shells = new Map<string, DemoShell>();
 const logTimers = new Map<string, () => void>();
 const pendingAi = new Map<string, (decision: string) => void>();
 let jobSeq = 0;
+/** 演示模式下"当前这条对话"的会话 id —— 镜像真机 `ai_chat` 的建会话/回传行为。 */
+let liveConvId: string | undefined;
 
 function newTabId(prefix = "t"): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -126,6 +131,12 @@ function answerFor(question: string): { answer: string; commands: string[] } {
         "- `docker update --memory 2g api-server` — 先给 api-server 加上限，别再让它可以无限涨；",
         "- `docker start mysql-prod` — 拉起来，观察 5 分钟是否再次被杀；",
         "- 若反复被杀：把 `innodb_buffer_pool_size` 从 1.4G 降到 512M，或给机器加 swap。",
+        "",
+        "| 容器 | 状态 | 说明 |",
+        "| --- | --- | --- |",
+        "| `mysql-prod` | 已退出 (137) | 被 OOM Killer 干掉 |",
+        "| `api-server` | 运行中 | 连不上库 → 对外一直 502 |",
+        "| `redis` | 运行中 | 内存 48M / 上限 512M，健康 |",
       ].join("\n"),
     };
   }
@@ -182,11 +193,51 @@ function answerFor(question: string): { answer: string; commands: string[] } {
   };
 }
 
-function streamAnswer(channel: unknown, jobId: string, question: string) {
+function streamAnswer(channel: unknown, jobId: string, question: string, planMode = false) {
   const { answer, commands } = answerFor(question);
   const yesNo = question.includes("重启") || question.includes("restart") || question.includes("删除");
 
-  let delay = 260;
+  // 思考片段先推完再开始跑工具，让"推理是否被合并"这件事在界面上看得清
+  let delay = 430;
+
+  // 上下文用量圆环：真机上每轮 LLM 调用后都会推一次，这里固定一份可读的数
+  later(140, () =>
+    pushEvent(channel, {
+      type: "usage",
+      promptTokens: 8420,
+      completionTokens: 386,
+      cachedTokens: 6016,
+      contextWindow: 64000,
+    }),
+  );
+
+  // 演示「思考过程」：真机上推理模型是**逐 token** 流式推的，这里故意拆成很多
+  // 小片段 —— 前端要是每条都新开一个气泡，就会变成"几个字一行"。
+  const thinking = ["先看容器状态", "，确认是不是进程", "没了；", "再查内存", "，", "OOM 的可能性", "最大。"];
+  thinking.forEach((t, i) =>
+    later(70 + i * 45, () => pushEvent(channel, { type: "reasoning", text: t })),
+  );
+
+  // 计划模式：只出方案、一个字都不动 —— 与内核行为一致
+  if (planMode) {
+    const plan = [
+      "## 目标",
+      "重启 mysql-prod，尽量缩短服务中断时间。",
+      "",
+      "## 步骤",
+      "1. 确认 mysql-prod 当前状态与最近日志（只读）",
+      "2. 检查 /data 剩余空间（只读）",
+      "3. docker restart mysql-prod",
+      "4. 复查容器状态与健康检查",
+      "",
+      "## 风险",
+      "- 第 3 步会中断服务约 5–15 秒",
+      "- 若第 4 步未通过，需要回滚到上一次镜像",
+    ].join("\n");
+    later(360, () => pushEvent(channel, { type: "planSubmitted", plan }));
+    later(560, () => pushEvent(channel, { type: "done", answer: plan }));
+    return;
+  }
 
   commands.forEach((cmd) => {
     later(delay, () => pushEvent(channel, { type: "toolCall", id: `call-${uid("c")}`, name: "exec_commands", display: cmd }));
@@ -223,6 +274,30 @@ function streamAnswer(channel: unknown, jobId: string, question: string) {
       );
     });
     delay = 240 + commands.length * 260 + 200;
+    // 演示「变更记录」：AI 改过文件时，会话里会出现这样一张 diff 卡片
+    later(200 + commands.length * 260, () =>
+      pushEvent(channel, {
+        type: "fileChange",
+        id: `call-${uid("c")}`,
+        path: "/etc/nginx/nginx.conf",
+        before: "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;",
+        after: "worker_processes auto;\nkeepalive_timeout 65;\nserver_tokens off;\nclient_max_body_size 64m;",
+      }),
+    );
+    // 演示「任务清单」：长任务里 AI 会边做边更新，清单钉在输入区上方
+    if (/排查|部署|安装|迁移|优化|重构/.test(question)) {
+      later(160 + commands.length * 260, () =>
+        pushEvent(channel, {
+          type: "todos",
+          items: [
+            { content: "确认目标主机与当前状态", status: "completed" },
+            { content: "采集运行数据（CPU / 内存 / 磁盘）", status: "completed" },
+            { content: "定位瓶颈并给出方案", status: "in_progress" },
+            { content: "执行修复并复查", status: "pending" },
+          ],
+        }),
+      );
+    }
     answer.split("\n").forEach((line, i) => {
       later(delay + i * 70, () => pushEvent(channel, { type: "delta", text: `${line}\n` }));
     });
@@ -232,9 +307,13 @@ function streamAnswer(channel: unknown, jobId: string, question: string) {
   function finish() {
     later(0, () => {
       emit("session://status", { sessionId: "s-web01", status: "connected", error: null });
+      // 用围栏代码块收命令（真实模型也是这么给的），顺带验一下 md 渲染的代码块分支
+      const cmds = commands.length
+        ? "```bash\n" + commands.map((c) => `$ ${c}`).join("\n") + "\n```\n"
+        : "";
       pushEvent(channel, {
         type: "done",
-        answer: commands.map((c) => `$ ${c}`).join("\n") + "\n—— 以上命令都已在你面前的终端里跑过，可回放。",
+        answer: cmds + "—— 以上命令都已在你面前的终端里跑过，可回放。",
       });
     });
   }
@@ -277,6 +356,13 @@ function toolOutputFor(cmd: string): string {
 
 export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>): Promise<unknown> {
   const a = params(rawArgs);
+  // `params` 只把 `args` 摊平，**顶层的兄弟键会一起丢掉** —— 而 Tauri 的 Channel
+  // 必须走顶层（塞不进结构体），于是 `ai_chat` 的 channel 会被吃掉、AI 事件
+  // 一个都推不出去（现象是发完消息界面毫无反应）。这里补回来。
+  if (rawArgs && typeof rawArgs === "object") {
+    const top = rawArgs as Record<string, unknown>;
+    if ("channel" in top && !("channel" in a)) a.channel = top.channel;
+  }
   // 所有命令都加一点点延迟，模拟 IPC 往返；也让 loading 态可见
   await new Promise((r) => window.setTimeout(r, 40 + Math.random() * 60));
 
@@ -656,6 +742,28 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return total;
     }
 
+    case "fs_pack_download": {
+      // 和上一条共用一套假进度：演示模式里进度条也该动起来
+      const taskId = uid("task");
+      const total = 2_408_192;
+      let done = 0;
+      const timer = window.setInterval(() => {
+        done = Math.min(total, done + total / 8);
+        emit("fs://progress", { taskId, transferred: done, total, done: done >= total });
+        if (done >= total) window.clearInterval(timer);
+      }, 180);
+      await new Promise((r) => window.setTimeout(r, 1200));
+      window.clearInterval(timer);
+      emit("fs://progress", { taskId, transferred: total, total, done: true });
+      return total;
+    }
+
+    case "fs_extract": {
+      // 与内核约定一致：返回"去掉压缩后缀的同名目录"
+      const p = absPath(a.path);
+      return p.replace(/\.(tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz|tar|zip)$/i, "");
+    }
+
     /* ─────────────── mount ─────────────── */
     case "mount_list":
       return mounts.map((m) => ({ ...m }));
@@ -866,8 +974,23 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "ai_chat": {
       jobSeq += 1;
       const jobId = `job-${jobSeq}`;
-      streamAnswer(a.channel, jobId, str(a.message));
-      return { jobId };
+      // 镜像真机：首轮没带 id → 新建会话；**并把 id 回传**给前端，后续追问带着它回来
+      // 才落在同一个会话里。真机曾经漏了这回传，于是每追问一次就多出一个历史项。
+      const requested = str(a.conversationId) || liveConvId;
+      if (requested) {
+        liveConvId = requested;
+      } else {
+        liveConvId = uid("conv");
+        conversations.push({
+          id: liveConvId,
+          title: str(a.message).split("\n")[0].trim().slice(0, 24) || "新对话",
+          scope: {},
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+      streamAnswer(a.channel, jobId, str(a.message), Boolean(a.planMode));
+      return { jobId, conversationId: liveConvId };
     }
 
     case "ai_cancel":
@@ -885,11 +1008,80 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "ai_models":
       return ["deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "qwen-plus"];
 
+    /* ── 多模型档案（P0-3） ── */
+
+    case "ai_model_profiles":
+      return {
+        profiles: modelState.profiles.map((p) => ({ ...p })),
+        activeId: modelState.activeId,
+      };
+
+    case "ai_model_save": {
+      const p = rawArgs?.profile as (typeof modelState.profiles)[number] | undefined;
+      if (!p || typeof p !== "object") return null;
+      const saved = { ...p, id: p.id || `m-${uid("m")}` };
+      const idx = modelState.profiles.findIndex((x) => x.id === saved.id);
+      if (idx >= 0) modelState.profiles[idx] = saved;
+      else modelState.profiles.push(saved);
+      // 第一份档案自动成为当前 —— 否则用户存完发现"用不了"，会以为坏了
+      if (modelState.profiles.length === 1) modelState.activeId = saved.id;
+      return saved;
+    }
+
+    case "ai_model_delete": {
+      const id = str(a.id);
+      modelState.profiles = modelState.profiles.filter((p) => p.id !== id);
+      if (modelState.activeId === id) modelState.activeId = modelState.profiles[0]?.id ?? "";
+      return null;
+    }
+
+    case "ai_model_activate":
+      modelState.activeId = str(a.id);
+      return null;
+
+    case "ai_model_refresh":
+      await new Promise((r) => window.setTimeout(r, 600));
+      return ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"];
+
+    case "ai_model_preset": {
+      const name = str(a.preset);
+      const blank = {
+        id: "",
+        name: name || "新模型",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "",
+        model: "",
+        temperature: 0.3,
+        contextWindow: 32768,
+        proxy: null,
+        stream: true,
+      };
+      if (name === "deepseek") {
+        return { ...blank, name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", contextWindow: 64000 };
+      }
+      if (name === "openai") {
+        return { ...blank, name: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", contextWindow: 128000 };
+      }
+      if (name === "ollama") {
+        return { ...blank, name: "Ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b", contextWindow: 32000 };
+      }
+      return blank;
+    }
+
     case "ai_presets":
       return [...providerPresets];
 
     case "ai_get_provider":
       return { ...providerConfig, apiKey: providerConfig.apiKey ? MASK : "" };
+
+    case "ai_get_permission":
+      return { ...permissionConfig, dangerRules: [...permissionConfig.dangerRules] };
+
+    case "ai_set_permission": {
+      const c = (rawArgs?.config ?? {}) as Partial<typeof permissionConfig>;
+      if (c && typeof c === "object") Object.assign(permissionConfig, c);
+      return null;
+    }
 
     case "ai_set_provider": {
       const c = params(rawArgs) as unknown as typeof providerConfig;
@@ -923,8 +1115,12 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
-    case "ai_messages":
-      return [];
+    case "ai_messages": {
+      // 曾经这里无条件返回 []，于是演示模式下"点进历史会话"永远一片空白 ——
+      // 而真机那条路坏在别处（返回 Row 而非 DTO），两条路各坏各的，谁都盖不住谁。
+      const id = str(a.conversationId);
+      return (conversationMessages[id] ?? []).map((m) => ({ ...m, conversationId: id }));
+    }
 
     case "ai_takeover_enter":
     case "ai_takeover_exit":

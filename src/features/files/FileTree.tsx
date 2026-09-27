@@ -5,7 +5,7 @@
 // 资产列表退到图标栏的「资产」按钮后面（它依然是资产管理的主入口）。
 //
 // 三条交互约定（对齐参考实现）：
-//   · 单击选中整行；双击目录展开/收起，双击文件开编辑器标签；
+//   · 单击目录展开/收起（文件则只选中整行）；双击目录「进去」（把浏览根切到它），双击文件开编辑器标签；
 //   · 目录列表按需加载（react-query 按目录缓存，与宽幅文件浏览器共用同一 key）；
 //   · 工具栏与右键无关，一切动作都能从工具栏或行内 hover 完成。
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
@@ -19,10 +19,11 @@ import {
   cdCommandFor,
   findWritableTerminal,
   openFileTab,
+  openFileTabInSplit,
   openTerminalTab,
   useUi,
 } from "../../app/store";
-import { fileVisual, formatSize, isEditableFile } from "./fileTypes";
+import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
   HOME,
   baseName,
@@ -32,6 +33,7 @@ import {
   parentOf,
 } from "./pathUtils";
 import {
+  IconArchive,
   IconArrowUp,
   IconChevronDown,
   IconChevronRight,
@@ -40,7 +42,6 @@ import {
   IconEdit,
   IconFilePlus,
   IconFoldAll,
-  IconFolderOpen,
   IconFolderPlus,
   IconHome,
   IconRefresh,
@@ -66,7 +67,7 @@ function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
 
 export function FileTree({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
-  const { pushToast, leftOpen } = useUi();
+  const { pushToast, leftOpen, leftWidth } = useUi();
   const [root, setRoot] = useState(HOME);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -277,6 +278,49 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     }
   };
 
+  /** 「进目录」：把浏览根切到该目录 —— 只加载一层，不必从 / 一路展开下来。 */
+  const enterDir = (path: string) => {
+    if (path === root) return;
+    setExpanded([]);
+    setSelected(null);
+    setRoot(path);
+  };
+
+  /** 「打包下载当前文件夹」：远端 tar.gz → 本地文件。 */
+  const packDownload = async (dir: string) => {
+    const target = await pickSavePath(`${baseName(dir)}.tar.gz`);
+    if (!target) return;
+    pushToast("info", "正在远端打包…");
+    try {
+      const bytes = await fsApi.packDownload(sessionId, dir, target);
+      pushToast("success", `已打包下载 ${bytes} 字节 → ${target}`);
+    } catch (e) {
+      pushToast("error", `打包下载失败：${describeError(e)}`);
+    }
+  };
+
+  /**
+   * 「解压」：内核解到「与压缩包同名的目录」。
+   *
+   * 成功后必须把落点那一层从缓存里作废 —— 新目录不在已展开的 query key 里，
+   * 不刷的话用户点完看着像什么都没发生。
+   */
+  const extractHere = async (archive: string) => {
+    pushToast("info", "正在解压…");
+    try {
+      const target = await fsApi.extract(sessionId, archive);
+      const parent = parentOf(target) ?? root;
+      if (parent !== root) {
+        setExpanded((prev) => (prev.includes(parent) ? prev : [...prev, parent]));
+      }
+      void qc.invalidateQueries({ queryKey: ["fs", sessionId, parent] });
+      void qc.invalidateQueries({ queryKey: ["fs", sessionId, target] });
+      pushToast("success", `已解压到 ${target}`);
+    } catch (e) {
+      pushToast("error", `解压失败：${describeError(e)}`);
+    }
+  };
+
   /* ── 右键菜单 ──────────────────────────────────────────────────────── */
 
   /**
@@ -308,8 +352,12 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   };
 
   /**
-   * 行右键。目录落到它自己，文件落到它**所在的目录** ——
-   * 对文件路径本身执行 cd 是没有意义的。
+   * 行右键。
+   *
+   * 菜单只留「必须对着某个具体文件/目录做」的动作，其余（编码、录制、
+   * 上传下载的图标入口）交给工具栏，别在这里重复一遍。
+   * 按类型收敛：目录给「打包下载当前文件夹」，文件给「在下方编辑 / 解压 / 下载」。
+   * 目录落到它自己、文件落到它**所在的目录** —— 对文件路径本身 cd 没有意义。
    */
   const openRowMenu = (e: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
     e.preventDefault();
@@ -317,42 +365,54 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     setSelected(entry.path); // 右键顺手选中，符合直觉
     const isDir = entry.kind === "dir";
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? root);
-    const open = expanded.includes(entry.path);
     const items: MenuItem[] = [
       { kind: "group", label: "终端" },
       {
         kind: "item",
-        label: "在终端打开",
+        label: "在当前终端打开",
+        icon: <IconTerminal size={13} />,
+        hint: "已有终端",
+        onSelect: () => cdTerminalTo(dir),
+      },
+      {
+        kind: "item",
+        label: "在新终端打开",
         icon: <IconTerminal size={13} />,
         hint: "新标签",
         onSelect: () => openTerminalAt(dir),
       },
-      {
-        kind: "item",
-        label: "前进到当前目录",
-        icon: <IconFolderOpen size={13} />,
-        hint: "现有终端",
-        onSelect: () => cdTerminalTo(dir),
-      },
       { kind: "separator" },
       { kind: "group", label: isDir ? "目录" : "文件" },
-      isDir
-        ? {
-            kind: "item",
-            label: open ? "收起" : "展开",
-            onSelect: () => toggle(entry.path),
-          }
-        : {
-            kind: "item",
-            label: "编辑",
-            disabled: !isEditableFile(entry.name),
-            onSelect: () => openFile(entry),
-          },
     ];
-    if (!isDir) {
+    if (isDir) {
       items.push({
         kind: "item",
-        label: "下载到本机",
+        label: "打包下载当前文件夹",
+        icon: <IconArchive size={13} />,
+        hint: "tar.gz",
+        onSelect: () => void packDownload(entry.path),
+      });
+    } else {
+      items.push({
+        kind: "item",
+        label: "在下方编辑",
+        icon: <IconEdit size={13} />,
+        disabled: !isEditableFile(entry.name),
+        onSelect: () => openFileTabInSplit(sessionId, entry.path),
+      });
+      // 解压只对内核认得的归档出现 —— 给一个点了必然报错的入口更糟
+      if (isExtractableArchive(entry.name)) {
+        items.push({
+          kind: "item",
+          label: "解压",
+          icon: <IconArchive size={13} />,
+          hint: "到同名目录",
+          onSelect: () => void extractHere(entry.path),
+        });
+      }
+      items.push({
+        kind: "item",
+        label: "下载当前文件",
         icon: <IconDownload size={13} />,
         onSelect: () => void download(entry.path),
       });
@@ -378,7 +438,10 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const loading = dirs.some((_, i) => results[i]?.isLoading);
 
   return (
-    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950">
+    <aside
+      className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
+      style={{ width: leftWidth }}
+    >
       {/* 工具栏：一行放完，全部有 tooltip；危险动作是最后一个 */}
       <div className="flex h-[34px] shrink-0 items-center gap-0.5 px-2">
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
@@ -470,7 +533,10 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           >
             {crumbs.map((c, i) => (
               <span key={c.path} className="flex shrink-0 items-center gap-0.5">
-                {i > 0 && <span className="text-neutral-600">/</span>}
+                {/* 前一段是根（`/`）时它自己就是分隔符，再补一个会变成 `//home/...` */}
+                {i > 0 && crumbs[i - 1].label !== "/" && (
+                  <span className="text-neutral-600">/</span>
+                )}
                 <button
                   className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
                   onClick={() => setRoot(c.path)}
@@ -539,8 +605,13 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               key={entry.path}
               className={`nx-row group ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
-              onClick={() => setSelected(entry.path)}
-              onDoubleClick={() => (isDir ? toggle(entry.path) : openFile(entry))}
+              // 单击目录直接展开/收起（省掉「先选中、再双击」那两步）；文件只是选中
+              onClick={() => {
+                setSelected(entry.path);
+                if (isDir) toggle(entry.path);
+              }}
+              // 双击目录 = 「进去」：把浏览根切到它，不必从 / 一路展开下来
+              onDoubleClick={() => (isDir ? enterDir(entry.path) : openFile(entry))}
               onContextMenu={(e) => openRowMenu(e, entry)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
             >
@@ -593,7 +664,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           <div className="nx-hint px-2 py-6 text-center">
             这个目录是空的
             <br />
-            双击左侧目录可展开
+            单击目录名可展开，双击可进入
           </div>
         )}
       </div>

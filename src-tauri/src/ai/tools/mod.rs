@@ -2,6 +2,7 @@
 
 pub mod db;
 pub mod docker;
+pub mod edit;
 pub mod meta;
 pub mod server;
 
@@ -39,12 +40,13 @@ impl ToolOutput {
     }
 }
 
-/// v1 工具 schema 集（server 8 个 + docker 4 + db 4 + meta 2）。
+/// v1 工具 schema 集（server 8 个 + docker 4 + db 4 + meta 2 + edit 3）。
 pub fn all_tools() -> Vec<super::provider::ToolSchema> {
     let mut v = server::schemas();
     v.extend(docker::schemas());
     v.extend(db::schemas());
     v.extend(meta::schemas());
+    v.extend(edit::schemas());
     v
 }
 
@@ -59,8 +61,14 @@ pub async fn execute(
     match name {
         // server.rs
         "exec_commands" => server::exec_commands(state, scope, args).await,
-        "read_file" => server::read_file(state, scope, args).await,
-        "write_file" => server::write_file(state, scope, args).await,
+        // 读成功/失败都会登记到任务级注册表（先读后写门禁的依据）。
+        "read_file" => server::read_file(state, scope, job, args).await,
+        // 写前门禁：没读过的文件直接拒绝，不放行到工具实现里。
+        // 判定收敛在这一处，是为了让 write_file 与 edit_file 走同一条语义。
+        "write_file" => match edit::read_gate(&job.id, args) {
+            Some(rej) => rej,
+            None => server::write_file(state, scope, args).await,
+        },
         "list_dir" => server::list_dir(state, scope, args).await,
         "search_files" => server::search_files(state, scope, args).await,
         "read_screen" => server::read_screen(state, scope, args).await,
@@ -79,6 +87,13 @@ pub async fn execute(
         // meta.rs
         "list_assets" => meta::list_assets(state).await,
         "ask_user" => meta::ask_user(args),
+        // edit.rs
+        "edit_file" => match edit::read_gate(&job.id, args) {
+            Some(rej) => rej,
+            None => edit::edit_file(state, scope, args).await,
+        },
+        "todo_write" => edit::todo_write(&job.id, args),
+        "exit_plan_mode" => edit::exit_plan_mode(&job.id, args),
         _ => ToolOutput::fail(format!("未知工具 {name}")),
     }
 }

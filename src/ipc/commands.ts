@@ -223,6 +223,12 @@ export const fsApi = {
     call<number>("fs_upload", { sessionId, localPath, remotePath, resume }),
   download: (sessionId: string, remotePath: string, localPath: string) =>
     call<number>("fs_download", { sessionId, remotePath, localPath }),
+  /** 打包下载目录：远端 tar.gz → 本地文件，返回字节数。 */
+  packDownload: (sessionId: string, remotePath: string, localPath: string) =>
+    call<number>("fs_pack_download", { sessionId, remotePath, localPath }),
+  /** 解压远端压缩包，返回真实落地目录。 */
+  extract: (sessionId: string, path: string) =>
+    call<string>("fs_extract", { sessionId, path }),
 };
 
 // ───────── mount ─────────
@@ -369,6 +375,19 @@ export interface ProviderConfig {
   stream: boolean;
 }
 
+/** 常规 AI 的权限档位（终端接管是独立模块，不在这里）。 */
+export type AiPermissionMode = "read_only" | "read_write" | "silent";
+
+export interface AiPermissionConfig {
+  mode: AiPermissionMode;
+  /**
+   * 自定义危险规则，**子串匹配**（大小写不敏感）。
+   *
+   * 命中即视为危险命令：任何档位都要问用户 —— 包括「完全静默」。
+   */
+  dangerRules: string[];
+}
+
 export const aiApi = {
   chat: (
     args: {
@@ -376,9 +395,24 @@ export const aiApi = {
       scope: Record<string, unknown>;
       message: string;
       selection?: string;
+      /** 图片附件（裸 base64 或 data URI）。 */
+      images?: string[];
+      /** 计划模式：只做只读调研并把方案交出来，等批准后再动手。 */
+      planMode?: boolean;
       channel: unknown;
     },
-  ) => call<{ jobId: string }>("ai_chat", args),
+  ) => {
+    // 内核侧把请求体收成了单个 `args` 参数（那边平铺参数超了 clippy 上限 7），
+    // channel 单独走顶层 —— Tauri 的 Channel 不能塞进普通结构体里。
+    const { channel, ...body } = args;
+    // 返回值必须带 `conversationId`：首轮是内核新建的会话，前端要把它记住，
+    // 否则下一句追问会被当成新会话（现象：同一个会话里每追问一次就多一个历史项）。
+    return call<{ jobId: string; conversationId: string }>("ai_chat", { args: body, channel });
+  },
+  /** 权限档位 + 自定义危险规则。 */
+  getPermission: () => call<AiPermissionConfig>("ai_get_permission"),
+  setPermission: (config: AiPermissionConfig) =>
+    call<void>("ai_set_permission", { config }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
   confirm: (jobId: string, decision: "allow" | "allow_session" | "deny") =>
     call<void>("ai_confirm", { jobId, decision }),
@@ -408,6 +442,31 @@ export const aiApi = {
     call<import("./types").ConversationDto>("ai_conversation_create", { title }),
   messages: (conversationId: string) =>
     call<import("./types").MessageDto[]>("ai_messages", { conversationId }),
+};
+
+// ───────── ai models（多模型档案，P0-3）─────────
+
+// 类型由 ts-rs 从内核 `ai::profiles` 生成（跑 `cargo test` 导出到 types.ts）——
+// 别在这里手抄一份，字段一改就两边漂移。
+import type { ModelProfile, ModelProfilesView } from "./types";
+export type { ModelProfile, ModelProfilesView };
+
+export const modelApi = {
+  overview: () =>
+    call<ModelProfilesView | null>("ai_model_profiles").then(
+      (v) => v ?? { profiles: [], activeId: null },
+    ),
+  save: (profile: ModelProfile) => call<ModelProfile>("ai_model_save", { profile }),
+  remove: (id: string) => call<void>("ai_model_delete", { id }),
+  activate: (id: string) => call<void>("ai_model_activate", { id }),
+  /**
+   * 按**表单当前值**去拉模型列表，不要求先保存 ——
+   * 用户想先验证 baseUrl + key 能不能连，这个顺序必须支持。
+   */
+  refresh: (profile: ModelProfile) =>
+    call<string[] | null>("ai_model_refresh", { profile }).then((v) => v ?? []),
+  presets: () => call<string[] | null>("ai_presets").then((v) => v ?? []),
+  preset: (name: string) => call<ModelProfile>("ai_model_preset", { preset: name }),
 };
 
 // ───────── vault ─────────

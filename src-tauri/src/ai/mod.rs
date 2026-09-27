@@ -8,9 +8,11 @@
 pub mod agent;
 pub mod context;
 pub mod guard;
+pub mod profiles;
 pub mod provider;
 pub mod takeover;
 pub mod tools;
+pub mod usage;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,6 +61,29 @@ pub enum AiEvent {
     Screen {
         tab_id: String,
         text: String,
+    },
+    /// AI 改动了文件（「变更记录」）。
+    ///
+    /// 只在内容**真的变了**才推：工具把同样的内容重写一遍不算变更，
+    /// 否则每轮都会冒出一堆"无差异的 diff"。
+    FileChange {
+        id: String,
+        path: String,
+        before: String,
+        after: String,
+    },
+    /// 每轮用量快照（功能行右侧的上下文圆环）。
+    ///
+    /// 用**本轮**的输入量而不是累计值 —— 累计会把这一轮之前所有请求的 token
+    /// 都滚进来，圆环会虚高到吓人，反而没人敢用。
+    Usage(usage::Usage),
+    /// 任务清单（`todo_write` 之后推整份；它是「整份替换」语义，不做增量）。
+    Todos {
+        items: Vec<tools::edit::TodoItem>,
+    },
+    /// 计划模式：模型提交了完整计划，停下来等用户评审。
+    PlanSubmitted {
+        plan: String,
     },
     Done {
         answer: String,
@@ -216,10 +241,14 @@ pub struct AiScope {
     pub asset_id: Option<String>,
 }
 
-/// AI 运行时：任务表 + 活跃提供方配置 + 接管状态。
+/// AI 运行时：任务表 + 活跃提供方配置 + 权限档位 + 接管状态。
 pub struct AiRuntime {
     pub jobs: RwLock<HashMap<String, Arc<AiJob>>>,
     pub provider: RwLock<ProviderConfig>,
+    /// 常规模式的权限配置（档位 + 自定义危险规则）。
+    ///
+    /// **不含终端接管** —— 接管是完全权限、独立模块，见 `takeovers`。
+    pub permission: RwLock<guard::PermissionConfig>,
     /// 接管中的标签：tab_id → 取消令牌（用户按键即夺回）。
     pub takeovers: RwLock<HashMap<String, Arc<CancellationToken>>>,
     /// 用户按任意键即夺回（默认开，可配 takeover_steal_on_key）。
@@ -231,6 +260,7 @@ impl AiRuntime {
         Self {
             jobs: RwLock::new(HashMap::new()),
             provider: RwLock::new(provider),
+            permission: RwLock::new(guard::PermissionConfig::default()),
             takeovers: RwLock::new(HashMap::new()),
             steal_on_key: std::sync::atomic::AtomicBool::new(true),
         }

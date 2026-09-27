@@ -10,15 +10,17 @@ import {
   cdCommandFor,
   findWritableTerminal,
   openFileTab,
+  openFileTabInSplit,
   openTerminalTab,
   useUi,
 } from "../../app/store";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { describeError } from "../../ui/errorText";
-import { fileVisual, formatSize, isEditableFile } from "./fileTypes";
+import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
 import {
   IconAlert,
+  IconArchive,
   IconArrowUp,
   IconCopy,
   IconDownload,
@@ -167,6 +169,31 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     }
   };
 
+  /** 「打包下载当前文件夹」：远端 tar.gz → 本地文件。 */
+  const packDownload = async (dir: string) => {
+    const target = await pickSavePath(`${baseName(dir)}.tar.gz`);
+    if (!target) return;
+    pushToast("info", "正在远端打包…");
+    try {
+      const bytes = await fsApi.packDownload(sessionId, dir, target);
+      pushToast("success", `已打包下载 ${bytes} 字节 → ${target}`);
+    } catch (e) {
+      pushToast("error", `打包下载失败：${describeError(e)}`);
+    }
+  };
+
+  /** 「解压」：内核解到「与压缩包同名的目录」，刷掉落点所在那一层。 */
+  const extractHere = async (archive: string) => {
+    pushToast("info", "正在解压…");
+    try {
+      const target = await fsApi.extract(sessionId, archive);
+      refreshDir(parentOf(target) ?? path);
+      pushToast("success", `已解压到 ${target}`);
+    } catch (e) {
+      pushToast("error", `解压失败：${describeError(e)}`);
+    }
+  };
+
   /**
    * 「在终端打开」：新开一个终端标签并 cd 过去。
    *
@@ -197,7 +224,12 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
   /* ── 右键菜单 ──────────────────────────────────────────────────────── */
 
-  /** 行右键：目录落到它自己，文件落到它**所在的目录**（对文件路径 cd 没有意义）。 */
+  /**
+   * 行右键：与左栏文件树保持同一套结构与措辞。
+   *
+   * 目录落到它自己、文件落到它**所在的目录**（对文件路径 cd 没有意义）；
+   * 「进入目录」不再单列 —— 双击就是进入，菜单里再放一条是重复。
+   */
   const openRowMenu = (ev: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
     ev.preventDefault();
     ev.stopPropagation();
@@ -208,17 +240,17 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       { kind: "group", label: "终端" },
       {
         kind: "item",
-        label: "在终端打开",
+        label: "在当前终端打开",
         icon: <IconTerminal size={13} />,
-        hint: "新标签",
-        onSelect: () => openTerminalAt(dir),
+        hint: "已有终端",
+        onSelect: () => cdTerminalTo(dir),
       },
       {
         kind: "item",
-        label: "前进到当前目录",
-        icon: <IconFolderOpen size={13} />,
-        hint: "现有终端",
-        onSelect: () => cdTerminalTo(dir),
+        label: "在新终端打开",
+        icon: <IconTerminal size={13} />,
+        hint: "新标签",
+        onSelect: () => openTerminalAt(dir),
       },
       { kind: "separator" },
       { kind: "group", label: isDir ? "目录" : "文件" },
@@ -227,9 +259,10 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       items.push(
         {
           kind: "item",
-          label: "进入目录",
-          icon: <IconFolderOpen size={13} />,
-          onSelect: () => goto(entry.path),
+          label: "打包下载当前文件夹",
+          icon: <IconArchive size={13} />,
+          hint: "tar.gz",
+          onSelect: () => void packDownload(entry.path),
         },
         {
           kind: "item",
@@ -245,17 +278,26 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         },
       );
     } else {
+      items.push({
+        kind: "item",
+        label: "在下方编辑",
+        icon: <IconEdit size={13} />,
+        disabled: !isEditableFile(entry.name),
+        onSelect: () => openFileTabInSplit(sessionId, entry.path),
+      });
+      if (isExtractableArchive(entry.name)) {
+        items.push({
+          kind: "item",
+          label: "解压",
+          icon: <IconArchive size={13} />,
+          hint: "到同名目录",
+          onSelect: () => void extractHere(entry.path),
+        });
+      }
       items.push(
         {
           kind: "item",
-          label: "打开（编辑器）",
-          icon: <IconEdit size={13} />,
-          disabled: !isEditableFile(entry.name),
-          onSelect: () => openEntry(entry),
-        },
-        {
-          kind: "item",
-          label: "下载到本机",
+          label: "下载当前文件",
           icon: <IconDownload size={13} />,
           onSelect: () => void downloadToLocal(entry.path),
         },
@@ -293,6 +335,13 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       { kind: "group", label: "当前目录" },
       {
         kind: "item",
+        label: "打包下载当前文件夹",
+        icon: <IconArchive size={13} />,
+        hint: "tar.gz",
+        onSelect: () => void packDownload(path),
+      },
+      {
+        kind: "item",
         label: "上传到当前目录",
         icon: <IconUpload size={13} />,
         onSelect: () => void uploadTo(path),
@@ -305,19 +354,20 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       },
       { kind: "item", label: "刷新", icon: <IconRefresh size={13} />, onSelect: refresh },
       { kind: "separator" },
+      { kind: "group", label: "终端" },
       {
         kind: "item",
-        label: "在终端打开当前目录",
+        label: "在当前终端打开",
         icon: <IconTerminal size={13} />,
-        hint: "新标签",
-        onSelect: () => openTerminalAt(path),
+        hint: "已有终端",
+        onSelect: () => cdTerminalTo(path),
       },
       {
         kind: "item",
-        label: "前进到当前目录",
-        icon: <IconFolderOpen size={13} />,
-        hint: "现有终端",
-        onSelect: () => cdTerminalTo(path),
+        label: "在新终端打开",
+        icon: <IconTerminal size={13} />,
+        hint: "新标签",
+        onSelect: () => openTerminalAt(path),
       },
     ];
     setMenu({ x: ev.clientX, y: ev.clientY, title: path, items });

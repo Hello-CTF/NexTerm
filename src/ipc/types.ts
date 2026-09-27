@@ -27,13 +27,51 @@ export type FileEntryDto = { name: string, path: string,
  */
 kind: string, size: number, mode: string, owner: string | null, group: string | null, mtime: number, symlinkTarget: string | null, };
 
-export type ForwardSpecDto = { id: string, sessionId: string, listenPort: number, targetHost: string | null, targetPort: number | null, kind: string, createdAt: number, };
+export type ForwardSpecDto = { id: string, sessionId: string, listenPort: number, 
+/**
+ * 静态转发的目标；SOCKS5 动态转发没有固定目标 → `null`。
+ */
+targetHost: string | null, targetPort: number | null, 
+/**
+ * `local` 或 `socks`。
+ */
+kind: string, createdAt: number, };
 
 export type ImageSummaryDto = { id: string, repository: string, tag: string, size: string, createdSince: string, };
 
 export type KnownHostDto = { id: string, host: string, port: number, keyType: string, fingerprint: string, addedAt: number, };
 
 export type MessageDto = { id: string, conversationId: string, role: string, content: JsonValue, tokensIn: number | null, tokensOut: number | null, createdAt: number, };
+
+/**
+ * 一份模型档案（BYOK）。
+ *
+ * 字段与 `ProviderConfig` 一一对应，外加一个面向用户的展示名 `name` 与档案 `id`。
+ */
+export type ModelProfile = { 
+/**
+ * ULID。新建时传空串，由 [`ModelProfileStore::upsert`] 分配。
+ */
+id: string, 
+/**
+ * 展示名（下拉里显示的就是它）。
+ */
+name: string, baseUrl: string, apiKey: string, model: string, temperature: number, 
+/**
+ * 上下文窗口（1k–2M，非法值兜底 —— 同类工具 踩过的坑）。
+ */
+contextWindow: number, 
+/**
+ * None = 跟随系统代理（与 SSH/WinRM 策略相反，§8.7）。
+ */
+proxy: string | null, stream: boolean, };
+
+/**
+ * 档案表：全部档案 + 当前激活项的 id。
+ *
+ * 直接作为 `ai_model_profiles` 的返回值给前端，省得前端拉两次。
+ */
+export type ModelProfilesView = { profiles: Array<ModelProfile>, activeId: string | null, };
 
 export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
 

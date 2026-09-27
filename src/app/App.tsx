@@ -11,6 +11,8 @@ import {
   openTerminalTab,
   nextTabId,
   connectAsset,
+  LEFT_WIDTH_RANGE,
+  RIGHT_WIDTH_RANGE,
   type AppTab,
   type Pane,
   type Workspace,
@@ -33,6 +35,7 @@ import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { PromptModal } from "../ui/PromptModal";
+import { ResizeHandle } from "../ui/ResizeHandle";
 import { registerPromptHandler } from "../ui/dialogs";
 import {
   IconActivity,
@@ -106,6 +109,10 @@ export default function App() {
     setLeftMode,
     rightOpen,
     setRightOpen,
+    leftWidth,
+    setLeftWidth,
+    rightWidth,
+    setRightWidth,
     toasts,
     dismissToast,
     pushToast,
@@ -569,10 +576,22 @@ export default function App() {
             连上机器后默认是文件树 —— 这台机器就是接下来一段时间的工作面。
             用 key=sessionId 让每台机器各自保留自己的展开状态与选中项。
           */}
-          {!leftOpen ? null : leftMode === "files" && ws?.sessionId ? (
-            <FileTree key={ws.sessionId} sessionId={ws.sessionId} />
-          ) : (
-            <AssetTree />
+          {!leftOpen ? null : (
+            <>
+              {leftMode === "files" && ws?.sessionId ? (
+                <FileTree key={ws.sessionId} sessionId={ws.sessionId} />
+              ) : (
+                <AssetTree />
+              )}
+              <ResizeHandle
+                side="left"
+                width={leftWidth}
+                min={LEFT_WIDTH_RANGE.min}
+                max={LEFT_WIDTH_RANGE.max}
+                defaultWidth={LEFT_WIDTH_RANGE.default}
+                onChange={setLeftWidth}
+              />
+            </>
           )}
 
           <main className="min-w-0 flex-1">
@@ -632,6 +651,16 @@ export default function App() {
             )}
           </main>
 
+          {rightOpen && (
+            <ResizeHandle
+              side="right"
+              width={rightWidth}
+              min={RIGHT_WIDTH_RANGE.min}
+              max={RIGHT_WIDTH_RANGE.max}
+              defaultWidth={RIGHT_WIDTH_RANGE.default}
+              onChange={setRightWidth}
+            />
+          )}
           <AiSidebar sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
         </div>
 

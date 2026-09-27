@@ -280,7 +280,7 @@ pub async fn run_takeover(
                             ));
                             continue;
                         }
-                        Risk::NeedsConfirm => {
+                        Risk::NeedsConfirm | Risk::Danger => {
                             let _ = channel.send(AiEvent::ConfirmRequired {
                                 id: call.id.clone(),
                                 tool: "send_keys".into(),

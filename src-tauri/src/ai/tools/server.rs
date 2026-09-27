@@ -121,11 +121,15 @@ pub async fn exec_commands(
 pub async fn read_file(
     state: &AppState,
     scope: &crate::ai::AiScope,
+    job: &AiJob,
     args: &serde_json::Value,
 ) -> ToolOutput {
     let Some(path) = arg_str(args, "path") else {
         return ToolOutput::fail("缺少 path");
     };
+    // 先读后写门禁的登记点：无论这次读成功与否都登记（详见 edit::mark_read 的注释），
+    // 否则模型将永远无法创建还不存在的新文件。
+    super::edit::mark_read(&job.id, path);
     let max = arg_u64(args, "max_bytes")
         .unwrap_or(120 * 1024)
         .min(1024 * 1024);

@@ -173,3 +173,26 @@ pub async fn fs_download(
 ) -> AppResult<u64> {
     crate::fs::download(&state, &session_id, remote_path, local_path).await
 }
+
+/// 打包下载：远端目录 → 远端 tar.gz → 本地文件。
+#[tauri::command]
+pub async fn fs_pack_download(
+    state: ManagedState<'_>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+) -> AppResult<u64> {
+    sid(&session_id)?;
+    crate::fs::pack_download(&state, &session_id, remote_path, local_path).await
+}
+
+/// 解压：远端压缩包 → 远端「同名目录」。返回真实落地目录。
+#[tauri::command]
+pub async fn fs_extract(
+    state: ManagedState<'_>,
+    session_id: String,
+    path: String,
+) -> AppResult<String> {
+    sid(&session_id)?;
+    crate::fs::extract(&state, &session_id, path).await
+}

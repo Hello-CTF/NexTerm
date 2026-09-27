@@ -66,16 +66,66 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
     }
 }
 
+/// 崩溃取证：把 panic 落到文件。
+///
+/// GUI（Windows 子系统）程序里 panic 的默认行为是**什么都不留下** —— 没有控制台、
+/// 日志里没有、事件查看器通常也不记（Rust 是 unwind 之后以退出码 101 正常结束，
+/// 不走 SEH，所以 WER 不会生成报告）。结果就是「用着用着就没了」，事后完全无从查起。
+///
+/// 这里挂一个 hook，把 panic 位置与 backtrace 追加到 `<data>/logs/crash.log`。
+/// 刻意**不走 tracing** 落盘：那是异步 writer，panic 时未必来得及刷出去。
+fn install_panic_hook(log_dir: std::path::PathBuf) {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let text = format!("===== PANIC @ unix_ms {stamp} =====\n{info}\n{backtrace}\n");
+        eprintln!("[NexTerm] {text}");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_dir.join("crash.log"))
+        {
+            use std::io::Write;
+            let _ = f.write_all(text.as_bytes());
+            let _ = f.flush();
+        }
+        default_hook(info);
+    }));
+}
+
 pub fn run() {
     let log_dir = data_dir().join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
     let _log_guard = init_tracing(&log_dir);
+    install_panic_hook(log_dir.clone());
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     let builder = commands::register(builder);
     builder
+        .on_window_event(|window, event| {
+            // 「应用整体退出」最常见的直接原因就是窗口被关/被销毁（Tauri 默认最后一个
+            // 窗口关闭即退出），而它默认不留任何痕迹。
+            //
+            // ⚠️ 实测（2026-09-27）：**`.run()` 之后的代码不会执行** —— Tauri 在最后一个
+            // 窗口销毁后直接 `process::exit()`，不走返回到调用方那条路。所以"是否正常退出"
+            // 只能靠这两条日志判断：**两条都有 = 窗口被正常关掉（应用退出）；两条都没有
+            // 也没 crash.log = 进程被外部强杀**。别再指望在 `.run()` 后面补日志。
+            match event {
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    tracing::warn!(target: "lifecycle", label = window.label(), "窗口收到关闭请求");
+                }
+                tauri::WindowEvent::Destroyed => {
+                    tracing::warn!(target: "lifecycle", label = window.label(), "窗口已销毁");
+                }
+                _ => {}
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
@@ -95,15 +145,28 @@ pub fn run() {
                     }
                 };
                 let sessions = Arc::new(session::SessionManager::new());
-                // AI 提供方配置：从 setting 读取，缺省空配置
-                let provider = store
-                    .setting_get("ai.provider")
+                // AI 提供方配置：从「多模型档案」里取当前激活的那一份。
+                // 首次启动顺带做一次旧 `ai.provider` → `ai.models` 的迁移（会落库）。
+                // 读失败就退回空配置 —— 模型配置坏掉不该拦着应用启动。
+                let model_store = ai::profiles::ModelProfileStore::load(&store)
+                    .await
+                    .unwrap_or_default();
+                let provider = model_store
+                    .active()
+                    .map(|p| p.to_provider())
+                    .unwrap_or_default();
+                let ai = Arc::new(ai::AiRuntime::new(provider));
+                // AI 权限配置（档位 + 自定义危险规则）：同样从 setting 读，缺省「读写」档。
+                // 读不到就用默认值 —— 权限配置坏掉不该拦着应用启动。
+                if let Some(cfg) = store
+                    .setting_get("ai.permission")
                     .await
                     .ok()
                     .flatten()
-                    .and_then(|s| serde_json::from_str::<ai::ProviderConfig>(&s).ok())
-                    .unwrap_or_default();
-                let ai = Arc::new(ai::AiRuntime::new(provider));
+                    .and_then(|s| serde_json::from_str::<ai::guard::PermissionConfig>(&s).ok())
+                {
+                    *ai.permission.write().await = cfg;
+                }
                 let dbmgr = Arc::new(db::DbManager::default());
                 let app_state =
                     state::AppState::new(handle.clone(), store, vault, sessions, ai, dbmgr);
@@ -131,4 +194,38 @@ pub fn run() {
             eprintln!("NexTerm 启动失败: {e}");
             std::process::exit(1);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// panic hook 必须**真的**把内容写进 crash.log。
+    ///
+    /// 值得单测，是因为写文件那段用了 `if let Ok(..)`：路径不可写时它会**静默什么都不做** ——
+    /// 那样这套取证就成了摆设，而我们还以为有保底。下次真出问题照样查不出来。
+    #[test]
+    fn panic_hook_writes_crash_log() {
+        let dir = std::env::temp_dir().join(format!("nexterm-crash-hook-{}", std::process::id()));
+        let file = dir.join("crash.log");
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let _ = std::fs::remove_file(&file);
+
+        let prev = std::panic::take_hook();
+        install_panic_hook(dir.clone());
+        // 这个 panic 是**故意**的：hook 会在 unwind 之前把现场写下来
+        let panicked = std::panic::catch_unwind(|| panic!("取证自检用的假 panic"));
+        std::panic::set_hook(prev); // 还原，别影响别的测试的 panic 输出
+
+        assert!(panicked.is_err(), "catch_unwind 应捕获到 panic");
+        let text = std::fs::read_to_string(&file).expect("crash.log 应被写入");
+        assert!(
+            text.contains("取证自检用的假 panic"),
+            "应含 panic 信息：{text}"
+        );
+        assert!(text.contains("PANIC @ unix_ms"), "应带时间戳头：{text}");
+
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+    }
 }
