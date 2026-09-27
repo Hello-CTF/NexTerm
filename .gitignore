@@ -1,13 +1,21 @@
 node_modules
 dist
 target
-# 备用构建目录：当 target/debug/.cargo-build-lock 被占用时用
-# CARGO_TARGET_DIR=target-alt 绕过
+# ⚠️ 历史遗留：曾经为了绕开「target/debug/.cargo-build-lock 被占用」而建的备用目录。
+# 真正的根因不是"被占用"，而是**构建产物不该放在工作区内** ——
+# agent 沙箱把工作区当"只能新建、不能修改"，cargo 第二次启动打不开自己上次建的锁文件。
+# 现在由 `.cargo/config.toml` 的 `[build] target-dir` 把产物固定到工作区外解决。
+# 这条忽略规则留着以防有人又手滑建出来；`src-tauri/target-alt/` 可以删。
 target-alt
 src-tauri/target
 src-tauri/gen/schemas
 *.log
 .DS_Store
+# 临时构建校验目录（`vite build --outDir .buildcheck`）。
+# 必须忽略：它不在 dist/ 下，否则会污染 git status，
+# 并且会被 eslint（范围是 "."）连带扫到，报出上千个假错误。
+# 更稳的做法是直接输出到仓库外：`vite build --outDir "$TEMP/nxbuild"`。
+.buildcheck
 # 临时构建校验目录（`vite build --outDir .buildcheck`）。
 # 必须忽略：它不在 dist/ 下，否则会污染 git status，
 # 并且会被 eslint（范围是 "."）连带扫到，报出上千个假错误。

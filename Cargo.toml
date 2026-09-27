@@ -9,6 +9,23 @@ strip = true
 codegen-units = 16
 panic = "abort"
 
+# ── dev（开发版）体积 / 链接时间收敛 ──────────────────────────────────
+#
+# 默认 `debug = 2` 会写入完整调试信息，实测后果：
+#   target/debug 16.4 GB，其中 .pdb 2.4 GB（nexterm.pdb 单文件 322 MB，
+#   两个集成测试的 PDB 再加 460 MB），链接也慢。
+# `line-tables-only` 保留"崩在哪一行"需要的行号信息，丢掉变量/类型信息 ——
+# 日常排错够用，体积掉一个数量级。
+[profile.dev]
+debug = "line-tables-only"
+
+# 依赖包一律不出调试信息：几乎不会去 step into 别人的 crate，
+# 但它们贡献了 debug target 里的绝大部分体积。
+# 注意：这一条会让**所有依赖重编一次**（fingerprint 变了），是一次性成本。
+# 具体包的规则（下面 vt100 / russh）优先级更高，不受影响。
+[profile.dev.package."*"]
+debug = false
+
 [profile.bench]
 opt-level = 3
 strip = false

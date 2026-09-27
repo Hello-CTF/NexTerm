@@ -8,7 +8,14 @@ rust-version = "1.85"
 
 [lib]
 name = "nexterm_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 只要 rlib。
+#
+# Tauri 模板默认给的是 ["staticlib", "cdylib", "rlib"]，那是给**移动端**
+# （Android 要 cdylib、iOS 要 staticlib）用的。本项目只有桌面端，
+# 而 staticlib 的代价很具体：debug 下生成 1.7 GB 的 nexterm_lib.lib
+# （deps/ 里还再存一份），release 下也有 425 MB，链接时间一起变长。
+# main.rs 只做 `nexterm_lib::run()`，rlib 完全够用。
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

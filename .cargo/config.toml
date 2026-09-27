@@ -1,0 +1,36 @@
+# NexTerm 构建配置（放在 nexterm/ 下；cargo 从 cwd 向上找，所以在哪一层跑都生效）
+
+# ── 关于 target 目录：默认不动，人类照常用 nexter/target/ ──────────────
+#
+# **不要**在这里硬编码一个工作区外的 target-dir。原因：
+#   1. 你在自己的终端里跑 cargo，`nexterm/target/` 完全正常（这个目录就是这么建出来的，
+#      `target/debug/nexterm.exe` 还在那儿）；换到别处只会白白丢掉增量缓存。
+#   2. 真正有问题的场景只有一个：**agent 沙箱**。它把工作区（以及 %LOCALAPPDATA%、
+#      ~/.workbuddy 等）当成"只能新建、不能修改" —— 上一个命令建的文件，下一个命令
+#      连 open(O_RDWR) 都会被拒。cargo 每次启动都要重新打开自己上次建的
+#      `.cargo-*lock` / `.fingerprint/*`，于是第二次构建必然 `os error 5`，
+#      而且删不掉、无法自愈。
+#   3. 沙箱里**唯一**确定可写的地方是 `%TEMP%`。实测在 `%TEMP%` 下连续冷编
+#      release 33 分钟，期间反复开锁/写指纹/覆盖产物，**零错误**。
+#
+# 所以「agent 构建」这件事交给 scripts/build.mjs 自动处理：
+#   它检测到处于 agent 环境（存在 CODEBUDDY_SESSION_ID）时，
+#   自动把 CARGO_TARGET_DIR 指到 `%TEMP%\NexTerm-build`，人跑的时候什么都不加。
+#
+# 要手动覆盖：环境变量 CARGO_TARGET_DIR 优先级最高，例如
+#   CARGO_TARGET_DIR=/path/to/dir cargo build ...
+#
+# 详见 文档/工作区与工作流优化方案-NexTerm-2026-09-27.md
+
+# ── 可选：换用 rust-lld（保留未启用，要先在一次性目录实测再放开）──
+#
+# rust-lld 在 sysroot 里就有：
+#   ~\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe
+# 接上它通常能缩短链接时间（本项目 debug 主二进制 51 MB）。两种接法：
+#
+# [target.x86_64-pc-windows-msvc]
+# rustflags = ["-Clink-self-contained=+linker"]
+#
+# 或者显式给绝对路径：
+# [target.x86_64-pc-windows-msvc]
+# linker = "C:/Users/<用户>/.rustup/toolchains/stable-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe"

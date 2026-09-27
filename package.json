@@ -9,7 +9,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:app": "node scripts/build.mjs",
+    "build:release": "node scripts/build.mjs release"
   },
   "dependencies": {
     "@codemirror/commands": "^6.8.0",
