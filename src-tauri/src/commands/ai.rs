@@ -234,19 +234,11 @@ pub async fn ai_presets() -> AppResult<Vec<String>> {
 #[serde(rename_all = "camelCase")]
 pub struct TakeoverEnterArgs {
     pub tab_id: String,
-    pub max_steps: Option<u32>,
-    pub allow_write: Option<bool>,
 }
 
 #[tauri::command]
 pub async fn ai_takeover_enter(state: ManagedState<'_>, args: TakeoverEnterArgs) -> AppResult<()> {
-    takeover::enter(
-        &state,
-        &args.tab_id,
-        args.max_steps.unwrap_or(30),
-        args.allow_write.unwrap_or(true),
-    )
-    .await?;
+    takeover::enter(&state, &args.tab_id).await?;
     Ok(())
 }
 
@@ -267,6 +259,7 @@ pub async fn ai_takeover_run(
     tab_id: String,
     instruction: String,
     allow_write: Option<bool>,
+    max_steps: Option<u32>,
     channel: Channel<AiEvent>,
 ) -> AppResult<String> {
     let job_id = crate::ids::new_id();
@@ -278,6 +271,8 @@ pub async fn ai_takeover_run(
             &job_for_task,
             &tab_id,
             &instruction,
+            // 至少给 1 步，避免 0 直接「步数上限」闪退
+            max_steps.unwrap_or(takeover::DEFAULT_MAX_STEPS).max(1),
             allow_write.unwrap_or(true),
             channel,
         )

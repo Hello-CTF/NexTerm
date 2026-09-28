@@ -547,19 +547,22 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
       if (type === "screen") {
-        // 只保留最新一屏，避免 30 步把对话刷满
+        // 只保留最新一屏：把旧的读屏卡全部摘掉再追加新的。
+        // 最初实现只在「上一张恰好是读屏卡」时去重 —— 一旦中间插进了
+        // 动作卡/思考气泡，后续每步都会多出一张读屏卡，越滚越长。
         setItems((prev) => {
-          const last = prev[prev.length - 1];
-          const item: ChatItem = {
-            role: "tool",
-            name: "read_screen",
-            display: "读屏",
-            summary: String(ev.text).slice(-200),
-          };
-          if (last && last.role === "tool" && last.name === "read_screen") {
-            return [...prev.slice(0, -1), item];
-          }
-          return [...prev, item];
+          const rest = prev.filter((i) => !(i.role === "tool" && i.name === "read_screen"));
+          return [
+            ...rest,
+            {
+              role: "tool" as const,
+              name: "read_screen",
+              display: "读屏",
+              summary: String(ev.text).slice(-200),
+              text: String(ev.text).slice(-4000),
+              ok: true,
+            },
+          ];
         });
       } else if (type === "confirmRequired") {
         // 接管中遇到需确认的动作：走与主对话一致的确认卡片，不再自动拒绝
@@ -573,12 +576,52 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         setConfirmCard(card);
         setItems((prev) => [...prev, card]);
       } else if (type === "delta") {
+        // 模型每步的「看到…因为…所以…」叙述，实时流成气泡
         setItems((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.role === "assistant") {
             return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
           }
           return [...prev, { role: "assistant", text: ev.text as string }];
+        });
+      } else if (type === "reasoning") {
+        // 与主对话同款：逐 token 合并到上一条，避免「几个字一行」
+        setItems((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "reasoning") {
+            return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
+          }
+          return [...prev, { role: "reasoning", text: ev.text as string }];
+        });
+      } else if (type === "toolCall") {
+        // 接管的每个动作（send_keys/wait_for/done）也发卡片：
+        // 气泡讲因果，卡片记动作 —— 用户才看得懂 AI 在终端里敲了什么
+        setItems((prev) => [
+          ...prev,
+          {
+            role: "tool" as const,
+            name: ev.name as string,
+            display: (ev.display as string) || (ev.name as string),
+          },
+        ]);
+      } else if (type === "toolResult") {
+        setItems((prev) => {
+          const idx = [...prev]
+            .reverse()
+            .findIndex((i) => i.role === "tool" && !("summary" in i));
+          if (idx >= 0) {
+            const realIdx = prev.length - 1 - idx;
+            const copy = [...prev];
+            copy[realIdx] = {
+              ...(copy[realIdx] as Extract<ChatItem, { role: "tool" }>),
+              summary: ev.summary as string,
+              text: (ev.text as string) ?? "",
+              ok: ev.ok as boolean,
+              exitCode: ev.exitCode as number | null,
+            };
+            return copy;
+          }
+          return prev;
         });
       } else if (type === "done") {
         setAiBusy(false);
