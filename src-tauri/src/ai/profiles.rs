@@ -41,7 +41,7 @@ pub struct ModelProfile {
     pub api_key: String,
     pub model: String,
     pub temperature: f32,
-    /// 上下文窗口（1k–2M，非法值兜底 —— 同类工具 踩过的坑）。
+    /// 上下文窗口（1k–2M，非法值兜底 —— 外部配置可能乱填）。
     #[ts(type = "number")]
     pub context_window: u64,
     /// None = 跟随系统代理（与 SSH/WinRM 策略相反，§8.7）。

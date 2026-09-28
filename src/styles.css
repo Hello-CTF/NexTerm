@@ -3,7 +3,7 @@
 /* ============================================================================
  * NexTerm 视觉系统
  *
- * 设计语言参考 同类工具：微冷深灰分层、极浅明度差做层次（而不是靠硬边框）、
+ * 设计语言：微冷深灰分层、极浅明度差做层次（而不是靠硬边框）、
  * 单一冷静蓝强调色、圆角统一、状态用低饱和 pill 表达、密度高但安静。
  *
  * 四层结构：
@@ -401,6 +401,25 @@
   .nx-send-btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+  }
+
+  /*
+   * 运行中那颗「停止」。
+   *
+   * 刻意用危险色而不是把发送按钮变灰：它取代了原来那个转不停的圈 ——
+   * 那颗圈点不动、还看不出能不能点，正是「卡住了又停不下来」的界面成因。
+   * 红一点，用户才知道这里能按。
+   */
+  .nx-send-btn-stop {
+    border-color: color-mix(in srgb, var(--color-red-400) 55%, transparent);
+    background: color-mix(in srgb, var(--color-red-500) 22%, transparent);
+    color: var(--color-red-200);
+  }
+
+  .nx-send-btn-stop:hover:not(:disabled) {
+    border-color: var(--color-red-400);
+    background: color-mix(in srgb, var(--color-red-500) 40%, transparent);
+    color: var(--color-red-100);
   }
 
   /* 引用 chip 上的小叉 */
@@ -1245,7 +1264,7 @@
     background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
   }
 
-  /* 分组小标题（同类工具 那种「操作」）：只做视觉分段，不可点 */
+  /* 分组小标题：只做视觉分段，不可点 */
   .nx-menu-group {
     padding: 6px 10px 3px;
     color: var(--color-neutral-500);

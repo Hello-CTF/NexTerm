@@ -1,6 +1,6 @@
 // AI 侧栏：对话 + 流式事件 + 工具调用卡片 + 确认卡片 + 接管 + 历史会话。
 //
-// 形态参考 同类工具 的 AI 分栏：顶栏（历史 / 新建）、消息流、底部输入区
+// 形态：顶栏（历史 / 新建）、消息流、底部输入区
 // （大输入框 + 功能行 + 圆形发送）。**AI 接管终端**是我们独有的能力，完整保留。
 //
 // 四条自己定的规矩：
@@ -40,7 +40,17 @@ type ChatItem =
   | { role: "user"; text: string; imageCount?: number }
   | { role: "assistant"; text: string }
   | { role: "reasoning"; text: string }
-  | { role: "tool"; name: string; display: string; summary?: string; ok?: boolean; exitCode?: number | null }
+  | {
+      role: "tool";
+      name: string;
+      display: string;
+      /** 折叠态看到的一行摘要（内核截到 400 字）。 */
+      summary?: string;
+      /** 完整输出，点「展开」看的就是它（内核上限 64K）。 */
+      text?: string;
+      ok?: boolean;
+      exitCode?: number | null;
+    }
   | { role: "diff"; path: string; before: string; after: string }
   | { role: "plan"; text: string }
   | { role: "confirm"; jobId: string; callId: string; tool: string; rendered: string };
@@ -91,6 +101,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [input, setInput] = useState("");
   const [confirmCard, setConfirmCard] = useState<Extract<ChatItem, { role: "confirm" }> | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  /**
+   * 内核推来的运行状态（`AiEvent::Status`）。
+   *
+   * 这个事件一直在推，但前端**从来没渲染过** —— 于是 AI 跑长命令时界面上
+   * 什么动静都没有，"卡住了"的焦虑有一半来自这里：明明还在干活，
+   * 用户看到的是一个不动的转圈和一张点不动的发送按钮。
+   */
+  const [status, setStatus] = useState<{ phase: string; detail?: string; turn?: number } | null>(null);
   /** 最近一轮的用量快照（功能行右侧的圆环）。null = 本轮还没跑过。 */
   const [usage, setUsage] = useState<AiUsage | null>(null);
   /** 当前任务清单（todo_write 推整份）。 */
@@ -111,6 +129,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [permOpen, setPermOpen] = useState(false);
   /** 新增危险规则的输入草稿。 */
   const [ruleDraft, setRuleDraft] = useState("");
+  /** 草稿行是否展开（点「添加一条规则」或从确认卡片跳进来时为真）。 */
+  const [ruleDraftOpen, setRuleDraftOpen] = useState(false);
   /** 待发送的图片（data URI）。 */
   const [images, setImages] = useState<string[]>([]);
   /** @ 引用 chip。 */
@@ -146,15 +166,35 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
+  /** 提交新增规则（草稿行按 Enter 或失焦）。 */
   const addDangerRule = () => {
     const r = ruleDraft.trim();
-    if (!r || !perm) return;
-    if (perm.dangerRules.some((x) => x.toLowerCase() === r.toLowerCase())) {
-      setRuleDraft("");
-      return;
-    }
-    void savePerm({ ...perm, dangerRules: [...perm.dangerRules, r] });
+    // 不论成功与否都收起这行 —— 空规则没意义、重复规则也不起作用，
+    // 一直杵在那里只会让用户以为自己填错了。
     setRuleDraft("");
+    setRuleDraftOpen(false);
+    if (!r || !perm) return;
+    if (perm.dangerRules.some((x) => x.toLowerCase() === r.toLowerCase())) return;
+    void savePerm({ ...perm, dangerRules: [...perm.dangerRules, r] });
+  };
+
+  /**
+   * 改一条已有规则，返回是否真的落了库。
+   *
+   * 只在内容**真的变了**时才写：失焦只代表"离开了输入框"，不代表用户改了东西，
+   * 每次都写会平白发一次 IPC，还会顺手做一次没有必要的乐观更新。
+   * 空值（清空 = 想删，但删有专门的删除按钮）和重复规则都当"没改"处理。
+   */
+  const editDangerRule = (orig: string, next: string): boolean => {
+    if (!perm) return false;
+    const r = next.trim();
+    if (!r || r === orig) return false;
+    if (perm.dangerRules.some((x) => x !== orig && x.toLowerCase() === r.toLowerCase())) return false;
+    void savePerm({
+      ...perm,
+      dangerRules: perm.dangerRules.map((x) => (x === orig ? r : x)),
+    });
+    return true;
   };
 
   /**
@@ -217,7 +257,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
       switch (type) {
+        case "status":
+          setStatus({
+            phase: ev.phase as string,
+            detail: (ev.detail as string) || undefined,
+            turn: (ev.turn as number) ?? undefined,
+          });
+          break;
         case "delta":
+          // 开始吐字就说明不再"思考中"了，状态条让位给正文。
+          setStatus(null);
           setItems((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.role === "assistant") {
@@ -256,6 +305,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               copy[realIdx] = {
                 ...(copy[realIdx] as Extract<ChatItem, { role: "tool" }>),
                 summary: ev.summary as string,
+                text: (ev.text as string) ?? "",
                 ok: ev.ok as boolean,
                 exitCode: ev.exitCode as number | null,
               };
@@ -307,19 +357,49 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           planPendingRef.current = true;
           break;
         case "done": {
-          const answer = (ev.answer as string) || "(无回答)";
+          // raw 记下"内核到底给没给答案"：answer 会被填成占位串，那就不能再拿它
+          // 跟流式正文比对 —— 占位串永远不可能等于正文，会误走追加分支。
+          const raw = (ev.answer as string) || "";
+          const answer = raw || "(无回答)";
           const wasPlan = planPendingRef.current;
           planPendingRef.current = false;
           setAiBusy(false);
           setConfirmCard(null);
-          setItems((prev) => [
-            ...prev,
-            wasPlan ? { role: "plan", text: answer } : { role: "assistant", text: answer },
-          ]);
+          setStatus(null);
+          setItems((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && (last.role === "assistant" || last.role === "plan")) {
+              const streamed = last.text.trim();
+              // 判据：stream 已经把这段吐完了，done 再补一条就是重复 —— 这就是
+              // 「同一段回答出现两遍」的根因。逐字相同只说明同一个答案，
+              // 此时既不追加，也不改内容。
+              if (raw && streamed === answer.trim()) {
+                // 计划模式下"收尾"这个语义不能丢：把流式那条升级成 plan 气泡，
+                // 让批准按钮仍然出现，而不是多长出一条方案。
+                if (wasPlan) return [...prev.slice(0, -1), { role: "plan", text: answer }];
+                return prev;
+              }
+              // 末条是权威答案的真前缀（长度 ≥ 8 才认，免得一个"好"字就被当成
+              // 截断）→ 流被代理截了，或对端回退成了非流式。直接换成完整答案。
+              if (
+                last.role === "assistant" &&
+                raw &&
+                streamed.length >= 8 &&
+                answer.trim().startsWith(streamed)
+              ) {
+                return [...prev.slice(0, -1), { ...last, text: answer }];
+              }
+            }
+            return [
+              ...prev,
+              wasPlan ? { role: "plan", text: answer } : { role: "assistant", text: answer },
+            ];
+          });
           break;
         }
         case "error":
           setAiBusy(false);
+          setStatus(null);
           pushToast("error", `AI: ${ev.message as string}`);
           break;
         default:
@@ -362,6 +442,35 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (!jobId) return;
     await aiApi.confirm(jobId, decision);
     setConfirmCard(null);
+  };
+
+  /**
+   * 停止本轮。
+   *
+   * 以前界面上**没有这个入口** —— 内核早就实现了 `ai_cancel`、`ipc/commands.ts`
+   * 也导出了 `cancel()`，但从来没有任何地方调用它。结果 AI 一旦卡在长命令上，
+   * 发送按钮就只剩一个转不停的圈：点不动、也没别的办法，只能重启应用。
+   *
+   * 点完立刻解锁输入，不等后端回事件 —— 停止是用户按下的动作，手感必须即时；
+   * 后端稍后会推 `error("已取消")`，那一下只是把状态再确认一遍。
+   */
+  const stop = async () => {
+    const id = jobId;
+    if (!id) {
+      // 极短窗口：请求刚发出去、内核还没把 jobId 回过来，这时没有东西可取消。
+      // 静默 return 会让人以为按钮坏了，所以说一句。
+      pushToast("info", "这一轮还没启动完，稍等一下再点");
+      return;
+    }
+    setAiBusy(false);
+    setConfirmCard(null);
+    setStatus(null);
+    try {
+      await aiApi.cancel(id);
+      pushToast("info", "已停止本轮");
+    } catch (e) {
+      pushToast("error", `停止失败：${describeError(e)}`);
+    }
   };
 
   /* ── 历史会话 ──────────────────────────────────────────────────────── */
@@ -625,11 +734,32 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             ))}
           </div>
 
-          {/* 接管是独立模块，这里只说明、不配置 */}
-          <div className="mb-2 rounded border border-red-500/25 bg-red-500/[0.07] px-2 py-1.5 text-[10.5px] leading-relaxed text-red-200/90">
-            <div className="mb-0.5 font-medium text-red-200">终端接管（实验性功能）</div>
-            让 AI 直接接手当前终端干活。它不受上面三档限制 ——
-            用功能行的显示器图标发起，随时按 Esc 夺回。
+          {/* 工作方式：计划模式单独成组，不混进上面三档 ——
+              档位管的是"能不能动手"，计划模式管的是"先不先出方案"，
+              混在一起会被当成第四档权限。整行可点 + ●/○ 与三档的呈现保持一致。 */}
+          <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
+          <button
+            className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
+            title={
+              planMode
+                ? "计划模式已开：AI 只做只读调研，把方案交给你之后再动手"
+                : "计划模式：先让 AI 出方案，你批准了再执行"
+            }
+            onClick={() => setPlanMode((v) => !v)}
+          >
+            <span className={`shrink-0 ${planMode ? "text-blue-300" : "text-neutral-500"}`}>
+              <IconList size={12} />
+            </span>
+            <span className="nx-menu-label">
+              {planMode ? "● " : "○ "}
+              计划模式
+            </span>
+            <span className="nx-menu-hint">{planMode ? "已开启" : "关"}</span>
+          </button>
+          <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
+            {planMode
+              ? "先出方案，你批准了再动手 —— 期间只读调研，不碰你的机器"
+              : "AI 直接干活"}
           </div>
 
           {/* 自定义危险规则 */}
@@ -637,46 +767,73 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             自定义危险操作
             <span className="ml-1 text-neutral-500">（遇到就问你，静默档也会问）</span>
           </div>
-          <div className="mb-1.5 flex gap-1">
-            <input
-              className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-              placeholder="例如 kubectl delete"
-              value={ruleDraft}
-              onChange={(e) => setRuleDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addDangerRule();
-                }
-              }}
-            />
-            <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={addDangerRule}>
-              添加
-            </button>
-          </div>
-          {perm.dangerRules.length === 0 ? (
-            <div className="nx-hint text-[10.5px]">还没有自定义规则</div>
-          ) : (
-            <div className="flex flex-wrap gap-1">
-              {perm.dangerRules.map((r) => (
-                <span key={r} className="nx-chip" title={r}>
-                  <span className="max-w-[160px] truncate font-mono">{r}</span>
-                  <button
-                    className="nx-chip-x"
-                    title="删除"
-                    onClick={() =>
-                      void savePerm({
-                        ...perm,
-                        dangerRules: perm.dangerRules.filter((x) => x !== r),
-                      })
+          <div className="mb-1.5 flex flex-col gap-1">
+            {perm.dangerRules.map((r) => (
+              <div key={r} className="flex items-center gap-1">
+                <input
+                  className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
+                  defaultValue={r}
+                  title={r}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      // Enter 只负责"提交"，真正保存交给 onBlur ——
+                      // 两处都写会对同一次编辑保存两遍。
+                      e.currentTarget.blur();
                     }
-                  >
-                    <IconClose size={10} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+                  }}
+                  onBlur={(e) => {
+                    // 空值 / 重复都不会落库，输入框得还原成库里的那条，
+                    // 否则界面显示的和真实生效的规则会对不上。
+                    if (!editDangerRule(r, e.currentTarget.value)) e.currentTarget.value = r;
+                  }}
+                />
+                <button
+                  className="nx-icon-btn nx-icon-btn-sm"
+                  title="删除这条规则"
+                  onClick={() =>
+                    void savePerm({
+                      ...perm,
+                      dangerRules: perm.dangerRules.filter((x) => x !== r),
+                    })
+                  }
+                >
+                  <IconClose size={11} />
+                </button>
+              </div>
+            ))}
+            {/* 草稿行：只有这一行是受控的，落库后转成上面那种普通行。 */}
+            {ruleDraftOpen && (
+              <input
+                autoFocus
+                className="nx-input nx-input-sm w-full font-mono"
+                placeholder="例如 kubectl delete"
+                value={ruleDraft}
+                onChange={(e) => setRuleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addDangerRule();
+                  }
+                  if (e.key === "Escape") {
+                    setRuleDraft("");
+                    setRuleDraftOpen(false);
+                  }
+                }}
+                onBlur={addDangerRule}
+              />
+            )}
+            {perm.dangerRules.length === 0 && !ruleDraftOpen && (
+              <div className="nx-hint text-[10.5px]">还没有自定义规则</div>
+            )}
+          </div>
+          <button
+            className="nx-btn nx-btn-outline nx-btn-xs mb-1.5"
+            onClick={() => setRuleDraftOpen(true)}
+          >
+            <IconPlus size={10} />
+            添加一条规则
+          </button>
 
           <div className="mt-2 border-t border-neutral-800/60 pt-1.5 text-[10px] leading-relaxed text-neutral-500">
             另外有几条铁律：格式化磁盘、清空系统目录、删库这类毁掉就回不来的操作，
@@ -693,7 +850,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <IconBot size={19} />
             </span>
             <div className="text-xs text-neutral-400">
-              开始新对话 —— AI 跑过的每条命令都会出现在你眼前的终端里，不是黑盒。
+              开始新对话 —— AI 跑过的每条命令和完整输出都记在右边的卡片里，点开就能看，不是黑盒。
             </div>
             <div className="flex w-full flex-col gap-1.5">
               {EXAMPLES.map((ex) => (
@@ -723,10 +880,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <span className="nx-spacer" />
               <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
             </div>
-            <pre className="mb-2.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
+            <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
               {confirmCard.rendered}
             </pre>
-            <div className="flex gap-1.5">
+            <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
+              不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
+            </div>
+            <div className="flex flex-wrap gap-1.5">
               <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={() => void confirm("allow")}>
                 允许一次
               </button>
@@ -738,6 +898,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </button>
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void confirm("deny")}>
                 拒绝
+              </button>
+              {/* 权限浮层在消息流上方、这张卡片在底部，两者不会互相遮挡，可以同时开着。 */}
+              <button
+                className="nx-btn nx-btn-outline nx-btn-xs"
+                title="打开权限设置，并把这条命令预填成一条新规则"
+                onClick={() => {
+                  setPermOpen(true);
+                  // 先填草稿再展开：预填的这条就是要让用户直接改的对象，
+                  // 所以一进来草稿行必须是打开、并且已经聚焦的状态。
+                  setRuleDraft(ruleFromRendered(confirmCard.rendered));
+                  setRuleDraftOpen(true);
+                }}
+              >
+                在权限设置里管理
               </button>
             </div>
           </div>
@@ -787,6 +961,24 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
       {/* 输入区 */}
       <div className="shrink-0 border-t border-neutral-800/60 p-2.5">
+        {/* 计划模式开着时必须一直看得见。它已经从功能行搬进权限浮层，
+            而浮层一收起来就没人提醒用户"这一轮 AI 只出方案、不动手"了 ——
+            忘了它还开着，会以为 AI 变磨叽了。 */}
+        {planMode && (
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300/90">
+            <IconList size={10} className="shrink-0" />
+            <span className="truncate">计划模式 · 先出方案，你批准了再动手</span>
+          </div>
+        )}
+        {/* 运行状态条。
+            内核一直在推 `status`，前端却从没渲染过 —— AI 跑长命令时界面
+            完全静止，用户只能猜它死了没有。这行字就是回答「它还在动吗」。 */}
+        {aiBusy && status && (
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+            <IconLoader size={10} className="animate-spin text-amber-300/80" />
+            <span className="truncate">{statusText(status)}</span>
+          </div>
+        )}
         {/* 引用 chip */}
         {refs.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1">
@@ -867,18 +1059,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         {/* 功能行 */}
         <div className="mt-1.5 flex items-center gap-1">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
-          {/* 计划模式：先出方案、等你点头再动手 */}
-          <button
-            className={`nx-icon-btn nx-icon-btn-sm ${planMode ? "is-active" : ""}`}
-            title={
-              planMode
-                ? "计划模式已开：AI 只做只读调研，把方案交给你之后再动手"
-                : "计划模式：先让 AI 出方案，你批准了再执行"
-            }
-            onClick={() => setPlanMode((v) => !v)}
-          >
-            <IconList size={13} />
-          </button>
           <div className="nx-spacer" />
           <UsageRing usage={usage} />
           {/* 盾牌不再是"静默开关"，而是权限设置入口（图标刻意不变，位置也不动） */}
@@ -904,14 +1084,26 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           >
             <IconMonitor size={13} />
           </button>
-          <button
-            className="nx-send-btn"
-            title="发送 (Enter)"
-            disabled={aiBusy || (!input.trim() && images.length === 0)}
-            onClick={() => void send()}
-          >
-            {aiBusy ? <IconLoader size={14} className="animate-spin" /> : <IconSendArrow />}
-          </button>
+          {/* 运行中这个圆钮就从「发送」变成「停止」——把它放在同一位置，
+              是因为用户想中断时的第一反应就是去点那个正在转圈的东西。 */}
+          {aiBusy ? (
+            <button
+              className="nx-send-btn nx-send-btn-stop"
+              title="停止这一轮（AI 会停在当前位置，已跑完的结果保留）"
+              onClick={() => void stop()}
+            >
+              <IconStopSquare />
+            </button>
+          ) : (
+            <button
+              className="nx-send-btn"
+              title="发送 (Enter)"
+              disabled={!input.trim() && images.length === 0}
+              onClick={() => void send()}
+            >
+              <IconSendArrow />
+            </button>
+          )}
         </div>
       </div>
 
@@ -936,6 +1128,15 @@ function IconSendArrow() {
   );
 }
 
+/** 停止按钮里的实心方块（停止 = 方块，是播放器/终端里最通用的语汇）。 */
+function IconStopSquare() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** 读图 → data URI（内联进请求，不落盘）。 */
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -944,6 +1145,29 @@ function readAsDataUrl(file: File): Promise<string> {
     fr.onerror = () => reject(new Error("读取图片失败"));
     fr.readAsDataURL(file);
   });
+}
+
+/** 运行状态的一句话（把 `AiEvent::Status` 翻成人话）。 */
+function statusText(s: { phase: string; detail?: string; turn?: number }): string {
+  if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期工具结果…";
+  if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 轮 · 正在思考…` : "正在思考…";
+  return s.detail ?? s.phase;
+}
+
+/**
+ * 从确认卡片的内核渲染文本里抠出一条待编辑的危险规则。
+ *
+ * 内核渲染一般会把真正要跑的命令单独放在一行（以 `$` 开头），优先取它；
+ * 找不到就退回第一行。截到 120 字是因为规则是给人扫一眼的短模式，
+ * 把整段上下文塞进去反而看不清要匹配什么。
+ */
+function ruleFromRendered(rendered: string): string {
+  const lines = rendered
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const picked = lines.find((l) => l.startsWith("$")) ?? lines[0] ?? "";
+  return picked.slice(0, 120);
 }
 
 /** 持久化消息 → 会话项。只还原文本，工具调用与图片不入历史。 */
@@ -1000,35 +1224,63 @@ function ChatBubble({ item, onApprovePlan }: { item: ChatItem; onApprovePlan: (p
   if (item.role === "plan") {
     return <PlanBubble item={item} onApprove={() => onApprovePlan(item.text)} />;
   }
-  if (item.role === "tool") {
-    const running = item.summary === undefined;
-    return (
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
-        <div className="flex items-center gap-1.5">
-          <span className="nx-badge nx-badge-purple font-mono">{item.name}</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
-            {item.display}
-          </span>
-          {running ? (
-            <IconLoader size={11} className="animate-spin text-amber-300" />
-          ) : item.ok ? (
-            <IconCheck size={12} className="text-green-300" />
-          ) : (
-            <IconXCircle size={12} className="text-red-300" />
-          )}
-          {!running && item.exitCode !== null && item.exitCode !== undefined && (
-            <span className="font-mono text-[10px] text-neutral-500">{item.exitCode}</span>
-          )}
-        </div>
-        {item.summary && (
-          <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-500">
-            {item.summary}
-          </pre>
+  if (item.role === "tool") return <ToolBubble item={item} />;
+  return null;
+}
+
+/**
+ * 工具调用卡片：折叠态一行摘要，点「展开」看完整输出。
+ *
+ * 摘要只有 400 字（内核截的），排查问题时基本不够用 —— 一个 `docker ps`
+ * 就可能超。所以完整输出也一并推过来了（上限 64K），这里默认收着，
+ * 要用再铺开：一次几十屏的文本会把消息流冲散，反而找不到东西。
+ */
+function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
+  const [open, setOpen] = useState(false);
+  const running = item.summary === undefined;
+  const full = item.text ?? "";
+  const preview = item.summary ?? "";
+  // 完整输出确实比摘要长，才给展开入口 —— 一条 40 字的 `pwd` 没什么可展开的。
+  const expandable = full.length > preview.length;
+  const body = open ? full : preview;
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
+      <div className="flex items-center gap-1.5">
+        <span className="nx-badge nx-badge-purple font-mono">{item.name}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
+          {item.display}
+        </span>
+        {running ? (
+          <IconLoader size={11} className="animate-spin text-amber-300" />
+        ) : item.ok ? (
+          <IconCheck size={12} className="text-green-300" />
+        ) : (
+          <IconXCircle size={12} className="text-red-300" />
+        )}
+        {!running && item.exitCode !== null && item.exitCode !== undefined && (
+          <span className="font-mono text-[10px] text-neutral-500">{item.exitCode}</span>
         )}
       </div>
-    );
-  }
-  return null;
+      {body && (
+        <pre
+          className={`mt-1.5 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] ${
+            open ? "max-h-[26rem] text-neutral-300" : "max-h-32 text-neutral-500"
+          }`}
+        >
+          {body}
+        </pre>
+      )}
+      {expandable && (
+        <button
+          className="mt-1.5 flex items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
+          {open ? "收起" : `展开完整输出（${full.length} 字符）`}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**

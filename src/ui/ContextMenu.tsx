@@ -5,7 +5,7 @@
  * 检查元素」菜单 —— 在一个运维终端里既没用又出戏；而且文件树、终端、资产树各自
  * 需要的动作完全不同，只有自绘才能把动作摆到手指边上。
  *
- * 形态参考 同类工具：可分组（带灰色小标）、可带快捷键提示（右侧等宽灰字）、
+ * 形态：可分组（带灰色小标）、可带快捷键提示（右侧等宽灰字）、
  * 可挂子菜单（悬停展开，右边放不下自动翻到左边）。
  *
  * 定位策略：先按鼠标点挂载，`useLayoutEffect` 里量到真实尺寸后再做视口避让。
@@ -15,7 +15,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 
 export type MenuItem =
   | { kind: "separator" }
-  /** 分组小标题（同类工具 的「操作」那种）。不参与交互，只是视觉分段。 */
+  /** 分组小标题。不参与交互，只是视觉分段。 */
   | { kind: "group"; label: string }
   | {
       kind: "item";

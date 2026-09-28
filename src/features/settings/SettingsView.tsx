@@ -1,13 +1,16 @@
-// 设置页：AI 提供方（预设/自动填参/两步连通性测试）+ 凭据库 + MCP。
+// 设置页：模型档案管理（与 AI 侧栏共用 ModelManager）+ 凭据库。
+//
+// 模型设置以前在这里单开了一份「单 provider 表单」，和 AI 侧栏的多档案面板是两份重复且
+// 版本落后的实现 —— 现在统一内联复用 `ModelManager`，这里不再碰 aiApi 的
+// getProvider / setProvider / presets（连通性测试除外，见下方说明）。
 import { useEffect, useState } from "react";
 import { aiApi, vaultApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
-import { McpSection } from "./McpSection";
+import { ModelManager } from "../ai/ModelPanel";
 import {
   IconCheckCircle,
   IconInfo,
-  IconKey,
   IconLock,
   IconRefresh,
   IconSettings,
@@ -19,21 +22,18 @@ import {
 
 export function SettingsView() {
   const { pushToast } = useUi();
-  const [presets, setPresets] = useState<string[]>([]);
-  const [preset, setPreset] = useState("");
-  const [cfg, setCfg] = useState({
-    baseUrl: "",
-    apiKey: "",
-    model: "",
-    temperature: 0.3,
-    contextWindow: 32768,
-    proxy: "",
-    stream: true,
-  });
+
+  // 连通性测试的结果。原先这里先把表单值 setProvider 再测；现在只测激活档案，
+  // 所以除了两步的成败，还要把各自的错误信息留着给用户看。
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ modelsOk: boolean; chatOk: boolean; detail: string } | null>(
-    null,
-  );
+  const [testResult, setTestResult] = useState<{
+    modelsOk: boolean;
+    chatOk: boolean;
+    modelsError?: string;
+    chatError?: string;
+    /** 连调用本身都失败（IPC / 后端异常）时的兜底说明。 */
+    fatal?: string;
+  } | null>(null);
 
   // 凭据库
   const [vault, setVault] = useState<{
@@ -45,83 +45,43 @@ export function SettingsView() {
   const [unlockPwd, setUnlockPwd] = useState("");
 
   useEffect(() => {
-    void aiApi.presets().then(setPresets).catch(() => undefined);
-    void aiApi
-      .getProvider()
-      .then((c) =>
-        setCfg({
-          baseUrl: c.baseUrl,
-          apiKey: c.apiKey,
-          model: c.model,
-          temperature: c.temperature,
-          contextWindow: c.contextWindow,
-          proxy: c.proxy ?? "",
-          stream: c.stream,
-        }),
-      )
-      .catch(() => undefined);
     void vaultApi.status().then(setVault).catch(() => undefined);
   }, []);
 
-  const applyPreset = (name: string) => {
-    setPreset(name);
-    // 预设自动填参（§8.7）
-    const known: Record<string, { baseUrl: string; model: string; contextWindow: number }> = {
-      deepseek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", contextWindow: 64000 },
-      openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", contextWindow: 128000 },
-      dashscope: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", contextWindow: 128000 },
-      moonshot: { baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-32k", contextWindow: 128000 },
-      zhipu: { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", contextWindow: 128000 },
-      ollama: { baseUrl: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b", contextWindow: 32000 },
-      lmstudio: { baseUrl: "http://127.0.0.1:1234/v1", model: "local-model", contextWindow: 32000 },
-      vllm: { baseUrl: "http://127.0.0.1:8000/v1", model: "local-model", contextWindow: 32000 },
-    };
-    const k = known[name];
-    if (k) {
-      setCfg((c) => ({ ...c, baseUrl: k.baseUrl, model: k.model, contextWindow: k.contextWindow }));
-    }
-  };
-
-  const payload = () => ({
-    baseUrl: cfg.baseUrl,
-    apiKey: cfg.apiKey,
-    model: cfg.model,
-    temperature: cfg.temperature,
-    contextWindow: cfg.contextWindow,
-    proxy: cfg.proxy || null,
-    stream: cfg.stream,
-  });
-
-  const save = async () => {
-    try {
-      await aiApi.setProvider(payload());
-      pushToast("success", "AI 配置已保存");
-    } catch (e) {
-      pushToast("error", String(e));
-    }
-  };
-
+  /**
+   * 两步连通性测试。
+   *
+   * 为什么只能测「当前激活的模型」：后端 `ai_test_provider` 测的是**运行时生效的那份
+   * provider**，不接受前端临时塞一份配置（这正是它与旧版 setProvider + 测试的差别）。
+   * 想验证一份还没保存的草稿，请用模型管理区里的「刷新模型列表」。
+   */
   const test = async () => {
     setTesting(true);
     setTestResult(null);
     try {
-      // 两步测试：模型列表 + 实际对话（§8.7）
-      await aiApi.setProvider(payload());
       const r = await aiApi.testProvider();
       setTestResult({
         modelsOk: r.modelsOk,
         chatOk: r.chatOk,
-        detail: [
-          `模型列表：${r.modelsOk ? "可用" : `失败 — ${r.modelsError ?? "未知错误"}`}`,
-          `实际对话：${r.chatOk ? "可用" : `失败 — ${r.chatError ?? "未知错误"}`}`,
-        ].join("\n"),
+        modelsError: r.modelsError,
+        chatError: r.chatError,
       });
     } catch (e) {
-      setTestResult({ modelsOk: false, chatOk: false, detail: `测试失败: ${String(e)}` });
+      setTestResult({ modelsOk: false, chatOk: false, fatal: String(e) });
     } finally {
       setTesting(false);
     }
   };
+
+  const testPassed = !!testResult && testResult.modelsOk && testResult.chatOk;
+  const testDetail = testResult
+    ? testResult.fatal
+      ? `调用失败：${testResult.fatal}`
+      : [
+          `模型列表：${testResult.modelsOk ? "可用" : `失败 — ${testResult.modelsError ?? "未知错误"}`}`,
+          `实际对话：${testResult.chatOk ? "可用" : `失败 — ${testResult.chatError ?? "未知错误"}`}`,
+        ].join("\n")
+    : "";
 
   return (
     <div className="nx-pane h-full overflow-y-auto">
@@ -148,7 +108,7 @@ export function SettingsView() {
           </section>
         )}
 
-        {/* AI 提供方 */}
+        {/* AI 模型：内联复用侧栏那套多档案管理，避免两份实现漂移 */}
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
@@ -156,112 +116,35 @@ export function SettingsView() {
             <span className="nx-badge">OpenAI 兼容协议 · BYOK</span>
           </div>
           <p className="nx-hint mb-3.5">
-            密钥只存在本机加密凭据库里，不会上传；模型可换成本地 Ollama / LM Studio / vLLM。
+            可存多份模型档案（不同厂商 / 不同 Key），选中一份「设为当前」供 AI 使用。
+            密钥以明文存在本机 sqlite，不会上传；模型可换成本地 Ollama / LM Studio / vLLM。
           </p>
 
-          <div className="mb-4 flex flex-wrap gap-1.5">
-            {presets.map((p) => (
-              <button
-                key={p}
-                className={`nx-chip ${preset === p ? "nx-chip-accent" : ""}`}
-                onClick={() => applyPreset(p)}
-              >
-                {p}
+          <ModelManager />
+
+          {/* 连通性测试：只能针对激活档案，故独立成块放在管理区下方 */}
+          <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="nx-btn nx-btn-outline" disabled={testing} onClick={() => void test()}>
+                {testing ? <IconRefresh size={13} className="animate-spin" /> : <IconZap size={13} />}
+                {testing ? "测试中…" : "连通性测试（两步）· 当前激活的模型"}
               </button>
-            ))}
-          </div>
-
-          <div className="nx-form-row">
-            <label className="nx-label">Base URL</label>
-            <input
-              className="nx-input font-mono"
-              value={cfg.baseUrl}
-              onChange={(e) => setCfg({ ...cfg, baseUrl: e.target.value })}
-              placeholder="https://api.deepseek.com/v1"
-            />
-          </div>
-
-          <div className="nx-form-row">
-            <label className="nx-label">API Key（仅本机加密存储）</label>
-            <div className="nx-field">
-              <span className="nx-field-icon">
-                <IconKey size={13} />
+              <span className="nx-hint">
+                只能测当前激活的模型：后端测的是运行时生效的那份 provider，不能临时塞一份没保存的草稿；
+                要验证草稿的连接参数，请用上方的「刷新模型列表」。
               </span>
-              <input
-                type="password"
-                className="nx-input"
-                value={cfg.apiKey}
-                onChange={(e) => setCfg({ ...cfg, apiKey: e.target.value })}
-                placeholder="sk-…"
-              />
             </div>
-          </div>
 
-          <div className="mb-3 flex flex-wrap gap-2">
-            <div className="min-w-[180px] flex-1">
-              <label className="nx-label">模型</label>
-              <input
-                className="nx-input font-mono"
-                value={cfg.model}
-                onChange={(e) => setCfg({ ...cfg, model: e.target.value })}
-              />
-            </div>
-            <div className="w-[150px]">
-              <label className="nx-label">上下文窗口 (1k–2M)</label>
-              <input
-                type="number"
-                className="nx-input"
-                value={cfg.contextWindow}
-                onChange={(e) => setCfg({ ...cfg, contextWindow: Number(e.target.value) })}
-              />
-            </div>
-            <div className="w-[92px]">
-              <label className="nx-label">温度</label>
-              <input
-                type="number"
-                step="0.1"
-                className="nx-input"
-                value={cfg.temperature}
-                onChange={(e) => setCfg({ ...cfg, temperature: Number(e.target.value) })}
-              />
-            </div>
-          </div>
-
-          <div className="nx-form-row">
-            <label className="nx-label">代理（留空 = 跟随系统；注意不要让它影响 SSH 认证）</label>
-            <input
-              className="nx-input font-mono"
-              value={cfg.proxy}
-              onChange={(e) => setCfg({ ...cfg, proxy: e.target.value })}
-              placeholder="http://127.0.0.1:7890"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button className="nx-btn nx-btn-primary" onClick={() => void save()}>
-              保存
-            </button>
-            <button className="nx-btn nx-btn-outline" disabled={testing} onClick={() => void test()}>
-              {testing ? <IconRefresh size={13} className="animate-spin" /> : <IconZap size={13} />}
-              {testing ? "测试中…" : "连通性测试（两步）"}
-            </button>
-          </div>
-
-          {testResult && (
-            <div
-              className={`mt-3.5 nx-alert ${testResult.modelsOk && testResult.chatOk ? "" : "nx-alert-danger"}`}
-            >
-              <div className="mb-1 flex items-center gap-1.5 font-semibold">
-                {testResult.modelsOk && testResult.chatOk ? (
-                  <IconCheckCircle size={13} />
-                ) : (
-                  <IconXCircle size={13} />
-                )}
-                测试结果
+            {testResult && (
+              <div className={`mt-3.5 nx-alert ${testPassed ? "" : "nx-alert-danger"}`}>
+                <div className="mb-1 flex items-center gap-1.5 font-semibold">
+                  {testPassed ? <IconCheckCircle size={13} /> : <IconXCircle size={13} />}
+                  测试结果
+                </div>
+                <pre className="whitespace-pre-wrap font-mono text-[11px]">{testDetail}</pre>
               </div>
-              <pre className="whitespace-pre-wrap font-mono text-[11px]">{testResult.detail}</pre>
-            </div>
-          )}
+            )}
+          </div>
         </section>
 
         {/* 凭据库 */}
@@ -365,8 +248,6 @@ export function SettingsView() {
             </button>
           )}
         </section>
-
-        <McpSection />
 
         {/* 快捷键速查 */}
         <section className="nx-card">

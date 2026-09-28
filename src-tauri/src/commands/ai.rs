@@ -101,7 +101,18 @@ pub async fn ai_chat(
             .await;
         match outcome {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!(target: "ai", error = %e, "agent 运行失败"),
+            Ok(Err(e)) => {
+                // 兜底：`agent::run` 内部现在绝大多数异常路径都会自己推 Error
+                // （取消、模型请求失败），但这里仍然必须补一发 —— 前端的
+                // `aiBusy` 只认 done / error 两个事件，漏推一次就是永久转圈：
+                // 输入框禁用、没有任何停止入口，用户只能重启应用。
+                tracing::error!(target: "ai", error = %e, "agent 运行失败");
+                let _ = chan.send(AiEvent::Error {
+                    message: format!("AI 任务失败：{e}"),
+                    retryable: true,
+                });
+                state3.ai.finish_job(&job_for_task).await;
+            }
             Err(_) => {
                 // panic 详情已经由 lib.rs 的 hook 落到 logs/crash.log，这里只负责
                 // 把「本轮废了」告诉界面，并清掉任务，避免转圈转到天荒地老。

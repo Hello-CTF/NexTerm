@@ -6,7 +6,7 @@ use crate::ai::AiJob;
 use crate::state::AppState;
 use crate::terminal::keys;
 
-use super::{echo_to_tab, scoped_transport, ToolOutput};
+use super::{scoped_transport, ToolOutput};
 
 fn arg_str<'a>(args: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
@@ -18,7 +18,7 @@ fn arg_u64(args: &serde_json::Value, key: &str) -> Option<u64> {
 
 pub fn schemas() -> Vec<crate::ai::provider::ToolSchema> {
     vec![
-        s("exec_commands", "在目标主机批量执行命令（最多 20 条）。命令与输出会实时显示在用户终端里，不要执行无意义的探查命令。",
+        s("exec_commands", "在目标主机批量执行命令（最多 20 条）。命令与输出会完整记录在对话面板的工具卡片里，用户看得见，不要执行无意义的探查命令。",
           json!({"type":"object","properties":{
             "commands":{"type":"array","items":{"type":"string"},"description":"要执行的命令列表"},
             "timeout":{"type":"number","description":"每条命令超时秒数，默认 60"},
@@ -59,9 +59,20 @@ fn s(name: &str, desc: &str, params: serde_json::Value) -> crate::ai::provider::
     }
 }
 
+/// 批量执行命令。
+///
+/// **刻意不往用户终端里回显**（曾用 `echo_to_tab` 注入 `[AI] …`）：
+/// 命令走的是独立 exec 通道，终端里出现的内容会让人以为它真的在终端跑，
+/// 而 `feed_output` 还会污染终端模拟器的缓冲区 —— 连 AI 自己的
+/// `read_screen` / `wait_for` 都会读到自己刚注入的假文本。
+/// 要看 AI 干了什么，看对话面板的工具卡片（`AiEvent::ToolResult` 带完整输出）。
+///
+/// `job` 只为一件事存在：让长命令能被用户按「停止」打断。整个循环里
+/// 每一条命令前、以及命令执行途中都要能被取消。
 pub async fn exec_commands(
     state: &AppState,
     scope: &crate::ai::AiScope,
+    job: &AiJob,
     args: &serde_json::Value,
 ) -> ToolOutput {
     let cmds: Vec<String> = args
@@ -86,9 +97,27 @@ pub async fn exec_commands(
     };
     let mut report = String::new();
     let mut last_code: Option<i32> = None;
+    let mut cancelled = false;
     for cmd in &cmds {
-        echo_to_tab(state, scope, cmd).await;
-        match transport.exec(cmd, timeout).await {
+        // 命令之间也要查：一批 20 条命令，用户按了停止还继续跑剩下的，
+        // 等于这个按钮没做。
+        if job.cancel.is_cancelled() {
+            cancelled = true;
+            report.push_str(&format!("$ {cmd}\n[已取消，未执行]\n"));
+            break;
+        }
+        // 单条命令执行途中被取消 → 直接丢弃这个 future（SSH 通道随之关闭，
+        // 远端进程会收到 SIGHUP）。没有这一步的话，一条 `tail -f` 就能把
+        // 「停止」按钮变成摆设。
+        let outcome = tokio::select! {
+            _ = job.cancel.cancelled() => {
+                cancelled = true;
+                report.push_str(&format!("$ {cmd}\n[已取消]\n"));
+                break;
+            }
+            r = transport.exec(cmd, timeout) => r,
+        };
+        match outcome {
             Ok(out) => {
                 last_code = out.exit_code;
                 report.push_str(&format!("$ {cmd}\n{}", out.stdout));
@@ -111,8 +140,13 @@ pub async fn exec_commands(
         }
     }
     ToolOutput {
-        ok: true,
-        text: report,
+        // 取消不算失败：部分结果已经拿到了，标注清楚交给模型和用户判断。
+        ok: !cancelled,
+        text: if cancelled {
+            format!("{report}\n（用户中止了这一批命令，后面的没有执行）")
+        } else {
+            report
+        },
         exit_code: last_code,
         truncated: false,
     }
@@ -252,7 +286,6 @@ pub async fn search_files(
         Ok(t) => t,
         Err(e) => return e,
     };
-    echo_to_tab(state, scope, &cmd).await;
     match transport
         .exec(&cmd, std::time::Duration::from_secs(30))
         .await

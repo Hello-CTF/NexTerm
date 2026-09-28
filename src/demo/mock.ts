@@ -19,7 +19,6 @@ import {
   fsTree,
   groups,
   images,
-  mcpTools,
   mounts,
   mysqlColumns,
   mysqlIndexes,
@@ -65,6 +64,9 @@ const sessions: DemoSession[] = [
 const shells = new Map<string, DemoShell>();
 const logTimers = new Map<string, () => void>();
 const pendingAi = new Map<string, (decision: string) => void>();
+/** 演示模式的「停止」：被取消的 jobId 与它们的通道。 */
+const cancelledAiJobs = new Set<string>();
+const aiChannels = new Map<string, unknown>();
 let jobSeq = 0;
 /** 演示模式下"当前这条对话"的会话 id —— 镜像真机 `ai_chat` 的建会话/回传行为。 */
 let liveConvId: string | undefined;
@@ -193,9 +195,35 @@ function answerFor(question: string): { answer: string; commands: string[] } {
   };
 }
 
-function streamAnswer(channel: unknown, jobId: string, question: string, planMode = false) {
+function streamAnswer(rawChannel: unknown, jobId: string, question: string, planMode = false) {
+  // 取消闸门。
+  //
+  // 真机上是 `CancellationToken`，演示模式没有那个东西 —— 但「点了停止到底
+  // 有没有用」必须在演示里也看得见，否则这个按钮等于没人验过。这里把 channel
+  // 包一层：jobId 一旦进取消表，后续事件全部丢弃（等价于内核那边 break 掉整个循环）。
+  // 选择包 channel 而不是逐个改 `pushEvent(channel, …)`，是为了函数体一行都不用动。
+  const channel = {
+    onmessage: (evt: Record<string, unknown>) => {
+      if (cancelledAiJobs.has(jobId)) return;
+      pushEvent(rawChannel, evt);
+    },
+    toJSON: () => null,
+  };
   const { answer, commands } = answerFor(question);
   const yesNo = question.includes("重启") || question.includes("restart") || question.includes("删除");
+
+  /**
+   * 这一轮最终的完整回答 —— 流式和 `done` 用的是**同一个字符串**。
+   *
+   * 真机就是这么干的：整段正文都是流式（`delta`）推出去的，最后 `done` 再把同一份
+   * 完整文本回传一次。演示以前给 `done` 塞的是另一段文字（收尾的代码块），
+   * 于是「同一段回答在对话里出现两遍」这个真机 bug 在演示模式里**永远复现不出来** ——
+   * mock 越是"自成一派"，越容易把真机的问题挡在门外。
+   */
+  const cmdsBlock = commands.length
+    ? "```bash\n" + commands.map((c) => `$ ${c}`).join("\n") + "\n```\n"
+    : "";
+  const fullAnswer = `${answer}\n\n${cmdsBlock}—— 以上命令都已在你面前的终端里跑过，可回放。`;
 
   // 思考片段先推完再开始跑工具，让"推理是否被合并"这件事在界面上看得清
   let delay = 430;
@@ -239,6 +267,11 @@ function streamAnswer(channel: unknown, jobId: string, question: string, planMod
     return;
   }
 
+  // 真机每轮 LLM 调用前都会推 `status`（"第 N 轮 · 正在思考…"）。
+  // 这个事件前端一直没渲染，界面在 AI 跑长命令时完全静止 ——
+  // 「卡住了」的焦虑有一半来自这里。演示也推一份，否则状态条永远验不到。
+  later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
+
   commands.forEach((cmd) => {
     later(delay, () => pushEvent(channel, { type: "toolCall", id: `call-${uid("c")}`, name: "exec_commands", display: cmd }));
     delay += 520;
@@ -253,27 +286,41 @@ function streamAnswer(channel: unknown, jobId: string, question: string, planMod
         rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5–15 秒。\n这是本会话第 1 次请求写权限。`,
       });
       pendingAi.set(jobId, (decision) => {
-        if (decision === "deny") {
-          pushEvent(channel, { type: "delta", text: "已取消，没有执行任何写操作。" });
-        } else {
-          pushEvent(channel, { type: "delta", text: "已按你的授权执行 `docker restart mysql-prod`，容器已重启：\n\n" });
-          pushEvent(channel, { type: "delta", text: commands.map((c) => `  $ ${c}\n`).join("") + "\n" });
-        }
-        finish();
+        // 拼出"这一轮最终回答"，再把它当成 done 的 answer —— 与真机一致：
+        // 流式推出去的那段就是 done 回传的那段。
+        const head = decision === "deny" ? "" : "已按你的授权执行 `docker restart mysql-prod`，容器已重启：\n\n";
+        const body =
+          decision === "deny"
+            ? "已取消，没有执行任何写操作。"
+            : commands.map((c) => `  $ ${c}\n`).join("") + "\n";
+        if (head) pushEvent(channel, { type: "delta", text: head });
+        pushEvent(channel, { type: "delta", text: body });
+        finish(head + body);
       });
       return;
     }
     commands.forEach((cmd, i) => {
+      // 真机推的是**两份**：summary 是 text 的 400 字截断，text 是完整输出。
+      // 演示里也必须分成两份 —— 否则「展开完整输出」永远不出现，
+      // 等于这个功能在演示模式下没人验得到（这个教训我们已经吃过一次了）。
+      const output = `$ ${cmd}\n${toolOutputFor(cmd)}`;
+      const summary = output.length > 400 ? `${output.slice(0, 400)}…` : output;
       later(240 + i * 260, () =>
         pushEvent(channel, {
           type: "toolResult",
-          summary: `$ ${cmd}\n${toolOutputFor(cmd)}`,
+          summary,
+          text: output,
           ok: true,
           exitCode: 0,
         }),
       );
     });
     delay = 240 + commands.length * 260 + 200;
+    // 工具跑完、开始组织回答的那一轮 —— 状态条跟着翻到第 2 轮，
+    // 让人看得出"它在往下走"，而不是停在同一句话上不动。
+    later(delay - 160, () =>
+      pushEvent(channel, { type: "status", phase: "thinking", turn: 2 }),
+    );
     // 演示「变更记录」：AI 改过文件时，会话里会出现这样一张 diff 卡片
     later(200 + commands.length * 260, () =>
       pushEvent(channel, {
@@ -301,20 +348,13 @@ function streamAnswer(channel: unknown, jobId: string, question: string, planMod
     answer.split("\n").forEach((line, i) => {
       later(delay + i * 70, () => pushEvent(channel, { type: "delta", text: `${line}\n` }));
     });
-    later(delay + answer.split("\n").length * 70 + 120, finish);
+    later(delay + answer.split("\n").length * 70 + 120, () => finish(fullAnswer));
   });
 
-  function finish() {
+  function finish(finalAnswer: string) {
     later(0, () => {
       emit("session://status", { sessionId: "s-web01", status: "connected", error: null });
-      // 用围栏代码块收命令（真实模型也是这么给的），顺带验一下 md 渲染的代码块分支
-      const cmds = commands.length
-        ? "```bash\n" + commands.map((c) => `$ ${c}`).join("\n") + "\n```\n"
-        : "";
-      pushEvent(channel, {
-        type: "done",
-        answer: cmds + "—— 以上命令都已在你面前的终端里跑过，可回放。",
-      });
+      pushEvent(channel, { type: "done", answer: finalAnswer });
     });
   }
 }
@@ -329,7 +369,9 @@ function toolOutputFor(cmd: string): string {
     return "               total        used        free      shared  buff/cache   available\nMem:           7.7Gi       7.3Gi       380Mi        12Mi       189Mi       172Mi\nSwap:          2.0Gi       1.9Gi       104Mi";
   }
   if (cmd.startsWith("docker logs")) {
-    return containerLogLines("api-server").slice(-6).join("\n");
+    // 推**全量**日志（真机里 summary 是 400 字截断、text 是全文）——
+    // 演示模式得有一条明显超过 400 字的输出，「展开完整输出」才看得出价值。
+    return containerLogLines("api-server").join("\n");
   }
   if (cmd.startsWith("docker exec redis")) {
     return "used_memory:50544640\nused_memory_human:48.20M\nmaxmemory:536870912\nmaxmemory_policy:allkeys-lru";
@@ -338,7 +380,9 @@ function toolOutputFor(cmd: string): string {
     return "nginx: configuration file /etc/nginx/nginx.conf test is successful";
   }
   if (cmd.startsWith("cat /etc/nginx")) {
-    return fsFileContent["/etc/nginx/nginx.conf"].split("\n").slice(0, 12).join("\n") + "\n…（共 46 行）";
+    // 全文（49 行 ≈ 1.4K 字符）：折叠态只给前 400 字，展开才看得到
+    // 那个 `proxy_read_timeout` 之下的部分 —— 演示「展开」用最直观的一条。
+    return fsFileContent["/etc/nginx/nginx.conf"];
   }
   if (cmd.startsWith("uptime")) {
     return " 16:31:02 up 87 days,  3:41,  2 users,  load average: 2.14, 3.02, 2.66";
@@ -989,13 +1033,25 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           updatedAt: Date.now(),
         });
       }
+      aiChannels.set(jobId, a.channel);
       streamAnswer(a.channel, jobId, str(a.message), Boolean(a.planMode));
       return { jobId, conversationId: liveConvId };
     }
 
-    case "ai_cancel":
-      pendingAi.delete(str(a.jobId));
+    case "ai_cancel": {
+      const jobId = str(a.jobId);
+      cancelledAiJobs.add(jobId);
+      pendingAi.delete(jobId);
+      // 真机取消后会推一条 `error("已取消")`，界面据此复位。演示模式也推一份 ——
+      // 只把 jobId 记下来的话，停止按钮按下去是静默失效，看不出到底生效没有。
+      pushEvent(aiChannels.get(jobId), {
+        type: "error",
+        message: "已取消",
+        retryable: false,
+      });
+      aiChannels.delete(jobId);
       return null;
+    }
 
     case "ai_confirm": {
       const jobId = str(a.jobId);
@@ -1178,46 +1234,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "vault_reveal_credential":
       return MASK;
-
-    /* ─────────────── MCP ─────────────── */
-    case "mcp_get_settings":
-      return { enabled: true, httpPort: 8799, token: "nx_" + "a1b2c3d4e5f6".repeat(3), writeTools: {} };
-
-    case "mcp_save_settings":
-      return false;
-
-    case "mcp_generate_token":
-      return "nx_" + Math.random().toString(36).slice(2).repeat(2).slice(0, 32);
-
-    case "mcp_list_tools":
-      return mcpTools.map((t) => ({ ...t }));
-
-    case "mcp_client_config_snippet":
-      return {
-        mcpServers: {
-          nexterm: {
-            type: "http",
-            url: "http://127.0.0.1:8799/mcp",
-            headers: { Authorization: "Bearer <your-token>" },
-          },
-        },
-      };
-
-    case "mcp_write_client_config": {
-      const target = str(a.target, "claude_code");
-      const paths: Record<string, string> = {
-        claude_code: "~/.claude.json",
-        claude_desktop: "~/Library/Application Support/Claude/claude_desktop_config.json",
-        cursor: "~/.cursor/mcp.json",
-      };
-      return {
-        target,
-        path: paths[target] ?? paths.claude_code,
-        created: false,
-        backup: `${paths[target]}.nexterm.bak`,
-        snippet: { mcpServers: { nexterm: { type: "http", url: "http://127.0.0.1:8799/mcp" } } },
-      };
-    }
 
     /* ─────────────── port forward ─────────────── */
     case "forward_list":

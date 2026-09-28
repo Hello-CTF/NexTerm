@@ -1,7 +1,8 @@
 //! AI 运行时（M2 核心）：Agent + 工具调用 + 接管模式共享同一会话/审计/终端视图。
 //!
 //! 设计立场（§6.1）：
-//! 1. AI 的每个动作都在终端里可见（命令实时汇入终端 + 审计）；
+//! 1. AI 的每个动作都**可追溯**：命令与完整输出记录在对话面板的工具卡片里
+//!    （不是往用户终端里回显 —— 见 `tools::server::exec_commands` 的注释）；
 //! 2. AI 知道你在看什么（上下文自动装配）；
 //! 3. 不该做的事明确拒绝（guard 三级护栏，工具层拦截）。
 
@@ -44,10 +45,24 @@ pub enum AiEvent {
         args: serde_json::Value,
         display: String,
     },
+    /// ⚠️ 这个 `#[serde(rename_all)]` 是**必须**的，别删。
+    ///
+    /// 枚举上的 `rename_all = "camelCase"` 只管 **variant 名**（`ToolCall` →
+    /// `toolCall`），**不管 variant 里的字段**。少了这一行，`exit_code` 会原样
+    /// 发出去，前端读 `ev.exitCode` 永远是 `undefined` —— 不报错、不崩溃，
+    /// 只是工具卡片上的退出码从来没出现过。
+    #[serde(rename_all = "camelCase")]
     ToolResult {
         id: String,
         ok: bool,
+        /// 折叠态显示的一行摘要（前端卡片标题旁边那段）。
         summary: String,
+        /// **完整输出**（`summary` 是它的截断版）。
+        ///
+        /// 用户点开工具卡片看的应该是这个：只看摘要等于把"AI 到底跑出了什么"
+        /// 藏起来，出了问题还得去翻审计日志 —— 而摘要本来就只是省屏幕空间用的。
+        /// 仍然设上限（见 `agent.rs`），一条 `cat` 大文件不该把界面卡死。
+        text: String,
         truncated: bool,
         exit_code: Option<i32>,
     },
@@ -58,6 +73,7 @@ pub enum AiEvent {
         risk: String,
         rendered: String,
     },
+    #[serde(rename_all = "camelCase")]
     Screen {
         tab_id: String,
         text: String,
@@ -85,6 +101,7 @@ pub enum AiEvent {
     PlanSubmitted {
         plan: String,
     },
+    #[serde(rename_all = "camelCase")]
     Done {
         answer: String,
         turns: u32,
@@ -115,7 +132,7 @@ pub struct ProviderConfig {
     pub model: String,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
-    /// 上下文窗口（1k–2M，非法值兜底 —— 同类工具 踩过的坑）。
+    /// 上下文窗口（1k–2M，非法值兜底 —— 外部配置可能乱填）。
     #[serde(default = "default_context_window")]
     pub context_window: u64,
     /// None = 跟随系统代理（AI 走 HTTP 与 SSH/WinRM 策略相反，§8.7）。
@@ -300,10 +317,125 @@ impl AiRuntime {
 pub fn system_prompt_base() -> &'static str {
     "你是 NexTerm 内置的运维助手，运行在用户的开发运维终端里。\n\
      规则：\n\
-     1. 你执行的每条命令都会实时显示在用户的终端里，不要执行无意义的探查命令。\n\
+     1. 你执行的每条命令都会记录在右侧对话面板的工具卡片里，用户点开就能看到完整输出。\
+     命令不会写进用户的终端区域，所以不要以为「终端里能看到」——需要用户知道的事情，\
+     要在回答里说清楚。\n\
      2. 工具返回带 exit_code 与 truncated 标记；若返回「连接已断开」，\
      请立即停止排查并提示用户重新连接，不要重试，不要编造结果。\n\
      3. 危险命令会被系统拦截：写操作和 sudo 需要用户确认；rm -rf / 等会被直接拒绝。\n\
      4. 结论必须带依据：引用你实际执行过的命令与关键输出行。\n\
      5. 中文回答。"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ToolResult` 必须把**完整输出**一路送到前端。
+    ///
+    /// 守的是这一类静默 bug：内核少序列化一个字段 / 改了名字，前端按
+    /// `ev.text` 读只会拿到 `undefined` —— 不报错、不崩溃，只是「展开完整输出」
+    /// 永远不出现，用户以为 AI 什么都没跑。和历史上 `*Row` 直接序列化出
+    /// `content_json` 那次是同一个形状：**字段名对不上，界面静默变空**。
+    #[test]
+    fn tool_result_carries_full_text() {
+        let ev = AiEvent::ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            summary: "$ ls /srv…".into(),
+            text: "$ ls /srv\napi-server\nweb\n".into(),
+            truncated: false,
+            exit_code: Some(0),
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        // 前端 switch 认的就是这个 tag
+        assert_eq!(v["type"], "toolResult");
+        assert_eq!(v["text"], "$ ls /srv\napi-server\nweb\n");
+        assert_eq!(v["summary"], "$ ls /srv…");
+        assert_eq!(v["exitCode"], 0);
+    }
+
+    /// 所有事件的字段名都必须是 camelCase。
+    ///
+    /// 这条守的是一个**已经踩过三次**的坑：内核序列化出去的 key 与前端读的
+    /// 对不上，前端拿到 `undefined` —— 不报错、不崩溃，界面只是静默地空掉。
+    /// （前两次是 `*Row` 直接序列化出 `content_json`、`ai_chat` 没回传
+    /// `conversationId`；这次是 `exit_code`。）
+    ///
+    /// 根源很反直觉：枚举上的 `rename_all = "camelCase"` **只重命名 variant**，
+    /// 不会碰 variant 内部的下划线字段 —— 每个变体得自己再写一次。
+    /// 单靠人工 review 记不住这条，所以让测试把每个变体都序列化一遍，
+    /// 只认一条规则：**平铺出来的 key 里不许出现下划线**。
+    #[test]
+    fn every_event_field_is_camel_case() {
+        let events = vec![
+            AiEvent::Status {
+                phase: "thinking".into(),
+                detail: None,
+                turn: Some(1),
+            },
+            AiEvent::Delta { text: "x".into() },
+            AiEvent::Reasoning { text: "x".into() },
+            AiEvent::ToolCall {
+                id: "c".into(),
+                name: "n".into(),
+                args: serde_json::json!({}),
+                display: "d".into(),
+            },
+            AiEvent::ToolResult {
+                id: "c".into(),
+                ok: true,
+                summary: "s".into(),
+                text: "t".into(),
+                truncated: false,
+                exit_code: Some(0),
+            },
+            AiEvent::ConfirmRequired {
+                id: "c".into(),
+                tool: "t".into(),
+                args: serde_json::json!({}),
+                risk: "r".into(),
+                rendered: "x".into(),
+            },
+            AiEvent::Screen {
+                tab_id: "t".into(),
+                text: "x".into(),
+            },
+            AiEvent::FileChange {
+                id: "c".into(),
+                path: "p".into(),
+                before: "a".into(),
+                after: "b".into(),
+            },
+            AiEvent::Usage(usage::Usage::new(1000)),
+            AiEvent::Todos { items: vec![] },
+            AiEvent::PlanSubmitted { plan: "p".into() },
+            AiEvent::Done {
+                answer: "a".into(),
+                turns: 1,
+                tokens_in: 1,
+                tokens_out: 2,
+            },
+            AiEvent::Error {
+                message: "m".into(),
+                retryable: false,
+            },
+        ];
+
+        let mut offenders: Vec<String> = Vec::new();
+        for ev in &events {
+            let v = serde_json::to_value(ev).unwrap();
+            let Some(obj) = v.as_object() else { continue };
+            for key in obj.keys() {
+                if key.contains('_') {
+                    offenders.push(format!("{} → {key}", v["type"]));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "这些字段名前端读不到（枚举上的 rename_all 只管 variant 名，\
+             变体内部要自己再写一次）：{offenders:?}"
+        );
+    }
 }

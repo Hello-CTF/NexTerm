@@ -116,7 +116,6 @@ pub async fn docker_exec(
         Ok(t) => t,
         Err(e) => return e,
     };
-    super::echo_to_tab(state, scope, &format!("docker exec {container} {cmd}")).await;
     match crate::docker::cli::exec_in_container(
         &*transport,
         container,

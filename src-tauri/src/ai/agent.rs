@@ -21,6 +21,12 @@ const MAX_TURNS: u32 = 24;
 /// 上下文压缩触发线：上一轮的输入占用超过窗口这个百分比时，下一轮发送前先剪枝。
 const COMPACT_AT_PERCENT: f64 = 75.0;
 
+/// 推给前端的单条工具输出上限（64K 字符）。
+///
+/// 不是不信任用户，是怕界面被一条 `cat` 大文件卡死 —— 几 MB 文本一次性塞进
+/// DOM，滚动条会当场失去响应。超出部分在模型上下文与审计日志里仍然完整。
+const MAX_TOOL_TEXT: usize = 64 * 1024;
+
 /// 一次对话任务的输入。
 pub struct AgentRunInput {
     pub job: Arc<AiJob>,
@@ -102,9 +108,13 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
     let mut tokens_out: u64 = 0;
     let mut final_answer = String::new();
     let mut prune_pending = false;
+    // 这一轮是"被打断"结束的（用户取消 / 模型请求失败），不是正常收尾。
+    // 决定末尾要不要推 `Done` —— 详见底部那段注释。
+    let mut aborted = false;
 
     'turns: loop {
         if job.cancel.is_cancelled() {
+            aborted = true;
             let _ = channel.send(AiEvent::Error {
                 message: "已取消".into(),
                 retryable: false,
@@ -139,6 +149,7 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
         let chan2 = channel.clone();
         let completion = tokio::select! {
             _ = job.cancel.cancelled() => {
+                aborted = true;
                 let _ = channel.send(AiEvent::Error { message: "已取消".into(), retryable: false });
                 break;
             }
@@ -149,7 +160,22 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                     StreamItem::Reasoning(t) => { let _ = chan2.send(AiEvent::Reasoning { text: t }); }
                 }
                 let _ = &job2;
-            }) => r?,
+            }) => match r {
+                Ok(c) => c,
+                Err(e) => {
+                    // 这里以前是 `r?` —— `run()` 直接返回 Err，而调用方（commands/ai.rs）
+                    // 那一支**只记日志、不推任何事件**，于是界面永远停在「转圈」：
+                    // 输入框禁用、没有停止按钮，用户只能重启应用。这就是「卡住了」的
+                    // 一半来源（另一半是工具执行不可中断）。
+                    tracing::error!(target: "ai", error = %e, "模型请求失败");
+                    aborted = true;
+                    let _ = channel.send(AiEvent::Error {
+                        message: format!("模型请求失败：{e}"),
+                        retryable: true,
+                    });
+                    break;
+                }
+            },
         };
         tokens_in += completion.tokens_in;
         tokens_out += completion.tokens_out;
@@ -183,16 +209,15 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
 
             for call in &completion.tool_calls {
                 if job.cancel.is_cancelled() {
+                    aborted = true;
                     break;
                 }
                 let args: serde_json::Value =
                     serde_json::from_str(&call.function.arguments).unwrap_or_default();
-                let display = tools::all_tools()
-                    .iter()
-                    .find(|t| t.name == call.function.name)
-                    .map(|t| t.description.clone())
-                    .unwrap_or_default();
-                let _ = &display;
+                // 卡片标题 = 这次调用**实际做了什么**（命令/文件/表/容器），
+                // 而不是工具的 description —— 后者是给模型看的说明书，
+                // 拿来当标题会让每张卡片长得一模一样。详见 tools::display_for。
+                let display = tools::display_for(&call.function.name, &args);
 
                 let _ = channel.send(AiEvent::ToolCall {
                     id: call.id.clone(),
@@ -207,10 +232,12 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                 // 管道和重定向能溜过去；计划模式的语义是"一个字都不许改"，保守挡。
                 if plan_mode {
                     if let Some(reason) = tools::edit::blocked_in_plan_mode(&call.function.name) {
+                        let msg = format!("计划模式下被拦截：{}", call.function.name);
                         let _ = channel.send(AiEvent::ToolResult {
                             id: call.id.clone(),
                             ok: false,
-                            summary: format!("计划模式下被拦截：{}", call.function.name),
+                            summary: msg.clone(),
+                            text: format!("{msg}\n{reason}"),
                             truncated: false,
                             exit_code: None,
                         });
@@ -228,10 +255,12 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                 let ruling = guard::judge(perm_mode, &perm_danger, &call.function.name, &args);
                 let outcome = match ruling.decision {
                     guard::Decision::Deny => {
+                        let msg = format!("已拒绝：{}", ruling.reason);
                         let _ = channel.send(AiEvent::ToolResult {
                             id: call.id.clone(),
                             ok: false,
-                            summary: format!("已拒绝：{}", ruling.reason),
+                            summary: msg.clone(),
+                            text: msg,
                             truncated: false,
                             exit_code: None,
                         });
@@ -278,6 +307,7 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                                         id: call.id.clone(),
                                         ok: false,
                                         summary: "用户拒绝了该操作".into(),
+                                        text: "用户拒绝了该操作。".into(),
                                         truncated: false,
                                         exit_code: None,
                                     });
@@ -317,6 +347,8 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                     id: call.id.clone(),
                     ok: outcome.ok,
                     summary: truncate_summary(&outcome.text, 400),
+                    // 完整输出照推（上限 64K）：摘要只够扫一眼，排查问题得看原文。
+                    text: truncate_summary(&outcome.text, MAX_TOOL_TEXT),
                     truncated: outcome.truncated,
                     exit_code: outcome.exit_code,
                 });
@@ -346,25 +378,34 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
         break;
     }
 
-    // 持久化助手消息
-    let _ = state
-        .store
-        .msg_insert(
-            &conversation_id,
-            "assistant",
-            &serde_json::json!({ "role": "assistant", "content": final_answer }),
-            Some(tokens_in as i64),
-            Some(tokens_out as i64),
-        )
-        .await;
+    // 持久化助手消息。中途被打断且一个字都没产出时不落库 ——
+    // 否则历史列表里会多出一条点开是空白的助手消息，看起来像"记录坏了"。
+    if !(aborted && final_answer.is_empty()) {
+        let _ = state
+            .store
+            .msg_insert(
+                &conversation_id,
+                "assistant",
+                &serde_json::json!({ "role": "assistant", "content": final_answer }),
+                Some(tokens_in as i64),
+                Some(tokens_out as i64),
+            )
+            .await;
+    }
     let _ = state.store.conv_touch(&conversation_id).await;
 
-    let _ = channel.send(AiEvent::Done {
-        answer: final_answer,
-        turns: turn,
-        tokens_in,
-        tokens_out,
-    });
+    // 被打断时不推 `Done`：它的语义是"这一轮正常收尾"，前端收到就追加一条
+    // 回答气泡 —— 出错/取消之后再追一条「(无回答)」只会让人更困惑。
+    // 但**一定要推点东西**：前端 `aiBusy` 只由 done/error 复位，
+    // 一个事件都不推，界面就永远解不了锁。上面两条路径都已经推过 Error 了。
+    if !aborted {
+        let _ = channel.send(AiEvent::Done {
+            answer: final_answer,
+            turns: turn,
+            tokens_in,
+            tokens_out,
+        });
+    }
     // 任务级状态（已读文件 / 清单 / 计划）随任务一起销毁，
     // 不清的话这张注册表会跟着会话数一直长
     tools::edit::clear_task(&job.id);
