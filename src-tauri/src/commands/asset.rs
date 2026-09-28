@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::error::AppResult;
 use crate::state::ManagedState;
-use crate::store::{AssetRow, AuditQuery, AuditRow, CredentialInput};
+use crate::store::{AssetRow, AuditQuery, CredentialInput};
 
 #[tauri::command]
 pub async fn asset_list(state: ManagedState<'_>) -> AppResult<Vec<AssetRow>> {
@@ -58,17 +58,37 @@ pub async fn asset_create(state: ManagedState<'_>, args: AssetCreateArgs) -> App
         .await
 }
 
+/// 双层 Option 的显式 null 语义：标准 serde 把 JSON `null` 反序列化成外层
+/// `None`（=「不变」），`Some(None)`（=「清空这一列」）在 JSON 里根本表达
+/// 不出来 —— 于是「把资产拖回未分组」「切换认证方式后清掉旧 keyPath/credId」
+/// 这类更新全部静默失效。`deserialize_with` 让 `null` 落到内层：
+/// 字段缺失 = 不变；`null` = 清空；有值 = 设置。
+fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(de).map(Some)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetUpdateArgs {
     pub id: String,
+    #[serde(default, deserialize_with = "double_option")]
     pub group_id: Option<Option<String>>,
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
     pub host: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub port: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub username: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub auth_kind: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub key_path: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
     pub cred_id: Option<Option<String>>,
     pub options: Option<serde_json::Value>,
     pub tags: Option<String>,
@@ -189,8 +209,13 @@ pub struct AuditArgs {
 }
 
 #[tauri::command]
-pub async fn audit_query(state: ManagedState<'_>, args: AuditArgs) -> AppResult<Vec<AuditRow>> {
-    state
+pub async fn audit_query(
+    state: ManagedState<'_>,
+    args: AuditArgs,
+) -> AppResult<Vec<crate::ipc_types::AuditEntryDto>> {
+    // 必须经 DTO 转换：直接回 AuditRow 的话前端拿到的是 `payloadJson` 字符串，
+    // 而界面按 `payload` 读 —— 详情列永远空（与 ai_messages 那次同款 bug）。
+    Ok(state
         .store
         .audit_query(AuditQuery {
             session_id: args.session_id,
@@ -200,7 +225,10 @@ pub async fn audit_query(state: ManagedState<'_>, args: AuditArgs) -> AppResult<
             limit: args.limit.unwrap_or(200),
             offset: args.offset.unwrap_or(0),
         })
-        .await
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect())
 }
 
 // ── 已知主机 ──
@@ -310,4 +338,32 @@ pub async fn app_info(state: ManagedState<'_>) -> AppResult<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "vault": vault,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：`asset_update` 的双层 Option 曾用标准 serde —— JSON `null` 被当成
+    /// 「字段没变」，`Some(None)`（清空）在 JSON 里表达不出来。后果：
+    /// 资产拖回未分组、切换认证方式后清 keyPath/credId 全部静默失效。
+    #[test]
+    fn asset_update_null_clears_and_missing_keeps() {
+        // null → 清空（Some(None)）
+        let args: AssetUpdateArgs =
+            serde_json::from_str(r#"{"id":"a1","groupId":null}"#).unwrap();
+        assert_eq!(args.group_id, Some(None));
+        // 有值 → 设置
+        let args: AssetUpdateArgs =
+            serde_json::from_str(r#"{"id":"a1","groupId":"g1"}"#).unwrap();
+        assert_eq!(args.group_id, Some(Some("g1".into())));
+        // 字段缺失 → 不变（None）
+        let args: AssetUpdateArgs = serde_json::from_str(r#"{"id":"a1"}"#).unwrap();
+        assert_eq!(args.group_id, None);
+        // 其他可清空列同语义
+        let args: AssetUpdateArgs =
+            serde_json::from_str(r#"{"id":"a1","keyPath":null,"credId":null}"#).unwrap();
+        assert_eq!(args.key_path, Some(None));
+        assert_eq!(args.cred_id, Some(None));
+    }
 }

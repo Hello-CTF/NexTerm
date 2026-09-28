@@ -30,12 +30,17 @@ const KIND_LABEL: Record<string, string> = {
   redis: "Redis",
 };
 
+/** 拖拽资产用的 dataTransfer 类型（自定义 MIME，避免普通文本拖拽误触发）。 */
+const DRAG_ASSET = "application/x-nexterm-asset";
+
 export function AssetTree() {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  /** 从分组行上的 + 新建时 preset 为该分组；顶栏 + = 不分组。 */
+  const [presetGroup, setPresetGroup] = useState<string | null>(null);
 
   const assets = useQuery({
     queryKey: ["assets"],
@@ -80,6 +85,17 @@ export function AssetTree() {
     pushToast("info", "已删除");
   };
 
+  /** 拖拽落点：移入分组 / 移回未分组。groupId 传 null = 拖到根区域。 */
+  const moveAsset = async (assetId: string, groupId: string | null) => {
+    try {
+      await assetApi.update({ id: assetId, groupId });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      pushToast("info", groupId ? "已移入分组" : "已移到未分组");
+    } catch (e) {
+      pushToast("error", `移动失败：${String((e as Error).message ?? e)}`);
+    }
+  };
+
   if (!leftOpen) return null;
 
   return (
@@ -93,7 +109,10 @@ export function AssetTree() {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建资产"
-          onClick={() => setEditing("asset")}
+          onClick={() => {
+            setPresetGroup(null);
+            setEditing("asset");
+          }}
         >
           <IconPlus size={14} />
         </button>
@@ -120,7 +139,17 @@ export function AssetTree() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+      {/* 根区域本身是「未分组」的放置目标：拖到空白处即移出分组 */}
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes(DRAG_ASSET)) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const id = e.dataTransfer.getData(DRAG_ASSET);
+          if (id) void moveAsset(id, null);
+        }}
+      >
         {(byGroup.get(null) ?? []).map((a) => (
           <AssetRow
             key={a.id}
@@ -136,6 +165,11 @@ export function AssetTree() {
             assets={byGroup.get(g.id) ?? []}
             onDelete={(a) => void onDelete(a)}
             onEdit={(a) => setEditingAsset(a)}
+            onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
+            onCreateIn={() => {
+              setPresetGroup(g.id);
+              setEditing("asset");
+            }}
           />
         ))}
         {filtered.length === 0 && (
@@ -159,9 +193,14 @@ export function AssetTree() {
       {editing !== "none" && (
         <AssetEditor
           kind={editing}
-          onClose={() => setEditing("none")}
+          presetGroupId={presetGroup}
+          onClose={() => {
+            setEditing("none");
+            setPresetGroup(null);
+          }}
           onSaved={() => {
             setEditing("none");
+            setPresetGroup(null);
             void qc.invalidateQueries({ queryKey: ["assets"] });
             void qc.invalidateQueries({ queryKey: ["groups"] });
             void qc.invalidateQueries({ queryKey: ["credentials"] });
@@ -199,8 +238,13 @@ function AssetRow({
   return (
     <div
       className="nx-row group"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DRAG_ASSET, asset.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
       onDoubleClick={() => void connectAsset(asset)}
-      title={target ? `${asset.name} · ${target} · 双击连接` : `${asset.name} · 双击连接`}
+      title={target ? `${asset.name} · ${target} · 双击连接 · 可拖入分组` : `${asset.name} · 双击连接 · 可拖入分组`}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -246,35 +290,76 @@ function GroupNode({
   assets,
   onDelete,
   onEdit,
+  onMoveAsset,
+  onCreateIn,
 }: {
   group: AssetGroup;
   assets: Asset[];
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
+  onMoveAsset: (assetId: string, groupId: string | null) => void;
+  onCreateIn: () => void;
 }) {
   const [open, setOpen] = useState(true);
+  const [over, setOver] = useState(false);
+  const isAssetDrag = (e: React.DragEvent) =>
+    e.dataTransfer.types.includes(DRAG_ASSET);
   return (
-    <div className="mb-0.5">
-      <button
-        className="nx-row w-full text-neutral-400"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {open ? (
-          <IconChevronDown size={12} className="shrink-0" />
-        ) : (
-          <IconChevronRight size={12} className="shrink-0" />
-        )}
-        <IconFolder size={13} className="shrink-0 text-neutral-500" />
-        <span className="min-w-0 flex-1 truncate text-left text-xs font-medium">{group.name}</span>
+    <div
+      className={`mb-0.5 rounded ${over ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40" : ""}`}
+      onDragOver={(e) => {
+        if (isAssetDrag(e)) {
+          e.preventDefault();
+          setOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        // 子元素之间移动也会触发 dragleave，只有真正离开分组块才熄高亮
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false);
+      }}
+      onDrop={(e) => {
+        if (!isAssetDrag(e)) return;
+        e.preventDefault();
+        e.stopPropagation(); // 别冒泡给根区域（= 未分组）
+        setOver(false);
+        const id = e.dataTransfer.getData(DRAG_ASSET);
+        if (id) onMoveAsset(id, group.id);
+      }}
+    >
+      <div className="nx-row group w-full text-neutral-400">
+        <button
+          className="flex min-w-0 flex-1 items-center gap-1 text-left"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? (
+            <IconChevronDown size={12} className="shrink-0" />
+          ) : (
+            <IconChevronRight size={12} className="shrink-0" />
+          )}
+          <IconFolder size={13} className="shrink-0 text-neutral-500" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{group.name}</span>
+        </button>
         <span className="nx-count">{assets.length}</span>
-      </button>
+        <span className="nx-row-actions">
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="在分组内新建资产"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCreateIn();
+            }}
+          >
+            <IconPlus size={12} />
+          </button>
+        </span>
+      </div>
       {open && (
         <div className="ml-3.5">
           {assets.map((a) => (
             <AssetRow key={a.id} asset={a} onDelete={() => onDelete(a)} onEdit={() => onEdit(a)} />
           ))}
           {assets.length === 0 && (
-            <div className="px-2 py-1.5 text-[11px] text-neutral-600">（空分组）</div>
+            <div className="px-2 py-1.5 text-[11px] text-neutral-600">（空分组 · 可拖资产进来）</div>
           )}
         </div>
       )}
@@ -295,12 +380,15 @@ const CRED_KIND_LABEL: Record<string, string> = {
 function AssetEditor({
   kind,
   initial,
+  presetGroupId,
   onClose,
   onSaved,
 }: {
   kind: "asset" | "group";
   /** 编辑已有资产（P1）。不传 = 新建。 */
   initial?: Asset;
+  /** 新建时的目标分组（分组行上的 + 进入）。 */
+  presetGroupId?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -308,6 +396,7 @@ function AssetEditor({
   const [groupKind, setGroupKind] = useState<"ssh" | "winrm" | "local" | "mysql" | "redis">(
     (initial?.kind as "ssh") ?? "ssh",
   );
+  const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? presetGroupId ?? null);
   const [host, setHost] = useState(initial?.host ?? "");
   const [port, setPort] = useState(initial?.port ?? 22);
   const [username, setUsername] = useState(initial?.username ?? "root");
@@ -315,12 +404,6 @@ function AssetEditor({
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
   const [password, setPassword] = useState("");
   const pushToast = useUi((s) => s.pushToast);
-
-  // 私钥独立交互（§私钥添加逻辑）：来源默认选文件，也可粘贴内容（保存时落成本地文件）
-  const [keySource, setKeySource] = useState<"file" | "paste">("file");
-  const [pastedKey, setPastedKey] = useState("");
-  /** 私钥口令：与私钥同组输入，留空 = 保持已有绑定不变。 */
-  const [passphrase, setPassphrase] = useState("");
 
   // 凭据绑定：默认跟随已有绑定；没有就「新建凭据」
   const [credChoice, setCredChoice] = useState<CredChoice>(initial?.credId ?? "new");
@@ -331,15 +414,34 @@ function AssetEditor({
     queryFn: () => vaultApi.listCredentials(),
     refetchOnWindowFocus: false,
   });
+  const groups = useQuery({
+    queryKey: ["groups"],
+    queryFn: () => assetApi.groupList(),
+    refetchOnWindowFocus: false,
+  });
+
+  /** 编辑时已绑定的凭据：kind 决定私钥模式的来源默认值。 */
+  const boundCred = credentials.data?.find((c) => c.id === initial?.credId);
+  const boundIsVaultKey = boundCred?.kind === "private_key";
+
+  // 私钥独立交互（§私钥添加逻辑）：文件 / 粘贴内容 / 凭据库复用。
+  // 已绑定的凭据本身就是私钥 → 默认切到「凭据库」来源。
+  const [keySource, setKeySource] = useState<"file" | "paste" | "vault">(
+    boundIsVaultKey ? "vault" : "file",
+  );
+  const [pastedKey, setPastedKey] = useState("");
+  /** 私钥口令：与私钥同组输入，留空 = 保持已有绑定不变。凭据库来源没有口令位。 */
+  const [passphrase, setPassphrase] = useState("");
+  /** 凭据库来源选中的 private_key 凭据。 */
+  const [vaultCredId, setVaultCredId] = useState(boundIsVaultKey ? (initial?.credId ?? "") : "");
 
   const isDb = groupKind === "mysql" || groupKind === "redis";
-  /** 私钥模式走自己的一组输入（文件/粘贴 + 口令），不走凭据下拉。 */
+  /** 私钥模式走自己的一组输入（文件/粘贴/凭据库 + 口令），不走凭据下拉。 */
   const keyAuth = authKind === "key";
   /** 密码类（密码认证 / 数据库）走凭据下拉；agent / 私钥 / 无认证不显示。 */
   const usesCred = isDb || authKind === "password";
   const credKind = "password";
   /** 编辑时已绑定的口令凭据：口令框占位提示「留空保持不变」。 */
-  const boundCred = credentials.data?.find((c) => c.id === initial?.credId);
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
   /** 凭据名默认取资产名，跟着资产名输入走；一旦手改过就不再跟着变。 */
@@ -355,30 +457,45 @@ function AssetEditor({
         onSaved();
         return;
       }
-      /* 私钥模式：路径（粘贴的落成文件）+ 口令（留空保持已有绑定） */
+      /* 私钥模式：凭据库复用 / 路径（粘贴的落成文件）+ 口令（留空保持已有绑定） */
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
       if (keyAuth) {
-        if (keySource === "paste") {
-          if (!pastedKey.trim()) {
-            pushToast("error", "请粘贴私钥内容");
+        if (keySource === "vault") {
+          if (!vaultCredId) {
+            pushToast("error", "请从凭据库选择私钥");
             return;
           }
-          const saved = await assetApi.saveKeyFile(pastedKey);
-          finalKeyPath = saved.path;
+          finalKeyPath = null;
+          credId = vaultCredId;
         } else {
-          finalKeyPath = keyPath.trim() || null;
-        }
-        credId = initial?.credId ?? null;
-        if (passphrase) {
-          // 有绑定就原位更新（同一条口令凭据改值），没有就新建
-          const res = await vaultApi.setCredential(
-            credName.trim() || name.trim(),
-            "passphrase",
-            passphrase,
-            credId ?? undefined,
-          );
-          credId = res.id;
+          if (keySource === "paste") {
+            if (!pastedKey.trim()) {
+              pushToast("error", "请粘贴私钥内容");
+              return;
+            }
+            const saved = await assetApi.saveKeyFile(pastedKey);
+            finalKeyPath = saved.path;
+          } else {
+            finalKeyPath = keyPath.trim() || null;
+            if (!finalKeyPath && !initial) {
+              pushToast("error", "请选择私钥文件，或改用「凭据库」来源");
+              return;
+            }
+          }
+          // 原绑定若是私钥本体凭据（现在切回了文件模式）则解绑 ——
+          // 留着它，连接层会把这条凭据误当私钥本体而不是口令
+          credId = boundIsVaultKey ? null : (initial?.credId ?? null);
+          if (passphrase) {
+            // 有绑定就原位更新（同一条口令凭据改值），没有就新建
+            const res = await vaultApi.setCredential(
+              credName.trim() || name.trim(),
+              "passphrase",
+              passphrase,
+              credId ?? undefined,
+            );
+            credId = res.id;
+          }
         }
       } else if (credChoice === "new") {
         // 密码类：新建凭据。填了值才创建；不填 = 不绑定
@@ -396,6 +513,7 @@ function AssetEditor({
       const fields = {
         kind: groupKind,
         name,
+        groupId,
         host: groupKind === "local" ? null : host,
         port: groupKind === "local" ? null : Number(port),
         username: groupKind === "local" ? null : username,
@@ -456,6 +574,24 @@ function AssetEditor({
               placeholder="web-01"
             />
           </div>
+
+          {kind === "asset" && (
+            <div className="nx-form-row">
+              <label className="nx-label">分组</label>
+              <select
+                className="nx-select"
+                value={groupId ?? ""}
+                onChange={(e) => setGroupId(e.target.value || null)}
+              >
+                <option value="">（不分组）</option>
+                {(groups.data ?? []).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {kind === "asset" && groupKind !== "local" && (
             <>
@@ -522,6 +658,13 @@ function AssetEditor({
                     >
                       粘贴内容
                     </button>
+                    <button
+                      type="button"
+                      className={`nx-btn nx-btn-sm ${keySource === "vault" ? "nx-btn-primary" : "nx-btn-ghost"}`}
+                      onClick={() => setKeySource("vault")}
+                    >
+                      凭据库
+                    </button>
                   </div>
                   {keySource === "file" ? (
                     <div className="flex gap-1.5">
@@ -543,7 +686,7 @@ function AssetEditor({
                         浏览…
                       </button>
                     </div>
-                  ) : (
+                  ) : keySource === "paste" ? (
                     <textarea
                       className="nx-textarea font-mono text-[11.5px]"
                       rows={4}
@@ -551,20 +694,47 @@ function AssetEditor({
                       onChange={(e) => setPastedKey(e.target.value)}
                       placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"}
                     />
+                  ) : (
+                    <>
+                      <select
+                        className="nx-select"
+                        value={vaultCredId}
+                        onChange={(e) => setVaultCredId(e.target.value)}
+                      >
+                        <option value="">选择私钥凭据…</option>
+                        {(credentials.data ?? [])
+                          .filter((c) => c.kind === "private_key")
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.usedBy.length > 0 ? `（被 ${c.usedBy.length} 个资产使用）` : "（未使用）"}
+                            </option>
+                          ))}
+                      </select>
+                      {(credentials.data ?? []).filter((c) => c.kind === "private_key").length === 0 && (
+                        <div className="nx-hint mt-1">
+                          ↳ 凭据库里还没有私钥：去左下角「凭据」页新建一条 private_key，多台机器可共用
+                        </div>
+                      )}
+                    </>
                   )}
-                  <input
-                    type="password"
-                    className="nx-input mt-1.5"
-                    autoComplete="off"
-                    value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                    placeholder={
-                      hasBoundPassphrase ? "已设置口令 · 留空保持不变" : "私钥口令（没有可留空）"
-                    }
-                  />
-                  <div className="nx-hint mt-1">
-                    ↳ 口令与私钥一同存入「凭据」库，可改名复用
-                  </div>
+                  {keySource !== "vault" && (
+                    <>
+                      <input
+                        type="password"
+                        className="nx-input mt-1.5"
+                        autoComplete="off"
+                        value={passphrase}
+                        onChange={(e) => setPassphrase(e.target.value)}
+                        placeholder={
+                          hasBoundPassphrase ? "已设置口令 · 留空保持不变" : "私钥口令（没有可留空）"
+                        }
+                      />
+                      <div className="nx-hint mt-1">
+                        ↳ 口令与私钥一同存入「凭据」库，可改名复用
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

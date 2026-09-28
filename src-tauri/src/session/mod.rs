@@ -525,14 +525,48 @@ pub async fn build_ssh_params(
             SshAuth::Password(asset_credential(state, asset).await?.unwrap_or_default())
         }
         Some("key") => {
-            let passphrase = if asset.cred_id.is_some() {
-                Some(asset_credential(state, asset).await?.unwrap_or_default())
+            // 私钥两个来源，不加新列、按凭据类型区分：
+            // - key_path 有值 → 本地文件私钥；cred_id 若绑定且是 passphrase 类型则当口令
+            // - key_path 为空 → cred_id 必须指向 private_key 凭据（私钥本体在凭据库里）
+            let key_path = asset.key_path.clone().unwrap_or_default();
+            if !key_path.is_empty() {
+                let passphrase = match asset.cred_id.as_deref() {
+                    Some(id) => {
+                        let row = state.store.credential_get_row(id).await?;
+                        if row.kind == "private_key" {
+                            // 私钥本体凭据对文件私钥没有意义，不当口令用
+                            None
+                        } else {
+                            let dek = state.vault.dek().await?;
+                            Some(Vault::decrypt_credential(&dek, &row)?.to_string())
+                        }
+                    }
+                    None => None,
+                };
+                SshAuth::Key {
+                    path: key_path,
+                    passphrase,
+                }
             } else {
-                None
-            };
-            SshAuth::Key {
-                path: asset.key_path.clone().unwrap_or_default(),
-                passphrase,
+                match asset.cred_id.as_deref() {
+                    Some(id) => {
+                        let row = state.store.credential_get_row(id).await?;
+                        if row.kind != "private_key" {
+                            return Err(AppError::param(
+                                "该资产未绑定私钥：请在凭据库里选择 private_key 类型凭据，或填写私钥文件路径",
+                            ));
+                        }
+                        let dek = state.vault.dek().await?;
+                        let content = Vault::decrypt_credential(&dek, &row)?.to_string();
+                        SshAuth::KeyContent {
+                            content,
+                            passphrase: None,
+                        }
+                    }
+                    None => {
+                        return Err(AppError::param("私钥资产缺少私钥文件或私钥凭据"));
+                    }
+                }
             }
         }
         Some("agent") => SshAuth::Agent,

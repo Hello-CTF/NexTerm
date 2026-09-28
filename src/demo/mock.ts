@@ -621,7 +621,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "asset_create": {
       const created = {
         id: uid("a"),
-        groupId: null,
+        groupId: (a.groupId as string | null) ?? null,
         kind: str(a.kind, "ssh"),
         name: str(a.name, "新资产"),
         host: (a.host as string | null) ?? null,

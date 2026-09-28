@@ -38,6 +38,11 @@ pub enum SshAuth {
         path: String,
         passphrase: Option<String>,
     },
+    /// 私钥本体在内存里（凭据库里的 private_key 凭据）——没有本地文件路径。
+    KeyContent {
+        content: String,
+        passphrase: Option<String>,
+    },
     Agent,
 }
 
@@ -213,18 +218,13 @@ impl SshTransport {
             SshAuth::Key { path, passphrase } => {
                 let key = russh::keys::load_secret_key(path, passphrase.as_deref())
                     .map_err(|e| AppError::Ssh(format!("私钥加载失败: {e}")))?;
-                let hash = handle
-                    .best_supported_rsa_hash()
-                    .await
-                    .map_err(AppError::from)?
-                    .flatten();
-                handle
-                    .authenticate_publickey(
-                        &params.username,
-                        PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-                    )
-                    .await
-                    .map_err(AppError::from)?
+                auth_publickey(&mut handle, &params.username, key).await?
+            }
+            SshAuth::KeyContent { content, passphrase } => {
+                // 凭据库私钥：内容直达 russh 解码，不落盘
+                let key = russh::keys::decode_secret_key(content, passphrase.as_deref())
+                    .map_err(|e| AppError::Ssh(format!("私钥解析失败: {e}")))?;
+                auth_publickey(&mut handle, &params.username, key).await?
             }
             SshAuth::Agent => {
                 #[cfg(unix)]
@@ -320,6 +320,24 @@ impl SshTransport {
         *guard = Some(Arc::clone(&sftp));
         Ok(sftp)
     }
+}
+
+/// 公钥认证共用段：问服务端要 RSA 哈希 → 用私钥签名认证。
+/// 文件私钥与凭据库私钥两个分支只差「私钥从哪来」，认证流程完全一致。
+async fn auth_publickey(
+    handle: &mut Handle<NexTermHandler>,
+    username: &str,
+    key: russh::keys::PrivateKey,
+) -> AppResult<russh::client::AuthResult> {
+    let hash = handle
+        .best_supported_rsa_hash()
+        .await
+        .map_err(AppError::from)?
+        .flatten();
+    handle
+        .authenticate_publickey(username, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
+        .await
+        .map_err(AppError::from)
 }
 
 async fn socks5_stream(

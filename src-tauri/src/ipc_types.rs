@@ -255,6 +255,24 @@ pub struct AuditEntryDto {
     pub duration_ms: Option<i64>,
 }
 
+impl From<crate::store::AuditRow> for AuditEntryDto {
+    fn from(r: crate::store::AuditRow) -> Self {
+        Self {
+            id: r.id,
+            ts: r.ts,
+            session_id: r.session_id,
+            asset_id: r.asset_id,
+            source: r.source,
+            kind: r.kind,
+            // 库里存的是 JSON 文本；坏数据解不开时给 Null（详情列显示空对象）
+            // 而不是把整张表打挂。
+            payload: serde_json::from_str(&r.payload_json).unwrap_or(serde_json::Value::Null),
+            exit_code: r.exit_code,
+            duration_ms: r.duration_ms,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../src/ipc/types.ts")]
 #[serde(rename_all = "camelCase")]
@@ -423,6 +441,36 @@ mod export_tests {
         let dto: super::MessageDto = row.into();
         assert!(dto.content.is_object(), "content 应是结构而不是字符串");
         assert_eq!(dto.content["content"], "你好");
+    }
+
+    /// 回归：`audit_query` 曾经直接把 `AuditRow` 丢给前端（字段是 `payloadJson`
+    /// 字符串），而审计界面按 `payload` 读 —— **详情列永远空白**，只剩动作列。
+    /// DTO 必须把 `payload_json` 文本解成结构。
+    #[test]
+    fn audit_entry_dto_unwraps_payload_json() {
+        use crate::store::AuditRow;
+        let row = AuditRow {
+            id: 7,
+            ts: 1,
+            session_id: Some("s1".into()),
+            asset_id: None,
+            source: "ai".into(),
+            kind: "takeover".into(),
+            payload_json: r#"{"keys":"sudo apt install nginx","enter":true}"#.into(),
+            exit_code: Some(0),
+            duration_ms: None,
+        };
+        let dto: super::AuditEntryDto = row.clone().into();
+        assert!(dto.payload.is_object(), "payload 应是结构而不是字符串");
+        assert_eq!(dto.payload["keys"], "sudo apt install nginx");
+
+        // 坏数据（手动改库/写库失败残留）不整表崩：给 Null
+        let bad = AuditRow {
+            payload_json: "not-json{{".into(),
+            ..row
+        };
+        let dto: super::AuditEntryDto = bad.into();
+        assert!(dto.payload.is_null());
     }
 
     /// 同上：会话列表的 `scope_json` 也要解成结构。
