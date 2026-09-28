@@ -1,7 +1,7 @@
 // 演示模式的假数据仓库。
 //
 // 目标是"所有面板都有真实感的内容可看可点"：资产、容器、数据库、文件树、
-// 审计、MCP 工具……都与《产品开发文档》里的示例场景（web-01 上排查 nginx 与容器）对齐。
+// 审计记录……都与《产品开发文档》里的示例场景（web-01 上排查 nginx 与容器）对齐。
 // 数据是可变的内存对象，所以新建资产 / 删除容器 / 建文件夹等操作能真的生效。
 
 export interface DemoAsset {
@@ -1010,7 +1010,7 @@ export const redisValues: Record<string, { keyType: string; ttl: number; value: 
   },
 };
 
-/* ── 挂载 / 转发 / 审计 / MCP / AI ─────────────────────────────────────── */
+/* ── 挂载 / 转发 / 审计 / AI ───────────────────────────────────────────── */
 
 export const mounts: { id: string; localPoint: string; remote: string; sessionId: string | null; createdAt: number | null }[] = [
   { id: "m1", localPoint: "Z:", remote: "\\\\10.0.0.8\\share", sessionId: "s-nat", createdAt: NOW - 3 * DAY },
@@ -1061,20 +1061,6 @@ export const auditEntries: DemoAuditEntry[] = [
   { id: 32, ts: NOW - 3 * HOUR, sessionId: null, assetId: "a-docker", source: "user", kind: "docker_action", payload: { container: "api-server", action: "restart" }, exitCode: 0, durationMs: 1810 },
   { id: 31, ts: NOW - 4 * HOUR, sessionId: null, assetId: null, source: "ai", kind: "guard_block", payload: { rendered: "rm -rf /var/lib/mysql", reason: "forbidden: rm -rf 根路径" }, exitCode: null, durationMs: null },
   { id: 30, ts: NOW - 6 * HOUR, sessionId: "s-web01", assetId: "a-web01", source: "ai", kind: "takeover_enter", payload: { task: "安装 nginx 并启动", allowWrite: true }, exitCode: null, durationMs: null },
-];
-
-export const mcpTools = [
-  { name: "exec_commands", description: "批量执行命令（默认上限 20 条）", readOnly: false, writeEnabled: false },
-  { name: "list_dir", description: "列目录（含大小 / 时间 / 权限 / 属主）", readOnly: true, writeEnabled: false },
-  { name: "read_file", description: "读文件，超长自动截断并标记位置", readOnly: true, writeEnabled: false },
-  { name: "write_file", description: "写文件，默认需要确认", readOnly: false, writeEnabled: false },
-  { name: "search_files", description: "按文件名 / 内容在远端搜索", readOnly: true, writeEnabled: false },
-  { name: "docker_ps", description: "列出容器（结构化）", readOnly: true, writeEnabled: false },
-  { name: "docker_logs", description: "取容器日志（tail / since / grep）", readOnly: true, writeEnabled: false },
-  { name: "docker_control", description: "start / stop / restart / rm（需确认）", readOnly: false, writeEnabled: false },
-  { name: "db_query", description: "执行只读查询", readOnly: true, writeEnabled: false },
-  { name: "db_execute", description: "执行写操作（需确认，默认关闭）", readOnly: false, writeEnabled: false },
-  { name: "list_assets", description: "列出全部资产，支持跨主机编排", readOnly: true, writeEnabled: false },
 ];
 
 export const providerPresets = ["deepseek", "openai", "dashscope", "moonshot", "zhipu", "ollama", "lmstudio", "vllm"];

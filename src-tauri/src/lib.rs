@@ -1,7 +1,7 @@
 //! NexTerm 内核装配：Tauri Builder、状态注入、命令注册（§2）。
 //!
 //! 启动流程：日志 → SQLite（迁移）→ Vault → AI 运行时 → AppState →
-//! 后台任务（空闲清理 / 自动锁）→ MCP → 窗口。
+//! 后台任务（空闲清理 / 自动锁）→ 窗口。
 
 pub mod ai;
 pub mod commands;
@@ -12,7 +12,6 @@ pub mod events;
 pub mod fs;
 pub mod ids;
 pub mod ipc_types;
-pub mod mcp;
 pub mod session;
 pub mod state;
 pub mod store;
@@ -181,9 +180,6 @@ pub fn run() {
                 tokio::spawn(async move {
                     vault::auto_lock_task(vault2).await;
                 });
-
-                // MCP 对外（M4，设置开启时启动）
-                mcp::start(Arc::clone(&app_state)).await;
 
                 tracing::info!(target: "boot", "NexTerm 内核就绪");
                 Ok(())

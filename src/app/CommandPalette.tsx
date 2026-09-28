@@ -125,7 +125,7 @@ export function CommandPalette({
       {
         id: "settings",
         label: "打开设置",
-        hint: "AI / 凭据库 / MCP",
+        hint: "AI / 凭据库",
         icon: IconSettings,
         run: () => addTab({ id: "settings", kind: "settings", title: "设置", closable: true }),
       },

@@ -7,7 +7,6 @@ pub mod db;
 pub mod docker;
 pub mod forward;
 pub mod fs;
-pub mod mcp;
 pub mod models;
 pub mod mount;
 pub mod session;
@@ -125,13 +124,6 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         vault::vault_reveal_credential,
         vault::vault_list_credentials,
         vault::vault_delete_credential,
-        // mcp（M4-T1 设置 + M4-T2 写入外部 AI 工具配置）
-        mcp::mcp_get_settings,
-        mcp::mcp_save_settings,
-        mcp::mcp_generate_token,
-        mcp::mcp_list_tools,
-        mcp::mcp_write_client_config,
-        mcp::mcp_client_config_snippet,
         // asset / group / snippet / audit / known_host
         asset::asset_list,
         asset::asset_get,

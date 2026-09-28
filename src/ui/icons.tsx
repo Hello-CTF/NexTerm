@@ -529,7 +529,7 @@ export const IconLoader = (p: IconProps) => (
   </Svg>
 );
 
-/** MCP / 外部接入：插头。 */
+/** 端口转发：插头。 */
 export const IconPlug = (p: IconProps) => (
   <Svg {...p}>
     <path d="M9 3v6M15 3v6" />

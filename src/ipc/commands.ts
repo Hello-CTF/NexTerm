@@ -498,46 +498,6 @@ export const vaultApi = {
     call<{ id: string }>("credential_save", { name, kind, secret }),
 };
 
-// ───────── MCP ─────────
-
-// ───────── MCP（M4-T1 设置 / M4-T2 写入外部工具）─────────
-
-export interface McpSettings {
-  enabled: boolean;
-  httpPort: number;
-  token: string;
-  /** 逐工具写权限门；缺省即 false = 只读 */
-  writeTools: Record<string, boolean>;
-}
-
-export interface McpToolDto {
-  name: string;
-  description: string;
-  readOnly: boolean;
-  writeEnabled: boolean;
-}
-
-export interface McpClientWriteResult {
-  target: string;
-  path: string;
-  created: boolean;
-  backup: string | null;
-  snippet: Record<string, unknown>;
-}
-
-export const mcpApi = {
-  getSettings: () => call<McpSettings>("mcp_get_settings"),
-  /** 返回 restartRequired：true 表示端口/token/启停变了，需重启应用生效 */
-  saveSettings: (settings: McpSettings) => call<boolean>("mcp_save_settings", { settings }),
-  generateToken: () => call<string>("mcp_generate_token"),
-  listTools: () => call<McpToolDto[]>("mcp_list_tools"),
-  /** 一键写入外部 AI 工具配置（合并 + 备份，不覆盖其它 server） */
-  writeClientConfig: (target: "claude_code" | "claude_desktop" | "cursor") =>
-    call<McpClientWriteResult>("mcp_write_client_config", { target }),
-  /** 兜底：拿片段自行粘贴 */
-  clientConfigSnippet: () => call<Record<string, unknown>>("mcp_client_config_snippet"),
-};
-
 // ───────── port forward ─────────
 
 export const forwardApi = {

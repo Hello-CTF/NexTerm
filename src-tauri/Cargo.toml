@@ -80,9 +80,6 @@ tokio-socks = "0.5"
 md-5 = "0.10"
 sha2 = "0.10"
 
-# MCP 对外 HTTP 通道
-axum = { version = "0.8", default-features = false, features = ["json", "http1", "tokio"] }
-
 [dev-dependencies]
 tempfile = "3"
 
