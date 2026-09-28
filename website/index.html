@@ -19,11 +19,11 @@
       <img src="brand/nexterm-mark-128.png" alt="NexTerm" />
       NexTerm
     </a>
+    <span class="nav-path">~/$ <b>nexterm</b></span>
     <div class="nav-links">
-      <a href="#features">功能总览</a>
-      <a href="#highlights">特性</a>
+      <a href="#features">功能</a>
       <a href="#demo">在线体验</a>
-      <a href="#get">获取应用</a>
+      <a href="#get">获取</a>
       <a href="#faq">常见问题</a>
     </div>
     <div class="nav-actions">
@@ -38,242 +38,143 @@
 
 <header class="hero">
   <div class="container">
-    <span class="hero-kicker"><span class="dot"></span>开源 · 本地优先 · MIT 协议</span>
-    <h1>一体化<span class="grad">开发运维</span>终端</h1>
-    <p class="hero-sub">本地优先的桌面终端工作台。凭据加密存储，会话稳定复用，AI 全程在权限护栏内执行。</p>
-    <p class="hero-formula"><b>SSH</b> · <b>WinRM</b> · 文件 · Docker · 数据库 · <b>AI</b>，装进同一个窗口</p>
-    <div class="hero-ctas">
-      <a class="btn btn-primary" href="demo/">在线体验</a>
-      <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">在 GitHub 查看</a>
-    </div>
-    <p class="hero-platform">当前支持 <span class="os">Windows</span>，macOS 与 Linux 构建在路线图中</p>
-
-    <div class="hero-shot">
+    <div class="hero-grid">
+      <div>
+        <span class="hero-kicker"><span class="dot"></span>开源 · 本地优先 · MIT 协议</span>
+        <h1>一体化<span class="grad">开发运维</span>终端</h1>
+        <p class="hero-sub">SSH、WinRM、文件、Docker、数据库与 AI 共用一套三层工作区。标签始终挂载，切换不重连；AI 全程在权限护栏内执行。</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="demo/">在线体验</a>
+          <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub 源码</a>
+        </div>
+        <div class="hero-meta">
+          <span>目标平台 <span class="os">Windows</span>，macOS 与 Linux 构建在路线图中</span>
+          <span>凭据加密存储 · 数据不出本机</span>
+        </div>
+      </div>
       <div class="term">
         <div class="term-bar">
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
-          <span class="term-title">NexTerm — 生产环境 / web-01</span>
+          <span class="term-title">NexTerm — web-01 · SSH</span>
+          <span class="term-tag">AI 接管演示</span>
         </div>
-        <div class="term-body">
-          <img src="images/hero-ai-terminal.png" alt="NexTerm 主界面：终端、AI 侧栏与文件树" loading="eager" />
+        <div class="term-body" id="heroTerm" aria-hidden="true"></div>
+        <div class="term-status">
+          <span class="live">已连接</span>
+          <span class="sep">│</span>
+          <span>web-01</span>
+          <span class="sep">│</span>
+          <span>bash</span>
+          <span class="sep">│</span>
+          <span>UTF-8</span>
         </div>
       </div>
+    </div>
+
+    <div class="proto-row">
+      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>XChaCha20</span><span>DPAPI</span><span>xterm.js</span><span>Tauri</span><span>Rust</span>
     </div>
   </div>
 </header>
 
-<div class="marquee-wrap" aria-hidden="true">
-  <div class="marquee">
-    <ul>
-      <li>SSH</li><li>SFTP</li><li>WinRM</li><li>ConPTY</li><li>真 PTY</li><li>Docker</li><li>MySQL</li><li>Redis</li><li>SOCKS5</li><li>端口转发</li><li>Argon2id</li><li>XChaCha20-Poly1305</li><li>DPAPI</li><li>xterm.js</li><li>Tauri</li><li>Rust</li><li>React</li>
-    </ul>
-    <ul>
-      <li>SSH</li><li>SFTP</li><li>WinRM</li><li>ConPTY</li><li>真 PTY</li><li>Docker</li><li>MySQL</li><li>Redis</li><li>SOCKS5</li><li>端口转发</li><li>Argon2id</li><li>XChaCha20-Poly1305</li><li>DPAPI</li><li>xterm.js</li><li>Tauri</li><li>Rust</li><li>React</li>
-    </ul>
-  </div>
-</div>
-
 <section class="section" id="features">
   <div class="container">
     <div class="section-head">
-      <span class="kicker">FEATURES</span>
-      <h2>功能总览</h2>
-      <p>九大模块共用一套三层工作区，标签始终挂载，切换不重连、不丢状态。</p>
+      <span class="pk">nexterm --modules</span>
+      <h2>一个窗口，九个模块</h2>
+      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流。</p>
     </div>
-    <div class="grid">
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/></svg></div>
-        <h3>终端</h3>
-        <p>SSH 真 PTY、本地 ConPTY、WinRM；多标签与分屏、搜索、会话录制，支持 UTF-8 / GBK / GB18030 / Big5 编码切换。</p>
+    <div class="bento">
+      <div class="cell cell-lg">
+        <span class="tag">AI ASSISTANT</span>
+        <h3>AI 助手，看得见也管得住</h3>
+        <p>命令以卡片进入对话流，展开可见完整输出与退出码；危险操作一律拒绝，敏感操作先经确认。</p>
+        <ul>
+          <li>只读、读写、静默三档权限随时切换</li>
+          <li>终端接管可按任意键夺回</li>
+          <li>写文件生成修改前后 diff</li>
+          <li>任意 OpenAI 兼容端点，密钥仅存本机</li>
+        </ul>
+        <div class="cell-shot"><img src="images/ai-permission.png" alt="AI 权限确认卡片" loading="lazy" /></div>
       </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6H15a3 3 0 0 1 3 3v6.5M15.5 18H9a3 3 0 0 1-3-3V8.5"/></svg></div>
-        <h3>会话</h3>
-        <p>一台资产一条连接复用，关标签不断连；断线按指数退避自动重连。</p>
+      <div class="cell cell-w">
+        <span class="tag">TERMINAL</span>
+        <h3>终端与工作区</h3>
+        <p>工作区、分屏面板、标签三层结构；一台资产一条连接复用，断线按指数退避自动重连。</p>
+        <div class="cell-shot"><img src="images/split-pane-editor.png" alt="分屏终端与内置编辑器" loading="lazy" /></div>
       </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 13h8"/></svg></div>
+      <div class="cell">
+        <span class="tag">FILES</span>
         <h3>文件</h3>
-        <p>SFTP 浏览与虚拟滚动，传输带进度与断点续传；内置编辑器支持查找替换、LF/CRLF 与编码切换。</p>
+        <p>SFTP 虚拟滚动、带断点续传的传输、内置编辑器与 MD5 / SHA256 校验。</p>
       </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></svg></div>
-        <h3>挂载</h3>
-        <p>Windows net use 映射盘与 Linux sshfs，远程目录接入本地文件系统。</p>
-      </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="3" y="10" width="7" height="7" rx="1"/><rect x="14" y="10" width="7" height="7" rx="1"/><rect x="8.5" y="4" width="7" height="6" rx="1"/></svg></div>
-        <h3>Docker</h3>
-        <p>容器列表、日志 follow、容器终端、启停删、镜像管理与容器文件浏览。</p>
-      </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6"/><path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3"/></svg></div>
+      <div class="cell">
+        <span class="tag">DATABASE</span>
         <h3>数据库</h3>
         <p>MySQL 库表浏览与 SQL 工作台；Redis SCAN 分页、类型感知查看与命令台。</p>
       </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.3 11l9.4-4M7.3 13l9.4 4"/></svg></div>
+      <div class="cell">
+        <span class="tag">DOCKER</span>
+        <h3>Docker</h3>
+        <p>容器列表、日志 follow、容器终端、镜像管理与容器文件浏览。</p>
+      </div>
+      <div class="cell">
+        <span class="tag">FORWARD</span>
         <h3>端口转发</h3>
-        <p>SSH 本地转发与 SOCKS5 动态转发，复用已有会话打通内网数据库。</p>
+        <p>本地转发与 SOCKS5 动态转发复用已有会话，直达内网资源。</p>
       </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></div>
-        <h3>AI 助手</h3>
-        <p>OpenAI 兼容多模型、工具调用、权限护栏、终端接管、计划模式与用量统计。</p>
-      </div>
-      <div class="card">
-        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v3"/></svg></div>
-        <h3>凭据库</h3>
-        <p>两级密钥信封加密、集中管理面板、引用关系与删除保护、日志自动脱敏。</p>
+      <div class="cell cell-w">
+        <span class="tag">SECURITY</span>
+        <h3>凭据只在本机</h3>
+        <p>两级密钥信封加密，日志自动脱敏；管理面板呈现引用关系与删除保护，支持 Windows DPAPI 免主密码模式。</p>
+        <ul>
+          <li><code>主密码 → Argon2id → KEK → 信封加密 DEK → XChaCha20-Poly1305</code></li>
+        </ul>
       </div>
     </div>
   </div>
 </section>
 
-<section class="section section-alt" id="highlights">
-  <div class="container">
-    <div class="section-head">
-      <span class="kicker">HIGHLIGHTS</span>
-      <h2>为真实运维场景设计</h2>
-      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流。</p>
-    </div>
-
-    <div class="feature-row">
-      <div class="feature-text">
-        <span class="kicker">AI GUARDRAIL</span>
-        <h3>AI 看得见，也管得住</h3>
-        <p>AI 接在内核上，不是贴在旁边的聊天框。每一条执行都呈现在你面前，危险操作先经确认。</p>
-        <ul class="feature-list">
-          <li><b>工具调用透明</b> —— 命令以卡片进入对话流，展开可见完整输出与退出码</li>
-          <li><b>权限护栏</b> —— 安全操作直接执行，敏感操作弹确认，危险命令一律拒绝</li>
-          <li><b>只读、读写、静默</b> 三档模式随时切换</li>
-          <li><b>终端接管</b> —— AI 读屏、判定空闲、发送按键，按任意键立即夺回</li>
-        </ul>
-      </div>
-      <div class="feature-media">
-        <div class="term">
-          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">AI 权限面板</span></div>
-          <div class="term-body"><img src="images/ai-permission.png" alt="AI 权限确认卡片" loading="lazy" /></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="feature-row flip">
-      <div class="feature-text">
-        <span class="kicker">REVIEWABLE CHANGES</span>
-        <h3>每次变更都可审阅</h3>
-        <p>AI 的每次写文件生成修改前后 diff，改动一目了然；接入任意 OpenAI 兼容端点，成本常驻可见。</p>
-        <ul class="feature-list">
-          <li><b>文件变更 diff</b> —— 修改前后对照，拒绝可疑改动</li>
-          <li><b>计划模式</b> —— AI 先给方案，确认后执行</li>
-          <li><b>多模型接入</b> —— 两步连接测试，端点密钥仅存本机</li>
-          <li><b>用量统计</b> —— 上下文用量环与缓存命中率常驻侧栏</li>
-        </ul>
-      </div>
-      <div class="feature-media">
-        <div class="term">
-          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">文件变更 diff</span></div>
-          <div class="term-body"><img src="images/ai-file-changes.png" alt="AI 文件变更 diff 视图" loading="lazy" /></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="feature-row">
-      <div class="feature-text">
-        <span class="kicker">TERMINAL &amp; FILES</span>
-        <h3>终端与文件，无缝配合</h3>
-        <p>三层结构：工作区对应一台机器或一个连接，其下分屏，屏内开标签。所有标签保持挂载，切换不重连。</p>
-        <ul class="feature-list">
-          <li><b>会话复用</b> —— 关标签不断连，断线指数退避自动重连</li>
-          <li><b>分屏工作台</b> —— 比例持久化，一边敲命令、一边看日志</li>
-          <li><b>SFTP 虚拟滚动</b> —— 大目录流畅浏览，传输断点续传</li>
-          <li><b>内置编辑器</b> —— 查找替换、LF/CRLF、编码切换、校验和</li>
-        </ul>
-      </div>
-      <div class="feature-media">
-        <div class="term">
-          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">分屏与编辑器</span></div>
-          <div class="term-body"><img src="images/split-pane-editor.png" alt="分屏终端与内置编辑器" loading="lazy" /></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="feature-row flip">
-      <div class="feature-text">
-        <span class="kicker">DATA &amp; CONTAINERS</span>
-        <h3>数据与容器，触手可及</h3>
-        <p>数据库、容器与网络隧道都在同一个工作区里，通过已有 SSH 会话直达内网资源。</p>
-        <ul class="feature-list">
-          <li><b>MySQL 工作台</b> —— 库表浏览、SQL 执行与结果导出</li>
-          <li><b>Redis 控制台</b> —— SCAN 分页、类型感知查看、命令台</li>
-          <li><b>Docker 管理</b> —— 容器终端、日志 follow、镜像与文件浏览</li>
-          <li><b>端口转发</b> —— 本地转发与 SOCKS5 动态转发复用会话</li>
-        </ul>
-      </div>
-      <div class="feature-media">
-        <div class="term">
-          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">端口转发</span></div>
-          <div class="term-body"><img src="images/port-forward.png" alt="端口转发管理界面" loading="lazy" /></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="feature-row">
-      <div class="feature-text">
-        <span class="kicker">SECURITY</span>
-        <h3>凭据在本机，加密存放</h3>
-        <p>不依赖云同步，密钥与凭据只存在本机，从派生到落盘全程加密。</p>
-        <ul class="feature-list">
-          <li><b>两级密钥</b> —— Argon2id 派生 KEK，信封加密 DEK</li>
-          <li><b>算法落位</b> —— 凭据以 XChaCha20-Poly1305 加密存储</li>
-          <li><b>免主密码模式</b> —— Windows DPAPI 绑定当前用户</li>
-          <li><b>管理面板</b> —— 引用关系、删除保护、日志自动脱敏</li>
-        </ul>
-      </div>
-      <div class="feature-media">
-        <div class="code-block">
-          <pre><span class="c"># 凭据落盘路径</span>
-<span class="p">主密码</span> ─ Argon2id ─▶ <span class="p">KEK</span>
-<span class="p">KEK</span> ─ 信封加密 ─▶ <span class="p">DEK</span>
-<span class="p">DEK</span> + <span class="p">XChaCha20-Poly1305</span>
-      └─▶ <span class="g">credentials.db</span>
-
-<span class="c"># 日志输出自动脱敏</span>
-connect host=<span class="g">10.0.0.8</span> auth=<span class="g">cred:***</span></pre>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="section" id="demo">
+<section class="section section-alt" id="demo">
   <div class="container">
     <div class="demo-panel">
-      <span class="kicker">LIVE DEMO</span>
-      <h2>打开浏览器，立即体验</h2>
-      <p>在线演示运行完整界面：虚拟 shell、资产树、文件管理、数据库面板与 AI 对话全部可操作，无需安装任何软件。</p>
-      <a class="btn btn-primary" href="demo/">立即体验</a>
-      <div class="demo-note"><span class="dot"></span>演示数据存于内存，不连接任何真实服务器</div>
+      <div>
+        <span class="pk">live demo</span>
+        <h2>打开浏览器，立即体验</h2>
+        <p class="lead">在线演示运行完整界面：虚拟 shell、资产树、文件管理、数据库面板与 AI 对话全部可操作，无需安装任何软件。</p>
+        <a class="btn btn-primary" href="demo/">立即体验</a>
+        <div class="demo-note"><span class="dot"></span>演示数据存于内存，不连接任何真实服务器</div>
+      </div>
+      <div class="demo-cmd">
+        <div><span class="p">$</span> open nexterm/demo</div>
+        <div><span class="ok">✓</span> 演示模式已就绪</div>
+        <div><span class="ok">✓</span> 虚拟 shell · 8 台资产 · MySQL 与 Redis 面板</div>
+        <div><span class="ok">✓</span> AI 流式对话与确认卡片</div>
+        <div><span class="p">$</span> <span class="caret"></span></div>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="section section-alt" id="get">
+<section class="section" id="get">
   <div class="container">
     <div class="get-wrap">
       <div class="get-steps">
-        <span class="kicker">GET STARTED</span>
+        <span class="pk">nexterm build</span>
         <h3>从源码构建</h3>
         <p>当前目标平台为 Windows，构建依赖 Rust stable MSVC、Node 22+ 与 pnpm 9+。</p>
-        <ul class="feature-list">
+        <ul>
           <li>克隆仓库并安装前端依赖</li>
           <li>执行打包，产出 NSIS 安装器</li>
-          <li>本地开发、测试与质量门命令见仓库 README</li>
+          <li>本地开发与质量门命令见仓库 README</li>
         </ul>
       </div>
       <div class="code-block">
-        <pre><span class="c"># 依赖 Rust stable MSVC · Node 22+ · pnpm 9+</span>
-<span class="p">$</span> git clone https://github.com/ProbiusOfficial/NexTerm.git
+        <div class="term-bar">
+          <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
+          <span class="term-title">build — bash</span>
+        </div>
+        <pre><span class="p">$</span> git clone https://github.com/ProbiusOfficial/NexTerm.git
 <span class="p">$</span> cd NexTerm
 <span class="p">$</span> pnpm install
 <span class="p">$</span> pnpm tauri build    <span class="c"># 产出 NSIS 安装器</span>
@@ -285,10 +186,10 @@ connect host=<span class="g">10.0.0.8</span> auth=<span class="g">cred:***</span
   </div>
 </section>
 
-<section class="section" id="faq">
+<section class="section section-alt" id="faq">
   <div class="container">
     <div class="section-head">
-      <span class="kicker">FAQ</span>
+      <span class="pk">man nexterm-faq</span>
       <h2>常见问题</h2>
     </div>
     <div class="faq">
@@ -335,6 +236,63 @@ connect host=<span class="g">10.0.0.8</span> auth=<span class="g">cred:***</span
     <div class="footer-meta">基于 xterm.js、russh 与 Tauri 构建 · MIT 协议 · © 2026 ProbiusOfficial</div>
   </div>
 </footer>
+
+<script>
+(function () {
+  var body = document.getElementById("heroTerm");
+  if (!body) return;
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  function line(html) {
+    var d = document.createElement("div");
+    d.className = "ln";
+    d.innerHTML = html;
+    body.appendChild(d);
+    return d;
+  }
+
+  function out(html, wait) {
+    line('<span class="d">' + html + "</span>");
+    return wait;
+  }
+
+  function typeCmd(cmd) {
+    var d = line('<span class="p">deploy@web-01:~$</span> <span class="t"></span><span class="caret"></span>');
+    var t = d.querySelector(".t");
+    return (async function () {
+      for (var i = 0; i < cmd.length; i++) {
+        t.textContent += cmd[i];
+        if (!reduced) await sleep(22 + Math.random() * 34);
+      }
+      await sleep(reduced ? 0 : 320);
+      d.querySelector(".caret").remove();
+    })();
+  }
+
+  var steps = [
+    function () { return typeCmd("systemctl status api-server"); },
+    function () { out("● api-server.service — API 服务", 420); return sleep(420); },
+    function () { out("   Active: active (running) since 09:12 · 已运行 3h", 600); return sleep(600); },
+    function () { return typeCmd("docker logs --tail 1 api-server"); },
+    function () { out('10.0.0.8 - "GET /healthz 200" 3ms', 900); return sleep(900); },
+    function () { return typeCmd(""); },
+    function () { line('<span class="warn">── AI 请求接管终端 ──────────────────</span>'); return sleep(650); },
+    function () { line('<span class="info">   docker restart api-server</span>'); return sleep(650); },
+    function () { line('<span class="d">   〔允许本次〕〔本会话允许〕〔拒绝〕 → 允许本次</span>'); return sleep(950); },
+    function () { line('<span class="ok">✓ 已执行 · 退出码 0 · 2.1s · 按任意键夺回</span>'); return sleep(700); },
+    function () { line('<span class="p">deploy@web-01:~$</span> <span class="caret"></span>'); return sleep(4200); }
+  ];
+
+  async function run() {
+    body.innerHTML = "";
+    for (var i = 0; i < steps.length; i++) await steps[i]();
+    if (!reduced) run();
+  }
+
+  run();
+})();
+</script>
 
 </body>
 </html>
