@@ -68,12 +68,12 @@
 | M3-T8 | 端口转发 | ✅ forward.rs（direct-tcpip + 本地监听） |
 | M3-T9 | ai/tools/{docker,db} | ✅ |
 
-### M4 — MCP 对外
+### M4 — MCP 对外　【已移除】
 
 | 卡 | 内容 | 状态 |
 |---|---|---|
-| M4-T1 | stdio + streamable HTTP、token 校验、只读默认 + 写权限逐个开闸 | ✅ mcp/mod.rs（initialize/tools/list/tools/call） |
-| M4-T2 | 一键写入常见 AI 工具配置 | ⏳ 设置 UI 预留（MCP 设置含 token/端口/权限门） |
+| M4-T1 | stdio + streamable HTTP、token 校验、只读默认 + 写权限逐个开闸 | ❌ 已随 MCP 整体移除（2026-09-28，见 §八） |
+| M4-T2 | 一键写入常见 AI 工具配置 | ❌ 已随 MCP 整体移除（2026-09-28，见 §八） |
 
 ### M5 — 同步
 按文档：**v1 不做**（事件位 `sync://status` 已预留）。
@@ -133,7 +133,7 @@
 
 - `winrm-rs` builder/config 为 crate 私有模块 → 已用根导出 API。
 - SSH Agent 认证 Windows 侧暂不可用（russh agent 模块 Unix 限定），UI 提示改用密码/私钥。
-- MCP「一键写入 AI 工具配置」UI 待补（协议层已通）。
+- MCP「一键写入 AI 工具配置」UI —— **整个 MCP 对外能力已移除**（2026-09-28，见 §八），本条作废。
 - react-mosaic 分屏：依赖已装，布局接线上（当前单层标签 + 标签内分栏）。
 
 ---
@@ -213,7 +213,108 @@ print('未注册:', sorted(calls - reg) or '✅ 无')
 
 - 命令块：**终端画布内的折叠做不到**（xterm.js 无删除缓冲行的 API），v1 的折叠语义落在块面板；
   overview ruler 刻点依赖渲染器支持，需实机目视确认。
-- M4-T2 的三个目标路径需在真实机器上跑一次（会写入/备份用户配置文件）。
+- M4-T2 的三个目标路径需在真实机器上跑一次 —— **已随 MCP 移除，作废**。
 - §14 的 A1/A3/A5/A6/A7/A9/A10/A12 仍需真靶机联测（本地无 SSH/WinRM/Docker/DB 靶机）。
 - `tests/ssh_e2e.rs` 在未设 `NEXTERM_SSH_E2E=1` 时是「跳过式通过」，CI 上应显式区分。
 
+
+---
+
+## 八、变更记录（2026-09-28）：MCP 对外能力整体移除
+
+**决策**：MCP（把 NexTerm 能力对外暴露给 Claude Code / Cursor 等外部 AI 工具）整体移除。
+理由是这块对外暴露面在实际使用中没有价值，而它带来的是一整套额外的攻击面（HTTP 监听、token、写权限门）。
+
+**动手前的依赖扫描（先证再删）**：
+
+| 问题 | 结论 | 证据 |
+|---|---|---|
+| AI 模块是否依赖 MCP？ | **不依赖**（零命中） | `grep -rn "mcp" src-tauri/src/ai/ -i` → 0 |
+| Rust 侧引用点 | 仅 3 处 | `commands/mcp.rs`、`commands/mod.rs`（注册）、`lib.rs`（`pub mod` + 启动钩子） |
+| 前端引用点 | 仅 4 处 | `SettingsView` 的 `<McpSection/>`、`ipc/commands.ts` 的 `mcpApi`、`demo/mock.ts`、`demo/data.ts` |
+| 依赖项 | `axum` **只**被 MCP 用 | `grep -rn axum src-tauri/src` → 0（删除后从 `Cargo.toml` 一并移除） |
+
+**删除清单**：
+
+- `src-tauri/src/mcp/`（517 行）、`src-tauri/src/commands/mcp.rs`（93 行）
+- `lib.rs` 的 `pub mod mcp` 与 `mcp::start()` 启动钩子、`commands/mod.rs` 的 6 个命令注册
+- `src/features/settings/McpSection.tsx`（257 行）、`ipc/commands.ts` 的 `mcpApi` 与三个 DTO
+- `demo/mock.ts` 的 6 个 MCP 分支、`demo/data.ts` 的 `mcpTools`、命令面板里的 `AI / 凭据库 / MCP` 文案
+- `Cargo.toml` 的 `axum` 依赖（连带 `Cargo.lock`）
+- README 的能力表与架构图、`src/ui/icons.tsx` 里 `IconPlug` 的注释（图标本身仍被端口转发复用）
+
+> ⚠️ 与 MCP 无关的能力**刻意保留**：凭据库（vault）不动 —— 它是 SSH 密码 / 密钥口令 /
+> WinRM / MySQL·Redis 资产连接的**唯一**密码来源，误删会让这四条路直接断。
+
+**实测**：`cargo test -p nexterm --lib` → **155 passed / 0 failed**（MCP 自带 2 个单测随模块删除，
+本轮另为「工具卡片标题」新增 3 个单测，净 +1）。
+
+### 8.1 同批次的 AI 侧栏修复（同一次验收）
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 同一段回答在对话里出现**两遍** | 内核流式 `delta` 已把正文吐完，前端又在 `done` 分支无条件追加了 `answer` | `AiSidebar.tsx` 的 `done` 分支做去重：末条与 `answer` 逐字相同则不追加（计划模式下升级成 plan 气泡）；末条是 `answer` 的真前缀（≥8 字）则替换文本 |
+| 2 | 工具卡片顶着「在目标主机批量执行命令（最多 20 条）…」 | 内核把工具的 **description**（写给模型看的说明书）当 `display` 推给前端 | 新增 `tools::display_for(name, args)`，按工具 + 实参拼「这次到底干了什么」（哪条命令 / 哪个文件 / 哪张表 / 哪个容器），按字符截断 200 字；未登记的工具返回空串，前端退回工具名 |
+| 3 | 计划模式只是一个没有文字说明的图标 | 入口孤零零挂在功能行 | 搬进「AI 权限」浮层，单开「工作方式」分组，带标题、●/○ 选中态与一句话说明；功能行不再有该按钮；**开启后在输入框上方常驻一行提示**（浮层收起也看得见，否则用户会以为 AI 变磨叽了） |
+| 4 | 权限浮层里塞着「终端接管（实验性功能）」红框 | 与档位设置无关的说明块 | 删除该说明块；功能行的接管图标与顶栏「接管中」徽章保留 |
+| 5 | 危险命令只能被动弹卡片 | 自定义危险规则是只读 chip，确认卡片也没有出口 | 规则改成**可编辑条形列表**（改完失焦/回车落库，空值重复不写）；确认卡片加「在权限设置里管理」入口，点开权限浮层并把**本次待确认的命令预填进规则草稿** |
+| 6 | 模型设置有两份，设置页那份还落后（单 provider、不支持多档案） | 设置页保留了旧版 `aiApi.getProvider/setProvider` 表单，与 AI 侧栏的多档案面板并存 | `ModelPanel` 拆出可内联的 `ModelManager`（弹窗外壳只负责遮罩与 footer），设置页内联复用同一套；连通性测试保留但明确标注测的是**当前激活模型** |
+| 7 | 「执行命令就带那句话」的演示复现不出来 | 演示 mock 给 `done` 塞的 answer 与流式正文**不是同一段文本**，把真机 bug 挡在了门外 | mock 改成镜像真机：流式推出去的正文就是 `done.answer` |
+
+**UI 验收（演示模式，CDP 真点真读）**：25/25 通过 —— 覆盖权限浮层结构、功能行无计划模式入口、
+计划模式常驻提示、危险规则落库、确认卡片跳转 + 预填、对话无重复气泡、设置页无 MCP 且模型只剩一套多档案。
+探针脚本：`%TEMP%/nxprobe/probe.mjs`（一次性验收脚本，不入库）。
+
+### 8.2 启动闪退事故（P0，2026-09-28 同日修复）
+
+**现象**：双击 exe **一闪就没**。用户从 03:41 起试了 6 次，全部失败。
+
+**取证**（`crash.log` + 只读查 `data.db`，不猜）：
+
+```
+PANIC @ unix_ms 1790538088928
+panicked at tauri-2.11.6/src/app.rs:1425:11:
+Failed to setup app: error encountered during setup hook: 凭据库尚未初始化
+（进程退出码 101）
+```
+
+| 时间点 | `setting` 表里的键 | 启动结果 |
+|---|---|---|
+| 00:47 备份 | `ai.models` / `ai.provider` | ✅ 正常 |
+| 现在 | 多出 `vault.mode = dpapi`，但**没有** `vault.dek_envelope` | ❌ 每次闪退 |
+
+**根因（两处叠加，都不在本次改动范围内 —— 是先天 bug）**：
+
+1. **`unlock_dpapi()` 的首次分支永远走不到。** 原写法是先
+   `setting_get(SETTING_ENVELOPE)?.ok_or(AppError::VaultNotInit)?`，再判 `is_empty()` 决定
+   要不要生成信封。可真实首次初始化拿到的就是 `None`（键压根不存在），`ok_or` 先一步把它拒了。
+   于是 —— 「初始化（Windows DPAPI）」这个按钮**从来没有成功过**；更糟的是 `init_dpapi` 是
+   **先落库 `mode=dpapi`、再解锁**的，所以失败之后数据库里躺着一个「自称 dpapi、却没有信封」
+   的死状态，从此每次启动都在 load 阶段解锁失败。这正是 skill 里那句话的又一个实例：
+   *用户从没见过的功能，往往就是一调用就 panic 的功能*。
+2. **`Vault::load` 返回 `Result`，错误一路冒到 tauri 的 setup 钩子**，被 tauri 判为致命 →
+   panic。也就是说**一个可选组件的坏状态，能把整个应用变成打不开** —— 而且用户连界面都进不去，
+   永远没机会自己去设置页修。这与同一文件里对 `model_profile` / `ai.permission` 的兜底
+   （「读失败就退回缺省，不该拦着应用启动」）自相矛盾。
+
+**修法**：
+
+- `unlock_dpapi`：`None | Some("")` 合并走同一分支（首次 / 可自愈）；并加护栏 ——
+  信封丢失但 `credential` 表里**仍有密文**时**拒绝**重建密钥并说明原因
+  （重建 = 生成新 DEK，那些密文将永远解不开；静默毁数据比报错严重得多）。
+- `Vault::load` 签名改为 **`-> Arc<Self>`**：类型层面就不存在失败。DPAPI 解不开 / 模式串写坏
+  → 打 WARN + **内存里**降级为「未初始化」（**不回写数据库**：脏值留着当证据）。
+- `lib.rs`：删掉 `Err => return Err(e.to_string().into())` 那一支。
+
+**验证（四层，缺一层都不算过）**：
+
+| 层 | 证据 |
+|---|---|
+| 反向验证 | 临时把旧行为插回去 → 3 个测试失败，其中 `init_dpapi_works_on_first_run` 的报文是 **`首次初始化 DPAPI 必须成功: VaultNotInit`** —— 与线上 panic 文案**逐字相同**。改回后脚本按 **md5 字节级还原**（`00b495a286…`） |
+| 单测 | 新增 5 个回归测试；`cargo test -p nexterm --lib` → **160 passed / 0 failed**；`fmt --check` / `clippy -D warnings` 全绿 |
+| 真机启动 | 进程存活（未闪退）+ 日志「NexTerm 内核就绪」+ **真窗口截图 `RENDER OK`**（非白屏）+ `crash.log` 字节数无变化 |
+| 数据自愈 | 用户那个坏库**无需任何人工干预**：启动后 `vault.dek_envelope` 自动生成（352 B），界面右下角显示「凭据库已解锁」 |
+
+**同类风险（未修，记录在案）**：`setup` 里现在唯一的致命点是 `Store::open`（含迁移执行）。
+「数据库打不开 / 迁移失败 = 永久打不开且无任何提示」这条同类风险依旧存在 ——
+若要彻底消灭「双击没反应」，下一步该给它加一个带错误信息的兜底窗口。

@@ -58,7 +58,7 @@ id: string,
  */
 name: string, baseUrl: string, apiKey: string, model: string, temperature: number, 
 /**
- * 上下文窗口（1k–2M，非法值兜底 —— 同类工具 踩过的坑）。
+ * 上下文窗口（1k–2M，非法值兜底 —— 外部配置可能乱填）。
  */
 contextWindow: number, 
 /**
