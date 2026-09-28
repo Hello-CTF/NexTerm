@@ -36,4 +36,4 @@ gbk transcode throughput: 39.0 MB/s
 
 - 该基准覆盖 M0-T4 的内存验收（喂 100 MB、内存有界）与 §3.2 的吞吐预算（≥10 MB/s 不掉行）。
 - 前端渲染路径（Channel→xterm WebGL）另计；背压（§4.4）保证消费端再慢也不放大内存。
-- 10 会话并行 RSS ≤ 600MB 的 A3 验收需要 SSH 靶机，列入 nightly e2e（`scripts/` 靶机脚本待部署后执行）。
+- 10 会话并行 RSS ≤ 600MB 的 A3 验收需要 SSH 靶机，列入 nightly e2e，由 `scripts/` 下的靶机脚本执行。
