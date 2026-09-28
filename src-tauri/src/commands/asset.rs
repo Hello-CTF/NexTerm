@@ -231,6 +231,43 @@ pub async fn known_host_remove(state: ManagedState<'_>, id: String) -> AppResult
     state.store.known_host_remove(&id).await
 }
 
+/// 粘贴的私钥落成本地文件：SSH 认证按路径走（`SshAuth::Key { path, .. }`），
+/// 内容统一存到应用数据目录 keys/ 下。文件名用 id 而不是用户输入，避免路径注入；
+/// 返回最终路径，前端拿去绑 asset.key_path。
+#[tauri::command]
+pub async fn asset_save_key_file(
+    state: ManagedState<'_>,
+    content: String,
+) -> AppResult<serde_json::Value> {
+    use tauri::Manager;
+    let dir = state
+        .app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::internal(format!("定位应用数据目录失败: {e}")))?
+        .join("keys");
+    std::fs::create_dir_all(&dir)?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err(crate::error::AppError::param("私钥内容为空"));
+    }
+    let file = dir.join(format!("{}.pem", crate::ids::new_id()));
+    std::fs::write(&file, format!("{trimmed}\n"))?;
+    Ok(serde_json::json!({ "path": file.to_string_lossy() }))
+}
+
+/// 读取用户通过文件对话框选中的私钥内容（存入凭据库用）。
+/// 路径来自原生对话框的用户选择；上限 64KB——正常私钥远小于此，防误读大文件。
+#[tauri::command]
+pub async fn asset_read_key_file(path: String) -> AppResult<String> {
+    const MAX_LEN: u64 = 64 * 1024;
+    let meta = std::fs::metadata(&path)?;
+    if meta.len() > MAX_LEN {
+        return Err(crate::error::AppError::param("文件超过 64KB，不是私钥"));
+    }
+    Ok(std::fs::read_to_string(&path)?)
+}
+
 /// 保存凭据（供资产表单组合调用：先存凭据再绑 asset.cred_id）。
 #[tauri::command]
 pub async fn credential_save(
@@ -239,6 +276,10 @@ pub async fn credential_save(
     kind: String,
     secret: String,
 ) -> AppResult<serde_json::Value> {
+    // 全新安装（未初始化）也能直接存凭据：自动落 DPAPI 免密模式。
+    if !state.vault.status().await.initialized {
+        state.vault.init_dpapi().await?;
+    }
     let dek = state.vault.dek().await?;
     let (nonce, blob) = crate::vault::Vault::encrypt_credential(&dek, &secret).await?;
     let kek_hint = if state.vault.status().await.mode == "dpapi" {

@@ -128,17 +128,19 @@ function asset(
 
 export const assets: DemoAsset[] = [
   asset("a-local", null, "local", "本地终端", null, null, null, { authKind: "none" }),
-  asset("a-nat", "g-company", "ssh", "nat-01", "10.0.0.8", 22, "root"),
+  asset("a-nat", "g-company", "ssh", "nat-01", "10.0.0.8", 22, "root", { credId: "cred-nat" }),
   asset("a-win", "g-company", "winrm", "win-2019", "10.0.0.21", 5985, "Administrator", {
     authKind: "password",
   }),
-  asset("a-web01", "g-test", "ssh", "web-01", "127.0.0.1", 22, "deploy"),
+  asset("a-web01", "g-test", "ssh", "web-01", "127.0.0.1", 22, "deploy", { credId: "cred-web01" }),
   asset("a-docker", "g-test", "docker", "官网 docker", "127.0.0.1", 22, "deploy"),
-  asset("a-mysql", "g-test", "mysql", "db-prod", "127.0.0.1", 3306, "shop_app"),
+  asset("a-mysql", "g-test", "mysql", "db-prod", "127.0.0.1", 3306, "shop_app", {
+    credId: "cred-dbprod",
+  }),
   asset("a-redis", "g-test", "redis", "redis-cache", "127.0.0.1", 6379, null, {
     authKind: "none",
   }),
-  asset("a-build", "g-tools", "ssh", "build-01", "10.0.0.40", 22, "ci"),
+  asset("a-build", "g-tools", "ssh", "build-01", "10.0.0.40", 22, "ci", { credId: "cred-dbprod" }),
 ];
 
 /* ── 容器 / 镜像 ───────────────────────────────────────────────────────── */

@@ -306,6 +306,15 @@ pub struct CredentialInput {
     pub kek_hint: String,
 }
 
+/// 凭据引用关系：asset 表里绑定了该凭据的（未删除）资产。凭据页「被谁使用」的数据源。
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetRef {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
 impl super::Store {
     pub async fn credential_put(&self, input: CredentialInput) -> AppResult<String> {
         let id = match input.id {
@@ -366,6 +375,16 @@ impl super::Store {
             .execute(self.pool())
             .await?;
         Ok(())
+    }
+
+    /// 一条凭据被哪些在用资产引用（asset.cred_id 反查，软删除的不算）。
+    pub async fn credential_usage(&self, cred_id: &str) -> AppResult<Vec<AssetRef>> {
+        Ok(sqlx::query_as::<_, AssetRef>(
+            "SELECT id, name, kind FROM asset WHERE cred_id = ? AND deleted_at IS NULL ORDER BY sort, name",
+        )
+        .bind(cred_id)
+        .fetch_all(self.pool())
+        .await?)
     }
 }
 

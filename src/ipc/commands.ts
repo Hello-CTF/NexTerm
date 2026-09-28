@@ -148,6 +148,11 @@ export const assetApi = {
     call<Asset>("asset_create", { args }),
   update: (args: { id: string } & Record<string, unknown>) =>
     call<Asset>("asset_update", { args }),
+  /** 粘贴的私钥落成本地文件（应用数据目录 keys/），返回路径供绑定 keyPath。 */
+  saveKeyFile: (content: string) =>
+    call<{ path: string }>("asset_save_key_file", { content }),
+  /** 读取用户选中的私钥文件内容（存入凭据库用，上限 64KB）。 */
+  readKeyFile: (path: string) => call<string>("asset_read_key_file", { path }),
   delete: (id: string) => call<void>("asset_delete", { id }),
   search: (q: string) => call<Asset[]>("asset_search", { q }),
   groupList: () => call<AssetGroup[]>("group_list"),
@@ -478,6 +483,23 @@ export interface VaultStatus {
   autoLockMinutes: number;
 }
 
+/** 「被谁使用」：凭据页的核心信息（asset.cred_id 反查）。 */
+export interface CredentialUsedBy {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+/** 凭据页用的列表项：Meta + 引用关系（后端返回 DTO 而不是 Row）。 */
+export interface Credential {
+  id: string;
+  name: string;
+  kind: string;
+  createdAt: number;
+  updatedAt: number;
+  usedBy: CredentialUsedBy[];
+}
+
 export const vaultApi = {
   status: () => call<VaultStatus>("vault_status"),
   initMaster: (password: string) => call<void>("vault_init_master", { password }),
@@ -490,12 +512,12 @@ export const vaultApi = {
     call<{ id: string }>("vault_set_credential", {
       args: { id, name, kind, secret },
     }),
-  listCredentials: () =>
-    call<import("./types").CredentialMetaDto[]>("vault_list_credentials"),
+  listCredentials: () => call<Credential[]>("vault_list_credentials"),
   deleteCredential: (id: string) => call<void>("vault_delete_credential", { id }),
   revealCredential: (id: string) => call<string>("vault_reveal_credential", { id }),
-  credentialSave: (name: string, kind: string, secret: string) =>
-    call<{ id: string }>("credential_save", { name, kind, secret }),
+  /** 改名 / 改值（改值后端会重加密；name 与 secret 都是可选字段）。 */
+  updateCredential: (id: string, patch: { name?: string; secret?: string }) =>
+    call<void>("credential_update", { args: { id, ...patch } }),
 };
 
 // ───────── port forward ─────────

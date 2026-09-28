@@ -6,7 +6,7 @@
 // 这么分是因为实际用起来一定是"同时开几台机器，每台上各有一堆终端和文件"，
 // 扁平的一排标签很快就没法用了。
 import { create } from "zustand";
-import { dbApi, sessionApi, terminalApi, type SessionInfo } from "../ipc/commands";
+import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
 
 export type PaneKind =
   | "terminal"
@@ -15,6 +15,7 @@ export type PaneKind =
   | "forward"
   | "docker"
   | "db"
+  | "credentials"
   | "settings"
   | "audit";
 
@@ -105,7 +106,22 @@ export interface TextPromptState {
    * 用户真要写的东西却有十几行，猜不出来。
    */
   multiLine?: boolean;
+  /** 敏感输入（解锁凭据库）：单行打码，不进多行分支。 */
+  secret?: boolean;
   resolve: (v: string | null) => void;
+}
+
+/**
+ * 应用内确认 / 提示弹框的状态。替代原生 plugin-dialog / window.confirm：
+ * 系统弹框的样式与图标和整套暗色 UI 不搭，UI 要覆盖全面。
+ */
+export interface AppDialogState {
+  kind: "ask" | "confirm" | "message";
+  message: string;
+  title?: string;
+  /** info = 蓝色信息图标 / primary 按钮；warning = 琥珀警示图标 / 危险按钮。 */
+  level: "info" | "warning";
+  resolve: (v: boolean) => void;
 }
 
 /** 接管模式全局状态（§8.6）：顶部横幅与「立即夺回」按钮都读它。 */
@@ -141,6 +157,19 @@ interface UiState {
   textPrompt: TextPromptState | null;
   openTextPrompt: (s: TextPromptState) => void;
   closeTextPrompt: (v: string | null) => void;
+  /**
+   * 跨页预填的 AI 拦截规则草稿：AI 侧栏确认卡片点「加为拦截规则」时写入，
+   * 设置页的规则库卡片读到后展开草稿行并清空。null = 没有待处理的跳转。
+   */
+  aiRulePrefill: string | null;
+  setAiRulePrefill: (v: string | null) => void;
+  /**
+   * 应用内确认 / 提示弹框（替代原生 plugin-dialog / window.confirm——
+   * 系统弹框的样式与图标和整套暗色 UI 不搭）。
+   */
+  appDialog: AppDialogState | null;
+  openAppDialog: (d: AppDialogState) => void;
+  closeAppDialog: (v: boolean) => void;
 
   setLeftOpen: (v: boolean) => void;
   setLeftMode: (m: LeftMode) => void;
@@ -271,6 +300,15 @@ export const useUi = create<UiState>((set, get) => ({
     const cur = get().textPrompt;
     cur?.resolve(v);
     set({ textPrompt: null });
+  },
+  aiRulePrefill: null,
+  setAiRulePrefill: (v) => set({ aiRulePrefill: v }),
+  appDialog: null,
+  openAppDialog: (d) => set({ appDialog: d }),
+  closeAppDialog: (v) => {
+    const cur = get().appDialog;
+    cur?.resolve(v);
+    set({ appDialog: null });
   },
 
   setLeftOpen: (v) => set({ leftOpen: v }),
@@ -792,10 +830,50 @@ function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
   };
 }
 
+/**
+ * 打开「凭据」标签页（左栏底部入口调用）。
+ *
+ * 固定 id：已开着就激活它，不重复开。凭据是全局资源（不属于任何会话），
+ * 按 resolveWorkspaceId 的规则落在当前工作区，一个都没有就建「工具」。
+ */
+export function openCredentialsTab() {
+  useUi.getState().addTab({
+    id: "tab-credentials",
+    kind: "credentials",
+    title: "凭据",
+    closable: true,
+  });
+}
+
+/**
+ * 连接前确保凭据库可用：资产绑了凭据且库处于锁定态时，先弹一次解锁框，
+ * 而不是等连接失败再报错。取消解锁 = 取消连接。
+ */
+async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }): Promise<boolean> {
+  if (!asset.credId) return true;
+  try {
+    const st = await vaultApi.status();
+    if (!st.initialized || st.unlocked) return true;
+    const { promptText } = await import("../ui/dialogs");
+    const pwd = await promptText(
+      `连接「${asset.name}」需要使用凭据，请先输入保护密码：`,
+      "",
+      { secret: true },
+    );
+    if (pwd === null) return false;
+    await vaultApi.unlock(pwd);
+    return true;
+  } catch {
+    // 状态查询或解锁失败都不拦连接 —— 让后续连接流程给出具体报错
+    return true;
+  }
+}
+
 export async function connectAsset(asset: {
   id: string;
   name: string;
   kind: string;
+  credId?: string | null;
 }): Promise<void> {
   const { pushToast, setSessions, sessions, addTab, ensureWorkspace, setLeftMode, setLeftOpen } =
     useUi.getState();
@@ -803,6 +881,7 @@ export async function connectAsset(asset: {
   // 数据库资产：不开终端，直接开数据库工作台（复用一条 DB 连接）
   if (asset.kind === "mysql" || asset.kind === "redis") {
     try {
+      if (!(await ensureVaultReadyFor(asset))) return;
       const { connId } = await dbApi.connect(asset.id);
       const kind = asset.kind === "redis" ? "redis" : "mysql";
       const title = `${asset.name} · ${kind === "mysql" ? "SQL" : "Redis"}`;
@@ -822,6 +901,7 @@ export async function connectAsset(asset: {
   }
 
   try {
+    if (!(await ensureVaultReadyFor(asset))) return;
     const info =
       asset.kind === "local"
         ? await sessionApi.connectLocal()

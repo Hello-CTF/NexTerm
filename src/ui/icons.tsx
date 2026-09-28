@@ -201,6 +201,13 @@ export const IconMinus = (p: IconProps) => (
   </Svg>
 );
 
+/** 最大化 / 还原（窗口控制钮）。 */
+export const IconMaximize = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="5" y="5" width="14" height="14" rx="2" />
+  </Svg>
+);
+
 /* ── 分屏 ─────────────────────────────────────────────────────────────── */
 
 /** 上下分屏：外框 + 一条横向分隔线。 */

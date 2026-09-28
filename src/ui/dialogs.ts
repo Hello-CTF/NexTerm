@@ -1,29 +1,56 @@
-// 全局对话框：Tauri WebView 禁用 window.confirm/alert/prompt，
-// 统一走 tauri-plugin-dialog（ask/confirm/message）+ 注册制文本输入弹窗。
+// 全局对话框：UI 必须覆盖全面 —— ask / confirm / message 一律走应用内
+// 自绘弹框（DialogHost），原生 plugin-dialog / window.confirm 只作为
+// App 挂载前的兜底，正常路径下用户永远看到的是本应用样式的弹框。
 //
-// 演示模式（纯浏览器）下 plugin-dialog 不可用，这里退化成浏览器原生对话框，
-// 并把文件选择换成固定假路径，让上传/下载/录制这些流程也能走完。
-//
-// 注意：本模块不得反向 import store（避免循环依赖），文本弹窗用注册制回调。
+// 注意：本模块不得反向 import store（避免循环依赖），弹框实现走注册制回调
+// （App 挂载时 registerDialogHandlers），文本输入弹窗同理（registerPromptHandler）。
 import { ask as dAsk, confirm as dConfirm, message as dMessage } from "@tauri-apps/plugin-dialog";
 import { DEMO } from "../demo";
 
 type AskOptions = { title?: string; kind?: "info" | "warning" | "error" };
 
-export const ask: (message: string, options?: AskOptions) => Promise<boolean> = DEMO
+type AskFn = (message: string, options?: AskOptions) => Promise<boolean>;
+type ConfirmFn = (message: string) => Promise<boolean>;
+type MessageFn = (message: string) => Promise<void>;
+
+interface DialogHandlers {
+  ask: AskFn;
+  confirm: ConfirmFn;
+  message: MessageFn;
+}
+
+let handlers: DialogHandlers | null = null;
+
+/** App 挂载时注册应用内弹框实现（DialogHost）。 */
+export function registerDialogHandlers(h: DialogHandlers) {
+  handlers = h;
+}
+
+const nativeAsk: AskFn = DEMO
   ? async (message) => window.confirm(message)
   : dAsk;
-
-export const confirmDialog = DEMO
-  ? async (message: string) => window.confirm(message)
+const nativeConfirm: ConfirmFn = DEMO
+  ? async (message) => window.confirm(message)
   : dConfirm;
-
-export const messageBox = DEMO
-  ? async (message: string) => {
+const nativeMessage: MessageFn = DEMO
+  ? async (message) => {
       window.alert(message);
-      return undefined;
     }
-  : dMessage;
+  : async (message) => {
+      await dMessage(message);
+    };
+
+/** 确认框（取消 / 确定）。 */
+export const ask: AskFn = (message, options) =>
+  handlers ? handlers.ask(message, options) : nativeAsk(message, options);
+
+/** 确认框（同 ask，无选项参数的别名场景）。 */
+export const confirmDialog: ConfirmFn = (message) =>
+  handlers ? handlers.confirm(message) : nativeConfirm(message);
+
+/** 消息提示框（单按钮）。 */
+export const messageBox: MessageFn = (message) =>
+  handlers ? handlers.message(message) : nativeMessage(message);
 
 /** 选一个本地文件（上传用）。取消返回 null。 */
 export async function pickLocalFile(): Promise<string | null> {
@@ -32,6 +59,22 @@ export async function pickLocalFile(): Promise<string | null> {
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({ multiple: false });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** 选一个私钥文件（资产表单用）。取消返回 null。 */
+export async function pickKeyFile(): Promise<string | null> {
+  if (DEMO) {
+    return "C:\\Users\\you\\.ssh\\id_ed25519";
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    multiple: false,
+    filters: [
+      { name: "私钥文件", extensions: ["pem", "key", "ppk", "id_rsa", "id_ed25519", "openssh"] },
+      { name: "所有文件", extensions: ["*"] },
+    ],
+  });
   return typeof picked === "string" ? picked : null;
 }
 
@@ -47,6 +90,8 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
 export type PromptOptions = {
   /** 强制多行输入框。不传则由弹窗按内容自动判断。 */
   multiLine?: boolean;
+  /** 密码输入：单行 + 打码（解锁凭据库这类敏感输入用）。 */
+  secret?: boolean;
 };
 
 type PromptFn = (

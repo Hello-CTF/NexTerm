@@ -5,6 +5,7 @@
 //   · 标题栏（面包屑 + 全局动作）与标签栏拆成两行，各自只干一件事；
 //   · 状态栏用色更克制，并显式标出演示模式。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   useUi,
   useActiveWorkspace,
@@ -31,24 +32,31 @@ import { DockerPanel } from "../features/docker/DockerPanel";
 import { DbPanel } from "../features/db/DbPanel";
 import { AiSidebar } from "../features/ai/AiSidebar";
 import { SettingsView } from "../features/settings/SettingsView";
+import { CredentialsPanel } from "../features/credentials/CredentialsPanel";
 import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { PromptModal } from "../ui/PromptModal";
+import { DialogHost } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
-import { registerPromptHandler } from "../ui/dialogs";
+import { registerPromptHandler, registerDialogHandlers, promptText } from "../ui/dialogs";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import {
   IconActivity,
   IconBox,
   IconCheckCircle,
   IconChevronLeft,
   IconClose,
+  IconEdit,
+  IconMaximize,
+  IconMinus,
   IconCommand,
   IconDatabase,
   IconDrive,
   IconFolderOpen,
   IconHistory,
   IconInfo,
+  IconKey,
   IconLayers,
   IconLock,
   IconNetwork,
@@ -58,7 +66,6 @@ import {
   IconSettings,
   IconSparkles,
   IconTerminal,
-  IconUnlock,
   IconXCircle,
   Logo,
   assetIcon,
@@ -74,6 +81,7 @@ const TAB_ICON = {
   forward: IconNetwork,
   docker: IconBox,
   db: IconDatabase,
+  credentials: IconKey,
   settings: IconSettings,
   audit: IconHistory,
 } as const;
@@ -126,7 +134,6 @@ export default function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<string>("…");
-  const [vaultUnlocked, setVaultUnlocked] = useState(false);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   // 左栏文件树、AI 侧栏都跟着"当前工作区的机器"走，而不是"最后一个打开过标签的机器"
@@ -304,6 +311,42 @@ export default function App() {
     });
   }, []);
 
+  /* ── 全局确认 / 提示弹框（替代原生 plugin-dialog / window.confirm）──── */
+
+  useEffect(() => {
+    // ask 的 kind：warning / error 走警示图标 + 危险按钮；info 走信息图标；
+    // 不传 kind 的 ask 在本应用里几乎都是删除/断开类确认，按警示处理。
+    const level = (kind?: string): "info" | "warning" =>
+      kind === "info" ? "info" : "warning";
+    registerDialogHandlers({
+      ask: (message, options) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({
+            kind: "ask",
+            message,
+            title: options?.title,
+            level: level(options?.kind),
+            resolve,
+          });
+        }),
+      confirm: (message) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({
+            kind: "confirm",
+            message,
+            level: "warning",
+            resolve,
+          });
+        }),
+      message: (message) =>
+        new Promise<void>((resolve) => {
+          useUi
+            .getState()
+            .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+        }),
+    });
+  }, []);
+
   /* ── 启动：刷新会话与凭据库状态；演示模式下自动接一台机器 ──────────── */
 
   useEffect(() => {
@@ -311,7 +354,6 @@ export default function App() {
     void vaultApi
       .status()
       .then((v) => {
-        setVaultUnlocked(v.unlocked);
         setVaultStatus(
           !v.initialized ? "凭据库未初始化" : v.unlocked ? "凭据库已解锁" : "凭据库已锁定",
         );
@@ -459,10 +501,14 @@ export default function App() {
             一级标签：工作区。一个工作区 ≈ 一台连上的机器（或一个数据库连接），
             它自己的终端 / 编辑器都挂在下面（二级标签，在 main 里）。
             关闭工作区不会断开连接（断连是另一个明确动作），只回收里面的终端。
+
+            窗口无边框（decorations:false）：标签没占满的空白区是窗口拖拽区
+            （data-tauri-drag-region），最小化 / 最大化 / 关闭钉在条尾（sticky
+            right，标签多到滚动时也不被挤走）。浏览器演示模式下没有真窗口，隐藏。
           */}
-          <div className="nx-tabstrip is-top">
+          <div className="nx-tabstrip is-top" data-tauri-drag-region>
             {workspaces.length === 0 && (
-              <span className="px-1 text-xs text-neutral-500">
+              <span className="px-1 text-xs text-neutral-500" data-tauri-drag-region>
                 还没有工作区 —— 双击左侧资产连接一台机器
               </span>
             )}
@@ -518,23 +564,63 @@ export default function App() {
             >
               <IconPlus size={13} />
             </button>
+            {/* 标签条空白拖拽区：标签少时占满剩余宽度，标签多时收缩为 0 */}
+            <div className="nx-spacer min-w-0" data-tauri-drag-region />
+            {!DEMO && (
+              <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
+                <button
+                  className="nx-icon-btn"
+                  title="最小化"
+                  onClick={() => void getCurrentWindow().minimize()}
+                >
+                  <IconMinus size={13} />
+                </button>
+                <button
+                  className="nx-icon-btn"
+                  title="最大化 / 还原（双击空白处也可）"
+                  onClick={() => void getCurrentWindow().toggleMaximize()}
+                >
+                  <IconMaximize size={12} />
+                </button>
+                <button
+                  className="nx-icon-btn is-danger"
+                  title="关闭"
+                  onClick={() => void getCurrentWindow().close()}
+                >
+                  <IconClose size={14} />
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* 标题栏：面包屑 + 全局动作 */}
-          <header className="flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 pl-3.5">
-            <span className="text-[12.5px] font-semibold tracking-tight text-neutral-100">
+          {/* 标题栏：面包屑 + 全局动作。窗口无边框（decorations:false），
+              这一条就是拖拽区——data-tauri-drag-region 要落在实际接收
+              mousedown 的元素上，所以标题、面包屑、spacer 各自都带。 */}
+          <header
+            className="flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 pl-3.5"
+            data-tauri-drag-region
+          >
+            <span
+              className="text-[12.5px] font-semibold tracking-tight text-neutral-100"
+              data-tauri-drag-region
+            >
               NexTerm
             </span>
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500">
-              <span className="truncate">{crumb[0]}</span>
-              <span className="text-neutral-600">/</span>
-              <span className="truncate font-medium text-neutral-300">{crumb[1]}</span>
+            <span
+              className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
+              data-tauri-drag-region
+            >
+              <span className="truncate" data-tauri-drag-region>
+                {crumb[0]}
+              </span>
+              <span className="text-neutral-600" data-tauri-drag-region>
+                /
+              </span>
+              <span className="truncate font-medium text-neutral-300" data-tauri-drag-region>
+                {crumb[1]}
+              </span>
             </span>
-            <div className="nx-spacer" />
-            <span className={`nx-chip ${vaultUnlocked ? "nx-chip-accent" : ""}`} title={vaultStatus}>
-              {vaultUnlocked ? <IconUnlock size={11} /> : <IconLock size={11} />}
-              {vaultStatus}
-            </span>
+            <div className="nx-spacer" data-tauri-drag-region />
             <button
               className="nx-icon-btn"
               title="刷新会话列表与凭据库状态"
@@ -543,7 +629,6 @@ export default function App() {
                 void vaultApi
                   .status()
                   .then((v) => {
-                    setVaultUnlocked(v.unlocked);
                     setVaultStatus(
                       !v.initialized
                         ? "凭据库未初始化"
@@ -709,7 +794,7 @@ export default function App() {
       </div>
 
       {/* Toast */}
-      <div className="pointer-events-none fixed right-4 bottom-9 z-50 flex w-[380px] flex-col gap-2">
+      <div className="pointer-events-none fixed right-4 bottom-9 z-[95] flex w-[380px] flex-col gap-2">
         {toasts.map((t) => {
           const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
           const tone =
@@ -744,6 +829,7 @@ export default function App() {
         <CommandPalette onClose={() => setPaletteOpen(false)} onOpenFiles={openFiles} />
       )}
       <PromptModal />
+      <DialogHost />
     </div>
   );
 }
@@ -782,7 +868,39 @@ function PaneGroup({
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
   const closeTab = useUi((s) => s.closeTab);
+  const updateTab = useUi((s) => s.updateTab);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+
+  /** 重命名标签：空输入视为取消，不改成空标题。 */
+  const renameTab = async (id: string, title: string) => {
+    const next = await promptText("重命名标签：", title);
+    if (next === null || !next.trim()) return;
+    updateTab(id, { title: next.trim() });
+  };
+
+  /** 标签右键菜单。重命名只给终端标签（文件标签的标题是文件名，改了会对不上）。 */
+  const tabMenu = (e: React.MouseEvent, t: (typeof pane.tabs)[number]) => {
+    e.preventDefault();
+    const items: MenuItem[] = [];
+    if (t.kind === "terminal") {
+      items.push({
+        kind: "item",
+        label: "重命名",
+        icon: <IconEdit size={12} />,
+        onSelect: () => void renameTab(t.id, t.title),
+      });
+    }
+    items.push({
+      kind: "item",
+      label: "关闭标签",
+      icon: <IconClose size={12} />,
+      danger: true,
+      disabled: !t.closable,
+      onSelect: () => void closeTab(t.id),
+    });
+    setMenu({ x: e.clientX, y: e.clientY, title: t.title, items });
+  };
 
   return (
     <div
@@ -808,6 +926,7 @@ function PaneGroup({
               key={t.id}
               className={`nx-tab ${isActive ? "is-active" : ""}`}
               onClick={() => setActiveTab(t.id)}
+              onContextMenu={(e) => tabMenu(e, t)}
               title={t.title}
             >
               <Icon size={13} />
@@ -864,6 +983,9 @@ function PaneGroup({
           ))
         )}
       </div>
+
+      {/* 标签右键菜单（重命名 / 关闭） */}
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
@@ -999,6 +1121,8 @@ function PaneForTab({
       return <SettingsView />;
     case "audit":
       return <AuditView />;
+    case "credentials":
+      return <CredentialsPanel />;
     default:
       return <EmptyState />;
   }

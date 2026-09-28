@@ -4,18 +4,27 @@
 // 版本落后的实现 —— 现在统一内联复用 `ModelManager`，这里不再碰 aiApi 的
 // getProvider / setProvider / presets（连通性测试除外，见下方说明）。
 import { useEffect, useState } from "react";
-import { aiApi, vaultApi } from "../../ipc/commands";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  aiApi,
+  vaultApi,
+  type AiPermissionConfig,
+  type VaultStatus,
+} from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
+import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
 import {
   IconCheckCircle,
+  IconClose,
   IconInfo,
   IconLock,
+  IconPlus,
   IconRefresh,
   IconSettings,
+  IconShield,
   IconSparkles,
-  IconUnlock,
   IconXCircle,
   IconZap,
 } from "../../ui/icons";
@@ -35,18 +44,88 @@ export function SettingsView() {
     fatal?: string;
   } | null>(null);
 
-  // 凭据库
-  const [vault, setVault] = useState<{
-    initialized: boolean;
-    mode: string;
-    unlocked: boolean;
-  } | null>(null);
-  const [masterPwd, setMasterPwd] = useState("");
-  const [unlockPwd, setUnlockPwd] = useState("");
+  // 凭据保护（重做后：设置页只留一个开关；解锁 / 立即锁定挪到「凭据」页）
+  const [vault, setVault] = useState<VaultStatus | null>(null);
+  const [protPwd, setProtPwd] = useState("");
+  const [pendingEnable, setPendingEnable] = useState(false);
+
+  // 开关一变，凭据页 / 状态栏的 vault-status 缓存都要跟着失效
+  const qc = useQueryClient();
+  const refreshVault = () => {
+    void qc.invalidateQueries({ queryKey: ["vault-status"] });
+    return vaultApi
+      .status()
+      .then(setVault)
+      .catch(() => undefined);
+  };
+  useEffect(() => {
+    void vaultApi
+      .status()
+      .then(setVault)
+      .catch(() => undefined);
+  }, []);
+
+  // ── AI 拦截规则（从 AI 侧栏的权限浮层挪进来的规则库）──────────────────
+  const [aiPerm, setAiPerm] = useState<AiPermissionConfig | null>(null);
+  const [ruleDraft, setRuleDraft] = useState("");
+  const [ruleDraftOpen, setRuleDraftOpen] = useState(false);
+  /** AI 侧栏确认卡片「加为拦截规则」跳过来时带的预填命令。 */
+  const rulePrefill = useUi((s) => s.aiRulePrefill);
 
   useEffect(() => {
-    void vaultApi.status().then(setVault).catch(() => undefined);
+    void aiApi
+      .getPermission()
+      .then(setAiPerm)
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (rulePrefill === null) return;
+    setRuleDraft(rulePrefill);
+    setRuleDraftOpen(true);
+    useUi.getState().setAiRulePrefill(null);
+  }, [rulePrefill]);
+
+  /**
+   * 保存规则：先取最新配置再改 —— 权限档位可能同时在 AI 侧栏被切，
+   * 拿着手里的旧对象整包 setPermission 会把档位也覆盖回去。
+   */
+  const saveRules = async (rules: string[]) => {
+    try {
+      const latest = await aiApi.getPermission();
+      const next = { ...latest, dangerRules: rules };
+      setAiPerm(next);
+      await aiApi.setPermission(next);
+    } catch (e) {
+      pushToast("error", `保存拦截规则失败：${String((e as Error).message ?? e)}`);
+      void aiApi
+        .getPermission()
+        .then(setAiPerm)
+        .catch(() => undefined);
+    }
+  };
+
+  /** 提交新增规则（Enter 或失焦）：空值和重复都不落库，草稿行一律收起。 */
+  const addRule = () => {
+    const r = ruleDraft.trim();
+    setRuleDraft("");
+    setRuleDraftOpen(false);
+    if (!r || !aiPerm) return;
+    if (aiPerm.dangerRules.some((x) => x.toLowerCase() === r.toLowerCase())) return;
+    void saveRules([...aiPerm.dangerRules, r]);
+  };
+
+  /** 改一条已有规则：返回是否真的落了库（空值 / 重复当"没改"处理）。 */
+  const editRule = (orig: string, next: string): boolean => {
+    if (!aiPerm) return false;
+    const r = next.trim();
+    if (!r || r === orig) return false;
+    if (aiPerm.dangerRules.some((x) => x !== orig && x.toLowerCase() === r.toLowerCase())) {
+      return false;
+    }
+    void saveRules(aiPerm.dangerRules.map((x) => (x === orig ? r : x)));
+    return true;
+  };
 
   /**
    * 两步连通性测试。
@@ -147,105 +226,191 @@ export function SettingsView() {
           </div>
         </section>
 
-        {/* 凭据库 */}
+        {/* AI 拦截规则：侧栏权限浮层只留一行入口，规则库整套在这里 */}
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconShield size={15} className="text-neutral-400" />
+            <span className="nx-card-title">AI 拦截规则</span>
+            {aiPerm && (
+              <span className={`nx-badge ${aiPerm.dangerRules.length ? "nx-badge-amber" : ""}`}>
+                {aiPerm.dangerRules.length} 条
+              </span>
+            )}
+          </div>
+          <p className="nx-hint mb-3.5">
+            命中即拦截，静默模式同样生效；子串匹配，忽略大小写。
+          </p>
+
+          <div className="mb-1.5 flex flex-col gap-1">
+            {(aiPerm?.dangerRules ?? []).map((r) => (
+              <div key={r} className="flex items-center gap-1">
+                <input
+                  className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
+                  defaultValue={r}
+                  title={r}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      // Enter 只负责"提交"，真正保存交给 onBlur —— 两处都写会存两遍
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  onBlur={(e) => {
+                    // 空值 / 重复都不会落库，输入框还原成库里的那条，
+                    // 否则界面显示的和真实生效的规则对不上
+                    if (!editRule(r, e.currentTarget.value)) e.currentTarget.value = r;
+                  }}
+                />
+                <button
+                  className="nx-icon-btn nx-icon-btn-sm"
+                  title="删除这条规则"
+                  onClick={() =>
+                    void saveRules((aiPerm?.dangerRules ?? []).filter((x) => x !== r))
+                  }
+                >
+                  <IconClose size={11} />
+                </button>
+              </div>
+            ))}
+            {ruleDraftOpen && (
+              <input
+                autoFocus
+                className="nx-input nx-input-sm w-full font-mono"
+                placeholder="例如 kubectl delete"
+                value={ruleDraft}
+                onChange={(e) => setRuleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addRule();
+                  }
+                  if (e.key === "Escape") {
+                    setRuleDraft("");
+                    setRuleDraftOpen(false);
+                  }
+                }}
+                onBlur={addRule}
+              />
+            )}
+            {aiPerm && aiPerm.dangerRules.length === 0 && !ruleDraftOpen && (
+              <div className="nx-hint text-[11px]">还没有拦截规则</div>
+            )}
+          </div>
+          <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setRuleDraftOpen(true)}>
+            <IconPlus size={11} />
+            添加一条规则
+          </button>
+
+          <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
+            规则命中 → 先确认；不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
+          </p>
+        </section>
+
+        {/* 凭据保护：文案只写"会发生什么"，不出现算法与密钥层级 */}
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconLock size={15} className="text-neutral-400" />
-            <span className="nx-card-title">凭据库</span>
-            <span
-              className={`nx-badge ${
-                vault?.unlocked ? "nx-badge-green" : vault?.initialized ? "nx-badge-amber" : ""
-              }`}
-            >
-              {vault ? (vault.initialized ? (vault.unlocked ? "已解锁" : "已锁定") : "未初始化") : "读取中…"}
-            </span>
+            <span className="nx-card-title">凭据保护</span>
+            {vault &&
+              (vault.mode === "master" ? (
+                <span className="nx-badge nx-badge-green">已开启</span>
+              ) : (
+                <span className="nx-badge">未开启</span>
+              ))}
           </div>
-          <p className="nx-hint mb-3.5">
-            主密码 → Argon2id 派生 KEK → 包裹 DEK；凭据用 XChaCha20-Poly1305 加密。
-            也可以走 Windows DPAPI 免主密码模式。
-          </p>
 
-          {!vault?.initialized && (
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] text-neutral-200">用密码保护凭据</div>
+              <p className="nx-hint mt-0.5">
+                {vault?.mode === "master"
+                  ? "开启：每次启动需输入密码后方可使用凭据。"
+                  : "关闭：无需密码，启动后凭据直接可用。"}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={vault?.mode === "master"}
+              onChange={() => {
+                if (vault?.mode === "master") {
+                  // 关闭不是无感的：要明确知道"从此不需要密码"
+                  void ask("关闭密码保护？\n关闭后凭据无需密码即可使用。").then((ok) => {
+                    if (!ok) return;
+                    void vaultApi
+                      .initDpapi()
+                      .then(() => {
+                        pushToast("success", "已关闭密码保护");
+                        return refreshVault();
+                      })
+                      .catch((e) => pushToast("error", String(e)));
+                  });
+                } else {
+                  setProtPwd("");
+                  setPendingEnable(true);
+                }
+              }}
+            />
+          </div>
+
+          {pendingEnable && vault?.mode !== "master" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <input
                 type="password"
                 className="nx-input max-w-[240px]"
-                placeholder="设置主密码（≥8 位）"
-                value={masterPwd}
-                onChange={(e) => setMasterPwd(e.target.value)}
+                placeholder="设置保护密码（至少 8 位）"
+                value={protPwd}
+                autoComplete="off"
+                onChange={(e) => setProtPwd(e.target.value)}
               />
               <button
                 className="nx-btn nx-btn-primary"
-                disabled={masterPwd.length < 8}
+                disabled={protPwd.length < 8}
                 onClick={() =>
                   void vaultApi
-                    .initMaster(masterPwd)
+                    .initMaster(protPwd)
                     .then(() => {
-                      pushToast("success", "凭据库已初始化（主密码模式）");
-                      return vaultApi.status().then(setVault);
+                      setPendingEnable(false);
+                      pushToast("success", "已开启密码保护 · 下次启动生效");
+                      return refreshVault();
                     })
                     .catch((e) => pushToast("error", String(e)))
                 }
               >
-                初始化（主密码）
+                启用保护
               </button>
-              <button
-                className="nx-btn nx-btn-outline"
-                onClick={() =>
-                  void vaultApi
-                    .initDpapi()
-                    .then(() => {
-                      pushToast("success", "凭据库已初始化（DPAPI 模式）");
-                      return vaultApi.status().then(setVault);
-                    })
-                    .catch((e) => pushToast("error", String(e)))
-                }
-              >
-                初始化（Windows DPAPI，无主密码）
+              <button className="nx-btn nx-btn-ghost" onClick={() => setPendingEnable(false)}>
+                取消
               </button>
             </div>
           )}
 
-          {vault?.initialized && !vault.unlocked && vault.mode === "master" && (
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="password"
-                className="nx-input max-w-[240px]"
-                placeholder="主密码"
-                value={unlockPwd}
-                onChange={(e) => setUnlockPwd(e.target.value)}
-              />
+          {vault?.mode === "master" && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="nx-hint">锁定与解锁在「凭据」页</span>
               <button
-                className="nx-btn nx-btn-primary"
+                className="nx-btn nx-btn-outline nx-btn-sm"
                 onClick={() =>
-                  void vaultApi
-                    .unlock(unlockPwd)
-                    .then(() => {
-                      pushToast("success", "已解锁");
-                      return vaultApi.status().then(setVault);
-                    })
-                    .catch((e) => pushToast("error", String(e)))
+                  void (async () => {
+                    const old = await promptText("输入当前保护密码：", "", { secret: true });
+                    if (old === null) return;
+                    const next = await promptText("输入新密码（至少 8 位）：", "", { secret: true });
+                    if (next === null || next.length < 8) {
+                      if (next !== null) pushToast("error", "新密码至少 8 位");
+                      return;
+                    }
+                    try {
+                      await vaultApi.changePassword(old, next);
+                      pushToast("success", "密码已修改 · 凭据不受影响");
+                    } catch (e) {
+                      pushToast("error", String(e));
+                    }
+                  })()
                 }
               >
-                <IconUnlock size={13} />
-                解锁
+                修改密码
               </button>
             </div>
-          )}
-
-          {vault?.unlocked && (
-            <button
-              className="nx-btn nx-btn-outline nx-btn-sm"
-              onClick={() =>
-                void vaultApi
-                  .lock()
-                  .then(() => vaultApi.status().then(setVault))
-                  .catch((e) => pushToast("error", String(e)))
-              }
-            >
-              <IconLock size={13} />
-              立即锁定
-            </button>
           )}
         </section>
 

@@ -69,24 +69,16 @@ interface RefChip {
   detail: string;
 }
 
-/** 空态时给的几个"问一句就能看出能力"的例子。 */
-const EXAMPLES = [
-  "api-server 好像挂了，帮我排查",
-  "这台机器内存够不够？",
-  "nginx 配置有没有问题",
-  "重启 mysql-prod",
-];
-
 /**
  * 三档权限的展示文案。
  *
- * 说明文字刻意写成"会发生什么"而不是"叫什么" —— 用户选档位时要判断的是
+ * 说明文字写"会发生什么"而不是"叫什么" —— 用户选档位时要判断的是
  * 「AI 接下来会不会突然动我的机器」，不是记住三个名词。
  */
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "只看不动，不会改你的机器" },
-  { value: "read_write", label: "读写", hint: "要动手之前先问你" },
-  { value: "silent", label: "完全静默", hint: "只有危险操作才问你" },
+  { value: "read_only", label: "只读", hint: "仅执行只读命令" },
+  { value: "read_write", label: "读写", hint: "写操作需确认" },
+  { value: "silent", label: "完全静默", hint: "仅拦截规则命中时确认" },
 ];
 
 const MODE_LABEL: Record<AiPermissionMode, string> = {
@@ -124,13 +116,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
    */
   const planPendingRef = useRef(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
-  /** 权限档位 + 自定义危险规则（以内核为准，挂载时拉一次）。 */
+  /** 权限档位（+ 规则数量展示）。规则库本身在设置页，这里只留入口。 */
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permOpen, setPermOpen] = useState(false);
-  /** 新增危险规则的输入草稿。 */
-  const [ruleDraft, setRuleDraft] = useState("");
-  /** 草稿行是否展开（点「添加一条规则」或从确认卡片跳进来时为真）。 */
-  const [ruleDraftOpen, setRuleDraftOpen] = useState(false);
   /** 待发送的图片（data URI）。 */
   const [images, setImages] = useState<string[]>([]);
   /** @ 引用 chip。 */
@@ -154,6 +142,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       .catch(() => undefined);
   }, []);
 
+  // 规则库挪去设置页之后，档位和规则可能在那里被改 ——
+  // 浮层每次打开都拉最新，别拿旧数据覆盖（切档位是整包保存）。
+  useEffect(() => {
+    if (permOpen) {
+      void aiApi
+        .getPermission()
+        .then(setPerm)
+        .catch(() => undefined);
+    }
+  }, [permOpen]);
+
   /** 改权限：先落 UI 再写库（开关的手感不能等一次 IPC 往返），写失败再回滚提示。 */
   const savePerm = async (next: AiPermissionConfig) => {
     const prev = perm;
@@ -166,35 +165,12 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  /** 提交新增规则（草稿行按 Enter 或失焦）。 */
-  const addDangerRule = () => {
-    const r = ruleDraft.trim();
-    // 不论成功与否都收起这行 —— 空规则没意义、重复规则也不起作用，
-    // 一直杵在那里只会让用户以为自己填错了。
-    setRuleDraft("");
-    setRuleDraftOpen(false);
-    if (!r || !perm) return;
-    if (perm.dangerRules.some((x) => x.toLowerCase() === r.toLowerCase())) return;
-    void savePerm({ ...perm, dangerRules: [...perm.dangerRules, r] });
-  };
-
-  /**
-   * 改一条已有规则，返回是否真的落了库。
-   *
-   * 只在内容**真的变了**时才写：失焦只代表"离开了输入框"，不代表用户改了东西，
-   * 每次都写会平白发一次 IPC，还会顺手做一次没有必要的乐观更新。
-   * 空值（清空 = 想删，但删有专门的删除按钮）和重复规则都当"没改"处理。
-   */
-  const editDangerRule = (orig: string, next: string): boolean => {
-    if (!perm) return false;
-    const r = next.trim();
-    if (!r || r === orig) return false;
-    if (perm.dangerRules.some((x) => x !== orig && x.toLowerCase() === r.toLowerCase())) return false;
-    void savePerm({
-      ...perm,
-      dangerRules: perm.dangerRules.map((x) => (x === orig ? r : x)),
-    });
-    return true;
+  /** 切档位：先取最新配置再改 mode —— dangerRules 归设置页管，不能拿旧列表整包覆盖。 */
+  const switchMode = (mode: AiPermissionConfig["mode"]) => {
+    void aiApi
+      .getPermission()
+      .then((latest) => savePerm({ ...latest, mode }))
+      .catch(() => savePerm({ ...(perm as AiPermissionConfig), mode }));
   };
 
   /**
@@ -723,7 +699,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 className={`nx-menu-item w-full ${
                   perm.mode === m.value ? "bg-blue-500/15" : ""
                 }`}
-                onClick={() => void savePerm({ ...perm, mode: m.value })}
+                onClick={() => switchMode(m.value)}
               >
                 <span className="nx-menu-label">
                   {perm.mode === m.value ? "● " : "○ "}
@@ -740,11 +716,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
           <button
             className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
-            title={
-              planMode
-                ? "计划模式已开：AI 只做只读调研，把方案交给你之后再动手"
-                : "计划模式：先让 AI 出方案，你批准了再执行"
-            }
+            title={planMode ? "方案阶段只读调研，批准后才执行" : "先出方案，批准后执行"}
             onClick={() => setPlanMode((v) => !v)}
           >
             <span className={`shrink-0 ${planMode ? "text-blue-300" : "text-neutral-500"}`}>
@@ -757,87 +729,35 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="nx-menu-hint">{planMode ? "已开启" : "关"}</span>
           </button>
           <div className="mb-2 px-2.5 text-[10.5px] leading-relaxed text-neutral-500">
-            {planMode
-              ? "先出方案，你批准了再动手 —— 期间只读调研，不碰你的机器"
-              : "AI 直接干活"}
+            {planMode ? "先出方案，批准后执行；期间只读" : "直接执行"}
           </div>
 
-          {/* 自定义危险规则 */}
-          <div className="mb-1 text-[11px] text-neutral-300">
-            自定义危险操作
-            <span className="ml-1 text-neutral-500">（遇到就问你，静默档也会问）</span>
+          {/* 拦截规则：规则库整套在设置页，这里只留状态 + 显式跳转按钮 ——
+              侧栏是干活时顺手看档位的地方，不是管理规则的地方。 */}
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="shrink-0 text-neutral-500">
+              <IconShield size={12} />
+            </span>
+            <span className="text-[11.5px] text-neutral-300">拦截规则</span>
+            <span className="nx-count">
+              {perm.dangerRules.length > 0 ? `${perm.dangerRules.length} 条` : "未设置"}
+            </span>
+            <span className="nx-spacer" />
+            <button
+              className="nx-btn nx-btn-outline nx-btn-xs"
+              title="在设置中管理拦截规则"
+              onClick={() =>
+                useUi
+                  .getState()
+                  .addTab({ id: "settings", kind: "settings", title: "设置", closable: true })
+              }
+            >
+              去设置
+            </button>
           </div>
-          <div className="mb-1.5 flex flex-col gap-1">
-            {perm.dangerRules.map((r) => (
-              <div key={r} className="flex items-center gap-1">
-                <input
-                  className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-                  defaultValue={r}
-                  title={r}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      // Enter 只负责"提交"，真正保存交给 onBlur ——
-                      // 两处都写会对同一次编辑保存两遍。
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  onBlur={(e) => {
-                    // 空值 / 重复都不会落库，输入框得还原成库里的那条，
-                    // 否则界面显示的和真实生效的规则会对不上。
-                    if (!editDangerRule(r, e.currentTarget.value)) e.currentTarget.value = r;
-                  }}
-                />
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm"
-                  title="删除这条规则"
-                  onClick={() =>
-                    void savePerm({
-                      ...perm,
-                      dangerRules: perm.dangerRules.filter((x) => x !== r),
-                    })
-                  }
-                >
-                  <IconClose size={11} />
-                </button>
-              </div>
-            ))}
-            {/* 草稿行：只有这一行是受控的，落库后转成上面那种普通行。 */}
-            {ruleDraftOpen && (
-              <input
-                autoFocus
-                className="nx-input nx-input-sm w-full font-mono"
-                placeholder="例如 kubectl delete"
-                value={ruleDraft}
-                onChange={(e) => setRuleDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addDangerRule();
-                  }
-                  if (e.key === "Escape") {
-                    setRuleDraft("");
-                    setRuleDraftOpen(false);
-                  }
-                }}
-                onBlur={addDangerRule}
-              />
-            )}
-            {perm.dangerRules.length === 0 && !ruleDraftOpen && (
-              <div className="nx-hint text-[10.5px]">还没有自定义规则</div>
-            )}
-          </div>
-          <button
-            className="nx-btn nx-btn-outline nx-btn-xs mb-1.5"
-            onClick={() => setRuleDraftOpen(true)}
-          >
-            <IconPlus size={10} />
-            添加一条规则
-          </button>
 
           <div className="mt-2 border-t border-neutral-800/60 pt-1.5 text-[10px] leading-relaxed text-neutral-500">
-            另外有几条铁律：格式化磁盘、清空系统目录、删库这类毁掉就回不来的操作，
-            任何档位都不会执行，也不会弹确认框 —— 这种「确定」按钮本来就不该存在。
+            格式化磁盘、清空系统目录、删库等不可逆操作一律直接拒绝，不弹确认。
           </div>
         </div>
       )}
@@ -849,21 +769,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="nx-empty-icon">
               <IconBot size={19} />
             </span>
-            <div className="text-xs text-neutral-400">
-              开始新对话 —— AI 跑过的每条命令和完整输出都记在右边的卡片里，点开就能看，不是黑盒。
-            </div>
-            <div className="flex w-full flex-col gap-1.5">
-              {EXAMPLES.map((ex) => (
-                <button
-                  key={ex}
-                  className="nx-chip w-full justify-start text-left hover:border-neutral-600 hover:text-neutral-200"
-                  onClick={() => setInput(ex)}
-                >
-                  <IconChevronRight size={11} className="shrink-0" />
-                  <span className="truncate">{ex}</span>
-                </button>
-              ))}
-            </div>
+            <div className="text-xs text-neutral-400">新建会话 · 命令与输出全程留痕</div>
           </div>
         )}
         {items.map((item, i) => (
@@ -899,19 +805,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void confirm("deny")}>
                 拒绝
               </button>
-              {/* 权限浮层在消息流上方、这张卡片在底部，两者不会互相遮挡，可以同时开着。 */}
+              {/* 跳去设置页的规则库，并把这条命令预填成新规则的草稿 ——
+                  预填走全局 store：设置页可能还没挂载，等它读到再展开草稿行。 */}
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
-                title="打开权限设置，并把这条命令预填成一条新规则"
+                title="打开设置的拦截规则，并把这条命令预填成一条新规则"
                 onClick={() => {
-                  setPermOpen(true);
-                  // 先填草稿再展开：预填的这条就是要让用户直接改的对象，
-                  // 所以一进来草稿行必须是打开、并且已经聚焦的状态。
-                  setRuleDraft(ruleFromRendered(confirmCard.rendered));
-                  setRuleDraftOpen(true);
+                  const ui = useUi.getState();
+                  ui.setAiRulePrefill(ruleFromRendered(confirmCard.rendered));
+                  ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
                 }}
               >
-                在权限设置里管理
+                加为拦截规则
               </button>
             </div>
           </div>

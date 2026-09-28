@@ -78,6 +78,39 @@ function newTabId(prefix = "t"): string {
 /** 演示模式下没有任何真实凭据，任何 secret 一律回显成掩码。 */
 const MASK = "••••••••••••";
 
+/* ── 凭据库（内存版，与真机 vault 命令一一对应）────────────────────────── */
+
+interface DemoCredential {
+  id: string;
+  name: string;
+  kind: string;
+  secret: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * 演示凭据：secret 是假数据，可以随便显示/复制。
+ * cred-dbprod 被两个资产共用（db-prod / build-01），用来演示引用关系与改值联动。
+ */
+const demoCredentials: DemoCredential[] = [
+  { id: "cred-web01", name: "web-01", kind: "password", secret: "Xk9#web01$pw", createdAt: Date.now() - 20 * 86_400_000, updatedAt: Date.now() - 86_400_000 },
+  { id: "cred-dbprod", name: "db-prod", kind: "password", secret: "Prod#db2026!", createdAt: Date.now() - 25 * 86_400_000, updatedAt: Date.now() - 3 * 86_400_000 },
+  { id: "cred-nat", name: "nat-01", kind: "password", secret: "Nat0ld!2023", createdAt: Date.now() - 60 * 86_400_000, updatedAt: Date.now() - 30 * 86_400_000 },
+  { id: "cred-old", name: "旧机房-口令", kind: "passphrase", secret: "old-machine-room", createdAt: Date.now() - 200 * 86_400_000, updatedAt: Date.now() - 90 * 86_400_000 },
+];
+
+/**
+ * 凭据库状态：默认「未启用密码保护」（dpapi、解锁）——对应重做后开关的默认关闭。
+ * 在设置页打开保护 → 变 master；凭据页「立即锁定」/解锁会翻转 unlocked。
+ */
+const vaultState = {
+  initialized: true,
+  mode: "dpapi" as "dpapi" | "master",
+  unlocked: true,
+  autoLockMinutes: 30,
+};
+
 /* ── 参数归一 ─────────────────────────────────────────────────────────── */
 
 /**
@@ -608,6 +641,12 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       assets.push(created);
       return { ...created };
     }
+
+    case "asset_save_key_file":
+      return { path: `C:\\Users\\you\\.ssh\\nexterm-${uid("key")}.pem` };
+
+    case "asset_read_key_file":
+      return "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAAG1lcnRpbi1uYW0AAAAA\n-----END OPENSSH PRIVATE KEY-----\n";
 
     case "asset_update": {
       const target = assets.find((x) => x.id === str(a.id));
@@ -1212,28 +1251,84 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     /* ─────────────── vault ─────────────── */
     case "vault_status":
-      return { initialized: true, mode: "master", unlocked: true, autoLockMinutes: 30 };
+      return { ...vaultState };
 
     case "vault_init_master":
-    case "vault_init_dpapi":
-    case "vault_unlock":
-    case "vault_lock":
-    case "vault_change_password":
-    case "vault_delete_credential":
+      Object.assign(vaultState, { initialized: true, mode: "master", unlocked: true });
       return null;
 
-    case "vault_set_credential":
-    case "credential_save":
-      return { id: uid("cred") };
+    case "vault_init_dpapi":
+      Object.assign(vaultState, { initialized: true, mode: "dpapi", unlocked: true });
+      return null;
+
+    case "vault_unlock":
+      vaultState.unlocked = true;
+      return null;
+
+    case "vault_lock":
+      vaultState.unlocked = false;
+      return null;
+
+    case "vault_change_password":
+      return null;
+
+    case "vault_set_credential": {
+      // 带 id = 改值/改名（对齐 credential_update），不带 = 新建
+      const existing = a.id ? demoCredentials.find((c) => c.id === str(a.id)) : undefined;
+      if (existing) {
+        if (typeof a.name === "string") existing.name = a.name;
+        if (typeof a.kind === "string") existing.kind = a.kind;
+        if (typeof a.secret === "string") existing.secret = a.secret;
+        existing.updatedAt = Date.now();
+        return { id: existing.id };
+      }
+      const c = {
+        id: uid("cred"),
+        name: str(a.name, "新凭据"),
+        kind: str(a.kind, "password"),
+        secret: str(a.secret),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      demoCredentials.push(c);
+      return { id: c.id };
+    }
+
+    case "credential_update": {
+      const c = demoCredentials.find((x) => x.id === str(a.id));
+      if (c) {
+        if (typeof a.name === "string" && a.name.trim()) c.name = a.name.trim();
+        if (typeof a.secret === "string" && a.secret) c.secret = a.secret;
+        c.updatedAt = Date.now();
+      }
+      return null;
+    }
 
     case "vault_list_credentials":
-      return [
-        { id: "cred1", name: "web-01-password", kind: "password", cipher: "xchacha20poly1305", kekHint: "master", createdAt: Date.now() - 20 * 86_400_000, updatedAt: Date.now() - 86_400_000 },
-        { id: "cred2", name: "nat-01-password", kind: "password", cipher: "xchacha20poly1305", kekHint: "master", createdAt: Date.now() - 25 * 86_400_000, updatedAt: Date.now() - 3 * 86_400_000 },
-      ];
+      return demoCredentials.map((c) => ({
+        id: c.id,
+        name: c.name,
+        kind: c.kind,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        usedBy: assets
+          .filter((x) => x.credId === c.id && x.deletedAt === null)
+          .map((x) => ({ id: x.id, name: x.name, kind: x.kind })),
+      }));
 
-    case "vault_reveal_credential":
-      return MASK;
+    case "vault_delete_credential": {
+      const i = demoCredentials.findIndex((c) => c.id === str(a.id));
+      if (i >= 0) demoCredentials.splice(i, 1);
+      // 对齐真机 FK 的 ON DELETE SET NULL：删凭据后资产的引用清空、资产保留
+      for (const x of assets) if (x.credId === str(a.id)) x.credId = null;
+      return null;
+    }
+
+    case "vault_reveal_credential": {
+      if (!vaultState.unlocked) throw new Error("凭据库已锁定，请先解锁");
+      const c = demoCredentials.find((x) => x.id === str(a.id));
+      return c ? c.secret : MASK;
+    }
 
     /* ─────────────── port forward ─────────────── */
     case "forward_list":

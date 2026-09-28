@@ -24,10 +24,11 @@ export function PromptModal() {
 
   // 显式指定优先：像「AI 接管任务描述」这种提示语很短、初始值为空、
   // 但用户要写十几行的场景，靠内容长度是猜不出来的。
-  const multiLine = prompt.multiLine ?? (prompt.message.includes("\n") || prompt.value.length > 60);
+  // secret（密码输入）永远是单行，哪怕提示语里带了换行。
+  const multiLine = !prompt.secret && (prompt.multiLine ?? (prompt.message.includes("\n") || prompt.value.length > 60));
 
   return (
-    <div className="nx-overlay z-[60]" onClick={() => closeTextPrompt(null)}>
+    <div className="nx-overlay z-[90]" onClick={() => closeTextPrompt(null)}>
       <div
         className={`nx-modal ${multiLine ? "max-w-[620px]" : "max-w-[440px]"}`}
         onClick={(e) => e.stopPropagation()}
@@ -53,8 +54,10 @@ export function PromptModal() {
           ) : (
             <input
               ref={inputRef}
+              type={prompt.secret ? "password" : "text"}
               className="nx-input"
               value={value}
+              autoComplete="off"
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit();
