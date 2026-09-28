@@ -8,6 +8,7 @@
 
 本地优先、AI 原生的桌面终端工作台。凭据加密存储，AI 全程在权限护栏内执行。
 
+[![Website](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-online-516cd6)](https://probiusofficial.github.io/NexTerm/)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Rust](https://img.shields.io/badge/Rust-stable-orange)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8)
@@ -79,7 +80,8 @@ pnpm tauri build    # NSIS 安装器
 
 ### 浏览器演示
 
-免编译 Rust 预览全部界面。前后端仅 `src/ipc/commands.ts` 的 `call()` 一个接口，纯浏览器运行或 URL 带 `?demo=1` 时自动切换内存 mock：
+免编译 Rust 预览全部界面，在线演示直接访问 [probiusofficial.github.io/NexTerm/demo](https://probiusofficial.github.io/NexTerm/demo/)。
+前后端仅 `src/ipc/commands.ts` 的 `call()` 一个接口，纯浏览器运行或 URL 带 `?demo=1` 时自动切换内存 mock：
 
 ```bash
 pnpm dev            # http://localhost:1420/

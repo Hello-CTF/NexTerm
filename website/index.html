@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NexTerm — 一体化开发运维终端</title>
+  <meta name="description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。本地优先的桌面终端工作台，凭据加密存储，AI 全程在权限护栏内执行。" />
+  <link rel="icon" type="image/png" href="brand/nexterm-mark-128.png" />
+  <meta property="og:title" content="NexTerm — 一体化开发运维终端" />
+  <meta property="og:description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。" />
+  <meta property="og:type" content="website" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="#">
+      <img src="brand/nexterm-mark-128.png" alt="NexTerm" />
+      NexTerm
+    </a>
+    <div class="nav-links">
+      <a href="#features">功能总览</a>
+      <a href="#highlights">特性</a>
+      <a href="#demo">在线体验</a>
+      <a href="#get">获取应用</a>
+      <a href="#faq">常见问题</a>
+    </div>
+    <div class="nav-actions">
+      <a class="nav-github" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-primary btn-sm" href="demo/">在线体验</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <span class="hero-kicker"><span class="dot"></span>开源 · 本地优先 · MIT 协议</span>
+    <h1>一体化<span class="grad">开发运维</span>终端</h1>
+    <p class="hero-sub">本地优先的桌面终端工作台。凭据加密存储，会话稳定复用，AI 全程在权限护栏内执行。</p>
+    <p class="hero-formula"><b>SSH</b> · <b>WinRM</b> · 文件 · Docker · 数据库 · <b>AI</b>，装进同一个窗口</p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="demo/">在线体验</a>
+      <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">在 GitHub 查看</a>
+    </div>
+    <p class="hero-platform">当前支持 <span class="os">Windows</span>，macOS 与 Linux 构建在路线图中</p>
+
+    <div class="hero-shot">
+      <div class="term">
+        <div class="term-bar">
+          <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
+          <span class="term-title">NexTerm — 生产环境 / web-01</span>
+        </div>
+        <div class="term-body">
+          <img src="images/hero-ai-terminal.png" alt="NexTerm 主界面：终端、AI 侧栏与文件树" loading="eager" />
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="marquee-wrap" aria-hidden="true">
+  <div class="marquee">
+    <ul>
+      <li>SSH</li><li>SFTP</li><li>WinRM</li><li>ConPTY</li><li>真 PTY</li><li>Docker</li><li>MySQL</li><li>Redis</li><li>SOCKS5</li><li>端口转发</li><li>Argon2id</li><li>XChaCha20-Poly1305</li><li>DPAPI</li><li>xterm.js</li><li>Tauri</li><li>Rust</li><li>React</li>
+    </ul>
+    <ul>
+      <li>SSH</li><li>SFTP</li><li>WinRM</li><li>ConPTY</li><li>真 PTY</li><li>Docker</li><li>MySQL</li><li>Redis</li><li>SOCKS5</li><li>端口转发</li><li>Argon2id</li><li>XChaCha20-Poly1305</li><li>DPAPI</li><li>xterm.js</li><li>Tauri</li><li>Rust</li><li>React</li>
+    </ul>
+  </div>
+</div>
+
+<section class="section" id="features">
+  <div class="container">
+    <div class="section-head">
+      <span class="kicker">FEATURES</span>
+      <h2>功能总览</h2>
+      <p>九大模块共用一套三层工作区，标签始终挂载，切换不重连、不丢状态。</p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/></svg></div>
+        <h3>终端</h3>
+        <p>SSH 真 PTY、本地 ConPTY、WinRM；多标签与分屏、搜索、会话录制，支持 UTF-8 / GBK / GB18030 / Big5 编码切换。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.5 6H15a3 3 0 0 1 3 3v6.5M15.5 18H9a3 3 0 0 1-3-3V8.5"/></svg></div>
+        <h3>会话</h3>
+        <p>一台资产一条连接复用，关标签不断连；断线按指数退避自动重连。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 13h8"/></svg></div>
+        <h3>文件</h3>
+        <p>SFTP 浏览与虚拟滚动，传输带进度与断点续传；内置编辑器支持查找替换、LF/CRLF 与编码切换。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></svg></div>
+        <h3>挂载</h3>
+        <p>Windows net use 映射盘与 Linux sshfs，远程目录接入本地文件系统。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="3" y="10" width="7" height="7" rx="1"/><rect x="14" y="10" width="7" height="7" rx="1"/><rect x="8.5" y="4" width="7" height="6" rx="1"/></svg></div>
+        <h3>Docker</h3>
+        <p>容器列表、日志 follow、容器终端、启停删、镜像管理与容器文件浏览。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6"/><path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3"/></svg></div>
+        <h3>数据库</h3>
+        <p>MySQL 库表浏览与 SQL 工作台；Redis SCAN 分页、类型感知查看与命令台。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.3 11l9.4-4M7.3 13l9.4 4"/></svg></div>
+        <h3>端口转发</h3>
+        <p>SSH 本地转发与 SOCKS5 动态转发，复用已有会话打通内网数据库。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></div>
+        <h3>AI 助手</h3>
+        <p>OpenAI 兼容多模型、工具调用、权限护栏、终端接管、计划模式与用量统计。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v3"/></svg></div>
+        <h3>凭据库</h3>
+        <p>两级密钥信封加密、集中管理面板、引用关系与删除保护、日志自动脱敏。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="highlights">
+  <div class="container">
+    <div class="section-head">
+      <span class="kicker">HIGHLIGHTS</span>
+      <h2>为真实运维场景设计</h2>
+      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流。</p>
+    </div>
+
+    <div class="feature-row">
+      <div class="feature-text">
+        <span class="kicker">AI GUARDRAIL</span>
+        <h3>AI 看得见，也管得住</h3>
+        <p>AI 接在内核上，不是贴在旁边的聊天框。每一条执行都呈现在你面前，危险操作先经确认。</p>
+        <ul class="feature-list">
+          <li><b>工具调用透明</b> —— 命令以卡片进入对话流，展开可见完整输出与退出码</li>
+          <li><b>权限护栏</b> —— 安全操作直接执行，敏感操作弹确认，危险命令一律拒绝</li>
+          <li><b>只读、读写、静默</b> 三档模式随时切换</li>
+          <li><b>终端接管</b> —— AI 读屏、判定空闲、发送按键，按任意键立即夺回</li>
+        </ul>
+      </div>
+      <div class="feature-media">
+        <div class="term">
+          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">AI 权限面板</span></div>
+          <div class="term-body"><img src="images/ai-permission.png" alt="AI 权限确认卡片" loading="lazy" /></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-row flip">
+      <div class="feature-text">
+        <span class="kicker">REVIEWABLE CHANGES</span>
+        <h3>每次变更都可审阅</h3>
+        <p>AI 的每次写文件生成修改前后 diff，改动一目了然；接入任意 OpenAI 兼容端点，成本常驻可见。</p>
+        <ul class="feature-list">
+          <li><b>文件变更 diff</b> —— 修改前后对照，拒绝可疑改动</li>
+          <li><b>计划模式</b> —— AI 先给方案，确认后执行</li>
+          <li><b>多模型接入</b> —— 两步连接测试，端点密钥仅存本机</li>
+          <li><b>用量统计</b> —— 上下文用量环与缓存命中率常驻侧栏</li>
+        </ul>
+      </div>
+      <div class="feature-media">
+        <div class="term">
+          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">文件变更 diff</span></div>
+          <div class="term-body"><img src="images/ai-file-changes.png" alt="AI 文件变更 diff 视图" loading="lazy" /></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-row">
+      <div class="feature-text">
+        <span class="kicker">TERMINAL &amp; FILES</span>
+        <h3>终端与文件，无缝配合</h3>
+        <p>三层结构：工作区对应一台机器或一个连接，其下分屏，屏内开标签。所有标签保持挂载，切换不重连。</p>
+        <ul class="feature-list">
+          <li><b>会话复用</b> —— 关标签不断连，断线指数退避自动重连</li>
+          <li><b>分屏工作台</b> —— 比例持久化，一边敲命令、一边看日志</li>
+          <li><b>SFTP 虚拟滚动</b> —— 大目录流畅浏览，传输断点续传</li>
+          <li><b>内置编辑器</b> —— 查找替换、LF/CRLF、编码切换、校验和</li>
+        </ul>
+      </div>
+      <div class="feature-media">
+        <div class="term">
+          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">分屏与编辑器</span></div>
+          <div class="term-body"><img src="images/split-pane-editor.png" alt="分屏终端与内置编辑器" loading="lazy" /></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-row flip">
+      <div class="feature-text">
+        <span class="kicker">DATA &amp; CONTAINERS</span>
+        <h3>数据与容器，触手可及</h3>
+        <p>数据库、容器与网络隧道都在同一个工作区里，通过已有 SSH 会话直达内网资源。</p>
+        <ul class="feature-list">
+          <li><b>MySQL 工作台</b> —— 库表浏览、SQL 执行与结果导出</li>
+          <li><b>Redis 控制台</b> —— SCAN 分页、类型感知查看、命令台</li>
+          <li><b>Docker 管理</b> —— 容器终端、日志 follow、镜像与文件浏览</li>
+          <li><b>端口转发</b> —— 本地转发与 SOCKS5 动态转发复用会话</li>
+        </ul>
+      </div>
+      <div class="feature-media">
+        <div class="term">
+          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">端口转发</span></div>
+          <div class="term-body"><img src="images/port-forward.png" alt="端口转发管理界面" loading="lazy" /></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-row">
+      <div class="feature-text">
+        <span class="kicker">SECURITY</span>
+        <h3>凭据在本机，加密存放</h3>
+        <p>不依赖云同步，密钥与凭据只存在本机，从派生到落盘全程加密。</p>
+        <ul class="feature-list">
+          <li><b>两级密钥</b> —— Argon2id 派生 KEK，信封加密 DEK</li>
+          <li><b>算法落位</b> —— 凭据以 XChaCha20-Poly1305 加密存储</li>
+          <li><b>免主密码模式</b> —— Windows DPAPI 绑定当前用户</li>
+          <li><b>管理面板</b> —— 引用关系、删除保护、日志自动脱敏</li>
+        </ul>
+      </div>
+      <div class="feature-media">
+        <div class="code-block">
+          <pre><span class="c"># 凭据落盘路径</span>
+<span class="p">主密码</span> ─ Argon2id ─▶ <span class="p">KEK</span>
+<span class="p">KEK</span> ─ 信封加密 ─▶ <span class="p">DEK</span>
+<span class="p">DEK</span> + <span class="p">XChaCha20-Poly1305</span>
+      └─▶ <span class="g">credentials.db</span>
+
+<span class="c"># 日志输出自动脱敏</span>
+connect host=<span class="g">10.0.0.8</span> auth=<span class="g">cred:***</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="demo">
+  <div class="container">
+    <div class="demo-panel">
+      <span class="kicker">LIVE DEMO</span>
+      <h2>打开浏览器，立即体验</h2>
+      <p>在线演示运行完整界面：虚拟 shell、资产树、文件管理、数据库面板与 AI 对话全部可操作，无需安装任何软件。</p>
+      <a class="btn btn-primary" href="demo/">立即体验</a>
+      <div class="demo-note"><span class="dot"></span>演示数据存于内存，不连接任何真实服务器</div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="get">
+  <div class="container">
+    <div class="get-wrap">
+      <div class="get-steps">
+        <span class="kicker">GET STARTED</span>
+        <h3>从源码构建</h3>
+        <p>当前目标平台为 Windows，构建依赖 Rust stable MSVC、Node 22+ 与 pnpm 9+。</p>
+        <ul class="feature-list">
+          <li>克隆仓库并安装前端依赖</li>
+          <li>执行打包，产出 NSIS 安装器</li>
+          <li>本地开发、测试与质量门命令见仓库 README</li>
+        </ul>
+      </div>
+      <div class="code-block">
+        <pre><span class="c"># 依赖 Rust stable MSVC · Node 22+ · pnpm 9+</span>
+<span class="p">$</span> git clone https://github.com/ProbiusOfficial/NexTerm.git
+<span class="p">$</span> cd NexTerm
+<span class="p">$</span> pnpm install
+<span class="p">$</span> pnpm tauri build    <span class="c"># 产出 NSIS 安装器</span>
+
+<span class="c"># 本地开发窗口</span>
+<span class="p">$</span> pnpm tauri dev</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="faq">
+  <div class="container">
+    <div class="section-head">
+      <span class="kicker">FAQ</span>
+      <h2>常见问题</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>在线体验连接的是真实服务器吗？</summary>
+        <div class="faq-body">演示环境全部数据存于内存，不连接任何真实服务器。虚拟 shell 为内置回显实现，支持常用命令、Tab 补全与历史记录。</div>
+      </details>
+      <details>
+        <summary>支持哪些操作系统？</summary>
+        <div class="faq-body">当前目标平台为 Windows；macOS 与 Linux 构建已列入路线图。</div>
+      </details>
+      <details>
+        <summary>凭据如何保护？</summary>
+        <div class="faq-body">主密码经 Argon2id 派生密钥，凭据以 XChaCha20-Poly1305 信封加密存储；可选 Windows DPAPI 免主密码模式；日志输出统一脱敏。</div>
+      </details>
+      <details>
+        <summary>AI 助手接入什么模型？</summary>
+        <div class="faq-body">任意 OpenAI 兼容端点均可接入，API 密钥仅保存在本机，不经过任何第三方服务。</div>
+      </details>
+      <details>
+        <summary>采用什么开源协议？</summary>
+        <div class="faq-body">项目遵循 MIT 协议，可自由使用、修改与二次开发。</div>
+      </details>
+      <details>
+        <summary>如何参与贡献？</summary>
+        <div class="faq-body">前往 GitHub 仓库提交 Issue 与 Pull Request，构建与测试步骤见仓库 README。</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <img src="brand/nexterm-mark-128.png" alt="NexTerm" />
+      NexTerm
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub</a>
+      <a href="demo/">在线体验</a>
+      <a href="#features">功能</a>
+      <a href="#faq">常见问题</a>
+    </div>
+    <div class="footer-meta">基于 xterm.js、russh 与 Tauri 构建 · MIT 协议 · © 2026 ProbiusOfficial</div>
+  </div>
+</footer>
+
+</body>
+</html>

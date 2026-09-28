@@ -13,5 +13,8 @@ src-tauri/gen/schemas
 # 构建校验输出目录
 .buildcheck
 
+# 本地站点预览目录
+.sitetest
+
 # 本地设计稿，不入库
 docs/PLAN-*
