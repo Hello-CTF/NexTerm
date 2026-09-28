@@ -52,7 +52,7 @@ function Svg({ size = 16, children, ...rest }: IconProps & { children: ReactNode
 export function Logo({ size = 26 }: { size?: number }) {
   return (
     <img
-      src="/brand/nexterm-mark-128.png"
+      src={`${import.meta.env.BASE_URL}brand/nexterm-mark-128.png`}
       width={size}
       height={size}
       alt="NexTerm"
