@@ -123,7 +123,7 @@ pnpm typecheck && pnpm lint
 
 ## Roadmap
 
-会话同步、PostgreSQL、MongoDB、RDP、VNC、命令广播、跳板机、macOS 与 Linux 构建已在计划中；v1 不做以上之外的功能扩张。
+其他系统正在构建中。
 
 ## 致谢
 
