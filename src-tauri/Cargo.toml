@@ -3,8 +3,17 @@ name = "nexterm"
 version = "0.1.0"
 description = "NexTerm — 一体化开发运维终端"
 authors = ["NexTerm"]
+license = "MIT"
 edition = "2021"
 rust-version = "1.85"
+
+[[bin]]
+name = "nexterm"
+path = "src/main.rs"
+# main.rs 仅调用 run()，无单测；集成测试只依赖 nexterm_lib。
+# 关闭后 cargo test 与 clippy --all-targets 不再重复链接空的测试壳。
+test = false
+bench = false
 
 [lib]
 name = "nexterm_lib"
@@ -49,13 +58,14 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 redis = { version = "0.27", features = ["tokio-comp"] }
 
 # 加密
-argon2 = "0.5"
+# argon2 / windows / reqwest 版本与 russh、pageant、winrm-rs 的依赖树对齐，避免同一大件编译两份。
+argon2 = "0.6"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 
 [target."cfg(windows)".dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security_Cryptography",
 ] }
@@ -68,15 +78,16 @@ vt100 = "0.16"
 winrm-rs = "1.2"
 
 # AI / HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "socks"] }
+# 0.13 起 feature 名为 rustls，TLS 实现与 winrm-rs 一致，依赖树不再并存两套。
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "socks"] }
 
-# TS 类型生成（§6.1）：所有跨 IPC 类型只定义一份
+# TS 类型生成：所有跨 IPC 类型只定义一份
 ts-rs = { version = "10", features = ["serde-compat", "serde-json-impl", "no-serde-warnings"] }
 
-# SSH 代理（§5.2：socks5 / http connect）
+# SSH 代理：SOCKS5 与 HTTP CONNECT
 tokio-socks = "0.5"
 
-# 校验和（fs_checksum：MD5/SHA256，§5.4 文件能力）
+# 校验和：MD5 与 SHA256
 md-5 = "0.10"
 sha2 = "0.10"
 

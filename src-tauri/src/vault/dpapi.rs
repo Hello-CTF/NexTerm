@@ -44,7 +44,7 @@ pub fn unprotect(data: &[u8]) -> AppResult<Vec<u8>> {
 unsafe fn local_free_blob(ptr: *mut u8) {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     if !ptr.is_null() {
-        let _ = LocalFree(HLOCAL(ptr as *mut _));
+        let _ = LocalFree(Some(HLOCAL(ptr as *mut _)));
     }
 }
 
