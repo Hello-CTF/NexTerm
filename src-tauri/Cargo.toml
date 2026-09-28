@@ -1,6 +1,6 @@
 [package]
 name = "nexterm"
-version = "0.1.0"
+version = "0.1.1"
 description = "NexTerm — 一体化开发运维终端"
 authors = ["NexTerm"]
 license = "MIT"
