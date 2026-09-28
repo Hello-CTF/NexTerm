@@ -6,7 +6,7 @@
 
 **一体化开发运维终端 —— SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口**
 
-一个轻量的、AI 原生的桌面终端工作台。本地优先，凭据加密存储，AI 全程在护栏内干活。
+本地优先、AI 原生的桌面终端工作台。凭据加密存储，AI 全程在权限护栏内执行。
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Rust](https://img.shields.io/badge/Rust-stable-orange)
@@ -20,10 +20,7 @@
 
 ![NexTerm 主界面](docs/images/hero-ai-terminal.png)
 
-做运维的时候，窗口永远不够用：SSH 客户端一个、SFTP 工具一个、Docker 一个、数据库客户端一个，
-AI 助手还得再切出去复制粘贴报错。NexTerm 把这些放进同一个三层结构的工作区
-——工作区 → 分屏面板 → 标签，并给 AI 一条**看得见、管得住**的执行通道：
-它的每一条命令、每一次文件修改都实时呈现在你面前，危险操作先问你。
+运维工具链历来分散：SSH 客户端、SFTP 工具、Docker 面板、数据库客户端各占一个窗口，AI 助手还要切出去粘贴报错。NexTerm 将它们收进同一个三层工作区——工作区、分屏面板、标签，并为 AI 提供一条**看得见、管得住**的执行通道：每条命令、每次文件修改实时可见，危险操作先经确认。
 
 ## 功能总览
 
@@ -31,71 +28,64 @@ AI 助手还得再切出去复制粘贴报错。NexTerm 把这些放进同一个
 |---|---|
 | 终端 | SSH 真 PTY、本地 ConPTY、WinRM；多标签与分屏、搜索、会话录制，支持 UTF-8 / GBK / GB18030 / Big5 编码切换 |
 | 会话 | 一台资产一条连接复用，关标签不断连；指数退避自动重连 |
-| 文件 | SFTP 浏览与虚拟滚动、带进度与断点续传的上传下载；内置编辑器支持查找替换、LF/CRLF 与编码切换；MD5 / SHA256 校验 |
+| 文件 | SFTP 浏览与虚拟滚动、带进度与断点续传的传输；内置编辑器支持查找替换、LF/CRLF 转换与编码切换；MD5 / SHA256 校验 |
 | 挂载 | Windows `net use` 映射盘、Linux sshfs |
 | Docker | 容器列表、日志 follow、容器终端、启停删、镜像管理、容器文件浏览 |
 | 数据库 | MySQL 库表浏览与 SQL 工作台；Redis SCAN 分页、类型感知查看与命令台 |
 | 端口转发 | SSH 本地转发，复用已有会话打通内网数据库 |
 | AI 助手 | OpenAI 兼容多模型、工具调用、权限护栏、终端接管、文件变更 diff、计划模式、上下文用量与缓存命中统计 |
-| 凭据库 | 两级密钥信封加密，日志自动脱敏 |
+| 凭据库 | 两级密钥信封加密、集中管理面板、引用关系与删除保护、日志自动脱敏 |
 
 ## AI 助手
 
-AI 不是聊天框贴在旁边，而是接进了内核：
+AI 不是贴在旁边的聊天框，而是接进了内核。
 
-- **工具调用透明化** —— AI 执行的每条命令以卡片形式出现在对话流里，可展开看完整输出与退出码；
-  命令真实地跑在独立执行通道，不假装"打字进终端"。
-- **权限护栏** —— 操作按风险分级：安全操作直接执行，敏感操作弹确认卡片，可对本会话放行同类操作；
-  格式化、批量删除等危险命令一律拒绝。只读、读写、静默三档权限模式由你切换。
+- **工具调用透明** —— AI 执行的每条命令以卡片进入对话流，展开可见完整输出与退出码；命令运行在独立执行通道，不伪装成向终端打字。
+- **权限护栏** —— 操作按风险分级：安全操作直接执行；敏感操作弹确认卡片，可对本会话放行同类；格式化、批量删除等危险命令一律拒绝。只读、读写、静默三档模式随时切换。
 
 ![AI 权限面板](docs/images/ai-permission.png)
 
-- **文件变更可审** —— AI 的每次写文件都生成修改前后 diff，改动一目了然。
+- **文件变更可审** —— 每次写文件生成修改前后 diff，改动一目了然。
 
 ![文件变更 diff](docs/images/ai-file-changes.png)
 
-- **终端接管 · 实验性** —— AI 借助内核侧的终端状态机读屏、判定空闲、发送按键；
-  你按任意键立即夺回终端，全程有醒目接管横幅。
-- **多模型与成本可见** —— 任意 OpenAI 兼容端点，连接性两步测试；上下文用量环与缓存命中率常驻侧栏底部。
+- **终端接管 · 实验性** —— 基于内核侧终端状态机读屏、判定空闲、发送按键；按任意键立即夺回，全程显示接管横幅。
+- **多模型与成本可见** —— 任意 OpenAI 兼容端点，两步连接测试；上下文用量环与缓存命中率常驻侧栏底部。
 
 ![模型配置](docs/images/model-config.png)
 
-## 界面
+## 工作区
 
-三层结构：工作区对应一台机器或一个连接，其下分屏面板，面板内开标签。
-所有标签保持挂载，切换不重连、不丢终端状态；分屏比例记住，专为"一边敲命令、一边看日志"设计。
+三层结构：工作区对应一台机器或一个连接，其下分屏，屏内开标签。标签始终挂载，切换不重连、不丢终端状态；分屏比例持久化，为一边敲命令、一边看日志的场景而设计。
 
 ![分屏与编辑器](docs/images/split-pane-editor.png)
 
-连接资产后左栏自动切换到文件树，双击直接进内置编辑器；命令面板提供宽幅文件浏览器。
+连接资产后左栏切换为文件树，双击进入内置编辑器；命令面板提供宽幅文件浏览器。
 
 ![端口转发](docs/images/port-forward.png)
 
 ## 快速开始
 
-当前目标平台为 Windows。从源码构建：
+当前目标平台为 Windows，从源码构建：
 
 ```bash
 # 依赖：Rust stable MSVC、Node 22+、pnpm 9+
 git clone https://github.com/ProbiusOfficial/NexTerm.git
 cd NexTerm
 pnpm install
-pnpm tauri dev      # 启动开发窗口
-pnpm tauri build    # 打包 NSIS 安装器
+pnpm tauri dev      # 开发窗口
+pnpm tauri build    # NSIS 安装器
 ```
 
-### 浏览器演示模式
+### 浏览器演示
 
-不想编译 Rust 也能看全部界面。前后端接口只有一处，即 `src/ipc/commands.ts` 的 `call()`；
-纯浏览器运行或 URL 带 `?demo=1` 时自动切换到内存 mock 实现：
+免编译 Rust 预览全部界面。前后端仅 `src/ipc/commands.ts` 的 `call()` 一个接口，纯浏览器运行或 URL 带 `?demo=1` 时自动切换内存 mock：
 
 ```bash
-pnpm dev            # 打开 http://localhost:1420/
+pnpm dev            # http://localhost:1420/
 ```
 
-演示模式包含一台会回显的虚拟 shell，支持 `ls`、`cat`、`systemctl`、`docker ps` 等命令与
-Tab 补全、历史记录；另有 8 台资产、MySQL / Redis 面板、文件树与编辑器、AI 流式对话与确认卡片，
-命令块、搜索、录制全部可用。mock 数据是独立 chunk，生产包不会加载。URL 加 `?demo=0` 回到真实后端。
+演示包含一台回显虚拟 shell，支持 `ls`、`cat`、`systemctl`、`docker ps` 与 Tab 补全、历史记录；另有 8 台资产、MySQL / Redis 面板、文件树与编辑器、AI 流式对话与确认卡片，命令块、搜索、录制全部可用。mock 为独立 chunk，生产包不加载；URL 加 `?demo=0` 回到真实后端。
 
 ## 架构
 
@@ -112,16 +102,13 @@ Tab 补全、历史记录；另有 8 台资产、MySQL / Redis 面板、文件�
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-几条关键设计：
+关键设计：
 
 - **终端字节流不走 JSON** —— PTY 输出经 `Channel<Vec<u8>>` 直送 xterm.js，输入走 invoke。
-- **内核侧终端状态机** —— 每条 PTY 字节流同时喂给内核 `vt100::Parser`，这是 AI 读屏、
-  空闲判定与终端接管的唯一数据源。
-- **异步运行时不阻塞** —— 本地 PTY 读取以阻塞线程加有界通道桥接，端到端背压：
-  4MB 暂停、节流事件、隐藏标签批量刷新。
-- **凭据两级密钥** —— 主密码经 Argon2id 派生 KEK，信封加密 DEK；凭据用 XChaCha20-Poly1305 加密；
-  支持 Windows DPAPI 免主密码模式；日志统一脱敏。
-- **AI 护栏独立成层** —— 风险分级与放行决策分离，唯一入口，不散落在调用点。
+- **内核侧终端状态机** —— PTY 字节流同步喂给内核 `vt100::Parser`，是 AI 读屏、空闲判定与终端接管的唯一数据源。
+- **端到端背压** —— 本地 PTY 以阻塞线程加有界通道桥接；4MB 暂停、节流事件、隐藏标签批量刷新。
+- **凭据两级密钥** —— 主密码经 Argon2id 派生 KEK，信封加密 DEK；凭据以 XChaCha20-Poly1305 加密；支持 Windows DPAPI 免主密码模式；日志统一脱敏。
+- **AI 护栏独立成层** —— 风险分级与放行决策单一入口，不散落在调用点。
 
 ## 质量门
 
@@ -134,13 +121,11 @@ pnpm typecheck && pnpm lint
 
 ## Roadmap
 
-已在计划中：会话同步、PostgreSQL、MongoDB、RDP、VNC、命令广播、跳板机、macOS 与 Linux 构建。
-v1 不做以上之外的功能扩张。
+会话同步、PostgreSQL、MongoDB、RDP、VNC、命令广播、跳板机、macOS 与 Linux 构建已在计划中；v1 不做以上之外的功能扩张。
 
 ## 致谢
 
-终端模拟基于 [xterm.js](https://github.com/xtermjs/xterm.js)，
-SSH 基于 [russh](https://github.com/Eugeny/russh)，桌面框架为 [Tauri](https://tauri.app)。
+终端模拟基于 [xterm.js](https://github.com/xtermjs/xterm.js)，SSH 基于 [russh](https://github.com/Eugeny/russh)，桌面框架为 [Tauri](https://tauri.app)。
 
 ## License
 
