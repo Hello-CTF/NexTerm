@@ -136,13 +136,10 @@ pub fn run() {
                         return Err(e.to_string().into());
                     }
                 };
-                let vault = match vault::Vault::load(Arc::clone(&store)).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::error!(target: "boot", error = %e, "凭据库加载失败");
-                        return Err(e.to_string().into());
-                    }
-                };
+                // 凭据库是可选组件：加载**不会失败**，坏状态只在内存里降级为「未初始化」。
+                // 以前这里是个 `match ... Err => return Err(...)`，而 setup 返回 Err 会让
+                // tauri 直接 panic —— 一个可选组件能把整个应用变成"双击一闪就没"。
+                let vault = vault::Vault::load(Arc::clone(&store)).await;
                 let sessions = Arc::new(session::SessionManager::new());
                 // AI 提供方配置：从「多模型档案」里取当前激活的那一份。
                 // 首次启动顺带做一次旧 `ai.provider` → `ai.models` 的迁移（会落库）。

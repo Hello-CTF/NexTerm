@@ -54,28 +54,57 @@ pub struct Vault {
     auto_lock_ms: AtomicU64,
 }
 
+/// 读一个 setting：**读失败只记 WARN 并当作「没有这个键」**。
+///
+/// 启动路径上不能因为"某个可选配置读不出来"就把整个应用判死 —— 详见 `Vault::load`。
+async fn read_setting(store: &Store, key: &str, what: &str) -> Option<String> {
+    match store.setting_get(key).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(target: "vault", setting = key, error = %e, "读取{what}失败，按缺省处理");
+            None
+        }
+    }
+}
+
 impl Vault {
-    /// 启动时加载（不自动解锁 DPAPI 之外的形态）。
-    pub async fn load(store: Arc<Store>) -> AppResult<Arc<Self>> {
-        let mode = match store.setting_get(SETTING_MODE).await?.as_deref() {
+    /// 启动时加载。
+    ///
+    /// **刻意不返回 `Result`** —— 它曾经返回，于是"凭据库处于坏状态"会一路冒到 tauri 的
+    /// setup 钩子，被当成致命错误直接 panic：现象是**双击程序一闪就没了**，用户连界面都进不去，
+    /// 更不可能进设置页去修它。凭据库是**可选组件**（不初始化时其余功能完全可用），
+    /// 它坏掉不该拦着应用启动 —— 这和本文件对 model_profile / ai.permission 的兜底是同一个原则。
+    ///
+    /// 坏状态只在**内存里**降级为「未初始化」，**不回写数据库**：db 里的脏值是可查的证据，
+    /// 写回等于把用户的原始状态悄悄抹掉。降级会打 WARN，排查时一眼能看到。
+    pub async fn load(store: Arc<Store>) -> Arc<Self> {
+        let mode = match read_setting(&store, SETTING_MODE, "凭据库模式")
+            .await
+            .as_deref()
+        {
             None | Some("") => VaultMode::NotInit,
             Some("dpapi") => VaultMode::Dpapi,
             Some("master") => VaultMode::Master,
-            Some(other) => return Err(AppError::Crypto(format!("未知凭据库模式 {other}"))),
+            Some(other) => {
+                // 未知模式同样降级：宁可让用户重新初始化，也不能让应用起不来。
+                tracing::warn!(
+                    target: "vault",
+                    value = other,
+                    "凭据库模式无法识别，本次按「未初始化」处理"
+                );
+                VaultMode::NotInit
+            }
         };
-        let auto_lock_ms = store
-            .setting_get(SETTING_AUTOLOCK)
-            .await?
+        let auto_lock_ms = read_setting(&store, SETTING_AUTOLOCK, "自动锁时长")
+            .await
             .and_then(|v| v.parse().ok())
             .unwrap_or(30 * 60 * 1000u64);
-        let salt = match store.setting_get(SETTING_SALT).await? {
-            Some(s) => Some(
-                base64::engine::general_purpose::STANDARD
-                    .decode(s)
-                    .map_err(|e| AppError::Crypto(format!("salt 解码失败: {e}")))?,
-            ),
-            None => None,
-        };
+        let salt = read_setting(&store, SETTING_SALT, "主密码盐").await.and_then(|s| {
+            base64::engine::general_purpose::STANDARD
+                .decode(s)
+                .map_err(|e| tracing::warn!(target: "vault", error = %e, "salt 解码失败，按无盐处理"))
+                .ok()
+        });
         let vault = Arc::new(Self {
             store,
             mode: RwLock::new(mode),
@@ -85,11 +114,19 @@ impl Vault {
             last_used_at: AtomicU64::new(now_ms()),
             auto_lock_ms: AtomicU64::new(auto_lock_ms),
         });
-        // DPAPI 模式可以无感解锁
+        // DPAPI 模式可以无感解锁；解不开（信封丢失 / 换机器 / 换用户）只是"这个功能不可用"，
+        // 不是"应用不能启动"。
         if mode == VaultMode::Dpapi {
-            vault.unlock_dpapi().await?;
+            if let Err(e) = vault.unlock_dpapi().await {
+                tracing::warn!(
+                    target: "vault",
+                    error = %e,
+                    "凭据库自动解锁失败，本次按「未初始化」处理（可到设置页重新初始化）"
+                );
+                *vault.mode.write().await = VaultMode::NotInit;
+            }
         }
-        Ok(vault)
+        vault
     }
 
     /// 生产参数（§9.1：m=64MB, t=3, p=4）；测试编译走快速参数。
@@ -164,34 +201,51 @@ impl Vault {
     }
 
     /// DPAPI 解锁：用 DPAPI 直接包住随机 KEK → 信封里的 DEK。
+    ///
+    /// ⚠️ 这里曾经写成「先 `setting_get(...)?.ok_or(VaultNotInit)?`，再判 `is_empty()` 决定
+    /// 要不要生成」。问题在于**真实首次初始化拿到的就是 `None`**（键压根不存在），
+    /// `ok_or` 先一步把它拒了 —— 那个"生成信封"的分支**永远走不到**。
+    ///
+    /// 后果远不止"初始化失败"：`init_dpapi` 是**先落库 `mode=dpapi`、再解锁**的，
+    /// 所以失败之后数据库里留下一个"自称 dpapi、却没有信封"的死状态，
+    /// 从此每次启动都在 load 阶段解锁失败 → setup 返回 Err → tauri panic ——
+    /// **应用再也打不开（双击一闪就没）**。所以 `None` 与 `Some("")` 必须走同一条路。
     async fn unlock_dpapi(&self) -> AppResult<()> {
-        let envelope = self
-            .store
-            .setting_get(SETTING_ENVELOPE)
-            .await?
-            .ok_or(AppError::VaultNotInit)?;
-        let dek = if envelope.is_empty() {
-            // 首次：生成 DEK 并用 DPAPI 包起来
-            let dek = crypto::generate_dek();
-            let protected = dpapi::protect(dek.0.as_ref())?;
-            self.store
-                .setting_set(
-                    SETTING_ENVELOPE,
-                    &base64::engine::general_purpose::STANDARD.encode(&protected),
-                )
-                .await?;
-            dek
-        } else {
-            let raw = base64::engine::general_purpose::STANDARD
-                .decode(envelope)
-                .map_err(|e| AppError::Crypto(format!("信封解码失败: {e}")))?;
-            let plain = dpapi::unprotect(&raw)?;
-            let mut key = [0u8; crypto::DEK_LEN];
-            if plain.len() != crypto::DEK_LEN {
-                return Err(AppError::Decrypt("DPAPI 信封长度异常".into()));
+        let envelope = self.store.setting_get(SETTING_ENVELOPE).await?;
+        let dek = match envelope.as_deref() {
+            // 首次（或信封为空）：生成一把新 DEK，用 DPAPI 包住后落库
+            None | Some("") => {
+                // 唯一的例外：信封没了、但库里还躺着密文。这时重建密钥等于把这些密文
+                // 永久废掉 —— 宁可让这次初始化失败并说清原因，也不静默毁数据。
+                let existing = self.store.credential_list().await?;
+                if !existing.is_empty() {
+                    return Err(AppError::Crypto(format!(
+                        "凭据库的密钥信封已丢失，但库内仍有 {} 条密文；重建密钥会让它们永远无法解密，已拒绝。",
+                        existing.len()
+                    )));
+                }
+                let dek = crypto::generate_dek();
+                let protected = dpapi::protect(dek.0.as_ref())?;
+                self.store
+                    .setting_set(
+                        SETTING_ENVELOPE,
+                        &base64::engine::general_purpose::STANDARD.encode(&protected),
+                    )
+                    .await?;
+                dek
             }
-            key.copy_from_slice(&plain);
-            crypto::Dek(Zeroizing::new(key))
+            Some(envelope) => {
+                let raw = base64::engine::general_purpose::STANDARD
+                    .decode(envelope)
+                    .map_err(|e| AppError::Crypto(format!("信封解码失败: {e}")))?;
+                let plain = dpapi::unprotect(&raw)?;
+                if plain.len() != crypto::DEK_LEN {
+                    return Err(AppError::Decrypt("DPAPI 信封长度异常".into()));
+                }
+                let mut key = [0u8; crypto::DEK_LEN];
+                key.copy_from_slice(&plain);
+                crypto::Dek(Zeroizing::new(key))
+            }
         };
         *self.dek.write().await = Some(dek);
         self.last_used_at.store(now_ms(), Ordering::Relaxed);
@@ -333,9 +387,11 @@ pub use redact::redact;
 mod tests {
     use super::*;
 
+    /// 全新的内存库 → 一个「未初始化」的凭据库。
+    /// （`load` 已经不返回 `Result` 了：它永远不会失败，见上面的注释。）
     async fn vault() -> Arc<Vault> {
-        let store = Store::open_in_memory().await.unwrap();
-        Vault::load(Arc::new(store)).await.unwrap()
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        Vault::load(store).await
     }
 
     #[tokio::test]
@@ -386,5 +442,132 @@ mod tests {
             .unwrap();
         let dek_after = v.dek().await.unwrap().0.as_ref().to_vec();
         assert_eq!(dek_before, dek_after);
+    }
+
+    /* ── 回归：凭据库坏掉，绝不能让应用起不来 ──────────────────────────────
+     *
+     * 线上事故（2026-09-28）：`Vault::load` 当时返回 Result，坏状态一路冒到 tauri 的
+     * setup 钩子 → tauri panic → **双击程序一闪就没**（退出码 101），用户连设置页都进不去，
+     * 也就永远没机会自己修。
+     *
+     * 下面这组测试把三条策略钉死：
+     * ① 能自愈就自愈（缺信封但无密文）；② 不能自愈就降级（信封解不开 / 模式写坏），
+     * 且**绝不 panic**；③ 会毁数据的事（有密文却要重建密钥）**宁可失败并说清原因**。
+     */
+
+    /// 事故现场（`mode=dpapi`、没有信封）在**没有遗留密文**时应当**自愈**：
+    /// 直接补一把新信封并解锁 —— 用户双击就能正常用，不必自己去设置页重新初始化。
+    ///
+    /// 这是修 `None | Some("")` 带来的关键变化：「键不存在」从**永久死状态**
+    /// 变成了「首次初始化 / 可自愈」。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn load_heals_dpapi_mode_without_envelope() {
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        store.setting_set(SETTING_MODE, "dpapi").await.unwrap();
+
+        let v = Vault::load(Arc::clone(&store)).await; // ← 这一行以前直接 panic 退出
+
+        let st = v.status().await;
+        assert!(st.initialized, "无遗留密文时应自愈，不该降级成未初始化");
+        assert!(st.unlocked);
+        assert_eq!(st.mode, "dpapi");
+        assert!(
+            store
+                .setting_get(SETTING_ENVELOPE)
+                .await
+                .unwrap()
+                .is_some_and(|s| !s.is_empty()),
+            "自愈时要把新信封落库，否则下次启动又解不开"
+        );
+    }
+
+    /// 信封在、但**解不开**（换了机器 / 换了 Windows 用户 / 数据被损坏）
+    /// → 降级为「未初始化」，**不崩**。
+    #[tokio::test]
+    async fn load_survives_undecryptable_envelope() {
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        store.setting_set(SETTING_MODE, "dpapi").await.unwrap();
+        // 一段合法 base64，但绝对不是 DPAPI 能解的密文
+        store
+            .setting_set(
+                SETTING_ENVELOPE,
+                &base64::engine::general_purpose::STANDARD.encode([7u8; 64]),
+            )
+            .await
+            .unwrap();
+
+        let v = Vault::load(Arc::clone(&store)).await;
+
+        let st = v.status().await;
+        assert!(!st.initialized, "解不开的信封应降级为「未初始化」");
+        assert_eq!(st.mode, "not_init");
+    }
+
+    /// 模式字段被写坏（手改 / 未来版本降级残留）同样不能拦死启动。
+    #[tokio::test]
+    async fn load_survives_unknown_mode() {
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        store.setting_set(SETTING_MODE, "who-knows").await.unwrap();
+        let v = Vault::load(Arc::clone(&store)).await;
+        assert!(!v.status().await.initialized);
+    }
+
+    /// 「初始化（Windows DPAPI）」这条路必须真的能跑通 —— 它以前**从来没有成功过**。
+    ///
+    /// 反向验证：把 `unlock_dpapi` 的 `None | Some("")` 改回旧的
+    /// `ok_or(AppError::VaultNotInit)?`，本测试立刻失败，且报错原文就是线上那句
+    /// 「凭据库尚未初始化」。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn init_dpapi_works_on_first_run() {
+        let v = vault().await;
+        assert!(!v.status().await.initialized);
+
+        v.init_dpapi().await.expect("首次初始化 DPAPI 必须成功");
+
+        let st = v.status().await;
+        assert!(st.initialized);
+        assert_eq!(st.mode, "dpapi");
+        assert!(st.unlocked, "DPAPI 模式初始化后应直接是解锁态");
+        assert!(v.dek().await.is_ok());
+        // 信封必须落库 —— 否则下次启动又解不开
+        assert!(v
+            .store
+            .setting_get(SETTING_ENVELOPE)
+            .await
+            .unwrap()
+            .is_some_and(|s| !s.is_empty()));
+    }
+
+    /// 信封丢了、但库里还躺着密文：必须**拒绝**重建密钥。
+    /// 重建 = 生成一把新 DEK，那些密文会永远解不开 —— 静默毁数据比报错严重得多。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn refuses_to_rebuild_key_when_secrets_remain() {
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        store.setting_set(SETTING_MODE, "dpapi").await.unwrap();
+        store
+            .credential_put(crate::store::CredentialInput {
+                id: None,
+                name: "遗留密文".into(),
+                kind: "password".into(),
+                nonce: vec![0u8; 24],
+                blob: vec![1, 2, 3],
+                kek_hint: "dpapi".into(),
+            })
+            .await
+            .unwrap();
+
+        // 启动不崩，只是降级
+        let v = Vault::load(Arc::clone(&store)).await;
+        assert!(!v.status().await.initialized);
+
+        // 用户主动初始化时，才把话说清楚
+        let err = v.init_dpapi().await.expect_err("有密文时不许重建密钥");
+        assert!(
+            format!("{err}").contains("已拒绝"),
+            "错误信息要说清为什么拒绝，实际是：{err}"
+        );
     }
 }
