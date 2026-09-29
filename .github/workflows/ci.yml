@@ -24,6 +24,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Windows job 比 macOS 慢一倍，社区普遍归因于 Defender 实时扫描。
+      # 但查证（2026-09-29）发现 GitHub 官方镜像**已经**这么做了：
+      #   actions/runner-images › images/windows/scripts/build/Configure-WindowsDefender.ps1
+      # 该脚本被 windows-2025 / 2022 / 11-arm64 / *-vs2026 全部镜像模板调用
+      # （见 images/windows/templates/build.*.pkr.hcl），内容是 Set-MpPreference：
+      #   DisableRealtimeMonitoring = $true
+      #   ExclusionPath              = @("D:\", "C:\")
+      # 而 Windows runner 的工作区是 D:\a\<repo>\<repo>、cargo 在 C:\Users\runneradmin\，
+      # 两者本就落在已排除范围内。所以本步骤在当前镜像上预期是「幂等空操作」。
+      #
+      # 仍然保留它，理由有两条：
+      #   1. 把 runner 的真实状态打进日志 —— 让「究竟需不需要」有据可查，而不是靠传闻；
+      #   2. 镜像行为未来可能变，这一步只花几秒，作为显式防御。
+      # 失败只发 ::warning:: 不让质量门变红 —— 纯性能优化不该阻断 CI。
+      - name: 排除 Windows Defender 实时扫描（仅 Windows，幂等）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "=== 当前 Defender 状态 ==="
+          try {
+            $p = Get-MpPreference
+            Write-Host "实时监控已禁用: $($p.DisableRealtimeMonitoring)"
+            Write-Host "现有排除路径:"
+            if ($p.ExclusionPath) { $p.ExclusionPath | ForEach-Object { Write-Host "  $_" } }
+            else { Write-Host "  (无)" }
+          } catch {
+            Write-Host "读取 Defender 状态失败: $_"
+          }
+
+          $targets = @($env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup")
+          Write-Host "=== 补加排除（已存在则不加）==="
+          try {
+            $existing = @((Get-MpPreference).ExclusionPath)
+            $add = @($targets | Where-Object { $existing -notcontains $_ })
+            if ($add.Count -gt 0) {
+              Add-MpPreference -ExclusionPath $add -ErrorAction Stop
+              Write-Host "已加入: $($add -join ', ')"
+            } else {
+              Write-Host "目标路径均已覆盖，无需变更"
+            }
+          } catch {
+            Write-Host "::warning::补加 Defender 排除失败（不影响构建）: $_"
+          }
+
       - uses: pnpm/action-setup@v4
         with:
           # 与本地/锁文件口径一致（仓库里已按 pnpm 11 的 pnpm-workspace.yaml 配置
