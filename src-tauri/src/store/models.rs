@@ -34,6 +34,9 @@ pub struct AssetRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
+    /// 1 = 应用自带的内置资产（「当前设备」）：不可删除，UI 上有专属徽标。
+    /// SQLite 把它存成 INTEGER，sqlx 直接按 `bool` 解（0 = false）。
+    pub builtin: bool,
 }
 
 #[derive(Debug, Clone, FromRow)]

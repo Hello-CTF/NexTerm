@@ -903,10 +903,12 @@ export async function connectAsset(asset: {
 
   try {
     if (!(await ensureVaultReadyFor(asset))) return;
-    const info =
-      asset.kind === "local"
-        ? await sessionApi.connectLocal()
-        : await sessionApi.connect(asset.id);
+    // 一律按资产连接：包括 kind === "local"（「当前设备」）。
+    // 以前本地走的是 `session_connect_local` —— 内核侧现造一个 id 并不存在于
+    // 库里的合成资产，于是资产名（用户改过的名字）、options（shell / 起始目录）
+    // 全部丢掉，审计的归属也挂在一个查不到的 id 上。现在「当前设备」是一台
+    // 真正的本地资产，走同一条路就够了。
+    const info = await sessionApi.connect(asset.id);
     setSessions([...sessions.filter((s) => s.id !== info.id), info]);
     // 每个连上的机器 = 一个工作区（一级标签）
     ensureWorkspace({

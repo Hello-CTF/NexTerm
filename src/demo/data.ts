@@ -22,6 +22,8 @@ export interface DemoAsset {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /** 内置资产（「当前设备」）：不可删除、类型锁定。内核里是 asset.builtin 列。 */
+  builtin?: boolean;
 }
 
 export interface DemoGroup {
@@ -122,12 +124,18 @@ function asset(
     createdAt: NOW - 20 * DAY,
     updatedAt: NOW - 2 * HOUR,
     deletedAt: null,
+    builtin: false,
     ...extra,
   };
 }
 
 export const assets: DemoAsset[] = [
-  asset("a-local", null, "local", "本地终端", null, null, null, { authKind: "none" }),
+  // 与真机一致：内置的「当前设备」排在最前，不可删除（内核里也是这个 shape）
+  asset("a-local", null, "local", "当前设备", null, null, null, {
+    authKind: "none",
+    builtin: true,
+    sort: -1,
+  }),
   asset("a-nat", "g-company", "ssh", "nat-01", "10.0.0.8", 22, "root", { credId: "cred-nat" }),
   asset("a-win", "g-company", "winrm", "win-2019", "10.0.0.21", 5985, "Administrator", {
     authKind: "password",

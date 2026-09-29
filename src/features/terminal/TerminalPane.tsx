@@ -142,7 +142,7 @@ export function TerminalPane({
       const ok = await sessionApi.reconnect(sessionId);
       pushToast(
         ok ? "success" : "info",
-        ok ? "已重新连接" : "该会话不支持重连（本地快速会话，或会话已被断开）",
+        ok ? "已重新连接" : "该会话不支持重连（本机会话没有重连语义，或会话已被断开）",
       );
     } catch (e) {
       pushToast("error", `重连失败：${describeError(e)}`);

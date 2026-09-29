@@ -48,14 +48,14 @@ export function CommandPalette({
       {
         id: "local-terminal",
         label: "打开本地终端",
-        hint: "Ctrl+T",
+        hint: "Ctrl+T · 当前设备",
         icon: IconTerminal,
         run: () => {
           void sessionApi
             .connectLocal()
             .then((s) => {
               setSessions([...sessions.filter((x) => x.id !== s.id), s]);
-              return openTerminalTab(s, "本地终端");
+              return openTerminalTab(s);
             })
             .catch((e) => pushToast("error", describeError(e)));
         },

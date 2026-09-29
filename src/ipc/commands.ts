@@ -131,6 +131,13 @@ export interface Asset {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /**
+   * 应用自带的内置资产（「当前设备」）：不可删除，类型锁定，列表里带「本机」徽标。
+   *
+   * 判据来自内核（`asset.builtin` 列），不在前端按名字或 ID 猜 ——
+   * 名字用户可以改，ID 常量写两份迟早会不一致。
+   */
+  builtin: boolean;
 }
 
 export interface AssetGroup {

@@ -14,12 +14,26 @@ const BACKOFF_SECS: [u64; 6] = [1, 2, 4, 8, 16, 30];
 const MAX_ATTEMPTS: u32 = 10;
 const BANNER: &str = "\r\n\x1b[33m[NexTerm] 已重新连接\x1b[0m\r\n";
 
+/// 这个会话类型有没有「重连」这件事。
+///
+/// 本机会话（local）没有：底层就是本机进程，断了只能是进程没了，重建一个新
+/// shell 也不是"恢复现场"。以前它落到 `_ => Err(Unsupported)`，于是 UI 会
+/// **假装**重连 —— 状态切到"重连中"，按 1/2/4/8/16/30 秒退避重试十次，
+/// 半分钟后报"重连次数用尽"。用户看到的是半分钟的空转加一句假故障。
+pub(crate) fn is_reconnectable(kind: &str) -> bool {
+    matches!(kind, "ssh" | "docker" | "winrm")
+}
+
 /// 尝试重连一个会话：重建底层传输，替换进 Session，重开每个标签的 PTY。
 pub async fn try_reconnect(state: &AppState, session_id: &str) -> AppResult<bool> {
     let session = match state.sessions.get(session_id).await {
         Ok(s) => s,
         Err(_) => return Ok(false), // 会话已被显式断开，不重连
     };
+    // 先按类型判定，再碰状态：把状态改成「重连中」就等于对 UI 许了诺。
+    if !is_reconnectable(&session.kind) {
+        return Ok(false);
+    }
     let asset_id = match &session.asset_id {
         Some(a) => a.clone(),
         None => return Ok(false), // 本地快速会话不重连
@@ -62,7 +76,8 @@ pub async fn try_reconnect(state: &AppState, session_id: &str) -> AppResult<bool
         tracing::info!(target: "session", session = %session_id, attempt, "尝试重连");
         let build = async {
             match session.kind.as_str() {
-                "ssh" => {
+                // docker 主机就是 SSH 机器（kind 只影响前端开哪个面板）
+                "ssh" | "docker" => {
                     let params = crate::session::build_ssh_params(state, &asset, &options).await?;
                     crate::transport::ssh::SshTransport::connect(
                         params,
@@ -125,7 +140,7 @@ async fn reopen_pty_for_tab(
     session: &Arc<crate::session::Session>,
     tab_id: &str,
 ) {
-    if session.kind != "ssh" {
+    if session.kind != "ssh" && session.kind != "docker" {
         return; // WinRM 行模式标签无需 PTY
     }
     let Ok(tab) = state.sessions.get_tab(tab_id).await else {
@@ -146,5 +161,29 @@ async fn reopen_pty_for_tab(
         tokio::spawn(async move {
             pty::run_pump(tab2, pty::ByteSource::Ssh(read), callbacks).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_reconnectable;
+
+    /// 回归：本机会话**不得**进入重连循环。
+    ///
+    /// 以前 local 落到 `_ => Err(Unsupported)`，于是 UI 会假装重连：
+    /// 状态切「重连中」，按 1/2/4/8/16/30 秒退避试十次，半分钟后报
+    /// 「重连次数用尽」。用户看到的是半分钟空转 + 一句假故障。
+    #[test]
+    fn local_sessions_are_not_reconnectable() {
+        assert!(!is_reconnectable("local"), "本机没有重连语义");
+        assert!(!is_reconnectable("mysql"), "数据库会话走自己的连接管理");
+        assert!(!is_reconnectable("redis"));
+    }
+
+    #[test]
+    fn network_sessions_are_reconnectable() {
+        assert!(is_reconnectable("ssh"));
+        assert!(is_reconnectable("docker"), "docker 主机底层就是 SSH");
+        assert!(is_reconnectable("winrm"));
     }
 }

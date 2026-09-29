@@ -140,6 +140,13 @@ pub fn run() {
                 // 以前这里是个 `match ... Err => return Err(...)`，而 setup 返回 Err 会让
                 // tauri 直接 panic —— 一个可选组件能把整个应用变成"双击一闪就没"。
                 let vault = vault::Vault::load(Arc::clone(&store)).await;
+                // 内置「当前设备」资产：装上就有的一台"机器"，本地终端 / 文件树 /
+                // 容器面板都挂在它上面。幂等（固定 ID），重复启动只是一次主键查询。
+                // 失败只记日志、不拦启动 —— 少了它应用照样能用，只是首屏没有本机入口。
+                match store.asset_ensure_builtin_local().await {
+                    Ok(a) => tracing::info!(target: "boot", asset = %a.name, "内置本地资产就绪"),
+                    Err(e) => tracing::warn!(target: "boot", error = %e, "内置本地资产创建失败"),
+                }
                 let sessions = Arc::new(session::SessionManager::new());
                 // AI 提供方配置：从「多模型档案」里取当前激活的那一份。
                 // 首次启动顺带做一次旧 `ai.provider` → `ai.models` 的迁移（会落库）。

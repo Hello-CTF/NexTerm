@@ -165,6 +165,14 @@ pub async fn connect_asset(
     asset: &AssetRow,
     accept_unknown: bool,
 ) -> AppResult<Arc<Session>> {
+    // 复用：§7 写的是「一个资产 → 一个 Session」，但实现一直是"每次调用新建一个"。
+    // 后果在本地资产上最刺眼 —— 双击两下「当前设备」就冒出两个同名工作区、
+    // 两条互不相干的会话，关掉一个另一个还在。已 Failed / Disconnected 的不复用
+    // （那种本来就是要重建）。
+    if let Some(existing) = live_session_of_asset(state, &asset.id).await {
+        return Ok(existing);
+    }
+
     let options = crate::transport::parse_options(&asset.options_json);
     let encoding = options
         .get("encoding")
@@ -174,8 +182,11 @@ pub async fn connect_asset(
     let session_id = new_id();
 
     let transport: Arc<dyn Transport> = match asset.kind.as_str() {
-        "local" => Arc::new(crate::transport::local::LocalTransport::new()),
-        "ssh" => {
+        "local" => Arc::new(local_transport_from(&options)),
+        // docker 主机 = 一台跑着 Docker 的 SSH 机器（前端连上后直接开容器面板）。
+        // 以前 docker 落到下面的 `other` 分支 → 建得出资产、点连接必报
+        // 「资产类型 docker 不支持会话」，属于半成品入口。
+        "ssh" | "docker" => {
             let mut params = build_ssh_params(state, asset, &options).await?;
             if accept_unknown {
                 params.auto_accept_unknown = true;
@@ -232,27 +243,60 @@ pub async fn connect_asset(
     Ok(session)
 }
 
+/// 找出某资产上仍然活着的会话（用于复用）。
+///
+/// 「活着」= Connected / Connecting / Reconnecting：这三种状态下连接是好的或正在恢复，
+/// 可以直接拿来开新标签。Failed / Disconnected 不复用 —— 那种会话的底层传输已经废了。
+async fn live_session_of_asset(state: &AppState, asset_id: &str) -> Option<Arc<Session>> {
+    let sessions = state.sessions.sessions.read().await;
+    sessions
+        .values()
+        .find(|s| {
+            s.asset_id.as_deref() == Some(asset_id)
+                && matches!(
+                    s.status_now(),
+                    SessionStatus::Connected
+                        | SessionStatus::Connecting
+                        | SessionStatus::Reconnecting
+                )
+        })
+        .cloned()
+}
+
+/// 本机传输：把资产的 `options` 落成 shell / 起始目录。
+///
+/// 以前 `local` 分支直接 `LocalTransport::new()`，而选项在**更前面**就已经按
+/// 合成资产丢了 —— 本地资产「配置了也不生效」。现在两个 key 有明确语义：
+/// `shell`（默认取 `$SHELL` / Windows 上的 pwsh）、`cwd`（默认家目录）。
+fn local_transport_from(
+    options: &std::collections::HashMap<String, serde_json::Value>,
+) -> crate::transport::local::LocalTransport {
+    let mut t = crate::transport::local::LocalTransport::new();
+    let pick = |key: &str| {
+        options
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(shell) = pick("shell") {
+        t.shell = Some(shell);
+    }
+    if let Some(cwd) = pick("cwd") {
+        if let Ok(mut cur) = t.initial_cwd.lock() {
+            *cur = cwd;
+        }
+    }
+    t
+}
+
 /// 为本地快速终端（无资产）建立会话。
 pub async fn connect_local_quick(state: &AppState) -> AppResult<Arc<Session>> {
-    let asset = AssetRow {
-        id: new_id(),
-        group_id: None,
-        kind: "local".into(),
-        name: "本地终端".into(),
-        host: None,
-        port: None,
-        username: None,
-        auth_kind: None,
-        key_path: None,
-        cred_id: None,
-        options_json: "{}".into(),
-        tags: String::new(),
-        note: String::new(),
-        sort: 0,
-        created_at: now_ms() as i64,
-        updated_at: now_ms() as i64,
-        deleted_at: None,
-    };
+    // 落到内置的「当前设备」资产上，而不是现造一个 id 并不存在于库里的合成资产。
+    // 合成资产的两个后遗症：审计的 `asset_id` 指向查不到的归属；重连时
+    // `asset_get` 直接报错（看着像"重连失败"，其实是身份不存在）。
+    let asset = state.store.asset_ensure_builtin_local().await?;
     connect_asset(state, &asset, false).await
 }
 
@@ -680,5 +724,44 @@ pub async fn idle_sweeper(state: std::sync::Arc<AppState>, idle_close: Duration)
         for sid in candidates {
             let _ = disconnect(&state, &sid).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod local_option_tests {
+    use super::local_transport_from;
+    use serde_json::json;
+
+    /// 本机资产的 options 必须**真的**落到传输上。
+    ///
+    /// 以前 `local` 分支直接 `LocalTransport::new()`，而 options 在更前面就被
+    /// 合成资产丢掉了 —— 「配了 Shell 却还是起 $SHELL」正是这类静默失效：
+    /// 保存成功、界面显示已配置、行为完全没变。
+    #[test]
+    fn local_options_become_transport_settings() {
+        let mut o = std::collections::HashMap::new();
+        o.insert("shell".to_string(), json!("/bin/zsh"));
+        o.insert("cwd".to_string(), json!("/tmp"));
+        let t = local_transport_from(&o);
+        assert_eq!(t.shell.as_deref(), Some("/bin/zsh"));
+        assert_eq!(*t.initial_cwd.lock().unwrap(), "/tmp");
+    }
+
+    /// 空串 / 纯空白 / 缺键一律算「没配」，保持默认（$SHELL、家目录）。
+    ///
+    /// 不放行的话，前端「清空输入框」会变成一个空 shell 路径或空 cwd ——
+    /// 症状是「编辑过资产之后终端起不来」，而报错会指向 shell 启动失败，
+    /// 跟"清空了输入框"这件事看起来毫无关系。
+    #[test]
+    fn blank_local_options_keep_defaults() {
+        let mut o = std::collections::HashMap::new();
+        o.insert("shell".to_string(), json!("   "));
+        o.insert("cwd".to_string(), json!(""));
+        let t = local_transport_from(&o);
+        assert!(t.shell.is_none(), "空白 shell 应视为未配置");
+        assert!(
+            !t.initial_cwd.lock().unwrap().is_empty(),
+            "cwd 应保持默认家目录"
+        );
     }
 }

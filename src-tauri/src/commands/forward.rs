@@ -13,13 +13,27 @@ use crate::transport::ssh::SshTransport;
 ///
 /// 抽出来是因为两条命令都要做这同一件事，而 `as_any_arc().downcast()` 那串
 /// 泛型体操在这里写两遍很容易写歪。
+///
+/// 被拒时按会话类型给话：本机会话不是"这个功能缺了"，而是"这件事没有意义"
+/// （你已经在目标机器上了）—— 后者才解释得清，也才指得出下一步。
 async fn ssh_of(state: &ManagedState<'_>, session_id: &str) -> AppResult<Arc<SshTransport>> {
     let s = state.sessions.get(session_id).await?;
+    let kind = s.kind.clone();
     let t = s.transport().await;
     t.clone()
         .as_any_arc()
         .downcast::<SshTransport>()
-        .map_err(|_| AppError::Unsupported("端口转发需要 SSH 会话".into()))
+        .map_err(|_| {
+            if kind == "local" {
+                AppError::Unsupported(
+                    "本机就是目标机器，端口转发没有意义 —— 它存在的理由是把远端的口子搬到本机；\
+                 要访问内网其他主机，请先建一台 SSH 资产并连上"
+                        .into(),
+                )
+            } else {
+                AppError::Unsupported(format!("端口转发需要 SSH 会话（当前是 {kind} 会话）"))
+            }
+        })
 }
 
 /// 把刚建好的转发登记进全局表。

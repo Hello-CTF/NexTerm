@@ -102,6 +102,9 @@ function tabIcon(t: AppTab) {
   return TAB_ICON[t.kind] ?? IconTerminal;
 }
 
+/** 首启动自动连「当前设备」的一次性标记（StrictMode 下 effect 会跑两遍）。 */
+let bootLocalTried = false;
+
 export default function App() {
   const {
     workspaces,
@@ -150,10 +153,13 @@ export default function App() {
 
   const openLocalTerminal = useCallback(async () => {
     try {
+      // 内核会把这次调用落到内置的「当前设备」资产上（同一资产复用同一条会话）。
+      // 于是工作区叫「当前设备」、终端标签按「终端 N」编号 —— 一级标签已经写着
+      // 机器名了，二级再叫一遍没有信息量。
       const s = await sessionApi.connectLocal();
       const list = useUi.getState().sessions;
       setSessions([...list.filter((x) => x.id !== s.id), s]);
-      await openTerminalTab(s, "本地终端");
+      await openTerminalTab(s);
     } catch (e) {
       pushToast("error", describeError(e));
     }
@@ -396,6 +402,32 @@ export default function App() {
       cancelled = true;
     };
   }, [setSessions]);
+
+  /* ── 首启动：直接把内置的「当前设备」连上 ──────────────────────────── */
+
+  useEffect(() => {
+    if (DEMO) return; // 演示模式有自己的启动脚本（连 web-01）
+    // 只在"全新的安装"上自动开：一条**用户自建**资产都没有，说明还没开始用。
+    // 反过来，有资产的人一启动就多出一个本地终端是打扰 —— 他们显然知道
+    // Ctrl+T 和双击资产。
+    //
+    // 模块级一次性标记：StrictMode 下 effect 会跑两遍，而检查要在 await 之后
+    // 才看得到 workspaces —— 只靠那个检查会连开两个终端标签。
+    if (bootLocalTried) return;
+    bootLocalTried = true;
+    void (async () => {
+      try {
+        const list = await assetApi.list();
+        if (list.some((a) => !a.builtin)) return;
+        const builtin = list.find((a) => a.builtin && a.kind === "local");
+        if (!builtin) return;
+        if (useUi.getState().workspaces.length > 0) return;
+        await connectAsset(builtin);
+      } catch {
+        // 自动连接失败不影响手动操作：双击左栏「当前设备」即可重试
+      }
+    })();
+  }, []);
 
   /* ── 面包屑 ─────────────────────────────────────────────────────────── */
 
@@ -1221,7 +1253,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
             }
             void sessionApi.connectLocal().then((s) => {
               setSessions([...sessions.filter((x) => x.id !== s.id), s]);
-              void openTerminalTab(s, "本地终端");
+              void openTerminalTab(s);
             });
           }}
         >
@@ -1234,7 +1266,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
         </button>
       </div>
       <div className="nx-hint max-w-md text-center">
-        双击左侧资产即可连接；SSH / WinRM / 本地终端会开终端标签，
+        左栏的「当前设备」双击即连（本机终端 + 文件树）；SSH / WinRM 资产开终端标签，
         容器资产开容器面板，MySQL / Redis 资产开数据库工作台。
       </div>
     </div>

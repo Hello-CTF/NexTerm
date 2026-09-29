@@ -47,6 +47,12 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
 function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
+  const sessions = useUi((s) => s.sessions);
+  /**
+   * 本机会话上挂载没有意义：要挂的那个「远端」就是这台机器自己。
+   * 不给「点了才失败」的入口 —— 直接说明白并指出去哪儿看本机文件。
+   */
+  const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const [localPoint, setLocalPoint] = useState("Z:");
   const [remotePath, setRemotePath] = useState("");
   const [username, setUsername] = useState("");
@@ -64,6 +70,10 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const create = async () => {
     if (!sessionId) {
       pushToast("info", "先连接一台主机（凭据默认复用资产）");
+      return;
+    }
+    if (localSession) {
+      pushToast("info", "当前是「当前设备」会话 —— 本机文件直接在左栏文件树里看，不用挂载");
       return;
     }
     if (!remotePath.trim() || !localPoint.trim()) {
@@ -191,13 +201,25 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="密码（可选）"
           />
-          <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void create()}>
+          <button
+            className="nx-btn nx-btn-primary nx-btn-sm"
+            disabled={busy || localSession}
+            onClick={() => void create()}
+          >
             {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
             挂载
           </button>
         </div>
         <div className="nx-hint mt-2">
-          凭据默认复用资产里保存的那份；这里填的只对本次挂载生效，不落盘。
+          {localSession ? (
+            <>
+              当前工作区是内置的「当前设备」—— 要挂的「远端」就是这台机器自己。
+              本机目录请直接看左栏 <span className="text-neutral-300">文件树</span>；
+              挂载是给 <span className="text-neutral-300">SSH 资产</span> 用的。
+            </>
+          ) : (
+            <>凭据默认复用资产里保存的那份；这里填的只对本次挂载生效，不落盘。</>
+          )}
         </div>
       </div>
     </div>

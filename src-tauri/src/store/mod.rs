@@ -4,7 +4,10 @@ pub mod models;
 mod repo;
 
 pub use models::*;
-pub use repo::{AssetInput, AuditInput, AuditQuery, CredentialInput, GroupInput};
+pub use repo::{
+    AssetInput, AuditInput, AuditQuery, CredentialInput, GroupInput, BUILTIN_LOCAL_ASSET_ID,
+    BUILTIN_LOCAL_ASSET_NAME,
+};
 
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;

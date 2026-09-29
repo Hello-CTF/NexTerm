@@ -5,7 +5,11 @@ export type AiScopeDto = { sessionId: string | null, tabId: string | null, connI
 
 export type AppErrorDto = { code: string, message: string, detail: JsonValue | null, };
 
-export type AssetDto = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, options: JsonValue, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, };
+export type AssetDto = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, options: JsonValue, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, 
+/**
+ * 内置资产（应用自带的「当前设备」）：前端据此隐藏删除、锁定类型。
+ */
+builtin: boolean, };
 
 export type AssetGroupDto = { id: string, parentId: string | null, name: string, sort: number, createdAt: number, updatedAt: number, };
 

@@ -29,6 +29,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const sessions = useUi((s) => s.sessions);
+  /**
+   * 本机会话上转发没有意义：它存在的理由是把**远端**的口子搬到本机，
+   * 而本机自己就已经在 127.0.0.1 上。内核同样会拒（`AppError::Unsupported`），
+   * 这里把按钮禁掉并说清楚，不做「点了才失败」的入口。
+   */
+  const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const [kind, setKind] = useState<Kind>("local");
   const [listenPort, setListenPort] = useState(DEFAULT_PORT.local);
   const [targetHost, setTargetHost] = useState("127.0.0.1");
@@ -53,6 +59,13 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const create = async () => {
     if (!sessionId) {
       pushToast("info", "先连接一台机器 —— 转发要挂在某条 SSH 会话上");
+      return;
+    }
+    if (localSession) {
+      pushToast(
+        "info",
+        "当前是「当前设备」会话 —— 本机就是目标机器，转发没有意义；要访问内网其他主机请先连一台 SSH 资产",
+      );
       return;
     }
     const port = Number(listenPort.trim());
@@ -251,7 +264,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           )}
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
-            disabled={busy || !sessionId}
+            disabled={busy || !sessionId || localSession}
             onClick={() => void create()}
           >
             {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
@@ -260,7 +273,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
         </div>
 
         <div className="nx-hint mt-2">
-          {sessionId ? (
+          {localSession ? (
+            <>
+              当前工作区是内置的「当前设备」：出口必须是另一台机器的 SSH 连接。
+              要访问内网服务（数据库 / 后台面板），先新建一台 SSH 资产并连上，再来建转发。
+            </>
+          ) : sessionId ? (
             <>
               出口走当前会话（{sessionName(sessionId)}）的 SSH 连接；监听地址固定为{" "}
               <span className="nx-code">127.0.0.1</span> —— 内置代理无认证，不对外暴露。

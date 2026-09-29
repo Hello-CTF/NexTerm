@@ -3,17 +3,31 @@
 use serde::Deserialize;
 
 use crate::error::AppResult;
+use crate::ipc_types::AssetDto;
 use crate::state::ManagedState;
 use crate::store::{AssetRow, AuditQuery, CredentialInput};
 
-#[tauri::command]
-pub async fn asset_list(state: ManagedState<'_>) -> AppResult<Vec<AssetRow>> {
-    state.store.asset_list(false).await
+/// `AssetRow` → `AssetDto`。**必须转换**：行里是 `options_json`（字符串），
+/// 前端读的是 `options`（对象）—— 直接回行的话 `options` 永远 undefined。
+/// 唯一权威定义在 `ipc_types::AssetDto`（同一坑见 `ai_message` / `audit_log`）。
+fn dto(row: AssetRow) -> AssetDto {
+    row.into()
 }
 
 #[tauri::command]
-pub async fn asset_get(state: ManagedState<'_>, id: String) -> AppResult<AssetRow> {
-    state.store.asset_get(&id).await
+pub async fn asset_list(state: ManagedState<'_>) -> AppResult<Vec<AssetDto>> {
+    Ok(state
+        .store
+        .asset_list(false)
+        .await?
+        .into_iter()
+        .map(dto)
+        .collect())
+}
+
+#[tauri::command]
+pub async fn asset_get(state: ManagedState<'_>, id: String) -> AppResult<AssetDto> {
+    Ok(dto(state.store.asset_get(&id).await?))
 }
 
 #[derive(Deserialize)]
@@ -34,8 +48,8 @@ pub struct AssetCreateArgs {
 }
 
 #[tauri::command]
-pub async fn asset_create(state: ManagedState<'_>, args: AssetCreateArgs) -> AppResult<AssetRow> {
-    state
+pub async fn asset_create(state: ManagedState<'_>, args: AssetCreateArgs) -> AppResult<AssetDto> {
+    Ok(dto(state
         .store
         .asset_create(crate::store::AssetInput {
             group_id: args.group_id,
@@ -55,7 +69,7 @@ pub async fn asset_create(state: ManagedState<'_>, args: AssetCreateArgs) -> App
             note: args.note.unwrap_or_default(),
             sort: 0,
         })
-        .await
+        .await?))
 }
 
 /// 双层 Option 的显式 null 语义：标准 serde 把 JSON `null` 反序列化成外层
@@ -96,8 +110,8 @@ pub struct AssetUpdateArgs {
 }
 
 #[tauri::command]
-pub async fn asset_update(state: ManagedState<'_>, args: AssetUpdateArgs) -> AppResult<AssetRow> {
-    state
+pub async fn asset_update(state: ManagedState<'_>, args: AssetUpdateArgs) -> AppResult<AssetDto> {
+    Ok(dto(state
         .store
         .asset_update(
             &args.id,
@@ -114,7 +128,7 @@ pub async fn asset_update(state: ManagedState<'_>, args: AssetUpdateArgs) -> App
             args.note,
             None,
         )
-        .await
+        .await?))
 }
 
 #[tauri::command]
@@ -123,8 +137,14 @@ pub async fn asset_delete(state: ManagedState<'_>, id: String) -> AppResult<()> 
 }
 
 #[tauri::command]
-pub async fn asset_search(state: ManagedState<'_>, q: String) -> AppResult<Vec<AssetRow>> {
-    state.store.asset_search(&q).await
+pub async fn asset_search(state: ManagedState<'_>, q: String) -> AppResult<Vec<AssetDto>> {
+    Ok(state
+        .store
+        .asset_search(&q)
+        .await?
+        .into_iter()
+        .map(dto)
+        .collect())
 }
 
 // ── 分组 ──

@@ -236,6 +236,14 @@ function AssetRow({
   const Icon = assetIcon(asset.kind);
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
+  const tip = [
+    asset.name,
+    target || (asset.builtin ? "本机" : ""),
+    asset.builtin ? "内置资产 · 不可删除" : "",
+    "双击连接 · 可拖入分组",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div
       className="nx-row group"
@@ -245,11 +253,15 @@ function AssetRow({
         e.dataTransfer.effectAllowed = "move";
       }}
       onDoubleClick={() => void connectAsset(asset)}
-      title={target ? `${asset.name} · ${target} · 双击连接 · 可拖入分组` : `${asset.name} · 双击连接 · 可拖入分组`}
+      title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>}
+      {/* 内置的「当前设备」：标出来，并且不给删除按钮 ——
+          它是「本机」这个概念的锚点，删掉之后终端 / 容器 / 文件树都没了落脚点。
+          内核同样拒绝删除（命令层能被脚本直接调），这里只是不给点。 */}
+      {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       <span className="nx-row-actions">
         <button
           className="nx-icon-btn nx-icon-btn-sm"
@@ -271,16 +283,18 @@ function AssetRow({
         >
           <IconEdit size={12} />
         </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm is-danger"
-          title="删除"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        >
-          <IconClose size={12} />
-        </button>
+        {!asset.builtin && (
+          <button
+            className="nx-icon-btn nx-icon-btn-sm is-danger"
+            title="删除"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <IconClose size={12} />
+          </button>
+        )}
       </span>
     </div>
   );
@@ -394,9 +408,9 @@ function AssetEditor({
   onSaved: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
-  const [groupKind, setGroupKind] = useState<"ssh" | "winrm" | "local" | "mysql" | "redis">(
-    (initial?.kind as "ssh") ?? "ssh",
-  );
+  const [groupKind, setGroupKind] = useState<
+    "ssh" | "winrm" | "local" | "docker" | "mysql" | "redis"
+  >((initial?.kind as "ssh") ?? "ssh");
   const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? presetGroupId ?? null);
   const [host, setHost] = useState(initial?.host ?? "");
   const [port, setPort] = useState(initial?.port ?? 22);
@@ -404,6 +418,13 @@ function AssetEditor({
   const [authKind, setAuthKind] = useState(initial?.authKind ?? "password");
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
   const [password, setPassword] = useState("");
+  /** 本机资产的两个启动选项（存进 options，连接时由内核读取）。空 = 用系统默认。 */
+  const [shell, setShell] = useState(
+    typeof initial?.options?.shell === "string" ? (initial.options.shell as string) : "",
+  );
+  const [cwd, setCwd] = useState(
+    typeof initial?.options?.cwd === "string" ? (initial.options.cwd as string) : "",
+  );
   const pushToast = useUi((s) => s.pushToast);
 
   // 凭据绑定：默认跟随已有绑定；没有就「新建凭据」
@@ -511,6 +532,20 @@ function AssetEditor({
       } else if (credChoice !== "none") {
         credId = credChoice;
       }
+      // 本机资产的两个启动选项。空值**不写进** options —— 于是「清空输入框」
+      // 就等于「回到系统默认（$SHELL / 家目录）」，而不是留一个空 shell 路径
+      // 让内核去启一个不存在的程序。
+      //
+      // 非本机一律不传 options（undefined）：`AssetUpdateArgs.options` 是
+      // `Option<Value>`，传了就是**整列替换** —— 顺手把 encoding / 初始命令
+      // 这些别的字段抹掉，是很容易犯的错。
+      const options =
+        groupKind === "local"
+          ? {
+              ...(shell.trim() ? { shell: shell.trim() } : {}),
+              ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+            }
+          : undefined;
       const fields = {
         kind: groupKind,
         name,
@@ -521,6 +556,7 @@ function AssetEditor({
         authKind: groupKind === "local" ? "none" : authKind,
         keyPath: keyAuth ? finalKeyPath : null,
         credId,
+        options,
       };
       if (initial) {
         await assetApi.update({ id: initial.id, ...fields });
@@ -548,6 +584,7 @@ function AssetEditor({
               <select
                 className="nx-select"
                 value={groupKind}
+                disabled={initial?.builtin}
                 onChange={(e) => {
                   const v = e.target.value as typeof groupKind;
                   setGroupKind(v);
@@ -563,6 +600,11 @@ function AssetEditor({
                   </option>
                 ))}
               </select>
+              {initial?.builtin && (
+                <div className="nx-hint mt-1">
+                  ↳ 内置的「当前设备」，始终指向本机，类型不可更改（名字可以改）
+                </div>
+              )}
             </div>
           )}
 
@@ -592,6 +634,33 @@ function AssetEditor({
                 ))}
               </select>
             </div>
+          )}
+
+          {kind === "asset" && groupKind === "local" && (
+            <>
+              <div className="nx-form-row">
+                <label className="nx-label">默认 Shell</label>
+                <input
+                  className="nx-input font-mono text-[12px]"
+                  value={shell}
+                  onChange={(e) => setShell(e.target.value)}
+                  placeholder="留空用系统默认（$SHELL / pwsh）"
+                />
+              </div>
+              <div className="nx-form-row">
+                <label className="nx-label">起始目录</label>
+                <input
+                  className="nx-input font-mono text-[12px]"
+                  value={cwd}
+                  onChange={(e) => setCwd(e.target.value)}
+                  placeholder="留空用家目录"
+                />
+              </div>
+              <div className="nx-hint mb-3">
+                ↳ 只对「新开」的终端生效，已经开着的标签不会跟着变。
+                本机资产双击即连（无需凭据），终端 / 文件树 / 容器面板都落在本机。
+              </div>
+            </>
           )}
 
           {kind === "asset" && groupKind !== "local" && (

@@ -6,6 +6,20 @@ use crate::store::models::*;
 
 const KEEPALIVE: &str = "keepalive";
 
+/// 内置「当前设备」资产的**固定 ID**。
+///
+/// 为什么不用 `new_id()` 现场生成：这个 ID 是「本机」这个概念的身份 ——
+/// 会话复用（同一资产只连一条）、审计归属（`audit_log.asset_id`）、
+/// 前端判定「是不是本机」全都认它。每次启动换一个 ID，就会攒下一串
+/// 同名资产和一堆彼此独立的工作区。
+///
+/// 形态必须满足 `store::ensure_id`（26 位 ASCII 字母数字），
+/// 否则任何拿它当参数走的路径都会被参数校验拒掉 —— 有单测守着。
+pub const BUILTIN_LOCAL_ASSET_ID: &str = "01J0NEXTERMLOCALDEVICE0001";
+
+/// 内置资产的显示名。用户可改名（改名只影响显示），但默认叫这个。
+pub const BUILTIN_LOCAL_ASSET_NAME: &str = "当前设备";
+
 // ───────────────────────── setting ─────────────────────────
 
 impl super::Store {
@@ -265,13 +279,60 @@ impl super::Store {
     }
 
     /// 软删除（墓碑，为同步预留）。
+    ///
+    /// 内置资产（「当前设备」）拒绝删除：它是「本机」这个概念的锚点，
+    /// 删掉之后 `session_connect_local`、终端/容器/文件树这些"要一台机器"的
+    /// 入口都会退化成一个悬空的合成会话。UI 上已经不给删除按钮，
+    /// 这里再拦一道 —— 命令层能被直接调用（AI 工具、脚本），不能只靠前端自觉。
     pub async fn asset_delete(&self, id: &str) -> AppResult<()> {
+        let row = self.asset_get(id).await?;
+        if row.builtin {
+            return Err(AppError::param("「当前设备」是内置资产，不能删除"));
+        }
         sqlx::query("UPDATE asset SET deleted_at = ? WHERE id = ?")
             .bind(now_ms() as i64)
             .bind(id)
             .execute(self.pool())
             .await?;
         Ok(())
+    }
+
+    /// 确保内置「当前设备」资产存在，返回它（幂等）。
+    ///
+    /// 两条路径都走这里：应用启动时 seed 一次；`session_connect_local`
+    /// （Ctrl+T / 空态按钮 / 命令面板）每次解析一次。所以必须幂等 ——
+    /// 重复调用的代价只是一次主键查询。
+    ///
+    /// 若那行被软删除过（老版本留下的、或用户手工改库），这里**复活**它：
+    /// 内置资产的"不存在"没有第三种解释，留着墓碑只会让「当前设备」
+    /// 永远消失又占着 ID，重启也回不来。
+    pub async fn asset_ensure_builtin_local(&self) -> AppResult<AssetRow> {
+        if let Ok(row) = self.asset_get(BUILTIN_LOCAL_ASSET_ID).await {
+            if row.deleted_at.is_some() {
+                sqlx::query("UPDATE asset SET deleted_at = NULL, updated_at = ? WHERE id = ?")
+                    .bind(now_ms() as i64)
+                    .bind(BUILTIN_LOCAL_ASSET_ID)
+                    .execute(self.pool())
+                    .await?;
+                return self.asset_get(BUILTIN_LOCAL_ASSET_ID).await;
+            }
+            return Ok(row);
+        }
+        let now = now_ms() as i64;
+        // sort = -1：`ORDER BY sort, name` 下它排在最前 —— 本机是绝大多数操作的
+        // 起点，排在用户自建资产后面等于每次都要往下找一行。
+        sqlx::query(
+            "INSERT INTO asset(id, group_id, kind, name, host, port, username, auth_kind,
+             key_path, cred_id, options_json, tags, note, sort, created_at, updated_at, builtin)
+             VALUES(?,NULL,'local',?,NULL,NULL,NULL,NULL,NULL,NULL,'{}','','',-1,?,?,1)",
+        )
+        .bind(BUILTIN_LOCAL_ASSET_ID)
+        .bind(BUILTIN_LOCAL_ASSET_NAME)
+        .bind(now)
+        .bind(now)
+        .execute(self.pool())
+        .await?;
+        self.asset_get(BUILTIN_LOCAL_ASSET_ID).await
     }
 
     /// 全局搜索：匹配名称/主机/用户名/备注/标签。
@@ -743,4 +804,97 @@ impl super::Store {
 #[allow(dead_code)]
 pub(crate) fn _keepalive_key() -> &'static str {
     KEEPALIVE
+}
+
+#[cfg(test)]
+mod builtin_tests {
+    use super::*;
+    use crate::store::Store;
+
+    /// 内置资产的固定 ID 必须过得了参数校验层（`ensure_id` 要求 26 位 ASCII 字母数字）。
+    /// 写错一位（比如 25 位、带连字符）不会编译报错，而是在用户点「新建终端」时
+    /// 变成一句「非法 ID」—— 那种错只能靠这条用例挡。
+    #[test]
+    fn builtin_id_is_a_valid_ulid_shape() {
+        crate::store::ensure_id(BUILTIN_LOCAL_ASSET_ID).expect("内置资产 ID 形态必须合法");
+    }
+
+    #[tokio::test]
+    async fn ensure_builtin_is_idempotent() {
+        let store = Store::open_in_memory().await.expect("内存库");
+        let a = store.asset_ensure_builtin_local().await.expect("首次 seed");
+        assert_eq!(a.id, BUILTIN_LOCAL_ASSET_ID);
+        assert_eq!(a.kind, "local");
+        assert!(a.builtin, "必须带上内置标记");
+        assert!(a.deleted_at.is_none());
+
+        let b = store.asset_ensure_builtin_local().await.expect("再次调用");
+        assert_eq!(a.id, b.id);
+        assert_eq!(b.created_at, a.created_at, "重复调用不能重建（时间戳会变）");
+        assert_eq!(store.asset_list(false).await.unwrap().len(), 1);
+    }
+
+    /// 内置资产排在自建资产前面（`ORDER BY sort, name`，内置 sort = -1）。
+    #[tokio::test]
+    async fn builtin_sorts_first() {
+        let store = Store::open_in_memory().await.expect("内存库");
+        store.asset_ensure_builtin_local().await.expect("seed");
+        store
+            .asset_create(AssetInput {
+                group_id: None,
+                kind: "ssh".into(),
+                name: "web-01".into(),
+                host: Some("10.0.0.1".into()),
+                port: Some(22),
+                username: Some("root".into()),
+                auth_kind: Some("password".into()),
+                key_path: None,
+                cred_id: None,
+                options_json: "{}".into(),
+                tags: String::new(),
+                note: String::new(),
+                sort: 0,
+            })
+            .await
+            .expect("建资产");
+        let list = store.asset_list(false).await.unwrap();
+        assert_eq!(list[0].id, BUILTIN_LOCAL_ASSET_ID, "当前设备应排在最前");
+    }
+
+    /// 内置资产不可删除 —— 命令层能被脚本/AI 直接调，不能只靠前端藏按钮。
+    #[tokio::test]
+    async fn builtin_cannot_be_deleted() {
+        let store = Store::open_in_memory().await.expect("内存库");
+        store.asset_ensure_builtin_local().await.expect("seed");
+        let err = store
+            .asset_delete(BUILTIN_LOCAL_ASSET_ID)
+            .await
+            .expect_err("必须拒绝");
+        assert_eq!(err.code(), "bad_param");
+        assert!(
+            store.asset_get(BUILTIN_LOCAL_ASSET_ID).await.is_ok(),
+            "还在"
+        );
+    }
+
+    /// 墓碑残留（老版本删过 / 手工改库）要能复活：否则「当前设备」永远消失又占着 ID。
+    #[tokio::test]
+    async fn ensure_builtin_revives_tombstone() {
+        let store = Store::open_in_memory().await.expect("内存库");
+        store.asset_ensure_builtin_local().await.expect("seed");
+        // 绕过 asset_delete 的拒绝，直接造一个墓碑（模拟历史遗留）
+        sqlx::query("UPDATE asset SET deleted_at = 1 WHERE id = ?")
+            .bind(BUILTIN_LOCAL_ASSET_ID)
+            .execute(store.pool())
+            .await
+            .expect("写墓碑");
+        assert!(
+            store.asset_list(false).await.unwrap().is_empty(),
+            "墓碑不该出现在列表里"
+        );
+
+        let back = store.asset_ensure_builtin_local().await.expect("复活");
+        assert!(back.deleted_at.is_none(), "应已复活");
+        assert_eq!(store.asset_list(false).await.unwrap().len(), 1);
+    }
 }

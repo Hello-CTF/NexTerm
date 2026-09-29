@@ -739,13 +739,14 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         authKind: (a.authKind as string | null) ?? "password",
         keyPath: (a.keyPath as string | null) ?? null,
         credId: (a.credId as string | null) ?? null,
-        options: {},
+        options: (a.options as Record<string, unknown> | null) ?? {},
         tags: "",
         note: "",
         sort: 99,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         deletedAt: null,
+        builtin: false,
       };
       assets.push(created);
       return { ...created };
@@ -765,6 +766,9 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "asset_delete": {
       const target = assets.find((x) => x.id === str(a.id));
+      // 与内核一致：内置的「当前设备」拒绝删除（UI 已经不给按钮，
+      // 但演示模式也得守住这条，否则"演示里能删、装上去删不掉"）。
+      if (target?.builtin) throw new Error("「当前设备」是内置资产，不能删除");
       if (target) target.deletedAt = Date.now();
       return null;
     }

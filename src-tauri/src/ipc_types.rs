@@ -46,6 +46,8 @@ pub struct AssetDto {
     pub updated_at: i64,
     #[ts(type = "number | null")]
     pub deleted_at: Option<i64>,
+    /// 内置资产（应用自带的「当前设备」）：前端据此隐藏删除、锁定类型。
+    pub builtin: bool,
 }
 
 impl From<crate::store::AssetRow> for AssetDto {
@@ -68,6 +70,7 @@ impl From<crate::store::AssetRow> for AssetDto {
             created_at: r.created_at,
             updated_at: r.updated_at,
             deleted_at: r.deleted_at,
+            builtin: r.builtin,
         }
     }
 }
@@ -487,5 +490,50 @@ mod export_tests {
         let dto: super::ConversationDto = row.into();
         assert_eq!(dto.scope["scope"]["sessionId"], "s1");
         assert_eq!(dto.title, "看看磁盘");
+    }
+
+    /// 回归：资产也曾直接把 `AssetRow` 丢给前端 —— 序列化出的是 `optionsJson`
+    /// （**字符串**），而前端按 `options`（**对象**）读，于是 `options` 永远是
+    /// undefined。这条链路和 `ai_message` / `audit_log` 是同一个坑，
+    /// 起先是无害的（没人读 options），一旦本地资产要配 shell / 起始目录就立刻致命。
+    ///
+    /// 顺带守住 `builtin`：漏掉它，前端就分不出「当前设备」，会给它一个删除按钮，
+    /// 而内核会拒绝 —— 点了就报错的按钮比没有按钮更糟。
+    #[test]
+    fn asset_dto_unwraps_options_json() {
+        use crate::store::AssetRow;
+        let row = AssetRow {
+            id: "a1".into(),
+            group_id: None,
+            kind: "local".into(),
+            name: "当前设备".into(),
+            host: None,
+            port: None,
+            username: None,
+            auth_kind: None,
+            key_path: None,
+            cred_id: None,
+            options_json: r#"{"shell":"/bin/zsh","cwd":"/tmp"}"#.into(),
+            tags: String::new(),
+            note: String::new(),
+            sort: -1,
+            created_at: 1,
+            updated_at: 2,
+            deleted_at: None,
+            builtin: true,
+        };
+        let dto: super::AssetDto = row.clone().into();
+        assert!(dto.options.is_object(), "options 应是结构而不是字符串");
+        assert_eq!(dto.options["shell"], "/bin/zsh");
+        assert!(dto.builtin, "内置标记必须透传");
+
+        // 坏数据（手动改库/写库失败残留）不整表崩：给空对象
+        let bad = AssetRow {
+            options_json: "not-json{{".into(),
+            ..row
+        };
+        let dto: super::AssetDto = bad.into();
+        assert!(dto.options.is_object());
+        assert_eq!(dto.options.as_object().map(|o| o.len()), Some(0));
     }
 }

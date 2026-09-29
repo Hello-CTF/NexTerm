@@ -25,6 +25,82 @@ impl LocalTransport {
             ),
         }
     }
+
+    /// 在本机起一个**跑指定命令**的 PTY（不是交互 shell）。
+    ///
+    /// 用途：`docker logs -f` / `docker exec -it` 这类「要一个长驻 tty」的通道。
+    /// 以前这些通道只会 `downcast_ref::<SshTransport>()`，本机会话直接撞
+    /// 「该通道需要 SSH 会话」—— 而本机跑着 Docker 恰恰是最常见的场景。
+    ///
+    /// 参数形态与 [`exec`](Self::exec) 保持一致（同一个 shell、同样的 `-lc`
+    /// / `-Command`），这样「终端里能跑的命令，容器面板里也能跑」。
+    pub fn open_command_pty(&self, cmd: &str, cols: u16, rows: u16) -> AppResult<PtyHandle> {
+        let shell = self.shell.clone().unwrap_or_else(default_shell);
+        self.spawn_pty(shell_command_builder(&shell, cmd), cols, rows)
+    }
+
+    /// 建 PTY + 起进程 + 收好三个句柄。`open_pty` 与 `open_command_pty` 共用。
+    ///
+    /// `TERM` / `LANG` 的注入写在这里而不是各写一遍：这两条是「终端里中文
+    /// 不变问号、vim 不变哑终端」的**唯一**来源，漏掉任何一条的症状都很难查
+    /// （只表现为"某些命令看起来不对"）。见 `utf8_locale` 的注释。
+    fn spawn_pty(
+        &self,
+        mut cmd: portable_pty::CommandBuilder,
+        cols: u16,
+        rows: u16,
+    ) -> AppResult<PtyHandle> {
+        let pty_system = portable_pty::native_pty_system();
+        let pair = pty_system
+            .openpty(portable_pty::PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| AppError::Internal(format!("ConPTY 打开失败: {e}")))?;
+        if let Ok(cwd) = self.initial_cwd.lock() {
+            if !cwd.is_empty() {
+                cmd.cwd(cwd.clone());
+            }
+        }
+        // TERM 描述的是**我们提供的这个 pty**（xterm.js，256 色），不是启动 NexTerm
+        // 的那个终端，所以无条件覆盖 —— 宿主若是 `TERM=screen` 的 tmux 里起来的，
+        // 透传下去会让子进程按错误的能力表发序列。
+        // （原先只在 Windows 分支设，Unix 上一直是「没有 TERM」：vim/less 会退化成
+        // 哑终端，`ls` 也不再上色。）
+        cmd.env("TERM", "xterm-256color");
+        if let Some(locale) = utf8_locale() {
+            cmd.env("LANG", locale);
+        }
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| AppError::Internal(format!("shell 启动失败: {e}")))?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| AppError::Internal(format!("PTY reader 失败: {e}")))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| AppError::Internal(format!("PTY writer 失败: {e}")))?;
+        drop(pair.slave);
+        let child = Arc::new(std::sync::Mutex::new(child));
+        let killer = child
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone_killer();
+        Ok(PtyHandle::Local {
+            io: Arc::new(crate::terminal::LocalPtyIo {
+                writer: Arc::new(std::sync::Mutex::new(writer)),
+                master: Arc::new(std::sync::Mutex::new(pair.master)),
+            }),
+            reader,
+            child,
+            killer,
+        })
+    }
 }
 
 impl Default for LocalTransport {
@@ -110,6 +186,27 @@ fn build_shell_command(shell: &str, cmd: &str) -> std::process::Command {
     }
 }
 
+/// `build_shell_command` 的 portable_pty 版本：同一套参数形态，给 PTY 用。
+///
+/// 两处必须保持一致（`-lc` / `-Command`）。不一致的症状很隐蔽：
+/// 同一条命令在终端里能跑、在容器日志面板里报"找不到命令"。
+fn shell_command_builder(shell: &str, cmd: &str) -> portable_pty::CommandBuilder {
+    let mut c = portable_pty::CommandBuilder::new(shell);
+    #[cfg(windows)]
+    {
+        c.arg("-NoLogo");
+        c.arg("-NoProfile");
+        c.arg("-Command");
+        c.arg(cmd);
+    }
+    #[cfg(not(windows))]
+    {
+        c.arg("-lc");
+        c.arg(cmd);
+    }
+    c
+}
+
 fn default_shell() -> String {
     #[cfg(windows)]
     {
@@ -144,58 +241,8 @@ impl Transport for LocalTransport {
     }
 
     async fn open_pty(&self, cols: u16, rows: u16) -> AppResult<PtyHandle> {
-        let pty_system = portable_pty::native_pty_system();
-        let pair = pty_system
-            .openpty(portable_pty::PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| AppError::Internal(format!("ConPTY 打开失败: {e}")))?;
-        let mut cmd =
-            portable_pty::CommandBuilder::new(self.shell.clone().unwrap_or_else(default_shell));
-        if let Ok(cwd) = self.initial_cwd.lock() {
-            if !cwd.is_empty() {
-                cmd.cwd(cwd.clone());
-            }
-        }
-        // TERM 描述的是**我们提供的这个 pty**（xterm.js，256 色），不是启动 NexTerm
-        // 的那个终端，所以无条件覆盖 —— 宿主若是 `TERM=screen` 的 tmux 里起来的，
-        // 透传下去会让子进程按错误的能力表发序列。
-        // （原先只在 Windows 分支设，Unix 上一直是「没有 TERM」：vim/less 会退化成
-        // 哑终端，`ls` 也不再上色。）
-        cmd.env("TERM", "xterm-256color");
-        if let Some(locale) = utf8_locale() {
-            cmd.env("LANG", locale);
-        }
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|e| AppError::Internal(format!("shell 启动失败: {e}")))?;
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| AppError::Internal(format!("PTY reader 失败: {e}")))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|e| AppError::Internal(format!("PTY writer 失败: {e}")))?;
-        drop(pair.slave);
-        let child = Arc::new(std::sync::Mutex::new(child));
-        let killer = child
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone_killer();
-        Ok(PtyHandle::Local {
-            io: Arc::new(crate::terminal::LocalPtyIo {
-                writer: Arc::new(std::sync::Mutex::new(writer)),
-                master: Arc::new(std::sync::Mutex::new(pair.master)),
-            }),
-            reader,
-            child,
-            killer,
-        })
+        let shell = self.shell.clone().unwrap_or_else(default_shell);
+        self.spawn_pty(portable_pty::CommandBuilder::new(shell), cols, rows)
     }
 
     async fn exec(&self, cmd: &str, timeout: Duration) -> AppResult<ExecResult> {
@@ -569,5 +616,58 @@ mod tests {
         // 常量本身别被改坏（改成非 UTF-8 会静默退回 ASCII，
         // 症状只有「中文文件名变问号」，不看终端根本发现不了）
         assert!(UTF8_LOCALE.to_ascii_uppercase().contains("UTF-8"));
+    }
+
+    /// 命令 PTY 必须真能跑命令并回吐输出。
+    ///
+    /// 这是本机会话上 `docker logs -f` / `docker exec -it` 的底座：以前这两条
+    /// 通道只认 SSH，本机会话一律「该通道需要 SSH 会话」。
+    ///
+    /// 只跑在 Unix：夹具用的是 `printf`，Windows 的 shell 是 PowerShell，
+    /// 写法完全不同 —— 用 `cfg` 收窄而不是写死 Unix 命令让对侧必红。
+    #[cfg(unix)]
+    #[test]
+    fn command_pty_runs_and_produces_output() {
+        use std::io::Read;
+        let t = LocalTransport::new();
+        let handle = t
+            .open_command_pty("printf 'nx-pty-ok\\n'", 80, 24)
+            .expect("开命令 PTY");
+        let PtyHandle::Local {
+            // 名字故意不是 `_`：`_` 会立刻析构，master 一掉子进程就收 SIGHUP，
+            // 输出还没读到就读不到了（这是本用例最容易踩的坑）。
+            io: _io,
+            reader,
+            child,
+            mut killer,
+        } = handle
+        else {
+            panic!("本地传输必须返回 Local 句柄");
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut r = reader;
+            let mut buf = [0u8; 4096];
+            let mut acc = String::new();
+            while let Ok(n) = r.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if acc.contains("nx-pty-ok") {
+                    break;
+                }
+            }
+            let _ = tx.send(acc);
+        });
+        let got = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("10s 内应拿到命令输出");
+        assert!(got.contains("nx-pty-ok"), "实拿输出：{got:?}");
+
+        let _ = killer.kill();
+        let mut c = child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = c.wait();
     }
 }
