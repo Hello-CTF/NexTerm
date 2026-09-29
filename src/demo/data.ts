@@ -211,6 +211,11 @@ export const containers: DemoContainer[] = [
 ];
 
 export const images: DemoImage[] = [
+  // 同一个 image ID 挂两个 repository —— 这是 `docker images` 的真实形状
+  // （本地 tag + 镜像站 tag 指向同一层）。用来守住「镜像列表的 key 必须唯一」：
+  // 以前拿 id 当 key，这里必然重复，React 的协调会与真实 DOM 失同步 → 残影/重复行。
+  { id: "sha256:7dcddc01f13b", repository: "mysql", tag: "8.0", size: "1.09GB", createdSince: "4 months ago" },
+  { id: "sha256:7dcddc01f13b", repository: "docker.m.daocloud.io/library/mysql", tag: "8.0", size: "1.09GB", createdSince: "4 months ago" },
   { id: "sha256:1a2b3c4d", repository: "nexterm/api", tag: "2.4.1", size: "212MB", createdSince: "3 days ago" },
   { id: "sha256:2b3c4d5e", repository: "mysql", tag: "8.0", size: "591MB", createdSince: "2 weeks ago" },
   { id: "sha256:3c4d5e6f", repository: "redis", tag: "7-alpine", size: "41.2MB", createdSince: "5 weeks ago" },
