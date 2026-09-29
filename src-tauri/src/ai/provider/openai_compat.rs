@@ -164,6 +164,46 @@ pub enum StreamItem {
     },
 }
 
+/// 这个厂商要不要显式要求「工具参数逐分片下发」？
+///
+/// **这是 2026-09-30 那次「写文件时界面像卡死」的第二个成因，也是最硬的那个。**
+/// 实测（`open.bigmodel.cn` + `glm-5.3-flash`，同一份「写 60 行文件」的请求）：
+///
+/// | 请求 | `delta.tool_calls` 出现次数 | `function.arguments` |
+/// |---|---|---|
+/// | 只有 `stream:true` | **1** | 1963 字节，**整块** |
+/// | 再加 `tool_stream:true` | **494** | 每片 1–11 字节，逐 token |
+///
+/// 也就是说智谱默认先把**整份文件内容**在自己那边生成完，才朝客户端吐第一个
+/// 字节。这几十秒里客户端**物理上收不到任何东西** —— 上面那个
+/// `StreamItem::ToolArgs` 再怎么写也没用，它等不到分片。所以「进度条不亮」
+/// 不能只靠解析层解决，必须在请求上把这个开关打开。
+///
+/// 为什么不一视同仁地加：`tool_stream` **不是** OpenAI 协议字段。OpenAI /
+/// DeepSeek 本身就逐分片下发，凭空多一个未知字段有被 400 挡掉的风险，所以
+/// 按 host 严格限定，宁可少加也不要为一家去赌其他家。
+fn wants_tool_stream(base_url: &str) -> bool {
+    let host = host_of(base_url);
+    host.contains("bigmodel.cn")
+        || host.contains("zhipuai")
+        || host == "z.ai"
+        || host.ends_with(".z.ai")
+}
+
+/// 取 URL 的 host，小写、不含端口。
+///
+/// 不直接对整串 `contains`：`https://example.com/z.ai/v1` 这种把关键字写在
+/// **路径**里的地址会被误判成智谱，然后带着一个它不认识的字段去吃 400。
+fn host_of(url: &str) -> String {
+    url.split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
 pub struct LlmClient {
     http: reqwest::Client,
     pub cfg: ProviderConfig,
@@ -222,12 +262,10 @@ impl LlmClient {
         self.chat_block(messages, tools).await
     }
 
-    async fn try_stream(
-        &self,
-        messages: &[ChatMessage],
-        tools: &[ToolSchema],
-        on_item: &mut impl FnMut(StreamItem),
-    ) -> AppResult<Completion> {
+    /// 流式请求体。抽成独立方法是为了**能在测试里断言真的带上了 `tool_stream`**：
+    /// 只测 `wants_tool_stream` 那个布尔判断，证明不了它被用上 —— 判断对了、
+    /// 但没写进 body，测试照样绿，线上照样卡。
+    fn stream_body(&self, messages: &[ChatMessage], tools: &[ToolSchema]) -> serde_json::Value {
         let mut body = serde_json::json!({
             "model": self.cfg.model,
             "messages": messages,
@@ -237,7 +275,21 @@ impl LlmClient {
         });
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(tools.iter().map(|t| t.to_wire()).collect());
+            // 没有工具的一轮不需要它，也省得往纯聊天请求里塞厂商私货
+            if wants_tool_stream(&self.cfg.base_url) {
+                body["tool_stream"] = serde_json::Value::Bool(true);
+            }
         }
+        body
+    }
+
+    async fn try_stream(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolSchema],
+        on_item: &mut impl FnMut(StreamItem),
+    ) -> AppResult<Completion> {
+        let body = self.stream_body(messages, tools);
         let resp = self
             .http
             .post(self.url("/chat/completions"))
@@ -650,5 +702,86 @@ mod tests {
         );
         assert_eq!(completion.content, "好的，我来");
         assert_eq!(completion.tokens_in, 10);
+    }
+
+    /// `tool_stream` 只发给确实认它的厂商。
+    ///
+    /// 这不是「多一个字段也无所谓」的场景：字段不认识时，网关的常见反应是
+    /// **400 + 整轮失败**，而这里加错的代价是「所有对话都用不了」。所以除了
+    /// 正向（智谱要是），更要守住反向（别家一个都不许带）。
+    #[test]
+    fn tool_stream_is_asked_for_only_where_it_exists() {
+        // 该要的
+        for u in [
+            "https://open.bigmodel.cn/api/paas/v4",
+            "https://bigmodel.cn/api/paas/v4",
+            "https://open.bigmodel.cn:443/api/paas/v4",
+            "https://api.zhipuai.cn/v1",
+            "https://api.z.ai/api/paas/v4",
+            "https://Z.AI/api/paas/v4",
+        ] {
+            assert!(wants_tool_stream(u), "漏了该带 tool_stream 的端点：{u}");
+        }
+        // 不该要的
+        for u in [
+            "https://api.deepseek.com/v1",
+            "https://api.openai.com/v1",
+            "http://127.0.0.1:8888/v1",
+            "https://my-gateway.example.com/v1", // 自建网关：未知即不带
+        ] {
+            assert!(!wants_tool_stream(u), "给不该带的端点加了 tool_stream：{u}");
+        }
+        // 关键字出现在**路径**里不算 —— 否则一个自建网关换个前缀就被判成智谱，
+        // 然后带着它不认识的字段去吃 400。
+        assert!(
+            !wants_tool_stream("https://my-gateway.example.com/proxy/bigmodel.cn/v1"),
+            "把路径里的关键字当成了 host"
+        );
+    }
+
+    /// 判断对了还得**真的写进请求体**，否则测试全绿、线上照卡。
+    ///
+    /// 这条直接把 `stream_body` 的产物摊开断言，盖住「判断函数接对了、但
+    /// 忘了赋值」这种最容易漏的中间环节。
+    #[test]
+    fn stream_body_carries_tool_stream_only_for_zhipu_and_only_with_tools() {
+        let tools = vec![ToolSchema {
+            name: "write_file".into(),
+            description: "写文件".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }];
+        let msgs = vec![ChatMessage::user("写个文件")];
+
+        let client = |base: &str| {
+            LlmClient::new(ProviderConfig {
+                base_url: base.into(),
+                model: "m".into(),
+                ..Default::default()
+            })
+            .expect("构建 HTTP 客户端不该联网")
+        };
+
+        let zhipu = client("https://open.bigmodel.cn/api/paas/v4");
+        let ds = client("https://api.deepseek.com/v1");
+
+        let z = zhipu.stream_body(&msgs, &tools);
+        assert_eq!(
+            z.get("tool_stream").and_then(|v| v.as_bool()),
+            Some(true),
+            "智谱这一轮必须带上 tool_stream，否则参数整块下发、进度条永远不会亮：{z}"
+        );
+
+        let d = ds.stream_body(&msgs, &tools);
+        assert!(
+            d.get("tool_stream").is_none(),
+            "DeepSeek 不该收到这个厂商私有字段：{d}"
+        );
+
+        // 纯聊天（没有工具）：连智谱也不用带，别去污染最常见的那一轮
+        let plain = zhipu.stream_body(&msgs, &[]);
+        assert!(
+            plain.get("tool_stream").is_none(),
+            "没有工具的一轮不该带 tool_stream：{plain}"
+        );
     }
 }
