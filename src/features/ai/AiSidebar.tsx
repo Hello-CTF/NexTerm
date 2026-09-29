@@ -415,8 +415,21 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   };
 
   const confirm = async (decision: "allow" | "allow_session" | "deny") => {
-    if (!jobId) return;
-    await aiApi.confirm(jobId, decision);
+    // 极短窗口：确认卡片可能先于 `ai_chat` 把 jobId 回填过来就渲染出来。
+    // 静默 return 会让人以为按钮坏了（2026-09-29 真机：写文件卡片一直转圈、
+    // 点「允许」毫无反应），所以这里必须说一句话。
+    if (!jobId) {
+      pushToast("info", "这一轮还没启动完，稍等一下再点");
+      return;
+    }
+    try {
+      await aiApi.confirm(jobId, decision);
+    } catch (e) {
+      // 送不出去就明说，并保留卡片让用户能重试 —— 静默吞掉会退化成
+      // 「点了没反应、卡片一直转圈」，正是这次要根治的症状之一。
+      pushToast("error", `确认失败：${describeError(e)}`);
+      return;
+    }
     setConfirmCard(null);
   };
 

@@ -229,6 +229,22 @@ impl AiJob {
     }
 
     /// 等待用户确认（任务取消 → Deny）。
+    ///
+    /// ⚠️ 下面「先取决定、再复位槽位」这两步**必须分成两条语句**，不能合成
+    /// `if let Some(d) = *rx.borrow_and_update() { … send(None) … }`。
+    ///
+    /// `borrow_and_update()` 返回的 `Ref` 握着 watch 内部那把 **`std::sync::RwLock`**
+    /// 的读锁（`tokio::loom::sync::RwLock` 在非 loom 构建下就是 std 的），
+    /// 而 `if let` 的临时量会活到**整个 `if let` 表达式结束**（`then` 块内仍然活着，
+    /// 两个版次都是如此 —— 版次 2024 只改了 `else` 分支的时机）。
+    /// 于是块里那句 `send(None)` 就成了「自己握着读锁、再去要同一把锁的写锁」：
+    /// std 的 `RwLock` 不可重入，当场自死锁，且**读锁永不释放**，
+    /// 后续任何 `send`（`ai_confirm` / `ai_cancel`）都会排队等在这把锁上一起堵死。
+    ///
+    /// 真机症状（2026-09-29 采样确认，见 `docs/`）：第一次需要用户确认的工具
+    /// （如 `write_file`）卡片永远转圈、文件根本没落盘、停止按钮点了没反应、
+    /// 继续提问也不再有回复 —— 因为确认链上的线程全堵在这把锁上。
+    /// 回归测试：`wait_confirm_resets_slot_without_holding_read_guard`。
     pub async fn wait_confirm(&self) -> ConfirmDecision {
         let mut rx = self.confirm.1.clone();
         loop {
@@ -238,7 +254,10 @@ impl AiJob {
                     if changed.is_err() {
                         return ConfirmDecision::Deny;
                     }
-                    if let Some(d) = *rx.borrow_and_update() {
+                    // 单独一条语句取值：临时 `Ref` 在本语句结束就释放读锁，
+                    // 下一句 `send(None)` 才拿得到写锁。
+                    let decision = *rx.borrow_and_update();
+                    if let Some(d) = decision {
                         let _ = self.confirm.0.send(None);
                         return d;
                     }
@@ -437,5 +456,53 @@ mod tests {
             "这些字段名前端读不到（枚举上的 rename_all 只管 variant 名，\
              变体内部要自己再写一次）：{offenders:?}"
         );
+    }
+
+    /// 守 `wait_confirm` 的自死锁：读到决定后要把槽位复位（`send(None)`），
+    /// 但**不能在自己还握着读锁的时候去要写锁**。
+    ///
+    /// `rx.borrow_and_update()` 返回的 `Ref` 持着 watch 内部那把
+    /// `std::sync::RwLock` 的**读锁**；edition 2021 下 `if let` 的临时量活到整个
+    /// 块结束，所以原先写成
+    ///
+    /// ```ignore
+    /// if let Some(d) = *rx.borrow_and_update() { self.confirm.0.send(None); return d; }
+    /// ```
+    ///
+    /// 就是「自己握着读锁，再去要同一把锁的写锁」—— `std::sync::RwLock` 不可重入，
+    /// 当场死锁。真机症状（2026-09-29 实机采样确认，见 `docs/`）：第一次需要用户
+    /// 确认的工具（如 `write_file`）卡片永远转圈、文件根本没写、停止按钮点了没反应，
+    /// 之后继续提问也不再有回复 —— 因为整条确认链上所有线程都堵在这把锁上。
+    ///
+    /// 这里**不用 `tokio::time::timeout`**：死锁是线程级阻塞，同一条任务被卡住时
+    /// 定时器没法在同一 worker 上开火；改用一个纯 std 线程 + `recv_timeout`，
+    /// 无论卡多久都能把「超时」变成一次明确的断言失败。
+    #[test]
+    fn wait_confirm_resets_slot_without_holding_read_guard() {
+        let job = Arc::new(AiJob::new("t-wait-confirm"));
+        // 先投一个决定进去，让 wait_confirm 走「读到值 → 复位槽位 → 返回」这条路。
+        job.confirm
+            .0
+            .send(Some(ConfirmDecision::Allow))
+            .expect("watch 送达决定");
+
+        let j = Arc::clone(&job);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("建测试运行时");
+            let _ = tx.send(rt.block_on(j.wait_confirm()));
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(d) => assert_eq!(d, ConfirmDecision::Allow),
+            Err(_) => {
+                panic!("wait_confirm 卡死了：确认槽位复位时自己握着读锁又要写锁（见本测试注释）")
+            }
+        }
+        // 复位必须真的发生：否则下一轮等待会被上一轮的决定直接放行。
+        assert_eq!(*job.confirm.1.borrow(), None, "决定被读到后槽位要回到 None");
     }
 }
