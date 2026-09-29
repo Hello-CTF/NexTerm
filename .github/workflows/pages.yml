@@ -22,7 +22,9 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # 与 ci.yml / release.yml / 锁文件保持同一口径（原为 9，与 pnpm-workspace.yaml
+          # 里按 pnpm 11 写的依赖构建白名单对不上）。
+          version: 11
 
       - uses: actions/setup-node@v4
         with:

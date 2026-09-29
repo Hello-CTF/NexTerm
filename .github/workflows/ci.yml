@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    # 仓库默认分支是 **master**。这里原本只写了 `main`，于是往 master push
+    # 从来不触发 CI —— 双平台质量门形同虚设（本地却能全绿，最容易骗过自己）。
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: ${{ matrix.os }} · 质量门
+    strategy:
+      fail-fast: false
+      matrix:
+        # 双平台同跑：Windows 是既有基线，macOS 是适配目标；
+        # 任何一侧红了都不许合 —— 防跨平台改动误伤另一侧。
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # 与本地/锁文件口径一致（仓库里已按 pnpm 11 的 pnpm-workspace.yaml 配置
+          # 依赖构建白名单，详见该文件注释）。原来钉在 9，和 pnpm-workspace.yaml
+          # 里那套配置根本对不上。
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: Rust 格式检查
+        run: cargo fmt --all --check
+        working-directory: src-tauri
+
+      - name: Rust 静态检查（clippy -D warnings）
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
+
+      - name: Rust 测试
+        run: cargo test --workspace
+        working-directory: src-tauri
+        env:
+          # macOS：真钥匙串往返测试（写登录钥匙串并清理；GitHub runner 会话可用）
+          NEXTERM_TEST_KEYCHAIN: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+
+      - name: 前端类型检查
+        run: pnpm typecheck
+
+      - name: 前端 Lint
+        run: pnpm lint

@@ -1,0 +1,70 @@
+name: Release
+
+# 打 `v*` tag 即出安装包并挂到 Release。
+#
+# 为什么必须在 CI 里出包：**Tauri 不能跨平台打包** —— NSIS 只能在 Windows 出，
+# .app/.dmg 只能在 macOS 出。一台机器出一个平台，用矩阵各出一份。
+on:
+  push:
+    tags: ["v*"]
+# 刻意不挂 workflow_dispatch：手动触发时 github.ref_name 是**分支名**而不是 tag，
+# tauri-action 会照着分支名去建 Release。要试流水线就推一个预发布 tag（如 v0.1.2-rc1）。
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: ${{ matrix.os }} · 出包
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            # 平台覆盖文件 tauri.macos.conf.json 会自动合并（app + dmg + icon.icns）。
+            args: "--bundles app,dmg"
+          - os: windows-latest
+            # tauri.conf.json 的基线 targets 就是 nsis + icon.ico。
+            args: "--bundles nsis"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "NexTerm ${{ github.ref_name }}"
+          releaseBody: |
+            **macOS**：`*_aarch64.dmg`（Apple Silicon）
+            **Windows**：`*_x64-setup.exe`（NSIS 安装器）
+
+            > macOS 包为 ad-hoc 签名、未公证。首次打开若被 Gatekeeper 拦下，
+            > 右键 →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。
+          # 先出草稿：产物齐了、检查过再点 Publish，避免半成品直接对用户可见。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
