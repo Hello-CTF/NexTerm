@@ -10,6 +10,10 @@ src-tauri/gen/schemas
 *.log
 .DS_Store
 
+# pnpm 写 store 时的硬链接中间产物（0 字节、链接数 2），正常应自删；
+# 构建被打断时会滞留在项目根，不该进版本控制。同 inode 的兄弟在 ~/Library/pnpm/_tmp_*/。
+_tmp_*
+
 # 构建校验输出目录
 .buildcheck
 
