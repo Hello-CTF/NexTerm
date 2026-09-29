@@ -224,6 +224,42 @@ pnpm tauri build --bundles app        # 只出 .app（跳过后面的 dmg 步骤
 需要右键「打开」或 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。
 要免掉这一步，得有 Apple Developer 证书 + `notarize` 配置，目前没有。
 
+### 6.3 推送 workflow 文件需要 `workflow` scope（踩过一次）
+
+`.github/workflows/*` 是**受保护路径**：用 OAuth App token 推送会**被 GitHub 拒收整个 ref**，
+不是只跳过那几个文件。`master` 和 tag 都一样：
+
+```
+! [remote rejected] master -> master (refusing to allow an OAuth App to
+  create or update workflow `.github/workflows/ci.yml` without `workflow` scope)
+! [remote rejected] v0.1.2 -> v0.1.2 (同上)
+```
+
+关键区别，**别搞混**：
+
+| 命令 | 行为 | 结果 |
+|---|---|---|
+| `gh auth login` | 重开一份授权 | scope 回到默认的 `repo` / `read:org` / `gist` —— **没有 `workflow`** |
+| `gh auth refresh -s workflow` | 在现有 token 上**补** scope | 变成 `repo, read:org, gist, workflow`，原授权不丢 |
+
+查当前 token 的真实 scope（本地缓存可能骗你，直接问 API 最准）：
+
+```bash
+gh api -i user | grep -i '^x-oauth-scopes:'
+# → X-Oauth-Scopes: gist, read:org, repo, workflow
+```
+
+`gh auth refresh` 走 OAuth device flow，需要人参与（**不能用非交互 shell 代跑**）：
+
+```
+! First copy your one-time code: XXXX-XXXX
+Open this URL to continue in your web browser: https://github.com/login/device
+✓ Authentication complete.
+```
+
+> 如果 CI 因为这条挂掉，症状是 push 直接被拒（本地 `git log` 与远端不一致），
+> 而不是 Actions 页面报红 —— 容易误判成「代码有问题」。先查 scope。
+
 ---
 
 ## 7. 已知缺口（未处理，按优先级）
