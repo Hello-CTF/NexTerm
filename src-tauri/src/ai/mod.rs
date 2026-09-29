@@ -477,32 +477,100 @@ mod tests {
     /// 这里**不用 `tokio::time::timeout`**：死锁是线程级阻塞，同一条任务被卡住时
     /// 定时器没法在同一 worker 上开火；改用一个纯 std 线程 + `recv_timeout`，
     /// 无论卡多久都能把「超时」变成一次明确的断言失败。
-    #[test]
-    fn wait_confirm_resets_slot_without_holding_read_guard() {
-        let job = Arc::new(AiJob::new("t-wait-confirm"));
-        // 先投一个决定进去，让 wait_confirm 走「读到值 → 复位槽位 → 返回」这条路。
-        job.confirm
-            .0
-            .send(Some(ConfirmDecision::Allow))
-            .expect("watch 送达决定");
-
-        let j = Arc::clone(&job);
+    /// 在**独立 std 线程**上跑 `wait_confirm`，5s 内拿不到结果就判失败。
+    ///
+    /// 必须用 std 线程 + `recv_timeout`，**不能用 `tokio::time::timeout`**：
+    /// `wait_confirm` 里的死锁是**线程级阻塞**（`std::sync::RwLock` 不可重入，
+    /// 堵的是 OS 线程不是 future），同一条任务被卡住时定时器没法在同一个 worker
+    /// 上开火 —— 用例会静默挂死而不是明确失败，那正是「看起来跑过了」的假绿。
+    fn wait_confirm_or_fail(job: Arc<AiJob>) -> ConfirmDecision {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("建测试运行时");
-            let _ = tx.send(rt.block_on(j.wait_confirm()));
+            let _ = tx.send(rt.block_on(job.wait_confirm()));
         });
-
         match rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(d) => assert_eq!(d, ConfirmDecision::Allow),
-            Err(_) => {
-                panic!("wait_confirm 卡死了：确认槽位复位时自己握着读锁又要写锁（见本测试注释）")
-            }
+            Ok(d) => d,
+            Err(_) => panic!("wait_confirm 卡死了（见本文件 wait_confirm 上的 ⚠️ 注释）"),
         }
+    }
+
+    /// 单轮：读到决定后槽位要复位。
+    ///
+    /// 复位那句 `confirm.0.send(None)` 正是原先自死锁的地方 —— 它要写锁，
+    /// 而 `if let Some(d) = *rx.borrow_and_update()` 的临时 `Ref` 还握着读锁。
+    /// 修好后这句必须真的被执行到。
+    #[test]
+    fn wait_confirm_resets_slot_without_holding_read_guard() {
+        // `AiJob::new` 本身已经返回 `Arc<Self>`，不要再套一层 `Arc::new`。
+        let job = AiJob::new("t-wait-confirm");
+        // 先投一个决定进去，让 wait_confirm 走「读到值 → 复位槽位 → 返回」这条路。
+        job.confirm
+            .0
+            .send(Some(ConfirmDecision::Allow))
+            .expect("watch 送达决定");
+
+        assert_eq!(
+            wait_confirm_or_fail(Arc::clone(&job)),
+            ConfirmDecision::Allow
+        );
         // 复位必须真的发生：否则下一轮等待会被上一轮的决定直接放行。
         assert_eq!(*job.confirm.1.borrow(), None, "决定被读到后槽位要回到 None");
+    }
+
+    /// 多轮：这正是真机症状 3 的形状（第一轮卡死之后，后续每一轮都跟着卡）。
+    ///
+    /// 连续三轮「等确认 → 外部投决定」，每轮都必须能独立返回。只要槽位复位
+    /// 那句拿不到写锁，第二轮就会挂死 —— 真机上就是「继续提问也不再有回复」。
+    #[tokio::test]
+    async fn confirm_roundtrip_survives_multiple_turns() {
+        let rt = AiRuntime::new(ProviderConfig::default());
+        let job = AiJob::new("t-multi-turn");
+        rt.register_job(Arc::clone(&job)).await;
+
+        for turn in 0..3 {
+            let j = Arc::clone(&job);
+            let waiting = tokio::task::spawn_blocking(move || wait_confirm_or_fail(j));
+            // 先让 wait_confirm 挂上去，再投决定 —— 避免它只是「读到上一轮残留值」。
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            rt.send_confirm("t-multi-turn", ConfirmDecision::AllowSession)
+                .await
+                .expect("投决定");
+            assert_eq!(
+                waiting.await.expect("等待任务不该 panic"),
+                ConfirmDecision::AllowSession,
+                "第 {turn} 轮确认没有正常返回"
+            );
+            assert_eq!(
+                *job.confirm.1.borrow(),
+                None,
+                "第 {turn} 轮之后槽位没复位 —— 下一轮会被上一轮的决定直接放行"
+            );
+        }
+    }
+
+    /// 症状 2：停止按钮。`cancel_job` 也必须能把等待中的确认链解开。
+    ///
+    /// 它内部走的同样是 `confirm.0.send(...)` —— 一旦读锁被永久占住，
+    /// 这条命令自己也会堵死，界面上就是「点了停止没反应」。
+    #[tokio::test]
+    async fn cancel_job_unblocks_wait_confirm() {
+        let rt = AiRuntime::new(ProviderConfig::default());
+        let job = AiJob::new("t-cancel");
+        rt.register_job(Arc::clone(&job)).await;
+
+        let j = Arc::clone(&job);
+        let waiting = tokio::task::spawn_blocking(move || wait_confirm_or_fail(j));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        rt.cancel_job("t-cancel").await.expect("取消任务");
+        assert_eq!(
+            waiting.await.expect("等待任务不该 panic"),
+            ConfirmDecision::Deny,
+            "取消之后 wait_confirm 必须返回 Deny"
+        );
     }
 }
