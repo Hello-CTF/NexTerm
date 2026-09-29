@@ -14,7 +14,7 @@ use super::guard::{self, Risk};
 use super::provider::{ChatMessage, LlmClient};
 use super::tools;
 use super::usage::Usage;
-use super::{AiEvent, AiJob, AiScope, ConfirmDecision};
+use super::{AiEvent, AiJob, AiScope, ConfirmDecision, FilePreview};
 
 const MAX_TURNS: u32 = 24;
 
@@ -277,6 +277,12 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                     guard::Decision::Ask => {
                         let kind_allowed = session_allows(&job, ruling.kind).await;
                         if !kind_allowed {
+                            // 改动预览只在这个分支里算：本会话已放行同类时卡片
+                            // 根本不出现，白读一次文件。
+                            let preview = preview_change(state, &scope, &call.function.name, &args)
+                                .await
+                                .as_ref()
+                                .and_then(ChangePreview::frontend_preview);
                             let _ = channel.send(AiEvent::ConfirmRequired {
                                 id: call.id.clone(),
                                 tool: call.function.name.clone(),
@@ -290,6 +296,8 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                                     "{} {}\n{}",
                                     call.function.name, call.function.arguments, ruling.reason
                                 ),
+                                reason: ruling.reason.clone(),
+                                preview,
                             });
                             match job.wait_confirm().await {
                                 ConfirmDecision::Allow => {}
@@ -413,10 +421,10 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
     Ok(())
 }
 
-/// 执行工具；若是写文件类且内容确实变了，补推一条「变更记录」。
+/// 执行工具；若是写文件类，补推一条「变更记录」。
 ///
-/// `before` 在执行**前**读。读不到（不存在 / 无权限 / 不是文本）就当没有 before ——
-/// 那种情况本来也生成不出有意义的 diff，硬凑一个只会误导用户。
+/// 取数一律在**工具执行前**完成：写完之后再读，读到的就是 after，
+/// 前后对照永远为空 —— 这正是本函数存在的全部理由。
 async fn execute_with_diff(
     state: &AppState,
     scope: &AiScope,
@@ -425,43 +433,222 @@ async fn execute_with_diff(
     args: &serde_json::Value,
     channel: &Channel<AiEvent>,
 ) -> tools::ToolOutput {
-    let target = if matches!(call.function.name.as_str(), "write_file" | "edit_file") {
-        args.get("path")
-            .and_then(|p| p.as_str())
-            .map(str::to_string)
-    } else {
-        None
-    };
-    let before = match &target {
-        Some(p) => read_text(state, scope, p).await,
-        None => None,
-    };
+    let planned = preview_change(state, scope, &call.function.name, args).await;
 
     let outcome = tools::execute(state, scope, job, &call.function.name, args).await;
 
-    if let (Some(p), Some(before)) = (target, before) {
-        if let Some(after) = read_text(state, scope, &p).await {
-            // 只推真正的变更：把同样的内容重写一遍不算
-            if after != before {
-                let _ = channel.send(AiEvent::FileChange {
-                    id: call.id.clone(),
-                    path: p,
-                    before,
-                    after,
-                });
-            }
+    if let Some(pv) = planned {
+        // 改后内容以**执行后重读**为准：那是真实落盘结果，比我们的预测可靠
+        // （工具可能做了没预料到的事）。重读不出来时退回预测值 ——
+        // 有它就不至于让整张「变更记录」凭空消失。
+        let after = match read_before(state, scope, &pv.path).await {
+            BeforeText::Text(t) => Some(t),
+            _ => pv.after.clone(),
+        };
+        let path = pv.path.clone();
+        if let Some((before, after)) = change_record(pv.before.clone(), after) {
+            let _ = channel.send(AiEvent::FileChange {
+                id: call.id.clone(),
+                path,
+                before,
+                after,
+            });
         }
     }
     outcome
 }
 
-/// 读远端文件为文本（变更记录用）。二进制 / 无权限一律 None。
-async fn read_text(state: &AppState, scope: &AiScope, path: &str) -> Option<String> {
-    let sid = scope.session_id.as_deref()?;
-    let session = state.sessions.get(sid).await.ok()?;
-    let fs = session.transport().await.fs().await.ok()?;
-    let bytes = fs.read_file(path, 1024 * 1024).await.ok()?;
-    String::from_utf8(bytes).ok()
+/* ── 写文件类工具的「前后对照」────────────────────────────────────────
+确认前的预览与执行后的变更记录共用同一份取数逻辑：两处都要求"改动一目了然"，
+却各自读一次文件的话，早晚会走偏成两套判定。 */
+
+/// 前后对照的读取上限。挡的是「把一个 4GB 的日志读进内存」，与渲染无关。
+const MAX_DIFF_BYTES: u64 = 1024 * 1024;
+
+/// 送进**确认卡片**的那对前后文本总长上限。
+///
+/// 比 `MAX_DIFF_BYTES` 小一档：这一对要在用户按下「允许」**之前**走完 IPC 并渲染，
+/// 而没人会去读一张 2MB 的 diff。超限就给不出预览，退回展示原始参数
+/// （原始参数里本来就带着全文，所以是"少了个视图"，不是"少了信息"）。
+const MAX_PREVIEW_BYTES: usize = 512 * 1024;
+
+/// 写文件类工具：只有这两个会改文件内容。
+fn is_write_tool(name: &str) -> bool {
+    matches!(name, "write_file" | "edit_file")
+}
+
+/// 执行前对目标文件的了解程度。
+///
+/// 刻成三态而不是 `Option<String>`：**「文件不存在」和「存在但读不出」必须分开**。
+/// 以前这两者被一视同仁地当成 `None`，配合 `if let (Some(_), Some(before))`
+/// 直接把新建文件（AI 写文件最常见的形态）的变更记录整条丢掉 ——
+/// 界面上写完文件什么都不发生，README 承诺的「每次写文件生成修改前后 diff」
+/// 对新建文件根本不成立。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BeforeText {
+    /// 执行前文件不存在 ⇒ 这是一次新建，`before` 按空串算（diff 全是新增）。
+    Missing,
+    /// 读到了文本，这是执行前的内容。
+    Text(String),
+    /// 存在但读不出文本（二进制 / 超过读取上限 / 无权限）。
+    Unreadable,
+}
+
+/// 一次写文件类调用的改动预览。
+#[derive(Debug, Clone)]
+struct ChangePreview {
+    path: String,
+    before: BeforeText,
+    /// 预测的执行后内容；算不出来 = `None`（`edit_file` 匹配不上等）。
+    after: Option<String>,
+}
+
+impl ChangePreview {
+    fn is_create(&self) -> bool {
+        matches!(self.before, BeforeText::Missing)
+    }
+
+    fn before_text(&self) -> Option<String> {
+        match &self.before {
+            BeforeText::Missing => Some(String::new()),
+            BeforeText::Text(t) => Some(t.clone()),
+            BeforeText::Unreadable => None,
+        }
+    }
+
+    /// 送进确认卡片的前后对照。给不出确切对照就返回 `None`。
+    fn frontend_preview(&self) -> Option<FilePreview> {
+        let before = self.before_text()?;
+        let after = self.after.clone()?;
+        // 前后一模一样就不给预览：卡片上会渲染成"一段没变的内容"，
+        // 比直接摆原始参数更让人困惑。
+        if after == before {
+            return None;
+        }
+        if before.len() + after.len() > MAX_PREVIEW_BYTES {
+            return None;
+        }
+        Some(FilePreview {
+            path: self.path.clone(),
+            before,
+            after,
+            kind: if self.is_create() { "create" } else { "modify" }.into(),
+        })
+    }
+}
+
+/// 执行**前**读目标文件。
+///
+/// 必须在工具之前调用，理由见 `execute_with_diff`。
+async fn read_before(state: &AppState, scope: &AiScope, path: &str) -> BeforeText {
+    let Some(sid) = scope.session_id.as_deref() else {
+        return BeforeText::Unreadable;
+    };
+    let Ok(session) = state.sessions.get(sid).await else {
+        return BeforeText::Unreadable;
+    };
+    let Ok(fs) = session.transport().await.fs().await else {
+        return BeforeText::Unreadable;
+    };
+
+    // 先问"在不在"，再读。不靠 read_file 的错误类型去反推 ENOENT：
+    // 那等于把各 Transport 的实现细节焊进来（本地是 Io(NotFound)，
+    // SFTP / WinRM 未必），换一种连接方式判定就会静默失效。
+    match fs.exists(path).await {
+        Ok(true) => {}
+        Ok(false) => return BeforeText::Missing,
+        // 连"在不在"都问不出来（断线 / 无权限）：不猜。
+        Err(_) => return BeforeText::Unreadable,
+    }
+
+    match fs.read_file(path, MAX_DIFF_BYTES).await {
+        // 非 UTF-8 就是二进制，生成不了文本 diff。
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(t) => BeforeText::Text(t),
+            Err(_) => BeforeText::Unreadable,
+        },
+        Err(_) => BeforeText::Unreadable,
+    }
+}
+
+/// 算出一次写文件类调用的改动预览。
+///
+/// 非写文件类工具、缺 `path`、或拿不到可信的前后内容 ⇒ `None`。
+async fn preview_change(
+    state: &AppState,
+    scope: &AiScope,
+    name: &str,
+    args: &serde_json::Value,
+) -> Option<ChangePreview> {
+    if !is_write_tool(name) {
+        return None;
+    }
+    let path = args.get("path").and_then(|v| v.as_str())?.to_string();
+    let before = read_before(state, scope, &path).await;
+    let after = planned_after(name, args, &before);
+    Some(ChangePreview {
+        path,
+        before,
+        after,
+    })
+}
+
+/// 从工具参数算出「预测的改后内容」（纯函数，单独测）。
+///
+/// 抽出来只为一件事：这条判定必须和 `edit_file` 执行时的判定是同一套
+/// —— 都走 `tools::edit::apply_edit`。各写一份的话，预览和真实结果
+/// 迟早会说的是两回事，而用户正是照着预览点的「允许」。
+fn planned_after(name: &str, args: &serde_json::Value, before: &BeforeText) -> Option<String> {
+    match name {
+        "write_file" => args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        // edit_file 的改后内容**真的算得出来**。算不出来（找不到 old_string /
+        // 命中多处但没开 replace_all / 原文根本读不出来）就不给预览 ——
+        // 工具马上会报同样的错，猜一个 diff 只会把用户带偏。
+        "edit_file" => {
+            let BeforeText::Text(current) = before else {
+                return None;
+            };
+            let old = args.get("old_string").and_then(|v| v.as_str())?;
+            let new = args
+                .get("new_string")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let all = args
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match tools::edit::apply_edit(current, old, new, all) {
+                tools::edit::EditOutcome::Replaced { content, .. } => Some(content),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// 变更记录的取舍：这一次改动要不要生成 diff 卡片。
+///
+/// `Some((before, after))` = 推；`None` = 不推。三个 `None` 的理由各不相同，
+/// 别把它们合并成一个 —— 合并的结果就是「新建文件没有任何变更记录」。
+fn change_record(before: BeforeText, after: Option<String>) -> Option<(String, String)> {
+    let before = match before {
+        // 文件原本不存在 ⇒ 全部内容都是本次新增，对照的起点是空串。
+        BeforeText::Missing => String::new(),
+        BeforeText::Text(t) => t,
+        // 存在但读不出：报"原样保留"和"全部新增"都是在编，
+        // 宁可不推这张卡片。
+        BeforeText::Unreadable => return None,
+    };
+    // 拿不到改后内容 ⇒ 没有对照可言。
+    let after = after?;
+    // 同一份内容重写一遍不算变更，否则每轮都会冒出一堆"无差异的 diff"。
+    if after == before {
+        return None;
+    }
+    Some((before, after))
 }
 
 /// 把较早的工具结果压成一行占位，保留最近几条的原文。
@@ -564,5 +751,177 @@ mod tests {
         assert!(session_allows(&job, Some("write_fs")).await);
         // 危险命令不进这张表 —— 它本来就该每次问。
         assert!(!session_allows(&job, Some(guard::KIND_DANGER)).await);
+    }
+
+    /* ── 「文件变更可审」：新建文件也必须有 diff ──────────────────────
+    这一组守的就是 README 第 49 行那句承诺「每次写文件生成修改前后 diff」。
+    以前 `before` 读不到（= 文件不存在）就整条 FileChange 不推，于是
+    AI 新建文件 —— 写文件里最常见的形态 —— 在界面上一点痕迹都没有。 */
+
+    #[test]
+    fn new_file_still_gets_a_change_record() {
+        // 反向验证：把 `BeforeText::Missing` 改回 `return None`，本用例立刻红。
+        let (before, after) = change_record(BeforeText::Missing, Some("Hello\n".to_string()))
+            .expect("新建文件必须生成变更记录（整份都是新增）");
+        assert_eq!(before, "", "新建文件的对照起点是空串，不是「没有变更」");
+        assert_eq!(after, "Hello\n");
+    }
+
+    #[test]
+    fn modified_file_records_the_real_before() {
+        let (before, after) =
+            change_record(BeforeText::Text("a\nb\n".into()), Some("a\nc\n".into()))
+                .expect("内容变了就该有记录");
+        assert_eq!(before, "a\nb\n");
+        assert_eq!(after, "a\nc\n");
+    }
+
+    #[test]
+    fn unreadable_before_does_not_fake_a_full_add() {
+        // 二进制 / 超大 / 无权限：报"全部新增"会把「没读到」谎报成「原来没有」，
+        // 报"原样保留"同样是编的 —— 宁可不推这张卡片。
+        assert_eq!(
+            change_record(BeforeText::Unreadable, Some("x".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_after_is_not_a_change_record() {
+        // 拿不到改后内容（写入失败 / 文件被删）⇒ 没有对照可言。
+        assert_eq!(change_record(BeforeText::Text("a".into()), None), None);
+    }
+
+    #[test]
+    fn rewriting_identical_content_is_not_a_change() {
+        assert_eq!(
+            change_record(BeforeText::Text("same\n".into()), Some("same\n".into())),
+            None
+        );
+        // 边界：空内容写进不存在的文件 —— 前后都是空串，同样不算变更。
+        assert_eq!(
+            change_record(BeforeText::Missing, Some(String::new())),
+            None
+        );
+    }
+
+    /* ── 确认卡片的前后预览 ──────────────────────────────────────── */
+
+    fn preview(before: BeforeText, after: Option<&str>) -> Option<FilePreview> {
+        ChangePreview {
+            path: "/etc/nginx/nginx.conf".into(),
+            before,
+            after: after.map(str::to_string),
+        }
+        .frontend_preview()
+    }
+
+    #[test]
+    fn preview_tells_create_from_modify() {
+        let created =
+            preview(BeforeText::Missing, Some("server_tokens off;\n")).expect("新建文件要给预览");
+        assert_eq!(created.kind, "create");
+        assert_eq!(created.before, "");
+
+        let modified = preview(
+            BeforeText::Text("server_tokens on;\n".into()),
+            Some("server_tokens off;\n"),
+        )
+        .expect("修改要给预览");
+        assert_eq!(modified.kind, "modify");
+        assert_eq!(modified.before, "server_tokens on;\n");
+    }
+
+    #[test]
+    fn preview_is_dropped_when_the_outcome_cannot_be_predicted() {
+        // after 算不出来时不硬编一个：卡片退回展示原始参数。
+        assert!(preview(BeforeText::Text("a\n".into()), None).is_none());
+        // 原文读不出（二进制等）同样不给 —— 前后没有可信的起点。
+        assert!(preview(BeforeText::Unreadable, Some("b\n")).is_none());
+    }
+
+    #[test]
+    fn preview_is_dropped_when_nothing_would_change() {
+        // 渲染成"一段没变的内容"比直接摆原始参数更让人困惑。
+        assert!(preview(BeforeText::Text("same\n".into()), Some("same\n")).is_none());
+    }
+
+    #[test]
+    fn preview_skips_pairs_too_big_to_review() {
+        // 边界是「总长超过上限」而不是「≥」：恰好等于上限仍要给（别把边界写松）。
+        let big = "x".repeat(MAX_PREVIEW_BYTES + 1);
+        assert!(preview(BeforeText::Missing, Some(&big)).is_none());
+        let edge = "x".repeat(MAX_PREVIEW_BYTES);
+        assert!(preview(BeforeText::Missing, Some(&edge)).is_some());
+        // 前后各占一半、合计不超限也照样给。
+        let half = "x".repeat(MAX_PREVIEW_BYTES / 2);
+        assert!(preview(
+            BeforeText::Text("y".repeat(MAX_PREVIEW_BYTES / 2)),
+            Some(&half)
+        )
+        .is_some());
+    }
+
+    /* ── edit_file 的预览必须与真实执行同源 ─────────────────────── */
+
+    #[test]
+    fn edit_preview_reuses_the_tools_own_uniqueness_rule() {
+        let args = serde_json::json!({
+            "path": "/etc/nginx/nginx.conf",
+            "old_string": "listen 80;",
+            "new_string": "listen 8080;",
+        });
+        let current = BeforeText::Text("listen 80;\nroot /var/www;\n".into());
+        assert_eq!(
+            planned_after("edit_file", &args, &current),
+            Some("listen 8080;\nroot /var/www;\n".into())
+        );
+
+        // 找不到 old_string / 命中多处但没开 replace_all：工具会拒，预览也不给。
+        let absent = serde_json::json!({
+            "path": "/x", "old_string": "没有这一行", "new_string": "y",
+        });
+        assert_eq!(planned_after("edit_file", &absent, &current), None);
+        let ambiguous = serde_json::json!({
+            "path": "/x", "old_string": "listen 80;", "new_string": "listen 8080;",
+        });
+        let twice = BeforeText::Text("listen 80;\nlisten 80;\n".into());
+        assert_eq!(planned_after("edit_file", &ambiguous, &twice), None);
+        // 开 replace_all 就放行。
+        let mut with_all = ambiguous.clone();
+        with_all["replace_all"] = serde_json::json!(true);
+        assert_eq!(
+            planned_after("edit_file", &with_all, &twice),
+            Some("listen 8080;\nlisten 8080;\n".into())
+        );
+
+        // 原文读不出来（文件不存在 / 读不出）时不预测。
+        assert_eq!(
+            planned_after("edit_file", &ambiguous, &BeforeText::Missing),
+            None
+        );
+        assert_eq!(
+            planned_after("edit_file", &ambiguous, &BeforeText::Unreadable),
+            None
+        );
+    }
+
+    #[test]
+    fn previews_are_only_for_write_tools() {
+        let args = serde_json::json!({"path": "/etc/hosts", "content": "1.1.1.1\n"});
+        assert_eq!(
+            planned_after("write_file", &args, &BeforeText::Missing),
+            Some("1.1.1.1\n".into())
+        );
+        // 其他工具一律不给预览（它们不改文件内容）。
+        for name in ["read_file", "list_dir", "exec_commands", "docker_exec"] {
+            assert_eq!(
+                planned_after(name, &args, &BeforeText::Unreadable),
+                None,
+                "{name}"
+            );
+        }
+        assert!(!is_write_tool("read_file"));
+        assert!(is_write_tool("write_file") && is_write_tool("edit_file"));
     }
 }

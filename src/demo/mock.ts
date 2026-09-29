@@ -68,6 +68,17 @@ const pendingAi = new Map<string, (decision: string) => void>();
 const cancelledAiJobs = new Set<string>();
 const aiChannels = new Map<string, unknown>();
 let jobSeq = 0;
+
+/**
+ * 演示「写文件」场景用的前后内容。
+ *
+ * 确认卡片的**改动预览**与执行后的**变更记录**必须用同一对常量：两处各写一份
+ * 的话，演示本身就在演一个假的"前后一致"，而这个功能的价值恰恰是那份一致性。
+ */
+const DEMO_NGINX_PATH = "/etc/nginx/nginx.conf";
+const DEMO_NGINX_BEFORE = "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;";
+const DEMO_NGINX_AFTER =
+  "worker_processes auto;\nkeepalive_timeout 65;\nserver_tokens off;\nclient_max_body_size 64m;";
 /** 演示模式下"当前这条对话"的会话 id —— 镜像真机 `ai_chat` 的建会话/回传行为。 */
 let liveConvId: string | undefined;
 
@@ -300,6 +311,87 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     return;
   }
 
+  // 写文件场景：演示「确认卡片在批准之前就给出逐行 diff」+ 执行后的变更记录。
+  //
+  // 这条路径必须留在演示里：没有本地模型的机器上，这是唯一能看到该功能的地方
+  // （本轮改动的原因就是"新建/写入的改动记录在真机上看不到"）。
+  if (/写|新建|保存|创建|改一下|加一行/.test(question)) {
+    const callId = `call-${uid("c")}`;
+    // 新建与修改两条都要能演：**新建文件**正是本轮修掉的那个缺口
+    // （文件原本不存在时，以前整条变更记录都不推）。只演修改等于把 bug 藏起来。
+    const creating = /新建|创建/.test(question);
+    const path = creating ? "/etc/nginx/conf.d/upload.conf" : DEMO_NGINX_PATH;
+    const before = creating ? "" : DEMO_NGINX_BEFORE;
+    const after = creating
+      ? "client_max_body_size 64m;\nproxy_read_timeout 120s;\n"
+      : DEMO_NGINX_AFTER;
+    const verb = creating ? "新建" : "修改";
+
+    later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
+    later(620, () =>
+      pushEvent(channel, {
+        type: "toolCall",
+        id: callId,
+        name: "write_file",
+        display: `写入 ${path}`,
+      }),
+    );
+    later(780, () =>
+      pushEvent(channel, {
+        type: "confirmRequired",
+        id: callId,
+        tool: "write_file",
+        // 真机这里塞的是 `工具名 + 原始 JSON 参数 + 理由`，前端只在没有 preview
+        // 时才展示它 —— 演示也照这个形状给，免得两边字段对不上。
+        rendered: `write_file {"path":"${path}","content":"…"}\n这是本会话第 1 次请求写权限。`,
+        reason: "这是本会话第 1 次请求写权限。",
+        preview: { path, kind: creating ? "create" : "modify", before, after },
+      }),
+    );
+    pendingAi.set(jobId, (decision) => {
+      if (decision === "deny") {
+        pushEvent(channel, {
+          type: "toolResult",
+          id: callId,
+          ok: false,
+          summary: "用户拒绝了该操作",
+          text: "用户拒绝了该操作。",
+          exitCode: null,
+        });
+        const text = "已取消，没有动任何文件。";
+        pushEvent(channel, { type: "delta", text });
+        finish(text);
+        return;
+      }
+      pushEvent(channel, {
+        type: "toolResult",
+        id: callId,
+        ok: true,
+        summary: `写入 ${path}（${after.length} 字节）`,
+        text: creating
+          ? `写入 ${path} 成功（${after.length} 字节）。新文件，没有可备份的原内容。`
+          : `写入 ${path} 成功（${after.length} 字节）。原文件已备份为 ${path}.nexterm-bak`,
+        exitCode: null,
+      });
+      // 变更记录：与上面确认卡片里那份预览**同源**，两边显示不一致就是这个功能坏了。
+      pushEvent(channel, { type: "fileChange", id: callId, path, before, after });
+      const text = creating
+        ? [`已${verb} \`${path}\`：`, "", "- 整份都是新增内容（原文件不存在）", "", "改错了直接删掉这个文件即可。"].join("\n")
+        : [
+            `已按你的授权改掉 \`${path}\` 的两处配置：`,
+            "",
+            "- `worker_processes 1` → `auto`",
+            "- `server_tokens on` → `off`（不再对外报版本号）",
+            "- 新增 `client_max_body_size 64m`",
+            "",
+            "要回滚就用同目录的 `.nexterm-bak`。",
+          ].join("\n");
+      pushEvent(channel, { type: "delta", text });
+      finish(text);
+    });
+    return;
+  }
+
   // 真机每轮 LLM 调用前都会推 `status`（"第 N 轮 · 正在思考…"）。
   // 这个事件前端一直没渲染，界面在 AI 跑长命令时完全静止 ——
   // 「卡住了」的焦虑有一半来自这里。演示也推一份，否则状态条永远验不到。
@@ -317,6 +409,9 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         id: `call-${uid("c")}`,
         tool: "docker_control",
         rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5–15 秒。\n这是本会话第 1 次请求写权限。`,
+        reason: "这是本会话第 1 次请求写权限。",
+        // 重启容器不是写文件：没有前后对照可言，卡片走原始参数那条路。
+        preview: null,
       });
       pendingAi.set(jobId, (decision) => {
         // 拼出"这一轮最终回答"，再把它当成 done 的 answer —— 与真机一致：
@@ -359,9 +454,9 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
       pushEvent(channel, {
         type: "fileChange",
         id: `call-${uid("c")}`,
-        path: "/etc/nginx/nginx.conf",
-        before: "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;",
-        after: "worker_processes auto;\nkeepalive_timeout 65;\nserver_tokens off;\nclient_max_body_size 64m;",
+        path: DEMO_NGINX_PATH,
+        before: DEMO_NGINX_BEFORE,
+        after: DEMO_NGINX_AFTER,
       }),
     );
     // 演示「任务清单」：长任务里 AI 会边做边更新，清单钉在输入区上方

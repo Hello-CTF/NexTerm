@@ -465,6 +465,9 @@ pub async fn run_takeover(
                                 args: json!({ "keys": keys_text }),
                                 risk: "needs_confirm".into(),
                                 rendered: format!("AI 要输入：{keys_text}（{}）", verdict.reason),
+                                reason: verdict.reason.clone(),
+                                // 往终端打字不是写文件，没有前后对照可言。
+                                preview: None,
                             });
                             // 夺回也必须能打断确认等待：wait_confirm 只听 job 的
                             // 令牌和用户的确认，不听接管令牌 —— 不在这里 select，

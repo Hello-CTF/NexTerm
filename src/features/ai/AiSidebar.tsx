@@ -17,6 +17,7 @@ import { describeError } from "../../ui/errorText";
 import { ModelPanel } from "./ModelPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
+import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
 import { UsageRing, type AiUsage } from "./UsageRing";
 import {
   IconAlert,
@@ -36,6 +37,16 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
+/** 写文件类工具的改动预览（与内核 `FilePreview` 对应）。 */
+interface FilePreviewItem {
+  path: string;
+  /** 执行前的内容。新建文件是空串。 */
+  before: string;
+  /** 执行后（预测）的内容。 */
+  after: string;
+  kind: string;
+}
+
 type ChatItem =
   | { role: "user"; text: string; imageCount?: number }
   | { role: "assistant"; text: string }
@@ -53,7 +64,18 @@ type ChatItem =
     }
   | { role: "diff"; path: string; before: string; after: string }
   | { role: "plan"; text: string }
-  | { role: "confirm"; jobId: string; callId: string; tool: string; rendered: string };
+  | {
+      role: "confirm";
+      jobId: string;
+      callId: string;
+      tool: string;
+      /** 原始参数 + 判定理由的兜底文案（也是「加为拦截规则」的预填来源）。 */
+      rendered: string;
+      /** 判定理由，单独一行展示 —— 别让它跟着原始参数一起被 diff 顶掉。 */
+      reason?: string;
+      /** 写文件类工具的改动预览：**批准之前**就能看到改什么。 */
+      preview?: FilePreviewItem | null;
+    };
 
 /** 任务清单的一条（与内核 `TodoItem` 对应）。 */
 interface TodoRow {
@@ -309,6 +331,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               callId: ev.id as string,
               tool: ev.tool as string,
               rendered: ev.rendered as string,
+              reason: (ev.reason as string) || "",
+              // 没有改动预览就是 null（非写文件类工具，或内核算不出前后对照）
+              // —— 卡片退回展示原始参数，这里不做任何猜测。
+              preview: (ev.preview as FilePreviewItem | null) ?? null,
             };
             setConfirmCard(card);
             setItems((prev) => [...prev, card]);
@@ -842,9 +868,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <span className="nx-spacer" />
               <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
             </div>
-            <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
-              {confirmCard.rendered}
-            </pre>
+            <ConfirmBody card={confirmCard} />
             <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
               不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
             </div>
@@ -1275,9 +1299,57 @@ function PlanBubble({
   );
 }
 
+/**
+ * 确认卡片的主体。
+ *
+ * 写文件类工具在这里展示「到底要改什么」——**在用户按下「允许」之前**。
+ * 这是「文件变更可审」真正生效的地方：执行完再看一张事后卡片没有意义，
+ * 那时文件已经落盘了。内核算不出前后对照（非写文件类工具 / 二进制 / 超大文件）
+ * 时退回展示原始参数，前端不做任何猜测。
+ */
+function ConfirmBody({ card }: { card: Extract<ChatItem, { role: "confirm" }> }) {
+  const pv = card.preview;
+  if (!pv) {
+    return (
+      <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
+        {card.rendered}
+      </pre>
+    );
+  }
+  return (
+    <>
+      <div className="mb-1 flex items-baseline gap-1.5 font-mono text-[11px]">
+        <span className="shrink-0 text-neutral-500">
+          {pv.kind === "create" ? "将新建" : "将修改"}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-neutral-200" title={pv.path}>
+          {pv.path}
+        </span>
+      </div>
+      <div className="mb-1.5 max-h-52 overflow-auto whitespace-pre-wrap rounded border border-neutral-800 bg-neutral-950/70 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed">
+        <DiffLines before={pv.before} after={pv.after} />
+      </div>
+      {card.reason ? (
+        <div className="mb-1.5 text-[10.5px] leading-relaxed text-amber-300/90">
+          {card.reason}
+        </div>
+      ) : null}
+      {/* 原始参数折起来：它跟 diff 说的是同一件事，但没人读那坨 JSON；
+          留着是为了「参数被截断时还能看全」和排查用。 */}
+      <details className="mb-2">
+        <summary className="cursor-pointer text-[10.5px] text-neutral-600 hover:text-neutral-400">
+          查看原始参数
+        </summary>
+        <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-500">
+          {card.rendered}
+        </pre>
+      </details>
+    </>
+  );
+}
+
 /** 「变更记录」卡片：AI 改过的文件 + 行级 diff。 */
 function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
-  const lines = simpleDiff(item.before, item.after);
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
@@ -1288,61 +1360,48 @@ function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
         </span>
       </div>
       <pre className="max-h-44 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] leading-relaxed">
-        {lines.map((l, i) => (
-          <div
-            key={i}
-            className={
-              // diff 专用色，**不**复用通用成功/危险色：那两套色在本界面里还
-              // 扛着「操作成功 / 操作危险」的含义，而 diff 的增删只说明
-              // 「内容变了」—— 借同一套色会被读成价值判断（删了就是坏事）。
-              l.kind === "add"
-                ? "nx-diff-add"
-                : l.kind === "del"
-                  ? "nx-diff-del"
-                  : "text-neutral-500"
-            }
-          >
-            {(l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  ") + l.text}
-          </div>
-        ))}
+        <DiffLines before={item.before} after={item.after} />
       </pre>
     </div>
   );
 }
 
 /**
- * 极简行级 diff：摘掉公共前后缀，中间整段标成删/增。
+ * 逐行 diff 的渲染，确认卡片与变更记录卡片共用一套。
  *
- * 刻意不做 LCS —— 这里只要"一眼看出改了哪几行"，而 AI 改配置基本都是
- * 局部替换，前后缀一摘就只剩那几行；上完整 diff 算法反而把界面和代码都搞重。
- * 两侧各留 2 行上下文，免得用户看不出改动的落点。
+ * 共用是刻意的：同一个改动在「允许之前」和「执行之后」显示成两个样子，
+ * 用户会以为中间又变了一次。
  */
-function simpleDiff(
-  before: string,
-  after: string,
-): { kind: "add" | "del" | "same"; text: string }[] {
-  const a = before.split("\n");
-  const b = after.split("\n");
-
-  let head = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head++;
-
-  let tail = 0;
-  while (
-    tail < a.length - head &&
-    tail < b.length - head &&
-    a[a.length - 1 - tail] === b[b.length - 1 - tail]
-  ) {
-    tail++;
+function DiffLines({ before, after }: { before: string; after: string }) {
+  const lines = simpleDiff(before, after);
+  if (!hasVisibleChange(lines)) {
+    // 逐行比不出增删。两种来源，都不能渲染成"一段没变的内容" ——
+    // 那看起来像卡片坏了：
+    //   · 两段完全相同（内核已经过滤掉了，这里只是防御）；
+    //   · 只差文件末尾的那一个换行（"a" → "a\n"）。要精确表达它得引入
+    //     「文件末尾无换行」标记，属完整 diff 算法的范围，本模块刻意不做，
+    //     但至少要明说是换行差异，而不是假装没变。
+    return (
+      <div className="text-neutral-500">
+        {before === after ? "（内容没有变化）" : "（差异在文件末尾的换行）"}
+      </div>
+    );
   }
-
-  const out: { kind: "add" | "del" | "same"; text: string }[] = [];
-  const ctx = 2;
-  for (let i = Math.max(0, head - ctx); i < head; i++) out.push({ kind: "same", text: a[i] });
-  for (let i = head; i < a.length - tail; i++) out.push({ kind: "del", text: a[i] });
-  for (let i = head; i < b.length - tail; i++) out.push({ kind: "add", text: b[i] });
-  for (let i = 0; i < Math.min(ctx, tail); i++) {
-    out.push({ kind: "same", text: a[a.length - tail + i] });
-  }
-  return out;
+  return (
+    <>
+      {lines.map((l, i) => (
+        <div
+          key={i}
+          className={
+            // diff 专用色，**不**复用通用成功/危险色：那两套色在本界面里还
+            // 扛着「操作成功 / 操作危险」的含义，而 diff 的增删只说明
+            // 「内容变了」—— 借同一套色会被读成价值判断（删了就是坏事）。
+            l.kind === "add" ? "nx-diff-add" : l.kind === "del" ? "nx-diff-del" : "text-neutral-500"
+          }
+        >
+          {diffLineText(l)}
+        </div>
+      ))}
+    </>
+  );
 }

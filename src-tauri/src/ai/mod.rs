@@ -71,7 +71,24 @@ pub enum AiEvent {
         tool: String,
         args: serde_json::Value,
         risk: String,
+        /// 兜底文案：`工具名 + 原始参数 + 判定理由`。
+        ///
+        /// 仍然是「加为拦截规则」那条按钮的预填来源（见前端 `ruleFromRendered`），
+        /// 也是 `preview` 缺失时的展示内容 —— 它俩都要留着。
         rendered: String,
+        /// 护栏给出的判定理由，单独一份给确认卡片展示。
+        ///
+        /// 以前理由只能从 `rendered` 里"读"出来（它把理由拼在原始 JSON 后面），
+        /// 一旦卡片改成展示 diff，理由就会跟着那坨 JSON 一起被藏起来。
+        #[serde(default)]
+        reason: String,
+        /// 写文件类工具的改动预览（`write_file` / `edit_file`）。
+        ///
+        /// **在用户点「允许」之前**就送到 —— 「可审」的意思是在动手之前就能审，
+        /// 而不是执行完再看一张事后卡片。算不出前后对照时为 `None`，
+        /// 卡片退回展示 `rendered`：显示一个猜的 diff 比不显示更糟。
+        #[serde(default)]
+        preview: Option<FilePreview>,
     },
     #[serde(rename_all = "camelCase")]
     Screen {
@@ -112,6 +129,23 @@ pub enum AiEvent {
         message: String,
         retryable: bool,
     },
+}
+
+/// 写文件类工具的改动预览（`AiEvent::ConfirmRequired.preview`）。
+///
+/// 字段就是一对前后文本，diff 交给前端算 —— 内核只负责**取到可信的前后内容**，
+/// 渲染规则（上下文几行、什么颜色）不该跨进程复制一份。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePreview {
+    pub path: String,
+    /// 执行前的内容。**新建文件是空串**，不是"读不到"——
+    /// 这两种情况在 `BeforeText` 里分开表达，混起来正是以前丢掉 diff 的原因。
+    pub before: String,
+    /// 执行后（预测）的内容。能送到前端的预览必然是算得出的，所以这里不是 Option。
+    pub after: String,
+    /// `create` = 新建；`modify` = 改已存在的文件。前端据此选标题文案。
+    pub kind: String,
 }
 
 /// 确认决定（ai_confirm 命令）。
@@ -415,6 +449,13 @@ mod tests {
                 args: serde_json::json!({}),
                 risk: "r".into(),
                 rendered: "x".into(),
+                reason: "why".into(),
+                preview: Some(FilePreview {
+                    path: "p".into(),
+                    before: "a".into(),
+                    after: "b".into(),
+                    kind: "create".into(),
+                }),
             },
             AiEvent::Screen {
                 tab_id: "t".into(),
@@ -455,6 +496,46 @@ mod tests {
             offenders.is_empty(),
             "这些字段名前端读不到（枚举上的 rename_all 只管 variant 名，\
              变体内部要自己再写一次）：{offenders:?}"
+        );
+
+        // 嵌套结构同样要守：`FilePreview` 是第一处「事件里嵌结构体」，
+        // 前端直接读 `ev.preview.before`，字段名错一个字符就是静默 undefined
+        // —— 不报错、不崩溃，只是确认卡片上永远没有 diff。
+        let pv = serde_json::to_value(FilePreview {
+            path: "p".into(),
+            before: "a".into(),
+            after: "b".into(),
+            kind: "create".into(),
+        })
+        .unwrap();
+        for key in pv.as_object().expect("预览序列化成对象").keys() {
+            assert!(!key.contains('_'), "FilePreview.{key} 前端读不到");
+        }
+
+        // 而工具参数（`args`）**故意**保持 snake_case：它是给模型看的 schema
+        // （`old_string` / `replace_all`），别顺手一起改成 camelCase。
+        let confirm = serde_json::to_value(AiEvent::ConfirmRequired {
+            id: "c".into(),
+            tool: "write_file".into(),
+            args: serde_json::json!({"path": "/x", "old_string": "a", "replace_all": false}),
+            risk: "r".into(),
+            rendered: "x".into(),
+            reason: "why".into(),
+            preview: None,
+        })
+        .unwrap();
+        assert_eq!(
+            confirm["args"]["old_string"], "a",
+            "工具参数保持 snake_case"
+        );
+        assert_eq!(
+            confirm["reason"], "why",
+            "判定理由是独立字段，卡片要单独展示"
+        );
+        assert_eq!(
+            confirm["preview"],
+            serde_json::Value::Null,
+            "没有预览时给 null：前端按「没有」处理，退回展示原始参数"
         );
     }
 

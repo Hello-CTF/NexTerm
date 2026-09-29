@@ -46,7 +46,7 @@ AI 不是贴在旁边的聊天框，而是接进了内核。
 
 ![AI 权限面板](docs/images/ai-permission.png)
 
-- **文件变更可审** —— 每次写文件生成修改前后 diff，改动一目了然。
+- **文件变更可审** —— `write_file` / `edit_file` 在**确认卡片上先给出逐行 diff**（新建文件整份标为新增），执行后再落一张「变更记录」卡片。改动一目了然，而且是**批准之前**就一目了然。
 
 ![文件变更 diff](docs/images/ai-file-changes.png)
 
