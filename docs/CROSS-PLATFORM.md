@@ -323,7 +323,147 @@ Open this URL to continue in your web browser: https://github.com/login/device
 
 ---
 
-## 7. 已知缺口（未处理，按优先级）
+### 6.4 macOS 上别留 `.app` 副本，否则 Spotlight 里冒出多个「NexTerm」（踩过一次）
+
+**症状**：`⌘Space` 搜应用名，出来好几个一模一样的 NexTerm 图标。
+
+**成因**：macOS 的 Spotlight 是**按 `CFBundleIdentifier` 归类应用**的，不看路径。
+只要有第二个 `.app` 带着同样的 `com.nexterm.desktop`，它就会被当成「另一个已安装的 NexTerm」。
+2026-09-29 实际踩到 5 个副本：
+
+| 来源 | 路径 | 说明 |
+|---|---|---|
+| 正式版 | `/Applications/NexTerm.app` | ✅ 唯一该留的 |
+| 装机回滚备份 ×3 | `~/Library/Application Support/NexTerm/backup/NexTerm-<ver>-<ts>[-prefix\|-brokensig].app` | 装一次存一个、从不清理 |
+| 构建产物 | `<repo>/target/release/bundle/macos/NexTerm.app` | `tauri build` 的默认产物路径 |
+
+> 顺手认号：那个 `-brokensig` 备份的签名是 `flags=0x2(adhoc)`（**无 `runtime`**），
+> 正是当初报「已损坏」的那一版 —— `codesign -dv <app> | grep flags` 一眼能认出来。
+
+#### 唯一有效的修法：**别让第二个 `.app` 存在**
+
+1. **装机备份不要用 `.app` 后缀** —— 改成 `NexTerm-<ver>-<ts>.app.bak`，或者直接压成
+   `.zip` / `.tar.gz`。后缀一变，Spotlight 就不把它当应用了。
+   备份目录 `~/Library/Application Support/NexTerm/backup/` 也要**只保留最近一个**。
+2. `<repo>/target/release/bundle/macos/NexTerm.app` 是 Tauri 的固定产物路径，删不得（出 dmg 要用）。
+   想让它不出现在搜索结果里，只有一条路：**系统设置 → 聚焦 → 搜索结果 → 隐私列表里加入
+   `<repo>/target`**（GUI 操作，需要 root/用户本人）。脚本无法代劳。
+
+#### ❌ 实测否证：目录级标记文件在这台机器上**没用**
+
+网上常见的 `.metadata_never_index` / `.noindex` 说法，在本机（macOS 26）**经对照实验证伪**：
+
+```bash
+# 四个目录，各放不同标记，外加一个纯对照组；mdimport 强制导入后按文件名查
+mkdir -p $BASE/{ctrl,meta_never_index,noindex,subdir_marker}
+echo x > $BASE/ctrl/UNIQ_CTRL_1234.txt                  # 对照
+echo x > $BASE/meta_never_index/UNIQ_MNI_1234.txt
+echo x > $BASE/noindex/UNIQ_NOI_1234.txt
+touch $BASE/meta_never_index/.metadata_never_index      # 候选 1
+touch $BASE/noindex/.noindex                            # 候选 2
+mdimport -i $BASE && mdfind -name 'UNIQ_'                # 结果见下
+```
+
+| 目录 | 标记 | 是否仍被索引 |
+|---|---|---|
+| `ctrl` | 无（对照组） | ✅ 被索引 |
+| `meta_never_index` | `.metadata_never_index` | ⚠️ **仍被索引**（标记无效） |
+| `noindex` | `.noindex` | ⚠️ **仍被索引**（标记无效） |
+| `subdir_marker` | `.metadata_never_index_subdirectories` | ⚠️ **仍被索引**（标记无效） |
+
+对照组与三个实验组结果**完全一致** —— 说明这些标记根本没被 mds 识别。
+**不要再往仓库里塞这类标记文件**，也不要据此改构建脚本（曾一度这么改过，已回滚）。
+
+> 实验设计教训：第一次把探针放在 `$TMPDIR`（`/var/folders/…`）里跑，
+> 结果是「实验组和对照组都是 0 条」—— 那是**假阴性**，因为 macOS 本来就**不索引**
+> `/var/folders` 这个私有临时目录。**对照组必须放在确定会被索引的位置**（家目录 / 仓库），
+> 否则「两组都没命中」会被误读成「标记有效」。
+
+#### 清完之后自查（按 bundle id 查最准，`mdfind -name` 会漏）
+
+```bash
+mdfind 'kMDItemCFBundleIdentifier == "com.nexterm.desktop"'
+# 期望只剩 /Applications/NexTerm.app（+ 未加入隐私列表的 target/ 产物）
+```
+
+> `/Volumes/*` 不是多图标的原因：挂载的 dmg 默认就不参与索引
+> （`mdutil -s /Volumes/xxx` 会报 `Indexing disabled`）。但**残留挂载该弹还是要弹** ——
+> 尤其构建中途失败时留下的 `rw.<pid>.NexTerm_<ver>_<arch>.dmg` 临时镜像，
+> 源文件可能已被删、挂载点却还在，要用 `hdiutil detach -force` 清掉。
+
+---
+
+## 7. 本机 shell 的环境：`LANG` 与 `TERM` 得由我们注入（踩过一次）
+
+### 症状
+
+macOS 上打开本地终端，**中文文件名整片变成问号**：`中文目录Ω` → `??????????????`（14 个字节 = 14 个问号）。
+
+### 排查时最容易被带偏的地方
+
+`printf` / `cat` / `echo` 的中文**完全正常**，坏的只有 `ls`、`find` 这类命令 ——
+于是很容易去怀疑渲染层（xterm.js 字体缺 CJK 字形 / 编码转换 / IPC 通道），**全是错的方向**。
+链路本身没问题：PTY 出来的是原始字节，`transcoder.rs` 按 UTF-8 原样透传，`Channel<Vec<u8>>` 一个字节不丢。
+
+真正的判别点有两条，缺一不可：
+
+1. **程序是否按 locale 判断字符可打印性** —— `printf` 不做这件事，`ls` 做；
+2. **stdout 是不是 tty** —— BSD `ls` 的 `-q`（非可打印字符 → `?`）**只在 stdout 是 tty 时默认开启**。
+   所以 `ls | cat` 和 `$(ls)` 都能正常显示中文，**唯独用户在终端里直接敲的 `ls` 会变问号** ——
+   这一条会让「用脚本复现」的做法直接得出错误结论。
+
+### 根因
+
+macOS 的 GUI 应用由 launchd 启动，环境里**没有 `LANG` / `LC_ALL`**。NexTerm 实测（`ps eww <pid>`）：
+
+```
+PATH=/usr/bin:/bin:/usr/sbin:/sbin   SHELL=/bin/zsh   HOME=…   USER=…   TMPDIR=…
+# 没有 LANG、没有 LC_ALL、也没有 TERM
+```
+
+从这里 fork 出的 shell 落在 C locale（`locale charmap` = `US-ASCII`）。macOS 其实自己备了解药，
+`/etc/zprofile` 里写着 `if [ -z "$LANG" ]; then export LANG=C.UTF-8; fi`
+—— **但那是登录 shell 才读的文件**。Terminal.app / iTerm 默认起登录 shell（`zsh -l`），所以它们没这个问题；
+本应用起的是普通交互 shell，读不到它。
+
+实测对照（同一 GUI 环境、同一夹具、`ls -1` 直出 tty）：
+
+| 启动方式 | `locale charmap` | `ls` 中文名 |
+|---|---|---|
+| `zsh`（本应用原状） | `US-ASCII` | ❌ `????????????` |
+| `zsh -l`（＝Terminal.app） | `UTF-8` | ✅ |
+| `zsh` + `LANG=C.UTF-8` | `UTF-8` | ✅ |
+| `zsh` + 只加 `TERM=xterm-256color` | `US-ASCII` | ❌（这条对照组说明与 TERM 无关） |
+
+### 修法：注入环境，而不是改用户的 shell
+
+`transport/local.rs` 在起子进程时注入（不去改成登录 shell —— 那会连带 source
+`~/.zprofile` / `~/.zlogin`，副作用比一个环境变量大得多）：
+
+- **`LANG=C.UTF-8`，只在宿主三个变量都为空时才填。** 宿主已设 locale 时一律透传，尊重用户的选择
+  （从终端里 `pnpm tauri dev` 起来就属于这种）。选 `C.UTF-8` 而不是 `zh_CN.UTF-8`：它正是 macOS
+  给登录 shell 的值（`locale -a` 在册），语言仍是 C —— 错误信息保持英文，便于按文本解析命令输出的
+  调用方；变的只是 charmap。空串按「没设」处理（有启动器会塞 `LANG=`）。
+- **`TERM=xterm-256color`，无条件覆盖。** TERM 描述的是**我们提供的这个 pty**（xterm.js，256 色），
+  不是启动 NexTerm 的那个终端；宿主若在 tmux 里（`TERM=screen`），透传下去会让子进程按错误的能力表
+  发序列。原先只在 Windows 分支设，Unix 上一直是「根本没有 TERM」（`vim` / `less` 退化成哑终端、
+  `ls` 不上色）。
+- **`exec`（非 PTY）只补 locale、不设 TERM** —— 那里没有终端，TERM 没有意义。
+
+### 自查
+
+```bash
+# 1. GUI 应用的宿主环境到底有没有 locale
+ps eww $(pgrep -f 'NexTerm.app/Contents/MacOS') | tr ' ' '\n' | grep -E '^(LANG|LC_|TERM)='
+# 2. 在终端里问 shell 自己（US-ASCII 就是没生效）
+locale charmap
+# 3. 回归测试：走应用自己的 open_pty 路径，只在宿主无 locale 时判得动（--nocapture 看跳过原因）
+cargo test --test local_pty -- --nocapture
+```
+
+---
+
+## 8. 已知缺口（未处理，按优先级）
 
 | P | 缺口 | 说明 | 建议 |
 |---|---|---|---|
