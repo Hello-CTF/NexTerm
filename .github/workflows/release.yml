@@ -52,28 +52,44 @@ jobs:
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
 
+      # Release 说明 = 本版更新内容 + 安装说明。
+      #
+      # 本版更新内容放 `docs/releases/<tag>.md`（如 v0.1.3.md）：发版时**只加一个文件**，
+      # 不用改 workflow。此前 releaseBody 是硬编码的，于是每个 Release 都只有安装说明，
+      # 下载页永远看不到「这一版改了什么」。
+      #
+      # 说明文件缺失时只出安装说明并打 warning —— 不阻断发版（漏写说明不该让产物出不来）。
+      - name: 组装 Release 说明
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          body="release-body.md"
+          if [[ -f "$notes" ]]; then
+            echo "采用本版说明：$notes"
+            cat "$notes" > "$body"
+            printf '\n---\n\n' >> "$body"
+          else
+            echo "::warning::$notes 不存在，本次 Release 只有安装说明"
+            : > "$body"
+          fi
+          cat .github/release-template.md >> "$body"
+          # 多行值必须用「name<<分隔符」语法写进 GITHUB_OUTPUT（直接 echo 只会保留首行）
+          {
+            echo 'body<<NEXTERM_RELEASE_BODY'
+            cat "$body"
+            echo 'NEXTERM_RELEASE_BODY'
+          } >> "$GITHUB_OUTPUT"
+          echo "Release 说明共 $(wc -c < "$body") 字节 / $(wc -l < "$body") 行"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "NexTerm ${{ github.ref_name }}"
-          releaseBody: |
-            | 平台 | 文件 |
-            |---|---|
-            | Windows 10/11 x64 | `*_x64-setup.exe`（NSIS 安装器） |
-            | macOS（Apple Silicon） | `*_aarch64.dmg` |
-
-            ### macOS 首次打开会被拦一次（预期行为，不是文件损坏）
-
-            安装包是 **ad-hoc 签名、未公证**的（没有 Apple Developer 证书）：
-
-            1. 双击应用，看到「无法验证开发者 / 无法检查是否包含恶意软件」→ 点**完成**
-            2. **系统设置 → 隐私与安全性**，下拉到「安全性」，点 **「仍要打开」**
-            3. 之后正常双击即可
-
-            如果提示的是**「已损坏」**而不是「无法验证开发者」，那是早期版本的签名缺陷，
-            请改用最新版本；或用命令行修掉：`xattr -dr com.apple.quarantine /Applications/NexTerm.app`
+          releaseBody: ${{ steps.notes.outputs.body }}
           # 先出草稿：产物齐了、检查过再点 Publish，避免半成品直接对用户可见。
           releaseDraft: true
           prerelease: false
