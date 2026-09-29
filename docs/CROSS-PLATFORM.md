@@ -272,6 +272,6 @@ Open this URL to continue in your web browser: https://github.com/login/device
 | P2 | Linux 未进矩阵 | `dpapi.rs` 有 Linux 桩、`local.rs` 有 `#[cfg(not(windows))]` 分支，但没人验 | 要么声明「不支持 Linux」，要么把 `ubuntu-latest` 加进矩阵 |
 | P3 | `transport::ExecResult` 的裁剪职责靠约定 | 裁剪已从传输层挪到「喂模型的那一侧」，靠注释和回归用例守；漏调 `cap_text` 不会编译报错 | 若想强制，用类型区分 `RawOutput` / `CappedOutput` |
 | P3 | `MountPanel` 默认挂载点是 `Z:` | Windows 盘符，Linux 上不合理；macOS 已标不可用所以暴露不出来 | 按平台给默认值（Windows `Z:` / 其余 `/mnt/point`） |
-| P3 | Windows 分支的 PowerShell 语法未经本地实测 | `transport/mod.rs` 的 `1..1500`：本机（macOS）无 `pwsh`，只能由 CI 的 windows 任务验证 | 已有注释标注；首次 Windows CI 跑绿后即可去掉这行提醒 |
+| ✅ | ~~Windows 分支的 PowerShell 语法未经本地实测~~ | 已由 CI 实测关闭：`windows-latest` 跑出 `local_exec_keeps_full_output ... ok`（run `36532246405`，Windows 171 passed） | — |
 | P3 | macOS 包未签名 / 未公证 | ad-hoc 签名，用户首次打开要绕 Gatekeeper | 需要 Apple Developer 证书 |
 | P3 | `pnpm-workspace.yaml` 同时留着两代字段 | `onlyBuiltDependencies`（pnpm 10/11 读）与 `allowBuilds`（pnpm 12 读）并存。**这是有意为之**，让跨大版本都能装上依赖；副作用是读起来像笔误 | 若彻底钉死 11，可删掉 `allowBuilds` 两行 |

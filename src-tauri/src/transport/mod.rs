@@ -211,11 +211,14 @@ mod tests {
     /// 原先写死 `seq 1 1500`，clippy 能过、用例却会在 Windows 上连命令都找不到 ——
     /// 正是「本地全绿、另一侧必红」那类跨平台暗坑。PowerShell 用区间表达式
     /// `1..1500` 生成同样 1500 行。
+    ///
+    /// 已由 CI 的 `windows-latest` 任务实测通过（run 36532246405）。改这里之后，
+    /// 别只看本机 clippy —— 必须确认 Windows job 的那次运行也是绿的。
     #[tokio::test]
     async fn local_exec_keeps_full_output() {
         let t = crate::transport::local::LocalTransport::new();
-        // 注意：Windows 分支是 PowerShell 语法，本机（macOS）无 pwsh 无法本地实测，
-        // 由 CI 的 windows 任务把关。真要改这里，先确认两边都还能出 1500 行。
+        // 注意：Windows 分支是 PowerShell 语法，本机（macOS）无 pwsh 无法本地实测。
+        // 真要改这里，先确认两边都还能出 1500 行。
         let cmd = if cfg!(windows) {
             "1..1500"
         } else {
