@@ -615,28 +615,36 @@ impl FileSystem for SftpFs {
     async fn write_file(&self, path: &str, data: &[u8], backup: bool) -> AppResult<()> {
         let path = self.real(path).await?;
         if backup && self.exists(&path).await? {
+            // ⚠️ 这里曾经写成 `tokio::io::split(src)`，把内容写回了**源文件那个
+            // 只读句柄**的写半边，而真正该被写的 `dst`（备份文件）从头到尾没人碰。
+            // 后果有两层，都很坏：
+            //   ① 对只读 fd 写 → EBADF，OpenSSH 的 `errno_to_portable()` 把 EBADF
+            //      归进 `SSH2_FX_NO_SUCH_FILE` → 用户看到的是
+            //      「写入失败: SFTP 错误: No such file」，一个**指向错误方向**的
+            //      报错：文件明明在，读都读得到。2026-09-30 真机上「每次改已有
+            //      文件都失败、每次新建都成功」就是这条分支。
+            //   ② 即便某些服务器容忍了那次写，`.nexterm-bak` 也是个**空文件** ——
+            //      比没有备份更坏：用户以为有退路。
+            // 现在直接用两个**各自独立**的句柄做流式拷贝，不 split。
             let backup_path = format!("{path}.nexterm-bak");
-            let src = self
+            let mut src = self
                 .sftp
                 .open(&path)
                 .await
-                .map_err(|e| AppError::Sftp(e.to_string()))?;
-            let dst = self
+                .map_err(|e| AppError::Sftp(format!("备份失败（打开原文件 {path}）: {e}")))?;
+            let mut dst = self
                 .sftp
                 .create(&backup_path)
                 .await
-                .map_err(|e| AppError::Sftp(e.to_string()))?;
-            let (mut r, mut w) = tokio::io::split(src);
-            // 简化：一次性拷贝
-            use tokio::io::AsyncReadExt;
-            let mut all = Vec::new();
-            r.read_to_end(&mut all)
+                .map_err(|e| AppError::Sftp(format!("备份失败（创建 {backup_path}）: {e}")))?;
+            tokio::io::copy(&mut src, &mut dst)
                 .await
-                .map_err(|e| AppError::Sftp(e.to_string()))?;
-            tokio::io::copy(&mut all.as_slice(), &mut w)
+                .map_err(|e| AppError::Sftp(format!("备份失败（拷贝到 {backup_path}）: {e}")))?;
+            // 备份写成功之前不能继续往下写原文件 —— 否则就是「把用户唯一的退路
+            // 丢了还在原文上盖了新内容」。
+            dst.flush()
                 .await
-                .map_err(|e| AppError::Sftp(e.to_string()))?;
-            w.flush().await.map_err(|e| AppError::Sftp(e.to_string()))?;
+                .map_err(|e| AppError::Sftp(format!("备份失败（落盘 {backup_path}）: {e}")))?;
             dst.sync_all().await.ok();
         }
         let mut file = self
