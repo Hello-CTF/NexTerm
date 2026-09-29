@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useUi } from "./store";
 import { aiApi } from "../ipc/commands";
 import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
+import { describeError } from "../ui/errorText";
 
 /** 夺回：取消模型请求 + 退出接管 + 清横幅。幂等，可被按钮与 Esc 同时触发。 */
 async function stealBack(reason = "用户夺回控制权") {
@@ -19,7 +20,7 @@ async function stealBack(reason = "用户夺回控制权") {
     await aiApi.takeoverExit(takeover.tabId, reason);
     pushToast("info", "已夺回终端控制权，AI 已停止");
   } catch (e) {
-    pushToast("error", `夺回时出错：${typeof e === "object" ? JSON.stringify(e) : String(e)}`);
+    pushToast("error", `夺回时出错：${describeError(e)}`);
   }
 }
 

@@ -350,12 +350,10 @@ mod tests {
     #[test]
     fn asset_update_null_clears_and_missing_keeps() {
         // null → 清空（Some(None)）
-        let args: AssetUpdateArgs =
-            serde_json::from_str(r#"{"id":"a1","groupId":null}"#).unwrap();
+        let args: AssetUpdateArgs = serde_json::from_str(r#"{"id":"a1","groupId":null}"#).unwrap();
         assert_eq!(args.group_id, Some(None));
         // 有值 → 设置
-        let args: AssetUpdateArgs =
-            serde_json::from_str(r#"{"id":"a1","groupId":"g1"}"#).unwrap();
+        let args: AssetUpdateArgs = serde_json::from_str(r#"{"id":"a1","groupId":"g1"}"#).unwrap();
         assert_eq!(args.group_id, Some(Some("g1".into())));
         // 字段缺失 → 不变（None）
         let args: AssetUpdateArgs = serde_json::from_str(r#"{"id":"a1"}"#).unwrap();

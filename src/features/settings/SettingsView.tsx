@@ -15,6 +15,7 @@ import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
+import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
   IconClose,
@@ -97,7 +98,7 @@ export function SettingsView() {
       setAiPerm(next);
       await aiApi.setPermission(next);
     } catch (e) {
-      pushToast("error", `保存拦截规则失败：${String((e as Error).message ?? e)}`);
+      pushToast("error", `保存拦截规则失败：${describeError(e)}`);
       void aiApi
         .getPermission()
         .then(setAiPerm)
@@ -146,7 +147,7 @@ export function SettingsView() {
         chatError: r.chatError,
       });
     } catch (e) {
-      setTestResult({ modelsOk: false, chatOk: false, fatal: String(e) });
+      setTestResult({ modelsOk: false, chatOk: false, fatal: describeError(e) });
     } finally {
       setTesting(false);
     }
@@ -343,7 +344,7 @@ export function SettingsView() {
                         pushToast("success", "已关闭密码保护");
                         return refreshVault();
                       })
-                      .catch((e) => pushToast("error", String(e)));
+                      .catch((e) => pushToast("error", describeError(e)));
                   });
                 } else {
                   setProtPwd("");
@@ -374,7 +375,7 @@ export function SettingsView() {
                       pushToast("success", "已开启密码保护 · 下次启动生效");
                       return refreshVault();
                     })
-                    .catch((e) => pushToast("error", String(e)))
+                    .catch((e) => pushToast("error", describeError(e)))
                 }
               >
                 启用保护
@@ -403,7 +404,7 @@ export function SettingsView() {
                       await vaultApi.changePassword(old, next);
                       pushToast("success", "密码已修改 · 凭据不受影响");
                     } catch (e) {
-                      pushToast("error", String(e));
+                      pushToast("error", describeError(e));
                     }
                   })()
                 }

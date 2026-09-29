@@ -19,7 +19,10 @@ import {
   type Workspace,
 } from "./store";
 import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
+import { describeError } from "../ui/errorText";
 import { DEMO } from "../demo";
+import { isMac } from "./platform";
+import { mountUnavailableReason } from "./capabilities";
 import { AssetTree } from "../features/explorer/AssetTree";
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { FileBrowser } from "../features/files/FileBrowser";
@@ -152,7 +155,7 @@ export default function App() {
       setSessions([...list.filter((x) => x.id !== s.id), s]);
       await openTerminalTab(s, "本地终端");
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
   }, [pushToast, setSessions]);
 
@@ -168,12 +171,20 @@ export default function App() {
   }, [activeSessionId, needSession]);
 
   const openMount = useCallback(() => {
-    if (!activeSessionId) return needSession();
+    // 磁盘挂载在 macOS 上暂不可用（要 macFUSE 系统扩展 + sshfs）。
+    //
+    // 这里仍然开面板，而不是弹一句「暂不可用」了事：面板会把缺失的依赖、
+    // 原因是内核侧下发的（app/capabilities.ts）、以及替代路径（文件树走 SFTP）
+    // 一次说清，提示条 5 秒就没了。图标上已有置灰 + 琥珀点 + tooltip 三重标记。
+    //
+    // 不可用时**不要求先连机器** —— 连了也不能挂，没必要多拦一道。
+    const unavailable = mountUnavailableReason() !== null;
+    if (!unavailable && !activeSessionId) return needSession();
     useUi.getState().addTab({
-      id: nextTabId(`mount-${activeSessionId}`),
+      id: nextTabId(`mount-${activeSessionId ?? "none"}`),
       kind: "mount",
       title: "磁盘挂载",
-      sessionId: activeSessionId,
+      sessionId: activeSessionId ?? undefined,
       closable: true,
     });
   }, [activeSessionId, needSession]);
@@ -227,7 +238,7 @@ export default function App() {
         closable: true,
       });
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
   }, [pushToast]);
 
@@ -435,11 +446,19 @@ export default function App() {
     label: string;
     icon: typeof IconServer;
     onClick: () => void;
+    /** 非空 = 本平台暂不可用，图标栏置灰并在 tooltip 里说明。 */
+    unavailableReason?: string;
   }[] = [
     { key: "terminal", label: "新建终端", icon: IconTerminal, onClick: openNewTerminal },
     { key: "docker", label: "容器", icon: IconBox, onClick: openDocker },
     { key: "db", label: "数据库", icon: IconDatabase, onClick: () => void openDatabase() },
-    { key: "mount", label: "磁盘挂载", icon: IconDrive, onClick: openMount },
+    {
+      key: "mount",
+      label: "磁盘挂载",
+      icon: IconDrive,
+      onClick: openMount,
+      unavailableReason: mountUnavailableReason() ?? undefined,
+    },
     { key: "forward", label: "端口转发", icon: IconNetwork, onClick: openForward },
   ];
 
@@ -455,8 +474,9 @@ export default function App() {
       <TakeoverBanner />
 
       <div className="flex min-h-0 flex-1">
-        {/* 最左：图标导航栏 */}
-        <nav className="nx-rail">
+        {/* 最左：图标导航栏。macOS 原生红绿灯悬浮在窗口左上（约 28px 高），
+            顶部 Logo 必须让位，否则被红绿灯盖住。 */}
+        <nav className={`nx-rail ${!DEMO && isMac() ? "pt-[28px]" : ""}`}>
           <div className="mb-2 flex items-center justify-center" title="NexTerm">
             <Logo size={26} />
           </div>
@@ -474,11 +494,14 @@ export default function App() {
           {railItems.map((it) => (
             <button
               key={it.key}
-              className="nx-rail-btn"
-              title={it.label}
+              className={`nx-rail-btn ${it.unavailableReason ? "is-unavailable" : ""}`}
+              title={
+                it.unavailableReason ? `${it.label}（暂不可用）` : it.label
+              }
               onClick={it.onClick}
             >
               <it.icon size={17} />
+              {it.unavailableReason ? <span className="nx-rail-off" aria-hidden /> : null}
             </button>
           ))}
           <div className="nx-spacer" />
@@ -505,8 +528,16 @@ export default function App() {
             窗口无边框（decorations:false）：标签没占满的空白区是窗口拖拽区
             （data-tauri-drag-region），最小化 / 最大化 / 关闭钉在条尾（sticky
             right，标签多到滚动时也不被挤走）。浏览器演示模式下没有真窗口，隐藏。
+
+            macOS 走原生红绿灯（tauri.macos.conf.json 的 Overlay 标题栏 +
+            Rust 侧 AppKit 直配）：自绘按钮组整个不渲染；红绿灯横向占到
+            窗口左起约 64px，图标栏占前 48px，所以标签条只需再让 32px
+            （首个标签落在 ~80px，贴近原生间距），拖拽语义不变。
           */}
-          <div className="nx-tabstrip is-top" data-tauri-drag-region>
+          <div
+            className={`nx-tabstrip is-top ${!DEMO && isMac() ? "pl-[32px]" : ""}`}
+            data-tauri-drag-region
+          >
             {workspaces.length === 0 && (
               <span className="px-1 text-xs text-neutral-500" data-tauri-drag-region>
                 还没有工作区 —— 双击左侧资产连接一台机器
@@ -566,7 +597,8 @@ export default function App() {
             </button>
             {/* 标签条空白拖拽区：标签少时占满剩余宽度，标签多时收缩为 0 */}
             <div className="nx-spacer min-w-0" data-tauri-drag-region />
-            {!DEMO && (
+            {/* macOS 用原生红绿灯，这组自绘按钮只在 Windows 上出现 */}
+            {!DEMO && !isMac() && (
               <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
                 <button
                   className="nx-icon-btn"
@@ -1099,7 +1131,10 @@ function PaneForTab({
         <EmptyState />
       );
     case "mount":
-      return tab.sessionId ? <MountPanel sessionId={tab.sessionId} /> : <EmptyState />;
+      // 与「端口转发」同款：面板自己处理「没有会话」这件事。
+      // 不能因为没有 sessionId 就退化成 EmptyState —— 磁盘挂载在 macOS 上本来
+      // 就不依赖会话（已标暂不可用），退化成空白等于把理由一个字都吞掉。
+      return <MountPanel sessionId={tab.sessionId} />;
     case "forward":
       return <ForwardPanel sessionId={tab.sessionId} />;
     case "files":

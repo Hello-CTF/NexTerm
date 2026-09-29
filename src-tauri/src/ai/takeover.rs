@@ -101,9 +101,7 @@ async fn finish_owned(
     token.cancel();
     let removed = {
         let mut takeovers = ai.takeovers.write().await;
-        let still_mine = takeovers
-            .get(tab_id)
-            .is_some_and(|t| Arc::ptr_eq(t, token));
+        let still_mine = takeovers.get(tab_id).is_some_and(|t| Arc::ptr_eq(t, token));
         still_mine && takeovers.remove(tab_id).is_some()
     };
     if removed {
@@ -123,10 +121,7 @@ pub async fn on_user_key(state: &AppState, tab_id: &str) {
 
 /// 内核：见 [`on_user_key`]。
 async fn steal_back(ai: &AiRuntime, sessions: &SessionManager, tab_id: &str) {
-    if !ai
-        .steal_on_key
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
+    if !ai.steal_on_key.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
     // 令牌必须在调 finish 之前 clone 出来、立刻放掉读锁：finish 要拿同一把
@@ -159,7 +154,13 @@ fn keys_display(keys: &str, enter: bool) -> String {
 
 /// 发一张动作卡片（与主对话 agent 同款 ToolCall 事件，侧栏渲染成卡片）。
 /// 接管动作此前不发这张卡 —— 用户只看到一张读屏卡，AI 就开始闷头敲键盘了。
-fn action_card(channel: &Channel<AiEvent>, id: &str, name: &str, args: &serde_json::Value, display: String) {
+fn action_card(
+    channel: &Channel<AiEvent>,
+    id: &str,
+    name: &str,
+    args: &serde_json::Value,
+    display: String,
+) {
     let _ = channel.send(AiEvent::ToolCall {
         id: id.to_string(),
         name: name.to_string(),
@@ -551,13 +552,7 @@ pub async fn run_takeover(
                     } else {
                         "任务失败"
                     };
-                    action_card(
-                        &channel,
-                        &call.id,
-                        "done",
-                        &args,
-                        format!("结束：{answer}"),
-                    );
+                    action_card(&channel, &call.id, "done", &args, format!("结束：{answer}"));
                     action_result(&channel, &call.id, success, reason, answer.clone());
                     finish_owned(&state.ai, &state.sessions, tab_id, &token, reason).await;
                     done = true;
@@ -596,10 +591,7 @@ mod tests {
     use crate::terminal::TerminalTab;
 
     fn runtime() -> (AiRuntime, SessionManager) {
-        (
-            AiRuntime::new(Default::default()),
-            SessionManager::new(),
-        )
+        (AiRuntime::new(Default::default()), SessionManager::new())
     }
 
     /// 造一个挂在 SessionManager 里的真实标签（begin 的存在性检查要过）。
@@ -632,10 +624,7 @@ mod tests {
             t0.elapsed() < Duration::from_secs(3),
             "死锁回归：steal_back 未在 3s 内返回"
         );
-        assert!(
-            ai.takeovers.read().await.is_empty(),
-            "夺回后登记应被摘除"
-        );
+        assert!(ai.takeovers.read().await.is_empty(), "夺回后登记应被摘除");
     }
 
     /// 回归：同一标签二次进入接管必须取消旧令牌。修复前旧循环感知不到被

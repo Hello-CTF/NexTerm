@@ -2,6 +2,7 @@
 // 类型来自 ts-rs 生成（cargo test 导出），见 types.ts。
 import { invoke } from "@tauri-apps/api/core";
 import { DEMO } from "../demo";
+import { describeError } from "../ui/errorText";
 
 // ───────── 通用 ─────────
 
@@ -15,7 +16,7 @@ export function toAppError(e: unknown): AppError {
   if (e && typeof e === "object" && "code" in e) {
     return e as AppError;
   }
-  return { code: "internal", message: String(e) };
+  return { code: "internal", message: describeError(e) };
 }
 
 /**
@@ -239,6 +240,8 @@ export const fsApi = {
 // ───────── mount ─────────
 
 export const mountApi = {
+  /** 本机是否支持磁盘挂载；返回原因（字符串）表示暂不可用。 */
+  capability: () => call<string | null>("mount_capability"),
   list: (forceRefresh?: boolean) =>
     call<import("./types").MountEntryDto[]>("mount_list", { forceRefresh }),
   create: (args: {
@@ -248,7 +251,8 @@ export const mountApi = {
     username?: string;
     password?: string;
   }) => call<import("./types").MountEntryDto>("mount_create", { args }),
-  remove: (localPoint: string) => call<void>("mount_remove", { localPoint }),
+  remove: (localPoint: string, sessionId?: string) =>
+    call<void>("mount_remove", { localPoint, sessionId }),
 };
 
 // ───────── docker ─────────

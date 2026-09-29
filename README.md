@@ -9,7 +9,7 @@
 本地优先、AI 原生的桌面终端工作台。凭据加密存储，AI 全程在权限护栏内执行。
 
 [![Website](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-online-516cd6)](https://probiusofficial.github.io/NexTerm/)
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![Rust](https://img.shields.io/badge/Rust-stable-orange)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
@@ -67,16 +67,19 @@ AI 不是贴在旁边的聊天框，而是接进了内核。
 
 ## 快速开始
 
-当前目标平台为 Windows，从源码构建：
+支持 Windows 与 macOS，从源码构建：
 
 ```bash
-# 依赖：Rust stable MSVC、Node 22+、pnpm 9+
+# 依赖：Rust stable（≥1.98）、Node 22+、pnpm 11+
+#   Windows：MSVC 工具链；macOS：Xcode Command Line Tools
 git clone https://github.com/ProbiusOfficial/NexTerm.git
 cd NexTerm
 pnpm install
 pnpm tauri dev      # 开发窗口
-pnpm tauri build    # NSIS 安装器
+pnpm tauri build    # Windows 出 NSIS 安装器；macOS 出 .app + .dmg
 ```
+
+双平台 CI（Windows + macOS 各跑 fmt / clippy / test / typecheck / lint）在每次 push 时把关。
 
 ### 浏览器演示
 

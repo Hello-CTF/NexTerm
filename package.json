@@ -1,7 +1,7 @@
 {
   "name": "nexterm",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -37,12 +37,6 @@
     "react-dom": "^19.0.0",
     "react-mosaic-component": "^6.1.1",
     "zustand": "^5.0.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "@tailwindcss/oxide"
-    ]
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.6",

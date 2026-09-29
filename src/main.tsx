@@ -6,6 +6,8 @@ import App from "./app/App";
 import "./styles.css";
 import { listenEvent, EVENTS, type SessionStatusEvent } from "./ipc/events";
 import { useUi } from "./app/store";
+import { setMacPlatform } from "./app/platform";
+import { setMountUnavailableReason } from "./app/capabilities";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -50,10 +52,30 @@ window.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 });
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+// ── 平台判定 + 能力开关：先问后端（编译期常量），再渲染 ──
+// WKWebView 的 UA 不可靠（自定义协议下可能不含平台标识），渲染后才校正
+// 会导致标题栏闪变，所以这里阻塞首帧等这一个 IPC。
+// 能力开关同批拉取：磁盘挂载在 macOS 上是「暂不可用」，入口需要在首帧就置灰，
+// 否则会先画出一个可点的按钮再跳成灰色。
+async function bootstrap() {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const [os, mountReason] = await Promise.all([
+      invoke<string>("app_platform"),
+      invoke<string | null>("mount_capability"),
+    ]);
+    setMacPlatform(os === "macos");
+    setMountUnavailableReason(mountReason);
+  } catch {
+    /* 浏览器演示模式：无 Tauri IPC，维持 UA 探测 + 能力默认可用 */
+  }
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+void bootstrap();

@@ -15,9 +15,19 @@ pub mod vault;
 
 use crate::state::ManagedState;
 
+/// 前端平台判定（编译期常量）。WKWebView 经自定义协议加载时 UA 可能不含
+/// 平台标识，前端 UA 猜测曾把 macOS 误判成 Windows（自绘三键未隐藏），
+/// 所以标题栏这类平台分支一律以本命令为准。
+#[tauri::command]
+pub fn app_platform() -> String {
+    std::env::consts::OS.to_string()
+}
+
 /// 注册全部命令到 Builder。
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        // app
+        app_platform,
         // session
         session::session_connect,
         session::session_connect_local,
@@ -57,6 +67,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         fs::fs_pack_download,
         fs::fs_extract,
         // mount
+        mount::mount_capability,
         mount::mount_list,
         mount::mount_create,
         mount::mount_remove,

@@ -15,6 +15,14 @@ pub async fn docker_exec(
 ) -> AppResult<String> {
     let cmd = format!("docker {args}");
     let out = transport.exec(&cmd, timeout).await?;
+    // 传输层不再按行裁剪，这是唯一还能让结果不完整的地方（原始字节熔断，SSH 8MB）。
+    // 真触到了要留痕 —— 否则又是「UI 显示 400、实机 569」那种静默少数据。
+    if out.truncated {
+        tracing::warn!(
+            target: "docker",
+            "输出触发原始字节熔断，结果可能不完整: {cmd}"
+        );
+    }
     if let Some(code) = out.exit_code {
         if code != 0 && out.stdout.trim().is_empty() {
             return Err(AppError::Internal(format!(

@@ -1,12 +1,15 @@
 //! 凭据与安全（§9）：两级密钥。
 //!
-//! - 无主密码模式：DEK 直接由 Windows DPAPI 保护（`kek_hint = "dpapi"`）；
+//! - 无主密码模式：DEK 由系统凭据保护托管（Windows DPAPI / macOS 登录钥匙串，
+//!   `kek_hint = "dpapi"`，见 dpapi.rs 的平台路由）；
 //! - 主密码模式：Argon2id 派生 KEK → ChaCha20-Poly1305 信封包 DEK
 //!   （`kek_hint = "master:<salt_id>"`），闲置 30 分钟自动锁定；
 //! - 凭据明文用 XChaCha20-Poly1305(DEK) 加密，内存中短暂存在（zeroize）。
 
 pub mod crypto;
 pub mod dpapi;
+#[cfg(target_os = "macos")]
+pub mod keychain;
 pub mod redact;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -569,5 +572,95 @@ mod tests {
             format!("{err}").contains("已拒绝"),
             "错误信息要说清为什么拒绝，实际是：{err}"
         );
+    }
+
+    /* ── macOS 钥匙串版：与上面 DPAPI 组同构 ────────────────────────────────
+     *
+     * 会动真登录钥匙串的用例统一用 NEXTERM_TEST_KEYCHAIN=1 门控
+     * （本地验收 / CI 的 macos 任务显式开启，避免污染无关环境的钥匙串）。
+     * 不碰钥匙串的（坏信封降级）不门控。
+     */
+
+    /// 钥匙串测试共用同一个真实条目，必须串行跑，否则互相删对方的密钥。
+    #[cfg(target_os = "macos")]
+    static KEYCHAIN_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// 首次初始化：生成 DEK → 托管钥匙串 → 信封只存标记。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn mac_init_dpapi_works_on_first_run() {
+        if std::env::var("NEXTERM_TEST_KEYCHAIN").ok().as_deref() != Some("1") {
+            eprintln!("跳过：未设置 NEXTERM_TEST_KEYCHAIN=1");
+            return;
+        }
+        let _guard = KEYCHAIN_TEST_LOCK.lock().await;
+        let _ = keychain::cleanup_for_tests();
+        let v = vault().await;
+        assert!(!v.status().await.initialized);
+
+        v.init_dpapi().await.expect("首次初始化钥匙串模式必须成功");
+
+        let st = v.status().await;
+        assert!(st.initialized);
+        assert_eq!(st.mode, "dpapi");
+        assert!(st.unlocked, "钥匙串模式初始化后应直接是解锁态");
+        assert!(v.dek().await.is_ok());
+        // 信封必须落库（内容是托管标记）
+        let envelope = v
+            .store
+            .setting_get(SETTING_ENVELOPE)
+            .await
+            .unwrap()
+            .expect("信封应落库");
+        assert_eq!(
+            envelope,
+            base64::engine::general_purpose::STANDARD.encode(b"keychain:v1")
+        );
+        // 清理钥匙串，不留测试条目
+        let _ = keychain::cleanup_for_tests();
+    }
+
+    /// 重启（重新 load）后能凭信封标记从钥匙串无感解锁。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn mac_load_unlocks_via_keychain() {
+        if std::env::var("NEXTERM_TEST_KEYCHAIN").ok().as_deref() != Some("1") {
+            eprintln!("跳过：未设置 NEXTERM_TEST_KEYCHAIN=1");
+            return;
+        }
+        let _guard = KEYCHAIN_TEST_LOCK.lock().await;
+        let _ = keychain::cleanup_for_tests();
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        let v = Vault::load(Arc::clone(&store)).await;
+        v.init_dpapi().await.unwrap();
+        let dek_before = v.dek().await.unwrap().0.as_ref().to_vec();
+
+        // 模拟重启
+        let v2 = Vault::load(store).await;
+        let st = v2.status().await;
+        assert!(st.initialized, "重启后应保持已初始化");
+        assert!(st.unlocked, "钥匙串模式重启后应无感解锁");
+        assert_eq!(v2.dek().await.unwrap().0.as_ref().to_vec(), dek_before);
+        let _ = keychain::cleanup_for_tests();
+    }
+
+    /// 钥匙串条目被删（等于 DPAPI 的换机器场景）：启动降级为未初始化，不崩。
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn mac_load_survives_missing_keychain_item() {
+        if std::env::var("NEXTERM_TEST_KEYCHAIN").ok().as_deref() != Some("1") {
+            eprintln!("跳过：未设置 NEXTERM_TEST_KEYCHAIN=1");
+            return;
+        }
+        let _guard = KEYCHAIN_TEST_LOCK.lock().await;
+        let _ = keychain::cleanup_for_tests();
+        let store = Arc::new(Store::open_in_memory().await.unwrap());
+        let v = Vault::load(Arc::clone(&store)).await;
+        v.init_dpapi().await.unwrap();
+        // 模拟钥匙串条目丢失
+        keychain::cleanup_for_tests().expect("删除刚写入的条目应成功（这是测试前置条件）");
+
+        let v2 = Vault::load(store).await;
+        assert!(!v2.status().await.initialized, "取不回密钥应降级为未初始化");
     }
 }

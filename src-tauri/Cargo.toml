@@ -1,6 +1,6 @@
 [package]
 name = "nexterm"
-version = "0.1.1"
+version = "0.1.2"
 description = "NexTerm — 一体化开发运维终端"
 authors = ["NexTerm"]
 license = "MIT"
@@ -64,12 +64,6 @@ chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 
-[target."cfg(windows)".dependencies]
-windows = { version = "0.62", features = [
-  "Win32_Foundation",
-  "Win32_Security_Cryptography",
-] }
-
 # 传输
 russh = "0.63"
 russh-sftp = "2"
@@ -90,6 +84,19 @@ tokio-socks = "0.5"
 # 校验和：MD5 与 SHA256
 md-5 = "0.10"
 sha2 = "0.10"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+] }
+
+# macOS：Keychain 顶替 DPAPI 的「免主密码」凭据保护（信封密钥存登录钥匙串）；
+# objc2-app-kit 直改 NSWindow —— tao/wry 的运行时标题栏 API 只翻内部标志，
+# 红绿灯需要真实样式掩码含 Titled 位。
+[target."cfg(target_os = \"macos\")".dependencies]
+security-framework = "3"
+objc2-app-kit = { version = "0.3", features = ["NSWindow"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -147,7 +147,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     const map = new Map<string, string>();
     dirs.forEach((dir, i) => {
       const err = results[i]?.error;
-      if (err) map.set(dir, String((err as { message?: string })?.message ?? err));
+      if (err) map.set(dir, describeError(err));
     });
     return map;
   }, [dirs, results]);
@@ -218,7 +218,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       refresh();
       pushToast("success", `已创建 ${path}`);
     } catch (e) {
-      pushToast("error", `创建失败：${String(e)}`);
+      pushToast("error", `创建失败：${describeError(e)}`);
     }
   };
 
@@ -232,7 +232,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       if (!expanded.includes(targetDir())) toggle(targetDir());
       pushToast("success", `已创建 ${path}`);
     } catch (e) {
-      pushToast("error", `创建失败：${String(e)}`);
+      pushToast("error", `创建失败：${describeError(e)}`);
     }
   };
 
@@ -246,7 +246,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       refresh();
       pushToast("success", `已上传到 ${remote}`);
     } catch (e) {
-      pushToast("error", `上传失败：${String(e)}`);
+      pushToast("error", `上传失败：${describeError(e)}`);
     }
   };
 
@@ -258,7 +258,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       await fsApi.download(sessionId, path, target);
       pushToast("success", `已下载到 ${target}`);
     } catch (e) {
-      pushToast("error", `下载失败：${String(e)}`);
+      pushToast("error", `下载失败：${describeError(e)}`);
     }
   };
 
@@ -274,7 +274,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       refresh();
       pushToast("success", "已删除");
     } catch (e) {
-      pushToast("error", `删除失败：${String(e)}`);
+      pushToast("error", `删除失败：${describeError(e)}`);
     }
   };
 

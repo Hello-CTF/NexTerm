@@ -6,6 +6,7 @@
 // （App 挂载时 registerDialogHandlers），文本输入弹窗同理（registerPromptHandler）。
 import { ask as dAsk, confirm as dConfirm, message as dMessage } from "@tauri-apps/plugin-dialog";
 import { DEMO } from "../demo";
+import { isMac } from "../app/platform";
 
 type AskOptions = { title?: string; kind?: "info" | "warning" | "error" };
 
@@ -55,7 +56,9 @@ export const messageBox: MessageFn = (message) =>
 /** 选一个本地文件（上传用）。取消返回 null。 */
 export async function pickLocalFile(): Promise<string | null> {
   if (DEMO) {
-    return "C:\\Users\\you\\Downloads\\nginx-access.log";
+    return isMac()
+      ? "~/Downloads/nginx-access.log"
+      : "C:\\Users\\you\\Downloads\\nginx-access.log";
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({ multiple: false });
@@ -65,7 +68,7 @@ export async function pickLocalFile(): Promise<string | null> {
 /** 选一个私钥文件（资产表单用）。取消返回 null。 */
 export async function pickKeyFile(): Promise<string | null> {
   if (DEMO) {
-    return "C:\\Users\\you\\.ssh\\id_ed25519";
+    return isMac() ? "~/.ssh/id_ed25519" : "C:\\Users\\you\\.ssh\\id_ed25519";
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
@@ -81,7 +84,7 @@ export async function pickKeyFile(): Promise<string | null> {
 /** 选一个本地保存路径（下载 / 录制用）。取消返回 null。 */
 export async function pickSavePath(defaultName: string): Promise<string | null> {
   if (DEMO) {
-    return `C:\\Users\\you\\Desktop\\${defaultName}`;
+    return isMac() ? `~/Desktop/${defaultName}` : `C:\\Users\\you\\Desktop\\${defaultName}`;
   }
   const { save } = await import("@tauri-apps/plugin-dialog");
   return save({ defaultPath: defaultName });

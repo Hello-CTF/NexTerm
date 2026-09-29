@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsTab, useUi } from "../../app/store";
+import { describeError } from "../../ui/errorText";
 import {
   assetIcon,
   IconChevronDown,
@@ -92,7 +93,7 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["assets"] });
       pushToast("info", groupId ? "已移入分组" : "已移到未分组");
     } catch (e) {
-      pushToast("error", `移动失败：${String((e as Error).message ?? e)}`);
+      pushToast("error", `移动失败：${describeError(e)}`);
     }
   };
 
@@ -528,7 +529,7 @@ function AssetEditor({
       }
       onSaved();
     } catch (e) {
-      pushToast("error", String((e as Error).message ?? e));
+      pushToast("error", describeError(e));
     }
   };
 

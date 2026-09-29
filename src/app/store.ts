@@ -7,6 +7,7 @@
 // 扁平的一排标签很快就没法用了。
 import { create } from "zustand";
 import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
+import { describeError } from "../ui/errorText";
 
 export type PaneKind =
   | "terminal"
@@ -895,7 +896,7 @@ export async function connectAsset(asset: {
         closable: true,
       });
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
     return;
   }
@@ -958,15 +959,12 @@ export async function connectAsset(asset: {
           await openTerminalTab(info);
           return;
         } catch (e2) {
-          pushToast("error", String(e2));
+          pushToast("error", describeError(e2));
           return;
         }
       }
     }
-    pushToast(
-      "error",
-      err.message ??
-        (typeof e === "object" ? JSON.stringify(e) : String(e)),
-    );
+    // err.message 为空串时不能把空串弹出去（等于什么都没说），退回统一格式化。
+    pushToast("error", err.message || describeError(e));
   }
 }

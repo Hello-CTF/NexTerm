@@ -1170,6 +1170,23 @@
     border-radius: 0 3px 3px 0;
     background: var(--color-accent);
   }
+  /* 本平台暂不可用的入口（如 macOS 的磁盘挂载）：置灰 + 右上角琥珀点。
+     仍然可点击 —— 点了会弹一句说明理由的提示，比一个死按钮信息量更大。 */
+  .nx-rail-btn.is-unavailable {
+    color: var(--color-neutral-700);
+  }
+  .nx-rail-btn.is-unavailable:hover {
+    color: var(--color-neutral-500);
+  }
+  .nx-rail-off {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 5px;
+    height: 5px;
+    border-radius: 9999px;
+    background: var(--color-amber-400);
+  }
 
   /* ── 右键菜单 ────────────────────────────────────────────────────── */
   /*

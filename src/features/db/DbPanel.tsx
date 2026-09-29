@@ -9,6 +9,7 @@ import { nxHighlight } from "../../ui/editorTheme";
 import { DEMO } from "../../demo";
 import { dbApi, type QueryResult } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { describeError } from "../../ui/errorText";
 import {
   IconDatabase,
   IconHistory,
@@ -47,7 +48,7 @@ function MysqlView({ connId }: { connId: string }) {
     try {
       setTables(await dbApi.tables(connId, next));
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -60,7 +61,7 @@ function MysqlView({ connId }: { connId: string }) {
         const pick = list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "";
         if (pick) await loadSchema(pick);
       } catch (e) {
-        pushToast("error", String(e));
+        pushToast("error", describeError(e));
       }
     })();
   }, [connId]);
@@ -101,7 +102,7 @@ function MysqlView({ connId }: { connId: string }) {
     try {
       setResult(await dbApi.query(connId, text));
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     } finally {
       setRunning(false);
     }
@@ -146,7 +147,7 @@ function MysqlView({ connId }: { connId: string }) {
         error: null,
       });
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -321,7 +322,7 @@ function RedisView({ connId }: { connId: string }) {
       setCursor(next);
       setKeys((prev) => (c === 0 ? ks : [...prev, ...ks]));
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -334,7 +335,7 @@ function RedisView({ connId }: { connId: string }) {
     try {
       setView(await dbApi.redisInspect(connId, key));
     } catch (e) {
-      pushToast("error", String(e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -343,7 +344,7 @@ function RedisView({ connId }: { connId: string }) {
     try {
       setCmdOut(await dbApi.redisCommand(connId, cmdText.trim().split(/\s+/)));
     } catch (e) {
-      setCmdOut(`(error) ${String(e)}`);
+      setCmdOut(`(error) ${describeError(e)}`);
     }
   };
 

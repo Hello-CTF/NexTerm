@@ -5,6 +5,7 @@ import { ask } from "../../ui/dialogs";
 import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { createBinaryChannel } from "../../ipc/events";
+import { describeError } from "../../ui/errorText";
 import {
   IconArrowLeft,
   IconBox,
@@ -43,7 +44,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
       pushToast("success", `${c.name} · ${action} 已执行`);
     } catch (e) {
-      pushToast("error", `${action} 失败: ${String(e)}`);
+      pushToast("error", `${action} 失败: ${describeError(e)}`);
     }
   };
 
@@ -53,7 +54,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       const kernelTab = await dockerApi.logsAttach(sessionId, c.id, 500, channel);
       setAttached({ container: c.name, tabId: kernelTab });
     } catch (e) {
-      pushToast("error", `日志 attach 失败: ${String(e)}`);
+      pushToast("error", `日志 attach 失败: ${describeError(e)}`);
     }
   };
 
@@ -358,7 +359,7 @@ function PullBar({ sessionId }: { sessionId: string }) {
       setImage("");
       void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
     } catch (e) {
-      pushToast("error", `拉取失败: ${String(e)}`);
+      pushToast("error", `拉取失败: ${describeError(e)}`);
     } finally {
       setPulling(false);
     }

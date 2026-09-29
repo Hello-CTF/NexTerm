@@ -167,14 +167,14 @@ impl Transport for WinRmTransport {
             *self.cwd.lock().unwrap_or_else(|e| e.into_inner()) = c;
         }
         let err_text = decode_bytes(&out.stderr);
-        let (stdout, t1) = super::cap_text(&text);
-        let (stderr, t2) = super::cap_text(&err_text);
+        // 不做 §6.3 裁剪（原因见 `ExecResult` 注释）：限预算归喂模型的那一侧。
+        // WinRM 的输出规模由协议自身的消息上限兜住，这里不再二次裁剪。
         Ok(ExecResult {
-            stdout,
-            stderr,
+            stdout: text,
+            stderr: err_text,
             exit_code: Some(out.exit_code),
             duration_ms: start.elapsed().as_millis() as u64,
-            truncated: t1 || t2,
+            truncated: false,
         })
     }
 

@@ -5,7 +5,7 @@
  *   node scripts/build.mjs                      # 前端 + debug（日常开发）
  *   node scripts/build.mjs release               # 前端 + release（交付/装机）
  *   node scripts/build.mjs debug --skip-frontend # 只编 Rust
- *   node scripts/build.mjs release --install      # 顺带覆盖 %LOCALAPPDATA%\NexTerm\nexterm.exe
+ *   node scripts/build.mjs release --install      # 顺带覆盖安装版 exe（仅 Windows）
  *
  * 它把三个「暗坑」封进一条命令，而不是写在文档里靠人记：
  *
@@ -18,19 +18,21 @@
  *      钩子把 node 的 `fs.rmSync` 改成"走回收站"，回收站不可用时 FAIL_CLOSED。
  *      这里用子进程 + 清空 NODE_OPTIONS 的方式重试一次。
  *
- *   3. **agent 沙箱里构建必须把产物放到 `%TEMP%`**。
- *      沙箱把工作区/%LOCALAPPDATA% 当"只能新建、不能修改"：cargo 第二次启动打不开
- *      自己上次建的锁文件（`os error 5`），且删不掉。`%TEMP%` 是唯一确定可写的区域。
- *      检测到 agent 环境（CODEBUDDY_SESSION_ID）时自动改用 `%TEMP%\NexTerm-build`；
- *      人跑的时候一切照旧（用仓库内的 `nexterm/target/`，增量缓存不丢）。
+ *   3. **agent 沙箱里构建必须把产物放到临时目录**。
+ *      沙箱把工作区/安装目录当"只能新建、不能修改"：cargo 第二次启动打不开
+ *      自己上次建的锁文件（`os error 5`），且删不掉。系统临时目录是唯一确定
+ *      可写的区域。检测到 agent 环境（CODEBUDDY_SESSION_ID）时自动改用
+ *      <临时目录>/NexTerm-build；人跑的时候一切照旧（用仓库内的 `target/`，
+ *      增量缓存不丢）。
  *
  * 产物：
- *   人类模式：nexterm/target/<profile>/nexterm.exe
- *   agent模式：%TEMP%\NexTerm-build\<profile>\nexterm.exe（会把路径打印出来）
+ *   人类模式：<repo>/target/<profile>/nexterm(.exe)
+ *   agent模式：<临时目录>/NexTerm-build/<profile>/nexterm(.exe)（会把路径打印出来）
  */
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,6 +45,11 @@ const INSTALL = argv.includes("--install");
 const isWin = process.platform === "win32";
 const NODE = process.execPath;
 const EXE = isWin ? "nexterm.exe" : "nexterm";
+// PATH 分隔符与 cargo 家目录：都不能写死 Windows 的 `;` / `%USERPROFILE%`，
+// 否则在 macOS 上会拼出 `undefined\.cargo\bin` 这种既找不到 cargo、
+// 报错信息还误导人的 PATH。
+const PATH_SEP = isWin ? ";" : ":";
+const CARGO_BIN = path.join(os.homedir(), ".cargo", "bin");
 
 const log = (m) => console.log(m);
 const step = (m) => console.log(`\n\u2500\u2500 ${m}`);
@@ -51,15 +58,27 @@ const die = (m) => {
   process.exit(1);
 };
 
+/* ── -1. 参数校验：先拒绝，再干活 ─────────────────────────────────────── */
+
+// 放在最前面：`--install` 是 Windows 专用捷径（macOS 走 .app/.dmg，没有可覆盖的
+// 固定路径），这个判断如果拖到构建完成之后，用户会白等一次全量 release 编译才被拒。
+if (INSTALL) {
+  if (!isWin) die("--install 只在 Windows 上有意义（macOS 请用 `pnpm tauri build` 出 .dmg）。");
+  if (PROFILE !== "release") die("--install 只能配合 release 用。");
+}
+
 /* ── 0. 判断环境，定 target 目录 ─────────────────────────────────────── */
 
 const IN_AGENT = !!process.env.CODEBUDDY_SESSION_ID || !!process.env.CLAUDE_SESSION_ID;
-const TEMP = process.env.TEMP ?? process.env.TMP ?? "/tmp";
+// Windows 用 TEMP/TMP，macOS/Linux 大多不设这两个变量 —— 兜底必须是
+// `os.tmpdir()` 而不是写死 `/tmp`：macOS 上 `TMPDIR` 指向 /var/folders/… 的
+// 每用户私有目录，/tmp 是共享的，语义不对。
+const TEMP = process.env.TEMP ?? process.env.TMP ?? os.tmpdir();
 let targetDir;
 if (process.env.CARGO_TARGET_DIR) {
   targetDir = process.env.CARGO_TARGET_DIR;
 } else if (IN_AGENT) {
-  // 沙箱下唯一可写区域。用子目录而不是 %TEMP% 根目录，免得和别的工具混在一起，
+  // 沙箱下唯一可写区域。用子目录而不是临时目录根，免得和别的工具混在一起，
   // 也方便一条命令清掉。
   targetDir = path.join(TEMP, "NexTerm-build");
 } else {
@@ -68,10 +87,13 @@ if (process.env.CARGO_TARGET_DIR) {
 
 step("构建环境");
 log(`  profile   = ${PROFILE}`);
-log(`  运行环境  = ${IN_AGENT ? "agent 沙箱（产物放 %TEMP%）" : "普通终端（产物放仓库内 target/）"}`);
+log(`  运行环境  = ${IN_AGENT ? "agent 沙箱（产物放系统临时目录）" : "普通终端（产物放仓库内 target/）"}`);
 log(`  target-dir= ${targetDir}`);
-if (IN_AGENT && !targetDir.toLowerCase().includes("temp")) {
-  die(`agent 沙箱下 target-dir 必须在 %TEMP% 里，当前是 ${targetDir}。`);
+// 判据是「落在临时目录**里面**」，不是「路径名里含 temp 字样」——
+// 后者是 Windows 口径（%TEMP% 字面含 TEMP），在 macOS 上会把
+// /tmp/NexTerm-build 误判成越界而直接退出。
+if (IN_AGENT && !path.resolve(targetDir).startsWith(path.resolve(TEMP) + path.sep)) {
+  die(`agent 沙箱下 target-dir 必须落在临时目录内（${TEMP}），当前是 ${targetDir}。`);
 }
 
 /* ── 1. 前端 ─────────────────────────────────────────────────────────── */
@@ -137,13 +159,13 @@ const cargo = spawnSync(cargoBin, cargoArgs, {
   stdio: "inherit",
   env: {
     ...process.env,
-    // 本机 rust 工具链不在默认 PATH 里
-    PATH: `${process.env.USERPROFILE}\\.cargo\\bin${isWin ? ";" : ":"}${process.env.PATH ?? ""}`,
+    // 本机 rust 工具链常常不在默认 PATH 里，显式补上 ~/.cargo/bin
+    PATH: `${CARGO_BIN}${PATH_SEP}${process.env.PATH ?? ""}`,
     CARGO_TARGET_DIR: targetDir,
   },
 });
 if (cargo.error?.code === "ENOENT") {
-  die(`找不到 ${cargoBin}。把 ${process.env.USERPROFILE}\\.cargo\\bin 加进 PATH 再试。`);
+  die(`找不到 ${cargoBin}。把 ${CARGO_BIN} 加进 PATH 再试。`);
 }
 if (cargo.status !== 0) die(`cargo build 失败（rc=${cargo.status}）。`);
 
@@ -181,7 +203,7 @@ if (!IN_AGENT) {
 
 if (INSTALL) {
   step("覆盖安装版");
-  if (PROFILE !== "release") die("--install 只能配合 release 用。");
+  // 平台/参数校验已在最前面（参数校验段）做过，这里只管干活。
   const dst = path.join(process.env.LOCALAPPDATA ?? "", "NexTerm", EXE);
   if (!fs.existsSync(path.dirname(dst))) die(`安装目录不存在：${path.dirname(dst)}`);
   if (fs.existsSync(dst)) {

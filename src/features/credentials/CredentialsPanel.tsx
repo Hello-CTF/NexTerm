@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { assetApi, vaultApi, type Credential } from "../../ipc/commands";
 import { ask, pickKeyFile, promptText } from "../../ui/dialogs";
 import { connectAsset, useUi } from "../../app/store";
+import { describeError } from "../../ui/errorText";
 import {
   assetIcon,
   IconCopy,
@@ -67,7 +68,7 @@ export function CredentialsPanel() {
       refresh();
       pushToast("success", "已解锁");
     } catch (e) {
-      pushToast("error", String((e as Error).message ?? e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -110,7 +111,7 @@ export function CredentialsPanel() {
                 void vaultApi
                   .lock()
                   .then(refresh)
-                  .catch((e) => pushToast("error", String(e)))
+                  .catch((e) => pushToast("error", describeError(e)))
               }
             >
               <IconLock size={12} />
@@ -266,7 +267,7 @@ function CredentialDetail({
         });
       }, 1000);
     } catch (e) {
-      pushToast("error", String((e as Error).message ?? e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -276,7 +277,7 @@ function CredentialDetail({
       await navigator.clipboard.writeText(secret);
       pushToast("success", "已复制");
     } catch (e) {
-      pushToast("error", `复制失败：${String((e as Error).message ?? e)}`);
+      pushToast("error", `复制失败：${describeError(e)}`);
     }
   };
 
@@ -300,7 +301,7 @@ function CredentialDetail({
       setNewSecret("");
       onChanged();
     } catch (e) {
-      pushToast("error", String((e as Error).message ?? e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -321,7 +322,7 @@ function CredentialDetail({
       );
       onDeleted(cred.id);
     } catch (e) {
-      pushToast("error", String((e as Error).message ?? e));
+      pushToast("error", describeError(e));
     }
   };
 
@@ -453,7 +454,7 @@ function NewCredentialModal({
       pushToast("success", `已创建凭据「${name.trim()}」`);
       onSaved(id);
     } catch (e) {
-      pushToast("error", String((e as Error).message ?? e));
+      pushToast("error", describeError(e));
     }
   };
 

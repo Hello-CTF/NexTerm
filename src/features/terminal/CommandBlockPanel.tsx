@@ -5,6 +5,7 @@
 import { useState } from "react";
 import type { CommandBlock } from "./commandBlocks";
 import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconTrash } from "../../ui/icons";
+import { describeError } from "../../ui/errorText";
 
 export interface CommandBlockPanelProps {
   blocks: CommandBlock[];
@@ -52,7 +53,7 @@ export function CommandBlockPanel({
       await navigator.clipboard.writeText(text);
       onToast("success", `已复制块 #${index}（${text.length} 字符）`);
     } catch (e) {
-      onToast("error", `复制失败：${String(e)}`);
+      onToast("error", `复制失败：${describeError(e)}`);
     }
   };
 

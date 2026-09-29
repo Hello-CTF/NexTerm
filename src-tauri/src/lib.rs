@@ -168,6 +168,46 @@ pub fn run() {
                     state::AppState::new(handle.clone(), store, vault, sessions, ai, dbmgr);
                 tauri::Manager::manage(&handle, Arc::clone(&app_state));
 
+                // macOS：原生红绿灯标题栏。tao/wry 的运行时 API 靠不住 ——
+                // set_decorations 只翻转内部原子标志（is_decorated 读的也是它，
+                // 不是 NSWindow 真实状态），wry 的 Overlay 处理又不补 Titled 位；
+                // 红绿灯只有样式掩码真含 Titled 才会渲染。所以这里直接用
+                // AppKit 配 NSWindow：Titled 全家桶 + 全尺寸内容视图 + 透明
+                // 标题栏 + 隐藏标题。真实掩码前后值都写进启动日志。
+                #[cfg(target_os = "macos")]
+                {
+                    use objc2_app_kit::{NSWindow, NSWindowTitleVisibility};
+                    if let Some(win) = tauri::Manager::get_webview_window(&handle, "main") {
+                        match win.ns_window() {
+                            Ok(ptr) => {
+                                let ns: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+                                let before = ns.styleMask();
+                                ns.setStyleMask(
+                                    objc2_app_kit::NSWindowStyleMask::Titled
+                                        | objc2_app_kit::NSWindowStyleMask::Closable
+                                        | objc2_app_kit::NSWindowStyleMask::Miniaturizable
+                                        | objc2_app_kit::NSWindowStyleMask::Resizable
+                                        | objc2_app_kit::NSWindowStyleMask::FullSizeContentView,
+                                );
+                                ns.setTitlebarAppearsTransparent(true);
+                                ns.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+                                let after = ns.styleMask();
+                                tracing::info!(
+                                    target: "boot",
+                                    before = ?before,
+                                    after = ?after,
+                                    "macOS 标题栏已直接配置（AppKit：红绿灯 + 透明标题栏 + 全尺寸内容）"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(target: "boot", error = %e, "取 NSWindow 失败，跳过标题栏配置")
+                            }
+                        }
+                    } else {
+                        tracing::warn!(target: "boot", "未找到主窗口，跳过标题栏配置");
+                    }
+                }
+
                 // 后台任务：空闲会话清理（30 分钟，§7）+ vault 自动锁
                 let bg_state = Arc::clone(&app_state);
                 tokio::spawn(async move {

@@ -19,6 +19,15 @@ use crate::error::{AppError, AppResult};
 use crate::terminal::LocalPtyIo;
 
 /// 单次执行结果（§5.1）。
+///
+/// `stdout` / `stderr` 是**未经 §6.3 预算裁剪**的原始输出。这一条是硬约束：
+/// 消费方既有「喂给模型」的（`ai::tools` / `ai::context`），也有「结构化解析」的
+/// （`docker images --format '{{json .}}'`）。后者一旦被按行裁剪，解析结果就**静默**
+/// 少一截 —— 实机上就出现过「容器面板显示镜像 400，`docker images` 实际 569」。
+/// 所以裁剪不放在传输层，而是由喂模型的那一侧自己调 [`cap_text`]。
+///
+/// `truncated` 只表示**原始字节硬熔断**触顶（SSH 8MB / 本地 4MB），不代表 §6.3 的
+/// 行数·字节预算裁剪；预算裁剪由消费方自行判断。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecResult {
@@ -127,6 +136,10 @@ pub trait Transport: Send + Sync {
 }
 
 /// 输出裁剪（§6.3 / RainsIR cap_text）：400 行 / 120KB。
+///
+/// **由消费方调用**，不在 `Transport::exec` 里做（原因见 [`ExecResult`] 的注释）。
+/// 目前只用在两个「喂模型」的地方：`ai::tools::server` 的 exec / search 工具、
+/// `ai::context::recon_snapshot`。终端、文件树、Docker 面板拿到的都是完整输出。
 pub const CAP_LINES: usize = 400;
 pub const CAP_BYTES: usize = 120 * 1024;
 
@@ -186,5 +199,54 @@ mod tests {
         let (s3, t3) = cap_text("short output");
         assert!(!t3);
         assert_eq!(s3, "short output");
+    }
+
+    /// 回归：传输层 `exec` **不得**按行裁剪。
+    ///
+    /// 这是「容器面板显示镜像 400、实机 `docker images` 569」那个 bug 的守门用例 ——
+    /// 裁剪一旦回到 `Transport::exec`，本用例立刻红。
+    ///
+    /// 生成大输出的命令必须按平台给：`LocalTransport::exec` 走的是**本机 shell**
+    /// （Windows 是 PowerShell，Unix 是 sh），`seq` 在 Windows 上不存在。
+    /// 原先写死 `seq 1 1500`，clippy 能过、用例却会在 Windows 上连命令都找不到 ——
+    /// 正是「本地全绿、另一侧必红」那类跨平台暗坑。PowerShell 用区间表达式
+    /// `1..1500` 生成同样 1500 行。
+    #[tokio::test]
+    async fn local_exec_keeps_full_output() {
+        let t = crate::transport::local::LocalTransport::new();
+        // 注意：Windows 分支是 PowerShell 语法，本机（macOS）无 pwsh 无法本地实测，
+        // 由 CI 的 windows 任务把关。真要改这里，先确认两边都还能出 1500 行。
+        let cmd = if cfg!(windows) {
+            "1..1500"
+        } else {
+            "seq 1 1500"
+        };
+        let out = t
+            .exec(cmd, Duration::from_secs(30))
+            .await
+            .expect("本地 exec 失败");
+        assert_eq!(
+            out.exit_code,
+            Some(0),
+            "命令 `{cmd}` 未成功执行；stderr={}",
+            out.stderr.trim()
+        );
+        let lines = out.stdout.lines().filter(|l| !l.trim().is_empty()).count();
+        assert!(
+            lines >= 1500,
+            "传输层裁剪了输出：`{cmd}` 只拿到 {lines} 行（CAP_LINES={CAP_LINES}）"
+        );
+        assert!(!out.stdout.contains("已截断"), "传输层不应插入截断标记");
+        assert!(!out.truncated, "1500 行远未触及字节熔断，不应标截断");
+    }
+
+    /// 预算裁剪依旧存在，只是归属消费方（喂模型的那一侧）。
+    #[test]
+    fn cap_text_bounds_before_model() {
+        let many: String = (0..1500).map(|i| format!("line {i}\n")).collect();
+        let (s, t) = cap_text(&many);
+        assert!(t, "1500 行必须被裁剪");
+        assert!(s.lines().count() <= CAP_LINES + 1);
+        assert!(s.contains("已截断"));
     }
 }

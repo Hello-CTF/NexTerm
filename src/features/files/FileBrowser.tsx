@@ -472,7 +472,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
             <IconAlert size={14} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="break-words">
-                {String((entries.error as { message?: string })?.message ?? entries.error)}
+                {describeError(entries.error)}
               </div>
               <button className="nx-link mt-1 text-[11px]" onClick={refresh}>
                 重试

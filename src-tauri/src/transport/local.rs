@@ -147,6 +147,8 @@ impl Transport for LocalTransport {
         let err = child.stderr.take();
         let out_task = tokio::spawn(async move {
             let mut buf = Vec::new();
+            // 4MB 是防内存爆掉的硬熔断，不是 §6.3 预算裁剪；触顶要如实上报。
+            let mut capped = false;
             if let Some(mut o) = out {
                 use tokio::io::AsyncReadExt;
                 let mut tmp = vec![0u8; 8192];
@@ -156,15 +158,18 @@ impl Transport for LocalTransport {
                         Ok(n) => {
                             if buf.len() < 4 * 1024 * 1024 {
                                 buf.extend_from_slice(&tmp[..n]);
+                            } else {
+                                capped = true;
                             }
                         }
                     }
                 }
             }
-            buf
+            (buf, capped)
         });
         let err_task = tokio::spawn(async move {
             let mut buf = Vec::new();
+            let mut capped = false;
             if let Some(mut e) = err {
                 use tokio::io::AsyncReadExt;
                 let mut tmp = vec![0u8; 8192];
@@ -174,12 +179,14 @@ impl Transport for LocalTransport {
                         Ok(n) => {
                             if buf.len() < 1024 * 1024 {
                                 buf.extend_from_slice(&tmp[..n]);
+                            } else {
+                                capped = true;
                             }
                         }
                     }
                 }
             }
-            buf
+            (buf, capped)
         });
         let exit = tokio::time::timeout(timeout, child.wait()).await;
         let exit_code = match exit {
@@ -193,16 +200,17 @@ impl Transport for LocalTransport {
                 )));
             }
         };
-        let stdout = String::from_utf8_lossy(&out_task.await.unwrap_or_default()).into_owned();
-        let stderr = String::from_utf8_lossy(&err_task.await.unwrap_or_default()).into_owned();
-        let (stdout, t1) = super::cap_text(&stdout);
-        let (stderr, t2) = super::cap_text(&stderr);
+        let (out_buf, out_capped) = out_task.await.unwrap_or_default();
+        let (err_buf, err_capped) = err_task.await.unwrap_or_default();
+        let stdout = String::from_utf8_lossy(&out_buf).into_owned();
+        let stderr = String::from_utf8_lossy(&err_buf).into_owned();
+        // 不做 §6.3 裁剪（原因见 ExecResult 注释）：调用方里既有结构化解析，也有模型输入。
         Ok(ExecResult {
             stdout,
             stderr,
             exit_code,
             duration_ms: start.elapsed().as_millis() as u64,
-            truncated: t1 || t2,
+            truncated: out_capped || err_capped,
         })
     }
 
@@ -344,6 +352,14 @@ impl FileSystem for LocalFs {
         Ok(())
     }
 
+    #[cfg(unix)]
+    async fn chmod(&self, path: &str, mode: u32) -> AppResult<()> {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(real(path), std::fs::Permissions::from_mode(mode)).await?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
     async fn chmod(&self, _path: &str, _mode: u32) -> AppResult<()> {
         Err(AppError::Unsupported("Windows 文件系统不支持 chmod".into()))
     }

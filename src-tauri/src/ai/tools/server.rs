@@ -120,12 +120,16 @@ pub async fn exec_commands(
         match outcome {
             Ok(out) => {
                 last_code = out.exit_code;
-                report.push_str(&format!("$ {cmd}\n{}", out.stdout));
-                if !out.stderr.is_empty() {
-                    report.push_str(&format!("[stderr]\n{}\n", out.stderr));
+                // 传输层已不再裁剪（否则 docker 之类的结构化输出会被静默砍掉），
+                // 预算改由这里守：每条命令的输出单独 cap，与从前逐条裁剪口径一致。
+                let (stdout, t1) = crate::transport::cap_text(&out.stdout);
+                let (stderr, t2) = crate::transport::cap_text(&out.stderr);
+                report.push_str(&format!("$ {cmd}\n{stdout}"));
+                if !stderr.is_empty() {
+                    report.push_str(&format!("[stderr]\n{stderr}\n"));
                 }
                 report.push_str(&format!("[exit_code={}]\n", out.exit_code.unwrap_or(-1)));
-                if out.truncated {
+                if t1 || t2 || out.truncated {
                     report.push_str("[输出已截断]\n");
                 }
             }
@@ -290,16 +294,19 @@ pub async fn search_files(
         .exec(&cmd, std::time::Duration::from_secs(30))
         .await
     {
-        Ok(out) => ToolOutput {
-            ok: true,
-            text: if out.stdout.trim().is_empty() {
-                "无匹配".into()
-            } else {
-                out.stdout
-            },
-            exit_code: out.exit_code,
-            truncated: out.truncated,
-        },
+        Ok(out) => {
+            let (stdout, truncated) = crate::transport::cap_text(&out.stdout);
+            ToolOutput {
+                ok: true,
+                text: if stdout.trim().is_empty() {
+                    "无匹配".into()
+                } else {
+                    stdout
+                },
+                exit_code: out.exit_code,
+                truncated: truncated || out.truncated,
+            }
+        }
         Err(e) => ToolOutput::fail(format!("搜索失败: {e}")),
     }
 }

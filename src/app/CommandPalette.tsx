@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useUi, connectAsset, nextTabId, openTerminalTab } from "./store";
 import { assetApi, dbApi, sessionApi } from "../ipc/commands";
+import { describeError } from "../ui/errorText";
 import {
   IconDatabase,
   IconFolderOpen,
@@ -56,7 +57,7 @@ export function CommandPalette({
               setSessions([...sessions.filter((x) => x.id !== s.id), s]);
               return openTerminalTab(s, "本地终端");
             })
-            .catch((e) => pushToast("error", String(e)));
+            .catch((e) => pushToast("error", describeError(e)));
         },
       },
       {
@@ -83,7 +84,7 @@ export function CommandPalette({
                 closable: true,
               });
             })
-            .catch((e) => pushToast("error", String(e)));
+            .catch((e) => pushToast("error", describeError(e)));
         },
       },
       {

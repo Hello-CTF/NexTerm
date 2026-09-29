@@ -187,6 +187,10 @@ pub fn render(bundle: &ContextBundle) -> String {
 
 /// 确定性侦察快照（§8.5）：连接时采集、缓存，不消耗模型轮次。
 /// Linux 集合；失败命令静默跳过。
+///
+/// 每个命令的输出在这里过一遍 [`cap_text`]：传输层已不做裁剪（结构化消费者
+/// 需要完整数据），喂模型这一侧必须自己守预算。容器名单单独放宽到 60 行并附
+/// 总数 —— 原来写死 `head -20`，容器一多模型就会基于残缺名单作答却看不出来。
 pub async fn recon_snapshot(transport: &dyn Transport) -> String {
     const RECON: &[&str] = &[
         "hostname; uname -a; whoami; uptime",
@@ -194,13 +198,18 @@ pub async fn recon_snapshot(transport: &dyn Transport) -> String {
         "free -m 2>/dev/null | head -5",
         "ss -lntp 2>/dev/null | head -25 || netstat -lntp 2>/dev/null | head -25",
         "systemctl --failed --no-pager 2>/dev/null | head -15",
-        "docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | head -20",
+        "echo \"== docker ps（总数 $(docker ps -q 2>/dev/null | wc -l)）==\"; \
+         docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | head -60",
     ];
     let mut out = String::new();
     for cmd in RECON {
         match transport.exec(cmd, std::time::Duration::from_secs(8)).await {
             Ok(r) => {
-                out.push_str(&format!("$ {cmd}\n{}\n", r.stdout.trim_end()));
+                let (stdout, capped) = crate::transport::cap_text(&r.stdout);
+                out.push_str(&format!("$ {cmd}\n{}\n", stdout.trim_end()));
+                if capped {
+                    out.push_str("（上一条命令输出超出预算已截断）\n");
+                }
             }
             Err(e) => {
                 out.push_str(&format!("$ {cmd}\n<侦察命令失败: {e}>\n"));

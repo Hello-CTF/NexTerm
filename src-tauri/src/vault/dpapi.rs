@@ -1,6 +1,9 @@
 //! Windows DPAPI 封装（无主密码模式：KEK 直接来自 OS 凭据库）。
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
+// macOS 分支只做委托，不用 AppError；Windows / Linux 桩的报错需要它。
+#[cfg(not(target_os = "macos"))]
+use crate::error::AppError;
 
 /// DPAPI Protect（当前用户作用域）。
 #[cfg(windows)]
@@ -48,13 +51,29 @@ unsafe fn local_free_blob(ptr: *mut u8) {
     }
 }
 
-/// 非 Windows 平台编译桩（macOS/Linux 保持可编译，不验收）。
-#[cfg(not(windows))]
-pub fn protect(_data: &[u8]) -> AppResult<Vec<u8>> {
-    Err(AppError::Unsupported("DPAPI 仅在 Windows 可用".into()))
+/// macOS：委托登录钥匙串（见 [`crate::vault::keychain`]）。
+#[cfg(target_os = "macos")]
+pub fn protect(data: &[u8]) -> AppResult<Vec<u8>> {
+    crate::vault::keychain::protect(data)
 }
 
-#[cfg(not(windows))]
+/// macOS：委托登录钥匙串。
+#[cfg(target_os = "macos")]
+pub fn unprotect(data: &[u8]) -> AppResult<Vec<u8>> {
+    crate::vault::keychain::unprotect(data)
+}
+
+/// 其余平台（Linux 等）编译桩，保持可编译，运行时明确报不支持。
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn protect(_data: &[u8]) -> AppResult<Vec<u8>> {
+    Err(AppError::Unsupported(
+        "系统级免密保护仅支持 Windows / macOS".into(),
+    ))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn unprotect(_data: &[u8]) -> AppResult<Vec<u8>> {
-    Err(AppError::Unsupported("DPAPI 仅在 Windows 可用".into()))
+    Err(AppError::Unsupported(
+        "系统级免密保护仅支持 Windows / macOS".into(),
+    ))
 }

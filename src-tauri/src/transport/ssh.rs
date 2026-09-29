@@ -220,7 +220,10 @@ impl SshTransport {
                     .map_err(|e| AppError::Ssh(format!("私钥加载失败: {e}")))?;
                 auth_publickey(&mut handle, &params.username, key).await?
             }
-            SshAuth::KeyContent { content, passphrase } => {
+            SshAuth::KeyContent {
+                content,
+                passphrase,
+            } => {
                 // 凭据库私钥：内容直达 russh 解码，不落盘
                 let key = russh::keys::decode_secret_key(content, passphrase.as_deref())
                     .map_err(|e| AppError::Ssh(format!("私钥解析失败: {e}")))?;
@@ -416,17 +419,24 @@ impl Transport for SshTransport {
         let mut stdout: Vec<u8> = Vec::new();
         let mut stderr: Vec<u8> = Vec::new();
         let mut exit_code: Option<i32> = None;
+        // 8MB / 2MB 只是防内存爆掉的硬熔断，**不是** §6.3 的预算裁剪。
+        // 真被熔断必须如实上报（truncated），否则又是一次静默丢数据。
+        let mut raw_capped = false;
         let collect = async {
             while let Some(msg) = channel.wait().await {
                 match msg {
                     russh::ChannelMsg::Data { data } => {
                         if stdout.len() < 8 * 1024 * 1024 {
                             stdout.extend_from_slice(&data);
+                        } else {
+                            raw_capped = true;
                         }
                     }
                     russh::ChannelMsg::ExtendedData { data, .. } => {
                         if stderr.len() < 2 * 1024 * 1024 {
                             stderr.extend_from_slice(&data);
+                        } else {
+                            raw_capped = true;
                         }
                     }
                     russh::ChannelMsg::ExitStatus { exit_status: c } => {
@@ -448,14 +458,14 @@ impl Transport for SshTransport {
         }
         let stdout_s = String::from_utf8_lossy(&stdout).into_owned();
         let stderr_s = String::from_utf8_lossy(&stderr).into_owned();
-        let (stdout, t1) = super::cap_text(&stdout_s);
-        let (stderr, t2) = super::cap_text(&stderr_s);
+        // 不做 §6.3 裁剪：调用方里既有要完整数据的结构化解析，也有要限预算的模型输入。
+        // 限预算由喂模型的那一侧（ai::tools / ai::context）自己 cap_text。
         Ok(ExecResult {
-            stdout,
-            stderr,
+            stdout: stdout_s,
+            stderr: stderr_s,
             exit_code,
             duration_ms: start.elapsed().as_millis() as u64,
-            truncated: t1 || t2,
+            truncated: raw_capped,
         })
     }
 
@@ -806,7 +816,6 @@ async fn agent_auth_unix(
     handle: &mut Handle<NexTermHandler>,
     username: &str,
 ) -> AppResult<russh::client::AuthResult> {
-    use russh::keys::PrivateKeyWithHashAlg;
     let mut agent = russh::keys::agent::client::AgentClient::connect_env()
         .await
         .map_err(|e| AppError::Ssh(format!("SSH Agent 不可用: {e}")))?;
@@ -821,13 +830,18 @@ async fn agent_auth_unix(
             .await
             .map_err(AppError::from)?
             .flatten();
+        // russh 0.63 的 agent 返回 AgentIdentity（公钥或证书）；签名始终走 agent
+        // （下面的 signer），这里只需要公钥本体做认证请求。证书身份取其内嵌公钥，
+        // 按普通公钥认证 —— 服务器若配置了对应 CA/公钥即可通过。
+        let pubkey = id.public_key().into_owned();
         match handle
-            .authenticate_publickey_with(username, id, hash, &mut agent)
+            .authenticate_publickey_with(username, pubkey, hash, &mut agent)
             .await
         {
             Ok(r) => {
+                let ok = r.success();
                 result = Some(r);
-                if r.success() {
+                if ok {
                     break;
                 }
             }

@@ -4,10 +4,47 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { mountApi } from "../../ipc/commands";
+import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
+import { mountUnavailableReason } from "../../app/capabilities";
 import { IconArrowLeft, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
 
+/**
+ * 暂不可用态。
+ *
+ * 这版 macOS 不做「点了才失败」：把理由和替代路径直接摆在面板里。
+ * 理由文案来自内核（`mount_capability`），不在前端拼。
+ */
+function MountUnavailable({ reason }: { reason: string }) {
+  return (
+    <div className="nx-pane">
+      <div className="nx-toolbar">
+        <IconDrive size={14} className="text-neutral-500" />
+        <span className="nx-toolbar-title">磁盘挂载</span>
+        <span className="nx-badge nx-badge-amber">暂不可用</span>
+      </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6">
+        <div className="max-w-[560px] text-center">
+          <IconDrive size={30} className="mx-auto mb-3 text-neutral-600" />
+          <div className="text-[13px] font-semibold text-neutral-200">本平台暂不支持磁盘挂载</div>
+          <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
+          <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
+            远程文件读写请走左侧 <span className="text-neutral-300">「文件树」</span>
+            （SFTP 通道，不需要任何本机依赖）。
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MountPanel({ sessionId }: { sessionId?: string }) {
+  const reason = mountUnavailableReason();
+  if (reason) return <MountUnavailable reason={reason} />;
+  return <MountPanelInner sessionId={sessionId} />;
+}
+
+function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const [localPoint, setLocalPoint] = useState("Z:");
@@ -46,7 +83,7 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
       setRemotePath("");
       refresh();
     } catch (e) {
-      pushToast("error", `挂载失败: ${String(e)}`);
+      pushToast("error", `挂载失败: ${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -55,11 +92,11 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
   const remove = async (point: string) => {
     if (!(await ask(`断开 ${point}？`))) return;
     try {
-      await mountApi.remove(point);
+      await mountApi.remove(point, sessionId);
       refresh();
       pushToast("success", "已断开");
     } catch (e) {
-      pushToast("error", `断开失败: ${String(e)}`);
+      pushToast("error", `断开失败: ${describeError(e)}`);
     }
   };
 
@@ -123,7 +160,8 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
           <IconArrowLeft size={12} />
           新建映射 · Windows 用 <span className="nx-code">\\host\share</span> →{' '}
           <span className="nx-code">Z:</span>；Linux 用{' '}
-          <span className="nx-code">user@host:/path</span> → <span className="nx-code">/mnt/point</span>
+          <span className="nx-code">user@host:/path</span> →{' '}
+          <span className="nx-code">/mnt/point</span>（需 sshfs）
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input

@@ -35,6 +35,7 @@ import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { javascript } from "@codemirror/legacy-modes/mode/javascript";
 import { python } from "@codemirror/legacy-modes/mode/python";
 import { sql } from "@codemirror/lang-sql";
+import { describeError } from "../../ui/errorText";
 
 export interface FileEditorProps {
   sessionId: string;
@@ -139,7 +140,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           });
         }
       } catch (e) {
-        pushToast("error", `打开失败: ${String(e)}`);
+        pushToast("error", `打开失败: ${describeError(e)}`);
         onClose?.();
       }
     })();
@@ -177,7 +178,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       setDirty(false);
       pushToast("success", `已保存 ${path}（远端已备份 .nexterm-bak）`);
     } catch (e) {
-      pushToast("error", `保存失败: ${String(e)}`);
+      pushToast("error", `保存失败: ${describeError(e)}`);
     } finally {
       setSaving(false);
     }
