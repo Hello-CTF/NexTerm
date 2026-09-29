@@ -33,6 +33,68 @@ impl Default for LocalTransport {
     }
 }
 
+/// 宿主没安排 locale 时，给子进程补的 UTF-8 locale。
+///
+/// 选 `C.UTF-8` 而不是 `zh_CN.UTF-8`/`en_US.UTF-8`：它正是 macOS 的
+/// `/etc/zprofile` 给登录 shell 补的值（本机 `locale -a` 确认在册），
+/// 现代 Linux（glibc ≥ 2.35）也有。语言保持 C（错误信息仍是英文，
+/// 便于按文本解析命令输出的调用方），但 charmap 是 UTF-8。
+const UTF8_LOCALE: &str = "C.UTF-8";
+
+/// 决定要不要补 locale（注入取值数组以便单测，避免改全局环境变量）。
+///
+/// 三个变量**任一**非空就算宿主已安排：`LC_ALL` 覆盖一切，`LC_CTYPE` 只管字符分类，
+/// `LANG` 是兜底。空串按「没设」处理 —— 有些启动器会塞 `LANG=` 这种空值，
+/// 若当成已设置就会退回 C locale，等于没修。
+fn utf8_locale_from(vars: [Option<String>; 3]) -> Option<&'static str> {
+    let present = vars
+        .iter()
+        .any(|v| v.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false));
+    if present {
+        None
+    } else {
+        Some(UTF8_LOCALE)
+    }
+}
+
+/// 本机 shell 需要的 locale 补齐。
+///
+/// ## 为什么必须有这一步（中文文件名整片变成 `?` 的真因）
+///
+/// macOS 的 GUI 应用由 launchd 启动，环境里**没有 `LANG` / `LC_ALL`**
+/// （实测 `ps eww <NexTerm>` 只有 PATH/HOME/SHELL/USER/TMPDIR/…）。
+/// 从这里 fork 出来的 shell 因此落在 C/POSIX locale，`locale charmap` = `US-ASCII`。
+///
+/// 后果不是「字节被改坏」——`printf`、`cat` 这类纯字节透传的程序完全正常，
+/// 所以这个问题看起来只影响「某些命令」。真正会中招的是**按 locale 判断字符
+/// 可打印性的工具**：BSD `ls` 在 stdout 是 tty 时默认带 `-q`，会把每个非 ASCII
+/// **字节**换成一个 `?`，于是 `中文目录Ω`（14 字节）就显示成 14 个问号。
+/// （`find` / `grep` / `sort` 同属「按 locale 判断」这一类，但本仓库**只实测过 `ls`**，
+/// 其余是按机制推断，没验过就不当成结论用。）
+///
+/// ## 为什么不能指望对方 shell 自己修好
+///
+/// macOS 确实有 `/etc/zprofile`：`if [ -z "$LANG" ]; then export LANG=C.UTF-8; fi`。
+/// 但那是**登录 shell** 才读的文件。Terminal.app / iTerm 默认都起登录 shell
+/// （`zsh -l`），所以它们没这个问题；本应用起的是普通交互 shell，读不到它。
+/// 实测对照（同一 GUI 环境、同一夹具、`ls -1` 直出 tty）：
+///
+/// | 启动方式 | `locale charmap` | `ls` 中文名 |
+/// |---|---|---|
+/// | `zsh`（本应用原状） | US-ASCII | ❌ `????????????` |
+/// | `zsh -l` | UTF-8 | ✅ |
+/// | `zsh` + `LANG=C.UTF-8` | UTF-8 | ✅ |
+///
+/// 我们选后者：直接写进子进程环境，不去改用户的 shell 启动方式 ——
+/// 起登录 shell 会连带 source `~/.zprofile`/`~/.zlogin`，副作用大得多。
+fn utf8_locale() -> Option<&'static str> {
+    utf8_locale_from([
+        std::env::var("LC_ALL").ok(),
+        std::env::var("LC_CTYPE").ok(),
+        std::env::var("LANG").ok(),
+    ])
+}
+
 fn build_shell_command(shell: &str, cmd: &str) -> std::process::Command {
     #[cfg(windows)]
     {
@@ -98,8 +160,15 @@ impl Transport for LocalTransport {
                 cmd.cwd(cwd.clone());
             }
         }
-        #[cfg(windows)]
+        // TERM 描述的是**我们提供的这个 pty**（xterm.js，256 色），不是启动 NexTerm
+        // 的那个终端，所以无条件覆盖 —— 宿主若是 `TERM=screen` 的 tmux 里起来的，
+        // 透传下去会让子进程按错误的能力表发序列。
+        // （原先只在 Windows 分支设，Unix 上一直是「没有 TERM」：vim/less 会退化成
+        // 哑终端，`ls` 也不再上色。）
         cmd.env("TERM", "xterm-256color");
+        if let Some(locale) = utf8_locale() {
+            cmd.env("LANG", locale);
+        }
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -137,6 +206,11 @@ impl Transport for LocalTransport {
             if !cwd.is_empty() && std::path::Path::new(cwd.as_str()).is_dir() {
                 command.current_dir(cwd.as_str());
             }
+        }
+        // locale 与交互式 PTY 保持一致：同一条 `ls` 在终端里和经 AI 工具执行时
+        // 不该有不同结果。（`exec` 没有 tty，所以不设 TERM —— 那是描述终端的变量。）
+        if let Some(locale) = utf8_locale() {
+            command.env("LANG", locale);
         }
         let mut child = tokio::process::Command::from(command)
             .stdout(std::process::Stdio::piped())
@@ -438,5 +512,62 @@ impl super::RemoteWrite for LocalWriter {
     async fn finish(&mut self) -> AppResult<()> {
         use tokio::io::AsyncWriteExt;
         self.file.flush().await.map_err(AppError::Io)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vars(
+        lc_all: Option<&str>,
+        lc_ctype: Option<&str>,
+        lang: Option<&str>,
+    ) -> [Option<String>; 3] {
+        [
+            lc_all.map(str::to_string),
+            lc_ctype.map(str::to_string),
+            lang.map(str::to_string),
+        ]
+    }
+
+    #[test]
+    fn locale_filled_when_host_has_none() {
+        // GUI 启动的真实形态：三个变量全没有 → 必须补
+        assert_eq!(utf8_locale_from(vars(None, None, None)), Some(UTF8_LOCALE));
+    }
+
+    #[test]
+    fn locale_not_overridden_when_host_has_it() {
+        // 从终端 pnpm tauri dev 起来时会带 locale，用户的设置要原样透传
+        assert_eq!(
+            utf8_locale_from(vars(None, None, Some("en_US.UTF-8"))),
+            None
+        );
+        assert_eq!(
+            utf8_locale_from(vars(None, Some("zh_CN.UTF-8"), None)),
+            None
+        );
+        assert_eq!(utf8_locale_from(vars(Some("C"), None, None)), None);
+    }
+
+    #[test]
+    fn locale_filled_when_values_are_blank() {
+        // 空串等价于没设：若当成「已设置」，就会静默退回 C locale，等于没修。
+        assert_eq!(
+            utf8_locale_from(vars(None, None, Some(""))),
+            Some(UTF8_LOCALE)
+        );
+        assert_eq!(
+            utf8_locale_from(vars(Some("   "), None, None)),
+            Some(UTF8_LOCALE)
+        );
+    }
+
+    #[test]
+    fn locale_constant_is_utf8() {
+        // 常量本身别被改坏（改成非 UTF-8 会静默退回 ASCII，
+        // 症状只有「中文文件名变问号」，不看终端根本发现不了）
+        assert!(UTF8_LOCALE.to_ascii_uppercase().contains("UTF-8"));
     }
 }
