@@ -27,6 +27,16 @@ const COMPACT_AT_PERCENT: f64 = 75.0;
 /// DOM，滚动条会当场失去响应。超出部分在模型上下文与审计日志里仍然完整。
 const MAX_TOOL_TEXT: usize = 64 * 1024;
 
+/// `ToolArgs` 进度的最小推送间隔。
+///
+/// 工具参数是逐 token 流式到达的：一份 60 行的文件内容 ≈ 上千个分片，原样转发
+/// 等于用 IPC 刷屏（前端每收一条就要重渲染一次列表）。这条事件只需要表达
+/// 「还在动」，精确进度由 `ToolCall`（参数齐了）那一步给出，所以按时间节流。
+///
+/// `pub(crate)` 是因为 `takeover.rs` 的回调要共用同一口径 —— 两处各写一个
+/// 数字，迟早会漂移。
+pub(crate) const TOOL_ARGS_PING: Duration = Duration::from_millis(120);
+
 /// 一次对话任务的输入。
 pub struct AgentRunInput {
     pub job: Arc<AiJob>,
@@ -147,6 +157,9 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
 
         let job2 = Arc::clone(&job);
         let chan2 = channel.clone();
+        // 参数进度节流计时器。闭包每次循环重建 ⇒ 每次 `chat_streaming` 独立计时，
+        // 所以一次生成里的第一条进度一定是立刻推出去的（否则用户头两秒还是没反馈）。
+        let mut last_args_ping: Option<std::time::Instant> = None;
         let completion = tokio::select! {
             _ = job.cancel.cancelled() => {
                 aborted = true;
@@ -158,6 +171,18 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                 match item {
                     StreamItem::Delta(t) => { let _ = chan2.send(AiEvent::Delta { text: t }); }
                     StreamItem::Reasoning(t) => { let _ = chan2.send(AiEvent::Reasoning { text: t }); }
+                    // 生成工具参数的进度。以前这个分支不存在，于是模型吐
+                    // `write_file.content`（可能几十行）的几十秒里界面零事件 ——
+                    // 用户看到的是「AI 说完话就卡死」。不节流会刷屏，见 TOOL_ARGS_PING。
+                    StreamItem::ToolArgs { name, chars } => {
+                        let now = std::time::Instant::now();
+                        let due = last_args_ping
+                            .is_none_or(|t| now.duration_since(t) >= TOOL_ARGS_PING);
+                        if due {
+                            last_args_ping = Some(now);
+                            let _ = chan2.send(AiEvent::ToolArgs { tool: name, chars });
+                        }
+                    }
                 }
                 let _ = &job2;
             }) => match r {
@@ -253,6 +278,30 @@ pub async fn run(state: &AppState, input: AgentRunInput) -> AppResult<()> {
                 // 「档位 × 风险 → 放/问/拒」只在这里合成一次；下面三个分支
                 // 各自只负责怎么执行、怎么拒绝，不再自己判断风险。
                 let ruling = guard::judge(perm_mode, &perm_danger, &call.function.name, &args);
+
+                // ── 先读后写门禁：**提前到确认之前**（2026-09-30）────────────
+                // 这道检查原本埋在 `tools::execute` 里，也就是用户点完「允许」
+                // **之后**才跑。于是出现这样一串：用户对着一张带着完整 diff 的
+                // 卡片点了允许 → 才被告知「本次任务还没读过这个文件」→ 模型
+                // read_file、把整份内容**再生成一遍**。白点一次点击，白烧一遍
+                // token（写文件的内容常有上千 token，用户看到的就是「重写」「浪费」）。
+                //
+                // 判定一个字没改（仍是 `edit::read_gate` 那一份），只是把
+                // 「什么时候出结论」提前 —— 没读过的写入压根不该弹确认卡片。
+                // `tools::execute` 里那份保留，作纵深防御。
+                if let Some(rej) = tools::edit::read_gate_for(&call.function.name, &job.id, &args) {
+                    let _ = channel.send(AiEvent::ToolResult {
+                        id: call.id.clone(),
+                        ok: false,
+                        summary: truncate_summary(&rej.text, 400),
+                        text: rej.text.clone(),
+                        truncated: rej.truncated,
+                        exit_code: rej.exit_code,
+                    });
+                    history.push(ChatMessage::tool_result(&call.id, rej.text));
+                    continue;
+                }
+
                 let outcome = match ruling.decision {
                     guard::Decision::Deny => {
                         let msg = format!("已拒绝：{}", ruling.reason);
@@ -473,8 +522,11 @@ const MAX_DIFF_BYTES: u64 = 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = 512 * 1024;
 
 /// 写文件类工具：只有这两个会改文件内容。
+///
+/// 直接复用 `tools::edit::WRITE_TOOLS` —— 那份名单同时被「先读后写」门禁读，
+/// 两处各写一遍的话，将来加工具会出现「一边认得、一边不认得」。
 fn is_write_tool(name: &str) -> bool {
-    matches!(name, "write_file" | "edit_file")
+    tools::edit::is_write_tool(name)
 }
 
 /// 执行前对目标文件的了解程度。
@@ -923,5 +975,72 @@ mod tests {
         }
         assert!(!is_write_tool("read_file"));
         assert!(is_write_tool("write_file") && is_write_tool("edit_file"));
+    }
+
+    /* ── 跨模块的「连线」也得有东西守着 ───────────────────────────── */
+
+    /// 先读后写门禁要跑在**弹确认卡片之前**。
+    ///
+    /// 这条守不住行为（`run()` 要一整个 `AppState`，单测里起不来），但它回归的
+    /// 后果非常具体：一旦挪回确认之后，用户就会「点完允许才被告知没读过这个
+    /// 文件」，接着模型 read_file、把整份内容**再生成一遍** —— 白点一次点击 +
+    /// 白烧一遍 token（2026-09-30 用户报的正是这个）。所以直接盯源码里的先后
+    /// 顺序：守的是**顺序**，不是实现。
+    #[test]
+    fn read_gate_runs_before_the_confirm_card() {
+        assert!(
+            gate_precedes_confirm(production_source()),
+            "先读后写门禁必须早于 ConfirmRequired：晚一步，用户就会白点一次允许"
+        );
+        // 反向：顺序反过来、或缺任一边，都必须判 false。
+        // 少了这段，本条用例就退化成"符号存在性检查"—— 门禁被挪到确认之后，
+        // 它照样是绿的，而那正是要防的那种回归。
+        assert!(!gate_precedes_confirm(
+            "先弹 AiEvent::ConfirmRequired，再调 read_gate_for"
+        ));
+        assert!(!gate_precedes_confirm("只有 read_gate_for"));
+        assert!(!gate_precedes_confirm("只有 AiEvent::ConfirmRequired"));
+        assert!(!gate_precedes_confirm(""));
+    }
+
+    /// 门禁是否排在确认卡片之前。
+    ///
+    /// 抽成函数是为了能拿**构造的文本**验证顺序本身 —— 直接对生产源码断言，
+    /// 只能证明两个符号都在文件里，证明不了谁在前面。
+    fn gate_precedes_confirm(src: &str) -> bool {
+        match (
+            src.find("read_gate_for"),
+            src.find("AiEvent::ConfirmRequired"),
+        ) {
+            (Some(g), Some(c)) => g < c,
+            _ => false,
+        }
+    }
+
+    /// 回调必须把 `StreamItem::ToolArgs` 转成 `AiEvent::ToolArgs` 推出去。
+    ///
+    /// 这是个极容易被"顺手清理"的分支：它不产出任何最终结果，删掉之后编译照样
+    /// 过、所有行为测试照样绿 —— 只有界面在模型写大文件时重新变成死的
+    /// （就是 2026-09-30 那个「以为卡死」）。跨了进程边界，行为测试够不着，
+    /// 所以在这里守一根线。
+    #[test]
+    fn tool_args_progress_is_forwarded_to_the_frontend() {
+        let prod = production_source();
+        assert!(
+            prod.contains("StreamItem::ToolArgs") && prod.contains("AiEvent::ToolArgs"),
+            "回调里要把参数生成进度转成 AiEvent::ToolArgs，否则写大文件时界面零反馈"
+        );
+    }
+
+    /// 本文件 `#[cfg(test)]` 之前的那部分 —— 也就是生产代码。
+    ///
+    /// 上面两条测试靠源码顺序断言，而 `include_str!` 把测试模块自身也带了进来
+    /// （断言文本、错误消息里同样写着那两个名字）。不切开的话它们会自己匹配
+    /// 自己，测试永远绿 —— 等于没写。
+    fn production_source() -> &'static str {
+        include_str!("agent.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default()
     }
 }

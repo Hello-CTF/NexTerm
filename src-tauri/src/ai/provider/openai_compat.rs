@@ -147,6 +147,21 @@ pub struct Completion {
 pub enum StreamItem {
     Delta(String),
     Reasoning(String),
+    /// 模型正在逐 token 生成某个 tool_call 的**参数**（这个调用还没生成完）。
+    ///
+    /// 加这个变体是因为一个真机症状（2026-09-30）：让模型写文件时，整份内容
+    /// 会作为 `write_file.content` 逐 token 吐出来 —— 参数分片以前只在下面
+    /// 那个 `pending_tools` 里默默累积，**一个字都不往外说**。于是界面在
+    /// 「AI 说完『好的，我来写』」之后会静止几十秒，用户合理地判断成卡死。
+    ///
+    /// `chars` 是参数 JSON 已累积的**字节数**（`String::len()`）。刻意不去数
+    /// `chars()`：那是 O(n)，在逐 token 累积的循环里会退化成 O(n²)，而这里
+    /// 每条分片都会算一次。它也不是最终内容的长度，更不是进度条的分母 ——
+    /// 唯一的用途是让前端表达「还在长」。
+    ToolArgs {
+        name: String,
+        chars: usize,
+    },
 }
 
 pub struct LlmClient {
@@ -265,57 +280,7 @@ impl LlmClient {
                     finish_tools(&mut completion, &mut pending_tools);
                     return Ok(completion);
                 }
-                let v: serde_json::Value = match serde_json::from_str(payload) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if let Some(usage) = v.get("usage") {
-                    // 兼容各家口径（含缓存字段）。只在真的解析出用量时覆盖 ——
-                    // 有的网关会在中间分片里塞一个空的 usage，别把最终值冲掉。
-                    let u = crate::ai::usage::parse_usage(usage);
-                    if u.has_data() {
-                        completion.tokens_in = u.prompt_tokens;
-                        completion.tokens_out = u.completion_tokens;
-                        completion.tokens_cached = u.cached_tokens;
-                    }
-                }
-                let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
-                    continue;
-                };
-                if let Some(choice) = choices.first() {
-                    if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
-                        if !fr.is_empty() && fr != "null" {
-                            completion.finish_reason = fr.to_string();
-                        }
-                    }
-                    if let Some(delta) = choice.get("delta") {
-                        if let Some(rc) = delta.get("reasoning_content").and_then(|r| r.as_str()) {
-                            completion.reasoning.push_str(rc);
-                            on_item(StreamItem::Reasoning(rc.to_string()));
-                        }
-                        if let Some(cc) = delta.get("content").and_then(|c| c.as_str()) {
-                            completion.content.push_str(cc);
-                            on_item(StreamItem::Delta(cc.to_string()));
-                        }
-                        if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
-                            for tc in tcs {
-                                let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
-                                let entry = pending_tools.entry(idx).or_default();
-                                if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
-                                    entry.0 = id.to_string();
-                                }
-                                if let Some(f) = tc.get("function") {
-                                    if let Some(n) = f.get("name").and_then(|n| n.as_str()) {
-                                        entry.1.push_str(n);
-                                    }
-                                    if let Some(a) = f.get("arguments").and_then(|a| a.as_str()) {
-                                        entry.2.push_str(a);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                handle_payload(payload, &mut completion, &mut pending_tools, on_item);
             }
         }
         finish_tools(&mut completion, &mut pending_tools);
@@ -450,6 +415,79 @@ impl LlmClient {
     }
 }
 
+/// 处理一行 SSE 的 `data:` 载荷（`finish_tools` 的输入就是它攒出来的）。
+///
+/// 抽成独立函数（无 I/O、无时钟）是为了**可测**：这条解析链上现在挂着
+/// 「模型生成工具参数时要往外报进度」这种产品行为，而它的真机形态 ——
+/// 一份几十行的文件内容要吐几十秒 —— 在单测里造不出来，只能喂假的 SSE 行来守。
+///
+/// 原来内联时的 `continue`，进了函数都变成 `return`：函数只管一行，跳过即返回。
+fn handle_payload(
+    payload: &str,
+    completion: &mut Completion,
+    pending_tools: &mut std::collections::HashMap<u64, (String, String, String)>,
+    on_item: &mut impl FnMut(StreamItem),
+) {
+    let v: serde_json::Value = match serde_json::from_str(payload) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    if let Some(usage) = v.get("usage") {
+        // 兼容各家口径（含缓存字段）。只在真的解析出用量时覆盖 ——
+        // 有的网关会在中间分片里塞一个空的 usage，别把最终值冲掉。
+        let u = crate::ai::usage::parse_usage(usage);
+        if u.has_data() {
+            completion.tokens_in = u.prompt_tokens;
+            completion.tokens_out = u.completion_tokens;
+            completion.tokens_cached = u.cached_tokens;
+        }
+    }
+    let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
+        return;
+    };
+    if let Some(choice) = choices.first() {
+        if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+            if !fr.is_empty() && fr != "null" {
+                completion.finish_reason = fr.to_string();
+            }
+        }
+        if let Some(delta) = choice.get("delta") {
+            if let Some(rc) = delta.get("reasoning_content").and_then(|r| r.as_str()) {
+                completion.reasoning.push_str(rc);
+                on_item(StreamItem::Reasoning(rc.to_string()));
+            }
+            if let Some(cc) = delta.get("content").and_then(|c| c.as_str()) {
+                completion.content.push_str(cc);
+                on_item(StreamItem::Delta(cc.to_string()));
+            }
+            if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                for tc in tcs {
+                    let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
+                    let entry = pending_tools.entry(idx).or_default();
+                    if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                        entry.0 = id.to_string();
+                    }
+                    if let Some(f) = tc.get("function") {
+                        if let Some(n) = f.get("name").and_then(|n| n.as_str()) {
+                            entry.1.push_str(n);
+                        }
+                        if let Some(a) = f.get("arguments").and_then(|a| a.as_str()) {
+                            entry.2.push_str(a);
+                            // 逐分片转发，**节流交给消费端**：provider 这一层保持
+                            // 纯解析，不引入时间/频率概念，否则「多久报一次」会变成
+                            // 藏在传输层里的产品决策。
+                            on_item(StreamItem::ToolArgs {
+                                name: entry.1.clone(),
+                                chars: entry.2.len(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn finish_tools(
     completion: &mut Completion,
     pending: &mut std::collections::HashMap<u64, (String, String, String)>,
@@ -519,5 +557,98 @@ mod tests {
         assert_eq!(m.tool_call_id.as_deref(), Some("call_1"));
         let s = serde_json::to_string(&ChatMessage::user("hi")).unwrap();
         assert!(s.contains("\"role\":\"user\""));
+    }
+
+    /// 模型流式生成工具参数时，**每一个参数分片都要往外报一次进度**。
+    ///
+    /// 守的是 2026-09-30 那个真机症状：让模型写文件，整份内容会作为
+    /// `write_file.content` 逐 token 吐出来，而这期间界面一条事件都收不到 ——
+    /// 用户看到「AI 说完『好的，我来写』」之后几十秒毫无动静，合理地读成卡死。
+    ///
+    /// 用真的 SSE 载荷形状（第一个分片给 id + name、后续分片只给 arguments
+    /// 增量，这是 OpenAI 兼容协议的常规切法），不手搓简化格式 —— 否则测的是
+    /// 我脑补的协议，不是真的那条链。
+    #[test]
+    fn tool_args_are_reported_on_every_arguments_fragment() {
+        let mut completion = Completion::default();
+        let mut pending = std::collections::HashMap::new();
+        let mut items: Vec<StreamItem> = Vec::new();
+        let mut push = |it: StreamItem| items.push(it);
+
+        let fragments = [
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_file","arguments":""}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"/tmp/a\","}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"content\":\"第一行\\n"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"第二行\"}"}}]}}]}"#,
+        ];
+        for f in fragments {
+            handle_payload(f, &mut completion, &mut pending, &mut push);
+        }
+
+        let pings: Vec<(String, usize)> = items
+            .iter()
+            .filter_map(|i| match i {
+                StreamItem::ToolArgs { name, chars } => Some((name.clone(), *chars)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            pings.len(),
+            fragments.len(),
+            "每个参数分片都要报一次，否则写大文件的中途界面仍然是死的：{pings:?}"
+        );
+        // 名字从第一个分片起就得是对的 —— 前端要靠它说「正在写入 …」，
+        // 报成空串就只能显示一句没有主语的「正在准备…」。
+        assert!(
+            pings.iter().all(|(n, _)| n == "write_file"),
+            "每条进度都该带着工具名：{pings:?}"
+        );
+        // 进度只能往前走，且必须是**参数长度**（不是分片序号之类的计数）。
+        assert!(
+            pings.windows(2).all(|w| w[0].1 <= w[1].1),
+            "进度不许回退：{pings:?}"
+        );
+        assert_eq!(
+            pings.last().unwrap().1,
+            pending[&0].2.len(),
+            "最后一条进度要等于参数总长"
+        );
+        assert!(pending[&0].2.contains("第二行"), "报进度不能把聚合搞坏");
+        assert_eq!(pending[&0].1, "write_file");
+    }
+
+    /// 没有工具参数分片时，**一条进度都不该报**。
+    ///
+    /// 纯文本回复（最常见的一轮）走的是同一条解析链，凭空多一类事件会污染
+    /// 前端的流式渲染 —— 这类误报不会报错、不会崩溃，只会让界面出现
+    /// 说不清来历的状态。
+    #[test]
+    fn plain_text_stream_reports_no_tool_args() {
+        let mut completion = Completion::default();
+        let mut pending = std::collections::HashMap::new();
+        let mut items: Vec<StreamItem> = Vec::new();
+        let mut push = |it: StreamItem| items.push(it);
+
+        handle_payload(
+            r#"{"choices":[{"delta":{"content":"好的，我来"}}]}"#,
+            &mut completion,
+            &mut pending,
+            &mut push,
+        );
+        // usage-only 的噪声行（有的网关单独发一帧）
+        handle_payload(
+            r#"{"usage":{"prompt_tokens":10,"completion_tokens":2},"choices":[]}"#,
+            &mut completion,
+            &mut pending,
+            &mut push,
+        );
+
+        assert!(
+            items.iter().all(|i| matches!(i, StreamItem::Delta(_))),
+            "纯文本流里混进了非正文事件：{items:?}"
+        );
+        assert_eq!(completion.content, "好的，我来");
+        assert_eq!(completion.tokens_in, 10);
     }
 }

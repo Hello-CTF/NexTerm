@@ -39,6 +39,20 @@ pub enum AiEvent {
     Reasoning {
         text: String,
     },
+    /// 模型正在流式生成某个工具调用的参数（**尚未生成完**，还不是 `ToolCall`）。
+    ///
+    /// 存在的理由是一个真机症状（2026-09-30）：写文件的整份内容会作为
+    /// tool_call 参数逐 token 吐出来，这期间若一条事件都不推，界面会在 AI
+    /// 说完开场白之后静止几十秒 —— 用户合理地把它读成「卡死」。
+    ///
+    /// 与 `ToolCall` 的分工：这条只说「还在长」，会被节流丢掉若干次，
+    /// **不保证逐条到达**；`ToolCall` 才是「参数齐了、要发起了」。
+    /// `chars` 是参数 JSON 的已累积**字节数**（不是字符数 —— 逐分片数
+    /// `chars()` 会退化成 O(n²)）。别拿它当进度条的分母。
+    ToolArgs {
+        tool: String,
+        chars: usize,
+    },
     ToolCall {
         id: String,
         name: String,
@@ -429,6 +443,10 @@ mod tests {
             },
             AiEvent::Delta { text: "x".into() },
             AiEvent::Reasoning { text: "x".into() },
+            AiEvent::ToolArgs {
+                tool: "write_file".into(),
+                chars: 1200,
+            },
             AiEvent::ToolCall {
                 id: "c".into(),
                 name: "n".into(),

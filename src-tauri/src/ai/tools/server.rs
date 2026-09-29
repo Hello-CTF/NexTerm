@@ -27,7 +27,15 @@ pub fn schemas() -> Vec<crate::ai::provider::ToolSchema> {
           json!({"type":"object","properties":{
             "path":{"type":"string"},"max_bytes":{"type":"number"},
           },"required":["path"]})),
-        s("write_file", "写入远端文件（默认需用户确认；保存前自动备份）。",
+        // 说明书里这几句不是修辞，是**唯一**能让模型少烧 token 的地方：
+        // 「先读后写」门禁对 write_file 与 edit_file 一视同仁，但以前只有
+        // edit_file 的说明书提到了它。模型看不见规则 ⇒ 直接 write_file ⇒
+        // 生成完整份内容才被门禁拒（详见 edit::read_gate_for），然后重写一遍。
+        s("write_file", "写入远端文件（默认需用户确认；保存前自动备份）。\
+         **改一个已存在的文件前，必须先用 read_file 读过它**——先读后写门禁是硬性的，\
+         没读过会被直接拒绝，而这一次已经生成好的内容就作废了，只能重发。\
+         新建一个还不存在的文件时也先用 read_file 探一次：读不到正是你需要的信息。\
+         只改少数几行时优先用 edit_file，不要整份重写。",
           json!({"type":"object","properties":{
             "path":{"type":"string"},"content":{"type":"string"},
           },"required":["path","content"]})),

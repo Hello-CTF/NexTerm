@@ -328,7 +328,21 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     const verb = creating ? "新建" : "修改";
 
     later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
-    later(620, () =>
+    // 模型把整份内容当成工具参数逐 token 吐出来 —— 这一段在真机上最长，
+    // 而 2026-09-30 之前内核在这期间**一个字都不往外说**：界面在 AI 说完
+    // 开场白之后完全静止几十秒，用户合理地把它读成卡死。演示必须留出这段，
+    // 否则「写入过程有反馈」在没有本地模型的机器上根本验不到。
+    // 间隔对齐内核的节流口径（120ms），不是随手取的数。
+    [0.25, 0.5, 0.75, 1].forEach((frac, i) => {
+      later(460 + i * 110, () =>
+        pushEvent(channel, {
+          type: "toolArgs",
+          tool: "write_file",
+          chars: Math.round(after.length * frac),
+        }),
+      );
+    });
+    later(920, () =>
       pushEvent(channel, {
         type: "toolCall",
         id: callId,
@@ -336,7 +350,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         display: `写入 ${path}`,
       }),
     );
-    later(780, () =>
+    later(1040, () =>
       pushEvent(channel, {
         type: "confirmRequired",
         id: callId,

@@ -77,6 +77,23 @@ type ChatItem =
       preview?: FilePreviewItem | null;
     };
 
+/**
+ * 状态条上的一行字（`status` 事件，外加「正在生成工具参数」这个阶段）。
+ *
+ * `tool` / `chars` 只在 `phase === "tool_args"` 时有值：模型正在逐 token
+ * 生成某个工具调用的参数。**写文件的整份内容就藏在这个阶段里** ——
+ * 它可能持续几十秒，而 2026-09-30 之前的实现在这期间一条事件都不推，
+ * 用户看到 AI 说完开场白之后界面完全静止，合理地读成「卡死」。
+ */
+interface StatusLine {
+  phase: string;
+  detail?: string;
+  turn?: number;
+  tool?: string;
+  /** 参数 JSON 的**已累积字节数**。不是最终内容长度，别当百分比的分母。 */
+  chars?: number;
+}
+
 /** 任务清单的一条（与内核 `TodoItem` 对应）。 */
 interface TodoRow {
   content: string;
@@ -122,7 +139,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
    * 什么动静都没有，"卡住了"的焦虑有一半来自这里：明明还在干活，
    * 用户看到的是一个不动的转圈和一张点不动的发送按钮。
    */
-  const [status, setStatus] = useState<{ phase: string; detail?: string; turn?: number } | null>(null);
+  const [status, setStatus] = useState<StatusLine | null>(null);
   /** 最近一轮的用量快照（功能行右侧的圆环）。null = 本轮还没跑过。 */
   const [usage, setUsage] = useState<AiUsage | null>(null);
   /** 当前任务清单（todo_write 推整份）。 */
@@ -284,7 +301,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             return [...prev, { role: "reasoning", text: ev.text as string }];
           });
           break;
+        case "toolArgs":
+          // 模型正在吐工具参数 —— 写文件时那一大坨内容就在这里面。
+          // 这个阶段以前在内核里被默默吃掉（一个字都不往外说），于是 AI 说完
+          // 开场白之后界面会静止几十秒，用户只能反复问「是不是卡死了」。
+          // 事件本身已在内核侧节流（每 120ms 最多一条），这里直接覆盖。
+          setStatus({
+            phase: "tool_args",
+            tool: ev.tool as string,
+            chars: ev.chars as number,
+          });
+          break;
         case "toolCall":
+          // 参数齐了 ⇒ 卡片接管，状态条让位（否则会同时挂着两处「正在写入」）。
+          setStatus(null);
           setItems((prev) => [
             ...prev,
             {
@@ -1132,11 +1162,44 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-/** 运行状态的一句话（把 `AiEvent::Status` 翻成人话）。 */
-function statusText(s: { phase: string; detail?: string; turn?: number }): string {
+/** 运行状态的一句话（把 `AiEvent::Status` 与工具参数进度翻成人话）。 */
+function statusText(s: StatusLine): string {
   if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期工具结果…";
   if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 轮 · 正在思考…` : "正在思考…";
+  if (s.phase === "tool_args") {
+    // 报「已生成多少」而不是百分比：内核给的是参数 JSON 的**字节数**，
+    // 而这份 JSON 最终会长到多大没人知道 —— 分母不存在，百分比就是编的。
+    // 给一个会动的数字，用户就能判断它是活的，这正是这行字存在的全部意义。
+    return `${preparingLabel(s.tool)} · 已生成 ${formatBytes(s.chars ?? 0)}`;
+  }
   return s.detail ?? s.phase;
+}
+
+/**
+ * 「正在准备什么」的人话说法。
+ *
+ * 单独一张表，而不是拼成 `${tool}…`：工具名是给模型看的标识符
+ * （`write_file` / `edit_file`），直接摆给用户看等于让人读代码。
+ */
+function preparingLabel(tool?: string): string {
+  switch (tool) {
+    case "write_file":
+      return "正在准备写入内容";
+    case "edit_file":
+      return "正在准备修改内容";
+    case "exec_commands":
+      return "正在准备命令";
+    case "send_keys":
+      return "正在准备按键";
+    default:
+      return "正在准备工具参数";
+  }
+}
+
+/** 字节数的粗略说法。参数是逐 token 长起来的，精确到个位没有意义。 */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} 字节`;
+  return `${(n / 1024).toFixed(1)} KB`;
 }
 
 /**

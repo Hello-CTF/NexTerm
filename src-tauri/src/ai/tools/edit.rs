@@ -107,6 +107,35 @@ pub fn read_gate(job_id: &str, args: &serde_json::Value) -> Option<ToolOutput> {
     )))
 }
 
+/// 会改动文件内容的工具。只有这些要走「先读后写」门禁。
+///
+/// 收成一个常量，是因为门禁现在有**两个调用时机**（见 `read_gate_for`）：
+/// 执行时的兜底（`tools::execute`）与确认之前的提前判定（`agent::run`）。
+/// 两处各自判断工具名，迟早会出现「执行时拦、提前不拦」的错位 —— 那正好
+/// 是最坏的一种：用户白点一次允许才发现被拒。
+pub const WRITE_TOOLS: &[&str] = &["write_file", "edit_file"];
+
+/// 该工具是否会改动文件内容。
+pub fn is_write_tool(name: &str) -> bool {
+    WRITE_TOOLS.contains(&name)
+}
+
+/// **提前版**门禁：给 `agent::run` 在弹确认卡片**之前**调用。
+///
+/// 判定与 `read_gate` 完全是同一份，这里只多一层「哪些工具需要过门禁」的
+/// 分流。以前只有 `tools::execute` 里那一道，也就是用户点完「允许」之后才
+/// 检查：用户对着一张带 diff 的卡片点了允许，才被告知「还没读过这个文件」，
+/// 接着模型重新 read_file、把整份内容**再生成一遍** —— 白点一次点击，
+/// 白烧一遍 token（整份文件内容可能上千 token）。判定没变，只是提早出结果。
+///
+/// `tools::execute` 里那份保留：纵深防御，也覆盖不经 `run()` 的调用路径。
+pub fn read_gate_for(tool: &str, job_id: &str, args: &serde_json::Value) -> Option<ToolOutput> {
+    if !is_write_tool(tool) {
+        return None;
+    }
+    read_gate(job_id, args)
+}
+
 /// 任务结束时清理状态，避免注册表随任务数无限增长。
 pub fn clear_task(job_id: &str) {
     lock().remove(job_id);
@@ -556,6 +585,79 @@ mod tests {
         // 任务之间互不影响
         assert!(read_gate("test-job-gate-other", &json!({"path": "/etc/app.conf"})).is_some());
         clear_task(job);
+    }
+
+    /// `read_gate_for` 比 `read_gate` 只多一层「哪些工具要过门禁」的分流。
+    ///
+    /// 守两件事：① **非写文件类工具绝不能被这道门禁拦下**（拦了就是凭空多一次
+    /// 拒绝，模型会以为自己做错了什么，用户会看到一张莫名其妙的失败卡片）；
+    /// ② 写文件类工具在**用户点允许之前**就能拿到结论 —— 这正是 2026-09-30
+    /// 那个「点了允许才被拒、然后整份内容重写一遍」的修法。
+    #[test]
+    fn t11_read_gate_for_only_covers_write_tools() {
+        let job = "test-job-gate-for";
+        clear_task(job);
+        let args = json!({"path": "/srv/nginx.conf", "content": "x"});
+
+        for tool in [
+            "read_file",
+            "list_dir",
+            "exec_commands",
+            "send_keys",
+            "todo_write",
+        ] {
+            assert!(
+                read_gate_for(tool, job, &args).is_none(),
+                "{tool} 不是写文件类工具，不该被先读后写门禁拦下"
+            );
+        }
+
+        for tool in WRITE_TOOLS {
+            let rej = read_gate_for(tool, job, &args)
+                .unwrap_or_else(|| panic!("{tool} 未读过就该被拦，这是提前判定的全部意义"));
+            assert!(!rej.ok);
+            assert!(
+                rej.text.contains("/srv/nginx.conf"),
+                "{tool} 的拒绝理由要点名是哪个文件：{}",
+                rej.text
+            );
+        }
+
+        // 读过之后放行 —— 与执行时那一份判定必须同源同结论。
+        mark_read(job, "/srv/nginx.conf");
+        for tool in WRITE_TOOLS {
+            assert!(
+                read_gate_for(tool, job, &args).is_none(),
+                "{tool} 读过之后应当放行"
+            );
+        }
+        clear_task(job);
+    }
+
+    /// 工具名单只许有**一份**来源。
+    ///
+    /// 门禁现在有两个调用时机（执行时的兜底 + 确认前的提前判定），两处各自
+    /// 判断工具名的话，迟早出现「执行时拦、提前不拦」的错位 —— 而那正好是
+    /// 最坏的一种：用户白点一次允许才发现被拒。
+    #[test]
+    fn t12_write_tool_list_has_one_source_of_truth() {
+        for t in WRITE_TOOLS {
+            assert!(
+                is_write_tool(t),
+                "{t} 在 WRITE_TOOLS 里，is_write_tool 却不认它"
+            );
+        }
+        for t in [
+            "read_file",
+            "list_dir",
+            "exec_commands",
+            "todo_write",
+            "send_keys",
+            "docker_control",
+            "exit_plan_mode",
+        ] {
+            assert!(!is_write_tool(t), "{t} 不改文件内容，不该走先读后写门禁");
+        }
     }
 
     #[test]

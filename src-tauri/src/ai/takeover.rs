@@ -24,6 +24,7 @@ use crate::session::SessionManager;
 use crate::state::AppState;
 use crate::terminal::keys;
 
+use super::agent::TOOL_ARGS_PING;
 use super::guard::{self, Risk};
 use super::provider::{ChatMessage, LlmClient};
 use super::{AiEvent, AiRuntime, ConfirmDecision};
@@ -310,6 +311,9 @@ pub async fn run_takeover(
         // 模型每步的叙述（「看到…因为…所以…」）必须实时流给用户 ——
         // 丢弃回调的话侧栏全程零输出，AI 看起来就是「自顾自操作」。
         let chan2 = channel.clone();
+        // 与 agent.rs 同一套节流：接管模式同样会生成工具参数（`send_keys` 的
+        // 按键串可能不短），沉默几十秒在那里一样会被读成死机。
+        let mut last_args_ping: Option<std::time::Instant> = None;
         let completion = tokio::select! {
             _ = token.cancelled() => {
                 finish_owned(&state.ai, &state.sessions, tab_id, &token, "用户夺回").await;
@@ -329,6 +333,15 @@ pub async fn run_takeover(
                     }
                     StreamItem::Reasoning(t) => {
                         let _ = chan2.send(AiEvent::Reasoning { text: t });
+                    }
+                    StreamItem::ToolArgs { name, chars } => {
+                        let now = std::time::Instant::now();
+                        let due = last_args_ping
+                            .is_none_or(|t| now.duration_since(t) >= TOOL_ARGS_PING);
+                        if due {
+                            last_args_ping = Some(now);
+                            let _ = chan2.send(AiEvent::ToolArgs { tool: name, chars });
+                        }
                     }
                 }
             }) => match r {
