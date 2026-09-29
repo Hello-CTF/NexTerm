@@ -65,7 +65,34 @@ AI 不是贴在旁边的聊天框，而是接进了内核。
 
 ![端口转发](docs/images/port-forward.png)
 
-## 快速开始
+## 下载安装
+
+到 [Releases](https://github.com/ProbiusOfficial/NexTerm/releases/latest) 下载：
+
+| 平台 | 文件 |
+|---|---|
+| Windows 10/11 x64 | `NexTerm_x.y.z_x64-setup.exe`（NSIS 安装器，双击即装） |
+| macOS（Apple Silicon） | `NexTerm_x.y.z_aarch64.dmg`（拖入「应用程序」） |
+
+### macOS 首次打开被拦下怎么办
+
+安装包是 **ad-hoc 签名、未公证**的（没有 Apple Developer 证书），所以首次打开会被 Gatekeeper 拦一次。
+这是预期行为，不是文件损坏：
+
+1. 双击应用，看到「无法验证开发者 / 无法检查是否包含恶意软件」的提示 → 点**完成**
+2. 打开 **系统设置 → 隐私与安全性**，下拉到「安全性」，点 **「仍要打开」**
+3. 之后正常双击即可
+
+若提示的是**「已损坏，无法打开」**（而不是"无法验证开发者"），那是签名问题，用命令行一次修掉：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/NexTerm.app
+```
+
+> 只有 Intel Mac？目前只发 Apple Silicon 包，可用 Rosetta 或从源码构建
+> （`pnpm tauri build --target x86_64-apple-darwin`）。
+
+## 快速开始（从源码）
 
 支持 Windows 与 macOS，从源码构建：
 
@@ -79,7 +106,8 @@ pnpm tauri dev      # 开发窗口
 pnpm tauri build    # Windows 出 NSIS 安装器；macOS 出 .app + .dmg
 ```
 
-双平台 CI（Windows + macOS 各跑 fmt / clippy / test / typecheck / lint）在每次 push 时把关。
+双平台 CI（Windows + macOS 各跑 fmt / clippy / test / typecheck / lint）在每次 push 时把关；
+打 `v*` tag 由 `release.yml` 自动出两个平台的安装包并挂到 Release。
 
 ### 浏览器演示
 

@@ -22,6 +22,9 @@
     ],
     "icon": [
       "icons/icon.icns"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

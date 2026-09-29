@@ -217,12 +217,73 @@ pnpm tauri build --bundles app        # 只出 .app（跳过后面的 dmg 步骤
 > - 打包失败时 `.app` 通常已经生成好了（`Bundling NexTerm.app` 排在 dmg 之前），不必卡在 dmg 上。
 > - CI 上不需要额外处理：GitHub Actions 默认就设了 `CI=true`，且没有 `grep` 代理。
 
-### 6.2 macOS 包的签名现状
+### 6.2 macOS 签名：**不配 `signingIdentity` 等于不签名**（踩过，很隐蔽）
 
-本机与 CI 产出的都是 **ad-hoc 签名、未公证**（`codesign -dv` 显示 `Signature=adhoc`、
-`Info.plist=not bound`、`TeamIdentifier=not set`）。因此用户首次打开可能被 Gatekeeper 拦下，
-需要右键「打开」或 `xattr -dr com.apple.quarantine /Applications/NexTerm.app`。
-要免掉这一步，得有 Apple Developer 证书 + `notarize` 配置，目前没有。
+**这一节原来写错了**，原文说「产出的都是 ad-hoc 签名」。实测并非如此 ——
+Tauri **默认根本不跑 `codesign`**，`bundle.macOS.signingIdentity` 为空时直接跳过。
+后果是 app 里只剩 **链接器自动打的签名**，而它不是合法的 bundle 签名。
+
+先配好，否则后面全是坑（`tauri.macos.conf.json`）：
+
+```json
+{ "bundle": { "macOS": { "signingIdentity": "-" } } }
+```
+
+`-` 是 ad-hoc 的伪标识（官方文档：<https://v2.tauri.app/distribute/sign/macos/#ad-hoc-signing>）。
+配了之后构建日志会多出两行 `Signing with identity "-"`（先签主二进制，再签整个 bundle）。
+
+#### 怎么判断到底签没签：看 `flags`
+
+```bash
+codesign -dv path/to/NexTerm.app 2>&1 | grep -E '^flags|^Identifier|^Sealed'
+codesign --verify --deep --strict --verbose=2 path/to/NexTerm.app; echo "exit=$?"
+```
+
+| | 没配 `signingIdentity`（错） | 配了 `"-"`（对） |
+|---|---|---|
+| `flags` | `0x20002(adhoc,**linker-signed**)` | `0x10002(adhoc,runtime)` |
+| `Identifier` | 随机串（如 `nexterm-2f7aa5e9ff7431bd`） | Info.plist 里的 `com.nexterm.desktop` |
+| `Sealed Resources` | `none` | `version=2 rules=13 files=1` |
+| `Contents/_CodeSignature/` | **不存在** | 有 `CodeResources` |
+| `codesign --verify` | ❌ `code has no resources but signature indicates they must be present` | ✅ `valid on disk` / `satisfies its Designated Requirement` |
+
+`linker-signed` 这个 flag 是关键指纹 —— 看到它就知道 codesign 没跑过。
+
+#### 后果：用户看到的是「已损坏」，不是「无法验证开发者」
+
+从浏览器下载的 dmg 会带 `com.apple.quarantine`，拷出 app 时这个标记会跟过去
+（dmg 上是 `0281;…`，拷到 `/Applications` 后多出 `0x0100` 位变成 `0381;…`，
+该位表示「由应用下载」）。**隔离标记 + 无效签名 = Gatekeeper 判定为「已损坏」**，
+是死路：右键「打开」也救不回来。
+
+官方文档对这个症状的原话：
+
+> Code signing is required on macOS … and to prevent a warning that your application is
+> **broken and can not be started**, when downloaded from the browser.
+
+修好签名之后，报错会退化成常规的「未验证开发者」，用户可以走
+**系统设置 → 隐私与安全性 → 「仍要打开」**（或右键 →「打开」）放行一次。
+
+> **注意**：ad-hoc 签名**不能**完全免掉这一步。官方原文：
+> *Ad-hoc code signing does not prevent MacOS from requiring users to whitelist the
+> installation in their Privacy & Security settings.*
+> 要彻底无提示，需要 Apple Developer 证书（Developer ID Application）+ 公证（notarize），
+> 目前没有。CI 里若配了 `APPLE_CERTIFICATE` / `APPLE_SIGNING_IDENTITY` 等 secrets ，
+> `tauri-action` 会自动接手，无需改配置。
+
+#### 应急修法（用户手上已经有坏包时）
+
+```bash
+# 1) 去掉隔离标记（签名坏了时，这一条就足以让它能跑）
+xattr -dr com.apple.quarantine /Applications/NexTerm.app
+# 2) 顺手把签名补正（让 codesign --verify 也能过）
+codesign --force --sign - --identifier com.nexterm.desktop /Applications/NexTerm.app
+```
+
+> 本机（AI agent 终端）**无法复现** Finder 双击那条 Gatekeeper 评估路径 ——
+> 手工 `xattr -w` 注入隔离标记再 `open`，Gatekeeper 并不拦。
+> 所以这条只能靠「签名是否有效」这类客观判据来验，别宣称"已复现用户的报错"。
+
 
 ### 6.3 推送 workflow 文件需要 `workflow` scope（踩过一次）
 
@@ -273,5 +334,6 @@ Open this URL to continue in your web browser: https://github.com/login/device
 | P3 | `transport::ExecResult` 的裁剪职责靠约定 | 裁剪已从传输层挪到「喂模型的那一侧」，靠注释和回归用例守；漏调 `cap_text` 不会编译报错 | 若想强制，用类型区分 `RawOutput` / `CappedOutput` |
 | P3 | `MountPanel` 默认挂载点是 `Z:` | Windows 盘符，Linux 上不合理；macOS 已标不可用所以暴露不出来 | 按平台给默认值（Windows `Z:` / 其余 `/mnt/point`） |
 | ✅ | ~~Windows 分支的 PowerShell 语法未经本地实测~~ | 已由 CI 实测关闭：`windows-latest` 跑出 `local_exec_keeps_full_output ... ok`（run `36532246405`，Windows 171 passed） | — |
-| P3 | macOS 包未签名 / 未公证 | ad-hoc 签名，用户首次打开要绕 Gatekeeper | 需要 Apple Developer 证书 |
+| ✅ | ~~macOS 包签名~~ | 已修：原来**根本没签名**（`signingIdentity` 未配 ⇒ Tauri 跳过 codesign，只剩 linker 签名），用户下载后报「已损坏」。现已配 `"signingIdentity": "-"`，`codesign --verify` 通过 | — |
+| P2 | macOS 包未公证（notarize） | 现为有效的 ad-hoc 签名，不再报「已损坏」，但用户首次打开仍需在「隐私与安全性」里放行一次 | 需 Apple Developer 证书（$99/年）：CI 配 `APPLE_CERTIFICATE` / `APPLE_ID` / `APPLE_PASSWORD` 等 secrets 后 `tauri-action` 自动接手 |
 | P3 | `pnpm-workspace.yaml` 同时留着两代字段 | `onlyBuiltDependencies`（pnpm 10/11 读）与 `allowBuilds`（pnpm 12 读）并存。**这是有意为之**，让跨大版本都能装上依赖；副作用是读起来像笔误 | 若彻底钉死 11，可删掉 `allowBuilds` 两行 |
