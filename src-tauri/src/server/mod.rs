@@ -6,6 +6,24 @@
 //! / `transport` 一行不改，改的只是最外面那层「IPC 出口」——
 //! 桌面是 Tauri 的 IPC，服务端是 HTTP + WebSocket。
 //!
+//! # 两种形态：完整版与 onlyServer
+//!
+//! | | 完整版（默认） | onlyServer（`--sync-only`） |
+//! |---|---|---|
+//! | 用途 | 浏览器版：懒猫微服里那个、自建服务器上给人用的那个 | 只当资产同步的对端 |
+//! | 端点 | `/rpc` `/sync/rpc` `/healthz` `/ws/*` `/files/blob*` + 静态资源 | 只有 `/sync/rpc` `/healthz` |
+//! | 命令表 | 全部 132 条 | **3 条**（`sync_digest` / `sync_export` / `sync_import`） |
+//! | 前端资源 | 需要 | 不需要 |
+//!
+//! 两态**同一份二进制、运行时切换**（不是两套 feature / 两个 bin），理由：
+//! 内核与同步路径本来就共用，为「少挂几条路由」再造一套 cfg 门控，只会让
+//! 双态架构多出一个需要同步维护的维度。
+//!
+//! ⚠️ **onlyServer 不是可选项而是必需的**：公网上的 `/rpc` 没有任何自身鉴权
+//! （它靠懒猫平台登录门保护），而 `/sync/rpc` 的令牌走的是同一张命令表 ——
+//! 也就是说**完整版一旦暴露在公网，令牌 = 完全控制权**。只挂三条命令，
+//! 才谈得上「放到公网上只做同步」。
+//!
 //! # 启动顺序
 //!
 //! 日志 → SQLite（迁移）→ Vault → **平台注入的根密钥** → AI 运行时 → AppState
@@ -17,7 +35,7 @@
 //! （`lzc-manifest.yml` 里的 `{{ stable_secret "..." }}`，同一微服+同应用内稳定、
 //! 免用户交互），启动时用它 `init_master` / `unlock_master`。
 //!
-//! 因此**进程内存里持有明文 DEK**，这是设计选择不是疏漏：盒子是用户自己的硬件，
+//! 因此**进程内存里持有明文 DEK**，这是设计选择不是疏漏：微服是用户自己的硬件，
 //! 而「每次访问都要输主密码」在浏览器场景里会让整个凭据库功能废掉。
 //! 商店文案里会写明这一点。
 //!
@@ -26,6 +44,7 @@
 //! 在无人值守的服务端上只会把功能锁死。
 
 mod blobs;
+pub mod cli;
 pub mod hub;
 pub mod rpc;
 mod static_files;
@@ -53,17 +72,36 @@ pub struct ServerCtx {
     pub app: AppHandle,
     pub table: Table,
     pub hub: Arc<WsHub>,
-    pub web_root: PathBuf,
+    /// 前端静态资源目录。**onlyServer 下是 `None`** —— 没有浏览器界面可服务，
+    /// 用 `Option` 而不是「指一个不存在的目录」，是为了让「没挂静态资源」这件事
+    /// 在类型上就能看出来（`/healthz` 也据此报 `null` 而不是一条假路径）。
+    pub web_root: Option<PathBuf>,
+    /// onlyServer 形态（只做资产同步）。`/healthz` 报出来，便于运维自证。
+    pub sync_only: bool,
+    /// 解析后的数据目录（`--data-dir` / `NEXTERM_DATA_DIR` / 内置默认）。
+    ///
+    /// 放进来是为了让各处理器**用同一份**：`blobs` 那几个接口此前各自去读环境变量，
+    /// 命令行传了 `--data-dir` 时它们会算到另一个目录去（库与暂存区分家）。
+    pub data_dir: PathBuf,
 }
 
-/// 数据目录。
+/// 监听地址的默认值。
+///
+/// `0.0.0.0` 是**容器要的**（懒猫平台从容器网络另一侧来访问，绑 127.0.0.1 会连不上），
+/// 所以默认值不动。但裸 Linux 上照默认跑就等于把没有自身鉴权的 `/rpc` 挂到了
+/// 公网 —— 见 `serve` 里那条非回环警告，以及 `--sync-only`。
+pub const DEFAULT_LISTEN: &str = "0.0.0.0:8080";
+
+/// 默认监听地址（`DEFAULT_LISTEN` 的解析结果）。
+pub fn default_listen() -> SocketAddr {
+    SocketAddr::from(([0, 0, 0, 0], 8080))
+}
+
+/// 数据目录**内置默认值**（不含环境变量 / 命令行 —— 那两层由 `cli` 负责）。
 ///
 /// 容器里 `/lzcapp/var` 是**持久卷**（LPK 规范里唯一保证跨升级保留的路径），
 /// 所以有它就一定用它的子目录。本机跑（验收 / 调试）时退回 `./data`。
-pub fn data_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("NEXTERM_DATA_DIR") {
-        return PathBuf::from(p);
-    }
+pub fn default_data_dir() -> PathBuf {
     let lzc = PathBuf::from("/lzcapp/var");
     if lzc.is_dir() {
         return lzc.join("nexterm");
@@ -71,11 +109,8 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from("data")
 }
 
-/// 前端静态资源目录。
-fn web_root() -> PathBuf {
-    if let Ok(p) = std::env::var("NEXTERM_WEB_ROOT") {
-        return PathBuf::from(p);
-    }
+/// 猜前端静态资源目录（没有显式配置时）。
+fn probe_web_root() -> PathBuf {
     for cand in ["/app/dist", "dist", "../dist"] {
         let p = PathBuf::from(cand);
         if p.join("index.html").is_file() {
@@ -85,29 +120,83 @@ fn web_root() -> PathBuf {
     PathBuf::from("/app/dist")
 }
 
-fn listen_addr() -> SocketAddr {
-    let raw = std::env::var("NEXTERM_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    raw.parse().unwrap_or_else(|_| {
-        tracing::warn!(target: "boot", value = %raw, "NEXTERM_LISTEN 解析失败，退回 0.0.0.0:8080");
-        "0.0.0.0:8080".parse().expect("字面量一定是合法地址")
-    })
+/// 运行时参数（命令行 / 环境变量的解析结果，见 `cli`）。
+///
+/// 把「从哪读配置」与「怎么跑起来」分开：`serve` 只认这个结构，
+/// 于是测试里也能直接造一份，不必去动进程环境变量。
+#[derive(Debug, Clone)]
+pub struct Options {
+    /// 只做资产同步（只挂 `/sync/rpc` + `/healthz`，只注册三条命令）。
+    pub sync_only: bool,
+    pub listen: SocketAddr,
+    pub data_dir: PathBuf,
+    /// 前端资源目录。`None` = 按 `probe_web_root()` 猜。
+    pub web_root: Option<PathBuf>,
+    /// 凭据库根密钥。`None` = 凭据库保持未初始化（密码类资产同步会失败）。
+    pub master_key: Option<String>,
+}
+
+/// 绑到非回环地址时把风险喊出来。
+///
+/// 为什么**不直接拒绝启动**：懒猫微包容器必须绑 `0.0.0.0` —— 平台从容器网络
+/// 另一侧来访问，绑 `127.0.0.1` 就是连不上。所以默认值不能改成回环，
+/// 「裸 Linux 上照默认跑」这条只能靠**说清楚**来防（`--sync-only` 是另一道闸）。
+///
+/// ⚠️ 必须**同时**走 tracing 与 stderr，不能只发 tracing：本项目所有 tracing 都只
+/// 落到 `<数据目录>/logs/nexterm.log`（见 `init_tracing`），进程的 stdout/stderr
+/// 平时是空的（实测 0 字节）。只落文件就等于没警告 —— 首次部署的人不会想到去翻
+/// 数据目录里的日志，而这条警告的全部意义就是**当场被看见**。
+/// stderr 是终端、`journalctl`、`docker logs` 都能收到的那一路。
+fn warn_if_exposed(addr: SocketAddr, sync_only: bool) {
+    if addr.ip().is_loopback() {
+        return;
+    }
+    let detail = if sync_only {
+        "onlyServer 模式：能连上这个端口、又拿到同步令牌的人，可以读写你的资产库\n\
+         （含密码类凭据）。请确保端口没有直接暴露在公网，或用防火墙只放行对端地址。"
+    } else {
+        "⚠ 完整版：`/rpc` 与浏览器界面没有任何自身鉴权，能连上这个端口的人即\n\
+         拥有完整控制权 —— 终端、文件、Docker、凭据库。\n\
+         公网部署请改用 `--sync-only`（onlyServer），或只监听 127.0.0.1 再由带鉴权\n\
+         的反向代理转发。"
+    };
+    tracing::warn!(target: "boot", %addr, sync_only, "非回环地址监听：{}", detail);
+    eprintln!(
+        "\n\
+         ════════════════════════════════════════════════════════════════\n\
+         ⚠  NexTerm 服务端正在非回环地址 {addr} 上监听\n\
+         {detail}\n\
+         ════════════════════════════════════════════════════════════════\n"
+    );
 }
 
 /// 启动服务端。返回即进程该退出（正常关闭或致命错误）。
-pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
-    let data_dir = data_dir();
+pub async fn serve(opts: Options) -> Result<(), Box<dyn std::error::Error>> {
+    let data_dir = opts.data_dir.clone();
     std::fs::create_dir_all(&data_dir)?;
     let log_dir = data_dir.join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
     let _log_guard = crate::init_tracing(&log_dir);
     crate::install_panic_hook(log_dir.clone());
 
+    // onlyServer 没有浏览器界面 ⇒ 不去猜前端资源目录（猜了也没人用）。
+    let web_root = if opts.sync_only {
+        None
+    } else {
+        Some(opts.web_root.clone().unwrap_or_else(probe_web_root))
+    };
+
     tracing::info!(
         target: "boot",
+        mode = if opts.sync_only { "onlyServer（只做资产同步）" } else { "完整版（浏览器界面）" },
         data_dir = %data_dir.display(),
-        web_root = %web_root().display(),
+        web_root = %web_root
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(无)".to_string()),
         "NexTerm 服务端启动中"
     );
+    warn_if_exposed(opts.listen, opts.sync_only);
 
     // ── 内核装配（与桌面版逐条对齐，见 lib.rs 的 setup）──────────────
     let db_path = data_dir.join("data.db");
@@ -119,19 +208,24 @@ pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let vault = crate::vault::Vault::load(Arc::clone(&store)).await;
-    bootstrap_vault(&vault).await;
+    bootstrap_vault(&vault, opts.master_key.as_deref()).await;
 
     match store.asset_ensure_builtin_local().await {
         Ok(a) => tracing::info!(target: "boot", asset = %a.name, "内置本地资产就绪"),
         Err(e) => tracing::warn!(target: "boot", error = %e, "内置本地资产创建失败"),
     }
 
-    // 同步令牌：第一次启动就生成并落库，桌面版靠它（或平台的 API Token）配对。
+    // 同步令牌：第一次启动就生成并落库。
     // **不把令牌本身写进日志** —— 日志会被收集、转发、贴进工单。
     match crate::sync::ensure_token(&store).await {
         Ok(_) => tracing::info!(
             target: "boot",
-            "同步令牌已就绪（浏览器版「设置 → 同步」里可以查看）"
+            hint = if opts.sync_only {
+                "用 `nexterm-server token` 查看"
+            } else {
+                "浏览器版「设置 → 资产同步」里可以查看"
+            },
+            "同步令牌已就绪"
         ),
         Err(e) => {
             tracing::warn!(target: "boot", error = %e, "同步令牌初始化失败，桌面端同步将不可用")
@@ -178,23 +272,32 @@ pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         crate::session::idle_sweeper(bg_state, std::time::Duration::from_secs(30 * 60)).await;
     });
 
-    let table = Table::build();
+    // 命令表按形态注册。⚠️ **这是 onlyServer 的全部意义所在**：`/sync/rpc` 的
+    // 令牌走同一张表，全量注册（132 条）时它等价于完全控制权；只留三条，
+    // 令牌的权限就被限制在「能读写这份资产库」。
+    let table = if opts.sync_only {
+        Table::build_sync_only()
+    } else {
+        Table::build()
+    };
     tracing::info!(
         target: "boot",
         commands = table.len(),
+        sync_only = opts.sync_only,
         "RPC 表已装载"
     );
     if table.is_empty() {
         return Err("RPC 表为空：#[command] 展开或命令清单出了问题".into());
     }
 
-    let web_root = web_root();
-    if !web_root.join("index.html").is_file() {
-        tracing::warn!(
-            target: "boot",
-            root = %web_root.display(),
-            "web root 里没有 index.html：前端不会加载（RPC 与 WS 仍然可用）"
-        );
+    if let Some(root) = web_root.as_ref() {
+        if !root.join("index.html").is_file() {
+            tracing::warn!(
+                target: "boot",
+                root = %root.display(),
+                "web root 里没有 index.html：前端不会加载（RPC 与 WS 仍然可用）"
+            );
+        }
     }
 
     let ctx = Arc::new(ServerCtx {
@@ -203,39 +306,56 @@ pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         table,
         hub,
         web_root,
+        sync_only: opts.sync_only,
+        data_dir: data_dir.clone(),
     });
 
-    let router = Router::new()
-        .route("/rpc", post(handle_rpc))
-        // 桌面端的同步入口。**单独一条路径而不是给 `/rpc` 加锁**：`/rpc` 是
-        // 浏览器版在用的（靠平台登录门保护），动它等于给已有功能引入新的
-        // 故障模式；同步是新增能力，就该待在新增的路径上。见 `handle_sync_rpc`。
-        .route("/sync/rpc", post(handle_sync_rpc))
-        .route("/healthz", get(handle_healthz))
-        .route("/ws/events", get(hub::ws_events))
-        .route("/ws/channel/{id}", get(hub::ws_channel))
-        // 浏览器版的文件中转站（见 `blobs` 模块文档）：
-        // 桌面版的文件路径在浏览器里不存在，上传/下载要经过这里换一次手，
-        // 传输内核（fs_upload / fs_download / 打包 / 日志导出）才能一行不改地复用。
-        //
-        // 这几个接口**不在** `/rpc` 里，是因为它们承载的是**原始字节**：
-        // 走 JSON 得 base64，体积涨 1/3 且要在内存里复制一遍。
-        .route(
-            "/files/blob",
-            get(blobs::get_blob)
-                .post(blobs::post_blob)
-                .delete(blobs::delete_blob),
-        )
-        .route("/files/blob/reserve", post(blobs::post_reserve))
-        .fallback(handle_static)
-        // 文件写入 / 上传会把内容 base64 塞进 JSON，默认 2MB 上限对它们太小。
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
-        .with_state(Arc::clone(&ctx));
+    // onlyServer 只挂两条：同步入口 + 健康检查。
+    //
+    // 不挂静态资源（没有界面）、不挂 `/ws/*`（没有界面订阅事件）、不挂 `/files/blob*`
+    // （那是浏览器版的文件中转站，只在有界面时有意义）、**也不挂 `/rpc`**
+    // —— 最后这条是关键：`/rpc` 没有自身鉴权，挂上去等于把完整控制权重新放出来。
+    let router = if opts.sync_only {
+        Router::new()
+            .route("/sync/rpc", post(handle_sync_rpc))
+            .route("/healthz", get(handle_healthz))
+            .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
+            .with_state(Arc::clone(&ctx))
+    } else {
+        Router::new()
+            .route("/rpc", post(handle_rpc))
+            // 桌面端的同步入口。**单独一条路径而不是给 `/rpc` 加锁**：`/rpc` 是
+            // 浏览器版在用的（靠平台登录门保护），动它等于给已有功能引入新的
+            // 故障模式；同步是新增能力，就该待在新增的路径上。见 `handle_sync_rpc`。
+            .route("/sync/rpc", post(handle_sync_rpc))
+            .route("/healthz", get(handle_healthz))
+            .route("/ws/events", get(hub::ws_events))
+            .route("/ws/channel/{id}", get(hub::ws_channel))
+            // 浏览器版的文件中转站（见 `blobs` 模块文档）：
+            // 桌面版的文件路径在浏览器里不存在，上传/下载要经过这里换一次手，
+            // 传输内核（fs_upload / fs_download / 打包 / 日志导出）才能一行不改地复用。
+            //
+            // 这几个接口**不在** `/rpc` 里，是因为它们承载的是**原始字节**：
+            // 走 JSON 得 base64，体积涨 1/3 且要在内存里复制一遍。
+            .route(
+                "/files/blob",
+                get(blobs::get_blob)
+                    .post(blobs::post_blob)
+                    .delete(blobs::delete_blob),
+            )
+            .route("/files/blob/reserve", post(blobs::post_reserve))
+            .fallback(handle_static)
+            // 文件写入 / 上传会把内容 base64 塞进 JSON，默认 2MB 上限对它们太小。
+            .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
+            .with_state(Arc::clone(&ctx))
+    };
 
-    // 暂存区巡检：只按时间扫，因为「选完文件就走了」这种情况不会再有请求来触发清理。
-    tokio::spawn(blobs::sweep_task(data_dir.clone()));
+    if !opts.sync_only {
+        // 暂存区巡检：只按时间扫，因为「选完文件就走了」这种情况不会再有请求来触发清理。
+        tokio::spawn(blobs::sweep_task(data_dir.clone()));
+    }
 
-    let addr = listen_addr();
+    let addr = opts.listen;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(target: "boot", %addr, "NexTerm 服务端就绪");
 
@@ -246,14 +366,19 @@ pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 用平台注入的根密钥把凭据库拉到解锁态。
-async fn bootstrap_vault(vault: &Arc<crate::vault::Vault>) {
-    let key = match std::env::var("NEXTERM_MASTER_KEY") {
-        Ok(k) => k,
-        Err(_) => {
+/// 用注入的根密钥把凭据库拉到解锁态。
+///
+/// 密钥来源已在 `cli` 里收敛为「命令行 > 环境变量」（懒猫 manifest 走后者）。
+/// 这里只负责用，不再自己读环境 —— 上一版的 `std::env::var` 会让
+/// 「命令行传了、但环境变量也有」变成两套真相。
+async fn bootstrap_vault(vault: &Arc<crate::vault::Vault>, master_key: Option<&str>) {
+    let key = match master_key {
+        Some(k) if !k.is_empty() => k,
+        _ => {
             tracing::warn!(
                 target: "boot",
-                "未注入 NEXTERM_MASTER_KEY：凭据库保持未初始化，SSH 密码类资产不可用"
+                "未提供凭据库根密钥（--master-key / NEXTERM_MASTER_KEY）：\
+                 凭据库保持未初始化，密码类资产的同步会失败"
             );
             return;
         }
@@ -264,15 +389,15 @@ async fn bootstrap_vault(vault: &Arc<crate::vault::Vault>) {
         tracing::error!(
             target: "boot",
             len = key.len(),
-            "NEXTERM_MASTER_KEY 少于 8 位，拒绝使用（凭据库保持未初始化）"
+            "根密钥少于 8 位，拒绝使用（凭据库保持未初始化）"
         );
         return;
     }
     let status = vault.status().await;
     let outcome = if status.initialized {
-        vault.unlock_master(&key).await
+        vault.unlock_master(key).await
     } else {
-        vault.init_master(&key).await
+        vault.init_master(key).await
     };
     match outcome {
         Ok(()) => tracing::info!(
@@ -404,17 +529,29 @@ async fn handle_healthz(AxumState(ctx): AxumState<Arc<ServerCtx>>) -> Response {
         "ok": true,
         "service": "nexterm-server",
         "version": env!("CARGO_PKG_VERSION"),
+        // onlyServer 与完整版的区别在**命令表**上，所以这两个字段要能一眼对上：
+        // `syncOnly: true` 时 commands 必须是 3，多了就说明模式没生效。
+        "syncOnly": ctx.sync_only,
         "commands": ctx.table.len(),
         "eventSubscribers": ctx.hub.event_subscribers(),
         "liveChannels": ctx.hub.live_channels(),
-        "webRoot": ctx.web_root.to_string_lossy(),
+        "webRoot": ctx.web_root.as_ref().map(|p| p.to_string_lossy()),
         "vault": vault,
     }))
     .into_response()
 }
 
 async fn handle_static(AxumState(ctx): AxumState<Arc<ServerCtx>>, uri: Uri) -> Response {
-    static_files::serve(&ctx.web_root, uri.path()).await
+    match ctx.web_root.as_deref() {
+        Some(root) => static_files::serve(root, uri.path()).await,
+        // onlyServer 根本没挂这条路由；真走到这里说明路由装配被改了。
+        // 明确报出来，别回一个看不出所以然的 404 页面。
+        None => (
+            StatusCode::NOT_FOUND,
+            "onlyServer 模式没有浏览器界面（只有 /sync/rpc 与 /healthz）",
+        )
+            .into_response(),
+    }
 }
 
 /// `/healthz` 里自证用的命令名列表（排查用，不进 HTTP 面）。

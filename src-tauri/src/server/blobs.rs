@@ -46,14 +46,19 @@
 //! 分隔符会被替换 ⇒ **不可能借这几个接口读写盒子上的任意路径**。容器里数据目录是
 //! `/lzcapp/var/nexterm`，卸载应用即随卷清空。
 //!
+//! ⚠️ 这个数据目录取自 `ServerCtx.data_dir`（即 `--data-dir` / `NEXTERM_DATA_DIR`
+//! 解析后的**那一份**），不再自己读环境变量：否则命令行传了 `--data-dir` 时，
+//! 库落在一个目录、暂存区落在另一个目录，浏览器上传的文件会凭空消失。
+//!
 //! 这几个接口都**不额外做鉴权**，与 `/rpc` 一致：应用本身没有登录页，
 //! 鉴权整体交给平台 ingress（见 `docs/LAZYCAT-PORT.md` §7.1）。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
-use axum::extract::Query;
+use axum::extract::{Query, State as AxumState};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -63,6 +68,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::ids::new_id;
+use crate::server::ServerCtx;
 
 /// 单次搬运的块大小，与 `fs` 内核保持一致。
 const CHUNK: usize = 256 * 1024;
@@ -225,9 +231,13 @@ fn content_disposition(name: &str) -> String {
 ///
 /// 上传与「选私钥」都走这里：上传要的就是一个能喂给 `fs_upload` 的本地路径，
 /// 私钥要的是一个能让内核按路径读到的落点。
-pub async fn post_blob(Query(q): Query<BlobQuery>, body: Body) -> Response {
+pub async fn post_blob(
+    AxumState(ctx): AxumState<Arc<ServerCtx>>,
+    Query(q): Query<BlobQuery>,
+    body: Body,
+) -> Response {
     let dir = item_dir(
-        &target_root(&super::data_dir(), q.persist.unwrap_or(false)),
+        &target_root(&ctx.data_dir, q.persist.unwrap_or(false)),
         &new_id(),
     );
     if let Err(e) = tokio::fs::create_dir_all(&dir).await {
@@ -257,8 +267,11 @@ pub async fn post_blob(Query(q): Query<BlobQuery>, body: Body) -> Response {
 /// 「下载」用：浏览器没有字节可交，但需要一个落点让 `fs_download` 去写，
 /// 写完再 `GET` 回读。`fs_download` 用的是 `File::create`（截断），
 /// 所以预建的空文件不会被当成「已存在的内容」。
-pub async fn post_reserve(Query(q): Query<BlobQuery>) -> Response {
-    let dir = item_dir(&stage_root(&super::data_dir()), &new_id());
+pub async fn post_reserve(
+    AxumState(ctx): AxumState<Arc<ServerCtx>>,
+    Query(q): Query<BlobQuery>,
+) -> Response {
+    let dir = item_dir(&stage_root(&ctx.data_dir), &new_id());
     if let Err(e) = tokio::fs::create_dir_all(&dir).await {
         tracing::warn!(target: "blob", dir = %dir.display(), error = %e, "暂存目录创建失败");
         return err(StatusCode::INTERNAL_SERVER_ERROR, "暂存目录不可用");
@@ -279,11 +292,14 @@ pub async fn post_reserve(Query(q): Query<BlobQuery>) -> Response {
 }
 
 /// `GET /files/blob?id=` —— 把暂存内容流回浏览器。
-pub async fn get_blob(Query(q): Query<BlobQuery>) -> Response {
+pub async fn get_blob(
+    AxumState(ctx): AxumState<Arc<ServerCtx>>,
+    Query(q): Query<BlobQuery>,
+) -> Response {
     let Some(id) = q.id.as_deref().filter(|s| is_blob_id(s)) else {
         return err(StatusCode::BAD_REQUEST, "id 非法");
     };
-    let root = stage_root(&super::data_dir());
+    let root = stage_root(&ctx.data_dir);
     let Some(path) = find_item(&root, id).await else {
         return err(StatusCode::NOT_FOUND, "暂存项不存在或已过期");
     };
@@ -314,11 +330,14 @@ pub async fn get_blob(Query(q): Query<BlobQuery>) -> Response {
 ///
 /// 前端不删也不会漏：巡检任务兜底。但正常路径上前端**必须**删，
 /// 否则一次几 GB 的上传会在盒子上留一份无主副本直到两小时后。
-pub async fn delete_blob(Query(q): Query<BlobQuery>) -> Response {
+pub async fn delete_blob(
+    AxumState(ctx): AxumState<Arc<ServerCtx>>,
+    Query(q): Query<BlobQuery>,
+) -> Response {
     let Some(id) = q.id.as_deref().filter(|s| is_blob_id(s)) else {
         return err(StatusCode::BAD_REQUEST, "id 非法");
     };
-    let dir = item_dir(&stage_root(&super::data_dir()), id);
+    let dir = item_dir(&stage_root(&ctx.data_dir), id);
     match tokio::fs::remove_dir_all(&dir).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

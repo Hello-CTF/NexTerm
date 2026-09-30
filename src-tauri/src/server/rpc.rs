@@ -132,12 +132,51 @@ pub struct Table {
     entries: std::collections::HashMap<&'static str, RpcFn>,
 }
 
+/// `onlyServer` 模式下**唯一**允许对端调用的三条命令。
+///
+/// 就是同步客户端真正会 POST 过来的那些（`sync::client` 里逐条核对过）：
+/// `remote_digest` → `sync_digest`、`push` → `sync_import`、`pull` → `sync_export`。
+///
+/// ⚠️ 这张白名单是 `onlyServer` 存在的**技术理由**，不是省事：`/sync/rpc` 的令牌
+/// 走的是同一张命令表，全量注册时它等价于「本实例的完全控制权」——能开终端、
+/// 能读任意文件、能起容器。只留三条 ⇒ 令牌即使泄漏，拿到的也只是
+/// 「能读写这份资产库」。
+///
+/// 用**精确名单**而不是 `starts_with("sync_")` 前缀：前缀会把 `sync_link_set`
+/// （客户端自己的连接配置）和 `sync_push`/`sync_pull`（客户端发起的动作）
+/// 一并放进来，而它们对「当对端」这件事毫无用处，纯属白送攻击面。
+pub const SYNC_ONLY_COMMANDS: [&str; 3] = ["sync_digest", "sync_export", "sync_import"];
+
 impl Table {
-    /// 从 `commands::rpc_table()` 建表。
+    /// 从 `commands::rpc_table()` 建全量表（浏览器版 / 懒猫容器用）。
     pub fn build() -> Self {
-        let list = crate::commands::rpc_table();
+        Self::collect(crate::commands::rpc_table(), |_| true)
+    }
+
+    /// 只装「当同步对端」需要的那三条（`--sync-only`，即 onlyServer）。
+    pub fn build_sync_only() -> Self {
+        let table = Self::collect(crate::commands::rpc_table(), |e| {
+            SYNC_ONLY_COMMANDS.contains(&e.name)
+        });
+        // 三条一条都不能缺。缺了的表现是「服务端起来了、`/healthz` 也正常，
+        // 但任何一次同步都失败」——而客户端只会看到「对端返回未知命令」，
+        // 跟真正的原因（命令被改名了）隔着一层。所以在这里硬断言。
+        for want in SYNC_ONLY_COMMANDS {
+            assert!(
+                table.entries.contains_key(want),
+                "同步专用命令表缺少 {want}（命令被改名了？同步会永远失败）"
+            );
+        }
+        table
+    }
+
+    /// 建表的唯一实现（两条路共用，避免「重名检查只在其中一条路上」）。
+    fn collect(list: Vec<Entry>, keep: impl Fn(&Entry) -> bool) -> Self {
         let mut entries = std::collections::HashMap::with_capacity(list.len());
         for e in list {
+            if !keep(&e) {
+                continue;
+            }
             // 重名 = 命令清单里有两条同叶名路径。桌面侧不会报（generate_handler!
             // 允许），服务端这里若静默覆盖就是「有一条命令永远打不到」——
             // 所以直接 panic，让它在启动时暴露。
@@ -206,6 +245,43 @@ mod tests {
             assert!(
                 t.entries.contains_key(name),
                 "命令表缺少 {name}（服务端模式下它会 404）"
+            );
+        }
+    }
+
+    /// `--sync-only`（onlyServer）的表**恰好三条**，且都在全量表里存在。
+    ///
+    /// 这条测试是「令牌爆炸半径」的自动防线：表里多一条，令牌的权限就宽一分。
+    /// 反向也验一遍客户端侧的命令必须在场外 —— 它们对「当对端」毫无用处。
+    #[test]
+    fn sync_only_table_is_exactly_the_peer_commands() {
+        let full = Table::build();
+        let only = Table::build_sync_only();
+
+        assert_eq!(only.len(), SYNC_ONLY_COMMANDS.len(), "专用表条数不对");
+        assert_eq!(
+            only.names(),
+            vec!["sync_digest", "sync_export", "sync_import"],
+            "专用表的内容不对（改过命令名？）"
+        );
+        for want in SYNC_ONLY_COMMANDS {
+            assert!(
+                full.entries.contains_key(want),
+                "全量表里没有 {want}：命令被改名了，但白名单没跟着改"
+            );
+        }
+        for must_not in [
+            "sync_push",
+            "sync_pull",
+            "sync_link_set",
+            "terminal_attach",
+            "fs_write",
+            "docker_ps",
+            "ai_chat",
+        ] {
+            assert!(
+                !only.entries.contains_key(must_not),
+                "{must_not} 不该出现在同步专用表里（令牌会因此拿到远超「同步」的权限）"
             );
         }
     }

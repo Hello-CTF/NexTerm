@@ -103,8 +103,8 @@ desktop = [
 
 # 服务端版（懒猫微包容器，Linux、无桌面、无 WebKit）。
 # 构建写法固定为：cargo build --no-default-features --features server
-# 本 feature 不参与 `cfg` 判据，只用来开启服务端专属可选依赖（axum）。
-server = ["dep:axum"]
+# 本 feature 不参与 `cfg` 判据，只用来开启服务端专属可选依赖（axum + clap）。
+server = ["dep:axum", "dep:clap"]
 
 [dependencies]
 tauri = { version = "2", features = [], optional = true }
@@ -117,6 +117,18 @@ tauri-plugin-global-shortcut = { version = "2", optional = true }
 # HTTP 栈，桌面版没有理由为服务端的东西多编一份 —— 也让 Linux 容器镜像不必
 # 因为桌面依赖而拉 webkit2gtk。
 axum = { version = "0.8", features = ["ws", "json"], optional = true }
+
+# 服务端命令行解析。
+#
+# 只有服务端要它：`onlyServer` 那种部署**没有 web UI**，「监听地址 / 数据目录 /
+# 同步令牌」全得在命令行里配置，`--help` 也就是它唯一的说明书。
+#
+# 与 axum 同理做成 optional（桌面版一行不编）。三个 feature 都必要：
+#   derive    —— 声明式定义子命令与参数
+#   env       —— `--listen` 这类选项自动回落到环境变量 ⇒ 懒猫 manifest 里那套
+#                NEXTERM_* 变量**一行不改**继续生效（容器 ENTRYPOINT 不带参数）
+#   wrap_help —— `--help` 按终端宽度折行（帮助文本是中文，不折行很难读）
+clap = { version = "4", features = ["derive", "env", "wrap_help"], optional = true }
 
 # IPC 门面宏（桌面 / 服务端双态）。两侧都要，所以**不是** optional。
 # 只包一层透明转发：桌面下等价于 `#[tauri::command]`，产物不变。
