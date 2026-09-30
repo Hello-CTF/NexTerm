@@ -1,6 +1,6 @@
 [package]
 name = "nexterm-ipc-macros"
-version = "0.1.3"
+version = "0.2.0"
 description = "NexTerm IPC 门面宏：把 #[tauri::command] 变成「桌面 / 服务端」双态"
 authors = ["NexTerm"]
 license = "MIT"

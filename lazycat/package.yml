@@ -4,7 +4,7 @@
 # 用 `lzc-cli project lint` 可以自检 —— 它连着商店的要求一起查。
 
 package: cloud.lazycat.app.nexterm
-version: 0.1.3
+version: 0.2.0
 
 name: NexTerm 运维终端
 description: 浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端，凭据加密存在你自己的微服上。
