@@ -5,7 +5,12 @@ export default tseslint.config(
   // `.sitetest` 是站点校验产物（在 .gitignore 里，但忽略清单是独立的 —— 这个坑踩过两次）。
   // 两者都不在 dist/ 下，不忽略的话 lint 会连构建产物一起扫，报出上千个假错误 ——
   // 看着像"质量门挂了"，其实只是扫错了文件。
-  { ignores: ["dist", ".buildcheck", ".sitetest", "src-tauri", "target", "scripts", "*.cjs"] },
+  //
+  // `lazycat` 同理，而且是**必然会踩**的：`lazycat/image/build-server.sh` 会把
+  // `dist/` 整个拷到 `lazycat/content/web/`（那是 LPK 的 contentdir）。
+  // 只要打过一次 LPK，那里就躺着一份压缩后的 bundle，`pnpm lint` 立刻从 0 个错误
+  // 变成 4000+ 个（报错列号是 600+ 这种，一眼能认出是压缩产物）。
+  { ignores: ["dist", ".buildcheck", ".sitetest", "lazycat", "src-tauri", "target", "scripts", "*.cjs"] },
   tseslint.configs.recommended,
   {
     rules: {

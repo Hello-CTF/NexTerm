@@ -25,3 +25,35 @@ docs/PLAN-*
 
 # 本地工作笔记 / 会话记忆，不入库
 .workbuddy/
+
+# Python 字节码缓存：scripts/*.py 在本机跑过（商店截图、提审、manifest 校验）就会生成，
+# 里面是绝对路径与解释器版本，纯本地产物。
+__pycache__/
+
+# 懒猫微服（LazyCat）打包产物与中间目录。
+# 打包步骤是「重」的（会拉 Linux 镜像、跑一次完整 Rust 编译），产物与缓存不该入库：
+#   lazycat/app.lpk             ← lzc-build.yml 的 pkgout: ./
+#   lazycat/content/            ← contentdir，里面是前端 dist 的拷贝
+#   lazycat/image/nexterm-server← build-server.sh 从 target-linux 拷来的成品，
+#                                 随后被 Dockerfile `COPY` 进镜像（约 100MB，绝不能入库）
+#   target-linux/               ← **在仓库根**（不是 lazycat/ 下）：
+#                                 build-server.sh 用 CARGO_TARGET_DIR=/src/target-linux/<arch>
+#                                 且把仓库根挂进容器，所以产物落在根目录。约 1~2 GB。
+#   lazycat/.lzc-cli-build*/    ← lzc-cli 自己的临时目录（打包中断时会滞留）；
+#                                 正常应被它删掉，但受限环境里那步会被拦（见 docs/LAZYCAT-PORT.md §12.8.6）
+#   lazycat/.lzc-cli-cache/     ← lzc-cli 缓存本地镜像的 OCI blob（实测 42 MB）
+#   lazycat/image/lzc-build-image-context.tar ← lzc-cli 打镜像时生成的构建上下文包
+#   docs/store/raw/             ← 商店截图的「原始窗口截取」，必然带本机域名/主机名，
+#                                 仓库是公开的 ⇒ 不进版本库。只提交 scripts/store-shots.py
+#                                 合成后的 docs/store/*.png（已按 REDACT 表打过码）。
+*.lpk
+docs/store/raw/
+docs/store/_verify/
+lazycat/content/
+target-linux/
+lazycat/image/nexterm-server
+lazycat/.lzc-cli-build*
+lazycat/.lzc-cli-cache/
+# store-submit-review.py 组装出来的提审请求体（含截图 url 与包哈希，一次性）
+lazycat/.review-body.json
+lazycat/image/lzc-build-image-context.tar
