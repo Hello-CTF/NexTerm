@@ -703,6 +703,14 @@ export const syncApi = {
 
   /** 拉对端摘要 —— 同时就是连通性探测，结果会写回连接配置。 */
   remoteDigest: () => call<import("./types").SyncDigest>("sync_remote_digest"),
+
+  /**
+   * 从懒猫客户端**已经打开的** NexTerm 窗口里取会话票据，写进连接配置并试连一次。
+   *
+   * 返回的连接配置里 `lastError` 有值 = 取到了票据但没连上（比如票据刚过期）；
+   * 抛出异常 = 根本没取到（多半是窗口没开）。
+   */
+  discoverToken: () => call<import("./types").SyncLink>("sync_discover_token"),
   /** 推送选中资产到盒子。 */
   push: (assetIds: string[], withCreds: boolean, force: boolean) =>
     call<import("./types").ImportReport>("sync_push", { args: { assetIds, withCreds, force } }),

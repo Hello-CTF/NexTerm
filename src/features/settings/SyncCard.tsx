@@ -32,6 +32,7 @@ import {
   IconInfo,
   IconRefresh,
   IconServer,
+  IconShieldCheck,
   IconUpload,
   IconXCircle,
 } from "../../ui/icons";
@@ -122,7 +123,9 @@ export function SyncCard() {
   const isServer = WEB;
 
   const [link, setLink] = useState<SyncLink | null>(null);
-  const [draft, setDraft] = useState({ url: "", tokenKind: "platform", token: "", insecure: false });
+  // 默认「懒猫客户端票据」：它是唯一一种**用户不必在盒子上做任何事**的方式
+  // （另两种要么需要在盒子上有 shell，要么要先去盒子版界面抄一串码）。
+  const [draft, setDraft] = useState({ url: "", tokenKind: "session", token: "", insecure: false });
   const [showToken, setShowToken] = useState(false);
   const [ownToken, setOwnToken] = useState<string | null>(null);
 
@@ -132,7 +135,7 @@ export function SyncCard() {
   const [withCreds, setWithCreds] = useState(false);
   const [force, setForce] = useState(false);
 
-  const [busy, setBusy] = useState<null | "test" | "push" | "pull">(null);
+  const [busy, setBusy] = useState<null | "test" | "discover" | "push" | "pull">(null);
   const [report, setReport] = useState<{ dir: "push" | "pull"; data: ImportReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -161,12 +164,52 @@ export function SyncCard() {
       .linkGet()
       .then((l) => {
         setLink(l);
-        setDraft({ url: l.url, tokenKind: l.tokenKind || "platform", token: "", insecure: l.insecure });
+        setDraft({ url: l.url, tokenKind: l.tokenKind || "session", token: "", insecure: l.insecure });
       })
       .catch(() => undefined);
   }, [isServer, refreshLocal]);
 
   if (DEMO) return null;
+
+  const isSession = draft.tokenKind === "session";
+  /** 会话票据是**取**来的，不是手打的 —— 所以「保存并测试」在还没有票据时不能点。 */
+  const hasToken = !!draft.token.trim() || !!link?.token;
+
+  /**
+   * 从懒猫客户端已打开的窗口里取票据，并立刻试连一次。
+   *
+   * 票据是**会话级**的（客户端重开窗口就换），所以这个按钮不是「配一次就忘」，
+   * 而是「连不上时点一下」。同理：失败也**不当作异常**处理 —— 取到了却没连上，
+   * 后端会把原因放进 `lastError`，那才是用户要看的东西。
+   */
+  const discover = async () => {
+    setBusy("discover");
+    setError(null);
+    try {
+      // 先把地址与开关存下来 —— 后端要靠地址才知道该找哪个窗口
+      await syncApi.linkSet({ url: draft.url, tokenKind: "session", insecure: draft.insecure });
+      const l = await syncApi.discoverToken();
+      setLink(l);
+      setDraft((d) => ({ ...d, token: "" }));
+      if (l.lastError) {
+        setError(l.lastError);
+        pushToast("error", "取到了票据，但没能连上盒子 —— 原因见下方");
+      } else {
+        const d = await syncApi.remoteDigest();
+        setRemote(d);
+        pushToast("success", `已连上盒子（对端标识 ${d.origin}，${d.assets.length} 条资产）`);
+      }
+    } catch (e) {
+      setError(describeError(e));
+      setRemote(null);
+    } finally {
+      setBusy(null);
+      void syncApi
+        .linkGet()
+        .then(setLink)
+        .catch(() => undefined);
+    }
+  };
 
   /** 保存连接配置（令牌留空 = 不改动已存的），然后立刻验一次。 */
   const saveAndTest = async () => {
@@ -295,17 +338,20 @@ export function SyncCard() {
             <label className="flex items-center gap-2">
               <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">令牌类型</span>
               <select
-                className="nx-input w-[180px]"
+                className="nx-input w-[220px]"
                 value={draft.tokenKind}
                 onChange={(e) => setDraft((d) => ({ ...d, tokenKind: e.target.value }))}
               >
+                <option value="session">懒猫客户端票据</option>
                 <option value="platform">平台 API 令牌</option>
                 <option value="app">应用同步令牌</option>
               </select>
               <span className="nx-hint">
-                {draft.tokenKind === "platform"
-                  ? "在盒子上执行 hc api_auth_token gen 生成"
-                  : "在盒子版「设置 → 资产同步」里查看"}
+                {draft.tokenKind === "session"
+                  ? "从本机懒猫客户端打开的窗口里取，你不必在盒子上做任何事"
+                  : draft.tokenKind === "platform"
+                    ? "在盒子上执行 hc api_auth_token gen 生成"
+                    : "在盒子版「设置 → 资产同步」里查看"}
               </span>
             </label>
 
@@ -315,7 +361,13 @@ export function SyncCard() {
                 type={showToken ? "text" : "password"}
                 className="nx-input min-w-0 flex-1 font-mono"
                 autoComplete="off"
-                placeholder={link?.token ? "留空 = 不修改已保存的令牌" : "粘贴令牌"}
+                placeholder={
+                  link?.token
+                    ? "留空 = 不修改已保存的令牌"
+                    : isSession
+                      ? "点下面的「获取票据并连接」自动填入"
+                      : "粘贴令牌"
+                }
                 value={draft.token}
                 onChange={(e) => setDraft((d) => ({ ...d, token: e.target.value }))}
               />
@@ -323,6 +375,19 @@ export function SyncCard() {
                 {showToken ? "隐藏" : "显示"}
               </button>
             </label>
+
+            {isSession && (
+              <div className="nx-alert nx-alert-info flex items-start gap-2">
+                <IconInfo size={14} className="mt-0.5 shrink-0" />
+                <div>
+                  盒子公网入口有懒猫平台的登录门（不带凭证一律 307），所以光填地址连不上。
+                  这个票据是懒猫客户端**每次打开 Web 应用窗口**时下发的，桌面端从窗口进程
+                  里读出来 —— 用同一个凭据，不是绕过鉴权。
+                  <b>请先在懒猫客户端里打开 NexTerm 窗口并保持开着</b>；客户端重启后票据会换，
+                  连不上就回来点一次重新获取。
+                </div>
+              </div>
+            )}
 
             <label className="flex items-start gap-2">
               <input
@@ -334,16 +399,33 @@ export function SyncCard() {
               <span className="text-[12px] text-neutral-300">
                 跳过证书校验
                 <span className="nx-hint block">
-                  懒猫盒子用微服自己签发的证书，不勾这一项会握手失败。仅在你确认地址没错时勾选。
+                  只有在地址用的是**自签证书**时才需要（例如自己给盒子配的域名、或走内网
+                  直连）。懒猫微服自动签发的 `*.lazycore.heiyu.space` 是公共 CA 签的
+                  （实测 Let's Encrypt），那种地址**不用**勾。
                 </span>
               </span>
             </label>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {isSession && (
+              <button
+                className="nx-btn nx-btn-primary nx-btn-sm"
+                disabled={busy !== null || !draft.url.trim()}
+                onClick={() => void discover()}
+              >
+                {busy === "discover" ? (
+                  <IconRefresh size={12} className="animate-spin" />
+                ) : (
+                  <IconShieldCheck size={12} />
+                )}
+                {busy === "discover" ? "读取中…" : hasToken ? "重新获取票据并连接" : "获取票据并连接"}
+              </button>
+            )}
             <button
-              className="nx-btn nx-btn-primary nx-btn-sm"
-              disabled={busy !== null || !draft.url.trim()}
+              className={`nx-btn nx-btn-sm ${isSession ? "nx-btn-outline" : "nx-btn-primary"}`}
+              disabled={busy !== null || !draft.url.trim() || (isSession && !hasToken)}
+              title={isSession && !hasToken ? "先点「获取票据并连接」" : undefined}
               onClick={() => void saveAndTest()}
             >
               {busy === "test" ? <IconRefresh size={12} className="animate-spin" /> : <IconCheckCircle size={12} />}
@@ -470,7 +552,7 @@ function CompareTable(props: {
   onWithCreds: (v: boolean) => void;
   force: boolean;
   onForce: (v: boolean) => void;
-  busy: null | "test" | "push" | "pull";
+  busy: null | "test" | "discover" | "push" | "pull";
   onTransfer: (dir: "push" | "pull") => void;
   localOrigin: string;
   remoteOrigin: string;
