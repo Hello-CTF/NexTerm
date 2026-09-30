@@ -2638,3 +2638,152 @@ NexTerm 的响应』」—— 见 `client.rs` 的 `live_server_token_is_enough`�
 **界面上不许出现「盒子」**。用户明确反馈「我完全不知道你说的盒子到底代指的什么」——
 那是项目内部对懒猫微服那台硬件的简称。同步卡片里所有面向用户的文案本轮全部改成
 「懒猫微服 / 自建服务器 / 对端」，代码注释里也留了警告。
+
+---
+
+## 18. 两种服务端形态：LinuxServer 与 onlyServer（2026-10-01）
+
+这一节是 §17.13 的直接续集。§17.13 把认证收敛成「**一把钥匙，两个部署位置**」——
+令牌成了唯一的凭据，两个位置发同一个头。这个决定本身是对的，但它**顺手放大了令牌的半径**：
+令牌调的是同一张 RPC 表，所以拿到令牌 = 拿到该实例的全部能力。
+
+在微服上这不是问题，因为那道门只管**入口**，进去之后的信任边界是「平台已经把使用者认成了盒子的主人」。
+**裸 Linux 上没有这道门**（§17.13 那张前后对照表里，加 `public_path` 之后平台就彻底不管
+`/sync/rpc` 了）。于是同一个二进制装在公网 VPS 上时，「同步令牌」与「完全控制权」是等价的。
+
+### 18.1 结论：这不是「少注册几条命令」的省事做法
+
+反过来说 —— 有些东西只有拆开部署才成立：
+
+| | LinuxServer（完整版） | onlyServer（`--sync-only`） |
+|---|---|---|
+| 端点 | `/rpc`、`/sync/rpc`、`/healthz`、`/ws/events`、`/ws/channel/{id}`、`/files/blob*`、静态界面 | **`/sync/rpc`、`/healthz`** |
+| 命令表 | 全部 **132** 条 | **3** 条：`sync_digest` / `sync_export` / `sync_import` |
+| 浏览器界面 | 有 | 无（`webRoot` 报 `null`，`GET /` 404） |
+| 令牌泄漏的后果 | 终端、任意文件、Docker、凭据库 | 只能读写这份资产库 |
+| 公网 | ⛔ 不建议 | ✅ 这就是它的设计目标 |
+
+### 18.2 `SYNC_ONLY_COMMANDS` 为什么是**精确名单**而不是前缀
+
+白名单写在 `src-tauri/src/server/rpc.rs`：
+
+```rust
+pub const SYNC_ONLY_COMMANDS: [&str; 3] = ["sync_digest", "sync_export", "sync_import"];
+```
+
+不用 `starts_with("sync_")`。前缀会把三类别的东西一起放进来，且每个都有反例：
+
+- `sync_link_set` —— 客户端自己的连接配置，**对端用不到**；
+- `sync_push` / `sync_pull` —— 客户端发起的动作，对端从不调；
+- `sync_discover_token`（已删）—— 同理。
+
+白送攻击面。名单是照着 `sync::client` 的**实际调用点**逐个对的，三处：
+
+| 调用点 | 发出的 `cmd` | 载荷 |
+|---|---|---|
+| `remote_digest` | `sync_digest` | 只读探测 |
+| `push` | `sync_import` | `{"args":{"bundle":…,"force":…}}` |
+| `pull` | `sync_export` | `{"args":{"assetIds":…,"withCreds":…}}` |
+
+`Table::build_sync_only()` 里还有一条**自证断言**：三条名字必须都在表里，否则 panic
+（`命令被改名了？同步会永远失败`）。名字比行为更容易悄悄改坏 —— 改了名，编译照样过、
+启动照样成功、只有同步在运行时失败。
+
+测试是 `sync_only_table_is_exactly_the_peer_commands`：断言正好 3 条、都在全量表里，
+且 `sync_push` / `sync_pull` / `sync_link_set` / `terminal_attach` / `fs_write` /
+`docker_ps` / `ai_chat` **一条都不在**。
+
+### 18.3 ⛔ 懒猫那条路一行没改（这是硬约束）
+
+商店审核与容器部署走的是**裸启动**（`lazycat/image/Dockerfile` 的
+`ENTRYPOINT ["/usr/local/bin/nexterm-server"]`，**不带任何参数**）。所以：
+
+1. **子命令可选，省略即 `serve`** —— 裸启动必须是「起服务」。
+2. **每个选项都带 `env = NEXTERM_*`** —— `lzc-manifest.yml` 的 services 段是**用环境变量配的**，
+   加上 `env` 之后两边共用同一份定义，manifest 一个字都不用动。
+   优先级：**命令行 > 环境变量 > 内置默认**。
+3. 容器拿到的仍然是完整的 **132** 条命令。
+
+实测（本机 `target/debug/nexterm-server`，`curl /healthz`）：
+
+```
+完整版:  {"commands":132,"syncOnly":false,"webRoot":"dist","ok":true}
+onlyServer: {"commands":3,"syncOnly":true,"webRoot":null,"ok":true}
+           GET / → 404        POST /rpc → 404
+```
+
+`/healthz` 把 `syncOnly` / `commands` / `webRoot` 都报出来，就是为了让运维**一眼自证装的形态对不对**
+—— 这两个数不对，说明装的不是这个包，或参数没生效。
+
+### 18.4 两个 `--listen` 的失败姿势不一样，所以处理也不一样
+
+| 场景 | 处理 | 理由 |
+|---|---|---|
+| 地址解析失败（`--listen 999.1.1.1:1`） | **硬报错**（clap 退出） | 旧代码是「警告 + 退回 `0.0.0.0:8080`」。在 CLI 语境下这等于「打错一个字符，服务照常起来并公开在公网」 |
+| 解析成功但非回环（`0.0.0.0` / 公网 IP） | **警告，继续启动** | 容器必须绑 `0.0.0.0`（平台从容器网络另一侧访问），拒绝启动会直接打碎懒猫那条路 |
+
+警告的落点是这一节的**真实坑**：本项目所有 tracing 只写
+`<data_dir>/logs/nexterm.log.<日期>`，**进程 stdout/stderr 实测 0 字节**（`init_tracing` 用
+`RollingFileAppender`）。所以「只加日志警告」实际**谁也看不见** —— 警告必须**同时**打 stderr
+（终端 / `journalctl` / `docker logs`）。两种形态的文案不同：完整版说的是
+「`/rpc` 与浏览器界面没有自身鉴权」，onlyServer 说的是「可以读写资产库（含密码类凭据）」。
+
+回环地址**不打**警告（实测 stderr 0 字节），否则本地起一次服务就报一次，很快就没人看警告了。
+
+### 18.5 发布矩阵与「CI 能做什么」
+
+用户定的五类产物，以及各自的**来源**：
+
+| # | 产物 | 谁产出 | 备注 |
+|---|---|---|---|
+| ① | Windows 客户端 | CI（`release.yml` 的 `publish`） | amd64；`NexTerm_x.y.z_x64-setup.exe` |
+| ② | macOS 客户端 | CI（同上） | **必须显式 `--target aarch64-apple-darwin`** |
+| ③ | 懒猫微服专版（LPK） | **手工** | ⛔ CI 做不了，见下 |
+| ④ | LinuxServer | CI（`linux-server` job） | `NexTerm-x.y.z-linux-amd64.tar.gz` |
+| ⑤ | onlyServer | CI（同上） | `NexTerm-onlyServer-x.y.z-linux-amd64.tar.gz` |
+
+**② 为什么要钉 target**：`macos-latest` 现在是 arm64 是**当前机器池的偶然**。不写 `--target`，
+哪天池子换回 Intel，掉出来的包文件名一样、里面是 x86_64 —— 没人会发现。
+
+**③ 为什么 CI 做不了**：LPK 的构建要拉 `registry.lazycat.cloud` 的私有镜像（凭证只在微服上，
+开发机与 CI 一律 **401**，§12.9），且镜像本身是在盒子上构建的。所以它只能手工出包后
+**手动附到 Release**。这条要写进每次发版的检查单，否则 ③ 会被忘掉。
+
+④ 与 ⑤ 是**同一个二进制**，只差 `--sync-only`。分两个包不是为了减少体积（7.4M vs 6.7M，
+差的那点就是前端产物），而是让使用者拿到手就是对的形态 ——
+不用读完文档才发现「原来还得加个参数」。
+
+### 18.6 落地物（对应文件）
+
+| 文件 | 作用 |
+|---|---|
+| `src-tauri/src/server/cli.rs` | clap 定义 + `token` / `rotate-token` 动作 |
+| `src-tauri/src/server/rpc.rs` | `SYNC_ONLY_COMMANDS` 白名单 + `Table::build_sync_only()` |
+| `src-tauri/src/server/mod.rs` | `Options`、路由分流、`warn_if_exposed`、`/healthz` 三字段 |
+| `deploy/systemd/nexterm-server.service` | LinuxServer 单元（**故意不做 systemd 硬化**，见下） |
+| `deploy/systemd/nexterm-onlyserver.service` | onlyServer 单元 + caddy 两行 TLS 样例 |
+| `scripts/pack-linux-server.sh` | 一次打两个 tarball，含硬自检 |
+| `.github/workflows/release.yml` | `publish` / `linux-server` / `attach-linux` 三个 job |
+
+#### ⛔ systemd 单元**故意不写** `ProtectHome` / `ProtectSystem` / `PrivateTmp`
+
+不是忘了。内核要连 `~/.ssh`（SSH 资产）、要访问 Docker socket（容器面板）、
+sshfs/FUSE 挂载需要较宽的主机面权限。加硬化 = **起得来、用不了** —— 而这比不加硬化更难查：
+服务在跑、日志干净、只是每个功能都失败。按需自己加，别照抄网上的模板。
+
+#### `token` 为什么必须是子命令
+
+onlyServer **没有浏览器界面**。界面版可以在「设置 → 资产同步」里看令牌，命令行版如果没有
+`token` 子命令，用户就只能去改 `<data_dir>` 里的 SQLite —— 这个部署形态直接不可用。
+
+实现上两条约束：`print_token()` **不调 `init_tracing`**（保证 stdout 绝对干净），
+且**只有令牌进 stdout、所有说明进 stderr**，于是 `TOKEN=$(nexterm-server token)` 能用。
+`Store::open` 会跑迁移，所以「先取令牌、再启动服务」这条路也走得通。
+
+### 18.7 这一节的两个通用教训
+
+1. **「只加日志警告」不是安全措施，除非你确认过日志看得见**。本项目 stdout/stderr
+   实测 0 字节 —— 差点把一个用户明确要求的警告做成无声的。**任何「警告用户」的改动，
+   验收标准是「在真实运行方式下看得见」**，不是「代码里有 `warn!`」。
+2. **失败该报错还是该兜底，取决于默认值有多危险**。「监听地址解析失败退回 `0.0.0.0:8080`」
+   在库里是合理默认，在 CLI 上是安全缺陷。同一个值，两种语境，两种处理。
