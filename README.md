@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/images/icon-transparent-2026-09-30.png" width="96" alt="NexTerm">
+<img src="public/brand/nexterm-mark-256.png" width="96" alt="NexTerm">
 
 # NexTerm
 
