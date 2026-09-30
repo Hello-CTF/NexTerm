@@ -139,11 +139,21 @@ pub async fn session_cwd(state: ManagedState<'_>, session_id: String) -> AppResu
 
 /// 重连一个会话（§7）：重建底层传输、替换进 Session、为每个标签重开 PTY。
 ///
-/// `session::reconnect::try_reconnect` 在核心里一直存在，只是从没暴露成命令 ——
-/// 所以之前断开之后只能关掉工作区重开。返回 true 表示重连成功。
+/// **非阻塞**：真正的退避重试在后台跑（最坏 181 秒），结果通过 `session://status`
+/// 事件推给前端（重连中 → 已连接 / 连接失败）。
+///
+/// 返回值语义：`true` = **已开始重连**（不代表已连上）；`false` = 这个会话天然
+/// 不可重连（本机会话没有重连语义，或没绑定资产）。
 #[tauri::command]
 pub async fn session_reconnect(state: ManagedState<'_>, session_id: String) -> AppResult<bool> {
-    session::reconnect::try_reconnect(&state, &session_id).await
+    // 先取一次会话：既校验 id 有效（无效就如实报 not_found），也拿到 kind / asset_id
+    // 判断它到底有没有"重连"这回事 —— 别让前端点一个注定没结果的按钮。
+    let s = state.sessions.get(&session_id).await?;
+    if !session::reconnect::is_reconnectable(&s.kind) || s.asset_id.is_none() {
+        return Ok(false);
+    }
+    session::reconnect::spawn_reconnect(state.inner().clone(), session_id);
+    Ok(true)
 }
 
 /// 屏蔽未使用告警。

@@ -137,12 +137,13 @@ export function TerminalPane({
 
   /** 断开之后不用再关掉整个工作区重开 —— 直接走内核的重连。 */
   const reconnectSession = async () => {
-    pushToast("info", "正在重连…");
     try {
-      const ok = await sessionApi.reconnect(sessionId);
+      // true 只代表"已开始重连"：退避重试在后台跑（最坏三分钟），结果通过
+      // 会话状态事件推回来（重连中 → 已连接 / 连接失败），这里的提示别写死成"已连上"。
+      const started = await sessionApi.reconnect(sessionId);
       pushToast(
-        ok ? "success" : "info",
-        ok ? "已重新连接" : "该会话不支持重连（本机会话没有重连语义，或会话已被断开）",
+        started ? "info" : "error",
+        started ? "正在重连…结果会显示在终端状态上" : "这个会话不能重连：本机会话没有重连语义",
       );
     } catch (e) {
       pushToast("error", `重连失败：${describeError(e)}`);

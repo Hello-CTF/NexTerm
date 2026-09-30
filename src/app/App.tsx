@@ -12,6 +12,8 @@ import {
   openTerminalTab,
   nextTabId,
   connectAsset,
+  openCredentialsSidebar,
+  openCredentialsViewTab,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
@@ -36,6 +38,8 @@ import { DbPanel } from "../features/db/DbPanel";
 import { AiSidebar } from "../features/ai/AiSidebar";
 import { SettingsView } from "../features/settings/SettingsView";
 import { CredentialsPanel } from "../features/credentials/CredentialsPanel";
+import { CredentialsSidebar } from "../features/credentials/CredentialsSidebar";
+import { CredentialsView } from "../features/credentials/CredentialsView";
 import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { TakeoverBanner } from "./TakeoverBanner";
@@ -50,6 +54,7 @@ import {
   IconCheckCircle,
   IconChevronLeft,
   IconClose,
+  IconCode,
   IconEdit,
   IconMaximize,
   IconMinus,
@@ -85,6 +90,7 @@ const TAB_ICON = {
   docker: IconBox,
   db: IconDatabase,
   credentials: IconKey,
+  credentialsText: IconCode,
   settings: IconSettings,
   audit: IconHistory,
 } as const;
@@ -261,15 +267,45 @@ export default function App() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
-  /** 新标签：在当前工作区再开一个终端（最常用的"再来一个"）。 */
-  const openNewTerminal = useCallback(() => {
-    const s = sessions.find((x) => x.id === ws?.sessionId);
-    if (s) {
+  /**
+   * 新标签：在当前工作区再开一个终端（最常用的"再来一个"）。
+   *
+   * 会话可能已经不在了 —— 本机会话一断开就被内核彻底回收、应用重启后旧工作区也可能
+   * 残留一个失效的 sessionId。这时**绝不能**退化成"开本机终端"：那会开到另一台机器上，
+   * 用户看到的是串台。按工作区记着的资产把同一台主机连回来才是对的。
+   */
+  const openNewTerminal = useCallback(async () => {
+    const sid = ws?.sessionId;
+    const s = sid ? sessions.find((x) => x.id === sid) : undefined;
+    if (s && isSessionAlive(s.status)) {
       void openTerminalTab(s);
       return;
     }
+    // 会话还在池子里（只是断了）→ 原地重连，工作区里已有的标签会一起恢复
+    if (s) {
+      const started = await sessionApi.reconnect(s.id).catch(() => false);
+      pushToast(
+        started ? "info" : "error",
+        started
+          ? "连接已断开，正在重连…连上之后再点一次「新建终端」"
+          : "这个会话不能重连，请从左侧资产树重新连接",
+      );
+      return;
+    }
+    // 会话已被回收 → 按资产重新连同一台主机
+    if (ws?.assetId) {
+      try {
+        const fresh = await sessionApi.connect(ws.assetId);
+        const list = useUi.getState().sessions;
+        setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
+        await openTerminalTab(fresh);
+      } catch (e) {
+        pushToast("error", `重新连接失败：${describeError(e)}`);
+      }
+      return;
+    }
     void openLocalTerminal();
-  }, [ws?.sessionId, sessions, openLocalTerminal]);
+  }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
 
   /* ── 全局快捷键 ─────────────────────────────────────────────────────── */
 
@@ -438,7 +474,7 @@ export default function App() {
 
   /*
    * 图标栏分三层：
-   *   1) 左栏形态（资产 / 文件）—— 激活态反映"左栏现在是什么"，
+   *   1) 左栏形态（资产 / 凭据 / 文件）—— 激活态反映"左栏现在是什么"，
    *      而不是"当前标签是什么"。参考实现里开着终端标签时，
    *      高亮的仍然是资源管理器那一个，这样用户不会误判左栏内容。
    *   2) 快捷动作（终端 / 容器 / 数据库 / 挂载）—— 开对应类型的标签。
@@ -458,6 +494,14 @@ export default function App() {
         setLeftMode("assets");
         setLeftOpen(true);
       },
+    },
+    {
+      // 凭据是全局资源，没有一个会话时也该能进：
+      // 资产表单填的密码、数据库连接用的口令都往这里写。
+      key: "credentials",
+      label: "凭据",
+      icon: IconKey,
+      onClick: openCredentialsSidebar,
     },
     {
       key: "files",
@@ -721,13 +765,15 @@ export default function App() {
         {/* 三栏主体 */}
         <div className="flex min-h-0 flex-1 bg-neutral-900">
           {/*
-            左栏两种形态：资产列表（管理）与当前工作区的文件树（干活）。
+            左栏三种形态：资产列表（管理）、凭据库（资源）、当前工作区的文件树（干活）。
             连上机器后默认是文件树 —— 这台机器就是接下来一段时间的工作面。
             用 key=sessionId 让每台机器各自保留自己的展开状态与选中项。
           */}
           {!leftOpen ? null : (
             <>
-              {leftMode === "files" && ws?.sessionId ? (
+              {leftMode === "credentials" ? (
+                <CredentialsSidebar />
+              ) : leftMode === "files" && ws?.sessionId ? (
                 <FileTree key={ws.sessionId} sessionId={ws.sessionId} />
               ) : (
                 <AssetTree />
@@ -1139,6 +1185,16 @@ function SplitStack({
   );
 }
 
+/**
+ * 会话的连接是否健在。
+ *
+ * 只有这三种状态算"能用"：`disconnected` / `failed` 会话的底层传输已经关了，
+ * 往它上面 attach 只会拿到一句"连接已断开"。
+ */
+function isSessionAlive(status: string): boolean {
+  return status === "connected" || status === "connecting" || status === "reconnecting";
+}
+
 /** 单标签内容分发。由 App 的标签映射调用，保持挂载（生命周期与标签一致）。 */
 function PaneForTab({
   tab,
@@ -1189,7 +1245,13 @@ function PaneForTab({
     case "audit":
       return <AuditView />;
     case "credentials":
-      return <CredentialsPanel />;
+      return <CredentialsPanel credId={tab.credId} />;
+    case "credentialsText":
+      // 形态由标签上的 credView 决定：点左栏「文本 / JSON」= 写回它再激活，
+      // 所以标签已经开着时再点入口也会真的切过去。
+      return (
+        <CredentialsView view={tab.credView ?? "text"} onChange={openCredentialsViewTab} />
+      );
     default:
       return <EmptyState />;
   }

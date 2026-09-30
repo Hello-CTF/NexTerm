@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod dpapi;
 #[cfg(target_os = "macos")]
 pub mod keychain;
+pub mod payload;
 pub mod redact;
 
 use std::sync::atomic::{AtomicU64, Ordering};

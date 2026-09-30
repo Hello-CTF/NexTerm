@@ -188,7 +188,19 @@ export function XtermView(props: XtermViewProps) {
         // 不能用 String(e)：内核抛的 AppError 是 { code, message } 对象，
         // String() 只会印出 "[object Object]"，真正的原因（会话没了？PTY 开不出来？）
         // 当场丢失，排查时等于什么都没说。
-        term.writeln(`\r\n\x1b[31m[attach 失败] ${describeError(e)}\x1b[0m`);
+        //
+        // not_found = 这个会话在内核里已经不存在了（本机会话断开后被彻底回收，
+        // 或应用重启后残留的旧工作区）。这种情况**有明确的下一步**，不该甩一个
+        // not_found 让用户去猜，所以单独给一句人话 + 告诉他去哪儿恢复。
+        const code = (e as { code?: string } | null)?.code;
+        if (code === "not_found") {
+          term.writeln(
+            "\r\n\x1b[33m[会话已结束] 这台主机的连接已经不在了。请到左侧资产树重新连接，" +
+              "或点工具栏旁的「新建终端」让它自动连回来。\x1b[0m",
+          );
+        } else {
+          term.writeln(`\r\n\x1b[31m[attach 失败] ${describeError(e)}\x1b[0m`);
+        }
       }
     };
     // attach 延迟到一个宏任务再发。

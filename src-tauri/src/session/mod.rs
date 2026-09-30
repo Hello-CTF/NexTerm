@@ -471,8 +471,36 @@ pub async fn close_tab(state: &AppState, tab_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 断开会话（显式操作或空闲超时）。
+/// 断开会话：释放底层连接，**会话对象留在池子里**。
+///
+/// 「断开」和「回收」是两件事，以前被塞进同一个函数 —— 后果是 UI 上那个
+/// 「重新连接」按钮**永远不可能成功**：恢复所需的东西（`asset_id` / `kind` / `tabs`）
+/// 被连同对象一起删了，用户只能去资产树重连、丢掉整个工作区与回滚缓冲。
+///
+/// 现在的分工按"有没有重连语义"分：
+/// - **ssh / docker / winrm**：只关传输 + 状态置 Disconnected。对象、标签、
+///   `tab→session` 映射全部保留 —— `try_reconnect` 就是靠这些重建连接的。
+/// - **local / mysql / redis**：本来就是"断开即结束"，走 [`reap`] 彻底回收。
+///
+/// ★ **状态必须"先改再关传输"**：传输一关，泵就会自然退出并回调 `AppCallbacks::exit`，
+/// 而那个回调靠状态判断"这是主动断开，别自动重连"。顺序反了就会自己把自己重连一遍。
 pub async fn disconnect(state: &AppState, session_id: &str) -> AppResult<()> {
+    let session = state.sessions.get(session_id).await?;
+    if !reconnect::is_reconnectable(&session.kind) {
+        return reap(state, session_id).await;
+    }
+    *session.status.lock().unwrap_or_else(|e| e.into_inner()) = SessionStatus::Disconnected;
+    session.transport().await.close().await;
+    emit_status(state, session_id, SessionStatus::Disconnected, None);
+    Ok(())
+}
+
+/// 彻底回收会话：停泵、杀进程、摘掉标签与对象本身。
+///
+/// ⚠️ 调用方必须清楚这意味着**这个 session id 从此无效** —— 前端若还留着它，
+/// 之后任何 `state.sessions.get(sid)` 都会变成 `not_found`。所以只有"本来就没有
+/// 重连语义"的会话（本机会话）才配走这里；有重连语义的走 [`disconnect`] 保留对象。
+async fn reap(state: &AppState, session_id: &str) -> AppResult<()> {
     let session = state.sessions.get(session_id).await?;
     {
         let tabs = session
@@ -530,7 +558,7 @@ pub struct AppCallbacks {
 
 impl TabCallbacks for AppCallbacks {
     fn exit(&self, tab_id: &str, exit_code: Option<i32>) {
-        use tauri::Emitter;
+        use tauri::{Emitter, Manager};
         let _ = self.app.emit(
             crate::events::TERMINAL_EXIT,
             crate::events::TerminalExitPayload {
@@ -538,6 +566,47 @@ impl TabCallbacks for AppCallbacks {
                 exit_code,
             },
         );
+
+        // 泵结束了 —— 有两种原因，分不清就会误伤：
+        //   ① 用户关标签 / 主动断开 → `tab.stop` 已被取消 → 什么都不做
+        //   ② 连接掉了 → `stop` 没被取消 → **自动重连**（"持久运维不能掉"的底线）
+        //
+        // 还有个很容易被误判成 ② 的第三种：用户在那个 shell 里敲了 `exit`。
+        // 那时**连接还是好的**，所以再问一次传输层 —— 只有它说"没了"才是真掉线。
+        // 少了这一步，敲一次 exit 就会把整条连接拆掉重建，其它标签跟着一起断。
+        //
+        // 判定全部收在 `reconnect::pump_exit_action`（纯函数，有单测）。
+        let Some(state) = self.app.try_state::<Arc<AppState>>() else {
+            return;
+        };
+        let state: Arc<AppState> = state.inner().clone();
+        let tab_id = tab_id.to_string();
+        tauri::async_runtime::spawn(async move {
+            let Ok(tab) = state.sessions.get_tab(&tab_id).await else {
+                return;
+            };
+            let Ok(session) = state.sessions.session_of_tab(&tab_id).await else {
+                return;
+            };
+            let action = reconnect::pump_exit_action(
+                tab.stop.is_cancelled(),
+                session.status_now(),
+                reconnect::is_reconnectable(&session.kind),
+                session.transport().await.is_alive(),
+            );
+            if action == reconnect::PumpExit::Ignore {
+                return;
+            }
+            tracing::warn!(
+                target: "session",
+                session = %session.id,
+                tab = %tab_id,
+                "底层连接已断开，进入自动重连"
+            );
+            *session.status.lock().unwrap_or_else(|e| e.into_inner()) = SessionStatus::Disconnected;
+            emit_status(&state, &session.id, SessionStatus::Disconnected, None);
+            reconnect::spawn_reconnect(Arc::clone(&state), session.id.clone());
+        });
     }
 
     fn throttled(&self, tab_id: &str, inflight: usize) {
@@ -592,23 +661,43 @@ pub async fn build_ssh_params(
                     passphrase,
                 }
             } else {
-                match asset.cred_id.as_deref() {
-                    Some(id) => {
-                        let row = state.store.credential_get_row(id).await?;
-                        if row.kind != "private_key" {
-                            return Err(AppError::param(
-                                "该资产未绑定私钥：请在凭据库里选择 private_key 类型凭据，或填写私钥文件路径",
-                            ));
-                        }
-                        let dek = state.vault.dek().await?;
-                        let content = Vault::decrypt_credential(&dek, &row)?.to_string();
-                        SshAuth::KeyContent {
-                            content,
-                            passphrase: None,
-                        }
-                    }
-                    None => {
-                        return Err(AppError::param("私钥资产缺少私钥文件或私钥凭据"));
+                // 路径为空 → 私钥完全来自凭据库。载荷可能是「内容型」也可能是
+                // 「引用型」（只记路径不复制正文），口令与私钥存在同一条凭据里。
+                let id = asset
+                    .cred_id
+                    .as_deref()
+                    .ok_or_else(|| AppError::param("私钥资产缺少私钥文件或私钥凭据"))?;
+                let row = state.store.credential_get_row(id).await?;
+                if row.kind == payload::KIND_PASSPHRASE {
+                    return Err(AppError::param(format!(
+                        "「{}」是旧版的独立口令凭据，不能单独用于密钥认证 —— 请编辑该资产，重新选择私钥。",
+                        row.name
+                    )));
+                }
+                if row.kind != payload::KIND_PRIVATE_KEY {
+                    return Err(AppError::param(
+                        "该资产未绑定私钥：请在凭据库里选择私钥类型凭据，或填写私钥文件路径",
+                    ));
+                }
+                let dek = state.vault.dek().await?;
+                let raw = Vault::decrypt_credential(&dek, &row)?.to_string();
+                let PrivateKeyPayload {
+                    key,
+                    file,
+                    passphrase,
+                } = PrivateKeyPayload::parse(&raw);
+                match (file, key) {
+                    // 引用型：库里只有路径，连接时按路径读文件（口令仍来自凭据）
+                    (Some(path), _) => SshAuth::Key { path, passphrase },
+                    // 内容型：正文与口令一起交给 russh 的 decode_secret_key
+                    (None, Some(content)) => SshAuth::KeyContent {
+                        content,
+                        passphrase,
+                    },
+                    (None, None) => {
+                        return Err(AppError::param(
+                            "这条私钥凭据里既没有正文也没有路径，请重新填写",
+                        ))
                     }
                 }
             }
@@ -652,6 +741,7 @@ pub async fn asset_credential(state: &AppState, asset: &AssetRow) -> AppResult<O
     Ok(Some(Vault::decrypt_credential(&dek, &row)?.to_string()))
 }
 
+use crate::vault::payload::{self, PrivateKeyPayload};
 use crate::vault::Vault;
 
 /// 组装 WinRM 连接参数。

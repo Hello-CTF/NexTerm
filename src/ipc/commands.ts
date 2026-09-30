@@ -59,8 +59,10 @@ export const sessionApi = {
   /**
    * 重连一个已断开的会话（§7）。
    *
-   * 返回 false 不是错误 —— 表示「这个会话天然不可重连」（本地快速会话没有
-   * assetId，或会话已被显式断开后从内核里摘掉了）。调用方按提示处理即可。
+   * **非阻塞**：返回 `true` 只代表"已开始重连"，真正的退避重试在后台跑（最坏
+   * 三分钟），结果通过 `session://status` 事件推回来（重连中 → 已连接 / 连接失败）。
+   * 返回 `false` 不是错误 —— 表示这个会话天然不可重连（本机会话没有重连语义，
+   * 或没绑定资产）。
    */
   reconnect: (sessionId: string) => call<boolean>("session_reconnect", { sessionId }),
   list: () => call<SessionInfo[]>("session_list"),
@@ -501,7 +503,15 @@ export interface CredentialUsedBy {
   kind: string;
 }
 
-/** 凭据页用的列表项：Meta + 引用关系（后端返回 DTO 而不是 Row）。 */
+/**
+ * 私钥的来源。
+ *
+ * `inline` = 正文收进凭据库；`file` = 只记本地文件路径（引用，不复制内容）。
+ * 口令永远跟私钥存在同一条凭据里，不是独立凭据。
+ */
+export type CredentialSource = "inline" | "file";
+
+/** 凭据页用的列表项：Meta + 引用关系 + 私钥来源（后端返回 DTO 而不是 Row）。 */
 export interface Credential {
   id: string;
   name: string;
@@ -509,6 +519,21 @@ export interface Credential {
   createdAt: number;
   updatedAt: number;
   usedBy: CredentialUsedBy[];
+  /** 仅私钥类有值；**锁定态为 null**（来源藏在密文里，解不开就不显示） */
+  source: CredentialSource | null;
+  /** 引用型私钥的本地路径 */
+  refPath: string | null;
+  hasPassphrase: boolean;
+}
+
+/** 凭据明文（「显示」用）。私钥类会把来源、路径、口令一并给出来。 */
+export interface RevealedCredential {
+  kind: string;
+  /** 非私钥：值本身；内容型私钥：正文；引用型私钥：空串（库里本来就没有正文） */
+  value: string;
+  source: CredentialSource | null;
+  refPath: string | null;
+  passphrase: string | null;
 }
 
 export const vaultApi = {
@@ -519,16 +544,46 @@ export const vaultApi = {
   lock: () => call<void>("vault_lock"),
   changePassword: (oldPassword: string, newPassword: string) =>
     call<void>("vault_change_password", { oldPassword, newPassword }),
-  setCredential: (name: string, kind: string, secret: string, id?: string) =>
+  /**
+   * 存凭据。
+   *
+   * `extra.source` 仅私钥有意义：`file` 时 `secret` 是**路径**（只记引用），
+   * 否则是私钥正文。`extra.passphrase` 也是私钥专用，随私钥一起加密保存。
+   */
+  setCredential: (
+    name: string,
+    kind: string,
+    secret: string,
+    extra: { id?: string; source?: CredentialSource; passphrase?: string } = {},
+  ) =>
     call<{ id: string }>("vault_set_credential", {
-      args: { id, name, kind, secret },
+      args: {
+        id: extra.id,
+        name,
+        kind,
+        secret,
+        source: extra.source,
+        passphrase: extra.passphrase,
+      },
     }),
   listCredentials: () => call<Credential[]>("vault_list_credentials"),
   deleteCredential: (id: string) => call<void>("vault_delete_credential", { id }),
-  revealCredential: (id: string) => call<string>("vault_reveal_credential", { id }),
-  /** 改名 / 改值（改值后端会重加密；name 与 secret 都是可选字段）。 */
-  updateCredential: (id: string, patch: { name?: string; secret?: string }) =>
-    call<void>("credential_update", { args: { id, ...patch } }),
+  revealCredential: (id: string) => call<RevealedCredential>("vault_reveal_credential", { id }),
+  /**
+   * 改名 / 改值 / 改口令。
+   *
+   * ⚠️ `passphrase` 的语义是**提供即覆盖**（传空串 = 清除口令）；要"保持原样"就别带这个字段。
+   * 只改口令时不必重新提供私钥 —— 后端会解出原载荷、只换口令再加密。
+   */
+  updateCredential: (
+    id: string,
+    patch: {
+      name?: string;
+      secret?: string;
+      source?: CredentialSource;
+      passphrase?: string;
+    },
+  ) => call<void>("credential_update", { args: { id, ...patch } }),
 };
 
 // ───────── port forward ─────────

@@ -95,7 +95,11 @@ interface DemoCredential {
   id: string;
   name: string;
   kind: string;
+  /** 内容型：值本身 / 私钥正文；引用型私钥：本地文件路径。 */
   secret: string;
+  /** 私钥专用：来源与口令（对齐真机凭据载荷里的 ref / passphrase 两个字段）。 */
+  source?: "inline" | "file";
+  passphrase?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -108,7 +112,38 @@ const demoCredentials: DemoCredential[] = [
   { id: "cred-web01", name: "web-01", kind: "password", secret: "Xk9#web01$pw", createdAt: Date.now() - 20 * 86_400_000, updatedAt: Date.now() - 86_400_000 },
   { id: "cred-dbprod", name: "db-prod", kind: "password", secret: "Prod#db2026!", createdAt: Date.now() - 25 * 86_400_000, updatedAt: Date.now() - 3 * 86_400_000 },
   { id: "cred-nat", name: "nat-01", kind: "password", secret: "Nat0ld!2023", createdAt: Date.now() - 60 * 86_400_000, updatedAt: Date.now() - 30 * 86_400_000 },
+  // 旧版的「独立口令凭据」留一条：验证兼容显示（新建入口已经不再提供这个类型）
   { id: "cred-old", name: "旧机房-口令", kind: "passphrase", secret: "old-machine-room", createdAt: Date.now() - 200 * 86_400_000, updatedAt: Date.now() - 90 * 86_400_000 },
+  // 入库型私钥（带口令）：口令与私钥同一条凭据，详情页会有「私钥口令」卡片
+  {
+    id: "cred-key",
+    name: "id_ed25519",
+    kind: "private_key",
+    source: "inline",
+    passphrase: "demo-key-pass",
+    secret:
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACCkZW1vb25seW5vdGFyZWFsa2V5MDAwMDAwMDAwMDAwMDAwMAAAAJgAAAAA\nAAAAAAAAAA==\n-----END OPENSSH PRIVATE KEY-----",
+    createdAt: Date.now() - 45 * 86_400_000,
+    updatedAt: Date.now() - 5 * 86_400_000,
+  },
+  // 引用型私钥：库里只有路径，正文不进库（演示「引用本地文件」这条来源）
+  {
+    id: "cred-key-ref",
+    name: "id_rsa（引用）",
+    kind: "private_key",
+    source: "file",
+    secret: "C:\\Users\\you\\.ssh\\id_rsa",
+    createdAt: Date.now() - 70 * 86_400_000,
+    updatedAt: Date.now() - 18 * 86_400_000,
+  },
+  {
+    id: "cred-api",
+    name: "shipyard-token",
+    kind: "api_key",
+    secret: "demo-token-not-real",
+    createdAt: Date.now() - 12 * 86_400_000,
+    updatedAt: Date.now() - 12 * 86_400_000,
+  },
 ];
 
 /**
@@ -586,10 +621,20 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "session_disconnect": {
       const i = sessions.findIndex((s) => s.id === str(a.sessionId));
       if (i >= 0) {
-        const [gone] = sessions.splice(i, 1);
+        const s = sessions[i];
+        // 必须跟内核同语义，否则演示里验不出真实行为：
+        //   有重连语义的（ssh/docker/winrm）→ **对象留着**，只置 disconnected
+        //     （「重新连接」要靠它重建传输，删了那个按钮就永远点不动）
+        //   没有的（local 等）→ 断开就是结束，彻底摘掉
+        if (s.kind === "ssh" || s.kind === "docker" || s.kind === "winrm") {
+          s.status = "disconnected";
+          s.tabs = [];
+        } else {
+          sessions.splice(i, 1);
+        }
         // 不发这条事件的话，前端的状态徽标会一直停在「已连接」，
         // 于是「重新连接」永远是禁用态 —— 演示模式里这条路径就验不了。
-        emit("session://status", { sessionId: gone.id, status: "disconnected", error: null });
+        emit("session://status", { sessionId: s.id, status: "disconnected", error: null });
       }
       return null;
     }
@@ -598,9 +643,11 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return { open: true };
 
     case "session_reconnect": {
-      // 演示模式没有真实传输层，就演一遍状态机：connecting → connected
+      // 内核侧是非阻塞的：马上返回 true（已开始），结果靠状态事件推。
+      // 演示模式没有真实传输层，就演一遍状态机：connecting → connected。
       const s = sessions.find((x) => x.id === str(a.sessionId));
-      if (!s) return false;
+      // 跟内核一样，先判"有没有重连这回事"：本机会话与没绑定资产的都不可重连
+      if (!s || !s.assetId || s.kind === "local") return false;
       s.status = "connecting";
       emit("session://status", { sessionId: s.id, status: "connecting", error: null });
       later(600, () => {
@@ -1386,16 +1433,22 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
 
     case "vault_set_credential": {
-      // 带 id = 改值/改名（对齐 credential_update），不带 = 新建
+      // 带 id = 原位更新（对齐真机"已绑私钥凭据就地改"的语义），不带 = 新建
+      const src: "inline" | "file" = a.source === "file" ? "file" : "inline";
       const existing = a.id ? demoCredentials.find((c) => c.id === str(a.id)) : undefined;
       if (existing) {
         if (typeof a.name === "string") existing.name = a.name;
         if (typeof a.kind === "string") existing.kind = a.kind;
         if (typeof a.secret === "string") existing.secret = a.secret;
+        if (existing.kind === "private_key") {
+          existing.source = src;
+          // 口令"提供即覆盖"，空串/缺省 = 不动（对齐真机 credential_update）
+          if (typeof a.passphrase === "string" && a.passphrase) existing.passphrase = a.passphrase;
+        }
         existing.updatedAt = Date.now();
         return { id: existing.id };
       }
-      const c = {
+      const c: DemoCredential = {
         id: uid("cred"),
         name: str(a.name, "新凭据"),
         kind: str(a.kind, "password"),
@@ -1403,6 +1456,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      if (c.kind === "private_key") {
+        c.source = src;
+        if (typeof a.passphrase === "string" && a.passphrase) c.passphrase = a.passphrase;
+      }
       demoCredentials.push(c);
       return { id: c.id };
     }
@@ -1411,23 +1468,42 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const c = demoCredentials.find((x) => x.id === str(a.id));
       if (c) {
         if (typeof a.name === "string" && a.name.trim()) c.name = a.name.trim();
-        if (typeof a.secret === "string" && a.secret) c.secret = a.secret;
+        if (typeof a.secret === "string" && a.secret) {
+          c.secret = a.secret;
+          // 改了值就跟着改来源（真机在未提供 source 时沿用原来源，这里由调用方保证传对）
+          if (c.kind === "private_key" && typeof a.source === "string") {
+            c.source = a.source === "file" ? "file" : "inline";
+          }
+        }
+        if (c.kind === "private_key" && typeof a.passphrase === "string") {
+          // 空串 = 清除口令
+          c.passphrase = a.passphrase.trim() ? a.passphrase : undefined;
+        }
         c.updatedAt = Date.now();
       }
       return null;
     }
 
     case "vault_list_credentials":
-      return demoCredentials.map((c) => ({
-        id: c.id,
-        name: c.name,
-        kind: c.kind,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        usedBy: assets
-          .filter((x) => x.credId === c.id && x.deletedAt === null)
-          .map((x) => ({ id: x.id, name: x.name, kind: x.kind })),
-      }));
+      return demoCredentials.map((c) => {
+        const isKey = c.kind === "private_key";
+        const isRef = isKey && c.source === "file";
+        // 来源藏在密文里：锁定态一律给空（对齐真机，免得界面显示"没有口令"这种假信息）
+        const readable = isKey && vaultState.unlocked;
+        return {
+          id: c.id,
+          name: c.name,
+          kind: c.kind,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+          usedBy: assets
+            .filter((x) => x.credId === c.id && x.deletedAt === null)
+            .map((x) => ({ id: x.id, name: x.name, kind: x.kind })),
+          source: readable ? (c.source ?? "inline") : null,
+          refPath: readable && isRef ? c.secret : null,
+          hasPassphrase: readable ? !!c.passphrase : false,
+        };
+      });
 
     case "vault_delete_credential": {
       const i = demoCredentials.findIndex((c) => c.id === str(a.id));
@@ -1440,7 +1516,19 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "vault_reveal_credential": {
       if (!vaultState.unlocked) throw new Error("凭据库已锁定，请先解锁");
       const c = demoCredentials.find((x) => x.id === str(a.id));
-      return c ? c.secret : MASK;
+      if (!c) throw new Error("找不到这条凭据");
+      if (c.kind === "private_key") {
+        const isRef = c.source === "file";
+        // 引用型没有正文可给（库里本来就没有），路径单独给
+        return {
+          kind: c.kind,
+          value: isRef ? "" : c.secret,
+          source: c.source ?? "inline",
+          refPath: isRef ? c.secret : null,
+          passphrase: c.passphrase ?? null,
+        };
+      }
+      return { kind: c.kind, value: c.secret || MASK, source: null, refPath: null, passphrase: null };
     }
 
     /* ─────────────── port forward ─────────────── */

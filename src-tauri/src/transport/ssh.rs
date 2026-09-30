@@ -497,6 +497,24 @@ impl Transport for SshTransport {
             .disconnect(russh::Disconnect::ByApplication, "bye", "")
             .await;
     }
+
+    /// 连接是否还活着（供"泵退出是掉线还是 shell 退出"的判定用）。
+    ///
+    /// 两个信号合起来看：我们主动关过（`closed`）就直接算死；否则问 russh ——
+    /// 连接断开后它会把 handle 自己标记成 closed，这是**网络掉线唯一可靠的信号**
+    /// （russh 内部状态，不依赖我们有没有察觉）。
+    ///
+    /// 拿不到锁时返回 `true`：锁被占用说明正有人在用这条连接，那就是活着。
+    /// 宁可漏一次自动重连，也不要因为抢不到锁就把用户的会话当掉线拆掉重建。
+    fn is_alive(&self) -> bool {
+        if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        match self.handle.try_lock() {
+            Ok(h) => !h.is_closed(),
+            Err(_) => true,
+        }
+    }
 }
 
 /// SFTP 文件系统。

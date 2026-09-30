@@ -24,11 +24,75 @@ pub(crate) fn is_reconnectable(kind: &str) -> bool {
     matches!(kind, "ssh" | "docker" | "winrm")
 }
 
+/// 泵退出之后该怎么办。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PumpExit {
+    /// 什么都不做（用户停的 / 已经有人在处理 / 天然不可重连 / 连接还好着）
+    Ignore,
+    /// 连接真掉了 → 自动重连
+    Reconnect,
+}
+
+/// 判定"一次泵退出"是否意味着连接掉了。
+///
+/// 抽成纯函数是为了能单测 —— 这里错一个分支的后果是**用户的会话被无缘无故拆掉
+/// 重建**，而那种 bug 在真机上极难复现。三种结束原因长得很像，必须分开：
+///
+/// - **用户关标签 / 主动断开**：`stop` 已被取消 → 不管
+/// - **用户在 shell 里敲了 `exit`**：`stop` 没取消，但**连接还活着** → 不管
+///   （少了这条，敲一次 exit 就会把整条连接拆了重建，同会话其它标签一起断）
+/// - **连接掉了**（channel 关闭 / 网络断）→ 重连
+///
+/// 再加一道闸：只有状态还是 `Connected` 才动手。已经是 `Disconnected` /
+/// `Failed` / `Reconnecting` 说明已经有人处理过了，重复触发会把退避计数搅乱，
+/// 甚至把刚建好的连接再拆一次。
+pub(crate) fn pump_exit_action(
+    stop_cancelled: bool,
+    status: SessionStatus,
+    reconnectable: bool,
+    transport_alive: bool,
+) -> PumpExit {
+    if stop_cancelled || !reconnectable || transport_alive {
+        return PumpExit::Ignore;
+    }
+    if status != SessionStatus::Connected {
+        return PumpExit::Ignore;
+    }
+    PumpExit::Reconnect
+}
+
+/// 后台跑一次重连 —— 命令层（用户点「重新连接」）与掉线自动重连共用。
+///
+/// **必须异步**：退避最坏 1+2+4+8+16+30×5 = 181 秒。以前它是同步等在 IPC 命令里的，
+/// 界面会卡在"重连中"三分钟、用户以为程序死了。结果一律走 `SESSION_STATUS` 事件：
+/// 重连中 → 已连接 / 连接失败。
+pub fn spawn_reconnect(state: Arc<AppState>, session_id: String) {
+    tokio::spawn(async move {
+        match try_reconnect(&state, &session_id).await {
+            // 成功那条路自己打日志（带 attempt 明细），这里不重复
+            Ok(true) => {}
+            Ok(false) => tracing::info!(
+                target: "session",
+                session = %session_id,
+                "未重连（不可重连 / 已在流程中 / 次数用尽）"
+            ),
+            Err(e) => tracing::warn!(
+                target: "session",
+                session = %session_id,
+                error = %e,
+                "重连出错"
+            ),
+        }
+    });
+}
+
 /// 尝试重连一个会话：重建底层传输，替换进 Session，重开每个标签的 PTY。
 pub async fn try_reconnect(state: &AppState, session_id: &str) -> AppResult<bool> {
     let session = match state.sessions.get(session_id).await {
         Ok(s) => s,
-        Err(_) => return Ok(false), // 会话已被显式断开，不重连
+        // 会话已被回收（本机会话断开会走这条路，应用重启后前端也可能残留旧 id）：
+        // 那种情况没有恢复的原料，如实回 false。
+        Err(_) => return Ok(false),
     };
     // 先按类型判定，再碰状态：把状态改成「重连中」就等于对 UI 许了诺。
     if !is_reconnectable(&session.kind) {
@@ -166,7 +230,8 @@ async fn reopen_pty_for_tab(
 
 #[cfg(test)]
 mod tests {
-    use super::is_reconnectable;
+    use super::{is_reconnectable, pump_exit_action, PumpExit};
+    use crate::session::SessionStatus;
 
     /// 回归：本机会话**不得**进入重连循环。
     ///
@@ -185,5 +250,67 @@ mod tests {
         assert!(is_reconnectable("ssh"));
         assert!(is_reconnectable("docker"), "docker 主机底层就是 SSH");
         assert!(is_reconnectable("winrm"));
+    }
+
+    /// 真掉线 —— 这是"持久运维不能掉"的底线场景，必须重连。
+    ///
+    /// 三个条件同时成立：没被主动停、连接已死、状态还是 Connected。
+    #[test]
+    fn a_dead_connection_triggers_reconnect() {
+        assert_eq!(
+            pump_exit_action(false, SessionStatus::Connected, true, false),
+            PumpExit::Reconnect
+        );
+    }
+
+    /// 用户关标签 / 主动断开：`stop` 已取消 → 绝不能顺手重连。
+    ///
+    /// 少了这条，"关一个标签"会把整条连接拆掉重建。
+    #[test]
+    fn stopping_a_tab_never_triggers_reconnect() {
+        assert_eq!(
+            pump_exit_action(true, SessionStatus::Connected, true, false),
+            PumpExit::Ignore
+        );
+    }
+
+    /// 用户在 shell 里敲了 `exit`：`stop` 没取消，但**连接还活着** → 不重连。
+    ///
+    /// 这条最容易被漏掉：只看"泵为什么结束"会把正常退出 shell 误判成掉线，
+    /// 于是敲一次 exit 就把整条连接拆了重建，同会话里其它标签一起断。
+    #[test]
+    fn shell_exit_does_not_tear_down_a_healthy_connection() {
+        assert_eq!(
+            pump_exit_action(false, SessionStatus::Connected, true, true),
+            PumpExit::Ignore
+        );
+    }
+
+    /// 已经在处理中（断开 / 失败 / 重连中 / 连接中）：不叠加第二次。
+    ///
+    /// 重复触发会把退避计数搅乱，最坏把刚建好的连接再拆一次。
+    #[test]
+    fn an_in_flight_state_suppresses_reconnect() {
+        for st in [
+            SessionStatus::Disconnected,
+            SessionStatus::Failed,
+            SessionStatus::Reconnecting,
+            SessionStatus::Connecting,
+        ] {
+            assert_eq!(
+                pump_exit_action(false, st, true, false),
+                PumpExit::Ignore,
+                "{st:?} 状态不该触发自动重连"
+            );
+        }
+    }
+
+    /// 天然不可重连的会话（本机 / 数据库）：连接"死了"也不重连。
+    #[test]
+    fn non_reconnectable_kinds_never_auto_reconnect() {
+        assert_eq!(
+            pump_exit_action(false, SessionStatus::Connected, false, false),
+            PumpExit::Ignore
+        );
     }
 }

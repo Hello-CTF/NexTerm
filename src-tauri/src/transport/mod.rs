@@ -133,6 +133,17 @@ pub trait Transport: Send + Sync {
         None
     }
     fn set_cwd(&self, _cwd: &str) {}
+
+    /// 底层连接是否仍然可用。
+    ///
+    /// PTY 泵退出时要靠它区分两件事：**这个 shell 结束了**（用户敲了 `exit`、或
+    /// 关了标签）与 **整条连接掉了**（该重连）。前者连接还是好的，重连等于白拆白建。
+    ///
+    /// 只有 SSH 有真实的连接状态；本地与 WinRM 的连接是每次调用现建的，恒为可用 ——
+    /// 本机会话本来也没有重连语义，WinRM 走的是非交互行模式。
+    fn is_alive(&self) -> bool {
+        true
+    }
 }
 
 /// 输出裁剪（§6.3 / RainsIR cap_text）：400 行 / 120KB。

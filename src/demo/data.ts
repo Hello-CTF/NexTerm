@@ -148,7 +148,11 @@ export const assets: DemoAsset[] = [
   asset("a-redis", "g-test", "redis", "redis-cache", "127.0.0.1", 6379, null, {
     authKind: "none",
   }),
-  asset("a-build", "g-tools", "ssh", "build-01", "10.0.0.40", 22, "ci", { credId: "cred-dbprod" }),
+  // build-01 专门演示「私钥凭据」这条路径：keyPath 留空、私钥正文在凭据库里
+  asset("a-build", "g-tools", "ssh", "build-01", "10.0.0.40", 22, "ci", {
+    authKind: "key",
+    credId: "cred-key",
+  }),
 ];
 
 /* ── 容器 / 镜像 ───────────────────────────────────────────────────────── */

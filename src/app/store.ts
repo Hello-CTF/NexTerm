@@ -17,11 +17,18 @@ export type PaneKind =
   | "docker"
   | "db"
   | "credentials"
+  | "credentialsText"
   | "settings"
   | "audit";
 
-/** 左栏形态。资产列表是"管理"入口，文件树是"干活"入口。 */
-export type LeftMode = "assets" | "files";
+/**
+ * 左栏形态。
+ *
+ * 资产列表是"管理"入口，文件树是"干活"入口，凭据库是"资源"入口 ——
+ * 凭据量会随使用增长（资产表单、数据库连接都会往里写），塞在资产树底部
+ * 一行里既找不到也放不下后续要加的东西，所以给它一个和资产平级的形态。
+ */
+export type LeftMode = "assets" | "files" | "credentials";
 
 export interface AppTab {
   id: string;
@@ -33,6 +40,15 @@ export interface AppTab {
   connId?: string;
   /** db 标签特有的驱动类型（同一套面板，两种视图）。 */
   dbKind?: "mysql" | "redis";
+  /**
+   * 凭据标签当前选中的凭据 id。
+   *
+   * 左栏展开列表、主区看详情 —— 选中态是**左栏驱动的**，但详情标签要保持挂载
+   * （切换凭据不重挂组件、不丢滚动位置），所以选中值随标签走而不是随组件走。
+   */
+  credId?: string;
+  /** 凭据视图标签的初始形态（文本 / JSON）。 */
+  credView?: "text" | "json";
   path?: string;
   /**
    * 标签落地后立刻执行的命令（不带换行）。
@@ -67,6 +83,15 @@ export interface Workspace {
   title: string;
   /** session 工作区绑定的会话；也是左栏文件树的依据。 */
   sessionId?: string;
+  /**
+   * 会话所属的资产 id。
+   *
+   * 存它是为了**会话失效后还能找到回家的路**：会话对象会在内核里被回收（本机断开、
+   * 应用重启后残留的旧工作区），那时只剩一个无效的 `sessionId`，光靠它既连不上、
+   * 连不上还只能退化成"开本机终端"——那会开到另一台机器上去，看着像串台。
+   * 有 assetId 就能按同一台主机重新连接。
+   */
+  assetId?: string;
   /** db 工作区绑定的连接。 */
   connId?: string;
   dbKind?: "mysql" | "redis";
@@ -85,6 +110,7 @@ export interface WorkspaceSpec {
   kind: WorkspaceKind;
   title: string;
   sessionId?: string;
+  assetId?: string;
   connId?: string;
   dbKind?: "mysql" | "redis";
   assetKind?: string;
@@ -718,6 +744,8 @@ export async function openTerminalTab(
   const wsId = useUi.getState().ensureWorkspace({
     kind: "session",
     sessionId: session.id,
+    // 记下资产，会话被回收后还能按同一台主机重连（见 Workspace.assetId）
+    assetId: session.assetId ?? undefined,
     title: session.name,
     assetKind: session.kind,
   });
@@ -831,18 +859,72 @@ function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
   };
 }
 
+/** 某个固定 id 的标签是否已经开着。 */
+function hasTab(id: string): boolean {
+  return useUi
+    .getState()
+    .workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.id === id)));
+}
+
 /**
- * 打开「凭据」标签页（左栏底部入口调用）。
+ * 把左栏切到「凭据」形态（图标栏、资产树底部入口调用）。
  *
- * 固定 id：已开着就激活它，不重复开。凭据是全局资源（不属于任何会话），
- * 按 resolveWorkspaceId 的规则落在当前工作区，一个都没有就建「工具」。
+ * 不依赖当前工作区与会话：凭据是全局资源，一台机器都没连的时候也应该能管理
+ * （资产表单、数据库连接都会往库里写凭据）。
  */
-export function openCredentialsTab() {
-  useUi.getState().addTab({
+export function openCredentialsSidebar() {
+  const st = useUi.getState();
+  st.setLeftMode("credentials");
+  st.setLeftOpen(true);
+}
+
+/**
+ * 打开（或激活）「凭据」详情标签页，并选中某条凭据。
+ *
+ * 固定 id：已开着就激活它、只把选中项刷新过去 —— 详情标签保持挂载，
+ * 切换凭据不重挂组件，滚动位置与时间信息都不会闪。
+ * 不传 credId = 只激活、不改当前选中（左栏重新打开时用）。
+ */
+export function openCredentialsTab(credId?: string) {
+  const st = useUi.getState();
+  if (credId === undefined) {
+    if (hasTab("tab-credentials")) st.setActiveTab("tab-credentials");
+    else st.addTab({ id: "tab-credentials", kind: "credentials", title: "凭据", closable: true });
+    return;
+  }
+  st.addTab({
     id: "tab-credentials",
     kind: "credentials",
     title: "凭据",
+    credId,
     closable: true,
+  });
+}
+
+/**
+ * 打开「凭据视图」标签页（左栏底部入口调用）：把库里的东西渲染成
+ * ssh config 风格文本或 JSON，替代"为了看一眼凭据去开 VSCode"。
+ */
+export function openCredentialsViewTab(view: "text" | "json" = "text") {
+  useUi.getState().addTab({
+    id: "tab-credentials-view",
+    kind: "credentialsText",
+    title: "凭据视图",
+    credView: view,
+    closable: true,
+  });
+}
+
+/** 凭据详情标签当前选中的凭据 id（左栏据此高亮，标签关掉后自动为 undefined）。 */
+export function useCredentialsTabId(): string | undefined {
+  return useUi((s) => {
+    for (const w of s.workspaces) {
+      for (const p of w.panes) {
+        const t = p.tabs.find((x) => x.id === "tab-credentials");
+        if (t) return t.credId;
+      }
+    }
+    return undefined;
   });
 }
 

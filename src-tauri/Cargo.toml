@@ -29,6 +29,22 @@ crate-type = ["rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# 依赖修正 —— 没有代码直接使用这个 crate，纯粹是**构建域内的 feature 统一**。
+#
+# 链路：我们的 build-dep `tauri-build` → `tauri-utils` →（tauri-utils 对 schemars 也是
+# build-dep）→ `schemars 0.8` → `indexmap 1.9.3`，整条都活在构建域（host）。
+# resolver v2 下 build 域与 target 域的 feature 各自计算，所以必须写在
+# [build-dependencies] 里才够得着 —— 写在 [dependencies] 里不起作用（试过）。
+#
+# 问题：indexmap 1.9 的 build.rs 有两条路 —— `std` feature 开着就跳过探测、直接 emit
+# `has_std`；否则用打包进来的旧 autocfg 去探测 std。而旧 autocfg 的探测手法是编译
+# `extern crate std;`，**新 rustc（实测 1.98）对这句会报 E0259「std 重复定义」**
+# （Rust 2018 起 std 已隐式导入），于是探测判定为失败 → `has_std` 从未 emit →
+# `IndexMap<K, V, S>` 失去默认类型参数；而 schemars 在 `preserve_order` 下按两泛型写
+# `IndexMap<K, V>` → E0107，表现为整包编不出来（schemars 报 "expected 3 generic arguments"）。
+# 显式打开 std 就让 build.rs 走第一条路，问题消失（与 indexmap 2.x 无关）。
+indexmap = { version = "1.9", features = ["std"] }
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"

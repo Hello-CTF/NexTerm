@@ -2,11 +2,11 @@
 //
 // UI 要点：类型图标来自统一映射表（不再用 emoji）；行内操作只在 hover 时出现；
 // 分组用 chevron + 计数徽章；折叠状态由外壳的图标栏控制，这里不再自带展开按钮。
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
-import { connectAsset, openCredentialsTab, useUi } from "../../app/store";
+import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import {
   assetIcon,
@@ -180,15 +180,17 @@ export function AssetTree() {
         )}
       </div>
 
-      {/* 凭据入口：常驻底部。凭据在语义上属于资产，入口放资产区 */}
+      {/* 凭据入口：常驻底部。凭据在语义上属于资产，入口放资产区；
+          点击后左栏整体切成「凭据」形态（凭据有自己的侧边栏，不再占主区标签） */}
       <button
-        className="mx-1.5 mb-1.5 mt-auto flex h-[30px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 hover:bg-white/[.04] hover:text-neutral-200"
-        title="凭据库"
-        onClick={openCredentialsTab}
+        className="mx-1.5 mb-1.5 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
+        title="凭据库（左栏查看）"
+        onClick={openCredentialsSidebar}
       >
         <IconKey size={14} className="shrink-0 text-neutral-500" />
-        <span className="flex-1 text-left">凭据</span>
+        <span className="flex-1 text-left">凭据库</span>
         <span className="nx-count">{credentials.data?.length ?? "…"}</span>
+        <IconChevronRight size={12} className="shrink-0 text-neutral-600" />
       </button>
 
       {editing !== "none" && (
@@ -442,20 +444,41 @@ function AssetEditor({
     refetchOnWindowFocus: false,
   });
 
-  /** 编辑时已绑定的凭据：kind 决定私钥模式的来源默认值。 */
+  /** 编辑时已绑定的凭据：它的 kind 与来源决定私钥区块怎么回显。 */
   const boundCred = credentials.data?.find((c) => c.id === initial?.credId);
   const boundIsVaultKey = boundCred?.kind === "private_key";
+  /** 已绑定的是「引用型」私钥凭据（库里只有路径，没有正文）。 */
+  const boundIsRefKey = boundIsVaultKey && boundCred?.source === "file";
+  /** 可选的私钥凭据（入库模式的「选已有凭据」用）。 */
+  const privateKeys = (credentials.data ?? []).filter((c) => c.kind === "private_key");
 
-  // 私钥独立交互（§私钥添加逻辑）：文件 / 粘贴内容 / 凭据库复用。
-  // 已绑定的凭据本身就是私钥 → 默认切到「凭据库」来源。
-  const [keySource, setKeySource] = useState<"file" | "paste" | "vault">(
-    boundIsVaultKey ? "vault" : "file",
+  /**
+   * 私钥的两个正交选择：
+   *   来源 = 「引用本地文件」（只记路径）或「存入凭据库」（读内容加密保存）；
+   *   口令 = 私钥的一个属性，两种来源都能填，跟私钥存进同一条凭据。
+   * 编辑已有资产时按已绑定凭据的形态回显（引用型 → 引用；入库型 → 入库+选已有）。
+   */
+  const [keyOrigin, setKeyOrigin] = useState<"ref" | "vault">(
+    boundIsRefKey ? "ref" : boundIsVaultKey ? "vault" : "ref",
   );
+  /** 入库模式下：新建一条凭据，还是共选已有。 */
+  const [vaultMode, setVaultMode] = useState<"new" | "existing">(
+    boundIsVaultKey && !boundIsRefKey ? "existing" : "new",
+  );
+  /** 入库模式下私钥内容的获取方式。 */
+  const [keyContentMode, setKeyContentMode] = useState<"file" | "paste">("file");
   const [pastedKey, setPastedKey] = useState("");
-  /** 私钥口令：与私钥同组输入，留空 = 保持已有绑定不变。凭据库来源没有口令位。 */
+  /** 私钥口令：留空 = 不改动已有口令（同一条凭据上的字段）。 */
   const [passphrase, setPassphrase] = useState("");
-  /** 凭据库来源选中的 private_key 凭据。 */
+  /** 入库模式选中的 private_key 凭据。 */
   const [vaultCredId, setVaultCredId] = useState(boundIsVaultKey ? (initial?.credId ?? "") : "");
+
+  // 引用型凭据的路径存在凭据里（不在 asset.key_path），查询回来后才补进输入框。
+  // 只补一次：用户改过之后不再覆盖。
+  useEffect(() => {
+    if (!keyPath && boundIsRefKey && boundCred?.refPath) setKeyPath(boundCred.refPath);
+    // 依赖只看这两个：keyPath 变化不该重跑（否则会把用户正在输入的内容覆盖回去）
+  }, [boundIsRefKey, boundCred?.refPath]);
 
   const isDb = groupKind === "mysql" || groupKind === "redis";
   /** 私钥模式走自己的一组输入（文件/粘贴/凭据库 + 口令），不走凭据下拉。 */
@@ -479,45 +502,69 @@ function AssetEditor({
         onSaved();
         return;
       }
-      /* 私钥模式：凭据库复用 / 路径（粘贴的落成文件）+ 口令（留空保持已有绑定） */
+      /*
+       * 私钥：来源二选一（引用本地文件 / 存入凭据库），口令跟私钥同一条凭据。
+       *
+       * 「已绑定私钥凭据」时原位更新同一条（改一次、所有共用它的资产一起生效，
+       * 与凭据共用的语义一致）；否则新建。
+       */
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
+      const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
+      const credLabel = credName.trim() || name.trim();
       if (keyAuth) {
-        if (keySource === "vault") {
+        if (keyOrigin === "ref") {
+          const path = keyPath.trim();
+          if (!path && !initial) {
+            pushToast("error", "请选择私钥文件，或改用「存入凭据库」");
+            return;
+          }
+          if (passphrase || boundIsRefKey) {
+            // 有口令（或原本就是引用型凭据）→ 路径与口令一起存成一条凭据：
+            // 口令必须跟着私钥走，不能在库里单飞。
+            const res = await vaultApi.setCredential(credLabel, "private_key", path, {
+              id: reuseCredId,
+              source: "file",
+              // 留空 = 沿用原口令（后端会解出原载荷只换该字段）
+              ...(passphrase ? { passphrase } : {}),
+            });
+            credId = res.id;
+            finalKeyPath = null;
+          } else {
+            // 纯引用：资产直接记路径，凭据库里不留东西
+            finalKeyPath = path || null;
+            // 老数据可能把口令挂在一条独立凭据上，别因为"这次没填口令"就把它解绑
+            credId = hasBoundPassphrase ? (initial?.credId ?? null) : null;
+          }
+        } else if (vaultMode === "existing") {
           if (!vaultCredId) {
-            pushToast("error", "请从凭据库选择私钥");
+            pushToast("error", "请选择一条私钥凭据");
             return;
           }
           finalKeyPath = null;
           credId = vaultCredId;
         } else {
-          if (keySource === "paste") {
+          if (keyContentMode === "paste") {
             if (!pastedKey.trim()) {
               pushToast("error", "请粘贴私钥内容");
               return;
             }
-            const saved = await assetApi.saveKeyFile(pastedKey);
-            finalKeyPath = saved.path;
-          } else {
-            finalKeyPath = keyPath.trim() || null;
-            if (!finalKeyPath && !initial) {
-              pushToast("error", "请选择私钥文件，或改用「凭据库」来源");
-              return;
-            }
+          } else if (!keyPath.trim()) {
+            pushToast("error", "请选择私钥文件");
+            return;
           }
-          // 原绑定若是私钥本体凭据（现在切回了文件模式）则解绑 ——
-          // 留着它，连接层会把这条凭据误当私钥本体而不是口令
-          credId = boundIsVaultKey ? null : (initial?.credId ?? null);
-          if (passphrase) {
-            // 有绑定就原位更新（同一条口令凭据改值），没有就新建
-            const res = await vaultApi.setCredential(
-              credName.trim() || name.trim(),
-              "passphrase",
-              passphrase,
-              credId ?? undefined,
-            );
-            credId = res.id;
-          }
+          // 入库：文件模式在保存时才读内容，选完到保存之间文件被改动的窗口最小
+          const content =
+            keyContentMode === "paste"
+              ? pastedKey.trim()
+              : await assetApi.readKeyFile(keyPath.trim());
+          const res = await vaultApi.setCredential(credLabel, "private_key", content, {
+            id: reuseCredId,
+            source: "inline",
+            ...(passphrase ? { passphrase } : {}),
+          });
+          credId = res.id;
+          finalKeyPath = null;
         }
       } else if (credChoice === "new") {
         // 密码类：新建凭据。填了值才创建；不填 = 不绑定
@@ -712,99 +759,169 @@ function AssetEditor({
 
               {keyAuth && !isDb && (
                 <div className="nx-form-row">
-                  <label className="nx-label">私钥</label>
-                  <div className="mb-1.5 flex gap-1.5">
+                  <label className="nx-label">私钥来源</label>
+                  <div className="nx-segment mb-2">
                     <button
                       type="button"
-                      className={`nx-btn nx-btn-sm ${keySource === "file" ? "nx-btn-primary" : "nx-btn-ghost"}`}
-                      onClick={() => setKeySource("file")}
+                      className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
+                      onClick={() => setKeyOrigin("ref")}
                     >
-                      私钥文件
+                      引用本地文件
                     </button>
                     <button
                       type="button"
-                      className={`nx-btn nx-btn-sm ${keySource === "paste" ? "nx-btn-primary" : "nx-btn-ghost"}`}
-                      onClick={() => setKeySource("paste")}
+                      className={`nx-segment-item ${keyOrigin === "vault" ? "is-active" : ""}`}
+                      onClick={() => setKeyOrigin("vault")}
                     >
-                      粘贴内容
-                    </button>
-                    <button
-                      type="button"
-                      className={`nx-btn nx-btn-sm ${keySource === "vault" ? "nx-btn-primary" : "nx-btn-ghost"}`}
-                      onClick={() => setKeySource("vault")}
-                    >
-                      凭据库
+                      存入凭据库
                     </button>
                   </div>
-                  {keySource === "file" ? (
-                    <div className="flex gap-1.5">
-                      <input
-                        className="nx-input"
-                        value={keyPath}
-                        onChange={(e) => setKeyPath(e.target.value)}
-                        placeholder="选择或输入私钥路径"
-                      />
-                      <button
-                        type="button"
-                        className="nx-btn nx-btn-outline shrink-0"
-                        onClick={() =>
-                          void pickKeyFile().then((p) => {
-                            if (p) setKeyPath(p);
-                          })
-                        }
-                      >
-                        浏览…
-                      </button>
-                    </div>
-                  ) : keySource === "paste" ? (
-                    <textarea
-                      className="nx-textarea font-mono text-[11.5px]"
-                      rows={4}
-                      value={pastedKey}
-                      onChange={(e) => setPastedKey(e.target.value)}
-                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"}
-                    />
+
+                  {keyOrigin === "ref" ? (
+                    <>
+                      <div className="flex gap-1.5">
+                        <input
+                          className="nx-input font-mono text-[12px]"
+                          value={keyPath}
+                          onChange={(e) => setKeyPath(e.target.value)}
+                          placeholder="选择或输入私钥路径"
+                        />
+                        <button
+                          type="button"
+                          className="nx-btn nx-btn-outline shrink-0"
+                          onClick={() =>
+                            void pickKeyFile().then((p) => {
+                              if (p) setKeyPath(p);
+                            })
+                          }
+                        >
+                          浏览…
+                        </button>
+                      </div>
+                      <div className="nx-hint mt-1.5">
+                        ↳ 只记路径，私钥正文不复制进库 —— 跟系统 ssh 用同一份文件。
+                        文件被挪走后连不上，回来改这里即可。
+                      </div>
+                    </>
                   ) : (
                     <>
                       <select
                         className="nx-select"
-                        value={vaultCredId}
-                        onChange={(e) => setVaultCredId(e.target.value)}
+                        value={vaultMode}
+                        onChange={(e) => setVaultMode(e.target.value as "new" | "existing")}
                       >
-                        <option value="">选择私钥凭据…</option>
-                        {(credentials.data ?? [])
-                          .filter((c) => c.kind === "private_key")
-                          .map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                              {c.usedBy.length > 0 ? `（被 ${c.usedBy.length} 个资产使用）` : "（未使用）"}
-                            </option>
-                          ))}
+                        <option value="new">新建凭据</option>
+                        <option value="existing">选已有私钥凭据</option>
                       </select>
-                      {(credentials.data ?? []).filter((c) => c.kind === "private_key").length === 0 && (
-                        <div className="nx-hint mt-1">
-                          ↳ 凭据库里还没有私钥：去左下角「凭据」页新建一条 private_key，多台机器可共用
-                        </div>
+
+                      {vaultMode === "new" ? (
+                        <>
+                          <div className="nx-segment mt-2 mb-2">
+                            <button
+                              type="button"
+                              className={`nx-segment-item ${keyContentMode === "file" ? "is-active" : ""}`}
+                              onClick={() => setKeyContentMode("file")}
+                            >
+                              私钥文件
+                            </button>
+                            <button
+                              type="button"
+                              className={`nx-segment-item ${keyContentMode === "paste" ? "is-active" : ""}`}
+                              onClick={() => setKeyContentMode("paste")}
+                            >
+                              粘贴内容
+                            </button>
+                          </div>
+                          {keyContentMode === "file" ? (
+                            <div className="flex gap-1.5">
+                              <input
+                                className="nx-input font-mono text-[12px]"
+                                value={keyPath}
+                                onChange={(e) => setKeyPath(e.target.value)}
+                                placeholder="选择私钥文件"
+                              />
+                              <button
+                                type="button"
+                                className="nx-btn nx-btn-outline shrink-0"
+                                onClick={() =>
+                                  void pickKeyFile().then((p) => {
+                                    if (p) setKeyPath(p);
+                                  })
+                                }
+                              >
+                                浏览…
+                              </button>
+                            </div>
+                          ) : (
+                            <textarea
+                              className="nx-textarea font-mono text-[11.5px]"
+                              rows={4}
+                              value={pastedKey}
+                              onChange={(e) => setPastedKey(e.target.value)}
+                              placeholder={
+                                "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"
+                              }
+                            />
+                          )}
+                          <div className="nx-hint mt-1.5">
+                            ↳ 保存时读取内容并加密入库，之后不再依赖原文件。
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <select
+                            className="nx-select mt-2"
+                            value={vaultCredId}
+                            onChange={(e) => setVaultCredId(e.target.value)}
+                          >
+                            <option value="">选择私钥凭据…</option>
+                            {privateKeys.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                                {c.source === "file" ? "（引用文件）" : "（已入库）"}
+                                {c.usedBy.length > 0
+                                  ? ` · 被 ${c.usedBy.length} 个资产使用`
+                                  : " · 未使用"}
+                              </option>
+                            ))}
+                          </select>
+                          {privateKeys.length === 0 && (
+                            <div className="nx-hint mt-1.5">
+                              ↳ 凭据库里还没有私钥：改成「新建凭据」，或先去左栏「凭据」里建一条。
+                            </div>
+                          )}
+                          {vaultCredId && (
+                            <div className="nx-hint mt-1.5">↳ 共用这条凭据 · 改一处所有使用者生效</div>
+                          )}
+                        </>
                       )}
                     </>
                   )}
-                  {keySource !== "vault" && (
-                    <>
-                      <input
-                        type="password"
-                        className="nx-input mt-1.5"
-                        autoComplete="off"
-                        value={passphrase}
-                        onChange={(e) => setPassphrase(e.target.value)}
-                        placeholder={
-                          hasBoundPassphrase ? "已设置口令 · 留空保持不变" : "私钥口令（没有可留空）"
-                        }
-                      />
-                      <div className="nx-hint mt-1">
-                        ↳ 口令与私钥一同存入「凭据」库，可改名复用
-                      </div>
-                    </>
-                  )}
+
+                  <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
+                    <label className="nx-label">私钥口令</label>
+                    <input
+                      type="password"
+                      className="nx-input font-mono"
+                      autoComplete="off"
+                      value={passphrase}
+                      disabled={keyOrigin === "vault" && vaultMode === "existing"}
+                      onChange={(e) => setPassphrase(e.target.value)}
+                      placeholder={
+                        keyOrigin === "vault" && vaultMode === "existing"
+                          ? "口令跟着所选凭据，改它请去凭据库"
+                          : hasBoundPassphrase
+                            ? "已设置口令 · 留空保持不变"
+                            : "没有就留空"
+                      }
+                    />
+                    <div className="nx-hint mt-1.5">
+                      ↳ 选填。口令跟私钥存在同一条凭据里，不会单独占一条。
+                      {keyOrigin === "ref" && !passphrase && !hasBoundPassphrase
+                        ? " 引用模式不填口令时，凭据库里不会留任何东西。"
+                        : ""}
+                    </div>
+                  </div>
                 </div>
               )}
 
