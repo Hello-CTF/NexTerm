@@ -2255,6 +2255,16 @@ screencapture -x -o -l17869 out.png
 
 也就是说，「桌面直连盒子公网地址」这条最自然的路径**没有凭据可用**。
 
+> ⚠️ **本节下面两条结论后来被 §17.9 的真机验证推翻了，先看那节再读这里**：
+> ① 「桌面拿不到会话票据」是**错的** —— 票据就写在客户端窗口进程的命令行上，
+> 桌面端读得到（`client::find_session_token`）；
+> ② 「官方给的口子是 `Lzc-Api-Auth-Token`」虽是事实，但 `hc api_auth_token gen`
+> 需要**盒子上的 shell**，而开发者侧唯一能进的 `debug.bridge` 里没有 `hc`，
+> 所以这条路对普通用户等于不存在。**现在的推荐路径是会话票据**。
+>
+> 下面这段保留原文，是为了记住「当时为什么会这么设计」以及 `X-HC-User-ID`
+> 那个判据的来历 —— 它至今仍然是 `authorize_sync` 的核心。
+
 **官方给的口子是 API Auth Token**（`/advanced-api-auth-token`，需 lzcos v1.4.3+）：
 
 ```bash
@@ -2385,12 +2395,121 @@ curl -k -H "Lzc-Api-Auth-Token: <token>" "https://<box-domain>/sys/whoami"
 在 RPC 层是**再包一层** `{"args":{"args":{…}}}`（外层是 `{cmd,args}`，内层是命令自己的
 形参名）。少了内层，服务端报 `参数 args: invalid type: null, expected struct SetCredentialArgs`。
 
-### 17.9 还没做的（下次动之前先看这里）
+### 17.9 真机验证 + 会话票据通道（2026-09-30 晚，**本节推翻了 §17.2 的两条推测**）
+
+#### 用户报的现象与真因
+
+```
+内部错误: https://nexterm.lazycore.heiyu.space 返回的不是 NexTerm 的响应（HTTP 200 OK）：
+error decoding response body for url (https://lazycore.heiyu.space/sys/login?redirect=…)
+```
+
+真因有两层，**第二层是我们自己的 bug**：
+
+1. 公网入口不带凭证一律 `307` → `/sys/login`（§15.3 已知）。
+2. ⛔ **`reqwest` 默认跟随重定向** ⇒ 请求一路跟到登录页、拿到一张 `HTTP 200` 的
+   HTML，然后 `json()` 解析失败，报出上面那句**把真因完全藏住**的话
+   （「HTTP 200」+「error decoding response body」这两条线索指向的全是错方向）。
+   修法：客户端显式 `redirect::Policy::none()`，在**读 body 之前**看状态码与
+   `Location`，命中 `/sys/login` 就报「被登录门挡下」并给出下一步（见 `client::gate_error`）。
+
+#### ✅ 通道打通：用懒猫客户端的会话票据
+
+**决定性实测**（同一台机器、同一时刻，只差一个头）：
+
+| 请求 | 结果 |
+|---|---|
+| `GET /healthz` 不带凭证 | `307` → 登录页 |
+| `GET /healthz` 带 `Lzc-Auth-Token: <窗口票据>` | `200`，`{"commands":132,"version":"0.1.3","vault":{"unlocked":true}}` |
+| `POST /sync/rpc` 带同一个头 | `200`，`{"ok":true,"data":{"assets":[…"linuxcore"…],"protocol":1}}` |
+
+⇒ **`X-HC-User-ID` 在 `Lzc-Auth-Token` 这条路上同样被注入**（`authorize_sync` 的第二条
+路成立），整条同步链路可用。
+
+**票据从哪来**：懒猫客户端每次打开 Web 应用窗口，就 fork 一个同名可执行文件，命令行形如
+
+```
+/Applications/懒猫微服.app/Contents/MacOS/懒猫微服 --action=open_web_app_window \
+  --appUrl=https://nexterm.lazycore.heiyu.space/ --appId=cloud.lazycat.app.nexterm.dev \
+  --boxId=12D3KooW… --socksaddr=127.0.0.1:31085 --authToken=<uuid> --theme=dark
+```
+
+桌面端读得到它 ⇒ **用户不必在盒子上做任何事**。这是本轮选它当推荐路径的理由。
+
+⚠️ **两条与技能里写法不同的操作细节**：
+
+- `ps -ww -p $(pgrep -f …)` 这个组合在**当前这台机器上不可用**：macOS 的 `/bin/ps`
+  是 **setuid root**（`-rwsr-xr-x root wheel`），代理沙箱直接拒执行
+  （`operation not permitted`），`dangerouslyDisableSandbox` 也不放行。
+  **能用的是 `pgrep -fl <关键字>`** —— 它会把**完整命令行**打出来（`pgrep` 不是
+  setuid，普通权限，实测能读到别的同用户进程的 argv）。
+- 所以**判「桌面端能不能读别的进程命令行」不能用 `ps` 试**。要另证：`pgrep -fl authToken`
+  能打出 `--authToken=…` 即证明「普通用户进程读得到」——这正是 Rust 侧
+  `find_session_token` 依赖的能力。
+
+**匹配规则（`session_token_from_ps`）**：按窗口的 `--appUrl` 主机名匹配，分两轮 ——
+① 主机名**完全相同**；② 退一步比**盒子域**（`a.b.c` 的 `b.c`）。第②轮是为了
+「用户填的子域与窗口里的不一样」这一种情况（`subdomain` 首装固化，本项目 dev 包的
+窗口就开在 `nexterm.*` 而 manifest 写的是 `nexterm-dev`）。两轮**必须分开**，
+否则 `nexterm.heiyu.space` 这种短名会随手撞上别的盒子的窗口。
+
+#### ⛔ §17.2 的两条推测被推翻
+
+| §17.2 当时的说法 | 实测 |
+|---|---|
+| 「桌面拿不到会话票据」 | **错**。它就写在窗口进程的命令行上，桌面端读得到 |
+| 「官方给的口子是 `Lzc-Api-Auth-Token`，`hc api_auth_token gen`」 | 命令本身没错，但**这条路对普通用户等于不存在**：`hc` 只在**盒子的 shell** 上。开发者侧唯一能进去的入口是 `debug.bridge`（`box@<盒子>:22222`），而它的子命令清单里**没有 `hc`**（`blob-* / build* / devshell / install / lzc-docker* / status / …`，全是开发者工具链） |
+
+⇒ 三种钥匙的最终定位（`client::TOKEN_KIND_*`）：
+
+| 种类 | 头 | 谁生成 | 适合 |
+|---|---|---|---|
+| `session`（**默认/推荐**） | `Lzc-Auth-Token` | 懒猫客户端开窗口时下发 | 所有人。代价：**会话级**，窗口关了/客户端重启就换，失效后重新取一次 |
+| `platform` | `Lzc-Api-Auth-Token` | 盒子上 `hc api_auth_token gen` | 能直接登盒子的人（令牌长期有效） |
+| `app` | `X-NexTerm-Sync-Token` | 本应用 | 同网段直连 / `public_path` 放行 —— 不经过平台网关 |
+
+#### 顺带纠正的三件事
+
+1. **盒子的证书不需要 `insecure`**：`nexterm.lazycore.heiyu.space` 是
+   `CN=*.lazycore.heiyu.space`、签发者 **Let's Encrypt**、`Verify return code: 0 (ok)`。
+   所以 §17 里「懒猫盒子用私有 CA ⇒ 必须勾跳过校验」这条**对本项目的公网地址不成立**
+   （界面文案已改准：只有自签证书的地址才需要）。真机测试就是以 `insecure:false` 跑通的。
+2. **`AppError::Forbidden` 的文案名不副实**：它原先 Display 成「危险操作已被拒绝」，
+   但全代码库里用它的地方**全是鉴权**（同步令牌校验、登录门），没有一处是「危险操作」。
+   于是用户看到的是「危险操作已被拒绝: 被懒猫平台的登录门挡下了…」。已改成中性的
+   「操作被拒绝」。
+3. **`debug.bridge` 能连上盒子的真实地址是 `box@198.18.0.86`**（虚拟网 IP，**会变**；
+   上一轮记录的是 `198.18.0.13`）。⚠️ 虚拟网段 `198.18.0.0/15` 是**全量 fake-IP 拦截**：
+   `nc -z` 对**几乎每个 IP** 都报 open，**扫网段找盒子是无效的** —— 要用域名或历史记录。
+
+#### 新增的真机联调测试（默认跳过，可复现）
+
+`sync::client::tests::live_box_session_token_passes_the_gate` —— 只做**读**操作，不碰对端数据：
+
+```bash
+cd src-tauri
+NEXTERM_SYNC_LIVE_URL=https://nexterm.lazycore.heiyu.space \
+NEXTERM_SYNC_LIVE_TOKEN=<客户端窗口的 --authToken= 值> \
+  cargo test --lib live_box -- --ignored --nocapture
+```
+
+实测输出（两条断言都过）：
+
+```
+对端 origin=15e9994a protocol=1 version=0.1.3 资产=1 条
+不带票据时的报错：操作被拒绝: 被懒猫平台的登录门挡下了（HTTP 307 → 登录页）。…
+```
+
+第二条是**回归线**：默认跟随重定向时，这里会退化成
+「返回的不是 NexTerm 的响应」那句无信息量的话。
+
+### 17.10 还没做的（下次动之前先看这里）
 
 | 项 | 说明 |
 |---|---|
-| **真机验证** | 本机双实例已证；盒子上的实测需要重新 `project release` + 在盒子上 `hc api_auth_token gen`。**`Lzc-Api-Auth-Token` 能否访问应用业务路径（不只是 `/sys/*`）尚未真机证实** —— 这是最大的待验假设 |
-| `public_path: [/sync/rpc]` | 是否能让「不经过平台网关」那条路也通，未实测（§15.3 那次测的是「升级包不生效」） |
+| ~~真机验证~~ | ✅ **已做，见 §17.9**。结论同时**推翻了 §17.2 的两条推测**：会话票据桌面端拿得到（§17.2 说拿不到），而 `Lzc-Api-Auth-Token` 这条路对普通用户等于不存在（需要盒子上的 shell） |
+| `public_path: [/sync/rpc]` | 是否能让「不经过平台网关」那条路也通，未实测（§15.3 那次测的是「升级包不生效」）。**现已不重要**：主路径走公网 + 会话票据 |
 | 引用型私钥 | 路径跨设备无效，目前原样搬、不额外提示 |
-| 自动同步 | 本轮只有手动（用户明确选择）。事件位 `sync://status` 仍未用 |
+| 会话票据会过期 | 客户端重开窗口/重启客户端就换。目前靠「连不上就回来点一次」兜住，**没有**自动刷新 |
+| 自动同步 | 本轮只有手动（用户明确选择）。事件位 `sync://status` 仍未用。⚠️ 票据会过期 ⇒ 将来做自动同步也不能假设票据长期有效 |
 | 已提审的 LPK | `review.id=19682` 那份**不含**本功能；要让商店带上，需重出正式包再提审 |
