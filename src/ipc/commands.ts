@@ -668,13 +668,17 @@ export const forwardApi = {
 // ───────── sync（跨实例资产同步）─────────
 
 /**
- * 桌面 ↔ 盒子上的服务端之间搬运资产。
+ * 桌面 ↔ 服务端（微服上那个 / 自建服务器上那个）之间搬运资产。
  *
  * 三类命令，边界很清楚：
  * - `digest` / `export` / `import` 是**两端共用**的本地操作（服务端靠它们接收推送）；
  * - `linkGet` / `linkSet` / `remoteDigest` / `push` / `pull` 只在桌面版有意义
  *   （服务端上会返回 `unsupported`）；
  * - `token` / `rotateToken` 只在服务端有值（桌面版回 `null`）。
+ *
+ * 连接**只有一种凭据**：服务端自己生成的那串同步令牌，抄到桌面版即可。
+ * 服务端装在哪里由 `linkSet` 的 `tokenKind`（`box` | `server`）标注，
+ * 它只影响界面提示，不影响协议。
  *
  * `push` / `pull` 的方向是**显式**的：用户勾哪些、按哪个按钮，就往哪个方向走。
  * 没有自动合并 —— 冲突（两边都改过）由界面呈现，由人决定。
@@ -704,17 +708,10 @@ export const syncApi = {
   /** 拉对端摘要 —— 同时就是连通性探测，结果会写回连接配置。 */
   remoteDigest: () => call<import("./types").SyncDigest>("sync_remote_digest"),
 
-  /**
-   * 从懒猫客户端**已经打开的** NexTerm 窗口里取会话票据，写进连接配置并试连一次。
-   *
-   * 返回的连接配置里 `lastError` 有值 = 取到了票据但没连上（比如票据刚过期）；
-   * 抛出异常 = 根本没取到（多半是窗口没开）。
-   */
-  discoverToken: () => call<import("./types").SyncLink>("sync_discover_token"),
-  /** 推送选中资产到盒子。 */
+  /** 推送选中资产到对端。 */
   push: (assetIds: string[], withCreds: boolean, force: boolean) =>
     call<import("./types").ImportReport>("sync_push", { args: { assetIds, withCreds, force } }),
-  /** 从盒子拉取选中资产到本地。 */
+  /** 从对端拉取选中资产到本地。 */
   pull: (assetIds: string[], withCreds: boolean, force: boolean) =>
     call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
 

@@ -5,7 +5,7 @@
 //! - **两端共用**（`sync_digest` / `sync_export` / `sync_import`）：纯粹是
 //!   「本地库 ↔ 同步包」的转换，不涉及网络。服务端就是靠这三个响应桌面的推送。
 //! - **仅桌面**（`sync_link_*` / `sync_remote_digest` / `sync_push` / `sync_pull`）：
-//!   出站连盒子。服务端上它们返回明确的 `unsupported`，而不是「假装成功」——
+//!   出站连对端。服务端上它们返回明确的 `unsupported`，而不是「假装成功」——
 //!   命令表只有一份、两端都注册，运行时的拒绝是这里唯一的表达方式。
 //!
 //! 单向与双向在这里没有代码差异：推是 `push`（本地 export → 远端 import），
@@ -91,7 +91,7 @@ fn require_desktop() -> AppResult<()> {
         return Ok(());
     }
     Err(AppError::Unsupported(
-        "出站同步只在桌面版可用：盒子上的服务端是被同步的一端，不需要主动连别人".into(),
+        "出站同步只在桌面版可用：微服上的服务端是被同步的一端，不需要主动连别人".into(),
     ))
 }
 
@@ -104,7 +104,8 @@ pub async fn sync_link_get(state: ManagedState<'_>) -> AppResult<SyncLink> {
 #[serde(rename_all = "camelCase")]
 pub struct SyncLinkArgs {
     pub url: String,
-    /// `session` | `platform` | `app`（缺省或非法值都落到 app）
+    /// 对端服务端装在哪儿：`box`（懒猫微服）| `server`（自建服务器）。
+    /// 缺省或非法值都落到 `server` —— 见 `client::normalize_link`。
     #[serde(default)]
     pub token_kind: Option<String>,
     /// 缺省 = 不改动已存的令牌（界面留空时不覆盖）。
@@ -119,10 +120,12 @@ pub async fn sync_link_set(state: ManagedState<'_>, args: SyncLinkArgs) -> AppRe
     let mut link = client::load_link(&state.store).await?;
     link.url = args.url.trim().to_string();
     if let Some(kind) = args.token_kind {
-        link.token_kind = match kind.as_str() {
-            client::TOKEN_KIND_SESSION => client::TOKEN_KIND_SESSION.to_string(),
-            client::TOKEN_KIND_PLATFORM => client::TOKEN_KIND_PLATFORM.to_string(),
-            _ => client::TOKEN_KIND_APP.to_string(),
+        // 只认两个值；其余（含空串与旧版的 session/platform）交给同一处归一逻辑，
+        // 免得「界面上不可能出现的值」在这里悄悄变成一个第三种状态。
+        link.token_kind = if kind == client::TOKEN_KIND_BOX {
+            client::TOKEN_KIND_BOX.to_string()
+        } else {
+            client::TOKEN_KIND_SERVER.to_string()
         };
     }
     if let Some(t) = args.token {
@@ -161,42 +164,11 @@ pub async fn sync_remote_digest(state: ManagedState<'_>) -> AppResult<SyncDigest
     require_desktop()?;
     let link = client::load_link(&state.store).await?;
     if !link.is_configured() {
-        return Err(AppError::param("还没配置盒子地址与访问令牌"));
+        return Err(AppError::param("还没配置对端地址与访问令牌"));
     }
     let outcome = client::remote_digest(&link).await;
     record_probe(&state.store, &link, &outcome).await;
     outcome
-}
-
-/// 从懒猫客户端**已经打开的** NexTerm 窗口里取会话票据，写进连接配置并立刻试连一次。
-///
-/// 这是**推荐的连接方式**：用户在盒子上什么都不用做。对比另外两种 ——
-/// 平台 API 令牌要 `hc api_auth_token gen`（需要在盒子上有 shell），
-/// 应用同步令牌要先去盒子版界面里抄一串码。
-///
-/// ⚠️ 取到票据但这次没连上时**不报错**，而是把原因放进返回值的 `last_error`：
-/// 「取到了、这次没连上」和「根本没取到」对用户是两件事 —— 前者要看失败原因，
-/// 后者要去开窗口。混成一个错误会让人不知道该开窗口还是该查令牌。
-#[tauri::command]
-pub async fn sync_discover_token(state: ManagedState<'_>) -> AppResult<SyncLink> {
-    require_desktop()?;
-    let mut link = client::load_link(&state.store).await?;
-    if link.url.trim().is_empty() {
-        return Err(AppError::param("先填盒子地址，再取票据"));
-    }
-    let base = client::normalize_base(&link.url)?;
-    let (token, host) = client::find_session_token(&base)?;
-    link.token_kind = client::TOKEN_KIND_SESSION.to_string();
-    link.token = token;
-    client::save_link(&state.store, &link).await?;
-    tracing::info!(target: "sync", window_host = %host, "已从懒猫客户端窗口取到会话票据");
-
-    let outcome = client::remote_digest(&link).await;
-    record_probe(&state.store, &link, &outcome).await;
-    if let Err(e) = outcome {
-        link.last_error = Some(e.to_string());
-    }
-    Ok(link)
 }
 
 #[derive(Deserialize)]
@@ -210,13 +182,13 @@ pub struct SyncTransferArgs {
     pub force: bool,
 }
 
-/// 推：把选中的本地资产送到盒子。
+/// 推：把选中的本地资产送到对端。
 #[tauri::command]
 pub async fn sync_push(state: ManagedState<'_>, args: SyncTransferArgs) -> AppResult<ImportReport> {
     require_desktop()?;
     let link = client::load_link(&state.store).await?;
     if !link.is_configured() {
-        return Err(AppError::param("还没配置盒子地址与访问令牌"));
+        return Err(AppError::param("还没配置对端地址与访问令牌"));
     }
     client::push(
         &state.store,
@@ -229,13 +201,13 @@ pub async fn sync_push(state: ManagedState<'_>, args: SyncTransferArgs) -> AppRe
     .await
 }
 
-/// 拉：把盒子上的选中资产取回本地。
+/// 拉：把对端上的选中资产取回本地。
 #[tauri::command]
 pub async fn sync_pull(state: ManagedState<'_>, args: SyncTransferArgs) -> AppResult<ImportReport> {
     require_desktop()?;
     let link = client::load_link(&state.store).await?;
     if !link.is_configured() {
-        return Err(AppError::param("还没配置盒子地址与访问令牌"));
+        return Err(AppError::param("还没配置对端地址与访问令牌"));
     }
     client::pull(
         &state.store,

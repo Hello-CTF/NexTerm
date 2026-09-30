@@ -6,32 +6,44 @@
 //! 只要会用同一份契约说话，就复用了全部错误语义（`{ok,error}` 信封、
 //! `AppError` 的稳定 code）。换成自造协议等于把这套东西再实现一遍。
 //!
-//! # 认证：三种钥匙，一条通道
+//! # 认证：一把钥匙，两个部署位置
 //!
-//! 盒子的公网入口有平台登录门，**桌面版不是浏览器、过不了那道门**（实测：不带凭证
-//! 一律 `307` 到 `/sys/login`）。所以「填个地址就能连」是不成立的，必须先解决钥匙。
-//! 按「谁来开这把锁」分三种，[`SyncLink::token_kind`] 就是选哪种：
+//! 连接**只有一种凭据**：服务端自己生成的同步令牌，挂在
+//! [`crate::sync::TOKEN_HEADER`]（`X-NexTerm-Sync-Token`）上。服务端装在哪，
+//! 令牌就从哪拿 —— [`TOKEN_KIND_BOX`]（懒猫微服）与 [`TOKEN_KIND_SERVER`]
+//! （自建服务器）**只是界面上的两个位置提示**，走的是同一个头、同一套校验。
 //!
-//! 1. **懒猫客户端会话票据**（[`TOKEN_KIND_SESSION`]，`Lzc-Auth-Token`）—— **推荐**。
-//!    懒猫客户端每开一个 Web 应用窗口，就把当次票据写在窗口进程的命令行上
-//!    （`--authToken=`）。桌面端把它读出来即可（[`find_session_token`]），
-//!    用户在盒子上**不需要做任何事**。代价：会话级，窗口关了/客户端重启就换。
-//! 2. **平台 API 令牌**（[`TOKEN_KIND_PLATFORM`]，`Lzc-Api-Auth-Token`）—— 长期有效，
-//!    但要用 `hc api_auth_token gen` 生成，而那个命令只在**盒子的 shell** 上可用
-//!    （开发者侧能进的 `debug.bridge` 里没有 `hc`）。适合能直接登盒子的人。
-//! 3. **应用同步令牌**（[`TOKEN_KIND_APP`]，`X-NexTerm-Sync-Token`）—— 本应用自己的，
-//!    用于「同网段直连」或 `public_path` 放行这类**不经过平台网关**的场合。
+//! ## 为什么能只靠这一个令牌（懒猫的平台登录门去哪了）
 //!
-//! 三种在服务端都认（见 `server::authorize_sync`），这里按配置选一个发。
+//! 微服公网入口对所有请求一律 `307` → `/sys/login`，而且**不认第三方头**
+//! （实测：带本应用的令牌请求，响应与不带逐字节相同）。所以「把令牌放进请求头」
+//! 本身过不去那道门 —— 需要平台那边**把这条路径放出来**：
+//! `lzc-manifest.yml` 的 `application.public_path` 里声明了 `/sync/rpc`
+//! （官方 `/advanced-public-api` 就是为此设计的：应用自带独立鉴权时可关闭强制鉴权）。
+//!
+//! 于是整条链变成两段，各管各的：
+//!
+//! ```text
+//! 平台网关  ── public_path 放行 /sync/rpc ──▶  容器内的 authorize_sync()
+//! （不再要求登录）                              （要求令牌一致，否则 401）
+//! ```
+//!
+//! 曾经有另外两种钥匙，都已删除，记在这里免得再走一遍：
+//!
+//! - **`Lzc-Api-Auth-Token`（平台 API 令牌）**：网关认它，但要用
+//!   `hc api_auth_token gen` 生成，而 `hc` 只在**盒子的 shell** 上
+//!   （开发者侧能进的 `debug.bridge` 子命令里没有它）⇒ 对普通用户等于不存在。
+//! - **`Lzc-Auth-Token`（客户端会话票据）**：从懒猫客户端窗口进程的
+//!   `--authToken=` 里读得到，确实能过门，但它是**会话级**的（重开窗口就换），
+//!   把「配一次」变成「过期就再点一次」。`public_path` 落地后它没有存在价值。
 //!
 //! ⚠️ **不跟随重定向**是这条通道的关键细节，见 [`gate_error`]。
 //!
-//! # TLS：盒子用的是私有 CA
+//! # TLS
 //!
-//! rustls 默认只信公信根，而懒猫盒子的证书由微服自己签发 ⇒ **不显式放开就会
-//! 握手失败**。这不是「顺手把校验关掉」：它是这台盒子本来就有的信任模型
-//! （客户端要靠懒猫自己的客户端完成首次信任）。所以做成一个显式开关，
-//! 默认关闭，由用户确认。
+//! 微服自动签发的 `*.lazycore.heiyu.space` 是**公共 CA** 签的（实测
+//! `CN=*.lazycore.heiyu.space`，issuer Let's Encrypt，verify ok）⇒ 正常不需要
+//! 动 TLS 设置。`insecure` 开关留给「自己配了自签证书的域名 / 内网直连」。
 
 use std::time::Duration;
 
@@ -42,19 +54,10 @@ use ts_rs::TS;
 use crate::error::{AppError, AppResult};
 use crate::store::Store;
 
-/// 令牌种类：懒猫**客户端会话票据**（`Lzc-Auth-Token`，从客户端窗口进程读出来）。
-pub const TOKEN_KIND_SESSION: &str = "session";
-/// 令牌种类：平台 API Token（`Lzc-Api-Auth-Token`）。
-pub const TOKEN_KIND_PLATFORM: &str = "platform";
-/// 令牌种类：本应用同步令牌（`X-NexTerm-Sync-Token`）。
-pub const TOKEN_KIND_APP: &str = "app";
-
-/// 懒猫客户端打开一个 Web 应用窗口时的动作参数（票据就在同一条命令行上）。
-const CLIENT_WINDOW_ACTION: &str = "open_web_app_window";
-/// 客户端窗口命令行里「应用地址」的开关。
-const CLIENT_ARG_APP_URL: &str = "--appUrl=";
-/// 客户端窗口命令行里「会话票据」的开关。
-const CLIENT_ARG_AUTH_TOKEN: &str = "--authToken=";
+/// 部署位置：**懒猫微服**上的 NexTerm 服务端。
+pub const TOKEN_KIND_BOX: &str = "box";
+/// 部署位置：**自建服务器**上的 NexTerm 服务端（公网 VPS、自己的机器……）。
+pub const TOKEN_KIND_SERVER: &str = "server";
 
 /// 连接配置所在 setting 键。
 const SETTING_LINK: &str = "sync.link";
@@ -68,12 +71,17 @@ const SETTING_LINK: &str = "sync.link";
 #[ts(export, export_to = "../../src/ipc/types.ts")]
 #[serde(rename_all = "camelCase")]
 pub struct SyncLink {
-    /// 盒子公网地址，如 `https://nexterm.heiyu.space`
+    /// 对端服务端地址，如 `https://nexterm.heiyu.space`（微服）或
+    /// `https://sync.example.com`（自建）。
     pub url: String,
-    /// `platform` | `app`
+    /// 对端服务端装在哪儿：`box`（懒猫微服）| `server`（自建服务器）。
+    ///
+    /// **只影响界面提示，不影响协议** —— 两个位置发的是同一个头、同一套校验。
+    /// 留着它是因为「令牌去哪儿拿」这件事两者完全不同，而这正是用户最容易卡住的地方。
     pub token_kind: String,
+    /// 服务端自己生成的那串令牌。
     pub token: String,
-    /// 跳过 TLS 证书校验（懒猫盒子私有 CA）。
+    /// 跳过 TLS 证书校验（自签证书的内网/自建地址才需要）。
     pub insecure: bool,
     /// 最近一次连通性探测成功的时间（Unix 毫秒；0 = 没测过）
     #[ts(type = "number")]
@@ -89,12 +97,47 @@ impl SyncLink {
     }
 }
 
+/// 把连接配置收敛到当前定义上（历史取值在这里被消化掉）。
+///
+/// 旧版有三种钥匙（`session` / `platform` / `app`），现在只剩通用的服务端令牌。
+/// `app` 直接就是今天这一种；另外两种所对应的请求头**已经不再发送**，所以
+/// 顺手把存的令牌清空 —— 留着一条永远连不上的值，只会让用户以为「我配过了」。
+pub fn normalize_link(mut link: SyncLink) -> SyncLink {
+    match link.token_kind.as_str() {
+        TOKEN_KIND_BOX | TOKEN_KIND_SERVER => {}
+        "app" => link.token_kind = default_kind_for(&link.url),
+        _ => {
+            if !link.token.trim().is_empty() {
+                tracing::info!(
+                    target: "sync",
+                    old_kind = %link.token_kind,
+                    "连接配置用的是已废弃的令牌类型，已清空所存令牌（需要重新粘一次）"
+                );
+            }
+            link.token_kind = default_kind_for(&link.url);
+            link.token.clear();
+        }
+    }
+    link
+}
+
+/// 没得选时按地址猜部署位置：微服自动签发的应用域名一定是 `*.heiyu.space`。
+fn default_kind_for(url: &str) -> String {
+    if url.to_ascii_lowercase().contains("heiyu.space") {
+        TOKEN_KIND_BOX.to_string()
+    } else {
+        TOKEN_KIND_SERVER.to_string()
+    }
+}
+
 pub async fn load_link(store: &Store) -> AppResult<SyncLink> {
-    Ok(store
-        .setting_get(SETTING_LINK)
-        .await?
-        .and_then(|s| serde_json::from_str::<SyncLink>(&s).ok())
-        .unwrap_or_default())
+    Ok(normalize_link(
+        store
+            .setting_get(SETTING_LINK)
+            .await?
+            .and_then(|s| serde_json::from_str::<SyncLink>(&s).ok())
+            .unwrap_or_default(),
+    ))
 }
 
 pub async fn save_link(store: &Store, link: &SyncLink) -> AppResult<()> {
@@ -128,12 +171,7 @@ impl SyncClient {
         let mut headers = Vec::new();
         let token = link.token.trim();
         if !token.is_empty() {
-            let name = match link.token_kind.as_str() {
-                TOKEN_KIND_PLATFORM => crate::sync::PLATFORM_TOKEN_HEADER,
-                TOKEN_KIND_SESSION => crate::sync::SESSION_TOKEN_HEADER,
-                _ => crate::sync::TOKEN_HEADER,
-            };
-            headers.push((name.to_string(), token.to_string()));
+            headers.push((crate::sync::TOKEN_HEADER.to_string(), token.to_string()));
         }
         Ok(Self {
             http,
@@ -155,9 +193,10 @@ impl SyncClient {
 
         let resp = req.send().await.map_err(|e| {
             // 这里报出来的最常见两种：地址写错（DNS / 连接被拒）、TLS 握手失败。
-            // 后者有专门的成因（盒子私有 CA），所以提示里直接点出来。
+            // 后者只可能出现在自签证书的地址上，所以提示里直接点出来。
             AppError::Disconnected(format!(
-                "连不上 {}：{e}。若提示证书相关错误，请在下方勾选「跳过证书校验」（懒猫盒子用自签证书）",
+                "连不上 {}：{e}。若提示证书相关错误，请在下方勾选「跳过证书校验」\
+                 （只有自签证书的地址才需要；微服自动签发的地址是公共 CA）",
                 self.base
             ))
         })?;
@@ -183,7 +222,8 @@ impl SyncClient {
         let body: Value = resp.json().await.map_err(|e| {
             AppError::Internal(format!(
                 "{} 返回的不是 NexTerm 的响应（HTTP {status}{}）：{e}。\
-                 确认地址填的是盒子上的 NexTerm 应用入口、且令牌有效",
+                 确认地址填的是 NexTerm 服务端的入口 —— 微服上就是应用的应用域名，\
+                 自建就是你自己服务器的地址",
                 self.base,
                 if ctype.is_empty() {
                     String::new()
@@ -215,144 +255,59 @@ impl SyncClient {
 fn map_remote_error(status: u16, code: &str, msg: &str) -> AppError {
     if status == 401 {
         return AppError::Forbidden(format!(
-            "盒子拒绝了这次连接：{msg}。\
-             请确认令牌有效 —— 平台令牌用盒子上的 `hc api_auth_token gen` 生成，\
-             应用令牌在盒子版「设置 → 同步」里查看"
+            "对端拒绝了这次连接：{}。令牌在「对端服务端的设置 → 资产同步」里查\
+             （微服上就是那个应用的设置页），两边对不上就重新复制一次",
+            strip_display_prefix(msg)
         ));
     }
-    AppError::Internal(format!("盒子返回错误 [{code}] {msg}"))
+    AppError::Internal(format!(
+        "对端返回错误 [{code}] {}",
+        strip_display_prefix(msg)
+    ))
+}
+
+/// 去掉对端 `AppError` 的 Display 前缀，免得嵌进我们自己的句子里重复一遍。
+///
+/// 对端的 `{ok:false, error}` 信封里 `message` 已经是**展示过的**形态
+/// （如 `操作被拒绝: 缺少同步令牌`），直接拼进来会变成
+/// 「操作被拒绝: 对端拒绝了这次连接：操作被拒绝: 缺少同步令牌」。
+///
+/// 只在**已知前缀**上剥，不做通用解析：前缀属于展示层，改文案时这里同步改，
+/// 漏改也只是啰嗦一点，不会丢信息。
+fn strip_display_prefix(msg: &str) -> &str {
+    msg.strip_prefix("操作被拒绝: ").unwrap_or(msg)
 }
 
 /// 把「回了个重定向」翻译成用户能照着做的事。
 ///
-/// 这个函数存在的理由：桌面版和浏览器**唯一的**差别就是没有登录态，而这一点在
-/// 默认的 HTTP 客户端行为下是看不见的（重定向会被跟掉，最后只看到「响应解不出来」）。
-/// 所以宁可这里多写几行，也要把「你被登录门挡了、该去点哪个按钮」直接说出来。
+/// 这个函数存在的理由：默认的 HTTP 客户端会**跟掉重定向**，最后只看到一句
+/// 「响应解不出来」，真实成因（被平台的登录门挡了）完全看不见 —— 用户报的就是
+/// 这个现象。所以宁可多写几行，也要把「被谁挡了」直接说出来。
+///
+/// ⚠️ 正常情况下**不该**走到这里：`/sync/rpc` 已经在 manifest 的 `public_path`
+/// 里放行了，平台的登录门不拦它。真走到这里只有一种解释 —— **对端那个应用是旧版**
+/// （还没声明 `public_path`）或者平台没接住这条配置。所以文案要指向「升级对端」，
+/// 而不是指向「换个令牌试试」（换什么都没用）。
 fn gate_error(base: &str, status: u16, location: &str) -> AppError {
     if location.contains("/sys/login") {
         return AppError::Forbidden(format!(
-            "被懒猫平台的登录门挡下了（HTTP {status} → 登录页）。\
-             桌面版没有浏览器的登录态，所以光填地址连不上 —— \
-             请在懒猫客户端里打开 NexTerm 应用窗口（保持开着），\
-             然后点上面的「从懒猫客户端获取票据」。\
-             如果之前取过票据，就是它过期了（客户端重开窗口会换），重新取一次即可。"
+            "被懒猫微服的登录门挡下了（HTTP {status} → 登录页）。\
+             同步入口本该由应用自己放行（manifest 的 public_path），\
+             出现这条说明「微服上装的 NexTerm 还是旧版」：\
+             请在微服的应用商店/开发者后台把它更新到最新版后重试。\
+             地址：{base}"
         ));
     }
     AppError::Internal(format!(
-        "{base} 回了 HTTP {status} 重定向到 {location}，这不像是盒子上的 NexTerm 入口"
+        "{base} 回了 HTTP {status} 重定向到 {location}，这不像是 NexTerm 服务端的入口"
     ))
-}
-
-/// 从一个 URL 里取小写主机名（`https://a.b/c` → `a.b`）。
-pub fn host_of_url(url: &str) -> String {
-    let s = url.trim();
-    let s = s
-        .strip_prefix("https://")
-        .or_else(|| s.strip_prefix("http://"))
-        .unwrap_or(s);
-    s.split(['/', ':'])
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
-}
-
-/// 归到「盒子域」：`nexterm.lazycore.heiyu.space` → `lazycore.heiyu.space`。
-///
-/// 为什么按盒子域匹配而不是按完整主机名：懒猫的 `subdomain` **首装即固化**
-/// （§15.3），装的时候叫什么就一直叫什么。所以用户手里的地址和客户端窗口里的
-/// `appUrl` 完全可能不是一个名字（本项目就是：dev 包的窗口开在 `nexterm.*` 上）。
-/// 只按完整名匹配会得到一个「明明开着窗口却说没找到」的怪现象。
-fn box_domain(host: &str) -> &str {
-    host.split_once('.').map(|(_, rest)| rest).unwrap_or(host)
-}
-
-/// 从 `ps` 输出里挑出「开着目标应用窗口」的那条命令行，返回 `(票据, 窗口主机)`。
-///
-/// 做成纯函数是为了能单测：真实的窗口命令行很长、字段顺序不保证，所以这里按
-/// 「逐个 `--k=v`」解析，而不是靠位置或正则去截。
-///
-/// 匹配分**两轮**，顺序有意义：
-/// 1. **主机名完全相同** —— 正常情况，精确且不会误伤别的盒子；
-/// 2. 退一步比**盒子域**（`a.b.c` 的 `b.c`）—— 只用于「地址里的子域和窗口里的
-///    不一样」这一种情况（懒猫 `subdomain` 首装固化，见 `box_domain`）。
-///    如果放进同一轮，`nexterm.heiyu.space` 这种短名会跟别的盒子的窗口撞上。
-fn session_token_from_ps(ps_output: &str, target_host: &str) -> Option<(String, String)> {
-    // 收「主机名」也收「整条 URL」—— 调用方很容易顺手把地址整个传进来，
-    // 而那种错法的表现是「明明开着窗口却说没找到」，很难查。这里统一归一。
-    let want_host = host_of_url(target_host);
-    let want_box = box_domain(&want_host).to_string();
-
-    // 先把所有「开着某个应用的窗口」解析出来，再按两轮筛。
-    let mut windows: Vec<(String, String)> = Vec::new();
-    for line in ps_output.lines() {
-        if !line.contains(CLIENT_WINDOW_ACTION) {
-            continue;
-        }
-        let mut app_url = None;
-        let mut token = None;
-        for field in line.split_whitespace() {
-            if let Some(v) = field.strip_prefix(CLIENT_ARG_APP_URL) {
-                app_url = Some(v);
-            } else if let Some(v) = field.strip_prefix(CLIENT_ARG_AUTH_TOKEN) {
-                token = Some(v);
-            }
-        }
-        let (Some(url), Some(tok)) = (app_url, token) else {
-            continue;
-        };
-        if tok.is_empty() {
-            continue;
-        }
-        windows.push((tok.to_string(), host_of_url(url)));
-    }
-
-    windows
-        .iter()
-        .find(|(_, h)| h.as_str() == want_host.as_str())
-        .or_else(|| {
-            windows
-                .iter()
-                .find(|(_, h)| box_domain(h) == want_box.as_str())
-        })
-        .cloned()
-}
-
-/// 读本机进程列表，找出「开着目标应用」的懒猫客户端窗口，取它的会话票据。
-///
-/// # 为什么读进程命令行
-///
-/// 这是平台自己给浏览器窗口下发票据的方式（客户端把 `--authToken=` 写在窗口进程的
-/// 命令行上），所以不是绕过鉴权，而是**用同一个凭据**。用户因此不必在盒子上做任何事。
-///
-/// 读的是**同用户**进程的命令行（`ps -ww -ax`），不需要任何特权：这些票据本来就是
-/// 给这个用户的客户端用的。能读到它的程序，本来也能读这个用户自己的凭据库。
-pub fn find_session_token(base: &str) -> AppResult<(String, String)> {
-    let host = host_of_url(base);
-    let out = std::process::Command::new("ps")
-        .args(["-ww", "-ax", "-o", "command="])
-        .output()
-        .map_err(|e| {
-            AppError::Unsupported(format!(
-                "读不到本机进程列表（{e}）。\
-                 请在懒猫客户端里打开 NexTerm 窗口，把它命令行里的 `--authToken=` 值\
-                 手动填到「访问令牌」里（令牌类型选「懒猫客户端票据」）"
-            ))
-        })?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    session_token_from_ps(&text, &host).ok_or_else(|| {
-        AppError::NotFound(format!(
-            "没找到开着「{host}」的懒猫客户端窗口。\
-             请先在懒猫客户端里打开这个微服的任意应用窗口（打开 NexTerm 最稳）并保持开着，\
-             再点一次「从懒猫客户端获取票据」"
-        ))
-    })
 }
 
 /// 校验并规范化地址；**挡住「把令牌明文发到公网」**。
 pub fn normalize_base(raw: &str) -> AppResult<String> {
     let trimmed = raw.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        return Err(AppError::param("还没填盒子地址"));
+        return Err(AppError::param("还没填对端地址"));
     }
     let lower = trimmed.to_ascii_lowercase();
     let (scheme, rest) = if let Some(r) = lower.strip_prefix("https://") {
@@ -446,6 +401,17 @@ pub async fn pull(
 mod tests {
     use super::*;
 
+    fn link(kind: &str, token: &str) -> SyncLink {
+        SyncLink {
+            url: "https://box.example.com".into(),
+            token_kind: kind.into(),
+            token: token.into(),
+            insecure: false,
+            verified_at: 0,
+            last_error: None,
+        }
+    }
+
     #[test]
     fn base_url_normalization() {
         assert_eq!(
@@ -479,110 +445,59 @@ mod tests {
         assert!(normalize_base("https://8.8.8.8").is_ok());
     }
 
-    /// 令牌按种类挂到正确的头上；没填就不挂；认不出的种类落到应用令牌。
-    #[test]
-    fn token_header_follows_kind() {
-        let mk = |kind: &str, token: &str| SyncLink {
-            url: "https://box.example.com".into(),
-            token_kind: kind.into(),
-            token: token.into(),
-            insecure: false,
-            verified_at: 0,
-            last_error: None,
-        };
-        let session = SyncClient::new(&mk(TOKEN_KIND_SESSION, "t0")).unwrap();
-        assert_eq!(session.headers[0].0, crate::sync::SESSION_TOKEN_HEADER);
-        let platform = SyncClient::new(&mk(TOKEN_KIND_PLATFORM, "t1")).unwrap();
-        assert_eq!(platform.headers[0].0, crate::sync::PLATFORM_TOKEN_HEADER);
-        let app = SyncClient::new(&mk(TOKEN_KIND_APP, "t2")).unwrap();
-        assert_eq!(app.headers[0].0, crate::sync::TOKEN_HEADER);
-        let unknown = SyncClient::new(&mk("nonsense", "t3")).unwrap();
-        assert_eq!(unknown.headers[0].0, crate::sync::TOKEN_HEADER);
-        let none = SyncClient::new(&mk(TOKEN_KIND_APP, "   ")).unwrap();
-        assert!(none.headers.is_empty(), "空白令牌不该挂头");
-    }
-
-    /// 懒猫客户端窗口命令行的真实形状（本机实测原文，只截掉了无关参数）。
-    const REAL_PS_LINE: &str = "/Applications/懒猫微服.app/Contents/MacOS/懒猫微服 \
---action=open_web_app_window --appUrl=https://nexterm.lazycore.heiyu.space/ \
---appId=cloud.lazycat.app.nexterm.dev \
---boxId=12D3KooWBMT3z6FB9KTGTDG1oGmcF4XPdRj464bfkj3S9MvGe2J6 \
---socksaddr=127.0.0.1:31085 --authToken=df903244-4f20-48eb-a17d-81e782e03aa4 \
---theme=dark --themeOnlyForClient=false";
-
-    /// 从窗口命令行里取出票据，并认得出是哪台主机。
-    #[test]
-    fn session_token_is_read_from_client_window_args() {
-        let got = session_token_from_ps(REAL_PS_LINE, "nexterm.lazycore.heiyu.space");
-        assert_eq!(
-            got,
-            Some((
-                "df903244-4f20-48eb-a17d-81e782e03aa4".to_string(),
-                "nexterm.lazycore.heiyu.space".to_string()
-            ))
-        );
-    }
-
-    /// 地址里的子域和窗口里的不一样时，靠**盒子域**兜住。
+    /// **只有一把钥匙**：两个部署位置发的是同一个头；没填令牌就不挂头。
     ///
-    /// 这条不是构造出来的场景：懒猫的 `subdomain` 首装即固化，本项目 dev 包的窗口
-    /// 就开在 `nexterm.*` 上而 manifest 里写的是 `nexterm-dev`（§15.3）。
-    /// 只认完整主机名会报「明明开着窗口却说没找到」。
+    /// 这条钉住的是本轮的收敛结果 —— 以前这里按 `token_kind` 分派到三种不同的头，
+    /// 而其中两种（平台令牌 / 会话票据）用户根本拿不到或会过期。
     #[test]
-    fn session_token_falls_back_to_box_domain() {
-        let got = session_token_from_ps(REAL_PS_LINE, "https://nexterm-dev.lazycore.heiyu.space/");
-        assert!(got.is_some(), "同一盒子的另一个子域也该认");
-
-        let other = session_token_from_ps(REAL_PS_LINE, "https://nexterm.otherbox.heiyu.space");
-        assert!(other.is_none(), "另一个盒子不能认");
+    fn token_header_is_the_same_for_both_places() {
+        for kind in [TOKEN_KIND_BOX, TOKEN_KIND_SERVER] {
+            let c = SyncClient::new(&link(kind, "t")).unwrap();
+            assert_eq!(c.headers.len(), 1, "{kind} 应当只挂一个头");
+            assert_eq!(c.headers[0].0, crate::sync::TOKEN_HEADER);
+            assert_eq!(c.headers[0].1, "t");
+        }
+        let blank = SyncClient::new(&link(TOKEN_KIND_BOX, "   ")).unwrap();
+        assert!(blank.headers.is_empty(), "空白令牌不该挂头");
     }
 
-    /// 精确匹配优先于盒子域兜底 —— 否则短名地址会随手撞上别的窗口。
+    /// 历史配置要被消化掉，而不是让用户对着一串永远连不上的值发呆。
+    ///
+    /// · `app`（旧版第三种）就是今天这一种 ⇒ 令牌原样保留；
+    /// · `session` / `platform`（旧版另外两种）所对应的请求头**已经不再发送** ⇒
+    ///   清空令牌，并按键名落地到两个新值之一；空串 / 未知值同样按地址猜。
     #[test]
-    fn session_token_prefers_exact_host() {
-        let two = format!(
-            "{REAL_PS_LINE}\n/Applications/lazycat --action=open_web_app_window \
---appUrl=https://other.otherbox.heiyu.space/ --authToken=exact-match-token"
-        );
-        let got = session_token_from_ps(&two, "other.otherbox.heiyu.space");
-        assert_eq!(got.unwrap().0, "exact-match-token");
-    }
+    fn legacy_token_kinds_are_migrated() {
+        let app = normalize_link(link("app", "keep-me"));
+        assert_eq!(app.token_kind, TOKEN_KIND_SERVER, "非微服地址猜自建");
+        assert_eq!(app.token, "keep-me", "app 令牌就是今天这种，不该丢");
 
-    /// 没开窗口 / 不是窗口进程 / 票据为空 ⇒ 都取不到（宁可报错，也不能拿错票据）。
-    #[test]
-    fn session_token_is_none_when_absent() {
-        assert!(session_token_from_ps("", "box.example.com").is_none());
-        assert!(session_token_from_ps("sshd\nnginx\n", "box.example.com").is_none());
-        // 有窗口但票据字段是空值
-        assert!(session_token_from_ps(
-            "/Applications/lazycat --action=open_web_app_window \
-             --appUrl=https://box.example.com/ --authToken=",
-            "box.example.com"
-        )
-        .is_none());
-        // 有票据但窗口开的是别的应用
-        assert!(session_token_from_ps(
-            "/Applications/lazycat --action=open_web_app_window \
-             --appUrl=https://files.otherbox.heiyu.space/ --authToken=xxx",
-            "box.example.com"
-        )
-        .is_none());
-    }
+        let app_box = normalize_link(SyncLink {
+            url: "https://nexterm.lazycore.heiyu.space".into(),
+            ..link("app", "keep-me")
+        });
+        assert_eq!(app_box.token_kind, TOKEN_KIND_BOX, "微服地址猜微服");
 
-    #[test]
-    fn host_and_box_domain_parsing() {
-        assert_eq!(host_of_url("https://A.B.C/x/y"), "a.b.c");
-        assert_eq!(host_of_url("http://127.0.0.1:8080/"), "127.0.0.1");
-        assert_eq!(host_of_url("box.example.com"), "box.example.com");
-        assert_eq!(host_of_url(""), "");
-        assert_eq!(
-            box_domain("nexterm.lazycore.heiyu.space"),
-            "lazycore.heiyu.space"
-        );
-        assert_eq!(box_domain("single"), "single");
+        let session = normalize_link(SyncLink {
+            url: "https://nexterm.lazycore.heiyu.space".into(),
+            ..link("session", "expired-ticket")
+        });
+        assert_eq!(session.token_kind, TOKEN_KIND_BOX);
+        assert!(session.token.is_empty(), "旧票据当令牌用只会白报错，清掉");
+
+        let platform = normalize_link(link("platform", "old-platform-token"));
+        assert_eq!(platform.token_kind, TOKEN_KIND_SERVER);
+        assert!(platform.token.is_empty());
+
+        let empty = normalize_link(SyncLink::default());
+        assert_eq!(empty.token_kind, TOKEN_KIND_SERVER);
+        assert!(empty.token.is_empty());
     }
 
     /// 登录门必须被**认出来**并给出可执行的下一步，而不是报一句「响应解不出来」。
+    ///
+    /// ⚠️ 正常情况下走不到这里（`/sync/rpc` 已由 `public_path` 放行），所以文案指向
+    /// 「对端是旧版」，而不是「换个令牌试试」—— 后者换什么都没用。
     #[test]
     fn login_gate_is_reported_with_next_step() {
         let url = "https://lazycore.heiyu.space/sys/login?redirect=https%3A%2F%2Fx%2Fsync%2Frpc";
@@ -590,7 +505,7 @@ mod tests {
         assert_eq!(e.code(), "forbidden");
         let msg = e.to_string();
         assert!(msg.contains("登录门"), "要说清是被门挡了: {msg}");
-        assert!(msg.contains("从懒猫客户端获取票据"), "要给下一步: {msg}");
+        assert!(msg.contains("更新到最新版"), "要给下一步: {msg}");
         assert!(msg.contains("307"), "要带上真实状态码: {msg}");
         // 非登录页的重定向走另一支，别把话说错
         let other = gate_error(
@@ -612,34 +527,50 @@ mod tests {
         assert!(l.is_configured());
     }
 
+    /// 401 的文案必须指向「去哪儿抄令牌」，而不是指向一条普通人走不通的命令；
+    /// 并且**不能**出现叠加的「操作被拒绝」（对端信封里的 message 自带这个前缀）。
     #[test]
-    fn remote_401_is_reported_as_forbidden() {
-        let e = map_remote_error(401, "forbidden", "同步令牌不正确");
+    fn remote_401_points_at_the_server_settings() {
+        let e = map_remote_error(401, "forbidden", "操作被拒绝: 同步令牌不正确");
         assert_eq!(e.code(), "forbidden");
-        assert!(e.to_string().contains("hc api_auth_token gen"));
+        let msg = e.to_string();
+        assert!(msg.contains("设置 → 资产同步"), "要指向抄令牌的地方: {msg}");
+        assert_eq!(
+            msg.matches("操作被拒绝").count(),
+            1,
+            "只该有一个「操作被拒绝」: {msg}"
+        );
+        assert!(
+            !msg.contains("**"),
+            "这里是纯文本展示，别把 Markdown 强调写进来: {msg}"
+        );
+        assert!(
+            !msg.contains("hc api_auth_token"),
+            "那条命令普通用户执行不了，不该出现在面向用户的文案里: {msg}"
+        );
     }
 
-    /// **真机联调**（默认跳过）：拿真实盒子把出站客户端整条路走一遍。
+    /// **真机联调**（默认跳过）：拿真服务端把出站客户端整条路走一遍。
     ///
-    /// 为什么要有它：`/sync/rpc` 这条路的两个关键事实——「`Lzc-Auth-Token` 能过
-    /// 登录门」与「没过时会以 307 而不是 JSON 报错」——**都只在真盒子上成立**，
-    /// 单测只能钉住解析逻辑，钉不住网关行为。GUI 里点按钮最快，但它不可复现、
-    /// 也没法进 CI 之外的回归；这个测试把同一件事变成一条命令。
+    /// 为什么要有它：这条路的两个关键事实 —— ①「`public_path` 放行后，只带应用
+    /// 令牌就能穿过平台的登录门」②「不带令牌时会得到一条**可读**的拒绝，而不是
+    /// 一句没有信息量的解析错误」—— **都只在真服务端上成立**，单测只能钉住解析
+    /// 逻辑，钉不住网关行为。GUI 里点按钮最快，但它不可复现；这个测试把同一件事
+    /// 变成一条命令。
     ///
-    /// 跑法（两个环境变量都要给；票据从客户端窗口的命令行里抄，见
-    /// [`find_session_token`]）：
+    /// 跑法（两个环境变量都要给；令牌从对端「设置 → 资产同步」里复制）：
     ///
     /// ```bash
     /// cd src-tauri
     /// NEXTERM_SYNC_LIVE_URL=https://nexterm.lazycore.heiyu.space \
-    /// NEXTERM_SYNC_LIVE_TOKEN=<--authToken= 的值> \
-    ///   cargo test --lib live_box -- --ignored --nocapture
+    /// NEXTERM_SYNC_LIVE_TOKEN=<服务端生成的令牌> \
+    ///   cargo test --lib live_server -- --ignored --nocapture
     /// ```
     ///
     /// ⚠️ 只做**读**操作（`sync_digest`），不碰对端数据：真机测试不该改用户的库。
     #[tokio::test]
-    #[ignore = "需要真盒子与真票据，见本测试文档注释"]
-    async fn live_box_session_token_passes_the_gate() {
+    #[ignore = "需要真服务端与真令牌，见本测试文档注释"]
+    async fn live_server_token_is_enough() {
         let Ok(url) = std::env::var("NEXTERM_SYNC_LIVE_URL") else {
             panic!("没给 NEXTERM_SYNC_LIVE_URL");
         };
@@ -648,19 +579,19 @@ mod tests {
         };
         let mk = |token: &str| SyncLink {
             url: url.clone(),
-            token_kind: TOKEN_KIND_SESSION.to_string(),
+            token_kind: TOKEN_KIND_BOX.to_string(),
             token: token.to_string(),
-            // 盒子的公网证书是 Let's Encrypt 签的，走公共信任根即可 ——
+            // 微服公网证书是 Let's Encrypt 签的，走公共信任根即可 ——
             // 顺带把「这里根本不需要 insecure」也钉住。
             insecure: false,
             verified_at: 0,
             last_error: None,
         };
 
-        // ① 带票据：能穿过登录门，并解出对端摘要
+        // ① 只带服务端令牌：必须连通，并解出对端摘要。
         let digest = remote_digest(&mk(&token))
             .await
-            .expect("带会话票据应当连得上");
+            .expect("只带服务端令牌就应当连得上");
         println!(
             "  对端 origin={} protocol={} version={} 资产={} 条",
             digest.origin,
@@ -670,12 +601,17 @@ mod tests {
         );
         assert!(digest.protocol >= 1);
 
-        // ② 不带票据：必须是**可读的登录门错误**，而不是「响应解不出来」。
-        //    这条是回归线 —— 默认跟随重定向时这里会退化成一句无信息量的解析错误。
-        let err = remote_digest(&mk("")).await.expect_err("不带票据应当被拒");
+        // ② 不带令牌：必须是**可读的**拒绝。两种都算通过 ——
+        //    「缺少同步令牌」（public_path 生效，被应用自己的门挡）或
+        //    「登录门」（对端还是没声明 public_path 的旧版）。
+        //    唯一不许出现的，是那句什么都没说清的解析错误。
+        let err = remote_digest(&mk("")).await.expect_err("不带令牌应当被拒");
         let msg = err.to_string();
-        println!("  不带票据时的报错：{msg}");
-        assert!(msg.contains("登录门"), "要说清是被登录门挡的，实际：{msg}");
+        println!("  不带令牌时的报错：{msg}");
+        assert!(
+            msg.contains("缺少同步令牌") || msg.contains("登录门"),
+            "要说清是谁拒的，实际：{msg}"
+        );
         assert!(
             !msg.contains("返回的不是 NexTerm 的响应"),
             "不该退化成解析错误，实际：{msg}"

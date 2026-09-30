@@ -43,37 +43,19 @@ const SETTING_ORIGIN: &str = "sync.origin";
 /// 同步令牌所在的 setting 键（仅服务端使用）。
 const SETTING_TOKEN: &str = "sync.token";
 
-/// **应用层**同步令牌的 HTTP 头名。
+/// **应用层**同步令牌的 HTTP 头名 —— 这条路**只有这一把钥匙**。
+///
+/// 令牌由**服务端自己**生成（微服上的 NexTerm：设置 → 资产同步；自建服务器同理），
+/// 客户端只负责把它带上。两个部署位置（懒猫微服 / 自建服务器）用的是同一个头、
+/// 同一套校验，差别只在「平台网关那一段有没有」——见 `client` 的模块文档。
 pub const TOKEN_HEADER: &str = "x-nexterm-sync-token";
 
-/// 懒猫平台 API 令牌的头名。
-///
-/// ⚠️ 这个头**由平台网关消费**，不会转发进容器（官方 `/advanced-api-auth-token`：
-/// 「该 Header 只用于系统鉴权，转发到应用时会被移除」）。所以应用**看不到它**，
-/// 只能靠下面那个 `X-HC-User-ID` 判断「网关已经放行过」。
-///
-/// 它的价值在于：桌面版不是浏览器、进不了微服的虚拟网络，而
-/// `Lzc-Api-Auth-Token` 正是官方给「脚本或命令行访问」留的口子。
-pub const PLATFORM_TOKEN_HEADER: &str = "lzc-api-auth-token";
-
 /// 平台鉴权通过后注入的用户标识头（官方 `/http-request-headers`）。
+///
+/// `/sync/rpc` 的准入判定里除了令牌还认它：**这个头存在 = 平台网关已经鉴过权**。
+/// 它不是给桌面端用的（桌面端走令牌），而是留给「经由平台登录门进来的请求」
+/// 那条路，见 `server::authorize_sync`。
 pub const PLATFORM_USER_HEADER: &str = "x-hc-user-id";
-
-/// 懒猫**客户端会话票据**的头名（`Lzc-Auth-Token`）。
-///
-/// 平台登录门认的就是这个头（§15.3.1 实测）。它和 [`PLATFORM_TOKEN_HEADER`]
-/// 是同一道门的两种钥匙，区别在**谁去开**：
-///
-/// - `Lzc-Api-Auth-Token`：要给盒子开个口子（`hc api_auth_token gen`），
-///   而那个命令需要**盒子上的 shell** —— 开发者侧唯一能进去的入口是
-///   `debug.bridge`，它没有 `hc`（实测）。所以这条路对普通用户等于不存在。
-/// - `Lzc-Auth-Token`：懒猫客户端**每次打开 Web 应用窗口**时自己下发的，
-///   就写在窗口进程的命令行上（`--authToken=`）。桌面端读得到
-///   （见 [`client::find_session_token`]），**用户不必在盒子上做任何事**。
-///
-/// 代价是它是**会话级**的：窗口关掉、客户端重启都会换。失效后的表现是被登录门
-/// 307（见 `client::gate_error`），重新取一次即可 —— 同步本来就是手动动作。
-pub const SESSION_TOKEN_HEADER: &str = "lzc-auth-token";
 
 /// 本实例的标识（持久化，首次调用时生成）。
 ///

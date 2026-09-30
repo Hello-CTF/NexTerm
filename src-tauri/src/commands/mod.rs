@@ -184,7 +184,6 @@ macro_rules! nexterm_commands {
             sync::sync_link_get,
             sync::sync_link_set,
             sync::sync_remote_digest,
-            sync::sync_discover_token,
             sync::sync_push,
             sync::sync_pull,
         }

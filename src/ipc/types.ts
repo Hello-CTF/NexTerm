@@ -139,15 +139,23 @@ desktop: boolean, assets: Array<DigestEntry>, };
  */
 export type SyncLink = { 
 /**
- * 盒子公网地址，如 `https://nexterm.heiyu.space`
+ * 对端服务端地址，如 `https://nexterm.heiyu.space`（微服）或
+ * `https://sync.example.com`（自建）。
  */
 url: string, 
 /**
- * `platform` | `app`
+ * 对端服务端装在哪儿：`box`（懒猫微服）| `server`（自建服务器）。
+ *
+ * **只影响界面提示，不影响协议** —— 两个位置发的是同一个头、同一套校验。
+ * 留着它是因为「令牌去哪儿拿」这件事两者完全不同，而这正是用户最容易卡住的地方。
  */
-tokenKind: string, token: string, 
+tokenKind: string, 
 /**
- * 跳过 TLS 证书校验（懒猫盒子私有 CA）。
+ * 服务端自己生成的那串令牌。
+ */
+token: string, 
+/**
+ * 跳过 TLS 证书校验（自签证书的内网/自建地址才需要）。
  */
 insecure: boolean, 
 /**

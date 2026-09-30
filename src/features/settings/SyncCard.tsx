@@ -1,4 +1,4 @@
-// 资产同步：桌面 ↔ 盒子上的服务端。
+// 资产同步：桌面 ↔ 服务端（微服上那个 / 自建服务器上那个）。
 //
 // # 为什么落在设置页而不是新开一个视图
 //
@@ -7,15 +7,23 @@
 //
 // # 两种运行模式在界面上是两份东西，刻意不合并
 //
-// - **桌面**是发起方：配盒子地址与访问令牌，然后勾资产、选方向推 / 拉；
-// - **浏览器版**（也就是盒子上的服务端）是被同步的那一端：只把自己的令牌
+// - **桌面**是发起方：配对端地址与服务端生成的令牌，然后勾资产、选方向推 / 拉；
+// - **服务端**（微服上的应用 / 自建的那台）是被同步的那一端：只把自己的令牌
 //   交出去（复制到桌面去填）。
 //
 // 硬合成一张卡片会两头都不像 —— 一边要填密码框，另一边要显示一串可复制的码。
 //
+// # 认证只有一个东西：服务端生成的令牌
+//
+// 不管服务端装在哪，凭据都是**它自己生成的那串令牌**，桌面版抄过来填上就能连。
+// 「部署位置」那个下拉只影响「去哪儿抄」的提示，不影响发什么。
+//
+// ⚠️ 用户界面里**不要写「盒子」**。这个词是本项目内部的简称（懒猫微服那台硬件），
+// 用户看不懂 —— 界面上一律写「懒猫微服」「对端」。
+//
 // # 方向是显式的，「冲突」由人判断
 //
-// 每行一个勾选框，方向由**按钮**决定：勾中的资产按「推送到盒子」或「从盒子拉取」
+// 每行一个勾选框，方向由**按钮**决定：勾中的资产按「推送到对端」或「从对端拉取」
 // 走。没有自动合并：SSH 私钥这类载荷根本不可合并（不是文本），所以冲突（两边都
 // 改过）只在行上标出来，让人自己选 —— 这正是「同步哪些资产可选」的自然延伸。
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -32,7 +40,6 @@ import {
   IconInfo,
   IconRefresh,
   IconServer,
-  IconShieldCheck,
   IconUpload,
   IconXCircle,
 } from "../../ui/icons";
@@ -97,35 +104,34 @@ function mergeRows(local: SyncDigest | null, remote: SyncDigest | null): Row[] {
 function stateLabel(r: Row): { text: string; tone: string; hint: string } {
   if (r.deleted) {
     return {
-      text: r.local ? "本机已删" : "盒子已删",
+      text: r.local ? "本机已删" : "对端已删",
       tone: "nx-badge-amber",
       hint: "这条在某一侧已被删除。往另一侧同步会把它一并删掉。",
     };
   }
   switch (r.state) {
     case "local-only":
-      return { text: "仅本机", tone: "", hint: "盒子上还没有这条。推送会新建。" };
+      return { text: "仅本机", tone: "", hint: "对端还没有这条。推送会新建。" };
     case "remote-only":
-      return { text: "仅盒子", tone: "", hint: "本机还没有这条。拉取会在本机新建。" };
+      return { text: "仅对端", tone: "", hint: "本机还没有这条。拉取会在本机新建。" };
     case "same":
       return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     default:
       return r.localNewer
         ? { text: "本机较新", tone: "nx-badge-amber", hint: "两边都改过，本机这份更新。" }
-        : { text: "盒子较新", tone: "nx-badge-amber", hint: "两边都改过，盒子那份更新。" };
+        : { text: "对端较新", tone: "nx-badge-amber", hint: "两边都改过，对端那份更新。" };
   }
 }
 
 export function SyncCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
-  /** 浏览器版 = 盒子上的服务端 = 被同步的那一端。 */
+  /** 服务端版（微服上那个 / 自建那台）= 被同步的那一端。 */
   const isServer = WEB;
 
   const [link, setLink] = useState<SyncLink | null>(null);
-  // 默认「懒猫客户端票据」：它是唯一一种**用户不必在盒子上做任何事**的方式
-  // （另两种要么需要在盒子上有 shell，要么要先去盒子版界面抄一串码）。
-  const [draft, setDraft] = useState({ url: "", tokenKind: "session", token: "", insecure: false });
+  // 「部署位置」只是提示用的：两个位置发的是同一把钥匙（服务端生成的令牌）。
+  const [draft, setDraft] = useState({ url: "", tokenKind: "box", token: "", insecure: false });
   const [showToken, setShowToken] = useState(false);
   const [ownToken, setOwnToken] = useState<string | null>(null);
 
@@ -135,7 +141,7 @@ export function SyncCard() {
   const [withCreds, setWithCreds] = useState(false);
   const [force, setForce] = useState(false);
 
-  const [busy, setBusy] = useState<null | "test" | "discover" | "push" | "pull">(null);
+  const [busy, setBusy] = useState<null | "test" | "push" | "pull">(null);
   const [report, setReport] = useState<{ dir: "push" | "pull"; data: ImportReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,52 +170,17 @@ export function SyncCard() {
       .linkGet()
       .then((l) => {
         setLink(l);
-        setDraft({ url: l.url, tokenKind: l.tokenKind || "session", token: "", insecure: l.insecure });
+        // 后端已经把历史取值归一（旧版三种钥匙 → 现在两个位置），这里照抄即可
+        setDraft({ url: l.url, tokenKind: l.tokenKind || "box", token: "", insecure: l.insecure });
       })
       .catch(() => undefined);
   }, [isServer, refreshLocal]);
 
   if (DEMO) return null;
 
-  const isSession = draft.tokenKind === "session";
-  /** 会话票据是**取**来的，不是手打的 —— 所以「保存并测试」在还没有票据时不能点。 */
+  const isBox = draft.tokenKind === "box";
+  /** 令牌是**手抄**过来的，所以「保存并测试」在没有令牌时点了也没用。 */
   const hasToken = !!draft.token.trim() || !!link?.token;
-
-  /**
-   * 从懒猫客户端已打开的窗口里取票据，并立刻试连一次。
-   *
-   * 票据是**会话级**的（客户端重开窗口就换），所以这个按钮不是「配一次就忘」，
-   * 而是「连不上时点一下」。同理：失败也**不当作异常**处理 —— 取到了却没连上，
-   * 后端会把原因放进 `lastError`，那才是用户要看的东西。
-   */
-  const discover = async () => {
-    setBusy("discover");
-    setError(null);
-    try {
-      // 先把地址与开关存下来 —— 后端要靠地址才知道该找哪个窗口
-      await syncApi.linkSet({ url: draft.url, tokenKind: "session", insecure: draft.insecure });
-      const l = await syncApi.discoverToken();
-      setLink(l);
-      setDraft((d) => ({ ...d, token: "" }));
-      if (l.lastError) {
-        setError(l.lastError);
-        pushToast("error", "取到了票据，但没能连上盒子 —— 原因见下方");
-      } else {
-        const d = await syncApi.remoteDigest();
-        setRemote(d);
-        pushToast("success", `已连上盒子（对端标识 ${d.origin}，${d.assets.length} 条资产）`);
-      }
-    } catch (e) {
-      setError(describeError(e));
-      setRemote(null);
-    } finally {
-      setBusy(null);
-      void syncApi
-        .linkGet()
-        .then(setLink)
-        .catch(() => undefined);
-    }
-  };
 
   /** 保存连接配置（令牌留空 = 不改动已存的），然后立刻验一次。 */
   const saveAndTest = async () => {
@@ -227,7 +198,7 @@ export function SyncCard() {
       setDraft((d) => ({ ...d, token: "" }));
       const d = await syncApi.remoteDigest();
       setRemote(d);
-      pushToast("success", `已连接盒子（对端标识 ${d.origin}，${d.assets.length} 条资产）`);
+      pushToast("success", `已连接（对端标识 ${d.origin}，${d.assets.length} 条资产）`);
     } catch (e) {
       setError(describeError(e));
       setRemote(null);
@@ -320,39 +291,37 @@ export function SyncCard() {
       {!isServer && (
         <>
           <p className="nx-hint mb-3.5">
-            把本机配好的服务器资产送到微服的 NexTerm（或取回来），之后在手机、浏览器上
-            就能直接连。方向由你按按钮决定，同步哪些资产由你勾选。
+            把本机配好的服务器资产送到对端（或取回来），之后在手机、浏览器上就能直接连。
+            连接只需要一样东西：<b>对端服务端生成的同步令牌</b>。方向由你按按钮决定，
+            同步哪些资产由你勾选。
           </p>
 
           <div className="flex flex-col gap-2">
             <label className="flex items-center gap-2">
-              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">盒子地址</span>
-              <input
-                className="nx-input min-w-0 flex-1 font-mono"
-                placeholder="https://nexterm.heiyu.space"
-                value={draft.url}
-                onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
-              />
-            </label>
-
-            <label className="flex items-center gap-2">
-              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">令牌类型</span>
+              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">部署位置</span>
               <select
                 className="nx-input w-[250px]"
                 value={draft.tokenKind}
                 onChange={(e) => setDraft((d) => ({ ...d, tokenKind: e.target.value }))}
               >
-                <option value="session">懒猫客户端票据（懒猫微服）</option>
-                <option value="platform">平台 API 令牌（要能登盒子）</option>
-                <option value="app">应用同步令牌（自建服务器）</option>
+                <option value="box">懒猫微服上的 NexTerm</option>
+                <option value="server">自建服务器上的 NexTerm</option>
               </select>
               <span className="nx-hint">
-                {draft.tokenKind === "session"
-                  ? "从本机懒猫客户端打开的窗口里取，你不必在盒子上做任何事"
-                  : draft.tokenKind === "platform"
-                    ? "要在盒子本机的 shell 上跑 hc api_auth_token gen 才有 —— 开发者通道里没有 hc（实测）。长期有效"
-                    : "在自建服务器的「设置 → 资产同步」里查看"}
+                {isBox
+                  ? "要连的是你微服上那个 NexTerm"
+                  : "要连的是你自己服务器上跑的 NexTerm"}
               </span>
+            </label>
+
+            <label className="flex items-center gap-2">
+              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">服务端地址</span>
+              <input
+                className="nx-input min-w-0 flex-1 font-mono"
+                placeholder={isBox ? "https://nexterm.<你的微服域名>" : "https://sync.example.com"}
+                value={draft.url}
+                onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
+              />
             </label>
 
             <label className="flex items-center gap-2">
@@ -362,11 +331,7 @@ export function SyncCard() {
                 className="nx-input min-w-0 flex-1 font-mono"
                 autoComplete="off"
                 placeholder={
-                  link?.token
-                    ? "留空 = 不修改已保存的令牌"
-                    : isSession
-                      ? "点下面的「获取票据并连接」自动填入"
-                      : "粘贴令牌"
+                  link?.token ? "留空 = 不修改已保存的令牌" : "粘贴对端服务端生成的那串令牌"
                 }
                 value={draft.token}
                 onChange={(e) => setDraft((d) => ({ ...d, token: e.target.value }))}
@@ -376,32 +341,21 @@ export function SyncCard() {
               </button>
             </label>
 
-            {draft.tokenKind === "app" && (
-              <div className="nx-alert nx-alert-info flex items-start gap-2">
-                <IconInfo size={14} className="mt-0.5 shrink-0" />
-                <div>
-                  这个令牌<b>在懒猫微服的公网入口上过不去</b>：平台网关只认它自己的凭证
-                  （<code>Lzc-Auth-Token</code> / <code>Lzc-Api-Auth-Token</code>），
-                  本应用的令牌它根本不看 —— 带与不带一样在网关就被 307 到登录页（实测）。
-                  所以它只适用于<b>不经过平台网关</b>的场合：自建服务器、或同网段直连。
-                  地址是懒猫微服的，请改用<b>懒猫客户端票据</b>。
-                </div>
+            <div className="nx-alert nx-alert-info flex items-start gap-2">
+              <IconInfo size={14} className="mt-0.5 shrink-0" />
+              <div>
+                <b>令牌在哪儿拿</b>：{isBox ? "微服上" : "你自己的服务器上"}打开 NexTerm，
+                进「设置 → 资产同步」，复制那里的令牌填到上面。
+                {isBox ? (
+                  <>
+                    微服这一侧不需要额外配置 —— 应用已经把同步入口从平台的登录门里放行，
+                    由应用自己核对这个令牌。
+                  </>
+                ) : (
+                  <>自建这一侧没有平台在中间，地址与令牌对上就能连。</>
+                )}
               </div>
-            )}
-
-            {isSession && (
-              <div className="nx-alert nx-alert-info flex items-start gap-2">
-                <IconInfo size={14} className="mt-0.5 shrink-0" />
-                <div>
-                  盒子公网入口有懒猫平台的登录门（不带凭证一律 307），所以光填地址连不上。
-                  这个票据是懒猫客户端<b>每次打开 Web 应用窗口</b>时下发的，桌面端从窗口进程
-                  里读出来 —— 用同一个凭据，不是绕过鉴权。
-                  <b>先在本机懒猫客户端里打开这个微服的任意应用窗口并保持开着</b>
-                  （打开 NexTerm 最稳；实测同微服的「在线设备」窗口给的也是同一张会话票据）。
-                  客户端重启后票据会换，连不上就回来点一次重新获取。
-                </div>
-              </div>
-            )}
+            </div>
 
             <label className="flex items-start gap-2">
               <input
@@ -413,8 +367,8 @@ export function SyncCard() {
               <span className="text-[12px] text-neutral-300">
                 跳过证书校验
                 <span className="nx-hint block">
-                  只有在地址用的是<b>自签证书</b>时才需要（例如自己给盒子配的域名、或走内网
-                  直连）。懒猫微服自动签发的 <code>*.lazycore.heiyu.space</code> 是公共 CA 签的
+                  只有在地址用的是<b>自签证书</b>时才需要（自建的机器、或走内网直连）。
+                  懒猫微服自动签发的 <code>*.lazycore.heiyu.space</code> 是公共 CA 签的
                   （实测 Let's Encrypt），那种地址<b>不用</b>勾。
                 </span>
               </span>
@@ -422,24 +376,10 @@ export function SyncCard() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {isSession && (
-              <button
-                className="nx-btn nx-btn-primary nx-btn-sm"
-                disabled={busy !== null || !draft.url.trim()}
-                onClick={() => void discover()}
-              >
-                {busy === "discover" ? (
-                  <IconRefresh size={12} className="animate-spin" />
-                ) : (
-                  <IconShieldCheck size={12} />
-                )}
-                {busy === "discover" ? "读取中…" : hasToken ? "重新获取票据并连接" : "获取票据并连接"}
-              </button>
-            )}
             <button
-              className={`nx-btn nx-btn-sm ${isSession ? "nx-btn-outline" : "nx-btn-primary"}`}
-              disabled={busy !== null || !draft.url.trim() || (isSession && !hasToken)}
-              title={isSession && !hasToken ? "先点「获取票据并连接」" : undefined}
+              className="nx-btn nx-btn-primary nx-btn-sm"
+              disabled={busy !== null || !draft.url.trim() || !hasToken}
+              title={!hasToken ? "先填对端服务端生成的令牌" : undefined}
               onClick={() => void saveAndTest()}
             >
               {busy === "test" ? <IconRefresh size={12} className="animate-spin" /> : <IconCheckCircle size={12} />}
@@ -452,7 +392,7 @@ export function SyncCard() {
                 onClick={() => void reloadRemote()}
               >
                 <IconRefresh size={12} />
-                重新读取盒子
+                重新读取对端
               </button>
             )}
             {link?.lastError && (
@@ -489,7 +429,7 @@ export function SyncCard() {
   );
 }
 
-/** 盒子端（浏览器版）：把自己的令牌交出去。 */
+/** 服务端版（微服上的应用 / 自建那台）：把自己的令牌交出去。 */
 function ServerTokenBody({
   token,
   onRotate,
@@ -503,8 +443,8 @@ function ServerTokenBody({
   return (
     <>
       <p className="nx-hint mb-3.5">
-        桌面版的 NexTerm 可以连到这台微服，把上面配好的服务器资产推过来（或取回去）。
-        把下面的令牌填到桌面版「设置 → 资产同步 → 访问令牌」里即可。
+        桌面版的 NexTerm 可以连到这台服务端，把上面配好的服务器资产推过来（或取回去）。
+        把下面的令牌复制到桌面版「设置 → 资产同步 → 访问令牌」里即可。
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -548,7 +488,7 @@ function ServerTokenBody({
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          <b>这个令牌等同于对这台微服的完全控制权</b>，不只是同步资产 —— 它连的是
+          <b>这个令牌等同于对这台服务端的完全控制权</b>，不只是同步资产 —— 它连的是
           同一套命令接口。别贴到聊天、截图或工单里；怀疑泄露了就点「重置令牌」。
         </div>
       </div>
@@ -556,7 +496,7 @@ function ServerTokenBody({
   );
 }
 
-/** 本地 / 盒子 资产对照表 + 方向按钮。 */
+/** 本机 / 对端 资产对照表 + 方向按钮。 */
 function CompareTable(props: {
   rows: Row[];
   selected: Set<string>;
@@ -566,7 +506,7 @@ function CompareTable(props: {
   onWithCreds: (v: boolean) => void;
   force: boolean;
   onForce: (v: boolean) => void;
-  busy: null | "test" | "discover" | "push" | "pull";
+  busy: null | "test" | "push" | "pull";
   onTransfer: (dir: "push" | "pull") => void;
   localOrigin: string;
   remoteOrigin: string;
@@ -595,7 +535,7 @@ function CompareTable(props: {
         <span className="text-[12.5px] text-neutral-200">
           资产对照
           <span className="nx-hint ml-2">
-            本机 · {localOrigin || "—"} ↔ 盒子 · {remoteOrigin}
+            本机 · {localOrigin || "—"} ↔ 对端 · {remoteOrigin}
           </span>
         </span>
         <div className="nx-spacer" />
@@ -671,7 +611,7 @@ function CompareTable(props: {
           onClick={() => onTransfer("push")}
         >
           {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
-          推送到盒子 ({Math.min(selected.size, pushable)})
+          推送到对端 ({Math.min(selected.size, pushable)})
         </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -679,7 +619,7 @@ function CompareTable(props: {
           onClick={() => onTransfer("pull")}
         >
           {busy === "pull" ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-          从盒子拉取 ({Math.min(selected.size, pullable)})
+          从对端拉取 ({Math.min(selected.size, pullable)})
         </button>
       </div>
 
