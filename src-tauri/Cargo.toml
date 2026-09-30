@@ -24,13 +24,30 @@ bench = false
 
 # 服务端入口（懒猫微包容器）。
 #
-# 这个**刻意不加** `required-features = ["server"]`：`--all-features` 会同时打开
-# desktop 与 server，那时服务端代码整块被 cfg 掉，加了 required-features 也拦不住
-# 它被编 —— 会直接报「找不到 main」。所以改为在 src/bin/nexterm-server.rs 内部
-# 按 cfg 分叉（桌面模式下打印一行说明并 exit 2）。见该文件顶部的注释。
+# ★ `required-features = ["server"]` 是**必须的**，它挡的不是「多编一个包」，
+#   而是**桌面打包打错主程序**（2026-09-30 实测踩到）：
+#
+#   Tauri CLI 打包时的逻辑是「取 cargo 产出的那个二进制，按需要改名后塞进 .app」。
+#   包里一旦存在**两个** bin，它挑中的是 `nexterm-server` —— 于是
+#   `pnpm tauri build` 打出来的 `NexTerm.app` 里装的是**服务端桩**
+#   （desktop 模式下这个 bin 只会打印「当前是桌面模式构建」然后 exit 2，
+#   323 KB），装上去点开就退。
+#
+#   ⚠️ 别试图用 `tauri.conf.json` 的 `mainBinaryName` 修：那个字段的语义是
+#   **给 cargo 的产物改名**，实测反而把桩改名成 `nexterm`、
+#   **覆盖掉真的 25 MB 桌面二进制**（`target/release/nexterm` 被写成 323 KB）。
+#   正解就是这一行：桌面构建（默认 feature，不含 server）里**这个 bin 压根不参与**，
+#   Tauri 只有一个候选，必然选中 `nexterm`。
+#
+# 为什么不是 `required-features = ["server"]` 会与 `--all-features` 冲突的担忧：
+# `--all-features` 同时打开 desktop + server ⇒ 本 bin 会被编，而 main 由
+# `#[cfg(feature = "desktop")]` 分支提供（打印说明并 exit 2），**不存在找不到 main**。
+# CI 的 `clippy --all-targets --all-features` 与 `cargo test --workspace` 都实测通过。
+# 服务端侧的三条真实构建路径（docker 交叉编译、e2e、手工）都显式带 `--features server`，不受影响。
 [[bin]]
 name = "nexterm-server"
 path = "src/bin/nexterm-server.rs"
+required-features = ["server"]
 test = false
 bench = false
 
