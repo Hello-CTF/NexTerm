@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use crate::error::AppResult;
+use crate::ipc_shim as tauri;
 use crate::state::ManagedState;
 use crate::transport::FileEntry;
 

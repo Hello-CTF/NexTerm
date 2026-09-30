@@ -1,5 +1,6 @@
 //! 会话命令（§6.2 session）。
 
+use crate::ipc_shim as tauri;
 use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::State;

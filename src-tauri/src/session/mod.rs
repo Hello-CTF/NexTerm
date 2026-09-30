@@ -17,6 +17,7 @@ use tokio::sync::RwLock;
 use crate::error::{AppError, AppResult};
 use crate::events::SessionStatusPayload;
 use crate::ids::{new_id, now_ms, SessionId, TabId};
+use crate::ipc_shim as tauri;
 use crate::state::AppState;
 use crate::store::models::AssetRow;
 use crate::terminal::transcoder::TerminalEncoding;

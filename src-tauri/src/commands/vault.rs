@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::AppResult;
+use crate::ipc_shim as tauri;
 use crate::state::ManagedState;
 use crate::vault::payload::{self, PrivateKeyPayload};
 use crate::vault::VaultStatus;

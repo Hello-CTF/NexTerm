@@ -12,6 +12,7 @@
 use crate::ai::profiles::{ModelProfile, ModelProfileStore, ModelProfilesView};
 use crate::ai::provider::LlmClient;
 use crate::error::{AppError, AppResult};
+use crate::ipc_shim as tauri;
 use crate::state::ManagedState;
 
 /// 档案总览：全部档案 + 当前激活项的 id。

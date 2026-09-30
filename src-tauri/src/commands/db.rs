@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::db::{DbConn, DbRef, QueryResult, RedisKeyView};
 use crate::error::{AppError, AppResult};
+use crate::ipc_shim as tauri;
 use crate::state::ManagedState;
 
 #[derive(Deserialize)]

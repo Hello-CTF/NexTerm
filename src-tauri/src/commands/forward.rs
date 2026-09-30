@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::error::{AppError, AppResult};
+use crate::ipc_shim as tauri;
 use crate::state::ManagedState;
 use crate::transport::forward::{
     spawn_local_forward, spawn_socks_forward, ForwardSpec, RunningForward,

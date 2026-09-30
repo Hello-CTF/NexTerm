@@ -1,5 +1,8 @@
 [workspace]
-members = ["src-tauri"]
+# `nexterm-ipc-macros` 是 IPC 门面宏（桌面 / 服务端双态，见 src-tauri/src/ipc_shim.rs）。
+# 放进 members 而不是只写 path 依赖：否则它在 workspace 外自成一个包，
+# 会拿到自己的 target/ 与 Cargo.lock，`cargo fmt --all` / clippy 也扫不到它。
+members = ["src-tauri", "src-tauri/nexterm-ipc-macros"]
 resolver = "2"
 
 [profile.release]

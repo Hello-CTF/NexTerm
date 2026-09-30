@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::ipc_shim as tauri;
 use crate::session::SessionManager;
 use crate::store::Store;
 use crate::vault::Vault;

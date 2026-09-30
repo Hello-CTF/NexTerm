@@ -1,5 +1,6 @@
 //! 终端命令（§6.2 terminal）：attach / write / resize / 读屏 / 录制。
 
+use crate::ipc_shim as tauri;
 use serde::Deserialize;
 use tauri::ipc::Channel;
 

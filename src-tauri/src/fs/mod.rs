@@ -7,6 +7,7 @@ use serde_json::json;
 
 use crate::error::{AppError, AppResult};
 use crate::ids::new_id;
+use crate::ipc_shim as tauri;
 use crate::state::AppState;
 
 /// 远端打包 / 解压的超时：大目录能跑到分钟级，给足 10 分钟。

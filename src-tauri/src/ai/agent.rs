@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::ipc_shim as tauri;
 use tauri::ipc::Channel;
 
 use crate::error::AppResult;

@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::error::{AppError, AppResult};
 use crate::fs::mount::{self, MountEntry};
+use crate::ipc_shim as tauri;
 use crate::state::ManagedState;
 use crate::store::{AuditInput, Store};
 

@@ -1,5 +1,6 @@
 //! Docker 命令（§6.2 docker）。
 
+use crate::ipc_shim as tauri;
 use serde::Deserialize;
 use tauri::ipc::Channel;
 

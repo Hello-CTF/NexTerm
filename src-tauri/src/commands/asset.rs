@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use crate::error::AppResult;
+use crate::ipc_shim as tauri;
 use crate::ipc_types::AssetDto;
 use crate::state::ManagedState;
 use crate::store::{AssetRow, AuditQuery, CredentialInput};

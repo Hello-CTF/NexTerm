@@ -13,6 +13,7 @@ pub mod transcoder;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::ipc_shim as tauri;
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::RwLock;

@@ -11,6 +11,7 @@ pub mod error;
 pub mod events;
 pub mod fs;
 pub mod ids;
+pub mod ipc_shim;
 pub mod ipc_types;
 pub mod session;
 pub mod state;
@@ -19,6 +20,12 @@ pub mod terminal;
 pub mod transport;
 pub mod vault;
 
+/// 服务端装配（HTTP + WS）。仅服务端模式编译；里面依赖 axum（`server` feature）。
+#[cfg(not(feature = "desktop"))]
+pub mod server;
+
+// `Arc` 只被桌面装配（`run`）用到；服务端那份走 `server::serve`。
+#[cfg(feature = "desktop")]
 use std::sync::Arc;
 
 /// 应用数据目录（%APPDATA%/NexTerm）。
@@ -36,7 +43,9 @@ pub fn data_dir() -> std::path::PathBuf {
 /// 磁盘满、上一个实例句柄未释放，都可能触发。
 ///
 /// 返回的 guard 必须活到进程结束，否则非阻塞写入线程会被提前掐掉。
-fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+pub(crate) fn init_tracing(
+    log_dir: &std::path::Path,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let env_filter = || {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
@@ -73,7 +82,7 @@ fn init_tracing(log_dir: &std::path::Path) -> Option<tracing_appender::non_block
 ///
 /// 这里挂一个 hook，把 panic 位置与 backtrace 追加到 `<data>/logs/crash.log`。
 /// 刻意**不走 tracing** 落盘：那是异步 writer，panic 时未必来得及刷出去。
-fn install_panic_hook(log_dir: std::path::PathBuf) {
+pub(crate) fn install_panic_hook(log_dir: std::path::PathBuf) {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
@@ -96,6 +105,11 @@ fn install_panic_hook(log_dir: std::path::PathBuf) {
     }));
 }
 
+/// 桌面版启动。服务端不走这里（见 `server::serve`）。
+///
+/// 整个函数门控在 `desktop` 下：它直接使用 `tauri::` 与两个 Tauri 插件，
+/// 而这些在服务端是不存在的依赖（`tauri` 是 optional）。
+#[cfg(feature = "desktop")]
 pub fn run() {
     let log_dir = data_dir().join("logs");
     let _ = std::fs::create_dir_all(&log_dir);

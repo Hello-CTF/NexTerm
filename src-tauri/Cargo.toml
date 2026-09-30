@@ -7,11 +7,30 @@ license = "MIT"
 edition = "2021"
 rust-version = "1.85"
 
+# 桌面入口。服务端不使用它（服务端代码全部 `cfg(not(feature = "desktop"))`）。
+#
+# `required-features = ["desktop"]`：这样**服务端构建里根本不会产出这个 bin**
+# （否则 Linux 容器镜像里会多一个只会打印「请用桌面模式构建」的空壳）。
+# `--all-features` 含 desktop，所以 CI 的 `clippy --all-targets --all-features`
+# 照样会编它。
 [[bin]]
 name = "nexterm"
 path = "src/main.rs"
+required-features = ["desktop"]
 # main.rs 仅调用 run()，无单测；集成测试只依赖 nexterm_lib。
 # 关闭后 cargo test 与 clippy --all-targets 不再重复链接空的测试壳。
+test = false
+bench = false
+
+# 服务端入口（懒猫微包容器）。
+#
+# 这个**刻意不加** `required-features = ["server"]`：`--all-features` 会同时打开
+# desktop 与 server，那时服务端代码整块被 cfg 掉，加了 required-features 也拦不住
+# 它被编 —— 会直接报「找不到 main」。所以改为在 src/bin/nexterm-server.rs 内部
+# 按 cfg 分叉（桌面模式下打印一行说明并 exit 2）。见该文件顶部的注释。
+[[bin]]
+name = "nexterm-server"
+path = "src/bin/nexterm-server.rs"
 test = false
 bench = false
 
@@ -45,14 +64,50 @@ tauri-build = { version = "2", features = [] }
 # 显式打开 std 就让 build.rs 走第一条路，问题消失（与 indexmap 2.x 无关）。
 indexmap = { version = "1.9", features = ["std"] }
 
+[features]
+# ── 双态开关（见 src/ipc_shim.rs 顶部说明）─────────────────────────────
+#
+# **主开关是 `desktop`**：桌面模式 = 它开启（默认）；服务端模式 = `not(feature = "desktop")`。
+# 之所以不用「desktop / server 互斥」，是因为 CI 跑的是
+# `clippy --all-targets --all-features` 与 `test --workspace` —— 互斥设计下
+# `--all-features` 会同时打开两边、桌面入口与 bin 立刻编不过，**就得改 CI**。
+# 现在 `--all-features` 等价于「service 关闭 + desktop 开启」= 桌面模式 = 现状，
+# **CI 口径一行不用改**（见 docs/LAZYCAT-PORT.md §12.2）。
+default = ["desktop"]
+
+# 桌面版：Tauri 运行时 + 两个插件。
+# 写成 `dep:` 形式而不是让 feature 与依赖同名，是为了**能用 `not(feature = "desktop")`
+# 当服务端判据**（见 ipc_shim.rs）。若叫 `tauri`，就没法表达「不开 Tauri」。
+desktop = [
+    "dep:tauri",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-global-shortcut",
+]
+
+# 服务端版（懒猫微包容器，Linux、无桌面、无 WebKit）。
+# 构建写法固定为：cargo build --no-default-features --features server
+# 本 feature 不参与 `cfg` 判据，只用来开启服务端专属可选依赖（axum）。
+server = ["dep:axum"]
+
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
-tauri-plugin-global-shortcut = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-global-shortcut = { version = "2", optional = true }
+
+# 服务端 HTTP / WebSocket。
+#
+# 桌面版不编它。这不只是体积问题：axum 带 hyper/tower，而 Tauri 链上已有另一套
+# HTTP 栈，桌面版没有理由为服务端的东西多编一份 —— 也让 Linux 容器镜像不必
+# 因为桌面依赖而拉 webkit2gtk。
+axum = { version = "0.8", features = ["ws", "json"], optional = true }
+
+# IPC 门面宏（桌面 / 服务端双态）。两侧都要，所以**不是** optional。
+# 只包一层透明转发：桌面下等价于 `#[tauri::command]`，产物不变。
+nexterm-ipc-macros = { path = "nexterm-ipc-macros" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "io-util", "io-std", "sync", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "io-util", "io-std", "sync", "fs", "signal"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 async-trait = "0.1"
 futures = "0.3"

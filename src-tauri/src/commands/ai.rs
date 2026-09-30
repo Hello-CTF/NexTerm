@@ -1,5 +1,6 @@
 //! AI 命令（§6.2 ai）：chat / cancel / confirm / 接管 / 会话管理。
 
+use crate::ipc_shim as tauri;
 use futures::FutureExt;
 use serde::Deserialize;
 use serde_json::json;
