@@ -34,20 +34,24 @@ function Svg({ size = 16, children, ...rest }: IconProps & { children: ReactNode
 /* ── 品牌 ──────────────────────────────────────────────────────────────── */
 
 /**
- * 应用标识（方案 C「流体终端」· 霓虹版）。
+ * 应用标识（霓虹猫娘 · 透明底）。
  *
- * 直接引用交付包的位图，而不是内联 SVG —— 这一版是带辉光和渐变的栅格画，
- * 没有任何矢量版本（交付包说明里也建议"如需矢量请另行描摹"），
- * 硬描成 SVG 只会丢掉它最值钱的那层辉光。
+ * 直接引用位图，而不是内联 SVG —— 这一版是带辉光和渐变的栅格画，
+ * 没有任何矢量版本，硬描成 SVG 只会丢掉它最值钱的那层辉光。
  *
  * 资产来源与规格：
- *   `public/brand/nexterm-mark-128.png` ← NexTerm_SchemeC_darkbg_128.png
+ *   `public/brand/nexterm-mark-128.png` ← 品牌图 1.375x 局部裁切（脸 + 耳机 + 终端）
  *   128px 是给 2x 屏上 52px 空态用的；图标栏 26px 也走它，缩放质量足够。
- *   应用图标（任务栏 / 安装包 / favicon）由 `NexTerm_SchemeC_darkbg_1024.png`
+ *   应用图标（任务栏 / 安装包）由 1024 母版 `src-tauri/icons/source.png`
  *   经 `pnpm tauri icon` 生成，见 `src-tauri/icons/`。
  *
- * 深色底是交付方推荐的默认（`#0B0E14`）：不挑底层背景色，暗色任务栏上不会有毛边。
- * 换方案只需把 `public/brand/` 换成对应目录的图，再跑一次 `pnpm tauri icon`。
+ * 背景是**纯透明**，不是早期的 `#0B0E14` 实底方砖 —— 实底会在 Dock / 任务栏上
+ * 显出一个黑方块。品牌标刻意比应用图标裁得紧：全幅缩到 26px 只剩一团，
+ * 深色侧栏（`--color-neutral-950`）上连轮廓都糊掉；同时仍保留透明边，
+ * 否则裁成满幅又变成一个「方砖」。
+ *
+ * 换方案：把 `public/brand/` 换成新图、`src-tauri/icons/source.png` 换成 1024 母版，
+ * 再跑一次 `pnpm tauri icon`。
  */
 export function Logo({ size = 26 }: { size?: number }) {
   return (
