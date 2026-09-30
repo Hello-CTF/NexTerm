@@ -22,7 +22,7 @@ import {
 } from "./store";
 import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
-import { DEMO } from "../demo";
+import { DEMO, TRANSPORT } from "../demo";
 import { isMac } from "./platform";
 import { mountUnavailableReason } from "./capabilities";
 import { AssetTree } from "../features/explorer/AssetTree";
@@ -552,7 +552,7 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         {/* 最左：图标导航栏。macOS 原生红绿灯悬浮在窗口左上（约 28px 高），
             顶部 Logo 必须让位，否则被红绿灯盖住。 */}
-        <nav className={`nx-rail ${!DEMO && isMac() ? "pt-[28px]" : ""}`}>
+        <nav className={`nx-rail ${TRANSPORT === "desktop" && isMac() ? "pt-[28px]" : ""}`}>
           <div className="mb-2 flex items-center justify-center" title="NexTerm">
             <Logo size={26} />
           </div>
@@ -611,7 +611,7 @@ export default function App() {
             （首个标签落在 ~80px，贴近原生间距），拖拽语义不变。
           */}
           <div
-            className={`nx-tabstrip is-top ${!DEMO && isMac() ? "pl-[32px]" : ""}`}
+            className={`nx-tabstrip is-top ${TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : ""}`}
             data-tauri-drag-region
           >
             {workspaces.length === 0 && (
@@ -673,8 +673,9 @@ export default function App() {
             </button>
             {/* 标签条空白拖拽区：标签少时占满剩余宽度，标签多时收缩为 0 */}
             <div className="nx-spacer min-w-0" data-tauri-drag-region />
-            {/* macOS 用原生红绿灯，这组自绘按钮只在 Windows 上出现 */}
-            {!DEMO && !isMac() && (
+            {/* macOS 用原生红绿灯，这组自绘按钮只在 **桌面版** 的 Windows 上出现。
+                浏览器里既没有红绿灯也没有窗口按钮 —— 它们会去调 Tauri 的 window API。 */}
+            {TRANSPORT === "desktop" && !isMac() && (
               <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
                 <button
                   className="nx-icon-btn"

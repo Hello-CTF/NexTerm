@@ -1,9 +1,17 @@
 // 事件订阅（§6.3）：Rust → 前端事件统一走 listen。
-// 演示模式下没有内核，`listenEvent` 与两个 `create*Channel` 改走本地事件总线，
-// 调用方（main.tsx / XtermView / AiSidebar / FileBrowser / DockerPanel）无需分支。
+//
+// 三种运行环境各有一条实现，调用方（main.tsx / XtermView / AiSidebar /
+// FileBrowser / DockerPanel）无需分支：
+//
+// | 环境 | listen | Channel |
+// |---|---|---|
+// | 桌面 | Tauri `listen` | Tauri `Channel` |
+// | 服务端 | `/ws/events` | `/ws/channel/{id}` |
+// | 演示 | 本地事件总线 | 内存通道 |
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Channel } from "@tauri-apps/api/core";
-import { DEMO, subscribe } from "../demo";
+import { DEMO, WEB, subscribe } from "../demo";
+import { newBinaryChannel, newJsonChannel, subscribeEvent } from "./webTransport";
 
 export const EVENTS = {
   sessionStatus: "session://status",
@@ -58,6 +66,11 @@ export function createBinaryChannel(
     ch.onmessage = (raw: unknown) => decodeBytes(raw, onBytes);
     return ch;
   }
+  if (WEB) {
+    const ch = newBinaryChannel();
+    ch.onmessage = (raw: unknown) => decodeBytes(raw, onBytes);
+    return ch as unknown as Channel<unknown>;
+  }
   const channel = new Channel<unknown>();
   channel.onmessage = (raw) => decodeBytes(raw, onBytes);
   return channel;
@@ -94,6 +107,11 @@ export function createAiChannel(onEvent: (event: Record<string, unknown>) => voi
     ch.onmessage = push;
     return ch;
   }
+  if (WEB) {
+    const ch = newJsonChannel();
+    ch.onmessage = (raw: unknown) => push(raw);
+    return ch as unknown as Channel<unknown>;
+  }
   const channel = new Channel<unknown>();
   channel.onmessage = push;
   return channel;
@@ -105,6 +123,11 @@ export function listenEvent<T>(
 ): Promise<UnlistenFn> {
   if (DEMO) {
     const off = subscribe(event, (payload) => handler(payload as T));
+    return Promise.resolve(off);
+  }
+  if (WEB) {
+    const off = subscribeEvent(event, (payload) => handler(payload as T));
+    // 与 Tauri 的 `listen` 一样返回**异步**的取消函数，调用方写法不必分支。
     return Promise.resolve(off);
   }
   return listen<T>(event, (e) => handler(e.payload));

@@ -5,8 +5,18 @@
 // 注意：本模块不得反向 import store（避免循环依赖），弹框实现走注册制回调
 // （App 挂载时 registerDialogHandlers），文本输入弹窗同理（registerPromptHandler）。
 import { ask as dAsk, confirm as dConfirm, message as dMessage } from "@tauri-apps/plugin-dialog";
-import { DEMO } from "../demo";
+import { DEMO, TRANSPORT } from "../demo";
 import { isMac } from "../app/platform";
+import {
+  deliverStaged,
+  dropStaged,
+  isStagedPath,
+  pickBrowserFile,
+  requestSaveTarget,
+  stageFile,
+} from "../ipc/webFiles";
+
+export { dropStaged as discardStaged };
 
 type AskOptions = { title?: string; kind?: "info" | "warning" | "error" };
 
@@ -27,20 +37,28 @@ export function registerDialogHandlers(h: DialogHandlers) {
   handlers = h;
 }
 
-const nativeAsk: AskFn = DEMO
+/**
+ * 用浏览器原生对话框（`window.confirm` / `alert`）兜底。
+ *
+ * 条件从「演示模式」扩成「任何非桌面环境」：
+ * `@tauri-apps/plugin-dialog` 在浏览器里根本没有实现，服务端模式下
+ * 若还去调它，App 挂载前那几次弹框会直接抛。
+ */
+const NATIVE_BROWSER_DIALOG = DEMO || TRANSPORT === "web";
+
+const nativeAsk: AskFn = NATIVE_BROWSER_DIALOG
   ? async (message) => window.confirm(message)
   : dAsk;
-const nativeConfirm: ConfirmFn = DEMO
+const nativeConfirm: ConfirmFn = NATIVE_BROWSER_DIALOG
   ? async (message) => window.confirm(message)
   : dConfirm;
-const nativeMessage: MessageFn = DEMO
+const nativeMessage: MessageFn = NATIVE_BROWSER_DIALOG
   ? async (message) => {
       window.alert(message);
     }
   : async (message) => {
       await dMessage(message);
     };
-
 /** 确认框（取消 / 确定）。 */
 export const ask: AskFn = (message, options) =>
   handlers ? handlers.ask(message, options) : nativeAsk(message, options);
@@ -53,22 +71,43 @@ export const confirmDialog: ConfirmFn = (message) =>
 export const messageBox: MessageFn = (message) =>
   handlers ? handlers.message(message) : nativeMessage(message);
 
-/** 选一个本地文件（上传用）。取消返回 null。 */
+/** 选一个要上传的文件。取消返回 null；返回的是**内核能读到的路径**。
+ *
+ *  服务端模式下浏览器里没有「本地路径」这个概念，所以这里先把选中的字节
+ *  交给服务端暂存，再把暂存后的盒子路径回上去 —— 调用点（`fsApi.upload`）
+ *  因此完全不用改。用完调用 `discardStaged` 删掉副本，别让盒子攒垃圾。
+ */
 export async function pickLocalFile(): Promise<string | null> {
   if (DEMO) {
     return isMac()
       ? "~/Downloads/nginx-access.log"
       : "C:\\Users\\you\\Downloads\\nginx-access.log";
   }
+  if (TRANSPORT === "web") {
+    const picked = await pickBrowserFile();
+    if (!picked) return null;
+    const staged = await stageFile(picked);
+    return staged.path;
+  }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({ multiple: false });
   return typeof picked === "string" ? picked : null;
 }
 
-/** 选一个私钥文件（资产表单用）。取消返回 null。 */
+/** 选一个私钥文件（资产表单用）。取消返回 null。
+ *
+ *  服务端模式下**必须 `persist`**：这个路径会被存进资产、几天后才用于建连，
+ *  落进会被巡检清理的暂存目录的话，用户的密钥认证会在两小时后自己失效。
+ */
 export async function pickKeyFile(): Promise<string | null> {
   if (DEMO) {
     return isMac() ? "~/.ssh/id_ed25519" : "C:\\Users\\you\\.ssh\\id_ed25519";
+  }
+  if (TRANSPORT === "web") {
+    const picked = await pickBrowserFile();
+    if (!picked) return null;
+    const staged = await stageFile(picked, { persist: true });
+    return staged.path;
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
@@ -81,13 +120,58 @@ export async function pickKeyFile(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
-/** 选一个本地保存路径（下载 / 录制用）。取消返回 null。 */
+/** 选一个保存落点（下载 / 录制用）。取消返回 null；返回的是**内核能写到的路径**。
+ *
+ *  服务端模式下先向服务端要一个空的暂存落点，同时**趁用户手势还在**把浏览器的
+ *  保存句柄拿到手（`showSaveFilePicker()` 需要 transient activation，而内核落盘
+ *  往往要几十秒，那时再问就过期了）。等内核（`fs_download` / 打包 / 日志导出）
+ *  写完，再由调用点用 `finishSave` 把内容交给浏览器保存。
+ *  「先要落点、后交付」是必然的：那时才有字节。
+ *
+ *  ⚠️ 本函数必须在用户手势（点击）的同步调用链里被 await，不要先等别的异步操作。
+ */
 export async function pickSavePath(defaultName: string): Promise<string | null> {
   if (DEMO) {
     return isMac() ? `~/Desktop/${defaultName}` : `C:\\Users\\you\\Desktop\\${defaultName}`;
   }
+  if (TRANSPORT === "web") {
+    return requestSaveTarget(defaultName);
+  }
   const { save } = await import("@tauri-apps/plugin-dialog");
   return save({ defaultPath: defaultName });
+}
+
+/**
+ * 下载收尾：服务端模式下把暂存的内容交给浏览器保存，返回给提示语用的**落点描述**。
+ *
+ * 落点已在 `pickSavePath` 的手势期确认过，这里只是往那个句柄里写字节，
+ * 不会再弹窗口；句柄没拿到时才退到锚点下载（见 `ipc/webFiles.ts` 文件头）。
+ *
+ * 描述刻意返回文件名，而不是那个盒子上的暂存路径 —— 后者对用户没有意义，
+ * 打进 toast 只会让人以为「下载到盒子里了」。桌面模式原样返回真实路径。
+ * 用户取消时返回 `null`（调用方报「已取消保存」）；交付本身出错时**抛出**，
+ * 由调用方的 catch 如实报错 —— 不要把「没交出去」说成成功。
+ */
+export async function finishSave(target: string, name: string): Promise<string | null> {
+  if (TRANSPORT !== "web") return target;
+  const outcome = await deliverStaged(target, name);
+  if (outcome === "cancelled") return null;
+  if (outcome === "not-staged") {
+    // web 模式下 `pickSavePath` 一定登记过，走到这里说明流程串了。文件已经取回但没交出去，
+    // 静默丢掉是最坏的结果，所以明确报出来。
+    console.warn("[dialogs] 期望是暂存落点，但没有登记记录", target);
+  }
+  return name;
+}
+
+/**
+ * 把一个「内核用的路径」转成给用户看的描述。
+ *
+ * 服务端模式下 `pickSavePath` 返回的是暂存路径，直接显示（比如「开始录制 → …」）
+ * 会让用户以为文件落在盒子上。桌面模式原样返回。
+ */
+export function describeTarget(path: string, name: string): string {
+  return TRANSPORT === "web" && isStagedPath(path) ? name : path;
 }
 
 export type PromptOptions = {
@@ -117,7 +201,7 @@ export function promptText(
   options: PromptOptions = {},
 ): Promise<string | null> {
   if (!promptHandler) {
-    return Promise.resolve(DEMO ? window.prompt(message, value) : null);
+    return Promise.resolve(NATIVE_BROWSER_DIALOG ? window.prompt(message, value) : null);
   }
   return promptHandler(message, value, options);
 }

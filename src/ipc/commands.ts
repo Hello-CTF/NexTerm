@@ -1,7 +1,8 @@
 // 与 Rust 的唯一接口层：类型化命令包装（§6）。
 // 类型来自 ts-rs 生成（cargo test 导出），见 types.ts。
 import { invoke } from "@tauri-apps/api/core";
-import { DEMO } from "../demo";
+import { DEMO, WEB } from "../demo";
+import { httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
 
 // ───────── 通用 ─────────
@@ -20,8 +21,18 @@ export function toAppError(e: unknown): AppError {
 }
 
 /**
- * 唯一的 IPC 出海口。演示模式下改走内存实现（`src/demo/mock.ts`），
- * 因此所有面板代码都不需要为"没有后端"这件事做任何适配。
+ * 唯一的 IPC 出海口。三种运行环境各走一条：
+ *
+ * | 环境 | 出口 |
+ * |---|---|
+ * | 桌面（Tauri） | `invoke()` —— 现有发布线，行为一个字不变 |
+ * | 服务端（浏览器） | `POST /rpc` —— 见 nexterm-server |
+ * | 演示 | `src/demo/mock.ts` 的内存实现 |
+ *
+ * 三者的**参数形状完全一致**（Tauri 的 `invoke(cmd, args)` 约定），
+ * 所以上面那 700 行 `sessionApi` / `fsApi` / … 一行都不用改 —— 包括
+ * 通道参数：服务端模式下 `WebChannel.toJSON()` 会把它压成一个 id 字符串，
+ * `JSON.stringify` 自然就把它送出去了。
  *
  * mock 用动态 import：让假数据 + 虚拟 shell 独立成一个 chunk，
  * Tauri 生产包不会加载它。
@@ -32,11 +43,55 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
       const { mockInvoke } = await import("../demo/mock");
       return (await mockInvoke(cmd, args)) as T;
     }
+    if (WEB) {
+      return await callWeb<T>(cmd, args);
+    }
     return await invoke<T>(cmd, args);
   } catch (e) {
     throw toAppError(e);
   }
 }
+
+/**
+ * 服务端出口。
+ *
+ * 错误也走 HTTP 200 + `{ok:false,error}` 信封（服务端如此约定）——
+ * 用非 2xx 会让 `fetch` 的失败路径和业务错误路径分裂成两套，
+ * 而 `code`（`vault_locked` / `host_key_pending` …）恰恰在前端是有分支意义的。
+ */
+async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const res = await fetch(httpUrl("/rpc"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cmd, args: args ?? null }),
+  });
+  const text = await res.text();
+  let body: { ok?: boolean; data?: unknown; error?: unknown } | null = null;
+  try {
+    body = JSON.parse(text) as { ok?: boolean; data?: unknown; error?: unknown };
+  } catch {
+    // 不是 JSON：多半是被静态托管兜底成了 index.html（路由没对上）。
+    throw {
+      code: "internal",
+      message: `服务端返回了非 JSON 响应（HTTP ${res.status}）：${text.slice(0, 120)}`,
+    } satisfies AppError;
+  }
+  if (!body || body.ok !== true) {
+    throw (body?.error ?? { code: "internal", message: `HTTP ${res.status}` }) as AppError;
+  }
+  return body.data as T;
+}
+
+// ───────── 内核自述 ─────────
+//
+// 首帧渲染前要用到这两条，所以单独成一组。
+// 注意：**服务端模式下 `app_platform` 回的是「后端所在的系统」**，
+// 不是浏览器所在的系统 —— 这正是我们要的（标题栏留白这类判定问的是
+// 「有没有原生红绿灯」，而红绿灯只存在于桌面窗口里，见 App.tsx）。
+
+export const systemApi = {
+  platform: () => call<string>("app_platform"),
+};
 
 // ───────── session ─────────
 

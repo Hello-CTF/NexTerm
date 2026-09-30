@@ -2,7 +2,14 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ask, pickLocalFile, pickSavePath, promptText } from "../../ui/dialogs";
+import {
+  ask,
+  discardStaged,
+  finishSave,
+  pickLocalFile,
+  pickSavePath,
+  promptText,
+} from "../../ui/dialogs";
 import { fsApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type FsProgressEvent } from "../../ipc/events";
 import type { FileEntryDto } from "../../ipc/types";
@@ -111,7 +118,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const uploadTo = async (dir: string) => {
     const file = await pickLocalFile();
     if (!file) return;
-    const remote = joinPath(dir, file.split(/[\\/]/).pop() ?? "upload.bin");
+    const remote = joinPath(dir, baseName(file));
     pushToast("info", "开始上传…");
     try {
       const bytes = await fsApi.upload(sessionId, file, remote, false);
@@ -119,6 +126,10 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       pushToast("success", `已上传 ${bytes} 字节 → ${remote}`);
     } catch (e) {
       pushToast("error", `上传失败：${describeError(e)}`);
+    } finally {
+      // 浏览器模式选中的文件会先在盒子上存一份副本（见 `ui/dialogs.ts`），
+      // 传完就没有价值了，删掉别让盒子攒垃圾；桌面模式下这个是空操作。
+      await discardStaged(file);
     }
   };
 
@@ -128,7 +139,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     pushToast("info", "开始下载…");
     try {
       const bytes = await fsApi.download(sessionId, remotePath, target);
-      pushToast("success", `已下载 ${bytes} 字节 → ${target}`);
+      const where = await finishSave(target, baseName(remotePath));
+      pushToast(where ? "success" : "info", where ? `已下载 ${bytes} 字节 → ${where}` : "已取消保存");
     } catch (e) {
       pushToast("error", `下载失败：${describeError(e)}`);
     }
@@ -176,7 +188,11 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     pushToast("info", "正在远端打包…");
     try {
       const bytes = await fsApi.packDownload(sessionId, dir, target);
-      pushToast("success", `已打包下载 ${bytes} 字节 → ${target}`);
+      const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
+      pushToast(
+        where ? "success" : "info",
+        where ? `已打包下载 ${bytes} 字节 → ${where}` : "已取消保存",
+      );
     } catch (e) {
       pushToast("error", `打包下载失败：${describeError(e)}`);
     }

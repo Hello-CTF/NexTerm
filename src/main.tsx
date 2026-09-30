@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
 import { listenEvent, EVENTS, type SessionStatusEvent } from "./ipc/events";
+import { mountApi, systemApi } from "./ipc/commands";
 import { useUi } from "./app/store";
 import { setMacPlatform } from "./app/platform";
 import { setMountUnavailableReason } from "./app/capabilities";
@@ -57,17 +58,23 @@ window.addEventListener("contextmenu", (e) => {
 // 会导致标题栏闪变，所以这里阻塞首帧等这一个 IPC。
 // 能力开关同批拉取：磁盘挂载在 macOS 上是「暂不可用」，入口需要在首帧就置灰，
 // 否则会先画出一个可点的按钮再跳成灰色。
+//
+// 走 `src/ipc/commands.ts` 而不是直接 `invoke`：这样三种运行环境
+// （桌面 / 服务端 / 演示）共用同一条出海口，不至于在这里漏掉服务端模式。
 async function bootstrap() {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
     const [os, mountReason] = await Promise.all([
-      invoke<string>("app_platform"),
-      invoke<string | null>("mount_capability"),
+      systemApi.platform(),
+      mountApi.capability(),
     ]);
-    setMacPlatform(os === "macos");
+    // 演示模式没有真后端：mock 对这两条命令返回 null，此时**不要**覆盖
+    // UA 猜测 —— 否则 macOS 上跑演示模式会被判成 Windows。
+    if (typeof os === "string" && os.length > 0) {
+      setMacPlatform(os === "macos");
+    }
     setMountUnavailableReason(mountReason);
   } catch {
-    /* 浏览器演示模式：无 Tauri IPC，维持 UA 探测 + 能力默认可用 */
+    /* 后端还没就绪：维持 UA 探测 + 能力默认可用 */
   }
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>

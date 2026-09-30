@@ -5,7 +5,7 @@ import { CommandBlockPanel } from "./CommandBlockPanel";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { takePendingCommand, useUi } from "../../app/store";
-import { pickSavePath, promptText } from "../../ui/dialogs";
+import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
@@ -61,6 +61,14 @@ export function TerminalPane({
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   /** 用户是否手动关过侧栏——关过之后就不再自动弹，尊重用户选择。 */
   const userClosedBlocks = useRef(false);
+  /**
+   * 正在录制的落点。
+   *
+   * 之所以要留到停止时：服务端模式下 `pickSavePath` 给的是**盒子上的暂存文件**，
+   * 录的是它；停录之后还要把内容交给浏览器保存（见 `toggleRecord` 的停止分支）。
+   * 桌面模式下这就是那个真实路径，多留一份也无害。
+   */
+  const recordTarget = useRef<{ path: string; name: string } | null>(null);
   const searchApi = useRef<{
     findNext: (t: string) => void;
     findPrevious: (t: string) => void;
@@ -93,15 +101,41 @@ export function TerminalPane({
   const toggleRecord = async () => {
     if (!kernelTabId) return;
     if (!recording) {
-      const path = await pickSavePath(`${title}-${Date.now()}.log`);
-      if (!path) return;
-      await terminalApi.recordStart(kernelTabId, path);
-      setRecording(true);
-      pushToast("info", `开始录制 → ${path}`);
+      const name = `${title}-${Date.now()}.log`;
+      try {
+        // 必须在用户手势里问落点：服务端模式下这一步要向服务端预留暂存文件、
+        // 并趁激活还在把浏览器的保存句柄拿到手（见 `ui/dialogs.ts::pickSavePath`）。
+        const path = await pickSavePath(name);
+        if (!path) return;
+        await terminalApi.recordStart(kernelTabId, path);
+        // 停止时要拿它去「交付给浏览器保存」，见下面那个分支。
+        recordTarget.current = { path, name };
+        setRecording(true);
+        pushToast("info", `开始录制 → ${describeTarget(path, name)}`);
+      } catch (e) {
+        pushToast("error", `开始录制失败：${describeError(e)}`);
+      }
     } else {
-      const bytes = await terminalApi.recordStop(kernelTabId);
+      const target = recordTarget.current;
+      recordTarget.current = null;
+      let bytes: number;
+      try {
+        bytes = await terminalApi.recordStop(kernelTabId);
+      } catch (e) {
+        // 停录失败也要把状态复位，否则按钮永远卡在「停止录制」。
+        setRecording(false);
+        pushToast("error", `停止录制失败：${describeError(e)}`);
+        return;
+      }
       setRecording(false);
-      pushToast("success", `录制完成（${bytes} 字节）`);
+      try {
+        // 服务端模式下录的是**盒子上的暂存文件**，停录之后才把内容交给浏览器保存。
+        const where = target ? await finishSave(target.path, target.name) : null;
+        pushToast("success", `录制完成（${bytes} 字节）${where ? ` → ${where}` : ""}`);
+      } catch (e) {
+        // 录制已经成功停下了，这时候说「停止录制失败」是误导 —— 如实说是交付那一步挂了。
+        pushToast("error", `录制已停止（${bytes} 字节），但保存到本地失败：${describeError(e)}`);
+      }
     }
   };
 
@@ -153,11 +187,16 @@ export function TerminalPane({
   /** 把回滚输出写到本地文件（内核 dump → std::fs::write）。 */
   const saveLogToFile = async () => {
     if (!kernelTabId) return;
-    const path = await pickSavePath(`${title}-${Date.now()}.log`.replace(/[\\/:*?"<>|]/g, "_"));
+    const name = `${title}-${Date.now()}.log`.replace(/[\\/:*?"<>|]/g, "_");
+    const path = await pickSavePath(name);
     if (!path) return;
     try {
       const bytes = await terminalApi.exportLog(kernelTabId, path);
-      pushToast("success", `已保存 ${bytes} 字节 → ${path}`);
+      const where = await finishSave(path, name);
+      pushToast(
+        where ? "success" : "info",
+        where ? `已保存 ${bytes} 字节 → ${where}` : "已取消保存",
+      );
     } catch (e) {
       pushToast("error", `保存失败：${describeError(e)}`);
     }
