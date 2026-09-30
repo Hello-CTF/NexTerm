@@ -65,7 +65,10 @@
 
 两种位置的令牌是**同一个机制**（对端服务端自己生成的那一串），部署位置只影响界面提示，不影响协议。
 
-> ⚠️ 这个令牌等同于该实例的**完全控制权**——它调的是同一张 RPC 表，能执行任何已注册命令，不只是同步资产。别外传。
+> ⚠️ **完整版**服务端上，这个令牌等同于该实例的**完全控制权**——它调的是同一张 RPC 表，能执行任何已注册命令，不只是同步资产。别外传。
+>
+> 只想在公网上做同步，就用 **onlyServer**（见下方「部署服务端」）：它的命令表只有同步那三条，
+> 令牌泄漏也拿不到终端、文件与容器。这不是"少注册几件事"的省事做法，而是拆开部署的**唯一理由**。
 
 ## 功能总览
 
@@ -114,12 +117,21 @@ AI 不是贴在旁边的聊天框，而是接进了内核。
 
 ## 下载安装
 
-到 [Releases](https://github.com/ProbiusOfficial/NexTerm/releases/latest) 下载：
+到 [Releases](https://github.com/ProbiusOfficial/NexTerm/releases/latest) 下载。每次发版产出五类产物：
 
-| 平台 | 文件 |
-|---|---|
-| Windows 10/11 x64 | `NexTerm_x.y.z_x64-setup.exe`（NSIS 安装器，双击即装） |
-| macOS（Apple Silicon） | `NexTerm_x.y.z_aarch64.dmg`（拖入「应用程序」） |
+| # | 产物 | 文件名 / 形态 | 装在哪 |
+|---|---|---|---|
+| ① | **Windows 客户端** | `NexTerm_x.y.z_x64-setup.exe` | Windows 10/11 x64，NSIS 安装器双击即装 |
+| ② | **macOS 客户端** | `NexTerm_x.y.z_aarch64.dmg` | Apple Silicon（M 系列），拖入「应用程序」 |
+| ③ | **懒猫微服专版** | 应用商店安装包 | 在微服**应用中心里安装**，不经 Release 下载 |
+| ④ | **LinuxServer** | `NexTerm-x.y.z-linux-amd64.tar.gz` | 任意 Linux（amd64），带浏览器界面 |
+| ⑤ | **onlyServer** | `NexTerm-onlyServer-x.y.z-linux-amd64.tar.gz` | 任意 Linux（amd64），只做资产同步 |
+
+四个客户端/服务端产物由 CI 自动构建；③ 因为要拉私有镜像仓库（凭证只在微服上），
+由维护者手工出包后附到 Release 上。
+
+> ④ 和 ⑤ 是**同一个二进制**，`--sync-only` 一个开关切换形态（见下）。
+> 分两个包只是为了让你拿到手就是对的形态，不用读文档才发现「原来还要加参数」。
 
 ### macOS 首次打开被拦下怎么办
 
@@ -143,6 +155,16 @@ xattr -dr com.apple.quarantine /Applications/NexTerm.app
 
 服务端适合放在**常开的机器**上：换一台设备，浏览器打开接着用；它同时是桌面版资产同步的对端。
 
+三种部署位置，按「你在哪、要什么」选：
+
+| 部署位置 | 用哪个包 | 浏览器界面 | 公网 | 适合 |
+|---|---|---|---|---|
+| **懒猫微服** | 应用商店安装包 | ✅ | ✅（平台登录门 + 应用令牌） | 有微服，要一个随处可开的浏览器工作台 |
+| **LinuxServer** | `NexTerm-x.y.z-linux-amd64.tar.gz` | ✅ | ⚠️ **不建议** | 自建机器 / 内网 VPS，自己接反代 |
+| **onlyServer** | `NexTerm-onlyServer-x.y.z-linux-amd64.tar.gz` | ❌ | ✅ 设计目标 | 公网只当同步中转，`ssh` 上去配 |
+
+后两者是**同一个二进制**：`onlyServer` 就是加了 `--sync-only`。它少了什么、为什么少，见下。
+
 ### 懒猫微服
 
 本仓库自带 LPK v2 打包与提审链路（`lazycat/` 与 `scripts/`），产物为应用商店可用的安装包：
@@ -155,23 +177,74 @@ lzc-cli project deploy     # 部署到自己的微服
 微服的公网入口默认要求登录，应用在 `public_path` 里只放行了同步入口一条路径，
 靠应用自己的令牌把关 —— 用浏览器打开应用，体验不变。
 
-### 自建服务器（容器 / VPS）
+### 自建服务器（LinuxServer）
+
+下载 tarball 解压，里面有二进制、前端产物、systemd 单元和一份 `README.md`（安装步骤就在里面）：
 
 ```bash
-cargo build --release --no-default-features --features server --bin nexterm-server
+tar xzf NexTerm-x.y.z-linux-amd64.tar.gz
+cd NexTerm-x.y.z-linux-amd64 && less README.md
 ```
 
-启动前把前端产物放到它找得到的位置（默认 `/app/dist`），再用环境变量配置：
+跑起来就三步：建用户 → 放文件 → 起 systemd 单元。单元默认监听 `127.0.0.1:8080`，
+对外要自己接一层**带鉴权**的反代：
 
-| 环境变量 | 默认 | 说明 |
-|---|---|---|
-| `NEXTERM_LISTEN` | `0.0.0.0:8080` | 监听地址 |
-| `NEXTERM_DATA_DIR` | 有 `/lzcapp/var` 用它，否则 `./data` | SQLite 与日志落点 |
-| `NEXTERM_WEB_ROOT` | `/app/dist` | 前端静态资源目录 |
-| `NEXTERM_MASTER_KEY` | 无 | 凭据库根密钥（≥ 8 位）。**不注入则凭据库保持未初始化**，SSH 密码类资产不可用 |
+```bash
+# 凭据库根密钥（≥ 8 位）。不设也能起，但密码类资产与「带凭据同步」不可用
+printf 'NEXTERM_MASTER_KEY=%s\n' "$(openssl rand -base64 32)" \
+  | sudo tee /etc/nexterm/nexterm.env >/dev/null
+sudo chmod 0600 /etc/nexterm/nexterm.env
+sudo systemctl enable --now nexterm-server
+```
 
-> 公开部署请自行评估：服务端是**常开解锁**状态，凭据库随进程可用。
-> 别把它裸奔在公网上 —— 至少加一层反代与 TLS。
+> ⛔ **`/rpc` 与浏览器界面没有任何自身鉴权。** 懒猫那边是平台登录门在挡，裸 Linux 上那道门**不存在** ——
+> 能连上端口的人就拿到了终端、任意文件、Docker 与凭据库。所以：默认只听 `127.0.0.1`；
+> 别改成 `0.0.0.0` 了事；**不建议公网部署**。
+
+### onlyServer（公网只做同步）
+
+```bash
+tar xzf NexTerm-onlyServer-x.y.z-linux-amd64.tar.gz
+cd NexTerm-onlyServer-x.y.z-linux-amd64 && less README.md
+```
+
+`--sync-only` 的形态**只有两个端点**（`/sync/rpc`、`/healthz`）和**三条命令**
+（`sync_digest` / `sync_export` / `sync_import`）—— 没有浏览器界面，没有 `/rpc`。
+这不是「顺手精简」，而是这种部署存在的理由：`/sync/rpc` 的令牌走的是同一张命令表，
+全量注册时它等于**整个实例的控制权**；只注册对端真正会调的三条，令牌泄漏最多也就读写这份资产库。
+
+所有选项命令行与环境变量**等价**（命令行 > 环境变量 > 内置默认），懒猫那份 manifest 用的是环境变量，所以两边一份定义：
+
+| 选项 | 环境变量 | 默认 | 说明 |
+|---|---|---|---|
+| `--listen` | `NEXTERM_LISTEN` | `0.0.0.0:8080` | 监听地址。默认给容器用（平台从容器网络另一侧访问），裸机请显式改 |
+| `--data-dir` | `NEXTERM_DATA_DIR` | 有 `/lzcapp/var` 用它，否则 `./data` | SQLite / 日志 / 令牌落点 |
+| `--web-root` | `NEXTERM_WEB_ROOT` | 自动探测（`/app/dist`、`dist`） | 前端静态资源；`--sync-only` 下用不到 |
+| `--master-key` | `NEXTERM_MASTER_KEY` | 无 | 凭据库根密钥（≥ 8 位）。不给则凭据库保持未初始化 |
+| `--sync-only` | — | 关 | 切成只做同步的形态 |
+
+三条子命令，`serve` 可省略（容器不带任何参数启动，走的就是 `serve`）：
+
+```bash
+nexterm-server                      # = serve，容器里就是这一条
+nexterm-server --sync-only --listen 0.0.0.0:9000 --data-dir /var/lib/nexterm
+nexterm-server token                # 打印同步令牌（没有就生成；只有令牌进 stdout）
+nexterm-server rotate-token         # 重新生成 —— 旧令牌立即失效
+```
+
+`token` 只把令牌写 stdout，说明文字走 stderr，所以可以直接 `TOKEN=$(nexterm-server token)`——
+**onlyServer 没有界面，这条命令是拿到令牌的唯一途径**。
+
+两句自查：
+
+```bash
+curl -s 127.0.0.1:8080/healthz   # 完整版应报 commands:132；onlyServer 是 commands:3 + syncOnly:true
+```
+
+`--help` 会列出全部选项与示例。
+
+> 公开部署请自行评估：完整版服务端是**常开解锁**状态，凭据库随进程可用 ——
+> 要公网就换 onlyServer，并确保**前面有 TLS**（令牌明文放在请求头里）。
 
 ## 快速开始（从源码）
 
