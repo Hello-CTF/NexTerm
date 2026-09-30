@@ -104,7 +104,7 @@ pub async fn sync_link_get(state: ManagedState<'_>) -> AppResult<SyncLink> {
 #[serde(rename_all = "camelCase")]
 pub struct SyncLinkArgs {
     pub url: String,
-    /// `platform` | `app`（缺省按 app 处理；非法值同样落到 app）
+    /// `session` | `platform` | `app`（缺省或非法值都落到 app）
     #[serde(default)]
     pub token_kind: Option<String>,
     /// 缺省 = 不改动已存的令牌（界面留空时不覆盖）。
@@ -119,10 +119,10 @@ pub async fn sync_link_set(state: ManagedState<'_>, args: SyncLinkArgs) -> AppRe
     let mut link = client::load_link(&state.store).await?;
     link.url = args.url.trim().to_string();
     if let Some(kind) = args.token_kind {
-        link.token_kind = if kind == client::TOKEN_KIND_PLATFORM {
-            client::TOKEN_KIND_PLATFORM.to_string()
-        } else {
-            client::TOKEN_KIND_APP.to_string()
+        link.token_kind = match kind.as_str() {
+            client::TOKEN_KIND_SESSION => client::TOKEN_KIND_SESSION.to_string(),
+            client::TOKEN_KIND_PLATFORM => client::TOKEN_KIND_PLATFORM.to_string(),
+            _ => client::TOKEN_KIND_APP.to_string(),
         };
     }
     if let Some(t) = args.token {
@@ -135,25 +135,68 @@ pub async fn sync_link_set(state: ManagedState<'_>, args: SyncLinkArgs) -> AppRe
     Ok(link)
 }
 
-/// 拉对端摘要 —— 同时就是连通性探测：结果写回连接配置（供界面显示状态）。
+/// 探一次对端，并把结果（成功时间 / 失败原因）落回连接配置。
+///
+/// 为什么要落盘：界面上「上次连接」的状态必须来自**真实尝试**，而不是
+/// 「上次保存时看起来没问题」。落盘失败只记日志、不打断本次调用 —— 用户的
+/// 目的是「连上」，不是「把状态写下来」。
+async fn record_probe(
+    store: &crate::store::Store,
+    link: &SyncLink,
+    outcome: &AppResult<SyncDigest>,
+) {
+    let mut updated = link.clone();
+    if outcome.is_ok() {
+        updated.verified_at = crate::ids::now_ms() as i64;
+    }
+    updated.last_error = outcome.as_ref().err().map(|e| e.to_string());
+    if let Err(e) = client::save_link(store, &updated).await {
+        tracing::warn!(target: "sync", error = %e, "连接状态落盘失败");
+    }
+}
+
+/// 拉对端摘要 —— 同时就是连通性探测。
 #[tauri::command]
 pub async fn sync_remote_digest(state: ManagedState<'_>) -> AppResult<SyncDigest> {
     require_desktop()?;
-    let mut link = client::load_link(&state.store).await?;
+    let link = client::load_link(&state.store).await?;
     if !link.is_configured() {
         return Err(AppError::param("还没配置盒子地址与访问令牌"));
     }
     let outcome = client::remote_digest(&link).await;
-    // 无论成败都把结果落回配置：界面上「上次连接」的状态必须来自真实尝试，
-    // 而不是「上次保存时看起来没问题」。
-    link.verified_at = if outcome.is_ok() {
-        crate::ids::now_ms() as i64
-    } else {
-        link.verified_at
-    };
-    link.last_error = outcome.as_ref().err().map(|e| e.to_string());
-    client::save_link(&state.store, &link).await?;
+    record_probe(&state.store, &link, &outcome).await;
     outcome
+}
+
+/// 从懒猫客户端**已经打开的** NexTerm 窗口里取会话票据，写进连接配置并立刻试连一次。
+///
+/// 这是**推荐的连接方式**：用户在盒子上什么都不用做。对比另外两种 ——
+/// 平台 API 令牌要 `hc api_auth_token gen`（需要在盒子上有 shell），
+/// 应用同步令牌要先去盒子版界面里抄一串码。
+///
+/// ⚠️ 取到票据但这次没连上时**不报错**，而是把原因放进返回值的 `last_error`：
+/// 「取到了、这次没连上」和「根本没取到」对用户是两件事 —— 前者要看失败原因，
+/// 后者要去开窗口。混成一个错误会让人不知道该开窗口还是该查令牌。
+#[tauri::command]
+pub async fn sync_discover_token(state: ManagedState<'_>) -> AppResult<SyncLink> {
+    require_desktop()?;
+    let mut link = client::load_link(&state.store).await?;
+    if link.url.trim().is_empty() {
+        return Err(AppError::param("先填盒子地址，再取票据"));
+    }
+    let base = client::normalize_base(&link.url)?;
+    let (token, host) = client::find_session_token(&base)?;
+    link.token_kind = client::TOKEN_KIND_SESSION.to_string();
+    link.token = token;
+    client::save_link(&state.store, &link).await?;
+    tracing::info!(target: "sync", window_host = %host, "已从懒猫客户端窗口取到会话票据");
+
+    let outcome = client::remote_digest(&link).await;
+    record_probe(&state.store, &link, &outcome).await;
+    if let Err(e) = outcome {
+        link.last_error = Some(e.to_string());
+    }
+    Ok(link)
 }
 
 #[derive(Deserialize)]

@@ -59,6 +59,22 @@ pub const PLATFORM_TOKEN_HEADER: &str = "lzc-api-auth-token";
 /// 平台鉴权通过后注入的用户标识头（官方 `/http-request-headers`）。
 pub const PLATFORM_USER_HEADER: &str = "x-hc-user-id";
 
+/// 懒猫**客户端会话票据**的头名（`Lzc-Auth-Token`）。
+///
+/// 平台登录门认的就是这个头（§15.3.1 实测）。它和 [`PLATFORM_TOKEN_HEADER`]
+/// 是同一道门的两种钥匙，区别在**谁去开**：
+///
+/// - `Lzc-Api-Auth-Token`：要给盒子开个口子（`hc api_auth_token gen`），
+///   而那个命令需要**盒子上的 shell** —— 开发者侧唯一能进去的入口是
+///   `debug.bridge`，它没有 `hc`（实测）。所以这条路对普通用户等于不存在。
+/// - `Lzc-Auth-Token`：懒猫客户端**每次打开 Web 应用窗口**时自己下发的，
+///   就写在窗口进程的命令行上（`--authToken=`）。桌面端读得到
+///   （见 [`client::find_session_token`]），**用户不必在盒子上做任何事**。
+///
+/// 代价是它是**会话级**的：窗口关掉、客户端重启都会换。失效后的表现是被登录门
+/// 307（见 `client::gate_error`），重新取一次即可 —— 同步本来就是手动动作。
+pub const SESSION_TOKEN_HEADER: &str = "lzc-auth-token";
+
 /// 本实例的标识（持久化，首次调用时生成）。
 ///
 /// 用 8 位十六进制而不是 ULID：它是要显示在人眼前、口头念得出来的东西
