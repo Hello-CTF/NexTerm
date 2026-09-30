@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      text { font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif; }
+      .mono { font-family: ui-monospace, Menlo, "Cascadia Mono", monospace; }
+      .t-title { font-size: 40px; font-weight: 700; fill: #eef1f6; }
+      .t-sub   { font-size: 20px; fill: #8a919f; }
+      .t-h     { font-size: 27px; font-weight: 700; fill: #eef1f6; }
+      .t-tag   { font-size: 13.5px; letter-spacing: 1.4px; fill: #8b9de4; }
+      .t-step  { font-size: 16.5px; fill: #c8d0e0; }
+      .t-num   { font-size: 13px; font-weight: 700; fill: #0e1015; }
+      .t-field { font-size: 16px; }
+      .t-key   { font-size: 17px; font-weight: 700; fill: #eef1f6; }
+      .t-val   { font-size: 16.5px; fill: #9aa6c4; }
+    </style>
+    <marker id="dn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#516cd6"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="900" fill="#0e1015"/>
+
+  <text class="t-title" x="84" y="88">连接对端：一把令牌，两个部署位置</text>
+  <text class="t-sub" x="84" y="128">不用管对端装在哪 —— 地址填对、令牌贴上，就连上了</text>
+
+  <!-- ═══ 桌面发起端 ═══ -->
+  <rect x="84" y="176" width="1432" height="150" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
+  <text class="t-h" x="120" y="248">桌面 App</text>
+  <text class="t-sub" x="120" y="284" font-size="16px">发起同步的一端</text>
+
+  <rect x="524" y="216" width="410" height="52" rx="10" fill="#0f131b" stroke="#2b3446"/>
+  <text class="t-field mono" x="548" y="249" fill="#616877">https://nexterm.…</text>
+
+  <rect x="958" y="216" width="348" height="52" rx="10" fill="#0f131b" stroke="#2b3446"/>
+  <text class="t-field mono" x="982" y="249" fill="#616877">同步令牌 ••••••••</text>
+
+  <rect x="1330" y="216" width="150" height="52" rx="10" fill="#4a63c9"/>
+  <text class="t-field" x="1405" y="249" text-anchor="middle" fill="#ffffff" font-weight="600">测试连接</text>
+
+  <line x1="437" y1="334" x2="437" y2="374" stroke="#516cd6" stroke-width="2" marker-end="url(#dn)"/>
+  <line x1="1163" y1="334" x2="1163" y2="374" stroke="#516cd6" stroke-width="2" marker-end="url(#dn)"/>
+
+  <!-- ═══ 左：懒猫微服 ═══ -->
+  <rect x="84" y="380" width="706" height="360" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
+  <text class="t-tag mono" x="120" y="424">部署位置 A</text>
+  <text class="t-h" x="116" y="474">懒猫微服</text>
+
+  <circle cx="138" cy="524" r="12" fill="#516cd6"/><text class="t-num" x="138" y="529" text-anchor="middle">1</text>
+  <text class="t-step" x="166" y="530">平台有自己的登录门：公网入口默认要求登录</text>
+  <circle cx="138" cy="572" r="12" fill="#516cd6"/><text class="t-num" x="138" y="577" text-anchor="middle">2</text>
+  <text class="t-step" x="166" y="578">只放行一条路径：<tspan class="mono" fill="#8b9de4">/sync/rpc</tspan></text>
+  <circle cx="138" cy="620" r="12" fill="#516cd6"/><text class="t-num" x="138" y="625" text-anchor="middle">3</text>
+  <text class="t-step" x="166" y="626">请求这才到达容器</text>
+  <circle cx="138" cy="668" r="12" fill="#516cd6"/><text class="t-num" x="138" y="673" text-anchor="middle">4</text>
+  <text class="t-step" x="166" y="674">应用自己校验令牌，不对就 401</text>
+
+  <text class="t-val" x="120" y="718" font-size="15px" fill="#616877">放行的是平台的账密门，不是应用的门</text>
+
+  <!-- ═══ 右：自建服务器 ═══ -->
+  <rect x="810" y="380" width="706" height="360" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
+  <text class="t-tag mono" x="846" y="424">部署位置 B</text>
+  <text class="t-h" x="842" y="474">自建服务器</text>
+
+  <circle cx="864" cy="524" r="12" fill="#516cd6"/><text class="t-num" x="864" y="529" text-anchor="middle">1</text>
+  <text class="t-step" x="892" y="530">不经平台网关，直接连到服务端</text>
+  <circle cx="864" cy="572" r="12" fill="#516cd6"/><text class="t-num" x="864" y="577" text-anchor="middle">2</text>
+  <text class="t-step" x="892" y="578">应用自己校验令牌，不对就 401</text>
+  <circle cx="864" cy="620" r="12" fill="#516cd6"/><text class="t-num" x="864" y="625" text-anchor="middle">3</text>
+  <text class="t-step" x="892" y="626">公网地址强制 https</text>
+  <circle cx="864" cy="668" r="12" fill="#516cd6"/><text class="t-num" x="864" y="673" text-anchor="middle">4</text>
+  <text class="t-step" x="892" y="674">容器或直接跑 <tspan class="mono" fill="#8b9de4">nexterm-server</tspan></text>
+
+  <text class="t-val" x="846" y="718" font-size="15px" fill="#616877">只有本机 / 内网地址才允许 http</text>
+
+  <!-- ═══ 底部提示 ═══ -->
+  <rect x="84" y="762" width="1432" height="106" rx="16" fill="#1c1a17" stroke="#5c4a2a" stroke-width="1.5"/>
+  <text class="t-key" x="120" y="804">令牌从哪来，它等于什么</text>
+  <text class="t-val" x="120" y="838">在对端服务端的「设置 → 资产同步」里复制。它等同于该实例的完全控制权（能执行任何已注册命令），不只是同步资产 —— 别外传。</text>
+</svg>

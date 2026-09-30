@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      text { font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif; }
+      .mono { font-family: ui-monospace, Menlo, "Cascadia Mono", monospace; }
+      .t-title { font-size: 40px; font-weight: 700; fill: #eef1f6; }
+      .t-sub   { font-size: 20px; fill: #8a919f; }
+      .t-h     { font-size: 25px; font-weight: 700; fill: #eef1f6; }
+      .t-li    { font-size: 16.5px; fill: #b3bac6; }
+      .t-tag   { font-size: 13.5px; letter-spacing: 1.4px; fill: #8b9de4; }
+      .t-step  { font-size: 15.5px; fill: #c8d0e0; }
+      .t-num   { font-size: 15px; font-weight: 700; fill: #0e1015; }
+      .t-cap   { font-size: 15px; fill: #8a919f; }
+      .t-key   { font-size: 17px; font-weight: 700; fill: #eef1f6; }
+      .t-val   { font-size: 16px; fill: #9aa6c4; }
+    </style>
+    <marker id="a-push" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b9de4"/>
+    </marker>
+    <marker id="a-pull" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M10,0 L0,5 L10,10 z" fill="#55c483"/>
+    </marker>
+    <marker id="a-step" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#516cd6"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="900" fill="#0e1015"/>
+
+  <text class="t-title" x="84" y="88">跨实例资产同步</text>
+  <text class="t-sub" x="84" y="128">桌面把主机、分组与凭据配好，一键送到对端；之后手机、平板、浏览器接着用</text>
+
+  <!-- ═══ 左：本机 ═══ -->
+  <rect x="84" y="180" width="600" height="352" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
+  <text class="t-tag mono" x="120" y="228">本机 · 桌面版</text>
+  <text class="t-h" x="116" y="280">要搬走的那一份</text>
+  <text class="t-li" x="120" y="334">资产库：SQLite（WAL）</text>
+  <text class="t-li" x="120" y="382">凭据库：DPAPI / 主密码 —— 同步前必须先解锁</text>
+  <text class="t-li" x="120" y="430">只搬你勾中的资产，方向（推 / 拉）由你按按钮定</text>
+  <text class="t-val mono" x="120" y="486" fill="#616877">内置「当前设备」不参与搬运</text>
+
+  <!-- ═══ 右：对端 ═══ -->
+  <rect x="916" y="180" width="600" height="352" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
+  <text class="t-tag mono" x="952" y="228">对端 · 服务端</text>
+  <text class="t-h" x="948" y="280">落地的那一份</text>
+  <text class="t-li" x="952" y="334">资产库：SQLite（服务端自己的实例）</text>
+  <text class="t-li" x="952" y="382">凭据用对端自己的密钥重新加密落库</text>
+  <text class="t-li" x="952" y="430">逐条回报：导入 / 跳过 / 警告</text>
+  <text class="t-val mono" x="952" y="486" fill="#616877">主机指纹以目标端实际握手为准</text>
+
+  <!-- ═══ 中间：两个方向 ═══ -->
+  <line x1="700" y1="300" x2="900" y2="300" stroke="#8b9de4" stroke-width="2" marker-end="url(#a-push)"/>
+  <text class="t-cap mono" x="800" y="282" text-anchor="middle" fill="#8b9de4">推送到对端</text>
+
+  <line x1="900" y1="404" x2="700" y2="404" stroke="#55c483" stroke-width="2" marker-end="url(#a-pull)"/>
+  <text class="t-cap mono" x="800" y="386" text-anchor="middle" fill="#55c483">从对端拉取</text>
+
+  <text class="t-cap mono" x="800" y="462" text-anchor="middle" fill="#616877">方向显式</text>
+  <text class="t-cap mono" x="800" y="486" text-anchor="middle" fill="#616877">不做自动合并</text>
+
+  <!-- ═══ 凭据链路 ═══ -->
+  <rect x="84" y="556" width="1432" height="140" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
+  <text class="t-tag mono" x="120" y="594">凭据怎么过去 —— 两端密钥体系各自独立，密文搬过去解不开</text>
+
+  <rect x="120" y="608" width="290" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="265" y="646" text-anchor="middle">源端解锁凭据库</text>
+  <line x1="418" y1="640" x2="462" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <rect x="470" y="608" width="290" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="615" y="646" text-anchor="middle">解密出落库明文</text>
+  <line x1="768" y1="640" x2="812" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <rect x="820" y="608" width="290" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step mono" x="965" y="646" text-anchor="middle">HTTPS 传输</text>
+  <line x1="1118" y1="640" x2="1162" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <rect x="1170" y="608" width="310" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="1325" y="646" text-anchor="middle">目标端重新加密落库</text>
+
+  <!-- ═══ 两条规则 ═══ -->
+  <rect x="84" y="728" width="706" height="128" rx="16" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
+  <text class="t-key" x="120" y="774">冲突怎么办</text>
+  <text class="t-val" x="120" y="808">默认跳过「本机这份更新」的条目，并逐条说明原因</text>
+  <text class="t-val" x="120" y="836">看到报告后可勾「强制覆盖」再来一次</text>
+
+  <rect x="810" y="728" width="706" height="128" rx="16" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
+  <text class="t-key" x="846" y="774">哪些不搬</text>
+  <text class="t-val" x="846" y="808">AI 对话 · 审计日志 · 终端录制 —— 本地行为记录，搬过去不是同一件事</text>
+  <text class="t-val" x="846" y="836">主机指纹 —— 必须以目标端实际握手结果为准</text>
+</svg>
