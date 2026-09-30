@@ -11,8 +11,8 @@
 
 | 用途 | 文件 |
 |---|---|
-| 自建机器 / 内网 VPS，**带完整浏览器界面** | `NexTerm-*-linux-amd64.tar.gz` |
-| 公网只做资产同步中转，无界面、命令行管理 | `NexTerm-onlyServer-*-linux-amd64.tar.gz` |
+| **LinuxServer** —— 自建机器 / 内网 VPS，**带完整浏览器界面** | `NexTerm-*-linux-amd64.tar.gz` |
+| **onlyServer** —— 公网只做资产同步中转，无界面、命令行管理 | `NexTerm-onlyServer-*-linux-amd64.tar.gz` |
 
 两者是**同一个二进制**，只差一个 `--sync-only` —— 分成两个包是为了让你拿到手就是对的形态。
 解压后有二进制、前端产物、systemd 单元与一份 `README.md` / `.env.example`。
