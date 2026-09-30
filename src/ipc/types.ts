@@ -126,7 +126,7 @@ export type SnippetDto = { id: string, groupId: string | null, name: string, bod
  */
 export type SyncDigest = { origin: string, protocol: number, appVersion: string, 
 /**
- * 本实例是桌面版还是服务端（界面据此区分「这台 / 盒子」）。
+ * 本实例是桌面版还是服务端（界面据此区分「本机 / 对端」）。
  */
 desktop: boolean, assets: Array<DigestEntry>, };
 

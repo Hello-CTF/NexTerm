@@ -222,7 +222,7 @@ pub struct SyncDigest {
     pub origin: String,
     pub protocol: u32,
     pub app_version: String,
-    /// 本实例是桌面版还是服务端（界面据此区分「这台 / 盒子」）。
+    /// 本实例是桌面版还是服务端（界面据此区分「本机 / 对端」）。
     pub desktop: bool,
     pub assets: Vec<DigestEntry>,
 }
