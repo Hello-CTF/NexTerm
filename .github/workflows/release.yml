@@ -176,6 +176,12 @@ jobs:
       - name: 上传
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ⛔ 这个 job **故意没有 checkout**（只下载 artifact 再上传），于是当前目录
+          # 不是 git 仓库，`gh` 就推不出「要操作哪个仓库」—— 2026-10-01 首次真跑正是
+          # 死在这里：`failed to run git: fatal: not a git repository`。
+          # 明写 GH_REPO，而不是为了 gh 去 checkout 一次整仓库：这个 job 的依赖
+          # 保持「一个 artifact + 一个 token」。
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # nullglob：不然没匹配上时数组里会留一个字面量 `release-assets/*.tar.gz`，
