@@ -154,6 +154,52 @@ impl super::Store {
             .await?;
         Ok(())
     }
+
+    /// 按指定 ID 写入分组（同步导入用）：存在则覆盖，不存在则新建；返回是否新建。
+    ///
+    /// 与 `group_create` 的唯一区别是 **ID 由调用方给定** —— 同步的两端必须认
+    /// 同一套 ID，否则「同一个分组在两台设备上」会被当成两个分组，每次同步都
+    /// 变成「新增」而不是「更新」，越同步越乱。
+    ///
+    /// 两点刻意行为：
+    /// - `created_at` 新建时取传入值、**更新时不动** —— 「这条什么时候建的」
+    ///   是本地事实，导入不该改写它（`updated_at` 才表示内容新旧）。
+    /// - 调用方必须保证父分组先于子分组写入（`parent_id` 是自引用外键，
+    ///   父不在库里时 INSERT 直接失败）。拓扑排序在 `sync::apply` 里做。
+    pub async fn group_upsert(
+        &self,
+        id: &str,
+        parent_id: Option<&str>,
+        name: &str,
+        sort: i64,
+        created_at: i64,
+        updated_at: i64,
+    ) -> AppResult<bool> {
+        crate::store::ensure_id(id)?;
+        if name.trim().is_empty() {
+            return Err(AppError::param("分组名称不能为空"));
+        }
+        let existed: Option<(String,)> = sqlx::query_as("SELECT id FROM asset_group WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.pool())
+            .await?;
+        sqlx::query(
+            "INSERT INTO asset_group(id, parent_id, name, sort, created_at, updated_at)
+             VALUES(?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+                parent_id = excluded.parent_id, name = excluded.name,
+                sort = excluded.sort, updated_at = excluded.updated_at",
+        )
+        .bind(id)
+        .bind(parent_id)
+        .bind(name.trim())
+        .bind(sort)
+        .bind(created_at)
+        .bind(updated_at)
+        .execute(self.pool())
+        .await?;
+        Ok(existed.is_none())
+    }
 }
 
 // ───────────────────────── asset ─────────────────────────
@@ -353,6 +399,70 @@ impl super::Store {
         .bind(&like)
         .fetch_all(self.pool())
         .await?)
+    }
+
+    /// 按指定 ID 写入资产（同步导入用）：存在则覆盖，不存在则新建；返回是否新建。
+    ///
+    /// 与 `asset_create` / `asset_update` 的三处差异，全都是为了让「导入」不会
+    /// 毁掉本地状态：
+    /// - **ID 由调用方给定** —— 两端认同一套 ID，「同一台机器」才能在两侧被认成
+    ///   同一条；否则每次同步都算「新增」，最后攒出一堆重名资产，而更新永远发不出去。
+    /// - **`builtin` 列永不覆盖**，且内置资产的 ID 直接被拒 —— 「是不是内置」是本机
+    ///   的属性（「当前设备」这个锚点），不能由对端说了算。
+    /// - **`created_at` 只在新插入时采用**，更新时保留本地值。
+    ///
+    /// `deleted_at` 则**照搬**：墓碑是同步的一等公民，不传播的话「对端删了」
+    /// 在本地永远删不掉。
+    ///
+    /// 调用方须保证 `group_id` / `cred_id` 指向的记录已在库里（外键是硬约束，
+    /// 组合不出「先插子后插父」），兜底在 `sync::apply` 里做。
+    pub async fn asset_upsert(&self, row: &AssetRow) -> AppResult<bool> {
+        if row.id == BUILTIN_LOCAL_ASSET_ID {
+            return Err(AppError::param(
+                "内置资产「当前设备」不接受同步写入（本机在每台设备上都是各自身份）",
+            ));
+        }
+        crate::store::ensure_id(&row.id)?;
+        if row.name.trim().is_empty() {
+            return Err(AppError::param("资产名称不能为空"));
+        }
+        let existed: Option<(String,)> = sqlx::query_as("SELECT id FROM asset WHERE id = ?")
+            .bind(&row.id)
+            .fetch_optional(self.pool())
+            .await?;
+        sqlx::query(
+            "INSERT INTO asset(id, group_id, kind, name, host, port, username, auth_kind,
+             key_path, cred_id, options_json, tags, note, sort, created_at, updated_at,
+             deleted_at, builtin)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+             ON CONFLICT(id) DO UPDATE SET
+                group_id = excluded.group_id, kind = excluded.kind, name = excluded.name,
+                host = excluded.host, port = excluded.port, username = excluded.username,
+                auth_kind = excluded.auth_kind, key_path = excluded.key_path,
+                cred_id = excluded.cred_id, options_json = excluded.options_json,
+                tags = excluded.tags, note = excluded.note, sort = excluded.sort,
+                updated_at = excluded.updated_at, deleted_at = excluded.deleted_at",
+        )
+        .bind(&row.id)
+        .bind(&row.group_id)
+        .bind(&row.kind)
+        .bind(row.name.trim())
+        .bind(&row.host)
+        .bind(row.port)
+        .bind(&row.username)
+        .bind(&row.auth_kind)
+        .bind(&row.key_path)
+        .bind(&row.cred_id)
+        .bind(&row.options_json)
+        .bind(&row.tags)
+        .bind(&row.note)
+        .bind(row.sort)
+        .bind(row.created_at)
+        .bind(row.updated_at)
+        .bind(row.deleted_at)
+        .execute(self.pool())
+        .await?;
+        Ok(existed.is_none())
     }
 }
 

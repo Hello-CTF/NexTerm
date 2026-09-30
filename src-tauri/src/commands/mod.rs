@@ -10,6 +10,7 @@ pub mod fs;
 pub mod models;
 pub mod mount;
 pub mod session;
+pub mod sync;
 pub mod terminal;
 pub mod vault;
 
@@ -173,6 +174,18 @@ macro_rules! nexterm_commands {
             asset::known_host_accept,
             asset::known_host_remove,
             asset::app_info,
+            // sync（两端共用三个原语 + 桌面出站五条；服务端上出站命令运行时报 unsupported）
+            sync::sync_digest,
+            sync::sync_origin,
+            sync::sync_export,
+            sync::sync_import,
+            sync::sync_token,
+            sync::sync_token_rotate,
+            sync::sync_link_get,
+            sync::sync_link_set,
+            sync::sync_remote_digest,
+            sync::sync_push,
+            sync::sync_pull,
         }
     };
 }

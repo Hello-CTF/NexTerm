@@ -132,7 +132,7 @@ redis = { version = "0.27", features = ["tokio-comp"] }
 # argon2 / windows / reqwest 版本与 russh、pageant、winrm-rs 的依赖树对齐，避免同一大件编译两份。
 argon2 = "0.6"
 chacha20poly1305 = "0.10"
-zeroize = { version = "1", features = ["derive"] }
+zeroize = { version = "1", features = ["derive", "serde"] }
 rand = "0.8"
 
 # 传输

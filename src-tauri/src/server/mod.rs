@@ -35,13 +35,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, State as AxumState};
-use axum::http::Uri;
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::error::AppResult;
 use crate::ipc_shim::AppHandle;
 use crate::server::hub::WsHub;
 use crate::server::rpc::Table;
@@ -125,6 +126,18 @@ pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => tracing::warn!(target: "boot", error = %e, "内置本地资产创建失败"),
     }
 
+    // 同步令牌：第一次启动就生成并落库，桌面版靠它（或平台的 API Token）配对。
+    // **不把令牌本身写进日志** —— 日志会被收集、转发、贴进工单。
+    match crate::sync::ensure_token(&store).await {
+        Ok(_) => tracing::info!(
+            target: "boot",
+            "同步令牌已就绪（浏览器版「设置 → 同步」里可以查看）"
+        ),
+        Err(e) => {
+            tracing::warn!(target: "boot", error = %e, "同步令牌初始化失败，桌面端同步将不可用")
+        }
+    }
+
     let sessions = Arc::new(crate::session::SessionManager::new());
     let model_store = crate::ai::profiles::ModelProfileStore::load(&store)
         .await
@@ -194,6 +207,10 @@ pub async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
     let router = Router::new()
         .route("/rpc", post(handle_rpc))
+        // 桌面端的同步入口。**单独一条路径而不是给 `/rpc` 加锁**：`/rpc` 是
+        // 浏览器版在用的（靠平台登录门保护），动它等于给已有功能引入新的
+        // 故障模式；同步是新增能力，就该待在新增的路径上。见 `handle_sync_rpc`。
+        .route("/sync/rpc", post(handle_sync_rpc))
         .route("/healthz", get(handle_healthz))
         .route("/ws/events", get(hub::ws_events))
         .route("/ws/channel/{id}", get(hub::ws_channel))
@@ -306,6 +323,61 @@ async fn handle_rpc(
     AxumState(ctx): AxumState<Arc<ServerCtx>>,
     Json(req): Json<RpcRequest>,
 ) -> Response {
+    dispatch(ctx, req).await
+}
+
+/// `POST /sync/rpc` —— 桌面端的同步入口。
+///
+/// 与 `/rpc` 共用同一条分发路径，差别只有一处：**先鉴权**。两条路任一成立即可：
+///
+/// ① `X-NexTerm-Sync-Token` 与本实例令牌一致 —— 不依赖平台，`public_path`
+///    放行或同网段直连时单靠它就够；
+/// ② 请求带 `X-HC-User-ID` —— 说明平台网关已经鉴过权。桌面用官方
+///    `Lzc-Api-Auth-Token` 走公网域名时走的就是这条路（该头由网关消费，
+///    转发进容器时会被移除，所以应用只能靠注入的用户标识判断）。
+///
+/// ⚠️ **令牌等价于「本实例的完全控制权」**：它调的是同一张 RPC 表，能执行任何
+/// 已注册命令，不只是资产同步。界面与文档的文案必须据实说明，不能做成
+/// 「只读配对码」的样子。
+async fn handle_sync_rpc(
+    AxumState(ctx): AxumState<Arc<ServerCtx>>,
+    headers: HeaderMap,
+    Json(req): Json<RpcRequest>,
+) -> Response {
+    if let Err(e) = authorize_sync(&ctx, &headers).await {
+        tracing::warn!(target: "sync", cmd = %req.cmd, code = e.code(), "同步请求被拒");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "ok": false, "error": e })),
+        )
+            .into_response();
+    }
+    dispatch(ctx, req).await
+}
+
+/// `/sync/rpc` 的准入判定。
+async fn authorize_sync(ctx: &ServerCtx, headers: &HeaderMap) -> AppResult<()> {
+    let presented = headers
+        .get(crate::sync::TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    // 令牌对了就走这条路；不对也**不立刻拒** —— 先看平台头。最后再拿令牌校验
+    // 的错误信息回报：说「令牌不正确」比说「缺少令牌」对排查有用得多。
+    if !presented.is_empty()
+        && crate::sync::verify_token(&ctx.state.store, presented)
+            .await
+            .is_ok()
+    {
+        return Ok(());
+    }
+    if headers.contains_key(crate::sync::PLATFORM_USER_HEADER) {
+        return Ok(());
+    }
+    crate::sync::verify_token(&ctx.state.store, presented).await
+}
+
+/// 命令分发的唯一实现（两条路径共用，避免两侧行为漂移）。
+async fn dispatch(ctx: Arc<ServerCtx>, req: RpcRequest) -> Response {
     let started = std::time::Instant::now();
     let result = ctx
         .table

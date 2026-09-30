@@ -16,6 +16,7 @@ pub mod ipc_types;
 pub mod session;
 pub mod state;
 pub mod store;
+pub mod sync;
 pub mod terminal;
 pub mod transport;
 pub mod vault;
