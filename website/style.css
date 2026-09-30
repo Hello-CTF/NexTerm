@@ -435,9 +435,14 @@ img { max-width: 100%; display: block; }
 
 .cell ul { list-style: none; display: grid; gap: 7px; margin-top: 12px; }
 
-.cell ul li { font-size: 13px; color: var(--text-3); display: flex; gap: 9px; }
+/* ⛔ 这里**不能**用 `display: flex` 挂 `▸`。
+   实测：flex 是 nowrap，文字在 flex 主轴里不会换行 ⇒ 条目一长整行就撑破卡片
+   （窄屏 390px 下实测把 `.cell` 从 342 撑到 409，页面整体横向溢出 43px）。
+   改成「块 + 绝对定位的记号」：文字正常换行，续行挂在 16.8px 处（等于原来的
+   `▸ 宽度 + gap 9px`，逐项量过，单行条目的文字坐标与行高与改前一致）。 */
+.cell ul li { font-size: 13px; color: var(--text-3); display: block; position: relative; padding-left: 16.8px; }
 
-.cell ul li::before { content: "▸"; color: var(--accent-bright); font-family: var(--mono); flex-shrink: 0; }
+.cell ul li::before { content: "▸"; color: var(--accent-bright); font-family: var(--mono); position: absolute; left: 0; }
 
 /* ── 在线体验 CTA ─────────────────────────────────────────────────────── */
 
