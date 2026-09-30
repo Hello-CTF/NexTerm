@@ -25,6 +25,12 @@ export type ConversationDto = { id: string, title: string, scope: JsonValue, cre
 
 export type CredentialMetaDto = { id: string, name: string, kind: string, cipher: string, kekHint: string, createdAt: number, updatedAt: number, };
 
+export type DigestEntry = { id: string, name: string, kind: string, host: string | null, username: string | null, updatedAt: number, deletedAt: number | null, 
+/**
+ * 引用了凭据（界面据此提示「这条带密码」）。
+ */
+hasCred: boolean, groupId: string | null, };
+
 export type FileEntryDto = { name: string, path: string, 
 /**
  * dir | file | symlink | other
@@ -42,6 +48,24 @@ targetHost: string | null, targetPort: number | null,
 kind: string, createdAt: number, };
 
 export type ImageSummaryDto = { id: string, repository: string, tag: string, size: string, createdSince: string, };
+
+/**
+ * 导入结果。界面拿它报告「建了几条、更新了几条、什么被跳过了」。
+ */
+export type ImportReport = { groupsCreated: number, groupsUpdated: number, assetsCreated: number, assetsUpdated: number, credsCreated: number, credsUpdated: number, 
+/**
+ * 因为「本地这份更新」而跳过的条数（未开强制覆盖时）。
+ */
+skippedNewer: number, 
+/**
+ * 被拒的条数（内置资产、名称非法等）。
+ */
+refused: number, 
+/**
+ * 人话警告。界面必须展示 —— 这里的每一条都对应一个「用户以为同步了，
+ * 其实没有」的坑（引用的私钥路径失效、凭据没跟过来、分组不存在…）。
+ */
+warnings: Array<string>, };
 
 export type KnownHostDto = { id: string, host: string, port: number, keyType: string, fingerprint: string, addedAt: number, };
 
@@ -96,6 +120,44 @@ status: string, tabs: Array<string>, createdAt: number, };
 export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, };
 
 export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, };
+
+/**
+ * 本机摘要：给界面做「哪边有、哪边新」的对比，**不含任何密文**。
+ */
+export type SyncDigest = { origin: string, protocol: number, appVersion: string, 
+/**
+ * 本实例是桌面版还是服务端（界面据此区分「这台 / 盒子」）。
+ */
+desktop: boolean, assets: Array<DigestEntry>, };
+
+/**
+ * 出站连接配置。
+ *
+ * ⚠️ `token` 是**明文存在本地库**的（和凭据库分开）。这是刻意的取舍：它要能
+ * 在用户没解锁凭据库时也把「上次连的那个盒子」显示出来；换成密文就得先解锁
+ * 才能看一眼设置页。风险面在界面上明说（密码框 + 文案）。
+ */
+export type SyncLink = { 
+/**
+ * 盒子公网地址，如 `https://nexterm.heiyu.space`
+ */
+url: string, 
+/**
+ * `platform` | `app`
+ */
+tokenKind: string, token: string, 
+/**
+ * 跳过 TLS 证书校验（懒猫盒子私有 CA）。
+ */
+insecure: boolean, 
+/**
+ * 最近一次连通性探测成功的时间（Unix 毫秒；0 = 没测过）
+ */
+verifiedAt: number, 
+/**
+ * 最近一次探测的失败原因（成功时为空）
+ */
+lastError: string | null, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, };
 

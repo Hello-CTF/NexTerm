@@ -15,6 +15,7 @@ import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
+import { SyncCard } from "./SyncCard";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
@@ -414,6 +415,9 @@ export function SettingsView() {
             </div>
           )}
         </section>
+
+        {/* 资产同步：桌面与微服之间搬资产。桌面是发起方，浏览器版是被同步的一端 */}
+        <SyncCard />
 
         {/* 快捷键速查 */}
         <section className="nx-card">

@@ -664,3 +664,56 @@ export const forwardApi = {
   list: () => call<import("./types").ForwardSpecDto[]>("forward_list"),
   remove: (id: string) => call<void>("forward_remove", { id }),
 };
+
+// ───────── sync（跨实例资产同步）─────────
+
+/**
+ * 桌面 ↔ 盒子上的服务端之间搬运资产。
+ *
+ * 三类命令，边界很清楚：
+ * - `digest` / `export` / `import` 是**两端共用**的本地操作（服务端靠它们接收推送）；
+ * - `linkGet` / `linkSet` / `remoteDigest` / `push` / `pull` 只在桌面版有意义
+ *   （服务端上会返回 `unsupported`）；
+ * - `token` / `rotateToken` 只在服务端有值（桌面版回 `null`）。
+ *
+ * `push` / `pull` 的方向是**显式**的：用户勾哪些、按哪个按钮，就往哪个方向走。
+ * 没有自动合并 —— 冲突（两边都改过）由界面呈现，由人决定。
+ */
+export const syncApi = {
+  /** 本机摘要（不含任何密文），用于对照界面。 */
+  digest: () => call<import("./types").SyncDigest>("sync_digest"),
+  origin: () => call<string>("sync_origin"),
+
+  /** 导出选中资产为同步包（本地操作，不走网络）。 */
+  exportAssets: (assetIds: string[], withCreds: boolean) =>
+    call<unknown>("sync_export", { args: { assetIds, withCreds } }),
+
+  /** 应用一个同步包（本地操作）。 */
+  importBundle: (bundle: unknown, force: boolean) =>
+    call<import("./types").ImportReport>("sync_import", { args: { bundle, force } }),
+
+  // ── 仅桌面 ──
+
+  linkGet: () => call<import("./types").SyncLink>("sync_link_get"),
+  /**
+   * 保存连接配置。`token` 缺省 = 不改动已存的令牌（界面留空时不覆盖）。
+   */
+  linkSet: (patch: { url: string; tokenKind?: string; token?: string; insecure?: boolean }) =>
+    call<import("./types").SyncLink>("sync_link_set", { args: patch }),
+
+  /** 拉对端摘要 —— 同时就是连通性探测，结果会写回连接配置。 */
+  remoteDigest: () => call<import("./types").SyncDigest>("sync_remote_digest"),
+  /** 推送选中资产到盒子。 */
+  push: (assetIds: string[], withCreds: boolean, force: boolean) =>
+    call<import("./types").ImportReport>("sync_push", { args: { assetIds, withCreds, force } }),
+  /** 从盒子拉取选中资产到本地。 */
+  pull: (assetIds: string[], withCreds: boolean, force: boolean) =>
+    call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
+
+  // ── 仅服务端 ──
+
+  /** 本机同步令牌（桌面版回 null）。 */
+  token: () => call<string | null>("sync_token"),
+  /** 换一个同步令牌，旧令牌立即失效。 */
+  rotateToken: () => call<string | null>("sync_token_rotate"),
+};
