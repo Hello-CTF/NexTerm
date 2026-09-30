@@ -1346,7 +1346,7 @@ try {
 | 层 | 产物 |
 |---|---|
 | IPC 门面 | `src/ipc_shim.rs`（桌面转发真 Tauri / 服务端给替身）+ `nexterm-ipc-macros`（proc-macro） |
-| 命令清单 | `commands/mod.rs` 的**一份** `macro_rules! nexterm_commands`（121 条），两侧共用 |
+| 命令清单 | `commands/mod.rs` 的**一份** `macro_rules! nexterm_commands`（**132** 条，随 sync 从 121 增至 132），两侧共用 |
 | 服务端 | `src/server/{mod,rpc,hub,static_files}.rs` + `src/bin/nexterm-server.rs` |
 | 前端 | `src/ipc/env.ts`（三态判定）+ `src/ipc/webTransport.ts`（WS 通道 / 事件订阅），`commands.ts` / `events.ts` / `dialogs.ts` / `main.tsx` / `App.tsx` 接三态 |
 | 打包 | `lazycat/{package.yml,lzc-manifest.yml,lzc-build.yml,lzc-build.dev.yml}` + `lazycat/image/{Dockerfile,build-server.sh}` |
@@ -1364,8 +1364,14 @@ try {
 | 服务端 check | `cargo check --no-default-features --features server --all-targets` | 干净 |
 | 服务端 test | `cargo test --no-default-features --features server --lib` | 217 passed |
 
-命令数口径（实测对齐过一次，此前记错）：**独占一行的 `#[tauri::command]` 121 个 = 121 个函数 =
-清单 121 条 = `/healthz` 报 `commands:121`**。另有 3 处属性串只出现在注释里。
+命令数口径（2026-10-01 重测）：**独占一行的 `#[tauri::command]` 132 个 = 132 个函数 =
+清单 132 条 = `/healthz` 报 `commands:132`**。另有 3 处属性串只出现在注释里
+（`commands/mod.rs` 的宏说明、`ipc_shim.rs` 与 `lib.rs` 的文档注释）⇒ `grep -c` 得 135，
+不是 135 条命令。
+
+⏳ 数字会变：本页 §13 那几处 `commands:121` 是**当时的实测记录**（保留不改，那是证据）；
+121 → 132 是 `sync` 落地带进来的 11 条（`commands/sync.rs`）。加命令后请以 `/healthz` 为准
+重测一次，别照抄这里的数字。
 
 ### 13.2 服务端端到端冒烟：真跑过，不是"应该能跑"
 
@@ -1373,7 +1379,7 @@ try {
 
 | 断言 | 结果 |
 |---|---|
-| `/healthz` | `commands:121`，`vault {initialized:true, unlocked:true, mode:"master"}` |
+| `/healthz` | `commands:121`，`vault {initialized:true, unlocked:true, mode:"master"}` ⏳ 当轮数字；sync 落地后为 **132**，见上面「命令数口径」与 §18 |
 | `POST /rpc app_platform` | `{"data":"macos","ok":true}` |
 | 未知命令 | **HTTP 200** + `{"ok":false,"error":{"code":"not_found"}}`（信封语义对） |
 | `terminal_attach` 缺 channel | `bad_param`，报文直接提示"服务端模式下要先开 `/ws/channel/<id>`" |
