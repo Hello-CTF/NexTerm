@@ -581,15 +581,83 @@ img { max-width: 100%; display: block; }
 
 .footer-meta { font-size: 12.5px; color: var(--text-4); }
 
+/* ── 配图（示意图 / 宽幅截图） ─────────────────────────────────────────── */
+
+.figure {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  background: #0b0d12;
+  margin-bottom: 24px;
+}
+
+.figure img { width: 100%; }
+
+/* 放在分栏里时不要再压一层下边距（列间距已经给了） */
+.figure-tight { margin-bottom: 0; }
+
+/* ── 两种形态：并排两张卡 ─────────────────────────────────────────────── */
+
+.duo {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+/* 三列版 bento（资产同步的三条规则）。写在 .bento 之后，靠顺序覆盖列数。 */
+.bento-3 { grid-template-columns: repeat(3, 1fr); }
+
+/* ── 图文分栏 ─────────────────────────────────────────────────────────── */
+
+.split {
+  display: grid;
+  grid-template-columns: 0.92fr 1.08fr;
+  gap: 48px;
+  align-items: center;
+  margin-top: 56px;
+}
+
+.split > div > p { font-size: 15px; }
+
+.sub-h {
+  font-size: clamp(22px, 3vw, 28px);
+  color: var(--text);
+  font-weight: 750;
+  letter-spacing: -0.3px;
+  margin-bottom: 12px;
+}
+
+.points { list-style: none; display: grid; gap: 12px; margin-top: 20px; }
+
+/* ⚠️ 这里**不能**用 flex：li 里带行内 <b>，display:flex 会把 <b> 变成独立
+   的 flex 项，于是「懒猫微服」被拆成两个盒子换行。用绝对定位的符号代替。 */
+.points li { position: relative; padding-left: 22px; font-size: 14.5px; color: var(--text-3); }
+
+.points li::before {
+  content: "▸";
+  position: absolute;
+  left: 0;
+  color: var(--accent-bright);
+  font-family: var(--mono);
+}
+
+.points b { color: var(--text-2); font-weight: 600; }
+
+.cell em { color: var(--text-2); font-style: normal; font-weight: 600; }
+
 /* ── 响应式 ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 980px) {
   .hero-grid { grid-template-columns: 1fr; gap: 40px; }
   .hero-sub { max-width: none; }
   .bento { grid-template-columns: repeat(2, 1fr); }
+  .bento-3 { grid-template-columns: 1fr; }
   .cell-lg { grid-column: span 2; grid-row: span 1; }
   .demo-panel { grid-template-columns: 1fr; }
   .get-wrap { grid-template-columns: 1fr; gap: 32px; }
+  .split { grid-template-columns: 1fr; gap: 32px; }
+  .duo { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 700px) {

@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NexTerm — 一体化开发运维终端</title>
-  <meta name="description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。本地优先的桌面终端工作台，凭据加密存储，AI 全程在权限护栏内执行。" />
+  <meta name="description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。桌面 App 与浏览器版共用同一份 Rust 内核，凭据加密存储，AI 全程在权限护栏内执行。" />
   <link rel="icon" type="image/png" href="brand/nexterm-mark-128.png" />
   <meta property="og:title" content="NexTerm — 一体化开发运维终端" />
-  <meta property="og:description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。" />
+  <meta property="og:description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口；也能部署成服务端，浏览器打开即用。" />
   <meta property="og:type" content="website" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -22,8 +22,9 @@
     <span class="nav-path">~/$ <b>nexterm</b></span>
     <div class="nav-links">
       <a href="#features">功能</a>
+      <a href="#forms">两种形态</a>
+      <a href="#sync">资产同步</a>
       <a href="#demo">在线体验</a>
-      <a href="#get">获取</a>
       <a href="#faq">常见问题</a>
     </div>
     <div class="nav-actions">
@@ -48,7 +49,7 @@
           <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub 源码</a>
         </div>
         <div class="hero-meta">
-          <span>目标平台 <span class="os">Windows</span>，其他系统正在构建中</span>
+          <span>桌面版 <span class="os">Windows · macOS</span>，服务端 <span class="os">Linux / 容器</span></span>
           <span>凭据加密存储 · 数据不出本机</span>
         </div>
       </div>
@@ -72,7 +73,7 @@
     </div>
 
     <div class="proto-row">
-      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>XChaCha20</span><span>DPAPI</span><span>xterm.js</span><span>Tauri</span><span>Rust</span>
+      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>XChaCha20</span><span>DPAPI</span><span>xterm.js</span><span>Tauri</span><span>axum</span><span>WebSocket</span><span>SQLite</span><span>Rust</span>
     </div>
   </div>
 </header>
@@ -81,8 +82,8 @@
   <div class="container">
     <div class="section-head">
       <span class="pk">nexterm --modules</span>
-      <h2>一个窗口，九个模块</h2>
-      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流。</p>
+      <h2>一个窗口，把整套运维收进来</h2>
+      <p>不是功能堆叠，而是把命令、文件、数据与 AI 放进同一条工作流 —— 再让它跑在桌面上，也跑在服务器上。</p>
     </div>
     <div class="bento">
       <div class="cell cell-lg">
@@ -116,7 +117,7 @@
       <div class="cell">
         <span class="tag">DOCKER</span>
         <h3>Docker</h3>
-        <p>容器列表、日志 follow、容器终端、镜像管理与容器文件浏览。</p>
+        <p>容器列表、日志 follow、容器终端、镜像管理、容器文件浏览与批量操作。</p>
       </div>
       <div class="cell">
         <span class="tag">FORWARD</span>
@@ -130,6 +131,91 @@
         <ul>
           <li><code>主密码 → Argon2id → KEK → 信封加密 DEK → XChaCha20-Poly1305</code></li>
         </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="forms">
+  <div class="container">
+    <div class="section-head">
+      <span class="pk">nexterm --forms</span>
+      <h2>一个内核，两种形态</h2>
+      <p>同一份 Rust 代码 —— 装在本机是桌面 App，部署到服务器就是浏览器里的运维终端。</p>
+    </div>
+
+    <div class="figure">
+      <img src="images/01-dual-form.png" alt="桌面 App 与服务端共用同一份 Rust 内核" loading="lazy" />
+    </div>
+
+    <div class="duo">
+      <div class="cell">
+        <span class="tag">DESKTOP · TAURI</span>
+        <h3>桌面 App</h3>
+        <p>本地优先、功能完整。Windows 与 macOS 安装即用，凭据加密存在自己机器上。</p>
+        <ul>
+          <li>本地终端 · SSH · WinRM · 文件 · Docker · 数据库</li>
+          <li>AI 助手：工具调用 · 权限护栏 · 终端接管</li>
+          <li>凭据落本机（DPAPI / 主密码）</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <span class="tag">SERVER · AXUM</span>
+        <h3>服务端 nexterm-server</h3>
+        <p>部署一次，随处可用。浏览器打开就是完整界面，不用装任何客户端。</p>
+        <ul>
+          <li>部署到懒猫微服 / 自建服务器</li>
+          <li>同一套界面与命令清单，行为一致</li>
+          <li>同时是桌面版资产同步的对端</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="sync">
+  <div class="container">
+    <div class="section-head">
+      <span class="pk">nexterm --sync</span>
+      <h2>跨实例资产同步</h2>
+      <p>桌面把主机、分组与凭据配好，一键送到对端；之后手机、平板、浏览器接着用。</p>
+    </div>
+
+    <div class="figure">
+      <img src="images/02-sync-flow.png" alt="跨实例资产同步：本机与对端之间的推拉与凭据重封" loading="lazy" />
+    </div>
+
+    <div class="bento bento-3">
+      <div class="cell">
+        <span class="tag">DIRECTION</span>
+        <h3>方向显式</h3>
+        <p>勾中资产，按「推送到对端」或「从对端拉取」。内核不猜方向 —— SSH 私钥这类载荷根本不可合并。</p>
+      </div>
+      <div class="cell">
+        <span class="tag">CONFLICT</span>
+        <h3>默认不覆盖更新的那份</h3>
+        <p>跳过「本机这份更新」的条目并逐条说明原因。看到报告后可勾强制覆盖，再来一次。</p>
+      </div>
+      <div class="cell">
+        <span class="tag">CREDENTIALS</span>
+        <h3>凭据落地重封</h3>
+        <p>两端密钥体系各自独立，密文搬过去解不开。源端解密 → HTTPS 传输 → 目标端用<em>它自己的</em>密钥重新加密。</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <div>
+        <span class="pk">nexterm --connect</span>
+        <h3 class="sub-h">一把令牌，两个部署位置</h3>
+        <p>填「对端地址 + 同步令牌」就能连上，不用管对端装在哪 —— 懒猫微服或自建服务器，令牌是同一个机制。</p>
+        <ul class="points">
+          <li><b>懒猫微服</b>：平台公网入口默认要求登录，应用只把同步入口这一条路径放行，请求这才到达容器。</li>
+          <li><b>自建服务器</b>：不经平台网关，直接连到服务端。</li>
+          <li>两种方式都由<b>应用自己</b>校验令牌，不对就拒绝。</li>
+        </ul>
+      </div>
+      <div class="figure figure-tight">
+        <img src="images/03-connect.png" alt="连接对端：一把令牌，两个部署位置" loading="lazy" />
       </div>
     </div>
   </div>
@@ -160,13 +246,13 @@
   <div class="container">
     <div class="get-wrap">
       <div class="get-steps">
-        <span class="pk">nexterm build</span>
-        <h3>从源码构建</h3>
-        <p>当前目标平台为 Windows，构建依赖 Rust stable MSVC、Node 22+ 与 pnpm 9+。</p>
+        <span class="pk">nexterm install</span>
+        <h3>获取与部署</h3>
+        <p>桌面版支持 Windows 与 macOS；服务端跑在 Linux 容器里，浏览器访问。</p>
         <ul>
-          <li>克隆仓库并安装前端依赖</li>
-          <li>执行打包，产出 NSIS 安装器</li>
-          <li>本地开发与质量门命令见仓库 README</li>
+          <li>桌面版：下载安装包，双击即装</li>
+          <li>服务端：部署到懒猫微服，或自建服务器 / VPS</li>
+          <li>从源码构建：Rust stable + Node 22+ + pnpm</li>
         </ul>
       </div>
       <div class="code-block">
@@ -177,10 +263,11 @@
         <pre><span class="p">$</span> git clone https://github.com/ProbiusOfficial/NexTerm.git
 <span class="p">$</span> cd NexTerm
 <span class="p">$</span> pnpm install
-<span class="p">$</span> pnpm tauri build    <span class="c"># 产出 NSIS 安装器</span>
+<span class="p">$</span> pnpm tauri build    <span class="c"># 桌面端安装包</span>
 
-<span class="c"># 本地开发窗口</span>
-<span class="p">$</span> pnpm tauri dev</pre>
+<span class="c"># 服务端（浏览器访问）</span>
+<span class="p">$</span> cargo build --release --no-default-features \
+      --features server --bin nexterm-server</pre>
       </div>
     </div>
   </div>
@@ -199,7 +286,15 @@
       </details>
       <details>
         <summary>支持哪些操作系统？</summary>
-        <div class="faq-body">当前目标平台为 Windows，其他系统正在构建中。</div>
+        <div class="faq-body">桌面版支持 Windows 10/11 与 macOS（Apple Silicon）；服务端跑在 Linux 容器里，浏览器访问，因而不限操作系统。Linux 桌面版尚未验收。</div>
+      </details>
+      <details>
+        <summary>服务端和桌面版是两套代码吗？</summary>
+        <div class="faq-body">不是。两端共用同一份 Rust 内核与同一份命令清单，差异由平台门控收束，所以界面与行为一致。</div>
+      </details>
+      <details>
+        <summary>同步会把我的密码传到别人的服务器吗？</summary>
+        <div class="faq-body">只在你指定的对端之间传，且只传你勾中的资产。凭据在传输前解密、到达后立刻用对端自己的密钥重新加密落库；公网地址强制 HTTPS，明文 HTTP 只对本机与私有网段放行。</div>
       </details>
       <details>
         <summary>凭据如何保护？</summary>
@@ -230,7 +325,8 @@
     <div class="footer-links">
       <a href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub</a>
       <a href="demo/">在线体验</a>
-      <a href="#features">功能</a>
+      <a href="#forms">两种形态</a>
+      <a href="#sync">资产同步</a>
       <a href="#faq">常见问题</a>
     </div>
     <div class="footer-meta">基于 xterm.js、russh 与 Tauri 构建 · MIT 协议 · © 2026 ProbiusOfficial</div>
