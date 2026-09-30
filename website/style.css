@@ -424,13 +424,36 @@ img { max-width: 100%; display: block; }
 
 .cell-shot img { width: 100%; }
 
-.cell code {
+/* `code` 也用在 get-steps / faq-body 里（命名产物与命令），所以不挂在 .cell 下 */
+.cell code,
+.get-steps code,
+.faq-body code {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--green);
   background: rgba(85, 196, 131, 0.08);
   border-radius: 5px;
   padding: 1px 7px;
+}
+
+/* 不可断的词（文件名之类）：`linux-amd64.tar.gz` 会在 `-` 处折成两行，把整行排版撕开。
+   但**不能**图省事把它挂到上面那条通用规则上：不折行的标记会把自己的整宽计入
+   min-content，写长了直接顶开网格轨道。实测把 SECURITY 那条
+   `主密码 → Argon2id → …XChaCha20-Poly1305`（54 字符 ≈ 486px）一起 nowrap 之后，
+   `.bento` 的单列轨道从 342 被撑到 486px，整节横向溢出 120px。
+   所以文件名这类长串改成**可断行的 mono 行**（下面 .file），而不是 nowrap 的 chip。 */
+
+/* 卡片底部的产物文件名：mono 但**不是** chip（无底色/内边距，允许断行）。
+   `overflow-wrap: anywhere`（不是 `break-all`）有两个作用：够宽时一行放下、
+   不够宽时优先在 `-` 这种正常断点处折行；同时把 min-content 压到 1 字符，
+   于是再长的文件名也不会把卡片撑开（这正是上面 nowrap 踩过的坑）。 */
+.cell .file {
+  display: block;
+  margin-top: 13px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-4);
+  overflow-wrap: anywhere;
 }
 
 .cell ul { list-style: none; display: grid; gap: 7px; margin-top: 12px; }
@@ -649,7 +672,9 @@ img { max-width: 100%; display: block; }
 
 .points b { color: var(--text-2); font-weight: 600; }
 
-.cell em { color: var(--text-2); font-style: normal; font-weight: 600; }
+/* `em` 只用来给「不建议」这类词加重（`code` 已经是等宽绿字，不再叠 em） */
+.cell em,
+.faq-body em { color: var(--text-2); font-style: normal; font-weight: 600; }
 
 /* ── 响应式 ───────────────────────────────────────────────────────────── */
 

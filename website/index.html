@@ -256,26 +256,59 @@
       <div class="get-steps">
         <span class="pk">nexterm install</span>
         <h3>获取与部署</h3>
-        <p>桌面版支持 Windows 与 macOS；服务端跑在 Linux 容器里，浏览器访问。</p>
+        <p>每次发版五类产物：Windows / macOS 客户端、懒猫微服专版，以及 Linux 服务端的两个包。</p>
         <ul>
-          <li>桌面版：下载安装包，双击即装</li>
-          <li>服务端：部署到懒猫微服，或自建服务器 / VPS</li>
+          <li>桌面版：<code>.exe</code> / <code>.dmg</code>，下载双击即装</li>
+          <li>LinuxServer：<code>tar.gz</code>，含前端与 systemd 单元</li>
+          <li>onlyServer：同样的包减掉界面，公网只当同步中转</li>
+          <li>懒猫微服：在微服应用中心里安装，不经 Release 下载</li>
           <li>从源码构建：Rust stable + Node 22+ + pnpm</li>
         </ul>
       </div>
       <div class="code-block">
         <div class="term-bar">
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
-          <span class="term-title">build — bash</span>
+          <span class="term-title">nexterm-server — bash</span>
         </div>
-        <pre><span class="p">$</span> git clone https://github.com/ProbiusOfficial/NexTerm.git
-<span class="p">$</span> cd NexTerm
-<span class="p">$</span> pnpm install
-<span class="p">$</span> pnpm tauri build    <span class="c"># 桌面端安装包</span>
+        <pre><span class="c"># 完整版：界面 + 全部 132 条命令</span>
+<span class="c"># 裸启动就是 serve（容器里就这条）</span>
+<span class="p">$</span> nexterm-server
 
-<span class="c"># 服务端（浏览器访问）</span>
-<span class="p">$</span> cargo build --release --no-default-features \
-      --features server --bin nexterm-server</pre>
+<span class="c"># onlyServer：只有 3 条同步命令</span>
+<span class="p">$</span> nexterm-server --sync-only \
+      --data-dir /var/lib/nexterm
+
+<span class="c"># 没有界面，令牌只能命令行取</span>
+<span class="p">$</span> TOKEN=$(nexterm-server token)
+
+<span class="c"># 自查：两个数对不对</span>
+<span class="p">$</span> curl -s 127.0.0.1:8080/healthz
+  <span class="c"># commands:132 | 3</span></pre>
+      </div>
+    </div>
+
+    <div class="duo">
+      <div class="cell">
+        <span class="tag">LINUX · LINUXSERVER</span>
+        <h3>自建机器 / 内网 VPS</h3>
+        <p>带完整浏览器界面，打开 <code>http://&lt;地址&gt;:8080</code> 即用。</p>
+        <ul>
+          <li>解压即得二进制、前端产物、systemd 单元</li>
+          <li>单元默认只听 <code>127.0.0.1</code>，对外自己接反代</li>
+          <li>⛔ <code>/rpc</code> 无自身鉴权 —— 不建议公网部署</li>
+        </ul>
+        <span class="file">NexTerm-x.y.z-linux-amd64.tar.gz</span>
+      </div>
+      <div class="cell">
+        <span class="tag">LINUX · ONLYSERVER</span>
+        <h3>公网只做同步中转</h3>
+        <p>同一个二进制加 <code>--sync-only</code>：只挂 <code>/sync/rpc</code> 与 <code>/healthz</code>。</p>
+        <ul>
+          <li>命令表只有 <code>sync_digest</code> / <code>sync_export</code> / <code>sync_import</code></li>
+          <li>令牌泄漏也拿不到终端、文件与容器</li>
+          <li>命令行配置，<code>ssh</code> 上去就能管</li>
+        </ul>
+        <span class="file">NexTerm-onlyServer-x.y.z-linux-amd64.tar.gz</span>
       </div>
     </div>
   </div>
@@ -294,7 +327,11 @@
       </details>
       <details>
         <summary>支持哪些操作系统？</summary>
-        <div class="faq-body">桌面版支持 Windows 10/11 与 macOS（Apple Silicon）；服务端跑在 Linux 容器里，浏览器访问，因而不限操作系统。Linux 桌面版尚未验收。</div>
+        <div class="faq-body">桌面版支持 Windows 10/11 与 macOS（Apple Silicon）；服务端是同一份内核编译的 Linux（amd64）二进制，可装进容器，也可直接装在任意 Linux 机器上、用浏览器访问，因而不限客户端操作系统。Linux 桌面版尚未验收。</div>
+      </details>
+      <details>
+        <summary>服务端放公网安全吗？</summary>
+        <div class="faq-body">完整版<em>不建议</em>公网部署：它的 <code>/rpc</code> 与浏览器界面自身没有鉴权（在懒猫微服上由平台登录门挡着，裸机上那道门不存在），能连上端口就等于拿到终端、文件与容器。公网只想做资产同步，请用 <code>onlyServer</code>（<code>--sync-only</code>）—— 它只注册同步用的三条命令，令牌泄漏也只能读写这份资产库，且令牌走请求头，前面必须终止 TLS。</div>
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>
