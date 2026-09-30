@@ -1,14 +1,26 @@
 name: Release
 
-# 打 `v*` tag 即出安装包并挂到 Release。
+# 打 `v*` tag 即出安装包并挂到 Release。**发布的五个包**（矩阵见 README）：
 #
-# 为什么必须在 CI 里出包：**Tauri 不能跨平台打包** —— NSIS 只能在 Windows 出，
+#   ① NexTerm_<ver>_x64-setup.exe                  Windows 客户端（amd64）
+#   ② NexTerm_<ver>_aarch64.dmg                    macOS 客户端（M 系列 / arm64）
+#   ③ NexTerm-<ver>-linux-amd64.tar.gz             LinuxServer（浏览器版，给人用）
+#   ④ NexTerm-onlyServer-<ver>-linux-amd64.tar.gz  onlyServer（只做资产同步）
+#   ⑤ cloud.lazycat.app.nexterm-v<ver>.lpk         懒猫微服专版 —— **本流水线出不了**
+#
+# 为什么①②要在 CI 里出：**Tauri 不能跨平台打包** —— NSIS 只能在 Windows 出，
 # .app/.dmg 只能在 macOS 出。一台机器出一个平台，用矩阵各出一份。
+#
+# 为什么⑤不在这里：构建 LPK 要连 `registry.lazycat.cloud`（**只有微服自己有凭证**，
+# 开发机拿社区账号一律 401）并且镜像在**盒子侧**构建，GitHub runner 上做不到。
+# ⇒ 懒猫专版由维护者本机 `lzc-cli project build` 出，再手动挂到同一个 Release。
+#
+# 刻意不挂 workflow_dispatch：手动触发时 github.ref_name 是**分支名**而不是 tag，
+# tauri-action 会照着分支名去建 Release。要试流水线就推一个预发布 tag（如 v0.1.2-rc1）。
+
 on:
   push:
     tags: ["v*"]
-# 刻意不挂 workflow_dispatch：手动触发时 github.ref_name 是**分支名**而不是 tag，
-# tauri-action 会照着分支名去建 Release。要试流水线就推一个预发布 tag（如 v0.1.2-rc1）。
 
 permissions:
   contents: write
@@ -19,17 +31,22 @@ concurrency:
 
 jobs:
   publish:
-    name: ${{ matrix.os }} · 出包
+    name: ${{ matrix.os }} · 桌面客户端
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
-            # 平台覆盖文件 tauri.macos.conf.json 会自动合并（app + dmg + icon.icns）。
-            args: "--bundles app,dmg"
+            # ⚠️ 显式钉死 arm64（M 系列），不靠 runner 的默认值。
+            # `macos-latest` 眼下恰好是 arm64 机器，但 GitHub 换一次 runner 镜像
+            # 就会**静默**出成 Intel 版 —— 那种包能装能跑，没人会发现。
+            # 写死 target 后产物名必然带 `aarch64`，可核对。
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
+            target: aarch64-apple-darwin
           - os: windows-latest
-            # tauri.conf.json 的基线 targets 就是 nsis + icon.ico。
+            # tauri.conf.json 的基线 targets 就是 nsis + icon.ico（x64）。
             args: "--bundles nsis"
+            target: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +61,12 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # 交叉目标单独一步，而不是写进 toolchain 的 `with: targets:` ——
+      # 那样 Windows 那格得传空字符串，而空值会被当成「加一个名叫空的 target」。
+      - name: 追加交叉目标
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -94,3 +117,73 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  linux-server:
+    name: linux · 服务端两个包
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      # 服务端要的只是静态产物，所以刻意**不跑 tsc**：类型门在 ci.yml 里，
+      # 而 tag 已经推了，发布不该因为一个类型错误就拿不到包。
+      - name: 构建前端
+        run: pnpm exec vite build
+
+      # runner 自己就是 x86_64 ⇒ 原生编译，不需要交叉工具链。
+      - name: 构建服务端二进制
+        run: cargo build --release --no-default-features --features server --bin nexterm-server
+
+      - name: 打包（LinuxServer + onlyServer）
+        run: bash scripts/pack-linux-server.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-server-packages
+          path: target/release-assets/*.tar.gz
+          if-no-files-found: error
+
+  attach-linux:
+    name: linux · 挂到 Release 草稿
+    needs: [publish, linux-server]
+    runs-on: ubuntu-latest
+    steps:
+      # 单独一个 job，而不是把上传塞进 linux-server：那个 job 不该依赖
+      # 「Release 已经建好」这个事实（草稿由 publish 那个 job 的 tauri-action 创建）。
+      # 分开之后，桌面那侧先挂、这侧后补，两边互不阻塞。
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-server-packages
+          path: release-assets
+
+      - name: 上传
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # nullglob：不然没匹配上时数组里会留一个字面量 `release-assets/*.tar.gz`，
+          # 检查「有没有产物」那条就永远通过，错到 upload 那步才炸。
+          shopt -s nullglob
+          files=(release-assets/*.tar.gz)
+          [ ${#files[@]} -gt 0 ] || { echo "::error::没有可挂的产物"; exit 1; }
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          # 自证：把 Release 上现有的产物列出来，别只信 upload 的退出码。
+          echo "Release $GITHUB_REF_NAME 当前产物："
+          gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name'
