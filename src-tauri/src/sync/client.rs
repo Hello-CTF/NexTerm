@@ -342,7 +342,8 @@ pub fn find_session_token(base: &str) -> AppResult<(String, String)> {
     session_token_from_ps(&text, &host).ok_or_else(|| {
         AppError::NotFound(format!(
             "没找到开着「{host}」的懒猫客户端窗口。\
-             请先在懒猫客户端里打开 NexTerm 应用（窗口保持开着），再点一次「从懒猫客户端获取票据」"
+             请先在懒猫客户端里打开这个微服的任意应用窗口（打开 NexTerm 最稳）并保持开着，\
+             再点一次「从懒猫客户端获取票据」"
         ))
     })
 }

@@ -338,20 +338,20 @@ export function SyncCard() {
             <label className="flex items-center gap-2">
               <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">令牌类型</span>
               <select
-                className="nx-input w-[220px]"
+                className="nx-input w-[250px]"
                 value={draft.tokenKind}
                 onChange={(e) => setDraft((d) => ({ ...d, tokenKind: e.target.value }))}
               >
-                <option value="session">懒猫客户端票据</option>
-                <option value="platform">平台 API 令牌</option>
-                <option value="app">应用同步令牌</option>
+                <option value="session">懒猫客户端票据（懒猫微服）</option>
+                <option value="platform">平台 API 令牌（要能登盒子）</option>
+                <option value="app">应用同步令牌（自建服务器）</option>
               </select>
               <span className="nx-hint">
                 {draft.tokenKind === "session"
                   ? "从本机懒猫客户端打开的窗口里取，你不必在盒子上做任何事"
                   : draft.tokenKind === "platform"
-                    ? "在盒子上执行 hc api_auth_token gen 生成"
-                    : "在盒子版「设置 → 资产同步」里查看"}
+                    ? "要在盒子本机的 shell 上跑 hc api_auth_token gen 才有 —— 开发者通道里没有 hc（实测）。长期有效"
+                    : "在自建服务器的「设置 → 资产同步」里查看"}
               </span>
             </label>
 
@@ -376,15 +376,29 @@ export function SyncCard() {
               </button>
             </label>
 
+            {draft.tokenKind === "app" && (
+              <div className="nx-alert nx-alert-info flex items-start gap-2">
+                <IconInfo size={14} className="mt-0.5 shrink-0" />
+                <div>
+                  这个令牌<b>在懒猫微服的公网入口上过不去</b>：平台网关只认它自己的凭证
+                  （<code>Lzc-Auth-Token</code> / <code>Lzc-Api-Auth-Token</code>），
+                  本应用的令牌它根本不看 —— 带与不带一样在网关就被 307 到登录页（实测）。
+                  所以它只适用于<b>不经过平台网关</b>的场合：自建服务器、或同网段直连。
+                  地址是懒猫微服的，请改用<b>懒猫客户端票据</b>。
+                </div>
+              </div>
+            )}
+
             {isSession && (
               <div className="nx-alert nx-alert-info flex items-start gap-2">
                 <IconInfo size={14} className="mt-0.5 shrink-0" />
                 <div>
                   盒子公网入口有懒猫平台的登录门（不带凭证一律 307），所以光填地址连不上。
-                  这个票据是懒猫客户端**每次打开 Web 应用窗口**时下发的，桌面端从窗口进程
+                  这个票据是懒猫客户端<b>每次打开 Web 应用窗口</b>时下发的，桌面端从窗口进程
                   里读出来 —— 用同一个凭据，不是绕过鉴权。
-                  <b>请先在懒猫客户端里打开 NexTerm 窗口并保持开着</b>；客户端重启后票据会换，
-                  连不上就回来点一次重新获取。
+                  <b>先在本机懒猫客户端里打开这个微服的任意应用窗口并保持开着</b>
+                  （打开 NexTerm 最稳；实测同微服的「在线设备」窗口给的也是同一张会话票据）。
+                  客户端重启后票据会换，连不上就回来点一次重新获取。
                 </div>
               </div>
             )}
@@ -399,9 +413,9 @@ export function SyncCard() {
               <span className="text-[12px] text-neutral-300">
                 跳过证书校验
                 <span className="nx-hint block">
-                  只有在地址用的是**自签证书**时才需要（例如自己给盒子配的域名、或走内网
-                  直连）。懒猫微服自动签发的 `*.lazycore.heiyu.space` 是公共 CA 签的
-                  （实测 Let's Encrypt），那种地址**不用**勾。
+                  只有在地址用的是<b>自签证书</b>时才需要（例如自己给盒子配的域名、或走内网
+                  直连）。懒猫微服自动签发的 <code>*.lazycore.heiyu.space</code> 是公共 CA 签的
+                  （实测 Let's Encrypt），那种地址<b>不用</b>勾。
                 </span>
               </span>
             </label>
