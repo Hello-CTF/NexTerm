@@ -37,6 +37,30 @@ export type FileEntryDto = { name: string, path: string,
  */
 kind: string, size: number, mode: string, owner: string | null, group: string | null, mtime: number, symlinkTarget: string | null, };
 
+/**
+ * 转发能力自述（`forward_env` 的返回值）。
+ *
+ * 界面据此决定三件事：要不要显示「本平台不支持」的提示条、把创建按钮禁掉、
+ * 以及转发地址该显示成 `127.0.0.1` 还是 `0.0.0.0`。
+ *
+ * 这些判断**不能放前端**：它们取决于「跑在哪种运行形态、部署在哪个平台」，
+ * 是内核（编译期形态 + `NEXTERM_PLATFORM`）才知道的事实。前端自己猜会给出错误承诺
+ * —— 比如在懒猫上画出「外部可访问 http://…:13306」而实际永远连不上。
+ */
+export type ForwardEnvDto = { 
+/**
+ * 本平台是否允许端口转发。懒猫微服上为 `false`。
+ */
+available: boolean, 
+/**
+ * 部署平台标识：`lazycat` / `other`。
+ */
+platform: string, 
+/**
+ * 转发监听地址。桌面形态是 `127.0.0.1`；服务端形态是 `0.0.0.0`。
+ */
+listenHost: string, };
+
 export type ForwardSpecDto = { id: string, sessionId: string, listenPort: number, 
 /**
  * 静态转发的目标；SOCKS5 动态转发没有固定目标 → `null`。

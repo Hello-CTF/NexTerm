@@ -780,6 +780,14 @@ export const vaultApi = {
 // ───────── port forward ─────────
 
 export const forwardApi = {
+  /**
+   * 转发能力自述：本平台允不允许转发、以及监听地址是哪个。
+   *
+   * 界面拿它决定要不要显示「本平台暂不可用」的提示条，以及地址该写成
+   * `127.0.0.1` 还是 `0.0.0.0` —— 这两个值只有内核知道（编译形态 + 平台标识），
+   * 前端不猜。进程内不会变，所以取一次就够。
+   */
+  env: () => call<import("./types").ForwardEnvDto>("forward_env"),
   create: (sessionId: string, listenPort: number, targetHost: string, targetPort: number) =>
     call<import("./types").ForwardSpecDto>("forward_create", {
       sessionId,
@@ -788,9 +796,10 @@ export const forwardApi = {
       targetPort,
     }),
   /**
-   * SOCKS5 动态转发：本地起一个 SOCKS5 代理，目标由客户端当场指定。
+   * SOCKS5 动态转发：在监听地址上起一个 SOCKS5 代理，目标由客户端当场指定。
    *
-   * 只有 SSH 会话能建（内置的代理无认证，所以内核只监听 127.0.0.1）。
+   * 只有 SSH 会话能建。⚠️ 这个代理本身**无认证**：桌面形态绑回环所以只给本机用；
+   * 服务端形态绑 `0.0.0.0`，能连上它的任何人都能借这条 SSH 会话逛内网。
    */
   createSocks: (sessionId: string, listenPort: number) =>
     call<import("./types").ForwardSpecDto>("forward_create_socks", {

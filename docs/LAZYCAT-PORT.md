@@ -3246,7 +3246,8 @@ $ curl -H "Lzc-Auth-Token: …" https://nexterm.lazycore.heiyu.space/healthz
 3. 前端的转发面板给出「外部可访问地址」并做成**可点链接**（照 §21.8 第 3 点）；
 4. **区间要窄**（区间内每个端口都是敞开的），并且**别在生产包里试**（§21.7 结论 2）。
 
-⚠️ 这套**尚未开始做**，本轮只做到「可行性确认 + 暴露面收尾」。
+> ⛔ **这一节已被 §22 取代 —— 别照它做。** 该方案（固定端口区间 + 应用自签令牌）在拍板前
+> 被否掉了，最终决策是「懒猫上**直接关闭**端口转发」。取代它的理由与最终形态见 §22。
 
 ### 21.10 工具链两处更正（**覆盖 §20.5 的旧绕法**）
 
@@ -3273,4 +3274,134 @@ lzc-cli project exec --dev -s nexterm-server -- sh -c 'grep -c ingress /lzcapp/p
 - `project deploy` 全程约 **2.5–4 分钟**；结束后实例先 `Status_Starting`，
   **必须等到 `Status_Running` 再探端口** —— 否则「应用没起来」会伪装成「端口已关」
   （本轮就差点据此得出错误的「已经撤掉了」结论）。
+
+---
+
+## 22. 端口转发的最终形态：懒猫关闭 / 自建服务端绑 `0.0.0.0`（2026-10-02 落地）
+
+§21 证明了 L4 ingress **能**用，但也证明了它**不值得用**（裸 TCP、平台零鉴权、
+规则集只增不减）。于是最终形态完全不走平台转发，而是把选择权交给**部署形态**。
+
+### 22.1 决策（一句话）
+
+| 运行形态 | 判据 | 转发可用 | 监听地址 |
+|---|---|---|---|
+| 桌面壳 | `cfg!(feature = "desktop")` | ✅ | `127.0.0.1` |
+| 懒猫微服服务端 | `NEXTERM_PLATFORM=lazycat` | ❌ **关闭** | （用不到） |
+| 自建服务端 | 未设 `NEXTERM_PLATFORM` | ✅ | **`0.0.0.0`** |
+
+**为什么懒猫上关掉**：平台侧的转发是裸 TCP 且零鉴权（§21.6），应用侧再怎么收紧
+也补不上「平台不提供鉴权流程」这个洞；而 NexTerm 的转发面板会把
+「外部可访问 http://…:13306」画出来 —— 一旦在懒猫上画了却连不上，用户会一直以为
+是自己端口填错了（§21.5 第 2 条）。**宁可明确说「本平台不可用」，也不给一个错误的承诺。**
+
+**为什么自建服务端绑 `0.0.0.0`**：这正是「把远端服务搬到服务端的端口上」这个原始诉求
+（在 LinuxCore 上监听 `127.0.0.1:58627`，转发到服务端的 `13306`，再从别处访问）。
+自建部署下这台机器就是用户自己的边界，可达性交给他的防火墙 / 安全组决定。
+
+### 22.2 落点（改了什么）
+
+| 文件 | 改动 |
+|---|---|
+| `lazycat/lzc-manifest.yml` | 加 `NEXTERM_PLATFORM=lazycat`；并**刻意不声明** `application.ingress`（长注释说明「别顺手加」） |
+| `src-tauri/src/transport/forward.rs` | 新增 `ForwardPolicy`（`bind_ip` / `available` / `platform`）；`bind_local` → `bind_on(bind_ip, port)`；两条 `spawn_*` 各加 `bind_ip` 形参 |
+| `src-tauri/src/state.rs` | `AppState` 加 `forward_policy`，在 `new` 里探测**一次**定死 |
+| `src-tauri/src/commands/forward.rs` | 平台门 `ensure_forward_allowed`；新增只读命令 `forward_env` |
+| `src-tauri/src/ipc_types.rs` | 新增 `ForwardEnvDto`（`available` / `platform` / `listenHost`） |
+| `src/features/forward/ForwardPanel.tsx` | 不可用时整块换成提示条并隐藏控件；`listenHost` 非 `127.*` 时文案切到「对外可访问」语义（含 SOCKS5 开放代理警告） |
+
+**关键设计**：这三个值**只在 `AppState::new` 里探测一次**，前端通过 `forward_env` 读。
+放前端去猜（比如探 `/lzcapp` 在不在）会立刻分叉出「界面说可用、内核说不可用」的第二套真相。
+
+### 22.3 验证一：内核层（单元测试 + 本地 RPC 对照）
+
+```
+cargo test transport::forward                 # 桌面形态：3 passed
+cargo test --no-default-features --features server transport::forward   # 服务端：3 passed
+cargo clippy --all-targets --all-features -- -D warnings                # 零告警
+```
+
+4 个测试：`platform_only_lazycat_disables_forwards`（`lazycat`/`LazyCat`/带空格/`other`/`""`/`None`）、
+`desktop_form_binds_loopback_only`、`server_form_binds_all_addresses`、
+`bind_on_honours_the_given_address`（用 listener 自己的 `local_addr()` 验**真的**绑对了地址
+—— 只断言策略值的话，`bind_on` 里写死 `127.0.0.1` 也能全绿）。
+
+本地起服务端 `curl POST /rpc`：
+
+| 实例 | `forward_env` | `forward_create`（传**不存在的** sessionId） |
+|---|---|---|
+| 无 `NEXTERM_PLATFORM` | `{available:true, listenHost:"0.0.0.0", platform:"other"}` | `{"code":"not_found","message":"未找到: 会话 no-such-session"}` |
+| `NEXTERM_PLATFORM=lazycat` | `{available:false, listenHost:"0.0.0.0", platform:"lazycat"}` | `{"code":"unsupported", …"端口转发在懒猫微服上暂不可用…"}` |
+
+第二列是关键对照：**懒猫侧拿到的是「平台不支持」而不是「会话不存在」** ⇒ 证明平台门
+在取会话**之前**就拦下了（不是碰巧因为会话找不到才失败）。
+
+### 22.4 验证二：真转发端到端（本机服务端，`lsof` + 局域网访问）
+
+靶服务只绑回环：`python3 -m http.server 59999 --bind 127.0.0.1`。
+经 `asset_create`（ssh/localhost，密钥认证）→ `session_connect` → `forward_create`
+（`listenPort: 13306 → 127.0.0.1:59999`）后：
+
+| 步骤 | 结果 |
+|---|---|
+| 从局域网直连**靶服务** | `HTTP 000`（rc=7）—— 它只绑回环，符合预期 |
+| `lsof -nP -iTCP:13306 -sTCP:LISTEN` | **`nexterm-s … TCP *:13306 (LISTEN)`** ← 是 `0.0.0.0`，不是 `127.0.0.1` |
+| `curl http://192.168.1.71:13306/marker.txt` | **HTTP 200 + 正确 marker** ★ |
+| `curl http://127.0.0.1:13306/marker.txt` | HTTP 200 |
+
+★ 这一行就是「把远端服务搬到服务端的端口上、从别处访问」的完整闭环。
+
+### 22.5 验证三：懒猫真机（盒子上的容器内取证）
+
+`lzc-cli project deploy --dev` → `project start` → 等 `Status_Running` 后：
+
+| 探测（从盒子上的 `app` 容器里发） | 结果 |
+|---|---|
+| 容器环境变量 | `NEXTERM_PLATFORM=lazycat` ✅ |
+| 已装 manifest `/lzcapp/pkg/manifest.yml:225` | `- NEXTERM_PLATFORM=lazycat` ✅ |
+| `/healthz` | `commands:139, version:0.2.0`（138→139 = 新二进制确实上机了） |
+| `POST /rpc {"cmd":"forward_env"}` | `{"available":false,"listenHost":"0.0.0.0","platform":"lazycat"}` ✅ |
+| `POST /rpc {"cmd":"forward_create",…}` | `{"code":"unsupported", "message":"…端口转发在懒猫微服上暂不可用…"}` ✅ |
+
+**手法**：`app` 容器是 Alpine（自带 busybox `wget`），`nexterm-server` 容器是 Debian slim
+（**没有** curl/wget，但有 `/usr/bin/bash`）。所以「从容器内部打 RPC」这条路的正确组合是
+**用 `app` 容器去打 `http://nexterm-server:8080/rpc`**：
+
+```bash
+lzc-cli project exec --dev -s app -t=false -- \
+  wget -qO- --header=Content-Type:application/json \
+  --post-data='{"cmd":"forward_env"}' http://nexterm-server:8080/rpc
+```
+
+⚠️ **顺带一个安全观察**：`lzc-cli project exec` 能把容器的 `NEXTERM_MASTER_KEY`
+原样读出来（它在 `NEXTERM_PLATFORM` 旁边）。也就是说**任何能 exec 进这个容器的人
+都能直接解锁凭据库** —— 这是「主密钥以环境变量注入」这个设计的固有代价，
+不是本次改动引入的，但值得记在案。
+
+### 22.6 验证四：界面（真浏览器 A/B 渲染）
+
+同一份 `dist/` 产物、同一台机器、只差一个环境变量，用 headless Chrome + CDP 渲染对照：
+
+| 断言 | 懒猫 (`lazycat`) | 非懒猫 (`other`) |
+|---|---|---|
+| 页面自己的 `fetch('/rpc', forward_env)` | `available:false, platform:"lazycat"` | `available:true, platform:"other"` |
+| 提示条文案出现在页面 | **true** | false |
+| `.nx-alert-info` 元素数 | **1** | 0 |
+| 「创建」按钮数 | **0** | 1 |
+| 端口输入框标签 | **未出现** | **监听端口**（原名 `本地端口` ⇒ `exposed` 分支生效） |
+| console error / exception | 0 | 0 |
+
+截图见 `docs/acceptance-lazycat-forward/`（`01-lazycat-forward-disabled.png` /
+`02-other-server-listens-any.png`）。
+
+### 22.7 桌面形态为什么还留着 `127.0.0.1`
+
+桌面应用跑在用户自己的笔记本上，转发是**给本机自己用**的（连远端 MySQL / Redis）。
+绑 `0.0.0.0` 会让同一 WiFi 下的任何人借这条 SSH 连接进内网；
+SOCKS5 更是直接变成**无认证的开放代理**（`forward.rs` 里 SOCKS 的 doc 已写明这个差异）。
+
+**降级安全性**：`ForwardPanel` 里 `unavailable = env.data?.available === false` ——
+查询失败时 `env.data` 是 `undefined`，`unavailable` 为 `false`，`listenHost` 回落到
+`127.0.0.1`。也就是说**即使 `forward_env` 这个新命令哪天没注册上，桌面形态的表现
+也和改动前逐字一致**，不会因为多了一次能力查询而把功能弄坏。
 

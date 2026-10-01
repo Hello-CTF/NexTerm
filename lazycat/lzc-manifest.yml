@@ -176,6 +176,20 @@ application:
             # 判不出类型时的兜底 MIME（脚本默认值）。
             fallbackMime: application/octet-stream
 
+  # ⛔ 刻意**不声明** `ingress`（四层 TCP/UDP 转发）—— 这是决策，不是漏了。
+  #
+  # 平台原生支持把容器端口暴露到公网（`application.ingress`），但它的访问形式是**裸 TCP**，
+  # 且官方原文写明「微服系统仅能提供底层虚拟网络的保护，从原理上无法提供鉴权流程」——
+  # 也就是说平台上没有任何一层能替这个应用做鉴权，端口一旦声明就等于把完整控制权挂出去。
+  # 所以本应用在懒猫上**关闭**端口转发功能（界面禁用 + 内核拒绝，见 `NEXTERM_PLATFORM`）。
+  #
+  # ⚠️ 给后来的人：**别顺手加 `ingress`**。平台的 L4 规则集是「只增不减」的 ——
+  # 声明过的 `publish_port` 只能改指、无法收回（删声明、`lpk install`、`project deploy`
+  # 全都撤不掉，已逐条实测）。完整机制与收尾手法见 `docs/LAZYCAT-PORT.md` §21
+  # 与 skill `lzc-l4-ingress`。
+  #
+  # 「想从外部连内网服务」在这台微服上请走微服自己的转发功能，或改用 SSH 隧道。
+
   # 刻意**不设** health_check：
   # `test_url` 只在 application 字段下生效、且探测的仍是 `app` 容器内部；
   # 而文档明确写着替换 health_check 会丢掉「系统默认注入的自动依赖检测」。
@@ -205,4 +219,12 @@ services:
       # contentdir 的内容对所有容器以只读方式挂在 /lzcapp/pkg/content。
       - NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web
       - NEXTERM_LISTEN=0.0.0.0:8080
+      # ⚠️ 平台标识：应用据此把「端口转发」判为**不可用**（界面禁用 + 内核拒绝）。
+      #
+      # 为什么要在 manifest 里显式写、而不是让应用去猜（比如探 `/lzcapp` 在不在）：
+      # 「这个平台允不允许把端口暴露出去」是**部署决策**，不是环境巧合。
+      # 写在这里，改平台时改一行，且一眼能看出这份部署的立场。
+      #
+      # 取值目前只有 `lazycat` 有意义；不设 = 非懒猫（自建服务端），转发可用。
+      - NEXTERM_PLATFORM=lazycat
       - RUST_LOG=info

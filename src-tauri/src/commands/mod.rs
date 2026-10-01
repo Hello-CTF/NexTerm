@@ -118,6 +118,7 @@ macro_rules! nexterm_commands {
             db::redis_command,
             db::redis_set_ttl,
             // forward
+            forward::forward_env,
             forward::forward_create,
             forward::forward_create_socks,
             forward::forward_list,
