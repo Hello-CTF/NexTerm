@@ -31,6 +31,7 @@
     <div class="nav-links">
       <a href="#features">功能</a>
       <a href="#forms">两种形态</a>
+      <a href="#server">服务端</a>
       <a href="#sync">资产同步</a>
       <a href="#demo">在线体验</a>
       <a href="#faq">常见问题</a>
@@ -130,7 +131,7 @@
       <div class="cell">
         <span class="tag">FORWARD</span>
         <h3>端口转发</h3>
-        <p>本地转发与 SOCKS5 动态转发复用已有会话，直达内网资源。</p>
+        <p>本地转发与 SOCKS5 动态转发复用已有会话，直达内网资源。监听地址由部署形态决定：桌面回环、自建服务端对外、懒猫微服上不可用。</p>
       </div>
       <div class="cell cell-w">
         <span class="tag">SECURITY</span>
@@ -170,9 +171,11 @@
       <div class="cell">
         <span class="tag">SERVER · AXUM</span>
         <h3>服务端 nexterm-server</h3>
-        <p>部署一次，随处可用。浏览器打开就是完整界面，不用装任何客户端。</p>
+        <p>部署一次，随处可用。浏览器打开就是完整界面，不用装任何客户端 —— 而且运行态在服务端，不只是「投屏」。</p>
         <ul>
           <li>部署到懒猫微服 / 自建服务器</li>
+          <li>终端进程与回滚缓冲留在服务端，换设备接着用</li>
+          <li>多端同看，键盘只有一把（控制权按设备）</li>
           <li>同一套界面与命令清单，行为一致</li>
           <li>同时是桌面版资产同步的对端</li>
         </ul>
@@ -181,7 +184,62 @@
   </div>
 </section>
 
-<section class="section" id="sync">
+<section class="section" id="server">
+  <div class="container">
+    <div class="section-head">
+      <span class="pk">nexterm --serve</span>
+      <h2>服务端：工作台搬到服务器上</h2>
+      <p>不是「投屏」。终端进程、回滚缓冲与工作区布局都跑在那台常开的机器上，浏览器只是接上去看 —— 换设备、关网页、多人同看，都以此为准。</p>
+    </div>
+
+    <div class="figure">
+      <img src="images/04-server-runtime.png" alt="服务端权威运行态：多台设备共用一个工作台" loading="lazy" />
+    </div>
+
+    <div class="bento bento-3">
+      <div class="cell">
+        <span class="tag">CONTINUITY</span>
+        <h3>换设备接着用</h3>
+        <p>另一台设备打开网页，按服务端记着的标签 id 接管那条已有终端：先清屏、再回放历史。看到的是原来那条连接，不是一个新开的空 shell。</p>
+      </div>
+      <div class="cell">
+        <span class="tag">PRESENCE</span>
+        <h3>多端同看，键盘只有一把</h3>
+        <p>终端可被多台设备观看，同一时刻只有一台能操作。非控制者写入被拒并提示「接管控制」，点一下即换人，PTY 按接管者的窗口重排。</p>
+      </div>
+      <div class="cell">
+        <span class="tag">PERSISTENCE</span>
+        <h3>关网页不丢会话</h3>
+        <p>关网页只断这一端的订阅，进程与回滚继续在服务端跑。关标签会先问一次，三选一：后台继续运行 / 结束进程 / 取消。</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <div>
+        <span class="pk">nexterm --layout</span>
+        <h3 class="sub-h">布局也归服务端</h3>
+        <p>工作区、分屏与标签结构带一个 <code>revision</code> 存在服务端；任一端改动即广播给其余各端，打开时照此重建。</p>
+        <ul class="points">
+          <li><b>乐观锁</b>：写布局要带上「我这份基于哪个 revision」，对不上就不写。</li>
+          <li><b>冲突不自动合并</b>：布局没有可合并的语义，界面拉最新的一份让你再决定。</li>
+          <li><b>广播带 revision</b>：收到的一方能认出「这是我自己刚写的那次」，不会自己触发自己。</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <span class="tag">FORWARD · BY PLATFORM</span>
+        <h3>转发端口的地址，看部署形态</h3>
+        <p>同一条「把远端端口搬到服务端」的功能，监听在哪由部署形态决定。</p>
+        <ul>
+          <li>桌面 App：<code>127.0.0.1</code> —— 转发只给自己用</li>
+          <li>自建服务端：<code>0.0.0.0</code> —— 可把远端服务搬到服务端端口上</li>
+          <li>懒猫微服：<b>不可用</b>。平台侧端口暴露无鉴权，界面直接说明并指你改用平台原生转发</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="sync">
   <div class="container">
     <div class="section-head">
       <span class="pk">nexterm --sync</span>
@@ -229,7 +287,7 @@
   </div>
 </section>
 
-<section class="section section-alt" id="demo">
+<section class="section" id="demo">
   <div class="container">
     <div class="demo-panel">
       <div>
@@ -250,7 +308,7 @@
   </div>
 </section>
 
-<section class="section" id="get">
+<section class="section section-alt" id="get">
   <div class="container">
     <div class="get-wrap">
       <div class="get-steps">
@@ -270,7 +328,7 @@
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
           <span class="term-title">nexterm-server — bash</span>
         </div>
-        <pre><span class="c"># 完整版：界面 + 全部 132 条命令</span>
+        <pre><span class="c"># 完整版：界面 + 全部 139 条命令</span>
 <span class="c"># 裸启动就是 serve（容器里就这条）</span>
 <span class="p">$</span> nexterm-server
 
@@ -283,7 +341,7 @@
 
 <span class="c"># 自查：两个数对不对</span>
 <span class="p">$</span> curl -s 127.0.0.1:8080/healthz
-  <span class="c"># commands:132 | 3</span></pre>
+  <span class="c"># commands:139 | 3</span></pre>
       </div>
     </div>
 
@@ -314,7 +372,7 @@
   </div>
 </section>
 
-<section class="section section-alt" id="faq">
+<section class="section" id="faq">
   <div class="container">
     <div class="section-head">
       <span class="pk">man nexterm-faq</span>
@@ -335,7 +393,15 @@
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>
-        <div class="faq-body">不是。两端共用同一份 Rust 内核与同一份命令清单，差异由平台门控收束，所以界面与行为一致。</div>
+        <div class="faq-body">不是。两端共用同一份 Rust 内核与同一份命令清单（139 条），差异由平台门控收束，所以界面与行为一致。区别在运行态：桌面版的进程随窗口结束，服务端版把终端进程、回滚缓冲与工作区布局都留在服务端，于是关掉网页不丢、换设备能接着用。</div>
+      </details>
+      <details>
+        <summary>几个人可以同时用同一台服务端吗？</summary>
+        <div class="faq-body">可以。终端能被多台设备一起看，但同一时刻只有一台能操作：控制权认的是<em>设备身份</em>（存在浏览器本地，同一台设备多开几个页面算同一台），后来者默认是观察者，点「接管控制」即可夺得键盘，原操作者当场转为只读。关闭标签时会问一次 —— 后台继续运行、结束进程、取消，选「后台继续运行」的会话可以在「后台会话」面板里重新接管。</div>
+      </details>
+      <details>
+        <summary>懒猫微服上的端口转发为什么不可用？</summary>
+        <div class="faq-body">平台提供的端口暴露是<em>裸 TCP</em>，且平台文档写明「从原理上无法提供鉴权流程」—— 应用侧补不上这个洞。所以在这个平台上这一功能被关闭，界面会直接说明并建议改用微服平台自带的转发功能，而不是画一个连不上的地址。自建服务端上转发正常可用，监听 <code>0.0.0.0</code>，可以把远端 <code>127.0.0.1</code> 上的服务搬到服务端端口上访问。</div>
       </details>
       <details>
         <summary>同步会把我的密码传到别人的服务器吗？</summary>
@@ -371,6 +437,7 @@
       <a href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub</a>
       <a href="demo/">在线体验</a>
       <a href="#forms">两种形态</a>
+      <a href="#server">服务端</a>
       <a href="#sync">资产同步</a>
       <a href="#faq">常见问题</a>
     </div>
