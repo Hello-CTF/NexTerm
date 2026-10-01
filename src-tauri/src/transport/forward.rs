@@ -500,7 +500,10 @@ mod tests {
     #[test]
     fn server_form_binds_all_addresses() {
         let p = ForwardPolicy::detect();
-        assert!(!p.bind_ip.is_loopback(), "服务端形态要绑全部地址，否则外部连不上");
+        assert!(
+            !p.bind_ip.is_loopback(),
+            "服务端形态要绑全部地址，否则外部连不上"
+        );
         assert!(p.bind_ip.is_unspecified(), "服务端形态应当是 0.0.0.0");
     }
 

@@ -352,8 +352,13 @@ pub async fn open_terminal_tab(
                 .write()
                 .await
                 .insert(tab_id.clone(), killer);
-            register_and_pump(state, session, Arc::clone(&tab), pty::ByteSource::Local(reader))
-                .await?;
+            register_and_pump(
+                state,
+                session,
+                Arc::clone(&tab),
+                pty::ByteSource::Local(reader),
+            )
+            .await?;
         }
     }
     // 订阅数变了，而且 `claim_if_free` 可能刚让这个客户端拿到控制权 —— 推一次。
@@ -562,11 +567,7 @@ pub async fn detach_tab(state: &AppState, tab_id: &str) -> AppResult<()> {
 /// 只有一个视图，"摘自己"与"清空"等价）；本函数只摘 `client` 那一台设备，其他设备
 /// 的画面照旧。多端同看时，用户在一台设备上点标签 ×、选「后台继续运行」，语义是
 /// 「我这一端不看了」，绝不能把别人也一起摘掉。
-pub async fn detach_tab_for_client(
-    state: &AppState,
-    tab_id: &str,
-    client: &str,
-) -> AppResult<()> {
+pub async fn detach_tab_for_client(state: &AppState, tab_id: &str, client: &str) -> AppResult<()> {
     let tab = state.sessions.get_tab(tab_id).await?;
     tab.detach_client(client).await;
     notify_control_changed(state, &tab).await;

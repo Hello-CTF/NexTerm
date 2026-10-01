@@ -1109,8 +1109,14 @@ mod builtin_tests {
         assert_eq!(r1, 1);
 
         // 另一台设备拿着同一个 revision=0 来写 → 必须被拒
-        let (ok2, r2) = store.layout_save(0, r#"{"panes":999}"#).await.expect("过期写");
-        assert!(!ok2, "过期 revision 必须被拒（否则就是静默覆盖对方整份布局）");
+        let (ok2, r2) = store
+            .layout_save(0, r#"{"panes":999}"#)
+            .await
+            .expect("过期写");
+        assert!(
+            !ok2,
+            "过期 revision 必须被拒（否则就是静默覆盖对方整份布局）"
+        );
         assert_eq!(r2, 1, "应把当前 revision 报回去，好让前端先拉最新");
 
         // 正文没有被污染
@@ -1118,7 +1124,10 @@ mod builtin_tests {
         assert_eq!(data.as_deref(), Some(r#"{"panes":1}"#));
 
         // 拿对 revision 就能写
-        let (ok3, r3) = store.layout_save(1, r#"{"panes":2}"#).await.expect("正常写");
+        let (ok3, r3) = store
+            .layout_save(1, r#"{"panes":2}"#)
+            .await
+            .expect("正常写");
         assert!(ok3);
         assert_eq!(r3, 2);
     }

@@ -919,12 +919,25 @@ mod tests {
             assert_eq!(t.subscriber_count().await, 2);
 
             t.feed_output(b"job is still running\r\n");
-            assert!(t.send_to_frontend(b"job is still running\r\n".to_vec()).await);
+            assert!(
+                t.send_to_frontend(b"job is still running\r\n".to_vec())
+                    .await
+            );
 
             let sent = hub.sent.lock().unwrap();
-            let a = sent.iter().find(|(id, _)| id == "ws-a").map(|(_, d)| d.clone());
-            let b = sent.iter().find(|(id, _)| id == "ws-b").map(|(_, d)| d.clone());
-            assert_eq!(a.as_deref(), Some(&b"job is still running\r\n"[..]), "A 没收到");
+            let a = sent
+                .iter()
+                .find(|(id, _)| id == "ws-a")
+                .map(|(_, d)| d.clone());
+            let b = sent
+                .iter()
+                .find(|(id, _)| id == "ws-b")
+                .map(|(_, d)| d.clone());
+            assert_eq!(
+                a.as_deref(),
+                Some(&b"job is still running\r\n"[..]),
+                "A 没收到"
+            );
             assert_eq!(b, a, "两端拿到的必须是同一份字节");
         });
     }
@@ -942,10 +955,18 @@ mod tests {
         let hub = std::sync::Arc::new(NullHub) as std::sync::Arc<dyn Hub>;
         let t = tab();
         rt().block_on(async {
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-1"), 0, "device-a")
-                .await;
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-2"), 0, "device-a")
-                .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-1"),
+                0,
+                "device-a",
+            )
+            .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-2"),
+                0,
+                "device-a",
+            )
+            .await;
             t.claim_if_free("device-a").await;
 
             t.detach_subscriber("ws-1").await;
@@ -977,12 +998,24 @@ mod tests {
         let t = tab();
         rt().block_on(async {
             // A 开两个标签页（两条通道），B 开一个。
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-a1"), 0, "device-a")
-                .await;
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-a2"), 0, "device-a")
-                .await;
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-b1"), 0, "device-b")
-                .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-a1"),
+                0,
+                "device-a",
+            )
+            .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-a2"),
+                0,
+                "device-a",
+            )
+            .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-b1"),
+                0,
+                "device-b",
+            )
+            .await;
             assert_eq!(t.subscriber_count().await, 3);
 
             assert_eq!(t.detach_client("device-a").await, 2, "应摘掉 A 的两条通道");
@@ -1012,14 +1045,30 @@ mod tests {
         let t = tab();
         rt().block_on(async {
             // A 开两个页面（两条通道），B 开一个：共 3 条 sink、2 台设备。
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-a1"), 0, "device-a")
-                .await;
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-a2"), 0, "device-a")
-                .await;
-            t.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-b1"), 0, "device-b")
-                .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-a1"),
+                0,
+                "device-a",
+            )
+            .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-a2"),
+                0,
+                "device-a",
+            )
+            .await;
+            t.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-b1"),
+                0,
+                "device-b",
+            )
+            .await;
             assert_eq!(t.subscriber_count().await, 3, "通道口径 = 3");
-            assert_eq!(t.viewer_count().await, 2, "设备口径 = 2（A 的两条通道去重）");
+            assert_eq!(
+                t.viewer_count().await,
+                2,
+                "设备口径 = 2（A 的两条通道去重）"
+            );
 
             // 摘掉 A 的全部通道后只剩 B 一台设备。
             assert_eq!(t.detach_client("device-a").await, 2);
@@ -1053,8 +1102,12 @@ mod tests {
         //    否则控制权永远卡在一个不在场的人手里（谁也敲不了）。
         let t1 = tab();
         rt().block_on(async {
-            t1.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-1"), 0, "device-a")
-                .await;
+            t1.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-1"),
+                0,
+                "device-a",
+            )
+            .await;
             t1.claim_if_free("device-a").await;
             assert_eq!(t1.detach_client("device-a").await, 1);
             assert!(
@@ -1066,10 +1119,18 @@ mod tests {
         // ② 控制者是 A，但摘的是另一台设备 B ⇒ A 的控制权不受影响。
         let t2 = tab();
         rt().block_on(async {
-            t2.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-a"), 0, "device-a")
-                .await;
-            t2.attach_frontend(Channel::new(std::sync::Arc::clone(&hub), "ws-b"), 0, "device-b")
-                .await;
+            t2.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-a"),
+                0,
+                "device-a",
+            )
+            .await;
+            t2.attach_frontend(
+                Channel::new(std::sync::Arc::clone(&hub), "ws-b"),
+                0,
+                "device-b",
+            )
+            .await;
             t2.claim_if_free("device-a").await;
             assert_eq!(t2.detach_client("device-b").await, 1);
             assert_eq!(

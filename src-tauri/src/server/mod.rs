@@ -321,14 +321,7 @@ pub async fn serve(opts: Options) -> Result<(), Box<dyn std::error::Error>> {
                 // 遍历所有标签而不是查索引：前端是「先开通道、再调 attach」，
                 // 服务端拿到通道 id 的那一刻还不知道它属于谁，建反向索引得额外
                 // 维护一致性；而断连既不频繁、标签数量也就是几十个。
-                let tabs: Vec<_> = st
-                    .sessions
-                    .tabs
-                    .read()
-                    .await
-                    .values()
-                    .cloned()
-                    .collect();
+                let tabs: Vec<_> = st.sessions.tabs.read().await.values().cloned().collect();
                 for t in tabs {
                     // 只有真的摘掉了某条订阅（人数变了）才广播 —— 关一条通道时会
                     // 遍历所有标签，绝大多数标签并不含这条通道，为它们白发事件只是噪音。
