@@ -709,6 +709,7 @@ S1 与 S2 **可以并行**（契约就是 §7.1 那三个端点）。
 - [x] 使用须知（多语言，首次进入渲染）—— LDK 包内 `locales.*.usage` + manifest 顶层兜底
 - [x] 截图：`docs/store/` **7 张 1920×1080（16:9）**
   · 控制台要求 `support_pc` 时**至少 2 张**、**宽高比 16:9** ⇒ 原先的 1920×1200（16:10）**不合规**，已按 16:9 重出
+  · 第 2 张已换成「服务端权威运行态」，原来的「端口转发」撤下（§16.1.1 —— 本平台不给转发，挂在货架上自相矛盾）
 - [x] 上游作者/仓库地址（MIT，公开仓库 `ProbiusOfficial/NexTerm`）
   · 提审时 `source` **留空** —— 该字段 label 是「项目移植来源 URL 地址」，本项目为原创
 - [x] 数据持久化说明（`/lzcapp/var`）—— 写进 `description`
@@ -1787,7 +1788,7 @@ curl -sk -i --http1.1 --max-time 8 -N \
   `check/exist` 已 `{"exist":true}`）。接口与字段见 §15.5
 - ✅ **上传/下载接入懒猫网盘文件选择器** —— 已接入（两条 inject + 前端改走原生文件 API + 服务端暂存区），
   见 §15.6。`lzc-cli project lint` 干净通过、结构断言跑 `scripts/verify-manifest-injects.py`
-- ✅ **商店截图** —— `docs/store/` 7 张 **1920×1080（16:9）**（真实窗口 2 + 演示 5，打码见 §16.3）。
+- ✅ **商店截图** —— `docs/store/` 7 张 **1920×1080（16:9）**（真实窗口 2 + 演示 4 + 示意图 1，打码见 §16.3）。
   规格细节（具体像素）只有开发者中心表单知道；不符时 `python3 scripts/store-shots.py --size WxH` 重出
 - ✅ **WebSocket 101 已在真机实测通过**（`/ws/events` 与 `/ws/channel/*`，见 §15.3.1）
 - ✅ 图标 `lazycat/lzc-icon.png` 256×256 PNG（`spec/build.md` 只要求 png 后缀，无尺寸下限）
@@ -2145,9 +2146,9 @@ ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnl
 
 ```
 scripts/store-shots.py   # 合成器
-docs/images/*.png        # 来源 A：应用内演示截图（演示模式，1680x1050）
+docs/images/*.png        # 来源 A：应用内演示截图（1680x1050），外加示意图 04-server-runtime（3200x1800）
 docs/store/raw/*.png     # 来源 B：桌面版真实窗口截取（1480x920）—— **已 gitignore**
-docs/store/*.png         # 产物：1920x1080（16:9）统一版式，7 张
+docs/store/*.png         # 产物：1920x1080（16:9）统一版式，7 张（轮播顺序 = 文件名排序，改名即换位）
 ```
 
 ```bash
@@ -2162,15 +2163,37 @@ python3 scripts/store-shots.py --verify      # 另出 docs/store/_verify/（打�
 | # | 产物 | 画面 | 来源 |
 |---|---|---|---|
 | 1 | `01-workspace-overview.png` | 工作区总览：终端 + AI 助手（命令解释 / 日志分析 / 任务清单） | 演示图 |
-| 2 | `02-live-terminal.png` | 真实终端会话，`● 已连接`、真实 `sw_vers` / `uptime` / `df` 输出 | **真实窗口** |
-| 3 | `03-ai-guardrail.png` | AI 权限护栏：风险分级 + 危险命令确认卡片 | 演示图 |
-| 4 | `04-ai-file-diff.png` | AI 改文件的前后对照 diff | 演示图 |
-| 5 | `05-split-workspace.png` | 分屏工作区：终端 + 文件编辑器 | 演示图 |
-| 6 | `06-port-forward.png` | 端口转发 / SSH 隧道 | 演示图 |
+| 2 | `02-server-runtime.png` | 服务端权威运行态：布局 / 终端 / 回滚留服务端，多设备接管与观看 | **示意图** |
+| 3 | `03-live-terminal.png` | 真实终端会话，`● 已连接`、真实 `sw_vers` / `uptime` / `df` 输出 | **真实窗口** |
+| 4 | `04-ai-guardrail.png` | AI 权限护栏：风险分级 + 危险命令确认卡片 | 演示图 |
+| 5 | `05-ai-file-diff.png` | AI 改文件的前后对照 diff | 演示图 |
+| 6 | `06-split-workspace.png` | 分屏工作区：终端 + 文件编辑器 | 演示图 |
 | 7 | `07-ai-models.png` | 多模型接入（BYOK）+ 快速填充预设 | **真实窗口** |
 
 两张真实图是**真窗口截取**（§16.2），其余用演示图补——真实窗口在「空态」下
 没什么可看，而审核门槛 #10 恰好卡「界面粗糙 / 功能过简」，用空态图反而扣分。
+
+第 2 张是**唯一一张示意图**，来源 `docs/images/04-server-runtime.png`
+（`docs/diagrams/04-server-runtime.svg` 经 `render-diagrams.mjs` 渲染）。放它有三个理由：
+
+1. 懒猫专版**就是**服务端形态，「运行态在服务端」是这个包与桌面版最不同的一点 ——
+   它该出现在轮播的前排，而不是等用户装完才发现。
+2. 这个语义在**单机截图上根本拍不出来**：多设备接管、布局权威、`subscribers / viewers`
+   的区分，都要多个客户端同时在线才可见，截出来只会是一张和桌面版长得一样的图。
+3. 它是 16:9、深色底、与其余 6 张同色系，进合成器后版式一致，不显得突兀。
+
+### 16.1.1 移除 `06-port-forward.png`（端口转发那张）
+
+**已删**。原来的第 6 张是「端口转发 / SSH 隧道 —— 一键转发到本机，浏览器直接访问内网服务」。
+
+它本身没画错，错在**放进了懒猫专版的货架**：本应用的懒猫版**刻意禁用**端口转发
+（§22，平台裸 TCP + 零鉴权，应用侧补不上），商店描述里也写着「端口转发在此平台上不可用」——
+轮播图却在宣传「一键转发到本机」，两边自相矛盾，还会让用户以为是自己的端口填错了。
+
+- 那张图仍在 `docs/images/port-forward.png`，README 的端口转发章节与演示仍照常用它
+  ——**功能没被砍，只是这一平台不给**，所以撤的是「懒猫轮播位」，不是这个功能。
+- 新第 2 张（服务端运行态）顶上了它的位置，并前移到 2 —— 轮播顺序按文件名排序，
+  所以「排第几」靠改编号实现，不是靠上传顺序。
 
 ### 16.2 真实窗口怎么截（无需辅助功能之外的东西）
 
@@ -2227,9 +2250,9 @@ screencapture -x -o -l17869 out.png
 密码类内容打码仍属险，而且糊掉半屏反而不像真的。
 
 结论：**别在有敏感 scrollback 的终端标签里取景**。要真实终端图就
-`新建终端` 开一个干净标签（本轮 `02` 就是这么来的），或先确认那个标签是干净的。
+`新建终端` 开一个干净标签（本轮 `03` 就是这么来的），或先确认那个标签是干净的。
 另外终端里的 `netmap.lazycore.heiyu.space` 已经随资产树一起被 §16.3 的规则覆盖。
-⚠️ 遗留：`02` 保留了本机提示符 `macmini@macminideMac-mini`（Apple 默认主机名，
+⚠️ 遗留：`03` 保留了本机提示符 `macmini@macminideMac-mini`（Apple 默认主机名，
 不构成泄露，但若想彻底避开，改用手动构造的通用提示符重截即可）。
 
 

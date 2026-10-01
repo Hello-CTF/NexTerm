@@ -32,21 +32,31 @@ unsupported_platforms:
 locales:
   zh-CN:
     name: NexTerm 运维终端
-    description: 浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端。凭据用微服注入的根密钥加密后存在你自己的盒子上；支持磁盘挂载（sshfs）、端口转发与 AI 助手。
+    description: 浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端。终端进程、会话与工作区布局都跑在你的微服上，关掉网页不断、换台设备接着用；凭据用微服注入的根密钥加密后只存在你自己的实例里。
     usage: |
       首次进入请到「设置 → 网络安全 → 凭据库」确认凭据库状态。
 
-      浏览器版把凭据库的根密钥交给微服注入（同一台微服、同一个应用内稳定），
-      因此进程内存里持有解密后的密钥：盒子是您自己的硬件，这是为了让
+      终端进程、会话与工作区布局都跑在这台微服上，浏览器只是接上去看：
+      关掉网页不会结束会话，换一台设备打开即可接管原来那条终端，接着看原来的输出。
+
+      浏览器版由微服注入凭据库的根密钥（同一台微服、同一个应用内稳定），
+      因此进程内存里会持有解密后的密钥。这台微服是您自己的硬件，这是为了让
       「打开浏览器就能连服务器」成立。如果需要更强的隔离，请不要在这台微服上
       保存生产环境的 SSH 口令，改用密钥认证。
 
       磁盘挂载（sshfs）依赖「挂载 FUSE 文件系统」权限；未授权时该入口会置灰并给出原因。
+
+      端口转发在此平台上不可用：平台的端口暴露是裸 TCP 且不带鉴权，应用侧补不上这个洞。
+      需要把远端端口开放给外部时，请改用微服平台自带的转发功能。
   en-US:
     name: NexTerm
-    description: An all-in-one SSH / SFTP / Docker / database operations terminal in your browser. Credentials are encrypted with a key injected by your microserver and never leave your own device.
+    description: An all-in-one SSH / SFTP / Docker / database operations terminal in your browser. Terminal processes, sessions and workspace layout all run on your own microserver, so closing the page keeps them alive and another device picks up right where you left off. Credentials are encrypted with a root key injected by the microserver and stay on your own instance.
     usage: |
       On first launch, open Settings → Network Security → Vault to check the credential vault status.
+
+      Terminal processes, sessions and workspace layout all run on this microserver; the browser
+      only attaches to them. Closing the page does not end a session, and opening it from another
+      device takes over the same terminal and replays its scrollback.
 
       In the browser build the vault master key is injected by the microserver (stable for this
       microserver and this app), so the decrypted key is held in process memory. The microserver is
@@ -55,6 +65,10 @@ locales:
 
       Disk mounting (sshfs) requires the "mount FUSE filesystem" permission. Without it the entry
       is greyed out with a readable reason.
+
+      Port forwarding is not available on this platform: the platform exposes ports as raw TCP with
+      no authentication, and the app cannot compensate for that. To expose a remote port, use the
+      native forwarding feature of the microserver platform instead.
 
 # 权限声明。`required` 是「不给就跑不起来」，`optional` 是「不给就少一块功能」。
 permissions:

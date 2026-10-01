@@ -46,54 +46,66 @@ LANGUAGES = [
     {
         "language": "zh",
         "name": "NexTerm 运维终端",
-        "brief": "浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端，凭据加密后存在你自己的微服上。",
+        "brief": "浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端。会话与布局都跑在微服上，关掉网页不断、换设备接着用。",
         "description": """\
-NexTerm 把日常运维要开的一堆工具收进一个浏览器窗口：SSH 终端、SFTP 文件管理、Docker 容器、数据库客户端、端口转发与磁盘挂载，再加上一个能读懂终端输出的 AI 助手。
+NexTerm 把日常运维要开的一堆工具收进一个浏览器窗口：SSH 终端、SFTP 文件管理、Docker 容器、数据库客户端、磁盘挂载，再加上一个能读懂终端输出的 AI 助手。
+
+跑在你的微服上
+终端进程、会话与工作区布局都留在微服，浏览器只是接上去看。关掉网页不会结束会话，换一台设备打开即可接管原来那条终端、接着看原来的输出；同一时刻只有一台设备能操作，其余设备观看，点一下即可接管。工作区、分屏与标签结构也保存在微服上，任一端的改动会同步到其他设备。
 
 主要能力
-· 终端：多标签与分屏、会话录制、日志导出
-· 文件：SFTP 浏览与编辑，支持拖拽上传下载
-· Docker：容器与镜像列表、启停、日志查看
-· 数据库：MySQL / PostgreSQL / Redis 连接与查询
-· 端口转发：SSH 隧道一键映射，浏览器直接访问内网服务
-· 磁盘挂载：通过 sshfs 把远端目录挂进工作区
+· 终端：多标签与分屏、会话录制、日志导出、UTF-8 / GBK / GB18030 / Big5 编码切换
+· 文件：SFTP 浏览与内置编辑器，传输进度与断点续传、MD5 / SHA256 校验
+· Docker：容器与镜像列表、启停删除、日志跟随、容器终端、容器文件浏览
+· 数据库：MySQL / MariaDB 库表浏览与 SQL 工作台；Redis 键浏览与命令台
+· 磁盘挂载：通过 sshfs 把远端目录挂进工作区（需授予 FUSE 权限）
 · AI 助手：命令按风险分级、危险操作先确认、改文件留前后对照
 
+关于端口转发
+端口转发在此平台上不可用。平台的端口暴露是裸 TCP 且不带鉴权，应用侧补不上这个洞；需要把远端端口开放给外部时，请改用微服平台自带的转发功能。
+
 凭据安全
-所有主机凭据由微服注入的根密钥加密后保存在你自己的盒子上，不上传任何第三方。浏览器版为了让「打开浏览器就能连服务器」成立，进程内存里会持有解密后的密钥——盒子是您自己的硬件。需要更强隔离时，请不要在这台微服上保存生产环境的口令，改用密钥认证。
+所有主机凭据由微服注入的根密钥加密后保存在你自己的实例里，不上传任何第三方。浏览器版为了让「打开浏览器就能连服务器」成立，进程内存里会持有解密后的密钥，这台微服是您自己的硬件。需要更强隔离时，请不要在这台微服上保存生产环境的口令，改用密钥认证。
 
 数据持久化
 配置与凭据保存在 /lzcapp/var，随应用升级保留。""",
-        "keywords": "SSH,SFTP,Docker,数据库,终端,运维,端口转发,隧道,AI助手",
+        "keywords": "SSH,SFTP,Docker,数据库,终端,运维,浏览器,多端会话,AI助手",
     },
     {
         "language": "en",
         "name": "NexTerm",
-        "brief": "An all-in-one SSH / SFTP / Docker / database ops terminal in your browser, with credentials encrypted and stored on your own microserver.",
+        "brief": "An all-in-one SSH / SFTP / Docker / database ops terminal in your browser. Sessions and layout live on your microserver, so closing the page keeps them alive and another device picks up where you left off.",
         "description": """\
-NexTerm puts the tools you open every day into a single browser window: an SSH terminal, SFTP file manager, Docker containers, a database client, port forwarding and disk mounting — plus an AI assistant that can read your terminal output.
+NexTerm puts the tools you open every day into a single browser window: an SSH terminal, SFTP file manager, Docker containers, a database client and disk mounting, plus an AI assistant that can read your terminal output.
+
+Runs on your microserver
+Terminal processes, sessions and workspace layout all live on the microserver; the browser only attaches to them. Closing the page does not end a session, and opening it from another device takes over the same terminal and replays its scrollback. Only one device can type at a time while the others watch; click to take over. Workspaces, split panes and tabs are stored on the microserver too, and a change on any device propagates to the rest.
 
 Capabilities
-- Terminal: tabs and split panes, session recording, log export
-- Files: SFTP browsing and editing, drag-and-drop upload/download
-- Docker: container and image lists, start/stop, logs
-- Databases: MySQL / PostgreSQL / Redis connections and queries
-- Port forwarding: one-click SSH tunnels that reach internal services from the browser
-- Disk mounting: mount remote directories via sshfs
+- Terminal: tabs and split panes, session recording, log export, UTF-8 / GBK / GB18030 / Big5 encoding switching
+- Files: SFTP browsing with a built-in editor, transfer progress and resume, MD5 / SHA256 checksums
+- Docker: container and image lists, start/stop/remove, log following, container shell, container file browsing
+- Databases: MySQL / MariaDB table browsing and a SQL workbench; Redis key browser and console
+- Disk mounting: mount remote directories via sshfs (requires the FUSE permission)
 - AI assistant: commands graded by risk, dangerous operations confirmed first, file edits shown as before/after diffs
 
+About port forwarding
+Port forwarding is not available on this platform. The platform exposes ports as raw TCP with no authentication, which the app cannot compensate for. To expose a remote port, use the native forwarding feature of the microserver platform instead.
+
 Credential safety
-All host credentials are encrypted with a root key injected by your microserver and stored on your own device — nothing is sent to a third party. In the browser build the decrypted key is held in process memory so that "open a browser and connect" works; the microserver is your own hardware. If you need stronger isolation, do not store production passwords here — use key authentication.
+All host credentials are encrypted with a root key injected by your microserver and stored on your own instance, and nothing is sent to a third party. In the browser build the decrypted key is held in process memory so that "open a browser and connect" works; the microserver is your own hardware. If you need stronger isolation, do not store production passwords here, use key authentication.
 
 Data persistence
 Configuration and credentials live in /lzcapp/var and survive app upgrades.""",
-        "keywords": "SSH,SFTP,Docker,database,terminal,ops,port forwarding,tunnel,AI assistant",
+        "keywords": "SSH,SFTP,Docker,database,terminal,ops,browser,multi-device,AI assistant",
     },
 ]
 
 DEFAULT_CHANGELOG = {
-    "zh": "首个版本：SSH / SFTP / Docker / 数据库一体化终端，含 AI 助手、端口转发与磁盘挂载。",
-    "en": "First release: an all-in-one SSH / SFTP / Docker / database terminal with an AI assistant, port forwarding and disk mounting.",
+    # 商店上一版是 0.1.3（review.id 19682，2026-09-30），所以这次是 0.2.0 的更新说明，
+    # **不是**「首个版本」——写错会让审核看到一份与版本号不符的 changelog。
+    "zh": "v0.2.0：新增服务端形态——把 NexTerm 部署到一台常开的机器，浏览器打开就是完整工作台。终端进程、会话与工作区布局都留在服务端，关掉网页不会中断，换台设备接着用；同一时刻只有一台设备能操作，其余设备观看。同时新增桌面与服务端之间的资产同步（含凭据）。懒猫版不提供端口转发，请改用微服平台自带的转发功能。",
+    "en": "v0.2.0: adds the server form — deploy NexTerm on an always-on machine and open it in a browser as a complete workspace. Terminal processes, sessions and workspace layout stay on the server, so closing the page does not interrupt them and another device picks up where you left off; only one device types at a time while the others watch. Also adds asset sync between desktop and server, credentials included. The LazyCat build does not provide port forwarding — use the platform's own forwarding instead.",
 }
 
 

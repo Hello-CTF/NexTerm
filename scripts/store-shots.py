@@ -65,19 +65,28 @@ class Shot:
 SHOTS: list[Shot] = [
     Shot("01-workspace-overview.png", "docs/images/hero-ai-terminal.png",
          "工作区总览", "终端、文件、容器、数据库、AI 助手，一个窗口收束"),
-    Shot("02-live-terminal.png", "docs/store/raw/terminal.png",
+    # 第 2 位放服务端运行态：懒猫专版**就是**服务端形态，这是它与桌面版最不同、也最该被看见的一点。
+    # 来源是一张示意图（`docs/diagrams/04-server-runtime.svg` 渲染产物），
+    # 而不是真窗口截图 —— 因为「多设备 / 布局权威」这些语义在单机截图上根本拍不出来。
+    Shot("02-server-runtime.png", "docs/images/04-server-runtime.png",
+         "服务端运行态", "终端、会话与工作区都在微服上，关掉网页不断、换设备接着用"),
+    Shot("03-live-terminal.png", "docs/store/raw/terminal.png",
          "真实终端会话", "本机与远程统一入口，连接状态实时可见"),
-    Shot("03-ai-guardrail.png", "docs/images/ai-permission.png",
+    Shot("04-ai-guardrail.png", "docs/images/ai-permission.png",
          "AI 权限护栏", "命令按风险分级，危险操作先确认再执行"),
-    Shot("04-ai-file-diff.png", "docs/images/ai-file-changes.png",
+    Shot("05-ai-file-diff.png", "docs/images/ai-file-changes.png",
          "AI 改文件留痕", "写入前给出前后对照，改动可逐行核对"),
-    Shot("05-split-workspace.png", "docs/images/split-pane-editor.png",
+    Shot("06-split-workspace.png", "docs/images/split-pane-editor.png",
          "分屏工作区", "终端与文件编辑器同屏，边看边改"),
-    Shot("06-port-forward.png", "docs/images/port-forward.png",
-         "端口转发", "SSH 隧道一键转发到本机，浏览器直接访问内网服务"),
     Shot("07-ai-models.png", "docs/store/raw/settings-ai.png",
          "多模型接入", "自带密钥（BYOK），DeepSeek / 智谱 / OpenAI 兼容端点随选"),
 ]
+
+# ⛔ 曾经有一张 `06-port-forward.png`（端口转发 / SSH 隧道），**已移除**。
+# 原因：懒猫微服上端口转发是被**刻意禁用**的（§22，平台裸 TCP 无鉴权），
+# 商店描述里写着「端口转发在此平台上不可用」，轮播图却宣传「SSH 隧道一键转发到本机」——
+# 两边自相矛盾，且会让用户以为填错端口。演示图本身没错，错在把它放进**懒猫专版**的货架。
+# 那张图仍在 `docs/images/port-forward.png`，README 的桌面/服务端章节照常用它。
 
 # ---------------------------------------------------------------- 视觉常量
 BRAND = (0x2E, 0x6B, 0xE6)
