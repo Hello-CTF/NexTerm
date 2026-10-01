@@ -21,6 +21,26 @@
 //! `apply` 在 `force = false` 时**跳过「本地这份更新」的条目**，并在报告里逐条说明。
 //! 理由是同步最常见的误操作是「拿一台旧机器的包盖掉新改动」，静默覆盖会直接丢数据；
 //! 而「跳过了什么」是用户能看懂、能补救的（看到报告 → 勾强制覆盖 → 重来）。
+//!
+//! # 私钥正文要跟着资产走，不能只搬路径
+//!
+//! `key_path` 只是**源端**的文件路径；到了对端那个路径根本不存在 —— 资产看似
+//! 同步成功，一连就报「私钥文件不存在」。引用型私钥凭据（`PrivateKeyPayload.file`）
+//! 同理，库里只有路径、没有正文。所以导出时必须把**正文**读进来：
+//!
+//! - `auth_kind == "key"` 且 `key_path` 非空：读文件 → 造一条**内容型**私钥凭据，
+//!   把资产的 `cred_id` 指向它、`key_path` 置空。导入侧因此自然落进
+//!   「`key_path` 为空 + `cred_id` 指向 `private_key` 凭据」这条
+//!   `session::build_ssh_params` 已经支持的分支，一行都不用改；
+//! - `private_key` 凭据本身是引用型（`file` 有值）：读文件 → 补进 `key` 并把
+//!   `file` 置空。**必须置空** —— `build_ssh_params` 解出来是 `file` 优先于
+//!   `key`（`(Some(path), _) => SshAuth::Key{path}`），只带正文不清 `file`
+//!   等于没带。
+//!
+//! 读不到文件时**不能静默**：导出侧把原因记进警告（走 `tracing`，见 `export`），
+//! 对端导入时还会按「本机路径是否存在」再兜一条**用户可见**的警告
+//! （`ImportReport.warnings`，见 `apply_assets` / `apply_creds`）—— 那条路
+//! push / pull 两个方向都能到达界面，是「别让用户以为同步了其实没有」的兜底。
 
 pub mod bundle;
 pub mod client;
@@ -32,9 +52,12 @@ pub use bundle::{
 
 use std::collections::{HashMap, HashSet};
 
+use zeroize::Zeroizing;
+
 use crate::error::{AppError, AppResult};
-use crate::store::models::AssetRow;
+use crate::store::models::{AssetRow, CredentialRow};
 use crate::store::Store;
+use crate::vault::payload::{self, PrivateKeyPayload};
 use crate::vault::Vault;
 
 /// 实例标识所在的 setting 键。
@@ -179,25 +202,35 @@ pub async fn digest(store: &Store) -> AppResult<SyncDigest> {
     })
 }
 
-/// 把选中的资产打成一包。
+/// 导出（带「用户可见」的警告列表）。
 ///
-/// 自动带上两样用户没直接勾选、但不带就会坏的东西：
-/// - **祖先分组**：`asset.group_id` 是外键，分组不过去的话导入侧只能把它扔进
-///   「未分组」—— 用户看到的是「同步成功了，但目录结构全平了」。
-/// - **被引用的凭据**（`with_creds` 时）：没有凭据的密码类资产在另一端是死的
-///   （点连接就报「凭据不存在」）。
+/// # 为什么是这个形状（而不是改 `export` 的返回类型）
 ///
-/// 内置资产（「当前设备」）**一律不导出**：它是「本机」这个概念在**每台设备上
-/// 各自的锚点**，搬到另一边只会多出一台连不上的假机器。
-pub async fn export(
+/// `export` 的调用方分布在 `commands::sync::sync_export` 与 `sync::client`
+/// （`push` / `pull`）里，它们各有既定的返回形状（`SyncBundle` / `ImportReport`）。
+/// 把它们全改成 `(SyncBundle, Vec<String>)` 会牵动一批文件；而**用户真正需要的
+/// 兜底并不在导出侧** —— 见下。
+///
+/// 所以这里拆成两层：
+/// - `export_with_warnings` 返回 `(包, 警告)`，信息完整、可测；
+/// - [`export`] 保持原签名（调用方不动），把警告走 `tracing::warn!` 记下来。
+///
+/// 而**面向用户**的那条警告在**导入侧**：`apply` 会按**目标机的文件系统**再判
+/// 一次「引用的私钥文件在不在」，结果进 `ImportReport.warnings`。这条设计比在
+/// 导出侧报更结实 —— 它判的是「这台机器连不连得上」，而不是「源端读没读到」；
+/// 而且 push / pull 两个方向都会经过 `apply`，警告必然到得了界面。
+pub async fn export_with_warnings(
     store: &Store,
     vault: &Vault,
     asset_ids: &[String],
     with_creds: bool,
-) -> AppResult<SyncBundle> {
+) -> AppResult<(SyncBundle, Vec<String>)> {
     let mut out = SyncBundle::new(origin(store).await?);
+    let mut warnings: Vec<String> = Vec::new();
     let mut group_ids: HashSet<String> = HashSet::new();
     let mut cred_ids: HashSet<String> = HashSet::new();
+    // 内容型私钥凭据的 id 已经在包里出现过？见 `synced_key_cred_id`。
+    let mut inline_cred_ids: HashSet<String> = HashSet::new();
 
     for id in asset_ids {
         let row = match store.asset_get(id).await {
@@ -212,12 +245,50 @@ pub async fn export(
         if let Some(gid) = row.group_id.clone() {
             collect_ancestors(store, &gid, &mut group_ids).await;
         }
-        if with_creds {
-            if let Some(cid) = row.cred_id.clone() {
+
+        let mut payload: AssetPayload = (&row).into();
+
+        // key_path 型资产：把文件正文读进凭据库，资产改指那条新凭据。
+        let mut cred_replaced = false;
+        if with_creds && payload.auth_kind.as_deref() == Some("key") {
+            if let Some(path) = payload.key_path.clone().filter(|p| !p.trim().is_empty()) {
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let cred_id = synced_key_cred_id(&row.id);
+                        let passphrase =
+                            file_key_passphrase(store, vault, row.cred_id.as_deref()).await?;
+                        let secret = PrivateKeyPayload::inline(content, passphrase).encode();
+                        if inline_cred_ids.insert(cred_id.clone()) {
+                            out.creds.push(CredPayload {
+                                id: cred_id.clone(),
+                                name: format!("{} 的私钥", row.name),
+                                kind: payload::KIND_PRIVATE_KEY.to_string(),
+                                secret: Zeroizing::new(secret),
+                            });
+                        }
+                        payload.cred_id = Some(cred_id);
+                        payload.key_path = None;
+                        cred_replaced = true;
+                    }
+                    Err(e) => warnings.push(format!(
+                        "资产「{}」引用的私钥文件 {} 读不到（{}），私钥正文未能随行：\
+                         这次同步到对端后仍然连不上该主机。请把私钥存入凭据库，\
+                         或在对端重新指定该文件路径后重试",
+                        row.name, path, e
+                    )),
+                }
+            }
+        }
+
+        // 原有的「带上 cred_id 指向的凭据」照旧。但路径已被正文取代时不重复带：
+        // 此时 `cred_id` 指向的多半是原先那条**口令**凭据，它的值已经并进新的
+        // 内容型私钥凭据里，单独带走只会在对端造一条没人引用的孤儿凭据。
+        if with_creds && !cred_replaced {
+            if let Some(cid) = payload.cred_id.clone() {
                 cred_ids.insert(cid);
             }
         }
-        out.assets.push((&row).into());
+        out.assets.push(payload);
     }
 
     for gid in group_ids {
@@ -237,6 +308,8 @@ pub async fn export(
                 continue;
             };
             let secret = Vault::decrypt_credential(&dek, &row)?;
+            // 引用型私钥凭据：把正文读进来、清掉 `ref`（见模块文档）。
+            let secret = inline_referenced_key(secret, &row, &mut warnings);
             out.creds.push(CredPayload {
                 id: row.id.clone(),
                 name: row.name.clone(),
@@ -246,7 +319,100 @@ pub async fn export(
         }
     }
 
-    Ok(out)
+    Ok((out, warnings))
+}
+
+/// 把选中的资产打成一包（既有签名，调用方在 `commands` / `sync::client`）。
+///
+/// 自动带上两样用户没直接勾选、但不带就会坏的东西：
+/// - **祖先分组**：`asset.group_id` 是外键，分组不过去的话导入侧只能把它扔进
+///   「未分组」—— 用户看到的是「同步成功了，但目录结构全平了」。
+/// - **被引用的凭据**（`with_creds` 时）：没有凭据的密码类资产在另一端是死的
+///   （点连接就报「凭据不存在」）；私钥类还会把**正文**读进来（见模块文档）。
+///
+/// 内置资产（「当前设备」）**一律不导出**：它是「本机」这个概念在**每台设备上
+/// 各自的锚点**，搬到另一边只会多出一台连不上的假机器。
+///
+/// 本函数只是 [`export_with_warnings`] 的薄包装：真正的警告在这里只走日志
+/// （用户可见的那条在导入侧，理由见 `export_with_warnings` 的文档）。
+pub async fn export(
+    store: &Store,
+    vault: &Vault,
+    asset_ids: &[String],
+    with_creds: bool,
+) -> AppResult<SyncBundle> {
+    let (bundle, warnings) = export_with_warnings(store, vault, asset_ids, with_creds).await?;
+    for w in &warnings {
+        tracing::warn!(target: "sync", "导出警告：{w}");
+    }
+    Ok(bundle)
+}
+
+/// 从 `key_path` 型资产派生的**内容型私钥凭据 id**。
+///
+/// 必须**确定性**：同一条资产每次导出都要得到同一个 id，否则重复同步会在对端
+/// 攒下一堆内容相同、id 不同的私钥凭据（每次都新建而非更新）。从 `asset.id`
+/// 派生即可 —— 它在一台设备上唯一且稳定。
+fn synced_key_cred_id(asset_id: &str) -> String {
+    format!("synckey-{asset_id}")
+}
+
+/// 解出「文件私钥」所配的口令。
+///
+/// 与 `session::build_ssh_params` 对「`key_path` 非空」那条支路的判定**逐条对齐**：
+/// `cred_id` 指向的凭据只有**不是 `private_key` 时**才被当成口令；指向
+/// `private_key` 凭据时它对本文件私钥没有意义，忽略（不当口令用）。
+async fn file_key_passphrase(
+    store: &Store,
+    vault: &Vault,
+    cred_id: Option<&str>,
+) -> AppResult<Option<String>> {
+    let Some(id) = cred_id else {
+        return Ok(None);
+    };
+    // 悬空引用：按「没有口令」处理，由导入侧兜底报。
+    let Ok(row) = store.credential_get_row(id).await else {
+        return Ok(None);
+    };
+    if row.kind == payload::KIND_PRIVATE_KEY {
+        return Ok(None);
+    }
+    let dek = vault.dek().await?;
+    let plain = Vault::decrypt_credential(&dek, &row)?;
+    let text = plain.trim().to_string();
+    Ok(if text.is_empty() { None } else { Some(text) })
+}
+
+/// 引用型私钥凭据 → 内容型：把 `ref` 指向的文件读进来，清掉 `ref`。
+///
+/// 读不到就原样返回 + 记一条警告（**不静默**）：这条凭据到了对端仍是引用型，
+/// 而对端没有这个文件，连接时会在 `build_ssh_params` 里按路径读文件失败。
+fn inline_referenced_key(
+    secret: Zeroizing<String>,
+    row: &CredentialRow,
+    warnings: &mut Vec<String>,
+) -> Zeroizing<String> {
+    if row.kind != payload::KIND_PRIVATE_KEY {
+        return secret;
+    }
+    let parsed = PrivateKeyPayload::parse(secret.as_str());
+    let Some(path) = parsed.file.clone() else {
+        return secret; // 已经是内容型（或旧数据），没什么可做
+    };
+    match std::fs::read_to_string(&path) {
+        // 保留口令；`file` 置空 —— `build_ssh_params` 里 `file` 优先于 `key`。
+        Ok(content) => {
+            Zeroizing::new(PrivateKeyPayload::inline(content, parsed.passphrase).encode())
+        }
+        Err(e) => {
+            warnings.push(format!(
+                "凭据「{}」引用的私钥文件 {} 读不到（{}），私钥正文未能随行：\
+                 对端连接时会因找不到这个文件而失败。请把私钥存入凭据库后重试",
+                row.name, path, e
+            ));
+            secret
+        }
+    }
 }
 
 /// 把一包落进本地库。
@@ -353,6 +519,20 @@ async fn apply_creds(
                 } else {
                     report.creds_created += 1;
                 }
+                // 引用型私钥凭据：`ref` 指向的是**源端**路径，到本机多半不存在
+                // （Windows 路径搬到 Linux 服务端更是必然不存在）。与资产那条同源 ——
+                // 用户需要知道「这条凭据在本机连不上」，只读文件在不在，不读内容。
+                if c.kind == payload::KIND_PRIVATE_KEY {
+                    let parsed = PrivateKeyPayload::parse(c.secret.as_str());
+                    if let Some(path) = parsed.file.as_deref() {
+                        if !std::path::Path::new(path).exists() {
+                            report.warn(format!(
+                                "凭据「{}」引用的私钥文件 {} 在本机不存在，连接会失败",
+                                c.name, path
+                            ));
+                        }
+                    }
+                }
             }
             Err(e) => {
                 report.refused += 1;
@@ -411,6 +591,21 @@ async fn apply_assets(store: &Store, bundle: &SyncBundle, force: bool, report: &
             Err(e) => {
                 report.refused += 1;
                 report.warn(format!("资产「{}」未能导入：{e}", row.name));
+                continue;
+            }
+        }
+
+        // 私钥「文件型」资产：对端把「本地文件私钥」搬了过来，但 `key_path` 记的是
+        // **源端**的路径，在本机几乎一定不存在 ⇒ 这条资产在本机连不上。只看文件在不在，
+        // 不读内容。墓碑不查（它马上就要被删掉，报「连不上」只会误导）。
+        if row.deleted_at.is_none() && row.auth_kind.as_deref() == Some("key") {
+            if let Some(path) = row.key_path.as_deref().filter(|p| !p.trim().is_empty()) {
+                if !std::path::Path::new(path).exists() {
+                    report.warn(format!(
+                        "资产「{}」引用的私钥文件 {} 在本机不存在，连接会失败",
+                        row.name, path
+                    ));
+                }
             }
         }
     }
@@ -536,6 +731,289 @@ mod tests {
             })
             .await
             .unwrap()
+    }
+
+    /// 造一个「用本地文件私钥」的资产（`auth_kind == "key"` + `key_path`）。
+    async fn mk_key_asset(
+        store: &Store,
+        name: &str,
+        key_path: &str,
+        cred_id: Option<String>,
+    ) -> AssetRow {
+        store
+            .asset_create(AssetInput {
+                group_id: None,
+                kind: "ssh".into(),
+                name: name.into(),
+                host: Some("10.0.0.1".into()),
+                port: Some(22),
+                username: Some("root".into()),
+                auth_kind: Some("key".into()),
+                key_path: Some(key_path.into()),
+                cred_id,
+                options_json: "{}".into(),
+                tags: String::new(),
+                note: String::new(),
+                sort: 0,
+            })
+            .await
+            .unwrap()
+    }
+
+    /// 写一个真实临时文件并返回路径（用完删；名字带随机 id 防碰撞）。
+    fn tmp_key_file(tag: &str, body: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "nexterm-sync-test-{tag}-{}.key",
+            crate::ids::new_id()
+        ));
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    /// `key_path` 型资产：导出要把**文件正文**读成内容型私钥凭据，并把资产改成
+    /// 「`cred_id` 指向它 + `key_path` 为空」；再落到另一台机器上仍能解出正文 ——
+    /// 这就是「服务端能连上」的内核证据。
+    #[tokio::test]
+    async fn key_path_asset_carries_key_body() {
+        let (a_store, a_vault) = pair().await;
+        let body = "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRET\n-----END OPENSSH PRIVATE KEY-----";
+        let file = tmp_key_file("kp", body);
+        let a = mk_key_asset(&a_store, "用文件的", &file.to_string_lossy(), None).await;
+
+        let (bundle, warnings) =
+            export_with_warnings(&a_store, &a_vault, std::slice::from_ref(&a.id), true)
+                .await
+                .unwrap();
+        assert!(warnings.is_empty(), "能读到文件时不该有警告: {warnings:?}");
+
+        let asset = &bundle.assets[0];
+        assert!(asset.key_path.is_none(), "key_path 必须被清空");
+        let cid = asset
+            .cred_id
+            .as_deref()
+            .expect("必须指向新凭据")
+            .to_string();
+        assert_eq!(cid, synced_key_cred_id(&a.id), "cred id 要确定性派生");
+        let cred = bundle
+            .creds
+            .iter()
+            .find(|c| c.id == cid)
+            .expect("包内要有这条内容型私钥凭据");
+        assert_eq!(cred.kind, payload::KIND_PRIVATE_KEY);
+        let parsed = PrivateKeyPayload::parse(cred.secret.as_str());
+        assert_eq!(parsed.key.as_deref(), Some(body), "正文要与文件逐字一致");
+        assert!(parsed.file.is_none(), "内容型不该带 ref");
+
+        // 端到端：B 侧用自己的密钥重新加密后仍能解出正确正文。
+        let (b_store, b_vault) = pair().await;
+        let report = apply(&b_store, &b_vault, &bundle, false).await.unwrap();
+        assert_eq!(report.assets_created, 1);
+        assert_eq!(report.creds_created, 1);
+        assert!(
+            report.warnings.is_empty(),
+            "不该有警告: {:?}",
+            report.warnings
+        );
+
+        let got = b_store.asset_get(&a.id).await.unwrap();
+        assert!(got.key_path.is_none(), "对端落地后 key_path 也该为空");
+        assert_eq!(got.cred_id.as_deref(), Some(cid.as_str()));
+        let row = b_store.credential_get_row(&cid).await.unwrap();
+        let dek = b_vault.dek().await.unwrap();
+        let plain = Vault::decrypt_credential(&dek, &row).unwrap();
+        let parsed = PrivateKeyPayload::parse(plain.as_str());
+        assert_eq!(parsed.key.as_deref(), Some(body), "对端要能解出同一把私钥");
+
+        std::fs::remove_file(&file).ok();
+    }
+
+    /// 文件口令凭据要跟着私钥一起过去（并进内容型凭据的 `passphrase`），
+    /// 否则带口令的私钥到了对端照样解不开。
+    #[tokio::test]
+    async fn key_path_asset_keeps_passphrase_cred() {
+        let (a_store, a_vault) = pair().await;
+        let body = "PRIVATE-KEY-WITH-PASSPHRASE";
+        let file = tmp_key_file("kp-pass", body);
+        // 口令存在另一条非 private_key 凭据里（与 build_ssh_params 的判定一致）
+        let pass_id = mk_cred(&a_store, &a_vault, "私钥口令", "p@ss").await;
+        let a = mk_key_asset(
+            &a_store,
+            "带口令的文件私钥",
+            &file.to_string_lossy(),
+            Some(pass_id.clone()),
+        )
+        .await;
+
+        let (bundle, warnings) =
+            export_with_warnings(&a_store, &a_vault, std::slice::from_ref(&a.id), true)
+                .await
+                .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let cid = bundle.assets[0].cred_id.clone().unwrap();
+        let cred = bundle.creds.iter().find(|c| c.id == cid).unwrap();
+        let parsed = PrivateKeyPayload::parse(cred.secret.as_str());
+        assert_eq!(parsed.key.as_deref(), Some(body));
+        assert_eq!(parsed.passphrase.as_deref(), Some("p@ss"), "口令不能丢");
+        // 原口令凭据不该再作为孤儿被单独带走
+        assert!(
+            !bundle.creds.iter().any(|c| c.id == pass_id),
+            "口令已并进新凭据，不该再造一条孤儿凭据"
+        );
+
+        std::fs::remove_file(&file).ok();
+    }
+
+    /// 文件读不到时**不能静默**：资产原样保留（不被偷偷改成空私钥），
+    /// 导入侧还会按目标机文件系统给出一条面向用户的警告。
+    #[tokio::test]
+    async fn missing_key_file_warns_instead_of_silently_dropping() {
+        let (a_store, a_vault) = pair().await;
+        let missing = std::env::temp_dir().join(format!("nexterm-nope-{}", crate::ids::new_id()));
+        let missing_s = missing.to_string_lossy().to_string();
+        let a = mk_key_asset(&a_store, "文件丢了", &missing_s, None).await;
+
+        let (bundle, warnings) =
+            export_with_warnings(&a_store, &a_vault, std::slice::from_ref(&a.id), true)
+                .await
+                .unwrap();
+        assert_eq!(warnings.len(), 1, "导出侧要记一条: {warnings:?}");
+        assert!(warnings[0].contains("读不到"), "{}", warnings[0]);
+
+        let asset = &bundle.assets[0];
+        assert_eq!(
+            asset.key_path.as_deref(),
+            Some(missing_s.as_str()),
+            "读不到时资产必须原样保留，不能被改坏"
+        );
+        assert!(asset.cred_id.is_none());
+        assert!(bundle.creds.is_empty(), "不该凭空造一条空私钥凭据");
+
+        // 用户可见的那条在导入侧（push / pull 都会经过它）
+        let (b_store, b_vault) = pair().await;
+        let report = apply(&b_store, &b_vault, &bundle, false).await.unwrap();
+        assert_eq!(report.assets_created, 1);
+        assert!(
+            report.warnings.iter().any(|w| w.contains("在本机不存在")),
+            "导入侧要给出人话警告: {:?}",
+            report.warnings
+        );
+    }
+
+    /// 引用型私钥凭据在**源端**也读不到时：正文带不过去，但导入侧要给出人话警告
+    /// （否则用户看到「同步成功」，对端点连接却是死的）。
+    #[tokio::test]
+    async fn missing_referenced_key_cred_warns_on_import() {
+        let (a_store, a_vault) = pair().await;
+        let missing =
+            std::env::temp_dir().join(format!("nexterm-nope-ref-{}", crate::ids::new_id()));
+        let missing_s = missing.to_string_lossy().to_string();
+        let refd = PrivateKeyPayload::referenced(missing_s.clone(), None);
+        let dek = a_vault.dek().await.unwrap();
+        let (nonce, blob) = Vault::encrypt_credential(&dek, &refd.encode())
+            .await
+            .unwrap();
+        let cid = a_store
+            .credential_put(CredentialInput {
+                id: None,
+                name: "引用型私钥(丢了)".into(),
+                kind: payload::KIND_PRIVATE_KEY.into(),
+                nonce,
+                blob,
+                kek_hint: "master:0".into(),
+            })
+            .await
+            .unwrap();
+        let a = a_store
+            .asset_create(AssetInput {
+                group_id: None,
+                kind: "ssh".into(),
+                name: "引用型".into(),
+                host: Some("10.0.0.1".into()),
+                port: Some(22),
+                username: Some("root".into()),
+                auth_kind: Some("key".into()),
+                key_path: None,
+                cred_id: Some(cid),
+                options_json: "{}".into(),
+                tags: String::new(),
+                note: String::new(),
+                sort: 0,
+            })
+            .await
+            .unwrap();
+
+        let (bundle, warnings) =
+            export_with_warnings(&a_store, &a_vault, std::slice::from_ref(&a.id), true)
+                .await
+                .unwrap();
+        assert_eq!(warnings.len(), 1, "源端读不到要记一条: {warnings:?}");
+
+        let (b_store, b_vault) = pair().await;
+        let report = apply(&b_store, &b_vault, &bundle, false).await.unwrap();
+        assert!(
+            report.warnings.iter().any(|w| w.contains("在本机不存在")),
+            "导入侧要给人话警告: {:?}",
+            report.warnings
+        );
+    }
+
+    /// 引用型私钥凭据：导出要把 `ref` 读成正文并**清空 `file`**
+    /// （否则 `build_ssh_params` 里 `file` 优先于 `key`，带正文也白搭），口令保留。
+    #[tokio::test]
+    async fn referenced_private_key_cred_is_inlined() {
+        let (store, vault) = pair().await;
+        let body = "REFERENCED-KEY-BODY";
+        let file = tmp_key_file("ref", body);
+        let refd =
+            PrivateKeyPayload::referenced(file.to_string_lossy().to_string(), Some("pw".into()));
+        let dek = vault.dek().await.unwrap();
+        let (nonce, blob) = Vault::encrypt_credential(&dek, &refd.encode())
+            .await
+            .unwrap();
+        let cid = store
+            .credential_put(CredentialInput {
+                id: None,
+                name: "引用型私钥".into(),
+                kind: payload::KIND_PRIVATE_KEY.into(),
+                nonce,
+                blob,
+                kek_hint: "master:0".into(),
+            })
+            .await
+            .unwrap();
+        // 资产 key_path 为空 → 私钥完全来自这条凭据（引用型）
+        let a = store
+            .asset_create(AssetInput {
+                group_id: None,
+                kind: "ssh".into(),
+                name: "引用型私钥资产".into(),
+                host: Some("10.0.0.1".into()),
+                port: Some(22),
+                username: Some("root".into()),
+                auth_kind: Some("key".into()),
+                key_path: None,
+                cred_id: Some(cid.clone()),
+                options_json: "{}".into(),
+                tags: String::new(),
+                note: String::new(),
+                sort: 0,
+            })
+            .await
+            .unwrap();
+
+        let (bundle, warnings) =
+            export_with_warnings(&store, &vault, std::slice::from_ref(&a.id), true)
+                .await
+                .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let cred = bundle.creds.iter().find(|c| c.id == cid).unwrap();
+        let parsed = PrivateKeyPayload::parse(cred.secret.as_str());
+        assert_eq!(parsed.key.as_deref(), Some(body), "正文要读进来");
+        assert!(parsed.file.is_none(), "file 必须清空，否则仍按路径读");
+        assert_eq!(parsed.passphrase.as_deref(), Some("pw"), "口令保留");
+
+        std::fs::remove_file(&file).ok();
     }
 
     #[tokio::test]

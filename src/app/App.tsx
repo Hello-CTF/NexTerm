@@ -14,12 +14,14 @@ import {
   connectAsset,
   openCredentialsSidebar,
   openCredentialsViewTab,
+  requestCloseTab,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
   type Pane,
   type Workspace,
 } from "./store";
+import { layoutBootstrapped, startLayoutSync } from "./layout";
 import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
@@ -27,6 +29,7 @@ import { isMac } from "./platform";
 import { mountUnavailableReason } from "./capabilities";
 import { AssetTree } from "../features/explorer/AssetTree";
 import { TerminalPane } from "../features/terminal/TerminalPane";
+import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
 import { FileBrowser } from "../features/files/FileBrowser";
 import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
@@ -93,6 +96,7 @@ const TAB_ICON = {
   credentialsText: IconCode,
   settings: IconSettings,
   audit: IconHistory,
+  background: IconActivity,
 } as const;
 
 /** 一级标签（工作区）的图标：会话工作区用资产类型图标，其余按种类给。 */
@@ -120,7 +124,6 @@ export default function App() {
     unsplitWorkspace,
     setActivePane,
     setSplitRatio,
-    closeTab,
     sessions,
     setSessions,
     leftOpen,
@@ -268,6 +271,17 @@ export default function App() {
   }, []);
 
   /**
+   * 「后台会话」：服务端还在跑、但没人在看的终端标签。
+   *
+   * 固定 id：再点一次只是把已开的面板激活，不堆第二个。
+   */
+  const openBackground = useCallback(() => {
+    useUi
+      .getState()
+      .addTab({ id: "background", kind: "background", title: "后台会话", closable: true });
+  }, []);
+
+  /**
    * 新标签：在当前工作区再开一个终端（最常用的"再来一个"）。
    *
    * 会话可能已经不在了 —— 本机会话一断开就被内核彻底回收、应用重启后旧工作区也可能
@@ -338,7 +352,7 @@ export default function App() {
         else cur.splitWorkspace(target.id);
       } else if (mod && e.key.toLowerCase() === "w" && activeTabId) {
         e.preventDefault();
-        void closeTab(activeTabId);
+        void requestCloseTab(activeTabId);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -349,7 +363,6 @@ export default function App() {
     activeTabId,
     setLeftOpen,
     setRightOpen,
-    closeTab,
     openLocalTerminal,
   ]);
 
@@ -397,7 +410,25 @@ export default function App() {
             .getState()
             .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
         }),
+      // 多选一（关闭终端标签：后台继续运行 / 结束进程）。见 store.requestCloseTab。
+      choose: (message, options) =>
+        new Promise<string | null>((resolve) => {
+          useUi.getState().openAppChoice({
+            title: options?.title ?? "请选择",
+            message,
+            options: options?.choices ?? [],
+            level: options?.level ?? "info",
+            resolve,
+          });
+        }),
     });
+  }, []);
+
+  /* ── 布局同步：服务端是权威运行态，浏览器只是显示器（§布局） ────────── */
+
+  useEffect(() => {
+    // StrictMode 下会跑两遍；layout.ts 里有 started 幂等闸门。
+    startLayoutSync();
   }, []);
 
   /* ── 启动：刷新会话与凭据库状态；演示模式下自动接一台机器 ──────────── */
@@ -420,6 +451,9 @@ export default function App() {
     let cancelled = false;
     void (async () => {
       try {
+        // 先等布局恢复完成再决定要不要自动开终端：否则「从服务端恢复了一份
+        // 有工作区的布局」和「首启动自动连当前设备」会同时命中，凭空多出一个终端。
+        await layoutBootstrapped;
         const list = await assetApi.list();
         const web = list.find((a) => a.name === "web-01");
         if (!web || cancelled) return;
@@ -453,6 +487,8 @@ export default function App() {
     bootLocalTried = true;
     void (async () => {
       try {
+        // 同上：先等布局恢复，别在"已经恢复出工作区"的情况下再自动连一台。
+        await layoutBootstrapped;
         const list = await assetApi.list();
         if (list.some((a) => !a.builtin)) return;
         const builtin = list.find((a) => a.builtin && a.kind === "local");
@@ -524,8 +560,15 @@ export default function App() {
     onClick: () => void;
     /** 非空 = 本平台暂不可用，图标栏置灰并在 tooltip 里说明。 */
     unavailableReason?: string;
-  }[] = [
+  }[  ] = [
     { key: "terminal", label: "新建终端", icon: IconTerminal, onClick: openNewTerminal },
+    {
+      // 服务端模式下「关掉网页，任务还在跑」的落点：这里能看到并接回它们。
+      key: "background",
+      label: "后台会话",
+      icon: IconActivity,
+      onClick: openBackground,
+    },
     { key: "docker", label: "容器", icon: IconBox, onClick: openDocker },
     { key: "db", label: "数据库", icon: IconDatabase, onClick: () => void openDatabase() },
     {
@@ -978,7 +1021,6 @@ function PaneGroup({
   onToggleLeft,
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
-  const closeTab = useUi((s) => s.closeTab);
   const updateTab = useUi((s) => s.updateTab);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -1008,7 +1050,7 @@ function PaneGroup({
       icon: <IconClose size={12} />,
       danger: true,
       disabled: !t.closable,
-      onSelect: () => void closeTab(t.id),
+      onSelect: () => void requestCloseTab(t.id),
     });
     setMenu({ x: e.clientX, y: e.clientY, title: t.title, items });
   };
@@ -1048,7 +1090,7 @@ function PaneGroup({
                   title="关闭标签"
                   onClick={(e) => {
                     e.stopPropagation();
-                    void closeTab(t.id);
+                    void requestCloseTab(t.id);
                   }}
                 >
                   <IconClose size={10} />
@@ -1088,7 +1130,7 @@ function PaneGroup({
               <PaneForTab
                 tab={t}
                 active={t.id === activeTabId && active}
-                onClose={() => void closeTab(t.id)}
+                onClose={() => void requestCloseTab(t.id)}
               />
             </div>
           ))
@@ -1214,6 +1256,10 @@ function PaneForTab({
           title={tab.title}
           containerId={tab.containerId}
           storeTabId={tab.id}
+          // ★「关掉网页再打开还能接回原终端」的总开关：把持久化下来的内核标签 id
+          // 传下去，XtermView 才会走 terminal_attach_tab（接管）而不是新建 shell。
+          // 漏了这个字段 = 每恢复一次就多泄漏一个远端 shell。
+          resumeTabId={tab.tabId}
           visible={active}
         />
       ) : (
@@ -1245,6 +1291,9 @@ function PaneForTab({
       return <SettingsView />;
     case "audit":
       return <AuditView />;
+    case "background":
+      // 「后台会话」面板：只在它被激活时轮询，避免所有隐藏标签一起空转。
+      return <BackgroundSessions visible={active} />;
     case "credentials":
       return <CredentialsPanel credId={tab.credId} />;
     case "credentialsText":

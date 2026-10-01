@@ -2,7 +2,7 @@
 // 类型来自 ts-rs 生成（cargo test 导出），见 types.ts。
 import { invoke } from "@tauri-apps/api/core";
 import { DEMO, WEB } from "../demo";
-import { httpUrl } from "./env";
+import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
 
 // ───────── 通用 ─────────
@@ -126,7 +126,13 @@ export const sessionApi = {
       args: { host, port, timeoutMs },
     }),
   openLineTab: (sessionId: string, cols: number, rows: number, channel: unknown) =>
-    call<string>("session_open_line_tab", { sessionId, cols, rows, channel }),
+    call<string>("session_open_line_tab", {
+      sessionId,
+      cols,
+      rows,
+      channel,
+      clientId: clientId(),
+    }),
   lineExec: (tabId: string, line: string) =>
     call<void>("session_line_exec", { tabId, line }),
   cwd: (sessionId: string) =>
@@ -135,14 +141,98 @@ export const sessionApi = {
 
 // ───────── terminal ─────────
 
+/**
+ * 接管一个已有内核标签的结果（`terminal_attach_tab` 的返回）。
+ *
+ * 字段与 Rust 侧 `session::AttachedTabInfo` 一一对应（camelCase）。
+ */
+export interface AttachedTabInfo {
+  tabId: string;
+  sessionId: string;
+  /** PTY 的**当前**尺寸 —— 接管方应照它渲染，而不是按自己窗口尺寸去改 PTY。 */
+  cols: number;
+  rows: number;
+  /** 当前持输入控制权的人；`null` = 无人持权（谁都不能敲）。 */
+  controller: string | null;
+  /**
+   * 有几个前端在看。
+   *
+   * ⚠️ **含自己**：刚 attach 完立刻读会是 1。这是**通道数**（同一台设备开两个页面
+   * 就是 2），不是设备数 —— 界面要显示「几个设备在看」请用 {@link viewers}。
+   */
+  subscribers: number;
+  /** **观看设备数**（按 clientId 去重）：同一台设备多开页面不重复计数。 */
+  viewers: number;
+  /** 这个标签的进程已经结束了（只能看到最后一屏，敲不了）。 */
+  exited: boolean;
+}
+
+/** 内核里存活着的终端标签（后台会话面板的数据源）。 */
+export interface LiveTabInfo {
+  tabId: string;
+  sessionId: string;
+  sessionName: string;
+  sessionKind: string;
+  cols: number;
+  rows: number;
+  controller: string | null;
+  /** 通道数（含自己）：同一台设备多开一个页面就会 +1。 */
+  subscribers: number;
+  /** 观看设备数（按 clientId 去重）：界面上「N 个设备正在观看」用它。 */
+  viewers: number;
+  exited: boolean;
+  lastOutputMsAgo: number;
+}
+
 export const terminalApi = {
+  /**
+   * 新建终端标签 —— **会在远端开一个新 shell**。
+   *
+   * 想接回已有标签请用 {@link attachTab}：这个命令每调一次就多一个 shell。
+   */
   attach: (sessionId: string, cols: number, rows: number, channel: unknown) =>
-    call<string>("terminal_attach", { sessionId, cols, rows, channel }),
+    call<string>("terminal_attach", { sessionId, cols, rows, channel, clientId: clientId() }),
+  /**
+   * 接管一个**已存在**的内核标签（不新开 shell）。
+   *
+   * 这是「关掉网页再回来，终端还在、中间那段日志也在」的关键路径：服务端把那条
+   * 连接上的滚动内容回放给这个新页面。
+   *
+   * ⚠️ **刻意不收 `cols`/`rows`**：一个 PTY 只有一组尺寸，接管方若顺手按自己窗口
+   * 改尺寸，正在另一台设备上操作的人画面会被突然重排。尺寸只由**持控制权**的那端
+   * 决定（`resize` 会校验控制权），返回的 `cols`/`rows` 才是当前真实尺寸。
+   *
+   * `replayBytes` 缺省由服务端定（4 MiB）。
+   */
+  attachTab: (tabId: string, channel: unknown, replayBytes?: number) =>
+    call<AttachedTabInfo>("terminal_attach_tab", {
+      tabId,
+      replayBytes,
+      channel,
+      clientId: clientId(),
+    }),
   write: (tabId: string, data: Uint8Array) =>
-    call<void>("terminal_write", { args: { tabId, data: Array.from(data) } }),
+    call<void>("terminal_write", {
+      args: { tabId, data: Array.from(data), clientId: clientId() },
+    }),
   resize: (tabId: string, cols: number, rows: number) =>
-    call<void>("terminal_resize", { tabId, cols, rows }),
-  detach: (tabId: string) => call<void>("terminal_detach", { tabId }),
+    call<void>("terminal_resize", { tabId, cols, rows, clientId: clientId() }),
+  /**
+   * 摘掉自己的订阅。
+   *
+   * ⚠️ `channelId` 必须传（服务端）：不传就是「清空全部」，会把同一个终端上
+   * 其他设备的推送一起掐掉。
+   */
+  detach: (tabId: string, channelId?: string) =>
+    call<void>("terminal_detach", { tabId, channelId }),
+  /** 接管输入控制权（单点模式）。返回被顶掉的那个人。 */
+  claim: (tabId: string) =>
+    call<string | null>("terminal_claim", { tabId, clientId: clientId() }),
+  /** 主动交出输入控制权。 */
+  release: (tabId: string) =>
+    call<boolean>("terminal_release", { tabId, clientId: clientId() }),
+  /** 内核里存活着的终端标签（含在后台跑的）。 */
+  listLive: () => call<LiveTabInfo[]>("terminal_list"),
   screenText: (tabId: string) => call<string>("terminal_screen_text", { tabId }),
   snapshot: (tabId: string) =>
     call<import("./types").ScreenSnapshotDto>("terminal_snapshot", { tabId }),
@@ -165,7 +255,46 @@ export const terminalApi = {
    */
   exportLog: (tabId: string, path: string, maxBytes?: number) =>
     call<number>("terminal_export_log", { tabId, path, maxBytes }),
-  closeTab: (tabId: string) => call<void>("terminal_close_tab", { tabId }),
+  /**
+   * 关闭标签。
+   *
+   * `mode`：
+   * - `"detach"` —— 只从视图里拿走，**进程继续在服务端跑**（跑长任务时选这个，
+   *   之后可以在「后台会话」里重新接管）
+   * - 不传 —— 真的结束：停泵、杀进程
+   *
+   * 缺省是「真结束」而不是 «detach»：不能因为"关标签"这个动作看着轻，就把
+   * 用户可能正等着结果的任务默默留成后台僵尸。后台运行必须由用户显式选择。
+   */
+  closeTab: (tabId: string, mode?: "kill" | "detach") =>
+    // 带上 clientId：服务端要据此**只摘掉本端那一条订阅**，而不是无差别清空全部。
+    // 不传时内核按"整个进程一个视图"的桌面语义退回清空全部（见 Rust terminal_close_tab），
+    // 所以两边落地有先后也不会坏。
+    call<void>("terminal_close_tab", { tabId, mode, clientId: clientId() }),
+};
+
+// ───────── layout（工作区布局：服务端权威运行态）─────────
+
+export interface LayoutDto {
+  /** 乐观锁版本号。写入时必须带上"我这份是基于哪个版本"。 */
+  revision: number;
+  updatedAt: number;
+  /** 布局正文（前端的视图模型，内核不解释）；从没保存过时是 null。 */
+  data: unknown | null;
+}
+
+export interface LayoutSaveResult {
+  saved: boolean;
+  /** 写入后的 revision（`saved=false` 时是**对端**的当前版本）。 */
+  revision: number;
+  /** 对端在你之后改过。应拉最新再决定，**不要**直接重试覆盖。 */
+  conflict: boolean;
+}
+
+export const layoutApi = {
+  get: () => call<LayoutDto>("layout_get"),
+  put: (data: string, revision: number) =>
+    call<LayoutSaveResult>("layout_put", { args: { data, revision } }),
 };
 
 // ───────── asset / group / snippet ─────────
@@ -351,19 +480,26 @@ export const dockerApi = {
     containerId: string,
     tail: number,
     channel: unknown,
-  ) => call<string>("docker_logs_attach", { sessionId, containerId, tail, channel }),
+  ) =>
+    call<string>("docker_logs_attach", {
+      sessionId,
+      containerId,
+      tail,
+      channel,
+      clientId: clientId(),
+    }),
   execAttach: (
     sessionId: string,
     containerId: string,
     cols: number,
     rows: number,
     channel: unknown,
+    cmd?: string,
   ) =>
+    // 入参收成一个 `args` 对象：Rust 侧为了不超过 clippy 的参数上限把签名收成了
+    // `DockerExecArgs`（`channel` 必须留在签名上，宏要特殊处理它）。
     call<string>("docker_exec_attach", {
-      sessionId,
-      containerId,
-      cols,
-      rows,
+      args: { sessionId, containerId, cmd, cols, rows, clientId: clientId() },
       channel,
     }),
   action: (sessionId: string, containerId: string, action: string, newName?: string) =>

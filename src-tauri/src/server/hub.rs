@@ -84,6 +84,23 @@ pub struct WsHub {
     channels: Mutex<HashMap<String, UnboundedSender<Frame>>>,
     /// 还没有 WS 认领的帧（见模块文档）。
     pending: Mutex<HashMap<String, VecDeque<Frame>>>,
+    /// 通道 WS 断开时的回调。
+    ///
+    /// # 为什么必须有这个（不能省）
+    ///
+    /// 终端标签现在持有**订阅者表**（`TerminalTab::sinks`），键就是通道 id。
+    /// 浏览器关掉页面时那条 `/ws/channel/{id}` 会断，但**没人会告诉终端标签** ——
+    /// 于是表里留下一个已经死掉的 `Channel`，之后每一帧 PTY 输出都要白跑一遍。
+    ///
+    /// 这里**不能指望 `Channel::send` 失败来自动剔除**：服务端门面的
+    /// `Channel::send` 永远返回 `Ok(())`（它只是往 hub 投一帧，投递结果由 hub
+    /// 自己消化）。实测口径是「`WsHub::deliver` 发现发送失败会摘掉通道并**直接
+    /// return，不落 pending**」—— 也就是说断连这件事**只在这里知道**。
+    ///
+    /// 用回调而不是让 hub 直接持有 `AppState`：本模块的边界是「连接表 + 通道路由」，
+    /// 一旦让它认识会话与标签，hub 就得跟着内核的每次重构走。回调把「断开之后
+    /// 该干什么」留给装配方（`server::serve`）。
+    on_channel_closed: Mutex<Option<Arc<dyn Fn(&str) + Send + Sync>>>,
 }
 
 impl WsHub {
@@ -161,6 +178,20 @@ impl WsHub {
         lock(&self.channels).len()
     }
 
+    /// 注册「通道 WS 断开」回调（装配方在 `serve` 里调一次）。
+    pub fn set_on_channel_closed(&self, cb: Arc<dyn Fn(&str) + Send + Sync>) {
+        *lock(&self.on_channel_closed) = Some(cb);
+    }
+
+    /// 通知断开。回调里**只能做立即返回的事**（取锁、`tokio::spawn`），
+    /// 不能 `.await` —— 它在关闭路径上，被它拖住就等于连接关不掉。
+    fn notify_channel_closed(&self, id: &str) {
+        let cb = lock(&self.on_channel_closed).clone();
+        if let Some(cb) = cb {
+            cb(id);
+        }
+    }
+
     /// 还没被认领的通道数（`/healthz` 用；长期 > 0 说明前端没把 WS 连上）。
     pub fn pending_channels(&self) -> usize {
         lock(&self.pending).len()
@@ -222,6 +253,8 @@ async fn pump_channel(socket: WebSocket, hub: Arc<WsHub>, channel_id: String) {
     let (sink, stream) = socket.split();
     pump(sink, stream, rx).await;
     hub.unregister_channel(&channel_id);
+    // 告诉终端标签「这个订阅者走了」—— 它会把 sinks 里那条删掉（见 set_on_channel_closed）。
+    hub.notify_channel_closed(&channel_id);
     tracing::debug!(target: "server", channel = %channel_id, "通道 WS 断开");
 }
 

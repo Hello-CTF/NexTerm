@@ -88,12 +88,14 @@ pub async fn session_open_line_tab(
     cols: u16,
     rows: u16,
     channel: Channel<Vec<u8>>,
+    client_id: Option<String>,
 ) -> AppResult<String> {
     let s = state.sessions.get(&session_id).await?;
     if s.kind != "winrm" {
         return Err(crate::error::AppError::param("该会话不是 WinRM"));
     }
-    session::open_winrm_line_tab(&state, &s, cols, rows, channel).await
+    let client = super::client_or_default(client_id);
+    session::open_winrm_line_tab(&state, &s, cols, rows, channel, &client).await
 }
 
 /// WinRM 行模式写入：一行命令 → exec → 输出进同一标签。

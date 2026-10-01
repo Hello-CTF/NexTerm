@@ -266,6 +266,9 @@ pub async fn ai_takeover_run(
     let job_id = crate::ids::new_id();
     let state2 = std::sync::Arc::clone(&state);
     let job_for_task = job_id.clone();
+    // 外面留一份 channel：`channel` 随后被 move 进 `run_takeover`，而任务 panic 时
+    // 里面那份会被丢掉 —— 就再也发不出消息了，界面会一直转圈，比直接报错更糟。
+    let chan = channel.clone();
     tokio::spawn(async move {
         if let Err(e) = takeover::run_takeover(
             &state2,
@@ -279,7 +282,16 @@ pub async fn ai_takeover_run(
         )
         .await
         {
+            // 兜底：`run_takeover` 有三条可达的早退（begin 失败 / 标签已被关 /
+            // 模型未配置），它们**一个事件都不推**。这里必须补一发 —— 前端的
+            // `aiBusy` 只认 done / error 两个事件，漏推一次就是永久转圈：
+            // 输入框禁用 + Esc 接管横幅挂着、没有任何停止入口，用户只能重启应用，
+            // 而且接管通道会一直泄漏。与主对话路径（见上方 `Ok(Err(e))` 分支）同形。
             tracing::error!(target: "ai", error = %e, "接管失败");
+            let _ = chan.send(AiEvent::Error {
+                message: format!("接管失败：{e}"),
+                retryable: true,
+            });
         }
     });
     Ok(job_id)

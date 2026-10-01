@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
-import { createAiChannel } from "../../ipc/events";
+import { createAiChannel, disposeChannel } from "../../ipc/events";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { ModelPanel } from "./ModelPanel";
@@ -427,12 +427,19 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               wasPlan ? { role: "plan", text: answer } : { role: "assistant", text: answer },
             ];
           });
+          // 终态到达 ⇒ 这次作业彻底结束，释放本次作业专用的通道。
+          // 不释放的话它对应的 WS 会一直挂着（`disposed` 永为 false ⇒ 退避重连），
+          // 实测 `liveChannels` 只增不减。
+          disposeChannel(channel);
           break;
         }
         case "error":
           setAiBusy(false);
           setStatus(null);
           pushToast("error", `AI: ${ev.message as string}`);
+          // `error` 与 `done` 互斥且都是终态：`agent.rs` 被打断时只推 Error、
+          // 正常收尾只推 Done，两条路径都必须释放。
+          disposeChannel(channel);
           break;
         default:
           break;
@@ -455,6 +462,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     } catch (e) {
       pushToast("error", describeError(e));
       setAiBusy(false);
+      // 命令级失败（未拿到 jobId）时服务端不会推任何终态事件 ⇒ 在这里兜底释放，
+      // 否则这条通道永远没人回收。
+      disposeChannel(channel);
     }
   };
 
@@ -610,7 +620,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
     // 命令是「spawn 后立刻返回」，事件可能在 await 拿到 jobId 之前就到达；
     // 闭包直接读 state 会拿到 null，故用 holder 承载。
-    const holder: { jobId: string | null } = { jobId: null };
+    //
+    // `settled` 记「这条接管通道已经收到终态（done / error）」。没有它会有个
+    // 竞态：模型侧立刻失败时（例如 provider 配错 → `LlmClient::new` 直接失败），
+    // Error 事件**早于** `takeoverRun` 的 await 返回 ⇒ 错误分支先跑
+    // `clearTakeover()`（此时还没置过，等于空操作），随后 `await` 回来又
+    // `setTakeover(...)` 把横幅重新立起来 —— 结果 `aiBusy` 复位了、横幅却永远
+    // 挂着，用户仍然只能按 Esc 手动退出。所以 await 回来后必须看这个标记。
+    const holder: { jobId: string | null; settled: boolean } = { jobId: null, settled: false };
     const clearTakeover = () => useUi.getState().setTakeover(null);
 
     const channel = createAiChannel((ev) => {
@@ -693,6 +710,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           return prev;
         });
       } else if (type === "done") {
+        holder.settled = true;
         setAiBusy(false);
         setConfirmCard(null);
         clearTakeover();
@@ -700,11 +718,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           ...prev,
           { role: "assistant", text: `接管结束：${(ev.answer as string) || "(无回答)"}` },
         ]);
+        // 接管的终态。注意「Esc 夺回」也走这里 —— 服务端 `run_takeover` 在取消
+        // 分支 break 之后仍然会补推一条 `Done`（见 takeover.rs 末尾），所以取消
+        // 路径不需要另找释放点。此刻之后该通道再无任何事件，可安全关闭。
+        disposeChannel(channel);
       } else if (type === "error") {
+        holder.settled = true;
         setAiBusy(false);
         setConfirmCard(null);
         clearTakeover();
         pushToast("error", `接管：${ev.message as string}`);
+        // 与 done 并列的终态（模型请求失败那条路径只推 Error）。
+        disposeChannel(channel);
       }
     });
 
@@ -713,18 +738,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const id = await aiApi.takeoverRun({ tabId, instruction, allowWrite, channel });
       holder.jobId = id;
       setJobId(id); // 让确认卡片对得上这次接管
-      useUi.getState().setTakeover({
-        tabId,
-        jobId: id,
-        task: instruction,
-        allowWrite,
-        startedAt: Date.now(),
-      });
-      pushToast("info", "接管已启动 —— 顶部横幅可随时夺回，Esc 亦可");
+      // 终态若在 await 期间就已到达（Error 的常见路径），横幅不能再立起来 ——
+      // 否则 clearTakeover 已经跑过，这里又 set 一次，横幅就永远挂着了。
+      if (!holder.settled) {
+        useUi.getState().setTakeover({
+          tabId,
+          jobId: id,
+          task: instruction,
+          allowWrite,
+          startedAt: Date.now(),
+        });
+        pushToast("info", "接管已启动 —— 顶部横幅可随时夺回，Esc 亦可");
+      }
     } catch (e) {
       setAiBusy(false);
       clearTakeover();
       pushToast("error", describeError(e));
+      // 命令级失败：服务端若在 `begin`/建客户端阶段就退出，一个事件都不会推，
+      // 终态分支永远不会执行 ⇒ 在这里兜底释放。
+      disposeChannel(channel);
     }
   };
 

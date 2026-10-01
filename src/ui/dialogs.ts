@@ -24,10 +24,29 @@ type AskFn = (message: string, options?: AskOptions) => Promise<boolean>;
 type ConfirmFn = (message: string) => Promise<boolean>;
 type MessageFn = (message: string) => Promise<void>;
 
+/** 多选一弹框的一个选项（key 由调用方定义，原样回传）。 */
+export interface ChoiceOption {
+  key: string;
+  label: string;
+  hint?: string;
+  danger?: boolean;
+  primary?: boolean;
+}
+
+export type ChoiceOptions = {
+  title?: string;
+  level?: "info" | "warning";
+  choices: ChoiceOption[];
+};
+
+/** 多选一：返回选中的 key；取消返回 null。 */
+type ChooseFn = (message: string, options: ChoiceOptions) => Promise<string | null>;
+
 interface DialogHandlers {
   ask: AskFn;
   confirm: ConfirmFn;
   message: MessageFn;
+  choose: ChooseFn;
 }
 
 let handlers: DialogHandlers | null = null;
@@ -59,6 +78,21 @@ const nativeMessage: MessageFn = NATIVE_BROWSER_DIALOG
   : async (message) => {
       await dMessage(message);
     };
+
+/**
+ * 多选一的兜底（App 还没挂载时）。
+ *
+ * 用 `window.confirm` 逐个问，比"静默返回 null"强：返回 null 等于把用户的
+ * 关闭动作悄悄吞掉（标签没关、也没提示）。这个分支正常路径下不会走到 ——
+ * 弹框只在用户点击之后才可能触发，那时 App 早已挂载。
+ */
+const nativeChoose: ChooseFn = async (message, options) => {
+  for (const c of options.choices) {
+    const text = `${message}\n\n${c.label}${c.hint ? `\n（${c.hint}）` : ""}`;
+    if (window.confirm(text)) return c.key;
+  }
+  return null;
+};
 /** 确认框（取消 / 确定）。 */
 export const ask: AskFn = (message, options) =>
   handlers ? handlers.ask(message, options) : nativeAsk(message, options);
@@ -70,6 +104,16 @@ export const confirmDialog: ConfirmFn = (message) =>
 /** 消息提示框（单按钮）。 */
 export const messageBox: MessageFn = (message) =>
   handlers ? handlers.message(message) : nativeMessage(message);
+
+/**
+ * 多选一弹框（关闭终端标签的「后台继续运行 / 结束进程」用）。
+ *
+ * 和 ask / confirm 一样走注册制：App 挂载时注册应用内实现，调用方不必知道
+ * 自己跑在哪种环境里。
+ */
+export function askChoice(message: string, options: ChoiceOptions): Promise<string | null> {
+  return handlers ? handlers.choose(message, options) : nativeChoose(message, options);
+}
 
 /** 选一个要上传的文件。取消返回 null；返回的是**内核能读到的路径**。
  *

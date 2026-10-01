@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from "../../ipc/commands";
 import { useUi } from "../../app/store";
-import { createBinaryChannel } from "../../ipc/events";
+import { createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import {
   IconArrowLeft,
@@ -18,6 +18,28 @@ import {
   IconTerminal,
   IconTrash,
 } from "../../ui/icons";
+
+/** 一次「查看日志」的 attach 结果。 */
+interface LogAttach {
+  /** 容器名（工具栏标题用）。 */
+  container: string;
+  /** 容器 id —— 重连自愈时要拿它重新 attach（见下面 `onChannelReopen` 那条 effect）。 */
+  containerId: string;
+  /** 服务端返回的内核标签 id，关闭时要拿它 detach。 */
+  tabId: string;
+  /** 唯一的那条二进制通道（也是唯一那个 PTY 的宿主）。 */
+  channel: ReturnType<typeof createBinaryChannel>;
+  /**
+   * 字节的去处。通道在 `openLogs` 里就建好了 —— `createBinaryChannel` 的回调
+   * 只在**创建时**绑定，而此刻消费者 `<LogStream>` 还没渲染。所以让通道回调读
+   * 这个可变槽位，`LogStream` 挂载时把 `onBytes` 指过去、卸载时置回 null。
+   *
+   * 不直接把 `channel.onmessage` 交给 LogStream 重绑：那要求三个形态（Tauri
+   * `Channel` / `WebChannel` / demo）的 `onmessage` 都可写且能复用 events.ts 里
+   * 的字节解码；转发器只依赖一个稳定的对象引用，与通道形态无关。
+   */
+  sink: { onBytes: ((bytes: Uint8Array) => void) | null };
+}
 
 /** 同一个 image ID 会挂多个 repository（本地 tag + 镜像站 tag）。
  *  只用 id 当 React key 必然重复 —— 重复 key 的协调行为是未定义的，
@@ -40,12 +62,14 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const qc = useQueryClient();
   const { addTab, pushToast } = useUi();
   const [tab, setTab] = useState<"containers" | "images">("containers");
-  const [attached, setAttached] = useState<{ container: string; tabId: string } | null>(null);
+  const [attached, setAttached] = useState<LogAttach | null>(null);
   /** 勾选集合：存行 key（容器 = id，镜像 = imageKey）。 */
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   /** 正在删除的行 key：挡住「点了没反应就再点一下」的并发删除。 */
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  /** 在途 guard：一次只允许一次 `logsAttach` 在飞（见 `openLogs` 的注释）。 */
+  const attachInFlight = useRef(false);
 
   // 标签不可见时停掉轮询（切标签不再卸载面板，所以要显式 gate）
   const containers = useQuery({
@@ -66,6 +90,59 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   useEffect(() => {
     setPicked(new Set());
   }, [tab]);
+
+  // 日志 attach 的回收：`返回` 与「关闭标签（组件卸载）」共用这一条 cleanup。
+  // 之所以放在 effect 而不是按钮里：这两条路径都要「杀掉那个 `docker logs -f` PTY +
+  // 关掉那条 WS」，写成两份必然漏一处 —— 而漏卸载那处就是关标签后永久残留一个进程。
+  //
+  // 职责是**回收 PTY**，所以这里用 `closeTab(..., "kill")` 而不是旧的 detach：一次
+  // 「查看日志」= 一次 `logsAttach` = 一个**全新**的 tabId，回看这个面板永远走的是新
+  // attach，没有任何路径会重新接管这个标签 —— 留着它只会变成一个用户从没开过的
+  // 「后台会话」幽灵（旧版每点一次「查看日志→返回」就永久多一个）。
+  // `close_tab` 也不缺原 detach 的语义：它内部先 `detach_frontend` 摘掉订阅、再
+  // 取 killer 杀进程，所以这一行是**替换**、不是叠加。`disposeChannel` 仍要保留 ——
+  // 本地那条 WS 和 PTY 是两回事，关 WS 并不会杀进程。
+  useEffect(() => {
+    if (!attached) return;
+    const { tabId, channel } = attached;
+    return () => {
+      void terminalApi.closeTab(tabId, "kill").catch(() => undefined);
+      disposeChannel(channel);
+    };
+  }, [attached]);
+
+  // 断线 / 后退（bfcache）自愈：这条通道的 WS 重连后，重新登记一次订阅。
+  //
+  // 服务端只以「有没有人重新登记」判订阅；而登记的**唯一**动作就是
+  // `docker_logs_attach`（它是给日志跟随打 `is_ephemeral` 标记、并计入
+  // `subscribers` 的那条命令）。不补这一步，WS 用同一个通道 id 重连上了、
+  // 服务端该标签的 `subscribers` 却恒为 0：
+  //   ① 面板从此冻结，不再收帧（改之前就是这个既有行为）；
+  //   ② 给日志跟随打的 `is_ephemeral` 标记会在订阅者归零 5s 后被回收，
+  //      正在看的人也会被误杀。
+  //
+  // 为什么是「重新 attach 一口新的」而不是「接回同一口」：服务端没有
+  // 「attach 到已存在的日志标签」的命令，`docker_logs_attach` 每次都新起一个
+  // `docker logs -f` PTY；而改走既有的 `terminal_attach_tab` 会把清屏转义前缀
+  // （`\x1b[2J\x1b[3J\x1b[H`）连同回滚内容一起灌进这条**二进制**通道，而
+  // `LogStream` 是纯文本行缓冲，会把转义当普通文字渲染出来。所以「新建一口 +
+  // 面板从最近 500 行续上」是当前架构下正确且最省的做法。
+  //
+  // 重连仍走同一条 `setAttached(...)`，因此会自动触发上面那条 `[attached]`
+  // cleanup：旧那口 PTY 被 `closeTab(old, "kill")` 立刻回收、旧通道被
+  // `disposeChannel` —— 任一刻只有一口 `docker logs -f`。
+  useEffect(() => {
+    if (!attached) return;
+    const { channel, containerId, container } = attached;
+    let cancelled = false;
+    const off = onChannelReopen(channel, () => {
+      if (!cancelled) void openLogs(containerId, container);
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [attached]);
 
   const markPending = (key: string, on: boolean) =>
     setPending((prev) => {
@@ -189,13 +266,34 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
   };
 
-  const openLogs = async (c: ContainerSummary) => {
-    const channel = createBinaryChannel(() => undefined);
+  const openLogs = async (containerId: string, containerName: string) => {
+    // 一次「查看日志」= 一次 attach = 一个 PTY。
+    //
+    // 这条通道的回调在创建时就绑定好了，但消费者 `<LogStream>` 此刻还没渲染，
+    // 于是先把回调接到 `sink` 这个可变槽位，等 LogStream 挂载时再指向它的 setLines。
+    // 不再「建两条通道 / attach 两次」：以前这里用容器 id 建一条丢弃字节的空转通道，
+    // LogStream 又用容器**名字**另建一条 —— 服务端 `docker_logs_attach` 每次都新起一个
+    // `docker logs -f` PTY，于是白起一个没人看的 PTY，且它那条通道的 tabId 从没被记下、
+    // 关不掉。现在被追踪的这一次就是唯一的一次。
+    //
+    // 在途 guard：通道抖动（或页面前后台切换）时 `onChannelReopen` 可能连续触发，
+    // 两次 `logsAttach` 并发会多起一口没人看的 PTY。成功与失败都要复位。
+    if (attachInFlight.current) return;
+    attachInFlight.current = true;
+    const sink: LogAttach["sink"] = { onBytes: null };
+    const channel = createBinaryChannel((bytes) => sink.onBytes?.(bytes));
     try {
-      const kernelTab = await dockerApi.logsAttach(sessionId, c.id, 500, channel);
-      setAttached({ container: c.name, tabId: kernelTab });
+      const kernelTab = await dockerApi.logsAttach(sessionId, containerId, 500, channel);
+      setAttached({ container: containerName, containerId, tabId: kernelTab, channel, sink });
     } catch (e) {
+      // attach 失败：没有消费者，立刻释放，别漏一条 WS。
+      // 成功时**不能**在这里释放 —— 通道现在有消费者（LogStream），提前 dispose 会让
+      // 日志静默丢失（服务端未认领的帧缓存进 pending，上限 512）。回收统一交给上面的
+      // `[attached]` effect cleanup。
+      disposeChannel(channel);
       pushToast("error", `日志 attach 失败: ${describeError(e)}`);
+    } finally {
+      attachInFlight.current = false;
     }
   };
 
@@ -217,10 +315,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         <div className="nx-toolbar">
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            onClick={() => {
-              void terminalApi.detach(attached.tabId).catch(() => undefined);
-              setAttached(null);
-            }}
+            onClick={() => setAttached(null)}
           >
             <IconArrowLeft size={13} />
             返回
@@ -232,7 +327,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           <span className="nx-hint">跟随中 · 关闭此标签或返回即停止</span>
         </div>
         <div className="min-h-0 flex-1">
-          <LogStream sessionId={sessionId} container={attached.container} />
+          {/* key 绑 tabId：换容器时即使 React 复用了这个位置，也会重建 LogStream，
+              行缓冲不会把上一个容器的日志带过来。 */}
+          <LogStream key={attached.tabId} sink={attached.sink} />
         </div>
       </div>
     );
@@ -380,7 +477,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   </td>
                   <td className="nx-right">
                     <span className="inline-flex items-center gap-0.5">
-                      <button className="nx-icon-btn nx-icon-btn-sm" title="查看日志" onClick={() => void openLogs(c)}>
+                      <button className="nx-icon-btn nx-icon-btn-sm" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
                         <IconList size={13} />
                       </button>
                       <button className="nx-icon-btn nx-icon-btn-sm" title="进入容器终端" onClick={() => openExec(c)}>
@@ -506,27 +603,32 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   );
 }
 
-/** 日志跟随：复用内核的日志通道，逐行追加。 */
-function LogStream({ sessionId, container }: { sessionId: string; container: string }) {
+/** 日志跟随：**纯消费者**。
+ *
+ *  通道与 attach 全部由 `openLogs` 完成（见 `LogAttach` 的说明），这里只把通道
+ *  字节接到 `sink.onBytes` 上 —— 挂载时接、卸载时摘。它不再建通道、不再调
+ *  `logsAttach`，所以「一次点击 = 一次 attach = 一个 PTY」。
+ *
+ *  上一版那个 `attachedRef` 防重入 guard 已删除：它的存在前提是本组件自己 attach
+ *  （effect 依赖变化时靠 ref 复位才能为**新容器**重挂）。现在 attach 不在这里，
+ *  「换容器」由父组件 `setAttached(null)` → 卸载本组件 → 用新 sink 重新挂载完成，
+ *  `key={attached.tabId}` 保证复用位置时也重建。没有需要复位的状态，guard 失去意义。 */
+function LogStream({ sink }: { sink: LogAttach["sink"] }) {
   const [lines, setLines] = useState<string[]>([]);
-  const attachedRef = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (attachedRef.current) return;
-    attachedRef.current = true;
-    void (async () => {
-      const channel = createBinaryChannel((bytes) => {
-        const text = new TextDecoder().decode(bytes);
-        setLines((prev) => [...prev.slice(-4000), ...text.split("\n")]);
-      });
-      try {
-        await dockerApi.logsAttach(sessionId, container, 500, channel);
-      } catch {
-        setLines((prev) => [...prev, `[日志通道建立失败]`]);
-      }
-    })();
-  }, [sessionId, container]);
+    const decoder = new TextDecoder();
+    sink.onBytes = (bytes) => {
+      const text = decoder.decode(bytes);
+      setLines((prev) => [...prev.slice(-4000), ...text.split("\n")]);
+    };
+    return () => {
+      // 摘掉自己：通道可能比本组件活得久（父组件卸载顺序 / 位置复用），
+      // 留着闭包会让已卸载组件的 setLines 被调用。
+      sink.onBytes = null;
+    };
+  }, [sink]);
 
   useEffect(() => {
     const el = scroller.current;

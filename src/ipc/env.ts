@@ -50,6 +50,48 @@ export const WEB = TRANSPORT === "web";
 export const DESKTOP = TRANSPORT === "desktop";
 
 /**
+ * 客户端身份：一台设备上的一个浏览器实例。
+ *
+ * # 为什么需要它
+ *
+ * 终端是「多点可看、单点可写」—— 同时看着的人得有个**稳定的名字**，否则
+ * 刷新一次页面就"换了个人"，键盘控制权会在没有任何操作的情况下易主（用户看到
+ * 的现象是"莫名其妙敲不进去字了"）。
+ *
+ * 存 `localStorage` 而不是内存变量：刷新要保住身份。新开的标签页也应当算
+ * **同一个客户端**（同一台设备上多开几个页面，不该被当成两台设备互相抢键盘）。
+ *
+ * # 与「通道 id」的区别
+ *
+ * 通道 id 每个标签页一条（页面关了就没了），身份要跨页面稳定 —— 两者不能合成
+ * 一个值。服务端的 `TerminalTab` 里也是分开存的（见 `terminal/mod.rs` 的 `Sink`）。
+ */
+const CLIENT_KEY = "nexterm.client";
+
+let memoryClientId = "";
+
+export function clientId(): string {
+  try {
+    let v = window.localStorage.getItem(CLIENT_KEY);
+    if (!v) {
+      v = newClientId();
+      window.localStorage.setItem(CLIENT_KEY, v);
+    }
+    return v;
+  } catch {
+    // 无痕模式 / 存储被禁用：退回进程内一次性 id。
+    // 代价要认下来 —— 此时刷新页面会被当成新设备，控制权需要重新接管。
+    if (!memoryClientId) memoryClientId = newClientId();
+    return memoryClientId;
+  }
+}
+
+/** 只含字母数字：通道 id 会被塞进 URL 路径，任何需要转义的字符都会出问题。 */
+function newClientId(): string {
+  return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
  * 后端基址（仅服务端模式用）。
  *
  * 默认同源 —— 生产环境前端就是 nexterm-server 自己发的，同源是对的。

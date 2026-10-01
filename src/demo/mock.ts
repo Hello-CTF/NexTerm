@@ -70,6 +70,60 @@ const aiChannels = new Map<string, unknown>();
 let jobSeq = 0;
 
 /**
+ * 演示模式的内核标签表（`terminal_list` / `terminal_attach_tab` 的数据源）。
+ *
+ * 关键点：**detach 不等于销毁**。关闭标签选「后台继续运行」时只把 subscribers 置 0，
+ * 进程（DemoShell）留着 —— 这样「后台会话」面板才有的看、也才接得回来。
+ * 之前 detach 直接 delete 掉 shell，等于把"关掉网页任务还在跑"这个核心场景
+ * 在演示模式里演成了反面，功能在演示里根本验不到。
+ */
+interface DemoLiveTab {
+  tabId: string;
+  sessionId: string;
+  sessionName: string;
+  sessionKind: string;
+  cols: number;
+  rows: number;
+  controller: string | null;
+  subscribers: number;
+  exited: boolean;
+  lastOutputAt: number;
+}
+
+const liveTabs = new Map<string, DemoLiveTab>();
+
+/** 预置一个「后台运行中」的标签：让「后台会话」面板一打开就有内容可看。 */
+liveTabs.set("t-bg-demo", {
+  tabId: "t-bg-demo",
+  sessionId: "s-web01",
+  sessionName: "web-01",
+  sessionKind: "ssh",
+  cols: 120,
+  rows: 30,
+  controller: null,
+  subscribers: 0,
+  exited: false,
+  lastOutputAt: Date.now() - 42_000,
+});
+
+/** 演示模式的布局存储（`layout_get` / `layout_put`）。data 是前端自己的 JSON。 */
+const layoutState: { revision: number; updatedAt: number; data: unknown | null } = {
+  revision: 0,
+  updatedAt: 0,
+  data: null,
+};
+
+/**
+ * 演示模式的错误：形状对齐内核的 `AppError`（`ipc/commands.ts::toAppError` 只看 `code`）。
+ *
+ * 不能 `throw new Error(...)` —— 那样 code 会退化成 `internal`，前端就分不出
+ * 「别人正在操作终端」（not_controller）和真正的错误了。
+ */
+function throwAppError(code: string, message: string): never {
+  throw { code, message };
+}
+
+/**
  * 演示「写文件」场景用的前后内容。
  *
  * 确认卡片的**改动预览**与执行后的**变更记录**必须用同一对常量：两处各写一份
@@ -678,9 +732,24 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     /* ─────────────── terminal ─────────────── */
     case "terminal_attach": {
       const tabId = newTabId("t");
+      const sessionId = str(a.sessionId);
+      const sess = sessions.find((s) => s.id === sessionId);
       const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")));
       shells.set(tabId, shell);
-      const asset = assets.find((x) => x.id === sessions.find((s) => s.id === str(a.sessionId))?.assetId);
+      liveTabs.set(tabId, {
+        tabId,
+        sessionId,
+        sessionName: sess?.name ?? "web-01",
+        sessionKind: sess?.kind ?? "ssh",
+        cols: num(a.cols, 120),
+        rows: num(a.rows, 30),
+        // 新建时先来的人自动成为操作者（对齐内核 open_terminal_tab 的语义）
+        controller: str(a.clientId) || "desktop",
+        subscribers: 1,
+        exited: false,
+        lastOutputAt: Date.now(),
+      });
+      const asset = assets.find((x) => x.id === sess?.assetId);
       later(90, () => {
         pushText(a.channel, `\r\n\x1b[2m[演示模式] 已连到 ${asset?.name ?? "web-01"}（假数据，随便敲）\x1b[0m\r\n\r\n`);
         shell.start();
@@ -688,31 +757,126 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return tabId;
     }
 
+    case "terminal_attach_tab": {
+      // 接管已有标签：不新开 shell。未知 tabId 报 not_found —— 和内核一致，
+      // 界面会给一句「[会话已结束]」的提示，而不是静默留一个空终端。
+      const tabId = str(a.tabId);
+      const lt = liveTabs.get(tabId);
+      if (!lt) throwAppError("not_found", "终端标签不存在（可能进程已结束）");
+      const client = str(a.clientId) || "desktop";
+      // 订阅者 +1；无人持权时先来的人自动成为操作者（对齐 attach_existing_tab 的 claim_if_free）
+      lt.subscribers += 1;
+      if (!lt.controller) lt.controller = client;
+      lt.lastOutputAt = Date.now();
+      // 演示模式没有真正的回滚缓冲，用一个绑到新通道的 shell 顶替，
+      // 保证接管后能继续敲（不然只能看到一行横幅、字打不进去）。
+      const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")));
+      shells.set(tabId, shell);
+      later(70, () => {
+        pushText(a.channel, `\x1b[2m[演示模式] 已接回后台终端（回放最近的输出）\x1b[0m\r\n\r\n`);
+        shell.start();
+      });
+      return {
+        tabId: lt.tabId,
+        sessionId: lt.sessionId,
+        cols: lt.cols,
+        rows: lt.rows,
+        controller: lt.controller,
+        subscribers: lt.subscribers,
+        exited: lt.exited,
+      };
+    }
+
     case "terminal_write": {
-      const shell = shells.get(str(a.tabId));
+      const tabId = str(a.tabId);
+      const lt = liveTabs.get(tabId);
+      const client = str(a.clientId);
+      // 单点模式：别人持权时拒绝。前端据此切观察者态（不弹错误框）。
+      if (lt && client && lt.controller && lt.controller !== client) {
+        throwAppError("not_controller", "终端正在其他设备上操作中");
+      }
+      const shell = shells.get(tabId);
       const data = a.data;
       if (shell && Array.isArray(data)) {
         shell.input(new TextDecoder().decode(Uint8Array.from(data as number[])));
+        if (lt) lt.lastOutputAt = Date.now();
       }
       return null;
     }
 
-    case "terminal_resize":
+    case "terminal_resize": {
+      const lt = liveTabs.get(str(a.tabId));
+      const client = str(a.clientId);
+      if (lt && client && lt.controller && lt.controller !== client) {
+        throwAppError("not_controller", "终端正在其他设备上操作中");
+      }
+      if (lt) {
+        lt.cols = num(a.cols, lt.cols);
+        lt.rows = num(a.rows, lt.rows);
+      }
+      return null;
+    }
+
+    case "terminal_claim": {
+      const lt = liveTabs.get(str(a.tabId));
+      const client = str(a.clientId) || "desktop";
+      if (!lt) return null;
+      const prev = lt.controller;
+      lt.controller = client;
+      return prev === client ? null : prev;
+    }
+
+    case "terminal_release": {
+      const lt = liveTabs.get(str(a.tabId));
+      const client = str(a.clientId) || "desktop";
+      if (!lt || lt.controller !== client) return false;
+      lt.controller = null;
+      return true;
+    }
+
+    case "terminal_list":
+      return Array.from(liveTabs.values()).map((lt) => ({
+        tabId: lt.tabId,
+        sessionId: lt.sessionId,
+        sessionName: lt.sessionName,
+        sessionKind: lt.sessionKind,
+        cols: lt.cols,
+        rows: lt.rows,
+        controller: lt.controller,
+        subscribers: lt.subscribers,
+        exited: lt.exited,
+        lastOutputMsAgo: Date.now() - lt.lastOutputAt,
+      }));
+
     case "terminal_set_visible":
     case "terminal_switch_encoding":
       return null;
 
     case "terminal_detach": {
-      shells.delete(str(a.tabId));
-      logTimers.get(str(a.tabId))?.();
-      logTimers.delete(str(a.tabId));
+      // 只摘订阅，**进程留着**：这正是「关掉网页任务还在跑」的语义。
+      const lt = liveTabs.get(str(a.tabId));
+      if (lt) {
+        lt.subscribers = Math.max(0, lt.subscribers - 1);
+        if (lt.subscribers === 0 && lt.controller === str(a.clientId)) lt.controller = null;
+      }
       return null;
     }
 
     case "terminal_close_tab": {
-      shells.delete(str(a.tabId));
-      logTimers.get(str(a.tabId))?.();
-      logTimers.delete(str(a.tabId));
+      const tabId = str(a.tabId);
+      if (str(a.mode) === "detach") {
+        // 后台继续运行：从视图拿走，进程留在服务端（能在「后台会话」里接回来）
+        const lt = liveTabs.get(tabId);
+        if (lt) {
+          lt.subscribers = 0;
+          lt.controller = null;
+        }
+        return null;
+      }
+      shells.delete(tabId);
+      liveTabs.delete(tabId);
+      logTimers.get(tabId)?.();
+      logTimers.delete(tabId);
       return null;
     }
 
@@ -753,6 +917,35 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "terminal_export_log":
       // 演示模式不落盘，按回滚缓冲的字符数回一个"字节数"
       return 4096;
+
+    /* ─────────────── layout ─────────────── */
+    case "layout_get":
+      return {
+        revision: layoutState.revision,
+        updatedAt: layoutState.updatedAt,
+        data: layoutState.data,
+      };
+
+    case "layout_put": {
+      // 乐观锁：revision 对不上就是对端在我们之后改过 → conflict，**不覆盖**
+      // （布局没有可合并语义，前端拿到 conflict 会去拉最新）。
+      if (num(a.revision, 0) !== layoutState.revision) {
+        return { saved: false, revision: layoutState.revision, conflict: true };
+      }
+      try {
+        layoutState.data = JSON.parse(str(a.data, "null"));
+      } catch {
+        layoutState.data = null;
+      }
+      layoutState.revision += 1;
+      layoutState.updatedAt = Date.now();
+      // 事件**延迟一帧**发：真机上事件走 WS，一定晚于 RPC 的响应。
+      // 同步发的话会早于前端更新本地 revision，自己收到自己的事件、
+      // 触发一次多余的拉取（真机上不会发生）—— 演示也就演不出回声判据了。
+      const rev = layoutState.revision;
+      later(0, () => emit("layout://changed", { revision: rev }));
+      return { saved: true, revision: rev, conflict: false };
+    }
 
     /* ─────────────── asset / group / snippet ─────────────── */
     case "asset_list":

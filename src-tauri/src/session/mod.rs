@@ -302,12 +302,16 @@ pub async fn connect_local_quick(state: &AppState) -> AppResult<Arc<Session>> {
 }
 
 /// 打开一个终端标签（复用会话连接，§7）。
+///
+/// `client` 是「谁在操作」的稳定身份（见 [`crate::terminal::TerminalTab`] 的控制权
+/// 一节）：新标签的第一个订阅者直接成为操作者，后面进来的都是观察者。
 pub async fn open_terminal_tab(
     state: &AppState,
     session: &Arc<Session>,
     cols: u16,
     rows: u16,
     channel: tauri::ipc::Channel<Vec<u8>>,
+    client: &str,
 ) -> AppResult<TabId> {
     let tab_id = new_id();
     let tab = TerminalTab::new_arc(
@@ -318,12 +322,13 @@ pub async fn open_terminal_tab(
         session.encoding,
     );
     let handle = session.transport().await.open_pty(cols, rows).await?;
-    tab.attach_frontend(channel, 0).await;
+    tab.attach_frontend(channel, 0, client).await;
+    tab.claim_if_free(client).await;
     match handle {
         PtyHandle::Ssh { read, write } => {
             tab.set_writer(TerminalWriter::Ssh(Arc::clone(&write)))
                 .await;
-            register_and_pump(state, session, tab, pty::ByteSource::Ssh(read)).await?;
+            register_and_pump(state, session, Arc::clone(&tab), pty::ByteSource::Ssh(read)).await?;
         }
         PtyHandle::Local {
             io,
@@ -347,9 +352,12 @@ pub async fn open_terminal_tab(
                 .write()
                 .await
                 .insert(tab_id.clone(), killer);
-            register_and_pump(state, session, tab, pty::ByteSource::Local(reader)).await?;
+            register_and_pump(state, session, Arc::clone(&tab), pty::ByteSource::Local(reader))
+                .await?;
         }
     }
+    // 订阅数变了，而且 `claim_if_free` 可能刚让这个客户端拿到控制权 —— 推一次。
+    notify_control_changed(state, &tab).await;
     Ok(tab_id)
 }
 
@@ -360,6 +368,7 @@ pub async fn open_winrm_line_tab(
     cols: u16,
     rows: u16,
     channel: tauri::ipc::Channel<Vec<u8>>,
+    client: &str,
 ) -> AppResult<TabId> {
     let tab_id = new_id();
     let tab = TerminalTab::new_arc(
@@ -369,11 +378,91 @@ pub async fn open_winrm_line_tab(
         rows,
         session.encoding,
     );
-    tab.attach_frontend(channel, 0).await;
+    tab.attach_frontend(channel, 0, client).await;
+    tab.claim_if_free(client).await;
     tab.feed_output(
         "[NexTerm] WinRM 非交互模式（每条命令新 shell，不支持 vim/top）\r\nPS> ".as_bytes(),
     );
-    register_and_pump_quiet(state, session, tab).await
+    let tab_id = register_and_pump_quiet(state, session, Arc::clone(&tab)).await?;
+    notify_control_changed(state, &tab).await;
+    Ok(tab_id)
+}
+
+/// 接管已有标签的结果。
+///
+/// 走 DTO 而不是把 `TerminalTab` 直接序列化出去：那是内核对象，字段语义
+/// （`sinks` 表、`stop` 令牌）与前端无关，回 Row/内核对象正是本项目
+/// 「前端字段永远 undefined」那类坑的来源。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachedTabInfo {
+    pub tab_id: TabId,
+    pub session_id: String,
+    /// PTY 的**当前**尺寸。接管方应照它渲染，而不是按自己窗口的尺寸去改 PTY
+    /// （原因见 [`attach_existing_tab`]）。
+    pub cols: u16,
+    pub rows: u16,
+    /// 当前持控制权的人；`None` = 无人持权（此时谁都不能写，需要先接管）。
+    pub controller: Option<String>,
+    /// 有几个订阅者在看，**含自己**（刚 attach 完立刻读会是 1）。
+    /// 与 `terminal_list` 的 `LiveTabInfo.subscribers` 同口径（同一个原值，
+    /// 前端当同一个字段用）。
+    ///
+    /// ⚠️ 这是**通道数**，不是设备数：同一台设备开两个页面就 +2。设备数见 `viewers`。
+    pub subscribers: usize,
+    /// **观看设备数**（按 `client` 去重）—— 与 `LiveTabInfo.viewers` 同口径。
+    /// 界面上的「N 个设备正在观看」用这个。
+    pub viewers: usize,
+    /// 这个标签的进程已经结束了（接管回来只能看到最后一屏，敲不了）。
+    pub exited: bool,
+}
+
+/// 接管一个**已存在**的终端标签。
+///
+/// # 它是「关掉网页再打开」的关键路径
+///
+/// [`open_terminal_tab`] 每次都 `open_pty` 开一个全新 shell，所以浏览器刷新后
+/// 只能拿到一个空终端 —— 哪怕服务端手里那条连接还好好的、回滚缓冲里还留着
+/// 用户刚才跑出来的日志。本函数不新建任何东西：把已有的 scrollback 回放给这个
+/// 新订阅者，挂上通道，继续推。
+///
+/// # 为什么先清屏再回放
+///
+/// 回放取的是环形缓冲的**尾部**（[`crate::terminal::SCROLLBACK_BYTES`] 满了会掐头），
+/// 掐断点可能落在某条转义序列中间。不清屏就直接叠加，会把新旧画面混在一起 ——
+/// 表现为"接管回来满屏乱码"，而实际数据是好的。
+///
+/// # ⚠️ 刻意不按接管方的窗口尺寸 resize
+///
+/// 一个 PTY 只有一组 `cols`/`rows`。接管方若顺手 resize，就变成「谁打开页面谁
+/// 改尺寸」——正在另一台设备上操作的人画面会突然被重排。尺寸只由**持控制权**
+/// 的那端决定（`terminal_resize` 会校验控制权），这也是「最后活跃者赢」的落点。
+pub async fn attach_existing_tab(
+    state: &AppState,
+    tab_id: &str,
+    replay_bytes: usize,
+    channel: tauri::ipc::Channel<Vec<u8>>,
+    client: &str,
+) -> AppResult<AttachedTabInfo> {
+    let tab = state.sessions.get_tab(tab_id).await?;
+    // 清屏 + 清滚动缓冲 + 光标归位。
+    let _ = channel.send(b"\x1b[2J\x1b[3J\x1b[H".to_vec());
+    tab.attach_frontend(channel, replay_bytes, client).await;
+    // 有人持权就不抢 —— 观察者进来不该把操作者的键盘抢走。
+    tab.claim_if_free(client).await;
+    // 订阅数变了（可能还顺带 `claim_if_free` 拿到控制权）：广播给所有观看端，
+    // 让它们的「几个人在看 / 谁在操作」立刻更新，而不是等到下次交互。
+    notify_control_changed(state, &tab).await;
+    Ok(AttachedTabInfo {
+        tab_id: tab.tab_id.clone(),
+        session_id: tab.session_id.clone(),
+        cols: tab.cols(),
+        rows: tab.rows(),
+        controller: tab.controller().await,
+        subscribers: tab.subscriber_count().await,
+        viewers: tab.viewer_count().await,
+        exited: tab.has_exited(),
+    })
 }
 
 async fn register_and_pump(
@@ -442,11 +531,91 @@ async fn register_and_pump_quiet(
     Ok(tab_id)
 }
 
+/// 把标签从视图里摘掉，但**让进程继续在服务端跑**。
+///
+/// # 与 [`close_tab`] 的分工
+///
+/// | | `close_tab` | `detach_tab`（本函数） |
+/// |---|---|---|
+/// | 泵 | 停 | 继续跑 |
+/// | 进程 | 杀 | 不动 |
+/// | `sessions.tabs` 里的记录 | 摘掉 | **保留** |
+/// | 之后能接管回来吗 | 不能 | 能（正是「后台会话面板」的数据来源） |
+///
+/// 用户的场景是「在外面临时开了个打日志的任务，先把窗口关掉，回头再来看」——
+/// 如果关窗口就等于杀进程，那个任务就白跑了。所以关标签必须是一个**有选择的**
+/// 动作，而不是一个隐式的 kill。
+///
+/// ⚠️ 刻意**不从 `sessions.tabs` 里摘记录**：摘了就没法再接管（`get_tab` 会
+/// `not_found`）。留下的那条记录 + `subscribers == 0` 就是「有进程在后台跑着」
+/// 的判据。
+pub async fn detach_tab(state: &AppState, tab_id: &str) -> AppResult<()> {
+    let tab = state.sessions.get_tab(tab_id).await?;
+    tab.detach_frontend().await;
+    notify_control_changed(state, &tab).await;
+    Ok(())
+}
+
+/// 摘掉**某个客户端**的订阅，但让进程继续在服务端跑。
+///
+/// 与 [`detach_tab`] 的唯一差别是「摘谁」：后者清空全部订阅（桌面语义 —— 整个进程
+/// 只有一个视图，"摘自己"与"清空"等价）；本函数只摘 `client` 那一台设备，其他设备
+/// 的画面照旧。多端同看时，用户在一台设备上点标签 ×、选「后台继续运行」，语义是
+/// 「我这一端不看了」，绝不能把别人也一起摘掉。
+pub async fn detach_tab_for_client(
+    state: &AppState,
+    tab_id: &str,
+    client: &str,
+) -> AppResult<()> {
+    let tab = state.sessions.get_tab(tab_id).await?;
+    tab.detach_client(client).await;
+    notify_control_changed(state, &tab).await;
+    Ok(())
+}
+
+/// 广播一个标签的控制权 / 观看人数快照（`terminal://control`）。
+///
+/// # 为什么需要推送
+///
+/// 控制权易主、观看人数变化原本**只在下一次交互时**才会被某一端发现：B 点「接管
+/// 控制」后，A 要等到自己敲键被 `not_controller` 顶回来才知道自己已不是操作者，
+/// 中间那段时间 A 的 UI 在骗人。所以每一个会改变控制权或订阅者数量的动作之后都要
+/// 发一次：attach（新订阅，且可能顺带 `claim_if_free` 拿到控制权）、claim、release、
+/// 各种 detach、以及进程退出。
+///
+/// 发失败不是错误 —— 没有前端在订阅事件是常态，照 `layout::layout_put` 用 `let _ =`
+/// 吞掉。
+pub async fn notify_control_changed(state: &AppState, tab: &Arc<TerminalTab>) {
+    use tauri::Emitter;
+    let payload = crate::events::TerminalControlPayload {
+        tab_id: tab.tab_id.clone(),
+        controller: tab.controller().await,
+        // `subscriber_count()` 的原值，**含收到事件的那一端自己** ——
+        // 与 `terminal_list` 同口径，前端按同一个字段用。
+        subscribers: tab.subscriber_count().await,
+        // 设备口径（按 client 去重）：同一台设备开两个页面时 `subscribers == 2`
+        // 而这里 == 1。界面上的「N 个设备正在观看」用这个。
+        viewers: tab.viewer_count().await,
+        exited: tab.has_exited(),
+    };
+    let _ = state.app.emit(crate::events::TERMINAL_CONTROL, payload);
+}
+
 /// 关闭标签：停泵杀进程；会话保留（§7 标签 ≠ 连接）。
 pub async fn close_tab(state: &AppState, tab_id: &str) -> AppResult<()> {
     let tab = state.sessions.get_tab(tab_id).await?;
     tab.stop.cancel();
+    // 真结束：这个标签马上要从内核表里摘掉，其他观看端也该立刻知道它没了
+    // （否则他们的画面会永远停在最后一屏）。
+    //
+    // ⚠️ 语义取 `exited: true`（进程正在被结束）并把订阅一并清空 —— 此时
+    // `subscribers` / `controller` 报 0 / null。之所以在这里自己发、而不是
+    // 等 `AppCallbacks::exit`：泵退出回调要 `get_tab` 才拿得到 tab，而本函数
+    // 紧接着就把 tab 从表里摘掉了，回调只会 `NotFound` 提前返回，补不上通知。
+    // `mark_exited()` 也一并在这里做 —— 同一原因，回调里那一步同样是拿不到 tab 的。
+    tab.mark_exited();
     tab.detach_frontend().await;
+    notify_control_changed(state, &tab).await;
     if let Some(mut killer) = state.sessions.tab_killers.write().await.remove(tab_id) {
         let _ = killer.kill();
     }
@@ -512,6 +681,11 @@ async fn reap(state: &AppState, session_id: &str) -> AppResult<()> {
         for t in tabs {
             if let Ok(tab) = state.sessions.get_tab(&t).await {
                 tab.stop.cancel();
+                // 与 `close_tab` 同语义：这个标签的进程要没了、记录也马上摘，
+                // 其他观看端必须收到 `exited: true`，否则画面会一直停在最后一屏。
+                tab.mark_exited();
+                tab.detach_frontend().await;
+                notify_control_changed(state, &tab).await;
             }
             if let Some(mut killer) = state.sessions.tab_killers.write().await.remove(&t) {
                 let _ = killer.kill();
@@ -586,6 +760,12 @@ impl TabCallbacks for AppCallbacks {
             let Ok(tab) = state.sessions.get_tab(&tab_id).await else {
                 return;
             };
+            // 泵退出 = 这个标签的进程没了。记下来，否则「接管一个已经结束的标签」
+            // 会让人以为它还在跑（`sessions.tabs` 里那条记录不会因为 pump 结束而消失）。
+            tab.mark_exited();
+            // 进程结束也要推一次（`exited: true`）—— 观看端据此把输入区禁掉，
+            // 而不是继续让人对着一个死终端敲字。
+            notify_control_changed(&state, &tab).await;
             let Ok(session) = state.sessions.session_of_tab(&tab_id).await else {
                 return;
             };

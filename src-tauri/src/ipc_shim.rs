@@ -57,6 +57,36 @@
 /// —— 122 个调用点全是这么写的，一行都不用动。
 pub use ::nexterm_ipc_macros::command;
 
+/// 桌面侧的固定订阅者标识（见 [`SubscriberKey`]）。
+///
+/// 命令层把它当作 `clientId` 参数的缺省值：桌面前端不必为「谁在操作」这件事
+/// 传任何东西 —— 整个进程只有一个视图，缺省即正确。
+pub const DESKTOP_SUBSCRIBER: &str = "desktop";
+
+/// 「谁在看这条通道」——终端标签支持多订阅者后，必须能区分订阅者身份。
+///
+/// # 为什么两种模式的值不一样
+///
+/// - **桌面**：只有一个 WebView 窗口，全部 Channel 都属于同一个视图 ⇒ 一律返回
+///   固定值 `"desktop"`。语义是「同一个视图重复 attach = 替换自己」，与改造前
+///   `sink: Option<Channel>` 的行为**逐字节一致**（重复 attach 只有最后一条生效）。
+/// - **服务端**：前端为每条 `/ws/channel/{id}` 生成的 id 天然是唯一身份
+///   ⇒ 每个浏览器标签页各算一个订阅者，于是多台设备能同时看同一个终端。
+///
+/// 不能在 `TerminalTab` 里自己生成这份标识：桌面侧无法从 `Channel` 反查 Tauri
+/// 内部的通道号（字段私有），而服务端侧的 `channel_id` 才是前端真正连的那条 WS。
+pub trait SubscriberKey {
+    fn subscriber_key(&self) -> String;
+}
+
+/// 桌面：所有 Channel 归同一个视图（见 trait 文档）。
+#[cfg(feature = "desktop")]
+impl<T> SubscriberKey for ::tauri::ipc::Channel<T> {
+    fn subscriber_key(&self) -> String {
+        DESKTOP_SUBSCRIBER.to_string()
+    }
+}
+
 // ── 桌面：纯再导出，零行为变化 ────────────────────────────────────────
 #[cfg(feature = "desktop")]
 // ⚠️ 这是**白名单**再导出，不是 `pub use ::tauri::*` —— 所以任何调用点新用到一个
@@ -303,6 +333,15 @@ mod server_impl {
                 Payload::Json(v) => self.hub.send_json(&self.channel_id, v),
             }
             Ok(())
+        }
+    }
+
+    /// 服务端：订阅者身份 = 前端那条 `/ws/channel/{id}` 的 id（见 `SubscriberKey`）。
+    ///
+    /// 写在这里而不是门面顶层，是因为 `channel_id` 是私有字段 —— 同模块才能读。
+    impl<T> super::SubscriberKey for Channel<T> {
+        fn subscriber_key(&self) -> String {
+            self.channel_id.clone()
         }
     }
 

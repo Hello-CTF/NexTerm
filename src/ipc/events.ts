@@ -11,12 +11,19 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Channel } from "@tauri-apps/api/core";
 import { DEMO, WEB, subscribe } from "../demo";
-import { newBinaryChannel, newJsonChannel, subscribeEvent } from "./webTransport";
+import { newBinaryChannel, newJsonChannel, onChannelReopen as onWsChannelReopen, disposeChannel as disposeWsChannel, subscribeEvent } from "./webTransport";
 
 export const EVENTS = {
   sessionStatus: "session://status",
   terminalExit: "terminal://exit",
   terminalThrottled: "terminal://throttled",
+  /**
+   * 终端控制权 / 观看人数 / 进程结束状态变化。
+   *
+   * 与 Rust 侧 `events::TERMINAL_CONTROL` 必须一致。**全局广播**：一次事件发到所有
+   * 终端，各端按 `payload.tabId` 自己过滤；所以订阅方不能假定"这条事件是我这个标签的"。
+   */
+  terminalControl: "terminal://control",
   fsProgress: "fs://progress",
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
@@ -32,6 +39,25 @@ export interface SessionStatusEvent {
 export interface TerminalExitEvent {
   tabId: string;
   exitCode: number | null;
+}
+
+/**
+ * `terminal://control` 的 payload（camelCase，与 Rust `TerminalControlPayload` 对齐）。
+ *
+ * 五个字段每次都给全，前端按同一份快照覆盖本地状态即可，不必做增量推断。
+ * `subscribers` 是内核原值（**含收到事件的那一端自己**），与 `terminal_list` 同口径；
+ * 它是**通道数**（同一台设备开两个页面就 +2），不是设备数。
+ * `viewers` 是**按设备去重**后的观看设备数 —— 界面上「N 个设备正在观看」用它。
+ */
+export interface TerminalControlEvent {
+  tabId: string;
+  /** 当前持权者的 clientId；null = 无人持权（此时谁都不能敲）。 */
+  controller: string | null;
+  /** 通道数（含自己）：同一台设备多开一个页面就会 +1。 */
+  subscribers: number;
+  /** 观看设备数（按 clientId 去重）：同一台设备多开页面不重复计数。 */
+  viewers: number;
+  exited: boolean;
 }
 
 export interface FsProgressEvent {
@@ -74,6 +100,52 @@ export function createBinaryChannel(
   const channel = new Channel<unknown>();
   channel.onmessage = (raw) => decodeBytes(raw, onBytes);
   return channel;
+}
+
+/**
+ * 取通道 id（只有服务端模式有）。
+ *
+ * 多端同看时 `terminal_detach` **必须**只摘自己那一条通道，否则一台设备切走标签
+ * 会把所有其他设备的推送一起掐掉 —— 而它们那边看起来只是"画面不动了"，极难排查。
+ * 桌面模式没有这个概念（整个进程一个视图），返回 `undefined` 让调用方走
+ * 「清空全部」的旧语义。
+ *
+ * 判据是「是不是字符串」而不是「有没有 `id` 字段」：Tauri 的 `Channel` 也有 `id`，
+ * 但那是个数字、且属于框架内部，拿它当通道 id 用会静默错配。
+ */
+export function channelIdOf(ch: unknown): string | undefined {
+  const id = (ch as { id?: unknown } | null)?.id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * 订阅「该终端通道的 WS 已重连」。桌面 / 演示模式没有 WS 通道，
+ * 连接不会断 ⇒ 直接返回空退订函数。
+ *
+ * 为什么要包一层：调用方（XtermView）只需要知道「通道重开时通知我」，
+ * 不该知道 WEB 分支或 webTransport 的存在 —— 否则每个使用通道的组件都要
+ * 自己写一遍形态判断，漏一处就是桌面端行为被意外改变。
+ */
+export function onChannelReopen(ch: unknown, cb: () => void): () => void {
+  const id = channelIdOf(ch);
+  if (!WEB || id === undefined) return () => {};
+  return onWsChannelReopen(id, cb);
+}
+
+/**
+ * 关闭一条通道，让它对应的 WS 收摊、不再重连。
+ *
+ * 与 `onChannelReopen` 同款形态无关包装：调用方只管「这条通道用完了」，
+ * 不该知道 WEB 分支或 `webTransport` 的存在。桌面 / 演示模式没有 WS 通道，
+ * 天然是空操作。
+ *
+ * ⚠️ 只能在该通道**彻底没有消费者**之后调用 —— 服务端会把未认领的帧缓存进
+ * `pending`，作业没结束就关会让输出静默丢失。
+ */
+export function disposeChannel(ch: unknown): void {
+  const id = channelIdOf(ch);
+  if (!WEB || id === undefined) return;
+  disposeWsChannel(id);
 }
 
 function decodeBytes(raw: unknown, onBytes: (data: Uint8Array) => void) {

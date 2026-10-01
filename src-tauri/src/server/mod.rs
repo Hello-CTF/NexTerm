@@ -42,6 +42,22 @@
 //! 也正因为是解锁态，服务端**不启动自动锁后台任务**（`vault::auto_lock_task`）——
 //! 那个任务的语义是「用户离开一会儿就锁上，等他自己回来输密码」，
 //! 在无人值守的服务端上只会把功能锁死。
+//!
+//! # 服务端也不做「空闲会话清理」
+//!
+//! 同一条设计原则的第二个落点：服务端**不启动 `session::idle_sweeper`**。
+//! 那个任务的语义是「前端标签全关掉、且再过 30 分钟，就把这个会话收掉」。
+//! 这个前提**在服务端不成立**：「标签全关」只说明浏览器关了，**不代表用户走了**
+//! —— 他完全可能正跑着一个几个小时的日志 / 编译 / 压测任务，只是把窗口最小化，
+//! 或者换到手机上看。30 分钟把这种会话断掉是最恶劣的体验，而且用户很难把
+//! 「链接突然断了」和「前端标签关过」这两件事联系起来。
+//!
+//! 代价要写清楚：**会话与 PTY 会一直留在内存里**。释放途径只有两条 ——
+//! ① 用户在界面上显式结束 / 断开；② 服务端进程重启。这是有意接受的取舍，
+//! 不是遗漏。**刻意不加一个「更长的阈值」来和稀泥**：那只是把问题从 30 分钟
+//! 推到 3 小时，更难排查，还给人「有个阈值在兜底」的错觉。
+//! （桌面版仍然保留 idle_sweeper —— 那里的「人就在本机、标签关了就是关了」
+//! 是成立的，见 `lib.rs` 的 setup。）
 
 mod blobs;
 pub mod cli;
@@ -96,6 +112,27 @@ pub const DEFAULT_LISTEN: &str = "0.0.0.0:8080";
 pub fn default_listen() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], 8080))
 }
+
+/// 短命标签（日志跟随）在最后一个订阅者离开后，延迟多久复查并回收。
+///
+/// # 为什么要留宽限期
+///
+/// 通道 WS 断开**不区分**「用户关掉页面走了」和「网络抖了一下 / 浏览器 bfcache
+/// 后退恢复」：两种都会先让订阅者归零。无条件立即回收，就会把「马上就要重连
+/// 回来」的日志跟随标签误杀。所以先等一个宽限期，再复查订阅者是否仍为 0。
+///
+/// # 取值依据（实测）
+///
+/// 前端在有视图回来时的订阅登记耗时实测：普通终端（`XtermView` 的
+/// `onChannelReopen` 会重发 `terminal_attach`）**368ms** —— 即 `subscribers`
+/// 从 0 回到 1 的实测值（本机 + headless Chrome，`/rpc terminal_list` 轮询）。
+/// 取 **5s ≈ 13×** 这个实测值，留足余量：WS 重连退避是 300ms 起步、逐次翻倍
+/// （300 / 600 / 1200 / 2400 / 4800 / 8000ms 封顶），5s 足以覆盖前四次退避，
+/// 也就是说连续几次抖动也不会误杀。
+///
+/// ⚠️ **只对 `TerminalTab::is_ephemeral()` 为真的标签生效**（目前只有
+/// `docker_logs_attach` 打的标记）。普通交互终端订阅归零后**永不**被这条路径回收。
+const EPHEMERAL_RECLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// 数据目录**内置默认值**（不含环境变量 / 命令行 —— 那两层由 `cli` 负责）。
 ///
@@ -266,11 +303,80 @@ pub async fn serve(opts: Options) -> Result<(), Box<dyn std::error::Error>> {
     // Tauri 的 `manage()`；服务端没有框架，只能手动挂一次。
     app.attach_state(Arc::clone(&state));
 
-    // 后台任务：只留空闲会话清理。**不启自动锁** —— 原因见模块文档。
-    let bg_state = Arc::clone(&state);
-    tokio::spawn(async move {
-        crate::session::idle_sweeper(bg_state, std::time::Duration::from_secs(30 * 60)).await;
-    });
+    // 通道 WS 断开 → 摘掉终端标签里对应的那条订阅；对短命标签（日志跟随）
+    // 则进一步在宽限期后回收（见 [`EPHEMERAL_RECLAIM_GRACE`]）。
+    //
+    // 不做摘订阅的后果很具体：浏览器关掉页面后，标签的 `sinks` 表里会留下一个
+    // 已经死掉的通道，之后每一帧 PTY 输出都要白跑一遍；而且**不能指望发送失败
+    // 来自动清理** —— 门面的 `Channel::send` 永远返回 `Ok`（投递结果由 hub 自己
+    // 消化），也就是说"这条通道断了"这件事**只有 hub 知道**，所以只能由它回调出来。
+    //
+    // 回调里不 `await`：它在关闭路径上，被拖住就等于连接关不掉。
+    {
+        let st = Arc::clone(&state);
+        hub.set_on_channel_closed(Arc::new(move |channel_id: &str| {
+            let st = Arc::clone(&st);
+            let cid = channel_id.to_string();
+            tokio::spawn(async move {
+                // 遍历所有标签而不是查索引：前端是「先开通道、再调 attach」，
+                // 服务端拿到通道 id 的那一刻还不知道它属于谁，建反向索引得额外
+                // 维护一致性；而断连既不频繁、标签数量也就是几十个。
+                let tabs: Vec<_> = st
+                    .sessions
+                    .tabs
+                    .read()
+                    .await
+                    .values()
+                    .cloned()
+                    .collect();
+                for t in tabs {
+                    // 只有真的摘掉了某条订阅（人数变了）才广播 —— 关一条通道时会
+                    // 遍历所有标签，绝大多数标签并不含这条通道，为它们白发事件只是噪音。
+                    let before = t.subscriber_count().await;
+                    t.detach_subscriber(&cid).await;
+                    if t.subscriber_count().await != before {
+                        // 走的人可能正是控制者：detach_subscriber 会顺带释放控制权，
+                        // 剩下的人必须立刻知道「现在没人持权 / 换成谁了」。
+                        crate::session::notify_control_changed(&st, &t).await;
+                    }
+                    // 短命资源（日志跟随）在**最后一个订阅者**走后回收。
+                    //
+                    // # 为什么不能立刻回收
+                    //
+                    // 这条回调**不区分**「用户关掉页面走了」和「网络抖了一下 /
+                    // 浏览器 bfcache 后退恢复」—— 两种都会先看到订阅者归零。
+                    // 立即回收会把「马上就要重连回来」的标签误杀，用户按一下后退
+                    // 就发现日志面板死了。延迟一个宽限期再复查一次：宽限期内有视图
+                    // 回来（`subscribers` 回到 > 0）就自然免于误杀，**不需要**任何
+                    // 额外的取消 / 续期机制 —— 复查本身就是判据。
+                    if t.is_ephemeral() && t.subscriber_count().await == 0 {
+                        let reclaim = Arc::clone(&st);
+                        let tab_id = t.tab_id.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(EPHEMERAL_RECLAIM_GRACE).await;
+                            // 复查：标签可能已被别的路径回收（拿不到就直接返回）。
+                            let Ok(tab) = reclaim.sessions.get_tab(&tab_id).await else {
+                                return;
+                            };
+                            if tab.subscriber_count().await != 0 {
+                                return; // 宽限期内有视图回来：免于误杀。
+                            }
+                            // 幂等：`close_tab` 自己会再 `get_tab`，拿不到 tab 返回 Err，
+                            // 吞掉即可（与上面这次复查之间的窗口里被别的路径关掉了）。
+                            let _ = crate::session::close_tab(&reclaim, &tab_id).await;
+                        });
+                    }
+                }
+            });
+        }));
+    }
+
+    // 后台任务：**不启动空闲会话清理，也不启动自动锁** —— 两者是同一条理由
+    // （服务端无人值守，「用户走了」这个前提不成立），详见模块文档
+    // 「凭据库在服务端是「解锁态」」与「服务端也不做「空闲会话清理」」两节。
+    //
+    // ⚠️ 只删掉了服务端这一处 spawn，**`session::idle_sweeper` 函数本身保留**：
+    // 桌面版在 `lib.rs` 的 setup 里仍在用它（那边「标签关了就是人走了」成立）。
 
     // 命令表按形态注册。⚠️ **这是 onlyServer 的全部意义所在**：`/sync/rpc` 的
     // 令牌走同一张表，全量注册（132 条）时它等价于完全控制权；只留三条，

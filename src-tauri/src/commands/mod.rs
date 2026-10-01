@@ -7,6 +7,7 @@ pub mod db;
 pub mod docker;
 pub mod forward;
 pub mod fs;
+pub mod layout;
 pub mod models;
 pub mod mount;
 pub mod session;
@@ -43,6 +44,9 @@ macro_rules! nexterm_commands {
         $cb! {
             // app
             app_platform,
+            // layout（工作区布局：服务端权威运行态的一部分）
+            layout::layout_get,
+            layout::layout_put,
             // session
             session::session_connect,
             session::session_connect_local,
@@ -55,6 +59,10 @@ macro_rules! nexterm_commands {
             session::session_reconnect,
             // terminal
             terminal::terminal_attach,
+            terminal::terminal_attach_tab,
+            terminal::terminal_list,
+            terminal::terminal_claim,
+            terminal::terminal_release,
             terminal::terminal_write,
             terminal::terminal_resize,
             terminal::terminal_detach,
@@ -254,6 +262,16 @@ pub trait SessionArgs {
 pub struct AppInfo {
     pub name: &'static str,
     pub version: &'static str,
+}
+
+/// `clientId` 参数的缺省值：桌面视图。
+///
+/// 「谁在操作」这件事在桌面版上只有一个答案（整个进程一个窗口），所以缺省即正确。
+/// 服务端侧同一条缺省还承担一个兼容作用：**还没接 `clientId` 的前端不会被这次
+/// 改造锁死**（控制权归 `desktop`，写入也报 `desktop`，两边一致 ⇒ 照旧能敲）。
+/// 详见 `commands/terminal` 的模块文档。
+pub(crate) fn client_or_default(client_id: Option<String>) -> String {
+    client_id.unwrap_or_else(|| crate::ipc_shim::DESKTOP_SUBSCRIBER.to_string())
 }
 
 #[allow(dead_code)]

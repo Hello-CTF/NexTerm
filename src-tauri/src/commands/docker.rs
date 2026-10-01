@@ -171,8 +171,10 @@ pub async fn docker_logs_attach(
     container_id: String,
     tail: Option<u64>,
     channel: Channel<Vec<u8>>,
+    client_id: Option<String>,
 ) -> AppResult<String> {
     let s = state.sessions.get(&session_id).await?;
+    let client = super::client_or_default(client_id);
     let tail = tail.unwrap_or(500);
     let (cols, rows) = (120u16, 40u16);
     let ch = open_exec_for_session(
@@ -185,36 +187,71 @@ pub async fn docker_logs_attach(
     .await?;
     let tab_id = crate::ids::new_id();
     let tab = TerminalTab::new_arc(tab_id.clone(), session_id.clone(), cols, rows, s.encoding);
-    tab.attach_frontend(channel, 500 * 1024).await;
-    attach_exec_tab(&state, &session_id, tab, ch).await
+    // 日志跟随是**短命资源**：没人看（订阅者归零）时没有保留价值。
+    //
+    // 用户直接关掉浏览器页面时前端清不掉这个 `docker logs -f` PTY（页面卸载路径
+    // 上发不出 RPC），只能由服务端在通道 WS 断开后按这个标记回收 —— 见
+    // `server::serve` 里 `set_on_channel_closed` 的宽限期复查。
+    //
+    // ⚠️ **不要**给 `docker_exec_attach` 加这个标记：`docker exec -it` 是真交互
+    // 终端，前端按普通终端标签打开，必须能跨网页关闭存活。
+    tab.mark_ephemeral();
+    tab.attach_frontend(channel, 500 * 1024, &client).await;
+    tab.claim_if_free(&client).await;
+    let tab_id = attach_exec_tab(&state, &session_id, std::sync::Arc::clone(&tab), ch).await?;
+    // 新订阅（可能顺带拿到控制权）—— 广播控制权快照。
+    crate::session::notify_control_changed(&state, &tab).await;
+    Ok(tab_id)
+}
+
+/// 容器 exec 终端的入参。
+///
+/// 收成一个结构体而不是继续摊平：`docker_exec_attach` 摊平后是 8 个参数，
+/// 会踩 `clippy::too_many_arguments`（CI 是 `-D warnings`），而逐条加
+/// `#[allow]` 只是把问题藏起来。`channel` **必须留在签名上**：它是
+/// `#[command]` 宏特殊识别的一类形参（服务端要从 WS 通道 id 构造），
+/// 塞进结构体就变成普通字段、两侧都编不过。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerExecArgs {
+    pub session_id: String,
+    pub container_id: String,
+    pub cmd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    /// 谁在操作（单点模式，见 `commands/terminal` 的模块文档）。
+    pub client_id: Option<String>,
 }
 
 /// 容器 exec 终端（真 PTY：docker exec -it）。
 #[tauri::command]
 pub async fn docker_exec_attach(
     state: ManagedState<'_>,
-    session_id: String,
-    container_id: String,
-    cmd: Option<String>,
-    cols: u16,
-    rows: u16,
+    args: DockerExecArgs,
     channel: Channel<Vec<u8>>,
 ) -> AppResult<String> {
-    let s = state.sessions.get(&session_id).await?;
-    let shell_cmd = cmd.unwrap_or_else(|| format!("docker exec -it {container_id} sh"));
+    let s = state.sessions.get(&args.session_id).await?;
+    let client = super::client_or_default(args.client_id);
+    let shell_cmd = args
+        .cmd
+        .unwrap_or_else(|| format!("docker exec -it {} sh", args.container_id));
     // docker exec 不走 request_pty（在外层命令带 -t 即可）；尺寸给标签用
-    let ch =
-        open_exec_for_session(&state, &session_id, &shell_cmd, cols.max(20), rows.max(5)).await?;
+    let cols = args.cols.max(20);
+    let rows = args.rows.max(5);
+    let ch = open_exec_for_session(&state, &args.session_id, &shell_cmd, cols, rows).await?;
     let tab_id = crate::ids::new_id();
     let tab = TerminalTab::new_arc(
         tab_id.clone(),
-        session_id.clone(),
-        cols.max(20),
-        rows.max(5),
+        args.session_id.clone(),
+        cols,
+        rows,
         s.encoding,
     );
-    tab.attach_frontend(channel, 0).await;
-    attach_exec_tab(&state, &session_id, tab, ch).await
+    tab.attach_frontend(channel, 0, &client).await;
+    tab.claim_if_free(&client).await;
+    let tab_id = attach_exec_tab(&state, &args.session_id, std::sync::Arc::clone(&tab), ch).await?;
+    crate::session::notify_control_changed(&state, &tab).await;
+    Ok(tab_id)
 }
 
 #[derive(Deserialize)]

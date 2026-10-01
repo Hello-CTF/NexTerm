@@ -8,7 +8,8 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
-import { createBinaryChannel } from "../../ipc/events";
+import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
+import { clientId } from "../../ipc/env";
 import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
@@ -63,6 +64,8 @@ export interface TerminalHandle {
   clear: () => void;
   /** 当前选中的文本（没选中时是空串）。右键「向 AI 提问」用它取内容。 */
   getSelection: () => string;
+  /** 当前终端尺寸。接管控制权后要按它把 PTY 尺寸推过去（最后活跃者赢）。 */
+  dimensions: () => { cols: number; rows: number };
 }
 
 export interface XtermViewProps {
@@ -78,9 +81,52 @@ export interface XtermViewProps {
    * 高度算出 0，FitAddon 会提出 2x1 这种尺寸并**连带把远端 PTY 也改小**，
    * 所以隐藏期间绝不能 fit。
    */
+  /**
+   * 要**接管**的内核标签 id（从服务端恢复工作区时带上来）。
+   *
+   * 非空 ⇒ 走 `terminal_attach_tab`：不新开 shell，把服务端那条连接上已有的
+   * 回滚内容回放回来。为空 ⇒ 走 `terminal_attach` 新建（会开一个新的 shell）。
+   *
+   * ⚠️ 这个 prop 是「关掉网页再打开还能接回原终端」的总开关。它一旦有值，
+   * 组件就不能再走新建分支 —— 否则每恢复一次就多泄漏一个远端 shell。
+   */
+  resumeTabId?: string;
+  /**
+   * attach 结果（含「我现在是不是控制者」）。
+   *
+   * 交给上层决定要不要挂观察者遮罩 —— 这个组件只负责画终端，不掌握多端语义。
+   */
+  onAttachInfo?: (info: {
+    tabId: string;
+    controller: string | null;
+    /** 通道数（含自己）：同一台设备多开一个页面就会 +1。 */
+    subscribers: number;
+    /** 观看设备数（按 clientId 去重）：界面「N 个设备正在观看」用这个。 */
+    viewers: number;
+    exited: boolean;
+  }) => void;
+  /**
+   * 是否允许本视图改 PTY 尺寸（默认 true）。
+   *
+   * 观察者必须传 false：`terminal_resize` 会校验控制权（非控制者报 `not_controller`），
+   * 而且观察者本来就不该改尺寸 —— 一个 PTY 只有一组 `cols`/`rows`，谁操作谁决定，
+   * 否则别的设备一打开页面就会把正在操作那端的画面重排。
+   */
+  canResize?: boolean;
   visible?: boolean;
   onClosed?: () => void;
   onAttach?: (kernelTabId: string) => void;
+  /**
+   * attach 失败且错误码是 `not_found` —— 即「连接已失效」时回调。
+   *
+   * 覆盖两条路径：接管已有标签（服务端重启后 tabId 已不存在）与新建（会话已被回收）。
+   * 两者对用户是同一件事：这个标签背后的连接不在服务端了，需要一个明确的下一步，
+   * 而不是在终端里留一行黄字让人干瞪眼。
+   *
+   * ⚠️ 这个组件**不掌握 store**（不知道 storeTabId），所以清失效 `tabId`、弹遮罩、
+   * 重连都由上层 `TerminalPane` 在收到回调后处理。
+   */
+  onAttachFailed?: (code: string) => void;
   registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;
   onData?: (data: string) => void;
   /** 命令块列表变化（M1-T9）。 */
@@ -99,8 +145,26 @@ export function XtermView(props: XtermViewProps) {
   // 回调放 ref：避免它们进入 effect 依赖导致终端被反复重建
   const onBlocksRef = useRef(props.onBlocks);
   const onHandleRef = useRef(props.onHandle);
+  const onAttachInfoRef = useRef(props.onAttachInfo);
+  const onAttachFailedRef = useRef(props.onAttachFailed);
+  /**
+   * 输入回调也放 ref：`term.onData` 的 handler 是在 attach effect 里注册的，
+   * 而那个 effect 的依赖只有 sessionId / containerId / resumeTabId —— 直接读
+   * `props.onData` 的话，拿到的会是首次渲染那一份闭包（里面的 kernelTabId 还是
+   * null、控制权态也还是旧的），于是观察者拦截、最新 tabId 全都对不上。
+   */
+  const onDataRef = useRef(props.onData);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
+  onAttachInfoRef.current = props.onAttachInfo;
+  onAttachFailedRef.current = props.onAttachFailed;
+  onDataRef.current = props.onData;
+  /**
+   * 能不能改 PTY 尺寸。放 ref 而不是进 effect 依赖：它只是"要不要发 resize"的
+   * 开关，不该因为它变化就把整个终端重建一遍。
+   */
+  const canResizeRef = useRef(props.canResize !== false);
+  canResizeRef.current = props.canResize !== false;
 
   /** 只在容器有真实尺寸时 fit —— 隐藏容器的 computed 高度是 0。 */
   const fitIfSized = () => {
@@ -156,6 +220,7 @@ export function XtermView(props: XtermViewProps) {
       clearBlocks: () => blocks.clear(),
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),
+      dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
     // ── attach：输出走 Channel 二进制（L1）──
@@ -166,21 +231,76 @@ export function XtermView(props: XtermViewProps) {
       try {
         const cols = term.cols;
         const rows = term.rows;
-        // 三种执行通道：容器内 exec / WinRM 行模式 / 服务器 PTY
-        const id = props.containerId
-          ? await dockerApi.execAttach(
-              props.sessionId,
-              props.containerId,
-              cols,
-              rows,
-              channel,
-            )
-          : props.winrm
-            ? await import("../../ipc/commands").then((m) =>
-                m.sessionApi.openLineTab(props.sessionId, cols, rows, channel),
-              )
-            : await terminalApi.attach(props.sessionId, cols, rows, channel);
-        if (disposed) return;
+        // ⚠️ 依赖里带 resumeTabId：恢复出来的标签必须走"接管"分支。
+        // 忘了加，就会在每次恢复时新开一个 shell（用户看到的是"我原来的任务不见了，
+        // 眼前是个空终端"，而远端悄悄多了一个泄漏的 shell）。
+        const resume = props.resumeTabId;
+        let id: string;
+        if (resume) {
+          // 接管**优先于** containerId / winrm 分支。
+          //
+          // 容器 exec、WinRM 行模式的标签同样存在内核的标签表里（见 docker.rs 的
+          // attach_exec_tab），能用同一条 `terminal_attach_tab` 接回来。如果让
+          // containerId / winrm 分支排在前面，每次恢复都会重新 exec / 重开一条
+          // 行模式标签 —— 和"新开 shell"是同一类泄漏，只是更隐蔽。
+          //
+          // 不传 cols/rows —— 接管方无权改 PTY 尺寸（见 terminalApi.attachTab）。
+          const info = await terminalApi.attachTab(resume, channel);
+          id = info.tabId;
+          onAttachInfoRef.current?.({
+            tabId: info.tabId,
+            controller: info.controller,
+            subscribers: info.subscribers,
+            viewers: info.viewers,
+            exited: info.exited,
+          });
+        } else if (props.containerId) {
+          id = await dockerApi.execAttach(
+            props.sessionId,
+            props.containerId,
+            cols,
+            rows,
+            channel,
+          );
+          onAttachInfoRef.current?.({
+            tabId: id,
+            controller: null,
+            subscribers: 1,
+            viewers: 1,
+            exited: false,
+          });
+        } else if (props.winrm) {
+          id = await import("../../ipc/commands").then((m) =>
+            m.sessionApi.openLineTab(props.sessionId, cols, rows, channel),
+          );
+          onAttachInfoRef.current?.({
+            tabId: id,
+            controller: null,
+            subscribers: 1,
+            viewers: 1,
+            exited: false,
+          });
+        } else {
+          id = await terminalApi.attach(props.sessionId, cols, rows, channel);
+          onAttachInfoRef.current?.({
+            tabId: id,
+            controller: clientId(),
+            subscribers: 1,
+            viewers: 1,
+            exited: false,
+          });
+        }
+        if (disposed) {
+          // 组件在 attach 等待期间被卸载：此刻服务端已按这条 channel 登记了订阅者，
+          // 而 cleanup 当时看到的 kernelTabId 还是空、不会替我们摘 —— 必须在这里自己补一次。
+          //
+          // ⚠️ 必须带 channelId（只摘自己这条通道）；不带就是「清空全部」，会把同一终端上
+          // 其他设备的推送一起掐掉（它们那边只表现为"画面不动了"，几乎无从排查）。
+          // 安全性依据：channel id 含 clientId + 序号 + 随机段，每个 XtermView 实例唯一，
+          // 所以这次定向 detach 不可能误摘别人的通道。
+          void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
+          return;
+        }
         kernelTabId = id;
         kernelTabIdRef.current = id;
         props.onAttach?.(id);
@@ -188,21 +308,68 @@ export function XtermView(props: XtermViewProps) {
         // 不能用 String(e)：内核抛的 AppError 是 { code, message } 对象，
         // String() 只会印出 "[object Object]"，真正的原因（会话没了？PTY 开不出来？）
         // 当场丢失，排查时等于什么都没说。
-        //
-        // not_found = 这个会话在内核里已经不存在了（本机会话断开后被彻底回收，
-        // 或应用重启后残留的旧工作区）。这种情况**有明确的下一步**，不该甩一个
-        // not_found 让用户去猜，所以单独给一句人话 + 告诉他去哪儿恢复。
         const code = (e as { code?: string } | null)?.code;
         if (code === "not_found") {
-          term.writeln(
-            "\r\n\x1b[33m[会话已结束] 这台主机的连接已经不在了。请到左侧资产树重新连接，" +
-              "或点工具栏旁的「新建终端」让它自动连回来。\x1b[0m",
-          );
+          // 连接已失效（服务端重启后 tabId 全失效 / 会话被回收）。
+          //
+          // ⚠️ 上层**必须**处理：清掉 store 里这条失效的 `tabId`，否则
+          //   ①`term.onData` 里的 `if (!kernelTabId) return` 会把输入全吃掉，
+          //     标签永久敲不动；
+          //   ②失效的 id 会被反复持久化成"这里有个活着的终端"，重启一次多一个死标签。
+          // 这里只把失效这件事上报（上层做清理 + 挂「连接已失效」遮罩给下一步），
+          // 终端里留一行痕迹给遮罩后面的画面。
+          if (!disposed) onAttachFailedRef.current?.(code);
+          term.writeln("\r\n\x1b[33m[连接已失效] 这台终端所属的连接在服务端已经不在了。\x1b[0m");
         } else {
           term.writeln(`\r\n\x1b[31m[attach 失败] ${describeError(e)}\x1b[0m`);
         }
       }
     };
+
+    /**
+     * 通道 WS 重连后**重新登记订阅**（bfcache 恢复 / 网络抖动都会走到这里）。
+     *
+     * # 为什么需要它
+     * WS 断开时服务端会把这条通道在终端里的订阅摘掉（`sinks` 变空，控制者还会被
+     * 释放控制权）。transport 随后用**同一 id** 自动重连，但那只是重建字节管道，
+     * 不会重放 app 层的订阅；而 bfcache 恢复是同一文档、React 不重挂 ⇒ 没人再调
+     * attach ⇒ 终端「看着在、敲了没反应」（写入被 `not_controller` 拒掉）。
+     *
+     * # 为什么只走"接管"分支
+     * 必须用 `attachTab(已有内核 id)`。走 `doAttach` 的"新建"分支会在服务端**再开一个
+     * PTY**、把原来那个泄漏掉。所以只在 `kernelTabId` 已存在时才动作。
+     *
+     * ⚠️ `attachTab` 在服务端会清屏 + 回放 scrollback（`session/mod.rs` 的
+     * `attach_existing_tab`），所以每次重连画面会重绘一次。这是复用同一内核标签的代价，
+     * 换来的是订阅随连接自愈。
+     */
+    const reattachOnReopen = () => {
+      const id = kernelTabId;
+      if (!id) return; // 首次 attach 还没落地：那条路径自己会登记订阅
+      void (async () => {
+        try {
+          const info = await terminalApi.attachTab(id, channel);
+          if (disposed) return;
+          kernelTabIdRef.current = info.tabId;
+          onAttachInfoRef.current?.({
+            tabId: info.tabId,
+            controller: info.controller,
+            subscribers: info.subscribers,
+            viewers: info.viewers,
+            exited: info.exited,
+          });
+        } catch (e) {
+          if (disposed) return;
+          // 内核里那条标签也没了（例如服务端重启过）⇒ 走既有的失效上报，
+          // 让上层清 tabId + 挂「连接已失效」遮罩。
+          if ((e as { code?: string } | null)?.code === "not_found") {
+            onAttachFailedRef.current?.("not_found");
+          }
+        }
+      })();
+    };
+    const offReopen = onChannelReopen(channel, reattachOnReopen);
+
     // attach 延迟到一个宏任务再发。
     //
     // React StrictMode 在开发模式下会「挂载 → 卸载 → 再挂载」，同步 attach 会开出
@@ -217,8 +384,9 @@ export function XtermView(props: XtermViewProps) {
     const dataDisposable = term.onData((data) => {
       blocks.feedInput(data);
       if (!kernelTabId) return;
-      if (props.onData) {
-        props.onData(data);
+      const onData = onDataRef.current;
+      if (onData) {
+        onData(data);
       } else {
         void terminalApi
           .write(kernelTabId, new TextEncoder().encode(data))
@@ -227,6 +395,8 @@ export function XtermView(props: XtermViewProps) {
     });
     const resizeDisposable = term.onResize(({ cols, rows }) => {
       if (!kernelTabId) return;
+      // 观察者不发：内核会拒（not_controller），而且会把正在操作那端的 PTY 尺寸改掉。
+      if (!canResizeRef.current) return;
       void terminalApi.resize(kernelTabId, cols, rows).catch(() => undefined);
     });
 
@@ -243,6 +413,7 @@ export function XtermView(props: XtermViewProps) {
 
     return () => {
       disposed = true;
+      offReopen();
       window.clearTimeout(attachTimer);
       ro.disconnect();
       dataDisposable.dispose();
@@ -251,13 +422,23 @@ export function XtermView(props: XtermViewProps) {
       if (kernelTabId) {
         // 只 detach（断开前端通道），不 close —— 内核标签的生命周期由 store.closeTab
         // 显式调用 terminal_close_tab 来管（§7：关标签 ≠ 断连，但关标签要回收 PTY）。
-        void terminalApi.detach(kernelTabId).catch(() => undefined);
+        //
+        // ⚠️ 必须带上 channelId（服务端）：不带就是「清空全部」，会把同一个终端上
+        // 其他设备的推送一起掐掉 —— 它们那边只表现为"画面不动了"，几乎无从排查。
+        // 桌面模式下 channelIdOf 返回 undefined，退回「清空全部」，语义不变。
+        void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
       }
+      // detach 之后关闭通道本身：它只摘服务端订阅，那条 WS 仍挂着。
+      // 不关的话 `entry.disposed` 永远 false，`ws.onclose` 会退避重连，
+      // 于是每开一个标签就永久多一条通道（实测 liveChannels 1→2→…→6）。
+      // 顺序：detach 要用 channelIdOf(channel) 取 id 发给服务端（读 channel.id，
+      // 不受 dispose 影响），所以先 detach 后 dispose 最省心；两端重复摘订阅幂等。
+      disposeChannel(channel);
       kernelTabIdRef.current = "";
       term.dispose();
       termRef.current = null;
     };
-      }, [props.sessionId, props.containerId]);
+      }, [props.sessionId, props.containerId, props.resumeTabId]);
 
   // ── 标签激活状态 → 可见性 + 重新 fit（§4.4）──
   // 切标签时组件不再卸载（见 App.tsx 的「全部挂载、隐藏非激活」），

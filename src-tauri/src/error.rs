@@ -65,6 +65,16 @@ pub enum AppError {
     #[error("操作被拒绝: {0}")]
     Forbidden(String),
 
+    /// 终端输入被拒：这会儿控制权在别的设备手里（单点模式）。
+    ///
+    /// 单独开一个变体而不是复用 `Forbidden`：界面要对它做**特定**处理 ——
+    /// 弹「接管控制」而不是当成错误报出来。靠通用的 `forbidden` 码前端分不出来。
+    ///
+    /// 刻意**不带上持有者的标识**：那是订阅者通道 id，对用户没有意义，
+    /// 而且渲染出来只会像串乱码。
+    #[error("终端正在其他设备上操作中")]
+    NotController,
+
     #[error("该操作需要用户确认: {0}")]
     NeedsConfirm(String),
 
@@ -114,6 +124,7 @@ impl AppError {
             Self::BadMasterPassword => "bad_master_password",
             Self::Decrypt(_) => "decrypt",
             Self::Forbidden(_) => "forbidden",
+            Self::NotController => "not_controller",
             Self::NeedsConfirm(_) => "needs_confirm",
             Self::Timeout(_) => "timeout",
             Self::AiProvider(_) => "ai_provider",

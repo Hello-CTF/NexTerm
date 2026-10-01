@@ -138,7 +138,9 @@ export function SyncCard() {
   const [local, setLocal] = useState<SyncDigest | null>(null);
   const [remote, setRemote] = useState<SyncDigest | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [withCreds, setWithCreds] = useState(false);
+  // 默认**带上**凭据：不勾的话私钥/密码连包都不进，对端拿到的资产是死的 ——
+  // 「同步成功但连不上」是最难排查的一类反馈。用户仍可主动取消勾选。
+  const [withCreds, setWithCreds] = useState(true);
   const [force, setForce] = useState(false);
 
   const [busy, setBusy] = useState<null | "test" | "push" | "pull">(null);

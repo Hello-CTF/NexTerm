@@ -19,7 +19,8 @@ export type PaneKind =
   | "credentials"
   | "credentialsText"
   | "settings"
-  | "audit";
+  | "audit"
+  | "background";
 
 /**
  * 左栏形态。
@@ -59,6 +60,15 @@ export interface AppTab {
    */
   pendingCommand?: string;
   closable: boolean;
+  /**
+   * 该终端的内核标签在服务端已不存在（attach 拿到 `not_found`）——「连接已失效」态。
+   *
+   * ⚠️ **纯本地字段，绝不进持久化**：`src/app/layout.ts::sanitizeTab` 是显式白名单
+   * 构造对象，没列进去的字段不会被写到服务端 —— 这正是「死标签不再累积」的依据。
+   * 也正因服务端那份不含它，`applyToStore` 必须把带这个标记的标签**并回来**，
+   * 否则套用远端布局时会把遮罩连同标签一起抹掉（实测遮罩只活 ~608ms）。
+   */
+  dead?: boolean;
 }
 
 export type WorkspaceKind = "session" | "db" | "tools";
@@ -151,6 +161,31 @@ export interface AppDialogState {
   resolve: (v: boolean) => void;
 }
 
+/** 多选一弹框的一个选项。 */
+export interface AppChoiceOption {
+  key: string;
+  label: string;
+  hint?: string;
+  danger?: boolean;
+  primary?: boolean;
+}
+
+/**
+ * 多选一弹框（关闭终端标签时的「后台继续运行 / 结束进程」用）。
+ *
+ * 单独一份状态，而不是把 AppDialogState 的 resolve 扩成联合类型：那样
+ * `ask` 的 `(v: boolean) => void` 在 strictFunctionTypes 下就赋不进去了，
+ * 每个调用点都得加断言 —— 得不偿失。
+ */
+export interface AppChoiceState {
+  title: string;
+  message: string;
+  options: AppChoiceOption[];
+  level: "info" | "warning";
+  /** 选了返回选项 key；点取消 / Esc 返回 null。 */
+  resolve: (v: string | null) => void;
+}
+
 /** 接管模式全局状态（§8.6）：顶部横幅与「立即夺回」按钮都读它。 */
 export interface TakeoverState {
   tabId: string;
@@ -197,6 +232,10 @@ interface UiState {
   appDialog: AppDialogState | null;
   openAppDialog: (d: AppDialogState) => void;
   closeAppDialog: (v: boolean) => void;
+  /** 多选一弹框（关闭终端标签用，见 AppChoiceState）。 */
+  appChoice: AppChoiceState | null;
+  openAppChoice: (c: AppChoiceState) => void;
+  closeAppChoice: (v: string | null) => void;
 
   setLeftOpen: (v: boolean) => void;
   setLeftMode: (m: LeftMode) => void;
@@ -235,7 +274,14 @@ interface UiState {
   /** 以下四个都按"标签 id 全局唯一"工作，自动定位它所在的工作区与面板。 */
   setActiveTab: (id: string) => void;
   addTab: (tab: AppTab, paneId?: string) => void;
-  closeTab: (id: string) => Promise<void>;
+  /**
+   * 关闭标签并从视图移除。
+   *
+   * `mode` 只对**带内核标签的终端**有意义（透传给 `terminal_close_tab`）：
+   * - `"detach"`：进程留在服务端继续跑，之后可从「后台会话」接管；
+   * - `"kill"` / 不传：真的结束进程（缺省值 = 现状语义，不因"关标签"看着轻就留后台僵尸）。
+   */
+  closeTab: (id: string, mode?: "kill" | "detach") => Promise<void>;
   updateTab: (id: string, patch: Partial<AppTab>) => void;
 
   setSessions: (s: SessionInfo[]) => void;
@@ -307,6 +353,46 @@ export function nextTabId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${tabSeq++}`;
 }
 
+/** 建工作区时可能只拿到占位标题，真实名字（会话名 / 资产名）晚一步才到位。 */
+const PLACEHOLDER_WS_TITLES = new Set(["工作区", "会话", "标签"]);
+
+/**
+ * 命中已存在工作区时要补的字段；没有可补的返回 null。
+ *
+ * # 为什么必须补（否则会串台）
+ *
+ * `connectAsset` 建工作区**太早**：那一刻还没拿到 `assetId`（sessionId 要等
+ * `session_connect` 返回后才知道），调用点也就没传。真正拿得到 `assetId` 的是
+ * 随后的 `openTerminalTab`，但它调 `ensureWorkspace` 时会**命中已存在**的工作区 ——
+ * 如果这里直接 return 不补字段，自动连出来的工作区 `assetId` 就永远是空的。
+ *
+ * 后果不止「失效遮罩上的重连按钮报『找不到资产信息』」：`App.tsx` 的
+ * `if (ws?.assetId)` 一旦失配就退化成 `openLocalTerminal()` —— 连一台远端主机、
+ * 会话被回收后点「新建终端」会**开到本机**，用户看到的就是串台。
+ */
+function workspaceFieldPatch(
+  w: Workspace,
+  spec: WorkspaceSpec,
+): Partial<Pick<Workspace, "title" | "assetId" | "assetKind">> | null {
+  const patch: Partial<Pick<Workspace, "title" | "assetId" | "assetKind">> = {};
+  let changed = false;
+  // assetId / assetKind 是身份：只补"缺的"，已有值不覆盖（避免把对的改错）。
+  if (!w.assetId && spec.assetId) {
+    patch.assetId = spec.assetId;
+    changed = true;
+  }
+  if (!w.assetKind && spec.assetKind) {
+    patch.assetKind = spec.assetKind;
+    changed = true;
+  }
+  // 标题允许"更具体"地覆盖占位文案（会话名晚到时会先写成「会话」）。
+  if (spec.title && spec.title !== w.title && (!w.title || PLACEHOLDER_WS_TITLES.has(w.title))) {
+    patch.title = spec.title;
+    changed = true;
+  }
+  return changed ? patch : null;
+}
+
 const initialLayout = loadLayout();
 
 export const useUi = create<UiState>((set, get) => ({
@@ -337,6 +423,13 @@ export const useUi = create<UiState>((set, get) => ({
     cur?.resolve(v);
     set({ appDialog: null });
   },
+  appChoice: null,
+  openAppChoice: (c) => set({ appChoice: c }),
+  closeAppChoice: (v) => {
+    const cur = get().appChoice;
+    cur?.resolve(v);
+    set({ appChoice: null });
+  },
 
   setLeftOpen: (v) => set({ leftOpen: v }),
   setLeftMode: (m) => set({ leftMode: m }),
@@ -353,14 +446,26 @@ export const useUi = create<UiState>((set, get) => ({
   },
 
   ensureWorkspace: (spec) => {
-    const { workspaces } = get();
+    const { workspaces, activeWorkspaceId } = get();
     const exists = workspaces.find(
       (w) =>
         (spec.sessionId !== undefined && w.sessionId === spec.sessionId) ||
         (spec.connId !== undefined && w.connId === spec.connId),
     );
     if (exists) {
-      set({ activeWorkspaceId: exists.id });
+      // 命中已存在：把后到的具体字段补上（见 workspaceFieldPatch 的因果说明）。
+      // ⚠️ 只在确实有变化时才 set —— 否则每次调用都产生一次 store 变更，
+      // 会触发无谓的布局写入与回写（拖拽/开标签路径上会被高频调到）。
+      const patch = workspaceFieldPatch(exists, spec);
+      const activeChanged = activeWorkspaceId !== exists.id;
+      if (patch || activeChanged) {
+        set({
+          workspaces: patch
+            ? workspaces.map((w) => (w.id === exists.id ? { ...w, ...patch } : w))
+            : workspaces,
+          activeWorkspaceId: exists.id,
+        });
+      }
       return exists.id;
     }
     const id = nextTabId(`ws-${spec.kind}`);
@@ -388,13 +493,16 @@ export const useUi = create<UiState>((set, get) => ({
     const { workspaces, activeWorkspaceId } = get();
     const target = workspaces.find((w) => w.id === id);
     if (!target) return;
-    // 先把里面（所有面板）的终端内核标签全部回收，否则远端的 shell 会一直挂着
-    await Promise.all(
-      target.panes
-        .flatMap((p) => p.tabs)
-        .filter((t) => t.tabId)
-        .map((t) => terminalApi.closeTab(t.tabId as string).catch(() => undefined)),
+    // 关工作区 = 关掉里面（所有面板）的所有标签，带内核标签的终端要先回收，
+    // 否则远端的 shell 会一直挂着。回收走和关标签同一套三选一
+    // （后台继续运行 / 结束进程 / 取消），不再静默杀进程 —— 用户可能正跑着长任务。
+    // 用户点「取消」时这里返回 false，整个关闭动作中止（工作区还在、终端一个都不能动）。
+    const ok = await reclaimTerminals(
+      target.panes.flatMap((p) => p.tabs),
+      "这个工作区",
+      `关闭「${target.title}」`,
     );
+    if (!ok) return;
     const next = workspaces.filter((w) => w.id !== id);
     // 会话本身不主动断开：工作区是"视图"，断连是另一个明确动作
     set({
@@ -451,12 +559,10 @@ export const useUi = create<UiState>((set, get) => ({
     const target = w.panes.find((p) => p.id === (paneId ?? w.activePaneId)) ?? w.panes[1];
     const keep = w.panes.filter((p) => p.id !== target.id);
     if (keep.length === 0) return;
-    // 关面板等于关掉它里面的所有标签，终端要先回收
-    await Promise.all(
-      target.tabs
-        .filter((t) => t.tabId)
-        .map((t) => terminalApi.closeTab(t.tabId as string).catch(() => undefined)),
-    );
+    // 关面板等于关掉它里面的所有标签，终端要先回收（同 closeWorkspace：
+    // 整个面板只弹一次框；取消则这次取消分屏动作中止）。
+    const ok = await reclaimTerminals(target.tabs, "这个面板", "取消分屏");
+    if (!ok) return;
     set((s2) => ({
       workspaces: s2.workspaces.map((x) =>
         x.id === id ? { ...x, panes: keep, activePaneId: keep[0].id } : x,
@@ -563,7 +669,7 @@ export const useUi = create<UiState>((set, get) => ({
     }));
   },
 
-  closeTab: async (id) => {
+  closeTab: async (id, mode) => {
     const st = get();
     let target: AppTab | undefined;
     let wsId: string | undefined;
@@ -581,7 +687,8 @@ export const useUi = create<UiState>((set, get) => ({
       if (target) break;
     }
     if (!target || !wsId || !paneId) return;
-    if (target.tabId) await terminalApi.closeTab(target.tabId).catch(() => undefined);
+    // mode 透传：detach = 进程留在服务端；不传 = 结束进程。
+    if (target.tabId) await terminalApi.closeTab(target.tabId, mode).catch(() => undefined);
     set((s2) => ({
       workspaces: s2.workspaces.map((w) => {
         if (w.id !== wsId) return w;
@@ -664,6 +771,8 @@ function resolveWorkspaceId(
       kind: "session",
       sessionId: tab.sessionId,
       title: s?.name ?? "会话",
+      // 会话被回收后要能按同一台主机重连，assetId 必须带上（见 Workspace.assetId）。
+      assetId: s?.assetId ?? undefined,
       assetKind: s?.kind,
     });
   }
@@ -764,6 +873,120 @@ export async function openTerminalTab(
     },
     paneId,
   );
+}
+
+/**
+ * 批量回收一组标签里「带内核 tabId 的终端」，**整个作用域只弹一次框**。
+ *
+ * 语义与 `requestCloseTab` 完全一致（后台继续运行 / 结束进程 / 取消），
+ * 差别只是作用域：关工作区 / 取消分屏会一次收掉好几个终端，给每个终端各弹
+ * 一次框没人受得了 —— 所以这里弹一次，提示里带上**数量**让用户知道影响面。
+ *
+ * 返回 `true` = 可以继续执行关闭；`false` = 用户点了取消，调用方必须**中止**
+ * 整个关闭动作（工作区/面板还在，终端一个都不能动）。
+ *
+ * 没有任何带 tabId 的终端时直接返回 `true` 且**不弹框** —— 和 `requestCloseTab`
+ * 一样，没必要为"关一个设置页"多要点一次。
+ *
+ * 名字里带 scope 是因为要读 `useUi.getState()`（弹 toast），所以只能放在
+ * store 声明之后；`AppTab` / `terminalApi` / `describeError` 都在模块顶部。
+ */
+async function reclaimTerminals(
+  tabs: AppTab[],
+  scope: string,
+  title: string,
+): Promise<boolean> {
+  const tabIds = tabs.filter((t) => t.tabId).map((t) => t.tabId as string);
+  if (tabIds.length === 0) return true;
+  const { askChoice } = await import("../ui/dialogs");
+  const choice = await askChoice(`${scope}里有 ${tabIds.length} 个正在运行的终端，要如何处理？`, {
+    title,
+    choices: [
+      {
+        key: "detach",
+        label: "后台继续运行",
+        hint: "进程保留在服务端，之后可在「后台会话」里重新接管",
+        primary: true,
+      },
+      {
+        key: "kill",
+        label: "结束进程",
+        hint: "停止这些终端里的进程并释放它们",
+        danger: true,
+      },
+    ],
+  });
+  // choice === null = 取消：不回收任何终端，并让调用方中止关闭。
+  if (choice !== "detach" && choice !== "kill") return false;
+  // 逐个回收；单个失败不再被静默吞掉（原来写的是 .catch(() => undefined)），
+  // 否则用户以为终端已经处理完，服务端却还挂着进程。
+  const results = await Promise.allSettled(
+    tabIds.map((tabId) => terminalApi.closeTab(tabId, choice)),
+  );
+  const failed = results.filter((r) => r.status === "rejected");
+  if (failed.length) {
+    const first = (failed[0] as PromiseRejectedResult).reason;
+    useUi
+      .getState()
+      .pushToast(
+        "error",
+        `${failed.length}/${tabIds.length} 个终端回收失败：${describeError(first)}`,
+      );
+  }
+  return true;
+}
+
+/**
+ * 用户主动关闭标签（点 × / 右键 / Ctrl+W）的统一入口。
+ *
+ * 和 `closeTab` 的差别只有一件事：**带内核标签的终端要问一句**。
+ * 用户跑着长任务时，直接「结束进程」是最容易造成损失的动作；而"后台继续运行"
+ * 又要靠用户显式选择（关标签不等于可以默默留个后台僵尸）。所以这里弹一个
+ * 三选一：后台继续运行 / 结束进程 / 取消。
+ *
+ * 非终端标签、以及还没有内核 tabId 的终端（进程压根没起来）不弹，
+ * 直接按原来的语义关掉 —— 没必要为"关一个设置页"多一次点击。
+ */
+export async function requestCloseTab(id: string): Promise<void> {
+  const st = useUi.getState();
+  let target: AppTab | undefined;
+  for (const w of st.workspaces) {
+    for (const p of w.panes) {
+      const t = p.tabs.find((x) => x.id === id);
+      if (t) {
+        target = t;
+        break;
+      }
+    }
+    if (target) break;
+  }
+  if (!target) return;
+  if (target.kind !== "terminal" || !target.tabId) {
+    await st.closeTab(id);
+    return;
+  }
+  const { askChoice } = await import("../ui/dialogs");
+  const choice = await askChoice("这个终端在服务端还在运行，要如何处理？", {
+    title: `关闭「${target.title}」`,
+    choices: [
+      {
+        key: "detach",
+        label: "后台继续运行",
+        hint: "进程保留在服务端，之后可在「后台会话」里重新接管",
+        primary: true,
+      },
+      {
+        key: "kill",
+        label: "结束进程",
+        hint: "停止这个终端里的进程并释放它",
+        danger: true,
+      },
+    ],
+  });
+  if (choice === "detach" || choice === "kill") {
+    await st.closeTab(id, choice);
+  }
+  // choice === null = 取消：什么都不做（标签留着）
 }
 
 /**
@@ -997,6 +1220,9 @@ export async function connectAsset(asset: {
       kind: "session",
       sessionId: info.id,
       title: info.name,
+      // connectAsset 这里就拿得到 asset.id；漏了它自动连出来的工作区会永远空着
+      // assetId，重连/「新建终端」都会退化成开本机终端（串台）。
+      assetId: asset.id,
       assetKind: asset.kind,
     });
     // 连上机器就把左栏从"资产列表"切到"这台机器的文件树"：
@@ -1036,6 +1262,8 @@ export async function connectAsset(asset: {
             kind: "session",
             sessionId: info.id,
             title: info.name,
+            // 同 connectAsset：首次连接（接受指纹）这条分支也必须带 assetId。
+            assetId: asset.id,
             assetKind: asset.kind,
           });
           setLeftMode("files");

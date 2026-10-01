@@ -51,6 +51,90 @@ impl super::Store {
             .await?;
         Ok(())
     }
+
+    // ── 工作区布局（服务端权威运行态的一部分）────────────────────────
+
+    /// 布局在 `setting` 表里的键。
+    ///
+    /// 复用 `setting` 而不是新开一张表：布局是**单行、整份替换**的数据，
+    /// 天然就是「一个键一个值」。为它建表意味着以后每次调整布局结构都要写一次
+    /// schema 迁移，而布局是前端的视图模型、改得比内核勤得多。
+    pub const LAYOUT_KEY: &str = "layout.workspace";
+
+    /// 读布局：`(revision, updated_at, 正文 JSON 文本)`。没存过时 revision = 0。
+    pub async fn layout_load(&self) -> AppResult<(i64, i64, Option<String>)> {
+        let row: Option<(String, i64)> =
+            sqlx::query_as("SELECT value, updated_at FROM setting WHERE key = ?")
+                .bind(Self::LAYOUT_KEY)
+                .fetch_optional(self.pool())
+                .await?;
+        let Some((value, updated_at)) = row else {
+            return Ok((0, 0, None));
+        };
+        // 信封解不开（旧版本写下的 / 被手工改坏）时当作「还没有布局」，
+        // **不报错**：一份坏掉的布局不该让整个界面起不来，重新存一次即可。
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&value) else {
+            return Ok((0, updated_at, None));
+        };
+        let revision = v.get("revision").and_then(|x| x.as_i64()).unwrap_or(0);
+        let data = v
+            .get("data")
+            .filter(|d| !d.is_null())
+            .map(|d| d.to_string());
+        Ok((revision, updated_at, data))
+    }
+
+    /// 条件写入布局（乐观锁）。返回 `(是否写入, 写入后的 revision)`。
+    ///
+    /// # 为什么不能 `setting_get` + `setting_set` 两步走
+    ///
+    /// 两台设备同时拖布局时，两边都读到 `revision=5`、两边都写成功 ⇒ **后写的
+    /// 把先写的整份布局覆盖掉**，而先写的那台还以为自己保存成功了。布局是「整份
+    /// 替换」的，一次覆盖就是丢掉对方所有的窗口与标签，伤得很重。
+    ///
+    /// 这里用一个事务把「比 revision」和「写入」合起来。SQLite 的快照隔离会让
+    /// 后写的那个事务拿不到写锁（返回 `db` 错误），**而不是静默丢数据** ——
+    /// 界面拉一次最新再重试即可。
+    ///
+    /// ⚠️ 刻意不做「自动合并」：布局没有可合并的语义（对端删掉的标签该不该复活？
+    /// 两个窗口的尺寸听谁的？），强行合并只会产出一份谁也看不懂的布局。
+    pub async fn layout_save(&self, expected: i64, data_json: &str) -> AppResult<(bool, i64)> {
+        let data: serde_json::Value = serde_json::from_str(data_json)
+            .map_err(|e| AppError::param(format!("布局不是合法 JSON: {e}")))?;
+
+        let mut tx = self.pool().begin().await?;
+        let cur: Option<(String,)> = sqlx::query_as("SELECT value FROM setting WHERE key = ?")
+            .bind(Self::LAYOUT_KEY)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let cur_rev = cur
+            .as_ref()
+            .and_then(|(v,)| serde_json::from_str::<serde_json::Value>(v).ok())
+            .and_then(|v| v.get("revision").and_then(|x| x.as_i64()))
+            .unwrap_or(0);
+        if cur_rev != expected {
+            // 让 Transaction 自然 drop（= 回滚），别把冲突写进去。
+            return Ok((false, cur_rev));
+        }
+        let next = cur_rev + 1;
+        let value = serde_json::json!({
+            "revision": next,
+            "updatedAt": now_ms() as i64,
+            "data": data,
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(Self::LAYOUT_KEY)
+        .bind(&value)
+        .bind(now_ms() as i64)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((true, next))
+    }
 }
 
 // ───────────────────────── asset_group ─────────────────────────
@@ -1006,5 +1090,63 @@ mod builtin_tests {
         let back = store.asset_ensure_builtin_local().await.expect("复活");
         assert!(back.deleted_at.is_none(), "应已复活");
         assert_eq!(store.asset_list(false).await.unwrap().len(), 1);
+    }
+
+    /// 布局：乐观锁必须**真的**挡住后写的那个。
+    ///
+    /// 这条要是失效，症状是「两台设备同时改布局，后写的那份把先写的整份覆盖掉」——
+    /// 丢的是对方所有的窗口与标签，而两边都显示「保存成功」。
+    #[tokio::test]
+    async fn layout_rejects_stale_revision() {
+        let store = Store::open_in_memory().await.expect("内存库");
+
+        let (rev, _, data) = store.layout_load().await.expect("读空库");
+        assert_eq!(rev, 0, "没存过时 revision 应为 0");
+        assert!(data.is_none(), "没存过时不该有正文");
+
+        let (ok, r1) = store.layout_save(0, r#"{"panes":1}"#).await.expect("首写");
+        assert!(ok, "首写应当成功");
+        assert_eq!(r1, 1);
+
+        // 另一台设备拿着同一个 revision=0 来写 → 必须被拒
+        let (ok2, r2) = store.layout_save(0, r#"{"panes":999}"#).await.expect("过期写");
+        assert!(!ok2, "过期 revision 必须被拒（否则就是静默覆盖对方整份布局）");
+        assert_eq!(r2, 1, "应把当前 revision 报回去，好让前端先拉最新");
+
+        // 正文没有被污染
+        let (_, _, data) = store.layout_load().await.expect("回读");
+        assert_eq!(data.as_deref(), Some(r#"{"panes":1}"#));
+
+        // 拿对 revision 就能写
+        let (ok3, r3) = store.layout_save(1, r#"{"panes":2}"#).await.expect("正常写");
+        assert!(ok3);
+        assert_eq!(r3, 2);
+    }
+
+    /// 布局正文不是合法 JSON 时要**报参数错误**，而不是把一份坏数据存进去。
+    #[tokio::test]
+    async fn layout_rejects_malformed_json() {
+        let store = Store::open_in_memory().await.expect("内存库");
+        assert!(
+            store.layout_save(0, "{ not json").await.is_err(),
+            "坏 JSON 不该被写进库"
+        );
+        let (rev, _, data) = store.layout_load().await.unwrap();
+        assert_eq!(rev, 0);
+        assert!(data.is_none(), "被拒之后库里应当还是空的");
+    }
+
+    /// 信封坏掉（老版本写下的 / 被手工改过）不该让整个界面起不来 ——
+    /// 当作「还没有布局」，重新存一次即可。
+    #[tokio::test]
+    async fn layout_tolerates_corrupt_envelope() {
+        let store = Store::open_in_memory().await.expect("内存库");
+        store
+            .setting_set(Store::LAYOUT_KEY, "这不是 JSON")
+            .await
+            .expect("塞坏值");
+        let (rev, _, data) = store.layout_load().await.expect("读坏值不该报错");
+        assert_eq!(rev, 0);
+        assert!(data.is_none());
     }
 }
