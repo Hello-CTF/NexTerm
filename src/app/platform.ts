@@ -1,5 +1,7 @@
+import type { CSSProperties } from "react";
+
 /**
- * 平台判定（仅界面细节：标题栏按钮、示例文案）。后端能力差异由 Rust cfg 决定，
+ * 平台判定（仅界面细节：标题栏按钮、示例文案）。后端能力差异由 Go 编译目标决定，
  * 前端不做能力判断。
  *
  * 可靠性排序：后端 `app_platform` 命令（编译期常量）> UA 猜测（浏览器 demo 兜底）。
@@ -18,3 +20,7 @@ export function isMac(): boolean {
 export function setMacPlatform(fromBackend: boolean): void {
   macPlatform = fromBackend;
 }
+
+export const wailsDragRegionStyle = {
+  "--wails-draggable": "drag",
+} as CSSProperties;

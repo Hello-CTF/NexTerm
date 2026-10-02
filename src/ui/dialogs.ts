@@ -1,10 +1,16 @@
 // 全局对话框：UI 必须覆盖全面 —— ask / confirm / message 一律走应用内
-// 自绘弹框（DialogHost），原生 plugin-dialog / window.confirm 只作为
+// 自绘弹框（DialogHost），Wails 原生弹框 / window.confirm 只作为
 // App 挂载前的兜底，正常路径下用户永远看到的是本应用样式的弹框。
 //
 // 注意：本模块不得反向 import store（避免循环依赖），弹框实现走注册制回调
 // （App 挂载时 registerDialogHandlers），文本输入弹窗同理（registerPromptHandler）。
-import { ask as dAsk, confirm as dConfirm, message as dMessage } from "@tauri-apps/plugin-dialog";
+import {
+  askWails,
+  confirmWails,
+  messageWails,
+  openWailsFile,
+  saveWailsFile,
+} from "../ipc/wails";
 import { DEMO, TRANSPORT } from "../demo";
 import { isMac } from "../app/platform";
 import {
@@ -56,28 +62,20 @@ export function registerDialogHandlers(h: DialogHandlers) {
   handlers = h;
 }
 
-/**
- * 用浏览器原生对话框（`window.confirm` / `alert`）兜底。
- *
- * 条件从「演示模式」扩成「任何非桌面环境」：
- * `@tauri-apps/plugin-dialog` 在浏览器里根本没有实现，服务端模式下
- * 若还去调它，App 挂载前那几次弹框会直接抛。
- */
+/** App 挂载前：Web/demo 用浏览器弹框，desktop 用 Wails 原生弹框。 */
 const NATIVE_BROWSER_DIALOG = DEMO || TRANSPORT === "web";
 
 const nativeAsk: AskFn = NATIVE_BROWSER_DIALOG
   ? async (message) => window.confirm(message)
-  : dAsk;
+  : askWails;
 const nativeConfirm: ConfirmFn = NATIVE_BROWSER_DIALOG
   ? async (message) => window.confirm(message)
-  : dConfirm;
+  : confirmWails;
 const nativeMessage: MessageFn = NATIVE_BROWSER_DIALOG
   ? async (message) => {
       window.alert(message);
     }
-  : async (message) => {
-      await dMessage(message);
-    };
+  : messageWails;
 
 /**
  * 多选一的兜底（App 还没挂载时）。
@@ -133,9 +131,7 @@ export async function pickLocalFile(): Promise<string | null> {
     const staged = await stageFile(picked);
     return staged.path;
   }
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({ multiple: false });
-  return typeof picked === "string" ? picked : null;
+  return openWailsFile();
 }
 
 /** 选一个私钥文件（资产表单用）。取消返回 null。
@@ -153,15 +149,13 @@ export async function pickKeyFile(): Promise<string | null> {
     const staged = await stageFile(picked, { persist: true });
     return staged.path;
   }
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({
-    multiple: false,
-    filters: [
-      { name: "私钥文件", extensions: ["pem", "key", "ppk", "id_rsa", "id_ed25519", "openssh"] },
-      { name: "所有文件", extensions: ["*"] },
-    ],
-  });
-  return typeof picked === "string" ? picked : null;
+  return openWailsFile([
+    {
+      name: "私钥文件",
+      extensions: ["pem", "key", "ppk", "id_rsa", "id_ed25519", "openssh"],
+    },
+    { name: "所有文件", extensions: ["*"] },
+  ]);
 }
 
 /** 选一个保存落点（下载 / 录制用）。取消返回 null；返回的是**内核能写到的路径**。
@@ -181,8 +175,7 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
   if (TRANSPORT === "web") {
     return requestSaveTarget(defaultName);
   }
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  return save({ defaultPath: defaultName });
+  return saveWailsFile(defaultName);
 }
 
 /**
