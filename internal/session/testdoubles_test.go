@@ -149,6 +149,7 @@ type fakeChannel struct {
 	rows       uint32
 	waitErr    error
 	closeWrite int
+	resizeHook func(context.Context, uint32, uint32) error
 }
 
 func newFakeChannel(generation uint64) *fakeChannel {
@@ -186,7 +187,12 @@ func (c *fakeChannel) Close() error {
 
 func (c *fakeChannel) Stderr() io.Reader { return nil }
 
-func (c *fakeChannel) Resize(_ context.Context, cols, rows uint32) error {
+func (c *fakeChannel) Resize(ctx context.Context, cols, rows uint32) error {
+	if c.resizeHook != nil {
+		if err := c.resizeHook(ctx, cols, rows); err != nil {
+			return err
+		}
+	}
 	c.mu.Lock()
 	c.resizes++
 	c.cols, c.rows = cols, rows
@@ -252,12 +258,14 @@ func (f *fakeTerminalFactory) terminal(id string) *fakeTerminal {
 }
 
 type fakeTerminal struct {
-	mu         sync.Mutex
-	raw        []byte
-	cols       int
-	rows       int
-	closeCount int
-	response   func([]byte)
+	mu             sync.Mutex
+	raw            []byte
+	cols           int
+	rows           int
+	closeCount     int
+	response       func([]byte)
+	hidden         bool
+	visibilityHook func(bool)
 }
 
 func (t *fakeTerminal) Feed(data []byte) {
@@ -287,6 +295,21 @@ func (t *fakeTerminal) SetResponseHandler(handler func([]byte)) {
 	t.mu.Lock()
 	t.response = handler
 	t.mu.Unlock()
+}
+
+func (t *fakeTerminal) SetVisible(visible bool) {
+	if t.visibilityHook != nil {
+		t.visibilityHook(visible)
+	}
+	t.mu.Lock()
+	t.hidden = !visible
+	t.mu.Unlock()
+}
+
+func (t *fakeTerminal) isHidden() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.hidden
 }
 
 func (t *fakeTerminal) Close() {

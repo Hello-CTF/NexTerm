@@ -19,8 +19,9 @@
 // every new intent. Observer revisions form a separate authoritative sequence
 // and are filtered independently. All methods are safe for concurrent use.
 //
-// ResizeFunc is the transport boundary for later adapters. It must return nil
-// only after the peer has applied the requested grid, and it must honor context
-// cancellation. The package deliberately does not update a DOM, terminal
-// emulator, session or transport implementation itself.
+// ResizeFunc is the transport boundary for adapters. It must return nil only
+// after the peer has applied the requested grid, and it must honor context
+// cancellation. Current lets an adapter revalidate the request under its own
+// lifecycle lock before committing associated terminal state. The package does
+// not update a DOM, terminal emulator, session or transport itself.
 package terminalgrid

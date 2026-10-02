@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -31,21 +32,27 @@ type Tab struct {
 	mu           sync.Mutex
 	cols         uint32
 	rows         uint32
+	gridRevision uint64
+	grid         *terminalgrid.Model
+	retire       chan struct{}
 	channel      *channelHandle
 	generation   uint64
 	eventVersion uint64
 	subscribers  map[string]subscriber
 	controller   string
+	controlled   bool
+	hidden       bool
 	exited       bool
 	closed       bool
 	cancelPump   context.CancelFunc
 
-	ctx       context.Context
-	cancel    context.CancelFunc
-	responses *responseQueue
-	feedGate  chan struct{}
-	writeMu   sync.Mutex
-	closeOnce sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
+	responses    *responseQueue
+	feedGate     chan struct{}
+	writeMu      sync.Mutex
+	visibilityMu sync.Mutex
+	closeOnce    sync.Once
 }
 
 func (t *Tab) Info() TabInfo {
@@ -60,7 +67,7 @@ func (t *Tab) infoLocked() TabInfo {
 		viewers[subscriber.client] = struct{}{}
 	}
 	return TabInfo{
-		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows,
+		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Ephemeral: t.ephemeral,
 	}
@@ -70,7 +77,8 @@ func (t *Tab) controlEventLocked() ControlEvent {
 	info := t.infoLocked()
 	t.eventVersion++
 	return ControlEvent{
-		TabID: t.ID, Controller: info.Controller, Subscribers: info.Subscribers,
+		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
+		Controller: info.Controller, Subscribers: info.Subscribers,
 		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion,
 	}
 }
@@ -162,6 +170,14 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 	}
 	tab.feedGate <- struct{}{}
+	if err := m.initGrid(tab, channel, generation); err != nil {
+		cancel()
+		if channel != nil {
+			_ = channel.Close()
+		}
+		closeTerminal(terminal)
+		return TabInfo{}, err
+	}
 	terminal.SetResponseHandler(tab.responses.enqueue)
 
 	m.mu.Lock()
@@ -298,7 +314,15 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	client := clientID(options.ClientID)
 	tab.subscribers[options.ChannelID] = subscriber{client: client, producer: producer}
 	if tab.controller == "" {
+		if tab.controlled && tab.grid != nil {
+			if err := tab.grid.Claim(); err != nil {
+				tab.mu.Unlock()
+				m.mu.Unlock()
+				return TabInfo{}, mapGridError(err)
+			}
+		}
 		tab.controller = client
+		tab.controlled = true
 	}
 	info := tab.infoLocked()
 	event := tab.controlEventLocked()
@@ -327,6 +351,9 @@ func (t *Tab) releaseOrphanControllerLocked() {
 		}
 	}
 	t.controller = ""
+	if t.grid != nil && !t.hidden {
+		_ = t.grid.SetMode(terminalgrid.ModeObserver)
+	}
 }
 
 func (t *Tab) lockFeed(ctx context.Context) error {
@@ -437,7 +464,14 @@ func (m *Manager) Claim(tabID, client string) (string, error) {
 		return "", ErrTabClosed
 	}
 	previous := tab.controller
+	if tab.grid != nil {
+		if err := tab.grid.Claim(); err != nil {
+			tab.mu.Unlock()
+			return "", mapGridError(err)
+		}
+	}
 	tab.controller = clientID(client)
+	tab.controlled = true
 	event := tab.controlEventLocked()
 	tab.mu.Unlock()
 	m.emit(context.Background(), TopicTerminalControl, event)
@@ -451,6 +485,12 @@ func (m *Manager) Release(tabID, client string) (bool, error) {
 	}
 	tab.mu.Lock()
 	released := tab.controller == clientID(client)
+	if released && tab.grid != nil && !tab.hidden {
+		if err := tab.grid.SetMode(terminalgrid.ModeObserver); err != nil {
+			tab.mu.Unlock()
+			return false, mapGridError(err)
+		}
+	}
 	if released {
 		tab.controller = ""
 	}
@@ -520,14 +560,13 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	if !validSize(cols, rows) {
 		return ErrInvalidSize
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return err
 	}
-	if err := tab.lockFeed(ctx); err != nil {
-		return err
-	}
-	defer tab.unlockFeed()
 	tab.mu.Lock()
 	if tab.closed {
 		tab.mu.Unlock()
@@ -539,6 +578,8 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	}
 	channel := tab.channel
 	generation := tab.generation
+	exited := tab.exited
+	grid := tab.grid
 	tab.mu.Unlock()
 	tab.session.mu.Lock()
 	connected := tab.session.status == StatusConnected && tab.session.generation == generation
@@ -546,22 +587,32 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	if !connected {
 		return ErrDisconnected
 	}
-	if channel != nil {
-		if err := channel.Resize(ctx, cols, rows); err != nil {
-			return err
-		}
-	} else if tab.session.asset.Kind != KindWinRM {
+	if ptyBacked(tab.session.asset.Kind) && (exited || channel == nil) {
 		return ErrTabClosed
 	}
-	if err := tab.terminal.Resize(int(cols), int(rows)); err != nil {
-		return err
+	if grid == nil {
+		return ErrUnsupported
 	}
+
 	tab.mu.Lock()
-	if !tab.closed && tab.generation == generation {
-		tab.cols, tab.rows = cols, rows
+	if tab.closed {
+		tab.mu.Unlock()
+		return ErrTabClosed
 	}
+	if tab.controller != clientID(client) {
+		tab.mu.Unlock()
+		return ErrNotController
+	}
+	if tab.generation != generation || tab.channel != channel {
+		tab.mu.Unlock()
+		return ErrDisconnected
+	}
+	revision, err := grid.SetDesired(terminalgrid.Grid{Cols: int(cols), Rows: int(rows)})
 	tab.mu.Unlock()
-	return nil
+	if err != nil {
+		return mapGridError(err)
+	}
+	return mapGridError(grid.Wait(ctx, revision))
 }
 
 func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (base.ExecResult, error) {
@@ -642,6 +693,10 @@ func (m *Manager) closeTabResources(tab *Tab) {
 		subscribers := tab.subscribers
 		tab.subscribers = make(map[string]subscriber)
 		tab.controller = ""
+		if tab.grid != nil {
+			tab.grid.Close()
+			close(tab.retire)
+		}
 		tab.mu.Unlock()
 		tab.responses.close()
 		tab.cancel()
@@ -781,6 +836,9 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		tab.exited = true
 		if tab.channel == channel {
 			tab.channel = nil
+		}
+		if tab.grid != nil {
+			_ = tab.grid.Reattach(nil)
 		}
 		exitEvent = tab.exitEventLocked(code)
 		control = tab.controlEventLocked()

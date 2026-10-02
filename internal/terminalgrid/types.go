@@ -82,12 +82,14 @@ type Result struct {
 	Err       error
 }
 
-// Config constructs a Model. OnResult is called without model locks after a
-// real transport completion; it may call back into the Model.
+// Config constructs a Model. InitialGrid is an already active transport size,
+// not a default. OnResult is called without model locks after a real transport
+// completion; it may call back into the Model.
 type Config struct {
-	Mode     Mode
-	Resize   ResizeFunc
-	OnResult func(Result)
+	Mode        Mode
+	InitialGrid Grid
+	Resize      ResizeFunc
+	OnResult    func(Result)
 }
 
 // ResizeError associates a transport failure with its intent.
