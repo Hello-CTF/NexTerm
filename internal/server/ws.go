@@ -1,0 +1,88 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/coder/websocket"
+)
+
+func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	subscriber, unsubscribe, err := s.events.subscribe()
+	if err != nil {
+		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
+		return
+	}
+	defer unsubscribe()
+	s.pumpSocket(r.Context(), connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+		select {
+		case data := <-subscriber.queue:
+			return websocket.MessageText, data, nil
+		case <-subscriber.done:
+			return 0, nil, ErrEventBrokerClosed
+		case <-ctx.Done():
+			return 0, nil, ctx.Err()
+		}
+	})
+}
+
+func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	receiver, err := s.channels.BindChannel(r.PathValue("id"))
+	if err != nil {
+		_ = connection.Close(websocket.StatusInternalError, "channel unavailable")
+		return
+	}
+	defer receiver.Close()
+	s.pumpSocket(r.Context(), connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+		frame, err := receiver.Next(ctx)
+		if err != nil {
+			return 0, nil, err
+		}
+		switch frame.Kind {
+		case FrameBinary:
+			return websocket.MessageBinary, frame.Data, nil
+		case FrameJSON:
+			return websocket.MessageText, frame.Data, nil
+		default:
+			return 0, nil, errors.New("unknown channel frame kind")
+		}
+	})
+}
+
+func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, error)) {
+	ctx, cancel := context.WithCancel(ctx)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		defer cancel()
+		for {
+			if _, _, err := connection.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		cancel()
+		_ = connection.Close(websocket.StatusNormalClosure, "")
+		<-readDone
+	}()
+
+	for {
+		messageType, data, err := next(ctx)
+		if err != nil {
+			return
+		}
+		if err := connection.Write(ctx, messageType, data); err != nil {
+			return
+		}
+	}
+}
