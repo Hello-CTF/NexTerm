@@ -79,13 +79,18 @@ func verifyHostKey(ctx context.Context, store HostKeyStore, host string, port in
 	if err != nil {
 		return fmt.Errorf("load SSH host keys: %w", err)
 	}
+	var knownSameType []HostKey
 	for _, candidate := range known {
-		if candidate.KeyType == key.KeyType && candidate.Key == key.Key {
+		if candidate.KeyType != key.KeyType {
+			continue
+		}
+		knownSameType = append(knownSameType, candidate)
+		if candidate.Key == key.Key {
 			return nil
 		}
 	}
 
-	if len(known) == 0 {
+	if len(knownSameType) == 0 {
 		approved := autoAcceptUnknown || (approval != nil && approval.Fingerprint == key.Fingerprint)
 		if !approved {
 			return &HostKeyError{Pending: true, Presented: key}
@@ -97,7 +102,7 @@ func verifyHostKey(ctx context.Context, store HostKeyStore, host string, port in
 	}
 
 	if approval == nil || !approval.Replace || approval.Fingerprint != key.Fingerprint {
-		return &HostKeyError{Presented: key, Known: known}
+		return &HostKeyError{Presented: key, Known: knownSameType}
 	}
 	if err := store.PutHostKey(ctx, key, true); err != nil {
 		return fmt.Errorf("replace approved SSH host key: %w", err)

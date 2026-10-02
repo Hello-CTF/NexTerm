@@ -221,6 +221,33 @@ func TestPackDownloadAndExtract(t *testing.T) {
 	}
 }
 
+func TestPackDownloadCleansPartialArchiveFailures(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		execErr  error
+		exitCode int
+	}{
+		{name: "exec error", execErr: fmt.Errorf("exec transport failed")},
+		{name: "nonzero exit", exitCode: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{execErr: test.execErr, exitCode: test.exitCode}
+			filesystem, _ := newTestFS(t, executor)
+			executor.filesystem = filesystem
+			_, err := filesystem.PackDownload(context.Background(), "some dir", filepath.Join(t.TempDir(), "out.tar.gz"), TransferOptions{})
+			if err == nil {
+				t.Fatal("failed pack unexpectedly succeeded")
+			}
+			if executor.temporary == "" {
+				t.Fatal("partial archive was not created by the test executor")
+			}
+			if exists, statErr := filesystem.Exists(context.Background(), executor.temporary); statErr != nil || exists {
+				t.Fatalf("partial archive remains after failure = %v, %v", exists, statErr)
+			}
+		})
+	}
+}
+
 func newTestFS(t *testing.T, executor Executor) (*FS, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -275,14 +302,17 @@ type fakeExecutor struct {
 	commands   []string
 	filesystem *FS
 	temporary  string
+	execErr    error
+	exitCode   int
 }
 
 func (e *fakeExecutor) Exec(ctx context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
 	e.mu.Lock()
 	e.commands = append(e.commands, command)
 	e.mu.Unlock()
-	if strings.HasPrefix(command, "tar -czf '") {
-		rest := strings.TrimPrefix(command, "tar -czf '")
+	const packPrefix = "umask 077 && tar -czf '"
+	if strings.HasPrefix(command, packPrefix) {
+		rest := strings.TrimPrefix(command, packPrefix)
 		end := strings.Index(rest, "'")
 		if end < 0 {
 			return base.ExecResult{}, fmt.Errorf("unquoted pack output")
@@ -292,6 +322,9 @@ func (e *fakeExecutor) Exec(ctx context.Context, command string, _ base.ExecOpti
 			return base.ExecResult{}, err
 		}
 	}
-	code := 0
+	if e.execErr != nil {
+		return base.ExecResult{}, e.execErr
+	}
+	code := e.exitCode
 	return base.ExecResult{ExitCode: &code}, nil
 }

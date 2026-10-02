@@ -169,9 +169,15 @@ func selectHostKeys(keys []HostKey, host string, port int) []HostKey {
 
 func putHostKey(keys *[]HostKey, key HostKey, replace bool) error {
 	existing := selectHostKeys(*keys, key.Host, key.Port)
-	if len(existing) > 0 && !replace {
-		for _, candidate := range existing {
-			if candidate.KeyType == key.KeyType && candidate.Key == key.Key {
+	var existingSameType []HostKey
+	for _, candidate := range existing {
+		if candidate.KeyType == key.KeyType {
+			existingSameType = append(existingSameType, candidate)
+		}
+	}
+	if len(existingSameType) > 0 && !replace {
+		for _, candidate := range existingSameType {
+			if candidate.Key == key.Key {
 				return nil
 			}
 		}
@@ -180,7 +186,7 @@ func putHostKey(keys *[]HostKey, key HostKey, replace bool) error {
 	if replace {
 		kept := (*keys)[:0]
 		for _, candidate := range *keys {
-			if candidate.Host != key.Host || candidate.Port != key.Port {
+			if candidate.Host != key.Host || candidate.Port != key.Port || candidate.KeyType != key.KeyType {
 				kept = append(kept, candidate)
 			}
 		}

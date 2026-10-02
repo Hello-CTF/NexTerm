@@ -1,5 +1,5 @@
-pack: tar -czf '/tmp/out.tar.gz' -C '/home/deploy' -- 'my dir'
+pack: umask 077 && tar -czf '/tmp/out.tar.gz' -C '/home/deploy' -- 'my dir'
 extract: mkdir -p '/home/deploy/my dir' && tar -xzf '/home/deploy/my dir.tar.gz' -C '/home/deploy/my dir'
 target: /home/deploy/my dir
-option-safe: tar -czf '/tmp/out.tar.gz' -C '.' -- './-checkpoint-action=exec=touch pwned'
+option-safe: umask 077 && tar -czf '/tmp/out.tar.gz' -C '.' -- './-checkpoint-action=exec=touch pwned'
 quote: 'it'\''s $HOME`id`'

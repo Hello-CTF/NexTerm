@@ -23,7 +23,7 @@ func PackCommand(remotePath, outputPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("tar -czf %s -C %s -- %s", ShellQuote(outputPath), ShellQuote(parent), ShellQuote(shellOperand(name))), nil
+	return fmt.Sprintf("umask 077 && tar -czf %s -C %s -- %s", ShellQuote(outputPath), ShellQuote(parent), ShellQuote(shellOperand(name))), nil
 }
 
 func ExtractCommand(remotePath string) (string, string, error) {
@@ -80,6 +80,11 @@ func (f *FS) PackDownload(ctx context.Context, remotePath, localPath string, opt
 	if err != nil {
 		return 0, err
 	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_ = f.Delete(cleanupCtx, temporary, false)
+	}()
 	result, err := f.executor.Exec(ctx, command, base.ExecOptions{Timeout: archiveExecTimeout})
 	if err != nil {
 		return 0, fmt.Errorf("create remote archive: %w", err)
@@ -87,11 +92,6 @@ func (f *FS) PackDownload(ctx context.Context, remotePath, localPath string, opt
 	if err := commandResult(result); err != nil {
 		return 0, fmt.Errorf("create remote archive: %w", err)
 	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		_ = f.Delete(cleanupCtx, temporary, false)
-	}()
 	options.Resume = false
 	return f.Download(ctx, temporary, localPath, options)
 }

@@ -178,6 +178,38 @@ func TestSSHCancellationKeepsSharedConnection(t *testing.T) {
 	server.blockOnce.Do(func() { close(server.blockExec) })
 }
 
+func TestClientCloseUnblocksStalledSFTP(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	server.stallSFTP.Store(true)
+	defer func() { server.blockOnce.Do(func() { close(server.blockExec) }) }()
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	sftpResult := make(chan error, 1)
+	go func() {
+		_, err := client.SFTP(context.Background())
+		sftpResult <- err
+	}()
+	select {
+	case <-server.sftpStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SFTP initialization did not reach the stalled version handshake")
+	}
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- client.Close() }()
+	select {
+	case <-closeResult:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Client.Close hung behind stalled SFTP initialization")
+	}
+	select {
+	case err := <-sftpResult:
+		if err == nil {
+			t.Fatal("stalled SFTP initialization unexpectedly succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing the client did not unblock SFTP initialization")
+	}
+}
+
 func TestSSHKeepalive(t *testing.T) {
 	server := newTestSSHServer(t, nil)
 	cfg := testClientConfig(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})

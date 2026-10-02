@@ -111,8 +111,8 @@ func (c *Client) IsAlive() bool {
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.stateOnce.Do(func() { close(c.done) })
-		c.closeSFTP()
 		c.closeErr = c.ssh.Close()
+		c.closeSFTP()
 		if errors.Is(c.closeErr, net.ErrClosed) || errors.Is(c.closeErr, context.Canceled) {
 			c.closeErr = nil
 		}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,6 +32,32 @@ func TestArchiveCommandGoldens(t *testing.T) {
 		"quote: " + ShellQuote("it's $HOME`id`") + "\n"
 	if actual != golden {
 		t.Fatalf("archive commands differ from golden\n--- want ---\n%s--- got ---\n%s", golden, actual)
+	}
+}
+
+func TestPackCommandCreatesPrivateArchive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("archive permission regression requires a POSIX shell and tar; Windows has compile-only coverage")
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "secret.txt")
+	if err := os.WriteFile(source, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "private.tar.gz")
+	command, err := PackCommand(source, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("/bin/sh", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("pack command failed: %v: %s", err, output)
+	}
+	info, err := os.Stat(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("temporary archive mode = %04o, want 0600", info.Mode().Perm())
 	}
 }
 

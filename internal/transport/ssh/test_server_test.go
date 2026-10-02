@@ -16,15 +16,17 @@ import (
 )
 
 type testSSHServer struct {
-	listener   net.Listener
-	config     *gossh.ServerConfig
-	hostKey    gossh.PublicKey
-	root       string
-	blockExec  chan struct{}
-	blockOnce  sync.Once
-	cols       atomic.Uint32
-	rows       atomic.Uint32
-	keepalives atomic.Uint32
+	listener    net.Listener
+	config      *gossh.ServerConfig
+	hostKey     gossh.PublicKey
+	root        string
+	blockExec   chan struct{}
+	blockOnce   sync.Once
+	cols        atomic.Uint32
+	rows        atomic.Uint32
+	keepalives  atomic.Uint32
+	stallSFTP   atomic.Bool
+	sftpStarted chan struct{}
 }
 
 func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServer {
@@ -53,11 +55,12 @@ func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServe
 	}
 	config.AddHostKey(signer)
 	server := &testSSHServer{
-		listener:  newTCPListener(t),
-		config:    config,
-		hostKey:   signer.PublicKey(),
-		root:      t.TempDir(),
-		blockExec: make(chan struct{}),
+		listener:    newTCPListener(t),
+		config:      config,
+		hostKey:     signer.PublicKey(),
+		root:        t.TempDir(),
+		blockExec:   make(chan struct{}),
+		sftpStarted: make(chan struct{}, 1),
 	}
 	go server.accept()
 	t.Cleanup(func() {
@@ -164,6 +167,14 @@ func (s *testSSHServer) handleSession(channel gossh.Channel, requests <-chan *go
 				continue
 			}
 			request.Reply(true, nil)
+			if s.stallSFTP.Load() {
+				select {
+				case s.sftpStarted <- struct{}{}:
+				default:
+				}
+				<-s.blockExec
+				return
+			}
 			server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(s.root))
 			if err != nil {
 				return

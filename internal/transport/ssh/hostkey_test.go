@@ -2,7 +2,9 @@ package ssh
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -55,6 +57,54 @@ func TestHostKeyPendingChangedAndApproval(t *testing.T) {
 	}
 	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, other); !errors.Is(err, ErrHostKeyChanged) {
 		t.Fatalf("unapproved third key accepted: %v", err)
+	}
+}
+
+func TestHostKeyAlgorithmsCoexistAndReplacePerType(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryHostKeyStore()
+	ed25519Key := hostKeyForTest(t)
+	ecdsaPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecdsaSigner, err := gossh.NewSignerFromKey(ecdsaPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecdsaKey := ecdsaSigner.PublicKey()
+	ed25519Info := newHostKey("example.test", 22, ed25519Key)
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, &HostKeyApproval{Fingerprint: ed25519Info.Fingerprint}, ed25519Key); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, ecdsaKey); !errors.Is(err, ErrHostKeyPending) || errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("new algorithm was treated as a changed key: %v", err)
+	}
+	ecdsaInfo := newHostKey("example.test", 22, ecdsaKey)
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, &HostKeyApproval{Fingerprint: ecdsaInfo.Fingerprint}, ecdsaKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, ed25519Key); err != nil {
+		t.Fatalf("ed25519 trust was removed by ECDSA approval: %v", err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, ecdsaKey); err != nil {
+		t.Fatalf("ECDSA trust was not persisted: %v", err)
+	}
+
+	replacement := hostKeyForTest(t)
+	replacementInfo := newHostKey("example.test", 22, replacement)
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, &HostKeyApproval{Fingerprint: replacementInfo.Fingerprint, Replace: true}, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, ecdsaKey); err != nil {
+		t.Fatalf("per-type replacement removed ECDSA trust: %v", err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, ed25519Key); !errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("replaced ed25519 key remained trusted: %v", err)
+	}
+	keys, err := store.HostKeys(ctx, "example.test", 22)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("coexisting host keys = %+v, %v", keys, err)
 	}
 }
 

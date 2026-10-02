@@ -104,9 +104,11 @@ func TestStreamConnCloseWriteFlushesAcceptedBytes(t *testing.T) {
 	defer writer.Close()
 	conn := NewStreamConn(stream, nil, nil)
 	defer conn.Close()
-	if _, err := conn.Write([]byte("payload")); err != nil {
-		t.Fatal(err)
-	}
+	writeResult := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("payload"))
+		writeResult <- err
+	}()
 	<-stream.started
 	closed := make(chan error, 1)
 	go func() { closed <- conn.CloseWrite() }()
@@ -116,6 +118,9 @@ func TestStreamConnCloseWriteFlushesAcceptedBytes(t *testing.T) {
 	case <-time.After(30 * time.Millisecond):
 	}
 	close(stream.allow)
+	if err := <-writeResult; err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-stream.closeWriteCalled:
 	case <-time.After(time.Second):
@@ -155,6 +160,58 @@ func (s *blockingWriteStream) CloseWrite() error {
 }
 
 func (s *blockingWriteStream) Close() error {
+	return s.reader.Close()
+}
+
+func TestStreamConnPropagatesOutboundFailure(t *testing.T) {
+	boom := errors.New("outbound write failed")
+	reader, writer := io.Pipe()
+	stream := &failingWriteStream{reader: reader, err: boom}
+	defer writer.Close()
+	conn := NewStreamConn(stream, nil, nil)
+	defer conn.Close()
+	assertError := func(label string, call func() error) {
+		t.Helper()
+		result := make(chan error, 1)
+		go func() { result <- call() }()
+		select {
+		case err := <-result:
+			if !errors.Is(err, boom) {
+				t.Fatalf("%s error = %v, want %v", label, err, boom)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s hung after terminal outbound failure", label)
+		}
+	}
+	assertError("accepted write", func() error {
+		_, err := conn.Write([]byte("payload"))
+		return err
+	})
+	assertError("later write", func() error {
+		_, err := conn.Write([]byte("later"))
+		return err
+	})
+	assertError("CloseWrite", conn.CloseWrite)
+}
+
+type failingWriteStream struct {
+	reader *io.PipeReader
+	err    error
+}
+
+func (s *failingWriteStream) Read(p []byte) (int, error) {
+	return s.reader.Read(p)
+}
+
+func (s *failingWriteStream) Write(p []byte) (int, error) {
+	return 0, s.err
+}
+
+func (s *failingWriteStream) CloseWrite() error {
+	return nil
+}
+
+func (s *failingWriteStream) Close() error {
 	return s.reader.Close()
 }
 
