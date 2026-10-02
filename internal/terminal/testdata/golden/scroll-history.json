@@ -1,0 +1,43 @@
+{
+  "snapshot": {
+    "text": "row-55 abcdef\nrow-56 abcdef\nrow-57 abcdef\nrow-58 abcdef\nrow-59 abcdef\n",
+    "lines": [
+      "row-55 abcdef",
+      "row-56 abcdef",
+      "row-57 abcdef",
+      "row-58 abcdef",
+      "row-59 abcdef"
+    ],
+    "cursorRow": 5,
+    "cursorCol": 0,
+    "cols": 40,
+    "rows": 6,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 55,
+  "history": [
+    "row-50 abcdef",
+    "row-51 abcdef",
+    "row-52 abcdef",
+    "row-53 abcdef",
+    "row-54 abcdef"
+  ],
+  "tail": [
+    "row-58 abcdef",
+    "row-59 abcdef",
+    "",
+    "row-55 abcdef",
+    "row-56 abcdef",
+    "row-57 abcdef",
+    "row-58 abcdef",
+    "row-59 abcdef"
+  ],
+  "dumpSha256": "cf9c60f9a676d180fb08349559803ad9b9ffe37afe8aba2394192df3cc7dae8f"
+}

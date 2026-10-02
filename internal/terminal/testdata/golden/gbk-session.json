@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "text": "C:\\\u003e 中文目录列表\n服务器编码 与 ASCII mixed\nprompt\u003e\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "lines": [
+      "C:\\\u003e 中文目录列表",
+      "服务器编码 与 ASCII mixed",
+      "prompt\u003e",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 2,
+    "cursorCol": 8,
+    "cols": 80,
+    "rows": 24,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "464463f80a45845c74057de1bd0ef7dfd111ef113b9bc630b692259a33599d4e"
+}

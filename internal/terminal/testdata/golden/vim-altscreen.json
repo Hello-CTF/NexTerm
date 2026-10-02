@@ -1,0 +1,41 @@
+{
+  "snapshot": {
+    "text": "before-vim\nafter-vim\n\n\n\n\n\n\n\n",
+    "lines": [
+      "before-vim",
+      "after-vim",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 1,
+    "cursorCol": 9,
+    "cols": 80,
+    "rows": 10,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "after-vim",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "1462156ad49bb1ff48d68587fce7652027dbc0cd9cf712afe0a03d37a04b4bbd"
+}

@@ -1,0 +1,40 @@
+{
+  "snapshot": {
+    "text": "d\nsecond line\nafter-resize\nend\n\n",
+    "lines": [
+      "d",
+      "second line",
+      "after-resize",
+      "end",
+      ""
+    ],
+    "cursorRow": 3,
+    "cursorCol": 3,
+    "cols": 30,
+    "rows": 6,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 2,
+  "history": [
+    "a very long line tha",
+    "p around the thirty"
+  ],
+  "tail": [
+    "second line",
+    "after-resize",
+    "end",
+    "d",
+    "second line",
+    "after-resize",
+    "end",
+    ""
+  ],
+  "dumpSha256": "87a41a46b191114d05960f9b39e271fa243e3c78ef0d5da4cea0691b6f786030"
+}

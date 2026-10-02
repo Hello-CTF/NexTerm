@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "text": "user@host:~$ red-bold plain orange rgb\n\nuser@host:~$\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "lines": [
+      "user@host:~$ red-bold plain orange rgb",
+      "",
+      "user@host:~$",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 2,
+    "cursorCol": 13,
+    "cols": 80,
+    "rows": 24,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "f2c20059b1d208ddc095df0040c833f6e23805e5c79b433cbbffa603f6abd9ff"
+}
