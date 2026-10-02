@@ -222,6 +222,36 @@ func (s *testSSHServer) execute(channel gossh.Channel, command string) {
 		channel.Write(bytes.Repeat([]byte("o"), 64))
 		channel.Stderr().Write(bytes.Repeat([]byte("e"), 32))
 		sendExitStatus(channel, 0)
+	case "ordered-live":
+		events := []struct {
+			data   string
+			stderr bool
+		}{
+			{data: "out-1"},
+			{data: "err-1", stderr: true},
+			{data: "out-2"},
+			{data: "err-2", stderr: true},
+		}
+		for _, event := range events {
+			if event.stderr {
+				_, _ = channel.Stderr().Write([]byte(event.data))
+			} else {
+				_, _ = channel.Write([]byte(event.data))
+			}
+			var acknowledgment [1]byte
+			if _, err := channel.Read(acknowledgment[:]); err != nil {
+				return
+			}
+		}
+		sendExitStatus(channel, 0)
+	case "full-queues":
+		for range 33 {
+			_, _ = channel.Write([]byte("o"))
+		}
+		for range 33 {
+			_, _ = channel.Stderr().Write([]byte("e"))
+		}
+		sendExitStatus(channel, 0)
 	case "sleep":
 		_, _ = io.Copy(io.Discard, channel)
 	case "stream":
