@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	creack "github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 type unixTerminal struct {
@@ -44,7 +45,18 @@ func (t *unixTerminal) Write(p []byte) (int, error) {
 }
 
 func (t *unixTerminal) Resize(cols, rows uint32) error {
-	return creack.Setsize(t.master, &creack.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	connection, err := t.master.SyscallConn()
+	if err != nil {
+		return err
+	}
+	size := unix.Winsize{Col: uint16(cols), Row: uint16(rows)}
+	var resizeErr error
+	if err := connection.Control(func(fd uintptr) {
+		resizeErr = setWinsize(fd, &size)
+	}); err != nil {
+		return err
+	}
+	return resizeErr
 }
 
 func (t *unixTerminal) Wait(ctx context.Context) error {
