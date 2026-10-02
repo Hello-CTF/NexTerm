@@ -125,6 +125,8 @@ type managedStream struct {
 	sinkVersion uint64
 	closed      bool
 	writeMu     sync.Mutex
+	deliveryMu  sync.Mutex
+	replay      boundedReplay
 	closeOnce   sync.Once
 	finishOnce  sync.Once
 	closeErr    error
@@ -166,18 +168,41 @@ func (s *managedStream) currentSink() (FrameSink, context.Context, uint64) {
 	return s.sink, s.sinkCtx, s.sinkVersion
 }
 
-func (s *managedStream) sinkFailed(version uint64) {
+func (s *managedStream) sinkFailed(version uint64, frame []byte) {
 	s.mu.Lock()
 	if s.sinkVersion == version {
 		if s.sinkCancel != nil {
 			s.sinkCancel()
 		}
+		s.replay.add(frame)
 		s.sink = nil
 		s.sinkCtx = nil
 		s.sinkCancel = nil
 		s.sinkVersion++
 	}
 	s.mu.Unlock()
+}
+
+func (s *managedStream) dispatch(frame []byte) error {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	sink, sinkCtx, version := s.currentSink()
+	if sink == nil {
+		if s.kind == streamExec {
+			s.mu.Lock()
+			s.replay.add(frame)
+			s.mu.Unlock()
+		}
+		return nil
+	}
+	if err := sink.Send(sinkCtx, frame); err != nil {
+		if s.kind == streamExec {
+			s.sinkFailed(version, frame)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *managedStream) run() {
@@ -187,15 +212,9 @@ func (s *managedStream) run() {
 		count, err := s.reader.Read(buffer)
 		if count > 0 {
 			frame := append([]byte(nil), buffer[:count]...)
-			sink, sinkCtx, version := s.currentSink()
-			if sink != nil {
-				if sendErr := sink.Send(sinkCtx, frame); sendErr != nil {
-					if s.kind == streamLogs {
-						_ = s.close(sendErr)
-						return
-					}
-					s.sinkFailed(version)
-				}
+			if sendErr := s.dispatch(frame); sendErr != nil {
+				_ = s.close(sendErr)
+				return
 			}
 		}
 		if err != nil {
@@ -224,13 +243,13 @@ func (s *managedStream) run() {
 
 func (s *managedStream) close(cause error) error {
 	s.closeOnce.Do(func() {
+		s.cancel()
 		s.mu.Lock()
 		s.closed = true
 		if s.sinkCancel != nil {
 			s.sinkCancel()
 		}
 		s.mu.Unlock()
-		s.cancel()
 		if s.exec != nil {
 			s.closeErr = s.exec.Close()
 		} else if s.reader != nil {
@@ -260,12 +279,20 @@ func (s *managedStream) detach() error {
 		return s.close(ErrStreamClosed)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return ErrStreamClosed
 	}
 	if s.sinkCancel != nil {
 		s.sinkCancel()
+	}
+	s.mu.Unlock()
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrStreamClosed
 	}
 	s.sink = nil
 	s.sinkCtx = nil
@@ -278,20 +305,44 @@ func (s *managedStream) resume(sink FrameSink) error {
 	if s.kind != streamExec || sink == nil {
 		return ErrUnsupported
 	}
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return ErrStreamClosed
 	}
 	if s.sink != nil {
+		s.mu.Unlock()
 		return errors.New("docker exec stream already has a subscriber")
 	}
 	if s.sinkCancel != nil {
 		s.sinkCancel()
 	}
 	s.sinkVersion++
+	version := s.sinkVersion
 	s.sink = sink
 	s.sinkCtx, s.sinkCancel = context.WithCancel(s.ctx)
+	sinkCtx := s.sinkCtx
+	backlog := s.replay.drain()
+	s.mu.Unlock()
+	for index, frame := range backlog {
+		if err := sink.Send(sinkCtx, frame); err != nil {
+			s.mu.Lock()
+			if s.sinkVersion == version {
+				s.replay.restore(backlog[index:])
+				if s.sinkCancel != nil {
+					s.sinkCancel()
+				}
+				s.sink = nil
+				s.sinkCtx = nil
+				s.sinkCancel = nil
+				s.sinkVersion++
+			}
+			s.mu.Unlock()
+			return err
+		}
+	}
 	return nil
 }
 
@@ -299,8 +350,12 @@ func (s *Service) AttachLogs(ctx context.Context, request LogsAttachRequest) (st
 	if request.Sink == nil {
 		return "", errors.New("docker logs sink is required")
 	}
-	if request.Tail <= 0 {
-		request.Tail = 500
+	tail := 500
+	if request.Tail != nil {
+		tail = *request.Tail
+		if tail < 0 {
+			return "", errors.New("docker logs tail cannot be negative")
+		}
 	}
 	token := s.streams.token(request.SessionID)
 	setupCtx, cancel := context.WithTimeout(ctx, s.config.ListTimeout)
@@ -310,7 +365,7 @@ func (s *Service) AttachLogs(ctx context.Context, request LogsAttachRequest) (st
 	logStream, err := readWithFallback(setupCtx, s.provider, request.SessionID, func(backend Backend) (LogStream, error) {
 		return backend.OpenLogs(streamCtx, LogsOptions{
 			Container: request.Container,
-			Tail:      request.Tail,
+			Tail:      tail,
 			Follow:    true,
 		})
 	})
@@ -380,6 +435,7 @@ func (s *Service) AttachExec(ctx context.Context, request ExecAttachRequest) (st
 	managed.reader = session
 	managed.exec = session
 	managed.tty = session.IsTTY()
+	managed.replay.limit = s.config.ExecReplayBytes
 	if err := s.streams.add(managed, token); err != nil {
 		_ = managed.close(err)
 		return "", err

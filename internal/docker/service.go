@@ -336,11 +336,19 @@ func (s *Service) Exec(ctx context.Context, request ExecRequest) (ExecResult, er
 	if err != nil {
 		return ExecResult{}, err
 	}
-	session, err := backend.OpenExec(ctx, ExecOptions{
+	options := ExecOptions{
 		Container: request.Container,
 		Cmd:       []string{"sh", "-c", request.Command},
 		TTY:       false,
-	})
+	}
+	if oneShot, ok := backend.(ExecOnceBackend); ok {
+		return oneShot.ExecOnce(ctx, options)
+	}
+	return execWithSession(ctx, backend, options)
+}
+
+func execWithSession(ctx context.Context, backend Backend, options ExecOptions) (ExecResult, error) {
+	session, err := backend.OpenExec(ctx, options)
 	if err != nil {
 		return ExecResult{}, err
 	}

@@ -111,9 +111,24 @@ func TestCommandBackendLogsIncludeStderr(t *testing.T) {
 	}
 }
 
+func TestRunnerOnlyWinRMExecReturnsOutputAndNonZeroExit(t *testing.T) {
+	exitCode := 7
+	runner := &recordingRunner{result: CommandResult{Stdout: "stdout\n", Stderr: "stderr\n", ExitCode: &exitCode}}
+	command := NewCommandBackend(runner, nil, ShellPowerShell)
+	service := NewService(&stubProvider{sdkErr: ErrNoBackend, command: command})
+	result, err := service.Exec(t.Context(), ExecRequest{SessionID: "s1", Container: "c1", Command: "printf test"})
+	if err != nil || result.Output != "stdout\nstderr\n" || result.ExitCode != 7 {
+		t.Fatalf("exec = %+v, %v", result, err)
+	}
+	want := "docker 'exec' 'c1' 'sh' '-c' 'printf test'"
+	if len(runner.commands) != 1 || runner.commands[0] != want {
+		t.Fatalf("commands = %q, want %q", runner.commands, want)
+	}
+}
+
 func TestCommandExecFallbackReadsRawNonTTYOutput(t *testing.T) {
 	opener := &recordingOpener{stream: &bufferCommandStream{Reader: strings.NewReader("plain output")}}
-	command := NewCommandBackend(&recordingRunner{}, opener, ShellPOSIX)
+	command := NewCommandBackend(nil, opener, ShellPOSIX)
 	service := NewService(&stubProvider{sdkErr: ErrNoBackend, command: command})
 	result, err := service.Exec(t.Context(), ExecRequest{SessionID: "s1", Container: "c1", Command: "printf test"})
 	if err != nil || result.Output != "plain output" {

@@ -1,15 +1,10 @@
 package docker
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"path"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -175,53 +170,26 @@ func (b *MobyBackend) OpenExec(ctx context.Context, options ExecOptions) (ExecSe
 }
 
 func (b *MobyBackend) ListDir(ctx context.Context, id, directory string) ([]string, error) {
-	result, err := b.client.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: directory})
+	result, err := execWithSession(ctx, b, ExecOptions{
+		Container: id,
+		Cmd:       []string{"ls", "-1a", "--", directory},
+		TTY:       false,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer result.Content.Close()
-	if !result.Stat.Mode.IsDir() {
-		return nil, fmt.Errorf("docker path %q is not a directory", directory)
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("docker ls exited with code %d: %s", result.ExitCode, strings.TrimSpace(result.Output))
 	}
-	reader := tar.NewReader(result.Content)
-	entries := make(map[string]struct{})
-	root := ""
-	for {
-		header, nextErr := reader.Next()
-		if errors.Is(nextErr, io.EOF) {
-			break
+	lines := strings.Split(result.Output, "\n")
+	entries := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		if line != "" {
+			entries = append(entries, line)
 		}
-		if nextErr != nil {
-			return nil, nextErr
-		}
-		name := strings.Trim(path.Clean(strings.ReplaceAll(header.Name, "\\", "/")), "/")
-		if name == "" || name == "." {
-			continue
-		}
-		if root == "" {
-			root = name
-			continue
-		}
-		relative := name
-		if name == root {
-			continue
-		}
-		if strings.HasPrefix(name, root+"/") {
-			relative = strings.TrimPrefix(name, root+"/")
-		}
-		if relative == "" || relative == "." || strings.Contains(relative, "/") {
-			continue
-		}
-		entries[relative] = struct{}{}
 	}
-	names := make([]string, 0, len(entries)+2)
-	names = append(names, ".", "..")
-	ordered := make([]string, 0, len(entries))
-	for name := range entries {
-		ordered = append(ordered, name)
-	}
-	sort.Strings(ordered)
-	return append(names, ordered...), nil
+	return entries, nil
 }
 
 func (b *MobyBackend) Close() error {

@@ -1,17 +1,15 @@
 package docker
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -57,8 +55,6 @@ func (d *fakeDaemon) ServeHTTP(writer http.ResponseWriter, request *http.Request
 		output.WriteString("stderr\n")
 		writer.Header().Set("Content-Type", "application/vnd.docker.multiplexed-stream")
 		_, _ = writer.Write(output.Bytes())
-	case path == "/containers/c1/archive" && request.Method == http.MethodGet:
-		writeTestArchive(writer)
 	case path == "/images/create" && request.Method == http.MethodPost:
 		_, _ = io.WriteString(writer, "{\"status\":\"Downloading\"}\n{\"status\":\"Done\"}\n")
 	case strings.HasPrefix(path, "/images/") && request.Method == http.MethodDelete:
@@ -85,34 +81,12 @@ func writeTestJSON(writer http.ResponseWriter, value any) {
 	_ = json.NewEncoder(writer).Encode(value)
 }
 
-func writeTestArchive(writer http.ResponseWriter) {
-	var content bytes.Buffer
-	archive := tar.NewWriter(&content)
-	for _, entry := range []struct {
-		name string
-		mode int64
-	}{
-		{name: "data/", mode: 0755},
-		{name: "data/.env", mode: 0644},
-		{name: "data/hello world.txt", mode: 0644},
-		{name: "data/链接", mode: 0777},
-		{name: "data/sub/", mode: 0755},
-		{name: "data/sub/nested", mode: 0644},
-	} {
-		_ = archive.WriteHeader(&tar.Header{Name: entry.name, Mode: entry.mode, Size: 0})
-	}
-	_ = archive.Close()
-	stat, _ := json.Marshal(container.PathStat{Name: "data", Mode: os.ModeDir | 0755})
-	writer.Header().Set("X-Docker-Container-Path-Stat", base64.StdEncoding.EncodeToString(stat))
-	_, _ = writer.Write(content.Bytes())
-}
-
 func hijackTestExec(writer http.ResponseWriter, request *http.Request) {
 	var options struct {
 		Detach bool
 		Tty    bool
 	}
-	if err := json.NewDecoder(request.Body).Decode(&options); err != nil || options.Detach || !options.Tty {
+	if err := json.NewDecoder(request.Body).Decode(&options); err != nil || options.Detach {
 		http.Error(writer, "invalid exec start", http.StatusBadRequest)
 		return
 	}
@@ -121,7 +95,20 @@ func hijackTestExec(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer connection.Close()
-	_, _ = fmt.Fprint(connection, "HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
+	contentType := "application/vnd.docker.raw-stream"
+	if !options.Tty {
+		contentType = "application/vnd.docker.multiplexed-stream"
+	}
+	_, _ = fmt.Fprintf(connection, "HTTP/1.1 101 UPGRADED\r\nContent-Type: %s\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n", contentType)
+	if !options.Tty {
+		payload := []byte(".\n..\n.env\nhello world.txt\nsub\n链接\n")
+		header := make([]byte, 8)
+		header[0] = byte(stdcopy.Stdout)
+		binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+		_, _ = connection.Write(header)
+		_, _ = connection.Write(payload)
+		return
+	}
 	_, _ = io.WriteString(connection, "welcome\n")
 	input := make([]byte, 4)
 	if _, err := io.ReadFull(connection, input); err == nil && string(input) == "ping" {
@@ -153,7 +140,7 @@ func newFakeMobyBackend(t *testing.T) (*MobyBackend, *fakeDaemon) {
 }
 
 func TestMobyBackendReadsImagesInspectStatsAndFiles(t *testing.T) {
-	backend, _ := newFakeMobyBackend(t)
+	backend, daemon := newFakeMobyBackend(t)
 	containers, err := backend.ListContainers(t.Context(), true)
 	if err != nil || len(containers) != 1 || containers[0].Names[0] != "/web" {
 		t.Fatalf("containers = %+v, %v", containers, err)
@@ -185,6 +172,13 @@ func TestMobyBackendReadsImagesInspectStatsAndFiles(t *testing.T) {
 	want := []string{".", "..", ".env", "hello world.txt", "sub", "链接"}
 	if !reflect.DeepEqual(entries, want) {
 		t.Fatalf("entries = %#v, want %#v", entries, want)
+	}
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	for _, request := range daemon.requests {
+		if strings.Contains(request, "/archive") {
+			t.Fatalf("ListDir downloaded a recursive archive: %s", request)
+		}
 	}
 }
 

@@ -123,6 +123,10 @@ type Backend interface {
 	Close() error
 }
 
+type ExecOnceBackend interface {
+	ExecOnce(ctx context.Context, options ExecOptions) (ExecResult, error)
+}
+
 type StatsSnapshotter interface {
 	StatsSnapshot(ctx context.Context) (string, error)
 }
@@ -229,7 +233,7 @@ func (f FrameSinkFunc) Send(ctx context.Context, frame []byte) error {
 type LogsAttachRequest struct {
 	SessionID string
 	Container string
-	Tail      int
+	Tail      *int
 	Sink      FrameSink
 }
 
@@ -254,6 +258,7 @@ type Config struct {
 	LogsTimeout      time.Duration
 	StatsTimeout     time.Duration
 	StatsConcurrency int
+	ExecReplayBytes  int
 	Now              func() time.Time
 }
 
@@ -275,6 +280,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.StatsConcurrency <= 0 {
 		c.StatsConcurrency = 4
+	}
+	if c.ExecReplayBytes <= 0 {
+		c.ExecReplayBytes = 500 * 1024
 	}
 	if c.Now == nil {
 		c.Now = time.Now

@@ -221,11 +221,39 @@ func (b *CommandBackend) OpenLogs(ctx context.Context, options LogsOptions) (Log
 }
 
 func (b *CommandBackend) OpenExec(ctx context.Context, options ExecOptions) (ExecSession, error) {
+	stream, err := b.open(ctx, b.command(commandExecArgs(options, true)), options.Width, options.Height)
+	if err != nil {
+		return nil, err
+	}
+	return newCommandExecSession(stream), nil
+}
+
+func (b *CommandBackend) ExecOnce(ctx context.Context, options ExecOptions) (ExecResult, error) {
+	if b.runner == nil {
+		return execWithSession(ctx, b, options)
+	}
+	result, err := b.runner.RunCommand(ctx, b.command(commandExecArgs(options, false)))
+	if err != nil {
+		return ExecResult{}, err
+	}
+	if result.Truncated {
+		return ExecResult{}, errors.New("docker command output exceeded the transport limit")
+	}
+	exitCode := 0
+	if result.ExitCode != nil {
+		exitCode = *result.ExitCode
+	}
+	return ExecResult{Output: result.Stdout + result.Stderr, ExitCode: exitCode}, nil
+}
+
+func commandExecArgs(options ExecOptions, streaming bool) []string {
 	args := []string{"exec"}
-	if options.TTY {
-		args = append(args, "-it")
-	} else {
-		args = append(args, "-i")
+	if streaming {
+		if options.TTY {
+			args = append(args, "-it")
+		} else {
+			args = append(args, "-i")
+		}
 	}
 	if options.User != "" {
 		args = append(args, "--user", options.User)
@@ -237,12 +265,7 @@ func (b *CommandBackend) OpenExec(ctx context.Context, options ExecOptions) (Exe
 		args = append(args, "--workdir", options.WorkDir)
 	}
 	args = append(args, options.Container)
-	args = append(args, options.Cmd...)
-	stream, err := b.open(ctx, b.command(args), options.Width, options.Height)
-	if err != nil {
-		return nil, err
-	}
-	return newCommandExecSession(stream), nil
+	return append(args, options.Cmd...)
 }
 
 func (b *CommandBackend) OpenRawExec(ctx context.Context, command string, width, height uint) (ExecSession, error) {

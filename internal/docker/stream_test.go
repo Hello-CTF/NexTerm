@@ -100,6 +100,25 @@ func (s *pipeExecSession) emit(t *testing.T, value string) {
 	go func() { _, _ = io.WriteString(s.writer, value) }()
 }
 
+func waitExecReplay(t *testing.T, service *Service, id string, size int) {
+	t.Helper()
+	stream, err := service.streams.get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		stream.mu.Lock()
+		got := stream.replay.size
+		stream.mu.Unlock()
+		if got == size {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d replay bytes", size)
+}
+
 func TestAttachExecLifecycleDetachResumeResize(t *testing.T) {
 	exec := newPipeExecSession(true)
 	backend := &stubBackend{openExec: func(_ context.Context, options ExecOptions) (ExecSession, error) {
@@ -141,13 +160,16 @@ func TestAttachExecLifecycleDetachResumeResize(t *testing.T) {
 	if exec.closed.Load() {
 		t.Fatal("detach killed exec")
 	}
+	exec.emit(t, "two")
+	waitExecReplay(t, service, id, 3)
 	second := newCollectSink()
 	if err := service.ResumeExec(id, second); err != nil {
 		t.Fatal(err)
 	}
-	exec.emit(t, "two")
 	second.waitFrame(t)
-	if second.String() != "two" || first.String() != "one" {
+	exec.emit(t, "three")
+	second.waitFrame(t)
+	if second.String() != "twothree" || first.String() != "one" {
 		t.Fatalf("resume output first=%q second=%q", first.String(), second.String())
 	}
 	if err := service.CloseSession("s1"); err != nil {
@@ -168,6 +190,91 @@ func TestAttachExecLifecycleDetachResumeResize(t *testing.T) {
 	defer exec.resizeMu.Unlock()
 	if len(exec.resizes) != 1 || exec.resizes[0] != [2]uint{100, 30} {
 		t.Fatalf("resizes = %v", exec.resizes)
+	}
+}
+
+func TestExecReplayIsBounded(t *testing.T) {
+	exec := newPipeExecSession(true)
+	backend := &stubBackend{openExec: func(context.Context, ExecOptions) (ExecSession, error) { return exec, nil }}
+	service := NewService(&stubProvider{sdk: backend}, WithConfig(Config{ExecReplayBytes: 4}))
+	id, err := service.AttachExec(t.Context(), ExecAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.CloseStream(id)
+	if err := service.DetachStream(id); err != nil {
+		t.Fatal(err)
+	}
+	exec.emit(t, "abcdefgh")
+	waitExecReplay(t, service, id, 4)
+	resumed := newCollectSink()
+	if err := service.ResumeExec(id, resumed); err != nil {
+		t.Fatal(err)
+	}
+	resumed.waitFrame(t)
+	if resumed.String() != "efgh" {
+		t.Fatalf("bounded replay = %q", resumed.String())
+	}
+}
+
+func TestExecResumeBackpressureCanBeClosed(t *testing.T) {
+	exec := newPipeExecSession(true)
+	backend := &stubBackend{openExec: func(context.Context, ExecOptions) (ExecSession, error) { return exec, nil }}
+	service := NewService(&stubProvider{sdk: backend})
+	id, err := service.AttachExec(t.Context(), ExecAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DetachStream(id); err != nil {
+		t.Fatal(err)
+	}
+	exec.emit(t, "backlog")
+	waitExecReplay(t, service, id, 7)
+	resumed := newCollectSink()
+	resumed.block = true
+	resumeResult := make(chan error, 1)
+	go func() { resumeResult <- service.ResumeExec(id, resumed) }()
+	select {
+	case <-resumed.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replay did not reach blocked sink")
+	}
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- service.CloseStream(id) }()
+	select {
+	case err := <-resumeResult:
+		if err == nil {
+			t.Fatal("blocked resume unexpectedly succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("close did not interrupt replay")
+	}
+	select {
+	case <-closeResult:
+	case <-time.After(2 * time.Second):
+		t.Fatal("close blocked behind replay")
+	}
+}
+
+func TestAttachLogsDistinguishesOmittedAndZeroTail(t *testing.T) {
+	tails := make(chan int, 2)
+	backend := &stubBackend{openLogs: func(_ context.Context, options LogsOptions) (LogStream, error) {
+		tails <- options.Tail
+		return LogStream{Reader: io.NopCloser(bytes.NewReader(nil)), TTY: true}, nil
+	}}
+	service := NewService(&stubProvider{sdk: backend})
+	if _, err := service.AttachLogs(t.Context(), LogsAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()}); err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	if _, err := service.AttachLogs(t.Context(), LogsAttachRequest{SessionID: "s1", Container: "c1", Tail: &zero, Sink: newCollectSink()}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-tails; got != 500 {
+		t.Fatalf("omitted tail = %d", got)
+	}
+	if got := <-tails; got != 0 {
+		t.Fatalf("explicit zero tail = %d", got)
 	}
 }
 
