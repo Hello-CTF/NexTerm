@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   takeoverExit: vi.fn(),
   toast: vi.fn(),
   dispose: vi.fn(),
-  channels: [] as { onEvent: (ev: Record<string, unknown>) => void; reopen?: (() => void) | null }[],
+  channels: [] as { onEvent: (ev: Record<string, unknown>) => void }[],
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -55,20 +55,11 @@ vi.mock("../../ipc/commands", () => ({
 vi.mock("../../ipc/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ipc/events")>()),
   createAiChannel: (onEvent: (ev: Record<string, unknown>) => void) => {
-    const channel: { onEvent: (ev: Record<string, unknown>) => void; reopen?: (() => void) | null } = {
-      onEvent,
-      reopen: null,
-    };
+    const channel = { onEvent };
     mocks.channels.push(channel);
     return channel;
   },
   disposeChannel: mocks.dispose,
-  onChannelReopen: (channel: { reopen?: (() => void) | null }, cb: () => void) => {
-    channel.reopen = cb;
-    return () => {
-      channel.reopen = null;
-    };
-  },
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
@@ -89,6 +80,11 @@ function emit(ev: Record<string, unknown>, channelIndex = -1) {
   const channel = mocks.channels.at(channelIndex);
   if (!channel) throw new Error("no fake channel");
   act(() => channel.onEvent(ev));
+}
+
+/** M23 落地实现（WithEventSequence）的身份：per-run 单调 seq，全事件共享计数。 */
+function perRun(seq: number) {
+  return { seq };
 }
 
 function textOf(view: MountedView): string {
@@ -432,14 +428,11 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("reconnect replay does not duplicate streamed text end to end", async () => {
     await send("重连测试");
-    emit({ type: "delta", text: "abcdefghij" });
+    emit({ type: "delta", text: "abcdefghij", ...perRun(1) });
     act(runFrames);
-    const channel = mocks.channels.at(-1);
-    expect(channel?.reopen).toBeTypeOf("function");
-    // 通道重连 ⇒ 补发缓存帧：同一段 delta 再来一遍，然后接新内容。
-    act(() => channel!.reopen!());
-    emit({ type: "delta", text: "abcdefghij" });
-    emit({ type: "delta", text: " XYZ" });
+    // 通道重连 ⇒ 补发缓存帧：同一三元组再来一遍是精确重放，新 seq 才是新内容。
+    emit({ type: "delta", text: "abcdefghij", ...perRun(1) });
+    emit({ type: "delta", text: " XYZ", ...perRun(2) });
     act(runFrames);
     expect(textOf(view!)).toContain("abcdefghij XYZ");
     expect(textOf(view!)).not.toContain("abcdefghijabcdefghij");
@@ -447,5 +440,19 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!).match(/abcdefghij XYZ/g)).toHaveLength(1);
     expect(textOf(view!)).toContain("本轮已完成");
+  });
+
+  it("keeps genuinely new identical reasoning after reconnect, end to end", async () => {
+    await send("重复内容");
+    emit({ type: "reasoning", text: "ha", ...perRun(1) });
+    act(runFrames);
+    // 相同文本、不同 seq：是真·新推理，绝不能被当成重放丢掉。
+    emit({ type: "reasoning", text: "ha", ...perRun(2) });
+    emit({ type: "reasoning", text: "!", ...perRun(3) });
+    act(runFrames);
+    emit({ type: "done", answer: "答案" });
+    await flush();
+    expect(textOf(view!)).toContain("haha!");
+    expect(textOf(view!)).not.toContain("haha!haha!");
   });
 });

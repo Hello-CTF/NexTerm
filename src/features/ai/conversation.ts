@@ -328,10 +328,11 @@ function kernelId(ev: Record<string, unknown>): string {
  *   · 未知 / 已终态的 attempt：非终态事件丢弃；终态事件只上报不改动（先到先得）；
  *   · 带内核 id 的条目按 id upsert，重放不会产生第二张卡；
  *   · done.answer 是内核的权威最终消息：末段流式气泡**整条**以它为准
- *     （截断 / 重放损坏都一并修复），早先段落不受影响；
+ *     （截断 / 重放损坏都一并修复），早先段落不受影响；末段的定位允许
+ *     尾部跟着本轮 reasoning（finalStreamedSegment）；
  *   · raw answer 为空时不再对已流出的正文补「(无回答)」占位气泡。
- *   · delta / reasoning 没有内核 id，它们的重放抑制在控制器里
- *     （conversationStream.ts，靠重连信号 + 片段序列对齐）。
+ *   · delta / reasoning 没有内核 id，它们的重放去重在控制器里
+ *     （conversationStream.ts，只靠 attempt + seq 精确身份，不按内容）。
  */
 export function applyAiEvent(
   state: ConversationState,
@@ -553,33 +554,38 @@ function finishDone(
     return appendOutcome(next, generation, "done", "接管已完成");
   }
 
-  const last = next.items[next.items.length - 1];
-  const lastIsStreamed =
-    last &&
-    (last.role === "assistant" || last.role === "plan") &&
-    last.attempt === generation;
-  if (raw && lastIsStreamed) {
+  const segment = finalStreamedSegment(next.items, generation);
+  if (raw && segment >= 0) {
     // 权威答案对账：**整条末段换成 done.answer**，不做相似度猜测。
     // answer 就是内核的最后一条 assistant 消息，而末段气泡正是它的流式形态 ——
     // 截断、代理改包、重连重放把 chunk 重复或交错，都只是"同一条消息的损坏版本"，
     // 权威答案一律为真。逐字相同 / 前缀 / 超集只是这条规则的特例，不再单列。
     // 早先的气泡（前几轮 assistant 消息、工具卡）不动，只有末段参与对账。
     // 计划模式要把这条升级成 plan 气泡，批准按钮才有着落。
-    const items = [
-      ...next.items.slice(0, -1),
-      wasPlan ? { ...last, role: "plan" as const, text: answer } : { ...last, text: answer },
-    ];
+    const last = next.items[segment] as Extract<ChatItem, { role: "assistant" | "plan" }>;
+    const items = next.items.map((item, index) =>
+      index === segment
+        ? wasPlan
+          ? { ...last, role: "plan" as const, text: answer }
+          : { ...last, text: answer }
+        : item,
+    );
     return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
   }
-  if (!raw && lastIsStreamed && last.text.trim()) {
-    // 内核没给答案（raw 为空）而正文已经流出：内容就在屏幕上，
-    // 不再补一条「(无回答)」占位气泡冒充新输出。
-    const items = wasPlan
-      ? [...next.items.slice(0, -1), { ...last, role: "plan" as const }]
-      : next.items;
-    return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
+  if (!raw && segment >= 0) {
+    const last = next.items[segment] as Extract<ChatItem, { role: "assistant" | "plan" }>;
+    if (last.text.trim()) {
+      // 内核没给答案（raw 为空）而正文已经流出：内容就在屏幕上，
+      // 不再补一条「(无回答)」占位气泡冒充新输出。
+      const items = wasPlan
+        ? next.items.map((item, index) =>
+            index === segment ? { ...last, role: "plan" as const } : item,
+          )
+        : next.items;
+      return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
+    }
   }
-  // 末条不是本轮的流式气泡（非流式回退 / 只有推理或工具卡）：答案单独落一条。
+  // 找不到本轮的流式末段（非流式回退 / 只有推理或工具卡）：答案单独落一条。
   const { id, seq } = nextId(next, wasPlan ? "p" : "a");
   next = appendItems({ ...next, seq }, [
     wasPlan
@@ -587,6 +593,24 @@ function finishDone(
       : { id, attempt: generation, role: "assistant", text: answer },
   ]);
   return appendOutcome(next, generation, "done", "本轮已完成");
+}
+
+/**
+ * 本轮**最后一段流式 assistant/plan 气泡**的下标；找不到返回 -1。
+ *
+ * 允许它后面跟着本轮的 reasoning：两家提供方都按到达顺序推事件，
+ * 最后一段正文之后再补一段推理是合法流。中间隔着工具卡 / 交互卡 / 文件变更
+ * 就不算了 —— 那说明模型已经走进下一轮工具调用，最终答案应该另起一条，
+ * 而不是回头改写早先的旁白。
+ */
+function finalStreamedSegment(items: ChatItem[], generation: number): number {
+  let i = items.length - 1;
+  while (i >= 0 && items[i].attempt === generation && items[i].role === "reasoning") i--;
+  const last = items[i];
+  if (last && last.attempt === generation && (last.role === "assistant" || last.role === "plan")) {
+    return i;
+  }
+  return -1;
 }
 
 function appendOutcome(

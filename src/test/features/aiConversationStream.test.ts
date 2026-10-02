@@ -43,6 +43,11 @@ function stream() {
   return { s, frames };
 }
 
+/** M23/tower 最终冻结的身份：每个 job 从 1 起单调 seq，全事件类型共享计数。 */
+function perRun(seq: number) {
+  return { seq };
+}
+
 function texts(items: ChatItem[], role: string): string[] {
   return items.filter((i) => i.role === role).map((i) => (i as { text?: string }).text ?? "");
 }
@@ -251,72 +256,70 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
   });
 });
 
-describe("reopen-driven replay suppression (delta / reasoning)", () => {
-  it("suppresses the replayed chunk, accepts the diverging tail, and settles on one answer", () => {
+describe("sequence-identity replay suppression (delta / reasoning)", () => {
+  it("drops only exact per-run seq replays and settles on one answer", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "abcdefghij" });
+    s.pushEvent(1, { type: "delta", text: "abcdefghij", ...perRun(1) });
     frames.runFrame();
-    s.notifyReopen(1);
-    // 重连补帧：同一段再来一遍 ⇒ 丢弃；跟不上的下一帧 ⇒ 新内容，窗口关闭。
-    s.pushEvent(1, { type: "delta", text: "abcdefghij" });
-    s.pushEvent(1, { type: "delta", text: " XYZ" });
+    // 重连补帧：同一 seq 再来一遍 ⇒ 精确重放，丢弃；新 seq ⇒ 新内容。
+    expect(s.pushEvent(1, { type: "delta", text: "abcdefghij", ...perRun(1) }).accepted).toBe(false);
+    s.pushEvent(1, { type: "delta", text: " XYZ", ...perRun(2) });
     frames.runFrame();
     expect(texts(s.getState().items, "assistant")).toEqual(["abcdefghij XYZ"]);
-    s.pushEvent(1, { type: "done", answer: "abcdefghij XYZ" });
+    s.pushEvent(1, { type: "done", answer: "abcdefghij XYZ", ...perRun(3) });
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "outcome"]);
     expect(texts(items, "assistant")).toEqual(["abcdefghij XYZ"]);
   });
 
-  it("aligns a partial suffix replay across several chunks", () => {
+  it("drops a replayed suffix across several chunks by identity", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    for (const text of ["a1", "b2", "c3", "d4"]) s.pushEvent(1, { type: "delta", text });
+    ["a1", "b2", "c3", "d4"].forEach((text, i) => s.pushEvent(1, { type: "delta", text, ...perRun(i + 1) }));
     frames.runFrame();
-    s.notifyReopen(1);
-    // 只补发后两段：c3 先在 log 里对齐成功，d4 连续对齐，e5 是新内容。
-    for (const text of ["c3", "d4", "e5"]) s.pushEvent(1, { type: "delta", text });
+    // 只补发后两段（seq 3、4），随后是全新的 seq 5。
+    s.pushEvent(1, { type: "delta", text: "c3", ...perRun(3) });
+    s.pushEvent(1, { type: "delta", text: "d4", ...perRun(4) });
+    s.pushEvent(1, { type: "delta", text: "e5", ...perRun(5) });
     frames.runFrame();
     expect(texts(s.getState().items, "assistant")).toEqual(["a1b2c3d4e5"]);
   });
 
-  it("handles interleaved replay with reasoning and id-bearing tool events", () => {
+  it("handles interleaved replay with reasoning and tool events", () => {
     const { s, frames } = stream();
     s.beginRun(1);
     const script = () => {
-      s.pushEvent(1, { type: "delta", text: "A" });
-      s.pushEvent(1, { type: "reasoning", text: "R" });
-      s.pushEvent(1, { type: "toolCall", id: "t1", name: "exec", display: "ls" });
-      s.pushEvent(1, { type: "toolResult", id: "t1", ok: true, summary: "s", text: "full", exitCode: 0 });
-      s.pushEvent(1, { type: "delta", text: "B" });
+      s.pushEvent(1, { type: "delta", text: "A", ...perRun(1) });
+      s.pushEvent(1, { type: "reasoning", text: "R", ...perRun(2) });
+      s.pushEvent(1, { type: "toolCall", id: "t1", name: "exec", display: "ls", ...perRun(3) });
+      s.pushEvent(1, { type: "toolResult", id: "t1", ok: true, summary: "s", text: "full", exitCode: 0, ...perRun(4) });
+      s.pushEvent(1, { type: "delta", text: "B", ...perRun(5) });
     };
     script();
     frames.runFrame();
-    s.notifyReopen(1);
-    script(); // 整段重放：文本帧被对齐丢弃，工具帧由 id 幂等
-    s.pushEvent(1, { type: "delta", text: "C" });
+    script(); // 整段重放：所有事件的 seq 都已见过（生产计数为全事件共享）
+    s.pushEvent(1, { type: "delta", text: "C", ...perRun(6) });
     frames.runFrame();
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "reasoning", "tool", "assistant"]);
     expect(texts(items, "assistant")).toEqual(["A", "BC"]);
     expect(texts(items, "reasoning")).toEqual(["R"]);
-    s.pushEvent(1, { type: "done", answer: "BC" });
+    s.pushEvent(1, { type: "done", answer: "BC", ...perRun(7) });
     expect(roles(s.getState().items)).toEqual(["assistant", "reasoning", "tool", "assistant", "outcome"]);
   });
 
   it("suppresses reasoning replay and keeps the surviving reasoning exact", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "reasoning", text: "same reasoning chunk" });
+    s.pushEvent(1, { type: "reasoning", text: "same reasoning chunk", ...perRun(1) });
     frames.runFrame();
-    s.notifyReopen(1);
-    s.pushEvent(1, { type: "reasoning", text: "same reasoning chunk" });
-    s.pushEvent(1, { type: "reasoning", text: " and more" });
+    s.pushEvent(1, { type: "reasoning", text: "same reasoning chunk", ...perRun(1) });
+    s.pushEvent(1, { type: "reasoning", text: " and more", ...perRun(2) });
     frames.runFrame();
     expect(texts(s.getState().items, "reasoning")).toEqual(["same reasoning chunk and more"]);
-    // done 不带推理内容：推理的修复必须发生在入口，而不是终态。
-    s.pushEvent(1, { type: "done", answer: "答案" });
+    // done 不带推理内容：推理的去重必须发生在入口，而不是终态。
+    s.pushEvent(1, { type: "done", answer: "答案", ...perRun(3) });
     const items = s.getState().items;
     expect(texts(items, "reasoning")).toEqual(["same reasoning chunk and more"]);
     expect(texts(items, "assistant")).toEqual(["答案"]);
@@ -325,45 +328,101 @@ describe("reopen-driven replay suppression (delta / reasoning)", () => {
   it("suppresses replay even before the original fragments were flushed", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "x" });
-    // 不跑帧：原片段还在 pending，但原始日志已记录，重放依然被识别。
-    s.notifyReopen(1);
-    s.pushEvent(1, { type: "delta", text: "x" });
-    s.pushEvent(1, { type: "delta", text: "y" });
+    s.pushEvent(1, { type: "delta", text: "x", ...perRun(1) });
+    // 不跑帧：原片段还在 pending，身份在入口就已登记，重放依然被识别。
+    s.pushEvent(1, { type: "delta", text: "x", ...perRun(1) });
+    s.pushEvent(1, { type: "delta", text: "y", ...perRun(2) });
     frames.runFrame();
     expect(texts(s.getState().items, "assistant")).toEqual(["xy"]);
   });
 
-  it("never dedupes without a reopen signal, and accepts repeats after the window closes", () => {
+  it("never drops genuinely new identical reasoning, with or without seq", () => {
+    // per-job seq：相同文本、不同 seq ⇒ 两条都是新内容，一条都不能少。
+    const withSeq = stream();
+    withSeq.s.beginRun(1);
+    withSeq.s.pushEvent(1, { type: "reasoning", text: "ha", ...perRun(1) });
+    withSeq.s.pushEvent(1, { type: "reasoning", text: "ha", ...perRun(2) });
+    withSeq.s.pushEvent(1, { type: "reasoning", text: "!", ...perRun(3) });
+    withSeq.s.pushEvent(1, { type: "done", answer: "答案", ...perRun(4) });
+    expect(texts(withSeq.s.getState().items, "reasoning")).toEqual(["haha!"]);
+    // 无 seq（旧内核）：没有证据可判，同样一律保留，绝不按内容丢。
+    const noSeq = stream();
+    noSeq.s.beginRun(1);
+    noSeq.s.pushEvent(1, { type: "reasoning", text: "ha" });
+    noSeq.s.pushEvent(1, { type: "reasoning", text: "ha" });
+    noSeq.s.pushEvent(1, { type: "reasoning", text: "!" });
+    noSeq.s.pushEvent(1, { type: "done", answer: "答案" });
+    expect(texts(noSeq.s.getState().items, "reasoning")).toEqual(["haha!"]);
+  });
+
+  it("repeated identical chunks survive: only the exact seq replay is dropped", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "ha" });
-    s.pushEvent(1, { type: "delta", text: "ha" });
+    s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(1) });
+    s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(2) });
     frames.runFrame();
-    expect(texts(s.getState().items, "assistant")).toEqual(["haha"]);
-    // 窗口被首个对不上的片段关闭后，相同内容照常落账。
-    s.notifyReopen(1);
-    s.pushEvent(1, { type: "delta", text: "!" });
-    s.pushEvent(1, { type: "delta", text: "ha" });
+    // 补发后缀（原 seq）⇒ 丢弃；但**第三个全新的 x**（新 seq）必须活着，
+    // 内容相同不能成为丢弃理由（这正是内容对齐法会误杀的情形）。
+    s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(2) });
+    s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(3) });
+    s.pushEvent(1, { type: "reasoning", text: "y", ...perRun(4) });
     frames.runFrame();
-    expect(texts(s.getState().items, "assistant")).toEqual(["haha!ha"]);
+    expect(texts(s.getState().items, "reasoning")).toEqual(["xxxy"]);
+  });
+
+  it("the per-job counter never resets across model calls; text and reasoning share it", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "a", ...perRun(1) });
+    s.pushEvent(1, { type: "reasoning", text: "r", ...perRun(2) });
+    s.pushEvent(1, { type: "delta", text: "b", ...perRun(3) });
+    frames.runFrame();
+    // 进入第二次模型调用后计数**继续**（不重置）：seq 4、5 都是新帧；
+    // 而第一轮帧的重放（原 seq）依然被精确丢弃。
+    s.pushEvent(1, { type: "reasoning", text: "r", ...perRun(2) });
+    s.pushEvent(1, { type: "delta", text: "c", ...perRun(4) });
+    s.pushEvent(1, { type: "reasoning", text: "r2", ...perRun(5) });
+    frames.runFrame();
+    const items = s.getState().items;
+    expect(texts(items, "assistant")).toEqual(["a", "bc"]);
+    expect(texts(items, "reasoning")).toEqual(["r", "r2"]);
+  });
+
+  it("scopes identity per run and treats missing/invalid identity fields as new content", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "一", ...perRun(1) });
+    s.pushEvent(1, { type: "done", answer: "一", ...perRun(2) });
+    s.beginRun(2);
+    // 另一个 job 的计数互不影响（不同前端 attempt，各自独立身份空间）。
+    s.pushEvent(2, { type: "delta", text: "二", ...perRun(1) });
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["一", "二"]);
+    // 无效 seq（0 / 负数 / 小数 / 字符串 / 缺字段）= 无身份，一律按新事件保留。
+    s.beginRun(3);
+    const invalid = [{ seq: 0 }, { seq: -2 }, { seq: 1.5 }, { seq: "7" }, {}];
+    for (const identity of invalid) {
+      s.pushEvent(3, { type: "delta", text: "x", ...identity });
+    }
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["一", "二", "xxxxx"]);
   });
 
   it("a replayed done still settles exactly once after a replayed text prefix", () => {
     const { s, frames } = stream();
     s.beginRun(1);
-    s.pushEvent(1, { type: "delta", text: "答" });
+    s.pushEvent(1, { type: "delta", text: "答", ...perRun(1) });
     frames.runFrame();
-    s.notifyReopen(1);
-    s.pushEvent(1, { type: "delta", text: "答" });
-    expect(s.pushEvent(1, { type: "done", answer: "答" }).accepted).toBe(true);
-    expect(s.pushEvent(1, { type: "done", answer: "答" }).accepted).toBe(false);
+    s.pushEvent(1, { type: "delta", text: "答", ...perRun(1) });
+    expect(s.pushEvent(1, { type: "done", answer: "答", ...perRun(2) }).accepted).toBe(true);
+    const replayedDone = s.pushEvent(1, { type: "done", answer: "答", ...perRun(2) });
+    expect(replayedDone.accepted).toBe(false);
+    expect(replayedDone.terminal).toBe("done");
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "outcome"]);
     expect(texts(items, "assistant")).toEqual(["答"]);
-    // 终态后重连信号与迟到文本一律无效。
-    s.notifyReopen(1);
-    expect(s.pushEvent(1, { type: "delta", text: "答" }).accepted).toBe(false);
+    // 终态后迟到文本一律无效（哪怕带着没见过的身份）。
+    expect(s.pushEvent(1, { type: "delta", text: "答", ...perRun(3) }).accepted).toBe(false);
   });
 });
 
@@ -406,6 +465,48 @@ describe("conversation terminal reconciliation", () => {
     expect(roles(streamed.items)).toEqual(["assistant", "outcome"]);
     const empty = doneWith(null, "");
     expect(texts(empty.items, "assistant")).toEqual(["(无回答)"]);
+  });
+
+  it("replaces the final segment even when reasoning trails it, without touching earlier items", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "早先的旁白" });
+    frames.runFrame();
+    s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
+    s.pushEvent(1, { type: "toolResult", id: "t", ok: true, summary: "s", text: "full", exitCode: 0 });
+    s.pushEvent(1, { type: "delta", text: "streamed final" });
+    s.pushEvent(1, { type: "reasoning", text: "trailing reasoning" });
+    frames.runFrame();
+    s.pushEvent(1, { type: "done", answer: "authoritative final" });
+    const items = s.getState().items;
+    // 末段被原位替换：不再冒出第二个答案气泡；旁白 / 工具卡 / 尾部推理都原样保留。
+    expect(roles(items)).toEqual(["assistant", "tool", "assistant", "reasoning", "outcome"]);
+    expect(texts(items, "assistant")).toEqual(["早先的旁白", "authoritative final"]);
+    expect(texts(items, "reasoning")).toEqual(["trailing reasoning"]);
+  });
+
+  it("appends after a tool boundary even with trailing reasoning, and handles empty raw there", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "工具前的旁白" });
+    frames.runFrame();
+    s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
+    s.pushEvent(1, { type: "reasoning", text: "收尾推理" });
+    frames.runFrame();
+    // 末段 assistant 与尾部推理之间隔着工具卡 ⇒ 属于下一轮：答案另起一条，不改写旁白。
+    s.pushEvent(1, { type: "done", answer: "工具后的答案" });
+    expect(texts(s.getState().items, "assistant")).toEqual(["工具前的旁白", "工具后的答案"]);
+    expect(roles(s.getState().items)).toEqual(["assistant", "tool", "reasoning", "assistant", "outcome"]);
+
+    // 同样的结构 + raw 为空：正文段没有被替换，但也不会补占位气泡。
+    const empty = stream();
+    empty.s.beginRun(1);
+    empty.s.pushEvent(1, { type: "delta", text: "streamed final" });
+    empty.s.pushEvent(1, { type: "reasoning", text: "trailing reasoning" });
+    empty.frames.runFrame();
+    empty.s.pushEvent(1, { type: "done", answer: "" });
+    expect(texts(empty.s.getState().items, "assistant")).toEqual(["streamed final"]);
+    expect(roles(empty.s.getState().items)).toEqual(["assistant", "reasoning", "outcome"]);
   });
 
   it("planSubmitted upgrades the closing bubble to a plan exactly once", () => {
