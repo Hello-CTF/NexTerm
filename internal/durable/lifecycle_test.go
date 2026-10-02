@@ -140,3 +140,82 @@ func TestKillRetryAfterSessionGoneCleansArtifacts(t *testing.T) {
 		t.Fatalf("kill-session calls = %d, want 1", killCalls)
 	}
 }
+
+func TestKillRecoversTombstoneAfterRename(t *testing.T) {
+	metadataCases := []struct {
+		name    string
+		data    []byte
+		present bool
+	}{
+		{name: "present", data: []byte("0\n"), present: true},
+		{name: "absent"},
+		{name: "malformed", data: []byte("not-an-exit-status\n"), present: true},
+	}
+	for _, restart := range []bool{false, true} {
+		recovery := "cleanup-retry"
+		if restart {
+			recovery = "daemon-restart"
+		}
+		for _, metadata := range metadataCases {
+			t.Run(recovery+"/"+metadata.name, func(t *testing.T) {
+				backend, runner := newUnitBackend(t)
+				touchUnitSocket(t, backend)
+				id := ids.New()
+				if err := os.Mkdir(backend.sessionDir(id), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(backend.recordingPath(id), []byte("raw"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if metadata.present {
+					if err := os.WriteFile(backend.recorderDonePath(id), metadata.data, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(backend.recorderDoneTempPath(id), []byte("pending\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(backend.sessionDir(id), backend.tombstonePath(id)); err != nil {
+					t.Fatal(err)
+				}
+
+				active := backend
+				activeRunner := runner
+				if restart {
+					var err error
+					active, err = New(Config{
+						Binary:         backend.binary,
+						SocketPath:     backend.socketPath,
+						StateDir:       backend.stateDir,
+						Namespace:      backend.namespace,
+						CommandTimeout: backend.commandTimeout,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					activeRunner = &fakeRunner{}
+					active.runner = activeRunner.run
+				}
+				installRecords(active, activeRunner)
+				for attempt := 0; attempt < 2; attempt++ {
+					ctx, cancel := context.WithTimeout(context.Background(), active.commandTimeout/10)
+					err := active.Kill(ctx, id)
+					cancel()
+					if err != nil {
+						t.Fatalf("Kill attempt %d: %v", attempt+1, err)
+					}
+					for _, path := range []string{active.sessionDir(id), active.tombstonePath(id)} {
+						if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+							t.Fatalf("artifact remains after Kill attempt %d at %s: %v", attempt+1, path, err)
+						}
+					}
+				}
+				for _, call := range activeRunner.recordedCalls() {
+					if len(call) > 0 && call[0] == "kill-session" {
+						t.Fatalf("tombstone recovery issued kill-session: %v", call)
+					}
+				}
+			})
+		}
+	}
+}

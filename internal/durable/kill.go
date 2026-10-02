@@ -16,18 +16,20 @@ func (b *Backend) finishKill(ctx context.Context, id string) error {
 }
 
 func (b *Backend) finishMissingKill(ctx context.Context, id string) error {
-	present, err := b.artifactsExist(id)
+	originalPresent, tombstonePresent, err := b.artifactPresence(id)
 	if err != nil {
 		return err
 	}
-	if !present {
+	if !originalPresent && !tombstonePresent {
 		if !b.wasKilled(id) {
 			return fmt.Errorf("%w: %s", ErrNotFound, id)
 		}
 		return nil
 	}
-	if err := b.waitForRecorder(ctx, id); err != nil {
-		return fmt.Errorf("tmux session is gone and recorder completion is pending: %w", err)
+	if originalPresent {
+		if err := b.waitForRecorder(ctx, id); err != nil {
+			return fmt.Errorf("tmux session is gone and recorder completion is pending: %w", err)
+		}
 	}
 	return b.removeArtifactsAndMark(id)
 }
@@ -51,17 +53,19 @@ func (b *Backend) waitForRecorder(ctx context.Context, id string) error {
 	}
 }
 
-func (b *Backend) artifactsExist(id string) (bool, error) {
-	for _, path := range []string{b.sessionDir(id), b.tombstonePath(id)} {
+func (b *Backend) artifactPresence(id string) (bool, bool, error) {
+	var present [2]bool
+	for index, path := range []string{b.sessionDir(id), b.tombstonePath(id)} {
 		_, err := os.Lstat(path)
 		if err == nil {
-			return true, nil
+			present[index] = true
+			continue
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("inspect durable artifacts for %s: %w", id, err)
+			return false, false, fmt.Errorf("inspect durable artifacts for %s: %w", id, err)
 		}
 	}
-	return false, nil
+	return present[0], present[1], nil
 }
 
 func (b *Backend) removeArtifactsAndMark(id string) error {
