@@ -98,6 +98,44 @@ func TestHiddenNeverInventsOrSendsAGrid(t *testing.T) {
 	assertCallCount(t, &calls, 2)
 }
 
+func TestHiddenTinyViewportDoesNotLeakOneCellGridOnResume(t *testing.T) {
+	transport := newControlledTransport()
+	model := newModel(t, grid.Config{Mode: grid.ModeController, Resize: transport.resize})
+	valid := grid.Grid{Cols: 93, Rows: 27}
+	mustSetDesired(t, model, valid)
+	initial := transport.next(t)
+	initial.finish(nil)
+	waitFor(t, func() bool { return model.Snapshot().CommittedGrid == valid })
+
+	if err := model.SetMode(grid.ModeHidden); err != nil {
+		t.Fatal(err)
+	}
+	beforeTiny := model.Snapshot().Revision
+	tiny := grid.Viewport{WidthPx: 1, HeightPx: 1}
+	if _, err := model.SetViewport(tiny, grid.CellMetrics{WidthPx: 10, HeightPx: 20}); err != nil {
+		t.Fatal(err)
+	}
+	hidden := model.Snapshot()
+	if hidden.ViewportPx != tiny {
+		t.Fatalf("hidden viewport = %+v, want %+v", hidden.ViewportPx, tiny)
+	}
+	if hidden.DesiredGrid != valid || hidden.Revision != beforeTiny {
+		t.Errorf("hidden tiny measurement changed intent: %+v", hidden)
+	}
+	transport.assertNoCall(t)
+
+	if err := model.SetMode(grid.ModeController); err != nil {
+		t.Fatal(err)
+	}
+	resumed := transport.next(t)
+	resumedGrid := resumed.grid
+	resumed.finish(nil)
+	if resumedGrid != valid {
+		t.Fatalf("resume transport grid = %+v, want preserved %+v; no 1x1 request is allowed", resumedGrid, valid)
+	}
+	transport.assertNoCall(t)
+}
+
 func TestHiddenCancelsWorkAndResumeFlushesLatest(t *testing.T) {
 	transport := newControlledTransport()
 	model := newModel(t, grid.Config{Mode: grid.ModeController, Resize: transport.resize})

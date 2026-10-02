@@ -10,9 +10,9 @@
 //
 // Controller mode schedules local intent. Observer mode accepts authoritative
 // grids but never invokes the transport. Hidden mode also suppresses transport
-// work and preserves the last valid desired grid across zero-sized viewport
-// measurements. Claim and transitions back to controller mode force a final
-// synchronization; Flush provides the pointer-up synchronization boundary.
+// work and preserves the last valid desired grid across zero-sized and sub-cell
+// viewport measurements. Claim and transitions back to controller mode force a
+// final synchronization; Flush provides the pointer-up synchronization boundary.
 //
 // Each model has at most one in-flight request and one pending request. A newer
 // intent replaces the pending request. Local revision numbers increase for

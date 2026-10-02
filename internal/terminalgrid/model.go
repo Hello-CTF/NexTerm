@@ -86,8 +86,9 @@ func (m *Model) snapshotLocked() Snapshot {
 }
 
 // SetViewport records the pixel viewport and schedules a newly computed grid.
-// Zero-sized measurements are recorded but preserve the last valid desired
-// grid. No transport request is derived from such a measurement.
+// Zero-sized measurements in any mode and sub-cell measurements while hidden
+// preserve the last valid desired grid. No transport request is derived from
+// such a measurement.
 func (m *Model) SetViewport(viewport Viewport, metrics CellMetrics) (uint64, error) {
 	grid, ok, err := GridForViewport(viewport, metrics)
 	if err != nil {
@@ -99,13 +100,17 @@ func (m *Model) SetViewport(viewport Viewport, metrics CellMetrics) (uint64, err
 		return 0, ErrClosed
 	}
 	m.viewport = viewport
-	if ok {
+	if ok && (m.mode != ModeHidden || hasWholeCell(viewport, metrics)) {
 		if err := m.setDesiredLocked(grid); err != nil {
 			return 0, err
 		}
 	}
 	m.notifyLocked()
 	return m.revision, nil
+}
+
+func hasWholeCell(viewport Viewport, metrics CellMetrics) bool {
+	return float64(viewport.WidthPx) >= metrics.WidthPx && float64(viewport.HeightPx) >= metrics.HeightPx
 }
 
 // SetDesired records and, in controller mode, schedules a validated grid.
