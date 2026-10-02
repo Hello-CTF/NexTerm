@@ -55,33 +55,47 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	}
 	total := info.Size()
 	var offset int64
+	targetExists := false
 	if options.Resume {
 		size, err := destination.Size(ctx, remotePath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		switch {
+		case err == nil:
+			if size < 0 {
+				return 0, fmt.Errorf("remote resume target has a negative size")
+			}
+			if size > total {
+				return 0, fmt.Errorf("remote resume target is larger than source (%d > %d)", size, total)
+			}
+			offset = size
+			targetExists = true
+		case errors.Is(err, os.ErrNotExist):
+		default:
 			return 0, err
 		}
-		if err == nil && size > 0 && size < total {
-			offset = size
-		}
+	}
+	if targetExists && offset == total {
+		reportTransferProgress(options, offset, total, true)
+		return offset, nil
 	}
 	if _, err := source.Seek(offset, io.SeekStart); err != nil {
-		return 0, err
+		return offset, err
 	}
 	target, err := destination.OpenWrite(ctx, remotePath, offset > 0)
 	if err != nil {
-		return 0, err
+		return offset, err
 	}
 	if err := verifyResumeOffset(target, offset); err != nil {
 		_ = target.Close()
-		return 0, err
+		return offset, err
 	}
 	return finishTransfer(ctx, source, target, offset, total, options)
 }
 
 func Download(ctx context.Context, source base.FileSystem, remotePath, localPath string, options TransferOptions) (int64, error) {
 	destination := New()
+	targetPath := destination.LocalPath(localPath)
 	if mapped, ok := source.(localPathMapper); ok {
-		if err := rejectSameFile(mapped.LocalPath(remotePath), localPath); err != nil {
+		if err := rejectSameFile(mapped.LocalPath(remotePath), targetPath); err != nil {
 			return 0, err
 		}
 	}
@@ -95,31 +109,49 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 		return 0, fmt.Errorf("download source %s has a negative size", remotePath)
 	}
 	var offset int64
+	targetExists := false
 	if options.Resume {
-		size, err := destination.Size(ctx, localPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		info, err := os.Stat(targetPath)
+		switch {
+		case err == nil:
+			if !info.Mode().IsRegular() {
+				return 0, fmt.Errorf("download resume target is not a regular file")
+			}
+			if info.Size() > total {
+				return 0, fmt.Errorf("local resume target is larger than remote file (%d > %d)", info.Size(), total)
+			}
+			offset = info.Size()
+			targetExists = true
+		case errors.Is(err, os.ErrNotExist):
+		default:
 			return 0, err
 		}
-		if err == nil && size > 0 && size < total {
-			offset = size
-		}
+	}
+	if targetExists && offset == total {
+		reportTransferProgress(options, offset, total, true)
+		return offset, nil
 	}
 	if offset > 0 {
 		if seeker, ok := remote.(io.Seeker); ok {
 			if _, err := seeker.Seek(offset, io.SeekStart); err != nil {
-				return 0, err
+				return offset, err
 			}
-		} else if _, err := io.CopyN(io.Discard, remote, offset); err != nil {
-			return 0, err
+		} else {
+			if _, err := io.CopyN(io.Discard, remote, offset); err != nil {
+				if errors.Is(err, io.EOF) {
+					return offset, io.ErrUnexpectedEOF
+				}
+				return offset, err
+			}
 		}
 	}
 	local, err := destination.OpenWrite(ctx, localPath, offset > 0)
 	if err != nil {
-		return 0, err
+		return offset, err
 	}
 	if err := verifyResumeOffset(local, offset); err != nil {
 		_ = local.Close()
-		return 0, err
+		return offset, err
 	}
 	return finishTransfer(ctx, remote, local, offset, total, options)
 }
@@ -150,33 +182,50 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 		}
 	}()
 	transferred = offset
+	if offset < 0 || total < 0 || offset > total {
+		return transferred, fmt.Errorf("invalid transfer bounds %d..%d", offset, total)
+	}
 	interval := options.ProgressInterval
 	if interval == 0 {
 		interval = 200 * time.Millisecond
 	}
 	lastReport := time.Now()
 	buffer := make([]byte, transferChunkSize)
-	for {
+	for transferred < total {
 		if err := ctx.Err(); err != nil {
 			return transferred, err
 		}
-		n, readErr := source.Read(buffer)
+		remaining := total - transferred
+		chunk := buffer
+		if int64(len(chunk)) > remaining {
+			chunk = chunk[:remaining]
+		}
+		n, readErr := source.Read(chunk)
+		if n < 0 || n > len(chunk) {
+			return transferred, fmt.Errorf("invalid read count %d", n)
+		}
 		if n > 0 {
-			written, writeErr := writeAll(target, buffer[:n])
+			written, writeErr := writeAll(target, chunk[:n])
 			transferred += written
 			if writeErr != nil {
 				return transferred, writeErr
 			}
 			if options.Progress != nil && interval > 0 && time.Since(lastReport) >= interval {
-				options.Progress(Progress{TaskID: options.TaskID, Transferred: transferred, Total: total})
+				reportTransferProgress(options, transferred, total, false)
 				lastReport = time.Now()
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
+			if transferred < total {
+				return transferred, io.ErrUnexpectedEOF
+			}
 			break
 		}
 		if readErr != nil {
 			return transferred, readErr
+		}
+		if n == 0 {
+			time.Sleep(time.Millisecond)
 		}
 	}
 	if err := target.Sync(); err != nil {
@@ -187,10 +236,14 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 		return transferred, err
 	}
 	closed = true
-	if options.Progress != nil {
-		options.Progress(Progress{TaskID: options.TaskID, Transferred: transferred, Total: total, Done: true})
-	}
+	reportTransferProgress(options, transferred, total, true)
 	return transferred, nil
+}
+
+func reportTransferProgress(options TransferOptions, transferred, total int64, done bool) {
+	if options.Progress != nil {
+		options.Progress(Progress{TaskID: options.TaskID, Transferred: transferred, Total: total, Done: done})
+	}
 }
 
 func writeAll(writer io.Writer, data []byte) (int64, error) {
