@@ -26,6 +26,10 @@ func New() *FileSystem {
 	return &FileSystem{}
 }
 
+func (f *FileSystem) LocalPath(path string) string {
+	return real(path)
+}
+
 func real(path string) string {
 	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, `~\`) {
 		return path

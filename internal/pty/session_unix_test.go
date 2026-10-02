@@ -92,6 +92,19 @@ func TestSessionCloseKillsProcessTreeAndIsIdempotent(t *testing.T) {
 	assertSessionProcessGone(t, pid)
 }
 
+func TestSessionWaitPreservesDeadlineCause(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	session, err := Start(ctx, Config{Path: "/bin/sh", Args: []string{"-lc", "sleep 1000"}, Env: testEnvironment(), Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.Wait(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait error = %v", err)
+	}
+}
+
 func TestSessionRejectsInvalidDimensions(t *testing.T) {
 	for _, size := range [][2]uint32{{0, 1025}, {1025, 24}} {
 		if _, err := Start(context.Background(), Config{Path: "/bin/sh", Cols: size[0], Rows: size[1]}); err == nil {

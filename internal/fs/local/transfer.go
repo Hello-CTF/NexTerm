@@ -27,9 +27,17 @@ type TransferOptions struct {
 	Progress         func(Progress)
 }
 
+type localPathMapper interface {
+	LocalPath(path string) string
+}
+
+type currentSizer interface {
+	CurrentSize() (int64, error)
+}
+
 func Upload(ctx context.Context, localPath string, destination base.FileSystem, remotePath string, options TransferOptions) (int64, error) {
-	if _, ok := destination.(*FileSystem); ok {
-		if err := rejectSameFile(localPath, real(remotePath)); err != nil {
+	if mapped, ok := destination.(localPathMapper); ok {
+		if err := rejectSameFile(localPath, mapped.LocalPath(remotePath)); err != nil {
 			return 0, err
 		}
 	}
@@ -41,6 +49,9 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	info, err := source.Stat()
 	if err != nil {
 		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("upload source %s is not a regular file", localPath)
 	}
 	total := info.Size()
 	var offset int64
@@ -60,13 +71,17 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	if err != nil {
 		return 0, err
 	}
+	if err := verifyResumeOffset(target, offset); err != nil {
+		_ = target.Close()
+		return 0, err
+	}
 	return finishTransfer(ctx, source, target, offset, total, options)
 }
 
 func Download(ctx context.Context, source base.FileSystem, remotePath, localPath string, options TransferOptions) (int64, error) {
 	destination := New()
-	if _, ok := source.(*FileSystem); ok {
-		if err := rejectSameFile(real(remotePath), localPath); err != nil {
+	if mapped, ok := source.(localPathMapper); ok {
+		if err := rejectSameFile(mapped.LocalPath(remotePath), localPath); err != nil {
 			return 0, err
 		}
 	}
@@ -76,6 +91,9 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 	}
 	defer remote.Close()
 	total := remote.Size()
+	if total < 0 {
+		return 0, fmt.Errorf("download source %s has a negative size", remotePath)
+	}
 	var offset int64
 	if options.Resume {
 		size, err := destination.Size(ctx, localPath)
@@ -99,7 +117,29 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 	if err != nil {
 		return 0, err
 	}
+	if err := verifyResumeOffset(local, offset); err != nil {
+		_ = local.Close()
+		return 0, err
+	}
 	return finishTransfer(ctx, remote, local, offset, total, options)
+}
+
+func verifyResumeOffset(target base.RemoteWriter, offset int64) error {
+	if offset == 0 {
+		return nil
+	}
+	sizer, ok := target.(currentSizer)
+	if !ok {
+		return nil
+	}
+	size, err := sizer.CurrentSize()
+	if err != nil {
+		return err
+	}
+	if size != offset {
+		return fmt.Errorf("resume offset changed: got %d bytes, expected %d", size, offset)
+	}
+	return nil
 }
 
 func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWriter, offset, total int64, options TransferOptions) (transferred int64, err error) {
@@ -122,10 +162,11 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 		}
 		n, readErr := source.Read(buffer)
 		if n > 0 {
-			if err := writeAll(target, buffer[:n]); err != nil {
-				return transferred, err
+			written, writeErr := writeAll(target, buffer[:n])
+			transferred += written
+			if writeErr != nil {
+				return transferred, writeErr
 			}
-			transferred += int64(n)
 			if options.Progress != nil && interval > 0 && time.Since(lastReport) >= interval {
 				options.Progress(Progress{TaskID: options.TaskID, Transferred: transferred, Total: total})
 				lastReport = time.Now()
@@ -152,26 +193,31 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 	return transferred, nil
 }
 
-func writeAll(writer io.Writer, data []byte) error {
+func writeAll(writer io.Writer, data []byte) (int64, error) {
+	var written int64
 	for len(data) > 0 {
 		n, err := writer.Write(data)
+		if n < 0 || n > len(data) {
+			return written, fmt.Errorf("invalid write count %d", n)
+		}
 		if n > 0 {
+			written += int64(n)
 			data = data[n:]
 		}
 		if err != nil {
-			return err
+			return written, err
 		}
 		if n == 0 {
-			return io.ErrShortWrite
+			return written, io.ErrShortWrite
 		}
 	}
-	return nil
+	return written, nil
 }
 
 func rejectSameFile(sourcePath, targetPath string) error {
 	source, err := os.Stat(sourcePath)
 	if err != nil {
-		return nil
+		return err
 	}
 	target, err := os.Stat(targetPath)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -105,11 +106,20 @@ func TestTransferRejectsSameFileAndCancellation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Upload(context.Background(), path, filesystem, path, TransferOptions{}); err == nil {
-		t.Fatal("same-file upload unexpectedly succeeded")
+	decorated := &struct{ *FileSystem }{FileSystem: filesystem}
+	targets := []string{path}
+	hardlink := path + ".hardlink"
+	if err := os.Link(path, hardlink); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := Download(context.Background(), filesystem, path, path, TransferOptions{}); err == nil {
-		t.Fatal("same-file download unexpectedly succeeded")
+	targets = append(targets, hardlink)
+	for _, target := range targets {
+		if _, err := Upload(context.Background(), path, decorated, target, TransferOptions{}); err == nil {
+			t.Fatalf("same-file upload to %s unexpectedly succeeded", target)
+		}
+		if _, err := Download(context.Background(), decorated, target, path, TransferOptions{}); err == nil {
+			t.Fatalf("same-file download from %s unexpectedly succeeded", target)
+		}
 	}
 	assertBytes(t, path, []byte("keep"))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -140,6 +150,50 @@ func TestUploadResumeDoesNotOverwriteAfterSizeError(t *testing.T) {
 		t.Fatalf("Upload error = %v", err)
 	}
 	assertBytes(t, remote, []byte("keep"))
+}
+
+func TestFinishTransferCountsPartialWriteBeforeError(t *testing.T) {
+	writeErr := errors.New("write failed")
+	target := &errorAfterWrite{err: writeErr}
+	transferred, err := finishTransfer(context.Background(), strings.NewReader("abcdef"), target, 0, 6, TransferOptions{})
+	if !errors.Is(err, writeErr) || transferred != 3 {
+		t.Fatalf("finishTransfer = %d, %v", transferred, err)
+	}
+}
+
+func TestVerifyResumeOffset(t *testing.T) {
+	filesystem := New()
+	path := filepath.Join(t.TempDir(), "offset")
+	if err := os.WriteFile(path, []byte("1234"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target, err := filesystem.OpenWrite(context.Background(), path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	if err := verifyResumeOffset(target, 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyResumeOffset(target, 3); err == nil {
+		t.Fatal("mismatched offset unexpectedly succeeded")
+	}
+}
+
+type errorAfterWrite struct {
+	err error
+}
+
+func (w *errorAfterWrite) Write(p []byte) (int, error) {
+	return 3, w.err
+}
+
+func (w *errorAfterWrite) Sync() error {
+	return nil
+}
+
+func (w *errorAfterWrite) Close() error {
+	return nil
 }
 
 type failingSizeFS struct {

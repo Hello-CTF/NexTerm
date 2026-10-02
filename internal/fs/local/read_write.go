@@ -169,6 +169,14 @@ func (w *writer) Write(p []byte) (int, error) {
 	return w.file.Write(p)
 }
 
+func (w *writer) CurrentSize() (int64, error) {
+	info, err := w.file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
 func (w *writer) Sync() error {
 	return w.file.Sync()
 }

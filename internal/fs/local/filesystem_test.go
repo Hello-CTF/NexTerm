@@ -244,7 +244,7 @@ func assertFileContent(t *testing.T, path, want string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(got)) != want && string(got) != want {
+	if strings.Compare(string(got), want) != 0 {
 		t.Fatalf("%s = %q, want %q", path, got, want)
 	}
 }

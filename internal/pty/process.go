@@ -16,20 +16,17 @@ type processTree interface {
 }
 
 type Process struct {
-	pid     int
-	tree    processTree
-	done    chan struct{}
-	waitErr error
-	mu      sync.Mutex
-	doneful bool
+	pid        int
+	tree       processTree
+	done       chan struct{}
+	waitErr    error
+	cleanupErr error
+	mu         sync.Mutex
+	terminated bool
 }
 
 func StartProcess(cmd *exec.Cmd) (*Process, error) {
-	prepareCommand(cmd)
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	return newStartedProcess(cmd)
+	return startProcess(cmd)
 }
 
 func newStartedProcess(cmd *exec.Cmd) (*Process, error) {
@@ -39,17 +36,25 @@ func newStartedProcess(cmd *exec.Cmd) (*Process, error) {
 		_ = cmd.Wait()
 		return nil, err
 	}
-	p := &Process{pid: cmd.Process.Pid, tree: tree, done: make(chan struct{})}
-	go p.wait(cmd)
-	return p, nil
+	return newProcess(cmd.Process.Pid, tree, cmd.Wait), nil
 }
 
-func (p *Process) wait(cmd *exec.Cmd) {
-	err := cmd.Wait()
+func newProcess(pid int, tree processTree, wait func() error) *Process {
+	p := &Process{pid: pid, tree: tree, done: make(chan struct{})}
+	go p.wait(wait)
+	return p
+}
+
+func (p *Process) wait(wait func() error) {
+	err := wait()
 	p.mu.Lock()
 	p.waitErr = exitError(err)
-	p.doneful = true
-	_ = p.tree.Close()
+	killErr := p.tree.Kill()
+	if errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
+	}
+	p.cleanupErr = errors.Join(killErr, p.tree.Close())
+	p.terminated = true
 	close(p.done)
 	p.mu.Unlock()
 }
@@ -61,6 +66,9 @@ func (p *Process) PID() int {
 func (p *Process) Wait(ctx context.Context) error {
 	select {
 	case <-p.done:
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		return p.waitErr
 	case <-ctx.Done():
 		return context.Cause(ctx)
@@ -70,7 +78,7 @@ func (p *Process) Wait(ctx context.Context) error {
 func (p *Process) Kill() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.doneful {
+	if p.terminated {
 		return nil
 	}
 	err := p.tree.Kill()
@@ -78,6 +86,12 @@ func (p *Process) Kill() error {
 		return nil
 	}
 	return err
+}
+
+func (p *Process) CleanupError() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cleanupErr
 }
 
 func exitError(err error) error {

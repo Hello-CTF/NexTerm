@@ -9,6 +9,14 @@ import (
 	"syscall"
 )
 
+func startProcess(cmd *exec.Cmd) (*Process, error) {
+	prepareCommand(cmd)
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return newStartedProcess(cmd)
+}
+
 func prepareCommand(cmd *exec.Cmd) {
 	attrs := &syscall.SysProcAttr{}
 	if cmd.SysProcAttr != nil {

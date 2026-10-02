@@ -66,6 +66,28 @@ func TestExecTimeoutKillsProcessTree(t *testing.T) {
 	assertProcessGone(t, pid)
 }
 
+func TestExecParentExitStillCleansChildren(t *testing.T) {
+	transport := unixTransport(t)
+	pidPath := filepath.Join(t.TempDir(), "orphan.pid")
+	command := fmt.Sprintf("sleep 1000 >/dev/null 2>&1 & child=$!; printf '%%s' \"$child\" > %s; exit 0", shellQuote(pidPath))
+	result, err := transport.Exec(context.Background(), command, base.ExecOptions{Timeout: 5 * time.Second})
+	if err != nil || result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("Exec = %#v, %v", result, err)
+	}
+	assertProcessGone(t, readPID(t, pidPath))
+}
+
+func TestExecParentExitClosesInheritedPipes(t *testing.T) {
+	transport := unixTransport(t)
+	pidPath := filepath.Join(t.TempDir(), "pipe-child.pid")
+	command := fmt.Sprintf("sleep 1000 & child=$!; printf '%%s' \"$child\" > %s; exit 0", shellQuote(pidPath))
+	result, err := transport.Exec(context.Background(), command, base.ExecOptions{Timeout: 5 * time.Second})
+	if err != nil || result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("Exec = %#v, %v", result, err)
+	}
+	assertProcessGone(t, readPID(t, pidPath))
+}
+
 func TestExecContextCancellation(t *testing.T) {
 	transport := unixTransport(t)
 	ctx, cancel := context.WithCancel(context.Background())

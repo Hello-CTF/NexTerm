@@ -55,6 +55,10 @@ func (t *unixTerminal) Kill() error {
 	return t.process.Kill()
 }
 
+func (t *unixTerminal) CleanupError() error {
+	return t.process.CleanupError()
+}
+
 func (t *unixTerminal) PID() int {
 	return t.process.PID()
 }

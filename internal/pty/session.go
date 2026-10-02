@@ -33,6 +33,7 @@ type terminal interface {
 	Resize(cols, rows uint32) error
 	Wait(ctx context.Context) error
 	Kill() error
+	CleanupError() error
 	PID() int
 }
 
@@ -40,13 +41,15 @@ type Session struct {
 	terminal   terminal
 	ctx        context.Context
 	cancel     context.CancelFunc
-	stop       func() bool
 	id         string
 	generation uint64
 	onClose    func()
 	writeMu    sync.Mutex
 	closeOnce  sync.Once
 	closeErr   error
+	stopMu     sync.Mutex
+	stop       func() bool
+	closed     bool
 }
 
 func Start(ctx context.Context, config Config) (*Session, error) {
@@ -81,8 +84,19 @@ func Start(ctx context.Context, config Config) (*Session, error) {
 		generation: config.Generation,
 		onClose:    config.OnClose,
 	}
-	s.stop = context.AfterFunc(sessionCtx, func() { _ = s.Close() })
+	s.setStop(context.AfterFunc(sessionCtx, func() { _ = s.Close() }))
 	return s, nil
+}
+
+func (s *Session) setStop(stop func() bool) {
+	s.stopMu.Lock()
+	if s.closed {
+		s.stopMu.Unlock()
+		stop()
+		return
+	}
+	s.stop = stop
+	s.stopMu.Unlock()
 }
 
 func (s *Session) Read(p []byte) (int, error) {
@@ -110,13 +124,17 @@ func (s *Session) Resize(ctx context.Context, cols, rows uint32) error {
 }
 
 func (s *Session) Wait(ctx context.Context) error {
-	waitCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(s.ctx, cancel)
+	waitCtx, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(s.ctx, func() { cancel(context.Cause(s.ctx)) })
 	defer func() {
 		stop()
-		cancel()
+		cancel(nil)
 	}()
-	return s.terminal.Wait(waitCtx)
+	err := s.terminal.Wait(waitCtx)
+	if cause := context.Cause(s.ctx); cause != nil {
+		return cause
+	}
+	return err
 }
 
 func (s *Session) CloseWrite() error {
@@ -137,24 +155,41 @@ func (s *Session) PID() int {
 
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
-		if s.stop != nil {
-			s.stop()
+		s.stopMu.Lock()
+		s.closed = true
+		stop := s.stop
+		s.stopMu.Unlock()
+		if stop != nil {
+			stop()
 		}
 		s.cancel()
 		killErr := s.terminal.Kill()
 		closeErr := s.terminal.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = s.terminal.Wait(ctx)
+		waitErr := s.terminal.Wait(ctx)
 		cancel()
-		s.closeErr = errors.Join(killErr, closeErr)
+		var exitErr *base.ExitError
+		if errors.As(waitErr, &exitErr) {
+			waitErr = nil
+		}
+		s.closeErr = errors.Join(
+			normalizeCloseError(killErr),
+			normalizeCloseError(closeErr),
+			normalizeCloseError(waitErr),
+			s.terminal.CleanupError(),
+		)
 		if s.onClose != nil {
 			s.onClose()
 		}
 	})
-	if errors.Is(s.closeErr, os.ErrProcessDone) {
+	return s.closeErr
+}
+
+func normalizeCloseError(err error) error {
+	if errors.Is(err, os.ErrProcessDone) || errors.Is(err, os.ErrClosed) {
 		return nil
 	}
-	return s.closeErr
+	return err
 }
 
 func validateSize(cols, rows uint32) error {

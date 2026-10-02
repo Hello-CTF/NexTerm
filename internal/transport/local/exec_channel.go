@@ -89,12 +89,16 @@ func (c *execChannel) Resize(ctx context.Context, cols, rows uint32) error {
 
 func (c *execChannel) Wait(ctx context.Context) error {
 	waitCtx, cancel := context.WithCancelCause(ctx)
-	stop := context.AfterFunc(c.ctx, func() { cancel(c.ctx.Err()) })
+	stop := context.AfterFunc(c.ctx, func() { cancel(context.Cause(c.ctx)) })
 	defer func() {
 		stop()
 		cancel(nil)
 	}()
-	return c.process.Wait(waitCtx)
+	err := c.process.Wait(waitCtx)
+	if cause := context.Cause(c.ctx); cause != nil {
+		return cause
+	}
+	return err
 }
 
 func (c *execChannel) CloseWrite() error {
@@ -112,9 +116,13 @@ func (c *execChannel) Close() error {
 		stdoutErr := closeFile(c.stdout)
 		stderrErr := closeFile(c.stderr)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = c.process.Wait(ctx)
+		waitErr := c.process.Wait(ctx)
 		cancel()
-		c.closeErr = errors.Join(killErr, stdinErr, stdoutErr, stderrErr)
+		var exitErr *base.ExitError
+		if errors.As(waitErr, &exitErr) {
+			waitErr = nil
+		}
+		c.closeErr = errors.Join(killErr, stdinErr, stdoutErr, stderrErr, waitErr, c.process.CleanupError())
 	})
 	return c.closeErr
 }

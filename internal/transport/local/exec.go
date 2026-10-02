@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -78,6 +77,7 @@ func (t *Transport) Exec(ctx context.Context, command string, options base.ExecO
 		}
 	}
 	wg.Wait()
+	waitErr = channel.Wait(ctx)
 	close(copyErrors)
 	result := base.ExecResult{
 		Stdout:    strings.ToValidUTF8(stdout.String(), "\uFFFD"),
@@ -97,7 +97,7 @@ func (t *Transport) Exec(ctx context.Context, command string, options base.ExecO
 	code := 0
 	result.ExitCode = &code
 	for copyErr := range copyErrors {
-		if copyErr != nil && !errors.Is(copyErr, os.ErrClosed) {
+		if copyErr != nil {
 			return result, fmt.Errorf("read local exec output: %w", copyErr)
 		}
 	}
