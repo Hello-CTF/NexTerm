@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
-import { dimensionsForControllerClaim, resolveWinrmMode } from "./terminalPolicy";
+import { TerminalKeysBar } from "./TerminalKeysBar";
+import { resolveWinrmMode } from "./terminalPolicy";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type TerminalControlEvent } from "../../ipc/events";
@@ -51,6 +52,12 @@ export interface TerminalPaneProps {
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 
+type GridControlEvent = TerminalControlEvent & {
+  cols?: number;
+  rows?: number;
+  gridRevision?: number;
+};
+
 /** 命令块数量达到这个值就自动展开侧栏（3 条以上已经值得一眼看到）。 */
 const AUTO_OPEN_BLOCKS = 3;
 
@@ -92,6 +99,11 @@ export function TerminalPane({
     /** 观看设备数（按 clientId 去重）：徽章「N 个设备正在观看」用它。 */
     viewers: number;
     exited: boolean;
+  } | null>(null);
+  const [remoteGrid, setRemoteGrid] = useState<{
+    cols: number;
+    rows: number;
+    revision: number;
   } | null>(null);
   const [claiming, setClaiming] = useState(false);
   /**
@@ -275,10 +287,8 @@ export function TerminalPane({
       setControl((c) =>
         c ? { ...c, controller: me } : { controller: me, subscribers: 1, viewers: 1, exited: false },
       );
-      // 接管前我们是观察者，一直没敢调 resize，本地尺寸和服务端 PTY 可能不一致；
-      // 先按当前宿主重新 fit，再主动把尺寸推过去，否则新敲的命令会按旧宽度换行。
-      const dims = dimensionsForControllerClaim(handleRef.current);
-      if (dims) await terminalApi.resize(kernelTabId, dims.cols, dims.rows).catch(() => undefined);
+      // 接管前本地目标尺寸可能与服务端不同；统一由网格协调器发送一次最新值。
+      handleRef.current?.fit();
       pushToast("success", prev && prev !== me ? "已接管控制权（对方转为只读观看）" : "已取得控制权");
     } catch (e) {
       pushToast("error", `接管失败：${describeError(e)}`);
@@ -300,7 +310,7 @@ export function TerminalPane({
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
-    void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, (p) => {
+    void listenEvent<GridControlEvent>(EVENTS.terminalControl, (p) => {
       if (p.tabId !== kernelTabIdRef.current) return;
       setControl({
         controller: p.controller,
@@ -308,6 +318,14 @@ export function TerminalPane({
         viewers: p.viewers,
         exited: p.exited,
       });
+      if (
+        typeof p.gridRevision === "number" &&
+        p.gridRevision > 0 &&
+        typeof p.cols === "number" &&
+        typeof p.rows === "number"
+      ) {
+        setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
+      }
     }).then((off) => {
       // 订阅是异步建立的：卸载可能先于它完成，此时立刻注销，别留悬挂订阅。
       if (cancelled) off();
@@ -366,6 +384,7 @@ export function TerminalPane({
       useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: undefined, dead: false });
       resumeRef.current = undefined;
       setControl(null);
+      setRemoteGrid(null);
       setAttachDead(false);
       setKernelTabId(null);
       setEpoch((n) => n + 1);
@@ -777,7 +796,7 @@ export function TerminalPane({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="nx-terminal-body flex min-h-0 flex-1">
         {/* 终端内容区接右键；菜单本身渲染在组件末尾（fixed 定位，不占布局）。
             relative 是为了让观察者遮罩能绝对定位盖住 xterm。 */}
         <div className="relative min-h-0 min-w-0 flex-1" onContextMenu={openTerminalMenu}>
@@ -795,6 +814,7 @@ export function TerminalPane({
               // 观察者不调 resize：会报 not_controller，而且会按自己的窗口尺寸
               // 把正在操作那端的 PTY 重排。
               canResize={canResize}
+              remoteGrid={remoteGrid ?? undefined}
               visible={visible}
               // 用户按键统一走 sendData：它把 not_controller 当"别人正在操作"处理，
               // 而不是当错误弹框。
@@ -945,6 +965,10 @@ export function TerminalPane({
         )}
       </div>
 
+      <TerminalKeysBar
+        onSend={(data) => void sendData(data)}
+        onFocus={() => handleRef.current?.focus()}
+      />
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
