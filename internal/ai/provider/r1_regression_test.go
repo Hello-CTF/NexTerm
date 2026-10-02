@@ -50,6 +50,7 @@ func TestBlockTextPartContentRegression(t *testing.T) {
 type countingReadCloser struct {
 	reader io.Reader
 	read   atomic.Int64
+	closed atomic.Int32
 }
 
 func (b *countingReadCloser) Read(target []byte) (int, error) {
@@ -59,6 +60,7 @@ func (b *countingReadCloser) Read(target []byte) (int, error) {
 }
 
 func (b *countingReadCloser) Close() error {
+	b.closed.Add(1)
 	return nil
 }
 

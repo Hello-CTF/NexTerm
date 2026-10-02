@@ -17,9 +17,12 @@ type wireTransport struct {
 	base http.RoundTripper
 }
 
-type boundedReadCloser struct {
-	io.Reader
-	io.Closer
+type terminalErrorReader struct {
+	err error
+}
+
+func (r terminalErrorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -32,12 +35,17 @@ func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		return nil, err
 	}
 	response, err := t.base.RoundTrip(normalized)
-	if err != nil || response == nil {
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
 		return response, err
 	}
+	if response == nil {
+		return response, nil
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		response.Body = &boundedReadCloser{Reader: io.LimitReader(response.Body, maxErrorBody), Closer: response.Body}
-		response.ContentLength = -1
+		closeErrorBody(response)
 		return response, nil
 	}
 	if state.streaming {
@@ -51,6 +59,21 @@ func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 	response.Body = body
 	return response, nil
+}
+
+func closeErrorBody(response *http.Response) {
+	if response.Body == nil {
+		response.Body = http.NoBody
+	}
+	body := response.Body
+	raw, readErr := io.ReadAll(io.LimitReader(body, maxErrorBody))
+	_ = body.Close()
+	response.ContentLength = int64(len(raw))
+	if readErr != nil {
+		response.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), terminalErrorReader{err: readErr}))
+		return
+	}
+	response.Body = io.NopCloser(bytes.NewReader(raw))
 }
 
 func normalizeChatRequest(request *http.Request) (*http.Request, error) {
