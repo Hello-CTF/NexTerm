@@ -241,6 +241,53 @@ func TestGoToGoHTTPPushPullAndTokenRotation(t *testing.T) {
 		t.Fatalf("HTTP pull did not apply remote row: %+v", local)
 	}
 
+	local.Name = "source-before-delete"
+	local.UpdatedAt = 100
+	putTestAsset(t, source, local)
+	remote.Name = "target-edit-200"
+	remote.UpdatedAt = 200
+	putTestAsset(t, target, remote)
+	if err := source.db.AssetDelete(ctx, asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	deletedSource, _ := source.db.AssetGet(ctx, asset.ID)
+	if deletedSource.UpdatedAt != 100 || deletedSource.DeletedAt == nil {
+		t.Fatalf("real delete fixture advanced updated_at or lost deleted_at: %+v", deletedSource)
+	}
+	report, err = client.Push(ctx, PushRequest{AssetIDs: []string{asset.ID}, WithCredentials: true})
+	if err != nil || report.SkippedNewer != 0 || report.AssetsUpdated != 1 {
+		t.Fatalf("HTTP delete-versus-edit push report=%+v err=%v", report, err)
+	}
+	remote, _ = target.db.AssetGet(ctx, asset.ID)
+	if remote.DeletedAt == nil || remote.UpdatedAt != 100 {
+		t.Fatalf("HTTP push did not accept newer tombstone: %+v", remote)
+	}
+
+	remote.DeletedAt = nil
+	remote.Name = "remote-live-200"
+	remote.UpdatedAt = 200
+	putTestAsset(t, target, remote)
+	report, err = client.Pull(ctx, PullRequest{AssetIDs: []string{asset.ID}, WithCredentials: true})
+	if err != nil || report.SkippedNewer != 1 || report.CredsUpdated != 0 || report.AssetsUpdated != 0 {
+		t.Fatalf("HTTP older-live pull report=%+v err=%v", report, err)
+	}
+	local, _ = source.db.AssetGet(ctx, asset.ID)
+	if local.DeletedAt == nil {
+		t.Fatal("HTTP pull resurrected a newer local tombstone with an older live row")
+	}
+
+	remote.Name = "remote-resurrect-newer"
+	remote.UpdatedAt = *local.DeletedAt + 100
+	putTestAsset(t, target, remote)
+	report, err = client.Pull(ctx, PullRequest{AssetIDs: []string{asset.ID}, WithCredentials: true})
+	if err != nil || report.SkippedNewer != 0 || report.AssetsUpdated != 1 {
+		t.Fatalf("HTTP newer-live pull report=%+v err=%v", report, err)
+	}
+	local, _ = source.db.AssetGet(ctx, asset.ID)
+	if local.DeletedAt != nil || local.Name != "remote-resurrect-newer" {
+		t.Fatalf("HTTP newer live row did not resurrect: %+v", local)
+	}
+
 	newToken, _ := target.service.RotateToken(ctx)
 	_, err = client.RemoteDigest(ctx)
 	requireCode(t, err, ipc.CodeForbidden)

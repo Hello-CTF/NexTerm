@@ -22,27 +22,45 @@ func (s *Service) Import(ctx context.Context, request ImportRequest) (ImportRepo
 		return ImportReport{}, ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}
 	report := ImportReport{Warnings: append([]string{}, bundle.Warnings...)}
+	assetDecisions := s.planAssets(ctx, bundle.Assets, request.Force)
 	s.importGroups(ctx, bundle.Groups, &report)
-	s.importCredentials(ctx, bundle.Credentials, &report)
-	s.importAssets(ctx, bundle.Assets, request.Force, &report)
+	s.importCredentials(ctx, bundle.Credentials, bundle.Assets, assetDecisions, &report)
+	s.importAssets(ctx, bundle.Assets, assetDecisions, &report)
 	return report, nil
 }
 
 func (s *Service) importGroups(ctx context.Context, groups []GroupPayload, report *ImportReport) {
 	ordered, warnings := orderGroups(groups)
 	report.Warnings = append(report.Warnings, warnings...)
+	if len(ordered) == 0 {
+		return
+	}
+	existing, err := s.store.GroupList(ctx)
+	if err != nil {
+		report.Refused += len(ordered)
+		report.Warnings = append(report.Warnings, fmt.Sprintf("无法读取本机分组拓扑，已拒绝全部分组导入: %v", err))
+		return
+	}
+	parents := make(map[string]*string, len(existing)+len(ordered))
+	for _, group := range existing {
+		parents[group.ID] = group.ParentID
+	}
 	for _, group := range ordered {
 		if group.ParentID != nil {
 			if strings.TrimSpace(*group.ParentID) == "" {
 				group.ParentID = nil
-			} else if _, err := s.store.GroupGet(ctx, *group.ParentID); isNotFound(err) {
+			} else if _, exists := parents[*group.ParentID]; !exists {
 				report.Warnings = append(report.Warnings, fmt.Sprintf("分组 %s 的父级 %s 不存在，已按顶级分组导入", group.ID, *group.ParentID))
 				group.ParentID = nil
-			} else if err != nil {
-				report.Refused++
-				report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查分组 %s 的父级: %v", group.ID, err))
-				continue
 			}
+		}
+		switch mergedGroupTopology(group.ID, group.ParentID, parents) {
+		case groupTopologyCycle:
+			report.Warnings = append(report.Warnings, fmt.Sprintf("分组 %s 的父级会在本机与同步拓扑合并后形成循环，已按顶级分组导入", group.ID))
+			group.ParentID = nil
+		case groupTopologyTooDeep:
+			report.Warnings = append(report.Warnings, fmt.Sprintf("分组 %s 合并本机拓扑后的祖先链超过 64 层，已按顶级分组导入", group.ID))
+			group.ParentID = nil
 		}
 		created, err := s.store.GroupUpsert(ctx, group.ID, group.ParentID, group.Name, group.Sort, group.CreatedAt, group.UpdatedAt)
 		if err != nil {
@@ -50,6 +68,7 @@ func (s *Service) importGroups(ctx context.Context, groups []GroupPayload, repor
 			report.Warnings = append(report.Warnings, fmt.Sprintf("分组 %s 导入失败: %v", group.ID, err))
 			continue
 		}
+		parents[group.ID] = group.ParentID
 		if created {
 			report.GroupsCreated++
 		} else {
@@ -106,11 +125,16 @@ func orderGroups(groups []GroupPayload) ([]GroupPayload, []string) {
 	return ordered, warnings
 }
 
-func (s *Service) importCredentials(ctx context.Context, credentials []CredentialPayload, report *ImportReport) {
+func (s *Service) importCredentials(ctx context.Context, credentials []CredentialPayload, assets []AssetPayload, decisions []assetDecision, report *ImportReport) {
+	blocked := blockedCredentials(assets, decisions)
 	for _, credential := range credentials {
 		if strings.TrimSpace(credential.ID) == "" {
 			report.Refused++
 			report.Warnings = append(report.Warnings, "拒绝了 ID 为空的凭据")
+			continue
+		}
+		if blocked[credential.ID] {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变", credential.ID))
 			continue
 		}
 		_, err := s.store.CredentialGetRow(ctx, credential.ID)
@@ -156,23 +180,18 @@ func warnMissingReferencedKey(credential CredentialPayload, report *ImportReport
 	}
 }
 
-func (s *Service) importAssets(ctx context.Context, assets []AssetPayload, force bool, report *ImportReport) {
-	for _, asset := range assets {
-		local, err := s.store.AssetGet(ctx, asset.ID)
-		exists := err == nil
-		if err != nil && !isNotFound(err) {
-			report.Refused++
-			report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查资产 %s: %v", asset.ID, err))
-			continue
-		}
-		if asset.ID == store.BuiltinLocalAssetID || (exists && local.Builtin) {
-			report.Refused++
-			report.Warnings = append(report.Warnings, "内置「当前设备」不接受同步覆盖")
-			continue
-		}
-		if exists && local.UpdatedAt > asset.UpdatedAt && !force {
-			report.SkippedNewer++
-			report.Warnings = append(report.Warnings, fmt.Sprintf("资产 %s 的本机版本较新，已跳过；如需覆盖请使用强制同步", asset.ID))
+func (s *Service) importAssets(ctx context.Context, assets []AssetPayload, decisions []assetDecision, report *ImportReport) {
+	for i, asset := range assets {
+		decision := decisions[i]
+		if decision.acceptance != assetAccepted {
+			if decision.acceptance == assetSkippedNewer {
+				report.SkippedNewer++
+			} else {
+				report.Refused++
+			}
+			if decision.warning != "" {
+				report.Warnings = append(report.Warnings, decision.warning)
+			}
 			continue
 		}
 

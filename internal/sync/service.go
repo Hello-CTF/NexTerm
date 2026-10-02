@@ -228,7 +228,7 @@ func (s *Service) Digest(ctx context.Context) (Digest, error) {
 		}
 		digest.Assets = append(digest.Assets, DigestEntry{
 			ID: asset.ID, Name: asset.Name, Kind: asset.Kind, Host: asset.Host,
-			Username: asset.Username, UpdatedAt: asset.UpdatedAt, DeletedAt: asset.DeletedAt,
+			Username: asset.Username, UpdatedAt: effectiveRevision(asset.UpdatedAt, asset.DeletedAt), DeletedAt: asset.DeletedAt,
 			HasCred: asset.CredID != nil, GroupID: asset.GroupID,
 		})
 	}
