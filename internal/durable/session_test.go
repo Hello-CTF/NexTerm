@@ -70,7 +70,7 @@ func TestDetachUnblocksReadWithoutKilling(t *testing.T) {
 	}
 }
 
-func TestDeadSessionDrainsLateOutputBeforeEOF(t *testing.T) {
+func TestDeadSessionCompletionAfterQuietWindow(t *testing.T) {
 	backend, runner := newUnitBackend(t)
 	touchUnitSocket(t, backend)
 	current := unitRecord(backend, ids.New())
@@ -84,12 +84,13 @@ func TestDeadSessionDrainsLateOutputBeforeEOF(t *testing.T) {
 			return nil, nil
 		}
 		discoveries++
-		if discoveries == 2 {
+		if discoveries == 3 {
 			file, err := os.OpenFile(backend.recordingPath(current.info.ID), os.O_APPEND|os.O_WRONLY, 0)
 			if err != nil {
 				return nil, err
 			}
-			if _, err := file.Write([]byte("final")); err != nil {
+			final := append([]byte("final"), completionMarker(current.info.ID)...)
+			if _, err := file.Write(final); err != nil {
 				_ = file.Close()
 				return nil, err
 			}
@@ -108,7 +109,7 @@ func TestDeadSessionDrainsLateOutputBeforeEOF(t *testing.T) {
 		t.Fatalf("output = %q, discoveries = %d", output, discoveries)
 	}
 	if discoveries < 3 {
-		t.Fatalf("EOF did not wait for a quiet dead-pane drain window: discoveries = %d", discoveries)
+		t.Fatalf("EOF preceded the delayed completion marker: discoveries = %d", discoveries)
 	}
 }
 

@@ -283,12 +283,14 @@ func (b *Backend) launchCommand(id string, options CreateOptions) (string, error
 		quoted[index] = shellQuote(argument)
 	}
 	gate := shellQuote(b.gatePath(id))
-	return "while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate + "; exec " + strings.Join(quoted, " "), nil
+	launch := strings.Join(quoted, " ")
+	return "while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate + "; " + launch +
+		"; _nexterm_durable_status=$?; printf " + shellQuote(completionPrintFormat(id)) + "; exit \"$_nexterm_durable_status\"", nil
 }
 
 func (b *Backend) pipeCommand(id string) string {
 	path := strings.ReplaceAll(b.recordingPath(id), "#", "##")
-	return "cat >> " + shellQuote(path)
+	return "exec cat >> " + shellQuote(path)
 }
 
 func (b *Backend) openRecording(id string) (*os.File, error) {

@@ -190,7 +190,8 @@ func TestLaunchCommandQuotesArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := shellQuote(backend.gatePath(id))
-	want := "while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate + "; exec '/bin/echo' 'hello world' 'a'\"'\"'b'"
+	want := "while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate + "; '/bin/echo' 'hello world' 'a'\"'\"'b'" +
+		"; _nexterm_durable_status=$?; printf " + shellQuote(completionPrintFormat(id)) + "; exit \"$_nexterm_durable_status\""
 	if launch != want {
 		t.Fatalf("launch command:\n got %s\nwant %s", launch, want)
 	}
