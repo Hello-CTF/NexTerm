@@ -1,0 +1,18 @@
+
+SELFCheck observations (Go runtime only; no Rust expected payloads):
+[
+  {
+    "health": {
+      "ok": true,
+      "service": "nexterm-server",
+      "version": "dev",
+      "syncOnly": true,
+      "commands": 2,
+      "webRoot": null,
+      "vault": null
+    }
+  },
+  {
+    "sync_only_rpc_status": 404
+  }
+]

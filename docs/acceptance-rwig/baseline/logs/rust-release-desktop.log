@@ -1,0 +1,39 @@
+
+── 构建环境
+  profile   = release
+  运行环境  = 普通终端（产物放仓库内 target/）
+  target-dir= /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity
+
+── 前端：tsc + vite build
+  tsc ✓
+vite v6.4.3 building for production...
+transforming...
+✓ 185 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/ipc/commands.ts is dynamically imported by /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/terminal/XtermView.tsx but also statically imported by /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/App.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/CommandPalette.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/TakeoverBanner.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/layout.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/store.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/ai/AiSidebar.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/ai/ModelPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/ai/ModelSelector.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/CredentialsPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/CredentialsSidebar.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/CredentialsView.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/NewCredentialModal.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/useVaultUnlock.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/db/DbPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/docker/DockerPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/explorer/AssetTree.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/FileBrowser.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/FileEditor.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/FileTree.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/MountPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/forward/ForwardPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/settings/AuditView.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/settings/SettingsView.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/settings/SyncCard.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/terminal/BackgroundSessions.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/terminal/TerminalPane.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/terminal/XtermView.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/main.tsx, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/node_modules/.pnpm/@tauri-apps+plugin-dialog@2.7.3/node_modules/@tauri-apps/plugin-dialog/dist-js/index.js is dynamically imported by /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/ui/dialogs.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/ui/dialogs.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/ui/dialogs.ts but also statically imported by /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/ui/dialogs.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/ui/dialogs.ts is dynamically imported by /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/store.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/store.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/store.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/store.ts but also statically imported by /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/app/App.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/ai/AiSidebar.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/ai/ModelPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/CredentialsPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/NewCredentialModal.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/credentials/useVaultUnlock.ts, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/db/DbPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/docker/DockerPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/explorer/AssetTree.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/FileBrowser.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/FileEditor.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/FileTree.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/files/MountPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/forward/ForwardPanel.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/settings/SettingsView.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/terminal/BackgroundSessions.tsx, /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src/features/terminal/TerminalPane.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                     0.47 kB │ gzip:   0.30 kB
+dist/assets/index-KdRukmNX.css     81.80 kB │ gzip:  15.03 kB
+dist/assets/mock-p7sFZQRF.js       81.90 kB │ gzip:  30.03 kB
+dist/assets/index-CqJIyneP.js   1,574.56 kB │ gzip: 464.23 kB
+✓ built in 3.15s
+  vite build ✓
+
+── Rust：cargo build --release
+   Compiling nexterm v0.2.1 (/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src-tauri)
+    Finished `release` profile [optimized] target(s) in 56.24s
+
+── 校验产物
+  产物   : /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity/release/nexterm  (24.9 MB)
+  内嵌前端: ✓ 有
+  习惯路径: target/release/nexterm（已经在 target-dir 里，无需回拷）
+
+✓ 完成：/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity/release/nexterm

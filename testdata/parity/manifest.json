@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "purpose": "feature inventory and Rust test/artifact size baseline plus Go self-consistency",
+    "source_commit": "25c2fa003cc05f04347b1d33c4d4be25f820f870",
+    "real_user_data": false,
+    "rust_compatibility_goldens": false
+  },
+  "producers": {
+    "inventory": "python3 scripts/parity/inventory.py",
+    "rust_baseline": "python3 scripts/parity/run_baseline.py",
+    "go_selfcheck": "python3 scripts/parity/go_selfcheck.py --go-root <go-module-root>",
+    "verification": "python3 scripts/parity/verify.py --go-root <go-module-root>"
+  },
+  "files": [
+    {
+      "path": "testdata/parity/source.json",
+      "role": "pinned Rust feature and artifact baseline commit",
+      "bytes": 167,
+      "sha256": "03ecc791753a47a51ac6e76f7b31d69349247b50749b6d58d054070c895647ed"
+    },
+    {
+      "path": "testdata/parity/inventory.json",
+      "role": "source-derived command/event/stream feature inventory",
+      "bytes": 69992,
+      "sha256": "b98158c30298887fe49999193b6819c86e813b83f75deabf76b10b1eab956419"
+    },
+    {
+      "path": "testdata/parity/go-aliases.json",
+      "role": "optional canonical feature IDs to Go-internal names; no wire compatibility requirement",
+      "bytes": 205,
+      "sha256": "c0620a09e86dde48c414409f77635d67de19f76b200729e1feaf9cd622dc6804"
+    }
+  ]
+}

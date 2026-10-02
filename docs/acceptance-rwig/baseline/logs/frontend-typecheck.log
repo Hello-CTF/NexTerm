@@ -1,0 +1,4 @@
+
+> nexterm@0.2.1 typecheck /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10
+> tsc -p tsconfig.json --noEmit
+

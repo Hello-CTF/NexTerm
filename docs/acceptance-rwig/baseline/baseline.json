@@ -1,0 +1,398 @@
+{
+  "schema_version": 1,
+  "purpose": "Rust baseline for later Go parity comparisons; not a claim of complete parity",
+  "status": "commands-passed-coverage-gaps-remain",
+  "environment": {
+    "captured_at": "2026-10-02T12:16:06.313177+00:00",
+    "host": {
+      "system": "Darwin",
+      "release": "25.6.0",
+      "version": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:20 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T8142",
+      "machine": "arm64",
+      "python": "3.14.3",
+      "sw_vers": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83"
+    },
+    "source": {
+      "head": "25c2fa003cc05f04347b1d33c4d4be25f820f870",
+      "rwig": "25c2fa003cc05f04347b1d33c4d4be25f820f870"
+    },
+    "default_toolchain": {
+      "rustc": "rustc 1.94.1 (e408947bf 2026-03-25) (Homebrew)",
+      "cargo": "cargo 1.94.1 (Homebrew)"
+    },
+    "selected_toolchain": {
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+      "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+      "node": "v24.14.1",
+      "pnpm": "10.33.0",
+      "path_prefix": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-toolchain/rust/bin",
+      "cargo_home": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-cargo-home",
+      "cargo_target_dir": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity"
+    },
+    "locale": {
+      "LC_ALL": null,
+      "LC_CTYPE": null,
+      "LANG": "zh_CN.UTF-8"
+    },
+    "credential_guards": [
+      "NEXTERM_SSH_* removed from baseline subprocesses",
+      "NEXTERM_TEST_KEYCHAIN removed; personal Keychain is not touched",
+      "all generated credentials are marked PARITY-SYNTHETIC"
+    ]
+  },
+  "steps": [
+    {
+      "id": "rust-test-desktop",
+      "command": "cargo test --workspace -- --nocapture",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 50.708,
+      "started_at": "2026-10-02T12:16:06.856429+00:00",
+      "finished_at": "2026-10-02T12:16:57.564256+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log"
+    },
+    {
+      "id": "rust-test-server",
+      "command": "cargo test --workspace --no-default-features --features server -- --nocapture",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 49.781,
+      "started_at": "2026-10-02T12:16:57.564456+00:00",
+      "finished_at": "2026-10-02T12:17:47.345738+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/rust-test-server.log"
+    },
+    {
+      "id": "frontend-typecheck",
+      "command": "pnpm typecheck",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.558,
+      "started_at": "2026-10-02T12:17:47.345961+00:00",
+      "finished_at": "2026-10-02T12:17:48.904187+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/frontend-typecheck.log"
+    },
+    {
+      "id": "frontend-lint",
+      "command": "pnpm lint",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.112,
+      "started_at": "2026-10-02T12:17:48.904448+00:00",
+      "finished_at": "2026-10-02T12:17:50.016626+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/frontend-lint.log"
+    },
+    {
+      "id": "frontend-build",
+      "command": "pnpm build",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 5.822,
+      "started_at": "2026-10-02T12:17:50.016863+00:00",
+      "finished_at": "2026-10-02T12:17:55.839006+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/frontend-build.log"
+    },
+    {
+      "id": "terminal-throughput",
+      "command": "cargo bench -p nexterm --bench terminal_throughput",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 67.27,
+      "started_at": "2026-10-02T12:17:55.839245+00:00",
+      "finished_at": "2026-10-02T12:19:03.109721+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/terminal-throughput.log"
+    },
+    {
+      "id": "rust-release-desktop",
+      "command": "node scripts/build.mjs release",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 61.268,
+      "started_at": "2026-10-02T12:19:03.110009+00:00",
+      "finished_at": "2026-10-02T12:20:04.378298+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/rust-release-desktop.log"
+    },
+    {
+      "id": "rust-bundle-desktop",
+      "command": "pnpm tauri build",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 118.706,
+      "started_at": "2026-10-02T12:20:04.378513+00:00",
+      "finished_at": "2026-10-02T12:22:03.084384+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/rust-bundle-desktop.log"
+    },
+    {
+      "id": "rust-release-server",
+      "command": "cargo build --release -p nexterm --no-default-features --features server --bin nexterm-server",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 45.828,
+      "started_at": "2026-10-02T12:22:03.084660+00:00",
+      "finished_at": "2026-10-02T12:22:48.912838+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/rust-release-server.log"
+    },
+    {
+      "id": "sync-e2e",
+      "command": "python3 scripts/e2e-sync-local.py --bin target/parity/release/nexterm-server --no-build",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 1.658,
+      "started_at": "2026-10-02T12:22:48.913063+00:00",
+      "finished_at": "2026-10-02T12:22:50.572115+00:00",
+      "log": "docs/acceptance-rwig/baseline/logs/sync-e2e.log"
+    }
+  ],
+  "coverage_skips": [
+    {
+      "id": "ssh_pty_pipeline_on_linux_target",
+      "category": "external-service",
+      "status": "skipped",
+      "reason": "requires an SSH target and NEXTERM_SSH_HOST/USER/KEY; no real target or credentials were used"
+    },
+    {
+      "id": "10-session RSS and throughput acceptance",
+      "category": "external-service",
+      "status": "not-measured",
+      "reason": "requires the unavailable SSH target; the single-engine benchmark is not a substitute"
+    },
+    {
+      "id": "macOS Keychain roundtrip tests (4)",
+      "category": "external-os-store",
+      "status": "skipped",
+      "reason": "NEXTERM_TEST_KEYCHAIN=1 was deliberately not set; no personal Keychain data was touched",
+      "tests": [
+        "vault::keychain::tests::keychain_roundtrip",
+        "vault::tests::mac_init_dpapi_works_on_first_run",
+        "vault::tests::mac_load_survives_missing_keychain_item",
+        "vault::tests::mac_load_unlocks_via_keychain"
+      ]
+    },
+    {
+      "id": "local_pty_keeps_utf8_filenames",
+      "category": "host-environment",
+      "status": "skipped-by-test-precondition",
+      "reason": "the regression test requires an empty host locale; current LANG=zh_CN.UTF-8"
+    },
+    {
+      "id": "Windows DPAPI-specific tests",
+      "category": "platform-not-compiled",
+      "status": "not-run",
+      "reason": "current host is Darwin; these tests require a Windows run"
+    },
+    {
+      "id": "sync::client::tests::live_server_token_is_enough",
+      "category": "external-service",
+      "status": "ignored-by-attribute",
+      "reason": "requires a real server and token; it was not replaced with a mock or counted as passed"
+    }
+  ],
+  "metrics": {
+    "terminal_utf8_mb_per_s": 149.3,
+    "terminal_gbk_mb_per_s": 149.7,
+    "scrollback_retained_bytes": 33554432,
+    "screen_after_feed": "120x40, lines_len=40",
+    "sync_e2e_assertions_passed": 34
+  },
+  "artifacts": [
+    {
+      "label": "rust-desktop-macos-arm64",
+      "path": "target/parity/release/nexterm",
+      "size_bytes": 26095616,
+      "size_mib": 24.887,
+      "sha256": "8f81f7b99855475dd2f08a2866932acefaff5e8d1b373bf04d726169eb05c033",
+      "file": "Mach-O 64-bit executable arm64",
+      "linked_libraries": [
+        "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity/release/nexterm:",
+        "\t/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 170.0.0)",
+        "\t/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics (compatibility version 64.0.0, current version 2050.0.0)",
+        "\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "\t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)",
+        "\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)",
+        "\t/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit (compatibility version 1.0.0, current version 625.1.29)",
+        "\t/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices (compatibility version 1.0.0, current version 66.0.0)",
+        "\t/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 758.27.0)",
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)",
+        "\t/System/Library/Frameworks/CoreData.framework/Versions/A/CoreData (compatibility version 1.0.0, current version 1629.1.0)",
+        "\t/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText (compatibility version 1.0.0, current version 904.0.0)",
+        "\t/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage (compatibility version 1.0.1, current version 7.0.0)",
+        "\t/System/Library/Frameworks/CloudKit.framework/Versions/A/CloudKit (compatibility version 1.0.0, current version 2710.120.0)",
+        "\t/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore (compatibility version 1.2.0, current version 1223.2.2)",
+        "\t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)",
+        "\t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)",
+        "\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)",
+        "\t/System/Library/Frameworks/ColorSync.framework/Versions/A/ColorSync (compatibility version 1.0.0, current version 3929.0.0)",
+        "\t/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)"
+      ]
+    },
+    {
+      "label": "rust-server-macos-arm64",
+      "path": "target/parity/release/nexterm-server",
+      "size_bytes": 17172784,
+      "size_mib": 16.377,
+      "sha256": "cdf19ea072f7aadb302a416b98c780adeff60e8f8070907b8c731e51a0c9d079",
+      "file": "Mach-O 64-bit executable arm64",
+      "linked_libraries": [
+        "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity/release/nexterm-server:",
+        "\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 62460.1.2)",
+        "\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+        "\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)",
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)"
+      ]
+    },
+    {
+      "label": "rust-desktop-dmg-macos-arm64",
+      "path": "target/parity/release/bundle/dmg/NexTerm_0.2.1_aarch64.dmg",
+      "size_bytes": 14987015,
+      "size_mib": 14.293,
+      "sha256": "9d039a3b17551e018258b76e78653a10795da10ccf85345aa9a008afc7344a4a",
+      "file": "zlib compressed data"
+    }
+  ],
+  "not_produced": [
+    {
+      "item": "Windows and Linux same-host artifacts",
+      "reason": "only Darwin/arm64 is available; cross-compiled output is not substituted for a native run"
+    },
+    {
+      "item": "LazyCat LPK from this baseline run",
+      "reason": "requires the external LazyCat remote builder/box; documented historical LPK sizes are retained separately"
+    }
+  ],
+  "rust_test_accounting": {
+    "rust-test-desktop": {
+      "runner_reported_passed": 279,
+      "runner_reported_ignored": 3,
+      "early_return_skips": [
+        {
+          "test": "vault::keychain::tests::keychain_roundtrip",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:251",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "vault::tests::mac_init_dpapi_works_on_first_run",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:269",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "vault::tests::mac_load_survives_missing_keychain_item",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:271",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "vault::tests::mac_load_unlocks_via_keychain",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:273",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "local_pty_keeps_utf8_filenames",
+          "reason": "宿主已有 locale [\"zh_CN.UTF-8\"]，本用例只在无 locale 时判得动",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:377",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "ssh_pty_pipeline_on_linux_target",
+          "reason": "未设置 NEXTERM_SSH_E2E=1，跳过 SSH 实机测试",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:394",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        }
+      ],
+      "ignored_tests": [
+        {
+          "test": "sync::client::tests::live_server_token_is_enough",
+          "kind": "product-test",
+          "note": "需要真服务端与真令牌，见本测试文档注释",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:177"
+        },
+        {
+          "test": "src-tauri/src/ipc_shim.rs - ipc_shim (line 11)",
+          "kind": "documentation-example",
+          "note": "",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:408"
+        },
+        {
+          "test": "src-tauri/nexterm-ipc-macros/src/lib.rs - (line 17)",
+          "kind": "documentation-example",
+          "note": "",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:415"
+        }
+      ],
+      "executed_passed_excluding_early_return_skips": 273,
+      "accounting": "279 runner-reported passes - 6 early returns = 273 executed passes; 3 ignored entries remain unexecuted"
+    },
+    "rust-test-server": {
+      "runner_reported_passed": 301,
+      "runner_reported_ignored": 3,
+      "early_return_skips": [
+        {
+          "test": "vault::keychain::tests::keychain_roundtrip",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:273",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "vault::tests::mac_init_dpapi_works_on_first_run",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:291",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "vault::tests::mac_load_survives_missing_keychain_item",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:293",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "vault::tests::mac_load_unlocks_via_keychain",
+          "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:295",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "local_pty_keeps_utf8_filenames",
+          "reason": "宿主已有 locale [\"zh_CN.UTF-8\"]，本用例只在无 locale 时判得动",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:399",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        },
+        {
+          "test": "ssh_pty_pipeline_on_linux_target",
+          "reason": "未设置 NEXTERM_SSH_E2E=1，跳过 SSH 实机测试",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:416",
+          "runner_outcome": "ok (early return; not counted as an executed pass)"
+        }
+      ],
+      "ignored_tests": [
+        {
+          "test": "sync::client::tests::live_server_token_is_enough",
+          "kind": "product-test",
+          "note": "需要真服务端与真令牌，见本测试文档注释",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:194"
+        },
+        {
+          "test": "src-tauri/src/ipc_shim.rs - ipc_shim (line 11)",
+          "kind": "documentation-example",
+          "note": "",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:430"
+        },
+        {
+          "test": "src-tauri/nexterm-ipc-macros/src/lib.rs - (line 17)",
+          "kind": "documentation-example",
+          "note": "",
+          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:437"
+        }
+      ],
+      "executed_passed_excluding_early_return_skips": 295,
+      "accounting": "301 runner-reported passes - 6 early returns = 295 executed passes; 3 ignored entries remain unexecuted"
+    }
+  },
+  "summary": {
+    "commands_passed": 10,
+    "commands_failed": 0,
+    "coverage_skipped_or_not_run": 6,
+    "skips_are_passes": false
+  },
+  "finished_at": "2026-10-02T12:22:50.679879+00:00"
+}
