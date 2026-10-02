@@ -90,7 +90,9 @@ func (r *historyRecorder) appendUnit(unit []*schema.Message) {
 
 func (r *historyRecorder) cap() {
 	for len(r.history) > 0 && (len(r.history) > r.maxMessages || historySize(r.history) > r.maxBytes) {
-		r.history = r.history[firstUnitLen(r.history):]
+		drop := firstUnitLen(r.history)
+		clear(r.history[:drop])
+		r.history = r.history[drop:]
 		r.truncated = true
 	}
 }
