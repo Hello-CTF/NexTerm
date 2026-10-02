@@ -19,4 +19,8 @@ func TestEinoChatModelConstruction(t *testing.T) {
 	if chatModel == nil {
 		t.Fatal("ChatModel returned nil")
 	}
+	baseModel, contextWindow, err := client.BaseChatModel(context.Background())
+	if err != nil || baseModel == nil || contextWindow != 1000 {
+		t.Fatalf("BaseChatModel() = %v, %d, %v", baseModel, contextWindow, err)
+	}
 }

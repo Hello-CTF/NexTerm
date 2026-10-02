@@ -20,6 +20,7 @@ type Config struct {
 	BaseURL       string  `json:"baseUrl"`
 	APIKey        string  `json:"apiKey"`
 	Model         string  `json:"model"`
+	FallbackModel string  `json:"fallbackModel,omitempty"`
 	Temperature   float64 `json:"temperature"`
 	ContextWindow uint64  `json:"contextWindow"`
 	Proxy         *string `json:"proxy"`
@@ -34,6 +35,10 @@ func (c Config) Normalized() Config {
 	c.BaseURL = strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	c.Model = strings.TrimSpace(c.Model)
+	c.FallbackModel = strings.TrimSpace(c.FallbackModel)
+	if c.FallbackModel == c.Model {
+		c.FallbackModel = ""
+	}
 	if math.IsNaN(c.Temperature) || math.IsInf(c.Temperature, 0) {
 		c.Temperature = DefaultTemperature
 	} else {
@@ -57,6 +62,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		BaseURL       string   `json:"baseUrl"`
 		APIKey        string   `json:"apiKey"`
 		Model         string   `json:"model"`
+		FallbackModel string   `json:"fallbackModel"`
 		Temperature   *float64 `json:"temperature"`
 		ContextWindow *uint64  `json:"contextWindow"`
 		Proxy         *string  `json:"proxy"`
@@ -68,6 +74,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.BaseURL = wire.BaseURL
 	c.APIKey = wire.APIKey
 	c.Model = wire.Model
+	c.FallbackModel = wire.FallbackModel
 	c.Temperature = defaults.Temperature
 	if wire.Temperature != nil {
 		c.Temperature = *wire.Temperature

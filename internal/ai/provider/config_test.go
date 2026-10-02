@@ -1,8 +1,10 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
+	"net/http"
 	"reflect"
 	"testing"
 )
@@ -51,8 +53,8 @@ func TestAllPresets(t *testing.T) {
 
 func TestConfigNormalizationAndJSONDefaults(t *testing.T) {
 	emptyProxy := "  "
-	config := Config{BaseURL: " https://example.test/v1/// ", APIKey: " key ", Model: " model ", Temperature: math.NaN(), ContextWindow: 0, Proxy: &emptyProxy}.Normalized()
-	if config.BaseURL != "https://example.test/v1" || config.APIKey != "key" || config.Model != "model" || config.Temperature != 0.3 || config.ContextWindow != 1000 || config.Proxy != nil {
+	config := Config{BaseURL: " https://example.test/v1/// ", APIKey: " key ", Model: " model ", FallbackModel: " fallback ", Temperature: math.NaN(), ContextWindow: 0, Proxy: &emptyProxy}.Normalized()
+	if config.BaseURL != "https://example.test/v1" || config.APIKey != "key" || config.Model != "model" || config.FallbackModel != "fallback" || config.Temperature != 0.3 || config.ContextWindow != 1000 || config.Proxy != nil {
 		t.Fatalf("normalized config = %+v", config)
 	}
 	config.Temperature = math.Inf(1)
@@ -61,17 +63,20 @@ func TestConfigNormalizationAndJSONDefaults(t *testing.T) {
 	if config.Temperature != 0.3 || config.ContextWindow != 2_000_000 {
 		t.Fatalf("non-finite/clamped config = %+v", config)
 	}
+	if same := (Config{Model: "same", FallbackModel: " same "}).Normalized(); same.FallbackModel != "" {
+		t.Fatalf("non-alternate fallback = %+v", same)
+	}
 	var decoded Config
-	if err := json.Unmarshal([]byte(`{"model":"m"}`), &decoded); err != nil {
+	if err := json.Unmarshal([]byte(`{"model":"m","fallbackModel":"f"}`), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Temperature != 0.3 || decoded.ContextWindow != 32768 || !decoded.Stream {
+	if decoded.Temperature != 0.3 || decoded.ContextWindow != 32768 || !decoded.Stream || decoded.FallbackModel != "f" {
 		t.Fatalf("JSON defaults = %+v", decoded)
 	}
 	if err := json.Unmarshal([]byte(`{"temperature":0,"stream":false}`), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Temperature != 0 || decoded.Stream {
+	if decoded.Temperature != 0 || decoded.Stream || decoded.FallbackModel != "" {
 		t.Fatalf("explicit zero/false were lost: %+v", decoded)
 	}
 }
@@ -128,26 +133,47 @@ func TestToolStreamHostBoundaries(t *testing.T) {
 	}
 }
 
-func TestChatBodyProviderSpecificFields(t *testing.T) {
-	client := &Client{config: Config{Model: "glm", BaseURL: "https://open.bigmodel.cn/api/paas/v4", Temperature: 0.3}}
-	tools := []ToolSchema{{Name: "write", Description: "write", Parameters: map[string]any{"type": "object"}}}
-	stream := client.chatBody(ChatRequest{Messages: []ChatMessage{}, Tools: tools}, true)
+func TestChatRequestProviderSpecificFields(t *testing.T) {
+	normalize := func(baseURL, raw string) map[string]any {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, baseURL+"/chat/completions", bytes.NewBufferString(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		normalized, err := normalizeChatRequest(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(normalized.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	stream := normalize("https://open.bigmodel.cn/api/paas/v4", `{"stream":true,"stream_options":{},"tools":[{}],"messages":[]}`)
 	if stream["stream"] != true || stream["tool_stream"] != true || stream["stream_options"] == nil || stream["tools"] == nil {
 		t.Fatalf("stream body = %+v", stream)
 	}
-	block := client.chatBody(ChatRequest{Messages: []ChatMessage{}, Tools: tools}, false)
+	block := normalize("https://open.bigmodel.cn/api/paas/v4", `{"tools":[{}],"messages":[]}`)
 	for _, key := range []string{"stream", "stream_options", "tool_stream"} {
 		if _, exists := block[key]; exists {
 			t.Fatalf("block body unexpectedly contains %s: %+v", key, block)
 		}
 	}
-	withoutTools := client.chatBody(ChatRequest{Messages: []ChatMessage{}}, true)
+	withoutTools := normalize("https://open.bigmodel.cn/api/paas/v4", `{"stream":true,"messages":[]}`)
 	if _, exists := withoutTools["tool_stream"]; exists {
 		t.Fatal("tool_stream was sent without tools")
 	}
-	client.config.BaseURL = "https://api.openai.com/v1"
-	openAI := client.chatBody(ChatRequest{Messages: []ChatMessage{}, Tools: tools}, true)
+	openAI := normalize("https://api.openai.com/v1", `{"stream":true,"tools":[{}],"messages":[]}`)
 	if _, exists := openAI["tool_stream"]; exists {
 		t.Fatal("tool_stream leaked into an OpenAI request")
+	}
+	assistant := normalize("https://api.openai.com/v1", `{"messages":[{"role":"assistant","tool_calls":[]},{"role":"assistant"}]}`)
+	messages := assistant["messages"].([]any)
+	if content, exists := messages[0].(map[string]any)["content"]; !exists || content != nil {
+		t.Fatalf("assistant tool content = %#v, exists=%v", content, exists)
+	}
+	if content := messages[1].(map[string]any)["content"]; content != "" {
+		t.Fatalf("empty assistant content = %#v", content)
 	}
 }

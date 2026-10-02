@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 )
 
 func TestStreamFragmentedCRLFReasoningToolsAndUsage(t *testing.T) {
@@ -61,8 +59,9 @@ func TestStreamFragmentedCRLFReasoningToolsAndUsage(t *testing.T) {
 	if completion.Content != "Hello" || completion.Reasoning != "thinking" || completion.FinishReason != "tool_calls" {
 		t.Fatalf("completion = %+v", completion)
 	}
-	if completion.Usage != (usage.Usage{PromptTokens: 3, CompletionTokens: 2, CachedTokens: 1}) {
-		t.Fatalf("usage = %+v", completion.Usage)
+	usage := completion.Usage
+	if usage.Model != "m" || usage.PromptTokens != 3 || usage.CompletionTokens != 2 || usage.CachedTokens != 1 || usage.ContextWindow != 1000 || usage.RunID == "" || usage.CallID == "" || usage.RunID != completion.RunID || usage.CallID != completion.CallID {
+		t.Fatalf("usage = %+v, completion correlation = %s/%s", usage, completion.RunID, completion.CallID)
 	}
 	wantCalls := []ToolCall{
 		{ID: "call_1", Type: "function", Function: FunctionCall{Name: "write", Arguments: `{"path":"a"}`}},
@@ -198,8 +197,8 @@ func TestSafeStreamFallbackEmitsOnlyBlockOutput(t *testing.T) {
 	}
 }
 
-func TestAmbiguousFailuresNeverTriggerFallback(t *testing.T) {
-	t.Run("server failure", func(t *testing.T) {
+func TestServerRetryAndAmbiguousStreamSafety(t *testing.T) {
+	t.Run("server failure retries same model", func(t *testing.T) {
 		var calls atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			calls.Add(1)
@@ -207,11 +206,12 @@ func TestAmbiguousFailuresNeverTriggerFallback(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"error":{"message":"maybe generated"}}`))
 		}))
 		defer server.Close()
-		client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
+		client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true}, withRetryHooks(
+			func(context.Context, time.Duration) error { return nil }, func() float64 { return 0.5 },
+		))
 		_, err := client.Chat(context.Background(), ChatRequest{}, nil)
-		var httpErr *HTTPError
-		if !errors.As(err, &httpErr) || httpErr.StatusCode != 500 || calls.Load() != 1 {
-			t.Fatalf("error = %v, calls = %d", err, calls.Load())
+		if status, ok := statusCodeForError(err); !ok || status != 500 || calls.Load() != 3 {
+			t.Fatalf("error = %v (status=%d, ok=%v), calls = %d", err, status, ok, calls.Load())
 		}
 	})
 	t.Run("partial output then protocol error", func(t *testing.T) {

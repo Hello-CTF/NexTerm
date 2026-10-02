@@ -207,7 +207,7 @@ func load(ctx context.Context, settings Settings) (state, bool, error) {
 	}
 	profile := Profile{
 		ID: ids.New(), BaseURL: legacy.BaseURL, APIKey: legacy.APIKey, Model: legacy.Model,
-		Temperature: legacy.Temperature, ContextWindow: legacy.ContextWindow,
+		FallbackModel: legacy.FallbackModel, Temperature: legacy.Temperature, ContextWindow: legacy.ContextWindow,
 		Proxy: legacy.Proxy, Stream: legacy.Stream,
 	}.Normalized()
 	loaded := state{Version: StoreVersion, Profiles: []Profile{profile}, ActiveID: cloneString(&profile.ID)}

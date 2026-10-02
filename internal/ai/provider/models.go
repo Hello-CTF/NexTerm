@@ -55,7 +55,7 @@ func (c *Client) Test(ctx context.Context) TestResult {
 		setTestError(&result.ChatOK, &result.ChatError, ctx.Err())
 		return result
 	}
-	completion, err := c.chatBlock(ctx, ChatRequest{Messages: []ChatMessage{UserMessage("ping")}}, nil)
+	completion, err := c.ChatBlock(ctx, ChatRequest{Messages: []ChatMessage{UserMessage("ping")}})
 	if err == nil && completion.Content == "" && len(completion.ToolCalls) == 0 {
 		err = fmt.Errorf("model returned an empty response")
 	}
