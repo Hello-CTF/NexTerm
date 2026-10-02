@@ -2,25 +2,19 @@
 //
 // # 为什么需要它
 //
-// 前端原本只有两态：**Tauri 容器** 与 **纯浏览器（= 演示模式）**，
-// 判据是 `window.__TAURI_INTERNALS__` 在不在。加了 nexterm-server 之后，
-// 「纯浏览器」就一分为二了：
-//
-//   · `pnpm dev` 打开的普通浏览器  → 演示模式（假数据，无后端）
-//   · 被 nexterm-server 服务的页面 → **真后端**，数据是真的
-//
-// 两者 `__TAURI_INTERNALS__` 都是 `undefined`，所以必须另给一个判据。
-// 用「探测 /rpc 通不通」是异步的，而模块求值（`commands.ts` / `events.ts` 顶层）
-// 时就必须有答案。所以服务端在发 `index.html` 时注入一行标记
-// （见 Rust 侧 `server/static_files.rs`），这里同步读取。
+// Wails、被 nexterm-server 服务的页面和普通浏览器必须同步区分：
+// 模块求值（`commands.ts` / `events.ts` 顶层）时就要有答案，不能异步探测 /rpc。
+// 桌面优先读显式 `__NEXTERM_TRANSPORT__="desktop"`，也接受 Wails 注入的
+// `window.wails`；不能读 `_wails`，因为 npm runtime 在普通浏览器也会创建它。
 
 export type Transport = "desktop" | "web" | "demo";
 
 function detect(): Transport {
   if (typeof window === "undefined") return "desktop";
   const w = window as unknown as Record<string, unknown>;
-  const isTauri = w.__TAURI_INTERNALS__ !== undefined;
-  const isWeb = w.__NEXTERM_TRANSPORT__ === "web";
+  const marker = w.__NEXTERM_TRANSPORT__;
+  const isWails = marker === "desktop" || w.wails !== undefined;
+  const isWeb = marker === "web";
 
   let flag: string | null = null;
   try {
@@ -31,7 +25,7 @@ function detect(): Transport {
 
   // `?demo=1` 强制演示模式：在真后端上也能跑假数据，排 UI 问题时很有用。
   if (flag === "1") return "demo";
-  if (isTauri) return "desktop";
+  if (isWails) return "desktop";
   if (isWeb) return "web";
   // 普通浏览器、没有服务端标记 ⇒ 演示模式（`pnpm dev` 的既有工作流）。
   return "demo";
@@ -46,7 +40,7 @@ export const DEMO = TRANSPORT === "demo";
 /** 服务端模式：浏览器 + nexterm-server（真后端）。 */
 export const WEB = TRANSPORT === "web";
 
-/** 桌面模式：Tauri 容器内。 */
+/** 桌面模式：Wails 容器内。 */
 export const DESKTOP = TRANSPORT === "desktop";
 
 /**

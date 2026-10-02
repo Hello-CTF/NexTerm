@@ -1,17 +1,25 @@
-// 事件订阅（§6.3）：Rust → 前端事件统一走 listen。
-//
-// 三种运行环境各有一条实现，调用方（main.tsx / XtermView / AiSidebar /
-// FileBrowser / DockerPanel）无需分支：
-//
-// | 环境 | listen | Channel |
-// |---|---|---|
-// | 桌面 | Tauri `listen` | Tauri `Channel` |
-// | 服务端 | `/ws/events` | `/ws/channel/{id}` |
-// | 演示 | 本地事件总线 | 内存通道 |
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Channel } from "@tauri-apps/api/core";
+// 事件订阅（§6.3）：Go → 前端事件统一走这里的三态适配。
 import { DEMO, WEB, subscribe } from "../demo";
-import { newBinaryChannel, newJsonChannel, onChannelReopen as onWsChannelReopen, disposeChannel as disposeWsChannel, subscribeEvent } from "./webTransport";
+import {
+  newBinaryChannel,
+  newJsonChannel,
+  onChannelReopen as onWsChannelReopen,
+  disposeChannel as disposeWsChannel,
+  subscribeEvent,
+} from "./webTransport";
+import {
+  disposeWailsChannel,
+  listenWailsEvent,
+  newWailsChannel,
+  type WailsChannel,
+} from "./wails";
+
+export type UnlistenFn = () => void;
+
+export interface IpcChannel<T = unknown> {
+  onmessage: (message: T) => void;
+  toJSON(): string | null;
+}
 
 export const EVENTS = {
   sessionStatus: "session://status",
@@ -20,7 +28,7 @@ export const EVENTS = {
   /**
    * 终端控制权 / 观看人数 / 进程结束状态变化。
    *
-   * 与 Rust 侧 `events::TERMINAL_CONTROL` 必须一致。**全局广播**：一次事件发到所有
+   * 与 Go 侧 `events::TERMINAL_CONTROL` 必须一致。**全局广播**：一次事件发到所有
    * 终端，各端按 `payload.tabId` 自己过滤；所以订阅方不能假定"这条事件是我这个标签的"。
    */
   terminalControl: "terminal://control",
@@ -42,7 +50,7 @@ export interface TerminalExitEvent {
 }
 
 /**
- * `terminal://control` 的 payload（camelCase，与 Rust `TerminalControlPayload` 对齐）。
+ * `terminal://control` 的 payload（camelCase，与 Go `TerminalControlPayload` 对齐）。
  *
  * 五个字段每次都给全，前端按同一份快照覆盖本地状态即可，不必做增量推断。
  * `subscribers` 是内核原值（**含收到事件的那一端自己**），与 `terminal_list` 同口径；
@@ -67,85 +75,50 @@ export interface FsProgressEvent {
   done: boolean;
 }
 
-/**
- * 演示模式下的"通道"：只需要 `onmessage` 这一个可赋值字段。
- *
- * 为什么不能直接 `new Channel()`：Tauri 的 Channel 构造函数会调
- * `transformCallback`，它依赖 `window.__TAURI_INTERNALS__`，纯浏览器里会抛。
- */
-function demoChannel<T>(): Channel<T> {
-  const ch = {
-    onmessage: (_msg: unknown) => undefined,
+function demoChannel<T>(): IpcChannel<T> {
+  return {
+    onmessage: (_msg: T) => undefined,
     toJSON() {
       return null;
     },
   };
-  return ch as unknown as Channel<T>;
 }
 
 /** 终端二进制通道：接收 PTY 原始字节。 */
 export function createBinaryChannel(
   onBytes: (data: Uint8Array) => void,
-): Channel<unknown> {
-  if (DEMO) {
-    const ch = demoChannel<unknown>();
-    ch.onmessage = (raw: unknown) => decodeBytes(raw, onBytes);
-    return ch;
-  }
-  if (WEB) {
-    const ch = newBinaryChannel();
-    ch.onmessage = (raw: unknown) => decodeBytes(raw, onBytes);
-    return ch as unknown as Channel<unknown>;
-  }
-  const channel = new Channel<unknown>();
+): IpcChannel<unknown> {
+  const channel = DEMO
+    ? demoChannel<unknown>()
+    : WEB
+      ? newBinaryChannel()
+      : newWailsChannel();
   channel.onmessage = (raw) => decodeBytes(raw, onBytes);
   return channel;
 }
 
-/**
- * 取通道 id（只有服务端模式有）。
- *
- * 多端同看时 `terminal_detach` **必须**只摘自己那一条通道，否则一台设备切走标签
- * 会把所有其他设备的推送一起掐掉 —— 而它们那边看起来只是"画面不动了"，极难排查。
- * 桌面模式没有这个概念（整个进程一个视图），返回 `undefined` 让调用方走
- * 「清空全部」的旧语义。
- *
- * 判据是「是不是字符串」而不是「有没有 `id` 字段」：Tauri 的 `Channel` 也有 `id`，
- * 但那是个数字、且属于框架内部，拿它当通道 id 用会静默错配。
- */
+/** 字符串 id 让 desktop / web 的 detach 都只摘掉当前订阅。 */
 export function channelIdOf(ch: unknown): string | undefined {
   const id = (ch as { id?: unknown } | null)?.id;
   return typeof id === "string" ? id : undefined;
 }
 
-/**
- * 订阅「该终端通道的 WS 已重连」。桌面 / 演示模式没有 WS 通道，
- * 连接不会断 ⇒ 直接返回空退订函数。
- *
- * 为什么要包一层：调用方（XtermView）只需要知道「通道重开时通知我」，
- * 不该知道 WEB 分支或 webTransport 的存在 —— 否则每个使用通道的组件都要
- * 自己写一遍形态判断，漏一处就是桌面端行为被意外改变。
- */
+/** Web WS 重连通知；Wails 与 demo 没有这一生命周期。 */
 export function onChannelReopen(ch: unknown, cb: () => void): () => void {
   const id = channelIdOf(ch);
   if (!WEB || id === undefined) return () => {};
   return onWsChannelReopen(id, cb);
 }
 
-/**
- * 关闭一条通道，让它对应的 WS 收摊、不再重连。
- *
- * 与 `onChannelReopen` 同款形态无关包装：调用方只管「这条通道用完了」，
- * 不该知道 WEB 分支或 `webTransport` 的存在。桌面 / 演示模式没有 WS 通道，
- * 天然是空操作。
- *
- * ⚠️ 只能在该通道**彻底没有消费者**之后调用 —— 服务端会把未认领的帧缓存进
- * `pending`，作业没结束就关会让输出静默丢失。
- */
+/** 幂等关闭当前通道；必须在终端 detach / AI 终态之后调用。 */
 export function disposeChannel(ch: unknown): void {
   const id = channelIdOf(ch);
-  if (!WEB || id === undefined) return;
-  disposeWsChannel(id);
+  if (id === undefined || DEMO) return;
+  if (WEB) {
+    disposeWsChannel(id);
+    return;
+  }
+  disposeWailsChannel(ch as WailsChannel);
 }
 
 function decodeBytes(raw: unknown, onBytes: (data: Uint8Array) => void) {
@@ -161,7 +134,9 @@ function decodeBytes(raw: unknown, onBytes: (data: Uint8Array) => void) {
 }
 
 /** AI 事件通道。 */
-export function createAiChannel(onEvent: (event: Record<string, unknown>) => void): Channel<unknown> {
+export function createAiChannel(
+  onEvent: (event: Record<string, unknown>) => void,
+): IpcChannel<unknown> {
   const push = (raw: unknown) => {
     if (raw && typeof raw === "object") {
       onEvent(raw as Record<string, unknown>);
@@ -169,22 +144,15 @@ export function createAiChannel(onEvent: (event: Record<string, unknown>) => voi
       try {
         onEvent(JSON.parse(raw) as Record<string, unknown>);
       } catch {
-        // 非 JSON 字符串按 Delta 处理
         onEvent({ type: "delta", text: raw });
       }
     }
   };
-  if (DEMO) {
-    const ch = demoChannel<unknown>();
-    ch.onmessage = push;
-    return ch;
-  }
-  if (WEB) {
-    const ch = newJsonChannel();
-    ch.onmessage = (raw: unknown) => push(raw);
-    return ch as unknown as Channel<unknown>;
-  }
-  const channel = new Channel<unknown>();
+  const channel = DEMO
+    ? demoChannel<unknown>()
+    : WEB
+      ? newJsonChannel()
+      : newWailsChannel();
   channel.onmessage = push;
   return channel;
 }
@@ -199,8 +167,7 @@ export function listenEvent<T>(
   }
   if (WEB) {
     const off = subscribeEvent(event, (payload) => handler(payload as T));
-    // 与 Tauri 的 `listen` 一样返回**异步**的取消函数，调用方写法不必分支。
     return Promise.resolve(off);
   }
-  return listen<T>(event, (e) => handler(e.payload));
+  return listenWailsEvent(event, handler);
 }

@@ -1,32 +1,15 @@
 // 服务端模式（浏览器 + nexterm-server）的传输层。
 //
-// # 它替代了桌面下的哪两样东西
+// 桌面的 Wails Channel / Events.On 在这里对应 WebChannel + /ws/channel/{id}
+// 和 /ws/events 单连接；调用方不需要感知两套传输。
 //
-// | 桌面 Tauri | 这里 |
-// |---|---|
-// | `ipc::Channel<T>`（PTY 字节 / AI 事件） | `WebChannel` + `/ws/channel/{id}` |
-// | `listen()`（`tauri::Emitter` 事件） | `/ws/events` 单连接 + 本地订阅表 |
-//
-// # 通道 id 为什么能"自动"传上去
-//
-// `WebChannel.toJSON()` 返回自己的 id。命令参数里的 channel 是**原样交给**
-// `JSON.stringify` 的，于是序列化出来就是一个字符串 id —— `call()` 不需要
-// 为通道做任何特判，`terminalApi.attach(sessionId, cols, rows, channel)` 这种
-// 现有写法一行不用改。
-//
-// # 连线时序
-//
-// 通道是**先被创建、再被当成参数发出去**的，这中间 WS 可能还没连上。
-// 服务端为此把「还没有 WS 认领的帧」先缓存下来（见 Rust 侧 `server/hub.rs`），
-// 所以这里不需要「等 open 再调命令」这种约定 —— 它是个容易漏、漏了就少一屏
-// 滚动内容（`terminal_attach` 的回滚）的约定。
-//
-// 断线重连用**同一个 id**：服务端同样会把断线期间产生的帧缓存起来，
-// 重连后一次性补齐。
+// `WebChannel.toJSON()` 返回自己的 id，因此命令参数会自然序列化成字符串。
+// 通道先创建再发送，服务端的 pending 队列负责 open / attach 前的 early frames；
+// 断线重连沿用同一个 id，补齐服务端缓存的帧。
 
 import { clientId, wsUrl } from "./env";
 
-/** 与 Rust 侧 `Payload` 的 JSON 分支对齐：文本帧是 JSON。 */
+/** 与服务端线格式对齐：文本帧是 JSON。 */
 type ChannelMessage = unknown;
 
 class WebChannel<T> {
@@ -299,7 +282,7 @@ function decodeFrame(data: unknown): ChannelMessage | undefined {
   return data;
 }
 
-// ── 结构化事件（替代 tauri `listen`）───────────────────────────────────
+// ── 结构化事件（与桌面 Events.On 对齐）─────────────────────────────────
 
 interface EventsEntry {
   ws: WebSocket | null;

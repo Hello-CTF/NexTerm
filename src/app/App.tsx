@@ -4,8 +4,14 @@
 //   · 一级导航从「横向标签栏里塞按钮」搬到了最左的 48px 图标栏；
 //   · 标题栏（面包屑 + 全局动作）与标签栏拆成两行，各自只干一件事；
 //   · 状态栏用色更克制，并显式标出演示模式。
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import {
   useUi,
   useActiveWorkspace,
@@ -25,7 +31,17 @@ import { layoutBootstrapped, startLayoutSync } from "./layout";
 import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
-import { isMac } from "./platform";
+import {
+  isMac,
+  isWailsDragRegionTarget,
+  wailsDragRegionStyle,
+  wailsNoDragRegionStyle,
+} from "./platform";
+import {
+  closeWindow,
+  minimiseWindow,
+  toggleMaximiseWindow,
+} from "../ipc/wails";
 import { mountUnavailableReason } from "./capabilities";
 import { AssetTree } from "../features/explorer/AssetTree";
 import { TerminalPane } from "../features/terminal/TerminalPane";
@@ -98,6 +114,13 @@ const TAB_ICON = {
   audit: IconHistory,
   background: IconActivity,
 } as const;
+
+function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
+  if (TRANSPORT !== "desktop") return;
+  if (isWailsDragRegionTarget(event.target)) {
+    void toggleMaximiseWindow();
+  }
+}
 
 /** 一级标签（工作区）的图标：会话工作区用资产类型图标，其余按种类给。 */
 function workspaceIcon(w: Workspace) {
@@ -588,7 +611,7 @@ export default function App() {
   ];
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" onDoubleClick={onDragRegionDoubleClick}>
       {/* 接管横幅（§8.6）：置顶占满整行，非空即表示 AI 正在操作某个终端 */}
       <TakeoverBanner />
 
@@ -644,21 +667,19 @@ export default function App() {
             它自己的终端 / 编辑器都挂在下面（二级标签，在 main 里）。
             关闭工作区不会断开连接（断连是另一个明确动作），只回收里面的终端。
 
-            窗口无边框（decorations:false）：标签没占满的空白区是窗口拖拽区
-            （data-tauri-drag-region），最小化 / 最大化 / 关闭钉在条尾（sticky
-            right，标签多到滚动时也不被挤走）。浏览器演示模式下没有真窗口，隐藏。
+            窗口无边框：标签没占满的空白区是 Wails 拖拽区，最小化 / 最大化 /
+            关闭钉在条尾（sticky right，标签多到滚动时也不被挤走）。浏览器隐藏。
 
-            macOS 走原生红绿灯（tauri.macos.conf.json 的 Overlay 标题栏 +
-            Rust 侧 AppKit 直配）：自绘按钮组整个不渲染；红绿灯横向占到
-            窗口左起约 64px，图标栏占前 48px，所以标签条只需再让 32px
-            （首个标签落在 ~80px，贴近原生间距），拖拽语义不变。
+            macOS 走原生红绿灯，自绘按钮组整个不渲染；红绿灯横向占到窗口左起
+            约 64px，图标栏占前 48px，所以标签条只需再让 32px（首个标签落在
+            ~80px，贴近原生间距），拖拽语义不变。
           */}
           <div
             className={`nx-tabstrip is-top ${TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : ""}`}
-            data-tauri-drag-region
+            data-wails-drag-region style={wailsDragRegionStyle}
           >
             {workspaces.length === 0 && (
-              <span className="px-1 text-xs text-neutral-500" data-tauri-drag-region>
+              <span className="px-1 text-xs text-neutral-500" data-wails-drag-region style={wailsDragRegionStyle}>
                 还没有工作区 —— 双击左侧资产连接一台机器
               </span>
             )}
@@ -678,6 +699,7 @@ export default function App() {
                 <button
                   key={w.id}
                   className={`nx-ws ${isActive ? "is-active" : ""}`}
+                  style={wailsNoDragRegionStyle}
                   onClick={() => setActiveWorkspace(w.id)}
                   title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
                     w.panes.length > 1 ? " · 已分屏" : ""
@@ -705,6 +727,7 @@ export default function App() {
             })}
             <button
               className="nx-tab-new"
+              style={wailsNoDragRegionStyle}
               title="新建工作区：在左侧资产树里双击一台机器"
               onClick={() => {
                 setLeftMode("assets");
@@ -715,29 +738,29 @@ export default function App() {
               <IconPlus size={13} />
             </button>
             {/* 标签条空白拖拽区：标签少时占满剩余宽度，标签多时收缩为 0 */}
-            <div className="nx-spacer min-w-0" data-tauri-drag-region />
-            {/* macOS 用原生红绿灯，这组自绘按钮只在 **桌面版** 的 Windows 上出现。
-                浏览器里既没有红绿灯也没有窗口按钮 —— 它们会去调 Tauri 的 window API。 */}
+            <div className="nx-spacer min-w-0" data-wails-drag-region style={wailsDragRegionStyle} />
+            {/* macOS 用原生红绿灯；这组 Wails 窗口按钮只在桌面非 macOS 上出现。 */}
             {TRANSPORT === "desktop" && !isMac() && (
               <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
                 <button
-                  className="nx-icon-btn"
+                  className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最小化"
-                  onClick={() => void getCurrentWindow().minimize()}
+                  onClick={() => void minimiseWindow()}
                 >
                   <IconMinus size={13} />
                 </button>
                 <button
-                  className="nx-icon-btn"
+                  className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最大化 / 还原（双击空白处也可）"
-                  onClick={() => void getCurrentWindow().toggleMaximize()}
+                  onClick={() => void toggleMaximiseWindow()}
                 >
                   <IconMaximize size={12} />
                 </button>
                 <button
                   className="nx-icon-btn is-danger"
+                  style={wailsNoDragRegionStyle}
                   title="关闭"
-                  onClick={() => void getCurrentWindow().close()}
+                  onClick={() => void closeWindow()}
                 >
                   <IconClose size={14} />
                 </button>
@@ -745,36 +768,35 @@ export default function App() {
             )}
           </div>
 
-          {/* 标题栏：面包屑 + 全局动作。窗口无边框（decorations:false），
-              这一条就是拖拽区——data-tauri-drag-region 要落在实际接收
-              mousedown 的元素上，所以标题、面包屑、spacer 各自都带。 */}
+          {/* 标题栏也是拖拽区；Wails 只检查事件目标自身，所以标题、
+              面包屑和 spacer 都保留各自的 CSS drag 标记。 */}
           <header
             className="flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 pl-3.5"
-            data-tauri-drag-region
+            data-wails-drag-region style={wailsDragRegionStyle}
           >
             <span
               className="text-[12.5px] font-semibold tracking-tight text-neutral-100"
-              data-tauri-drag-region
+              data-wails-drag-region style={wailsDragRegionStyle}
             >
               NexTerm
             </span>
             <span
               className="flex min-w-0 items-center gap-1.5 text-xs text-neutral-500"
-              data-tauri-drag-region
+              data-wails-drag-region style={wailsDragRegionStyle}
             >
-              <span className="truncate" data-tauri-drag-region>
+              <span className="truncate" data-wails-drag-region style={wailsDragRegionStyle}>
                 {crumb[0]}
               </span>
-              <span className="text-neutral-600" data-tauri-drag-region>
+              <span className="text-neutral-600" data-wails-drag-region style={wailsDragRegionStyle}>
                 /
               </span>
-              <span className="truncate font-medium text-neutral-300" data-tauri-drag-region>
+              <span className="truncate font-medium text-neutral-300" data-wails-drag-region style={wailsDragRegionStyle}>
                 {crumb[1]}
               </span>
             </span>
-            <div className="nx-spacer" data-tauri-drag-region />
+            <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
             <button
-              className="nx-icon-btn"
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
               title="刷新会话列表与凭据库状态"
               onClick={() => {
                 void sessionApi.list().then(setSessions).catch(() => undefined);
@@ -795,13 +817,13 @@ export default function App() {
               <IconActivity size={15} />
             </button>
             <button
-              className="nx-icon-btn"
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
               title="命令面板 (Ctrl+Shift+P)"
               onClick={() => setPaletteOpen(true)}
             >
               <IconCommand size={15} />
             </button>
-            <button className="nx-icon-btn" title="全局搜索 (Ctrl+K)" onClick={() => setPaletteOpen(true)}>
+            <button className="nx-icon-btn" style={wailsNoDragRegionStyle} title="全局搜索 (Ctrl+K)" onClick={() => setPaletteOpen(true)}>
               <IconSearch size={15} />
             </button>
           </header>

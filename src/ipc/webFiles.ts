@@ -21,8 +21,7 @@
 // # 与服务端的配合
 //
 // 浏览器拿到的是**字节**，而传输内核（`fs_upload` / `fs_download` / 打包 / 日志导出）
-// 收发的都是**盒子上的路径**。两边的兑换由服务端的暂存区完成
-// （见 Rust 侧 `server/blobs.rs` 的模块文档）：
+// 收发的都是**盒子上的路径**。两边的兑换由服务端的 blobs 暂存区完成：
 //
 //     · 上传：selected file → POST /files/blob → 盒子路径 → fs_upload(...)
 //     · 下载：POST /files/blob/reserve → 盒子路径 → fs_download(...) → GET /files/blob → 用户保存
@@ -40,7 +39,7 @@
 //
 // # 只在 web 模式下生效
 //
-// 桌面版有真正的原生对话框（`@tauri-apps/plugin-dialog`），拿到的是磁盘路径，
+// 桌面版有 Wails 原生对话框，拿到的是磁盘路径，
 // 不需要这一层。所有函数在非 web 模式下都返回「不适用」，由调用方回落到桌面分支。
 
 import { WEB, httpUrl } from "./env";

@@ -1,9 +1,8 @@
-// 与 Rust 的唯一接口层：类型化命令包装（§6）。
-// 类型来自 ts-rs 生成（cargo test 导出），见 types.ts。
-import { invoke } from "@tauri-apps/api/core";
+// 与 Go 内核的唯一接口层：类型化命令包装（§6）。
 import { DEMO, WEB } from "../demo";
 import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
+import { callDesktop } from "./wails";
 
 // ───────── 通用 ─────────
 
@@ -25,17 +24,16 @@ export function toAppError(e: unknown): AppError {
  *
  * | 环境 | 出口 |
  * |---|---|
- * | 桌面（Tauri） | `invoke()` —— 现有发布线，行为一个字不变 |
+ * | 桌面（Wails） | `main.Service.Call` —— 统一请求 / 响应 envelope |
  * | 服务端（浏览器） | `POST /rpc` —— 见 nexterm-server |
  * | 演示 | `src/demo/mock.ts` 的内存实现 |
  *
- * 三者的**参数形状完全一致**（Tauri 的 `invoke(cmd, args)` 约定），
- * 所以上面那 700 行 `sessionApi` / `fsApi` / … 一行都不用改 —— 包括
- * 通道参数：服务端模式下 `WebChannel.toJSON()` 会把它压成一个 id 字符串，
- * `JSON.stringify` 自然就把它送出去了。
+ * 三者的 facade 参数形状完全一致，所以下面 `sessionApi` / `fsApi` / …
+ * 不需要分支。桌面适配器只把顶层 `channel` / `clientId` 提升到请求 envelope；
+ * 嵌套参数和通道的字符串序列化保持原样。
  *
  * mock 用动态 import：让假数据 + 虚拟 shell 独立成一个 chunk，
- * Tauri 生产包不会加载它。
+ * 桌面生产包不会加载它。
  */
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -46,7 +44,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
     if (WEB) {
       return await callWeb<T>(cmd, args);
     }
-    return await invoke<T>(cmd, args);
+    return await callDesktop<T>(cmd, args);
   } catch (e) {
     throw toAppError(e);
   }
@@ -144,7 +142,7 @@ export const sessionApi = {
 /**
  * 接管一个已有内核标签的结果（`terminal_attach_tab` 的返回）。
  *
- * 字段与 Rust 侧 `session::AttachedTabInfo` 一一对应（camelCase）。
+ * 字段与 Go 侧 `session::AttachedTabInfo` 一一对应（camelCase）。
  */
 export interface AttachedTabInfo {
   tabId: string;
@@ -268,8 +266,7 @@ export const terminalApi = {
    */
   closeTab: (tabId: string, mode?: "kill" | "detach") =>
     // 带上 clientId：服务端要据此**只摘掉本端那一条订阅**，而不是无差别清空全部。
-    // 不传时内核按"整个进程一个视图"的桌面语义退回清空全部（见 Rust terminal_close_tab），
-    // 所以两边落地有先后也不会坏。
+    // 缺省清理语义由 Go 内核决定，两边落地有先后也不会坏。
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId() }),
 };
 
@@ -496,8 +493,7 @@ export const dockerApi = {
     channel: unknown,
     cmd?: string,
   ) =>
-    // 入参收成一个 `args` 对象：Rust 侧为了不超过 clippy 的参数上限把签名收成了
-    // `DockerExecArgs`（`channel` 必须留在签名上，宏要特殊处理它）。
+    // 入参收成一个嵌套 `args` 对象，channel 独立留在顶层 envelope。
     call<string>("docker_exec_attach", {
       args: { sessionId, containerId, cmd, cols, rows, clientId: clientId() },
       channel,
@@ -527,7 +523,7 @@ export interface QueryResult {
   error: string | null;
 }
 
-/** 表字段（对应 Rust 侧 information_schema.columns 的投影）。 */
+/** 表字段（对应 Go 侧 information_schema.columns 的投影）。 */
 export interface TableColumn {
   name: string;
   type: string;
@@ -611,8 +607,7 @@ export const aiApi = {
       channel: unknown;
     },
   ) => {
-    // 内核侧把请求体收成了单个 `args` 参数（那边平铺参数超了 clippy 上限 7），
-    // channel 单独走顶层 —— Tauri 的 Channel 不能塞进普通结构体里。
+    // 请求体保留单个嵌套 `args` 参数，channel 单独走顶层 envelope。
     const { channel, ...body } = args;
     // 返回值必须带 `conversationId`：首轮是内核新建的会话，前端要把它记住，
     // 否则下一句追问会被当成新会话（现象：同一个会话里每追问一次就多一个历史项）。
@@ -655,8 +650,7 @@ export const aiApi = {
 
 // ───────── ai models（多模型档案，P0-3）─────────
 
-// 类型由 ts-rs 从内核 `ai::profiles` 生成（跑 `cargo test` 导出到 types.ts）——
-// 别在这里手抄一份，字段一改就两边漂移。
+// 内核 DTO 统一在 types.ts 维护，调用点不再另抄一份字段。
 import type { ModelProfile, ModelProfilesView } from "./types";
 export type { ModelProfile, ModelProfilesView };
 
