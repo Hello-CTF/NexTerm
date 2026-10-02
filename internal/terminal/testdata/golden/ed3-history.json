@@ -1,0 +1,40 @@
+{
+  "snapshot": {
+    "text": "row-59 abcdef\nafter-erase-1\nafter-erase-2\nafter-erase-3\n",
+    "lines": [
+      "row-59 abcdef",
+      "after-erase-1",
+      "after-erase-2",
+      "after-erase-3"
+    ],
+    "cursorRow": 4,
+    "cursorCol": 0,
+    "cols": 40,
+    "rows": 5,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 3,
+  "history": [
+    "row-56 abcdef",
+    "row-57 abcdef",
+    "row-58 abcdef"
+  ],
+  "tail": [
+    "\u001b[3Jafter-erase-1",
+    "after-erase-2",
+    "after-erase-3",
+    "",
+    "row-59 abcdef",
+    "after-erase-1",
+    "after-erase-2",
+    "after-erase-3"
+  ],
+  "dumpSha256": "0598e34501aaa7020768746a695a789bfbca5fcc9eb4b1764485e12832ca996e"
+}

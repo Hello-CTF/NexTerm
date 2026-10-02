@@ -1,0 +1,39 @@
+{
+  "snapshot": {
+    "text": "osc-d!eb       c\nendoverwrite\n\nregion-bottom\n\n\n\n",
+    "lines": [
+      "osc-d!eb       c",
+      "endoverwrite",
+      "",
+      "region-bottom",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 1,
+    "cursorCol": 3,
+    "cols": 40,
+    "rows": 8,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "end",
+    "osc-d!eb       c",
+    "endoverwrite",
+    "",
+    "region-bottom",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "4b9ec4e48e6c3f13e90d255730ead58aa2b8f75332179cf21444b614e6c1a392"
+}

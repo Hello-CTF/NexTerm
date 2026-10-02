@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "text": "繁體中文測試 第一行\n第二行 結束\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "lines": [
+      "繁體中文測試 第一行",
+      "第二行 結束",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 2,
+    "cursorCol": 0,
+    "cols": 80,
+    "rows": 24,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "e7ef5cd7ffadd62bcf922ecdf885f2566c39a958e7883f03ce7c4b0a5455eb69"
+}

@@ -1,0 +1,37 @@
+{
+  "snapshot": {
+    "text": "é combining\nfamily 👨‍👩‍👧 zwj flag 🇨🇳\nend\n\n\n",
+    "lines": [
+      "é combining",
+      "family 👨‍👩‍👧 zwj flag 🇨🇳",
+      "end",
+      "",
+      ""
+    ],
+    "cursorRow": 2,
+    "cursorCol": 3,
+    "cols": 30,
+    "rows": 6,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "é combining",
+    "family 👨‍👩‍👧 zwj flag 🇨🇳",
+    "end",
+    "é combining",
+    "family 👨‍👩‍👧 zwj flag 🇨🇳",
+    "end",
+    "",
+    ""
+  ],
+  "dumpSha256": "43cb0418926eb344f48017d664987861d7d6e2883544ba8f8ef5d0fa4840b032"
+}

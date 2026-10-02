@@ -1,0 +1,37 @@
+{
+  "snapshot": {
+    "text": "中文宽度测试 wrappin\ng 行为\nemoji 🚀🙂 test asci\ni\ntail\n",
+    "lines": [
+      "中文宽度测试 wrappin",
+      "g 行为",
+      "emoji 🚀🙂 test asci",
+      "i",
+      "tail"
+    ],
+    "cursorRow": 4,
+    "cursorCol": 4,
+    "cols": 20,
+    "rows": 6,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "中文宽度测试 wrapping 行为",
+    "emoji 🚀🙂 test ascii",
+    "tail",
+    "中文宽度测试 wrappin",
+    "g 行为",
+    "emoji 🚀🙂 test asci",
+    "i",
+    "tail"
+  ],
+  "dumpSha256": "66dede682af0f2e234e6803b004e9291c9d5ac4e794117ab1665c7c2748c9265"
+}

@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "text": "café €99 hotel\na�bÿ\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "lines": [
+      "café €99 hotel",
+      "a�bÿ",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 2,
+    "cursorCol": 0,
+    "cols": 80,
+    "rows": 24,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "f2ffd673dd14807a4d0a64e1ae06461d0e53e5c019fcf9d68146cda16e761b35"
+}

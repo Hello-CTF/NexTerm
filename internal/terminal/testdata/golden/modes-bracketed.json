@@ -1,0 +1,55 @@
+{
+  "snapshot": {
+    "text": "paste-on\nhidden-cursor\ndone\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "lines": [
+      "paste-on",
+      "hidden-cursor",
+      "done",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ],
+    "cursorRow": 2,
+    "cursorCol": 4,
+    "cols": 80,
+    "rows": 24,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": true
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "dumpSha256": "c629d05d083f99474b3f7e285d9a21cf5ebff958a355ed36994ac8166d8a089b"
+}

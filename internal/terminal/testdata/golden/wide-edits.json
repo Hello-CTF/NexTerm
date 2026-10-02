@@ -1,0 +1,36 @@
+{
+  "snapshot": {
+    "text": "x   Y\na b\nx  y\nq   z",
+    "lines": [
+      "x   Y",
+      "a b",
+      "x  y",
+      "q   z"
+    ],
+    "cursorRow": 3,
+    "cursorCol": 2,
+    "cols": 20,
+    "rows": 4,
+    "altScreen": false,
+    "lastOutputMsAgo": 0
+  },
+  "state": {
+    "altScreen": false,
+    "cursorVisible": true,
+    "bracketedPaste": false,
+    "applicationCursor": false
+  },
+  "scrollbackLen": 0,
+  "history": null,
+  "tail": [
+    "中\rx\u001b[3CY",
+    "a中b\u001b[2G\u001b[P",
+    "x中y\u001b[2G\u001b[X",
+    "q中z\u001b[3G\u001b[@",
+    "x   Y",
+    "a b",
+    "x  y",
+    "q   z"
+  ],
+  "dumpSha256": "e3da77e42a3d344c9934d290ff358e794cd9dc3c808151ae4ebaebbf61487812"
+}
