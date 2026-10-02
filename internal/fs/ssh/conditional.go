@@ -11,21 +11,44 @@ import (
 	"path"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	"github.com/pkg/sftp"
 )
 
-// conditionalTestHook lets tests inject an external mutation after the
-// replacement content is staged and before the final verification.
-var conditionalTestHook func()
+// The hooks let tests inject adversarial external mutations around the
+// final check, including after it and immediately before the commit. They
+// are nil in production.
+var (
+	conditionalPreVerifyHook func()
+	conditionalPreCommitHook func()
+)
+
+// conditionalLink is the atomic no-clobber commit primitive. Tests wrap it
+// to inject post-commit response loss and determinate server failures.
+var conditionalLink = func(client *sftp.Client, oldname, newname string) error {
+	return client.Link(oldname, newname)
+}
 
 // WriteFileVersion implements conditional.Writer over the SFTP protocol
-// only, without shell commands. The target version is measured before and
-// after the replacement content is staged in a same-directory temporary
-// file, and the commit is a single atomic protocol operation: an
-// overwriting posix-rename for replacements, or a hard link that refuses to
-// clobber a path that appeared meanwhile for conditional creates. Any
-// external change made before the final verification rejects the commit and
-// leaves the remote target, and its backup, untouched by this call.
+// only, without shell commands.
+//
+// A conditional create stages the content in an exclusively created
+// same-directory temporary file and publishes it through the
+// hardlink@openssh.com extension: an atomic operation that fails instead of
+// overwriting if the path appeared at any moment before the commit.
+// Existence is established with Lstat alone, so any occupied path — file,
+// directory, symlink, readable or not — is a version mismatch.
+//
+// An existing-file replacement cannot honour the contract: the protocol has
+// neither a compare-and-commit operation nor file locks that exclude
+// non-cooperating writers between the final snapshot and an unconditional
+// rename, so it fails with base.ErrUnsupported before any mutation.
+//
+// A failed commit is reconciled against the resulting path state, never
+// retried: an absent target is a determinate uncommitted failure, a target
+// holding exactly the staged content yields *conditional.IndeterminateError
+// (the link may have succeeded before its response was lost), and any other
+// occupant is a version mismatch.
 func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -35,112 +58,18 @@ func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byt
 		return err
 	}
 	if expected.Exists {
-		return f.replaceFileVersion(ctx, remotePath, data, backup, expected)
+		return fmt.Errorf("SFTP conditional replace %s: %w: the protocol has no compare-and-commit or file-lock primitive against non-cooperating writers", remotePath, base.ErrUnsupported)
 	}
 	return f.createFileVersion(ctx, remotePath, data, expected)
 }
 
-type remoteSnapshot struct {
-	version conditional.Version
-	mode    fs.FileMode
-	regular bool
-}
-
-// snapshot measures the remote target without following a final symlink:
-// Lstat classifies the path, and only regular files are opened and hashed.
-func (f *FS) snapshot(ctx context.Context, remotePath string) (remoteSnapshot, error) {
-	info, err := f.client.Lstat(remotePath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
-			return remoteSnapshot{}, nil
-		}
-		return remoteSnapshot{}, fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
-	}
-	snap := remoteSnapshot{version: conditional.Version{Exists: true}, mode: info.Mode(), regular: info.Mode().IsRegular()}
-	if !snap.regular {
-		return snap, nil
-	}
-	file, err := f.client.Open(remotePath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
-			return remoteSnapshot{}, nil
-		}
-		return remoteSnapshot{}, fmt.Errorf("SFTP open %s: %w", remotePath, err)
-	}
-	stop := context.AfterFunc(ctx, func() { _ = file.Close() })
-	defer stop()
-	version, hashErr := conditional.HashReader(ctx, file)
-	closeErr := file.Close()
-	if hashErr != nil {
-		return remoteSnapshot{}, fmt.Errorf("SFTP verify %s: %w", remotePath, hashErr)
-	}
-	if closeErr != nil {
-		return remoteSnapshot{}, fmt.Errorf("SFTP close %s: %w", remotePath, closeErr)
-	}
-	snap.version = version
-	return snap, nil
-}
-
-func checkSnapshot(expected conditional.Expectation, snap remoteSnapshot) error {
-	if expected.Exists && snap.version.Exists && !snap.regular {
-		return &conditional.MismatchError{Expected: expected, Actual: snap.version, Reason: "target is not a regular file"}
-	}
-	return expected.Check(snap.version)
-}
-
-func (f *FS) replaceFileVersion(ctx context.Context, remotePath string, data []byte, backup bool, expected conditional.Expectation) error {
-	initial, err := f.snapshot(ctx, remotePath)
-	if err != nil {
-		return err
-	}
-	if err := checkSnapshot(expected, initial); err != nil {
-		return err
-	}
-	temporary, err := f.uploadTemporary(ctx, remotePath, data, initial.mode.Perm())
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = f.client.Remove(temporary)
-		}
-	}()
-	if conditionalTestHook != nil {
-		conditionalTestHook()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	final, err := f.snapshot(ctx, remotePath)
-	if err != nil {
-		return err
-	}
-	if err := checkSnapshot(expected, final); err != nil {
-		return err
-	}
-	if backup {
-		if err := f.backup(ctx, remotePath, final.mode); err != nil {
-			return err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := f.client.PosixRename(temporary, remotePath); err != nil {
-		return fmt.Errorf("SFTP conditional replace %s (requires posix-rename@openssh.com): %w", remotePath, err)
-	}
-	committed = true
-	return nil
-}
-
 func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation) error {
-	initial, err := f.snapshot(ctx, remotePath)
+	occupied, err := f.lstatOccupied(remotePath)
 	if err != nil {
 		return err
 	}
-	if err := checkSnapshot(expected, initial); err != nil {
-		return err
+	if occupied {
+		return remoteAlreadyExists(expected)
 	}
 	temporary, err := f.uploadTemporary(ctx, remotePath, data, 0o600)
 	if err != nil {
@@ -152,32 +81,99 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 			_ = f.client.Remove(temporary)
 		}
 	}()
-	if conditionalTestHook != nil {
-		conditionalTestHook()
+	if conditionalPreVerifyHook != nil {
+		conditionalPreVerifyHook()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	final, err := f.snapshot(ctx, remotePath)
+	occupied, err = f.lstatOccupied(remotePath)
 	if err != nil {
 		return err
 	}
-	if err := checkSnapshot(expected, final); err != nil {
+	if occupied {
+		return remoteAlreadyExists(expected)
+	}
+	if conditionalPreCommitHook != nil {
+		conditionalPreCommitHook()
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := f.client.Link(temporary, remotePath); err != nil {
-		if _, statErr := f.client.Lstat(remotePath); statErr == nil {
-			return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
-		}
-		return fmt.Errorf("SFTP conditional create %s (requires hardlink@openssh.com): %w", remotePath, err)
+	if err := conditionalLink(f.client, temporary, remotePath); err != nil {
+		return f.reconcileCreate(ctx, remotePath, data, expected, err)
 	}
 	committed = true
 	_ = f.client.Remove(temporary)
 	return nil
 }
 
+// reconcileCreate classifies a failed hard-link commit by inspecting the
+// resulting path state rather than trusting error shapes, which the SFTP
+// client normalises inconsistently. The link is atomic, so an absent target
+// proves nothing was committed; a target holding exactly the staged content
+// means the commit may have succeeded before the response was lost; any
+// other occupant is a plain version mismatch. No retry is ever attempted.
+func (f *FS) reconcileCreate(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation, linkErr error) error {
+	// Reconciliation must finish even if the caller's context was cancelled;
+	// otherwise a cancelled read could misclassify the commit outcome.
+	ctx = context.WithoutCancel(ctx)
+	occupied, statErr := f.lstatOccupied(remotePath)
+	if statErr != nil {
+		return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w (reconciliation failed: %v)", remotePath, linkErr, statErr)}
+	}
+	if !occupied {
+		return fmt.Errorf("SFTP conditional create %s (requires hardlink@openssh.com): %w", remotePath, linkErr)
+	}
+	if version, err := f.hashRemoteRegular(ctx, remotePath); err == nil && version == conditional.VersionOf(data) {
+		return &conditional.IndeterminateError{Expected: expected, New: version, Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, linkErr)}
+	}
+	return remoteAlreadyExists(expected)
+}
+
+// hashRemoteRegular measures a regular file for reconciliation. Any open or
+// read failure is reported as an error and treated as foreign content.
+func (f *FS) hashRemoteRegular(ctx context.Context, remotePath string) (conditional.Version, error) {
+	info, err := f.client.Lstat(remotePath)
+	if err != nil {
+		return conditional.Version{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return conditional.Version{}, fmt.Errorf("not a regular file")
+	}
+	file, err := f.client.Open(remotePath)
+	if err != nil {
+		return conditional.Version{}, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = file.Close() })
+	defer stop()
+	version, hashErr := conditional.HashReader(ctx, file)
+	closeErr := file.Close()
+	if hashErr != nil {
+		return conditional.Version{}, hashErr
+	}
+	return version, closeErr
+}
+
+// lstatOccupied reports whether anything exists at remotePath without
+// opening it, so unreadable files still count as occupied.
+func (f *FS) lstatOccupied(remotePath string) (bool, error) {
+	_, err := f.client.Lstat(remotePath)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
+}
+
+func remoteAlreadyExists(expected conditional.Expectation) error {
+	return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
+}
+
 // uploadTemporary stages the replacement content in an exclusively created
-// same-directory temporary file, preserving the target's permission bits.
+// same-directory temporary file.
 func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (temporary string, err error) {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {

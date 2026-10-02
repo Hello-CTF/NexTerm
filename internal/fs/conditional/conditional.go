@@ -168,21 +168,74 @@ func describe(exists bool, size int64, sha256Hex string) string {
 	return fmt.Sprintf("size %d sha256 %s", size, sha256Hex)
 }
 
+// ErrCommitIndeterminate matches errors returned when the commit may or may
+// not have taken effect, for example when a remote transport executes the
+// atomic commit but the response is lost. Use errors.As with
+// *IndeterminateError for reconciliation details.
+var ErrCommitIndeterminate = errors.New("conditional write: commit outcome indeterminate")
+
+// IndeterminateError reports that the outcome of the commit is unknown. It
+// is the only error under which the new content may already be live; callers
+// must re-read the target and reconcile it against Expected and New before
+// doing anything else. Implementations never retry the operation
+// automatically, because the external effect is ambiguous.
+type IndeterminateError struct {
+	Expected Expectation
+	New      Version
+	Cause    error
+}
+
+func (e *IndeterminateError) Error() string {
+	return fmt.Sprintf("conditional write: commit outcome is unknown (%v); re-read the target and reconcile it with the attempted content before any retry", e.Cause)
+}
+
+// Unwrap matches ErrCommitIndeterminate and, when present, the underlying
+// transport cause (for example context.Canceled) through errors.Is.
+func (e *IndeterminateError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrCommitIndeterminate}
+	}
+	return []error{ErrCommitIndeterminate, e.Cause}
+}
+
 // Writer is the conditional-write capability implemented by filesystem
 // transports alongside their unconditional base interface.
 //
 // WriteFileVersion writes data to path only while the target still matches
 // expected, preserving the transport's atomic temporary-file replacement and
 // backup behaviour. When backup is true and the target holds the verified
-// version, that version is copied to the transport's backup path before the
-// atomic replacement; a conditional create has nothing to back up.
+// version, those exact verified bytes are copied to the transport's backup
+// path before the atomic replacement; a conditional create has nothing to
+// back up and never writes a backup.
 //
-// The write is all-or-nothing: a nil return means the new content was
-// committed, and any error return means it was not committed and temporary
-// files were removed best effort. In particular a mismatch never truncates,
-// replaces or creates the target, and never produces a backup of
-// unverified content. On mismatch callers must re-read the target and obtain
-// a fresh confirmation instead of retrying with the same expectation.
+// Support is deliberately limited to what each platform can actually enforce:
+//   - A conditional create (expected absent) is supported by every
+//     transport. The commit is an atomic no-clobber primitive (a hard link
+//     or a move that fails if the path appeared), so a conflicting create is
+//     rejected as a mismatch even if it lands after the last check.
+//   - An existing-file replacement is supported only where other processes'
+//     content writes are kernel-enforced to stay out for the whole
+//     verify-and-commit operation: local Windows (share modes plus a
+//     mandatory byte-range lock held across the commit) and WinRM (the same
+//     mechanism inside a single remote script, with the locked handle still
+//     open during File.Replace). The path's identity/content is re-checked
+//     immediately before the commit. Unix local filesystems and the SFTP
+//     protocol offer no such exclusion or compare-and-commit primitive, so
+//     their replacements fail with an error wrapping base.ErrUnsupported
+//     before any mutation instead of pretending to be safe.
+//
+// The outcome of every call is exactly one of:
+//   - nil: the new content was committed under the guarantees above.
+//   - *MismatchError (errors.Is ErrVersionMismatch): the target was not the
+//     verified version; nothing was committed and no backup was written.
+//     Callers must re-read and obtain a fresh confirmation.
+//   - *IndeterminateError (errors.Is ErrCommitIndeterminate): the commit may
+//     or may not have happened; callers must re-read and reconcile, and no
+//     automatic retry has been attempted.
+//   - an error wrapping base.ErrUnsupported: the transport cannot enforce
+//     the contract for this operation; no mutation was attempted.
+//   - any other error: the new content was not committed and temporary
+//     files were removed best effort.
 //
 // Paths are passed as filesystem operands only; implementations must not
 // interpolate them into shell command lines.

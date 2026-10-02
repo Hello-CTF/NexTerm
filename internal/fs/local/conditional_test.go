@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 func writeSynthetic(t *testing.T, path, content string) {
@@ -58,41 +59,6 @@ func assertNoTemporaryLeftovers(t *testing.T, dir string) {
 	}
 }
 
-func TestWriteFileVersionCommitsWithBackupAndMode(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "file.txt")
-	writeSynthetic(t, path, "old content")
-	if err := os.Chmod(path, 0o640); err != nil {
-		t.Fatal(err)
-	}
-	filesystem := New()
-	if err := filesystem.WriteFileVersion(context.Background(), path, []byte("new content"), true, expectVersion("old content")); err != nil {
-		t.Fatal(err)
-	}
-	if got := readSynthetic(t, path); got != "new content" {
-		t.Fatalf("content = %q", got)
-	}
-	if got := readSynthetic(t, path+BackupSuffix); got != "old content" {
-		t.Fatalf("backup = %q", got)
-	}
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0o640 {
-			t.Fatalf("mode = %v, %v", info.Mode(), err)
-		}
-	}
-	if err := filesystem.WriteFileVersion(context.Background(), path, []byte("third"), false, expectVersion("new content")); err != nil {
-		t.Fatal(err)
-	}
-	if got := readSynthetic(t, path); got != "third" {
-		t.Fatalf("content = %q", got)
-	}
-	if got := readSynthetic(t, path+BackupSuffix); got != "old content" {
-		t.Fatalf("backup rewritten without backup flag: %q", got)
-	}
-	assertNoTemporaryLeftovers(t, dir)
-}
-
 func TestWriteFileVersionCreatesOnlyWhenAbsent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "created.txt")
@@ -116,183 +82,58 @@ func TestWriteFileVersionCreatesOnlyWhenAbsent(t *testing.T) {
 	assertNoTemporaryLeftovers(t, dir)
 }
 
-func TestWriteFileVersionRejectsStaleExpectations(t *testing.T) {
+func TestWriteFileVersionCreateRejectsEveryOccupiedPathKind(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "file.txt")
-	writeSynthetic(t, path, "actual")
+	victim := filepath.Join(dir, "victim.txt")
+	writeSynthetic(t, victim, "victim")
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	subdir := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(subdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	filesystem := New()
-	for _, test := range []struct {
-		name     string
-		expected conditional.Expectation
-	}{
-		{name: "wrong digest", expected: expectVersion("xxxxx!")},
-		{name: "wrong size", expected: conditional.Expectation{Exists: true, Size: 99, SHA256: conditional.VersionOf([]byte("actual")).SHA256}},
-		{name: "absent expected", expected: conditional.Absent()},
-	} {
-		mismatch := requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), true, test.expected))
-		t.Logf("%s: %v", test.name, mismatch)
-		if got := readSynthetic(t, path); got != "actual" {
-			t.Fatalf("%s: target modified on mismatch: %q", test.name, got)
-		}
+	for _, path := range []string{victim, link, subdir} {
+		requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), true, conditional.Absent()))
 	}
-	missingPath := filepath.Join(dir, "missing.txt")
-	mismatch := requireMismatch(t, filesystem.WriteFileVersion(context.Background(), missingPath, []byte("new"), false, expectVersion("actual")))
-	if mismatch.Actual.Exists {
-		t.Fatalf("missing target reported as present: %+v", mismatch.Actual)
+	if got := readSynthetic(t, victim); got != "victim" {
+		t.Fatalf("occupied-path mismatch modified content: %q", got)
 	}
-	if _, err := os.Lstat(missingPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("mismatch created the target: %v", err)
-	}
-	if _, err := os.Lstat(path + BackupSuffix); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("mismatch wrote a backup: %v", err)
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink itself replaced: %v, %v", info, err)
 	}
 	assertNoTemporaryLeftovers(t, dir)
 }
 
-func TestWriteFileVersionRejectsInvalidExpectations(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "file.txt")
-	writeSynthetic(t, path, "actual")
-	filesystem := New()
-	err := filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Expectation{Exists: true, Size: 6, SHA256: "not-a-digest"})
-	if err == nil || errors.Is(err, conditional.ErrVersionMismatch) {
-		t.Fatalf("invalid expectation = %v", err)
-	}
-	if got := readSynthetic(t, path); got != "actual" {
-		t.Fatalf("invalid expectation modified target: %q", got)
-	}
-}
-
-func TestWriteFileVersionDetectsExternalWriteBeforeCommit(t *testing.T) {
+func TestWriteFileVersionDetectsExternalCreateAroundFinalCheck(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		mutate  func(t *testing.T, path string)
-		content string
+		name string
+		hook *func()
 	}{
-		{name: "in place write", mutate: func(t *testing.T, path string) { writeSynthetic(t, path, "external") }, content: "external"},
-		{name: "delete", mutate: func(t *testing.T, path string) {
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
-			}
-		}},
-		{name: "rename replacement", mutate: func(t *testing.T, path string) {
-			replacement := path + ".replacement"
-			writeSynthetic(t, replacement, "external")
-			if err := os.Rename(replacement, path); err != nil {
-				t.Fatal(err)
-			}
-		}, content: "external"},
+		{name: "before final check", hook: &conditionalPreVerifyHook},
+		{name: "after final check before commit", hook: &conditionalPreCommitHook},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "file.txt")
-			writeSynthetic(t, path, "verified")
-			conditionalTestHook = func() { test.mutate(t, path) }
-			t.Cleanup(func() { conditionalTestHook = nil })
+			path := filepath.Join(dir, "created.txt")
+			*test.hook = func() { writeSynthetic(t, path, "external") }
+			t.Cleanup(func() { *test.hook = nil })
 			filesystem := New()
-			requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), true, expectVersion("verified")))
-			if test.content != "" {
-				if got := readSynthetic(t, path); got != test.content {
-					t.Fatalf("external content was clobbered: %q", got)
-				}
-			}
-			if _, err := os.Lstat(path + BackupSuffix); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("mismatch wrote a backup: %v", err)
+			requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Absent()))
+			if got := readSynthetic(t, path); got != "external" {
+				t.Fatalf("external create was clobbered: %q", got)
 			}
 			assertNoTemporaryLeftovers(t, dir)
 		})
 	}
 }
 
-func TestWriteFileVersionDetectsExternalCreateBeforeCommit(t *testing.T) {
+func TestWriteFileVersionConcurrentCreatesCommitOnce(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "created.txt")
-	conditionalTestHook = func() { writeSynthetic(t, path, "external") }
-	t.Cleanup(func() { conditionalTestHook = nil })
 	filesystem := New()
-	requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Absent()))
-	if got := readSynthetic(t, path); got != "external" {
-		t.Fatalf("external create was clobbered: %q", got)
-	}
-	assertNoTemporaryLeftovers(t, dir)
-}
-
-func TestWriteFileVersionRejectsSymlinkTargets(t *testing.T) {
-	dir := t.TempDir()
-	victim := filepath.Join(dir, "victim.txt")
-	writeSynthetic(t, victim, "victim")
-	path := filepath.Join(dir, "link.txt")
-	if err := os.Symlink(victim, path); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	filesystem := New()
-	requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), true, expectVersion("victim")))
-	requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Absent()))
-	if got := readSynthetic(t, victim); got != "victim" {
-		t.Fatalf("symlink victim modified: %q", got)
-	}
-	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("symlink itself replaced: %v, %v", info, err)
-	}
-	if _, err := os.Lstat(victim + BackupSuffix); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("symlink write produced a victim backup: %v", err)
-	}
-}
-
-func TestWriteFileVersionRejectsSymlinkSwapBeforeCommit(t *testing.T) {
-	dir := t.TempDir()
-	victim := filepath.Join(dir, "victim.txt")
-	writeSynthetic(t, victim, "victim")
-	path := filepath.Join(dir, "file.txt")
-	writeSynthetic(t, path, "verified")
-	conditionalTestHook = func() {
-		if err := os.Remove(path); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(victim, path); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() { conditionalTestHook = nil })
-	filesystem := New()
-	requireMismatch(t, filesystem.WriteFileVersion(context.Background(), path, []byte("new"), true, expectVersion("verified")))
-	if got := readSynthetic(t, victim); got != "victim" {
-		t.Fatalf("symlink swap victim modified: %q", got)
-	}
-	assertNoTemporaryLeftovers(t, dir)
-}
-
-func TestWriteFileVersionCancellation(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "file.txt")
-	writeSynthetic(t, path, "verified")
-	filesystem := New()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := filesystem.WriteFileVersion(ctx, path, []byte("new"), true, expectVersion("verified")); !errors.Is(err, context.Canceled) {
-		t.Fatalf("pre-cancelled write = %v", err)
-	}
-	ctx, cancel = context.WithCancel(context.Background())
-	conditionalTestHook = cancel
-	t.Cleanup(func() { conditionalTestHook = nil })
-	if err := filesystem.WriteFileVersion(ctx, path, []byte("new"), true, expectVersion("verified")); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancel before commit = %v", err)
-	}
-	if got := readSynthetic(t, path); got != "verified" {
-		t.Fatalf("cancelled write modified target: %q", got)
-	}
-	if _, err := os.Lstat(path + BackupSuffix); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("cancelled write produced a backup: %v", err)
-	}
-	assertNoTemporaryLeftovers(t, dir)
-}
-
-func TestWriteFileVersionConcurrentWritersCommitOnce(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "file.txt")
-	writeSynthetic(t, path, "verified")
-	filesystem := New()
-	expected := expectVersion("verified")
 	start := make(chan struct{})
 	errs := make([]error, 2)
 	var wg sync.WaitGroup
@@ -301,7 +142,7 @@ func TestWriteFileVersionConcurrentWritersCommitOnce(t *testing.T) {
 		go func(i int, content string) {
 			defer wg.Done()
 			<-start
-			errs[i] = filesystem.WriteFileVersion(context.Background(), path, []byte(content), false, expected)
+			errs[i] = filesystem.WriteFileVersion(context.Background(), path, []byte(content), false, conditional.Absent())
 		}(i, content)
 	}
 	close(start)
@@ -322,6 +163,77 @@ func TestWriteFileVersionConcurrentWritersCommitOnce(t *testing.T) {
 	}
 	if got := readSynthetic(t, path); got != "writer A" && got != "writer B" {
 		t.Fatalf("final content = %q", got)
+	}
+	assertNoTemporaryLeftovers(t, dir)
+}
+
+func TestWriteFileVersionCancellation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "created.txt")
+	filesystem := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := filesystem.WriteFileVersion(ctx, path, []byte("new"), false, conditional.Absent()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-cancelled write = %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		hook *func()
+	}{
+		{name: "before final check", hook: &conditionalPreVerifyHook},
+		{name: "before commit", hook: &conditionalPreCommitHook},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			*test.hook = cancel
+			t.Cleanup(func() { *test.hook = nil })
+			if err := filesystem.WriteFileVersion(ctx, path, []byte("new"), false, conditional.Absent()); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled write = %v", err)
+			}
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("cancelled create produced a target: %v", err)
+			}
+			assertNoTemporaryLeftovers(t, dir)
+		})
+	}
+}
+
+func TestWriteFileVersionRejectsInvalidExpectations(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	writeSynthetic(t, path, "actual")
+	filesystem := New()
+	err := filesystem.WriteFileVersion(context.Background(), path, []byte("new"), false, conditional.Expectation{Exists: true, Size: 6, SHA256: "not-a-digest"})
+	if err == nil || errors.Is(err, conditional.ErrVersionMismatch) {
+		t.Fatalf("invalid expectation = %v", err)
+	}
+	if got := readSynthetic(t, path); got != "actual" {
+		t.Fatalf("invalid expectation modified target: %q", got)
+	}
+}
+
+func TestWriteFileVersionReplaceIsRefusedWhereUnenforceable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows replacement is covered by the windows-only replace tests")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	writeSynthetic(t, path, "actual")
+	filesystem := New()
+	for _, target := range []string{path, filepath.Join(dir, "missing.txt")} {
+		err := filesystem.WriteFileVersion(context.Background(), target, []byte("new"), true, expectVersion("actual"))
+		if !errors.Is(err, base.ErrUnsupported) {
+			t.Fatalf("unix replacement = %v, want base.ErrUnsupported", err)
+		}
+		if errors.Is(err, conditional.ErrVersionMismatch) || errors.Is(err, conditional.ErrCommitIndeterminate) {
+			t.Fatalf("unsupported must be a distinct outcome: %v", err)
+		}
+	}
+	if got := readSynthetic(t, path); got != "actual" {
+		t.Fatalf("refused replacement modified target: %q", got)
+	}
+	if _, err := os.Lstat(path + BackupSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refused replacement wrote a backup: %v", err)
 	}
 	assertNoTemporaryLeftovers(t, dir)
 }

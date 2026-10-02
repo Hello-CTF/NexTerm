@@ -105,3 +105,30 @@ type failingReader struct{}
 func (failingReader) Read([]byte) (int, error) {
 	return 0, errors.New("synthetic read failure")
 }
+
+func TestIndeterminateErrorCarriesReconciliationDetails(t *testing.T) {
+	expected := VersionOf([]byte("old")).Expectation()
+	attempted := VersionOf([]byte("new"))
+	cause := context.Canceled
+	err := &IndeterminateError{Expected: expected, New: attempted, Cause: cause}
+	if !errors.Is(err, ErrCommitIndeterminate) {
+		t.Fatalf("indeterminate error does not match ErrCommitIndeterminate: %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("indeterminate error lost its cause: %v", err)
+	}
+	if errors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("indeterminate error must not look like a mismatch: %v", err)
+	}
+	var typed *IndeterminateError
+	if !errors.As(err, &typed) || typed.Expected != expected || typed.New != attempted || typed.Cause != cause {
+		t.Fatalf("typed details = %+v", typed)
+	}
+	if !strings.Contains(err.Error(), "re-read") {
+		t.Fatalf("error does not instruct reconciliation: %q", err.Error())
+	}
+	bare := &IndeterminateError{Expected: expected, New: attempted}
+	if !errors.Is(bare, ErrCommitIndeterminate) || bare.Unwrap() == nil {
+		t.Fatalf("cause-less indeterminate error = %v", bare)
+	}
+}
