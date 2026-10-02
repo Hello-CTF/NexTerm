@@ -1,0 +1,241 @@
+package session
+
+import (
+	"context"
+	"errors"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+)
+
+const (
+	KindLocal  = "local"
+	KindSSH    = "ssh"
+	KindDocker = "docker"
+	KindWinRM  = "winrm"
+
+	TopicSessionStatus     = "session://status"
+	TopicTerminalExit      = "terminal://exit"
+	TopicTerminalControl   = "terminal://control"
+	TopicTerminalThrottled = "terminal://throttled"
+)
+
+var (
+	ErrSessionNotFound = errors.New("session not found")
+	ErrTabNotFound     = errors.New("terminal tab not found")
+	ErrSessionClosed   = errors.New("session closed")
+	ErrTabClosed       = errors.New("terminal tab closed")
+	ErrNotController   = errors.New("not_controller")
+	ErrUnsupported     = errors.New("session capability unsupported")
+	ErrDisconnected    = errors.New("session disconnected")
+	ErrInvalidSize     = errors.New("invalid terminal size")
+	ErrStaleGeneration = errors.New("stale session generation")
+)
+
+type Status string
+
+const (
+	StatusConnecting   Status = "connecting"
+	StatusConnected    Status = "connected"
+	StatusReconnecting Status = "reconnecting"
+	StatusDisconnected Status = "disconnected"
+	StatusFailed       Status = "failed"
+)
+
+type Asset struct {
+	ID       string
+	Name     string
+	Kind     string
+	Encoding string
+	Options  any
+}
+
+type Connector interface {
+	Connect(context.Context, Asset, uint64) (base.Transport, error)
+}
+
+type ConnectorFunc func(context.Context, Asset, uint64) (base.Transport, error)
+
+func (f ConnectorFunc) Connect(ctx context.Context, asset Asset, generation uint64) (base.Transport, error) {
+	return f(ctx, asset, generation)
+}
+
+type TerminalConfig struct {
+	TabID     string
+	SessionID string
+	Cols      uint32
+	Rows      uint32
+	Encoding  string
+}
+
+type TerminalState interface {
+	Feed([]byte)
+	Dump(maxBytes int) []byte
+	Resize(cols, rows int) error
+	SetResponseHandler(func([]byte))
+	Close()
+}
+
+type TerminalFactory interface {
+	NewTerminal(TerminalConfig) (TerminalState, error)
+}
+
+type TerminalFactoryFunc func(TerminalConfig) (TerminalState, error)
+
+func (f TerminalFactoryFunc) NewTerminal(config TerminalConfig) (TerminalState, error) {
+	return f(config)
+}
+
+type Event struct {
+	Topic   string
+	Payload any
+}
+
+type Emitter interface {
+	EmitSessionEvent(context.Context, Event) error
+}
+
+type EmitterFunc func(context.Context, Event) error
+
+func (f EmitterFunc) EmitSessionEvent(ctx context.Context, event Event) error {
+	return f(ctx, event)
+}
+
+type Config struct {
+	Connector        Connector
+	Terminals        TerminalFactory
+	Hub              *hub.Hub
+	Emitter          Emitter
+	NewID            func() string
+	IdleTimeout      time.Duration
+	SweepInterval    time.Duration
+	ReconnectMax     int
+	ReconnectBackoff []time.Duration
+	DefaultReplay    int
+}
+
+type SessionInfo struct {
+	ID         string    `json:"id"`
+	AssetID    string    `json:"assetId"`
+	Name       string    `json:"name"`
+	Kind       string    `json:"kind"`
+	Status     Status    `json:"status"`
+	Tabs       []string  `json:"tabs"`
+	Generation uint64    `json:"generation"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type TabInfo struct {
+	ID          string `json:"id"`
+	SessionID   string `json:"sessionId"`
+	Cols        uint32 `json:"cols"`
+	Rows        uint32 `json:"rows"`
+	Controller  string `json:"controller,omitempty"`
+	Subscribers int    `json:"subscribers"`
+	Viewers     int    `json:"viewers"`
+	Exited      bool   `json:"exited"`
+	Ephemeral   bool   `json:"ephemeral,omitempty"`
+}
+
+type StatusEvent struct {
+	SessionID string `json:"sessionId"`
+	Status    Status `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ExitEvent struct {
+	TabID    string `json:"tabId"`
+	ExitCode *int   `json:"exitCode"`
+}
+
+type ControlEvent struct {
+	TabID       string `json:"tabId"`
+	Controller  string `json:"controller,omitempty"`
+	Subscribers int    `json:"subscribers"`
+	Viewers     int    `json:"viewers"`
+	Exited      bool   `json:"exited"`
+}
+
+type ThrottleEvent struct {
+	TabID         string `json:"tabId"`
+	InflightBytes int    `json:"inflightBytes"`
+}
+
+type Session struct {
+	ID        string
+	CreatedAt time.Time
+
+	asset Asset
+
+	mu              sync.Mutex
+	status          Status
+	transport       *transportHandle
+	generation      uint64
+	ctx             context.Context
+	cancel          context.CancelFunc
+	tabs            map[string]*Tab
+	idleSince       time.Time
+	closed          bool
+	connectDone     chan struct{}
+	connectErr      error
+	connectFinished bool
+	reconnecting    bool
+	reconnectDone   chan struct{}
+	reconnectErr    error
+}
+
+func (s *Session) Info() SessionInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tabs := make([]string, 0, len(s.tabs))
+	for id := range s.tabs {
+		tabs = append(tabs, id)
+	}
+	sort.Strings(tabs)
+	return SessionInfo{
+		ID: s.ID, AssetID: s.asset.ID, Name: s.asset.Name, Kind: s.asset.Kind,
+		Status: s.status, Tabs: tabs, Generation: s.generation, CreatedAt: s.CreatedAt,
+	}
+}
+
+func (s *Session) Asset() Asset {
+	return s.asset
+}
+
+type OpenTabOptions struct {
+	SessionID string
+	ClientID  string
+	ChannelID string
+	Cols      uint32
+	Rows      uint32
+	Term      string
+	Ephemeral bool
+}
+
+type AttachOptions struct {
+	ClientID    string
+	ChannelID   string
+	ReplayBytes int
+}
+
+func reconnectable(kind string) bool {
+	return kind == KindSSH || kind == KindDocker || kind == KindWinRM
+}
+
+func ptyBacked(kind string) bool {
+	return kind == KindLocal || kind == KindSSH || kind == KindDocker
+}
+
+func validSize(cols, rows uint32) bool {
+	return cols > 0 && rows > 0 && cols <= 1024 && rows <= 1024
+}
+
+func clientID(id string) string {
+	if id == "" {
+		return "desktop"
+	}
+	return id
+}
