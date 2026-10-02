@@ -1,4 +1,4 @@
-//go:build (darwin || linux) && !race
+//go:build darwin || linux
 
 package production
 
