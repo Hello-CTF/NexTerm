@@ -76,13 +76,13 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 	transport.DialContext = dialer.DialContext
 	if config.Proxy != nil {
 		proxyURL, err := url.Parse(*config.Proxy)
-		if err != nil || proxyURL.Host == "" {
-			return nil, fmt.Errorf("invalid AI proxy %q", *config.Proxy)
+		if err != nil || proxyURL.Host == "" || proxyURL.Hostname() == "" {
+			return nil, errors.New("invalid AI proxy configuration")
 		}
 		switch proxyURL.Scheme {
 		case "http", "https", "socks5":
 		default:
-			return nil, fmt.Errorf("unsupported AI proxy scheme %q", proxyURL.Scheme)
+			return nil, errors.New("unsupported AI proxy scheme")
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}

@@ -50,12 +50,14 @@ func (c *Client) chatStream(ctx context.Context, request ChatRequest, handler St
 
 type pendingToolCall struct {
 	id        string
-	name      string
-	arguments string
+	name      strings.Builder
+	arguments strings.Builder
 }
 
 type streamState struct {
 	completion Completion
+	content    strings.Builder
+	reasoning  strings.Builder
 	pending    map[uint64]*pendingToolCall
 	handler    StreamHandler
 	sawPayload bool
@@ -119,14 +121,14 @@ func (s *streamState) consume(ctx context.Context, data string) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		s.completion.Reasoning += *reasoning
+		s.reasoning.WriteString(*reasoning)
 		s.handler(StreamItem{Kind: StreamReasoning, Text: *reasoning})
 	}
 	if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		s.completion.Content += *choice.Delta.Content
+		s.content.WriteString(*choice.Delta.Content)
 		s.handler(StreamItem{Kind: StreamDelta, Text: *choice.Delta.Content})
 	}
 	for _, fragment := range choice.Delta.ToolCalls {
@@ -142,14 +144,14 @@ func (s *streamState) consume(ctx context.Context, data string) (bool, error) {
 			continue
 		}
 		if fragment.Function.Name != nil {
-			pending.name += *fragment.Function.Name
+			pending.name.WriteString(*fragment.Function.Name)
 		}
 		if fragment.Function.Arguments != nil {
-			pending.arguments += *fragment.Function.Arguments
+			pending.arguments.WriteString(*fragment.Function.Arguments)
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
-			s.handler(StreamItem{Kind: StreamToolArgs, Name: pending.name, Chars: len(pending.arguments)})
+			s.handler(StreamItem{Kind: StreamToolArgs, Name: pending.name.String(), Chars: pending.arguments.Len()})
 		}
 	}
 	return false, nil
@@ -166,9 +168,11 @@ func (s *streamState) finishTools() {
 		pending := s.pending[index]
 		s.completion.ToolCalls = append(s.completion.ToolCalls, ToolCall{
 			ID: pending.id, Type: "function",
-			Function: FunctionCall{Name: pending.name, Arguments: pending.arguments},
+			Function: FunctionCall{Name: pending.name.String(), Arguments: pending.arguments.String()},
 		})
 	}
+	s.completion.Content = s.content.String()
+	s.completion.Reasoning = s.reasoning.String()
 }
 
 func consumeSSE(reader io.Reader, handle func(string) (bool, error)) error {
