@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
 	if err != nil {
 		return
 	}
@@ -38,7 +38,7 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
 	if err != nil {
 		return
 	}

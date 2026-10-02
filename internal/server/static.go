@@ -1,12 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -59,12 +59,7 @@ func (s *staticFiles) serveFile(w http.ResponseWriter, r *http.Request, path str
 		injected := InjectTransportMarker(string(data))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Content-Length", strconv.Itoa(len(injected)))
-		w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
-		w.WriteHeader(http.StatusOK)
-		if r.Method != http.MethodHead {
-			_, _ = w.Write([]byte(injected))
-		}
+		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), bytes.NewReader([]byte(injected)))
 		return
 	}
 

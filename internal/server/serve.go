@@ -71,7 +71,11 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	defer server.Close()
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
+		defer closeCancel()
+		returnErr = errors.Join(returnErr, server.CloseContext(closeCtx))
+	}()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if config.Server.Blobs != nil && !config.Server.Options.SyncOnly {
@@ -113,9 +117,9 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 		return err
 	case <-ctx.Done():
 		cancel()
-		_ = server.Close()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 		defer shutdownCancel()
+		_ = server.CloseContext(shutdownCtx)
 		shutdownErr := httpServer.Shutdown(shutdownCtx)
 		serveErr := <-serveResult
 		if errors.Is(serveErr, http.ErrServerClosed) {

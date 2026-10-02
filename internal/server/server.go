@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -62,6 +64,8 @@ type Server struct {
 	handler        http.Handler
 	logger         *slog.Logger
 	sockets        socketTracker
+	closeOnce      sync.Once
+	closeErr       error
 }
 
 type Health struct {
@@ -107,6 +111,11 @@ func New(config Config) (*Server, error) {
 			return config.Vault.Status(), nil
 		}
 	}
+	allowedOrigins := config.Options.AllowedOrigins
+	if allowedOrigins == nil {
+		allowedOrigins = defaultAllowedOrigins
+	}
+	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
 		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
@@ -123,7 +132,7 @@ func New(config Config) (*Server, error) {
 		return nil, err
 	}
 	s.syncDispatcher = syncDispatcher
-	s.handler = s.routes(config)
+	s.handler = s.transportGuard(s.routes(config))
 	return s, nil
 }
 
@@ -271,7 +280,12 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) Events() *EventBroker { return s.events }
 
 func (s *Server) Close() error {
-	err := s.events.Close()
-	s.sockets.closeAndWait()
-	return err
+	return s.CloseContext(context.Background())
+}
+
+func (s *Server) CloseContext(ctx context.Context) error {
+	s.closeOnce.Do(func() {
+		s.closeErr = errors.Join(s.events.Close(), s.sockets.closeAndWait(ctx))
+	})
+	return s.closeErr
 }

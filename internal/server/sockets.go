@@ -44,7 +44,7 @@ func (t *socketTracker) track(parent context.Context) (context.Context, func(), 
 	}, nil
 }
 
-func (t *socketTracker) closeAndWait() {
+func (t *socketTracker) closeAndWait(ctx context.Context) error {
 	t.mu.Lock()
 	t.closed = true
 	cancels := make([]context.CancelFunc, 0, len(t.cancels))
@@ -55,5 +55,15 @@ func (t *socketTracker) closeAndWait() {
 	for _, cancel := range cancels {
 		cancel()
 	}
-	t.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		t.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

@@ -159,6 +159,9 @@ func TestSafeBlobName(t *testing.T) {
 			t.Errorf("SafeBlobName(%q) = %q, want %q", input, actual, expected)
 		}
 	}
+	if actual, expected := SafeBlobName(strings.Repeat("界", 120)), strings.Repeat("界", 80); actual != expected {
+		t.Errorf("long UTF-8 name has %d bytes, want %d: %q", len(actual), len(expected), actual)
+	}
 }
 
 func decodeStagedBlob(t *testing.T, response *http.Response) stagedBlob {

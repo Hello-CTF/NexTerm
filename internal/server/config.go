@@ -25,11 +25,12 @@ const (
 )
 
 type Options struct {
-	Listen    string
-	DataDir   string
-	WebRoot   string
-	MasterKey string
-	SyncOnly  bool
+	Listen         string
+	DataDir        string
+	WebRoot        string
+	MasterKey      string
+	SyncOnly       bool
+	AllowedOrigins []string
 }
 
 type Invocation struct {

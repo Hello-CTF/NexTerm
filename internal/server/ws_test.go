@@ -218,6 +218,36 @@ func TestWebSocketEventsEnvelopeAndUnsubscribe(t *testing.T) {
 	waitFor(t, func() bool { return server.Events().SubscriberCount() == 0 })
 }
 
+func TestCloseContextBoundsBlockedChannelBinder(t *testing.T) {
+	entered := make(chan struct{})
+	block := make(chan struct{})
+	config := testConfig(t, false)
+	config.Channels = ChannelBinderFunc(func(string) (ChannelReceiver, error) {
+		close(entered)
+		<-block
+		return nil, errors.New("binder released")
+	})
+	server, httpServer := newTestHTTP(t, config)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/channel/blocked", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(websocket.StatusNormalClosure, "")
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("binder was not reached")
+	}
+	closeCtx, stopClose := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer stopClose()
+	if err := server.CloseContext(closeCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext error = %v", err)
+	}
+	close(block)
+}
+
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

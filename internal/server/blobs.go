@@ -192,9 +192,12 @@ func SafeBlobName(raw string) string {
 	}
 	runes := []rune(cleaned)
 	if len(runes) > 120 {
-		cleaned = string(runes[:120])
+		runes = runes[:120]
 	}
-	return cleaned
+	for len(string(runes)) > 240 {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes)
 }
 
 func findBlob(root, id string) (string, error) {

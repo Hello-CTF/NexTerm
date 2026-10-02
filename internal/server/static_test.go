@@ -72,6 +72,19 @@ func TestStaticSPAMarkerCacheAndHead(t *testing.T) {
 	if length, _ := strconv.Atoi(response.Header.Get("Content-Length")); length != len(InjectTransportMarker(index)) {
 		t.Fatalf("HEAD content length = %s", response.Header.Get("Content-Length"))
 	}
+	request, err = http.NewRequest(http.MethodGet, httpServer.URL+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("If-Modified-Since", response.Header.Get("Last-Modified"))
+	response, err = httpServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotModified {
+		t.Fatalf("conditional index status = %d", response.StatusCode)
+	}
 }
 
 func TestStaticRejectsTraversalAndMissingIndex(t *testing.T) {
