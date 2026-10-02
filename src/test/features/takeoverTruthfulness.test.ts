@@ -17,7 +17,7 @@ import { stealBack } from "../../app/TakeoverBanner";
 import { useUi, type TakeoverState } from "../../app/store";
 
 function takeover(startedAt = 1): TakeoverState {
-  return { tabId: "tab", jobId: "job", task: "task", allowWrite: true, startedAt };
+  return { tabId: "tab", jobId: "job", token: "token", task: "task", allowWrite: true, startedAt };
 }
 
 describe("takeover steal-back truthfulness", () => {
@@ -40,7 +40,7 @@ describe("takeover steal-back truthfulness", () => {
   it("clears the banner only after successful exit", async () => {
     useUi.getState().setTakeover(takeover());
     await stealBack();
-    expect(mocks.exit).toHaveBeenCalledWith("tab", "用户夺回控制权");
+    expect(mocks.exit).toHaveBeenCalledWith("tab", "token", "用户夺回控制权");
     expect(useUi.getState().takeover).toBeNull();
   });
 

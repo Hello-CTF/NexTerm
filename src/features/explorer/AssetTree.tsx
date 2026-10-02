@@ -8,7 +8,7 @@ import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { pickInlineKeyFile, resolveInlineKeyContent } from "../credentials/keyStaging";
+import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
 import {
   assetIcon,
   IconChevronDown,
@@ -395,7 +395,7 @@ const CRED_KIND_LABEL: Record<string, string> = {
   api_key: "API Key",
 };
 
-function AssetEditor({
+export function AssetEditor({
   kind,
   initial,
   presetGroupId,
@@ -495,6 +495,31 @@ function AssetEditor({
   const syncCredName = (assetName: string) => {
     setName(assetName);
     if (!credNameTouched.current) setCredName(assetName);
+  };
+
+  const inlinePicker = useInlineKeyPicker();
+  const pickInline = async () => {
+    try {
+      const selection = await inlinePicker.pick();
+      if (!selection) return;
+      setKeyPath(selection.path);
+      setInlineKeyContent(selection.content);
+    } catch (e) {
+      pushToast("error", describeError(e));
+    }
+  };
+  const changeKeyOrigin = (next: "ref" | "vault") => {
+    inlinePicker.invalidate();
+    if (next === "ref" && inlineKeyContent !== null) {
+      setKeyPath("");
+      setInlineKeyContent(null);
+    }
+    setKeyOrigin(next);
+  };
+  const changeInlinePath = (next: string) => {
+    inlinePicker.invalidate();
+    setKeyPath(next);
+    setInlineKeyContent(null);
   };
 
   const save = async () => {
@@ -768,20 +793,14 @@ function AssetEditor({
                     <button
                       type="button"
                       className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
-                      onClick={() => {
-                        if (inlineKeyContent !== null) {
-                          setKeyPath("");
-                          setInlineKeyContent(null);
-                        }
-                        setKeyOrigin("ref");
-                      }}
+                      onClick={() => changeKeyOrigin("ref")}
                     >
                       引用本地文件
                     </button>
                     <button
                       type="button"
                       className={`nx-segment-item ${keyOrigin === "vault" ? "is-active" : ""}`}
-                      onClick={() => setKeyOrigin("vault")}
+                      onClick={() => changeKeyOrigin("vault")}
                     >
                       存入凭据库
                     </button>
@@ -847,22 +866,14 @@ function AssetEditor({
                               <input
                                 className="nx-input font-mono text-[12px]"
                                 value={keyPath}
-                                onChange={(e) => {
-                                  setKeyPath(e.target.value);
-                                  setInlineKeyContent(null);
-                                }}
+                                onChange={(e) => changeInlinePath(e.target.value)}
                                 placeholder="选择私钥文件"
                               />
                               <button
                                 type="button"
                                 className="nx-btn nx-btn-outline shrink-0"
-                                onClick={() =>
-                                  void pickInlineKeyFile().then((selection) => {
-                                    if (!selection) return;
-                                    setKeyPath(selection.path);
-                                    setInlineKeyContent(selection.content);
-                                  })
-                                }
+                                onClick={() => void pickInline()}
+                                disabled={inlinePicker.pending}
                               >
                                 浏览…
                               </button>
@@ -993,7 +1004,14 @@ function AssetEditor({
           </button>
           <button
             className="nx-btn nx-btn-primary"
-            disabled={!name.trim()}
+            disabled={
+              !name.trim() ||
+              (keyAuth &&
+                keyOrigin === "vault" &&
+                vaultMode === "new" &&
+                keyContentMode === "file" &&
+                inlinePicker.pending)
+            }
             onClick={() => void save()}
           >
             保存

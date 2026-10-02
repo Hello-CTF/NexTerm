@@ -46,16 +46,16 @@ function commandCalls() {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 139 个方法和 138 个唯一命令", () => {
+  it("保留 140 个方法和 139 个唯一命令", () => {
     const names = commandCalls().map((call) => call.command);
-    expect(names).toHaveLength(139);
-    expect(new Set(names)).toHaveProperty("size", 138);
+    expect(names).toHaveLength(140);
+    expect(new Set(names)).toHaveProperty("size", 139);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_presets",
     ]);
   });
 
-  it("保留全部 21 个嵌套 args 命令", () => {
+  it("保留全部 20 个嵌套 args 命令", () => {
     const nested = commandCalls()
       .filter((call) => call.nested)
       .map((call) => call.command);
@@ -73,7 +73,6 @@ describe("IPC facade 静态契约", () => {
       "docker_action",
       "db_connect",
       "ai_chat",
-      "ai_takeover_enter",
       "vault_set_credential",
       "credential_update",
       "sync_export",

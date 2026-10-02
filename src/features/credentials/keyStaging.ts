@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { pickKeyFile } from "../../ui/dialogs";
 import { browserFilesAvailable, pickBrowserFile } from "../../ipc/webFiles";
 
@@ -15,6 +16,38 @@ export async function pickInlineKeyFile(): Promise<InlineKeySelection | null> {
   }
   const path = await pickKeyFile();
   return path ? { path, content: null } : null;
+}
+
+export function useInlineKeyPicker() {
+  const generationRef = useRef(0);
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      generationRef.current += 1;
+    };
+  }, []);
+
+  const invalidate = useCallback(() => {
+    generationRef.current += 1;
+    setPending(false);
+  }, []);
+
+  const pick = useCallback(async (): Promise<InlineKeySelection | null> => {
+    const generation = ++generationRef.current;
+    setPending(true);
+    try {
+      const selection = await pickInlineKeyFile();
+      return generation === generationRef.current ? selection : null;
+    } catch (error) {
+      if (generation !== generationRef.current) return null;
+      throw error;
+    } finally {
+      if (generation === generationRef.current) setPending(false);
+    }
+  }, []);
+
+  return { pick, pending, invalidate };
 }
 
 export async function resolveInlineKeyContent(

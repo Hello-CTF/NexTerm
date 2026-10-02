@@ -18,6 +18,7 @@ import { ModelPanel } from "./ModelPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
+import { answerInput, confirmationInput, confirmationNonceOf, questionFromEvent } from "./aiWire";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -85,6 +86,15 @@ type ChatItem =
       reason?: string;
       /** 写文件类工具的改动预览：**批准之前**就能看到改什么。 */
       preview?: FilePreviewItem | null;
+      nonce: string;
+    }
+  | {
+      role: "question";
+      jobId: string;
+      callId: string;
+      nonce: string;
+      question: string;
+      options: string[];
     };
 
 /**
@@ -141,6 +151,15 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [confirmCard, setConfirmCard] = useState<Extract<ChatItem, { role: "confirm" }> | null>(null);
+  const [questionCard, setQuestionCard] = useState<Extract<ChatItem, { role: "question" }> | null>(
+    null,
+  );
+  const [questionInput, setQuestionInput] = useState("");
+  const clearInteractionCards = () => {
+    setConfirmCard(null);
+    setQuestionCard(null);
+    setQuestionInput("");
+  };
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
@@ -276,7 +295,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     // 否则模型会再给你一份计划 —— 用户点的是"执行"，不是"再想想"。
     const usePlan = override?.planMode ?? planMode;
     setAiBusy(true);
-    setConfirmCard(null);
+    clearInteractionCards();
     setStatus(null);
     planPendingRef.current = false;
     setInput("");
@@ -391,11 +410,26 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               // 没有改动预览就是 null（非写文件类工具，或内核算不出前后对照）
               // —— 卡片退回展示原始参数，这里不做任何猜测。
               preview: (ev.preview as FilePreviewItem | null) ?? null,
+              nonce: confirmationNonceOf(ev),
             };
             setConfirmCard(card);
             setItems((prev) => [...prev, card]);
           }
           break;
+        case "questionRequired": {
+          const question = questionFromEvent(ev);
+          const card: ChatItem = {
+            role: "question",
+            jobId: current.jobId ?? "",
+            callId: ev.id as string,
+            nonce: confirmationNonceOf(ev),
+            ...question,
+          };
+          setQuestionInput("");
+          setQuestionCard(card);
+          setItems((prev) => [...prev, card]);
+          break;
+        }
         case "usage":
           // 每轮覆盖（不是累加）：圆环要回答的是「现在还剩多少」，
           // 累计值会把历史请求也滚进来，越用越吓人。
@@ -423,7 +457,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           planPendingRef.current = false;
           activeRunRef.current = settleAiRun(current);
           if (!current.spawnPending) setAiBusy(false);
-          setConfirmCard(null);
+          clearInteractionCards();
           setStatus(null);
           setItems((prev) => {
             const last = prev[prev.length - 1];
@@ -463,7 +497,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         case "error": {
           activeRunRef.current = settleAiRun(current);
           if (!current.spawnPending) setAiBusy(false);
-          setConfirmCard(null);
+          clearInteractionCards();
           setStatus(null);
           pushToast("error", `AI: ${ev.message as string}`);
           // `error` 与 `done` 互斥且都是终态：`agent.rs` 被打断时只推 Error、
@@ -504,7 +538,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (!current.settled) pushToast("error", describeError(e));
         activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
         setAiBusy(false);
-        setConfirmCard(null);
+        clearInteractionCards();
         setStatus(null);
       }
       // 命令级失败（未拿到 jobId）时服务端不会推任何终态事件 ⇒ 在这里兜底释放，
@@ -527,20 +561,43 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   const confirm = async (decision: "allow" | "allow_session" | "deny") => {
     const run = activeRunRef.current;
+    const card = confirmCard;
     const id = run?.jobId;
-    // 极短窗口：确认卡片可能先于 `ai_chat` 把 jobId 回填过来就渲染出来。
-    if (!run || !id) {
+    if (!run || !id || !card) {
       pushToast("info", "这一轮还没启动完，稍等一下再点");
       return;
     }
     try {
-      await aiApi.confirm(id, decision);
+      await aiApi.confirm(
+        confirmationInput({ jobId: id, callId: card.callId, nonce: card.nonce }, decision),
+      );
     } catch (e) {
-      // 送不出去就明说，并保留卡片让用户能重试。
       pushToast("error", `确认失败：${describeError(e)}`);
       return;
     }
-    if (isCurrentAiRun(activeRunRef.current, run.generation)) setConfirmCard(null);
+    if (isCurrentAiRun(activeRunRef.current, run.generation)) clearInteractionCards();
+  };
+
+  const answer = async (option?: string) => {
+    const run = activeRunRef.current;
+    const card = questionCard;
+    const id = run?.jobId;
+    const text = option ?? questionInput;
+    if (!run || !id || !card) {
+      pushToast("info", "这一轮还没启动完，稍等一下再点");
+      return;
+    }
+    if (!text.trim()) {
+      pushToast("info", "请先输入回答，或选择一个问题选项");
+      return;
+    }
+    try {
+      await aiApi.answer(answerInput({ jobId: id, callId: card.callId, nonce: card.nonce }, text));
+    } catch (e) {
+      pushToast("error", `回答失败：${describeError(e)}`);
+      return;
+    }
+    if (isCurrentAiRun(activeRunRef.current, run.generation)) clearInteractionCards();
   };
 
   /** chat 取消成功即可收尾；takeover 必须等终端终态清横幅，不能提前解锁。 */
@@ -558,7 +615,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const cancellation = completeRunCancellation(current);
       activeRunRef.current = cancellation.run;
       if (!cancellation.waitForTerminal) setAiBusy(false);
-      setConfirmCard(null);
+      clearInteractionCards();
       setStatus(null);
       pushToast(
         "info",
@@ -605,7 +662,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       setItems(msgs.flatMap(msgToItems));
       setConversationId(id);
       setHistoryOpen(false);
-      setConfirmCard(null);
+      clearInteractionCards();
     } catch (e) {
       pushToast("error", `打开会话失败：${describeError(e)}`);
     }
@@ -618,7 +675,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     setConversationId(undefined);
     setItems([]);
-    setConfirmCard(null);
+    clearInteractionCards();
     setHistoryOpen(false);
   };
 
@@ -685,7 +742,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       if (banner && useUi.getState().takeover === banner) useUi.getState().setTakeover(null);
     };
 
-    setConfirmCard(null);
+    clearInteractionCards();
     setStatus(null);
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
@@ -721,8 +778,21 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           callId: ev.id as string,
           tool: ev.tool as string,
           rendered: ev.rendered as string,
+          nonce: confirmationNonceOf(ev),
         };
         setConfirmCard(card);
+        setItems((prev) => [...prev, card]);
+      } else if (type === "questionRequired") {
+        const question = questionFromEvent(ev);
+        const card: ChatItem = {
+          role: "question",
+          jobId: current.jobId ?? "",
+          callId: ev.id as string,
+          nonce: confirmationNonceOf(ev),
+          ...question,
+        };
+        setQuestionInput("");
+        setQuestionCard(card);
         setItems((prev) => [...prev, card]);
       } else if (type === "delta") {
         // 模型每步的「看到…因为…所以…」叙述，实时流成气泡
@@ -776,7 +846,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         holder.settled = true;
         activeRunRef.current = settleAiRun(current);
         if (!current.spawnPending) setAiBusy(false);
-        setConfirmCard(null);
+        clearInteractionCards();
         clearTakeover();
         setItems((prev) => [
           ...prev,
@@ -790,7 +860,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         holder.settled = true;
         activeRunRef.current = settleAiRun(current);
         if (!current.spawnPending) setAiBusy(false);
-        setConfirmCard(null);
+        clearInteractionCards();
         clearTakeover();
         pushToast("error", `接管：${ev.message as string}`);
         // 与 done 并列的终态（模型请求失败那条路径只推 Error）。
@@ -799,8 +869,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     });
 
     setAiBusy(true);
+    let ownershipToken: string | undefined;
     try {
-      const id = await aiApi.takeoverRun({ tabId, instruction, allowWrite, channel });
+      ownershipToken = (await aiApi.takeoverEnter(tabId)).token;
+      const result = await aiApi.takeoverRun({
+        tabId,
+        token: ownershipToken,
+        instruction,
+        allowWrite,
+        channel,
+      });
+      ownershipToken = result.token;
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation)) {
         disposeChannel(channel);
@@ -811,10 +890,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         setAiBusy(false);
         return;
       }
-      activeRunRef.current = bindAiRunJob(current, id);
+      activeRunRef.current = bindAiRunJob(current, result.jobId);
       banner = {
         tabId,
-        jobId: id,
+        jobId: result.jobId,
+        token: result.token,
         task: instruction,
         allowWrite,
         startedAt: Date.now(),
@@ -822,12 +902,15 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       useUi.getState().setTakeover(banner);
       pushToast("info", "接管已启动 —— 顶部横幅可随时夺回，Esc 亦可");
     } catch (e) {
+      if (ownershipToken) {
+        await aiApi.takeoverExit(tabId, ownershipToken, "接管启动失败").catch(() => undefined);
+      }
       const current = activeRunRef.current;
       if (isCurrentAiRun(current, run.generation)) {
         if (!current.settled) pushToast("error", describeError(e));
         activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
         setAiBusy(false);
-        setConfirmCard(null);
+        clearInteractionCards();
         clearTakeover();
       }
       // 命令级失败：服务端若在 `begin`/建客户端阶段就退出，一个事件都不会推，
@@ -1038,6 +1121,56 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {questionCard && (
+        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950 p-2.5">
+          <form
+            className="nx-alert"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void answer();
+            }}
+          >
+            <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+              <IconAlert size={13} />
+              AI 需要你回答
+            </div>
+            <div className="mb-2 whitespace-pre-wrap text-[12px] leading-relaxed text-neutral-200">
+              {questionCard.question}
+            </div>
+            {questionCard.options.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {questionCard.options.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className="nx-btn nx-btn-outline nx-btn-xs"
+                    onClick={() => void answer(option)}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-1.5">
+              <textarea
+                className="nx-textarea min-h-[36px] flex-1"
+                rows={2}
+                value={questionInput}
+                placeholder="输入回答…"
+                onChange={(event) => setQuestionInput(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
+                disabled={!questionInput.trim()}
+              >
+                回答
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -1375,7 +1508,7 @@ function ChatBubble({ item, onApprovePlan }: { item: ChatItem; onApprovePlan: (p
       </div>
     );
   }
-  if (item.role === "confirm") return null;
+  if (item.role === "confirm" || item.role === "question") return null;
   if (item.role === "diff") return <DiffBubble item={item} />;
   if (item.role === "plan") {
     return <PlanBubble item={item} onApprove={() => onApprovePlan(item.text)} />;

@@ -155,6 +155,25 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       }
       refresh();
     } catch (e) {
+      if (kind === "socks" && (e as { code?: string } | null)?.code === "needs_confirm") {
+        const detail = (e as { detail?: { listenHost?: unknown } } | null)?.detail;
+        const confirmedListenHost =
+          typeof detail?.listenHost === "string" && detail.listenHost ? detail.listenHost : listenHost;
+        const ok = await ask(
+          `监听 ${confirmedListenHost}:${port} 将创建一个无认证的开放 SOCKS5 代理。\n\n能连上这个端口的任何人都能借当前 SSH 会话访问远端网络。请确认你理解并愿意承担这个风险。`,
+          { title: "确认开放代理风险", kind: "warning" },
+        );
+        if (ok) {
+          try {
+            await forwardApi.createSocks(sessionId, port, true);
+            pushToast("success", `SOCKS5 代理已就绪 → ${confirmedListenHost}:${port}`);
+            refresh();
+          } catch (retryError) {
+            pushToast("error", `创建失败：${describeError(retryError)}`);
+          }
+        }
+        return;
+      }
       // 端口被占用是这里最常见的失败，内核的原话已经说清楚了，直接透传
       pushToast("error", `创建失败：${describeError(e)}`);
     } finally {

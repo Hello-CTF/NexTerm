@@ -234,13 +234,25 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   };
 
   const reloadFromDisk = () => {
+    if (saveInFlightRef.current) {
+      pushToast("info", "保存进行中，完成后才能重新读取文件");
+      return;
+    }
     setReloadEnc(enc);
     setReloadKey((k) => k + 1);
   };
 
   /** 切换解码方式：有未保存改动时先确认（会重新读盘）。 */
   const switchEnc = async (next: EncChoice) => {
+    if (saveInFlightRef.current) {
+      pushToast("info", "保存进行中，完成后才能切换编码");
+      return;
+    }
     if (dirtyRef.current && !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？"))) {
+      return;
+    }
+    if (saveInFlightRef.current) {
+      pushToast("info", "保存进行中，完成后才能切换编码");
       return;
     }
     setEnc(next);
@@ -333,6 +345,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           <select
             className="absolute h-0 w-0 opacity-0"
             value={enc}
+            disabled={saving}
             onChange={(e) => void switchEnc(e.target.value as EncChoice)}
           >
             {(Object.keys(ENC_LABEL) as EncChoice[]).map((k) => (
@@ -345,6 +358,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="重新读取（丢弃未保存改动）"
+          disabled={saving}
           onClick={() => {
             if (!dirtyRef.current) {
               reloadFromDisk();

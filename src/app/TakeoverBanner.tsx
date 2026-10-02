@@ -19,7 +19,7 @@ export async function stealBack(reason = "用户夺回控制权") {
     if (takeover.jobId) {
       await aiApi.cancel(takeover.jobId).catch(() => undefined);
     }
-    await aiApi.takeoverExit(takeover.tabId, reason);
+    await aiApi.takeoverExit(takeover.tabId, takeover.token, reason);
     if (useUi.getState().takeover === takeover) setTakeover(null);
     pushToast("info", "已夺回终端控制权，AI 已停止");
   } catch (e) {

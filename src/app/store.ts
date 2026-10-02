@@ -192,6 +192,8 @@ export interface TakeoverState {
   tabId: string;
   /** ai_takeover_run 返回的 jobId；用于「夺回」时同时取消模型请求。 */
   jobId?: string;
+  /** 当前接管实例的 ownership token；Exit 必须原样带回。 */
+  token: string;
   task: string;
   /** false = 只读接管（send_keys 全拒），生产环境应强制 false。 */
   allowWrite: boolean;
