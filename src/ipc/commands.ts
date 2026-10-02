@@ -221,6 +221,8 @@ export const terminalApi = {
     }),
   resize: (tabId: string, cols: number, rows: number) =>
     call<void>("terminal_resize", { tabId, cols, rows, clientId: clientId() }),
+  resizeFlush: (tabId: string) =>
+    call<void>("terminal_resize_flush", { tabId, clientId: clientId() }),
   /**
    * 摘掉自己的订阅。
    *

@@ -832,6 +832,15 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
+    case "terminal_resize_flush": {
+      const lt = liveTabs.get(str(a.tabId));
+      const client = str(a.clientId);
+      if (lt && client && lt.controller && lt.controller !== client) {
+        throwAppError("not_controller", "终端正在其他设备上操作中");
+      }
+      return null;
+    }
+
     case "terminal_claim": {
       const lt = liveTabs.get(str(a.tabId));
       const client = str(a.clientId) || "desktop";
