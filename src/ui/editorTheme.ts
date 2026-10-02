@@ -53,10 +53,10 @@ const TOKEN_COLORS: Record<string, string> = {
   unit: "#e9c489",
 
   // 注释
-  comment: "#5c6472",
-  lineComment: "#5c6472",
-  blockComment: "#5c6472",
-  docComment: "#5c6472",
+  comment: "#8792a2",
+  lineComment: "#8792a2",
+  blockComment: "#8792a2",
+  docComment: "#8792a2",
 
   // 函数 / 定义 / 类型
   function: "#79a8f8",

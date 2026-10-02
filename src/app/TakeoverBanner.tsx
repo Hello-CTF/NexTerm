@@ -7,6 +7,7 @@ import { useUi, type TakeoverState } from "./store";
 import { aiApi } from "../ipc/commands";
 import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
 import { describeError } from "../ui/errorText";
+import { hasActiveOverlay, isImeKeyEvent } from "../ui/DialogHost";
 
 let stealBackInFlight: TakeoverState | null = null;
 
@@ -41,15 +42,21 @@ export function TakeoverBanner() {
     return () => window.clearInterval(t);
   }, [takeover]);
 
-  // Esc 夺回（捕获阶段，避免被终端的 keydown 吞掉）
+  // Esc 夺回（捕获阶段，避免被终端的 keydown 吞掉）；浮层与 IME 优先。
   useEffect(() => {
     if (!takeover) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        void stealBack("用户按 Esc 夺回");
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.repeat ||
+        isImeKeyEvent(event) ||
+        hasActiveOverlay()
+      ) {
+        return;
       }
+      event.preventDefault();
+      event.stopPropagation();
+      void stealBack("用户按 Esc 夺回");
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -60,25 +67,44 @@ export function TakeoverBanner() {
   const elapsed = Math.max(0, Math.floor((now - takeover.startedAt) / 1000));
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
+  const mode = takeover.allowWrite ? "可写" : "只读";
 
   return (
-    <div className="flex h-[34px] shrink-0 items-center gap-2.5 border-b border-red-500/40 bg-red-950 px-3 text-xs text-red-100">
+    <div
+      className="nx-takeover-banner flex h-[34px] shrink-0 items-center gap-2.5 border-b border-red-500/40 bg-red-950 px-3 text-xs text-red-100"
+      role="region"
+      aria-label="AI 终端接管状态"
+    >
+      <span className="nx-sr-only" role="status" aria-atomic="true">
+        AI 正在操作此终端，{mode}。按 Escape 可立即夺回控制权。
+      </span>
       <span className="flex items-center gap-1.5 font-semibold text-red-100">
         <IconAlert size={14} className="text-red-300" />
         AI 正在操作此终端
       </span>
       <span className={`nx-badge ${takeover.allowWrite ? "nx-badge-red" : ""}`}>
         <IconShield size={10} />
-        {takeover.allowWrite ? "可写" : "只读"}
+        {mode}
       </span>
       <span className="min-w-0 flex-1 truncate text-red-200/80" title={takeover.task}>
         {takeover.task}
       </span>
-      <span className="shrink-0 font-mono tabular-nums text-red-200">{mm}:{ss}</span>
+      <span
+        className="shrink-0 font-mono tabular-nums text-red-200"
+        role="timer"
+        aria-label={`已用时 ${mm} 分 ${ss} 秒`}
+      >
+        {mm}:{ss}
+      </span>
       <span className="shrink-0 text-red-300/70">
         按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">Esc</span> 随时夺回
       </span>
-      <button className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0" onClick={() => void stealBack()}>
+      <button
+        type="button"
+        className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0"
+        aria-keyshortcuts="Escape"
+        onClick={() => void stealBack()}
+      >
         <IconGamepad size={12} />
         立即夺回
       </button>
