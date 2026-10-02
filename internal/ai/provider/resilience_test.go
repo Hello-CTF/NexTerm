@@ -63,7 +63,7 @@ func (f *fakeProvider) RoundTrip(request *http.Request) (*http.Response, error) 
 			trace.WroteHeaders()
 		}
 	}
-	if step.err != nil {
+	if step.err != nil && step.status == 0 {
 		return nil, step.err
 	}
 	if step.status == 0 {
@@ -73,10 +73,11 @@ func (f *fakeProvider) RoundTrip(request *http.Request) (*http.Response, error) 
 	if step.bodyOverride != nil {
 		responseBody = step.bodyOverride
 	}
-	return &http.Response{
+	response := &http.Response{
 		StatusCode: step.status, Header: make(http.Header),
 		Body: responseBody, Request: request,
-	}, nil
+	}
+	return response, step.err
 }
 
 func (f *fakeProvider) Requests() []recordedRequest {

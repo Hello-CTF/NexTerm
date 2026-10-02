@@ -65,11 +65,14 @@ func classifyHTTPStatus(status int) ErrorClass {
 }
 
 func statusCodeForError(err error) (int, bool) {
+	var statusErr *statusError
 	var httpErr *HTTPError
 	var componentErr *einoopenai.APIError
 	var sdkErr *sdkopenai.APIError
 	var requestErr *sdkopenai.RequestError
 	switch {
+	case errors.As(err, &statusErr):
+		return statusErr.status, statusErr.status != 0
 	case errors.As(err, &httpErr):
 		return httpErr.StatusCode, true
 	case errors.As(err, &componentErr):

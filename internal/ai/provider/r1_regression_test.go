@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -48,14 +47,18 @@ func TestBlockTextPartContentRegression(t *testing.T) {
 }
 
 type countingReadCloser struct {
-	reader io.Reader
-	read   atomic.Int64
-	closed atomic.Int32
+	reader  *strings.Reader
+	read    atomic.Int64
+	closed  atomic.Int32
+	readErr error
 }
 
 func (b *countingReadCloser) Read(target []byte) (int, error) {
 	read, err := b.reader.Read(target)
 	b.read.Add(int64(read))
+	if b.readErr != nil && b.reader.Len() == 0 {
+		return read, b.readErr
+	}
 	return read, err
 }
 

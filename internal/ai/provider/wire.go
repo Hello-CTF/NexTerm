@@ -17,6 +17,19 @@ type wireTransport struct {
 	base http.RoundTripper
 }
 
+type statusError struct {
+	status int
+	err    error
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.status, e.err)
+}
+
+func (e *statusError) Unwrap() error {
+	return e.err
+}
+
 type terminalErrorReader struct {
 	err error
 }
@@ -36,8 +49,14 @@ func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 	response, err := t.base.RoundTrip(normalized)
 	if err != nil {
-		if response != nil && response.Body != nil {
+		if response == nil {
+			return nil, err
+		}
+		if response.Body != nil {
 			_ = response.Body.Close()
+		}
+		if response.StatusCode != 0 {
+			return nil, &statusError{status: response.StatusCode, err: err}
 		}
 		return response, err
 	}
@@ -70,7 +89,7 @@ func closeErrorBody(response *http.Response) {
 	_ = body.Close()
 	response.ContentLength = int64(len(raw))
 	if readErr != nil {
-		response.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), terminalErrorReader{err: readErr}))
+		response.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), terminalErrorReader{err: &statusError{status: response.StatusCode, err: readErr}}))
 		return
 	}
 	response.Body = io.NopCloser(bytes.NewReader(raw))
