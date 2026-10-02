@@ -70,21 +70,45 @@ func TestDetachUnblocksReadWithoutKilling(t *testing.T) {
 	}
 }
 
-func TestDeadSessionReplaysThenReturnsEOF(t *testing.T) {
+func TestDeadSessionDrainsLateOutputBeforeEOF(t *testing.T) {
 	backend, runner := newUnitBackend(t)
 	touchUnitSocket(t, backend)
 	current := unitRecord(backend, ids.New())
 	current.info.Dead = true
-	current.info.ExitCode = intPointer(0)
-	current.recordingLive = false
-	installRecords(backend, runner, current)
-	session := newUnitSession(t, backend, current, []byte("final output"))
+	current.info.ExitCode = intPointer(7)
+	current.deadStatus = "7"
+	current.recordingLive = true
+	discoveries := 0
+	runner.handler = func(_ context.Context, args ...string) ([]byte, error) {
+		if len(args) == 0 || args[0] != "list-panes" {
+			return nil, nil
+		}
+		discoveries++
+		if discoveries == 2 {
+			file, err := os.OpenFile(backend.recordingPath(current.info.ID), os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := file.Write([]byte("final")); err != nil {
+				_ = file.Close()
+				return nil, err
+			}
+			if err := file.Close(); err != nil {
+				return nil, err
+			}
+		}
+		return []byte(discoveryLine(backend, current)), nil
+	}
+	session := newUnitSession(t, backend, current, []byte("old:"))
 	output, err := io.ReadAll(session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(output) != "final output" {
-		t.Fatalf("output = %q", output)
+	if string(output) != "old:final" {
+		t.Fatalf("output = %q, discoveries = %d", output, discoveries)
+	}
+	if discoveries < 3 {
+		t.Fatalf("EOF did not wait for a quiet dead-pane drain window: discoveries = %d", discoveries)
 	}
 }
 

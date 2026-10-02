@@ -75,7 +75,18 @@ func (s *Session) Read(buffer []byte) (int, error) {
 				return 0, fmt.Errorf("%w: %s", ErrIdentity, s.expected.info.ID)
 			}
 			if current.info.Dead {
-				if deadObserved && !current.recordingLive {
+				if deadObserved {
+					// A retained dead pane can keep its pipe open. Drain once more after the quiet interval.
+					count, err = s.log.Read(buffer)
+					if count > 0 {
+						return count, nil
+					}
+					if err != nil && !errors.Is(err, io.EOF) {
+						if s.closed() {
+							return 0, ErrClosed
+						}
+						return 0, err
+					}
 					return 0, io.EOF
 				}
 				deadObserved = true
