@@ -61,6 +61,7 @@ type Server struct {
 	vaultStatus    func(context.Context) (any, error)
 	handler        http.Handler
 	logger         *slog.Logger
+	sockets        socketTracker
 }
 
 type Health struct {
@@ -270,5 +271,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 func (s *Server) Events() *EventBroker { return s.events }
 
 func (s *Server) Close() error {
-	return s.events.Close()
+	err := s.events.Close()
+	s.sockets.closeAndWait()
+	return err
 }

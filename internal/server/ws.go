@@ -13,13 +13,19 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	ctx, release, err := s.sockets.track(r.Context())
+	if err != nil {
+		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
+		return
+	}
+	defer release()
 	subscriber, unsubscribe, err := s.events.subscribe()
 	if err != nil {
 		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
 		return
 	}
 	defer unsubscribe()
-	s.pumpSocket(r.Context(), connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
 		select {
 		case data := <-subscriber.queue:
 			return websocket.MessageText, data, nil
@@ -36,13 +42,19 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	ctx, release, err := s.sockets.track(r.Context())
+	if err != nil {
+		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
+		return
+	}
+	defer release()
 	receiver, err := s.channels.BindChannel(r.PathValue("id"))
 	if err != nil {
 		_ = connection.Close(websocket.StatusInternalError, "channel unavailable")
 		return
 	}
 	defer receiver.Close()
-	s.pumpSocket(r.Context(), connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
 		frame, err := receiver.Next(ctx)
 		if err != nil {
 			return 0, nil, err

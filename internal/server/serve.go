@@ -82,6 +82,7 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 			return err
 		}
 		defer func() {
+			cancel()
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 			defer shutdownCancel()
 			returnErr = errors.Join(returnErr, config.Lifecycle.Shutdown(shutdownCtx))

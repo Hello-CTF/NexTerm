@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 type testLifecycle struct {
@@ -49,6 +51,9 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := testConfig(t, false)
+	hub := newReplayHub()
+	config.Channels = hub
+	config.ChannelStats = hub.Stats
 	tokens := &fakeTokenStore{token: "secret"}
 	credentialVault := &fakeVault{}
 	config.Tokens = tokens
@@ -89,6 +94,14 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("sync response = %d %+v", status, body)
 	}
+	dialCtx, stopDial := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopDial()
+	connection, _, err := websocket.Dial(dialCtx, "ws://"+listener.Addr().String()+"/ws/channel/shutdown", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(websocket.StatusNormalClosure, "")
+	waitFor(t, func() bool { return hub.Stats().LiveChannels == 1 })
 
 	cancel()
 	select {
@@ -98,6 +111,9 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not stop")
+	}
+	if hub.Stats().LiveChannels != 0 {
+		t.Fatal("websocket channel remained attached after shutdown")
 	}
 	lifecycle.mu.Lock()
 	started, shutdown := lifecycle.started, lifecycle.shutdown
