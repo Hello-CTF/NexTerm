@@ -242,6 +242,47 @@ func TestLogsBlockedSinkDoesNotPreventCleanup(t *testing.T) {
 	}
 }
 
+func TestAttachCannotResurrectAfterSessionClose(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend := &stubBackend{openLogs: func(context.Context, LogsOptions) (LogStream, error) {
+		close(started)
+		<-release
+		return LogStream{Reader: reader, TTY: true}, nil
+	}}
+	service := NewService(&stubProvider{sdk: backend})
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.AttachLogs(context.Background(), LogsAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()})
+		result <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attach did not start")
+	}
+	if err := service.CloseSession("s1"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrStreamClosed) {
+			t.Fatalf("stale attach error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stale attach did not finish")
+	}
+	service.streams.mu.Lock()
+	remaining := len(service.streams.streams)
+	service.streams.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("stale stream resurrected: %d entries", remaining)
+	}
+}
+
 func TestCustomExecAlwaysUsesCommandBackendVerbatim(t *testing.T) {
 	exec := newPipeExecSession(true)
 	opener := &recordingOpener{stream: &commandStreamAdapter{pipeExecSession: exec}}

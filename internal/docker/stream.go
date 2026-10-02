@@ -21,11 +21,13 @@ const (
 type streamRegistry struct {
 	mu      sync.Mutex
 	streams map[string]*managedStream
+	epochs  map[string]uint64
+	closed  bool
 	counter atomic.Uint64
 }
 
 func newStreamRegistry() *streamRegistry {
-	return &streamRegistry{streams: make(map[string]*managedStream)}
+	return &streamRegistry{streams: make(map[string]*managedStream), epochs: make(map[string]uint64)}
 }
 
 func (r *streamRegistry) nextID() string {
@@ -36,10 +38,20 @@ func (r *streamRegistry) nextID() string {
 	return fmt.Sprintf("docker-%d", r.counter.Add(1))
 }
 
-func (r *streamRegistry) add(stream *managedStream) {
+func (r *streamRegistry) token(sessionID string) uint64 {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.epochs[sessionID]
+}
+
+func (r *streamRegistry) add(stream *managedStream, token uint64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.epochs[stream.sessionID] != token {
+		return ErrStreamClosed
+	}
 	r.streams[stream.id] = stream
-	r.mu.Unlock()
+	return nil
 }
 
 func (r *streamRegistry) get(id string) (*managedStream, error) {
@@ -62,6 +74,7 @@ func (r *streamRegistry) remove(id string, stream *managedStream) {
 
 func (r *streamRegistry) closeSession(sessionID string) error {
 	r.mu.Lock()
+	r.epochs[sessionID]++
 	ids := make([]string, 0)
 	for id, stream := range r.streams {
 		if stream.sessionID == sessionID {
@@ -80,6 +93,7 @@ func (r *streamRegistry) closeSession(sessionID string) error {
 
 func (r *streamRegistry) closeAll() error {
 	r.mu.Lock()
+	r.closed = true
 	streams := make([]*managedStream, 0, len(r.streams))
 	for _, stream := range r.streams {
 		streams = append(streams, stream)
@@ -288,6 +302,7 @@ func (s *Service) AttachLogs(ctx context.Context, request LogsAttachRequest) (st
 	if request.Tail <= 0 {
 		request.Tail = 500
 	}
+	token := s.streams.token(request.SessionID)
 	setupCtx, cancel := context.WithTimeout(ctx, s.config.ListTimeout)
 	defer cancel()
 	streamCtx, streamCancel := context.WithCancel(context.Background())
@@ -310,7 +325,10 @@ func (s *Service) AttachLogs(ctx context.Context, request LogsAttachRequest) (st
 	managed := newManagedStream(s.streams, request.SessionID, streamLogs, request.Sink, streamCtx, streamCancel)
 	managed.reader = demultiplexReadCloser(logStream.Reader, logStream.TTY)
 	managed.tty = logStream.TTY
-	s.streams.add(managed)
+	if err := s.streams.add(managed, token); err != nil {
+		_ = managed.close(err)
+		return "", err
+	}
 	go managed.run()
 	return managed.id, nil
 }
@@ -321,6 +339,7 @@ func (s *Service) AttachExec(ctx context.Context, request ExecAttachRequest) (st
 	}
 	request.Width = max(request.Width, 20)
 	request.Height = max(request.Height, 5)
+	token := s.streams.token(request.SessionID)
 	setupCtx, cancel := context.WithTimeout(ctx, s.config.ListTimeout)
 	defer cancel()
 	streamCtx, streamCancel := context.WithCancel(context.Background())
@@ -361,7 +380,10 @@ func (s *Service) AttachExec(ctx context.Context, request ExecAttachRequest) (st
 	managed.reader = session
 	managed.exec = session
 	managed.tty = session.IsTTY()
-	s.streams.add(managed)
+	if err := s.streams.add(managed, token); err != nil {
+		_ = managed.close(err)
+		return "", err
+	}
 	go managed.run()
 	return managed.id, nil
 }
