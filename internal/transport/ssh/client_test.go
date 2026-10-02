@@ -10,6 +10,7 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -368,6 +369,23 @@ func TestSSHExecConnOrderedOutput(t *testing.T) {
 	}
 	if _, err := execConn.Read(make([]byte, 1)); !errors.Is(err, base.ErrOutputMode) {
 		t.Fatalf("raw read after ordered selection = %v", err)
+	}
+}
+
+func TestSSHWaitDrainsFullRawQueues(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := client.Exec(ctx, "full-queues", base.ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != strings.Repeat("o", 33) || result.Stderr != strings.Repeat("e", 33) {
+		t.Fatalf("full queue output = %q/%q", result.Stdout, result.Stderr)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("full queue exit = %+v", result.ExitCode)
 	}
 }
 

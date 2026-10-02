@@ -244,6 +244,14 @@ func (s *testSSHServer) execute(channel gossh.Channel, command string) {
 			}
 		}
 		sendExitStatus(channel, 0)
+	case "full-queues":
+		for range 33 {
+			_, _ = channel.Write([]byte("o"))
+		}
+		for range 33 {
+			_, _ = channel.Stderr().Write([]byte("e"))
+		}
+		sendExitStatus(channel, 0)
 	case "sleep":
 		_, _ = io.Copy(io.Discard, channel)
 	case "stream":

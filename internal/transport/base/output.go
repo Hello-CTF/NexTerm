@@ -78,7 +78,7 @@ func NewOutputRouter(ctx context.Context) *OutputRouter {
 	router := &OutputRouter{
 		ctx:      ctx,
 		closedCh: make(chan struct{}),
-		notify:   make(chan struct{}, 1),
+		notify:   make(chan struct{}),
 	}
 	context.AfterFunc(ctx, router.Close)
 	return router
@@ -243,10 +243,9 @@ func (r *OutputRouter) selectModeLocked(mode outputMode) error {
 }
 
 func (r *OutputRouter) signalLocked() {
-	select {
-	case r.notify <- struct{}{}:
-	default:
-	}
+	previous := r.notify
+	r.notify = make(chan struct{})
+	close(previous)
 }
 
 type outputRouterWriter struct {
