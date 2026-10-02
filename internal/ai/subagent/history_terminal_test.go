@@ -109,7 +109,7 @@ func TestTerminalDiscardsIncompleteToolRound(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForSignal(t, toolStarted, "terminal tool did not start")
-			pendingMessages, retainedMessages, retainedBytes := waitForIncompleteRound(t, manager, handle)
+			pendingMessages, retainedMessages, retainedBytes := waitForIncompleteRound(t, manager, handle, maxMessages, maxBytes)
 			if pendingMessages == 0 || retainedMessages <= maxMessages || retainedBytes <= maxBytes {
 				t.Fatalf("test did not enter an oversized incomplete round: pending=%d messages=%d bytes=%d", pendingMessages, retainedMessages, retainedBytes)
 			}
@@ -142,7 +142,7 @@ func TestTerminalDiscardsIncompleteToolRound(t *testing.T) {
 	}
 }
 
-func waitForIncompleteRound(t *testing.T, manager *Manager, handle Handle) (int, int, int) {
+func waitForIncompleteRound(t *testing.T, manager *Manager, handle Handle, minMessages, minBytes int) (int, int, int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -156,13 +156,18 @@ func waitForIncompleteRound(t *testing.T, manager *Manager, handle Handle) (int,
 		pending := len(current.recorder.pending)
 		messages := len(current.recorder.history) + pending
 		bytes := historySize(current.recorder.history) + historySize(current.recorder.pending)
+		oversizedSecondRound := false
+		if pending > 0 && len(current.recorder.history) == minMessages {
+			calls := current.recorder.pending[0].ToolCalls
+			oversizedSecondRound = len(calls) == 2 && calls[0].ID == "unfinished-call" && messages > minMessages && bytes > minBytes
+		}
 		current.recorder.mu.Unlock()
-		if pending > 0 {
+		if oversizedSecondRound {
 			return pending, messages, bytes
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("timed out waiting for an incomplete tool round")
+	t.Fatal("timed out waiting for the oversized second tool round")
 	return 0, 0, 0
 }
 
