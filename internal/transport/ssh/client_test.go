@@ -326,6 +326,51 @@ func TestSSHDirectDialAndExecConn(t *testing.T) {
 	}
 }
 
+func TestSSHExecConnOrderedOutput(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	execConn, err := client.OpenExecConn(ctx, "ordered-live", base.ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer execConn.Close()
+	expected := []struct {
+		data   string
+		stderr bool
+	}{
+		{data: "out-1"},
+		{data: "err-1", stderr: true},
+		{data: "out-2"},
+		{data: "err-2", stderr: true},
+	}
+	for index, want := range expected {
+		event, err := execConn.NextOutput(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(event.Data) != want.data || event.Stderr != want.stderr || event.Sequence != uint64(index+1) {
+			t.Fatalf("event %d = %+v", index, event)
+		}
+		if _, err := execConn.Write([]byte{byte(index)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := execConn.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execConn.NextOutput(ctx); !errors.Is(err, io.EOF) {
+		t.Fatalf("ordered stream EOF = %v", err)
+	}
+	if err := execConn.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execConn.Read(make([]byte, 1)); !errors.Is(err, base.ErrOutputMode) {
+		t.Fatalf("raw read after ordered selection = %v", err)
+	}
+}
+
 func testClientConfig(t *testing.T, server *testSSHServer, auth AuthConfig) Config {
 	t.Helper()
 	host, port := splitAddress(t, server.listener.Addr().String())

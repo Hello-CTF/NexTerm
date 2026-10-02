@@ -27,7 +27,7 @@ func TestCombinedCommandOutputPreservesTransportEventOrder(t *testing.T) {
 	}
 }
 
-func TestCombinedCommandOutputFallbackDeliversBothStreams(t *testing.T) {
+func TestBestEffortFallbackDeliversBothStreamsWithoutOrderingClaim(t *testing.T) {
 	for range 20 {
 		stream := &dualCommandStream{
 			Reader: strings.NewReader("stdout"),
@@ -39,8 +39,8 @@ func TestCombinedCommandOutputFallbackDeliversBothStreams(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = reader.Close()
-		if string(output) != "stdoutstderr" && string(output) != "stderrstdout" {
-			t.Fatalf("fallback output = %q", output)
+		if len(output) != len("stdoutstderr") || !strings.Contains(string(output), "stdout") || !strings.Contains(string(output), "stderr") {
+			t.Fatalf("best-effort fallback output = %q", output)
 		}
 	}
 }

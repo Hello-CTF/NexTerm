@@ -13,6 +13,7 @@ type commandOutputMultiplexer struct {
 	sequence uint64
 }
 
+// newCommandOutputMultiplexer provides liveness and backpressure only; its sequence numbers are dequeue order, not transport arrival order. Transports that promise ordering must implement OrderedCommandOutput.
 func newCommandOutputMultiplexer(ctx context.Context, stdout io.Reader, stderr io.Reader) *commandOutputMultiplexer {
 	multiplexer := &commandOutputMultiplexer{ctx: ctx, events: make(chan CommandOutputEvent, 32)}
 	var readers sync.WaitGroup

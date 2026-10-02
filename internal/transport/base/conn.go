@@ -1,10 +1,12 @@
 package base
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +31,8 @@ type StreamConn struct {
 	closeWriteErr  error
 	closeOnce      sync.Once
 	closeErr       error
+	readOnce       sync.Once
+	outputMode     atomic.Uint32
 }
 
 func NewStreamConn(stream WriteCloseStream, local, remote net.Addr) *StreamConn {
@@ -45,14 +49,19 @@ func NewStreamConn(stream WriteCloseStream, local, remote net.Addr) *StreamConn 
 	go func() {
 		_, _ = io.Copy(&flushWriter{conn: wrapped}, peer)
 	}()
-	go func() {
-		_, _ = io.Copy(peer, stream)
-		_ = peer.Close()
-	}()
 	return wrapped
 }
 
 func (c *StreamConn) Read(p []byte) (int, error) {
+	if err := c.selectOutputMode(outputModeRaw); err != nil {
+		return 0, err
+	}
+	c.readOnce.Do(func() {
+		go func() {
+			_, _ = io.Copy(c.peer, c.stream)
+			_ = c.peer.Close()
+		}()
+	})
 	n, err := c.conn.Read(p)
 	if err != nil {
 		if terminal := c.terminalError(); terminal != nil {
@@ -60,6 +69,32 @@ func (c *StreamConn) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+func (c *StreamConn) NextOutput(ctx context.Context) (OutputEvent, error) {
+	ordered, ok := c.stream.(OrderedOutput)
+	if !ok {
+		return OutputEvent{}, ErrUnsupported
+	}
+	if err := c.selectOutputMode(outputModeOrdered); err != nil {
+		return OutputEvent{}, err
+	}
+	return ordered.NextOutput(ctx)
+}
+
+func (c *StreamConn) selectOutputMode(mode outputMode) error {
+	for {
+		current := outputMode(c.outputMode.Load())
+		if current == mode {
+			return nil
+		}
+		if current != outputModeUnset {
+			return ErrOutputMode
+		}
+		if c.outputMode.CompareAndSwap(uint32(outputModeUnset), uint32(mode)) {
+			return nil
+		}
+	}
 }
 
 func (c *StreamConn) Write(p []byte) (int, error) {

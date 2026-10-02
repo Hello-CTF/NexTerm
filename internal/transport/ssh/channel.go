@@ -19,6 +19,7 @@ type channel struct {
 	stdin      io.WriteCloser
 	stdout     io.Reader
 	stderr     io.Reader
+	output     *base.OutputRouter
 	ctx        context.Context
 	cancel     context.CancelFunc
 	stop       func() bool
@@ -95,14 +96,9 @@ func (c *Client) OpenExec(ctx context.Context, command string, options base.Exec
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
+	output := base.NewOutputRouter(opCtx)
+	session.Stdout = output.Writer(false)
+	session.Stderr = output.Writer(true)
 	if err := session.Start(command); err != nil {
 		if opCtx.Err() != nil {
 			return nil, opCtx.Err()
@@ -110,7 +106,9 @@ func (c *Client) OpenExec(ctx context.Context, command string, options base.Exec
 		return nil, fmt.Errorf("start SSH exec: %w", err)
 	}
 	failed = false
-	return newChannel(session, stdin, stdout, stderr, opCtx, cancel, stop, c.generation, false), nil
+	channel := newChannel(session, stdin, nil, nil, output, opCtx, cancel, stop, c.generation, false)
+	channel.startWait()
+	return channel, nil
 }
 
 func (c *Client) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Channel, error) {
@@ -170,15 +168,16 @@ func (c *Client) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Cha
 		return nil, fmt.Errorf("start SSH shell: %w", err)
 	}
 	failed = false
-	return newChannel(session, stdin, stdout, stderr, opCtx, cancel, stop, c.generation, true), nil
+	return newChannel(session, stdin, stdout, stderr, nil, opCtx, cancel, stop, c.generation, true), nil
 }
 
-func newChannel(session *gossh.Session, stdin io.WriteCloser, stdout, stderr io.Reader, ctx context.Context, cancel context.CancelFunc, stop func() bool, generation uint64, resizable bool) base.Channel {
+func newChannel(session *gossh.Session, stdin io.WriteCloser, stdout, stderr io.Reader, output *base.OutputRouter, ctx context.Context, cancel context.CancelFunc, stop func() bool, generation uint64, resizable bool) *channel {
 	return &channel{
 		session:    session,
 		stdin:      stdin,
 		stdout:     stdout,
 		stderr:     stderr,
+		output:     output,
 		ctx:        ctx,
 		cancel:     cancel,
 		stop:       stop,
@@ -190,6 +189,9 @@ func newChannel(session *gossh.Session, stdin io.WriteCloser, stdout, stderr io.
 }
 
 func (c *channel) Read(p []byte) (int, error) {
+	if c.output != nil {
+		return c.output.ReadStdout(p)
+	}
 	return c.stdout.Read(p)
 }
 
@@ -198,7 +200,17 @@ func (c *channel) Write(p []byte) (int, error) {
 }
 
 func (c *channel) Stderr() io.Reader {
+	if c.output != nil {
+		return c.output.Stderr()
+	}
 	return c.stderr
+}
+
+func (c *channel) NextOutput(ctx context.Context) (base.OutputEvent, error) {
+	if c.output == nil {
+		return base.OutputEvent{}, base.ErrUnsupported
+	}
+	return c.output.NextOutput(ctx)
 }
 
 func (c *channel) Resize(ctx context.Context, cols, rows uint32) error {
@@ -214,13 +226,20 @@ func (c *channel) Resize(ctx context.Context, cols, rows uint32) error {
 	return c.session.WindowChange(int(rows), int(cols))
 }
 
-func (c *channel) Wait(ctx context.Context) error {
+func (c *channel) startWait() {
 	c.waitOnce.Do(func() {
 		go func() {
 			c.waitErr = mapWaitError(c.session.Wait())
+			if c.output != nil {
+				c.output.Close()
+			}
 			close(c.waitDone)
 		}()
 	})
+}
+
+func (c *channel) Wait(ctx context.Context) error {
+	c.startWait()
 	select {
 	case <-c.waitDone:
 		return c.waitErr
@@ -239,6 +258,9 @@ func (c *channel) Close() error {
 	c.closeOnce.Do(func() {
 		c.stop()
 		c.cancel()
+		if c.output != nil {
+			c.output.Close()
+		}
 		c.closeErr = c.session.Close()
 	})
 	return c.closeErr

@@ -5,18 +5,13 @@ import (
 	"errors"
 	"io"
 	"sync"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-type CommandOutputEvent struct {
-	Data     []byte
-	Stderr   bool
-	Sequence uint64
-	Err      error
-}
+type CommandOutputEvent = base.OutputEvent
 
-type OrderedCommandOutput interface {
-	NextOutput(ctx context.Context) (CommandOutputEvent, error)
-}
+type OrderedCommandOutput = base.OrderedOutput
 
 func combinedCommandOutput(stream CommandStream) io.ReadCloser {
 	ctx, cancel := context.WithCancel(context.Background())
