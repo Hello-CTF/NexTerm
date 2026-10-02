@@ -1,6 +1,6 @@
 # Go skeleton ownership and extension contracts
 
-This module is a foundation, not a second set of business implementations. The existing Rust code remains the compatibility reference until each domain is ported and verified.
+This module is a foundation, not a second set of business implementations. Its contracts are versioned and self-consistent within the Go implementation; Rust data/wire compatibility and differential verification are not required.
 
 ## Package ownership
 
@@ -18,7 +18,7 @@ This module is a foundation, not a second set of business implementations. The e
 - Register a flat-argument command with `ipc.Register[In, Out](dispatcher, name, handler)`. Register a command whose request is `{args:{args:{...}}}` with `ipc.RegisterNested`.
 - A handler receives `context.Context`, `*ipc.Call`, and its typed input. `Call` exposes the raw arguments for tri-state DTOs, the channel reference, stable client ID, event emitter, and stream factory.
 - `RegisterRaw` is reserved for commands that must control decoding, such as explicit-null versus omitted fields. Command names are registered once; duplicates and unknown commands fail explicitly.
-- DTOs use `encoding/json` names that match the current camelCase contract. Response success is `{ok:true,data:...}`, including `data:null`; command failure is `{ok:false,error:{code,message,detail?}}`. HTTP command failures remain HTTP 200.
+- DTOs use consistent camelCase `encoding/json` tags. Response success is `{ok:true,data:...}`, including `data:null`; command failure is `{ok:false,error:{code,message,detail?}}`. HTTP command failures remain HTTP 200.
 - Keep `[]byte` out of ordinary DTOs unless base64 is the intended wire format. PTY and Docker output use `BinaryStream`; AI jobs use `OpenTypedJSONStream[AiEvent]` with the AI domain's concrete event type.
 - Events use the `Topic*` constants. `ipc.Event` is the HTTP/WS `{event,payload}` envelope; the Wails adapter emits the topic and payload separately.
 
@@ -35,4 +35,4 @@ Wails and HTTP/WS adapters must preserve per-channel ordering, cancellation, clo
 
 ## Build boundary
 
-`go.mod` pins Go 1.26.8 through the toolchain directive and Wails v3.0.0-alpha.98. The server and Windows desktop are zero-cgo. Only the Wails macOS/Linux desktop platform layer uses cgo. Always measure stripped production artifacts; no size reduction is assumed from the language change alone.
+`go.mod` pins Go 1.26.8 through the toolchain directive and Wails v3.0.0-alpha.98. The server and Windows desktop are zero-cgo. Only the Wails macOS/Linux desktop platform layer uses cgo. Every release artifact must be measured against the Rust size baseline; skeleton measurements alone do not prove the final requirement.

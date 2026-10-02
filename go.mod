@@ -8,9 +8,11 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.1
+	github.com/pkg/sftp v1.13.11
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/wailsapp/wails/v3 v3.0.0-alpha.98
 	golang.org/x/crypto v0.57.0
+	golang.org/x/net v0.58.0
 	modernc.org/sqlite v1.60.1
 )
 
@@ -46,6 +48,7 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/kevinburke/ssh_config v1.4.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -64,7 +67,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	modernc.org/libc v1.77.1 // indirect
