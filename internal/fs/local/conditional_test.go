@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -213,9 +212,6 @@ func TestWriteFileVersionRejectsInvalidExpectations(t *testing.T) {
 }
 
 func TestWriteFileVersionReplaceIsRefusedWhereUnenforceable(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("windows replacement is covered by the windows-only replace tests")
-	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
 	writeSynthetic(t, path, "actual")
@@ -223,7 +219,7 @@ func TestWriteFileVersionReplaceIsRefusedWhereUnenforceable(t *testing.T) {
 	for _, target := range []string{path, filepath.Join(dir, "missing.txt")} {
 		err := filesystem.WriteFileVersion(context.Background(), target, []byte("new"), true, expectVersion("actual"))
 		if !errors.Is(err, base.ErrUnsupported) {
-			t.Fatalf("unix replacement = %v, want base.ErrUnsupported", err)
+			t.Fatalf("replacement = %v, want base.ErrUnsupported", err)
 		}
 		if errors.Is(err, conditional.ErrVersionMismatch) || errors.Is(err, conditional.ErrCommitIndeterminate) {
 			t.Fatalf("unsupported must be a distinct outcome: %v", err)

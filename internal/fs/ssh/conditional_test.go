@@ -182,14 +182,14 @@ func TestWriteFileVersionCreateCommitFaultOutcomes(t *testing.T) {
 		assertNoRemoteTemporaryLeftovers(t, root)
 	})
 
-	t.Run("transport failure with absent target is determinate and uncommitted", func(t *testing.T) {
+	t.Run("transport failure remains indeterminate even with absent target", func(t *testing.T) {
 		filesystem, root := newTestFS(t, nil)
 		stubConditionalLink(t, func(client *sftp.Client, oldname, newname string) error {
 			return errors.New("synthetic transport drop")
 		})
 		err := filesystem.WriteFileVersion(context.Background(), "created.txt", []byte("new"), false, conditional.Absent())
-		if err == nil || errors.Is(err, conditional.ErrCommitIndeterminate) || errors.Is(err, conditional.ErrVersionMismatch) {
-			t.Fatalf("transport drop with absent target = %v, want plain determinate error", err)
+		if !errors.Is(err, conditional.ErrCommitIndeterminate) {
+			t.Fatalf("transport drop = %v, want indeterminate (absence proves nothing about the historical commit)", err)
 		}
 		if exists, statErr := filesystem.Exists(context.Background(), "created.txt"); statErr != nil || exists {
 			t.Fatalf("target = %v, %v", exists, statErr)
@@ -211,6 +211,58 @@ func TestWriteFileVersionCreateCommitFaultOutcomes(t *testing.T) {
 		}
 		assertNoRemoteTemporaryLeftovers(t, root)
 	})
+}
+
+func TestWriteFileVersionCreatePostCommitMutationsStayIndeterminate(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(t *testing.T, filesystem *FS)
+		verify func(t *testing.T, filesystem *FS)
+	}{
+		{name: "external delete after commit", mutate: func(t *testing.T, filesystem *FS) {
+			if err := filesystem.Delete(context.Background(), "created.txt", false); err != nil {
+				t.Fatal(err)
+			}
+		}, verify: func(t *testing.T, filesystem *FS) {
+			if exists, err := filesystem.Exists(context.Background(), "created.txt"); err != nil || exists {
+				t.Fatalf("target = %v, %v", exists, err)
+			}
+		}},
+		{name: "external replacement after commit", mutate: func(t *testing.T, filesystem *FS) {
+			if err := filesystem.WriteFile(context.Background(), "created.txt", []byte("foreign"), false); err != nil {
+				t.Fatal(err)
+			}
+		}, verify: func(t *testing.T, filesystem *FS) {
+			assertRemoteContent(t, filesystem, "created.txt", "foreign")
+		}},
+		{name: "target unreadable after commit", mutate: func(t *testing.T, filesystem *FS) {
+			if err := filesystem.Chmod(context.Background(), "created.txt", 0); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			filesystem, root := newTestFS(t, nil)
+			stubConditionalLink(t, func(client *sftp.Client, oldname, newname string) error {
+				if err := client.Link(oldname, newname); err != nil {
+					return err
+				}
+				test.mutate(t, filesystem)
+				return errors.New("synthetic response loss after commit")
+			})
+			err := filesystem.WriteFileVersion(context.Background(), "created.txt", []byte("new"), false, conditional.Absent())
+			if !errors.Is(err, conditional.ErrCommitIndeterminate) {
+				t.Fatalf("post-commit mutation = %v, want indeterminate (current state cannot rewrite the historical commit)", err)
+			}
+			if errors.Is(err, conditional.ErrVersionMismatch) {
+				t.Fatalf("ambiguous commit must not be downgraded to a mismatch: %v", err)
+			}
+			if test.verify != nil {
+				test.verify(t, filesystem)
+			}
+			assertNoRemoteTemporaryLeftovers(t, root)
+		})
+	}
 }
 
 func TestWriteFileVersionReplaceIsRefusedWhereUnenforceable(t *testing.T) {

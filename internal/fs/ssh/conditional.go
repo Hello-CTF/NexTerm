@@ -44,11 +44,12 @@ var conditionalLink = func(client *sftp.Client, oldname, newname string) error {
 // non-cooperating writers between the final snapshot and an unconditional
 // rename, so it fails with base.ErrUnsupported before any mutation.
 //
-// A failed commit is reconciled against the resulting path state, never
-// retried: an absent target is a determinate uncommitted failure, a target
-// holding exactly the staged content yields *conditional.IndeterminateError
-// (the link may have succeeded before its response was lost), and any other
-// occupant is a version mismatch.
+// A failed commit is classified by protocol proof, never by inspecting the
+// pathname afterwards: a server status reply proves non-commit and yields a
+// determinate error (a version mismatch when the path is occupied), while
+// any other failure keeps *conditional.IndeterminateError, because the link
+// may already have committed and current-state reads, failed or not, cannot
+// rewrite that history. The operation is never retried.
 func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -101,58 +102,37 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 		return err
 	}
 	if err := conditionalLink(f.client, temporary, remotePath); err != nil {
-		return f.reconcileCreate(ctx, remotePath, data, expected, err)
+		if !sftpFailureProvenByServer(err) {
+			// No protocol-level proof of non-commit exists, and no later
+			// path inspection can supply it: the link may have committed
+			// before the response was lost, whatever the target looks
+			// like now. Stay indeterminate and never retry.
+			return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, err)}
+		}
+		// The server's own status reply proves the link did not happen,
+		// so a determinate outcome is truthful; an occupied path is the
+		// conflicting version the caller must re-read.
+		if occupied, statErr := f.lstatOccupied(remotePath); statErr == nil && occupied {
+			return remoteAlreadyExists(expected)
+		}
+		return fmt.Errorf("SFTP conditional create %s (requires hardlink@openssh.com): %w", remotePath, err)
 	}
 	committed = true
 	_ = f.client.Remove(temporary)
 	return nil
 }
 
-// reconcileCreate classifies a failed hard-link commit by inspecting the
-// resulting path state rather than trusting error shapes, which the SFTP
-// client normalises inconsistently. The link is atomic, so an absent target
-// proves nothing was committed; a target holding exactly the staged content
-// means the commit may have succeeded before the response was lost; any
-// other occupant is a plain version mismatch. No retry is ever attempted.
-func (f *FS) reconcileCreate(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation, linkErr error) error {
-	// Reconciliation must finish even if the caller's context was cancelled;
-	// otherwise a cancelled read could misclassify the commit outcome.
-	ctx = context.WithoutCancel(ctx)
-	occupied, statErr := f.lstatOccupied(remotePath)
-	if statErr != nil {
-		return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w (reconciliation failed: %v)", remotePath, linkErr, statErr)}
+// sftpFailureProvenByServer reports whether err is the server's own status
+// reply to the failed operation, which is the only protocol-level proof
+// that the commit did not happen. pkg/sftp normalises status replies to
+// *sftp.StatusError, os.ErrNotExist or os.ErrPermission; io.EOF is
+// deliberately not accepted because it also occurs on transport failure.
+func sftpFailureProvenByServer(err error) bool {
+	var status *sftp.StatusError
+	if errors.As(err, &status) {
+		return true
 	}
-	if !occupied {
-		return fmt.Errorf("SFTP conditional create %s (requires hardlink@openssh.com): %w", remotePath, linkErr)
-	}
-	if version, err := f.hashRemoteRegular(ctx, remotePath); err == nil && version == conditional.VersionOf(data) {
-		return &conditional.IndeterminateError{Expected: expected, New: version, Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, linkErr)}
-	}
-	return remoteAlreadyExists(expected)
-}
-
-// hashRemoteRegular measures a regular file for reconciliation. Any open or
-// read failure is reported as an error and treated as foreign content.
-func (f *FS) hashRemoteRegular(ctx context.Context, remotePath string) (conditional.Version, error) {
-	info, err := f.client.Lstat(remotePath)
-	if err != nil {
-		return conditional.Version{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return conditional.Version{}, fmt.Errorf("not a regular file")
-	}
-	file, err := f.client.Open(remotePath)
-	if err != nil {
-		return conditional.Version{}, err
-	}
-	stop := context.AfterFunc(ctx, func() { _ = file.Close() })
-	defer stop()
-	version, hashErr := conditional.HashReader(ctx, file)
-	closeErr := file.Close()
-	if hashErr != nil {
-		return conditional.Version{}, hashErr
-	}
-	return version, closeErr
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission)
 }
 
 // lstatOccupied reports whether anything exists at remotePath without

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
@@ -13,41 +12,45 @@ import (
 )
 
 const (
-	winrmOutcomeMissing   = "@{s='mismatch';r='file is missing';e=$false;l=0;h=''}"
 	winrmOutcomeExists    = "@{s='mismatch';r='file already exists';e=$true;l=0;h=''}"
-	winrmOutcomeNotReg    = "@{s='mismatch';r='target is not a regular file';e=$true;l=0;h=''}"
 	winrmOutcomeCommitted = "@{s='committed'}"
+	winrmOutcomeError     = "@{s='error';c=$__nextermCommitted;m=$_.Exception.Message}"
 	winrmTempCleanup      = "if (-not $__nextermCommitted -and (Test-Path -LiteralPath $__nextermTemp)) { Remove-Item -LiteralPath $__nextermTemp -Force -ErrorAction SilentlyContinue }"
-	winrmShareCommit      = "[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete"
 )
 
 type conditionalOutcome struct {
-	Status string `json:"s"`
-	Reason string `json:"r"`
-	Exists bool   `json:"e"`
-	Size   int64  `json:"l"`
-	SHA256 string `json:"h"`
+	Status    string `json:"s"`
+	Reason    string `json:"r"`
+	Exists    bool   `json:"e"`
+	Size      int64  `json:"l"`
+	SHA256    string `json:"h"`
+	Committed bool   `json:"c"`
+	Message   string `json:"m"`
 }
 
-// WriteFileVersion implements conditional.Writer. The whole compare-and-write
-// runs as a single remote script, so there is no client-side window between
-// verification and mutation. For a replacement the target is opened with
-// ReadWrite access and then byte-range locked: Windows range locks are
-// mandatory, so other processes cannot write the verified content even if
-// they already hold a handle, and the lock is not released until after
-// File.Replace. The locked content is hashed before and after staging, the
-// path's current content is hashed once more through a second stream
-// immediately before the commit, and the backup is copied from the locked,
-// verified stream. A conditional create commits through File.Move, which
-// refuses to overwrite a path that appeared meanwhile. Paths reach the
-// script only as single-quoted literals produced by quoteLiteral.
+// WriteFileVersion implements conditional.Writer.
 //
-// A non-zero script exit is a determinate failure: the script threw, nothing
-// runs after the atomic commit, and a failed File.Replace/File.Move leaves
-// the target untouched. A transport error, a cancellation after dispatch, a
-// missing exit status, or an unreadable/missing success outcome instead
-// yields *conditional.IndeterminateError, because the remote script may have
-// committed already; the call is never retried automatically.
+// A conditional create runs as a single remote script that stages the
+// content beside the target and commits through File.Move, an atomic
+// operation that refuses to overwrite a path that appeared at any moment
+// before the commit, so there is no check-then-create window. Paths reach
+// the script only as single-quoted literals produced by quoteLiteral.
+//
+// An existing-file replacement cannot honour the contract: File.Replace is
+// not conditioned on the verified identity or content, and holding delete
+// sharing open for it reopens a rename/delete/recreate race after any
+// recheck, so replacement fails with base.ErrUnsupported before anything is
+// dispatched.
+//
+// Outcomes are classified by what the remote side actually proves. The
+// script catches its own failures and reports whether the commit completed:
+// a structured error with c=false is a determinate pre-commit failure with
+// nothing committed. Everything else that is not a structured committed or
+// mismatch outcome — a structured error with c=true, a non-zero exit, a
+// transport error, a cancellation after dispatch, a missing exit status, or
+// garbled output — keeps *conditional.IndeterminateError, because the commit
+// may already be live and the outcome cannot be proven otherwise. The call
+// is never retried automatically.
 func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -55,10 +58,13 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 	if len(data) > MaxWriteBytes {
 		return fmt.Errorf("WinRM write limit is %d bytes, got %d", MaxWriteBytes, len(data))
 	}
+	if expected.Exists {
+		return fmt.Errorf("WinRM conditional replace %s: %w: File.Replace cannot be conditioned on the verified identity and content against non-cooperating writers", path, base.ErrUnsupported)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	result, err := f.executor.Exec(ctx, conditionalWriteScript(path, data, backup, expected), base.ExecOptions{
+	result, err := f.executor.Exec(ctx, conditionalCreateScript(path, data), base.ExecOptions{
 		Limits: base.OutputLimits{Stdout: -1, Stderr: -1},
 	})
 	if err != nil {
@@ -67,14 +73,16 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 	if result.ExitCode == nil {
 		return indeterminateCommit(expected, data, base.ErrExitStatusMissing)
 	}
+	output := strings.TrimSpace(result.Stdout)
 	if *result.ExitCode != 0 {
+		// Without a structured outcome the failing stage is unknown: the
+		// commit may have completed before the script died.
 		message := strings.TrimSpace(result.Stderr)
 		if message == "" {
 			message = fmt.Sprintf("WinRM conditional write exited with status %d", *result.ExitCode)
 		}
-		return fmt.Errorf("WinRM conditional write: %s", message)
+		return indeterminateCommit(expected, data, fmt.Errorf("WinRM conditional write: %s", message))
 	}
-	output := strings.TrimSpace(result.Stdout)
 	var outcome conditionalOutcome
 	if err := json.Unmarshal([]byte(output), &outcome); err != nil {
 		return indeterminateCommit(expected, data, fmt.Errorf("parse WinRM conditional write response %q: %w", output, err))
@@ -88,6 +96,12 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 			Actual:   conditional.Version{Exists: outcome.Exists, Size: outcome.Size, SHA256: outcome.SHA256},
 			Reason:   outcome.Reason,
 		}
+	case "error":
+		if outcome.Committed {
+			return indeterminateCommit(expected, data, fmt.Errorf("WinRM conditional write failed after the commit: %s", outcome.Message))
+		}
+		// The script itself proves the commit never completed.
+		return fmt.Errorf("WinRM conditional write: %s", outcome.Message)
 	default:
 		return indeterminateCommit(expected, data, fmt.Errorf("unexpected WinRM conditional write response %q", output))
 	}
@@ -97,69 +111,32 @@ func indeterminateCommit(expected conditional.Expectation, data []byte, cause er
 	return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: cause}
 }
 
-func conditionalWriteScript(path string, data []byte, backup bool, expected conditional.Expectation) string {
-	prelude := "$ErrorActionPreference='Stop'; " + resolvePath(path) +
+// conditionalCreateScript stages and commits in one try/catch so every
+// script failure still produces a structured outcome recording whether the
+// atomic Move had already completed. Only a serialization or engine failure
+// can bypass that outcome, and those cases stay indeterminate on the client.
+func conditionalCreateScript(path string, data []byte) string {
+	return "$ErrorActionPreference='Stop'; $__nextermCommitted=$false; " +
+		"try { " +
+		resolvePath(path) +
 		"$__nextermData=[Convert]::FromBase64String('" + base64.StdEncoding.EncodeToString(data) + "'); " +
-		"$__nextermTemp=$__nextermPath+'.nexterm-tmp-'+[Guid]::NewGuid().ToString('N'); "
-	if expected.Exists {
-		return prelude + conditionalReplaceScript(backup, expected)
-	}
-	return prelude + conditionalCreateScript()
-}
-
-func conditionalReplaceScript(backup bool, expected conditional.Expectation) string {
-	verify := func(stream string, rewind bool) string {
-		block := "$__nextermLength=" + stream + ".Length; " +
-			"if ($__nextermLength -ne " + strconv.FormatInt(expected.Size, 10) + ") { return @{s='mismatch';r='size differs';e=$true;l=$__nextermLength;h=''} }; " +
-			"$__nextermSHA=[Security.Cryptography.SHA256]::Create(); " +
-			"$__nextermActual=[BitConverter]::ToString($__nextermSHA.ComputeHash(" + stream + ")).Replace('-','').ToLowerInvariant(); " +
-			"if ($__nextermActual -ne " + quoteLiteral(expected.SHA256) + ") { return @{s='mismatch';r='content digest differs';e=$true;l=$__nextermLength;h=$__nextermActual} }; "
-		if rewind {
-			block = stream + ".Position=0; " + block
-		}
-		return block
-	}
-	backupClause := ""
-	if backup {
-		backupClause = "$__nextermStream.Position=0; " +
-			"$__nextermBackup=[IO.File]::Open($__nextermPath+'" + BackupSuffix + "',[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None); " +
-			"try { $__nextermStream.CopyTo($__nextermBackup) } finally { $__nextermBackup.Dispose() }; "
-	}
-	return "$__nextermOutcome = & { " +
-		"if (-not (Test-Path -LiteralPath $__nextermPath)) { return " + winrmOutcomeMissing + " }; " +
-		"$__nextermItem=Get-Item -LiteralPath $__nextermPath -Force; " +
-		"if ($__nextermItem.PSIsContainer -or ($__nextermItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return " + winrmOutcomeNotReg + " }; " +
-		"$__nextermCommitted=$false; " +
-		"try { " +
-		"try { $__nextermStream=[IO.File]::Open($__nextermPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite," + winrmShareCommit + ") } catch [IO.FileNotFoundException] { return " + winrmOutcomeMissing + " } catch [IO.DirectoryNotFoundException] { return " + winrmOutcomeMissing + " }; " +
-		"try { " +
-		"$__nextermStream.Lock(0,[long]::MaxValue); " +
-		verify("$__nextermStream", false) +
-		"[IO.File]::WriteAllBytes($__nextermTemp,$__nextermData); " +
-		verify("$__nextermStream", true) +
-		"try { $__nextermPathStream=[IO.File]::Open($__nextermPath,[IO.FileMode]::Open,[IO.FileAccess]::Read," + winrmShareCommit + ") } catch [IO.FileNotFoundException] { return " + winrmOutcomeMissing + " }; " +
-		"try { " + verify("$__nextermPathStream", false) + "} finally { $__nextermPathStream.Dispose() }; " +
-		backupClause +
-		"try { [IO.File]::Replace($__nextermTemp,$__nextermPath,$null) } catch [IO.FileNotFoundException] { return " + winrmOutcomeMissing + " }; " +
-		"} finally { $__nextermStream.Dispose() }; " +
-		"$__nextermCommitted=$true; " +
-		"return " + winrmOutcomeCommitted + " " +
-		"} finally { " + winrmTempCleanup + " } " +
-		"}; ConvertTo-Json -InputObject $__nextermOutcome -Compress"
-}
-
-func conditionalCreateScript() string {
-	return "$__nextermOutcome = & { " +
-		"if (Test-Path -LiteralPath $__nextermPath) { return " + winrmOutcomeExists + " }; " +
-		"$__nextermCommitted=$false; " +
+		"$__nextermTemp=$__nextermPath+'.nexterm-tmp-'+[Guid]::NewGuid().ToString('N'); " +
+		"if (Test-Path -LiteralPath $__nextermPath) { $__nextermOutcome=" + winrmOutcomeExists + " } else { " +
 		"try { " +
 		"[IO.File]::WriteAllBytes($__nextermTemp,$__nextermData); " +
-		"if (Test-Path -LiteralPath $__nextermPath) { return " + winrmOutcomeExists + " }; " +
-		"try { [IO.File]::Move($__nextermTemp,$__nextermPath) } catch [IO.IOException] { if (Test-Path -LiteralPath $__nextermPath) { return " + winrmOutcomeExists + " }; throw }; " +
+		"if (Test-Path -LiteralPath $__nextermPath) { $__nextermOutcome=" + winrmOutcomeExists + " } else { " +
+		"try { " +
+		"[IO.File]::Move($__nextermTemp,$__nextermPath); " +
 		"$__nextermCommitted=$true; " +
-		"return " + winrmOutcomeCommitted + " " +
+		"$__nextermOutcome=" + winrmOutcomeCommitted + " " +
+		"} catch [IO.IOException] { " +
+		"if (Test-Path -LiteralPath $__nextermPath) { $__nextermOutcome=" + winrmOutcomeExists + " } else { throw } " +
+		"} " +
+		"} " +
 		"} finally { " + winrmTempCleanup + " } " +
-		"}; ConvertTo-Json -InputObject $__nextermOutcome -Compress"
+		"} " +
+		"} catch { $__nextermOutcome=" + winrmOutcomeError + " }; " +
+		"ConvertTo-Json -InputObject $__nextermOutcome -Compress"
 }
 
 var _ conditional.Writer = (*FileSystem)(nil)

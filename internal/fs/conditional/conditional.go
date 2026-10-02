@@ -202,27 +202,21 @@ func (e *IndeterminateError) Unwrap() []error {
 // transports alongside their unconditional base interface.
 //
 // WriteFileVersion writes data to path only while the target still matches
-// expected, preserving the transport's atomic temporary-file replacement and
-// backup behaviour. When backup is true and the target holds the verified
-// version, those exact verified bytes are copied to the transport's backup
-// path before the atomic replacement; a conditional create has nothing to
-// back up and never writes a backup.
-//
-// Support is deliberately limited to what each platform can actually enforce:
+// expected. Support is deliberately limited to what the platforms can
+// actually enforce against non-cooperating writers:
 //   - A conditional create (expected absent) is supported by every
 //     transport. The commit is an atomic no-clobber primitive (a hard link
 //     or a move that fails if the path appeared), so a conflicting create is
-//     rejected as a mismatch even if it lands after the last check.
-//   - An existing-file replacement is supported only where other processes'
-//     content writes are kernel-enforced to stay out for the whole
-//     verify-and-commit operation: local Windows (share modes plus a
-//     mandatory byte-range lock held across the commit) and WinRM (the same
-//     mechanism inside a single remote script, with the locked handle still
-//     open during File.Replace). The path's identity/content is re-checked
-//     immediately before the commit. Unix local filesystems and the SFTP
-//     protocol offer no such exclusion or compare-and-commit primitive, so
-//     their replacements fail with an error wrapping base.ErrUnsupported
-//     before any mutation instead of pretending to be safe.
+//     rejected as a mismatch even if it lands after the last check. A create
+//     has nothing to back up and never writes a backup.
+//   - An existing-file replacement is refused everywhere with an error
+//     wrapping base.ErrUnsupported before any mutation. No available
+//     primitive conditions an atomic pathname replacement on the verified
+//     identity and content: Unix locks are advisory, Windows replacement
+//     requires delete sharing and therefore cannot pin the verified file to
+//     the pathname through the commit, and SFTP has no compare-and-commit
+//     or locking operation. Best-effort rechecks do not close those races,
+//     so they are not offered under this contract.
 //
 // The outcome of every call is exactly one of:
 //   - nil: the new content was committed under the guarantees above.
@@ -230,12 +224,18 @@ func (e *IndeterminateError) Unwrap() []error {
 //     verified version; nothing was committed and no backup was written.
 //     Callers must re-read and obtain a fresh confirmation.
 //   - *IndeterminateError (errors.Is ErrCommitIndeterminate): the commit may
-//     or may not have happened; callers must re-read and reconcile, and no
-//     automatic retry has been attempted.
+//     or may not have happened; callers must re-read and reconcile against
+//     Expected and New, and no automatic retry has been attempted. An
+//     ambiguous commit is never reclassified from later path inspection:
+//     current-state reads, whether they fail or show deletion, replacement
+//     or foreign content, cannot prove a historical non-commit.
 //   - an error wrapping base.ErrUnsupported: the transport cannot enforce
 //     the contract for this operation; no mutation was attempted.
-//   - any other error: the new content was not committed and temporary
-//     files were removed best effort.
+//   - any other error: a determinate failure with nothing committed, which
+//     is only returned when non-commit is actually proven — by a local
+//     syscall, by the server's own status reply over SFTP, or by a WinRM
+//     script reporting a structured pre-commit failure. Temporary files
+//     were removed best effort.
 //
 // Paths are passed as filesystem operands only; implementations must not
 // interpolate them into shell command lines.
