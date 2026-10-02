@@ -1,0 +1,92 @@
+version: '3'
+
+vars:
+  VERSION: '{{.VERSION | default "dev"}}'
+  COMMIT: '{{.COMMIT | default "unknown"}}'
+  BIN_DIR: '{{.BIN_DIR | default "bin"}}'
+  WAILS: '{{.WAILS | default "wails3"}}'
+  LDFLAGS: '-s -w -X github.com/ProbiusOfficial/NexTerm/internal/version.Version={{.VERSION}} -X github.com/ProbiusOfficial/NexTerm/internal/version.Commit={{.COMMIT}}'
+
+tasks:
+  fmt:
+    summary: Format the Go sources
+    cmds:
+      - gofmt -w ./cmd ./internal/app ./internal/ipc ./internal/platform ./internal/version
+
+  fmt:check:
+    summary: Check Go formatting
+    cmds:
+      - |
+        files="$(gofmt -l ./cmd ./internal/app ./internal/ipc ./internal/platform ./internal/version)"
+        if [ -n "$files" ]; then
+          printf 'gofmt required:\n%s\n' "$files" >&2
+          exit 1
+        fi
+
+  vet:
+    summary: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    summary: Run all Go tests
+    cmds:
+      - go test ./...
+
+  check:
+    summary: Run formatting, vet, and tests
+    deps: [fmt:check, vet, test]
+
+  server:build:
+    summary: Build the pure-Go server without cgo
+    env:
+      CGO_ENABLED: '0'
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}'
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-server' ./cmd/nexterm-server
+
+  desktop:build:
+    summary: Build the desktop application for the host
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}'
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop' ./cmd/nexterm-desktop
+
+  windows:desktop:
+    summary: Cross-build the zero-cgo Windows desktop application
+    env:
+      CGO_ENABLED: '0'
+      GOOS: windows
+      GOARCH: amd64
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}'
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop-windows-amd64.exe' ./cmd/nexterm-desktop
+
+  darwin:desktop:
+    summary: Build the macOS desktop application with the Wails platform layer
+    env:
+      CGO_ENABLED: '1'
+      GOOS: darwin
+      CGO_CFLAGS: '-mmacosx-version-min=12.0'
+      CGO_LDFLAGS: '-mmacosx-version-min=12.0'
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}'
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop-darwin' ./cmd/nexterm-desktop
+
+  linux:desktop:
+    summary: Build the Linux desktop application with the Wails platform layer
+    env:
+      CGO_ENABLED: '1'
+      GOOS: linux
+    cmds:
+      - mkdir -p '{{.BIN_DIR}}'
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop-linux' ./cmd/nexterm-desktop
+
+  bindings:
+    summary: Generate Wails TypeScript bindings
+    cmds:
+      - '{{.WAILS}} generate bindings -ts -i -d src/ipc/bindings ./cmd/nexterm-desktop'
+
+  verify:
+    summary: Verify tests and native builds
+    deps: [check, server:build, desktop:build]

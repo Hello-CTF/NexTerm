@@ -1,0 +1,128 @@
+package ipc
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+)
+
+type echoInput struct {
+	Name      string `json:"name"`
+	WithCreds bool   `json:"withCreds"`
+}
+
+func TestDispatcherSupportsFlatAndNestedArguments(t *testing.T) {
+	dispatcher := NewDispatcher()
+	handler := func(_ context.Context, call *Call, input echoInput) (echoInput, error) {
+		if call.ClientID != "client-1" {
+			t.Fatalf("ClientID = %q", call.ClientID)
+		}
+		return input, nil
+	}
+	if err := Register(dispatcher, "echo", handler); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterNested(dispatcher, "nested", handler); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name    string
+		command string
+		args    string
+	}{
+		{name: "flat", command: "echo", args: `{"name":"box","withCreds":true}`},
+		{name: "nested", command: "nested", args: `{"args":{"name":"box","withCreds":true}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := dispatcher.Dispatch(context.Background(), Request{
+				Command: test.command,
+				Args:    json.RawMessage(test.args),
+			}, Environment{ClientID: "client-1"})
+			if !response.OK {
+				t.Fatalf("response error: %+v", response.Error)
+			}
+			if got, want := string(response.Data), `{"name":"box","withCreds":true}`; got != want {
+				t.Fatalf("data = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+func TestDispatcherResponseContracts(t *testing.T) {
+	dispatcher := NewDispatcher()
+	if err := Register(dispatcher, "null", func(context.Context, *Call, struct{}) (any, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(dispatcher, "fail", func(context.Context, *Call, struct{}) (any, error) {
+		return nil, NewError(CodeHostKeyPending, "主机指纹待确认").WithDetail(map[string]any{"host": "example"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatcher.Dispatch(context.Background(), Request{Command: "null"}, Environment{})
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(encoded), `{"ok":true,"data":null}`; got != want {
+		t.Fatalf("success = %s, want %s", got, want)
+	}
+
+	response = dispatcher.Dispatch(context.Background(), Request{Command: "fail"}, Environment{})
+	encoded, err = json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(encoded), `{"ok":false,"error":{"code":"host_key_pending","message":"主机指纹待确认","detail":{"host":"example"}}}`; got != want {
+		t.Fatalf("failure = %s, want %s", got, want)
+	}
+
+	response = dispatcher.Dispatch(context.Background(), Request{Command: "missing"}, Environment{})
+	if response.Error == nil || response.Error.Code != CodeNotFound {
+		t.Fatalf("unknown command error = %+v", response.Error)
+	}
+	if err := dispatcher.RegisterRaw("null", func(context.Context, *Call) (any, error) { return nil, nil }); err == nil {
+		t.Fatal("duplicate registration succeeded")
+	}
+	if got := dispatcher.Commands(); len(got) != 2 || got[0] != "fail" || got[1] != "null" {
+		t.Fatalf("commands = %v", got)
+	}
+}
+
+func TestDispatcherReturnsBadParamsAndContainsPanics(t *testing.T) {
+	dispatcher := NewDispatcher()
+	if err := Register(dispatcher, "echo", func(_ context.Context, _ *Call, input echoInput) (echoInput, error) {
+		return input, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(dispatcher, "panic", func(context.Context, *Call, struct{}) (any, error) {
+		panic("boom")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatcher.Dispatch(context.Background(), Request{Command: "echo", Args: json.RawMessage(`{"name":`)}, Environment{})
+	if response.Error == nil || response.Error.Code != CodeBadParam {
+		t.Fatalf("bad parameter error = %+v", response.Error)
+	}
+	response = dispatcher.Dispatch(context.Background(), Request{Command: "panic"}, Environment{})
+	if response.Error == nil || response.Error.Code != CodeInternal || !strings.Contains(response.Error.Message, "boom") {
+		t.Fatalf("panic error = %+v", response.Error)
+	}
+}
+
+func TestNormalizeErrorPreservesStructuredErrors(t *testing.T) {
+	original := NewError(CodeTimeout, "超时")
+	if got := NormalizeError(original); got != original {
+		t.Fatalf("NormalizeError returned %+v", got)
+	}
+	if got := NormalizeError(errors.New("plain")); got.Code != CodeInternal {
+		t.Fatalf("plain error code = %s", got.Code)
+	}
+}
