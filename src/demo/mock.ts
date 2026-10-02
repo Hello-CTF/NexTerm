@@ -248,6 +248,21 @@ function absPath(v: unknown): string {
   return raw.replace(/\/+$/, "") || "/";
 }
 
+/**
+ * 大文件的 base64：分块是为了不让 `String.fromCharCode(...bytes)` 展开超栈，
+ * 但**块长必须是 3 的倍数** —— 否则除最后一块外每块结尾都带 `=` padding，
+ * 拼起来就是一串非法 base64（解回来的内容从第一个块边界起全错）。
+ */
+const BASE64_CHUNK_BYTES = 32_766;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let b64 = "";
+  for (let i = 0; i < bytes.length; i += BASE64_CHUNK_BYTES) {
+    b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK_BYTES)));
+  }
+  return b64;
+}
+
 /* ── AI 脚本 ──────────────────────────────────────────────────────────── */
 
 function answerFor(question: string): { answer: string; commands: string[] } {
@@ -1091,23 +1106,27 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const path = absPath(a.path);
       const text = fsFileContent[path] ?? `# ${path}\n\n（演示模式：这个文件没有内置内容，随便改都行）\n`;
       const bytes = new TextEncoder().encode(text);
-      let b64 = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + chunk)));
-      }
-      return { path, size: bytes.length, contentBase64: b64 };
+      return { path, size: bytes.length, contentBase64: bytesToBase64(bytes) };
     }
 
     case "fs_write": {
       const path = absPath(a.path);
       const b64 = str(a.contentBase64);
+      let bin: Uint8Array;
       try {
-        const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        fsFileContent[path] = new TextDecoder().decode(bin);
+        bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       } catch {
-        // 忽略解码失败，演示模式下不阻塞保存流程
+        // 与内核一致：坏输入要报错，不能假装写成功（否则界面显示已保存而内容没变）
+        throwAppError("bad_param", "contentBase64 不是合法的 base64，写入已中止");
       }
+      let text: string;
+      try {
+        // 演示按文本存文件：fatal 解码，拒绝把非法 UTF-8 静默替换成 U+FFFD 后"写成功"
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bin);
+      } catch {
+        throwAppError("bad_param", "内容不是合法的 UTF-8 文本，写入已中止");
+      }
+      fsFileContent[path] = text;
       return null;
     }
 
