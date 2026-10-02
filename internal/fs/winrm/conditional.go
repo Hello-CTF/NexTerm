@@ -19,13 +19,15 @@ const (
 )
 
 type conditionalOutcome struct {
-	Status    string `json:"s"`
-	Reason    string `json:"r"`
-	Exists    bool   `json:"e"`
-	Size      int64  `json:"l"`
-	SHA256    string `json:"h"`
-	Committed bool   `json:"c"`
-	Message   string `json:"m"`
+	Status  string `json:"s"`
+	Reason  string `json:"r"`
+	Exists  bool   `json:"e"`
+	Size    int64  `json:"l"`
+	SHA256  string `json:"h"`
+	Message string `json:"m"`
+	// Committed must be an explicit JSON boolean: a missing or null flag
+	// decodes as nil and can never masquerade as proof of non-commit.
+	Committed *bool `json:"c"`
 }
 
 // WriteFileVersion implements conditional.Writer.
@@ -44,13 +46,14 @@ type conditionalOutcome struct {
 //
 // Outcomes are classified by what the remote side actually proves. The
 // script catches its own failures and reports whether the commit completed:
-// a structured error with c=false is a determinate pre-commit failure with
-// nothing committed. Everything else that is not a structured committed or
-// mismatch outcome — a structured error with c=true, a non-zero exit, a
-// transport error, a cancellation after dispatch, a missing exit status, or
-// garbled output — keeps *conditional.IndeterminateError, because the commit
-// may already be live and the outcome cannot be proven otherwise. The call
-// is never retried automatically.
+// only a structured error with a literal c=false is a determinate pre-commit
+// failure with nothing committed. Everything else that is not a structured
+// committed or mismatch outcome — a structured error with c=true or a
+// missing, null or mistyped c flag, a non-zero exit, a transport error, a
+// cancellation after dispatch, a missing exit status, or garbled output —
+// keeps *conditional.IndeterminateError, because the commit may already be
+// live and the outcome cannot be proven otherwise. The call is never
+// retried automatically.
 func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -97,10 +100,16 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 			Reason:   outcome.Reason,
 		}
 	case "error":
-		if outcome.Committed {
+		if outcome.Committed == nil {
+			// A missing or null flag says nothing about the commit stage,
+			// so it cannot prove a pre-commit failure.
+			return indeterminateCommit(expected, data, fmt.Errorf("WinRM conditional write error outcome lacks an explicit committed flag: %s", outcome.Message))
+		}
+		if *outcome.Committed {
 			return indeterminateCommit(expected, data, fmt.Errorf("WinRM conditional write failed after the commit: %s", outcome.Message))
 		}
-		// The script itself proves the commit never completed.
+		// Only a literal c=false is the script's own proof that the
+		// commit never completed.
 		return fmt.Errorf("WinRM conditional write: %s", outcome.Message)
 	default:
 		return indeterminateCommit(expected, data, fmt.Errorf("unexpected WinRM conditional write response %q", output))

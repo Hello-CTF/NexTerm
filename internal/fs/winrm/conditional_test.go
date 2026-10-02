@@ -132,6 +132,9 @@ func TestWriteFileVersionCommitFaultOutcomes(t *testing.T) {
 		{name: "unknown success outcome", executor: &fakeExecutor{result: success(`{"s":"unknown"}`)}},
 		{name: "nonzero exit after possible commit", executor: &fakeExecutor{result: base.ExecResult{Stderr: "synthetic engine failure", ExitCode: &nonzero}}},
 		{name: "structured error after commit", executor: &fakeExecutor{result: success(`{"s":"error","c":true,"m":"synthetic dispose failure"}`)}},
+		{name: "structured error with missing commit flag", executor: &fakeExecutor{result: success(`{"s":"error","m":"synthetic incomplete outcome"}`)}},
+		{name: "structured error with null commit flag", executor: &fakeExecutor{result: success(`{"s":"error","c":null,"m":"synthetic incomplete outcome"}`)}},
+		{name: "structured error with mistyped commit flag", executor: &fakeExecutor{result: success(`{"s":"error","c":"false","m":"synthetic mistyped outcome"}`)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			filesystem := New(test.executor)
