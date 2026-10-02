@@ -54,10 +54,14 @@ func (p *fakeDurableProvider) Create(_ context.Context, options base.DurableCrea
 	if p.createErr != nil {
 		return nil, p.createErr
 	}
-	if p.records[options.ID] != nil {
-		return nil, durable.ErrAlreadyExists
+	identity := 1
+	if previous := p.records[options.ID]; previous != nil {
+		if previous.killed == 0 {
+			return nil, durable.ErrAlreadyExists
+		}
+		identity = previous.identity + 1
 	}
-	record := &fakeDurableRecord{identity: 1}
+	record := &fakeDurableRecord{identity: identity}
 	p.records[options.ID] = record
 	return p.newAttachmentLocked(options.ID, record), nil
 }

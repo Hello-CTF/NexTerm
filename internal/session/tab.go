@@ -251,19 +251,19 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, errors.Join(ErrStaleGeneration, cleanupErr)
 	}
 	if !m.startResponses(tab) {
-		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab.ID, destroyOnFailure))
+		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 
 	info, err := m.attach(ctx, tab, AttachOptions{ClientID: options.ClientID, ChannelID: options.ChannelID}, false)
 	if err != nil {
-		return TabInfo{}, errors.Join(err, m.closeTab(tab.ID, destroyOnFailure))
+		return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
 	}
 	if kind == KindWinRM {
 		if err := m.feed(ctx, tab, generation, winRMBanner); err != nil {
-			return TabInfo{}, errors.Join(err, m.closeTab(tab.ID, destroyOnFailure))
+			return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
 		}
 	} else if !m.startPump(tab, channel, generation) {
-		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab.ID, destroyOnFailure))
+		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 	return info, nil
 }
@@ -708,16 +708,17 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 }
 
 func (m *Manager) CloseTab(id string) error {
-	return m.closeTab(id, true)
-}
-
-func (m *Manager) closeTab(id string, destroyDurable bool) error {
 	m.mu.Lock()
 	tab := m.tabs[id]
 	m.mu.Unlock()
+	return m.closeTab(tab, true)
+}
+
+func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 	if tab == nil {
 		return nil
 	}
+	id := tab.ID
 	tab.lifecycleMu.Lock()
 	defer tab.lifecycleMu.Unlock()
 
