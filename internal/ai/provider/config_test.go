@@ -1,0 +1,153 @@
+package provider
+
+import (
+	"encoding/json"
+	"math"
+	"reflect"
+	"testing"
+)
+
+func TestAllPresets(t *testing.T) {
+	presets := Presets()
+	got := make([]string, 0, len(presets))
+	for _, preset := range presets {
+		got = append(got, preset.ID)
+	}
+	want := []string{"deepseek", "openai", "dashscope", "moonshot", "zhipu", "ollama", "lmstudio", "vllm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("preset order = %v, want %v", got, want)
+	}
+	checks := map[string]struct {
+		baseURL string
+		model   string
+		window  uint64
+	}{
+		"deepseek":  {"https://api.deepseek.com/v1", "deepseek-chat", 64000},
+		"openai":    {"https://api.openai.com/v1", "gpt-4o-mini", 128000},
+		"dashscope": {"https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", 128000},
+		"moonshot":  {"https://api.moonshot.cn/v1", "moonshot-v1-32k", 128000},
+		"zhipu":     {"https://open.bigmodel.cn/api/paas/v4", "glm-4-flash", 128000},
+		"ollama":    {"http://127.0.0.1:11434/v1", "qwen2.5:7b", 32000},
+		"lmstudio":  {"http://127.0.0.1:1234/v1", "local-model", 32000},
+		"vllm":      {"http://127.0.0.1:8000/v1", "local-model", 32000},
+	}
+	for id, check := range checks {
+		config, err := FromPreset(id, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.BaseURL != check.baseURL || config.Model != check.model || config.ContextWindow != check.window || config.Temperature != 0.3 || !config.Stream || config.Proxy != nil {
+			t.Fatalf("preset %s = %+v", id, config)
+		}
+	}
+	config, err := FromPreset("openai", " custom-model ")
+	if err != nil || config.Model != "custom-model" {
+		t.Fatalf("model override = %+v, %v", config, err)
+	}
+	if _, err := FromPreset("unknown", ""); err == nil {
+		t.Fatal("unknown preset was accepted")
+	}
+}
+
+func TestConfigNormalizationAndJSONDefaults(t *testing.T) {
+	emptyProxy := "  "
+	config := Config{BaseURL: " https://example.test/v1/// ", APIKey: " key ", Model: " model ", Temperature: math.NaN(), ContextWindow: 0, Proxy: &emptyProxy}.Normalized()
+	if config.BaseURL != "https://example.test/v1" || config.APIKey != "key" || config.Model != "model" || config.Temperature != 0.3 || config.ContextWindow != 1000 || config.Proxy != nil {
+		t.Fatalf("normalized config = %+v", config)
+	}
+	config.Temperature = math.Inf(1)
+	config.ContextWindow = 3_000_000
+	config = config.Normalized()
+	if config.Temperature != 0.3 || config.ContextWindow != 2_000_000 {
+		t.Fatalf("non-finite/clamped config = %+v", config)
+	}
+	var decoded Config
+	if err := json.Unmarshal([]byte(`{"model":"m"}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Temperature != 0.3 || decoded.ContextWindow != 32768 || !decoded.Stream {
+		t.Fatalf("JSON defaults = %+v", decoded)
+	}
+	if err := json.Unmarshal([]byte(`{"temperature":0,"stream":false}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Temperature != 0 || decoded.Stream {
+		t.Fatalf("explicit zero/false were lost: %+v", decoded)
+	}
+}
+
+func TestUserMessageWithImages(t *testing.T) {
+	message := UserMessageWithImages("look", []string{"aGVsbG8=", "data:image/jpeg;base64,AAAA"})
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Content []struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			ImageURL struct {
+				URL string `json:"url"`
+			} `json:"image_url"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Content) != 3 || decoded.Content[0].Text != "look" || decoded.Content[1].ImageURL.URL != "data:image/png;base64,aGVsbG8=" || decoded.Content[2].ImageURL.URL != "data:image/jpeg;base64,AAAA" {
+		t.Fatalf("multipart message = %s", encoded)
+	}
+	plain := UserMessageWithImages("text", nil)
+	encoded, _ = json.Marshal(plain)
+	if string(encoded) != `{"role":"user","content":"text"}` {
+		t.Fatalf("image-free message should use string content: %s", encoded)
+	}
+	tool := AssistantToolCallsMessage("", []ToolCall{{ID: "1", Type: "function"}})
+	encoded, _ = json.Marshal(tool)
+	var wire map[string]any
+	_ = json.Unmarshal(encoded, &wire)
+	if value, exists := wire["content"]; !exists || value != nil {
+		t.Fatalf("assistant tool history must have null content: %s", encoded)
+	}
+}
+
+func TestToolStreamHostBoundaries(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://open.bigmodel.cn/api/paas/v4", "https://bigmodel.cn/v1", "https://open.zhipuai.cn/v1", "https://api.z.ai/v1", "https://z.ai/v1",
+	} {
+		if !wantsToolStream(baseURL) {
+			t.Errorf("wantsToolStream(%q) = false", baseURL)
+		}
+	}
+	for _, baseURL := range []string{
+		"https://example.com/z.ai/v1", "https://bigmodel.cn.evil.test/v1", "https://notzhipuai.com/v1", "https://z.ai.evil.test/v1",
+	} {
+		if wantsToolStream(baseURL) {
+			t.Errorf("wantsToolStream(%q) = true", baseURL)
+		}
+	}
+}
+
+func TestChatBodyProviderSpecificFields(t *testing.T) {
+	client := &Client{config: Config{Model: "glm", BaseURL: "https://open.bigmodel.cn/api/paas/v4", Temperature: 0.3}}
+	tools := []ToolSchema{{Name: "write", Description: "write", Parameters: map[string]any{"type": "object"}}}
+	stream := client.chatBody(ChatRequest{Messages: []ChatMessage{}, Tools: tools}, true)
+	if stream["stream"] != true || stream["tool_stream"] != true || stream["stream_options"] == nil || stream["tools"] == nil {
+		t.Fatalf("stream body = %+v", stream)
+	}
+	block := client.chatBody(ChatRequest{Messages: []ChatMessage{}, Tools: tools}, false)
+	for _, key := range []string{"stream", "stream_options", "tool_stream"} {
+		if _, exists := block[key]; exists {
+			t.Fatalf("block body unexpectedly contains %s: %+v", key, block)
+		}
+	}
+	withoutTools := client.chatBody(ChatRequest{Messages: []ChatMessage{}}, true)
+	if _, exists := withoutTools["tool_stream"]; exists {
+		t.Fatal("tool_stream was sent without tools")
+	}
+	client.config.BaseURL = "https://api.openai.com/v1"
+	openAI := client.chatBody(ChatRequest{Messages: []ChatMessage{}, Tools: tools}, true)
+	if _, exists := openAI["tool_stream"]; exists {
+		t.Fatal("tool_stream leaked into an OpenAI request")
+	}
+}

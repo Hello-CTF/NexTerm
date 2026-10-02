@@ -1,0 +1,47 @@
+[
+  {
+    "name": "openai cached tokens",
+    "input": {"prompt_tokens": 200, "completion_tokens": 8, "prompt_tokens_details": {"cached_tokens": 128}},
+    "expected": {"promptTokens": 200, "completionTokens": 8, "cachedTokens": 128, "contextWindow": 0}
+  },
+  {
+    "name": "deepseek cache hit and miss",
+    "input": {"prompt_tokens": 100, "completion_tokens": 20, "prompt_cache_hit_tokens": 64, "prompt_cache_miss_tokens": 36},
+    "expected": {"promptTokens": 100, "completionTokens": 20, "cachedTokens": 64, "contextWindow": 0}
+  },
+  {
+    "name": "deepseek infer input from cache fields",
+    "input": {"prompt_cache_hit_tokens": 40, "prompt_cache_miss_tokens": 10},
+    "expected": {"promptTokens": 50, "completionTokens": 0, "cachedTokens": 40, "contextWindow": 0}
+  },
+  {
+    "name": "zhipu compatible decimal strings",
+    "input": {"input_tokens": "1000", "output_tokens": "3", "cached_tokens": "250"},
+    "expected": {"promptTokens": 1000, "completionTokens": 3, "cachedTokens": 250, "contextWindow": 0}
+  },
+  {
+    "name": "anthropic compatible cache read",
+    "input": {"input_tokens": 80, "output_tokens": 12, "cache_read_input_tokens": 80},
+    "expected": {"promptTokens": 80, "completionTokens": 12, "cachedTokens": 80, "contextWindow": 0}
+  },
+  {
+    "name": "explicit zero alias wins",
+    "input": {"prompt_tokens": 0, "input_tokens": 900, "prompt_tokens_details": {"cached_tokens": 0}, "cached_tokens": 50},
+    "expected": {"promptTokens": 0, "completionTokens": 0, "cachedTokens": 0, "contextWindow": 0}
+  },
+  {
+    "name": "cached tokens cannot exceed input",
+    "input": {"prompt_tokens": 100, "cached_tokens": 130},
+    "expected": {"promptTokens": 100, "completionTokens": 0, "cachedTokens": 100, "contextWindow": 0}
+  },
+  {
+    "name": "deepseek miss only",
+    "input": {"prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 10},
+    "expected": {"promptTokens": 10, "completionTokens": 0, "cachedTokens": 0, "contextWindow": 0}
+  },
+  {
+    "name": "invalid values normalize to zero",
+    "input": {"prompt_tokens": -1, "input_tokens": false, "completion_tokens": "1.5", "cached_tokens": {}},
+    "expected": {"promptTokens": 0, "completionTokens": 0, "cachedTokens": 0, "contextWindow": 0}
+  }
+]

@@ -1,0 +1,123 @@
+package profiles
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+)
+
+type Profile struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	BaseURL       string  `json:"baseUrl"`
+	APIKey        string  `json:"apiKey"`
+	Model         string  `json:"model"`
+	Temperature   float64 `json:"temperature"`
+	ContextWindow uint64  `json:"contextWindow"`
+	Proxy         *string `json:"proxy"`
+	Stream        bool    `json:"stream"`
+}
+
+func DefaultProfile() Profile {
+	return Profile{
+		Temperature:   provider.DefaultTemperature,
+		ContextWindow: provider.DefaultContextWindow,
+		Stream:        true,
+	}
+}
+
+func (p Profile) Normalized() Profile {
+	config := p.ProviderConfig().Normalized()
+	p.ID = strings.TrimSpace(p.ID)
+	p.Name = strings.TrimSpace(p.Name)
+	p.BaseURL = config.BaseURL
+	p.APIKey = config.APIKey
+	p.Model = config.Model
+	p.Temperature = config.Temperature
+	p.ContextWindow = config.ContextWindow
+	p.Proxy = config.Proxy
+	if p.Name == "" {
+		p.Name = p.Model
+		if p.Name == "" {
+			p.Name = "未命名模型"
+		}
+	}
+	return p
+}
+
+func (p Profile) ProviderConfig() provider.Config {
+	return provider.Config{
+		BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model,
+		Temperature: p.Temperature, ContextWindow: p.ContextWindow,
+		Proxy: cloneString(p.Proxy), Stream: p.Stream,
+	}
+}
+
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	defaults := DefaultProfile()
+	var wire struct {
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		BaseURL       string   `json:"baseUrl"`
+		APIKey        string   `json:"apiKey"`
+		Model         string   `json:"model"`
+		Temperature   *float64 `json:"temperature"`
+		ContextWindow *uint64  `json:"contextWindow"`
+		Proxy         *string  `json:"proxy"`
+		Stream        *bool    `json:"stream"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	p.ID = wire.ID
+	p.Name = wire.Name
+	p.BaseURL = wire.BaseURL
+	p.APIKey = wire.APIKey
+	p.Model = wire.Model
+	p.Temperature = defaults.Temperature
+	if wire.Temperature != nil {
+		p.Temperature = *wire.Temperature
+	}
+	p.ContextWindow = defaults.ContextWindow
+	if wire.ContextWindow != nil {
+		p.ContextWindow = *wire.ContextWindow
+	}
+	p.Proxy = wire.Proxy
+	p.Stream = defaults.Stream
+	if wire.Stream != nil {
+		p.Stream = *wire.Stream
+	}
+	return nil
+}
+
+func PresetProfile(id string) (Profile, error) {
+	config, err := provider.FromPreset(id, "")
+	if err != nil {
+		return Profile{}, fmt.Errorf("%w: %s", err, id)
+	}
+	return Profile{
+		Name: id, BaseURL: config.BaseURL, Model: config.Model,
+		Temperature: config.Temperature, ContextWindow: config.ContextWindow,
+		Proxy: config.Proxy, Stream: config.Stream,
+	}, nil
+}
+
+type Overview struct {
+	Profiles []Profile `json:"profiles"`
+	ActiveID *string   `json:"activeId"`
+}
+
+func cloneProfile(profile Profile) Profile {
+	profile.Proxy = cloneString(profile.Proxy)
+	return profile
+}
+
+func cloneString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
