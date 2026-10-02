@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
@@ -27,6 +28,7 @@ type Tab struct {
 
 	session   *Session
 	terminal  TerminalState
+	durable   base.DurableAttachment
 	ephemeral bool
 
 	mu           sync.Mutex
@@ -44,6 +46,7 @@ type Tab struct {
 	hidden       bool
 	exited       bool
 	closed       bool
+	destroying   bool
 	cancelPump   context.CancelFunc
 
 	ctx          context.Context
@@ -52,6 +55,7 @@ type Tab struct {
 	feedGate     chan struct{}
 	writeMu      sync.Mutex
 	visibilityMu sync.Mutex
+	lifecycleMu  sync.Mutex
 	closeOnce    sync.Once
 }
 
@@ -69,7 +73,7 @@ func (t *Tab) infoLocked() TabInfo {
 	return TabInfo{
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
-		Exited: t.exited, Ephemeral: t.ephemeral,
+		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil,
 	}
 }
 
@@ -98,11 +102,30 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if m.terminals == nil {
 		return TabInfo{}, ErrUnsupported
 	}
+	if options.Durable != nil {
+		if m.durable == nil {
+			return TabInfo{}, ErrUnsupported
+		}
+		if options.Ephemeral || options.Durable.Recover && options.TabID == "" {
+			return TabInfo{}, ErrInvalidOptions
+		}
+	}
+	tabID := options.TabID
+	if tabID == "" && options.Durable != nil {
+		tabID = ids.New()
+	} else if tabID == "" {
+		tabID = m.newID()
+	}
+
 	m.mu.Lock()
 	session := m.sessions[options.SessionID]
 	if session == nil {
 		m.mu.Unlock()
 		return TabInfo{}, ErrSessionNotFound
+	}
+	if options.TabID != "" && m.tabs[tabID] != nil {
+		m.mu.Unlock()
+		return TabInfo{}, ErrTabExists
 	}
 	session.mu.Lock()
 	if m.closed || session.closed {
@@ -121,8 +144,10 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	encoding := session.asset.Encoding
 	session.mu.Unlock()
 	m.mu.Unlock()
+	if options.Durable != nil && kind != KindLocal {
+		return TabInfo{}, ErrUnsupported
+	}
 
-	tabID := m.newID()
 	terminal, err := m.terminals.NewTerminal(TerminalConfig{
 		TabID: tabID, SessionID: session.ID, Cols: options.Cols, Rows: options.Rows, Encoding: encoding,
 	})
@@ -130,11 +155,43 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, err
 	}
 	var channel *channelHandle
-	if ptyBacked(kind) {
+	var durableAttachment base.DurableAttachment
+	destroyOnFailure := options.Durable != nil && !options.Durable.Recover
+	cleanup := func() error {
+		var killErr error
+		if destroyOnFailure && durableAttachment != nil {
+			killErr = durableAttachment.Kill(context.Background())
+		}
+		if channel != nil {
+			_ = channel.Close()
+		}
+		closeTerminal(terminal)
+		return killErr
+	}
+	if options.Durable != nil {
+		var opened base.DurableAttachment
+		if options.Durable.Recover {
+			opened, err = m.durable.Attach(ctx, tabID)
+		} else {
+			opened, err = m.durable.Create(ctx, base.DurableCreateOptions{
+				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: options.Durable.Env,
+				Cols: options.Cols, Rows: options.Rows,
+			})
+		}
+		if opened != nil {
+			durableAttachment = opened
+			channel = newChannelHandle(opened)
+		}
+		if err != nil {
+			return TabInfo{}, errors.Join(err, cleanup())
+		}
+		if channel == nil {
+			return TabInfo{}, errors.Join(errors.New("durable provider returned a nil attachment"), cleanup())
+		}
+	} else if ptyBacked(kind) {
 		ptyTransport, ok := transport.Transport.(base.PTYTransport)
 		if !ok {
-			closeTerminal(terminal)
-			return TabInfo{}, ErrUnsupported
+			return TabInfo{}, errors.Join(ErrUnsupported, cleanup())
 		}
 		term := options.Term
 		if term == "" {
@@ -147,42 +204,32 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			channel = newChannelHandle(opened)
 		}
 		if err != nil {
-			closeTerminal(terminal)
-			if channel != nil {
-				_ = channel.Close()
-			}
-			return TabInfo{}, err
+			return TabInfo{}, errors.Join(err, cleanup())
 		}
 		if channel == nil {
-			closeTerminal(terminal)
-			return TabInfo{}, errors.New("transport returned a nil PTY")
+			return TabInfo{}, errors.Join(errors.New("transport returned a nil PTY"), cleanup())
 		}
 	} else if kind != KindWinRM {
-		closeTerminal(terminal)
-		return TabInfo{}, ErrUnsupported
+		return TabInfo{}, errors.Join(ErrUnsupported, cleanup())
 	}
 
 	tabCtx, cancel := context.WithCancel(m.ctx)
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal,
 		ephemeral: options.Ephemeral, cols: options.Cols, rows: options.Rows,
-		channel: channel, generation: generation, subscribers: make(map[string]subscriber),
+		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 	}
 	tab.feedGate <- struct{}{}
 	if err := m.initGrid(tab, channel, generation); err != nil {
 		cancel()
-		if channel != nil {
-			_ = channel.Close()
-		}
-		closeTerminal(terminal)
-		return TabInfo{}, err
+		return TabInfo{}, errors.Join(err, cleanup())
 	}
 	terminal.SetResponseHandler(tab.responses.enqueue)
 
 	m.mu.Lock()
 	session.mu.Lock()
-	current := !m.closed && !session.closed && m.sessions[session.ID] == session && session.status == StatusConnected && session.generation == generation && session.transport == transport
+	current := !m.closed && !session.closed && m.sessions[session.ID] == session && session.status == StatusConnected && session.generation == generation && session.transport == transport && m.tabs[tab.ID] == nil
 	if current {
 		m.tabs[tab.ID] = tab
 		session.tabs[tab.ID] = tab
@@ -192,30 +239,31 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	m.mu.Unlock()
 	if !current {
 		cancel()
-		if channel != nil {
-			_ = channel.Close()
+		cleanupErr := cleanup()
+		if options.TabID != "" {
+			m.mu.Lock()
+			exists := m.tabs[tab.ID] != nil
+			m.mu.Unlock()
+			if exists {
+				return TabInfo{}, errors.Join(ErrTabExists, cleanupErr)
+			}
 		}
-		closeTerminal(terminal)
-		return TabInfo{}, ErrStaleGeneration
+		return TabInfo{}, errors.Join(ErrStaleGeneration, cleanupErr)
 	}
 	if !m.startResponses(tab) {
-		_ = m.CloseTab(tab.ID)
-		return TabInfo{}, ErrSessionClosed
+		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 
 	info, err := m.attach(ctx, tab, AttachOptions{ClientID: options.ClientID, ChannelID: options.ChannelID}, false)
 	if err != nil {
-		_ = m.CloseTab(tab.ID)
-		return TabInfo{}, err
+		return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
 	}
 	if kind == KindWinRM {
 		if err := m.feed(ctx, tab, generation, winRMBanner); err != nil {
-			_ = m.CloseTab(tab.ID)
-			return TabInfo{}, err
+			return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
 		}
 	} else if !m.startPump(tab, channel, generation) {
-		_ = m.CloseTab(tab.ID)
-		return TabInfo{}, ErrSessionClosed
+		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
 	return info, nil
 }
@@ -306,7 +354,7 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 		return TabInfo{}, hub.ErrDetached
 	}
 	tab.mu.Lock()
-	if tab.closed {
+	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		m.mu.Unlock()
 		return TabInfo{}, ErrTabClosed
@@ -459,7 +507,7 @@ func (m *Manager) Claim(tabID, client string) (string, error) {
 		return "", err
 	}
 	tab.mu.Lock()
-	if tab.closed {
+	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return "", ErrTabClosed
 	}
@@ -511,7 +559,7 @@ func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) 
 	tab.writeMu.Lock()
 	defer tab.writeMu.Unlock()
 	tab.mu.Lock()
-	if tab.closed {
+	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
@@ -568,7 +616,7 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 		return err
 	}
 	tab.mu.Lock()
-	if tab.closed {
+	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
@@ -595,7 +643,7 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	}
 
 	tab.mu.Lock()
-	if tab.closed {
+	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return ErrTabClosed
 	}
@@ -621,7 +669,7 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 		return base.ExecResult{}, err
 	}
 	tab.mu.Lock()
-	if tab.closed {
+	if tab.closed || tab.destroying {
 		tab.mu.Unlock()
 		return base.ExecResult{}, ErrTabClosed
 	}
@@ -662,18 +710,49 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 func (m *Manager) CloseTab(id string) error {
 	m.mu.Lock()
 	tab := m.tabs[id]
+	m.mu.Unlock()
+	return m.closeTab(tab, true)
+}
+
+func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 	if tab == nil {
+		return nil
+	}
+	id := tab.ID
+	tab.lifecycleMu.Lock()
+	defer tab.lifecycleMu.Unlock()
+
+	m.mu.Lock()
+	if m.tabs[id] != tab {
 		m.mu.Unlock()
 		return nil
 	}
-	session := tab.session
-	session.mu.Lock()
-	delete(m.tabs, id)
-	delete(session.tabs, id)
-	if len(session.tabs) == 0 {
-		session.idleSince = time.Now()
+	if destroyDurable && tab.durable != nil {
+		tab.mu.Lock()
+		tab.destroying = true
+		tab.mu.Unlock()
+		m.mu.Unlock()
+		if err := tab.durable.Kill(context.Background()); err != nil {
+			tab.mu.Lock()
+			tab.destroying = false
+			tab.mu.Unlock()
+			return err
+		}
+	} else {
+		m.mu.Unlock()
 	}
-	session.mu.Unlock()
+
+	m.mu.Lock()
+	if m.tabs[id] == tab {
+		session := tab.session
+		session.mu.Lock()
+		delete(m.tabs, id)
+		delete(session.tabs, id)
+		if len(session.tabs) == 0 {
+			session.idleSince = time.Now()
+		}
+		session.mu.Unlock()
+	}
 	m.mu.Unlock()
 	m.closeTabResources(tab)
 	return nil
@@ -829,7 +908,7 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		code = &exitCode
 	}
 	tab.mu.Lock()
-	current := !tab.closed && tab.generation == generation
+	current := !tab.closed && !tab.destroying && tab.generation == generation
 	var exitEvent ExitEvent
 	var control ControlEvent
 	if current {
