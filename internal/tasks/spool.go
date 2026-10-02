@@ -26,6 +26,8 @@ type spool struct {
 	tailStart int64
 	tailLen   int64
 	closed    bool
+	// crashHook is test-only fault injection called at compaction stages.
+	crashHook func(stage string)
 }
 
 type spoolIndex struct {
@@ -34,9 +36,38 @@ type spoolIndex struct {
 	TailSize int64 `json:"tailSize"`
 }
 
-func (s *spool) headPath() string  { return filepath.Join(s.dir, s.base+".head") }
-func (s *spool) tailPath() string  { return filepath.Join(s.dir, s.base+".tail") }
-func (s *spool) indexPath() string { return filepath.Join(s.dir, s.base+".idx") }
+func (i spoolIndex) valid() bool {
+	return i.Total >= 0 && i.HeadSize >= 0 && i.TailSize >= 0 && i.Total >= i.HeadSize+i.TailSize
+}
+
+func (s *spool) headPath() string    { return filepath.Join(s.dir, s.base+".head") }
+func (s *spool) tailPath() string    { return filepath.Join(s.dir, s.base+".tail") }
+func (s *spool) indexPath() string   { return filepath.Join(s.dir, s.base+".idx") }
+func (s *spool) compactPath() string { return filepath.Join(s.dir, s.base+".compact") }
+
+func writeJSONAtomic(path string, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func readSpoolIndex(path string) *spoolIndex {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var idx spoolIndex
+	if json.Unmarshal(raw, &idx) != nil || !idx.valid() {
+		return nil
+	}
+	return &idx
+}
 
 // createSpool creates fresh spool files opened for writing.
 func createSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
@@ -62,9 +93,11 @@ func createSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 }
 
 // openSpool loads spool statistics from disk without holding file handles.
-// Bytes appended after the last index checkpoint are recovered from the
-// actual file sizes; a tail smaller than the checkpoint means a crash landed
-// mid-compaction, and offsets fall back to a contiguous reconstruction.
+// Bytes appended after a completed index checkpoint are recovered from the
+// actual file sizes. A compaction journal means a crash landed inside
+// compaction: the journaled target state is restored exactly by adopting the
+// already-renamed tail or by replaying the prepared tail, so Total, Dropped,
+// and every logical offset stay correct in every crash window.
 func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	s := &spool{dir: dir, base: base, headLimit: headLimit, tailLimit: tailLimit, closed: true}
 	var headSize, tailSize int64
@@ -78,20 +111,44 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	idx := readSpoolIndex(s.indexPath())
+	journal := readSpoolIndex(s.compactPath())
+	adopted := false
+	if journal != nil && headSize == journal.HeadSize {
+		if tailSize == journal.TailSize {
+			// The tail rename already happened; adopt the journaled state.
+			adopted = true
+		} else if st, err := os.Stat(s.tailPath() + ".tmp"); err == nil && st.Size() == journal.TailSize {
+			// Crash before the rename: replay the prepared tail.
+			if os.Rename(s.tailPath()+".tmp", s.tailPath()) == nil {
+				adopted = true
+			}
+		}
+	}
+	if adopted {
+		s.headLen = headSize
+		s.tailLen = journal.TailSize
+		s.total = journal.Total
+		s.tailStart = journal.Total - journal.TailSize
+		// Persist the repaired checkpoint and drop transaction artifacts.
+		// Failures keep the journal for the next open instead of losing
+		// the recovered state.
+		_ = s.writeIndexLocked()
+		_ = os.Remove(s.compactPath())
+		_ = os.Remove(s.tailPath() + ".tmp")
+		return s, nil
+	}
+	// No adoptable journal: recover the pre-compaction or append-only
+	// state, which is exact on its own, and clean up transaction garbage.
+	_ = os.Remove(s.compactPath())
+	_ = os.Remove(s.tailPath() + ".tmp")
 	s.headLen = headSize
 	s.tailLen = tailSize
 	s.total = headSize + tailSize
 	s.tailStart = headSize
-	raw, err := os.ReadFile(s.indexPath())
-	if err == nil {
-		var idx spoolIndex
-		if json.Unmarshal(raw, &idx) == nil && idx.Total >= 0 &&
-			headSize >= idx.HeadSize && tailSize >= idx.TailSize {
-			s.total = idx.Total + (headSize - idx.HeadSize) + (tailSize - idx.TailSize)
-			s.tailStart = s.total - tailSize
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	if idx != nil && headSize >= idx.HeadSize && tailSize >= idx.TailSize {
+		s.total = idx.Total + (headSize - idx.HeadSize) + (tailSize - idx.TailSize)
+		s.tailStart = s.total - tailSize
 	}
 	if s.tailStart < s.headLen {
 		s.tailStart = s.headLen
@@ -139,6 +196,10 @@ func (s *spool) Write(p []byte) (int, error) {
 }
 
 // compactLocked rewrites the tail keeping only the newest tailLimit bytes.
+// The compaction is a small transaction: prepare the new tail, commit a
+// journal describing the target state, swap the tail, checkpoint the index,
+// then remove the journal. openSpool completes or resolves any interrupted
+// transaction, so no crash window can corrupt logical offsets.
 func (s *spool) compactLocked() error {
 	if s.tailLen <= s.tailLimit {
 		return nil
@@ -161,6 +222,12 @@ func (s *spool) compactLocked() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	s.crash("tmp")
+	journal := spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: keep}
+	if err := writeJSONAtomic(s.compactPath(), journal); err != nil {
+		return err
+	}
+	s.crash("journal")
 	if err := s.tail.Close(); err != nil {
 		return err
 	}
@@ -168,6 +235,7 @@ func (s *spool) compactLocked() error {
 	if err := os.Rename(tmp, s.tailPath()); err != nil {
 		return err
 	}
+	s.crash("rename")
 	tail, err := os.OpenFile(s.tailPath(), os.O_RDWR, 0o600)
 	if err != nil {
 		return err
@@ -175,19 +243,21 @@ func (s *spool) compactLocked() error {
 	s.tail = tail
 	s.tailLen = keep
 	s.tailStart = s.total - keep
-	return s.writeIndexLocked()
+	if err := s.writeIndexLocked(); err != nil {
+		return err
+	}
+	s.crash("index")
+	return os.Remove(s.compactPath())
+}
+
+func (s *spool) crash(stage string) {
+	if s.crashHook != nil {
+		s.crashHook(stage)
+	}
 }
 
 func (s *spool) writeIndexLocked() error {
-	raw, err := json.Marshal(spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
-	if err != nil {
-		return err
-	}
-	tmp := s.indexPath() + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.indexPath())
+	return writeJSONAtomic(s.indexPath(), spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
 }
 
 // Stats reports the total bytes ever written and the elided middle size.
@@ -332,7 +402,7 @@ func (s *spool) Close() error {
 
 // removeSpoolFiles deletes every file variant belonging to one task spool.
 func removeSpoolFiles(dir, base string) {
-	for _, suffix := range []string{".head", ".tail", ".idx", ".tail.tmp", ".idx.tmp"} {
+	for _, suffix := range []string{".head", ".tail", ".idx", ".compact", ".tail.tmp", ".idx.tmp", ".compact.tmp"} {
 		os.Remove(filepath.Join(dir, base+suffix))
 	}
 }

@@ -604,13 +604,14 @@ func TestRetentionBounds(t *testing.T) {
 func TestOrphanCleanupOnOpen(t *testing.T) {
 	dir := t.TempDir()
 	for name, content := range map[string]string{
-		"orphan.head":   "h",
-		"orphan.tail":   "t",
-		"orphan.idx":    "{}",
-		"bad.json":      "not json",
-		"bad.head":      "x",
-		"junk.json.tmp": "{}",
-		"unknown.txt":   "keep",
+		"orphan.head":    "h",
+		"orphan.tail":    "t",
+		"orphan.idx":     "{}",
+		"orphan.compact": "{}",
+		"bad.json":       "not json",
+		"bad.head":       "x",
+		"junk.json.tmp":  "{}",
+		"unknown.txt":    "keep",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)

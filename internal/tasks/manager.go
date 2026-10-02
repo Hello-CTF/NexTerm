@@ -53,9 +53,19 @@ type task struct {
 	spool    *spool
 	proc     Process
 	done     chan struct{} // closed after reaping and the terminal transition
+	doneOnce sync.Once
 	finished bool
 	reaped   bool
 	detached bool
+	// persistErr records the last failed terminal metadata write; it blocks
+	// eviction and is retried by Kill and Close instead of being discarded.
+	persistErr error
+}
+
+// complete closes done exactly once, on both the supervise and the
+// startup-failure paths, so Close can never wait on an abandoned task.
+func (t *task) complete() {
+	t.doneOnce.Do(func() { close(t.done) })
 }
 
 // Open creates or reopens a manager. Records still marked running belong to
@@ -174,7 +184,7 @@ func validTaskID(id string) bool {
 // task ID.
 func taskFileBase(name string) (string, bool) {
 	name = strings.TrimSuffix(name, ".tmp")
-	for _, suffix := range []string{".json", ".head", ".tail", ".idx"} {
+	for _, suffix := range []string{".json", ".head", ".tail", ".idx", ".compact"} {
 		if strings.HasSuffix(name, suffix) {
 			return strings.TrimSuffix(name, suffix), true
 		}
@@ -232,6 +242,10 @@ func (m *Manager) Run(ctx context.Context, owner Owner, cmd Command, syncTimeout
 	m.mu.Unlock()
 	proc, err := m.starter.Start(ctx, cmd, sp)
 	if err != nil {
+		t.mu.Lock()
+		m.finishLocked(t, StateFailed, nil, err.Error())
+		t.complete()
+		t.mu.Unlock()
 		m.mu.Lock()
 		delete(m.tasks, id)
 		m.mu.Unlock()
@@ -300,9 +314,10 @@ func (m *Manager) supervise(t *task, proc Process) {
 		}
 		m.finishLocked(t, state, &code, errText)
 	} else if t.detached {
-		_ = m.writeMetaLocked(t)
+		// Refresh final stats; failures stay recorded on the task.
+		m.writeMetaLocked(t)
 	}
-	close(t.done)
+	t.complete()
 	t.mu.Unlock()
 	m.enforceRetention()
 }
@@ -320,7 +335,8 @@ func (m *Manager) finishLocked(t *task, state State, exitCode *int, errText stri
 	t.info.ExitCode = exitCode
 	t.info.Error = errText
 	if t.detached {
-		_ = m.writeMetaLocked(t)
+		// writeMetaLocked records any failure on the task for retry.
+		m.writeMetaLocked(t)
 	}
 }
 
@@ -475,8 +491,16 @@ func (m *Manager) Kill(ctx context.Context, owner Owner, id string) (Info, error
 	}
 	m.requestStop(t, StateKilled)
 	t.mu.Lock()
+	if t.detached && t.persistErr != nil {
+		// Retry so a transient failure cannot strand a stale record.
+		m.writeMetaLocked(t)
+	}
 	info := t.snapshotLocked()
+	persistErr := t.persistErr
 	t.mu.Unlock()
+	if persistErr != nil {
+		return info, fmt.Errorf("tasks: kill applied but the task record could not be persisted: %w", persistErr)
+	}
 	return info, nil
 }
 
@@ -508,8 +532,24 @@ func (m *Manager) Close(ctx context.Context) error {
 			break
 		}
 	}
+	var persistErr error
+	for _, t := range all {
+		t.mu.Lock()
+		if t.detached && t.persistErr != nil {
+			if writeErr := m.writeMetaLocked(t); writeErr != nil && persistErr == nil {
+				persistErr = writeErr
+			}
+		}
+		t.mu.Unlock()
+	}
 	m.enforceRetention()
-	return err
+	if err != nil {
+		return err
+	}
+	if persistErr != nil {
+		return fmt.Errorf("tasks: some task records could not be persisted: %w", persistErr)
+	}
+	return nil
 }
 
 // lookup resolves an owned task and authorizes the action. Tasks owned by a
@@ -571,14 +611,16 @@ func (m *Manager) now() time.Time {
 }
 
 // enforceRetention bounds the retained list: the oldest terminal tasks beyond
-// MaxRetained lose their record and spool. Running or not-yet-reaped tasks
-// are never evicted.
+// MaxRetained lose their record and spool. Running, not-yet-reaped, or
+// unpersisted tasks are never evicted. Map removal and file deletion happen
+// under the same lock, so observers never see an evicted task's leftover
+// files after it disappears from the list.
 func (m *Manager) enforceRetention() {
 	m.mu.Lock()
 	var terminal []*task
 	for _, t := range m.tasks {
 		t.mu.Lock()
-		eligible := t.detached && t.finished && t.reaped
+		eligible := t.detached && t.finished && t.reaped && t.persistErr == nil
 		t.mu.Unlock()
 		if eligible {
 			terminal = append(terminal, t)
@@ -591,19 +633,15 @@ func (m *Manager) enforceRetention() {
 		return terminal[i].info.CreatedAt.Before(terminal[j].info.CreatedAt)
 	})
 	excess := len(terminal) - m.maxRetained
-	var victims []string
 	if excess > 0 {
 		for _, t := range terminal[:excess] {
 			if m.tasks[t.info.ID] == t {
 				delete(m.tasks, t.info.ID)
-				victims = append(victims, t.info.ID)
+				removeTaskFiles(m.dir, t.info.ID)
 			}
 		}
 	}
 	m.mu.Unlock()
-	for _, id := range victims {
-		removeTaskFiles(m.dir, id)
-	}
 }
 
 func (t *task) snapshotLocked() Info {
@@ -612,12 +650,28 @@ func (t *task) snapshotLocked() Info {
 	return info
 }
 
+// writeMetaLocked persists the current snapshot and records the outcome on
+// the task: failures surface through Info.PersistError, block eviction, and
+// are retried by Kill and Close rather than being silently discarded.
 func (m *Manager) writeMetaLocked(t *task) error {
 	info := t.snapshotLocked()
 	t.info.OutputBytes = info.OutputBytes
 	t.info.DroppedBytes = info.DroppedBytes
-	return writeMetaFile(m.dir, info)
+	info.PersistError = ""
+	err := metaFileWriter(m.dir, info)
+	if err != nil {
+		t.persistErr = err
+		t.info.PersistError = err.Error()
+		return err
+	}
+	t.persistErr = nil
+	t.info.PersistError = ""
+	return nil
 }
+
+// metaFileWriter is the durable record sink; tests replace it to inject
+// filesystem failures.
+var metaFileWriter = writeMetaFile
 
 func writeMetaFile(dir string, info Info) error {
 	raw, err := json.Marshal(info)

@@ -77,6 +77,9 @@ type Info struct {
 	OutputBytes int64 `json:"outputBytes"`
 	// DroppedBytes is the number of middle bytes elided by bounded retention.
 	DroppedBytes int64 `json:"droppedBytes"`
+	// PersistError reports the last failed durable record write. It is never
+	// persisted itself; a later successful write clears it.
+	PersistError string `json:"persistError,omitempty"`
 }
 
 // Output is a retained output snapshot: the head of the stream and the most
