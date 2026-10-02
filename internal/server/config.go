@@ -16,6 +16,14 @@ import (
 
 const DefaultListen = "0.0.0.0:8080"
 
+type Command = core.Command
+
+const (
+	CommandServe       = core.CommandServe
+	CommandToken       = core.CommandToken
+	CommandRotateToken = core.CommandRotateToken
+)
+
 type Options struct {
 	Listen    string
 	DataDir   string
@@ -65,10 +73,26 @@ func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
 }
 
 func Usage(program string) string {
-	return core.Usage(program, core.CommandServe)
+	return fmt.Sprintf(`Usage:
+  %s [flags] [serve]
+
+Commands:
+  serve         Run the HTTP server (default)
+  token         Print the current sync token to stdout
+  rotate-token  Rotate and print the sync token to stdout
+
+Flags:
+  --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
+  --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
+  --web-root PATH     Web assets directory (env NEXTERM_WEB_ROOT)
+  --master-key KEY    Vault master key (env NEXTERM_MASTER_KEY)
+  --sync-only         Restrict the server to sync routes
+  --version           Print the version
+  -h, --help          Print this help
+`, program)
 }
 
-func RunTokenCommand(ctx context.Context, command core.Command, store TokenStore, stdout io.Writer) error {
+func RunTokenCommand(ctx context.Context, command Command, store TokenStore, stdout io.Writer) error {
 	return core.RunTokenCommand(ctx, command, store, stdout)
 }
 

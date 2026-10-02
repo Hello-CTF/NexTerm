@@ -101,6 +101,10 @@ func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 	if _, err := ParseCLI([]string{"desktop"}, getenv); err == nil {
 		t.Fatal("server accepted desktop command")
 	}
+	usage := Usage("nexterm-server")
+	if strings.Contains(usage, "desktop") || !strings.Contains(usage, "rotate-token") || !strings.Contains(usage, "NEXTERM_MASTER_KEY") {
+		t.Fatalf("server usage = %q", usage)
+	}
 
 	store := &fakeTokenStore{}
 	var stdout bytes.Buffer
