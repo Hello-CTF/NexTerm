@@ -79,6 +79,9 @@ type ChatRequest struct {
 }
 
 type Completion struct {
+	RunID        string
+	CallID       string
+	Model        string
 	Content      string
 	Reasoning    string
 	ToolCalls    []ToolCall

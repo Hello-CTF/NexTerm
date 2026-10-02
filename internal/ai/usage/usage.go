@@ -8,10 +8,16 @@ import (
 )
 
 type Usage struct {
+	RunID            string `json:"runId,omitempty"`
+	CallID           string `json:"callId,omitempty"`
+	Model            string `json:"model,omitempty"`
 	PromptTokens     uint64 `json:"promptTokens"`
 	CompletionTokens uint64 `json:"completionTokens"`
 	CachedTokens     uint64 `json:"cachedTokens"`
 	ContextWindow    uint64 `json:"contextWindow"`
+	mixedModels      bool
+	mixedRunIDs      bool
+	mixedCallIDs     bool
 }
 
 func Parse(raw json.RawMessage) Usage {
@@ -77,6 +83,26 @@ func (u *Usage) Accumulate(other Usage) {
 	u.CachedTokens = saturatingAdd(u.CachedTokens, other.CachedTokens)
 	if other.ContextWindow != 0 {
 		u.ContextWindow = other.ContextWindow
+	}
+	mergeUsageIdentity(&u.Model, &u.mixedModels, other.Model, other.mixedModels)
+	mergeUsageIdentity(&u.RunID, &u.mixedRunIDs, other.RunID, other.mixedRunIDs)
+	mergeUsageIdentity(&u.CallID, &u.mixedCallIDs, other.CallID, other.mixedCallIDs)
+}
+
+func mergeUsageIdentity(current *string, mixed *bool, other string, otherMixed bool) {
+	if otherMixed {
+		*current = ""
+		*mixed = true
+		return
+	}
+	if other == "" || *mixed {
+		return
+	}
+	if *current == "" {
+		*current = other
+	} else if *current != other {
+		*current = ""
+		*mixed = true
 	}
 }
 

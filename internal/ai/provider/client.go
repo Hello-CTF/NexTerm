@@ -36,6 +36,9 @@ type Option func(*clientOptions)
 
 type clientOptions struct {
 	timeouts Timeouts
+	retry    RetryPolicy
+	sleep    func(context.Context, time.Duration) error
+	random   func() float64
 }
 
 func WithTimeouts(timeouts Timeouts) Option {
@@ -59,11 +62,17 @@ type Client struct {
 	config   Config
 	http     *http.Client
 	timeouts Timeouts
+	retry    RetryPolicy
+	sleep    func(context.Context, time.Duration) error
+	random   func() float64
 }
 
 func NewClient(config Config, options ...Option) (*Client, error) {
 	config = config.Normalized()
-	settings := clientOptions{timeouts: DefaultTimeouts()}
+	settings := clientOptions{
+		timeouts: DefaultTimeouts(), retry: DefaultRetryPolicy(),
+		sleep: sleepWithContext, random: randomUnit,
+	}
 	for _, option := range options {
 		option(&settings)
 	}
@@ -88,8 +97,11 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 	}
 	return &Client{
 		config:   config,
-		http:     &http.Client{Transport: transport},
+		http:     &http.Client{Transport: &wireTransport{base: transport}},
 		timeouts: settings.timeouts,
+		retry:    settings.retry,
+		sleep:    settings.sleep,
+		random:   settings.random,
 	}, nil
 }
 
@@ -179,11 +191,11 @@ func truncate(value string, limit int) string {
 }
 
 func safeStreamFallback(err error) bool {
-	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) {
+	status, ok := statusCodeForError(err)
+	if !ok {
 		return false
 	}
-	switch httpErr.StatusCode {
+	switch status {
 	case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed,
 		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity, http.StatusNotImplemented:
 		return true

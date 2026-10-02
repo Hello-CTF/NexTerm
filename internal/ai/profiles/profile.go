@@ -14,6 +14,7 @@ type Profile struct {
 	BaseURL       string  `json:"baseUrl"`
 	APIKey        string  `json:"apiKey"`
 	Model         string  `json:"model"`
+	FallbackModel string  `json:"fallbackModel,omitempty"`
 	Temperature   float64 `json:"temperature"`
 	ContextWindow uint64  `json:"contextWindow"`
 	Proxy         *string `json:"proxy"`
@@ -35,6 +36,7 @@ func (p Profile) Normalized() Profile {
 	p.BaseURL = config.BaseURL
 	p.APIKey = config.APIKey
 	p.Model = config.Model
+	p.FallbackModel = config.FallbackModel
 	p.Temperature = config.Temperature
 	p.ContextWindow = config.ContextWindow
 	p.Proxy = config.Proxy
@@ -49,7 +51,7 @@ func (p Profile) Normalized() Profile {
 
 func (p Profile) ProviderConfig() provider.Config {
 	return provider.Config{
-		BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model,
+		BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model, FallbackModel: p.FallbackModel,
 		Temperature: p.Temperature, ContextWindow: p.ContextWindow,
 		Proxy: cloneString(p.Proxy), Stream: p.Stream,
 	}
@@ -63,6 +65,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		BaseURL       string   `json:"baseUrl"`
 		APIKey        string   `json:"apiKey"`
 		Model         string   `json:"model"`
+		FallbackModel string   `json:"fallbackModel"`
 		Temperature   *float64 `json:"temperature"`
 		ContextWindow *uint64  `json:"contextWindow"`
 		Proxy         *string  `json:"proxy"`
@@ -76,6 +79,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	p.BaseURL = wire.BaseURL
 	p.APIKey = wire.APIKey
 	p.Model = wire.Model
+	p.FallbackModel = wire.FallbackModel
 	p.Temperature = defaults.Temperature
 	if wire.Temperature != nil {
 		p.Temperature = *wire.Temperature

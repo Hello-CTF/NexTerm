@@ -27,7 +27,7 @@ func openStore(t *testing.T) *store.Store {
 func TestLegacyMigrationPersistsStableActiveProfile(t *testing.T) {
 	ctx := context.Background()
 	database := openStore(t)
-	legacy := `{"baseUrl":" https://example.test/v1/// ","apiKey":" secret ","model":" legacy-model ","contextWindow":100}`
+	legacy := `{"baseUrl":" https://example.test/v1/// ","apiKey":" secret ","model":" legacy-model ","fallbackModel":" legacy-fallback ","contextWindow":100}`
 	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestLegacyMigrationPersistsStableActiveProfile(t *testing.T) {
 	if !ids.Valid(profile.ID) || *overview.ActiveID != profile.ID {
 		t.Fatalf("migration did not allocate a stable active ID: %+v", overview)
 	}
-	if profile.Name != "legacy-model" || profile.BaseURL != "https://example.test/v1" || profile.APIKey != "secret" {
+	if profile.Name != "legacy-model" || profile.BaseURL != "https://example.test/v1" || profile.APIKey != "secret" || profile.FallbackModel != "legacy-fallback" {
 		t.Fatalf("migration did not sanitize profile: %+v", profile)
 	}
 	if profile.Temperature != provider.DefaultTemperature || !profile.Stream || profile.ContextWindow != 1000 {
