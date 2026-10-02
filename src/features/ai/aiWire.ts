@@ -35,3 +35,22 @@ export function confirmationInput(
 export function answerInput(request: AiInteractionRequest, text: string): AiAnswerInput {
   return { ...request, text };
 }
+
+export type AiInteractionKind = "confirm" | "question";
+
+export interface AiInteractionCard extends AiInteractionRequest {
+  role: AiInteractionKind;
+}
+
+export function clearInteractionIfMatch<T extends AiInteractionCard>(
+  current: T | null,
+  completed: T,
+  kind: AiInteractionKind,
+): T | null {
+  if (!current || current.role !== kind || completed.role !== kind) return current;
+  return current.jobId === completed.jobId &&
+    current.callId === completed.callId &&
+    current.nonce === completed.nonce
+    ? null
+    : current;
+}

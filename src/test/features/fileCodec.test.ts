@@ -5,6 +5,14 @@ function bytes(length: number): Uint8Array {
   return Uint8Array.from({ length }, (_, i) => (i * 31 + 17) % 256);
 }
 
+function sameBytes(actual: Uint8Array, expected: Uint8Array): boolean {
+  if (actual.length !== expected.length) return false;
+  for (let i = 0; i < expected.length; i += 1) {
+    if (actual[i] !== expected[i]) return false;
+  }
+  return true;
+}
+
 describe("base64 codec", () => {
   for (const length of [0, 1, 2, 3, 32_767, 32_768, 32_769, 65_535, 65_536, 65_537, 5 * 1024 * 1024 + 1]) {
     it(`round-trips ${length} bytes without interior padding`, () => {
@@ -12,7 +20,9 @@ describe("base64 codec", () => {
       const encoded = bytesToBase64(source);
       const padding = encoded.indexOf("=");
       if (padding >= 0) expect(padding).toBeGreaterThanOrEqual(encoded.length - 2);
-      expect(bytesFromBase64(encoded)).toEqual(source);
+      const decoded = bytesFromBase64(encoded);
+      expect(decoded.length).toBe(source.length);
+      expect(sameBytes(decoded, source)).toBe(true);
     });
   }
 });

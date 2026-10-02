@@ -18,7 +18,7 @@ import { ModelPanel } from "./ModelPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
-import { answerInput, confirmationInput, confirmationNonceOf, questionFromEvent } from "./aiWire";
+import { answerInput, clearInteractionIfMatch, confirmationInput, confirmationNonceOf, questionFromEvent } from "./aiWire";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -160,6 +160,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setQuestionCard(null);
     setQuestionInput("");
   };
+  useEffect(() => {
+    if (questionCard === null) setQuestionInput("");
+  }, [questionCard]);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
@@ -575,7 +578,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("error", `确认失败：${describeError(e)}`);
       return;
     }
-    if (isCurrentAiRun(activeRunRef.current, run.generation)) clearInteractionCards();
+    if (isCurrentAiRun(activeRunRef.current, run.generation)) {
+      setConfirmCard((current) => clearInteractionIfMatch(current, card, "confirm"));
+    }
   };
 
   const answer = async (option?: string) => {
@@ -597,7 +602,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("error", `回答失败：${describeError(e)}`);
       return;
     }
-    if (isCurrentAiRun(activeRunRef.current, run.generation)) clearInteractionCards();
+    if (isCurrentAiRun(activeRunRef.current, run.generation)) {
+      setQuestionCard((current) => clearInteractionIfMatch(current, card, "question"));
+    }
   };
 
   /** chat 取消成功即可收尾；takeover 必须等终端终态清横幅，不能提前解锁。 */
