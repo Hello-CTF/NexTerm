@@ -219,6 +219,11 @@ xattr -dr com.apple.quarantine /Applications/NexTerm.app
 
 后两者是**同一个二进制**：`onlyServer` 就是加了 `--sync-only`。它少了什么、为什么少，见下。
 
+> ⚠️ **两个 Linux 包都要求 `glibc >= 2.38`。** 二进制在 `ubuntu-latest`（= Ubuntu 24.04）上构建，
+> 动态链到该 runner 的 glibc ⇒ 在 **Ubuntu 22.04（2.35）/ Debian 12（2.36）** 上直接跑会报
+> `./nexterm-server: version 'GLIBC_2.38' not found`，而那个报错**看不出是发行版太旧**，很容易被当成包坏了。
+> 用 Ubuntu 24.04+ / Debian 13+，或在容器里换一个够新的基线。
+
 ### 懒猫微服
 
 本仓库自带 LPK v2 打包与提审链路（`lazycat/` 与 `scripts/`），产物为应用商店可用的安装包：

@@ -118,6 +118,12 @@ cat > "$LS_DIR/README.md" <<'MDEOF'
 浏览器打开 `http://<地址>:8080` 即用（首次启动会自动生成同步令牌，界面「设置 →
 资产同步」里能看）。
 
+## 要求
+
+**glibc >= 2.38**。二进制在 Ubuntu 24.04 上构建，在 Ubuntu 22.04（2.35）/
+Debian 12（2.36）上会报 `version 'GLIBC_2.38' not found` —— 那个报错看不出是发行版太旧，
+请用 Ubuntu 24.04+ / Debian 13+，或在容器里换一个够新的基线。
+
 ## 装
 
 ```bash
@@ -174,6 +180,12 @@ cat > "$OS_DIR/README.md" <<'MDEOF'
 它只挂两个端点（`/sync/rpc`、`/healthz`），命令表只有三条
 （`sync_digest` / `sync_export` / `sync_import`）：没有浏览器界面，没有 `/rpc`。
 所以**令牌泄漏也只能读写这份资产库**，拿不到终端、文件与容器。
+
+## 要求
+
+**glibc >= 2.38**。二进制在 Ubuntu 24.04 上构建，在 Ubuntu 22.04（2.35）/
+Debian 12（2.36）上会报 `version 'GLIBC_2.38' not found` —— 那个报错看不出是发行版太旧，
+请用 Ubuntu 24.04+ / Debian 13+，或在容器里换一个够新的基线。
 
 ## 装
 
