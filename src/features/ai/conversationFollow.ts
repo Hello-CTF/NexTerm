@@ -6,7 +6,11 @@
 //   · 跟随中：新输出 ⇒ 滚到底；
 //   · 用户上翻（离底超过阈值）⇒ 停止跟随，位置一动不动；
 //   · 停止跟随期间来了新输出 ⇒ 亮「回到最新」按钮，点了才下去并恢复跟随。
-import { useEffect, useRef, useState, type RefObject } from "react";
+//
+// 元素生命周期：侧栏收起（rightOpen=false）时消息流整个卸载，重开是一个
+// **新的 DOM 节点**。所以监听必须跟着元素走 —— 用 callback ref 拿到节点，
+// 节点更换 / 卸载时重新挂监听，而不是挂载时抓一次就不管。
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /** 离底多少像素以内算"还在最新输出"。留一点余量，吸收小数像素与弹性滚动。 */
 export const FOLLOW_BOTTOM_THRESHOLD_PX = 32;
@@ -35,6 +39,8 @@ function scrollToBottom(el: HTMLElement) {
 }
 
 export interface ConversationFollow {
+  /** 挂到消息流滚动容器上的 callback ref（元素更换时自动重挂监听）。 */
+  scrollRef: (el: HTMLElement | null) => void;
   /** 非跟随期间又有新输出（用于渲染「回到最新」入口）。 */
   newOutput: boolean;
   /** 当前是否跟随（测试与调试可读；渲染只依赖 newOutput）。 */
@@ -44,18 +50,21 @@ export interface ConversationFollow {
 }
 
 /**
- * @param scrollRef 消息流滚动容器
- * @param revision  内容版本（一般是 items；变化 ⇒ 需要做一次跟随判断）
+ * @param revision 内容版本（一般是 items；变化 ⇒ 需要做一次跟随判断）
  */
-export function useConversationFollow(
-  scrollRef: RefObject<HTMLElement | null>,
-  revision: unknown,
-): ConversationFollow {
+export function useConversationFollow(revision: unknown): ConversationFollow {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  const elRef = useRef<HTMLElement | null>(null);
   const followRef = useRef(true);
   const [following, setFollowing] = useState(true);
   const [newOutput, setNewOutput] = useState(false);
   const lastHeightRef = useRef(0);
   const jumpRef = useRef<() => void>(() => {});
+
+  const scrollRef = useCallback((node: HTMLElement | null) => {
+    elRef.current = node;
+    setEl(node);
+  }, []);
 
   const setFollow = (value: boolean) => {
     followRef.current = value;
@@ -64,17 +73,17 @@ export function useConversationFollow(
   };
 
   jumpRef.current = () => {
-    const el = scrollRef.current;
+    const node = elRef.current;
     setFollow(true);
-    if (el) {
-      scrollToBottom(el);
-      lastHeightRef.current = el.scrollHeight;
+    if (node) {
+      scrollToBottom(node);
+      lastHeightRef.current = node.scrollHeight;
     }
   };
 
-  // 滚动监听只挂一次：follow 与否读 ref，不把 listener 换来换去。
+  // 滚动监听跟着元素走：节点卸载（侧栏收起）⇒ 摘监听；
+  // 新节点（侧栏重开）⇒ 重新挂上，跟随状态本身不丢。
   useEffect(() => {
-    const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
       const near = isNearBottom(el);
@@ -86,10 +95,9 @@ export function useConversationFollow(
     el.addEventListener("scroll", onScroll, { passive: true });
     lastHeightRef.current = el.scrollHeight;
     return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [el]);
 
   useEffect(() => {
-    const el = scrollRef.current;
     if (!el) return;
     if (followRef.current) {
       scrollToBottom(el);
@@ -99,7 +107,7 @@ export function useConversationFollow(
     }
     lastHeightRef.current = el.scrollHeight;
     // revision 只表达"内容变了，重新判断一次"，不参与其它取值。
-  }, [revision]);
+  }, [el, revision]);
 
-  return { newOutput, following, jumpToLatest: () => jumpRef.current() };
+  return { scrollRef, newOutput, following, jumpToLatest: () => jumpRef.current() };
 }

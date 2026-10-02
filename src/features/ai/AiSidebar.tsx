@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
-import { createAiChannel, disposeChannel } from "../../ipc/events";
+import { createAiChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { useUi, type TakeoverState } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { ModelPanel } from "./ModelPanel";
@@ -145,9 +145,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [conversations, setConversations] = useState<{ id: string; title: string; updatedAt: number }[]>([]);
   /** 接管状态来自全局 store（§8.6）：顶部横幅与这里读的是同一份。 */
   const takeover = useUi((s) => s.takeover);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const follow = useConversationFollow(scrollRef, conv.items);
+  const follow = useConversationFollow(conv.items);
 
   useEffect(() => {
     void aiApi
@@ -262,6 +261,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       // dispose 幂等）。不释放的话它对应的 WS 会一直挂着退避重连。
       disposeChannel(channel);
     });
+    // WS 重连 ⇒ 服务端会补发缓存帧：开启本轮的文本重放抑制。
+    // Wails / demo 没有这一生命周期，这里是空操作；通道 dispose 时订阅随 id 一并清除。
+    onChannelReopen(channel, () => stream.notifyReopen(run.generation));
 
     try {
       const res = await aiApi.chat({
@@ -522,6 +524,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       // 此刻之后该通道再无任何事件，可安全关闭（重复 / 迟到终态同样幂等释放）。
       disposeChannel(channel);
     });
+    // 与 chat 相同：重连补帧时开启本轮的文本重放抑制。
+    onChannelReopen(channel, () => stream.notifyReopen(run.generation));
 
     setAiBusy(true);
     let ownershipToken: string | undefined;
@@ -727,7 +731,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       {/* 消息流：跟随滚动由 useConversationFollow 决定，不再无条件拽到底部 */}
       <div className="relative min-h-0 flex-1">
         <div
-          ref={scrollRef}
+          ref={follow.scrollRef}
           role="log"
           aria-label="AI 对话记录"
           className="h-full space-y-2.5 overflow-y-auto p-3"

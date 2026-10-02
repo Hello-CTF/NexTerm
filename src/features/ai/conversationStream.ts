@@ -46,6 +46,29 @@ interface PendingFragment {
   text: string;
 }
 
+/**
+ * 重放抑制（delta / reasoning 没有内核 id，只能靠序列对齐）。
+ *
+ * 传输层重连后会用同一通道 id 补发服务端缓存的帧：已收过的事件会按原顺序
+ * 再来一遍（通常是最近一段后缀），然后才接新事件。`onChannelReopen` 是这条
+ * 通道**确实发生过重连**的信号 —— 只有收到它，才进入重放窗口：
+ *   · 窗口内，每个文本片段与「本轮已落账片段序列」做连续对齐
+ *     （首个片段确定若干候选起点，后续片段逐步收敛）；
+ *   · 对齐上的 = 重发，直接丢弃（它早已上过屏）；对不上的第一个片段 = 新内容，
+ *     立即落账并关闭窗口（重放只可能是连续的一段，不会隔着新内容再来）。
+ * 没有重连信号时一律不去重：模型本来就会输出重复 token，
+ * 「内容相同」本身绝不是丢弃理由。窗口只覆盖文本片段；带 id 的事件由聚合层
+ * 幂等，终态由先到先得兜底，二者都不需要这套对齐。
+ */
+interface ReplayTracker {
+  /** 本轮已落账的原始文本片段（未做帧合并，对齐必须以原始 chunk 为单位）。 */
+  log: { role: "assistant" | "reasoning"; text: string }[];
+  /** 是否处于重连后的重放窗口。 */
+  armed: boolean;
+  /** 窗口内当前仍成立的候选对齐位置（log 下标）；null = 还没收到窗口首帧。 */
+  candidates: number[] | null;
+}
+
 export interface ConversationStream {
   getState(): ConversationState;
   subscribe(listener: (state: ConversationState) => void): () => void;
@@ -56,6 +79,8 @@ export interface ConversationStream {
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
   cancelRun(generation: number, settle: boolean): void;
   reset(items?: ChatItem[]): void;
+  /** 通道重连成功（`onChannelReopen`）：开启本轮的重放窗口。 */
+  notifyReopen(generation: number): void;
   /** 立刻把 pending 文本落账（边界 flush；幂等）。 */
   flush(): void;
   /** 卸载边界：最后一次 flush，取消已排度的帧，之后拒绝一切写入。 */
@@ -118,6 +143,44 @@ export function createConversationStream(
     fn();
   };
 
+  const trackers = new Map<number, ReplayTracker>();
+  const trackerOf = (generation: number): ReplayTracker => {
+    let tracker = trackers.get(generation);
+    if (!tracker) {
+      tracker = { log: [], armed: false, candidates: null };
+      trackers.set(generation, tracker);
+    }
+    return tracker;
+  };
+
+  /** 重放窗口内的一次对齐：返回 true = 这一帧是重发，丢弃。 */
+  const isReplay = (
+    tracker: ReplayTracker,
+    role: "assistant" | "reasoning",
+    text: string,
+  ): boolean => {
+    const matches = (index: number) =>
+      index >= 0 && index < tracker.log.length &&
+      tracker.log[index].role === role && tracker.log[index].text === text;
+    let next: number[];
+    if (tracker.candidates === null) {
+      next = [];
+      for (let i = 0; i < tracker.log.length; i++) {
+        if (matches(i)) next.push(i);
+      }
+    } else {
+      next = tracker.candidates.map((pos) => pos + 1).filter(matches);
+    }
+    if (next.length === 0) {
+      // 第一个对不上的片段就是新内容：重放窗口到此结束。
+      tracker.armed = false;
+      tracker.candidates = null;
+      return false;
+    }
+    tracker.candidates = next;
+    return true;
+  };
+
   return {
     getState: () => state,
     subscribe(listener) {
@@ -158,6 +221,12 @@ export function createConversationStream(
         const text = typeof ev.text === "string" ? ev.text : "";
         if (!text) return { state, accepted: true, terminal: null };
         const role = type === "delta" ? "assistant" : "reasoning";
+        const tracker = trackerOf(generation);
+        if (tracker.armed && isReplay(tracker, role, text)) {
+          // 重发帧：早已落账，不再进 pending，也不再记一次日志。
+          return { state, accepted: true, terminal: null };
+        }
+        tracker.log.push({ role, text });
         const last = pending[pending.length - 1];
         if (last && last.generation === generation && last.role === role) {
           // 连续同种片段直接合并：pending 的段数也有界。
@@ -178,6 +247,7 @@ export function createConversationStream(
       const result = applyAiEvent(state, generation, ev);
       if (result.accepted) {
         state = result.state;
+        if (result.terminal) trackers.delete(generation);
         publish();
       }
       return result;
@@ -196,6 +266,7 @@ export function createConversationStream(
         const next = cancelRun(state, generation, settle);
         if (next !== state) {
           state = next;
+          if (settle) trackers.delete(generation);
           publish();
         }
       });
@@ -203,8 +274,17 @@ export function createConversationStream(
     reset(items = []) {
       mutate(() => {
         state = resetConversation(state, items);
+        trackers.clear();
         publish();
       });
+    },
+    notifyReopen(generation) {
+      if (disposed) return;
+      const attempt = attemptOf(state, generation);
+      if (!attempt || attempt.outcome) return;
+      const tracker = trackerOf(generation);
+      tracker.armed = true;
+      tracker.candidates = null;
     },
     flush,
     dispose() {
@@ -212,6 +292,7 @@ export function createConversationStream(
       flush();
       disposed = true;
       cancelFrame();
+      trackers.clear();
       listeners.clear();
     },
   };

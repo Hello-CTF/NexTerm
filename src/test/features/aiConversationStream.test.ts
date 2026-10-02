@@ -167,18 +167,34 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
     expect(items[0]).toMatchObject({ summary: "s", text: "full" });
   });
 
-  it("replayed deltas followed by done reconcile to the authoritative answer", () => {
+  it("done repairs duplicated stream text even when the replay was never signaled", () => {
     const { s, frames } = stream();
     s.beginRun(1);
     s.pushEvent(1, { type: "delta", text: " authoritative answer" });
     frames.runFrame();
-    // 重连补帧：同一段 delta 又送了一遍。
+    // 没有重连信号 ⇒ 入口不去重，同一段 delta 真的落了两遍；
+    // 终态仍必须把末段修成权威答案，而不是再补一条重复气泡。
     s.pushEvent(1, { type: "delta", text: " authoritative answer" });
     frames.runFrame();
     s.pushEvent(1, { type: "done", answer: " authoritative answer" });
     const items = s.getState().items;
     expect(texts(items, "assistant")).toEqual([" authoritative answer"]);
     expect(roles(items)).toEqual(["assistant", "outcome"]);
+  });
+
+  it("done replaces only the final segment and keeps earlier narration and tool cards", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "先分析一下" });
+    frames.runFrame();
+    s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
+    s.pushEvent(1, { type: "toolResult", id: "t", ok: true, summary: "s", text: "full", exitCode: 0 });
+    s.pushEvent(1, { type: "delta", text: "最终" });
+    frames.runFrame();
+    s.pushEvent(1, { type: "done", answer: "最终答案" });
+    const items = s.getState().items;
+    expect(roles(items)).toEqual(["assistant", "tool", "assistant", "outcome"]);
+    expect(texts(items, "assistant")).toEqual(["先分析一下", "最终答案"]);
   });
 
   it("keeps the first terminal outcome under duplicate done and late error", () => {
@@ -235,6 +251,122 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
   });
 });
 
+describe("reopen-driven replay suppression (delta / reasoning)", () => {
+  it("suppresses the replayed chunk, accepts the diverging tail, and settles on one answer", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "abcdefghij" });
+    frames.runFrame();
+    s.notifyReopen(1);
+    // 重连补帧：同一段再来一遍 ⇒ 丢弃；跟不上的下一帧 ⇒ 新内容，窗口关闭。
+    s.pushEvent(1, { type: "delta", text: "abcdefghij" });
+    s.pushEvent(1, { type: "delta", text: " XYZ" });
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["abcdefghij XYZ"]);
+    s.pushEvent(1, { type: "done", answer: "abcdefghij XYZ" });
+    const items = s.getState().items;
+    expect(roles(items)).toEqual(["assistant", "outcome"]);
+    expect(texts(items, "assistant")).toEqual(["abcdefghij XYZ"]);
+  });
+
+  it("aligns a partial suffix replay across several chunks", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    for (const text of ["a1", "b2", "c3", "d4"]) s.pushEvent(1, { type: "delta", text });
+    frames.runFrame();
+    s.notifyReopen(1);
+    // 只补发后两段：c3 先在 log 里对齐成功，d4 连续对齐，e5 是新内容。
+    for (const text of ["c3", "d4", "e5"]) s.pushEvent(1, { type: "delta", text });
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["a1b2c3d4e5"]);
+  });
+
+  it("handles interleaved replay with reasoning and id-bearing tool events", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    const script = () => {
+      s.pushEvent(1, { type: "delta", text: "A" });
+      s.pushEvent(1, { type: "reasoning", text: "R" });
+      s.pushEvent(1, { type: "toolCall", id: "t1", name: "exec", display: "ls" });
+      s.pushEvent(1, { type: "toolResult", id: "t1", ok: true, summary: "s", text: "full", exitCode: 0 });
+      s.pushEvent(1, { type: "delta", text: "B" });
+    };
+    script();
+    frames.runFrame();
+    s.notifyReopen(1);
+    script(); // 整段重放：文本帧被对齐丢弃，工具帧由 id 幂等
+    s.pushEvent(1, { type: "delta", text: "C" });
+    frames.runFrame();
+    const items = s.getState().items;
+    expect(roles(items)).toEqual(["assistant", "reasoning", "tool", "assistant"]);
+    expect(texts(items, "assistant")).toEqual(["A", "BC"]);
+    expect(texts(items, "reasoning")).toEqual(["R"]);
+    s.pushEvent(1, { type: "done", answer: "BC" });
+    expect(roles(s.getState().items)).toEqual(["assistant", "reasoning", "tool", "assistant", "outcome"]);
+  });
+
+  it("suppresses reasoning replay and keeps the surviving reasoning exact", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "reasoning", text: "same reasoning chunk" });
+    frames.runFrame();
+    s.notifyReopen(1);
+    s.pushEvent(1, { type: "reasoning", text: "same reasoning chunk" });
+    s.pushEvent(1, { type: "reasoning", text: " and more" });
+    frames.runFrame();
+    expect(texts(s.getState().items, "reasoning")).toEqual(["same reasoning chunk and more"]);
+    // done 不带推理内容：推理的修复必须发生在入口，而不是终态。
+    s.pushEvent(1, { type: "done", answer: "答案" });
+    const items = s.getState().items;
+    expect(texts(items, "reasoning")).toEqual(["same reasoning chunk and more"]);
+    expect(texts(items, "assistant")).toEqual(["答案"]);
+  });
+
+  it("suppresses replay even before the original fragments were flushed", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "x" });
+    // 不跑帧：原片段还在 pending，但原始日志已记录，重放依然被识别。
+    s.notifyReopen(1);
+    s.pushEvent(1, { type: "delta", text: "x" });
+    s.pushEvent(1, { type: "delta", text: "y" });
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["xy"]);
+  });
+
+  it("never dedupes without a reopen signal, and accepts repeats after the window closes", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "ha" });
+    s.pushEvent(1, { type: "delta", text: "ha" });
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["haha"]);
+    // 窗口被首个对不上的片段关闭后，相同内容照常落账。
+    s.notifyReopen(1);
+    s.pushEvent(1, { type: "delta", text: "!" });
+    s.pushEvent(1, { type: "delta", text: "ha" });
+    frames.runFrame();
+    expect(texts(s.getState().items, "assistant")).toEqual(["haha!ha"]);
+  });
+
+  it("a replayed done still settles exactly once after a replayed text prefix", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "答" });
+    frames.runFrame();
+    s.notifyReopen(1);
+    s.pushEvent(1, { type: "delta", text: "答" });
+    expect(s.pushEvent(1, { type: "done", answer: "答" }).accepted).toBe(true);
+    expect(s.pushEvent(1, { type: "done", answer: "答" }).accepted).toBe(false);
+    const items = s.getState().items;
+    expect(roles(items)).toEqual(["assistant", "outcome"]);
+    expect(texts(items, "assistant")).toEqual(["答"]);
+    // 终态后重连信号与迟到文本一律无效。
+    s.notifyReopen(1);
+    expect(s.pushEvent(1, { type: "delta", text: "答" }).accepted).toBe(false);
+  });
+});
+
 describe("conversation terminal reconciliation", () => {
   function doneWith(streamed: string | null, answer: string, plan = false) {
     const { s, frames } = stream();
@@ -255,12 +387,17 @@ describe("conversation terminal reconciliation", () => {
     expect(texts(fallback.items, "assistant")).toEqual(["完整答案"]);
   });
 
-  it("true prefix (>=8 chars) is replaced by the full answer; short prefix is not", () => {
+  it("the authoritative answer replaces the final segment: prefix, short prefix, divergence", () => {
     const long = doneWith("0123456789", "0123456789 后续");
     expect(texts(long.items, "assistant")).toEqual(["0123456789 后续"]);
     expect(roles(long.items)).toEqual(["assistant", "outcome"]);
+    // 短前缀 / 完全分叉也一样：answer 就是最终消息，流式末段只是它的过渡形态。
     const short = doneWith("好", "好，完整回答");
-    expect(texts(short.items, "assistant")).toEqual(["好", "好，完整回答"]);
+    expect(texts(short.items, "assistant")).toEqual(["好，完整回答"]);
+    expect(roles(short.items)).toEqual(["assistant", "outcome"]);
+    const diverged = doneWith("与答案完全不同的流式", "权威答案");
+    expect(texts(diverged.items, "assistant")).toEqual(["权威答案"]);
+    expect(roles(diverged.items)).toEqual(["assistant", "outcome"]);
   });
 
   it("empty raw answer does not add a placeholder after streamed text, but does with no output", () => {

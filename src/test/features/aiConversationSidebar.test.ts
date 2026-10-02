@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   takeoverExit: vi.fn(),
   toast: vi.fn(),
   dispose: vi.fn(),
-  channels: [] as { onEvent: (ev: Record<string, unknown>) => void }[],
+  channels: [] as { onEvent: (ev: Record<string, unknown>) => void; reopen?: (() => void) | null }[],
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -55,11 +55,20 @@ vi.mock("../../ipc/commands", () => ({
 vi.mock("../../ipc/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ipc/events")>()),
   createAiChannel: (onEvent: (ev: Record<string, unknown>) => void) => {
-    const channel = { onEvent };
+    const channel: { onEvent: (ev: Record<string, unknown>) => void; reopen?: (() => void) | null } = {
+      onEvent,
+      reopen: null,
+    };
     mocks.channels.push(channel);
     return channel;
   },
   disposeChannel: mocks.dispose,
+  onChannelReopen: (channel: { reopen?: (() => void) | null }, cb: () => void) => {
+    channel.reopen = cb;
+    return () => {
+      channel.reopen = null;
+    };
+  },
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
@@ -84,6 +93,39 @@ function emit(ev: Record<string, unknown>, channelIndex = -1) {
 
 function textOf(view: MountedView): string {
   return view.container.textContent ?? "";
+}
+
+/** jsdom 无布局：显式 stub 滚动尺寸与 scrollTo，返回可编程的探针。 */
+function stubScroller(el: HTMLDivElement) {
+  const metrics = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+  for (const key of ["scrollTop", "scrollHeight", "clientHeight"] as const) {
+    Object.defineProperty(el, key, {
+      configurable: true,
+      get: () => metrics[key],
+      set: (value: number) => {
+        metrics[key] = value;
+      },
+    });
+  }
+  const scrollCalls: number[] = [];
+  el.scrollTo = ((options?: ScrollToOptions) => {
+    const top = Number(options?.top ?? 0);
+    scrollCalls.push(top);
+    metrics.scrollTop = top;
+  }) as typeof el.scrollTo;
+  return {
+    el,
+    metrics,
+    scrollCalls,
+    setMetrics(patch: Partial<typeof metrics>) {
+      Object.assign(metrics, patch);
+    },
+    dispatchScroll() {
+      act(() => {
+        el.dispatchEvent(new Event("scroll"));
+      });
+    },
+  };
 }
 
 describe("AiSidebar conversation stream UX", () => {
@@ -333,51 +375,77 @@ describe("AiSidebar conversation stream UX", () => {
   });
 
   it("follows output only at the bottom and offers a jump-back affordance", async () => {
-    const scroller = view!.container.querySelector('[role="log"]') as HTMLDivElement;
-    const metrics = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
-    for (const key of ["scrollTop", "scrollHeight", "clientHeight"] as const) {
-      Object.defineProperty(scroller, key, {
-        configurable: true,
-        get: () => metrics[key],
-        set: (value: number) => {
-          metrics[key] = value;
-        },
-      });
-    }
-    const scrollCalls: number[] = [];
-    scroller.scrollTo = ((options?: ScrollToOptions) => {
-      const top = Number(options?.top ?? 0);
-      scrollCalls.push(top);
-      metrics.scrollTop = top;
-    }) as typeof scroller.scrollTo;
+    const sc = stubScroller(view!.container.querySelector('[role="log"]') as HTMLDivElement);
 
     await send("滚动测试");
-    metrics.scrollHeight = 1000;
-    metrics.clientHeight = 200;
-    metrics.scrollTop = 800;
+    sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
     emit({ type: "delta", text: "第一段" });
     act(runFrames);
-    expect(scrollCalls.length).toBeGreaterThan(0);
+    expect(sc.scrollCalls.length).toBeGreaterThan(0);
 
     // 用户上翻：之后的流式输出不再拽动视图，改亮「回到最新」。
-    metrics.scrollTop = 100;
-    act(() => {
-      scroller.dispatchEvent(new Event("scroll"));
-    });
-    const callsBefore = scrollCalls.length;
-    metrics.scrollHeight = 1600;
+    sc.setMetrics({ scrollTop: 100 });
+    sc.dispatchScroll();
+    const callsBefore = sc.scrollCalls.length;
+    sc.setMetrics({ scrollHeight: 1600 });
     emit({ type: "delta", text: "第二段" });
     act(runFrames);
-    expect(scrollCalls.length).toBe(callsBefore);
+    expect(sc.scrollCalls.length).toBe(callsBefore);
     expect(textOf(view!)).toContain("↓ 新输出");
-    expect(metrics.scrollTop).toBe(100);
+    expect(sc.metrics.scrollTop).toBe(100);
 
     clickButton(view!.container, "↓ 新输出");
-    expect(scrollCalls.at(-1)).toBe(1600);
+    expect(sc.scrollCalls.at(-1)).toBe(1600);
     expect(textOf(view!)).not.toContain("↓ 新输出");
-    metrics.scrollHeight = 2000;
+    sc.setMetrics({ scrollHeight: 2000 });
     emit({ type: "done", answer: "第一段第二段" });
     await flush();
-    expect(scrollCalls.at(-1)).toBe(2000);
+    expect(sc.scrollCalls.at(-1)).toBe(2000);
+  });
+
+  it("keeps honoring manual scroll-up after a sidebar close/reopen cycle", async () => {
+    await send("滚动生命周期");
+    const first = view!.container.querySelector('[role="log"]');
+    // 收起侧栏：消息流卸载；再打开：是一个全新的 DOM 节点。
+    act(() => useUi.setState({ rightOpen: false }));
+    expect(view!.container.querySelector('[role="log"]')).toBeNull();
+    act(() => useUi.setState({ rightOpen: true }));
+    const sc = stubScroller(view!.container.querySelector('[role="log"]') as HTMLDivElement);
+    expect(sc.el).not.toBe(first);
+
+    sc.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
+    emit({ type: "delta", text: "重开后的输出" });
+    act(runFrames);
+    expect(sc.scrollCalls.length).toBeGreaterThan(0);
+
+    // 新节点上的手动上翻必须生效：不再自动滚底，改亮新输出入口。
+    sc.setMetrics({ scrollTop: 100 });
+    sc.dispatchScroll();
+    const callsBefore = sc.scrollCalls.length;
+    sc.setMetrics({ scrollHeight: 1600 });
+    emit({ type: "delta", text: "继续输出" });
+    act(runFrames);
+    expect(sc.scrollCalls.length).toBe(callsBefore);
+    expect(sc.metrics.scrollTop).toBe(100);
+    expect(textOf(view!)).toContain("↓ 新输出");
+  });
+
+  it("reconnect replay does not duplicate streamed text end to end", async () => {
+    await send("重连测试");
+    emit({ type: "delta", text: "abcdefghij" });
+    act(runFrames);
+    const channel = mocks.channels.at(-1);
+    expect(channel?.reopen).toBeTypeOf("function");
+    // 通道重连 ⇒ 补发缓存帧：同一段 delta 再来一遍，然后接新内容。
+    act(() => channel!.reopen!());
+    emit({ type: "delta", text: "abcdefghij" });
+    emit({ type: "delta", text: " XYZ" });
+    act(runFrames);
+    expect(textOf(view!)).toContain("abcdefghij XYZ");
+    expect(textOf(view!)).not.toContain("abcdefghijabcdefghij");
+    emit({ type: "done", answer: "abcdefghij XYZ" });
+    await flush();
+    expect(textOf(view!).match(/abcdefghij XYZ/g)).toHaveLength(1);
+    expect(textOf(view!)).toContain("本轮已完成");
   });
 });

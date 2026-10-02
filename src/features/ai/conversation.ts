@@ -327,9 +327,11 @@ function kernelId(ev: Record<string, unknown>): string {
  * 幂等口径：
  *   · 未知 / 已终态的 attempt：非终态事件丢弃；终态事件只上报不改动（先到先得）；
  *   · 带内核 id 的条目按 id upsert，重放不会产生第二张卡；
- *   · done 的 answer 对账保留原有「逐字相同 / 真前缀」分支，另补「流式文本比
- *     权威答案长」（重放导致重复吐字）时以权威答案为准；
+ *   · done.answer 是内核的权威最终消息：末段流式气泡**整条**以它为准
+ *     （截断 / 重放损坏都一并修复），早先段落不受影响；
  *   · raw answer 为空时不再对已流出的正文补「(无回答)」占位气泡。
+ *   · delta / reasoning 没有内核 id，它们的重放抑制在控制器里
+ *     （conversationStream.ts，靠重连信号 + 片段序列对齐）。
  */
 export function applyAiEvent(
   state: ConversationState,
@@ -556,56 +558,28 @@ function finishDone(
     last &&
     (last.role === "assistant" || last.role === "plan") &&
     last.attempt === generation;
-  if (lastIsStreamed) {
-    const streamed = last.text.trim();
-    // 逐字相同：stream 已经把这段吐完了，done 再补一条就是重复。
-    // 计划模式要把流式那条升级成 plan 气泡，批准按钮才有着落。
-    if (raw && streamed === answer.trim()) {
-      const items = wasPlan
-        ? [...next.items.slice(0, -1), { ...last, role: "plan" as const, text: answer }]
-        : next.items;
-      return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
-    }
-    // 末条是权威答案的真前缀（长度 ≥ 8 才认，免得一个"好"字就被当成截断）
-    // → 流被代理截了，或对端回退成了非流式。直接换成完整答案。
-    if (
-      last.role === "assistant" &&
-      raw &&
-      streamed.length >= 8 &&
-      answer.trim().startsWith(streamed)
-    ) {
-      return appendOutcome(
-        { ...next, items: [...next.items.slice(0, -1), { ...last, text: answer }] },
-        generation,
-        "done",
-        "本轮已完成",
-      );
-    }
-    // 反向：流式文本以权威答案开头且更长 —— 重连重放把同一段吐字重复送过。
-    // 权威答案是真，多出来的尾巴是重复，直接收回。
-    if (
-      last.role === "assistant" &&
-      raw &&
-      answer.trim().length >= 8 &&
-      streamed.startsWith(answer.trim()) &&
-      streamed !== answer.trim()
-    ) {
-      return appendOutcome(
-        { ...next, items: [...next.items.slice(0, -1), { ...last, text: answer }] },
-        generation,
-        "done",
-        "本轮已完成",
-      );
-    }
+  if (raw && lastIsStreamed) {
+    // 权威答案对账：**整条末段换成 done.answer**，不做相似度猜测。
+    // answer 就是内核的最后一条 assistant 消息，而末段气泡正是它的流式形态 ——
+    // 截断、代理改包、重连重放把 chunk 重复或交错，都只是"同一条消息的损坏版本"，
+    // 权威答案一律为真。逐字相同 / 前缀 / 超集只是这条规则的特例，不再单列。
+    // 早先的气泡（前几轮 assistant 消息、工具卡）不动，只有末段参与对账。
+    // 计划模式要把这条升级成 plan 气泡，批准按钮才有着落。
+    const items = [
+      ...next.items.slice(0, -1),
+      wasPlan ? { ...last, role: "plan" as const, text: answer } : { ...last, text: answer },
+    ];
+    return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
+  }
+  if (!raw && lastIsStreamed && last.text.trim()) {
     // 内核没给答案（raw 为空）而正文已经流出：内容就在屏幕上，
     // 不再补一条「(无回答)」占位气泡冒充新输出。
-    if (!raw && streamed) {
-      const items = wasPlan
-        ? [...next.items.slice(0, -1), { ...last, role: "plan" as const }]
-        : next.items;
-      return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
-    }
+    const items = wasPlan
+      ? [...next.items.slice(0, -1), { ...last, role: "plan" as const }]
+      : next.items;
+    return appendOutcome({ ...next, items }, generation, "done", "本轮已完成");
   }
+  // 末条不是本轮的流式气泡（非流式回退 / 只有推理或工具卡）：答案单独落一条。
   const { id, seq } = nextId(next, wasPlan ? "p" : "a");
   next = appendItems({ ...next, seq }, [
     wasPlan
