@@ -63,6 +63,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	channels := session.detachChannelsLocked()
 	m.byAsset[session.asset.ID] = session.ID
 	reconnectCtx := session.ctx
+	reconnectingEvent := session.statusEventLocked(StatusReconnecting, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
 
@@ -71,7 +72,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 	if oldTransport != nil {
 		_ = oldTransport.Close()
 	}
-	m.emit(context.Background(), TopicSessionStatus, StatusEvent{SessionID: id, Status: StatusReconnecting})
+	m.emit(context.Background(), TopicSessionStatus, reconnectingEvent)
 
 	runCtx, cancel := context.WithCancel(reconnectCtx)
 	stop := context.AfterFunc(ctx, cancel)
@@ -220,6 +221,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	}
 	session.finishReconnectLocked(nil)
 	reconnectCtx := session.ctx
+	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
 	for _, channel := range opened {
@@ -250,7 +252,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			_ = m.feed(reconnectCtx, tab, generation, reconnectBanner)
 		}
 	}
-	m.emit(context.Background(), TopicSessionStatus, StatusEvent{SessionID: session.ID, Status: StatusConnected})
+	m.emit(context.Background(), TopicSessionStatus, connectedEvent)
 	return true, nil
 }
 
@@ -277,9 +279,10 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	if m.byAsset[session.asset.ID] == session.ID {
 		delete(m.byAsset, session.asset.ID)
 	}
+	finishedEvent := session.statusEventLocked(status, reconnectErr)
 	session.mu.Unlock()
 	m.mu.Unlock()
-	m.emit(context.Background(), TopicSessionStatus, StatusEvent{SessionID: session.ID, Status: status, Error: reconnectErr.Error()})
+	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
 	return reconnectErr
 }
 

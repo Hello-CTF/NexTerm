@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -140,10 +141,19 @@ type TabInfo struct {
 	Ephemeral   bool   `json:"ephemeral,omitempty"`
 }
 
+func (t TabInfo) MarshalJSON() ([]byte, error) {
+	type Alias TabInfo
+	return json.Marshal(struct {
+		Alias
+		Controller *string `json:"controller"`
+	}{Alias: Alias(t), Controller: nullableController(t.Controller)})
+}
+
 type StatusEvent struct {
 	SessionID string `json:"sessionId"`
 	Status    Status `json:"status"`
 	Error     string `json:"error,omitempty"`
+	Version   uint64 `json:"version"`
 }
 
 type ExitEvent struct {
@@ -157,6 +167,22 @@ type ControlEvent struct {
 	Subscribers int    `json:"subscribers"`
 	Viewers     int    `json:"viewers"`
 	Exited      bool   `json:"exited"`
+	Version     uint64 `json:"version"`
+}
+
+func (e ControlEvent) MarshalJSON() ([]byte, error) {
+	type Alias ControlEvent
+	return json.Marshal(struct {
+		Alias
+		Controller *string `json:"controller"`
+	}{Alias: Alias(e), Controller: nullableController(e.Controller)})
+}
+
+func nullableController(controller string) *string {
+	if controller == "" {
+		return nil
+	}
+	return &controller
 }
 
 type ThrottleEvent struct {
@@ -174,6 +200,7 @@ type Session struct {
 	status          Status
 	transport       *transportHandle
 	generation      uint64
+	eventVersion    uint64
 	ctx             context.Context
 	cancel          context.CancelFunc
 	tabs            map[string]*Tab
@@ -185,6 +212,15 @@ type Session struct {
 	reconnecting    bool
 	reconnectDone   chan struct{}
 	reconnectErr    error
+}
+
+func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {
+	s.eventVersion++
+	event := StatusEvent{SessionID: s.ID, Status: status, Version: s.eventVersion}
+	if cause != nil {
+		event.Error = cause.Error()
+	}
+	return event
 }
 
 func (s *Session) Info() SessionInfo {

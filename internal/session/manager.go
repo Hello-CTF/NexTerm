@@ -183,9 +183,16 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	m.sessions[session.ID] = session
 	m.byAsset[asset.ID] = session.ID
 	m.mu.Unlock()
-	m.emit(ctx, TopicSessionStatus, StatusEvent{SessionID: session.ID, Status: StatusConnecting})
+	session.mu.Lock()
+	connectingEvent := session.statusEventLocked(StatusConnecting, nil)
+	session.mu.Unlock()
+	m.emit(ctx, TopicSessionStatus, connectingEvent)
 
-	transport, connectErr := m.connector.Connect(ctx, asset, generation)
+	connectCtx, connectCancel := context.WithCancel(sessionCtx)
+	stopCallerCancel := context.AfterFunc(ctx, connectCancel)
+	transport, connectErr := m.connector.Connect(connectCtx, asset, generation)
+	stopCallerCancel()
+	connectCancel()
 	var handle *transportHandle
 	if transport != nil {
 		handle = newTransportHandle(transport)
@@ -216,22 +223,24 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 		session.finishConnectLocked(connectErr)
 		delete(m.sessions, session.ID)
 		delete(m.byAsset, asset.ID)
+		failedEvent := session.statusEventLocked(StatusFailed, connectErr)
 		session.mu.Unlock()
 		m.mu.Unlock()
 		cancel()
 		if handle != nil {
 			_ = handle.Close()
 		}
-		m.emit(context.Background(), TopicSessionStatus, StatusEvent{SessionID: session.ID, Status: StatusFailed, Error: connectErr.Error()})
+		m.emit(context.Background(), TopicSessionStatus, failedEvent)
 		return nil, connectErr
 	}
 	session.transport = handle
 	session.status = StatusConnected
 	session.idleSince = time.Now()
 	session.finishConnectLocked(nil)
+	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
-	m.emit(ctx, TopicSessionStatus, StatusEvent{SessionID: session.ID, Status: StatusConnected})
+	m.emit(ctx, TopicSessionStatus, connectedEvent)
 	return session, nil
 }
 
@@ -344,6 +353,7 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	if m.byAsset[session.asset.ID] == session.ID {
 		delete(m.byAsset, session.asset.ID)
 	}
+	disconnectedEvent := session.statusEventLocked(StatusDisconnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
 
@@ -352,7 +362,7 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	if transport != nil {
 		_ = transport.Close()
 	}
-	m.emit(context.Background(), TopicSessionStatus, StatusEvent{SessionID: id, Status: StatusDisconnected})
+	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	return nil
 }
 
@@ -415,6 +425,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 	if m.byAsset[session.asset.ID] == session.ID {
 		delete(m.byAsset, session.asset.ID)
 	}
+	disconnectedEvent := session.statusEventLocked(StatusDisconnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
 
@@ -425,7 +436,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 	if transport != nil {
 		_ = transport.Close()
 	}
-	m.emit(context.Background(), TopicSessionStatus, StatusEvent{SessionID: id, Status: StatusDisconnected})
+	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	return nil
 }
 

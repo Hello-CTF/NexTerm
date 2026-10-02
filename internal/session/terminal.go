@@ -16,6 +16,7 @@ func (t *coreTerminal) Feed(raw []byte) {
 }
 
 func (t *coreTerminal) Close() {
+	t.StopRecording()
 	t.output.Close()
 	t.Tab.Close()
 }

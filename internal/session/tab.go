@@ -28,16 +28,17 @@ type Tab struct {
 	terminal  TerminalState
 	ephemeral bool
 
-	mu          sync.Mutex
-	cols        uint32
-	rows        uint32
-	channel     *channelHandle
-	generation  uint64
-	subscribers map[string]subscriber
-	controller  string
-	exited      bool
-	closed      bool
-	cancelPump  context.CancelFunc
+	mu           sync.Mutex
+	cols         uint32
+	rows         uint32
+	channel      *channelHandle
+	generation   uint64
+	eventVersion uint64
+	subscribers  map[string]subscriber
+	controller   string
+	exited       bool
+	closed       bool
+	cancelPump   context.CancelFunc
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -67,9 +68,10 @@ func (t *Tab) infoLocked() TabInfo {
 
 func (t *Tab) controlEventLocked() ControlEvent {
 	info := t.infoLocked()
+	t.eventVersion++
 	return ControlEvent{
 		TabID: t.ID, Controller: info.Controller, Subscribers: info.Subscribers,
-		Viewers: info.Viewers, Exited: info.Exited,
+		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion,
 	}
 }
 
