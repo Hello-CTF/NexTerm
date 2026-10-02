@@ -136,11 +136,13 @@ func (s *Service) Describe(ctx context.Context, connID, schema, table string) (T
 	for indexes.Next() {
 		var index TableIndex
 		var nonUnique int64
-		if err := indexes.Scan(&index.Name, &nonUnique, &index.Seq, &index.Column); err != nil {
+		var columnName sql.NullString
+		if err := indexes.Scan(&index.Name, &nonUnique, &index.Seq, &columnName); err != nil {
 			_ = indexes.Close()
 			return TableDescribe{}, internalError("读取 MySQL 索引列表", err)
 		}
 		index.Unique = nonUnique == 0
+		index.Column = columnName.String
 		description.Indexes = append(description.Indexes, index)
 	}
 	if err := errors.Join(indexes.Err(), indexes.Close()); err != nil {
@@ -293,7 +295,7 @@ func statementReturnsRows(statement string) bool {
 		keyword = withMainKeyword(statement)
 	}
 	switch keyword {
-	case "SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH", "CALL", "VALUES", "TABLE", "HELP", "ANALYZE", "OPTIMIZE", "REPAIR", "CHECK", "CHECKSUM":
+	case "SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH", "CALL", "VALUES", "TABLE", "HELP", "ANALYZE", "OPTIMIZE", "REPAIR", "CHECK", "CHECKSUM", "(":
 		return true
 	default:
 		return false
@@ -385,6 +387,9 @@ func firstSQLKeyword(statement string) string {
 			}
 			remaining = strings.TrimSpace(remaining[end+1:])
 		default:
+			if remaining[0] == '(' {
+				return "("
+			}
 			end := 0
 			for end < len(remaining) && ((remaining[end] >= 'a' && remaining[end] <= 'z') || (remaining[end] >= 'A' && remaining[end] <= 'Z')) {
 				end++

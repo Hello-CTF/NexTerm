@@ -143,6 +143,10 @@ func TestStatementReturnsRowsSkipsComments(t *testing.T) {
 	for statement, want := range map[string]bool{
 		" SELECT 1":                                         true,
 		"/* hint */ SHOW DATABASES":                         true,
+		"/* hint */ (SELECT 1 UNION SELECT 2);":             true,
+		"(SELECT 1);":                                       true,
+		"(TABLE items)":                                     true,
+		"(VALUES ROW(1))":                                   true,
 		"-- note\n UPDATE t SET x=1":                        false,
 		"# note\nDELETE FROM t":                             false,
 		"WITH x AS (SELECT 1) SELECT * FROM x":              true,
@@ -154,5 +158,73 @@ func TestStatementReturnsRowsSkipsComments(t *testing.T) {
 		if got := statementReturnsRows(statement); got != want {
 			t.Errorf("statementReturnsRows(%q)=%v want %v", statement, got, want)
 		}
+	}
+}
+
+func TestMySQLParenthesizedQueryUsesRowsPath(t *testing.T) {
+	rows := newFakeRows([]string{"value"}, []string{"INT"}, [][]driver.Value{{[]byte("1")}})
+	state := &fakeSQLState{query: func(context.Context, string) (driver.Rows, error) { return rows, nil }}
+	result, err := queryMySQL(context.Background(), newFakeSQLDB(t, state), "(SELECT 1);", 0, time.Second)
+	if err != nil || result.Error != nil {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if len(state.queries) != 1 || len(state.execs) != 0 || len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+		t.Fatalf("result=%+v queries=%v execs=%v", result, state.queries, state.execs)
+	}
+}
+
+func TestMySQLBITValuesUseBigEndianBytes(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value []byte
+		want  any
+	}{
+		{name: "zero BIT1", value: []byte{0}, want: uint64(0)},
+		{name: "one BIT1", value: []byte{1}, want: uint64(1)},
+		{name: "ASCII digit is numeric byte", value: []byte("1"), want: uint64(49)},
+		{name: "ASCII nine is numeric byte", value: []byte("9"), want: uint64(57)},
+		{name: "multiple bytes are big endian", value: []byte{0x31, 0x32}, want: uint64(12594)},
+		{name: "above JavaScript safe integer", value: []byte{0x00, 0x20, 0, 0, 0, 0, 0, 0}, want: "9007199254740992"},
+		{name: "wide BIT64", value: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, want: "18446744073709551615"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mysqlBytesValue(test.value, "BIT"); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("mysqlBytesValue(%x)=%#v want %#v", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestMySQLDescribeFunctionalIndexNullableColumn(t *testing.T) {
+	state := &fakeSQLState{query: func(_ context.Context, statement string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(statement, "information_schema.columns"):
+			return newFakeRows(
+				[]string{"column_name", "data_type", "is_nullable", "column_key", "column_default", "extra"},
+				nil,
+				[][]driver.Value{{"id", "int", "NO", "PRI", nil, ""}},
+			), nil
+		case strings.Contains(statement, "information_schema.statistics"):
+			return newFakeRows(
+				[]string{"index_name", "non_unique", "seq_in_index", "column_name"},
+				nil,
+				[][]driver.Value{{"PRIMARY", int64(0), int64(1), "id"}, {"idx_lower", int64(1), int64(1), nil}},
+			), nil
+		default:
+			return nil, errors.New("unexpected metadata query")
+		}
+	}}
+	service := NewService(nil)
+	service.conns["mysql"] = &mysqlConnection{db: newFakeSQLDB(t, state), database: "app"}
+	description, err := service.Describe(context.Background(), "mysql", "", "items")
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if len(description.Indexes) != 2 || description.Indexes[0].Column != "id" || description.Indexes[1].Name != "idx_lower" || description.Indexes[1].Column != "" {
+		t.Fatalf("description=%+v", description)
+	}
+	encoded, err := json.Marshal(description.Indexes[1])
+	if err != nil || !strings.Contains(string(encoded), `"column":""`) {
+		t.Fatalf("functional index DTO=%s err=%v", encoded, err)
 	}
 }

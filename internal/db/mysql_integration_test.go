@@ -92,6 +92,30 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 		t.Fatalf("UPDATE rowsAffected=%d", update.RowsAffected)
 	}
 
+	result = mustMySQLQuery(t, service, connID, "(SELECT 1);", 0, 5*time.Second)
+	if len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+		t.Fatalf("parenthesized SELECT result: %+v", result)
+	}
+	result = mustMySQLQuery(t, service, connID, "(SELECT 1 UNION SELECT 2);", 0, 5*time.Second)
+	if len(result.Rows) != 2 || result.Rows[0][0] != int64(1) || result.Rows[1][0] != int64(2) {
+		t.Fatalf("parenthesized UNION result: %+v", result)
+	}
+
+	mustMySQLQuery(t, service, connID, `CREATE TABLE m18_bits (
+		id INT PRIMARY KEY,
+		bit_zero BIT(1),
+		bit_one BIT(1),
+		bit_ascii BIT(8),
+		bit_wide BIT(64)
+	)`, 0, 5*time.Second)
+	mustMySQLQuery(t, service, connID, `INSERT INTO m18_bits VALUES
+		(1, b'0', b'1', b'00110001', b'1111111111111111111111111111111111111111111111111111111111111111')`, 0, 5*time.Second)
+	result = mustMySQLQuery(t, service, connID, "SELECT id, bit_zero, bit_one, bit_ascii, bit_wide FROM m18_bits", 0, 5*time.Second)
+	want = []any{int64(1), uint64(0), uint64(1), uint64(49), "18446744073709551615"}
+	if !reflect.DeepEqual(result.Rows[0], want) {
+		t.Fatalf("BIT values got  %#v\nwant %#v", result.Rows[0], want)
+	}
+
 	schemas, err := service.Schemas(context.Background(), connID)
 	if err != nil || !containsString(schemas, "nexterm_test") {
 		t.Fatalf("schemas=%v err=%v", schemas, err)
@@ -103,6 +127,28 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 	description, err := service.Describe(context.Background(), connID, "", "m18_types")
 	if err != nil || len(description.Columns) != 7 || len(description.Indexes) == 0 {
 		t.Fatalf("description=%+v err=%v", description, err)
+	}
+
+	mustMySQLQuery(t, service, connID, `CREATE TABLE m18_functional_indexes (
+		id INT PRIMARY KEY,
+		txt VARCHAR(255),
+		INDEX idx_lower_txt ((LOWER(txt)))
+	)`, 0, 5*time.Second)
+	description, err = service.Describe(context.Background(), connID, "", "m18_functional_indexes")
+	if err != nil || len(description.Columns) != 2 {
+		t.Fatalf("functional index description=%+v err=%v", description, err)
+	}
+	functionalIndexFound := false
+	for _, index := range description.Indexes {
+		if index.Name == "idx_lower_txt" {
+			functionalIndexFound = true
+			if index.Column != "" {
+				t.Fatalf("functional index column=%q, want empty DTO string", index.Column)
+			}
+		}
+	}
+	if !functionalIndexFound {
+		t.Fatalf("functional index missing from description: %+v", description.Indexes)
 	}
 
 	result, err = service.Query(context.Background(), connID, "SELECT 1; DROP TABLE m18_types", 0, 5*time.Second)

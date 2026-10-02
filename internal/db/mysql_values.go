@@ -62,6 +62,9 @@ func mysqlJSONValue(value any, databaseType string) any {
 }
 
 func mysqlBytesValue(value []byte, databaseType string) any {
+	if strings.EqualFold(databaseType, "BIT") {
+		return mysqlBitValue(value)
+	}
 	if isBinaryMySQLType(databaseType) {
 		return base64.StdEncoding.EncodeToString(value)
 	}
@@ -70,6 +73,17 @@ func mysqlBytesValue(value []byte, databaseType string) any {
 		return base64.StdEncoding.EncodeToString(value)
 	}
 	return mysqlTextValue(text, databaseType)
+}
+
+func mysqlBitValue(value []byte) any {
+	if len(value) == 0 || len(value) > 8 {
+		return base64.StdEncoding.EncodeToString(value)
+	}
+	var number uint64
+	for _, b := range value {
+		number = number<<8 | uint64(b)
+	}
+	return unsignedJSONInteger(number)
 }
 
 func mysqlTextValue(value, databaseType string) any {
