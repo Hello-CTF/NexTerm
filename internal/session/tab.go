@@ -463,6 +463,7 @@ func (m *Manager) Release(tabID, client string) (bool, error) {
 }
 
 func (m *Manager) Write(ctx context.Context, tabID, client string, data []byte) error {
+	m.notifyUserInput(tabID)
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return err

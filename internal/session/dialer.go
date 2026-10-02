@@ -6,7 +6,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-func (m *Manager) CurrentDialer(ctx context.Context, sessionID string) (base.Dialer, error) {
+func (m *Manager) Transport(ctx context.Context, sessionID string) (base.Transport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -21,7 +21,15 @@ func (m *Manager) CurrentDialer(ctx context.Context, sessionID string) (base.Dia
 	if session.closed || session.status != StatusConnected || session.transport == nil {
 		return nil, ErrDisconnected
 	}
-	dialer, ok := session.transport.Transport.(base.Dialer)
+	return session.transport.Transport, nil
+}
+
+func (m *Manager) CurrentDialer(ctx context.Context, sessionID string) (base.Dialer, error) {
+	transport, err := m.Transport(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	dialer, ok := transport.(base.Dialer)
 	if !ok {
 		return nil, ErrUnsupported
 	}

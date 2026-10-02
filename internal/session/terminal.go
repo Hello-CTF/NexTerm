@@ -172,6 +172,24 @@ func (m *Manager) RecordingBytes(tabID string) (uint64, error) {
 	return core.RecordingBytes(), nil
 }
 
+func (m *Manager) InjectInternal(ctx context.Context, tabID string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return err
+	}
+	tab.mu.Lock()
+	if tab.closed {
+		tab.mu.Unlock()
+		return ErrTabClosed
+	}
+	generation := tab.generation
+	tab.mu.Unlock()
+	return m.feed(ctx, tab, generation, data)
+}
+
 func (m *Manager) WriteInternal(ctx context.Context, tabID string, data []byte) error {
 	tab, err := m.Tab(tabID)
 	if err != nil {

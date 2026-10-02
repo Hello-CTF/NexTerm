@@ -30,6 +30,9 @@ type Manager struct {
 	emitter   Emitter
 	newID     func() string
 
+	hookMu        sync.RWMutex
+	userInputHook func(string)
+
 	idleTimeout      time.Duration
 	sweepInterval    time.Duration
 	reconnectMax     int
