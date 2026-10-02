@@ -74,6 +74,15 @@ func (r *historyRecorder) record(role schema.RoleType, message *schema.Message) 
 	}
 }
 
+func (r *historyRecorder) discardIncomplete() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clear(r.pending)
+	r.pending = nil
+	clear(r.remaining)
+	r.remaining = nil
+}
+
 func (r *historyRecorder) appendUnit(unit []*schema.Message) {
 	r.history = append(r.history, steer.CloneHistory(unit)...)
 	r.cap()

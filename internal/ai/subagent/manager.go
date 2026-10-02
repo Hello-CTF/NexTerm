@@ -259,6 +259,7 @@ func (m *Manager) lookupLocked(handle Handle) (*task, error) {
 func (m *Manager) run(current *task, request Request, scope Scope, allowed map[string]struct{}) {
 	defer m.wg.Done()
 	output, err := m.execute(current, request, scope, allowed)
+	current.recorder.discardIncomplete()
 	status := StatusCompleted
 	if err != nil {
 		status = StatusFailed
