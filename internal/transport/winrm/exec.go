@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
-	gowinrm "github.com/masterzen/winrm"
 )
 
 const (
@@ -20,14 +19,6 @@ const (
 
 type powerShellRunner interface {
 	RunPowerShell(context.Context, string, io.Writer, io.Writer) (int, error)
-}
-
-type libraryRunner struct {
-	client *gowinrm.Client
-}
-
-func (r *libraryRunner) RunPowerShell(ctx context.Context, script string, stdout, stderr io.Writer) (int, error) {
-	return r.client.RunWithContext(ctx, gowinrm.Powershell(script), stdout, stderr)
 }
 
 func quoteLiteral(value string) string {
@@ -124,10 +115,6 @@ func (t *Transport) Exec(ctx context.Context, command string, options base.ExecO
 		Duration:  time.Since(started),
 		Truncated: stdoutTruncated || stderrTruncated,
 	}
-	if runErr == nil {
-		result.ExitCode = &exitCode
-		return result, nil
-	}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
@@ -136,6 +123,10 @@ func (t *Transport) Exec(ctx context.Context, command string, options base.ExecO
 			return result, base.ErrClosed
 		}
 		return result, opCtx.Err()
+	}
+	if runErr == nil {
+		result.ExitCode = &exitCode
+		return result, nil
 	}
 	return result, fmt.Errorf("WinRM exec: %w", runErr)
 }

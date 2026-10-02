@@ -111,11 +111,11 @@ func TestExplicitHTTPProxyOverSOAPFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := newLibraryClient(config)
+	runner, err := newLibraryRunner(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateShell(); err != nil {
+	if _, err := runner.createShell(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if requests.Load() != 1 || targetHost.Load() != "winrm-fixture.invalid:5985" {
@@ -136,11 +136,11 @@ func TestTLSModesOverSOAPFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client, err := newLibraryClient(normalized)
+		runner, err := newLibraryRunner(normalized)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := client.CreateShell(); err != nil {
+		if _, err := runner.createShell(context.Background()); err != nil {
 			t.Fatalf("self-signed TLS fixture was not accepted: %v", err)
 		}
 	})
@@ -152,11 +152,11 @@ func TestTLSModesOverSOAPFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client, err := newLibraryClient(normalized)
+		runner, err := newLibraryRunner(normalized)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := client.CreateShell(); err != nil {
+		if _, err := runner.createShell(context.Background()); err != nil {
 			t.Fatalf("CA-trusted TLS fixture failed: %v", err)
 		}
 	})
@@ -166,11 +166,11 @@ func TestTLSModesOverSOAPFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client, err := newLibraryClient(normalized)
+		runner, err := newLibraryRunner(normalized)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := client.CreateShell(); err == nil {
+		if _, err := runner.createShell(context.Background()); err == nil {
 			t.Fatal("untrusted self-signed certificate succeeded")
 		}
 	})
@@ -184,11 +184,11 @@ func TestTLSModesOverSOAPFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client, err := newLibraryClient(normalized)
+		runner, err := newLibraryRunner(normalized)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := client.CreateShell(); err == nil || !strings.Contains(err.Error(), "wrong-fixture.invalid") {
+		if _, err := runner.createShell(context.Background()); err == nil || !strings.Contains(err.Error(), "wrong-fixture.invalid") {
 			t.Fatalf("TLS server name was not enforced: %v", err)
 		}
 	})

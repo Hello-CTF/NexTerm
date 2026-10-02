@@ -240,4 +240,51 @@ func TestRealWindowsServer(t *testing.T) {
 			t.Fatalf("OpenWrite = %v", err)
 		}
 	})
+
+	t.Run("relative read write and backup after cwd change", func(t *testing.T) {
+		temp := realExec(t, ctx, transport, "Write-Output $env:TEMP")
+		requireRealSuccess(t, temp)
+		processCWD := realExec(t, ctx, transport, "[Console]::Out.Write([Environment]::CurrentDirectory)")
+		requireRealSuccess(t, processCWD)
+		unique := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+		root := fmt.Sprintf(`%s\NexTerm-WinRM-relative-%s`, strings.TrimRight(temp.Stdout, `\`), unique)
+		name := "relative-'" + unique + ".txt"
+		decoy := fmt.Sprintf(`%s\%s`, strings.TrimRight(processCWD.Stdout, `\`), name)
+		filesystem, err := transport.FileSystem(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cleanupCancel()
+			_ = filesystem.Delete(cleanupCtx, root, true)
+			_ = filesystem.Delete(cleanupCtx, decoy, false)
+		})
+		if err := filesystem.Mkdir(ctx, root); err != nil {
+			t.Fatal(err)
+		}
+		changed := realExec(t, ctx, transport, "Set-Location -LiteralPath "+quoteLiteral(root)+"; Write-Output (Get-Location).Path")
+		requireRealSuccess(t, changed)
+		if err := filesystem.WriteFile(ctx, decoy, []byte("process-cwd-decoy"), false); err != nil {
+			t.Skipf("process-cwd collision fixture unavailable; the remote process directory is not writable: %v", err)
+		}
+		if err := filesystem.WriteFile(ctx, name, []byte("powershell-cwd-original"), false); err != nil {
+			t.Fatal(err)
+		}
+		if err := filesystem.WriteFile(ctx, name, []byte("powershell-cwd-replacement"), true); err != nil {
+			t.Fatal(err)
+		}
+		content, err := filesystem.ReadFile(ctx, name, 1024)
+		if err != nil || string(content) != "powershell-cwd-replacement" {
+			t.Fatalf("relative ReadFile after cwd change = %q, %v", content, err)
+		}
+		backup, err := filesystem.ReadFile(ctx, name+".nexterm-bak", 1024)
+		if err != nil || string(backup) != "powershell-cwd-original" {
+			t.Fatalf("relative backup after cwd change = %q, %v", backup, err)
+		}
+		decoyContent, err := filesystem.ReadFile(ctx, decoy, 1024)
+		if err != nil || string(decoyContent) != "process-cwd-decoy" {
+			t.Fatalf("relative I/O touched the .NET process-cwd file: %q, %v", decoyContent, err)
+		}
+	})
 }

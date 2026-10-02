@@ -87,7 +87,7 @@ func TestReadFileBase64AndLimit(t *testing.T) {
 		t.Fatalf("ReadFile = %v, %v", got, err)
 	}
 	script := executor.scripts[0]
-	if !strings.Contains(script, `'C:\O''Brien\bin.dat'`) || !strings.Contains(script, "$f.Length -gt 100") {
+	if !strings.Contains(script, `GetUnresolvedProviderPathFromPSPath('C:\O''Brien\bin.dat'`) || !strings.Contains(script, "[IO.File]::ReadAllBytes($f.FullName)") || !strings.Contains(script, "$f.Length -gt 100") {
 		t.Fatalf("read script = %s", script)
 	}
 	if _, err := filesystem.ReadFile(context.Background(), "file", -1); err == nil {
@@ -113,8 +113,10 @@ func TestWriteFileQuotesBackupAndEnforcesLimit(t *testing.T) {
 	}
 	script := executor.scripts[0]
 	for _, fragment := range []string{
-		`'C:\Users\O''Brien\a.txt'`,
-		`-Destination 'C:\Users\O''Brien\a.txt.nexterm-bak' -Force`,
+		`GetUnresolvedProviderPathFromPSPath('C:\Users\O''Brien\a.txt'`,
+		`$__nextermBackup=$__nextermPath+'.nexterm-bak'`,
+		`-Destination $__nextermBackup -Force`,
+		`[IO.File]::WriteAllBytes($__nextermPath`,
 		`[Convert]::FromBase64String('` + base64.StdEncoding.EncodeToString(data) + `')`,
 	} {
 		if !strings.Contains(script, fragment) {
@@ -129,6 +131,33 @@ func TestWriteFileQuotesBackupAndEnforcesLimit(t *testing.T) {
 	}
 	if err := filesystem.WriteFile(context.Background(), path, make([]byte, MaxWriteBytes), false); err != nil {
 		t.Fatalf("write at documented limit failed: %v", err)
+	}
+}
+
+func TestRelativeFileIOUsesResolvedFilesystemProviderPath(t *testing.T) {
+	executor := &fakeExecutor{result: success(base64.StdEncoding.EncodeToString([]byte("content")))}
+	filesystem := New(executor)
+	if _, err := filesystem.ReadFile(context.Background(), "after-cwd.txt", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.WriteFile(context.Background(), "after-cwd.txt", []byte("replacement"), true); err != nil {
+		t.Fatal(err)
+	}
+	for i, script := range executor.scripts {
+		resolve := strings.Index(script, "GetUnresolvedProviderPathFromPSPath('after-cwd.txt'")
+		if resolve < 0 || !strings.Contains(script, "if ($__nextermProvider.Name -ne 'FileSystem')") {
+			t.Fatalf("script %d does not resolve and validate the provider path: %s", i, script)
+		}
+		if strings.Contains(script, "[IO.File]::ReadAllBytes('after-cwd.txt'") || strings.Contains(script, "[IO.File]::WriteAllBytes('after-cwd.txt'") {
+			t.Fatalf("script %d passes a relative path to .NET: %s", i, script)
+		}
+	}
+	if !strings.Contains(executor.scripts[0], "[IO.File]::ReadAllBytes($f.FullName)") {
+		t.Fatalf("relative read does not use the resolved file: %s", executor.scripts[0])
+	}
+	write := executor.scripts[1]
+	if !strings.Contains(write, "[IO.File]::WriteAllBytes($__nextermPath") || !strings.Contains(write, "$__nextermBackup=$__nextermPath+'.nexterm-bak'") {
+		t.Fatalf("relative write/backup does not share the resolved path: %s", write)
 	}
 }
 

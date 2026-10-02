@@ -21,6 +21,7 @@ type Transport struct {
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
 	closeOnce   sync.Once
+	closeErr    error
 	execGate    chan struct{}
 }
 
@@ -29,11 +30,11 @@ func New(config Config) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := newLibraryClient(normalized)
+	runner, err := newLibraryRunner(normalized)
 	if err != nil {
 		return nil, err
 	}
-	return newWithRunner(normalized, &libraryRunner{client: client})
+	return newWithRunner(normalized, runner)
 }
 
 func newWithRunner(config Config, runner powerShellRunner) (*Transport, error) {
@@ -64,8 +65,13 @@ func (t *Transport) IsAlive() bool {
 }
 
 func (t *Transport) Close() error {
-	t.closeOnce.Do(t.closeCancel)
-	return nil
+	t.closeOnce.Do(func() {
+		t.closeCancel()
+		if closer, ok := t.runner.(interface{ Close() error }); ok {
+			t.closeErr = closer.Close()
+		}
+	})
+	return t.closeErr
 }
 
 func (t *Transport) CWD() string {

@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	gowinrm "github.com/masterzen/winrm"
 )
 
 type AuthMethod string
@@ -114,38 +112,4 @@ func proxyFunction(raw string) (func(*http.Request) (*url.URL, error), error) {
 		return nil, fmt.Errorf("unsupported WinRM proxy scheme %q", proxyURL.Scheme)
 	}
 	return http.ProxyURL(proxyURL), nil
-}
-
-func transportDecorator(auth AuthMethod, proxy func(*http.Request) (*url.URL, error)) func() gowinrm.Transporter {
-	return func() gowinrm.Transporter {
-		if auth == AuthNTLM {
-			return gowinrm.NewClientNTLMWithProxyFunc(proxy)
-		}
-		return gowinrm.NewClientWithProxyFunc(proxy)
-	}
-}
-
-func newLibraryClient(config Config) (*gowinrm.Client, error) {
-	endpoint := gowinrm.NewEndpoint(
-		config.Host,
-		config.Port,
-		config.UseTLS,
-		config.AcceptInvalidCerts,
-		config.CACert,
-		nil,
-		nil,
-		config.RequestTimeout,
-	)
-	endpoint.TLSServerName = config.TLSServerName
-	proxy, err := proxyFunction(config.ProxyURL)
-	if err != nil {
-		return nil, err
-	}
-	parameters := gowinrm.NewParameters("PT60S", "en-US", 153600)
-	parameters.TransportDecorator = transportDecorator(config.Auth, proxy)
-	client, err := gowinrm.NewClientWithParameters(endpoint, config.principal(), config.Password, parameters)
-	if err != nil {
-		return nil, fmt.Errorf("build WinRM client: %w", err)
-	}
-	return client, nil
 }

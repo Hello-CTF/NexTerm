@@ -132,6 +132,16 @@ func TestExecTimeoutAndCancellation(t *testing.T) {
 			t.Fatalf("timeout = %+v, %v", result, err)
 		}
 	})
+	t.Run("runner reports success after deadline", func(t *testing.T) {
+		transport := testTransport(t, &fakeRunner{run: func(ctx context.Context, _ string, _, _ io.Writer) (int, error) {
+			<-ctx.Done()
+			return 0, nil
+		}})
+		result, err := transport.Exec(context.Background(), "wait", base.ExecOptions{Timeout: 20 * time.Millisecond})
+		if !errors.Is(err, context.DeadlineExceeded) || result.ExitCode != nil {
+			t.Fatalf("late success = %+v, %v", result, err)
+		}
+	})
 	t.Run("caller cancellation", func(t *testing.T) {
 		started := make(chan struct{})
 		transport := testTransport(t, &fakeRunner{run: func(ctx context.Context, _ string, _, _ io.Writer) (int, error) {

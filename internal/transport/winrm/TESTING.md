@@ -1,6 +1,6 @@
 # WinRM integration fixtures
 
-Unit tests run by default. They include in-process HTTP/SOAP fixtures for Basic/domain credentials, command execution, explicit HTTP proxying, and TLS verification modes; these fixtures are not claims of real Windows Server or NTLM handshake validation. Real Windows Server tests are opt-in and never run against an arbitrary host:
+Unit tests run by default. They include in-process HTTP/SOAP fixtures for Basic/domain credentials, command execution, explicit HTTP proxying, TLS verification modes, and production-runner Create/Execute/Receive/Signal/Delete timeout, cancellation, and Close behavior. These fixtures are not claims of real Windows Server or NTLM handshake validation. Real Windows Server tests are opt-in and never run against an arbitrary host:
 
 ```sh
 NEXTERM_WINRM_INTEGRATION=1 \
@@ -18,7 +18,7 @@ Fixture coverage and explicit unavailable cases:
 - The domain-user subtest skips unless `NEXTERM_WINRM_DOMAIN` is set or the user is already qualified as `DOMAIN\\user` or `user@domain`. A local Administrator account is not a domain fixture.
 - The TLS subtest skips unless the fixture enables `NEXTERM_WINRM_TLS` or uses port 5986. A trusted CA can be supplied with `NEXTERM_WINRM_CA_FILE`; skipping verification is supported but is not a certificate-validation test.
 - The proxy subtest skips unless `NEXTERM_WINRM_PROXY_URL` is set. The fixture proxy must support the selected HTTP/HTTPS/SOCKS5 route; unit tests separately prove that environment proxies are ignored.
-- cwd persistence, nonzero exit status, UTF-8, GB18030, separate stdout/stderr, and filesystem operations run on the main fixture. Filesystem tests create and recursively remove a unique apostrophe-containing directory under the remote temporary directory.
+- cwd persistence, nonzero exit status, UTF-8, GB18030, separate stdout/stderr, and filesystem operations run on the main fixture. Filesystem tests create and recursively remove a unique apostrophe-containing directory under the remote temporary directory. The relative-I/O subtest also changes the synthetic cwd and uses a same-named decoy in the .NET process directory to verify read/write/backup path resolution; it skips explicitly if that process directory is not writable.
 - Kerberos, interactive PTY, streaming file transfer, and streaming Docker exec have no fixture and are not implemented or claimed.
 
 In this development environment no real Windows Server, domain controller, WinRM TLS listener, or explicit WinRM proxy fixture has been supplied. Consequently those tests must report Skip here; their successful execution remains outstanding until the corresponding environment is provided.

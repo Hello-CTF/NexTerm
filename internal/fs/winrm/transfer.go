@@ -15,12 +15,16 @@ func quoteLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
+func resolvePath(path string) string {
+	return "$__nextermProvider=$null; $__nextermDrive=$null; $__nextermPath=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(" + quoteLiteral(path) + ", [ref]$__nextermProvider, [ref]$__nextermDrive); if ($__nextermProvider.Name -ne 'FileSystem') { throw 'Path must use the FileSystem provider' }; "
+}
+
 func (f *FileSystem) ReadFile(ctx context.Context, path string, maxBytes int64) ([]byte, error) {
 	if maxBytes < 0 {
 		return nil, fmt.Errorf("read limit must not be negative")
 	}
-	quoted := quoteLiteral(path)
-	output, err := f.execute(ctx, fmt.Sprintf("$ErrorActionPreference='Stop'; $f=Get-Item -LiteralPath %s; if ($f.PSIsContainer) { throw 'Path is a directory' }; if ($f.Length -gt %d) { throw 'File exceeds read limit' }; [Convert]::ToBase64String([IO.File]::ReadAllBytes(%s))", quoted, maxBytes, quoted))
+	script := "$ErrorActionPreference='Stop'; " + resolvePath(path) + fmt.Sprintf("$f=Get-Item -LiteralPath $__nextermPath; if ($f.PSIsContainer) { throw 'Path is a directory' }; if ($f.Length -gt %d) { throw 'File exceeds read limit' }; [Convert]::ToBase64String([IO.File]::ReadAllBytes($f.FullName))", maxBytes)
+	output, err := f.execute(ctx, script)
 	if err != nil {
 		return nil, err
 	}
@@ -38,14 +42,13 @@ func (f *FileSystem) WriteFile(ctx context.Context, path string, data []byte, ba
 	if len(data) > MaxWriteBytes {
 		return fmt.Errorf("WinRM write limit is %d bytes, got %d", MaxWriteBytes, len(data))
 	}
-	quoted := quoteLiteral(path)
 	backupClause := ""
 	if backup {
-		backupPath := quoteLiteral(path + BackupSuffix)
-		backupClause = "if (Test-Path -LiteralPath " + quoted + ") { Copy-Item -LiteralPath " + quoted + " -Destination " + backupPath + " -Force }; "
+		backupClause = "if (Test-Path -LiteralPath $__nextermPath) { $__nextermBackup=$__nextermPath+'" + BackupSuffix + "'; Copy-Item -LiteralPath $__nextermPath -Destination $__nextermBackup -Force }; "
 	}
 	encoded := base64.StdEncoding.EncodeToString(data)
-	_, err := f.execute(ctx, "$ErrorActionPreference='Stop'; "+backupClause+"[IO.File]::WriteAllBytes("+quoted+", [Convert]::FromBase64String('"+encoded+"'))")
+	script := "$ErrorActionPreference='Stop'; " + resolvePath(path) + backupClause + "[IO.File]::WriteAllBytes($__nextermPath, [Convert]::FromBase64String('" + encoded + "'))"
+	_, err := f.execute(ctx, script)
 	return err
 }
 

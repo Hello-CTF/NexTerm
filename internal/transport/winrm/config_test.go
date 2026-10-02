@@ -1,12 +1,12 @@
 package winrm
 
 import (
-	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	gowinrm "github.com/masterzen/winrm"
+	"github.com/Azure/go-ntlmssp"
 )
 
 func TestConfigDefaultsAndDomainPrincipal(t *testing.T) {
@@ -55,17 +55,26 @@ func TestConfigRejectsAmbiguousOrInvalidValues(t *testing.T) {
 	}
 }
 
-func TestAuthenticationDecoratorIsConsumed(t *testing.T) {
-	direct, err := proxyFunction("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := transportDecorator(AuthNTLM, direct)().(*gowinrm.ClientNTLM); !ok {
-		t.Fatalf("NTLM config produced %T", transportDecorator(AuthNTLM, direct)())
-	}
-	basic := transportDecorator(AuthBasic, direct)()
-	if _, ok := basic.(*gowinrm.ClientNTLM); ok || !strings.Contains(fmt.Sprintf("%T", basic), "clientRequest") {
-		t.Fatalf("Basic config produced %T", basic)
+func TestAuthenticationTransportIsConsumed(t *testing.T) {
+	for _, auth := range []AuthMethod{AuthNTLM, AuthBasic} {
+		config, err := (Config{Host: "server.example", User: "alice", Auth: auth}).normalized()
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner, err := newLibraryRunner(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch auth {
+		case AuthNTLM:
+			if _, ok := runner.httpClient.Transport.(*ntlmssp.Negotiator); !ok {
+				t.Fatalf("NTLM config produced %T", runner.httpClient.Transport)
+			}
+		case AuthBasic:
+			if _, ok := runner.httpClient.Transport.(*http.Transport); !ok {
+				t.Fatalf("Basic config produced %T", runner.httpClient.Transport)
+			}
+		}
 	}
 }
 
@@ -105,7 +114,7 @@ func TestTLSValidationConfigurationIsConsumed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newLibraryClient(config); err == nil || !strings.Contains(err.Error(), "build WinRM client") {
+	if _, err := newLibraryRunner(config); err == nil || !strings.Contains(err.Error(), "build WinRM client") {
 		t.Fatalf("invalid CA should fail client construction, got %v", err)
 	}
 }
