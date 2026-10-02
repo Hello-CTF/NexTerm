@@ -2,6 +2,8 @@ package production
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/forward"
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
@@ -30,6 +33,7 @@ type ProductionConfig struct {
 	Terminals               session.TerminalFactory
 	TaskOptions             tasks.Options
 	Docker                  *docker.Service
+	DurableBinary           string
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
 }
@@ -102,11 +106,19 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		connector = defaultConnector
 		hostKeys = defaultConnector.hostKeys
 	}
+	durableBackend, durableErr := durable.New(durable.Config{
+		Binary: config.DurableBinary, SocketPath: productionDurableSocketPath(config.DataDir),
+		StateDir: filepath.Join(config.DataDir, "durable", "state"),
+	})
+	if durableErr != nil && !errors.Is(durableErr, durable.ErrUnavailable) {
+		return nil, durableErr
+	}
 	dockerService := config.Docker
 	emitter := session.AdaptEmitter(config.Config.Events)
 	sessionManager = session.NewManager(session.Config{
 		Connector: connector,
 		Terminals: config.Terminals,
+		Durable:   session.NewDurableProvider(durableBackend),
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
@@ -134,11 +146,16 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
-		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, dataDir: config.DataDir,
+		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, hostKeys: hostKeys, dataDir: config.DataDir,
 	}
 	production, err := NewProductionWithServices(config.Config, services)
 	if err != nil {
 		return nil, err
 	}
 	return production, nil
+}
+
+func productionDurableSocketPath(dataDir string) string {
+	digest := sha256.Sum256([]byte(dataDir))
+	return filepath.Join(os.TempDir(), "nexterm-durable-"+fmt.Sprintf("%x", digest[:8])+".sock")
 }

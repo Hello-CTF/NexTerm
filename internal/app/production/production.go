@@ -8,6 +8,7 @@ import (
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/forward"
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -42,6 +43,8 @@ type ProductionServices struct {
 	Sessions         *session.Manager
 	Forward          *forward.Service
 	Docker           *docker.Service
+	Durable          *durable.Backend
+	DurableErr       error
 	Retention        *RetentionRunner
 	channelBridge    *terminalBridge
 	terminalCommands *terminalCommandService
@@ -67,7 +70,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Durable, services.DurableErr, services.channelBridge)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status

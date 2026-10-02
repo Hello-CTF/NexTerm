@@ -11,17 +11,20 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
 type terminalCommandService struct {
-	database *store.Store
-	sessions *session.Manager
-	docker   *docker.Service
-	bridge   *terminalBridge
-	grid     *ipc.Dispatcher
+	database   *store.Store
+	sessions   *session.Manager
+	docker     *docker.Service
+	durable    *durable.Backend
+	durableErr error
+	bridge     *terminalBridge
+	grid       *ipc.Dispatcher
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -120,9 +123,9 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableBackend *durable.Backend, durableErr error, bridge *terminalBridge) *terminalCommandService {
 	return &terminalCommandService{
-		database: database, sessions: sessions, docker: dockerService, bridge: bridge,
+		database: database, sessions: sessions, docker: dockerService, durable: durableBackend, durableErr: durableErr, bridge: bridge,
 		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream),
 	}
 }
@@ -152,15 +155,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "session_connect_local", func(ctx context.Context, _ *ipc.Call, _ struct{}) (sessionInfoDTO, error) {
-				row, err := s.database.AssetEnsureBuiltinLocal(ctx)
-				if err != nil {
-					return sessionInfoDTO{}, err
-				}
-				asset, err := productionSessionAsset(row, false)
-				if err != nil {
-					return sessionInfoDTO{}, err
-				}
-				connected, err := s.sessions.Connect(ctx, asset)
+				connected, err := s.connectLocal(ctx)
 				if err != nil {
 					return sessionInfoDTO{}, terminalIPCError(err)
 				}
@@ -247,11 +242,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_attach", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
+				durableOptions, err := s.createDurableOptions(input.SessionID)
+				if err != nil {
+					return "", terminalIPCError(err)
+				}
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
 					return "", terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: input.Cols, Rows: input.Rows,
+					Durable: durableOptions,
 				})
 				if err != nil {
 					s.bridge.Unbridge(call.Channel.ID)
@@ -271,6 +271,26 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				})
 				if err == nil {
 					return attachedSessionTab(info), nil
+				}
+				if s.durableErr != nil {
+					return attachedTabDTO{}, terminalIPCError(s.durableErr)
+				}
+				if errors.Is(err, session.ErrTabNotFound) && s.durable != nil {
+					recovered, recoveryErr := s.recoverDurable(ctx, call, input.TabID)
+					if recoveryErr == nil {
+						return recovered, nil
+					}
+					s.bridge.Unbridge(call.Channel.ID)
+					if !errors.Is(recoveryErr, durable.ErrNotFound) {
+						return attachedTabDTO{}, terminalIPCError(recoveryErr)
+					}
+					if s.docker != nil {
+						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
+							return s.attachDocker(ctx, call, input.TabID)
+						}
+						return attachedTabDTO{}, terminalIPCError(recoveryErr)
+					}
+					return attachedTabDTO{}, terminalIPCError(recoveryErr)
 				}
 				if !errors.Is(err, session.ErrTabNotFound) || s.docker == nil {
 					return attachedTabDTO{}, terminalIPCError(err)
@@ -431,6 +451,66 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	return registerFSCommands(dispatcher, s.sessions)
 }
 
+func (s *terminalCommandService) createDurableOptions(sessionID string) (*session.DurableTabOptions, error) {
+	if s.durableErr != nil {
+		return nil, s.durableErr
+	}
+	if s.durable == nil {
+		return nil, nil
+	}
+	connected, err := s.sessions.Session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if connected.Asset().Kind != session.KindLocal {
+		return nil, nil
+	}
+	return &session.DurableTabOptions{}, nil
+}
+
+func (s *terminalCommandService) recoverDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {
+	var connected *session.Session
+	for _, info := range s.sessions.ListSessions() {
+		if info.Kind == session.KindLocal && info.Status == session.StatusConnected {
+			current, err := s.sessions.Session(info.ID)
+			if err == nil {
+				connected = current
+				break
+			}
+		}
+	}
+	var err error
+	if connected == nil {
+		connected, err = s.connectLocal(ctx)
+		if err != nil {
+			return attachedTabDTO{}, err
+		}
+	}
+	if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+		return attachedTabDTO{}, err
+	}
+	info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
+		TabID: tabID, SessionID: connected.ID, ClientID: call.ClientID, ChannelID: call.Channel.ID,
+		Cols: 80, Rows: 24, Durable: &session.DurableTabOptions{Recover: true},
+	})
+	if err != nil {
+		return attachedTabDTO{}, err
+	}
+	return attachedSessionTab(info), nil
+}
+
+func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Session, error) {
+	row, err := s.database.AssetEnsureBuiltinLocal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	asset, err := productionSessionAsset(row, false)
+	if err != nil {
+		return nil, err
+	}
+	return s.sessions.Connect(ctx, asset)
+}
+
 func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Call) (any, error) {
 	response := s.grid.Dispatch(ctx, ipc.Request{
 		Command: call.Command, Args: call.Args, Channel: call.Channel, ClientID: call.ClientID,
@@ -534,8 +614,20 @@ func terminalIPCError(err error) error {
 	if errors.Is(err, docker.ErrStreamClosed) {
 		return ipc.WrapError(ipc.CodeDisconnected, err.Error(), err)
 	}
-	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) {
+	if errors.Is(err, docker.ErrUnsupported) || errors.Is(err, docker.ErrNoBackend) || errors.Is(err, durable.ErrUnavailable) {
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
+	}
+	if errors.Is(err, durable.ErrNotFound) {
+		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
+	}
+	if errors.Is(err, durable.ErrNotOwned) || errors.Is(err, durable.ErrIdentity) {
+		return ipc.WrapError(ipc.CodeForbidden, err.Error(), err)
+	}
+	if errors.Is(err, durable.ErrExited) || errors.Is(err, durable.ErrClosed) {
+		return ipc.WrapError(ipc.CodeDisconnected, err.Error(), err)
+	}
+	if errors.Is(err, durable.ErrInvalidInput) || errors.Is(err, durable.ErrAlreadyExists) {
+		return ipc.BadParam(err)
 	}
 	return session.IPCError(err)
 }
