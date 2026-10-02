@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/migrations"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const migrationsTable = "schema_migrations"
@@ -23,7 +28,43 @@ type migration struct {
 }
 
 func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	all, err := loadMigrations()
+	if err != nil {
+		return migrateError(err)
+	}
+	backoff := time.Millisecond
+	for attempt := 0; ; attempt++ {
+		err := s.migrateOnce(ctx, all)
+		if !isSQLiteLockError(err) || attempt == 39 {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return migrateError(ctx.Err())
+		case <-time.After(backoff):
+		}
+		if backoff < 50*time.Millisecond {
+			backoff *= 2
+		}
+	}
+}
+
+func isSQLiteLockError(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	primaryCode := sqliteErr.Code() & 0xff
+	return primaryCode == sqlite3.SQLITE_BUSY || primaryCode == sqlite3.SQLITE_LOCKED
+}
+
+func (s *Store) migrateOnce(ctx context.Context, all []migration) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return migrateError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
     version BIGINT PRIMARY KEY,
     description TEXT NOT NULL,
     installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -31,12 +72,7 @@ func (s *Store) migrate(ctx context.Context) error {
 )`); err != nil {
 		return migrateError(err)
 	}
-
-	all, err := loadMigrations()
-	if err != nil {
-		return migrateError(err)
-	}
-	applied, err := s.appliedMigrations(ctx)
+	applied, err := appliedMigrations(ctx, tx)
 	if err != nil {
 		return migrateError(err)
 	}
@@ -63,16 +99,19 @@ func (s *Store) migrate(ctx context.Context) error {
 				return migrateError(fmt.Errorf("migration %d is missing before applied migration %d", m.version, version))
 			}
 		}
-		if err := s.applyMigration(ctx, m); err != nil {
+		if err := applyMigration(ctx, tx, m); err != nil {
 			return migrateError(err)
 		}
 		applied[m.version] = m.checksum
 	}
+	if err := tx.Commit(); err != nil {
+		return migrateError(err)
+	}
 	return nil
 }
 
-func (s *Store) appliedMigrations(ctx context.Context) (map[int64][]byte, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT version, checksum FROM schema_migrations ORDER BY version")
+func appliedMigrations(ctx context.Context, tx *sql.Tx) (map[int64][]byte, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT version, checksum FROM schema_migrations ORDER BY version")
 	if err != nil {
 		return nil, err
 	}
@@ -89,20 +128,13 @@ func (s *Store) appliedMigrations(ctx context.Context) (map[int64][]byte, error)
 	return result, rows.Err()
 }
 
-func (s *Store) applyMigration(ctx context.Context, m migration) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
+func applyMigration(ctx context.Context, tx *sql.Tx, m migration) error {
 	if _, err := tx.ExecContext(ctx, string(m.sql)); err != nil {
 		return fmt.Errorf("execute migration %d (%s): %w", m.version, m.description, err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations
-(version, description, checksum) VALUES (?, ?, ?)`, m.version, m.description, m.checksum); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations
+(version, description, checksum) VALUES (?, ?, ?)`, m.version, m.description, m.checksum)
+	return err
 }
 
 func loadMigrations() ([]migration, error) {

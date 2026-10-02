@@ -100,6 +100,49 @@ func TestFileOpenPragmasAndReopen(t *testing.T) {
 	}
 }
 
+func TestMigrationConcurrentFirstOpen(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		path := filepath.Join(t.TempDir(), "data.db")
+		start := make(chan struct{})
+		type openResult struct {
+			db  *Store
+			err error
+		}
+		results := make(chan openResult, 2)
+		for range 2 {
+			go func() {
+				<-start
+				db, err := Open(context.Background(), path)
+				results <- openResult{db: db, err: err}
+			}()
+		}
+		close(start)
+
+		var stores []*Store
+		failed := false
+		for range 2 {
+			result := <-results
+			if result.err != nil {
+				t.Errorf("round %d concurrent Open: %v", round, result.err)
+				failed = true
+				continue
+			}
+			stores = append(stores, result.db)
+		}
+		for _, db := range stores {
+			var count int
+			if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 2 {
+				t.Errorf("round %d migration count=%d err=%v", round, count, err)
+				failed = true
+			}
+			_ = db.Close()
+		}
+		if failed {
+			t.FailNow()
+		}
+	}
+}
+
 func TestMigrationRejectsChecksumDrift(t *testing.T) {
 	db, path := fileStore(t)
 	if err := db.Close(); err != nil {
