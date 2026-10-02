@@ -12,15 +12,16 @@ import (
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
 
 const (
-	TokenHeader        = "X-NexTerm-Sync-Token"
-	PlatformUserHeader = "X-HC-User-ID"
+	TokenHeader        = syncservice.TokenHeader
+	PlatformUserHeader = syncservice.PlatformUserHeader
 )
 
-var syncOnlyCommands = [...]string{"sync_digest", "sync_export", "sync_import"}
+var syncOnlyCommands = [...]string{syncservice.CommandDigest, syncservice.CommandExport, syncservice.CommandImport}
 
 type TokenVerifier interface {
 	VerifyToken(context.Context, string) (bool, error)

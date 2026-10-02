@@ -139,6 +139,38 @@ func (r *replayReceiver) Close() error {
 	return nil
 }
 
+func TestWebSocketReplayLiveBoundaryPreservesArrivalOrder(t *testing.T) {
+	hub := newReplayHub()
+	config := testConfig(t, false)
+	config.Channels = hub
+	config.ChannelStats = hub.Stats
+	_, httpServer := newTestHTTP(t, config)
+	const channelID = "ordered-channel"
+	hub.Send(channelID, Frame{Sequence: 1, Kind: FrameBinary, Data: []byte("replay-1")})
+	hub.Send(channelID, Frame{Sequence: 3, Kind: FrameBinary, Data: []byte("replay-3")})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/channel/"+channelID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close(websocket.StatusNormalClosure, "")
+	waitFor(t, func() bool { return hub.Stats().LiveChannels == 1 })
+	hub.Send(channelID, Frame{Sequence: 2, Kind: FrameBinary, Data: []byte("live-2")})
+	hub.Send(channelID, Frame{Sequence: 4, Kind: FrameBinary, Data: []byte("live-4")})
+
+	for _, expected := range []string{"replay-1", "replay-3", "live-2", "live-4"} {
+		messageType, data, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if messageType != websocket.MessageBinary || string(data) != expected {
+			t.Fatalf("frame = type %v data %q, want binary %q", messageType, data, expected)
+		}
+	}
+}
+
 func TestWebSocketChannelPendingReplayAndFrameTypes(t *testing.T) {
 	hub := newReplayHub()
 	config := testConfig(t, false)
@@ -166,7 +198,10 @@ func TestWebSocketChannelPendingReplayAndFrameTypes(t *testing.T) {
 	}
 	waitFor(t, func() bool { return hub.Stats().LiveChannels == 0 })
 
-	hub.Send("client-c1", Frame{Kind: FrameJSON, Data: []byte(`{"type":"delta","text":"ok"}`)})
+	hub.Send("client-c1", Frame{Sequence: 5, Kind: FrameJSON, Data: []byte(`{"type":"error","message":"backend run failed","final":true}`)})
+	if hub.Stats().PendingChannels != 1 {
+		t.Fatal("closing the watcher cancelled the pending background stream")
+	}
 	connection, _, err = websocket.Dial(ctx, channelURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -176,8 +211,16 @@ func TestWebSocketChannelPendingReplayAndFrameTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if messageType != websocket.MessageText || !json.Valid(data) || !strings.Contains(string(data), "delta") {
-		t.Fatalf("replay frame = type %v data %s", messageType, data)
+	var terminal struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+		Final   bool   `json:"final"`
+	}
+	if err := json.Unmarshal(data, &terminal); err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.MessageText || terminal.Type != "error" || terminal.Message != "backend run failed" || !terminal.Final {
+		t.Fatalf("terminal replay = type %v data %+v", messageType, terminal)
 	}
 }
 

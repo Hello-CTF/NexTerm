@@ -10,8 +10,9 @@ const (
 )
 
 type Frame struct {
-	Kind FrameKind
-	Data []byte
+	Sequence uint64
+	Kind     FrameKind
+	Data     []byte
 }
 
 type ChannelReceiver interface {

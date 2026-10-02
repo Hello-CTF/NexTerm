@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,6 +97,73 @@ func TestSyncOnlyPreflightDoesNotCreateExtraRoutes(t *testing.T) {
 		if response.StatusCode != expected {
 			t.Errorf("OPTIONS %s = %d, want %d", path, response.StatusCode, expected)
 		}
+	}
+}
+
+func TestTerminalHandshakeFailuresAreSingleShot(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		syncOnly bool
+		method   string
+		path     string
+		origin   string
+		expected int
+	}{
+		{name: "unauthorized", syncOnly: true, method: http.MethodPost, path: "/sync/rpc", expected: http.StatusUnauthorized},
+		{name: "forbidden", method: http.MethodGet, path: "/ws/events", origin: "https://evil.example", expected: http.StatusForbidden},
+		{name: "not found", syncOnly: true, method: http.MethodGet, path: "/ws/events", expected: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := New(testConfig(t, test.syncOnly))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var requests atomic.Int32
+			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				server.Handler().ServeHTTP(w, r)
+			}))
+			t.Cleanup(func() {
+				httpServer.Close()
+				_ = server.Close()
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if test.method == http.MethodPost {
+				request, err := http.NewRequestWithContext(ctx, test.method, httpServer.URL+test.path, strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set("Content-Type", "application/json")
+				response, err := httpServer.Client().Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				response.Body.Close()
+				if response.StatusCode != test.expected {
+					t.Fatalf("status = %d, want %d", response.StatusCode, test.expected)
+				}
+			} else {
+				options := &websocket.DialOptions{}
+				if test.origin != "" {
+					options.HTTPHeader = http.Header{"Origin": []string{test.origin}}
+				}
+				connection, response, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+test.path, options)
+				if err == nil {
+					connection.Close(websocket.StatusNormalClosure, "")
+					t.Fatalf("handshake unexpectedly succeeded")
+				}
+				if response != nil {
+					response.Body.Close()
+					if response.StatusCode != test.expected {
+						t.Fatalf("status = %d, want %d", response.StatusCode, test.expected)
+					}
+				}
+			}
+			if count := requests.Load(); count != 1 {
+				t.Fatalf("request count = %d, want exactly one terminal attempt", count)
+			}
+		})
 	}
 }
 
