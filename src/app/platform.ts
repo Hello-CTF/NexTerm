@@ -24,3 +24,11 @@ export function setMacPlatform(fromBackend: boolean): void {
 export const wailsDragRegionStyle = {
   "--wails-draggable": "drag",
 } as CSSProperties;
+
+export const wailsNoDragRegionStyle = {
+  "--wails-draggable": "no-drag",
+} as CSSProperties;
+
+export function isWailsDragRegionTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.matches("[data-wails-drag-region]");
+}

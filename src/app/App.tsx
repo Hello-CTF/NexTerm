@@ -31,7 +31,12 @@ import { layoutBootstrapped, startLayoutSync } from "./layout";
 import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
-import { isMac, wailsDragRegionStyle } from "./platform";
+import {
+  isMac,
+  isWailsDragRegionTarget,
+  wailsDragRegionStyle,
+  wailsNoDragRegionStyle,
+} from "./platform";
 import {
   closeWindow,
   minimiseWindow,
@@ -112,8 +117,7 @@ const TAB_ICON = {
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
   if (TRANSPORT !== "desktop") return;
-  const target = event.target;
-  if (target instanceof HTMLElement && target.closest("[data-wails-drag-region]")) {
+  if (isWailsDragRegionTarget(event.target)) {
     void toggleMaximiseWindow();
   }
 }
@@ -695,6 +699,7 @@ export default function App() {
                 <button
                   key={w.id}
                   className={`nx-ws ${isActive ? "is-active" : ""}`}
+                  style={wailsNoDragRegionStyle}
                   onClick={() => setActiveWorkspace(w.id)}
                   title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
                     w.panes.length > 1 ? " · 已分屏" : ""
@@ -722,6 +727,7 @@ export default function App() {
             })}
             <button
               className="nx-tab-new"
+              style={wailsNoDragRegionStyle}
               title="新建工作区：在左侧资产树里双击一台机器"
               onClick={() => {
                 setLeftMode("assets");
@@ -737,14 +743,14 @@ export default function App() {
             {TRANSPORT === "desktop" && !isMac() && (
               <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
                 <button
-                  className="nx-icon-btn"
+                  className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最小化"
                   onClick={() => void minimiseWindow()}
                 >
                   <IconMinus size={13} />
                 </button>
                 <button
-                  className="nx-icon-btn"
+                  className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最大化 / 还原（双击空白处也可）"
                   onClick={() => void toggleMaximiseWindow()}
                 >
@@ -752,6 +758,7 @@ export default function App() {
                 </button>
                 <button
                   className="nx-icon-btn is-danger"
+                  style={wailsNoDragRegionStyle}
                   title="关闭"
                   onClick={() => void closeWindow()}
                 >
@@ -789,7 +796,7 @@ export default function App() {
             </span>
             <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
             <button
-              className="nx-icon-btn"
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
               title="刷新会话列表与凭据库状态"
               onClick={() => {
                 void sessionApi.list().then(setSessions).catch(() => undefined);
@@ -810,13 +817,13 @@ export default function App() {
               <IconActivity size={15} />
             </button>
             <button
-              className="nx-icon-btn"
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
               title="命令面板 (Ctrl+Shift+P)"
               onClick={() => setPaletteOpen(true)}
             >
               <IconCommand size={15} />
             </button>
-            <button className="nx-icon-btn" title="全局搜索 (Ctrl+K)" onClick={() => setPaletteOpen(true)}>
+            <button className="nx-icon-btn" style={wailsNoDragRegionStyle} title="全局搜索 (Ctrl+K)" onClick={() => setPaletteOpen(true)}>
               <IconSearch size={15} />
             </button>
           </header>
