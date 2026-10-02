@@ -21,6 +21,7 @@ func CanonicalizeArguments(raw json.RawMessage) (json.RawMessage, error) {
 	}
 
 	validationDecoder := json.NewDecoder(bytes.NewReader(raw))
+	validationDecoder.UseNumber()
 	if err := validateJSONValue(validationDecoder); err != nil {
 		return nil, err
 	}

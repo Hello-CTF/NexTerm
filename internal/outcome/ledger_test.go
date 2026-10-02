@@ -238,3 +238,37 @@ func TestCanonicalArgumentsRejectAmbiguousJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalArgumentsPreserveLargeNumberLiterals(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "top level", input: `1e1000`, want: `1e1000`},
+		{name: "object", input: `{"n":1e1000}`, want: `{"n":1e1000}`},
+		{name: "array", input: `[1e1000]`, want: `[1e1000]`},
+		{
+			name:  "nested object and array",
+			input: ` { "z" : [1e1000, { "n" : -1E+1000 }], "a" : 1.00 } `,
+			want:  `{"a":1.00,"z":[1e1000,{"n":-1E+1000}]}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			canonical, err := CanonicalizeArguments([]byte(test.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(canonical) != test.want {
+				t.Fatalf("canonical = %s, want %s", canonical, test.want)
+			}
+		})
+	}
+
+	for _, input := range []string{`{"n":1e1000,"n":0}`, `[{"n":1e1000,"n":0}]`} {
+		if _, err := CanonicalizeArguments([]byte(input)); err == nil {
+			t.Errorf("CanonicalizeArguments(%q) accepted duplicate keys", input)
+		}
+	}
+}
