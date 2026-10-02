@@ -98,11 +98,12 @@ func (h *Hub) Bind(channelID string) (*Receiver, error) {
 }
 
 type Producer struct {
-	hub        *Hub
-	channelID  string
-	channel    *channel
-	generation uint64
-	once       sync.Once
+	hub          *Hub
+	channelID    string
+	channel      *channel
+	generation   uint64
+	forceOnce    sync.Once
+	gracefulOnce sync.Once
 }
 
 func (h *Hub) Producer(channelID string) (*Producer, error) {
@@ -111,7 +112,7 @@ func (h *Hub) Producer(channelID string) (*Producer, error) {
 		return nil, err
 	}
 	ch.mu.Lock()
-	if ch.closed {
+	if ch.closed || ch.draining {
 		ch.mu.Unlock()
 		return nil, ErrClosed
 	}
@@ -141,20 +142,37 @@ func (p *Producer) send(ctx context.Context, frame Frame) error {
 	return p.channel.sendProducer(ctx, frame, p.generation)
 }
 
+// CloseGracefully rejects new sends and closes the channel after its accepted
+// frames have been received. Close can still force-close it during the drain.
+func (p *Producer) CloseGracefully() error {
+	p.gracefulOnce.Do(func() {
+		p.hub.mu.Lock()
+		p.channel.mu.Lock()
+		current := p.hub.channels[p.channelID] == p.channel && p.channel.producer == p.generation && !p.channel.closed
+		if current {
+			p.channel.draining = true
+			if p.channel.pendingLocked() == 0 {
+				delete(p.hub.channels, p.channelID)
+				p.channel.closeLocked()
+			} else {
+				p.channel.signalLocked()
+			}
+		}
+		p.channel.mu.Unlock()
+		p.hub.mu.Unlock()
+	})
+	return nil
+}
+
+// Close immediately drops queued frames and invalidates the current receiver.
 func (p *Producer) Close() error {
-	p.once.Do(func() {
+	p.forceOnce.Do(func() {
 		p.hub.mu.Lock()
 		p.channel.mu.Lock()
 		current := p.hub.channels[p.channelID] == p.channel && p.channel.producer == p.generation && !p.channel.closed
 		if current {
 			delete(p.hub.channels, p.channelID)
-			p.channel.closed = true
-			p.channel.bound = false
-			p.channel.generation++
-			p.channel.queue = nil
-			p.channel.head = 0
-			p.channel.queuedBytes = 0
-			p.channel.signalLocked()
+			p.channel.closeLocked()
 		}
 		p.channel.mu.Unlock()
 		p.hub.mu.Unlock()
@@ -172,7 +190,9 @@ func (h *Hub) DiscardPending(channelID string) error {
 		return ErrHubClosed
 	}
 	if ch := h.channels[channelID]; ch != nil {
-		ch.discardPending()
+		if ch.discardPending() {
+			delete(h.channels, channelID)
+		}
 	}
 	return nil
 }
@@ -275,7 +295,11 @@ func (r *Receiver) Next(ctx context.Context) (Frame, error) {
 	if r.closed.Load() {
 		return Frame{}, ErrClosed
 	}
-	return r.channel.next(ctx, r.generation)
+	frame, drained, err := r.channel.next(ctx, r.generation)
+	if drained {
+		r.hub.finalizeDrained(r.channelID, r.channel)
+	}
+	return frame, err
 }
 
 func (r *Receiver) Close() error {
@@ -286,6 +310,14 @@ func (r *Receiver) Close() error {
 		r.hub.options.OnChannelClose(r.channelID)
 	}
 	return nil
+}
+
+func (h *Hub) finalizeDrained(channelID string, ch *channel) {
+	h.mu.Lock()
+	if h.channels[channelID] == ch {
+		delete(h.channels, channelID)
+	}
+	h.mu.Unlock()
 }
 
 type channel struct {
@@ -299,6 +331,7 @@ type channel struct {
 	generation     uint64
 	producer       uint64
 	bound          bool
+	draining       bool
 	closed         bool
 	backpressured  bool
 	maxFrames      int
@@ -317,7 +350,7 @@ func (c *channel) send(ctx context.Context, frame Frame) error {
 func (c *channel) sendProducer(ctx context.Context, frame Frame, producer uint64) error {
 	for {
 		c.mu.Lock()
-		if c.closed {
+		if c.closed || c.draining {
 			c.mu.Unlock()
 			return ErrClosed
 		}
@@ -353,20 +386,20 @@ func (c *channel) sendProducer(ctx context.Context, frame Frame, producer uint64
 	}
 }
 
-func (c *channel) next(ctx context.Context, generation uint64) (Frame, error) {
+func (c *channel) next(ctx context.Context, generation uint64) (Frame, bool, error) {
 	for {
 		c.mu.Lock()
 		if c.closed {
 			c.mu.Unlock()
-			return Frame{}, ErrClosed
+			return Frame{}, false, ErrClosed
 		}
 		if !c.bound || c.generation != generation {
 			replaced := c.generation > generation && c.bound
 			c.mu.Unlock()
 			if replaced {
-				return Frame{}, ErrReplaced
+				return Frame{}, false, ErrReplaced
 			}
-			return Frame{}, ErrDetached
+			return Frame{}, false, ErrDetached
 		}
 		if c.head < len(c.queue) {
 			frame := c.queue[c.head]
@@ -381,18 +414,23 @@ func (c *channel) next(ctx context.Context, generation uint64) (Frame, error) {
 				c.queue = c.queue[:len(c.queue)-c.head]
 				c.head = 0
 			}
-			if c.backpressured && len(c.queue)-c.head <= c.maxFrames/4 && c.queuedBytes <= c.maxBytes/4 {
+			if c.backpressured && c.pendingLocked() <= c.maxFrames/4 && c.queuedBytes <= c.maxBytes/4 {
 				c.backpressured = false
 			}
-			c.signalLocked()
+			drained := c.draining && c.pendingLocked() == 0
+			if drained {
+				c.closeLocked()
+			} else {
+				c.signalLocked()
+			}
 			c.mu.Unlock()
-			return frame, nil
+			return frame, drained, nil
 		}
 		changed := c.changed
 		c.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return Frame{}, ctx.Err()
+			return Frame{}, false, ctx.Err()
 		case <-changed:
 		}
 	}
@@ -412,6 +450,11 @@ func (c *channel) bind() uint64 {
 
 func (c *channel) close() {
 	c.mu.Lock()
+	c.closeLocked()
+	c.mu.Unlock()
+}
+
+func (c *channel) closeLocked() {
 	if !c.closed {
 		c.closed = true
 		c.bound = false
@@ -421,27 +464,36 @@ func (c *channel) close() {
 		c.queuedBytes = 0
 		c.signalLocked()
 	}
-	c.mu.Unlock()
 }
 
-func (c *channel) discardPending() {
+func (c *channel) discardPending() bool {
 	c.mu.Lock()
 	c.queue = nil
 	c.head = 0
 	c.queuedBytes = 0
 	c.backpressured = false
-	c.signalLocked()
+	finalized := c.draining
+	if c.draining {
+		c.closeLocked()
+	} else {
+		c.signalLocked()
+	}
 	c.mu.Unlock()
+	return finalized
 }
 
 func (c *channel) stats() (bound bool, frames, bytes int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.bound, len(c.queue) - c.head, c.queuedBytes
+	return c.bound, c.pendingLocked(), c.queuedBytes
+}
+
+func (c *channel) pendingLocked() int {
+	return len(c.queue) - c.head
 }
 
 func (c *channel) fullLocked(incoming int) bool {
-	count := len(c.queue) - c.head
+	count := c.pendingLocked()
 	if count >= c.maxFrames {
 		return true
 	}
