@@ -34,6 +34,7 @@ var (
 	ErrDisconnected    = errors.New("session disconnected")
 	ErrInvalidSize     = errors.New("invalid terminal size")
 	ErrStaleGeneration = errors.New("stale session generation")
+	ErrHidden          = errors.New("terminal hidden")
 )
 
 type Status string
@@ -130,15 +131,16 @@ type SessionInfo struct {
 }
 
 type TabInfo struct {
-	ID          string `json:"id"`
-	SessionID   string `json:"sessionId"`
-	Cols        uint32 `json:"cols"`
-	Rows        uint32 `json:"rows"`
-	Controller  string `json:"controller,omitempty"`
-	Subscribers int    `json:"subscribers"`
-	Viewers     int    `json:"viewers"`
-	Exited      bool   `json:"exited"`
-	Ephemeral   bool   `json:"ephemeral,omitempty"`
+	ID           string `json:"id"`
+	SessionID    string `json:"sessionId"`
+	Cols         uint32 `json:"cols"`
+	Rows         uint32 `json:"rows"`
+	GridRevision uint64 `json:"gridRevision"`
+	Controller   string `json:"controller,omitempty"`
+	Subscribers  int    `json:"subscribers"`
+	Viewers      int    `json:"viewers"`
+	Exited       bool   `json:"exited"`
+	Ephemeral    bool   `json:"ephemeral,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -163,12 +165,15 @@ type ExitEvent struct {
 }
 
 type ControlEvent struct {
-	TabID       string `json:"tabId"`
-	Controller  string `json:"controller,omitempty"`
-	Subscribers int    `json:"subscribers"`
-	Viewers     int    `json:"viewers"`
-	Exited      bool   `json:"exited"`
-	Version     uint64 `json:"version"`
+	TabID        string `json:"tabId"`
+	Cols         uint32 `json:"cols"`
+	Rows         uint32 `json:"rows"`
+	GridRevision uint64 `json:"gridRevision"`
+	Controller   string `json:"controller,omitempty"`
+	Subscribers  int    `json:"subscribers"`
+	Viewers      int    `json:"viewers"`
+	Exited       bool   `json:"exited"`
+	Version      uint64 `json:"version"`
 }
 
 func (e ControlEvent) MarshalJSON() ([]byte, error) {

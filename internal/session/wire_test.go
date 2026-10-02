@@ -16,13 +16,13 @@ func TestControllerJSONUsesExplicitNullWithoutDroppingSnapshotKeys(t *testing.T)
 			name:     "tab info",
 			empty:    TabInfo{ID: "tab", SessionID: "session", Controller: "", Subscribers: 0, Viewers: 0, Exited: true},
 			occupied: TabInfo{ID: "tab", SessionID: "session", Controller: "client-a", Subscribers: 1, Viewers: 1},
-			required: []string{"id", "sessionId", "cols", "rows", "controller", "subscribers", "viewers", "exited"},
+			required: []string{"id", "sessionId", "cols", "rows", "gridRevision", "controller", "subscribers", "viewers", "exited"},
 		},
 		{
 			name:     "control event",
 			empty:    ControlEvent{TabID: "tab", Controller: "", Subscribers: 0, Viewers: 0, Exited: true, Version: 4},
 			occupied: ControlEvent{TabID: "tab", Controller: "client-a", Subscribers: 2, Viewers: 1, Version: 5},
-			required: []string{"tabId", "controller", "subscribers", "viewers", "exited", "version"},
+			required: []string{"tabId", "cols", "rows", "gridRevision", "controller", "subscribers", "viewers", "exited", "version"},
 		},
 	}
 	for _, test := range tests {

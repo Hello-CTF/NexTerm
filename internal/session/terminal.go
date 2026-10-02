@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
 )
 
 type coreTerminal struct {
@@ -132,6 +133,27 @@ func (m *Manager) SetVisible(tabID string, visible bool) error {
 	if !ok {
 		return ErrUnsupported
 	}
+	tab.visibilityMu.Lock()
+	defer tab.visibilityMu.Unlock()
+	tab.mu.Lock()
+	if tab.closed {
+		tab.mu.Unlock()
+		return ErrTabClosed
+	}
+	mode := terminalgrid.ModeHidden
+	if visible && tab.controller != "" {
+		mode = terminalgrid.ModeController
+	} else if visible {
+		mode = terminalgrid.ModeObserver
+	}
+	if tab.grid != nil {
+		if err := tab.grid.SetMode(mode); err != nil {
+			tab.mu.Unlock()
+			return mapGridError(err)
+		}
+	}
+	tab.hidden = !visible
+	tab.mu.Unlock()
 	core.SetVisible(visible)
 	return nil
 }

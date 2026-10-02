@@ -176,6 +176,11 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 			continue
 		}
 		cols, rows := tab.cols, tab.rows
+		if tab.grid != nil {
+			if desired := tab.grid.Snapshot().DesiredGrid; desired.Valid() {
+				cols, rows = uint32(desired.Cols), uint32(desired.Rows)
+			}
+		}
 		tab.mu.Unlock()
 		channel, err := ptyTransport.OpenPTY(ctx, base.PTYOptions{
 			Cols: cols, Rows: rows, Term: "xterm-256color", ExpectedGeneration: transport.Generation(),
@@ -207,6 +212,14 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	for tab, channel := range opened {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
+			if tab.grid != nil {
+				if err := tab.grid.Reattach(m.gridResize(tab, channel, generation)); err != nil {
+					tab.mu.Unlock()
+					session.mu.Unlock()
+					m.mu.Unlock()
+					return false, err
+				}
+			}
 			tab.channel = channel
 			tab.setGenerationLocked(generation)
 			tab.exited = false
@@ -220,6 +233,14 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		for _, tab := range session.tabs {
 			tab.mu.Lock()
 			if !tab.closed && m.tabs[tab.ID] == tab {
+				if tab.grid != nil {
+					if err := tab.grid.Reattach(m.gridResize(tab, nil, generation)); err != nil {
+						tab.mu.Unlock()
+						session.mu.Unlock()
+						m.mu.Unlock()
+						return false, err
+					}
+				}
 				tab.exited = false
 				controls = append(controls, tab.controlEventLocked())
 			}

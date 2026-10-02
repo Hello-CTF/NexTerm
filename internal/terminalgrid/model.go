@@ -49,16 +49,24 @@ func New(config Config) (*Model, error) {
 	if !validMode(config.Mode) {
 		return nil, fmt.Errorf("terminalgrid: invalid mode %d", config.Mode)
 	}
+	if config.InitialGrid != (Grid{}) {
+		if err := validateGrid(config.InitialGrid); err != nil {
+			return nil, err
+		}
+	}
 	role := config.Mode
 	if role == ModeHidden {
 		role = ModeObserver
 	}
 	return &Model{
-		mode:     config.Mode,
-		role:     role,
-		resize:   config.Resize,
-		onResult: config.OnResult,
-		changed:  make(chan struct{}),
+		desired:   config.InitialGrid,
+		committed: config.InitialGrid,
+		lastGood:  config.InitialGrid,
+		mode:      config.Mode,
+		role:      role,
+		resize:    config.Resize,
+		onResult:  config.OnResult,
+		changed:   make(chan struct{}),
 	}, nil
 }
 
@@ -261,6 +269,46 @@ func (m *Model) Observe(revision uint64, grid Grid) (bool, error) {
 	return true, nil
 }
 
+// Wait waits for revision or a newer superseding intent to complete. It does
+// not schedule a duplicate transport request.
+func (m *Model) Wait(ctx context.Context, revision uint64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if revision > m.revision {
+		m.mu.Unlock()
+		return fmt.Errorf("terminalgrid: revision %d has not been submitted", revision)
+	}
+	for {
+		if m.closed {
+			m.mu.Unlock()
+			return ErrClosed
+		}
+		if m.settledRev >= revision {
+			err := m.lastResult.Err
+			m.mu.Unlock()
+			return err
+		}
+		if err := m.flushEligibleLocked(); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		if m.resize == nil && m.inFlight == nil {
+			m.mu.Unlock()
+			return ErrDisconnected
+		}
+		changed := m.changed
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+		m.mu.Lock()
+	}
+}
+
 // Flush waits for the latest desired intent and returns its transport error.
 // When idle, it forces one final request even if the grid equals the committed
 // value. Superseded intents are satisfied by the newest completed intent.
@@ -413,12 +461,28 @@ func (m *Model) startNextLocked() {
 	m.startLocked(req)
 }
 
+type resizeContextKey struct{}
+
 func (m *Model) startLocked(req *request) {
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, resizeContextKey{}, req)
 	req.cancel = cancel
 	req.resize = m.resize
 	m.inFlight = req
 	go m.run(ctx, req)
+}
+
+// Current reports whether ctx identifies the active resize request. A
+// ResizeFunc can revalidate it under an external lifecycle lock before
+// committing associated terminal state.
+func (m *Model) Current(ctx context.Context) bool {
+	req, _ := ctx.Value(resizeContextKey{}).(*request)
+	if req == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.closed && m.mode == ModeController && m.inFlight == req && req.generation == m.generation
 }
 
 func (m *Model) run(ctx context.Context, req *request) {

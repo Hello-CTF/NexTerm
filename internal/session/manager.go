@@ -381,6 +381,9 @@ func (s *Session) detachChannelsLocked() []*channelHandle {
 			channels = append(channels, tab.channel)
 			tab.channel = nil
 		}
+		if tab.grid != nil {
+			_ = tab.grid.Reattach(nil)
+		}
 		tab.mu.Unlock()
 	}
 	return channels

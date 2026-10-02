@@ -37,6 +37,7 @@ func TestIPCErrorPreservesControlAndLifecycleCodes(t *testing.T) {
 		{err: ErrDisconnected, code: ipc.CodeDisconnected},
 		{err: ErrUnsupported, code: ipc.CodeUnsupported},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam},
+		{err: ErrHidden, code: ipc.CodeBadParam},
 		{err: context.DeadlineExceeded, code: ipc.CodeTimeout},
 		{err: errors.New("other"), code: ipc.CodeInternal},
 	}
