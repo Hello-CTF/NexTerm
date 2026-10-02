@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
+	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
@@ -55,6 +55,12 @@ func run(args []string) int {
 		}
 	}()
 
+	assets, err := newDesktopAssets(invocation.WebRoot)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
+		return 1
+	}
+	streams := newDesktopStreamFactory()
 	var wailsApp *application.App
 	events := ipc.EmitterFunc(func(ctx context.Context, event ipc.Event) error {
 		if err := ctx.Err(); err != nil {
@@ -66,28 +72,41 @@ func run(args []string) int {
 		wailsApp.Event.Emit(string(event.Event), event.Payload)
 		return nil
 	})
-	coreApp, err := core.New(core.Config{
-		Logger: logger.Logger,
-		Events: events,
+	production, err := production.NewProduction(context.Background(), production.ProductionConfig{
+		Config: core.Config{
+			Logger:  logger.Logger,
+			Events:  events,
+			Streams: streams,
+			Modules: desktopSmokeModules,
+		},
+		DataDir:         paths.DataDir,
+		Desktop:         true,
+		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
 		return 1
 	}
-	service := &Service{app: coreApp}
+	service := &Service{app: production.Application, streams: streams}
 	wailsApp = application.New(application.Options{
 		Name:        "NexTerm",
 		Description: "NexTerm desktop client",
 		Logger:      logger.Logger,
+		ErrorHandler: func(err error) {
+			logger.Error("Wails error", "error", err)
+		},
+		WarningHandler: func(message string) {
+			logger.Warn("Wails warning", "message", message)
+		},
 		Services: []application.Service{
 			application.NewService(service),
 		},
-		Assets: application.AssetOptions{Handler: skeletonAssets()},
+		Assets: application.AssetOptions{Handler: desktopSmokeAssetHandler(assets)},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "NexTerm",
 		URL:       "/",
 		Width:     1480,
@@ -96,32 +115,14 @@ func run(args []string) int {
 		MinHeight: 600,
 		Frameless: true,
 	})
+	streams.SetWindow(window)
+	window.Show()
+	if desktopSmokeEnabled() {
+		return runDesktopSmoke(wailsApp, window)
+	}
 	if err := wailsApp.Run(); err != nil {
 		logger.Error("desktop stopped", "error", err)
 		return 1
 	}
 	return 0
-}
-
-func skeletonAssets() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NexTerm</title>
-  <script>window.__NEXTERM_TRANSPORT__="desktop";</script>
-  <script type="module" src="/wails/runtime.js"></script>
-</head>
-<body>
-  <main><h1>NexTerm</h1><p>Go application core is running.</p></main>
-</body>
-</html>`))
-	})
 }

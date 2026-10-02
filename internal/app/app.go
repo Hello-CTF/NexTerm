@@ -19,26 +19,28 @@ type Module struct {
 }
 
 type Config struct {
-	Name        string
-	Version     string
-	GOOS        string
-	Events      ipc.Emitter
-	Streams     ipc.StreamFactory
-	VaultStatus VaultStatusFunc
-	Logger      *slog.Logger
-	Modules     []Module
+	Name            string
+	Version         string
+	GOOS            string
+	Events          ipc.Emitter
+	Streams         ipc.StreamFactory
+	VaultStatus     VaultStatusFunc
+	RetentionStatus RetentionStatusFunc
+	Logger          *slog.Logger
+	Modules         []Module
 }
 
 type Application struct {
 	Dispatcher *ipc.Dispatcher
 
-	lifecycle   Lifecycle
-	environment ipc.Environment
-	name        string
-	version     string
-	goos        string
-	vaultStatus VaultStatusFunc
-	logger      *slog.Logger
+	lifecycle       Lifecycle
+	environment     ipc.Environment
+	name            string
+	version         string
+	goos            string
+	vaultStatus     VaultStatusFunc
+	retentionStatus RetentionStatusFunc
+	logger          *slog.Logger
 }
 
 type Info struct {
@@ -70,13 +72,14 @@ func New(config Config) (*Application, error) {
 	}
 
 	a := &Application{
-		Dispatcher:  ipc.NewDispatcher(),
-		environment: ipc.Environment{Events: config.Events, Streams: config.Streams},
-		name:        config.Name,
-		version:     config.Version,
-		goos:        config.GOOS,
-		vaultStatus: config.VaultStatus,
-		logger:      config.Logger,
+		Dispatcher:      ipc.NewDispatcher(),
+		environment:     ipc.Environment{Events: config.Events, Streams: config.Streams},
+		name:            config.Name,
+		version:         config.Version,
+		goos:            config.GOOS,
+		vaultStatus:     config.VaultStatus,
+		retentionStatus: config.RetentionStatus,
+		logger:          config.Logger,
 	}
 	if err := ipc.Register(a.Dispatcher, "app_info", func(ctx context.Context, _ *ipc.Call, _ struct{}) (Info, error) {
 		var vault any
