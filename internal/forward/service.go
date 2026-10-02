@@ -153,7 +153,7 @@ func (s *Service) validateSession(ctx context.Context, sessionID string) error {
 	}
 	dialer, err := s.provider.CurrentDialer(ctx, sessionID)
 	if err != nil {
-		return err
+		return providerIPCError(err)
 	}
 	if dialer == nil {
 		return ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH direct-tcpip 的会话")
