@@ -75,6 +75,11 @@ func (t *Tab) controlEventLocked() ControlEvent {
 	}
 }
 
+func (t *Tab) exitEventLocked(exitCode *int) ExitEvent {
+	t.eventVersion++
+	return ExitEvent{TabID: t.ID, ExitCode: exitCode, Version: t.eventVersion}
+}
+
 func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo, error) {
 	if !validSize(options.Cols, options.Rows) {
 		return TabInfo{}, ErrInvalidSize
@@ -763,27 +768,27 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		exitCode, hasExitCode = base.ExitCode(readErr)
 	}
 
+	var code *int
+	if hasExitCode {
+		code = &exitCode
+	}
 	tab.mu.Lock()
 	current := !tab.closed && tab.generation == generation
+	var exitEvent ExitEvent
+	var control ControlEvent
 	if current {
 		tab.exited = true
 		if tab.channel == channel {
 			tab.channel = nil
 		}
-	}
-	var control ControlEvent
-	if current {
+		exitEvent = tab.exitEventLocked(code)
 		control = tab.controlEventLocked()
 	}
 	tab.mu.Unlock()
 	if !current {
 		return
 	}
-	var code *int
-	if hasExitCode {
-		code = &exitCode
-	}
-	m.emit(context.Background(), TopicTerminalExit, ExitEvent{TabID: tab.ID, ExitCode: code})
+	m.emit(context.Background(), TopicTerminalExit, exitEvent)
 	m.emit(context.Background(), TopicTerminalControl, control)
 
 	tab.session.mu.Lock()

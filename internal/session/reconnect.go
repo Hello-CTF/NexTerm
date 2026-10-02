@@ -203,16 +203,28 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		return false, ErrStaleGeneration
 	}
 	start := make([]*Tab, 0, len(opened))
+	controls := make([]ControlEvent, 0, len(opened))
 	for tab, channel := range opened {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
 			tab.channel = channel
 			tab.setGenerationLocked(generation)
 			tab.exited = false
+			controls = append(controls, tab.controlEventLocked())
 			start = append(start, tab)
 			delete(opened, tab)
 		}
 		tab.mu.Unlock()
+	}
+	if !ptyBacked(session.asset.Kind) {
+		for _, tab := range session.tabs {
+			tab.mu.Lock()
+			if !tab.closed && m.tabs[tab.ID] == tab {
+				tab.exited = false
+				controls = append(controls, tab.controlEventLocked())
+			}
+			tab.mu.Unlock()
+		}
 	}
 	session.transport = transport
 	session.status = StatusConnected
@@ -226,6 +238,9 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	m.mu.Unlock()
 	for _, channel := range opened {
 		_ = channel.Close()
+	}
+	for _, control := range controls {
+		m.emit(context.Background(), TopicTerminalControl, control)
 	}
 
 	for _, tab := range start {

@@ -182,10 +182,10 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	}
 	m.sessions[session.ID] = session
 	m.byAsset[asset.ID] = session.ID
-	m.mu.Unlock()
 	session.mu.Lock()
 	connectingEvent := session.statusEventLocked(StatusConnecting, nil)
 	session.mu.Unlock()
+	m.mu.Unlock()
 	m.emit(ctx, TopicSessionStatus, connectingEvent)
 
 	connectCtx, connectCancel := context.WithCancel(sessionCtx)

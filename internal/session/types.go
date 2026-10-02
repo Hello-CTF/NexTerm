@@ -159,6 +159,7 @@ type StatusEvent struct {
 type ExitEvent struct {
 	TabID    string `json:"tabId"`
 	ExitCode *int   `json:"exitCode"`
+	Version  uint64 `json:"version"`
 }
 
 type ControlEvent struct {
