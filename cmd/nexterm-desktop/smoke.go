@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
@@ -86,7 +87,7 @@ func runDesktopSmoke(wailsApp *application.App, window *application.WebviewWindo
 	select {
 	case result := <-outcome:
 		fmt.Printf("desktop smoke: %+v\n", result)
-		if result.OK && result.Ready == "complete" && result.Transport == "desktop" && result.Platform == "darwin" && result.Body != "" && result.BinaryOK && result.ReopenOK && result.JSONOK && result.Error == "" {
+		if result.OK && result.Ready == "complete" && result.Transport == "desktop" && result.Platform == runtime.GOOS && result.Body != "" && result.BinaryOK && result.ReopenOK && result.JSONOK && result.Error == "" {
 			return 0
 		}
 		return 1
