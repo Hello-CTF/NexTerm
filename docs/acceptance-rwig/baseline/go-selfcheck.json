@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
   "purpose": "Go self-consistency and acceptance evidence; no Rust payload goldens or differential compatibility claims",
-  "captured_at": "2026-10-02T12:36:45.615607+00:00",
+  "captured_at": "2026-10-02T12:39:03.724356+00:00",
   "go_source": {
-    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
-    "commit": "8ce1a53555b4bb61e6d20cdf15ac08ffb232ed82",
+    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10",
+    "commit": "a02b74178448b4111e86272d291bfcb6271eb0af",
     "go_version": "go1.26.8"
   },
   "steps": [
     {
       "id": "go-harness-resolve",
-      "command": "go mod edit -replace=github.com/ProbiusOfficial/NexTerm=/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+      "command": "go mod edit -replace=github.com/ProbiusOfficial/NexTerm=/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10",
       "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.031,
+      "duration_seconds": 0.029,
       "log": "docs/acceptance-rwig/baseline/logs/go-harness-resolve.log"
     },
     {
@@ -23,7 +23,7 @@
       "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.062,
+      "duration_seconds": 0.036,
       "log": "docs/acceptance-rwig/baseline/logs/go-harness-tidy.log"
     },
     {
@@ -41,16 +41,16 @@
       "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 2.281,
+      "duration_seconds": 2.586,
       "log": "docs/acceptance-rwig/baseline/logs/go-ipc-self-tests.log"
     },
     {
       "id": "go-server-build",
       "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-artifacts/nexterm-server ./cmd/nexterm-server",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.415,
+      "duration_seconds": 0.131,
       "log": "docs/acceptance-rwig/baseline/logs/go-server-build.log"
     },
     {
@@ -58,16 +58,16 @@
       "command": "full and sync-only loopback servers with synthetic requests",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.902,
+      "duration_seconds": 0.233,
       "log": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log"
     },
     {
       "id": "go-desktop-build",
       "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-artifacts/nexterm-desktop ./cmd/nexterm-desktop",
-      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10",
       "status": "passed",
       "exit_code": 0,
-      "duration_seconds": 0.794,
+      "duration_seconds": 0.191,
       "log": "docs/acceptance-rwig/baseline/logs/go-desktop-build.log"
     }
   ],

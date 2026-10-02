@@ -2,8 +2,8 @@
   "schema_version": 1,
   "purpose": "Go feature acceptance coverage; canonical IDs are checklist labels, not required Rust wire compatibility",
   "go_source": {
-    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
-    "commit": "8ce1a53555b4bb61e6d20cdf15ac08ffb232ed82",
+    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10",
+    "commit": "a02b74178448b4111e86272d291bfcb6271eb0af",
     "report": "docs/acceptance-rwig/baseline/go-selfcheck.json"
   },
   "rules": {

@@ -1,6 +1,6 @@
 # RWIG feature, Go self-consistency, and size baseline
 
-Captured on macOS 26.6.2 arm64. The pinned Rust feature/artifact baseline is `25c2fa003cc05f04347b1d33c4d4be25f820f870`; the Go smoke source is M9 commit `8ce1a53555b4bb61e6d20cdf15ac08ffb232ed82`.
+Captured on macOS 26.6.2 arm64. The pinned Rust feature/artifact baseline is `25c2fa003cc05f04347b1d33c4d4be25f820f870`; the Go skeleton was merged at `9fea2bb375c1e3fe24c2bb42c815cba4cdbd79f0`, and each Go report embeds the exact worktree HEAD used to generate it.
 
 This baseline follows the latest goal: **Go must be internally consistent; Rust backward compatibility and Rust↔Go wire/database differential work are not required**. Rust remains the feature checklist and the test/performance/artifact-size reference. No Rust IPC, vault, sync, or old-database golden is shipped here. Pending features, missing artifacts, skips, and environment-only checks are not passes.
 
@@ -19,7 +19,7 @@ python3 scripts/parity/verify.py --go-root /path/to/go/module
 
 `python3 scripts/parity/verify.py --static-only` validates only existing files/reports and deliberately prints that no Go runtime check was requested. Without a Go module root or `--static-only`, verification exits 2 instead of silently skipping Go checks.
 
-For this pre-merge run, `/path/to/go/module` was the M9 worktree; its `go.mod` and `go.sum` were not modified. Later runs can use the repository root after the Go module lands. Go used `go1.26.8`; dependency, toolchain, and build caches were redirected to this worktree's ignored `target/`. Frontend packages used a store under `node_modules/`.
+The initial pre-merge check used the M9 worktree read-only; after rebasing onto the merged `rwig`, the final verification used this repository root directly. Root `go.mod` and `go.sum` were not modified. Go used `go1.26.8`; dependency, toolchain, and build caches were redirected to this worktree's ignored `target/`. Frontend packages used a store under `node_modules/`.
 
 The host's default Rust 1.94.1 cannot build locked `winrm-rs 1.2.2` (requires 1.98). An official Rust 1.98.0 toolchain was installed under `target/parity-toolchain`, and its archive SHA256 was verified as `5395f380bd220890b89b7e8ce137f3965cf0625b6f561af11e97c8d5c8743c3b`; the system toolchain was not changed.
 
@@ -87,7 +87,7 @@ The local OpenSSH SFTP backup test did run and pass; it is not in the skip list.
 
 `go-selfcheck.json` is a Go-only report; its expected behavior comes from the Go API and live Go runtime, not Rust payload goldens.
 
-Seven steps passed against M9: module resolution, tidy in a temporary harness copy, Go 1.26.8 selection, race-enabled external IPC tests, CGO_ENABLED=0 server build, live full/sync-only loopback server smoke, and macOS desktop build. Tests cover duplicate-safe registration, nested/raw dispatch, structured errors, explicit null results, HTTP method/body handling, ten unique event topics, ordered binary/typed-JSON streams, channel forms, health responses, `app_info`, `app_platform`, unknown-command errors, and sync-only `/rpc` 404 behavior.
+Seven steps passed against the merged Go skeleton: module resolution, tidy in a temporary harness copy, Go 1.26.8 selection, race-enabled external IPC tests, CGO_ENABLED=0 server build, live full/sync-only loopback server smoke, and macOS desktop build. Tests cover duplicate-safe registration, nested/raw dispatch, structured errors, explicit null results, HTTP method/body handling, ten unique event topics, ordered binary/typed-JSON streams, channel forms, health responses, `app_info`, `app_platform`, unknown-command errors, and sync-only `/rpc` 404 behavior.
 
 Raw-binary size gates pass, but they are only preliminary skeleton measurements:
 
