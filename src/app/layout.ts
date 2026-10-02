@@ -25,6 +25,7 @@
 import { layoutApi, terminalApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
+import { isDirtyFileEditor } from "../features/files/editorGuards";
 import {
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
@@ -334,13 +335,17 @@ function clearRetryTimer() {
  * **不修改入参**（`next` / `current` 都不就地改），返回新数组；无候选时**原样返回**
  * `next.workspaces`（不做无谓的浅拷贝，否则每次远端同步都会多一次 re-render）。
  */
-export function mergeDeadTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
-  // 收集本地失效标签：workspace id → pane id → 待并标签。
+function mergeLocalTabs(
+  next: PersistedLayout,
+  current: Workspace[],
+  shouldMerge: (tab: AppTab) => boolean,
+  restoreMissingWorkspaces: boolean,
+): Workspace[] {
   const byWs = new Map<string, Map<string, AppTab[]>>();
   for (const w of current) {
     for (const p of w.panes) {
       for (const t of p.tabs) {
-        if (t.kind !== "terminal" || t.dead !== true) continue;
+        if (!shouldMerge(t)) continue;
         let panes = byWs.get(w.id);
         if (!panes) {
           panes = new Map();
@@ -363,22 +368,17 @@ export function mergeDeadTabs(next: PersistedLayout, current: Workspace[]): Work
       const cand = paneMap.get(p.id);
       if (!cand) return p;
       const existing = new Set(p.tabs.map((t) => t.id));
-      const add = cand.filter((t) => !existing.has(t.id)); // 去重：已有同 id 就跳过
+      const add = cand.filter((t) => !existing.has(t.id));
       if (add.length === 0) return p;
       wsChanged = true;
       const tabs = [...p.tabs, ...add];
-      // activeTabId 为 null 或已不指向存在的标签 ⇒ 指到最后一个并入的标签，
-      // 让用户看到的是遮罩那一屏，而不是一个空面板 /「新建终端」。
-      const activeAlive =
-        p.activeTabId !== null && tabs.some((t) => t.id === p.activeTabId);
+      const activeAlive = p.activeTabId !== null && tabs.some((t) => t.id === p.activeTabId);
       return {
         ...p,
         tabs,
         activeTabId: activeAlive ? p.activeTabId : add[add.length - 1].id,
       };
     });
-    // 目标 pane 在远端那份里整个缺失（分屏里那个面板因清空被 sanitizeWorkspace 丢掉）
-    // ⇒ 补出来，保证 dead 标签有落脚的面板。
     const missing: Pane[] = [];
     for (const [paneId, cand] of paneMap) {
       if (w.panes.some((p) => p.id === paneId)) continue;
@@ -389,7 +389,38 @@ export function mergeDeadTabs(next: PersistedLayout, current: Workspace[]): Work
     changed = true;
     return { ...w, panes: missing.length > 0 ? [...panes, ...missing] : panes };
   });
+
+  if (restoreMissingWorkspaces) {
+    for (const [workspaceId, paneMap] of byWs) {
+      if (next.workspaces.some((w) => w.id === workspaceId)) continue;
+      const source = current.find((w) => w.id === workspaceId);
+      if (!source) continue;
+      const panes = [...paneMap].map(([id, tabs]) => ({
+        id,
+        tabs: [...tabs],
+        activeTabId: tabs[tabs.length - 1].id,
+      }));
+      if (panes.length === 0) continue;
+      changed = true;
+      workspaces.push({
+        ...source,
+        panes,
+        activePaneId: panes.some((p) => p.id === source.activePaneId)
+          ? source.activePaneId
+          : panes[0].id,
+      });
+    }
+  }
   return changed ? workspaces : next.workspaces;
+}
+
+export function mergeDeadTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
+  return mergeLocalTabs(next, current, (tab) => tab.kind === "terminal" && tab.dead === true, false);
+}
+
+/** 远端关闭标签/工作区时，本地未保存编辑器仍保留；clean 项继续跟随远端布局。 */
+export function mergeDirtyEditorTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
+  return mergeLocalTabs(next, current, isDirtyFileEditor, true);
 }
 
 /** 把服务端布局套用到 store（同时压低回声与回写）。 */
@@ -397,8 +428,10 @@ function applyToStore(l: PersistedLayout) {
   applyingRemote = true;
   clearSaveTimer();
   try {
-    // 先算出并入本地失效标签后的工作区（必须在 setState 之前取当前 store）。
-    const merged = mergeDeadTabs(l, useUi.getState().workspaces);
+    // 失效终端与本地未保存编辑器都不能被远端布局直接卸载。
+    const current = useUi.getState().workspaces;
+    const withDead = mergeDeadTabs(l, current);
+    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withDead }, current);
     useUi.setState({
       leftOpen: l.leftOpen,
       leftMode: l.leftMode,

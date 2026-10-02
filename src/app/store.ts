@@ -8,6 +8,7 @@
 import { create } from "zustand";
 import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
+import { dirtyFileEditors } from "../features/files/editorGuards";
 
 export type PaneKind =
   | "terminal"
@@ -213,6 +214,8 @@ interface UiState {
   /** 非空即表示 AI 正在操作某个终端；顶部横幅据此渲染。 */
   takeover: TakeoverState | null;
   setTakeover: (t: TakeoverState | null) => void;
+  modelProfilesRevision: number;
+  bumpModelProfilesRevision: () => void;
   // toast
   toasts: ToastItem[];
   // 全局文本输入弹窗
@@ -406,6 +409,9 @@ export const useUi = create<UiState>((set, get) => ({
   sessions: [],
   aiBusy: false,
   takeover: null,
+  modelProfilesRevision: 0,
+  bumpModelProfilesRevision: () =>
+    set((state) => ({ modelProfilesRevision: state.modelProfilesRevision + 1 })),
   toasts: [],
   textPrompt: null,
   openTextPrompt: (s) => set({ textPrompt: s }),
@@ -493,15 +499,13 @@ export const useUi = create<UiState>((set, get) => ({
     const { workspaces, activeWorkspaceId } = get();
     const target = workspaces.find((w) => w.id === id);
     if (!target) return;
+    const tabs = target.panes.flatMap((p) => p.tabs);
+    if (!(await confirmDirtyEditors(tabs, `关闭「${target.title}」`))) return;
     // 关工作区 = 关掉里面（所有面板）的所有标签，带内核标签的终端要先回收，
     // 否则远端的 shell 会一直挂着。回收走和关标签同一套三选一
     // （后台继续运行 / 结束进程 / 取消），不再静默杀进程 —— 用户可能正跑着长任务。
     // 用户点「取消」时这里返回 false，整个关闭动作中止（工作区还在、终端一个都不能动）。
-    const ok = await reclaimTerminals(
-      target.panes.flatMap((p) => p.tabs),
-      "这个工作区",
-      `关闭「${target.title}」`,
-    );
+    const ok = await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`);
     if (!ok) return;
     const next = workspaces.filter((w) => w.id !== id);
     // 会话本身不主动断开：工作区是"视图"，断连是另一个明确动作
@@ -559,6 +563,7 @@ export const useUi = create<UiState>((set, get) => ({
     const target = w.panes.find((p) => p.id === (paneId ?? w.activePaneId)) ?? w.panes[1];
     const keep = w.panes.filter((p) => p.id !== target.id);
     if (keep.length === 0) return;
+    if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
     // 关面板等于关掉它里面的所有标签，终端要先回收（同 closeWorkspace：
     // 整个面板只弹一次框；取消则这次取消分屏动作中止）。
     const ok = await reclaimTerminals(target.tabs, "这个面板", "取消分屏");
@@ -875,6 +880,17 @@ export async function openTerminalTab(
   );
 }
 
+async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boolean> {
+  const dirty = dirtyFileEditors(tabs);
+  if (dirty.length === 0) return true;
+  const { ask } = await import("../ui/dialogs");
+  const names = dirty.map((tab) => tab.title).join("、");
+  return ask(`有 ${dirty.length} 个文件尚未保存：${names}\n关闭后会丢失这些改动。仍要继续？`, {
+    title,
+    kind: "warning",
+  });
+}
+
 /**
  * 批量回收一组标签里「带内核 tabId 的终端」，**整个作用域只弹一次框**。
  *
@@ -961,6 +977,7 @@ export async function requestCloseTab(id: string): Promise<void> {
     if (target) break;
   }
   if (!target) return;
+  if (!(await confirmDirtyEditors([target], `关闭「${target.title}」`))) return;
   if (target.kind !== "terminal" || !target.tabId) {
     await st.closeTab(id);
     return;

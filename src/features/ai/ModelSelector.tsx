@@ -13,6 +13,7 @@ import { IconCheck, IconChevronUp, IconLoader, IconPlus, IconSettings } from "..
 
 export function ModelSelector({ onManage }: { onManage: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
+  const profilesRevision = useUi((s) => s.modelProfilesRevision);
   const [view, setView] = useState<ModelProfilesView | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -28,8 +29,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
 
   useEffect(() => {
     void refresh();
-    // 只在挂载时拉一次；展开下拉时会再刷新
-  }, []);
+  }, [profilesRevision]);
 
   // 点外部 / Esc 收起
   useEffect(() => {
@@ -59,7 +59,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
     setBusy(true);
     try {
       await modelApi.activate(id);
-      await refresh();
+      useUi.getState().bumpModelProfilesRevision();
       pushToast("info", `当前模型已切换为「${name}」`);
     } catch (e) {
       pushToast("error", `切换失败：${describeError(e)}`);

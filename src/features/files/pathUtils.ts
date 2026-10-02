@@ -25,7 +25,8 @@ export function isRoot(path: string): boolean {
 
 /** 拼接子项。`~` 与 `/` 都能直接接。 */
 export function joinPath(dir: string, name: string): string {
-  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
+  const base = norm(dir);
+  return base.endsWith("/") ? base + name : `${base}/${name}`;
 }
 
 /** 上一级；到根返回 null。`~` 的上一级是 `/`（允许从家目录向上浏览整机）。 */
@@ -77,8 +78,10 @@ export function crumbsOf(path: string): { label: string; path: string }[] {
 export function normalizeTypedPath(input: string): string | null {
   const typed = input.trim();
   if (!typed) return null;
-  const trimmed = norm(typed).replace(/\/+$/, "");
-  return trimmed === "" ? "/" : trimmed;
+  const normalized = norm(typed);
+  const trimmed = normalized.replace(/\/+$/, "");
+  if (trimmed === "") return "/";
+  return /^[A-Za-z]:$/.test(trimmed) && normalized.includes("/") ? `${trimmed}/` : trimmed;
 }
 
 /**
@@ -95,7 +98,10 @@ export function resolveRemotePath(cwd: string | null, input: string): string {
   if (!raw) return raw;
   // 已经是绝对路径：POSIX 根、家目录、Windows 盘符
   if (raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:[\\/]/.test(typed)) return raw;
-  const base = cwd ? norm(cwd).replace(/\/+$/, "") : "";
+  const normalizedBase = cwd ? norm(cwd) : "";
+  const base = /^[A-Za-z]:\/$/.test(normalizedBase)
+    ? normalizedBase
+    : normalizedBase.replace(/\/+$/, "");
   const rel = raw.replace(/^\.\//, "");
   if (!base) return rel;
   return joinPath(base, rel);

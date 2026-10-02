@@ -21,6 +21,7 @@ import { modelApi, type ModelProfile, type ModelProfilesView } from "../../ipc/c
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { selectModelProfileId } from "./modelLifecycle";
 import {
   IconCheck,
   IconClose,
@@ -115,7 +116,7 @@ export function ModelManager({
       const v = await modelApi.overview();
       setView(v);
       setDraft((prev) => {
-        const target = keepId ?? prev?.id ?? v.activeId ?? v.profiles[0]?.id;
+        const target = selectModelProfileId(v, keepId ?? prev?.id);
         const found = v.profiles.find((p) => p.id === target);
         return found ? { ...found } : null;
       });
@@ -165,6 +166,7 @@ export function ModelManager({
     setBusy(true);
     try {
       const saved = await modelApi.save(draft);
+      useUi.getState().bumpModelProfilesRevision();
       pushToast("info", `已保存模型档案「${saved.name}」`);
       await reload(saved.id);
     } catch (e) {
@@ -175,12 +177,15 @@ export function ModelManager({
   };
 
   const activate = async () => {
-    if (!draft || !draft.id) return;
+    if (!draft || !savedProfile) return;
+    if (!(await guardDiscard("设为当前"))) return;
+    const target = savedProfile;
     setBusy(true);
     try {
-      await modelApi.activate(draft.id);
-      await reload(draft.id);
-      pushToast("info", `当前模型已切换为「${draft.name}」`);
+      await modelApi.activate(target.id);
+      useUi.getState().bumpModelProfilesRevision();
+      await reload(target.id);
+      pushToast("info", `当前模型已切换为「${target.name}」`);
     } catch (e) {
       pushToast("error", `切换失败：${describeError(e)}`);
     } finally {
@@ -198,6 +203,7 @@ export function ModelManager({
     setBusy(true);
     try {
       await modelApi.remove(draft.id);
+      useUi.getState().bumpModelProfilesRevision();
       pushToast("info", "已删除");
       setModels([]);
       setModelsOpen(false);

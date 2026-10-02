@@ -11,6 +11,7 @@ import { pickKeyFile } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { KIND_META, NEW_KIND_ORDER } from "./meta";
+import { pickInlineKeyFile, resolveInlineKeyContent } from "./keyStaging";
 
 type Origin = "ref" | "vault";
 
@@ -28,6 +29,7 @@ export function NewCredentialModal({
   const [origin, setOrigin] = useState<Origin>("ref");
   /** 私钥文件路径：引用模式 = 要引用的文件；入库模式 = 要读取的文件。 */
   const [keyFilePath, setKeyFilePath] = useState("");
+  const [inlineKeyContent, setInlineKeyContent] = useState<string | null>(null);
   const [contentMode, setContentMode] = useState<"file" | "paste">("file");
   const [pastedKey, setPastedKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -38,6 +40,19 @@ export function NewCredentialModal({
     void pickKeyFile().then((p) => {
       if (p) set(p);
     });
+  const pickInline = () =>
+    void pickInlineKeyFile().then((selection) => {
+      if (!selection) return;
+      setKeyFilePath(selection.path);
+      setInlineKeyContent(selection.content);
+    });
+  const changeOrigin = (next: Origin) => {
+    if (next === "ref" && inlineKeyContent !== null) {
+      setKeyFilePath("");
+      setInlineKeyContent(null);
+    }
+    setOrigin(next);
+  };
 
   const fileReady = keyFilePath.trim().length > 0;
   const contentReady = contentMode === "paste" ? pastedKey.trim().length > 0 : fileReady;
@@ -55,10 +70,14 @@ export function NewCredentialModal({
           source = "file";
           secret = keyFilePath.trim();
         } else {
-          // 入库：文件模式在保存时才读内容 —— 选完到保存之间文件被改动的窗口最小
           source = "inline";
           secret =
-            contentMode === "paste" ? pastedKey.trim() : await assetApi.readKeyFile(keyFilePath.trim());
+            contentMode === "paste"
+              ? pastedKey.trim()
+              : await resolveInlineKeyContent(
+                  { path: keyFilePath.trim(), content: inlineKeyContent },
+                  assetApi.readKeyFile,
+                );
         }
       }
       const { id } = await vaultApi.setCredential(name.trim(), kind, secret, {
@@ -131,14 +150,14 @@ export function NewCredentialModal({
                   <button
                     type="button"
                     className={`nx-segment-item ${origin === "ref" ? "is-active" : ""}`}
-                    onClick={() => setOrigin("ref")}
+                    onClick={() => changeOrigin("ref")}
                   >
                     引用本地文件
                   </button>
                   <button
                     type="button"
                     className={`nx-segment-item ${origin === "vault" ? "is-active" : ""}`}
-                    onClick={() => setOrigin("vault")}
+                    onClick={() => changeOrigin("vault")}
                   >
                     存入凭据库
                   </button>
@@ -188,13 +207,16 @@ export function NewCredentialModal({
                         <input
                           className="nx-input font-mono text-[12px]"
                           value={keyFilePath}
-                          onChange={(e) => setKeyFilePath(e.target.value)}
+                          onChange={(e) => {
+                            setKeyFilePath(e.target.value);
+                            setInlineKeyContent(null);
+                          }}
                           placeholder="选择私钥文件"
                         />
                         <button
                           type="button"
                           className="nx-btn nx-btn-outline shrink-0"
-                          onClick={() => pick(setKeyFilePath)}
+                          onClick={pickInline}
                         >
                           浏览…
                         </button>

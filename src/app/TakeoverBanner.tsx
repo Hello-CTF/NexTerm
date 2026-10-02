@@ -3,24 +3,29 @@
 //   · 必须提供「立即夺回」按钮，一键中断；
 //   · Esc 也能夺回（终端内敲任意键由内核的 steal_on_key 处理）。
 import { useEffect, useState } from "react";
-import { useUi } from "./store";
+import { useUi, type TakeoverState } from "./store";
 import { aiApi } from "../ipc/commands";
 import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
 import { describeError } from "../ui/errorText";
 
+let stealBackInFlight: TakeoverState | null = null;
+
 /** 夺回：取消模型请求 + 退出接管 + 清横幅。幂等，可被按钮与 Esc 同时触发。 */
-async function stealBack(reason = "用户夺回控制权") {
+export async function stealBack(reason = "用户夺回控制权") {
   const { takeover, setTakeover, pushToast } = useUi.getState();
-  if (!takeover) return;
-  setTakeover(null); // 先清 UI，避免连点/连按重复触发
+  if (!takeover || stealBackInFlight === takeover) return;
+  stealBackInFlight = takeover;
   try {
     if (takeover.jobId) {
       await aiApi.cancel(takeover.jobId).catch(() => undefined);
     }
     await aiApi.takeoverExit(takeover.tabId, reason);
+    if (useUi.getState().takeover === takeover) setTakeover(null);
     pushToast("info", "已夺回终端控制权，AI 已停止");
   } catch (e) {
-    pushToast("error", `夺回时出错：${describeError(e)}`);
+    pushToast("error", `夺回失败，AI 可能仍在操作终端：${describeError(e)}`);
+  } finally {
+    if (stealBackInFlight === takeover) stealBackInFlight = null;
   }
 }
 

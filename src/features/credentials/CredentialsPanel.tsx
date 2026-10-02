@@ -14,6 +14,7 @@ import { connectAsset, openCredentialsSidebar, openCredentialsViewTab, useUi } f
 import { describeError } from "../../ui/errorText";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { kindMeta, formatTime } from "./meta";
+import { resolveCredentialCopy, type CredentialCopyField } from "./credentialCopy";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
 import {
   assetIcon,
@@ -179,9 +180,11 @@ function CredentialDetail({
     }
   };
 
-  const copy = async (text: string, label: string) => {
+  const copy = async (field: CredentialCopyField, label: string) => {
     try {
-      const value = text || (await vaultApi.revealCredential(cred.id)).value;
+      const value = await resolveCredentialCopy(cred, field, revealed, () =>
+        vaultApi.revealCredential(cred.id),
+      );
       await navigator.clipboard.writeText(value);
       pushToast("success", label);
     } catch (e) {
@@ -338,7 +341,7 @@ function CredentialDetail({
                 )}
                 <button
                   className="nx-btn nx-btn-sm shrink-0"
-                  onClick={() => void copy(isRef ? cred.refPath ?? "" : revealed?.value ?? "", "已复制")}
+                  onClick={() => void copy("value", "已复制")}
                 >
                   <IconCopy size={12} />
                   复制
@@ -408,7 +411,7 @@ function CredentialDetail({
                       </button>
                       <button
                         className="nx-btn nx-btn-sm shrink-0"
-                        onClick={() => void copy(revealed?.passphrase ?? "", "已复制口令")}
+                        onClick={() => void copy("passphrase", "已复制口令")}
                       >
                         <IconCopy size={12} />
                         复制

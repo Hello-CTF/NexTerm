@@ -15,6 +15,7 @@
 import type { ReactNode } from "react";
 import { IconCopy } from "../../ui/icons";
 import { useUi } from "../../app/store";
+import { safeWebUrl } from "./urlSafety";
 
 /* ── 块级解析 ─────────────────────────────────────────────────────────── */
 
@@ -220,11 +221,16 @@ function renderEmphasis(text: string, keyBase: string): ReactNode[] {
         </em>,
       );
     } else {
-      out.push(
-        <a key={key} className="nx-md-link" href={m[4]} target="_blank" rel="noreferrer">
-          {m[3]}
-        </a>,
-      );
+      const href = safeWebUrl(m[4]);
+      if (href) {
+        out.push(
+          <a key={key} className="nx-md-link" href={href} target="_blank" rel="noreferrer">
+            {m[3]}
+          </a>,
+        );
+      } else {
+        out.push(m[0]);
+      }
     }
     last = m.index + m[0].length;
   }

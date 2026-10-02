@@ -13,6 +13,7 @@ import { clientId } from "../../ipc/env";
 import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
+import { shouldFitTerminal, shouldSendTerminalResize } from "./terminalPolicy";
 
 // 终端配色：与 styles.css 的令牌保持一致（画布 #101217），
 // 前景与 ANSI 十六色统一压低饱和度，和整体界面（微冷深灰）同调。
@@ -64,6 +65,8 @@ export interface TerminalHandle {
   clear: () => void;
   /** 当前选中的文本（没选中时是空串）。右键「向 AI 提问」用它取内容。 */
   getSelection: () => string;
+  /** 接管控制权后按当前宿主重新计算行列。 */
+  fit: () => void;
   /** 当前终端尺寸。接管控制权后要按它把 PTY 尺寸推过去（最后活跃者赢）。 */
   dimensions: () => { cols: number; rows: number };
 }
@@ -166,12 +169,14 @@ export function XtermView(props: XtermViewProps) {
   const canResizeRef = useRef(props.canResize !== false);
   canResizeRef.current = props.canResize !== false;
 
-  /** 只在容器有真实尺寸时 fit —— 隐藏容器的 computed 高度是 0。 */
-  const fitIfSized = () => {
+  /** 只在容器有真实尺寸且本端有权改 PTY 时 fit；claim 成功后可显式越过观察者限制。 */
+  const fitIfSized = (afterClaim = false) => {
     const host = hostRef.current;
     const fit = fitRef.current;
     if (!host || !fit) return;
-    if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
+    if (!shouldFitTerminal(host.clientWidth, host.clientHeight, afterClaim || canResizeRef.current)) {
+      return;
+    }
     fit.fit();
   };
 
@@ -220,6 +225,7 @@ export function XtermView(props: XtermViewProps) {
       clearBlocks: () => blocks.clear(),
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),
+      fit: () => fitIfSized(true),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
@@ -227,6 +233,16 @@ export function XtermView(props: XtermViewProps) {
     const channel = createBinaryChannel((bytes) => {
       term.write(bytes);
     });
+    let applyingRemoteDimensions = false;
+    const applyRemoteDimensions = (cols: number, rows: number) => {
+      if (term.cols === cols && term.rows === rows) return;
+      applyingRemoteDimensions = true;
+      try {
+        term.resize(cols, rows);
+      } finally {
+        applyingRemoteDimensions = false;
+      }
+    };
     const doAttach = async () => {
       try {
         const cols = term.cols;
@@ -247,6 +263,7 @@ export function XtermView(props: XtermViewProps) {
           // 不传 cols/rows —— 接管方无权改 PTY 尺寸（见 terminalApi.attachTab）。
           const info = await terminalApi.attachTab(resume, channel);
           id = info.tabId;
+          applyRemoteDimensions(info.cols, info.rows);
           onAttachInfoRef.current?.({
             tabId: info.tabId,
             controller: info.controller,
@@ -351,6 +368,7 @@ export function XtermView(props: XtermViewProps) {
           const info = await terminalApi.attachTab(id, channel);
           if (disposed) return;
           kernelTabIdRef.current = info.tabId;
+          applyRemoteDimensions(info.cols, info.rows);
           onAttachInfoRef.current?.({
             tabId: info.tabId,
             controller: info.controller,
@@ -394,9 +412,10 @@ export function XtermView(props: XtermViewProps) {
       }
     });
     const resizeDisposable = term.onResize(({ cols, rows }) => {
-      if (!kernelTabId) return;
       // 观察者不发：内核会拒（not_controller），而且会把正在操作那端的 PTY 尺寸改掉。
-      if (!canResizeRef.current) return;
+      if (!shouldSendTerminalResize(!!kernelTabId, applyingRemoteDimensions, canResizeRef.current)) {
+        return;
+      }
       void terminalApi.resize(kernelTabId, cols, rows).catch(() => undefined);
     });
 
