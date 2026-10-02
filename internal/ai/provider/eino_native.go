@@ -142,7 +142,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 	if block {
 		message, err := chatModel.Generate(attemptContext, input, attemptOptions...)
 		if err != nil {
-			return nativeResult{}, fmt.Errorf("AI block chat request: %w", err)
+			return nativeResult{}, wrapNativeError("AI block chat request", err)
 		}
 		if message == nil {
 			return nativeResult{}, errors.New("AI block response has no message")
@@ -162,7 +162,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 
 	reader, err := chatModel.Stream(attemptContext, input, attemptOptions...)
 	if err != nil {
-		return nativeResult{}, fmt.Errorf("AI stream chat request: %w", err)
+		return nativeResult{}, wrapNativeError("AI stream chat request", err)
 	}
 	if reader == nil {
 		return nativeResult{}, errors.New("AI stream returned no reader")
@@ -175,7 +175,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 			break
 		}
 		if recvErr != nil {
-			return nativeResult{}, fmt.Errorf("read AI event stream: %w", recvErr)
+			return nativeResult{}, wrapNativeError("read AI event stream", recvErr)
 		}
 		state.frameSeen.Store(true)
 		if message == nil {
@@ -202,8 +202,53 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 	return nativeResult{completion: completion}, nil
 }
 
+type boundedError struct {
+	operation string
+	err       error
+}
+
+func (e *boundedError) Error() string {
+	message := e.operation + ": " + e.err.Error()
+	if len(message) <= 500 {
+		return message
+	}
+	return truncate(message, 500-len("…"))
+}
+
+func (e *boundedError) Unwrap() error {
+	return e.err
+}
+
+func wrapNativeError(operation string, err error) error {
+	if _, ok := statusCodeForError(err); ok {
+		return &boundedError{operation: operation, err: err}
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
+func nativeTextParts(message *schema.Message) string {
+	var text strings.Builder
+	for _, part := range message.MultiContent {
+		if part.Type == "" || part.Type == schema.ChatMessagePartTypeText {
+			text.WriteString(part.Text)
+		}
+	}
+	if text.Len() != 0 {
+		return text.String()
+	}
+	for _, part := range message.AssistantGenMultiContent {
+		if part.Type == "" || part.Type == schema.ChatMessagePartTypeText {
+			text.WriteString(part.Text)
+		}
+	}
+	return text.String()
+}
+
 func (c *Client) decorateMessage(message *schema.Message, state *attemptState) *schema.Message {
 	cloned := *message
+	if cloned.Content == "" {
+		cloned.Content = nativeTextParts(message)
+	}
 	extra := make(map[string]any, len(message.Extra)+4)
 	for key, value := range message.Extra {
 		extra[key] = value

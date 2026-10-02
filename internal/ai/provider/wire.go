@@ -17,6 +17,11 @@ type wireTransport struct {
 	base http.RoundTripper
 }
 
+type boundedReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
 func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	state := attemptFromContext(request.Context())
 	if state == nil || !strings.HasSuffix(request.URL.Path, "/chat/completions") {
@@ -27,8 +32,13 @@ func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		return nil, err
 	}
 	response, err := t.base.RoundTrip(normalized)
-	if err != nil || response == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+	if err != nil || response == nil {
 		return response, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		response.Body = &boundedReadCloser{Reader: io.LimitReader(response.Body, maxErrorBody), Closer: response.Body}
+		response.ContentLength = -1
+		return response, nil
 	}
 	if state.streaming {
 		response.Body = newSSEBody(response.Body, state)
@@ -121,11 +131,53 @@ func canonicalizePayload(raw []byte, state *attemptState) []byte {
 	if rawUsage := object["usage"]; len(rawUsage) != 0 && string(rawUsage) != "null" {
 		object["usage"] = canonicalizeUsage(rawUsage)
 	}
+	canonicalizeMessageTextParts(object)
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return raw
 	}
 	return encoded
+}
+
+func canonicalizeMessageTextParts(object map[string]json.RawMessage) {
+	var choices []map[string]json.RawMessage
+	if err := json.Unmarshal(object["choices"], &choices); err != nil {
+		return
+	}
+	changed := false
+	for _, choice := range choices {
+		var message map[string]json.RawMessage
+		if err := json.Unmarshal(choice["message"], &message); err != nil {
+			continue
+		}
+		rawContent, exists := message["content"]
+		if !exists || len(rawContent) == 0 || string(rawContent) == "null" {
+			continue
+		}
+		var plain string
+		if json.Unmarshal(rawContent, &plain) == nil {
+			continue
+		}
+		var parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(rawContent, &parts); err != nil {
+			continue
+		}
+		var text strings.Builder
+		for _, part := range parts {
+			if part.Type == "" || part.Type == "text" {
+				text.WriteString(part.Text)
+			}
+		}
+		message["content"], _ = json.Marshal(text.String())
+		choice["message"], _ = json.Marshal(message)
+		changed = true
+	}
+	if changed {
+		object["choices"], _ = json.Marshal(choices)
+	}
 }
 
 func canonicalizeUsage(raw json.RawMessage) json.RawMessage {

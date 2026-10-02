@@ -25,6 +25,7 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 type fakeStep struct {
 	status       int
 	body         string
+	bodyOverride io.ReadCloser
 	err          error
 	wroteRequest bool
 }
@@ -68,9 +69,13 @@ func (f *fakeProvider) RoundTrip(request *http.Request) (*http.Response, error) 
 	if step.status == 0 {
 		step.status = http.StatusOK
 	}
+	responseBody := io.NopCloser(strings.NewReader(step.body))
+	if step.bodyOverride != nil {
+		responseBody = step.bodyOverride
+	}
 	return &http.Response{
 		StatusCode: step.status, Header: make(http.Header),
-		Body: io.NopCloser(strings.NewReader(step.body)), Request: request,
+		Body: responseBody, Request: request,
 	}, nil
 }
 
