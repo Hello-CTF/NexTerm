@@ -155,52 +155,89 @@ func parseScheduleValue(raw string, names map[string]int) (int, error) {
 	return value, nil
 }
 
-// Next returns the first occurrence strictly after after.
+// Next returns the first valid occurrence strictly after after. Nonexistent
+// local wall times are skipped. When a wall time occurs twice, only its earliest
+// instant is used, so the repeated instant cannot produce a duplicate run.
+// Calendar search is strictly increasing and bounded to ten years; false means
+// that no valid occurrence was found.
 func (s *Schedule) Next(after time.Time) (time.Time, bool) {
 	if s.every > 0 {
 		return after.Add(s.every), true
 	}
-	current := after.In(s.location).Truncate(time.Minute).Add(time.Minute)
-	limit := current.AddDate(10, 0, 0)
-	for !current.After(limit) {
-		if !s.months[int(current.Month())] {
-			year, month, _ := current.Date()
-			current = time.Date(year, month+1, 1, 0, 0, 0, 0, s.location)
-			continue
-		}
-		if !s.matchesDay(current) {
-			year, month, day := current.Date()
-			current = time.Date(year, month, day+1, 0, 0, 0, 0, s.location)
-			continue
-		}
-		if !s.hours[current.Hour()] {
-			hour, ok := nextScheduleValue(s.hours, current.Hour()+1)
+	local := after.In(s.location)
+	year, month, day := local.Date()
+	wall := time.Date(year, month, day, local.Hour(), local.Minute(), 0, 0, time.UTC)
+	cursor := wall.Add(time.Minute)
+	limit := cursor.AddDate(10, 0, 0)
+	for !cursor.After(limit) {
+		candidate := cursor
+		switch {
+		case !s.months[int(cursor.Month())]:
+			year, month, _ := cursor.Date()
+			candidate = time.Date(year, month+1, 1, 0, 0, 0, 0, time.UTC)
+		case !s.matchesDay(cursor):
+			year, month, day := cursor.Date()
+			candidate = time.Date(year, month, day+1, 0, 0, 0, 0, time.UTC)
+		case !s.hours[cursor.Hour()]:
+			hour, ok := nextScheduleValue(s.hours, cursor.Hour()+1)
 			if !ok {
-				year, month, day := current.Date()
-				current = time.Date(year, month, day+1, 0, 0, 0, 0, s.location)
-				continue
+				year, month, day := cursor.Date()
+				candidate = time.Date(year, month, day+1, 0, 0, 0, 0, time.UTC)
+			} else {
+				year, month, day := cursor.Date()
+				candidate = time.Date(year, month, day, hour, 0, 0, 0, time.UTC)
 			}
-			year, month, day := current.Date()
-			current = time.Date(year, month, day, hour, 0, 0, 0, s.location)
-			continue
-		}
-		if !s.minutes[current.Minute()] {
-			minute, ok := nextScheduleValue(s.minutes, current.Minute()+1)
+		case !s.minutes[cursor.Minute()]:
+			minute, ok := nextScheduleValue(s.minutes, cursor.Minute()+1)
 			if !ok {
-				year, month, day := current.Date()
-				current = time.Date(year, month, day, current.Hour()+1, 0, 0, 0, s.location)
-				continue
+				year, month, day := cursor.Date()
+				candidate = time.Date(year, month, day, cursor.Hour()+1, 0, 0, 0, time.UTC)
+			} else {
+				year, month, day := cursor.Date()
+				candidate = time.Date(year, month, day, cursor.Hour(), minute, 0, 0, time.UTC)
 			}
-			year, month, day := current.Date()
-			current = time.Date(year, month, day, current.Hour(), minute, 0, 0, s.location)
-			continue
+		default:
+			if occurrence, ok := resolveWallTime(cursor, s.location); ok && occurrence.After(after) {
+				return occurrence, true
+			}
+			candidate = cursor.Add(time.Minute)
 		}
-		if current.After(after) {
-			return current, true
+		if !candidate.After(cursor) {
+			return time.Time{}, false
 		}
-		current = current.Add(time.Minute)
+		cursor = candidate
 	}
 	return time.Time{}, false
+}
+
+func resolveWallTime(wall time.Time, location *time.Location) (time.Time, bool) {
+	year, month, day := wall.Date()
+	probe := time.Date(year, month, day, wall.Hour(), wall.Minute(), 0, 0, location)
+	probes := []time.Time{probe, probe.Add(-6 * time.Hour), probe.Add(6 * time.Hour), probe.Add(-24 * time.Hour), probe.Add(24 * time.Hour)}
+	seen := make(map[int]struct{}, len(probes))
+	var earliest time.Time
+	for _, value := range probes {
+		_, offset := value.In(location).Zone()
+		if _, exists := seen[offset]; exists {
+			continue
+		}
+		seen[offset] = struct{}{}
+		candidate := wall.Add(-time.Duration(offset) * time.Second).In(location)
+		if !sameWallTime(candidate, wall) {
+			continue
+		}
+		if earliest.IsZero() || candidate.Before(earliest) {
+			earliest = candidate
+		}
+	}
+	return earliest, !earliest.IsZero()
+}
+
+func sameWallTime(value, wall time.Time) bool {
+	valueYear, valueMonth, valueDay := value.Date()
+	wallYear, wallMonth, wallDay := wall.Date()
+	return valueYear == wallYear && valueMonth == wallMonth && valueDay == wallDay &&
+		value.Hour() == wall.Hour() && value.Minute() == wall.Minute() && value.Second() == 0
 }
 
 func nextScheduleValue(values []bool, start int) (int, bool) {

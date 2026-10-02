@@ -82,6 +82,65 @@ func TestScheduleAliasesIntervalSundayAndTimezone(t *testing.T) {
 	}
 }
 
+func TestScheduleSkipsSpringForwardGapWithTimeout(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := ParseSchedule("30 2 * * *", location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Date(2026, time.March, 7, 2, 30, 0, 0, location)
+	got, ok := nextWithTimeout(t, schedule, after)
+	want := time.Date(2026, time.March, 9, 2, 30, 0, 0, location)
+	if !ok || !got.Equal(want) {
+		t.Fatalf("Next(%s) = %s, %v; want %s", after, got, ok, want)
+	}
+}
+
+func TestScheduleFallBackUsesEarliestInstantOnlyWithTimeout(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := ParseSchedule("30 1 * * *", location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Date(2026, time.October, 31, 1, 30, 0, 0, location)
+	first, ok := nextWithTimeout(t, schedule, after)
+	wantFirst := time.Date(2026, time.November, 1, 5, 30, 0, 0, time.UTC)
+	if !ok || !first.Equal(wantFirst) {
+		t.Fatalf("first ambiguous occurrence = %s, %v; want %s", first, ok, wantFirst)
+	}
+	second, ok := nextWithTimeout(t, schedule, first)
+	wantSecond := time.Date(2026, time.November, 2, 6, 30, 0, 0, time.UTC)
+	if !ok || !second.Equal(wantSecond) {
+		t.Fatalf("next occurrence = %s, %v; want %s without a repeated instant", second, ok, wantSecond)
+	}
+}
+
+func nextWithTimeout(t *testing.T, schedule *Schedule, after time.Time) (time.Time, bool) {
+	t.Helper()
+	type result struct {
+		at time.Time
+		ok bool
+	}
+	results := make(chan result, 1)
+	go func() {
+		at, ok := schedule.Next(after)
+		results <- result{at: at, ok: ok}
+	}()
+	select {
+	case result := <-results:
+		return result.at, result.ok
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Next(%s) did not terminate", after)
+		return time.Time{}, false
+	}
+}
+
 func TestInvalidSchedules(t *testing.T) {
 	for _, expression := range []string{
 		"", "* * * *", "61 * * * *", "* 24 * * *", "0 0 * FOO *",
