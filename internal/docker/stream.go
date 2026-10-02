@@ -124,6 +124,8 @@ type managedStream struct {
 	sinkCancel  context.CancelFunc
 	sinkVersion uint64
 	closed      bool
+	completed   bool
+	exit        StreamExit
 	writeMu     sync.Mutex
 	deliveryMu  sync.Mutex
 	replay      boundedReplay
@@ -256,12 +258,17 @@ func (s *managedStream) close(cause error) error {
 			s.closeErr = s.reader.Close()
 		}
 		s.finish(StreamExit{ExitCode: -1, Err: cause})
+		s.registry.remove(s.id, s)
 	})
 	return s.closeErr
 }
 
 func (s *managedStream) finish(exit StreamExit) {
 	s.finishOnce.Do(func() {
+		s.mu.Lock()
+		s.completed = true
+		s.exit = exit
+		s.mu.Unlock()
 		s.cancel()
 		if s.exec != nil {
 			_ = s.exec.Close()
@@ -270,7 +277,9 @@ func (s *managedStream) finish(exit StreamExit) {
 		}
 		s.done <- exit
 		close(s.done)
-		s.registry.remove(s.id, s)
+		if s.kind == streamLogs {
+			s.registry.remove(s.id, s)
+		}
 	})
 }
 
@@ -322,7 +331,11 @@ func (s *managedStream) resume(sink FrameSink) error {
 	s.sinkVersion++
 	version := s.sinkVersion
 	s.sink = sink
-	s.sinkCtx, s.sinkCancel = context.WithCancel(s.ctx)
+	sinkParent := s.ctx
+	if s.completed {
+		sinkParent = context.Background()
+	}
+	s.sinkCtx, s.sinkCancel = context.WithCancel(sinkParent)
 	sinkCtx := s.sinkCtx
 	backlog := s.replay.drain()
 	s.mu.Unlock()
@@ -455,9 +468,9 @@ func (s *Service) WriteExec(ctx context.Context, streamID string, data []byte) e
 	stream.writeMu.Lock()
 	defer stream.writeMu.Unlock()
 	stream.mu.Lock()
-	closed := stream.closed
+	unavailable := stream.closed || stream.completed
 	stream.mu.Unlock()
-	if closed {
+	if unavailable {
 		return ErrStreamClosed
 	}
 	for len(data) > 0 {
@@ -480,6 +493,12 @@ func (s *Service) ResizeExec(ctx context.Context, streamID string, width, height
 	}
 	if stream.kind != streamExec {
 		return ErrUnsupported
+	}
+	stream.mu.Lock()
+	unavailable := stream.closed || stream.completed
+	stream.mu.Unlock()
+	if unavailable {
+		return ErrStreamClosed
 	}
 	return stream.exec.Resize(ctx, max(width, 20), max(height, 5))
 }
@@ -514,6 +533,16 @@ func (s *Service) StreamDone(streamID string) (<-chan StreamExit, error) {
 		return nil, err
 	}
 	return stream.done, nil
+}
+
+func (s *Service) StreamStatus(streamID string) (StreamExit, bool, error) {
+	stream, err := s.streams.get(streamID)
+	if err != nil {
+		return StreamExit{}, false, err
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.exit, stream.completed, nil
 }
 
 func (s *Service) StreamSession(streamID string) (string, error) {

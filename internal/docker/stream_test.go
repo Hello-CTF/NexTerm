@@ -65,6 +65,7 @@ type pipeExecSession struct {
 	closed     atomic.Bool
 	closeWrite atomic.Int32
 	tty        bool
+	exitCode   int
 }
 
 func newPipeExecSession(tty bool) *pipeExecSession {
@@ -93,7 +94,7 @@ func (s *pipeExecSession) Resize(_ context.Context, width, height uint) error {
 	s.resizeMu.Unlock()
 	return nil
 }
-func (s *pipeExecSession) Wait(context.Context) (int, error) { return 0, nil }
+func (s *pipeExecSession) Wait(context.Context) (int, error) { return s.exitCode, nil }
 func (s *pipeExecSession) IsTTY() bool                       { return s.tty }
 func (s *pipeExecSession) emit(t *testing.T, value string) {
 	t.Helper()
@@ -190,6 +191,56 @@ func TestAttachExecLifecycleDetachResumeResize(t *testing.T) {
 	defer exec.resizeMu.Unlock()
 	if len(exec.resizes) != 1 || exec.resizes[0] != [2]uint{100, 30} {
 		t.Fatalf("resizes = %v", exec.resizes)
+	}
+}
+
+func TestCompletedDetachedExecRetainsReplayAndExit(t *testing.T) {
+	exec := newPipeExecSession(true)
+	exec.exitCode = 23
+	backend := &stubBackend{openExec: func(context.Context, ExecOptions) (ExecSession, error) { return exec, nil }}
+	service := NewService(&stubProvider{sdk: backend})
+	id, err := service.AttachExec(t.Context(), ExecAttachRequest{SessionID: "s1", Container: "c1", Sink: newCollectSink()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := service.StreamDone(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DetachStream(id); err != nil {
+		t.Fatal(err)
+	}
+	exec.emit(t, "final")
+	waitExecReplay(t, service, id, 5)
+	_ = exec.writer.Close()
+	select {
+	case exit := <-done:
+		if exit.ExitCode != 23 || exit.Err != nil {
+			t.Fatalf("exit = %+v", exit)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("exec did not complete")
+	}
+	status, completed, err := service.StreamStatus(id)
+	if err != nil || !completed || status.ExitCode != 23 {
+		t.Fatalf("status = %+v, completed = %v, err = %v", status, completed, err)
+	}
+	resumed := newCollectSink()
+	if err := service.ResumeExec(id, resumed); err != nil {
+		t.Fatal(err)
+	}
+	resumed.waitFrame(t)
+	if resumed.String() != "final" {
+		t.Fatalf("completed replay = %q", resumed.String())
+	}
+	if err := service.WriteExec(t.Context(), id, []byte("x")); !errors.Is(err, ErrStreamClosed) {
+		t.Fatalf("write after completion = %v", err)
+	}
+	if err := service.CloseStream(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.StreamStatus(id); !errors.Is(err, ErrStreamClosed) {
+		t.Fatalf("status after explicit cleanup = %v", err)
 	}
 }
 
