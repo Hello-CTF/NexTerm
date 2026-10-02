@@ -46,6 +46,7 @@ type Config struct {
 	Static       http.Handler
 	Vault        Vault
 	VaultStatus  func(context.Context) (any, error)
+	Retention    *RetentionConfig
 	Version      string
 	MaxRPCBytes  int64
 	Logger       *slog.Logger
@@ -62,6 +63,7 @@ type Server struct {
 	channelStats   ChannelStatsFunc
 	version        string
 	vaultStatus    func(context.Context) (any, error)
+	retention      *RetentionConfig
 	handler        http.Handler
 	logger         *slog.Logger
 	sockets        socketTracker
@@ -70,16 +72,17 @@ type Server struct {
 }
 
 type Health struct {
-	OK               bool    `json:"ok"`
-	Service          string  `json:"service"`
-	Version          string  `json:"version"`
-	SyncOnly         bool    `json:"syncOnly"`
-	Commands         int     `json:"commands"`
-	EventSubscribers int     `json:"eventSubscribers"`
-	LiveChannels     int     `json:"liveChannels"`
-	PendingChannels  int     `json:"pendingChannels"`
-	WebRoot          *string `json:"webRoot"`
-	Vault            any     `json:"vault"`
+	OK               bool             `json:"ok"`
+	Service          string           `json:"service"`
+	Version          string           `json:"version"`
+	SyncOnly         bool             `json:"syncOnly"`
+	Commands         int              `json:"commands"`
+	EventSubscribers int              `json:"eventSubscribers"`
+	LiveChannels     int              `json:"liveChannels"`
+	PendingChannels  int              `json:"pendingChannels"`
+	WebRoot          *string          `json:"webRoot"`
+	Vault            any              `json:"vault"`
+	Retention        *RetentionHealth `json:"retention"`
 }
 
 func New(config Config) (*Server, error) {
@@ -94,6 +97,9 @@ func New(config Config) (*Server, error) {
 	}
 	if !config.Options.SyncOnly && config.Channels == nil {
 		return nil, fmt.Errorf("channel binder is required in full server mode")
+	}
+	if config.Retention != nil && config.Retention.Enabled && config.Retention.Status == nil {
+		return nil, fmt.Errorf("enabled retention requires a status provider")
 	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
@@ -122,7 +128,7 @@ func New(config Config) (*Server, error) {
 		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
 		tokens: config.Tokens, events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
-		logger: config.Logger,
+		retention: config.Retention, logger: config.Logger,
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
@@ -254,6 +260,14 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 			vaultStatus = status
 		}
 	}
+	var retention *RetentionHealth
+	if s.retention != nil {
+		status, err := s.retention.health(r.Context())
+		retention = status
+		if err != nil {
+			s.logger.Warn("retention status unavailable", "error", err)
+		}
+	}
 	var webRoot *string
 	if !s.options.SyncOnly && s.options.WebRoot != "" {
 		webRoot = &s.options.WebRoot
@@ -272,7 +286,7 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 		OK: true, Service: "nexterm-server", Version: s.version, SyncOnly: s.options.SyncOnly,
 		Commands: commands, EventSubscribers: s.events.SubscriberCount(),
 		LiveChannels: channelStats.LiveChannels, PendingChannels: channelStats.PendingChannels,
-		WebRoot: webRoot, Vault: vaultStatus,
+		WebRoot: webRoot, Vault: vaultStatus, Retention: retention,
 	})
 }
 
