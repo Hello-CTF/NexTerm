@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "purpose": "Go self-consistency and acceptance evidence; no Rust payload goldens or differential compatibility claims",
+  "captured_at": "2026-10-02T12:36:45.615607+00:00",
+  "go_source": {
+    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+    "commit": "8ce1a53555b4bb61e6d20cdf15ac08ffb232ed82",
+    "go_version": "go1.26.8"
+  },
+  "steps": [
+    {
+      "id": "go-harness-resolve",
+      "command": "go mod edit -replace=github.com/ProbiusOfficial/NexTerm=/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 0.031,
+      "log": "docs/acceptance-rwig/baseline/logs/go-harness-resolve.log"
+    },
+    {
+      "id": "go-harness-tidy",
+      "command": "go mod tidy",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 0.062,
+      "log": "docs/acceptance-rwig/baseline/logs/go-harness-tidy.log"
+    },
+    {
+      "id": "go-toolchain",
+      "command": "go env GOVERSION",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 0.011,
+      "log": "docs/acceptance-rwig/baseline/logs/go-toolchain.log"
+    },
+    {
+      "id": "go-ipc-self-tests",
+      "command": "go test -mod=readonly -race -count=1 ./...",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-selfcheck/harness",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 2.281,
+      "log": "docs/acceptance-rwig/baseline/logs/go-ipc-self-tests.log"
+    },
+    {
+      "id": "go-server-build",
+      "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-artifacts/nexterm-server ./cmd/nexterm-server",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 0.415,
+      "log": "docs/acceptance-rwig/baseline/logs/go-server-build.log"
+    },
+    {
+      "id": "go-server-live-smoke",
+      "command": "full and sync-only loopback servers with synthetic requests",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 0.902,
+      "log": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log"
+    },
+    {
+      "id": "go-desktop-build",
+      "command": "go build -mod=readonly -trimpath '-ldflags=-s -w' -o /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-artifacts/nexterm-desktop ./cmd/nexterm-desktop",
+      "cwd": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_seconds": 0.794,
+      "log": "docs/acceptance-rwig/baseline/logs/go-desktop-build.log"
+    }
+  ],
+  "runtime": {
+    "verified_commands": [
+      {
+        "name": "app_platform",
+        "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_platform"
+      },
+      {
+        "name": "app_info",
+        "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_info"
+      }
+    ],
+    "implemented_commands": [
+      "app_info",
+      "app_platform"
+    ],
+    "verified_events": [],
+    "verified_streams": [],
+    "full_server": [
+      {
+        "health": {
+          "ok": true,
+          "service": "nexterm-server",
+          "version": "dev",
+          "syncOnly": false,
+          "commands": 2,
+          "webRoot": null,
+          "vault": null
+        }
+      },
+      {
+        "app_platform": {
+          "ok": true,
+          "data": "darwin"
+        }
+      },
+      {
+        "app_info": {
+          "ok": true,
+          "data": {
+            "name": "NexTerm",
+            "version": "dev",
+            "vault": null
+          }
+        }
+      },
+      {
+        "unknown_command": {
+          "ok": false,
+          "error": {
+            "code": "not_found",
+            "message": "未找到命令: self.missing"
+          }
+        }
+      }
+    ],
+    "sync_only_server": [
+      {
+        "health": {
+          "ok": true,
+          "service": "nexterm-server",
+          "version": "dev",
+          "syncOnly": true,
+          "commands": 2,
+          "webRoot": null,
+          "vault": null
+        }
+      },
+      {
+        "sync_only_rpc_status": 404
+      }
+    ]
+  },
+  "size_gates": [
+    {
+      "rust_label": "rust-desktop-macos-arm64",
+      "rust_path": "target/parity/release/nexterm",
+      "rust_sha256": "8f81f7b99855475dd2f08a2866932acefaff5e8d1b373bf04d726169eb05c033",
+      "go_path": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-artifacts/nexterm-desktop",
+      "rust_bytes": 26095616,
+      "go_bytes": 13171650,
+      "delta_bytes": -12923966,
+      "go_to_rust_ratio": 0.504746,
+      "smaller": true,
+      "status": "passed",
+      "rule": "Go artifact must be strictly smaller than the corresponding Rust artifact",
+      "go_sha256": "4f0401f8c4c0a1e9a8d9eb856292f717e84d34dc59190271bf7a29a7bb96a4c0",
+      "go_file": "Mach-O 64-bit executable arm64"
+    },
+    {
+      "rust_label": "rust-server-macos-arm64",
+      "rust_path": "target/parity/release/nexterm-server",
+      "rust_sha256": "cdf19ea072f7aadb302a416b98c780adeff60e8f8070907b8c731e51a0c9d079",
+      "go_path": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/target/parity-go-artifacts/nexterm-server",
+      "rust_bytes": 17172784,
+      "go_bytes": 5952834,
+      "delta_bytes": -11219950,
+      "go_to_rust_ratio": 0.346644,
+      "smaller": true,
+      "status": "passed",
+      "rule": "Go artifact must be strictly smaller than the corresponding Rust artifact",
+      "go_sha256": "905b845022c6d91c62c9067ef48252678801aed03a19e1427840043d34901670",
+      "go_file": "Mach-O 64-bit executable arm64"
+    }
+  ],
+  "not_produced": [
+    {
+      "item": "Go DMG/NSIS/LPK package-size acceptance",
+      "reason": "this skeleton selfcheck builds raw desktop/server binaries only; no installer-package pass is claimed"
+    }
+  ],
+  "summary": {
+    "selfcheck_steps_passed": 7,
+    "selfcheck_steps_failed_or_not_run": 0,
+    "feature_complete": false,
+    "raw_binary_size_gates_passed": true,
+    "installer_package_gates_passed": false,
+    "feature_coverage": {
+      "feature_complete": false,
+      "commands_total": 139,
+      "commands_verified": 2,
+      "commands_implemented_unverified": 0,
+      "commands_not_implemented": 137,
+      "events_total": 10,
+      "events_verified": 0,
+      "streams_total": 7,
+      "streams_verified": 0
+    },
+    "skips_are_passes": false
+  },
+  "status": "selfcheck-passed-acceptance-gaps-remain"
+}

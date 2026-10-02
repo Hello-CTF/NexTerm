@@ -1,0 +1,2498 @@
+{
+  "baseline": {
+    "generator": "scripts/parity/inventory.py",
+    "implementation": "rust",
+    "source_commit": "25c2fa003cc05f04347b1d33c4d4be25f820f870"
+  },
+  "commands": {
+    "frontend_facade": {
+      "entries": [
+        {
+          "accessor": "systemApi.platform",
+          "line": 93,
+          "name": "app_platform",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.connect",
+          "line": 110,
+          "name": "session_connect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.connectLocal",
+          "line": 111,
+          "name": "session_connect_local",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.disconnect",
+          "line": 113,
+          "name": "session_disconnect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.reconnect",
+          "line": 122,
+          "name": "session_reconnect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.list",
+          "line": 123,
+          "name": "session_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.probe",
+          "line": 125,
+          "name": "session_probe",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.openLineTab",
+          "line": 129,
+          "name": "session_open_line_tab",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.lineExec",
+          "line": 137,
+          "name": "session_line_exec",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "sessionApi.cwd",
+          "line": 139,
+          "name": "session_cwd",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.attach",
+          "line": 194,
+          "name": "terminal_attach",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.attachTab",
+          "line": 208,
+          "name": "terminal_attach_tab",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.write",
+          "line": 215,
+          "name": "terminal_write",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.resize",
+          "line": 219,
+          "name": "terminal_resize",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.detach",
+          "line": 227,
+          "name": "terminal_detach",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.claim",
+          "line": 230,
+          "name": "terminal_claim",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.release",
+          "line": 233,
+          "name": "terminal_release",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.listLive",
+          "line": 235,
+          "name": "terminal_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.screenText",
+          "line": 236,
+          "name": "terminal_screen_text",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.snapshot",
+          "line": 238,
+          "name": "terminal_snapshot",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.tail",
+          "line": 240,
+          "name": "terminal_tail",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.setVisible",
+          "line": 242,
+          "name": "terminal_set_visible",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.dump",
+          "line": 244,
+          "name": "terminal_dump",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.switchEncoding",
+          "line": 246,
+          "name": "terminal_switch_encoding",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.recordStart",
+          "line": 248,
+          "name": "terminal_record_start",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.recordStop",
+          "line": 249,
+          "name": "terminal_record_stop",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.exportLog",
+          "line": 257,
+          "name": "terminal_export_log",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "terminalApi.closeTab",
+          "line": 273,
+          "name": "terminal_close_tab",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "layoutApi.get",
+          "line": 295,
+          "name": "layout_get",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "layoutApi.put",
+          "line": 297,
+          "name": "layout_put",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.list",
+          "line": 339,
+          "name": "asset_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.get",
+          "line": 340,
+          "name": "asset_get",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.create",
+          "line": 342,
+          "name": "asset_create",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.update",
+          "line": 344,
+          "name": "asset_update",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.saveKeyFile",
+          "line": 347,
+          "name": "asset_save_key_file",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.readKeyFile",
+          "line": 349,
+          "name": "asset_read_key_file",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.delete",
+          "line": 350,
+          "name": "asset_delete",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.search",
+          "line": 351,
+          "name": "asset_search",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.groupList",
+          "line": 352,
+          "name": "group_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.groupCreate",
+          "line": 354,
+          "name": "group_create",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.groupUpdate",
+          "line": 356,
+          "name": "group_update",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.groupDelete",
+          "line": 357,
+          "name": "group_delete",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.snippetList",
+          "line": 359,
+          "name": "snippet_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.snippetCreate",
+          "line": 363,
+          "name": "snippet_create",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.snippetUpdate",
+          "line": 365,
+          "name": "snippet_update",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.snippetDelete",
+          "line": 366,
+          "name": "snippet_delete",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.auditQuery",
+          "line": 368,
+          "name": "audit_query",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.knownHostList",
+          "line": 369,
+          "name": "known_host_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.knownHostAccept",
+          "line": 371,
+          "name": "known_host_accept",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.knownHostRemove",
+          "line": 372,
+          "name": "known_host_remove",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "assetApi.appInfo",
+          "line": 374,
+          "name": "app_info",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.list",
+          "line": 393,
+          "name": "fs_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.read",
+          "line": 400,
+          "name": "fs_read",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.write",
+          "line": 410,
+          "name": "fs_write",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.mkdir",
+          "line": 412,
+          "name": "fs_mkdir",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.rename",
+          "line": 414,
+          "name": "fs_rename",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.delete",
+          "line": 416,
+          "name": "fs_delete",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.chmod",
+          "line": 418,
+          "name": "fs_chmod",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.checksum",
+          "line": 420,
+          "name": "fs_checksum",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.upload",
+          "line": 422,
+          "name": "fs_upload",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.download",
+          "line": 424,
+          "name": "fs_download",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.packDownload",
+          "line": 427,
+          "name": "fs_pack_download",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "fsApi.extract",
+          "line": 430,
+          "name": "fs_extract",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "mountApi.capability",
+          "line": 437,
+          "name": "mount_capability",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "mountApi.list",
+          "line": 439,
+          "name": "mount_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "mountApi.create",
+          "line": 446,
+          "name": "mount_create",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "mountApi.remove",
+          "line": 448,
+          "name": "mount_remove",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.overview",
+          "line": 473,
+          "name": "docker_overview",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.ps",
+          "line": 477,
+          "name": "docker_ps",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.logsAttach",
+          "line": 484,
+          "name": "docker_logs_attach",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.execAttach",
+          "line": 501,
+          "name": "docker_exec_attach",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.action",
+          "line": 506,
+          "name": "docker_action",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.images",
+          "line": 507,
+          "name": "docker_images",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.imagePull",
+          "line": 509,
+          "name": "docker_image_pull",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.imageRemove",
+          "line": 511,
+          "name": "docker_image_remove",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.inspect",
+          "line": 513,
+          "name": "docker_inspect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.stats",
+          "line": 514,
+          "name": "docker_stats",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dockerApi.containerListDir",
+          "line": 516,
+          "name": "docker_container_list_dir",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.connect",
+          "line": 556,
+          "name": "db_connect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.disconnect",
+          "line": 557,
+          "name": "db_disconnect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.schemas",
+          "line": 558,
+          "name": "db_schemas",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.tables",
+          "line": 560,
+          "name": "db_tables",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.columns",
+          "line": 562,
+          "name": "db_columns",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.query",
+          "line": 564,
+          "name": "db_query",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.redisScan",
+          "line": 566,
+          "name": "redis_scan",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.redisInspect",
+          "line": 568,
+          "name": "redis_inspect",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.redisCommand",
+          "line": 570,
+          "name": "redis_command",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "dbApi.redisSetTtl",
+          "line": 572,
+          "name": "redis_set_ttl",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.chat",
+          "line": 619,
+          "name": "ai_chat",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.getPermission",
+          "line": 622,
+          "name": "ai_get_permission",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.setPermission",
+          "line": 624,
+          "name": "ai_set_permission",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.cancel",
+          "line": 625,
+          "name": "ai_cancel",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.confirm",
+          "line": 627,
+          "name": "ai_confirm",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.models",
+          "line": 628,
+          "name": "ai_models",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.testProvider",
+          "line": 630,
+          "name": "ai_test_provider",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.setProvider",
+          "line": 634,
+          "name": "ai_set_provider",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.getProvider",
+          "line": 635,
+          "name": "ai_get_provider",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.presets",
+          "line": 636,
+          "name": "ai_presets",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.takeoverEnter",
+          "line": 638,
+          "name": "ai_takeover_enter",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.takeoverExit",
+          "line": 640,
+          "name": "ai_takeover_exit",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.takeoverRun",
+          "line": 646,
+          "name": "ai_takeover_run",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.conversationList",
+          "line": 648,
+          "name": "ai_conversation_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.conversationDelete",
+          "line": 649,
+          "name": "ai_conversation_delete",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.conversationCreate",
+          "line": 651,
+          "name": "ai_conversation_create",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.messages",
+          "line": 653,
+          "name": "ai_messages",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.overview",
+          "line": 665,
+          "name": "ai_model_profiles",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.save",
+          "line": 668,
+          "name": "ai_model_save",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.remove",
+          "line": 669,
+          "name": "ai_model_delete",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.activate",
+          "line": 670,
+          "name": "ai_model_activate",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.refresh",
+          "line": 676,
+          "name": "ai_model_refresh",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.presets",
+          "line": 677,
+          "name": "ai_presets",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "modelApi.preset",
+          "line": 678,
+          "name": "ai_model_preset",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.status",
+          "line": 731,
+          "name": "vault_status",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.initMaster",
+          "line": 732,
+          "name": "vault_init_master",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.initDpapi",
+          "line": 733,
+          "name": "vault_init_dpapi",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.unlock",
+          "line": 734,
+          "name": "vault_unlock",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.lock",
+          "line": 735,
+          "name": "vault_lock",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.changePassword",
+          "line": 737,
+          "name": "vault_change_password",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.setCredential",
+          "line": 750,
+          "name": "vault_set_credential",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.listCredentials",
+          "line": 760,
+          "name": "vault_list_credentials",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.deleteCredential",
+          "line": 761,
+          "name": "vault_delete_credential",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.revealCredential",
+          "line": 762,
+          "name": "vault_reveal_credential",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "vaultApi.updateCredential",
+          "line": 777,
+          "name": "credential_update",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "forwardApi.env",
+          "line": 790,
+          "name": "forward_env",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "forwardApi.create",
+          "line": 792,
+          "name": "forward_create",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "forwardApi.createSocks",
+          "line": 805,
+          "name": "forward_create_socks",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "forwardApi.list",
+          "line": 809,
+          "name": "forward_list",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "forwardApi.remove",
+          "line": 810,
+          "name": "forward_remove",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.digest",
+          "line": 833,
+          "name": "sync_digest",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.origin",
+          "line": 834,
+          "name": "sync_origin",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.exportAssets",
+          "line": 838,
+          "name": "sync_export",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.importBundle",
+          "line": 842,
+          "name": "sync_import",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.linkGet",
+          "line": 846,
+          "name": "sync_link_get",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.linkSet",
+          "line": 851,
+          "name": "sync_link_set",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.remoteDigest",
+          "line": 854,
+          "name": "sync_remote_digest",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.push",
+          "line": 858,
+          "name": "sync_push",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.pull",
+          "line": 861,
+          "name": "sync_pull",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.token",
+          "line": 866,
+          "name": "sync_token",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "syncApi.rotateToken",
+          "line": 868,
+          "name": "sync_token_rotate",
+          "source": "src/ipc/commands.ts"
+        }
+      ],
+      "method_count": 139,
+      "source": "src/ipc/commands.ts",
+      "unique_command_count": 138
+    },
+    "reconciliation": {
+      "duplicate_frontend_commands": [
+        {
+          "accessors": [
+            "aiApi.presets",
+            "modelApi.presets"
+          ],
+          "name": "ai_presets"
+        }
+      ],
+      "equation": "139 Rust = 138 frontend unique + credential_save; 139 frontend methods = 138 unique + duplicate ai_presets wrapper",
+      "frontend_only": [],
+      "rust_only": [
+        "credential_save"
+      ],
+      "sync_only_commands": [
+        "sync_digest",
+        "sync_export",
+        "sync_import"
+      ]
+    },
+    "rust_registry": {
+      "count": 139,
+      "duplicate_names": [],
+      "entries": [
+        {
+          "frontend_wrappers": [
+            "systemApi.platform"
+          ],
+          "line": 46,
+          "name": "app_platform",
+          "rust_path": "app_platform",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "layoutApi.get"
+          ],
+          "line": 48,
+          "name": "layout_get",
+          "rust_path": "layout::layout_get",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "layoutApi.put"
+          ],
+          "line": 49,
+          "name": "layout_put",
+          "rust_path": "layout::layout_put",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.connect"
+          ],
+          "line": 51,
+          "name": "session_connect",
+          "rust_path": "session::session_connect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.connectLocal"
+          ],
+          "line": 52,
+          "name": "session_connect_local",
+          "rust_path": "session::session_connect_local",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.disconnect"
+          ],
+          "line": 53,
+          "name": "session_disconnect",
+          "rust_path": "session::session_disconnect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.list"
+          ],
+          "line": 54,
+          "name": "session_list",
+          "rust_path": "session::session_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.probe"
+          ],
+          "line": 55,
+          "name": "session_probe",
+          "rust_path": "session::session_probe",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.openLineTab"
+          ],
+          "line": 56,
+          "name": "session_open_line_tab",
+          "rust_path": "session::session_open_line_tab",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.lineExec"
+          ],
+          "line": 57,
+          "name": "session_line_exec",
+          "rust_path": "session::session_line_exec",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.cwd"
+          ],
+          "line": 58,
+          "name": "session_cwd",
+          "rust_path": "session::session_cwd",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "sessionApi.reconnect"
+          ],
+          "line": 59,
+          "name": "session_reconnect",
+          "rust_path": "session::session_reconnect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.attach"
+          ],
+          "line": 61,
+          "name": "terminal_attach",
+          "rust_path": "terminal::terminal_attach",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.attachTab"
+          ],
+          "line": 62,
+          "name": "terminal_attach_tab",
+          "rust_path": "terminal::terminal_attach_tab",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.listLive"
+          ],
+          "line": 63,
+          "name": "terminal_list",
+          "rust_path": "terminal::terminal_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.claim"
+          ],
+          "line": 64,
+          "name": "terminal_claim",
+          "rust_path": "terminal::terminal_claim",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.release"
+          ],
+          "line": 65,
+          "name": "terminal_release",
+          "rust_path": "terminal::terminal_release",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.write"
+          ],
+          "line": 66,
+          "name": "terminal_write",
+          "rust_path": "terminal::terminal_write",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.resize"
+          ],
+          "line": 67,
+          "name": "terminal_resize",
+          "rust_path": "terminal::terminal_resize",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.detach"
+          ],
+          "line": 68,
+          "name": "terminal_detach",
+          "rust_path": "terminal::terminal_detach",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.closeTab"
+          ],
+          "line": 69,
+          "name": "terminal_close_tab",
+          "rust_path": "terminal::terminal_close_tab",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.screenText"
+          ],
+          "line": 70,
+          "name": "terminal_screen_text",
+          "rust_path": "terminal::terminal_screen_text",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.snapshot"
+          ],
+          "line": 71,
+          "name": "terminal_snapshot",
+          "rust_path": "terminal::terminal_snapshot",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.tail"
+          ],
+          "line": 72,
+          "name": "terminal_tail",
+          "rust_path": "terminal::terminal_tail",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.setVisible"
+          ],
+          "line": 73,
+          "name": "terminal_set_visible",
+          "rust_path": "terminal::terminal_set_visible",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.dump"
+          ],
+          "line": 74,
+          "name": "terminal_dump",
+          "rust_path": "terminal::terminal_dump",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.switchEncoding"
+          ],
+          "line": 75,
+          "name": "terminal_switch_encoding",
+          "rust_path": "terminal::terminal_switch_encoding",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.recordStart"
+          ],
+          "line": 76,
+          "name": "terminal_record_start",
+          "rust_path": "terminal::terminal_record_start",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.recordStop"
+          ],
+          "line": 77,
+          "name": "terminal_record_stop",
+          "rust_path": "terminal::terminal_record_stop",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "terminalApi.exportLog"
+          ],
+          "line": 78,
+          "name": "terminal_export_log",
+          "rust_path": "terminal::terminal_export_log",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.list"
+          ],
+          "line": 80,
+          "name": "fs_list",
+          "rust_path": "fs::fs_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.read"
+          ],
+          "line": 81,
+          "name": "fs_read",
+          "rust_path": "fs::fs_read",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.write"
+          ],
+          "line": 82,
+          "name": "fs_write",
+          "rust_path": "fs::fs_write",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.mkdir"
+          ],
+          "line": 83,
+          "name": "fs_mkdir",
+          "rust_path": "fs::fs_mkdir",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.rename"
+          ],
+          "line": 84,
+          "name": "fs_rename",
+          "rust_path": "fs::fs_rename",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.delete"
+          ],
+          "line": 85,
+          "name": "fs_delete",
+          "rust_path": "fs::fs_delete",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.chmod"
+          ],
+          "line": 86,
+          "name": "fs_chmod",
+          "rust_path": "fs::fs_chmod",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.checksum"
+          ],
+          "line": 87,
+          "name": "fs_checksum",
+          "rust_path": "fs::fs_checksum",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.upload"
+          ],
+          "line": 88,
+          "name": "fs_upload",
+          "rust_path": "fs::fs_upload",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.download"
+          ],
+          "line": 89,
+          "name": "fs_download",
+          "rust_path": "fs::fs_download",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.packDownload"
+          ],
+          "line": 90,
+          "name": "fs_pack_download",
+          "rust_path": "fs::fs_pack_download",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "fsApi.extract"
+          ],
+          "line": 91,
+          "name": "fs_extract",
+          "rust_path": "fs::fs_extract",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "mountApi.capability"
+          ],
+          "line": 93,
+          "name": "mount_capability",
+          "rust_path": "mount::mount_capability",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "mountApi.list"
+          ],
+          "line": 94,
+          "name": "mount_list",
+          "rust_path": "mount::mount_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "mountApi.create"
+          ],
+          "line": 95,
+          "name": "mount_create",
+          "rust_path": "mount::mount_create",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "mountApi.remove"
+          ],
+          "line": 96,
+          "name": "mount_remove",
+          "rust_path": "mount::mount_remove",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.overview"
+          ],
+          "line": 98,
+          "name": "docker_overview",
+          "rust_path": "docker::docker_overview",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.ps"
+          ],
+          "line": 99,
+          "name": "docker_ps",
+          "rust_path": "docker::docker_ps",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.logsAttach"
+          ],
+          "line": 100,
+          "name": "docker_logs_attach",
+          "rust_path": "docker::docker_logs_attach",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.execAttach"
+          ],
+          "line": 101,
+          "name": "docker_exec_attach",
+          "rust_path": "docker::docker_exec_attach",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.action"
+          ],
+          "line": 102,
+          "name": "docker_action",
+          "rust_path": "docker::docker_action",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.images"
+          ],
+          "line": 103,
+          "name": "docker_images",
+          "rust_path": "docker::docker_images",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.imagePull"
+          ],
+          "line": 104,
+          "name": "docker_image_pull",
+          "rust_path": "docker::docker_image_pull",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.imageRemove"
+          ],
+          "line": 105,
+          "name": "docker_image_remove",
+          "rust_path": "docker::docker_image_remove",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.inspect"
+          ],
+          "line": 106,
+          "name": "docker_inspect",
+          "rust_path": "docker::docker_inspect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.stats"
+          ],
+          "line": 107,
+          "name": "docker_stats",
+          "rust_path": "docker::docker_stats",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dockerApi.containerListDir"
+          ],
+          "line": 108,
+          "name": "docker_container_list_dir",
+          "rust_path": "docker::docker_container_list_dir",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.connect"
+          ],
+          "line": 110,
+          "name": "db_connect",
+          "rust_path": "db::db_connect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.disconnect"
+          ],
+          "line": 111,
+          "name": "db_disconnect",
+          "rust_path": "db::db_disconnect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.schemas"
+          ],
+          "line": 112,
+          "name": "db_schemas",
+          "rust_path": "db::db_schemas",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.tables"
+          ],
+          "line": 113,
+          "name": "db_tables",
+          "rust_path": "db::db_tables",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.columns"
+          ],
+          "line": 114,
+          "name": "db_columns",
+          "rust_path": "db::db_columns",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.query"
+          ],
+          "line": 115,
+          "name": "db_query",
+          "rust_path": "db::db_query",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.redisScan"
+          ],
+          "line": 116,
+          "name": "redis_scan",
+          "rust_path": "db::redis_scan",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.redisInspect"
+          ],
+          "line": 117,
+          "name": "redis_inspect",
+          "rust_path": "db::redis_inspect",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.redisCommand"
+          ],
+          "line": 118,
+          "name": "redis_command",
+          "rust_path": "db::redis_command",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "dbApi.redisSetTtl"
+          ],
+          "line": 119,
+          "name": "redis_set_ttl",
+          "rust_path": "db::redis_set_ttl",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "forwardApi.env"
+          ],
+          "line": 121,
+          "name": "forward_env",
+          "rust_path": "forward::forward_env",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "forwardApi.create"
+          ],
+          "line": 122,
+          "name": "forward_create",
+          "rust_path": "forward::forward_create",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "forwardApi.createSocks"
+          ],
+          "line": 123,
+          "name": "forward_create_socks",
+          "rust_path": "forward::forward_create_socks",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "forwardApi.list"
+          ],
+          "line": 124,
+          "name": "forward_list",
+          "rust_path": "forward::forward_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "forwardApi.remove"
+          ],
+          "line": 125,
+          "name": "forward_remove",
+          "rust_path": "forward::forward_remove",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.chat"
+          ],
+          "line": 127,
+          "name": "ai_chat",
+          "rust_path": "ai::ai_chat",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.cancel"
+          ],
+          "line": 128,
+          "name": "ai_cancel",
+          "rust_path": "ai::ai_cancel",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.confirm"
+          ],
+          "line": 129,
+          "name": "ai_confirm",
+          "rust_path": "ai::ai_confirm",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.models"
+          ],
+          "line": 130,
+          "name": "ai_models",
+          "rust_path": "ai::ai_models",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.testProvider"
+          ],
+          "line": 131,
+          "name": "ai_test_provider",
+          "rust_path": "ai::ai_test_provider",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.setProvider"
+          ],
+          "line": 132,
+          "name": "ai_set_provider",
+          "rust_path": "ai::ai_set_provider",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.getProvider"
+          ],
+          "line": 133,
+          "name": "ai_get_provider",
+          "rust_path": "ai::ai_get_provider",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.getPermission"
+          ],
+          "line": 134,
+          "name": "ai_get_permission",
+          "rust_path": "ai::ai_get_permission",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.setPermission"
+          ],
+          "line": 135,
+          "name": "ai_set_permission",
+          "rust_path": "ai::ai_set_permission",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.presets",
+            "modelApi.presets"
+          ],
+          "line": 136,
+          "name": "ai_presets",
+          "rust_path": "ai::ai_presets",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "modelApi.overview"
+          ],
+          "line": 138,
+          "name": "ai_model_profiles",
+          "rust_path": "models::ai_model_profiles",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "modelApi.save"
+          ],
+          "line": 139,
+          "name": "ai_model_save",
+          "rust_path": "models::ai_model_save",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "modelApi.remove"
+          ],
+          "line": 140,
+          "name": "ai_model_delete",
+          "rust_path": "models::ai_model_delete",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "modelApi.activate"
+          ],
+          "line": 141,
+          "name": "ai_model_activate",
+          "rust_path": "models::ai_model_activate",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "modelApi.refresh"
+          ],
+          "line": 142,
+          "name": "ai_model_refresh",
+          "rust_path": "models::ai_model_refresh",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "modelApi.preset"
+          ],
+          "line": 143,
+          "name": "ai_model_preset",
+          "rust_path": "models::ai_model_preset",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.takeoverEnter"
+          ],
+          "line": 144,
+          "name": "ai_takeover_enter",
+          "rust_path": "ai::ai_takeover_enter",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.takeoverRun"
+          ],
+          "line": 145,
+          "name": "ai_takeover_run",
+          "rust_path": "ai::ai_takeover_run",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.takeoverExit"
+          ],
+          "line": 146,
+          "name": "ai_takeover_exit",
+          "rust_path": "ai::ai_takeover_exit",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.conversationCreate"
+          ],
+          "line": 147,
+          "name": "ai_conversation_create",
+          "rust_path": "ai::ai_conversation_create",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.conversationList"
+          ],
+          "line": 148,
+          "name": "ai_conversation_list",
+          "rust_path": "ai::ai_conversation_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.conversationDelete"
+          ],
+          "line": 149,
+          "name": "ai_conversation_delete",
+          "rust_path": "ai::ai_conversation_delete",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "aiApi.messages"
+          ],
+          "line": 150,
+          "name": "ai_messages",
+          "rust_path": "ai::ai_messages",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.status"
+          ],
+          "line": 152,
+          "name": "vault_status",
+          "rust_path": "vault::vault_status",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.initMaster"
+          ],
+          "line": 153,
+          "name": "vault_init_master",
+          "rust_path": "vault::vault_init_master",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.initDpapi"
+          ],
+          "line": 154,
+          "name": "vault_init_dpapi",
+          "rust_path": "vault::vault_init_dpapi",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.unlock"
+          ],
+          "line": 155,
+          "name": "vault_unlock",
+          "rust_path": "vault::vault_unlock",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.lock"
+          ],
+          "line": 156,
+          "name": "vault_lock",
+          "rust_path": "vault::vault_lock",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.changePassword"
+          ],
+          "line": 157,
+          "name": "vault_change_password",
+          "rust_path": "vault::vault_change_password",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.setCredential"
+          ],
+          "line": 158,
+          "name": "vault_set_credential",
+          "rust_path": "vault::vault_set_credential",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.updateCredential"
+          ],
+          "line": 159,
+          "name": "credential_update",
+          "rust_path": "vault::credential_update",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.revealCredential"
+          ],
+          "line": 160,
+          "name": "vault_reveal_credential",
+          "rust_path": "vault::vault_reveal_credential",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.listCredentials"
+          ],
+          "line": 161,
+          "name": "vault_list_credentials",
+          "rust_path": "vault::vault_list_credentials",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "vaultApi.deleteCredential"
+          ],
+          "line": 162,
+          "name": "vault_delete_credential",
+          "rust_path": "vault::vault_delete_credential",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.list"
+          ],
+          "line": 164,
+          "name": "asset_list",
+          "rust_path": "asset::asset_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.get"
+          ],
+          "line": 165,
+          "name": "asset_get",
+          "rust_path": "asset::asset_get",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.create"
+          ],
+          "line": 166,
+          "name": "asset_create",
+          "rust_path": "asset::asset_create",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.update"
+          ],
+          "line": 167,
+          "name": "asset_update",
+          "rust_path": "asset::asset_update",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.delete"
+          ],
+          "line": 168,
+          "name": "asset_delete",
+          "rust_path": "asset::asset_delete",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.search"
+          ],
+          "line": 169,
+          "name": "asset_search",
+          "rust_path": "asset::asset_search",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.saveKeyFile"
+          ],
+          "line": 170,
+          "name": "asset_save_key_file",
+          "rust_path": "asset::asset_save_key_file",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.readKeyFile"
+          ],
+          "line": 171,
+          "name": "asset_read_key_file",
+          "rust_path": "asset::asset_read_key_file",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [],
+          "line": 172,
+          "name": "credential_save",
+          "rust_path": "asset::credential_save",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.groupList"
+          ],
+          "line": 173,
+          "name": "group_list",
+          "rust_path": "asset::group_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.groupCreate"
+          ],
+          "line": 174,
+          "name": "group_create",
+          "rust_path": "asset::group_create",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.groupUpdate"
+          ],
+          "line": 175,
+          "name": "group_update",
+          "rust_path": "asset::group_update",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.groupDelete"
+          ],
+          "line": 176,
+          "name": "group_delete",
+          "rust_path": "asset::group_delete",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.snippetList"
+          ],
+          "line": 177,
+          "name": "snippet_list",
+          "rust_path": "asset::snippet_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.snippetCreate"
+          ],
+          "line": 178,
+          "name": "snippet_create",
+          "rust_path": "asset::snippet_create",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.snippetUpdate"
+          ],
+          "line": 179,
+          "name": "snippet_update",
+          "rust_path": "asset::snippet_update",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.snippetDelete"
+          ],
+          "line": 180,
+          "name": "snippet_delete",
+          "rust_path": "asset::snippet_delete",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.auditQuery"
+          ],
+          "line": 181,
+          "name": "audit_query",
+          "rust_path": "asset::audit_query",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.knownHostList"
+          ],
+          "line": 182,
+          "name": "known_host_list",
+          "rust_path": "asset::known_host_list",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.knownHostAccept"
+          ],
+          "line": 183,
+          "name": "known_host_accept",
+          "rust_path": "asset::known_host_accept",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.knownHostRemove"
+          ],
+          "line": 184,
+          "name": "known_host_remove",
+          "rust_path": "asset::known_host_remove",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "assetApi.appInfo"
+          ],
+          "line": 185,
+          "name": "app_info",
+          "rust_path": "asset::app_info",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.digest"
+          ],
+          "line": 187,
+          "name": "sync_digest",
+          "rust_path": "sync::sync_digest",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": true
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.origin"
+          ],
+          "line": 188,
+          "name": "sync_origin",
+          "rust_path": "sync::sync_origin",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.exportAssets"
+          ],
+          "line": 189,
+          "name": "sync_export",
+          "rust_path": "sync::sync_export",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": true
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.importBundle"
+          ],
+          "line": 190,
+          "name": "sync_import",
+          "rust_path": "sync::sync_import",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": true
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.token"
+          ],
+          "line": 191,
+          "name": "sync_token",
+          "rust_path": "sync::sync_token",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.rotateToken"
+          ],
+          "line": 192,
+          "name": "sync_token_rotate",
+          "rust_path": "sync::sync_token_rotate",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.linkGet"
+          ],
+          "line": 193,
+          "name": "sync_link_get",
+          "rust_path": "sync::sync_link_get",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.linkSet"
+          ],
+          "line": 194,
+          "name": "sync_link_set",
+          "rust_path": "sync::sync_link_set",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.remoteDigest"
+          ],
+          "line": 195,
+          "name": "sync_remote_digest",
+          "rust_path": "sync::sync_remote_digest",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.push"
+          ],
+          "line": 196,
+          "name": "sync_push",
+          "rust_path": "sync::sync_push",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        },
+        {
+          "frontend_wrappers": [
+            "syncApi.pull"
+          ],
+          "line": 197,
+          "name": "sync_pull",
+          "rust_path": "sync::sync_pull",
+          "source": "src-tauri/src/commands/mod.rs",
+          "sync_only": false
+        }
+      ],
+      "source": "src-tauri/src/commands/mod.rs",
+      "unique_count": 139
+    }
+  },
+  "events": {
+    "frontend_declared": [
+      {
+        "constant": "aiEvent",
+        "line": 29,
+        "name": "ai://event",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "appError",
+        "line": 30,
+        "name": "app://error",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "dockerStats",
+        "line": 28,
+        "name": "docker://stats",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "fsProgress",
+        "line": 27,
+        "name": "fs://progress",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "layoutChanged",
+        "line": 14,
+        "name": "layout://changed",
+        "source": "src/app/layout.ts"
+      },
+      {
+        "constant": "sessionStatus",
+        "line": 17,
+        "name": "session://status",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "terminalControl",
+        "line": 26,
+        "name": "terminal://control",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "terminalExit",
+        "line": 18,
+        "name": "terminal://exit",
+        "source": "src/ipc/events.ts"
+      },
+      {
+        "constant": "terminalThrottled",
+        "line": 19,
+        "name": "terminal://throttled",
+        "source": "src/ipc/events.ts"
+      }
+    ],
+    "frontend_declared_count": 9,
+    "reserved_rust_events": [
+      "sync://status"
+    ],
+    "rust_declared": [
+      {
+        "constant": "AI_EVENT",
+        "declared_only": false,
+        "frontend_constant": "aiEvent",
+        "line": 13,
+        "name": "ai://event",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "APP_ERROR",
+        "declared_only": false,
+        "frontend_constant": "appError",
+        "line": 16,
+        "name": "app://error",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "DOCKER_STATS",
+        "declared_only": false,
+        "frontend_constant": "dockerStats",
+        "line": 12,
+        "name": "docker://stats",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "FS_PROGRESS",
+        "declared_only": false,
+        "frontend_constant": "fsProgress",
+        "line": 11,
+        "name": "fs://progress",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "LAYOUT_CHANGED",
+        "declared_only": false,
+        "frontend_constant": "layoutChanged",
+        "line": 34,
+        "name": "layout://changed",
+        "source": "src-tauri/src/commands/layout.rs"
+      },
+      {
+        "constant": "SESSION_STATUS",
+        "declared_only": false,
+        "frontend_constant": "sessionStatus",
+        "line": 6,
+        "name": "session://status",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "SYNC_STATUS",
+        "declared_only": true,
+        "frontend_constant": null,
+        "line": 15,
+        "name": "sync://status",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "TERMINAL_CONTROL",
+        "declared_only": false,
+        "frontend_constant": "terminalControl",
+        "line": 10,
+        "name": "terminal://control",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "TERMINAL_EXIT",
+        "declared_only": false,
+        "frontend_constant": "terminalExit",
+        "line": 7,
+        "name": "terminal://exit",
+        "source": "src-tauri/src/events.rs"
+      },
+      {
+        "constant": "TERMINAL_THROTTLED",
+        "declared_only": false,
+        "frontend_constant": "terminalThrottled",
+        "line": 8,
+        "name": "terminal://throttled",
+        "source": "src-tauri/src/events.rs"
+      }
+    ],
+    "rust_declared_count": 10,
+    "union_count": 10
+  },
+  "schema_version": 1,
+  "streams": {
+    "ai_event_variant_count": 14,
+    "ai_event_variants": [
+      "status",
+      "delta",
+      "reasoning",
+      "toolArgs",
+      "toolCall",
+      "toolResult",
+      "confirmRequired",
+      "screen",
+      "fileChange",
+      "usage",
+      "todos",
+      "planSubmitted",
+      "done",
+      "error"
+    ],
+    "ai_json_commands": [
+      "ai_chat",
+      "ai_takeover_run"
+    ],
+    "binary_commands": [
+      "docker_exec_attach",
+      "docker_logs_attach",
+      "session_open_line_tab",
+      "terminal_attach",
+      "terminal_attach_tab"
+    ],
+    "binary_encoding": "raw bytes; JSON fixture representation uses number arrays",
+    "ordering": "per-channel send order",
+    "references": [
+      {
+        "command": "ai_chat",
+        "kind": "ai_json",
+        "line": 53,
+        "rust_type": "Channel<AiEvent>",
+        "source": "src-tauri/src/commands/ai.rs"
+      },
+      {
+        "command": "ai_takeover_run",
+        "kind": "ai_json",
+        "line": 264,
+        "rust_type": "Channel<AiEvent>",
+        "source": "src-tauri/src/commands/ai.rs"
+      },
+      {
+        "command": "docker_logs_attach",
+        "kind": "binary",
+        "line": 173,
+        "rust_type": "Channel<Vec<u8>>",
+        "source": "src-tauri/src/commands/docker.rs"
+      },
+      {
+        "command": "docker_exec_attach",
+        "kind": "binary",
+        "line": 231,
+        "rust_type": "Channel<Vec<u8>>",
+        "source": "src-tauri/src/commands/docker.rs"
+      },
+      {
+        "command": "session_open_line_tab",
+        "kind": "binary",
+        "line": 90,
+        "rust_type": "Channel<Vec<u8>>",
+        "source": "src-tauri/src/commands/session.rs"
+      },
+      {
+        "command": "terminal_attach",
+        "kind": "binary",
+        "line": 32,
+        "rust_type": "Channel<Vec<u8>>",
+        "source": "src-tauri/src/commands/terminal.rs"
+      },
+      {
+        "command": "terminal_attach_tab",
+        "kind": "binary",
+        "line": 58,
+        "rust_type": "Channel<Vec<u8>>",
+        "source": "src-tauri/src/commands/terminal.rs"
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+   Compiling nexterm v0.2.1 (/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src-tauri)
+    Finished `bench` profile [optimized] target(s) in 1m 04s
+     Running benches/terminal_throughput.rs (target/parity/release/deps/terminal_throughput-17e680d7779012ee)
+terminal-engine throughput: 100 MB in 0.670s => 149.3 MB/s
+screen after feed: 120x40, lines_len=40
+scrollback retained: 33554432 bytes
+gbk transcode throughput: 149.7 MB/s

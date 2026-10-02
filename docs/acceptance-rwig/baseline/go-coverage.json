@@ -1,0 +1,1530 @@
+{
+  "schema_version": 1,
+  "purpose": "Go feature acceptance coverage; canonical IDs are checklist labels, not required Rust wire compatibility",
+  "go_source": {
+    "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-9",
+    "commit": "8ce1a53555b4bb61e6d20cdf15ac08ffb232ed82",
+    "report": "docs/acceptance-rwig/baseline/go-selfcheck.json"
+  },
+  "rules": {
+    "verified_requires_passing_feature_evidence": true,
+    "registration_alone_is_not_a_pass": true,
+    "generic_adapter_tests_are_not_production_feature_passes": true,
+    "not_implemented_and_not_verified_are_not_passes": true
+  },
+  "summary": {
+    "feature_complete": false,
+    "commands_total": 139,
+    "commands_verified": 2,
+    "commands_implemented_unverified": 0,
+    "commands_not_implemented": 137,
+    "events_total": 10,
+    "events_verified": 0,
+    "streams_total": 7,
+    "streams_verified": 0
+  },
+  "commands": [
+    {
+      "id": "app_platform",
+      "go_name": "app_platform",
+      "status": "verified",
+      "frontend_accessors": [
+        "systemApi.platform"
+      ],
+      "sync_only_feature": false,
+      "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_platform"
+    },
+    {
+      "id": "layout_get",
+      "go_name": "layout_get",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "layoutApi.get"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "layout_put",
+      "go_name": "layout_put",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "layoutApi.put"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_connect",
+      "go_name": "session_connect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.connect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_connect_local",
+      "go_name": "session_connect_local",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.connectLocal"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_disconnect",
+      "go_name": "session_disconnect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.disconnect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_list",
+      "go_name": "session_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.list"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_probe",
+      "go_name": "session_probe",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.probe"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_open_line_tab",
+      "go_name": "session_open_line_tab",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.openLineTab"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_line_exec",
+      "go_name": "session_line_exec",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.lineExec"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_cwd",
+      "go_name": "session_cwd",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.cwd"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "session_reconnect",
+      "go_name": "session_reconnect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "sessionApi.reconnect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_attach",
+      "go_name": "terminal_attach",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.attach"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_attach_tab",
+      "go_name": "terminal_attach_tab",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.attachTab"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_list",
+      "go_name": "terminal_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.listLive"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_claim",
+      "go_name": "terminal_claim",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.claim"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_release",
+      "go_name": "terminal_release",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.release"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_write",
+      "go_name": "terminal_write",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.write"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_resize",
+      "go_name": "terminal_resize",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.resize"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_detach",
+      "go_name": "terminal_detach",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.detach"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_close_tab",
+      "go_name": "terminal_close_tab",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.closeTab"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_screen_text",
+      "go_name": "terminal_screen_text",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.screenText"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_snapshot",
+      "go_name": "terminal_snapshot",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.snapshot"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_tail",
+      "go_name": "terminal_tail",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.tail"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_set_visible",
+      "go_name": "terminal_set_visible",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.setVisible"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_dump",
+      "go_name": "terminal_dump",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.dump"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_switch_encoding",
+      "go_name": "terminal_switch_encoding",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.switchEncoding"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_record_start",
+      "go_name": "terminal_record_start",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.recordStart"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_record_stop",
+      "go_name": "terminal_record_stop",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.recordStop"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "terminal_export_log",
+      "go_name": "terminal_export_log",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "terminalApi.exportLog"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_list",
+      "go_name": "fs_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.list"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_read",
+      "go_name": "fs_read",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.read"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_write",
+      "go_name": "fs_write",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.write"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_mkdir",
+      "go_name": "fs_mkdir",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.mkdir"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_rename",
+      "go_name": "fs_rename",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.rename"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_delete",
+      "go_name": "fs_delete",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.delete"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_chmod",
+      "go_name": "fs_chmod",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.chmod"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_checksum",
+      "go_name": "fs_checksum",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.checksum"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_upload",
+      "go_name": "fs_upload",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.upload"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_download",
+      "go_name": "fs_download",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.download"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_pack_download",
+      "go_name": "fs_pack_download",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.packDownload"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "fs_extract",
+      "go_name": "fs_extract",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "fsApi.extract"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "mount_capability",
+      "go_name": "mount_capability",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "mountApi.capability"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "mount_list",
+      "go_name": "mount_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "mountApi.list"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "mount_create",
+      "go_name": "mount_create",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "mountApi.create"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "mount_remove",
+      "go_name": "mount_remove",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "mountApi.remove"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_overview",
+      "go_name": "docker_overview",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.overview"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_ps",
+      "go_name": "docker_ps",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.ps"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_logs_attach",
+      "go_name": "docker_logs_attach",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.logsAttach"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_exec_attach",
+      "go_name": "docker_exec_attach",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.execAttach"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_action",
+      "go_name": "docker_action",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.action"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_images",
+      "go_name": "docker_images",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.images"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_image_pull",
+      "go_name": "docker_image_pull",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.imagePull"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_image_remove",
+      "go_name": "docker_image_remove",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.imageRemove"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_inspect",
+      "go_name": "docker_inspect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.inspect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_stats",
+      "go_name": "docker_stats",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.stats"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "docker_container_list_dir",
+      "go_name": "docker_container_list_dir",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dockerApi.containerListDir"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "db_connect",
+      "go_name": "db_connect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.connect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "db_disconnect",
+      "go_name": "db_disconnect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.disconnect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "db_schemas",
+      "go_name": "db_schemas",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.schemas"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "db_tables",
+      "go_name": "db_tables",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.tables"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "db_columns",
+      "go_name": "db_columns",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.columns"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "db_query",
+      "go_name": "db_query",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.query"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "redis_scan",
+      "go_name": "redis_scan",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.redisScan"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "redis_inspect",
+      "go_name": "redis_inspect",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.redisInspect"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "redis_command",
+      "go_name": "redis_command",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.redisCommand"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "redis_set_ttl",
+      "go_name": "redis_set_ttl",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "dbApi.redisSetTtl"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "forward_env",
+      "go_name": "forward_env",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "forwardApi.env"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "forward_create",
+      "go_name": "forward_create",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "forwardApi.create"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "forward_create_socks",
+      "go_name": "forward_create_socks",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "forwardApi.createSocks"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "forward_list",
+      "go_name": "forward_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "forwardApi.list"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "forward_remove",
+      "go_name": "forward_remove",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "forwardApi.remove"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_chat",
+      "go_name": "ai_chat",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.chat"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_cancel",
+      "go_name": "ai_cancel",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.cancel"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_confirm",
+      "go_name": "ai_confirm",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.confirm"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_models",
+      "go_name": "ai_models",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.models"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_test_provider",
+      "go_name": "ai_test_provider",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.testProvider"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_set_provider",
+      "go_name": "ai_set_provider",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.setProvider"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_get_provider",
+      "go_name": "ai_get_provider",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.getProvider"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_get_permission",
+      "go_name": "ai_get_permission",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.getPermission"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_set_permission",
+      "go_name": "ai_set_permission",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.setPermission"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_presets",
+      "go_name": "ai_presets",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.presets",
+        "modelApi.presets"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_model_profiles",
+      "go_name": "ai_model_profiles",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "modelApi.overview"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_model_save",
+      "go_name": "ai_model_save",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "modelApi.save"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_model_delete",
+      "go_name": "ai_model_delete",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "modelApi.remove"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_model_activate",
+      "go_name": "ai_model_activate",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "modelApi.activate"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_model_refresh",
+      "go_name": "ai_model_refresh",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "modelApi.refresh"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_model_preset",
+      "go_name": "ai_model_preset",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "modelApi.preset"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_takeover_enter",
+      "go_name": "ai_takeover_enter",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.takeoverEnter"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_takeover_run",
+      "go_name": "ai_takeover_run",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.takeoverRun"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_takeover_exit",
+      "go_name": "ai_takeover_exit",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.takeoverExit"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_conversation_create",
+      "go_name": "ai_conversation_create",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.conversationCreate"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_conversation_list",
+      "go_name": "ai_conversation_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.conversationList"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_conversation_delete",
+      "go_name": "ai_conversation_delete",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.conversationDelete"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "ai_messages",
+      "go_name": "ai_messages",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "aiApi.messages"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_status",
+      "go_name": "vault_status",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.status"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_init_master",
+      "go_name": "vault_init_master",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.initMaster"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_init_dpapi",
+      "go_name": "vault_init_dpapi",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.initDpapi"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_unlock",
+      "go_name": "vault_unlock",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.unlock"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_lock",
+      "go_name": "vault_lock",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.lock"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_change_password",
+      "go_name": "vault_change_password",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.changePassword"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_set_credential",
+      "go_name": "vault_set_credential",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.setCredential"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "credential_update",
+      "go_name": "credential_update",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.updateCredential"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_reveal_credential",
+      "go_name": "vault_reveal_credential",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.revealCredential"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_list_credentials",
+      "go_name": "vault_list_credentials",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.listCredentials"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "vault_delete_credential",
+      "go_name": "vault_delete_credential",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "vaultApi.deleteCredential"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_list",
+      "go_name": "asset_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.list"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_get",
+      "go_name": "asset_get",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.get"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_create",
+      "go_name": "asset_create",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.create"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_update",
+      "go_name": "asset_update",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.update"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_delete",
+      "go_name": "asset_delete",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.delete"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_search",
+      "go_name": "asset_search",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.search"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_save_key_file",
+      "go_name": "asset_save_key_file",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.saveKeyFile"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "asset_read_key_file",
+      "go_name": "asset_read_key_file",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.readKeyFile"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "credential_save",
+      "go_name": "credential_save",
+      "status": "not-implemented",
+      "frontend_accessors": [],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "group_list",
+      "go_name": "group_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.groupList"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "group_create",
+      "go_name": "group_create",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.groupCreate"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "group_update",
+      "go_name": "group_update",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.groupUpdate"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "group_delete",
+      "go_name": "group_delete",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.groupDelete"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "snippet_list",
+      "go_name": "snippet_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.snippetList"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "snippet_create",
+      "go_name": "snippet_create",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.snippetCreate"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "snippet_update",
+      "go_name": "snippet_update",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.snippetUpdate"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "snippet_delete",
+      "go_name": "snippet_delete",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.snippetDelete"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "audit_query",
+      "go_name": "audit_query",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.auditQuery"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "known_host_list",
+      "go_name": "known_host_list",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.knownHostList"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "known_host_accept",
+      "go_name": "known_host_accept",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.knownHostAccept"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "known_host_remove",
+      "go_name": "known_host_remove",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "assetApi.knownHostRemove"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "app_info",
+      "go_name": "app_info",
+      "status": "verified",
+      "frontend_accessors": [
+        "assetApi.appInfo"
+      ],
+      "sync_only_feature": false,
+      "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_info"
+    },
+    {
+      "id": "sync_digest",
+      "go_name": "sync_digest",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.digest"
+      ],
+      "sync_only_feature": true,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_origin",
+      "go_name": "sync_origin",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.origin"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_export",
+      "go_name": "sync_export",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.exportAssets"
+      ],
+      "sync_only_feature": true,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_import",
+      "go_name": "sync_import",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.importBundle"
+      ],
+      "sync_only_feature": true,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_token",
+      "go_name": "sync_token",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.token"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_token_rotate",
+      "go_name": "sync_token_rotate",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.rotateToken"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_link_get",
+      "go_name": "sync_link_get",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.linkGet"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_link_set",
+      "go_name": "sync_link_set",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.linkSet"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_remote_digest",
+      "go_name": "sync_remote_digest",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.remoteDigest"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_push",
+      "go_name": "sync_push",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.push"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    },
+    {
+      "id": "sync_pull",
+      "go_name": "sync_pull",
+      "status": "not-implemented",
+      "frontend_accessors": [
+        "syncApi.pull"
+      ],
+      "sync_only_feature": false,
+      "evidence": "no Go registration or passing feature-specific evidence supplied"
+    }
+  ],
+  "events": [
+    {
+      "id": "ai://event",
+      "go_name": "ai://event",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "app://error",
+      "go_name": "app://error",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "docker://stats",
+      "go_name": "docker://stats",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "fs://progress",
+      "go_name": "fs://progress",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "layout://changed",
+      "go_name": "layout://changed",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "session://status",
+      "go_name": "session://status",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "sync://status",
+      "go_name": "sync://status",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "terminal://control",
+      "go_name": "terminal://control",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "terminal://exit",
+      "go_name": "terminal://exit",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    },
+    {
+      "id": "terminal://throttled",
+      "go_name": "terminal://throttled",
+      "status": "not-verified",
+      "evidence": "no production-event evidence supplied"
+    }
+  ],
+  "streams": [
+    {
+      "id": "docker_exec_attach",
+      "kind": "binary",
+      "go_name": "docker_exec_attach",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    },
+    {
+      "id": "docker_logs_attach",
+      "kind": "binary",
+      "go_name": "docker_logs_attach",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    },
+    {
+      "id": "session_open_line_tab",
+      "kind": "binary",
+      "go_name": "session_open_line_tab",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    },
+    {
+      "id": "terminal_attach",
+      "kind": "binary",
+      "go_name": "terminal_attach",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    },
+    {
+      "id": "terminal_attach_tab",
+      "kind": "binary",
+      "go_name": "terminal_attach_tab",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    },
+    {
+      "id": "ai_chat",
+      "kind": "ai_json",
+      "go_name": "ai_chat",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    },
+    {
+      "id": "ai_takeover_run",
+      "kind": "ai_json",
+      "go_name": "ai_takeover_run",
+      "status": "not-verified",
+      "evidence": "no production-stream evidence supplied"
+    }
+  ]
+}

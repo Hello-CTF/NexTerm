@@ -1,0 +1,4 @@
+
+> nexterm@0.2.1 lint /Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10
+> eslint . --max-warnings 0
+

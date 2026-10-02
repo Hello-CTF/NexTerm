@@ -1,0 +1,440 @@
+   Compiling nexterm v0.2.1 (/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.81s
+     Running unittests src/lib.rs (target/parity/debug/deps/nexterm_lib-a203149a6c7e6228)
+
+running 298 tests
+test ai::agent::tests::missing_after_is_not_a_change_record ... ok
+test ai::agent::tests::preview_tells_create_from_modify ... ok
+test ai::agent::tests::new_file_still_gets_a_change_record ... ok
+test ai::agent::tests::preview_is_dropped_when_the_outcome_cannot_be_predicted ... ok
+test ai::agent::tests::modified_file_records_the_real_before ... ok
+test ai::agent::tests::preview_is_dropped_when_nothing_would_change ... ok
+test ai::agent::tests::rewriting_identical_content_is_not_a_change ... ok
+test ai::agent::tests::previews_are_only_for_write_tools ... ok
+test ai::agent::tests::unreadable_before_does_not_fake_a_full_add ... ok
+test ai::agent::tests::read_gate_runs_before_the_confirm_card ... ok
+test ai::agent::tests::tool_args_progress_is_forwarded_to_the_frontend ... ok
+test ai::agent::tests::preview_skips_pairs_too_big_to_review ... ok
+test ai::agent::tests::edit_preview_reuses_the_tools_own_uniqueness_rule ... ok
+test ai::context::tests::split_stable_prefix_is_byte_identical ... ok
+test ai::context::tests::render_includes_sections ... ok
+test ai::context::tests::split_reassembles_to_old_layout ... ok
+test ai::context::tests::volatile_message_skips_empty_context ... ok
+test ai::context::tests::budget_trim_drops_lowest_priority ... ok
+test ai::agent::tests::session_allows_is_readable_from_a_runtime ... ok
+test ai::guard::tests::t05_format_and_windows_danger ... ok
+test ai::guard::tests::t04_mkfs_dd_forbidden_shutdown_is_danger ... ok
+test ai::guard::tests::t11_redis_levels ... ok
+test ai::guard::tests::t12_pipe_to_shell_confirm ... ok
+test ai::guard::tests::t02_rm_rf_root_is_forbidden ... ok
+test ai::guard::tests::t07_sudo_always_confirm ... ok
+test ai::guard::tests::t15_tool_level_file_write ... ok
+test ai::guard::tests::t16_tool_level_docker_control ... ok
+test ai::guard::tests::t18_send_keys_guard ... ok
+test ai::guard::tests::t14_env_prefix_and_quotes ... ok
+test ai::guard::tests::t08_service_restart_confirm ... ok
+test ai::guard::tests::t13_composite_command_worst_segment_wins ... ok
+test ai::guard::tests::t01_readonly_whitelist_is_safe ... ok
+test ai::guard::tests::t23_mode_readonly_denies_everything_mutating ... ok
+test ai::guard::tests::t19_unknown_defaults_to_confirm ... ok
+test ai::guard::tests::t24_silent_only_asks_on_danger ... ok
+test ai::guard::tests::t06_drop_database_forbidden_drop_table_confirm ... ok
+test ai::guard::tests::t25_hard_forbidden_never_asks_in_any_mode ... ok
+test ai::guard::tests::t27_empty_user_rule_must_not_match_everything ... ok
+test ai::guard::tests::t21_empty_and_whitespace ... ok
+test ai::guard::tests::t03_rm_targeted_dirs_forbidden_but_home_file_ok ... ok
+test ai::guard::tests::t20_kill_and_perms_confirm ... ok
+test ai::profiles::tests::activate_rejects_unknown_id ... ok
+test ai::profiles::tests::deleting_last_profile_leaves_no_active ... ok
+test ai::profiles::tests::deleting_active_falls_back_to_first ... ok
+test ai::profiles::tests::broken_models_json_falls_back_to_empty ... ok
+test ai::guard::tests::t22_case_insensitive ... ok
+test ai::guard::tests::t26_user_rules_take_priority_and_are_case_insensitive ... ok
+test ai::profiles::tests::preset_profile_fills_known_preset ... ok
+test ai::profiles::tests::sanitize_rejects_nan_temperature ... ok
+test ai::profiles::tests::sanitize_trims_fills_and_clamps ... ok
+test ai::guard::tests::t17_tool_level_exec_commands_aggregates ... ok
+test ai::profiles::tests::to_provider_maps_fields ... ok
+test ai::profiles::tests::upsert_updates_in_place_and_keeps_order ... ok
+test ai::provider::openai_compat::tests::context_window_clamp ... ok
+test ai::provider::openai_compat::tests::presets_fill_params ... ok
+test ai::provider::openai_compat::tests::message_shapes ... ok
+test ai::profiles::tests::empty_legacy_provider_is_not_migrated ... ok
+test ai::profiles::tests::first_upsert_is_assigned_id_and_activated ... ok
+test ai::profiles::tests::migrates_legacy_single_provider ... ok
+test ai::provider::openai_compat::tests::tool_stream_is_asked_for_only_where_it_exists ... ok
+test ai::provider::openai_compat::tests::plain_text_stream_reports_no_tool_args ... ok
+test ai::provider::openai_compat::tests::tool_args_are_reported_on_every_arguments_fragment ... ok
+test ai::guard::tests::t10_db_write_keywords ... ok
+test ai::guard::tests::t09_docker_mutations ... ok
+test ai::tests::tool_result_carries_full_text ... ok
+test ai::takeover::tests::steal_back_must_not_hold_read_lock_across_finish ... ok
+test ai::tests::every_event_field_is_camel_case ... ok
+test ai::tools::display_tests::display_is_capped_by_chars_not_bytes ... ok
+test ai::tools::display_tests::every_tool_has_a_human_readable_display ... ok
+test ai::tools::display_tests::exec_commands_shows_the_actual_command_not_the_description ... ok
+test ai::tools::edit::tests::t01_apply_edit_unique_ok ... ok
+test ai::tools::edit::tests::t02_apply_edit_not_found ... ok
+test ai::tools::edit::tests::t03_apply_edit_ambiguous_refused_unless_replace_all ... ok
+test ai::tools::edit::tests::t04_apply_edit_empty_old_is_rejected ... ok
+test ai::tools::edit::tests::t05_apply_edit_multiline_context ... ok
+test ai::takeover::tests::reenter_cancels_previous_token ... ok
+test ai::takeover::tests::stale_finish_keeps_new_registration ... ok
+test ai::tools::edit::tests::t08_plan_mode_gate ... ok
+test ai::tools::edit::tests::t06_parse_todos_valid_and_defaults ... ok
+test ai::tools::edit::tests::t07_parse_todos_rejects_bad_input ... ok
+test ai::tools::edit::tests::t09_read_gate_blocks_until_marked ... ok
+test ai::tools::edit::tests::t10_todos_and_plan_are_job_scoped ... ok
+test ai::tools::edit::tests::t12_write_tool_list_has_one_source_of_truth ... ok
+test ai::tests::wait_confirm_resets_slot_without_holding_read_guard ... ok
+test ai::tools::edit::tests::t11_read_gate_for_only_covers_write_tools ... ok
+test ai::usage::tests::accumulate_keeps_nonzero_window ... ok
+test ai::usage::tests::cached_is_clamped_to_prompt ... ok
+test ai::usage::tests::parse_deepseek_hit_miss ... ok
+test ai::usage::tests::parse_deepseek_hit_miss_only_infers_prompt ... ok
+test ai::usage::tests::parse_openai_nested_details ... ok
+test ai::usage::tests::percentages_guard_against_zero_division ... ok
+test ai::usage::tests::used_percent_is_clamped_and_computed ... ok
+test ai::usage::tests::parse_missing_or_garbage_is_zero_not_error ... ok
+test ai::usage::tests::parse_variants_and_string_numbers ... ok
+test commands::ai::tests::title_caps_by_chars_not_bytes ... ok
+test commands::ai::tests::title_takes_first_nonempty_line_and_flattens_whitespace ... ok
+test commands::asset::tests::asset_update_null_clears_and_missing_keeps ... ok
+test docker::cli::tests::parse_ps_json_lines ... ok
+test error::tests::error_codes_are_stable ... ok
+test events::tests::control_payload_wire_shape ... ok
+test fs::mount::tests::parse_empty ... ok
+test fs::mount::tests::parse_linux_mount ... ok
+test fs::mount::tests::parse_macos_mount ... ok
+test fs::mount::tests::mac_mount_is_explicitly_unavailable ... ok
+test fs::mount::tests::parse_rejects_unrelated_fuse ... ok
+test fs::mount::tests::parse_windows_net_use ... ok
+test fs::tests::extract_command_rejects_unknown_suffix ... ok
+test fs::tests::extract_command_picks_the_tool_by_suffix ... ok
+test fs::tests::sh_quote_wraps_and_escapes_single_quotes ... ok
+test fs::tests::strip_archive_ext_eats_the_whole_suffix ... ok
+test fs::tests::split_parent_name_handles_root_and_relative ... ok
+test ids::tests::ids_are_unique_and_sorted ... ok
+test fs::tests::tar_pack_uses_dash_c_so_the_archive_has_no_absolute_paths ... ok
+test ai::provider::openai_compat::tests::stream_body_carries_tool_stream_only_for_zhipu_and_only_with_tools ... ok
+test commands::mount::tests::empty_args_are_rejected_without_audit ... ok
+test commands::mount::tests::mac_unmount_failure_is_audited ... ok
+test commands::mount::tests::mac_mount_failure_is_audited ... ok
+test ai::profiles::export_bindings_modelprofile ... ok
+test ipc_types::export_bindings_aiscopedto ... ok
+test ipc_types::export_bindings_assetgroupdto ... ok
+test ai::tests::cancel_job_unblocks_wait_confirm ... ok
+test ipc_types::export_bindings_containersummarydto ... ok
+test ai::profiles::export_bindings_modelprofilesview ... ok
+test ipc_types::export_bindings_credentialmetadto ... ok
+test ipc_types::export_bindings_fileentrydto ... ok
+test ipc_types::export_bindings_forwardenvdto ... ok
+test ipc_types::export_bindings_forwardspecdto ... ok
+test ipc_types::export_bindings_imagesummarydto ... ok
+test ipc_types::export_bindings_knownhostdto ... ok
+test ipc_types::export_bindings_apperrordto ... ok
+test ipc_types::export_bindings_assetdto ... ok
+test ipc_types::export_bindings_auditentrydto ... ok
+test ipc_types::export_bindings_mountentrydto ... ok
+test ipc_types::export_bindings_providerconfigdto ... ok
+test ipc_types::export_bindings_conversationdto ... ok
+test ipc_types::export_bindings_screensnapshotdto ... ok
+test ipc_types::export_tests::asset_dto_unwraps_options_json ... ok
+test ipc_types::export_tests::audit_entry_dto_unwraps_payload_json ... ok
+test ipc_types::export_tests::conversation_dto_unwraps_scope_json ... ok
+test ipc_types::export_tests::export_bindings ... ok
+test ipc_types::export_tests::message_dto_unwraps_content_json ... ok
+test server::blobs::tests::blob_id_shape_is_enforced ... ok
+test server::blobs::tests::safe_name_cannot_escape_dir ... ok
+test ipc_types::export_bindings_sessioninfodto ... ok
+test server::blobs::tests::staged_basename_is_the_original_name ... ok
+test ipc_types::export_bindings_messagedto ... ok
+test server::cli::tests::bare_invocation_means_serve ... ok
+test server::blobs::tests::stage_then_stream_roundtrip ... ok
+test server::blobs::tests::sweep_removes_only_expired ... ok
+test server::cli::tests::rotate_token_is_its_own_action ... ok
+test server::cli::tests::malformed_listen_is_rejected ... ok
+test server::cli::tests::data_dir_works_on_both_sides_of_the_subcommand ... ok
+test server::cli::tests::sync_only_is_visible_to_the_token_action ... ok
+test server::rpc::tests::sync_only_table_is_exactly_the_peer_commands ... ok
+test server::static_files::tests::content_types_cover_frontend_assets ... ok
+test server::cli::tests::sync_only_reaches_options ... ok
+test server::rpc::tests::table_covers_every_command ... ok
+test server::static_files::tests::marker_injected_before_head_close ... ok
+test server::static_files::tests::marker_still_applied_without_head ... ok
+test server::static_files::tests::sanitize_blocks_traversal ... ok
+test session::local_option_tests::blank_local_options_keep_defaults ... ok
+test session::local_option_tests::local_options_become_transport_settings ... ok
+test session::reconnect::tests::a_dead_connection_triggers_reconnect ... ok
+test session::reconnect::tests::an_in_flight_state_suppresses_reconnect ... ok
+test session::reconnect::tests::local_sessions_are_not_reconnectable ... ok
+test session::reconnect::tests::network_sessions_are_reconnectable ... ok
+test session::reconnect::tests::non_reconnectable_kinds_never_auto_reconnect ... ok
+test session::reconnect::tests::shell_exit_does_not_tear_down_a_healthy_connection ... ok
+test session::reconnect::tests::stopping_a_tab_never_triggers_reconnect ... ok
+test store::repo::builtin_tests::builtin_id_is_a_valid_ulid_shape ... ok
+test ipc_types::export_bindings_sessionstatusevent ... ok
+test ipc_types::export_bindings_vaultstatusdto ... ok
+test store::repo::builtin_tests::builtin_cannot_be_deleted ... ok
+test store::repo::builtin_tests::ensure_builtin_is_idempotent ... ok
+test ipc_types::export_bindings_terminalexitevent ... ok
+test ipc_types::export_bindings_rediskeyviewdto ... ok
+test store::tests::id_validation ... ok
+test store::repo::builtin_tests::builtin_sorts_first ... ok
+test ipc_types::export_bindings_snippetdto ... ok
+test ipc_types::export_bindings_queryresultdto ... ok
+test sync::bundle::tests::asset_payload_roundtrip_keeps_every_field ... ok
+test sync::bundle::tests::asset_payload_tolerates_missing_optional_fields ... ok
+test sync::bundle::tests::cred_payload_wire_format_is_plain_string ... ok
+test sync::bundle::tests::protocol_mismatch_is_refused ... ok
+test store::repo::builtin_tests::ensure_builtin_revives_tombstone ... ok
+test sync::client::tests::base_url_normalization ... ok
+test sync::client::tests::is_configured_requires_both ... ok
+test sync::client::tests::legacy_token_kinds_are_migrated ... ok
+test sync::client::tests::live_server_token_is_enough ... ignored, 需要真服务端与真令牌，见本测试文档注释
+test sync::client::tests::login_gate_is_reported_with_next_step ... ok
+test sync::client::tests::plaintext_http_only_for_local_and_private ... ok
+test sync::client::tests::remote_401_points_at_the_server_settings ... ok
+test sync::client::tests::token_header_is_the_same_for_both_places ... ok
+test store::repo::builtin_tests::layout_rejects_malformed_json ... ok
+test sync::bundle::export_bindings_digestentry ... ok
+test sync::tests::ct_eq_matches_equality ... ok
+test store::repo::builtin_tests::layout_rejects_stale_revision ... ok
+test sync::bundle::export_bindings_importreport ... ok
+test store::repo::builtin_tests::layout_tolerates_corrupt_envelope ... ok
+test store::tests::migration_creates_all_tables ... ok
+test sync::client::export_bindings_synclink ... ok
+test sync::bundle::export_bindings_syncdigest ... ok
+test sync::tests::builtin_is_never_overwritten ... ok
+test sync::tests::digest_includes_tombstones_and_excludes_builtin ... ok
+test sync::tests::export_collects_ancestor_groups ... ok
+test ai::tests::confirm_roundtrip_survives_multiple_turns ... ok
+test sync::tests::export_skips_builtin_local_asset ... ok
+test sync::tests::export_fails_when_vault_locked ... ok
+test sync::tests::key_path_asset_keeps_passphrase_cred ... ok
+test sync::tests::dangling_refs_are_dropped_with_warning ... ok
+test sync::tests::origin_is_stable_and_persisted ... ok
+test sync::tests::bundle_travels_and_creds_are_reencrypted ... ok
+test sync::tests::topo_order_puts_parents_first ... ok
+test sync::tests::topo_order_survives_cycle ... ok
+test sync::tests::referenced_private_key_cred_is_inlined ... ok
+test sync::tests::key_path_asset_carries_key_body ... ok
+test terminal::keys::tests::case_insensitive_keys ... ok
+test terminal::keys::tests::mixed_text_and_keys ... ok
+test terminal::keys::tests::simple_keys ... ok
+test terminal::keys::tests::special_keys ... ok
+test terminal::keys::tests::unknown_tag_passthrough ... ok
+test terminal::scrollback::tests::chunk_larger_than_cap_keeps_tail ... ok
+test terminal::scrollback::tests::dump_respects_max ... ok
+test terminal::scrollback::tests::keeps_recent_bytes_only ... ok
+test terminal::tests::alt_screen_detection ... ok
+test terminal::tests::claim_steals_control_from_previous_holder ... ok
+test terminal::tests::cursor_position_reported ... ok
+test terminal::tests::detach_client_only_removes_that_client ... ok
+test terminal::tests::detach_client_releases_control_only_when_it_was_the_controller_and_has_no_other_sink ... ok
+test terminal::tests::detach_keeps_control_while_client_has_other_channels ... ok
+test terminal::tests::first_subscriber_takes_control ... ok
+test sync::tests::token_is_stable_until_rotated ... ok
+test sync::tests::missing_key_file_warns_instead_of_silently_dropping ... ok
+test terminal::tests::mark_ephemeral_flips_flag ... ok
+test terminal::tests::new_tab_is_not_ephemeral_by_default ... ok
+test terminal::tests::nobody_writes_without_a_controller ... ok
+test terminal::tests::release_only_works_for_the_holder ... ok
+test terminal::tests::resize_updates_state_machine ... ok
+test terminal::tests::screen_text_has_no_ansi_residue ... ok
+test terminal::tests::tail_lines_with_scrollback ... ok
+test terminal::tests::two_subscribers_receive_the_same_output ... ok
+test terminal::tests::viewer_count_dedups_clients ... ok
+test terminal::transcoder::tests::bracketed_paste_detection_including_split ... ok
+test terminal::transcoder::tests::gbk_decode ... ok
+test terminal::transcoder::tests::gbk_multibyte_split_across_feed ... ok
+test terminal::transcoder::tests::invalid_byte_replaced_not_dropped ... ok
+test terminal::transcoder::tests::switch_encoding_midstream ... ok
+test terminal::tests::idle_detection ... ok
+test terminal::transcoder::tests::utf8_multibyte_across_chunks ... ok
+test sync::tests::verify_does_not_generate_token ... ok
+test transport::forward::tests::platform_only_lazycat_disables_forwards ... ok
+test transport::forward::tests::server_form_binds_all_addresses ... ok
+test transport::forward::tests::bind_on_honours_the_given_address ... ok
+test transport::local::tests::locale_constant_is_utf8 ... ok
+test transport::local::tests::locale_filled_when_host_has_none ... ok
+test transport::local::tests::locale_filled_when_values_are_blank ... ok
+test transport::local::tests::locale_not_overridden_when_host_has_it ... ok
+test transport::tests::cap_text_bounds_before_model ... ok
+test transport::tests::cap_text_limits ... ok
+test sync::tests::protocol_mismatch_rejects_whole_bundle ... ok
+test transport::winrm::tests::decode_prefers_utf8_falls_back_gb18030 ... ok
+test transport::winrm::tests::unwrap_without_sentinel ... ok
+test transport::winrm::tests::wrap_and_unwrap_cwd ... ok
+test sync::tests::verify_rejects_wrong_and_empty ... ok
+test vault::crypto::tests::credential_roundtrip_and_tamper ... ok
+test vault::crypto::tests::dek_seal_open_roundtrip ... ok
+test vault::crypto::tests::dek_wrong_kek_fails ... ok
+跳过：未设置 NEXTERM_TEST_KEYCHAIN=1
+test vault::keychain::tests::keychain_roundtrip ... ok
+test vault::keychain::tests::rejects_foreign_envelope ... ok
+test vault::payload::tests::blank_passphrase_normalizes_to_none ... ok
+test vault::payload::tests::changing_passphrase_keeps_key ... ok
+test vault::payload::tests::json_roundtrip_keeps_source_and_passphrase ... ok
+test vault::payload::tests::json_without_key_or_ref_falls_back_to_raw ... ok
+test vault::payload::tests::legacy_pem_is_inline_without_passphrase ... ok
+test vault::crypto::tests::master_password_change_invalidates ... ok
+test vault::payload::tests::ref_survives_roundtrip_without_passphrase ... ok
+test sync::tests::missing_referenced_key_cred_warns_on_import ... ok
+test sync::tests::newer_local_is_skipped_unless_forced ... ok
+test vault::redact::tests::leaves_normal_text ... ok
+test vault::redact::tests::masks_cli_passwords ... ok
+test vault::redact::tests::masks_private_key_blocks ... ok
+test vault::redact::tests::masks_auth_headers ... ok
+test vault::redact::tests::masks_kv_secrets ... ok
+test vault::redact::tests::masks_url_userinfo ... ok
+跳过：未设置 NEXTERM_TEST_KEYCHAIN=1
+test vault::tests::mac_init_dpapi_works_on_first_run ... ok
+跳过：未设置 NEXTERM_TEST_KEYCHAIN=1
+test vault::tests::mac_load_survives_missing_keychain_item ... ok
+跳过：未设置 NEXTERM_TEST_KEYCHAIN=1
+test vault::tests::mac_load_unlocks_via_keychain ... ok
+test sync::tests::second_sync_updates_instead_of_duplicating ... ok
+test sync::tests::tombstone_propagates ... ok
+test vault::tests::load_survives_unknown_mode ... ok
+test vault::tests::load_survives_undecryptable_envelope ... ok
+test vault::tests::master_mode_roundtrip ... ok
+test vault::tests::change_password_keeps_dek ... ok
+test vault::tests::wrong_password_fails_and_locks ... ok
+[NexTerm] ===== PANIC @ unix_ms 1790943423813 =====
+panicked at src-tauri/src/lib.rs:272:52:
+取证自检用的假 panic
+   0: std::backtrace_rs::backtrace::libunwind::trace
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1: std::backtrace_rs::backtrace::trace_unsynchronized::<<std::backtrace::Backtrace>::create::{closure#0}>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2: <std::backtrace::Backtrace>::create
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/backtrace.rs:331:13
+   3: {closure#0}
+             at ./src/lib.rs:89:25
+   4: <alloc::boxed::Box<dyn for<'a, 'b> core::ops::function::Fn<(&'a std::panic::PanicHookInfo<'b>,), Output = ()> + core::marker::Sync + core::marker::Send> as core::ops::function::Fn<(&std::panic::PanicHookInfo,)>>::call
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/boxed.rs:2333:9
+   5: std::panicking::panic_with_hook
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:823:13
+   6: std::panicking::panic_handler::{closure#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:681:13
+   7: std::sys::backtrace::__rust_end_short_backtrace::<std::panicking::panic_handler::{closure#0}, !>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/sys/backtrace.rs:182:18
+   8: __rustc::rust_begin_unwind
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:679:5
+   9: core::panicking::panic_fmt
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panicking.rs:80:14
+  10: {closure#0}
+             at ./src/lib.rs:272:52
+  11: do_call<nexterm_lib::tests::panic_hook_writes_crash_log::{closure_env#0}, ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:576:43
+  12: ___rust_try
+  13: catch_unwind<(), nexterm_lib::tests::panic_hook_writes_crash_log::{closure_env#0}>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:544:19
+  14: catch_unwind<nexterm_lib::tests::panic_hook_writes_crash_log::{closure_env#0}, ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panic.rs:359:14
+  15: panic_hook_writes_crash_log
+             at ./src/lib.rs:272:24
+  16: {closure#0}
+             at ./src/lib.rs:263:37
+  17: call_once<nexterm_lib::tests::panic_hook_writes_crash_log::{closure_env#0}, ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+  18: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+  19: test::__rust_begin_short_backtrace::<core::result::Result<(), alloc::string::String>, fn() -> core::result::Result<(), alloc::string::String>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/test/src/lib.rs:724:18
+  20: test::run_test_in_process::{closure#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/test/src/lib.rs:747:74
+  21: <core::panic::unwind_safe::AssertUnwindSafe<test::run_test_in_process::{closure#0}> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panic/unwind_safe.rs:275:9
+  22: std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<test::run_test_in_process::{closure#0}>, core::result::Result<(), alloc::string::String>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:576:43
+  23: std::panicking::catch_unwind::<core::result::Result<(), alloc::string::String>, core::panic::unwind_safe::AssertUnwindSafe<test::run_test_in_process::{closure#0}>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:544:19
+  24: std::panic::catch_unwind::<core::panic::unwind_safe::AssertUnwindSafe<test::run_test_in_process::{closure#0}>, core::result::Result<(), alloc::string::String>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panic.rs:359:14
+  25: test::run_test_in_process
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/test/src/lib.rs:747:27
+  26: test::run_test::{closure#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/test/src/lib.rs:668:43
+  27: test::run_test::{closure#1}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/test/src/lib.rs:698:41
+  28: std::sys::backtrace::__rust_begin_short_backtrace::<test::run_test::{closure#1}, ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/sys/backtrace.rs:166:18
+  29: std::thread::lifecycle::spawn_unchecked::<test::run_test::{closure#1}, ()>::{closure#1}::{closure#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/thread/lifecycle.rs:70:13
+  30: <core::panic::unwind_safe::AssertUnwindSafe<std::thread::lifecycle::spawn_unchecked<test::run_test::{closure#1}, ()>::{closure#1}::{closure#0}> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panic/unwind_safe.rs:275:9
+  31: std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<std::thread::lifecycle::spawn_unchecked<test::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:576:43
+  32: std::panicking::catch_unwind::<(), core::panic::unwind_safe::AssertUnwindSafe<std::thread::lifecycle::spawn_unchecked<test::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:544:19
+  33: std::panic::catch_unwind::<core::panic::unwind_safe::AssertUnwindSafe<std::thread::lifecycle::spawn_unchecked<test::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panic.rs:359:14
+  34: std::thread::lifecycle::spawn_unchecked::<test::run_test::{closure#1}, ()>::{closure#1}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/thread/lifecycle.rs:68:26
+  35: <std::thread::lifecycle::spawn_unchecked<test::run_test::{closure#1}, ()>::{closure#1} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+  36: <alloc::boxed::Box<dyn core::ops::function::FnOnce<(), Output = ()> + core::marker::Send> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/boxed.rs:2319:9
+  37: <std::sys::thread::unix::Thread>::new::thread_start
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/sys/thread/unix.rs:123:17
+  38: __pthread_cond_wait
+
+
+
+thread 'tests::panic_hook_writes_crash_log' (32918400) panicked at src-tauri/src/lib.rs:272:52:
+取证自检用的假 panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::panic_hook_writes_crash_log ... ok
+test transport::local::tests::command_pty_runs_and_produces_output ... ok
+test transport::tests::local_exec_keeps_full_output ... ok
+test terminal::tests::high_volume_feed_memory_bounded ... ok
+
+test result: ok. 297 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 39.91s
+
+     Running tests/local_pty.rs (target/parity/debug/deps/local_pty-0d3c31b7bd666b98)
+
+running 2 tests
+[skip] 宿主已有 locale ["zh_CN.UTF-8"]，本用例只在无 locale 时判得动
+test local_pty_keeps_utf8_filenames ... ok
+screen_text = "bash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: setopt: command not found\nbash: typeset: -U: invalid option\ntypeset: usage: typeset [-afFirtx] [-p] name[=value] ...\nbash: autoload: command not found\nbash: /Users/huangzheng/.bashrc: line 106: syntax error in conditional expression: unexpected token `('\nbash: /Users/huangzheng/.bashrc: line 106: syntax error near `~/.cache/zcompdump(#'\nbash: /Users/huangzheng/.bashrc: line 106: `if [[ -n ~/.cache/zcompdump(#qN.mh+24) ]]; then'\n\nThe default interactive shell is now zsh.\nTo update your account to use zsh, please run `chsh -s /bin/zsh`.\nFor more details, please visit https://support.apple.com/kb/HT208050.\nbash-3.2$ "
+test local_pty_pipeline_produces_screen_text ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+     Running tests/sftp_write_backup.rs (target/parity/debug/deps/sftp_write_backup-4eb7703a9ce0d706)
+
+running 1 test
+test writing_an_existing_file_keeps_a_faithful_backup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/ssh_e2e.rs (target/parity/debug/deps/ssh_e2e-1e0c9d42df7e6dac)
+
+running 1 test
+[skip] 未设置 NEXTERM_SSH_E2E=1，跳过 SSH 实机测试
+test ssh_pty_pipeline_on_linux_target ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/parity/debug/deps/nexterm_ipc_macros-2a4e58201f9d386f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests nexterm_lib
+
+running 1 test
+test src-tauri/src/ipc_shim.rs - ipc_shim (line 11) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests nexterm_ipc_macros
+
+running 1 test
+test src-tauri/nexterm-ipc-macros/src/lib.rs - (line 17) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

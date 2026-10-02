@@ -1,0 +1,40 @@
+
+SELFCheck observations (Go runtime only; no Rust expected payloads):
+[
+  {
+    "health": {
+      "ok": true,
+      "service": "nexterm-server",
+      "version": "dev",
+      "syncOnly": false,
+      "commands": 2,
+      "webRoot": null,
+      "vault": null
+    }
+  },
+  {
+    "app_platform": {
+      "ok": true,
+      "data": "darwin"
+    }
+  },
+  {
+    "app_info": {
+      "ok": true,
+      "data": {
+        "name": "NexTerm",
+        "version": "dev",
+        "vault": null
+      }
+    }
+  },
+  {
+    "unknown_command": {
+      "ok": false,
+      "error": {
+        "code": "not_found",
+        "message": "未找到命令: self.missing"
+      }
+    }
+  }
+]

@@ -1,0 +1,18 @@
+   Compiling aws-lc-sys v0.45.0
+   Compiling ring v0.17.14
+   Compiling libsqlite3-sys v0.30.1
+   Compiling nexterm v0.2.1 (/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-10/src-tauri)
+   Compiling sqlx-sqlite v0.8.6
+   Compiling sqlx-macros-core v0.8.6
+   Compiling sqlx-macros v0.8.6
+   Compiling aws-lc-rs v1.18.1
+   Compiling rustls v0.23.45
+   Compiling rustls-webpki v0.103.15
+   Compiling russh v0.63.3
+   Compiling sqlx v0.8.6
+   Compiling tokio-rustls v0.26.5
+   Compiling rustls-platform-verifier v0.7.1
+   Compiling hyper-rustls v0.27.10
+   Compiling reqwest v0.13.5
+   Compiling winrm-rs v1.2.2
+    Finished `release` profile [optimized] target(s) in 45.80s
