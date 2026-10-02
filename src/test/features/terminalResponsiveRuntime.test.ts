@@ -171,6 +171,7 @@ describe("terminal grid runtime lifecycle", () => {
     expect(coordinator.observe(2, { cols: 100, rows: 30 })).toBe(true);
     expect(coordinator.observe(1, { cols: 50, rows: 10 })).toBe(false);
     expect(coordinator.observe(2, { cols: 60, rows: 20 })).toBe(false);
+    expect(coordinator.observe(2, { cols: 100, rows: 30 })).toBe(false);
     expect(local).toEqual([{ cols: 100, rows: 30 }]);
 
     coordinator.attach("replacement", null, false);
@@ -178,6 +179,34 @@ describe("terminal grid runtime lifecycle", () => {
     coordinator.setCanResize(true);
     expect(local).toContainEqual({ cols: 90, rows: 20 });
     expect(resize).toHaveBeenCalledWith("replacement", { cols: 90, rows: 20 });
+  });
+
+  it("does not commit a disconnected resize and finishes the final intent on reattach", async () => {
+    const first = deferred();
+    const second = deferred();
+    const resize = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const coordinator = new TerminalGridCoordinator({ resize, flush }, () => undefined, {
+      visible: true,
+      canResize: true,
+    });
+    coordinator.attach("tab", { cols: 80, rows: 20 }, false);
+    coordinator.update({ widthPx: 900, heightPx: 400 }, cells);
+    coordinator.flush();
+
+    first.reject({ code: "disconnected" });
+    await microtasks();
+    expect(coordinator.snapshot().committed).toEqual({ cols: 80, rows: 20 });
+    expect(coordinator.desiredGrid()).toEqual({ cols: 90, rows: 20 });
+    expect(flush).not.toHaveBeenCalled();
+
+    second.resolve();
+    await microtasks();
+    expect(resize).toHaveBeenCalledTimes(2);
+    expect(flush).toHaveBeenCalledWith("tab");
+    expect(coordinator.snapshot().committed).toEqual({ cols: 90, rows: 20 });
   });
 
   it("drops pending work on unmount and ignores the late completion", async () => {

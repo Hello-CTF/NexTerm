@@ -15,13 +15,19 @@ afterEach(() => {
 });
 
 describe("terminal resize flush facade", () => {
-  it("uses the dedicated command and top-level controller identity", async () => {
+  it("uses exact resize commands and top-level controller identity", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
     const { terminalApi } = await import("../../ipc/commands");
 
+    await terminalApi.resize("tab-1", 120, 40);
     await terminalApi.resizeFlush("tab-1");
 
-    expect(runtime.Call.ByName).toHaveBeenCalledWith("main.Service.Call", {
+    expect(runtime.Call.ByName).toHaveBeenNthCalledWith(1, "main.Service.Call", {
+      cmd: "terminal_resize",
+      args: { tabId: "tab-1", cols: 120, rows: 40 },
+      clientId: expect.any(String),
+    });
+    expect(runtime.Call.ByName).toHaveBeenNthCalledWith(2, "main.Service.Call", {
       cmd: "terminal_resize_flush",
       args: { tabId: "tab-1" },
       clientId: expect.any(String),
