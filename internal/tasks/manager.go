@@ -130,8 +130,10 @@ func (m *Manager) load() error {
 		}
 		sp, spoolErr := openSpool(m.dir, base, m.headLimit, m.tailLimit)
 		if spoolErr != nil {
-			os.Remove(path)
-			continue
+			// Recovery failures (for example an interrupted checkpoint
+			// repair) must surface, never delete the record. Transaction
+			// journals are retained so a later Open can retry.
+			return fmt.Errorf("tasks: recover spool for %s: %w", base, spoolErr)
 		}
 		done := make(chan struct{})
 		close(done)

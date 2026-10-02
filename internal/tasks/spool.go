@@ -3,6 +3,7 @@ package tasks
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -98,6 +99,11 @@ func createSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 // compaction: the journaled target state is restored exactly by adopting the
 // already-renamed tail or by replaying the prepared tail, so Total, Dropped,
 // and every logical offset stay correct in every crash window.
+//
+// Transaction artifacts are removed only after the repaired checkpoint is
+// durable. If replay or the checkpoint write fails, openSpool returns the
+// error, keeps the journal (and any prepared tail) for the next open, and
+// still reports the recovered statistics in memory.
 func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	s := &spool{dir: dir, base: base, headLimit: headLimit, tailLimit: tailLimit, closed: true}
 	var headSize, tailSize int64
@@ -114,14 +120,20 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	idx := readSpoolIndex(s.indexPath())
 	journal := readSpoolIndex(s.compactPath())
 	adopted := false
+	keepTransaction := false
+	var repairErr error
 	if journal != nil && headSize == journal.HeadSize {
 		if tailSize == journal.TailSize {
 			// The tail rename already happened; adopt the journaled state.
 			adopted = true
 		} else if st, err := os.Stat(s.tailPath() + ".tmp"); err == nil && st.Size() == journal.TailSize {
-			// Crash before the rename: replay the prepared tail.
-			if os.Rename(s.tailPath()+".tmp", s.tailPath()) == nil {
+			// Crash before the rename: replay the prepared tail. A failed
+			// replay keeps the transaction for the next open.
+			if err := os.Rename(s.tailPath()+".tmp", s.tailPath()); err == nil {
 				adopted = true
+			} else {
+				keepTransaction = true
+				repairErr = fmt.Errorf("tasks: replay compaction for %s: %w", base, err)
 			}
 		}
 	}
@@ -130,18 +142,23 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 		s.tailLen = journal.TailSize
 		s.total = journal.Total
 		s.tailStart = journal.Total - journal.TailSize
-		// Persist the repaired checkpoint and drop transaction artifacts.
-		// Failures keep the journal for the next open instead of losing
-		// the recovered state.
-		_ = s.writeIndexLocked()
+		// The journal must survive until the checkpoint repair commits;
+		// deleting it earlier would let a later open fall back to stale
+		// Total/Dropped and wrong logical offsets.
+		if err := s.writeIndexLocked(); err != nil {
+			return s, fmt.Errorf("tasks: repair checkpoint for %s: %w", base, err)
+		}
 		_ = os.Remove(s.compactPath())
 		_ = os.Remove(s.tailPath() + ".tmp")
 		return s, nil
 	}
 	// No adoptable journal: recover the pre-compaction or append-only
-	// state, which is exact on its own, and clean up transaction garbage.
-	_ = os.Remove(s.compactPath())
-	_ = os.Remove(s.tailPath() + ".tmp")
+	// state, which is exact on its own. Transaction artifacts are dropped
+	// only when no repair is still pending.
+	if !keepTransaction {
+		_ = os.Remove(s.compactPath())
+		_ = os.Remove(s.tailPath() + ".tmp")
+	}
 	s.headLen = headSize
 	s.tailLen = tailSize
 	s.total = headSize + tailSize
@@ -156,7 +173,7 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	if s.total < s.headLen+s.tailLen {
 		s.total = s.headLen + s.tailLen
 	}
-	return s, nil
+	return s, repairErr
 }
 
 // Write appends stream bytes; it never blocks on readers.
@@ -256,8 +273,12 @@ func (s *spool) crash(stage string) {
 	}
 }
 
+// spoolIndexWriter is the checkpoint sink; tests replace it to inject
+// checkpoint repair failures.
+var spoolIndexWriter = writeJSONAtomic
+
 func (s *spool) writeIndexLocked() error {
-	return writeJSONAtomic(s.indexPath(), spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
+	return spoolIndexWriter(s.indexPath(), spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
 }
 
 // Stats reports the total bytes ever written and the elided middle size.
