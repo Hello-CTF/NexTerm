@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "policy": "Unavailable real targets are evidence gaps, never skipped passes. Desktop/server artifacts alone do not cover LazyCat, deployed Pages, mobile devices, or native soft keyboards.",
+  "gaps": [
+    {
+      "id": "physical-mobile-and-soft-keyboard",
+      "status": "evidence-gap",
+      "owner": "release-acceptance",
+      "required": "Physical iOS/Android layout, coarse pointer, keys bar and native soft-keyboard evidence at 360/560/820px where applicable."
+    },
+    {
+      "id": "lazycat-box-and-store",
+      "status": "evidence-gap",
+      "owner": "M47",
+      "required": "Build and install the Go LazyCat package on a real box; validate manifest injects, upstream image matching and LPK size against the recorded Rust LPK anchors."
+    },
+    {
+      "id": "deployed-pages",
+      "status": "evidence-gap",
+      "owner": "M47",
+      "required": "Run responsive and WS acceptance against the actual deployed Pages URL; a local Vite build is not deployment evidence."
+    },
+    {
+      "id": "native-installation",
+      "status": "evidence-gap",
+      "owner": "release-acceptance",
+      "required": "Install the produced NSIS/DMG on their real target OS versions and document signing/notarization and WebView2/WKWebView runtime results."
+    }
+  ]
+}

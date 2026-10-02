@@ -1,23 +1,5 @@
 name: Release
 
-# 打 `v*` tag 即出安装包并挂到 Release。**发布的五个包**（矩阵见 README）：
-#
-#   ① NexTerm_<ver>_x64-setup.exe                  Windows 客户端（amd64）
-#   ② NexTerm_<ver>_aarch64.dmg                    macOS 客户端（M 系列 / arm64）
-#   ③ NexTerm-<ver>-linux-amd64.tar.gz             LinuxServer（浏览器版，给人用）
-#   ④ NexTerm-onlyServer-<ver>-linux-amd64.tar.gz  onlyServer（只做资产同步）
-#   ⑤ cloud.lazycat.app.nexterm-v<ver>.lpk         懒猫微服专版 —— **本流水线出不了**
-#
-# 为什么①②要在 CI 里出：**Tauri 不能跨平台打包** —— NSIS 只能在 Windows 出，
-# .app/.dmg 只能在 macOS 出。一台机器出一个平台，用矩阵各出一份。
-#
-# 为什么⑤不在这里：构建 LPK 要连 `registry.lazycat.cloud`（**只有微服自己有凭证**，
-# 开发机拿社区账号一律 401）并且镜像在**盒子侧**构建，GitHub runner 上做不到。
-# ⇒ 懒猫专版由维护者本机 `lzc-cli project build` 出，再手动挂到同一个 Release。
-#
-# 刻意不挂 workflow_dispatch：手动触发时 github.ref_name 是**分支名**而不是 tag，
-# tauri-action 会照着分支名去建 Release。要试流水线就推一个预发布 tag（如 v0.1.2-rc1）。
-
 on:
   push:
     tags: ["v*"]
@@ -29,167 +11,171 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  GOTOOLCHAIN: go1.26.8
+  GOFLAGS: -mod=readonly
+
 jobs:
-  publish:
-    name: ${{ matrix.os }} · 桌面客户端
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  precondition:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag and wails.json are the same version source
+        run: node -e 'const v=require("./wails.json").info.version; if (process.env.GITHUB_REF_NAME !== `v${v}`) throw new Error(`${process.env.GITHUB_REF_NAME} != v${v}`)'
+
+  desktop:
+    name: ${{ matrix.os }}/${{ matrix.arch }} native package
+    needs: precondition
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            # ⚠️ 显式钉死 arm64（M 系列），不靠 runner 的默认值。
-            # `macos-latest` 眼下恰好是 arm64 机器，但 GitHub 换一次 runner 镜像
-            # 就会**静默**出成 Intel 版 —— 那种包能装能跑，没人会发现。
-            # 写死 target 后产物名必然带 `aarch64`，可核对。
-            args: "--target aarch64-apple-darwin --bundles app,dmg"
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            # tauri.conf.json 的基线 targets 就是 nsis + icon.ico（x64）。
-            args: "--bundles nsis"
-            target: ""
-    runs-on: ${{ matrix.os }}
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 11
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      # 交叉目标单独一步，而不是写进 toolchain 的 `with: targets:` ——
-      # 那样 Windows 那格得传空字符串，而空值会被当成「加一个名叫空的 target」。
-      - name: 追加交叉目标
-        if: matrix.target != ''
-        run: rustup target add ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
         with:
-          workspaces: src-tauri
-
-      - name: 安装前端依赖
+          go-version: 1.26.8
+          cache: true
+      - name: Install the pinned Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install NSIS
+        if: matrix.os == 'windows'
+        run: choco install nsis --version=3.11 --yes --no-progress
+      - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify bindings
+        run: node scripts/build.mjs bindings
+      - name: Build, package and enforce final artifact size evidence
+        run: node scripts/build.mjs desktop --release --repro-check --os=${{ matrix.os }} --arch=${{ matrix.arch }} --package --require-size
+      - name: Upload candidate and raw/final reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            target/release-assets/
+            target/go-build/*.artifact.json
+          if-no-files-found: error
 
-      # Release 说明 = 本版更新内容 + 安装说明。
-      #
-      # 本版更新内容放 `docs/releases/<tag>.md`（如 v0.1.3.md）：发版时**只加一个文件**，
-      # 不用改 workflow。此前 releaseBody 是硬编码的，于是每个 Release 都只有安装说明，
-      # 下载页永远看不到「这一版改了什么」。
-      #
-      # 说明文件缺失时只出安装说明并打 warning —— 不阻断发版（漏写说明不该让产物出不来）。
-      - name: 组装 Release 说明
-        id: notes
+  server:
+    name: Linux ${{ matrix.arch }} full/sync-only packages
+    needs: precondition
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build static Go server and reproducible frontend
+        run: |
+          node scripts/build.mjs server --release --repro-check --os=linux --arch=${{ matrix.arch }}
+          node scripts/build.mjs frontend --repro-check
+      - name: Exercise the packaged server before archiving
+        run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
+      - name: Produce and validate both archives with final size gates
+        run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-size
+      - name: Upload candidates and raw/final reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-server-linux-${{ matrix.arch }}
+          path: |
+            target/release-assets/
+            target/go-build/*.artifact.json
+          if-no-files-found: error
+      - name: Upload runtime evidence outside the release candidate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-server-linux-${{ matrix.arch }}
+          path: target/e2e-sync/
+          if-no-files-found: error
+
+  publish:
+    name: Verify complete release evidence and upload a draft
+    needs: [desktop, server]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: candidate
+          merge-multiple: true
+      - name: Flatten directories preserved by multi-path artifact uploads
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in release-assets go-build; do
+            if [[ -d "candidate/$directory" ]]; then
+              find "candidate/$directory" -type f -exec mv -f {} candidate/ \;
+              find "candidate/$directory" -depth -type d -empty -delete
+            fi
+          done
+      - name: Require every final artifact, hash and size report
+        run: node .github/scripts/release-evidence.mjs candidate
+      - name: Assemble release notes
         shell: bash
         run: |
           set -euo pipefail
           notes="docs/releases/${GITHUB_REF_NAME}.md"
-          body="release-body.md"
-          if [[ -f "$notes" ]]; then
-            echo "采用本版说明：$notes"
-            cat "$notes" > "$body"
-            printf '\n---\n\n' >> "$body"
-          else
-            echo "::warning::$notes 不存在，本次 Release 只有安装说明"
-            : > "$body"
-          fi
-          cat .github/release-template.md >> "$body"
-          # 多行值必须用「name<<分隔符」语法写进 GITHUB_OUTPUT（直接 echo 只会保留首行）
-          {
-            echo 'body<<NEXTERM_RELEASE_BODY'
-            cat "$body"
-            echo 'NEXTERM_RELEASE_BODY'
-          } >> "$GITHUB_OUTPUT"
-          echo "Release 说明共 $(wc -c < "$body") 字节 / $(wc -l < "$body") 行"
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "NexTerm ${{ github.ref_name }}"
-          releaseBody: ${{ steps.notes.outputs.body }}
-          # 先出草稿：产物齐了、检查过再点 Publish，避免半成品直接对用户可见。
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
-
-  linux-server:
-    name: linux · 服务端两个包
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: 安装前端依赖
-        run: pnpm install --frozen-lockfile
-
-      # 服务端要的只是静态产物，所以刻意**不跑 tsc**：类型门在 ci.yml 里，
-      # 而 tag 已经推了，发布不该因为一个类型错误就拿不到包。
-      - name: 构建前端
-        run: pnpm exec vite build
-
-      # runner 自己就是 x86_64 ⇒ 原生编译，不需要交叉工具链。
-      - name: 构建服务端二进制
-        run: cargo build --release --no-default-features --features server --bin nexterm-server
-
-      - name: 打包（LinuxServer + onlyServer）
-        run: bash scripts/pack-linux-server.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-server-packages
-          path: target/release-assets/*.tar.gz
-          if-no-files-found: error
-
-  attach-linux:
-    name: linux · 挂到 Release 草稿
-    needs: [publish, linux-server]
-    runs-on: ubuntu-latest
-    steps:
-      # 单独一个 job，而不是把上传塞进 linux-server：那个 job 不该依赖
-      # 「Release 已经建好」这个事实（草稿由 publish 那个 job 的 tauri-action 创建）。
-      # 分开之后，桌面那侧先挂、这侧后补，两边互不阻塞。
-      - uses: actions/download-artifact@v4
-        with:
-          name: linux-server-packages
-          path: release-assets
-
-      - name: 上传
+          if [[ -f "$notes" ]]; then cat "$notes" > candidate/release-body.md; printf '\n---\n\n' >> candidate/release-body.md; else : > candidate/release-body.md; fi
+          cat .github/release-template.md >> candidate/release-body.md
+          printf '\n### Verification evidence\n\nSee `release-evidence.json`, `SHA256SUMS` and `real-target-gaps.json`. Evidence gaps are not passed acceptance. LazyCat and deployed Pages packaging/real-target acceptance are delivered by M47.\n' >> candidate/release-body.md
+      - name: Create or update the draft release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # ⛔ 这个 job **故意没有 checkout**（只下载 artifact 再上传），于是当前目录
-          # 不是 git 仓库，`gh` 就推不出「要操作哪个仓库」—— 2026-10-01 首次真跑正是
-          # 死在这里：`failed to run git: fatal: not a git repository`。
-          # 明写 GH_REPO，而不是为了 gh 去 checkout 一次整仓库：这个 job 的依赖
-          # 保持「一个 artifact + 一个 token」。
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # nullglob：不然没匹配上时数组里会留一个字面量 `release-assets/*.tar.gz`，
-          # 检查「有没有产物」那条就永远通过，错到 upload 那步才炸。
           shopt -s nullglob
-          files=(release-assets/*.tar.gz)
-          [ ${#files[@]} -gt 0 ] || { echo "::error::没有可挂的产物"; exit 1; }
-          gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
-          # 自证：把 Release 上现有的产物列出来，别只信 upload 的退出码。
-          echo "Release $GITHUB_REF_NAME 当前产物："
-          gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name'
+          files=(candidate/*.exe candidate/*.dmg candidate/*.tar.gz candidate/SHA256SUMS candidate/release-evidence.json candidate/real-target-gaps.json)
+          [ ${#files[@]} -eq 10 ] || { echo "expected 7 packages plus 3 evidence files, got ${#files[@]}"; exit 1; }
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "NexTerm $GITHUB_REF_NAME" --notes-file candidate/release-body.md "${files[@]}"
+          fi
+          gh release view "$GITHUB_REF_NAME" --json assets,isDraft -q '{draft:.isDraft,assets:[.assets[].name]}'

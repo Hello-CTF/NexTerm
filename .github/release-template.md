@@ -6,16 +6,17 @@
 |---|---|
 | Windows 10/11 x64 | `*_x64-setup.exe`（NSIS 安装器，双击即装） |
 | macOS（Apple Silicon） | `*_aarch64.dmg`（拖入「应用程序」） |
+| macOS（Intel） | `*_x86_64.dmg`（拖入「应用程序」） |
 
 **服务端（浏览器访问）**
 
 | 用途 | 文件 |
 |---|---|
-| **LinuxServer** —— 自建机器 / 内网 VPS，**带完整浏览器界面** | `NexTerm-*-linux-amd64.tar.gz` |
-| **onlyServer** —— 公网只做资产同步中转，无界面、命令行管理 | `NexTerm-onlyServer-*-linux-amd64.tar.gz` |
+| **LinuxServer** —— 自建机器 / 内网 VPS，**带完整浏览器界面** | `NexTerm-*-linux-amd64.tar.gz` / `NexTerm-*-linux-arm64.tar.gz` |
+| **onlyServer** —— 公网只做资产同步中转，无界面、命令行管理 | `NexTerm-onlyServer-*-linux-amd64.tar.gz` / `NexTerm-onlyServer-*-linux-arm64.tar.gz` |
 
-两者是**同一个二进制**，只差一个 `--sync-only` —— 分成两个包是为了让你拿到手就是对的形态。
-解压后有二进制、前端产物、systemd 单元与一份 `README.md` / `.env.example`。
+同一架构的两个包使用**同一个 Go 静态二进制**，只差一个 `--sync-only` —— 分成两个包是为了让你拿到手就是对的形态。
+完整包解压后有二进制、前端产物、systemd 单元与一份 `README.md` / `.env.example`；同步-only 包不含浏览器资产。
 部署步骤见 [README 的「部署服务端」](https://github.com/ProbiusOfficial/NexTerm#部署服务端)。
 
 > ⛔ 完整版服务端**自身没有登录鉴权**，不建议直接暴露公网；公网请用 onlyServer。
