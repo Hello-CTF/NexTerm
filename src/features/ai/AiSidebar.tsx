@@ -8,7 +8,12 @@
 //   · 危险命令在任何档位都要问，硬底线在任何档位都不执行；
 //   · 图片走 data URI 内联，截图不出本机，也只在当次请求里存在（不落库）；
 //   · @ 引用是给模型的**显式目标**，不改内核 scope —— scope 仍由当前会话决定。
-import { useEffect, useMemo, useRef, useState } from "react";
+//
+// 流式路径的分层（本文件只管副作用与渲染）：
+//   · conversation.ts —— 事件 → 结构化会话（条目 / attempt / 终态），重放幂等；
+//   · conversationStream.ts —— 逐 token 文本按帧合并，工具 / 交互 / 终态前强制 flush；
+//   · conversationFollow.ts —— 只有用户还在最新输出时才自动滚动。
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel } from "../../ipc/events";
@@ -18,7 +23,17 @@ import { ModelPanel } from "./ModelPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
-import { answerInput, clearInteractionIfMatch, confirmationInput, confirmationNonceOf, questionFromEvent } from "./aiWire";
+import { answerInput, confirmationInput } from "./aiWire";
+import {
+  historyToItems,
+  pendingInteraction,
+  type ChatItem,
+  type ConfirmItem,
+  type QuestionItem,
+  type StatusLine,
+} from "./conversation";
+import { createConversationStream, type ConversationStream } from "./conversationStream";
+import { useConversationFollow } from "./conversationFollow";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -29,7 +44,7 @@ import {
   settleAiRun,
   type AiRunSlot,
 } from "./runOwnership";
-import { UsageRing, type AiUsage } from "./UsageRing";
+import { UsageRing } from "./UsageRing";
 import {
   IconAlert,
   IconBot,
@@ -47,78 +62,6 @@ import {
   IconShield,
   IconXCircle,
 } from "../../ui/icons";
-
-/** 写文件类工具的改动预览（与内核 `FilePreview` 对应）。 */
-interface FilePreviewItem {
-  path: string;
-  /** 执行前的内容。新建文件是空串。 */
-  before: string;
-  /** 执行后（预测）的内容。 */
-  after: string;
-  kind: string;
-}
-
-type ChatItem =
-  | { role: "user"; text: string; imageCount?: number }
-  | { role: "assistant"; text: string }
-  | { role: "reasoning"; text: string }
-  | {
-      role: "tool";
-      name: string;
-      display: string;
-      /** 折叠态看到的一行摘要（内核截到 400 字）。 */
-      summary?: string;
-      /** 完整输出，点「展开」看的就是它（内核上限 64K）。 */
-      text?: string;
-      ok?: boolean;
-      exitCode?: number | null;
-    }
-  | { role: "diff"; path: string; before: string; after: string }
-  | { role: "plan"; text: string }
-  | {
-      role: "confirm";
-      jobId: string;
-      callId: string;
-      tool: string;
-      /** 原始参数 + 判定理由的兜底文案（也是「加为拦截规则」的预填来源）。 */
-      rendered: string;
-      /** 判定理由，单独一行展示 —— 别让它跟着原始参数一起被 diff 顶掉。 */
-      reason?: string;
-      /** 写文件类工具的改动预览：**批准之前**就能看到改什么。 */
-      preview?: FilePreviewItem | null;
-      nonce: string;
-    }
-  | {
-      role: "question";
-      jobId: string;
-      callId: string;
-      nonce: string;
-      question: string;
-      options: string[];
-    };
-
-/**
- * 状态条上的一行字（`status` 事件，外加「正在生成工具参数」这个阶段）。
- *
- * `tool` / `chars` 只在 `phase === "tool_args"` 时有值：模型正在逐 token
- * 生成某个工具调用的参数。**写文件的整份内容就藏在这个阶段里** ——
- * 它可能持续几十秒，而 2026-09-30 之前的实现在这期间一条事件都不推，
- * 用户看到 AI 说完开场白之后界面完全静止，合理地读成「卡死」。
- */
-interface StatusLine {
-  phase: string;
-  detail?: string;
-  turn?: number;
-  tool?: string;
-  /** 参数 JSON 的**已累积字节数**。不是最终内容长度，别当百分比的分母。 */
-  chars?: number;
-}
-
-/** 任务清单的一条（与内核 `TodoItem` 对应）。 */
-interface TodoRow {
-  content: string;
-  status: string;
-}
 
 /** @ 引用选出来的一枚 chip。 */
 interface RefChip {
@@ -146,52 +89,49 @@ const MODE_LABEL: Record<AiPermissionMode, string> = {
   silent: "完全静默",
 };
 
+/** 确认决定 → 留在消息流里的结算文案（交互完成后仍然可查）。 */
+const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
+  allow: "已允许一次",
+  allow_session: "本会话已允许此类",
+  deny: "已拒绝",
+};
+
 export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
   const { rightOpen, setRightOpen, aiBusy, setAiBusy, pushToast, rightWidth, workspaces } = useUi();
-  const [items, setItems] = useState<ChatItem[]>([]);
+  /**
+   * 会话流控制器：组件生命周期内唯一。卸载时只 flush 不 dispose ——
+   * StrictMode 的开发态会走一遍"挂载→清理→再挂载"，dispose 是不可逆的，
+   * 会把第二段生命周期里的控制器变成哑巴；flush 则两个场景都正确。
+   */
+  const streamRef = useRef<ConversationStream | null>(null);
+  if (!streamRef.current) streamRef.current = createConversationStream();
+  const stream = streamRef.current;
+  const subscribe = useCallback((onChange: () => void) => stream.subscribe(() => onChange()), [stream]);
+  const getSnapshot = useCallback(() => stream.getState(), [stream]);
+  const conv = useSyncExternalStore(subscribe, getSnapshot);
+  useEffect(() => () => stream.flush(), [stream]);
+
   const [input, setInput] = useState("");
-  const [confirmCard, setConfirmCard] = useState<Extract<ChatItem, { role: "confirm" }> | null>(null);
-  const [questionCard, setQuestionCard] = useState<Extract<ChatItem, { role: "question" }> | null>(
-    null,
-  );
   const [questionInput, setQuestionInput] = useState("");
-  const clearInteractionCards = () => {
-    setConfirmCard(null);
-    setQuestionCard(null);
-    setQuestionInput("");
-  };
-  useEffect(() => {
-    if (questionCard === null) setQuestionInput("");
-  }, [questionCard]);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
     const run = createAiRun(++runSequenceRef.current, kind);
     activeRunRef.current = run;
+    stream.beginRun(run.generation, kind);
     return run;
   };
-  /**
-   * 内核推来的运行状态（`AiEvent::Status`）。
-   *
-   * 这个事件一直在推，但前端**从来没渲染过** —— 于是 AI 跑长命令时界面上
-   * 什么动静都没有，"卡住了"的焦虑有一半来自这里：明明还在干活，
-   * 用户看到的是一个不动的转圈和一张点不动的发送按钮。
-   */
-  const [status, setStatus] = useState<StatusLine | null>(null);
-  /** 最近一轮的用量快照（功能行右侧的圆环）。null = 本轮还没跑过。 */
-  const [usage, setUsage] = useState<AiUsage | null>(null);
-  /** 当前任务清单（todo_write 推整份）。 */
-  const [todos, setTodos] = useState<TodoRow[]>([]);
+  /** 当前轮的待处理交互：从会话里派生，终态 / 停止 / 切换会话会自动关闭。 */
+  const activeGeneration = activeRunRef.current?.generation ?? null;
+  const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
+  const questionCard = pendingInteraction(conv, activeGeneration, "question");
+  useEffect(() => {
+    // 新提问卡 / 卡片关闭都重置草稿；同一张卡的流式重渲染不清空用户输入。
+    setQuestionInput("");
+  }, [questionCard?.id]);
   /** 计划模式：只调研、出方案，等批准。 */
   const [planMode, setPlanMode] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
-  /**
-   * 「这一轮是不是计划模式收的尾」。
-   *
-   * 用 ref 而不是 state：它在**流中途**被 planSubmitted 改写，而 done 分支
-   * 拿到的是 send() 那一刻的闭包，state 在那里永远是旧值。
-   */
-  const planPendingRef = useRef(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   /** 权限档位（+ 规则数量展示）。规则库本身在设置页，这里只留入口。 */
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
@@ -207,10 +147,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const takeover = useUi((s) => s.takeover);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [items]);
+  const follow = useConversationFollow(scrollRef, conv.items);
 
   useEffect(() => {
     void aiApi
@@ -298,18 +235,12 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     // 否则模型会再给你一份计划 —— 用户点的是"执行"，不是"再想想"。
     const usePlan = override?.planMode ?? planMode;
     setAiBusy(true);
-    clearInteractionCards();
-    setStatus(null);
-    planPendingRef.current = false;
     setInput("");
     setRefs([]);
     setAtOpen(false);
     const sentImages = images;
     setImages([]);
-    setItems((prev) => [
-      ...prev,
-      { role: "user", text: message, imageCount: sentImages.length || undefined },
-    ]);
+    stream.appendUser(run.generation, message, sentImages.length);
 
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
@@ -319,198 +250,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (terminalEvent) disposeChannel(channel);
         return;
       }
-      switch (type) {
-        case "status":
-          setStatus({
-            phase: ev.phase as string,
-            detail: (ev.detail as string) || undefined,
-            turn: (ev.turn as number) ?? undefined,
-          });
-          break;
-        case "delta":
-          // 开始吐字就说明不再"思考中"了，状态条让位给正文。
-          setStatus(null);
-          setItems((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "assistant") {
-              return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
-            }
-            return [...prev, { role: "assistant", text: ev.text as string }];
-          });
-          break;
-        case "reasoning":
-          // 与 delta 同款**合并到上一条**：推理是逐 token 流式来的，
-          // 每个片段都新开一个气泡的话，就成了"几个字一行"。
-          setItems((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === "reasoning") {
-              return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
-            }
-            return [...prev, { role: "reasoning", text: ev.text as string }];
-          });
-          break;
-        case "toolArgs":
-          // 模型正在吐工具参数 —— 写文件时那一大坨内容就在这里面。
-          // 这个阶段以前在内核里被默默吃掉（一个字都不往外说），于是 AI 说完
-          // 开场白之后界面会静止几十秒，用户只能反复问「是不是卡死了」。
-          // 事件本身已在内核侧节流（每 120ms 最多一条），这里直接覆盖。
-          setStatus({
-            phase: "tool_args",
-            tool: ev.tool as string,
-            chars: ev.chars as number,
-          });
-          break;
-        case "toolCall":
-          // 参数齐了 ⇒ 卡片接管，状态条让位（否则会同时挂着两处「正在写入」）。
-          setStatus(null);
-          setItems((prev) => [
-            ...prev,
-            {
-              role: "tool",
-              name: ev.name as string,
-              display: (ev.display as string) || (ev.name as string),
-            },
-          ]);
-          break;
-        case "toolResult":
-          setItems((prev) => {
-            const idx = [...prev].reverse().findIndex((i) => i.role === "tool" && !("summary" in i));
-            if (idx >= 0) {
-              const realIdx = prev.length - 1 - idx;
-              const copy = [...prev];
-              copy[realIdx] = {
-                ...(copy[realIdx] as Extract<ChatItem, { role: "tool" }>),
-                summary: ev.summary as string,
-                text: (ev.text as string) ?? "",
-                ok: ev.ok as boolean,
-                exitCode: ev.exitCode as number | null,
-              };
-              return copy;
-            }
-            return prev;
-          });
-          break;
-        case "fileChange":
-          setItems((prev) => [
-            ...prev,
-            {
-              role: "diff",
-              path: ev.path as string,
-              before: (ev.before as string) ?? "",
-              after: (ev.after as string) ?? "",
-            },
-          ]);
-          break;
-        case "confirmRequired":
-          {
-            const card: ChatItem = {
-              role: "confirm",
-              jobId: current.jobId ?? "",
-              callId: ev.id as string,
-              tool: ev.tool as string,
-              rendered: ev.rendered as string,
-              reason: (ev.reason as string) || "",
-              // 没有改动预览就是 null（非写文件类工具，或内核算不出前后对照）
-              // —— 卡片退回展示原始参数，这里不做任何猜测。
-              preview: (ev.preview as FilePreviewItem | null) ?? null,
-              nonce: confirmationNonceOf(ev),
-            };
-            setConfirmCard(card);
-            setItems((prev) => [...prev, card]);
-          }
-          break;
-        case "questionRequired": {
-          const question = questionFromEvent(ev);
-          const card: ChatItem = {
-            role: "question",
-            jobId: current.jobId ?? "",
-            callId: ev.id as string,
-            nonce: confirmationNonceOf(ev),
-            ...question,
-          };
-          setQuestionInput("");
-          setQuestionCard(card);
-          setItems((prev) => [...prev, card]);
-          break;
-        }
-        case "usage":
-          // 每轮覆盖（不是累加）：圆环要回答的是「现在还剩多少」，
-          // 累计值会把历史请求也滚进来，越用越吓人。
-          setUsage({
-            promptTokens: Number(ev.promptTokens) || 0,
-            completionTokens: Number(ev.completionTokens) || 0,
-            cachedTokens: Number(ev.cachedTokens) || 0,
-            contextWindow: Number(ev.contextWindow) || 0,
-          });
-          break;
-        case "todos":
-          setTodos((ev.items as TodoRow[]) ?? []);
-          break;
-        case "planSubmitted":
-          // 只立旗子，气泡等 done 到了再落 —— 否则这里加一条、done 再加一条，
-          // 同一份方案会在对话里出现两遍。
-          planPendingRef.current = true;
-          break;
-        case "done": {
-          // raw 记下"内核到底给没给答案"：answer 会被填成占位串，那就不能再拿它
-          // 跟流式正文比对 —— 占位串永远不可能等于正文，会误走追加分支。
-          const raw = (ev.answer as string) || "";
-          const answer = raw || "(无回答)";
-          const wasPlan = planPendingRef.current;
-          planPendingRef.current = false;
-          activeRunRef.current = settleAiRun(current);
-          if (!current.spawnPending) setAiBusy(false);
-          clearInteractionCards();
-          setStatus(null);
-          setItems((prev) => {
-            const last = prev[prev.length - 1];
-            if (last && (last.role === "assistant" || last.role === "plan")) {
-              const streamed = last.text.trim();
-              // 判据：stream 已经把这段吐完了，done 再补一条就是重复 —— 这就是
-              // 「同一段回答出现两遍」的根因。逐字相同只说明同一个答案，
-              // 此时既不追加，也不改内容。
-              if (raw && streamed === answer.trim()) {
-                // 计划模式下"收尾"这个语义不能丢：把流式那条升级成 plan 气泡，
-                // 让批准按钮仍然出现，而不是多长出一条方案。
-                if (wasPlan) return [...prev.slice(0, -1), { role: "plan", text: answer }];
-                return prev;
-              }
-              // 末条是权威答案的真前缀（长度 ≥ 8 才认，免得一个"好"字就被当成
-              // 截断）→ 流被代理截了，或对端回退成了非流式。直接换成完整答案。
-              if (
-                last.role === "assistant" &&
-                raw &&
-                streamed.length >= 8 &&
-                answer.trim().startsWith(streamed)
-              ) {
-                return [...prev.slice(0, -1), { ...last, text: answer }];
-              }
-            }
-            return [
-              ...prev,
-              wasPlan ? { role: "plan", text: answer } : { role: "assistant", text: answer },
-            ];
-          });
-          // 终态到达 ⇒ 这次作业彻底结束，释放本次作业专用的通道。
-          // 不释放的话它对应的 WS 会一直挂着（`disposed` 永为 false ⇒ 退避重连），
-          // 实测 `liveChannels` 只增不减。
-          disposeChannel(channel);
-          break;
-        }
-        case "error": {
-          activeRunRef.current = settleAiRun(current);
-          if (!current.spawnPending) setAiBusy(false);
-          clearInteractionCards();
-          setStatus(null);
-          pushToast("error", `AI: ${ev.message as string}`);
-          // `error` 与 `done` 互斥且都是终态：`agent.rs` 被打断时只推 Error、
-          // 正常收尾只推 Done，两条路径都必须释放。
-          disposeChannel(channel);
-          break;
-        }
-        default:
-          break;
+      // 聚合层负责幂等与可见终态；这里只保留副作用（ownership / toast / 通道释放）。
+      const result = stream.pushEvent(run.generation, ev);
+      if (!terminalEvent) return;
+      if (result.accepted) {
+        activeRunRef.current = settleAiRun(current);
+        if (!current.spawnPending) setAiBusy(false);
+        if (type === "error") pushToast("error", `AI: ${ev.message as string}`);
       }
+      // 终态到达 ⇒ 这次作业彻底结束，释放本次作业专用的通道（重复 / 迟到终态也一样，
+      // dispose 幂等）。不释放的话它对应的 WS 会一直挂着退避重连。
+      disposeChannel(channel);
     });
 
     try {
@@ -535,17 +285,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       activeRunRef.current = bindAiRunJob(current, res.jobId);
+      stream.bindJob(run.generation, res.jobId);
     } catch (e) {
       const current = activeRunRef.current;
       if (isCurrentAiRun(current, run.generation)) {
-        if (!current.settled) pushToast("error", describeError(e));
+        // 命令级失败（未拿到 jobId）时服务端不会推任何终态事件：补一条本地 error，
+        // 失败的那一轮在消息流里同样留痕可查；已终态（如早到的 done）则不改写。
+        const result = stream.pushEvent(run.generation, {
+          type: "error",
+          message: describeError(e),
+        });
+        if (result.accepted && !current.settled) pushToast("error", describeError(e));
         activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
         setAiBusy(false);
-        clearInteractionCards();
-        setStatus(null);
       }
-      // 命令级失败（未拿到 jobId）时服务端不会推任何终态事件 ⇒ 在这里兜底释放，
-      // 否则这条通道永远没人回收。
       disposeChannel(channel);
     }
   };
@@ -579,7 +332,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       return;
     }
     if (isCurrentAiRun(activeRunRef.current, run.generation)) {
-      setConfirmCard((current) => clearInteractionIfMatch(current, card, "confirm"));
+      // 只结算这张卡（id + nonce 双重要件）：RPC 等待期间到来的新交互不受影响。
+      stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
     }
   };
 
@@ -603,7 +357,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       return;
     }
     if (isCurrentAiRun(activeRunRef.current, run.generation)) {
-      setQuestionCard((current) => clearInteractionIfMatch(current, card, "question"));
+      stream.resolveInteraction(run.generation, card.id, card.nonce, `已回答：${text}`);
     }
   };
 
@@ -621,9 +375,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       if (!isCurrentAiRun(current, run.generation)) return;
       const cancellation = completeRunCancellation(current);
       activeRunRef.current = cancellation.run;
+      stream.cancelRun(run.generation, !cancellation.waitForTerminal);
       if (!cancellation.waitForTerminal) setAiBusy(false);
-      clearInteractionCards();
-      setStatus(null);
       pushToast(
         "info",
         cancellation.waitForTerminal ? "已请求停止接管，等待终端退出" : "已停止本轮",
@@ -666,10 +419,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       ) {
         return;
       }
-      setItems(msgs.flatMap(msgToItems));
+      stream.reset(historyToItems(stream.getState(), msgs));
       setConversationId(id);
       setHistoryOpen(false);
-      clearInteractionCards();
     } catch (e) {
       pushToast("error", `打开会话失败：${describeError(e)}`);
     }
@@ -681,8 +433,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       return;
     }
     setConversationId(undefined);
-    setItems([]);
-    clearInteractionCards();
+    stream.reset();
     setHistoryOpen(false);
   };
 
@@ -749,8 +500,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       if (banner && useUi.getState().takeover === banner) useUi.getState().setTakeover(null);
     };
 
-    clearInteractionCards();
-    setStatus(null);
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
       const terminalEvent = type === "done" || type === "error";
@@ -759,120 +508,19 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (terminalEvent) disposeChannel(channel);
         return;
       }
-      if (type === "screen") {
-        // 只保留最新一屏：把旧的读屏卡全部摘掉再追加新的。
-        // 最初实现只在「上一张恰好是读屏卡」时去重 —— 一旦中间插进了
-        // 动作卡/思考气泡，后续每步都会多出一张读屏卡，越滚越长。
-        setItems((prev) => {
-          const rest = prev.filter((i) => !(i.role === "tool" && i.name === "read_screen"));
-          return [
-            ...rest,
-            {
-              role: "tool" as const,
-              name: "read_screen",
-              display: "读屏",
-              summary: String(ev.text).slice(-200),
-              text: String(ev.text).slice(-4000),
-              ok: true,
-            },
-          ];
-        });
-      } else if (type === "confirmRequired") {
-        // 接管中遇到需确认的动作：走与主对话一致的确认卡片，不再自动拒绝
-        const card: ChatItem = {
-          role: "confirm",
-          jobId: current.jobId ?? "",
-          callId: ev.id as string,
-          tool: ev.tool as string,
-          rendered: ev.rendered as string,
-          nonce: confirmationNonceOf(ev),
-        };
-        setConfirmCard(card);
-        setItems((prev) => [...prev, card]);
-      } else if (type === "questionRequired") {
-        const question = questionFromEvent(ev);
-        const card: ChatItem = {
-          role: "question",
-          jobId: current.jobId ?? "",
-          callId: ev.id as string,
-          nonce: confirmationNonceOf(ev),
-          ...question,
-        };
-        setQuestionInput("");
-        setQuestionCard(card);
-        setItems((prev) => [...prev, card]);
-      } else if (type === "delta") {
-        // 模型每步的「看到…因为…所以…」叙述，实时流成气泡
-        setItems((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === "assistant") {
-            return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
-          }
-          return [...prev, { role: "assistant", text: ev.text as string }];
-        });
-      } else if (type === "reasoning") {
-        // 与主对话同款：逐 token 合并到上一条，避免「几个字一行」
-        setItems((prev) => {
-          const last = prev[prev.length - 1];
-          if (last && last.role === "reasoning") {
-            return [...prev.slice(0, -1), { ...last, text: last.text + (ev.text as string) }];
-          }
-          return [...prev, { role: "reasoning", text: ev.text as string }];
-        });
-      } else if (type === "toolCall") {
-        // 接管的每个动作（send_keys/wait_for/done）也发卡片：
-        // 气泡讲因果，卡片记动作 —— 用户才看得懂 AI 在终端里敲了什么
-        setItems((prev) => [
-          ...prev,
-          {
-            role: "tool" as const,
-            name: ev.name as string,
-            display: (ev.display as string) || (ev.name as string),
-          },
-        ]);
-      } else if (type === "toolResult") {
-        setItems((prev) => {
-          const idx = [...prev]
-            .reverse()
-            .findIndex((i) => i.role === "tool" && !("summary" in i));
-          if (idx >= 0) {
-            const realIdx = prev.length - 1 - idx;
-            const copy = [...prev];
-            copy[realIdx] = {
-              ...(copy[realIdx] as Extract<ChatItem, { role: "tool" }>),
-              summary: ev.summary as string,
-              text: (ev.text as string) ?? "",
-              ok: ev.ok as boolean,
-              exitCode: ev.exitCode as number | null,
-            };
-            return copy;
-          }
-          return prev;
-        });
-      } else if (type === "done") {
+      const result = stream.pushEvent(run.generation, ev);
+      if (!terminalEvent) return;
+      if (result.accepted) {
         holder.settled = true;
         activeRunRef.current = settleAiRun(current);
         if (!current.spawnPending) setAiBusy(false);
-        clearInteractionCards();
         clearTakeover();
-        setItems((prev) => [
-          ...prev,
-          { role: "assistant", text: `接管结束：${(ev.answer as string) || "(无回答)"}` },
-        ]);
-        // 接管的终态。注意「Esc 夺回」也走这里 —— 服务端 `run_takeover` 在取消
-        // 分支 break 之后仍然会补推一条 `Done`（见 takeover.rs 末尾），所以取消
-        // 路径不需要另找释放点。此刻之后该通道再无任何事件，可安全关闭。
-        disposeChannel(channel);
-      } else if (type === "error") {
-        holder.settled = true;
-        activeRunRef.current = settleAiRun(current);
-        if (!current.spawnPending) setAiBusy(false);
-        clearInteractionCards();
-        clearTakeover();
-        pushToast("error", `接管：${ev.message as string}`);
-        // 与 done 并列的终态（模型请求失败那条路径只推 Error）。
-        disposeChannel(channel);
+        if (type === "error") pushToast("error", `接管：${ev.message as string}`);
       }
+      // 接管的终态。注意「Esc 夺回」也走这里 —— 服务端 `run_takeover` 在取消
+      // 分支 break 之后仍然会补推一条 `Done`，所以取消路径不需要另找释放点。
+      // 此刻之后该通道再无任何事件，可安全关闭（重复 / 迟到终态同样幂等释放）。
+      disposeChannel(channel);
     });
 
     setAiBusy(true);
@@ -898,6 +546,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       activeRunRef.current = bindAiRunJob(current, result.jobId);
+      stream.bindJob(run.generation, result.jobId);
       banner = {
         tabId,
         jobId: result.jobId,
@@ -914,14 +563,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       const current = activeRunRef.current;
       if (isCurrentAiRun(current, run.generation)) {
-        if (!current.settled) pushToast("error", describeError(e));
+        // 命令级失败：服务端若在 `begin`/建客户端阶段就退出，一个事件都不会推，
+        // 与 chat 一样补一条本地 error 留痕。
+        const result = stream.pushEvent(run.generation, {
+          type: "error",
+          message: describeError(e),
+        });
+        if (result.accepted && !current.settled) pushToast("error", describeError(e));
         activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
         setAiBusy(false);
-        clearInteractionCards();
         clearTakeover();
       }
-      // 命令级失败：服务端若在 `begin`/建客户端阶段就退出，一个事件都不会推，
-      // 终态分支永远不会执行 ⇒ 在这里兜底释放。
       disposeChannel(channel);
     }
   };
@@ -1072,19 +724,41 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      {/* 消息流 */}
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
-        {items.length === 0 && (
-          <div className="flex flex-col items-center gap-3 px-2 pt-10 text-center">
-            <span className="nx-empty-icon">
-              <IconBot size={19} />
-            </span>
-            <div className="text-xs text-neutral-400">新建会话 · 命令与输出全程留痕</div>
-          </div>
+      {/* 消息流：跟随滚动由 useConversationFollow 决定，不再无条件拽到底部 */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          role="log"
+          aria-label="AI 对话记录"
+          className="h-full space-y-2.5 overflow-y-auto p-3"
+        >
+          {conv.items.length === 0 && (
+            <div className="flex flex-col items-center gap-3 px-2 pt-10 text-center">
+              <span className="nx-empty-icon">
+                <IconBot size={19} />
+              </span>
+              <div className="text-xs text-neutral-400">新建会话 · 命令与输出全程留痕</div>
+            </div>
+          )}
+          {conv.items.map((item, i) => (
+            <ChatBubble
+              key={item.id}
+              item={item}
+              streaming={aiBusy && i === conv.items.length - 1}
+              onApprovePlan={approvePlan}
+            />
+          ))}
+        </div>
+        {follow.newOutput && (
+          <button
+            type="button"
+            className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700"
+            aria-label="回到最新输出"
+            onClick={follow.jumpToLatest}
+          >
+            ↓ 新输出
+          </button>
         )}
-        {items.map((item, i) => (
-          <ChatBubble key={i} item={item} onApprovePlan={approvePlan} />
-        ))}
       </div>
 
       {confirmCard && (
@@ -1167,6 +841,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 rows={2}
                 value={questionInput}
                 placeholder="输入回答…"
+                aria-label="回答 AI 的问题"
                 onChange={(event) => setQuestionInput(event.target.value)}
               />
               <button
@@ -1184,17 +859,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       {/* 任务清单：AI 自己维护的待办。
           钉在输入区上方而不是塞进消息流 —— 它是「现在做到哪了」的常驻视图，
           要滚动上去才能看到的清单等于没做这个功能。 */}
-      {todos.length > 0 && (
+      {conv.todos.length > 0 && (
         <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
             <IconList size={11} />
             任务清单
             <span className="text-neutral-600">
-              {todos.filter((t) => t.status === "completed").length}/{todos.length}
+              {conv.todos.filter((t) => t.status === "completed").length}/{conv.todos.length}
             </span>
           </div>
           <div className="flex max-h-28 flex-col gap-0.5 overflow-y-auto">
-            {todos.map((t, i) => (
+            {conv.todos.map((t, i) => (
               <div key={i} className="flex items-start gap-1.5 text-[11px] leading-snug">
                 <span
                   className={
@@ -1233,13 +908,15 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="truncate">计划模式 · 先出方案，你批准了再动手</span>
           </div>
         )}
-        {/* 运行状态条。
-            内核一直在推 `status`，前端却从没渲染过 —— AI 跑长命令时界面
-            完全静止，用户只能猜它死了没有。这行字就是回答「它还在动吗」。 */}
-        {aiBusy && status && (
-          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+        {/* 运行状态条：回答「它还在动吗」。phase 来自内核 status / toolArgs 事件。 */}
+        {aiBusy && conv.status && (
+          <div
+            className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500"
+            role="status"
+            aria-live="polite"
+          >
             <IconLoader size={10} className="animate-spin text-amber-300/80" />
-            <span className="truncate">{statusText(status)}</span>
+            <span className="truncate">{statusText(conv.status)}</span>
           </div>
         )}
         {/* 引用 chip */}
@@ -1323,7 +1000,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         <div className="mt-1.5 flex items-center gap-1">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
           <div className="nx-spacer" />
-          <UsageRing usage={usage} />
+          <UsageRing usage={conv.usage} />
           {/* 盾牌不再是"静默开关"，而是权限设置入口（图标刻意不变，位置也不动） */}
           <button
             className={`nx-icon-btn nx-icon-btn-sm ${
@@ -1466,28 +1143,16 @@ function ruleFromRendered(rendered: string): string {
   return picked.slice(0, 120);
 }
 
-/** 持久化消息 → 会话项。只还原文本，工具调用与图片不入历史。 */
-function msgToItems(m: { role: string; content: unknown }): ChatItem[] {
-  const raw = m.content;
-  const text =
-    typeof raw === "string"
-      ? raw
-      : typeof raw === "object" && raw !== null && "content" in raw
-        ? String((raw as { content?: unknown }).content ?? "")
-        : "";
-  if (!text) return [];
-  if (m.role === "user") {
-    const n =
-      typeof raw === "object" && raw !== null && "imageCount" in raw
-        ? Number((raw as { imageCount?: unknown }).imageCount ?? 0)
-        : 0;
-    return [{ role: "user", text, imageCount: n || undefined }];
-  }
-  if (m.role === "assistant") return [{ role: "assistant", text }];
-  return [];
-}
-
-function ChatBubble({ item, onApprovePlan }: { item: ChatItem; onApprovePlan: (plan: string) => void }) {
+function ChatBubble({
+  item,
+  streaming,
+  onApprovePlan,
+}: {
+  item: ChatItem;
+  /** 是不是"正在流出的最后一条"：思考过程在此期间保持展开，收尾自动折叠。 */
+  streaming: boolean;
+  onApprovePlan: (plan: string) => void;
+}) {
   if (item.role === "user") {
     return (
       <div className="ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-blue-50">
@@ -1509,19 +1174,79 @@ function ChatBubble({ item, onApprovePlan }: { item: ChatItem; onApprovePlan: (p
     );
   }
   if (item.role === "reasoning") {
+    // 旧版把思考截到 200 字且无处可看全文。改成可折叠全文：
+    // 流式期间默认展开（看得见"它在想什么"），这一轮结束后收起成一行，
+    // 既保留现场又不让大段推理长期霸占消息流。
     return (
-      <div className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500 italic">
-        {item.text.length > 200 ? `${item.text.slice(0, 200)}…` : item.text}
+      <details
+        className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500"
+        open={streaming}
+      >
+        <summary className="cursor-pointer select-none text-[10.5px] text-neutral-600 hover:text-neutral-400">
+          思考过程（{item.text.length} 字）{streaming ? " · 进行中" : ""}
+        </summary>
+        <div className="mt-1 whitespace-pre-wrap italic">{item.text}</div>
+      </details>
+    );
+  }
+  if (item.role === "confirm" || item.role === "question") {
+    return <InteractionRecord item={item} />;
+  }
+  if (item.role === "outcome") {
+    // 一轮的可见终态：失败 / 取消 / 完成都留在消息流里，
+    // 流关闭或重连之后仍能回看，不再只是一个转瞬即逝的 toast。
+    if (item.outcome === "error") {
+      return (
+        <div
+          role="alert"
+          className="flex items-start gap-1.5 rounded-lg border border-red-500/30 bg-red-500/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-red-200"
+        >
+          <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
+          <span className="whitespace-pre-wrap">本轮出错：{item.text}</span>
+        </div>
+      );
+    }
+    return (
+      <div
+        role="status"
+        className={`flex items-center justify-center gap-1.5 py-0.5 text-[10.5px] ${
+          item.outcome === "canceled" ? "text-amber-300/70" : "text-neutral-600"
+        }`}
+      >
+        {item.text}
       </div>
     );
   }
-  if (item.role === "confirm" || item.role === "question") return null;
   if (item.role === "diff") return <DiffBubble item={item} />;
   if (item.role === "plan") {
     return <PlanBubble item={item} onApprove={() => onApprovePlan(item.text)} />;
   }
   if (item.role === "tool") return <ToolBubble item={item} />;
   return null;
+}
+
+/** 交互在消息流里的留痕：待处理是一行提示，结算后留下决定 / 回答。 */
+function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
+  const pending = item.resolution === undefined;
+  const text =
+    item.role === "confirm"
+      ? pending
+        ? `等待确认：${item.tool}`
+        : `${item.tool} · ${item.resolution}`
+      : pending
+        ? `等待回答：${item.question}`
+        : `提问 · ${item.resolution}`;
+  return (
+    <div
+      className={`flex items-center gap-1.5 text-[10.5px] ${
+        pending ? "text-amber-300/80" : "text-neutral-600"
+      }`}
+      title={text}
+    >
+      {item.role === "confirm" ? <IconShield size={10} className="shrink-0" /> : <IconAlert size={10} className="shrink-0" />}
+      <span className="truncate">{text}</span>
+    </div>
+  );
 }
 
 /**
@@ -1540,12 +1265,16 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const expandable = full.length > preview.length;
   const body = open ? full : preview;
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
+    <div
+      className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]"
+      aria-busy={running}
+    >
       <div className="flex items-center gap-1.5">
         <span className="nx-badge nx-badge-purple font-mono">{item.name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
           {item.display}
         </span>
+        <span className="sr-only">{running ? "工具执行中" : item.ok ? "工具执行成功" : "工具执行失败"}</span>
         {running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />
         ) : item.ok ? (
@@ -1569,6 +1298,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
       {expandable && (
         <button
           className="mt-1.5 flex items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
+          aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
         >
           <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
@@ -1618,7 +1348,7 @@ function PlanBubble({
  * 那时文件已经落盘了。内核算不出前后对照（非写文件类工具 / 二进制 / 超大文件）
  * 时退回展示原始参数，前端不做任何猜测。
  */
-function ConfirmBody({ card }: { card: Extract<ChatItem, { role: "confirm" }> }) {
+function ConfirmBody({ card }: { card: ConfirmItem }) {
   const pv = card.preview;
   if (!pv) {
     return (
