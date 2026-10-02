@@ -10,7 +10,10 @@ export default tseslint.config(
   // `dist/` 整个拷到 `lazycat/content/web/`（那是 LPK 的 contentdir）。
   // 只要打过一次 LPK，那里就躺着一份压缩后的 bundle，`pnpm lint` 立刻从 0 个错误
   // 变成 4000+ 个（报错列号是 600+ 这种，一眼能认出是压缩产物）。
-  { ignores: ["dist", ".buildcheck", ".sitetest", "lazycat", "src-tauri", "target", "scripts", "*.cjs"] },
+  //
+  // `.tower/worktrees` 里是独立检出，源码由各自 worktree 的质量门检查；
+  // 根 lint 不应再递归扫描其中的源码、依赖或 dist/build 产物。
+  { ignores: ["dist", ".buildcheck", ".sitetest", ".tower/worktrees", "lazycat", "src-tauri", "target", "scripts", "*.cjs"] },
   tseslint.configs.recommended,
   {
     rules: {
