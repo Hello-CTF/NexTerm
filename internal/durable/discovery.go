@@ -29,6 +29,7 @@ var discoveryFormat = strings.Join([]string{
 	"#{pane_dead}",
 	"#{pane_dead_status}",
 	"#{pane_pipe}",
+	"#{pane_dead_signal}",
 }, fieldSeparator)
 
 type record struct {
@@ -173,7 +174,7 @@ func parseRecords(output []byte) ([]record, error) {
 	result := make([]record, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Split(line, fieldSeparator)
-		if len(fields) != 13 {
+		if len(fields) != 14 {
 			return nil, fmt.Errorf("malformed tmux discovery record: got %d fields in %q", len(fields), line)
 		}
 		created, err := strconv.ParseInt(fields[3], 10, 64)
@@ -200,12 +201,15 @@ func parseRecords(output []byte) ([]record, error) {
 			CreatedAt: time.Unix(created, 0),
 			Dead:      dead,
 		}
-		if dead {
+		if dead && fields[11] != "" {
 			status, err := strconv.Atoi(fields[11])
 			if err != nil {
 				return nil, fmt.Errorf("malformed tmux pane exit status %q", fields[11])
 			}
 			info.ExitCode = &status
+		}
+		if dead {
+			info.Signal = fields[13]
 		}
 		result = append(result, record{
 			info:          info,

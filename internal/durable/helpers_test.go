@@ -2,6 +2,7 @@ package durable
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -99,7 +100,7 @@ func discoveryLine(backend *Backend, current record) string {
 		pipe = "1"
 	}
 	status := current.deadStatus
-	if status == "" {
+	if status == "" && !current.info.Dead {
 		status = "0"
 	}
 	fields := []string{
@@ -116,6 +117,7 @@ func discoveryLine(backend *Backend, current record) string {
 		dead,
 		status,
 		pipe,
+		current.info.Signal,
 	}
 	return strings.Join(fields, fieldSeparator) + "\n"
 }
@@ -135,6 +137,9 @@ func installRecords(backend *Backend, runner *fakeRunner, records ...record) {
 
 func newUnitSession(t *testing.T, backend *Backend, current record, initial []byte) *Session {
 	t.Helper()
+	if err := os.Mkdir(backend.sessionDir(current.info.ID), 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(backend.recordingPath(current.info.ID), initial, 0o600); err != nil {
 		t.Fatal(err)
 	}

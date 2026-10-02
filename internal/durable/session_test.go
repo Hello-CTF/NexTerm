@@ -89,12 +89,14 @@ func TestDeadSessionCompletionAfterQuietWindow(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			final := append([]byte("final"), completionMarker(current.info.ID)...)
-			if _, err := file.Write(final); err != nil {
+			if _, err := file.Write([]byte("final")); err != nil {
 				_ = file.Close()
 				return nil, err
 			}
 			if err := file.Close(); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(backend.recorderDonePath(current.info.ID), []byte("0\n"), 0o600); err != nil {
 				return nil, err
 			}
 		}

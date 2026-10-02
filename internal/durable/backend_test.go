@@ -150,6 +150,9 @@ func TestKillOwnedSessionAndArtifacts(t *testing.T) {
 	touchUnitSocket(t, backend)
 	current := unitRecord(backend, ids.New())
 	installRecords(backend, runner, current)
+	if err := os.Mkdir(backend.sessionDir(current.info.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(backend.recordingPath(current.info.ID), []byte("raw"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -189,11 +192,24 @@ func TestLaunchCommandQuotesArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasPrefix(launch, "exec /bin/sh -c ") {
+		t.Fatalf("launch is not a supervised POSIX shell: %s", launch)
+	}
 	gate := shellQuote(backend.gatePath(id))
-	want := "while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate + "; '/bin/echo' 'hello world' 'a'\"'\"'b'" +
-		"; _nexterm_durable_status=$?; printf " + shellQuote(completionPrintFormat(id)) + "; exit \"$_nexterm_durable_status\""
-	if launch != want {
-		t.Fatalf("launch command:\n got %s\nwant %s", launch, want)
+	rawCommand := "'/bin/echo' 'hello world' 'a'\"'\"'b'"
+	script := backend.supervisorScript(id, rawCommand)
+	closeRecording := shellQuote(backend.binary) + " -f " + shellQuote(os.DevNull) + " -S " + shellQuote(backend.socketPath) + " pipe-pane -t \"$TMUX_PANE\""
+	for _, want := range []string{
+		"while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate,
+		rawCommand,
+		"trap '_nexterm_durable_on_signal INT 2' INT",
+		"trap '_nexterm_durable_on_signal TERM 15' TERM",
+		closeRecording,
+		"kill -s \"$1\" 0",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("supervisor script missing %q:\n%s", want, script)
+		}
 	}
 }
 
@@ -233,6 +249,24 @@ func TestCloneInfoExitCode(t *testing.T) {
 	*infos[0].ExitCode = 99
 	if *current.info.ExitCode != 3 {
 		t.Fatal("List aliased internal exit status")
+	}
+}
+
+func TestListAcceptsSignaledPaneWithoutExitStatus(t *testing.T) {
+	backend, runner := newUnitBackend(t)
+	touchUnitSocket(t, backend)
+	current := unitRecord(backend, ids.New())
+	current.info.Dead = true
+	current.info.ExitCode = nil
+	current.info.Signal = "int"
+	current.deadStatus = ""
+	installRecords(backend, runner, current)
+	infos, err := backend.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || !infos[0].Dead || infos[0].ExitCode != nil || infos[0].Signal != "int" {
+		t.Fatalf("signaled discovery = %+v", infos)
 	}
 }
 

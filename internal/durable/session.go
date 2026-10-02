@@ -12,29 +12,27 @@ import (
 )
 
 type Session struct {
-	backend    *Backend
-	expected   record
-	log        *os.File
-	completion *completionFilter
-	ctx        context.Context
-	cancel     context.CancelFunc
-	done       chan struct{}
-	readMu     sync.Mutex
-	writeMu    sync.Mutex
-	closeOnce  sync.Once
-	closeErr   error
+	backend   *Backend
+	expected  record
+	log       *os.File
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	readMu    sync.Mutex
+	writeMu   sync.Mutex
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func newSession(backend *Backend, expected record, log *os.File) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Session{
-		backend:    backend,
-		expected:   expected,
-		log:        log,
-		completion: newCompletionFilter(expected.info.ID),
-		ctx:        ctx,
-		cancel:     cancel,
-		done:       make(chan struct{}),
+		backend:  backend,
+		expected: expected,
+		log:      log,
+		ctx:      ctx,
+		cancel:   cancel,
+		done:     make(chan struct{}),
 	}
 }
 
@@ -51,16 +49,9 @@ func (s *Session) Read(buffer []byte) (int, error) {
 	}
 	nextStatusCheck := time.Now()
 	for {
-		if count, complete := s.completion.read(buffer); count > 0 || complete {
-			if count > 0 {
-				return count, nil
-			}
-			return 0, io.EOF
-		}
 		count, err := s.log.Read(buffer)
 		if count > 0 {
-			s.completion.append(buffer[:count])
-			continue
+			return count, nil
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			if s.closed() {
@@ -75,20 +66,24 @@ func (s *Session) Read(buffer []byte) (int, error) {
 					return 0, ErrClosed
 				}
 				if errors.Is(resolveErr, ErrNotFound) {
-					s.completion.finish()
-					continue
+					return 0, io.EOF
 				}
 				return 0, resolveErr
 			}
 			if !sameIdentity(s.expected.info, current.info) || s.expected.windowID != current.windowID {
 				return 0, fmt.Errorf("%w: %s", ErrIdentity, s.expected.info.ID)
 			}
-			if current.info.Dead && !current.recordingLive {
-				// A closed recorder is a completion boundary; drain bytes written during the status query.
+			if !current.info.Dead && !current.recordingLive {
+				return 0, fmt.Errorf("%w: tmux output recording stopped", ErrUnavailable)
+			}
+			complete, completionErr := s.backend.recorderComplete(s.expected.info.ID)
+			if completionErr != nil {
+				return 0, completionErr
+			}
+			if complete {
 				count, err = s.log.Read(buffer)
 				if count > 0 {
-					s.completion.append(buffer[:count])
-					continue
+					return count, nil
 				}
 				if err != nil && !errors.Is(err, io.EOF) {
 					if s.closed() {
@@ -96,11 +91,7 @@ func (s *Session) Read(buffer []byte) (int, error) {
 					}
 					return 0, err
 				}
-				s.completion.finish()
-				continue
-			}
-			if !current.info.Dead && !current.recordingLive {
-				return 0, fmt.Errorf("%w: tmux output recording stopped", ErrUnavailable)
+				return 0, io.EOF
 			}
 			nextStatusCheck = time.Now().Add(s.backend.statusInterval)
 		}

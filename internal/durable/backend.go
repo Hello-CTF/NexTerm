@@ -48,6 +48,7 @@ type Info struct {
 	CreatedAt time.Time
 	Dead      bool
 	ExitCode  *int
+	Signal    string
 }
 
 type Backend struct {
@@ -137,15 +138,19 @@ func (b *Backend) Create(ctx context.Context, options CreateOptions) (*Session, 
 	} else if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
+	if err := os.Mkdir(b.sessionDir(id), 0o700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("%w: artifacts for %s", ErrAlreadyExists, id)
+		}
+		return nil, fmt.Errorf("create durable artifact directory: %w", err)
+	}
 	recording, err := os.OpenFile(b.recordingPath(id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("%w: recording for %s", ErrAlreadyExists, id)
-		}
+		_ = b.removeArtifacts(id)
 		return nil, fmt.Errorf("create durable recording: %w", err)
 	}
 	if err := recording.Close(); err != nil {
-		_ = os.Remove(b.recordingPath(id))
+		_ = b.removeArtifacts(id)
 		return nil, fmt.Errorf("close durable recording: %w", err)
 	}
 	name := b.sessionName(id)
@@ -192,6 +197,10 @@ func (b *Backend) Create(ctx context.Context, options CreateOptions) (*Session, 
 	if err := gate.Close(); err != nil {
 		_ = file.Close()
 		return nil, b.abortCreate(id, fmt.Errorf("release durable shell: %w", err))
+	}
+	if err := b.waitForLaunch(ctx, id); err != nil {
+		_ = file.Close()
+		return nil, b.abortCreate(id, err)
 	}
 	return newSession(b, current, file), nil
 }
@@ -282,15 +291,37 @@ func (b *Backend) launchCommand(id string, options CreateOptions) (string, error
 	for index, argument := range command {
 		quoted[index] = shellQuote(argument)
 	}
-	gate := shellQuote(b.gatePath(id))
 	launch := strings.Join(quoted, " ")
-	return "while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate + "; " + launch +
-		"; _nexterm_durable_status=$?; printf " + shellQuote(completionPrintFormat(id)) + "; exit \"$_nexterm_durable_status\"", nil
+	return "exec /bin/sh -c " + shellQuote(b.supervisorScript(id, launch)), nil
+}
+
+func (b *Backend) supervisorScript(id, launch string) string {
+	gate := shellQuote(b.gatePath(id))
+	closeRecording := shellQuote(b.binary) + " -f " + shellQuote(os.DevNull) + " -S " + shellQuote(b.socketPath) + " pipe-pane -t \"$TMUX_PANE\""
+	script := []string{
+		"while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate,
+		"_nexterm_durable_status=",
+		"_nexterm_durable_finish() { " + closeRecording + "; exit \"$1\"; }",
+		"_nexterm_durable_on_signal() { _nexterm_durable_status=$?; trap ':' HUP INT QUIT TERM; kill -s \"$1\" 0 2>/dev/null; wait; if [ -z \"$_nexterm_durable_status\" ] || [ \"$_nexterm_durable_status\" -eq 0 ]; then _nexterm_durable_status=$((128 + $2)); fi; _nexterm_durable_finish \"$_nexterm_durable_status\"; }",
+		"trap '_nexterm_durable_on_signal HUP 1' HUP",
+		"trap '_nexterm_durable_on_signal INT 2' INT",
+		"trap '_nexterm_durable_on_signal QUIT 3' QUIT",
+		"trap '_nexterm_durable_on_signal TERM 15' TERM",
+		": > " + shellQuote(b.launchStartedPath(id)),
+		launch,
+		"_nexterm_durable_status=$?",
+		"_nexterm_durable_finish \"$_nexterm_durable_status\"",
+	}
+	return strings.Join(script, "; ")
 }
 
 func (b *Backend) pipeCommand(id string) string {
-	path := strings.ReplaceAll(b.recordingPath(id), "#", "##")
-	return "exec cat >> " + shellQuote(path)
+	recording := strings.ReplaceAll(b.recordingPath(id), "#", "##")
+	doneTemp := strings.ReplaceAll(b.recorderDoneTempPath(id), "#", "##")
+	done := strings.ReplaceAll(b.recorderDonePath(id), "#", "##")
+	return "umask 077; cat >> " + shellQuote(recording) +
+		"; _nexterm_durable_recorder=$?; printf \"$_nexterm_durable_recorder\\n\" > " + shellQuote(doneTemp) +
+		"; mv " + shellQuote(doneTemp) + " " + shellQuote(done)
 }
 
 func (b *Backend) openRecording(id string) (*os.File, error) {
@@ -314,21 +345,49 @@ func (b *Backend) openRecording(id string) (*os.File, error) {
 	return file, nil
 }
 
-func (b *Backend) removeArtifacts(id string) error {
-	var result error
-	for _, path := range []string{b.recordingPath(id), b.gatePath(id)} {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			result = errors.Join(result, fmt.Errorf("remove %s: %w", path, err))
+func (b *Backend) waitForLaunch(ctx context.Context, id string) error {
+	launchCtx, cancel := context.WithTimeout(ctx, b.commandTimeout)
+	defer cancel()
+	for {
+		_, err := os.Stat(b.launchStartedPath(id))
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: inspect supervisor launch: %v", ErrUnavailable, err)
+		}
+		select {
+		case <-launchCtx.Done():
+			return fmt.Errorf("%w: supervisor did not launch: %v", ErrUnavailable, launchCtx.Err())
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	return result
+}
+
+func (b *Backend) removeArtifacts(id string) error {
+	if err := os.RemoveAll(b.sessionDir(id)); err != nil {
+		return fmt.Errorf("remove durable artifacts for %s: %w", id, err)
+	}
+	return nil
 }
 
 func (b *Backend) sessionName(id string) string { return b.namespace + "-" + id }
+func (b *Backend) sessionDir(id string) string  { return filepath.Join(b.stateDir, id) }
 func (b *Backend) recordingPath(id string) string {
-	return filepath.Join(b.stateDir, id+".raw")
+	return filepath.Join(b.sessionDir(id), "output.raw")
 }
-func (b *Backend) gatePath(id string) string { return filepath.Join(b.stateDir, id+".ready") }
+func (b *Backend) gatePath(id string) string {
+	return filepath.Join(b.sessionDir(id), "launch.ready")
+}
+func (b *Backend) launchStartedPath(id string) string {
+	return filepath.Join(b.sessionDir(id), "supervisor.ready")
+}
+func (b *Backend) recorderDonePath(id string) string {
+	return filepath.Join(b.sessionDir(id), "recorder.done")
+}
+func (b *Backend) recorderDoneTempPath(id string) string {
+	return filepath.Join(b.sessionDir(id), "recorder.done.tmp")
+}
 
 func environmentValue(environment []string, name string) string {
 	value := ""

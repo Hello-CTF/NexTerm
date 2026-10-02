@@ -84,8 +84,8 @@ func TestRealTmuxProcessExitDelayedRecorder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(state) != "1 1" {
-		t.Fatalf("delayed fixture requires a retained dead active pipe, got %q", state)
+	if strings.TrimSpace(state) != "1 0" {
+		t.Fatalf("delayed fixture requires a dead pane whose supervisor closed the pipe, got %q", state)
 	}
 	if size := recordingSize(t, backend, id); size != 0 {
 		t.Fatalf("stopped recorder wrote %d bytes before release", size)
@@ -179,9 +179,9 @@ func recordingSize(t *testing.T, backend *Backend, id string) int64 {
 }
 
 func signalRecorder(ctx context.Context, pid int, signal string) error {
-	cmd := exec.CommandContext(ctx, "/bin/kill", signal, strconv.Itoa(pid))
+	cmd := exec.CommandContext(ctx, "/bin/kill", signal, "--", strconv.Itoa(-pid))
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("kill %s %d: %w: %s", signal, pid, err, output)
+		return fmt.Errorf("kill %s process-group %d: %w: %s", signal, pid, err, output)
 	}
 	return nil
 }
