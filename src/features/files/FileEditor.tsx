@@ -25,6 +25,8 @@ import {
   IconUndo,
 } from "../../ui/icons";
 import { fileVisual } from "./fileTypes";
+import { bytesFromBase64, bytesToBase64, decodeContent, type EncChoice } from "./fileCodec";
+import { isActiveFileEditor, setFileEditorDirty, shouldClearEditorDirty, shouldHandleEditorSave } from "./editorGuards";
 
 // 轻量语法高亮：按扩展名选 legacy mode
 import { StreamLanguage } from "@codemirror/language";
@@ -58,24 +60,11 @@ function modeFor(path: string) {
   return undefined;
 }
 
-type EncChoice = "auto" | "utf-8" | "gbk";
-
 const ENC_LABEL: Record<EncChoice, string> = {
   auto: "自动",
   "utf-8": "UTF-8",
   gbk: "GBK",
 };
-
-function decodeContent(bytes: Uint8Array, choice: EncChoice): { text: string; encoding: string } {
-  if (choice === "gbk") return { text: new TextDecoder("gbk").decode(bytes), encoding: "gbk" };
-  if (choice === "utf-8") return { text: new TextDecoder("utf-8").decode(bytes), encoding: "utf-8" };
-  // 自动：UTF-8 优先，失败回退 GBK（§5.4：GBK 文件不乱码）
-  try {
-    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), encoding: "utf-8" };
-  } catch {
-    return { text: new TextDecoder("gbk").decode(bytes), encoding: "gbk" };
-  }
-}
 
 /** 字号档位（工具条上的 -/+ 在这几个值之间走）。 */
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
@@ -89,12 +78,30 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   /** 换行符：从文档内容实时推导，工具条上那个 LF / CRLF 就是它。 */
   const [eol, setEol] = useState<"LF" | "CRLF">("LF");
   const [enc, setEnc] = useState<EncChoice>("auto");
+  const [reloadEnc, setReloadEnc] = useState<EncChoice>("auto");
   const [reloadKey, setReloadKey] = useState(0);
   const viewRef = useRef<EditorView | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const saveRef = useRef<() => void>(() => undefined);
+  const saveInFlightRef = useRef(false);
+  const editVersionRef = useRef(0);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
+
+  useEffect(() => {
+    setFileEditorDirty(sessionId, path, dirty);
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [sessionId, path, dirty]);
+
+  useEffect(() => {
+    return () => setFileEditorDirty(sessionId, path, false);
+  }, [sessionId, path]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,15 +109,17 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       try {
         const res = await fsApi.read(sessionId, path);
         if (cancelled) return;
-        const bin = Uint8Array.from(atob(res.contentBase64), (c) => c.charCodeAt(0));
         if (res.size > 5 * 1024 * 1024 && !(await ask("文件超过 5MB，确定要编辑？"))) {
           onClose?.();
           return;
         }
         if (cancelled) return;
-        const { text, encoding } = decodeContent(bin, enc);
+        const bin = bytesFromBase64(res.contentBase64);
+        const { text, encoding } = decodeContent(bin, reloadEnc);
         setMeta({ encoding, size: res.size });
         setEol(text.includes("\r\n") ? "CRLF" : "LF");
+        dirtyRef.current = false;
+        setFileEditorDirty(sessionId, path, false);
         setDirty(false);
         if (hostRef.current) {
           // 换编码会重建视图，所以旧实例必须显式销毁（否则会叠加两个画布）
@@ -129,6 +138,9 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
                   if (u.docChanged) {
+                    editVersionRef.current += 1;
+                    dirtyRef.current = true;
+                    setFileEditorDirty(sessionId, path, true);
                     setDirty(true);
                     const s = u.state.doc.toString();
                     setEol(s.includes("\r\n") ? "CRLF" : "LF");
@@ -149,37 +161,42 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-    // enc / reloadKey 变化 = 重新读盘重解码
-  }, [sessionId, path, enc, reloadKey]);
+    // reloadEnc / reloadKey 变化 = 重新读盘重解码
+  }, [sessionId, path, reloadEnc, reloadKey]);
 
   const save = async () => {
     const view = viewRef.current;
-    if (!view) return;
-    // 非 UTF-8 解码的文件没法按原编码写回（前端没有 GBK 编码器），
-    // 所以这里必须显式告知，而不是悄悄写成 UTF-8。
-    if (meta && meta.encoding !== "utf-8") {
-      const ok = await ask(
-        `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，非 ASCII 字符的字节会变。继续？`,
-        { title: "编码会改变", kind: "warning" },
-      );
-      if (!ok) return;
-    }
+    if (!view || !dirtyRef.current || saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     setSaving(true);
     try {
-      const text = view.state.doc.toString();
-      const bytes = new TextEncoder().encode(text);
-      let b64 = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        b64 += btoa(String.fromCharCode(...bytes.subarray(i, i + chunk)));
+      // 非 UTF-8 解码的文件没法按原编码写回（前端没有 GBK 编码器），
+      // 所以这里必须显式告知，而不是悄悄写成 UTF-8。
+      if (meta && meta.encoding !== "utf-8") {
+        const ok = await ask(
+          `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，非 ASCII 字符的字节会变。继续？`,
+          { title: "编码会改变", kind: "warning" },
+        );
+        if (!ok) return;
       }
+      const text = view.state.doc.toString();
+      const savedVersion = editVersionRef.current;
+      const bytes = new TextEncoder().encode(text);
+      const b64 = bytesToBase64(bytes);
       // 默认"保存即覆盖 + 保留远端备份"（§5.4）
       await fsApi.write(sessionId, path, b64, true);
-      setDirty(false);
+      setMeta({ encoding: "utf-8", size: bytes.length });
+      if (meta && meta.encoding !== "utf-8") setEnc("utf-8");
+      if (shouldClearEditorDirty(savedVersion, editVersionRef.current)) {
+        dirtyRef.current = false;
+        setFileEditorDirty(sessionId, path, false);
+        setDirty(false);
+      }
       pushToast("success", `已保存 ${path}（远端已备份 .nexterm-bak）`);
     } catch (e) {
       pushToast("error", `保存失败: ${describeError(e)}`);
     } finally {
+      saveInFlightRef.current = false;
       setSaving(false);
     }
   };
@@ -188,14 +205,17 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   // Ctrl/Cmd+S 保存
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return;
+      const state = useUi.getState();
+      if (!isActiveFileEditor(state, sessionId, path)) return;
+      e.preventDefault();
+      if (shouldHandleEditorSave(state, sessionId, path, dirtyRef.current, saveInFlightRef.current)) {
         saveRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [sessionId, path]);
 
   const withView = (fn: (v: EditorView) => void) => {
     const v = viewRef.current;
@@ -213,12 +233,30 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     });
   };
 
+  const reloadFromDisk = () => {
+    if (saveInFlightRef.current) {
+      pushToast("info", "保存进行中，完成后才能重新读取文件");
+      return;
+    }
+    setReloadEnc(enc);
+    setReloadKey((k) => k + 1);
+  };
+
   /** 切换解码方式：有未保存改动时先确认（会重新读盘）。 */
   const switchEnc = async (next: EncChoice) => {
+    if (saveInFlightRef.current) {
+      pushToast("info", "保存进行中，完成后才能切换编码");
+      return;
+    }
     if (dirtyRef.current && !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？"))) {
       return;
     }
+    if (saveInFlightRef.current) {
+      pushToast("info", "保存进行中，完成后才能切换编码");
+      return;
+    }
     setEnc(next);
+    setReloadEnc(next);
   };
 
   const { Icon: FileIcon, tone } = fileVisual(path, "file");
@@ -307,6 +345,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           <select
             className="absolute h-0 w-0 opacity-0"
             value={enc}
+            disabled={saving}
             onChange={(e) => void switchEnc(e.target.value as EncChoice)}
           >
             {(Object.keys(ENC_LABEL) as EncChoice[]).map((k) => (
@@ -319,13 +358,14 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="重新读取（丢弃未保存改动）"
+          disabled={saving}
           onClick={() => {
             if (!dirtyRef.current) {
-              setReloadKey((k) => k + 1);
+              reloadFromDisk();
               return;
             }
             void ask("重新读取会丢弃未保存的改动。继续？").then((ok) => {
-              if (ok) setReloadKey((k) => k + 1);
+              if (ok) reloadFromDisk();
             });
           }}
         >

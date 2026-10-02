@@ -25,6 +25,7 @@ import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/Cont
 import { describeError } from "../../ui/errorText";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
+import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
 import {
   IconAlert,
   IconArchive,
@@ -67,9 +68,11 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     overscan: 20,
   });
 
-  const [progress, setProgress] = useState<FsProgressEvent | null>(null);
+  const [progress, setProgress] = useState<FileProgressMap>({});
   useEffect(() => {
-    const un = listenEvent<FsProgressEvent>(EVENTS.fsProgress, (p) => setProgress(p));
+    const un = listenEvent<FsProgressEvent>(EVENTS.fsProgress, (event) => {
+      setProgress((current) => reduceFileProgress(current, event));
+    });
     return () => {
       void un.then((f) => f());
     };
@@ -463,14 +466,16 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         </button>
       </div>
 
-      {progress && !progress.done && progress.total > 0 && (
-        <div className="nx-progress shrink-0">
-          <div
-            className="nx-progress-bar"
-            style={{ width: `${Math.round((progress.transferred / progress.total) * 100)}%` }}
-          />
+      {visibleFileProgress(progress).map((task) => (
+        <div
+          key={task.taskId}
+          className="nx-progress shrink-0"
+          title={`文件任务 ${task.taskId}：${task.transferred}/${task.total} 字节`}
+          data-task-id={task.taskId}
+        >
+          <div className="nx-progress-bar" style={{ width: `${progressPercent(task)}%` }} />
         </div>
-      )}
+      ))}
 
       <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5 text-[11px] text-neutral-500">
         <span className="w-[18px]" />

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
+import { dimensionsForControllerClaim, resolveWinrmMode } from "./terminalPolicy";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, type TerminalControlEvent } from "../../ipc/events";
@@ -149,7 +150,9 @@ export function TerminalPane({
   } | null>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
   const pushToast = useUi((s) => s.pushToast);
+  const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
   const statusText =
     sessionStatus === "connected"
       ? "已连接"
@@ -164,7 +167,7 @@ export function TerminalPane({
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
   // winrm 是非交互行模式，没有「命令 + 输出」的块语义
-  const blocksSupported = !winrm;
+  const blocksSupported = !effectiveWinrm;
 
   // 命令块攒够 AUTO_OPEN_BLOCKS 条就自动展开（用户手动关过则不再打扰）
   useEffect(() => {
@@ -178,7 +181,7 @@ export function TerminalPane({
    * 容器内 exec / WinRM 行模式没有控制权语义（内核那边 `controller` 恒为 null）。
    * 对它们套观察者遮罩会把正常可用的终端锁死，所以这两类直接视为"我就是控制者"。
    */
-  const controlSupported = !containerId && !winrm;
+  const controlSupported = !containerId && !effectiveWinrm;
   const isObserver = controlSupported && control !== null && control.controller !== me;
   /** 观察者不调 resize（会报 not_controller，而且观察者本就不该改 PTY 尺寸）。 */
   const canResize = !isObserver;
@@ -273,8 +276,8 @@ export function TerminalPane({
         c ? { ...c, controller: me } : { controller: me, subscribers: 1, viewers: 1, exited: false },
       );
       // 接管前我们是观察者，一直没敢调 resize，本地尺寸和服务端 PTY 可能不一致；
-      // 接管后主动把尺寸推过去，否则新敲的命令会按旧宽度换行。
-      const dims = handleRef.current?.dimensions();
+      // 先按当前宿主重新 fit，再主动把尺寸推过去，否则新敲的命令会按旧宽度换行。
+      const dims = dimensionsForControllerClaim(handleRef.current);
       if (dims) await terminalApi.resize(kernelTabId, dims.cols, dims.rows).catch(() => undefined);
       pushToast("success", prev && prev !== me ? "已接管控制权（对方转为只读观看）" : "已取得控制权");
     } catch (e) {
@@ -420,10 +423,17 @@ export function TerminalPane({
 
   /** 切换字符编码（工具条的 select 和右键子菜单共用一份逻辑）。 */
   const applyEncoding = async (v: string) => {
-    setEncoding(v);
-    if (!kernelTabId) return;
-    await terminalApi.switchEncoding(kernelTabId, v).catch(() => undefined);
-    pushToast("info", `编码已切换为 ${v}（重连后生效更佳）`);
+    if (!kernelTabId) {
+      pushToast("error", "终端尚未连接，无法切换编码");
+      return;
+    }
+    try {
+      await terminalApi.switchEncoding(kernelTabId, v);
+      setEncoding(v);
+      pushToast("info", `编码已切换为 ${v}（重连后生效更佳）`);
+    } catch (e) {
+      pushToast("error", `编码切换失败：${describeError(e)}`);
+    }
   };
 
   /** 把剪贴板内容打进终端，等价于用户按了粘贴。 */
@@ -655,7 +665,7 @@ export function TerminalPane({
           <span className="nx-dot" />
           {statusText}
         </span>
-        {winrm && <span className="nx-badge nx-badge-amber">非交互模式</span>}
+        {effectiveWinrm && <span className="nx-badge nx-badge-amber">非交互模式</span>}
         {containerId && <span className="nx-badge nx-badge-purple">容器内 exec</span>}
         <div className="nx-spacer" />
 
@@ -778,7 +788,7 @@ export function TerminalPane({
               key={epoch}
               sessionId={sessionId}
               tabId={kernelTabId ?? "pending"}
-              winrm={winrm}
+              winrm={effectiveWinrm}
               containerId={containerId}
               // ★ 挂载时取一次（resumeRef），别跟着 prop 变 —— 见上方 resumeRef 的注释。
               resumeTabId={resumeRef.current}

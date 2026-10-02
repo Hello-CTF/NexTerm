@@ -58,10 +58,16 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
  * 而 `code`（`vault_locked` / `host_key_pending` …）恰恰在前端是有分支意义的。
  */
 async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
   const res = await fetch(httpUrl("/rpc"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ cmd, args: args ?? null }),
+    body: JSON.stringify({
+      cmd,
+      args: args ? requestBody : null,
+      ...(channel === undefined ? {} : { channel }),
+      ...(stableClientId === undefined ? {} : { clientId: stableClientId }),
+    }),
   });
   const text = await res.text();
   let body: { ok?: boolean; data?: unknown; error?: unknown } | null = null;
@@ -593,6 +599,29 @@ export interface AiPermissionConfig {
   dangerRules: string[];
 }
 
+export type AiDecision = "allow" | "allow_session" | "deny";
+
+export interface AiConfirmationInput {
+  jobId: string;
+  callId: string;
+  nonce: string;
+  decision: AiDecision;
+}
+
+export interface AiAnswerInput {
+  jobId: string;
+  callId: string;
+  nonce: string;
+  text: string;
+}
+
+export interface TakeoverRunResult {
+  jobId: string;
+  token: string;
+}
+
+const DEMO_TAKEOVER_TOKEN = "demo-takeover";
+
 export const aiApi = {
   chat: (
     args: {
@@ -618,8 +647,8 @@ export const aiApi = {
   setPermission: (config: AiPermissionConfig) =>
     call<void>("ai_set_permission", { config }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
-  confirm: (jobId: string, decision: "allow" | "allow_session" | "deny") =>
-    call<void>("ai_confirm", { jobId, decision }),
+  confirm: (input: AiConfirmationInput) => call<void>("ai_confirm", { ...input }),
+  answer: (input: AiAnswerInput) => call<void>("ai_answer", { ...input }),
   models: () => call<string[]>("ai_models"),
   testProvider: () =>
     call<{ modelsOk: boolean; modelsError?: string; chatOk: boolean; chatError?: string }>(
@@ -629,16 +658,27 @@ export const aiApi = {
     call<void>("ai_set_provider", { config }),
   getProvider: () => call<ProviderConfig>("ai_get_provider"),
   presets: () => call<string[]>("ai_presets"),
-  takeoverEnter: (tabId: string, allowWrite: boolean) =>
-    call<void>("ai_takeover_enter", { args: { tabId, allowWrite } }),
-  takeoverExit: (tabId: string, reason?: string) =>
-    call<void>("ai_takeover_exit", { tabId, reason }),
-  takeoverRun: (args: {
+  takeoverEnter: async (tabId: string): Promise<{ token: string }> => {
+    const res = await call<{ token: string } | null>("ai_takeover_enter", { tabId });
+    if (res?.token) return res;
+    if (DEMO) return { token: DEMO_TAKEOVER_TOKEN };
+    throw new Error("接管令牌响应无效");
+  },
+  takeoverExit: (tabId: string, token: string, reason?: string) =>
+    call<void>("ai_takeover_exit", { tabId, token, reason }),
+  takeoverRun: async (args: {
     tabId: string;
+    token: string;
     instruction: string;
     allowWrite: boolean;
     channel: unknown;
-  }) => call<string>("ai_takeover_run", args),
+  }): Promise<TakeoverRunResult> => {
+    const { channel, ...body } = args;
+    const res = await call<TakeoverRunResult | string>("ai_takeover_run", { ...body, channel });
+    if (res && typeof res === "object" && res.jobId && res.token) return res;
+    if (DEMO && typeof res === "string") return { jobId: res, token: DEMO_TAKEOVER_TOKEN };
+    throw new Error("接管任务响应无效");
+  },
   conversationList: () =>
     call<import("./types").ConversationDto[]>("ai_conversation_list"),
   conversationDelete: (id: string) => call<void>("ai_conversation_delete", { id }),
@@ -795,10 +835,11 @@ export const forwardApi = {
    * 只有 SSH 会话能建。⚠️ 这个代理本身**无认证**：桌面形态绑回环所以只给本机用；
    * 服务端形态绑 `0.0.0.0`，能连上它的任何人都能借这条 SSH 会话逛内网。
    */
-  createSocks: (sessionId: string, listenPort: number) =>
+  createSocks: (sessionId: string, listenPort: number, acknowledgeRisk = false) =>
     call<import("./types").ForwardSpecDto>("forward_create_socks", {
       sessionId,
       listenPort,
+      ...(acknowledgeRisk ? { acknowledgeRisk: true } : {}),
     }),
   list: () => call<import("./types").ForwardSpecDto[]>("forward_list"),
   remove: (id: string) => call<void>("forward_remove", { id }),

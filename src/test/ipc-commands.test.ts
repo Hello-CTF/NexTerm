@@ -59,19 +59,46 @@ describe("desktop 命令 envelope", () => {
   });
 
   it("takeover 保持扁平正文和顶层 channel", async () => {
-    runtime.Call.ByName.mockResolvedValue({ ok: true, data: "job-1" });
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { jobId: "job-1", token: "token-1" } });
     const { aiApi } = await import("../ipc/commands");
 
     await aiApi.takeoverRun({
       tabId: "tab-1",
+      token: "token-1",
       instruction: "检查负载",
       allowWrite: false,
       channel: { toJSON: () => "ai-1" },
     });
     expect(JSON.parse(JSON.stringify(requestAt()))).toEqual({
       cmd: "ai_takeover_run",
-      args: { tabId: "tab-1", instruction: "检查负载", allowWrite: false },
+      args: { tabId: "tab-1", token: "token-1", instruction: "检查负载", allowWrite: false },
       channel: "ai-1",
+    });
+  });
+
+  it("AI 确认、回答与接管令牌使用新 wire 合同", async () => {
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: (request as { cmd?: string }).cmd === "ai_takeover_enter" ? { token: "token-1" } : null,
+    }));
+    const { aiApi } = await import("../ipc/commands");
+
+    await aiApi.confirm({ jobId: "job", callId: "call", nonce: "nonce", decision: "allow" });
+    expect(requestAt(0)).toEqual({
+      cmd: "ai_confirm",
+      args: { jobId: "job", callId: "call", nonce: "nonce", decision: "allow" },
+    });
+    await aiApi.answer({ jobId: "job", callId: "call", nonce: "nonce", text: "继续" });
+    expect(requestAt(1)).toEqual({
+      cmd: "ai_answer",
+      args: { jobId: "job", callId: "call", nonce: "nonce", text: "继续" },
+    });
+    await expect(aiApi.takeoverEnter("tab-1")).resolves.toEqual({ token: "token-1" });
+    expect(requestAt(2)).toEqual({ cmd: "ai_takeover_enter", args: { tabId: "tab-1" } });
+    await aiApi.takeoverExit("tab-1", "token-1", "done");
+    expect(requestAt(3)).toEqual({
+      cmd: "ai_takeover_exit",
+      args: { tabId: "tab-1", token: "token-1", reason: "done" },
     });
   });
 
@@ -131,6 +158,30 @@ describe("web 命令行为保持", () => {
     expect(url).toBe("/rpc");
     expect(JSON.parse(init.body)).toEqual({ cmd: "app_platform", args: null });
     expect(runtime.Call.ByName).not.toHaveBeenCalled();
+  });
+
+  it("web takeover 将 channel 放在请求顶层", async () => {
+    useWebTransport();
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, data: { jobId: "job-1", token: "token-1" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { aiApi } = await import("../ipc/commands");
+
+    await aiApi.takeoverRun({
+      tabId: "tab-1",
+      token: "token-1",
+      instruction: "检查负载",
+      allowWrite: false,
+      channel: { toJSON: () => "ai-1" },
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(init.body)).toEqual({
+      cmd: "ai_takeover_run",
+      args: { tabId: "tab-1", token: "token-1", instruction: "检查负载", allowWrite: false },
+      channel: "ai-1",
+    });
   });
 
   it("HTTP 200 业务错误仍保留 code/detail", async () => {

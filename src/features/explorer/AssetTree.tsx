@@ -8,6 +8,7 @@ import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
 import {
   assetIcon,
   IconChevronDown,
@@ -394,7 +395,7 @@ const CRED_KIND_LABEL: Record<string, string> = {
   api_key: "API Key",
 };
 
-function AssetEditor({
+export function AssetEditor({
   kind,
   initial,
   presetGroupId,
@@ -467,6 +468,7 @@ function AssetEditor({
   );
   /** 入库模式下私钥内容的获取方式。 */
   const [keyContentMode, setKeyContentMode] = useState<"file" | "paste">("file");
+  const [inlineKeyContent, setInlineKeyContent] = useState<string | null>(null);
   const [pastedKey, setPastedKey] = useState("");
   /** 私钥口令：留空 = 不改动已有口令（同一条凭据上的字段）。 */
   const [passphrase, setPassphrase] = useState("");
@@ -493,6 +495,31 @@ function AssetEditor({
   const syncCredName = (assetName: string) => {
     setName(assetName);
     if (!credNameTouched.current) setCredName(assetName);
+  };
+
+  const inlinePicker = useInlineKeyPicker();
+  const pickInline = async () => {
+    try {
+      const selection = await inlinePicker.pick();
+      if (!selection) return;
+      setKeyPath(selection.path);
+      setInlineKeyContent(selection.content);
+    } catch (e) {
+      pushToast("error", describeError(e));
+    }
+  };
+  const changeKeyOrigin = (next: "ref" | "vault") => {
+    inlinePicker.invalidate();
+    if (next === "ref" && inlineKeyContent !== null) {
+      setKeyPath("");
+      setInlineKeyContent(null);
+    }
+    setKeyOrigin(next);
+  };
+  const changeInlinePath = (next: string) => {
+    inlinePicker.invalidate();
+    setKeyPath(next);
+    setInlineKeyContent(null);
   };
 
   const save = async () => {
@@ -553,11 +580,13 @@ function AssetEditor({
             pushToast("error", "请选择私钥文件");
             return;
           }
-          // 入库：文件模式在保存时才读内容，选完到保存之间文件被改动的窗口最小
           const content =
             keyContentMode === "paste"
               ? pastedKey.trim()
-              : await assetApi.readKeyFile(keyPath.trim());
+              : await resolveInlineKeyContent(
+                  { path: keyPath.trim(), content: inlineKeyContent },
+                  assetApi.readKeyFile,
+                );
           const res = await vaultApi.setCredential(credLabel, "private_key", content, {
             id: reuseCredId,
             source: "inline",
@@ -764,14 +793,14 @@ function AssetEditor({
                     <button
                       type="button"
                       className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
-                      onClick={() => setKeyOrigin("ref")}
+                      onClick={() => changeKeyOrigin("ref")}
                     >
                       引用本地文件
                     </button>
                     <button
                       type="button"
                       className={`nx-segment-item ${keyOrigin === "vault" ? "is-active" : ""}`}
-                      onClick={() => setKeyOrigin("vault")}
+                      onClick={() => changeKeyOrigin("vault")}
                     >
                       存入凭据库
                     </button>
@@ -837,17 +866,14 @@ function AssetEditor({
                               <input
                                 className="nx-input font-mono text-[12px]"
                                 value={keyPath}
-                                onChange={(e) => setKeyPath(e.target.value)}
+                                onChange={(e) => changeInlinePath(e.target.value)}
                                 placeholder="选择私钥文件"
                               />
                               <button
                                 type="button"
                                 className="nx-btn nx-btn-outline shrink-0"
-                                onClick={() =>
-                                  void pickKeyFile().then((p) => {
-                                    if (p) setKeyPath(p);
-                                  })
-                                }
+                                onClick={() => void pickInline()}
+                                disabled={inlinePicker.pending}
                               >
                                 浏览…
                               </button>
@@ -978,7 +1004,14 @@ function AssetEditor({
           </button>
           <button
             className="nx-btn nx-btn-primary"
-            disabled={!name.trim()}
+            disabled={
+              !name.trim() ||
+              (keyAuth &&
+                keyOrigin === "vault" &&
+                vaultMode === "new" &&
+                keyContentMode === "file" &&
+                inlinePicker.pending)
+            }
             onClick={() => void save()}
           >
             保存
