@@ -159,6 +159,9 @@ func TestKillOwnedSessionAndArtifacts(t *testing.T) {
 	if err := os.WriteFile(backend.gatePath(current.info.ID), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(backend.recorderDonePath(current.info.ID), []byte("0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := backend.Kill(context.Background(), current.info.ID); err != nil {
 		t.Fatal(err)
 	}

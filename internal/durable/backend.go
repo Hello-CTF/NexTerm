@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
@@ -60,6 +61,9 @@ type Backend struct {
 	pollInterval   time.Duration
 	statusInterval time.Duration
 	runner         runCommand
+	cleanupMu      sync.Mutex
+	killedMu       sync.Mutex
+	killed         map[string]struct{}
 }
 
 func New(config Config) (*Backend, error) {
@@ -107,6 +111,7 @@ func New(config Config) (*Backend, error) {
 		commandTimeout: config.CommandTimeout,
 		pollInterval:   20 * time.Millisecond,
 		statusInterval: 250 * time.Millisecond,
+		killed:         make(map[string]struct{}),
 	}
 	backend.runner = backend.execute
 	return backend, nil
@@ -211,7 +216,13 @@ func (b *Backend) Attach(ctx context.Context, id string) (*Session, error) {
 		return nil, err
 	}
 	if !current.info.Dead && !current.recordingLive {
-		return nil, fmt.Errorf("%w: tmux output recording is not running for %s", ErrUnavailable, id)
+		closing, err := b.recorderClosing(id)
+		if err != nil {
+			return nil, err
+		}
+		if !closing {
+			return nil, fmt.Errorf("%w: tmux output recording is not running for %s", ErrUnavailable, id)
+		}
 	}
 	file, err := b.openRecording(id)
 	if err != nil {
@@ -225,7 +236,12 @@ func (b *Backend) Kill(ctx context.Context, id string) error {
 }
 
 func (b *Backend) kill(ctx context.Context, id string, expected *record) error {
+	b.cleanupMu.Lock()
+	defer b.cleanupMu.Unlock()
 	current, err := b.resolve(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return b.finishMissingKill(ctx, id)
+	}
 	if err != nil {
 		return err
 	}
@@ -233,12 +249,12 @@ func (b *Backend) kill(ctx context.Context, id string, expected *record) error {
 		return fmt.Errorf("%w: %s", ErrIdentity, id)
 	}
 	if _, err := b.run(ctx, "kill-session", "-t", current.info.SessionID); err != nil {
+		if _, resolveErr := b.resolve(ctx, id); errors.Is(resolveErr, ErrNotFound) {
+			return b.finishMissingKill(ctx, id)
+		}
 		return err
 	}
-	if err := b.removeArtifacts(id); err != nil {
-		return fmt.Errorf("tmux session killed but durable artifacts remain: %w", err)
-	}
-	return nil
+	return b.finishKill(ctx, id)
 }
 
 func (b *Backend) abortCreate(id string, cause error) error {
@@ -301,7 +317,7 @@ func (b *Backend) supervisorScript(id, launch string) string {
 	script := []string{
 		"while [ ! -f " + gate + " ]; do sleep 0.05; done; rm -f " + gate,
 		"_nexterm_durable_status=",
-		"_nexterm_durable_finish() { " + closeRecording + "; exit \"$1\"; }",
+		"_nexterm_durable_finish() { umask 077; : > " + shellQuote(b.recorderClosingTempPath(id)) + "; mv " + shellQuote(b.recorderClosingTempPath(id)) + " " + shellQuote(b.recorderClosingPath(id)) + "; " + closeRecording + "; exit \"$1\"; }",
 		"_nexterm_durable_on_signal() { _nexterm_durable_status=$?; trap ':' HUP INT QUIT TERM; kill -s \"$1\" 0 2>/dev/null; wait; if [ -z \"$_nexterm_durable_status\" ] || [ \"$_nexterm_durable_status\" -eq 0 ]; then _nexterm_durable_status=$((128 + $2)); fi; _nexterm_durable_finish \"$_nexterm_durable_status\"; }",
 		"trap '_nexterm_durable_on_signal HUP 1' HUP",
 		"trap '_nexterm_durable_on_signal INT 2' INT",
@@ -365,14 +381,36 @@ func (b *Backend) waitForLaunch(ctx context.Context, id string) error {
 }
 
 func (b *Backend) removeArtifacts(id string) error {
-	if err := os.RemoveAll(b.sessionDir(id)); err != nil {
-		return fmt.Errorf("remove durable artifacts for %s: %w", id, err)
+	original := b.sessionDir(id)
+	tombstone := b.tombstonePath(id)
+	if _, err := os.Lstat(tombstone); err == nil {
+		if err := os.RemoveAll(tombstone); err != nil {
+			return fmt.Errorf("remove prior durable tombstone for %s: %w", id, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect durable tombstone for %s: %w", id, err)
+	}
+	if err := os.Rename(original, tombstone); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("quarantine durable artifacts for %s: %w", id, err)
+	}
+	if err := os.RemoveAll(tombstone); err != nil {
+		return fmt.Errorf("remove durable tombstone for %s: %w", id, err)
+	}
+	for _, path := range []string{original, tombstone} {
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("durable artifact path remains: %s", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("verify durable artifact cleanup for %s: %w", id, err)
+		}
 	}
 	return nil
 }
 
 func (b *Backend) sessionName(id string) string { return b.namespace + "-" + id }
 func (b *Backend) sessionDir(id string) string  { return filepath.Join(b.stateDir, id) }
+func (b *Backend) tombstonePath(id string) string {
+	return filepath.Join(b.stateDir, id+".delete")
+}
 func (b *Backend) recordingPath(id string) string {
 	return filepath.Join(b.sessionDir(id), "output.raw")
 }
@@ -387,6 +425,12 @@ func (b *Backend) recorderDonePath(id string) string {
 }
 func (b *Backend) recorderDoneTempPath(id string) string {
 	return filepath.Join(b.sessionDir(id), "recorder.done.tmp")
+}
+func (b *Backend) recorderClosingPath(id string) string {
+	return filepath.Join(b.sessionDir(id), "recorder.closing")
+}
+func (b *Backend) recorderClosingTempPath(id string) string {
+	return filepath.Join(b.sessionDir(id), "recorder.closing.tmp")
 }
 
 func environmentValue(environment []string, name string) string {

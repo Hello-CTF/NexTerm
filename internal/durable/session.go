@@ -74,7 +74,13 @@ func (s *Session) Read(buffer []byte) (int, error) {
 				return 0, fmt.Errorf("%w: %s", ErrIdentity, s.expected.info.ID)
 			}
 			if !current.info.Dead && !current.recordingLive {
-				return 0, fmt.Errorf("%w: tmux output recording stopped", ErrUnavailable)
+				closing, closingErr := s.backend.recorderClosing(s.expected.info.ID)
+				if closingErr != nil {
+					return 0, closingErr
+				}
+				if !closing {
+					return 0, fmt.Errorf("%w: tmux output recording stopped", ErrUnavailable)
+				}
 			}
 			complete, completionErr := s.backend.recorderComplete(s.expected.info.ID)
 			if completionErr != nil {
