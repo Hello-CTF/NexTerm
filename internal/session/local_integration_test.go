@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -58,5 +59,47 @@ func TestRealLocalPTYAttachDetachReplayAndReap(t *testing.T) {
 	}
 	if _, err := manager.Session(session.ID); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("real local session survived disconnect: %v", err)
+	}
+}
+
+func TestRealLocalPTYOpenResizeDetachReopenAndClose(t *testing.T) {
+	connector := ConnectorFunc(func(_ context.Context, _ Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := NewManager(Config{Connector: connector})
+	t.Cleanup(func() { _ = manager.Close() })
+	session, err := manager.Connect(context.Background(), Asset{ID: "real-local-resize-race", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 32; index++ {
+		channelID := fmt.Sprintf("resize-race-%d", index)
+		tab := openTestTab(t, manager, session, "client-a", channelID)
+		command := fmt.Sprintf("printf 'nexterm-open-%02d%%s\\n' '-output'\r", index)
+		if err := manager.Write(context.Background(), tab.ID, "client-a", []byte(command)); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Resize(context.Background(), tab.ID, "client-a", uint32(81+index%20), 30); err != nil {
+			t.Fatal(err)
+		}
+		marker := []byte(fmt.Sprintf("nexterm-open-%02d-output", index))
+		waitFor(t, func() bool { return bytes.Contains(tab.terminal.Dump(1<<20), marker) })
+		if err := manager.DetachChannel(channelID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{
+			ClientID: "client-a", ChannelID: channelID, ReplayBytes: 1 << 20,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		receiver := bindTestReceiver(t, manager, channelID)
+		assertFrameData(t, receiver, replayClear)
+		frame := receiveTestFrame(t, receiver)
+		if !bytes.Contains(frame.Data, marker) {
+			t.Fatalf("iteration %d replay = %q, want %q", index, frame.Data, marker)
+		}
+		if err := manager.CloseTab(tab.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
