@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
@@ -29,13 +30,13 @@ func IPCError(err error) *ipc.Error {
 	switch {
 	case errors.Is(err, ErrNotController):
 		return ipc.WrapError(ipc.CodeNotController, ErrNotController.Error(), err)
-	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrTabNotFound):
+	case errors.Is(err, ErrSessionNotFound), errors.Is(err, ErrTabNotFound), errors.Is(err, durable.ErrNotFound):
 		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected):
 		return ipc.WrapError(ipc.CodeDisconnected, err.Error(), err)
-	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
+	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported), errors.Is(err, durable.ErrUnavailable):
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
-	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, hub.ErrInvalidChannel):
+	case errors.Is(err, ErrInvalidSize), errors.Is(err, ErrHidden), errors.Is(err, ErrInvalidOptions), errors.Is(err, ErrTabExists), errors.Is(err, durable.ErrInvalidInput), errors.Is(err, durable.ErrAlreadyExists), errors.Is(err, hub.ErrInvalidChannel):
 		return ipc.BadParam(err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return ipc.WrapError(ipc.CodeTimeout, err.Error(), err)

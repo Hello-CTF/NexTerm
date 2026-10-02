@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
@@ -34,10 +35,14 @@ func TestIPCErrorPreservesControlAndLifecycleCodes(t *testing.T) {
 		{err: ErrNotController, code: ipc.CodeNotController},
 		{err: ErrSessionNotFound, code: ipc.CodeNotFound},
 		{err: ErrTabNotFound, code: ipc.CodeNotFound},
+		{err: durable.ErrNotFound, code: ipc.CodeNotFound},
 		{err: ErrDisconnected, code: ipc.CodeDisconnected},
 		{err: ErrUnsupported, code: ipc.CodeUnsupported},
+		{err: durable.ErrUnavailable, code: ipc.CodeUnsupported},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam},
 		{err: ErrHidden, code: ipc.CodeBadParam},
+		{err: durable.ErrInvalidInput, code: ipc.CodeBadParam},
+		{err: durable.ErrAlreadyExists, code: ipc.CodeBadParam},
 		{err: context.DeadlineExceeded, code: ipc.CodeTimeout},
 		{err: errors.New("other"), code: ipc.CodeInternal},
 	}

@@ -35,6 +35,8 @@ var (
 	ErrInvalidSize     = errors.New("invalid terminal size")
 	ErrStaleGeneration = errors.New("stale session generation")
 	ErrHidden          = errors.New("terminal hidden")
+	ErrTabExists       = errors.New("terminal tab already exists")
+	ErrInvalidOptions  = errors.New("invalid terminal options")
 )
 
 type Status string
@@ -109,6 +111,7 @@ func (f EmitterFunc) EmitSessionEvent(ctx context.Context, event Event) error {
 type Config struct {
 	Connector        Connector
 	Terminals        TerminalFactory
+	Durable          base.DurableProvider
 	Hub              *hub.Hub
 	Emitter          Emitter
 	NewID            func() string
@@ -141,6 +144,7 @@ type TabInfo struct {
 	Viewers      int    `json:"viewers"`
 	Exited       bool   `json:"exited"`
 	Ephemeral    bool   `json:"ephemeral,omitempty"`
+	Durable      bool   `json:"durable,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -248,6 +252,7 @@ func (s *Session) Asset() Asset {
 }
 
 type OpenTabOptions struct {
+	TabID     string
 	SessionID string
 	ClientID  string
 	ChannelID string
@@ -255,6 +260,14 @@ type OpenTabOptions struct {
 	Rows      uint32
 	Term      string
 	Ephemeral bool
+	Durable   *DurableTabOptions
+}
+
+type DurableTabOptions struct {
+	Command []string
+	Dir     string
+	Env     []string
+	Recover bool
 }
 
 type AttachOptions struct {

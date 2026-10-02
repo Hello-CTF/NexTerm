@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type Manager struct {
@@ -25,6 +26,7 @@ type Manager struct {
 
 	connector Connector
 	terminals TerminalFactory
+	durable   base.DurableProvider
 	bus       *hub.Hub
 	ownsBus   bool
 	emitter   Emitter
@@ -55,6 +57,7 @@ func NewManager(config Config) *Manager {
 		channelTabs:      make(map[string]string),
 		connector:        config.Connector,
 		terminals:        config.Terminals,
+		durable:          config.Durable,
 		emitter:          config.Emitter,
 		newID:            config.NewID,
 		idleTimeout:      config.IdleTimeout,
