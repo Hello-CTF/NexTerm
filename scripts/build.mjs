@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveMakensis } from "./lib/makensis.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -625,7 +626,13 @@ function packageWindows(binary, goarch) {
     `NEXTERM_WEBVIEW2=${bootstrapper}`,
     `NEXTERM_EXE_NAME=${path.basename(binary)}`,
   ];
-  run("makensis", [...defines.map((define) => `-D${define}`), path.join(ROOT, ".github/packaging/windows/NexTerm.nsi")]);
+  // Resolve makensis deterministically instead of trusting PATH: the
+  // Chocolatey nsis.install package deploys to ProgramFiles(x86)\NSIS
+  // without a shim, and the machine-PATH update its setup performs is never
+  // seen by an already-running CI job (release run 37149307116 ENOENT).
+  const makensis = resolveMakensis({ env: process.env });
+  log(`makensis: ${makensis.command} (${makensis.source})`);
+  run(makensis.command, [...defines.map((define) => `-D${define}`), path.join(ROOT, ".github/packaging/windows/NexTerm.nsi")]);
   if (!fs.existsSync(installer)) die("makensis did not produce the contracted installer");
   return installer;
 }
