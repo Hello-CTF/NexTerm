@@ -12,11 +12,12 @@ import (
 )
 
 type ServeConfig struct {
-	Listen   string
-	WebRoot  string
-	SyncOnly bool
-	SyncRPC  http.Handler
-	Static   http.Handler
+	Listen         string
+	WebRoot        string
+	SyncOnly       bool
+	SyncRPC        http.Handler
+	SyncDispatcher *ipc.Dispatcher
+	Static         http.Handler
 }
 
 type Health struct {
@@ -54,7 +55,7 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	if config.SyncRPC != nil {
 		mux.Handle("/sync/rpc", config.SyncRPC)
 	}
-	if config.Static != nil {
+	if !config.SyncOnly && config.Static != nil {
 		mux.Handle("/", config.Static)
 	}
 
@@ -118,9 +119,13 @@ func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 			}
 		}
 	}
+	commands := a.Dispatcher.Len()
+	if config.SyncOnly && config.SyncDispatcher != nil {
+		commands = config.SyncDispatcher.Len()
+	}
 	return Health{
 		OK: true, Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
-		Commands: a.Dispatcher.Len(), WebRoot: webRoot, Vault: vault, Retention: retention,
+		Commands: commands, WebRoot: webRoot, Vault: vault, Retention: retention,
 	}
 }
 
