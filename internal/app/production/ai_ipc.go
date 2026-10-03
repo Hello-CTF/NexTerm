@@ -24,6 +24,7 @@ type aiConversationRequest struct {
 	ID             string `json:"id"`
 	Title          string `json:"title"`
 	ConversationID string `json:"conversationId"`
+	Scope          any    `json:"scope"`
 }
 
 type conversationDTO struct {
@@ -123,8 +124,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				if title == "" {
 					title = "新对话"
 				}
-				scope := map[string]any{"sessionId": nil, "tabId": nil, "connId": nil, "assetId": nil}
-				row, err := database.ConvCreate(ctx, title, scope)
+				row, err := database.ConvCreate(ctx, title, map[string]any{"scope": input.Scope})
 				return productionConversation(row), err
 			})
 		},

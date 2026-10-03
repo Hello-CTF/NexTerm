@@ -272,7 +272,15 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err == nil {
 					return attachedSessionTab(info), nil
 				}
-				if s.durableErr != nil {
+				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
+					// Missing local tmux must not mask Docker tabs: give the
+					// Docker fallback its chance before reporting that durable
+					// local recovery is unavailable.
+					if s.docker != nil {
+						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
+							return s.attachDocker(ctx, call, input.TabID)
+						}
+					}
 					return attachedTabDTO{}, terminalIPCError(s.durableErr)
 				}
 				if errors.Is(err, session.ErrTabNotFound) && s.durable != nil {
@@ -452,17 +460,17 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 }
 
 func (s *terminalCommandService) createDurableOptions(sessionID string) (*session.DurableTabOptions, error) {
-	if s.durableErr != nil {
-		return nil, s.durableErr
-	}
-	if s.durable == nil {
-		return nil, nil
-	}
 	connected, err := s.sessions.Session(sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if connected.Asset().Kind != session.KindLocal {
+		return nil, nil
+	}
+	if s.durableErr != nil {
+		return nil, s.durableErr
+	}
+	if s.durable == nil {
 		return nil, nil
 	}
 	return &session.DurableTabOptions{}, nil
