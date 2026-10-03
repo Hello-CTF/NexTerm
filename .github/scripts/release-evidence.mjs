@@ -9,13 +9,24 @@ const directory = path.resolve(ROOT, process.argv[2] || "candidate");
 const version = JSON.parse(fs.readFileSync(path.join(ROOT, "wails.json"), "utf8")).info.version;
 const expected = [
   `NexTerm_${version}_x64-setup.exe`,
+  `NexTerm_${version}_arm64-setup.exe`,
   `NexTerm_${version}_aarch64.dmg`,
   `NexTerm_${version}_x86_64.dmg`,
   ...["amd64", "arm64"].flatMap((arch) => [
-    `NexTerm-${version}-linux-${arch}.tar.gz`,
-    `NexTerm-onlyServer-${version}-linux-${arch}.tar.gz`,
+    `NexTerm-desktop_${version}_linux_${arch}.tar.gz`,
+    `NexTerm-server_${version}_linux_${arch}.tar.gz`,
   ]),
 ];
+const reportIDs = new Map([
+  [`NexTerm_${version}_x64-setup.exe`, "desktop-nsis-windows-amd64"],
+  [`NexTerm_${version}_arm64-setup.exe`, "desktop-nsis-windows-arm64"],
+  [`NexTerm_${version}_aarch64.dmg`, "desktop-dmg-darwin-arm64"],
+  [`NexTerm_${version}_x86_64.dmg`, "desktop-dmg-darwin-amd64"],
+  ...["amd64", "arm64"].flatMap((arch) => [
+    [`NexTerm-desktop_${version}_linux_${arch}.tar.gz`, `desktop-linux-archive-linux-${arch}`],
+    [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-full-linux-${arch}`],
+  ]),
+]);
 function gatesPassed(report) {
   return report.status === "passed"
     && report.comparisons?.rust?.status === "passed"
@@ -46,7 +57,7 @@ for (const name of expected) {
   const bytes = fs.statSync(file).size;
   const sha256 = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
   const intact = report.artifact.size_bytes === bytes && report.artifact.sha256 === sha256;
-  const passed = gatesPassed(report) && intact && report.version === version;
+  const passed = gatesPassed(report) && intact && report.version === version && report.id === reportIDs.get(name);
   if (!passed) failed = true;
   artifacts.push({ name, size_bytes: bytes, sha256, report_status: report.status, intact, status: passed ? "passed" : "failed" });
 }

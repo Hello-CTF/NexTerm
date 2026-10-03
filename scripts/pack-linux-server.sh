@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Package a CGO_ENABLED=0 Go server as full and sync-only Linux tar.gz files.
-# This script packages only; scripts/build.mjs owns compilation and version injection.
+# Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
+# scripts/build.mjs owns compilation/versioning; e2e-sync-local.py retains --sync-only acceptance.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,9 +13,13 @@ REQUIRE_SIZE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
+    --out=*) OUT="${1#*=}"; shift ;;
     --bin) BIN="$2"; shift 2 ;;
+    --bin=*) BIN="${1#*=}"; shift ;;
     --web) WEB="$2"; shift 2 ;;
+    --web=*) WEB="${1#*=}"; shift ;;
     --arch) ARCH="$2"; shift 2 ;;
+    --arch=*) ARCH="${1#*=}"; shift ;;
     --require-size) REQUIRE_SIZE=1; shift ;;
     -h|--help) sed -n '1,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -24,7 +28,7 @@ done
 
 case "$ARCH" in amd64|arm64) ;; *) echo "unsupported Linux server architecture: $ARCH" >&2; exit 2 ;; esac
 [ -n "$BIN" ] || BIN="$ROOT/target/go-build/nexterm-server-linux-$ARCH"
-VERSION="$(node -e 'const c=require("./wails.json"); process.stdout.write(c.info.version)' 2>/dev/null)" || {
+VERSION="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(c.info.version)' "$ROOT/wails.json" 2>/dev/null)" || {
   echo "cannot read the sole release version from wails.json" >&2; exit 1;
 }
 [ -f "$BIN" ] || {
@@ -59,6 +63,8 @@ done
 
 mkdir -p "$OUT"
 rm -f \
+  "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz" \
+  "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz.artifact.json" \
   "$OUT/NexTerm-$VERSION-linux-$ARCH.tar.gz" \
   "$OUT/NexTerm-$VERSION-linux-$ARCH.tar.gz.artifact.json" \
   "$OUT/NexTerm-onlyServer-$VERSION-linux-$ARCH.tar.gz" \
@@ -87,26 +93,32 @@ ENVEOF
 }
 
 write_readme() {
-  local target="$1" mode="$2"
+  local target="$1"
   cat > "$target" <<MDEOF
-# NexTerm $mode $VERSION (linux/$ARCH)
+# NexTerm Linux Server $VERSION (linux/$ARCH)
 
-Built from the Go/Wails delivery chain. The server binary is stripped and static;
-its version comes only from wails.json. The full package serves the real Vite
-frontend from web/; the sync-only package intentionally has no browser or /rpc
-route and exposes only /sync/rpc plus /healthz.
+This is the only Linux server archive. It contains the stripped, static Go
+server, the real Vite frontend, both systemd units and both environment-file
+examples. Its version comes only from wails.json.
 
-## Install
+## Choose one runtime (do not enable both units)
 
-Install nexterm-server as /opt/nexterm/nexterm-server and the supplied systemd
-unit. Keep NEXTERM_MASTER_KEY secret and back it up with /var/lib/nexterm.
-The full server has no built-in login page: keep it on loopback or behind an
-authenticating reverse proxy. Public sync-only deployments still require TLS.
+- Full browser server: install nexterm-server.service and use nexterm.env.
+  It serves the browser UI and /rpc, but has no built-in login page; keep it on
+  loopback or behind an authenticating reverse proxy.
+- Restricted runtime: install nexterm-onlyserver.service instead and use
+  onlyserver.env. The same binary runs with --sync-only, exposes only /sync/rpc
+  and /healthz, and registers exactly three sync commands. This is an optional
+  runtime in this full archive, not a separate onlyServer package. Public
+  deployments still require TLS.
+
+Install nexterm-server as /opt/nexterm/nexterm-server. Keep NEXTERM_MASTER_KEY
+secret and back it up with /var/lib/nexterm.
 
 ## Verify
 
 - Full: curl http://127.0.0.1:8080/healthz and check syncOnly=false.
-- Sync only: check syncOnly=true and commands=3; /rpc must return 404.
+- Restricted: check syncOnly=true and commands=3; /rpc must return 404.
 - Token CLI: nexterm-server token --data-dir /var/lib/nexterm
 
 LazyCat assembly and real LazyCat/box acceptance belong to M47. This archive is
@@ -114,62 +126,49 @@ an input contract, not evidence that those external targets have passed.
 MDEOF
 }
 
-package_one() {
-  local flavor="$1" name dir unit env_file
-  if [ "$flavor" = full ]; then
-    name="NexTerm-$VERSION-linux-$ARCH"
-    unit="nexterm-server.service"
-    env_file="nexterm.env"
-  else
-    name="NexTerm-onlyServer-$VERSION-linux-$ARCH"
-    unit="nexterm-onlyserver.service"
-    env_file="onlyserver.env"
-  fi
-  dir="$STAGE/$name"
+package_full() {
+  local name="NexTerm-server_${VERSION}_linux_${ARCH}"
+  local dir="$STAGE/$name"
+  local unit env_file member
   mkdir -p "$dir"
   install -m 0755 "$BIN" "$dir/nexterm-server"
-  install -m 0644 "$ROOT/deploy/systemd/$unit" "$dir/$unit"
+  for unit in nexterm-server.service nexterm-onlyserver.service; do
+    install -m 0644 "$ROOT/deploy/systemd/$unit" "$dir/$unit"
+  done
+  for env_file in nexterm.env onlyserver.env; do
+    write_env "$dir/$env_file.example" "$env_file"
+  done
   install -m 0644 "$ROOT/LICENSE" "$dir/LICENSE"
-  write_env "$dir/$env_file.example" "$env_file"
-  write_readme "$dir/README.md" "$flavor"
-  if [ "$flavor" = full ]; then
-    mkdir -p "$dir/web"
-    (cd "$WEB" && find . -type f -print0 | sort -z | while IFS= read -r -d '' file; do
-      install -D -m 0644 "$file" "$dir/web/$file"
-    done)
-  fi
+  write_readme "$dir/README.md"
+  mkdir -p "$dir/web"
+  (cd "$WEB" && find . -type f -print0 | sort -z | while IFS= read -r -d '' file; do
+    install -D -m 0644 "$file" "$dir/web/$file"
+  done)
   tar_cz "$OUT/$name.tar.gz" "$STAGE" "$name"
 
-  tar -tzf "$OUT/$name.tar.gz" | grep -q "^$name/nexterm-server$"
-  tar -tzf "$OUT/$name.tar.gz" | grep -q "^$name/$unit$"
-  tar -tzf "$OUT/$name.tar.gz" | grep -q "^$name/$env_file.example$"
-  if [ "$flavor" = full ]; then
-    tar -tzf "$OUT/$name.tar.gz" | grep -q "^$name/web/index.html$"
-  elif tar -tzf "$OUT/$name.tar.gz" | grep -q '^.*\/web\/'; then
-    echo "sync-only archive unexpectedly contains browser assets" >&2; exit 1
-  fi
-
-  local kind="server-archive"
-  [ "$flavor" = full ] || kind="sync-archive"
-  node scripts/build.mjs report "--kind=$kind" "--flavor=$flavor" --os=linux "--arch=$ARCH" "--file=$OUT/$name.tar.gz"
+  local archive_members
+  archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
+  for member in \
+    nexterm-server \
+    nexterm-server.service \
+    nexterm-onlyserver.service \
+    nexterm.env.example \
+    onlyserver.env.example \
+    LICENSE \
+    README.md \
+    web/index.html; do
+    grep -q "^$name/$member$" <<<"$archive_members"
+  done
+  node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$OUT/$name.tar.gz"
 }
 
-(cd "$ROOT" && package_one full)
-(cd "$ROOT" && package_one sync)
+ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
+(cd "$ROOT" && package_full)
 
-# Produce every candidate before a missing/failed size baseline stops publication.
+# Produce the candidate before a missing/failed size baseline stops publication.
 if [ "$REQUIRE_SIZE" -ne 0 ]; then
-  for artifact in "$OUT"/*.tar.gz; do
-    case "$(basename "$artifact")" in
-      NexTerm-onlyServer-*) kind="sync-archive"; flavor="sync" ;;
-      *) kind="server-archive"; flavor="full" ;;
-    esac
-    (cd "$ROOT" && node scripts/build.mjs report "--kind=$kind" "--flavor=$flavor" --os=linux "--arch=$ARCH" "--file=$artifact" --require-size)
-  done
+  (cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT" --require-size)
 fi
 
-echo "Linux $ARCH packages:"
-for artifact in "$OUT"/*.tar.gz; do
-  if command -v sha256sum >/dev/null 2>&1; then digest="$(sha256sum "$artifact" | cut -d' ' -f1)"; else digest="$(shasum -a 256 "$artifact" | cut -d' ' -f1)"; fi
-  printf '  %s  %s bytes  %s\n' "$(basename "$artifact")" "$(stat -c %s "$artifact" 2>/dev/null || stat -f %z "$artifact")" "$digest"
-done
+if command -v sha256sum >/dev/null 2>&1; then digest="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"; else digest="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"; fi
+printf 'Linux %s full server archive: %s  %s bytes  %s\n' "$ARCH" "$(basename "$ARTIFACT")" "$(stat -c %s "$ARTIFACT" 2>/dev/null || stat -f %z "$ARTIFACT")" "$digest"

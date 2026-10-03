@@ -75,9 +75,9 @@ tasks:
       - node scripts/build.mjs desktop --release --repro-check --smoke
 
   windows:desktop:
-    summary: Build the zero-cgo Windows x64 Wails desktop
+    summary: Build the zero-cgo Windows amd64/arm64 Wails desktop
     cmds:
-      - node scripts/build.mjs desktop --release --repro-check --os=windows --arch=amd64
+      - node scripts/build.mjs desktop --release --repro-check --os=windows --arch={{.GOARCH | default "amd64"}}
 
   darwin:desktop:
     summary: Build the native cgo-enabled macOS Wails desktop
@@ -85,9 +85,9 @@ tasks:
       - node scripts/build.mjs desktop --release --repro-check --os=darwin --arch={{.GOARCH | default "arm64"}}
 
   linux:desktop:
-    summary: Build the native cgo-enabled Linux x64 Wails desktop
+    summary: Build the native cgo-enabled Linux amd64/arm64 Wails desktop
     cmds:
-      - node scripts/build.mjs desktop --release --repro-check --os=linux --arch=amd64
+      - node scripts/build.mjs desktop --release --repro-check --os=linux --arch={{.GOARCH | default "amd64"}}
 
   package:
     summary: Package the host desktop and enforce all artifact size evidence
@@ -95,7 +95,7 @@ tasks:
       - node scripts/build.mjs release
 
   linux:package:
-    summary: Produce full and sync-only Linux server archives
+    summary: Produce one full Linux server archive with both runtime units
     cmds:
       - bash scripts/pack-linux-server.sh --arch={{.GOARCH | default "amd64"}}
 

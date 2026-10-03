@@ -82,6 +82,10 @@ jobs:
             os: windows
             arch: amd64
             kind: desktop
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+            kind: desktop
           - runner: macos-15
             os: darwin
             arch: arm64
@@ -93,6 +97,10 @@ jobs:
           - runner: ubuntu-latest
             os: linux
             arch: amd64
+            kind: desktop
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
             kind: desktop
           - runner: ubuntu-latest
             os: linux
@@ -122,7 +130,7 @@ jobs:
         if: matrix.os == 'linux' && matrix.kind == 'desktop'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev xvfb
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev xvfb
       - name: Build stripped native artifact and inspect format/cgo/size evidence
         run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check --os=${{ matrix.os }} --arch=${{ matrix.arch }} ${{ matrix.kind == 'desktop' && '--smoke' || '' }}
       - name: Run Go two-process server acceptance

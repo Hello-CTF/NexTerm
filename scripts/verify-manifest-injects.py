@@ -213,6 +213,31 @@ def main() -> int:
         payload = artifact_path.read_bytes()
         assert artifact.get("size_bytes") == len(payload), "产物字节数与报告不一致"
         assert artifact.get("sha256") == hashlib.sha256(payload).hexdigest(), "产物 SHA256 与报告不一致"
+        kind = report.get("kind")
+        platform = report.get("platform") or {}
+        arch = platform.get("arch")
+        assert kind != "sync-archive", "onlyServer 独立包已停止发布；--sync-only 仅保留为 full 包运行时"
+        expected_name = None
+        member_assertion = None
+        if kind == "server-archive":
+            expected_name = f"NexTerm-server_{report.get('version')}_linux_{arch}.tar.gz"
+            member_assertion = "full-server-archive-members"
+        elif kind == "desktop-linux-archive":
+            expected_name = f"NexTerm-desktop_{report.get('version')}_linux_{arch}.tar.gz"
+            member_assertion = "linux-desktop-archive-members"
+        elif kind == "desktop-nsis":
+            setup_arch = "x64" if arch == "amd64" else "arm64"
+            expected_name = f"NexTerm_{report.get('version')}_{setup_arch}-setup.exe"
+        elif kind == "desktop-dmg":
+            dmg_arch = "aarch64" if arch == "arm64" else "x86_64"
+            expected_name = f"NexTerm_{report.get('version')}_{dmg_arch}.dmg"
+        if expected_name is not None:
+            assert artifact_path.name == expected_name, f"文件名 {artifact_path.name} 不符合合同 {expected_name}"
+        if member_assertion is not None:
+            assert any(
+                item.get("id") == member_assertion and item.get("status") == "passed"
+                for item in report.get("assertions") or []
+            ), f"归档成员门禁 {member_assertion} 未通过"
         assert report.get("real_target_acceptance_claim") is False, "交付报告不得自称完成真机验收"
         if args.require_release:
             assert report.get("status") == "passed", f"产物门禁未全通过：{report.get('status')}"

@@ -37,12 +37,21 @@ jobs:
           - runner: windows-latest
             os: windows
             arch: amd64
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
           - runner: macos-15
             os: darwin
             arch: arm64
           - runner: macos-15-intel
             os: darwin
             arch: amd64
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +73,11 @@ jobs:
       - name: Install NSIS
         if: matrix.os == 'windows'
         run: choco install nsis --version=3.11 --yes --no-progress
+      - name: Install Linux WebView packaging dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Verify bindings
@@ -81,7 +95,7 @@ jobs:
           if-no-files-found: error
 
   server:
-    name: Linux ${{ matrix.arch }} full/sync-only packages
+    name: Linux ${{ matrix.arch }} full package with optional restricted runtime
     needs: precondition
     strategy:
       fail-fast: false
@@ -113,7 +127,7 @@ jobs:
           node scripts/build.mjs frontend --repro-check
       - name: Exercise the packaged server before archiving
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
-      - name: Produce and validate both archives with final size gates
+      - name: Produce and validate the full archive with final size gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-size
       - name: Upload candidates and raw/final reports
         if: always()
@@ -172,7 +186,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           files=(candidate/*.exe candidate/*.dmg candidate/*.tar.gz candidate/SHA256SUMS candidate/release-evidence.json candidate/real-target-gaps.json)
-          [ ${#files[@]} -eq 10 ] || { echo "expected 7 packages plus 3 evidence files, got ${#files[@]}"; exit 1; }
+          [ ${#files[@]} -eq 11 ] || { echo "expected 8 packages plus 3 evidence files, got ${#files[@]}"; exit 1; }
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else

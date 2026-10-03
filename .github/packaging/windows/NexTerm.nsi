@@ -21,6 +21,9 @@ SetCompressor /SOLID lzma
 !ifndef NEXTERM_WEBVIEW2
   !error "NEXTERM_WEBVIEW2 is required"
 !endif
+!ifndef NEXTERM_EXE_NAME
+  !error "NEXTERM_EXE_NAME is required"
+!endif
 
 Name "NexTerm ${NEXTERM_VERSION}"
 OutFile "${NEXTERM_OUT}"
@@ -53,13 +56,13 @@ Section "NexTerm" SEC01
   WriteRegStr HKCU "Software\NexTerm" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "DisplayName" "NexTerm"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "DisplayVersion" "${NEXTERM_VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "DisplayIcon" "$INSTDIR\nexterm-desktop-windows-amd64.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "DisplayIcon" "$INSTDIR\${NEXTERM_EXE_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "NoRepair" 1
   CreateDirectory "$SMPROGRAMS\NexTerm"
-  CreateShortcut "$SMPROGRAMS\NexTerm\NexTerm.lnk" "$INSTDIR\nexterm-desktop-windows-amd64.exe"
-  CreateShortcut "$DESKTOP\NexTerm.lnk" "$INSTDIR\nexterm-desktop-windows-amd64.exe"
+  CreateShortcut "$SMPROGRAMS\NexTerm\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
+  CreateShortcut "$DESKTOP\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
 
   SetRegView 64
   ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
@@ -80,7 +83,7 @@ Section "Uninstall"
   Delete "$DESKTOP\NexTerm.lnk"
   Delete "$SMPROGRAMS\NexTerm\NexTerm.lnk"
   RMDir "$SMPROGRAMS\NexTerm"
-  Delete "$INSTDIR\nexterm-desktop-windows-amd64.exe"
+  Delete "$INSTDIR\${NEXTERM_EXE_NAME}"
   Delete "$INSTDIR\MicrosoftEdgeWebview2Setup.exe"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

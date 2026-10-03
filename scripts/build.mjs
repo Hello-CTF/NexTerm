@@ -98,15 +98,15 @@ function targetArch() {
 function assertTarget(kind, goos, goarch) {
   const allowed = {
     "windows/amd64": ["desktop", "server"],
+    "windows/arm64": ["desktop"],
     "darwin/amd64": ["desktop", "server"],
     "darwin/arm64": ["desktop", "server"],
     "linux/amd64": ["desktop", "server"],
-    "linux/arm64": ["server"],
+    "linux/arm64": ["desktop", "server"],
   };
   if (!allowed[`${goos}/${goarch}`]?.includes(kind)) {
-    die(`unsupported ${kind} target ${goos}/${goarch}; native matrix is Windows x64, macOS arm64/Intel, Linux x64 desktop, Linux amd64/arm64 server`);
+    die(`unsupported ${kind} target ${goos}/${goarch}; desktop is Windows/macOS/Linux amd64+arm64 and server is Linux amd64+arm64`);
   }
-  if (goos === "windows" && kind === "desktop" && goarch !== "amd64") die("Windows desktop release is x64-only");
 }
 
 function buildEnvironment(goos, goarch, kind) {
@@ -285,9 +285,10 @@ function buildBinary(kind) {
     if (!release) die("--package requires --release");
     if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
     const packaged = packageDesktop(outputPath, goos, goarch);
+    const packageKind = { darwin: "desktop-dmg", windows: "desktop-nsis", linux: "desktop-linux-archive" }[goos];
     writeArtifactReport({
-      id: `${goos === "darwin" ? "desktop-dmg" : "desktop-nsis"}-${goos}-${goarch}`,
-      kind: goos === "darwin" ? "desktop-dmg" : "desktop-nsis",
+      id: `${packageKind}-${goos}-${goarch}`,
+      kind: packageKind,
       goos,
       goarch,
       file: packaged,
@@ -368,12 +369,36 @@ function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbe
   return { assertions: result, inspected };
 }
 
-function packageAssertions(kind, file) {
+function packageAssertions(kind, file, goos, goarch) {
   const data = fs.readFileSync(file);
   if (kind === "desktop-nsis") return [assertion("nsis-container", data[0] === 0x4d && data[1] === 0x5a, "NSIS output is not a PE executable")];
-  if (kind === "server-archive" || kind === "sync-archive") {
-    return [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "server archive is not gzip compressed")];
+  if (kind === "desktop-linux-archive") {
+    const root = `NexTerm-desktop_${VERSION}_linux_${goarch}`;
+    const required = [`${root}/nexterm-desktop`, `${root}/LICENSE`, `${root}/README.md`];
+    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const members = new Set(listing?.split(/\r?\n/) || []);
+    return [
+      assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "Linux desktop archive is not gzip compressed"),
+      assertion("linux-desktop-archive-members", goos === "linux" && listing !== null && required.every((member) => members.has(member)), `required members: ${required.join(", ")}`),
+    ];
   }
+  if (kind === "server-archive") {
+    const checks = [assertion("gzip-container", data[0] === 0x1f && data[1] === 0x8b, "server archive is not gzip compressed")];
+    const root = `NexTerm-server_${VERSION}_linux_${goarch}`;
+    const required = [
+      "nexterm-server", "nexterm-server.service", "nexterm-onlyserver.service",
+      "nexterm.env.example", "onlyserver.env.example", "LICENSE", "README.md", "web/index.html",
+    ].map((member) => `${root}/${member}`);
+    const listing = output("tar", ["-tzf", file], { allowFailure: true });
+    const members = new Set(listing?.split(/\r?\n/) || []);
+    checks.push(assertion(
+      "full-server-archive-members",
+      goos === "linux" && listing !== null && required.every((member) => members.has(member)),
+      `required members: ${required.join(", ")}`,
+    ));
+    return checks;
+  }
+  if (kind === "sync-archive") return [assertion("separate-sync-archive-removed", false, "restricted --sync-only is a runtime mode of the full archive, not a separate artifact")];
   if (kind === "desktop-dmg") return [assertion("dmg-container", data.length > 512, "DMG was already validated with hdiutil")];
   return [];
 }
@@ -442,9 +467,9 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   const rawBinary = kind === "desktop" || kind === "server";
   const inspected = rawBinary
     ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
-    : { assertions: packageAssertions(kind, file), inspected: null };
+    : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
   const comparisons = sizeComparisons(id, bytes);
-  const failed = inspected.assertions.some((item) => item.status === "failed") || comparisons.rust.status === "failed";
+  const failed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed") || comparisons.rust.status === "failed";
   const gap = comparisons.rust.status === "evidence-gap" || comparisons.custom_go.status !== "measured";
   const report = {
     schema_version: 1,
@@ -493,7 +518,26 @@ function packageDesktop(binary, goos, goarch) {
   if (goos !== HOST_OS) die(`native ${goos} packaging cannot run on ${HOST_OS}`);
   if (goos === "darwin") return packageDarwin(binary, goarch);
   if (goos === "windows") return packageWindows(binary, goarch);
-  die(`no desktop installer is contracted for ${goos}; the Linux desktop is a CI build/smoke target only`);
+  if (goos === "linux") return packageLinuxDesktop(binary, goarch);
+  die(`no desktop package is contracted for ${goos}`);
+}
+
+function packageLinuxDesktop(binary, goarch) {
+  const assets = path.resolve(ROOT, option("assets-dir", "target/release-assets"));
+  const name = `NexTerm-desktop_${VERSION}_linux_${goarch}`;
+  const work = path.join(ROOT, "target/package-work/linux-desktop", goarch);
+  const directory = path.join(work, name);
+  fs.rmSync(work, { recursive: true, force: true });
+  fs.mkdirSync(directory, { recursive: true });
+  fs.mkdirSync(assets, { recursive: true });
+  fs.copyFileSync(binary, path.join(directory, "nexterm-desktop"));
+  fs.chmodSync(path.join(directory, "nexterm-desktop"), 0o755);
+  fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(directory, "LICENSE"));
+  fs.writeFileSync(path.join(directory, "README.md"), `# NexTerm desktop ${VERSION} (linux/${goarch})\n\nSelf-contained Wails binary with the production frontend embedded; no dist directory or working-directory web root is required. Run ./nexterm-desktop on Linux/${goarch} with the Wails GTK4/WebKitGTK 6.0 runtime installed. This tar.gz is not an AppImage/deb and does not claim real-target installation acceptance.\n`);
+  const archive = path.join(assets, `${name}.tar.gz`);
+  fs.rmSync(archive, { force: true });
+  run("tar", ["--sort=name", `--mtime=@${SOURCE_DATE_EPOCH}`, "--owner=0", "--group=0", "--numeric-owner", "-czf", archive, "-C", work, name]);
+  return archive;
 }
 
 function packageDarwin(binary, goarch) {
@@ -533,7 +577,8 @@ function packageWindows(binary, goarch) {
   if (!fs.existsSync(bootstrapper)) die("Wails did not generate the WebView2 bootstrapper");
   const icon = path.join(ROOT, "src-tauri/icons/icon.ico");
   if (!fs.existsSync(icon)) die("Windows icon.ico asset is missing");
-  const installer = path.join(assets, `NexTerm_${VERSION}_x64-setup.exe`);
+  const setupArch = goarch === "amd64" ? "x64" : "arm64";
+  const installer = path.join(assets, `NexTerm_${VERSION}_${setupArch}-setup.exe`);
   const defines = [
     `NEXTERM_BINARY=${binary}`,
     `NEXTERM_VERSION=${VERSION}`,
@@ -541,6 +586,7 @@ function packageWindows(binary, goarch) {
     `NEXTERM_OUT=${installer}`,
     `NEXTERM_ICON=${icon}`,
     `NEXTERM_WEBVIEW2=${bootstrapper}`,
+    `NEXTERM_EXE_NAME=${path.basename(binary)}`,
   ];
   run("makensis", [...defines.map((define) => `-D${define}`), path.join(ROOT, ".github/packaging/windows/NexTerm.nsi")]);
   if (!fs.existsSync(installer)) die("makensis did not produce the contracted installer");
@@ -580,6 +626,7 @@ function reportOnly() {
   const flavor = option("flavor", "full");
   const defaultID = kind === "desktop" || kind === "server" ? `${kind}-${goos}-${goarch}` : `${kind}-${flavor}-${goos}-${goarch}`;
   const id = option("id", defaultID);
+  if (kind === "server-archive" && flavor !== "full") die("only --flavor=full is published; --sync-only remains a runtime mode, not an archive");
   if (!options.file) die("report requires --file=PATH");
   writeArtifactReport({ id, kind, goos, goarch, file, requireSize: flag("require-size"), stripped: true });
 }
