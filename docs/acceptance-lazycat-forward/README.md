@@ -32,3 +32,14 @@
 
 以上缺口与 `.github/acceptance/real-target-gaps.json` 的 `lazycat-box-and-store`、
 `deployed-pages` 两条一致；由真机/合并后验收补齐，不以本地结果冒充。
+
+## 发布产物口径（M29 合同 6b17373）
+
+Release 产物固定为八个包：Windows `NexTerm_<v>_x64-setup.exe` / `_arm64-setup.exe`，
+macOS `NexTerm_<v>_x86_64.dmg` / `_aarch64.dmg`，Linux 桌面
+`NexTerm-desktop_<v>_linux_amd64.tar.gz` / `_arm64.tar.gz`，Linux 服务端
+`NexTerm-server_<v>_linux_amd64.tar.gz` / `_arm64.tar.gz`。
+`NexTerm-onlyServer-*` 与 `sync-archive` 不再是合法产物：sync-only 是同一个
+服务端包内的运行时选项（包内含 `nexterm-server.service` 与
+`nexterm-onlyserver.service` 两个单元与两份 env 示例）。website/deploy 文案
+已按此口径对齐；LazyCat LPK 仍直接消费静态服务端二进制，不经 tar 归档。

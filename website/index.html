@@ -314,10 +314,10 @@
       <div class="get-steps">
         <span class="pk">nexterm install</span>
         <h3>获取与部署</h3>
-        <p>每次发版：Windows / macOS / Linux 桌面客户端（amd64 与 arm64）、Linux 服务端包（amd64 与 arm64），以及懒猫微服专版。</p>
+        <p>每次发版八个产物：Windows / macOS / Linux 桌面客户端（各 amd64 与 arm64）、Linux 服务端包（amd64 与 arm64）；懒猫微服专版在应用中心安装，不经 Release 下载。</p>
         <ul>
-          <li>桌面版：<code>.exe</code> / <code>.dmg</code> / Linux 安装包，下载双击即装</li>
-          <li>LinuxServer：<code>tar.gz</code>，含前端、systemd 单元与 sync-only 单元</li>
+          <li>桌面版：<code>NexTerm_&lt;版本&gt;_x64-setup.exe</code> / <code>_arm64-setup.exe</code>、<code>_x86_64.dmg</code> / <code>_aarch64.dmg</code>、<code>NexTerm-desktop_&lt;版本&gt;_linux_&lt;架构&gt;.tar.gz</code></li>
+          <li>服务端：<code>NexTerm-server_&lt;版本&gt;_linux_&lt;架构&gt;.tar.gz</code>，含前端、两个 systemd 单元与两份 env 示例</li>
           <li>sync-only 不是独立包：同一个二进制加 <code>--sync-only</code> 即只挂同步端点</li>
           <li>懒猫微服：在微服应用中心里安装，不经 Release 下载</li>
           <li>从源码构建：Go 1.26 + Node 22+ + pnpm</li>
@@ -355,7 +355,7 @@
           <li>单元默认只听 <code>127.0.0.1</code>，对外自己接反代</li>
           <li>⛔ <code>/rpc</code> 无自身鉴权 —— 不建议公网部署</li>
         </ul>
-        <span class="file">NexTerm-x.y.z-linux-amd64.tar.gz · -arm64.tar.gz</span>
+        <span class="file">NexTerm-server_x.y.z_linux_amd64.tar.gz · _arm64.tar.gz</span>
       </div>
       <div class="cell">
         <span class="tag">LINUX · SYNC-ONLY 模式</span>
@@ -364,9 +364,9 @@
         <ul>
           <li>命令表只有 <code>sync_digest</code> / <code>sync_export</code> / <code>sync_import</code></li>
           <li>令牌泄漏也拿不到终端、文件与容器</li>
-          <li>包内附 <code>nexterm-onlyserver.service</code>，启用即切换</li>
+          <li>同一个服务端包内附 <code>nexterm-onlyserver.service</code>，换装即切换</li>
         </ul>
-        <span class="file">随完整版同一个 tar.gz 分发</span>
+        <span class="file">随 NexTerm-server 同一个 tar.gz 分发</span>
       </div>
     </div>
   </div>
