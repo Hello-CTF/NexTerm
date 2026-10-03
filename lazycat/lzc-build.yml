@@ -5,10 +5,9 @@
 
 # 打包前执行：产出 Linux 服务端二进制 + 前端 dist。
 #
-# 二进制在 **arm64 容器里原生执行、用 Debian 交叉工具链产出 x86_64**。
-# 这不是绕路：直接 `--platform linux/amd64` 让 qemu 模拟编译，实测会在
-# aws-lc-sys 的 AVX 汇编上随机报 `exit status: 4`（同一条 cc 命令单独跑却 exit 0）。
-# 交叉编译让 gcc 与 rustc 都原生跑，只有**输出**的指令集是 x86_64。
+# 二进制由共享交付入口 `node scripts/build.mjs server --release --os=linux
+# --arch=<amd64|arm64>` 产出：Go 工具链内建交叉编译，CGO_ENABLED=0 静态 ELF，
+# **不需要容器、qemu 或交叉 gcc**。
 # 完整取舍见 `image/build-server.sh` 文件头，以及 docs/LAZYCAT-PORT.md §12.7.1。
 buildscript: bash ./image/build-server.sh
 

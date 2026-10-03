@@ -2,9 +2,13 @@
 #
 # # 为什么用 debian 而不是 alpine
 #
-# 二进制是在 `rust:1-bookworm` 里编的，glibc 链接 ⇒ alpine（musl）跑不了。
-# 要上 alpine 就得编 musl 静态目标，那是另一条工具链，收益只有几十 MB，
-# 不值得在第一次上架时引入。
+# 服务端二进制是 CGO_ENABLED=0 的**静态 ELF**（Go 工具链内建交叉编译，
+# 由 `image/build-server.sh` 经共享交付入口产出），单看链接的话 alpine（musl）
+# 也能跑。留在 debian 的理由是运行期依赖与基线锚点：
+#
+#   · openssh-client / sshfs / fuse3 都要 apt 装（debian 系开箱即有）；
+#   · `FROM` 指向懒猫官方源的 debian 引用是 upstream-match 的既有锚点
+#     （见下），换 alpine 等于把整条基线链重新验证一遍，收益不抵风险。
 #
 # ⚠️ 基线镜像必须写成**懒猫官方源**的引用，不能写 `debian:bookworm-slim`。
 #
@@ -37,7 +41,7 @@ FROM --platform=linux/amd64 registry.lazycat.cloud/u0642568667/library/debian:07
 # sshfs + fuse3  ：磁盘挂载。平台声明 fuse.mount 后会注入 /lzcinit/fusermount3 并加进 PATH，
 #                  官方明确说标准 FUSE 客户端开箱可用 —— 我们只需要装着 sshfs 本体。
 # tzdata         ：容器里时间要对得上（会话列表、审计时间是按本地时区给用户看的）
-# ca-certificates：AI 提供方是 https 的（rustls 用自己的根证书库，但有些工具链仍会读系统库）
+# ca-certificates：AI 提供方是 https 的（Go 的 TLS 栈默认用系统根证书池）
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -52,8 +56,7 @@ RUN apt-get update \
 # ⛔ **这里不要再跟一条 `RUN chmod 0755`** —— 实测它会让二进制被打包两遍：
 # 构建上下文里的文件已经是 0755（build-server.sh 用 `install -m 0755`），
 # `COPY` 会原样保留权限位；而入 RUN 之后 overlayfs 为了记录*元数据*变更会
-# **把整个文件复制进新层**。实测两个层内容逐字节相同（都是 16337808 字节的
-# `usr/local/bin/nexterm-server`），白占 7.14 MiB —— LPK 22.77 MiB → 15.96 MiB。
+# **把整个文件复制进新层**。实测两个层内容逐字节相同，白占一层 —— LPK 明显变大。
 #
 # 权限改为在**构建期**断言：丢了执行位就是打包失败，而不是等用户装完启动才报错。
 # 这条 RUN 不产生数据层（空 diff），可以忽略其体积。
@@ -61,10 +64,13 @@ COPY nexterm-server /usr/local/bin/nexterm-server
 RUN test -x /usr/local/bin/nexterm-server \
     || { echo "FATAL: nexterm-server 没有执行位（构建上下文里的权限丢了？）" >&2; exit 1; }
 
+# 默认值与 `internal/app` 的 CLI 默认值一致；端口与数据目录写出来是为了
+# **在容器里一眼能看见**，改端口时不必去翻 Go 源码。
+# 日志级别不在此设置：服务端日志是固定 info 级的 slog（stderr + 数据目录 logs/），
+# 没有运行期日志级别环境变量。
 ENV NEXTERM_LISTEN=0.0.0.0:8080 \
     NEXTERM_DATA_DIR=/lzcapp/var/nexterm \
-    NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web \
-    RUST_LOG=info
+    NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web
 
 # /lzcapp/var 是持久卷挂载点，一定存在；不用 /lzcapp/var/nexterm 是因为它由
 # 应用自己创建，作为 WORKDIR 会要求镜像构建期就存在。
@@ -72,5 +78,5 @@ WORKDIR /lzcapp/var
 
 EXPOSE 8080
 
-# 健康检查交给 manifest 的 `health_check.test_url`（平台侧做，不需要容器里有 curl）。
+# 健康检查交给平台路由的自动健康检测（探测 /healthz，不需要容器里有 curl）。
 ENTRYPOINT ["/usr/local/bin/nexterm-server"]

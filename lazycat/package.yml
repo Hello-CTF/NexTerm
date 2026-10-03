@@ -34,7 +34,7 @@ locales:
     name: NexTerm 运维终端
     description: 浏览器里的 SSH / SFTP / Docker / 数据库一体化运维终端。终端进程、会话与工作区布局都跑在你的微服上，关掉网页不断、换台设备接着用；凭据用微服注入的根密钥加密后只存在你自己的实例里。
     usage: |
-      首次进入请到「设置 → 网络安全 → 凭据库」确认凭据库状态。
+      首次进入请到「凭据」面板确认凭据库状态。
 
       终端进程、会话与工作区布局都跑在这台微服上，浏览器只是接上去看：
       关掉网页不会结束会话，换一台设备打开即可接管原来那条终端，接着看原来的输出。
@@ -52,7 +52,7 @@ locales:
     name: NexTerm
     description: An all-in-one SSH / SFTP / Docker / database operations terminal in your browser. Terminal processes, sessions and workspace layout all run on your own microserver, so closing the page keeps them alive and another device picks up right where you left off. Credentials are encrypted with a root key injected by the microserver and stay on your own instance.
     usage: |
-      On first launch, open Settings → Network Security → Vault to check the credential vault status.
+      On first launch, open the Credentials panel to check the vault status.
 
       Terminal processes, sessions and workspace layout all run on this microserver; the browser
       only attaches to them. Closing the page does not end a session, and opening it from another
