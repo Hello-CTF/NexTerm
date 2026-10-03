@@ -187,7 +187,6 @@ func (m *Model) SetMode(mode Mode) error {
 		if mode == ModeObserver {
 			m.role = ModeObserver
 		}
-		m.pending = nil
 	}
 	m.notifyLocked()
 	return nil
@@ -393,7 +392,6 @@ func (m *Model) Close() {
 	m.closed = true
 	m.mode = ModeHidden
 	m.fenceLocked()
-	m.pending = nil
 	m.resize = nil
 	m.notifyLocked()
 }
@@ -450,10 +448,6 @@ func (m *Model) startNextLocked() {
 	}
 	req := m.pending
 	m.pending = nil
-	if req.generation != m.generation {
-		m.settleLocked(Result{Revision: req.revision, Grid: req.grid, Err: context.Canceled})
-		return
-	}
 	if !req.force && req.grid == m.committed {
 		m.settleLocked(Result{Revision: req.revision, Grid: req.grid})
 		return

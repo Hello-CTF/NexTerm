@@ -165,7 +165,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if channel != nil {
 			_ = channel.Close()
 		}
-		closeTerminal(terminal)
+		terminal.Close()
 		return killErr
 	}
 	if options.Durable != nil {
@@ -209,8 +209,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if channel == nil {
 			return TabInfo{}, errors.Join(errors.New("transport returned a nil PTY"), cleanup())
 		}
-	} else if kind != KindWinRM {
-		return TabInfo{}, errors.Join(ErrUnsupported, cleanup())
 	}
 
 	tabCtx, cancel := context.WithCancel(m.ctx)
@@ -792,17 +790,13 @@ func (m *Manager) closeTabResources(tab *Tab) {
 			_ = channel.Close()
 		}
 		<-tab.feedGate
-		closeTerminal(tab.terminal)
+		tab.terminal.Close()
 		tab.feedGate <- struct{}{}
 		tab.mu.Lock()
 		event := tab.controlEventLocked()
 		tab.mu.Unlock()
 		m.emit(context.Background(), TopicTerminalControl, event)
 	})
-}
-
-func closeTerminal(terminal TerminalState) {
-	terminal.Close()
 }
 
 func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []byte) error {

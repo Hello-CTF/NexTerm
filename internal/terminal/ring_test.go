@@ -11,7 +11,7 @@ func TestRingKeepsRecentBytesOnly(t *testing.T) {
 	r := NewRing(16)
 	r.Push([]byte("0123456789"))
 	r.Push([]byte("ABCDEFGHIJ"))
-	if got := r.Snapshot(); !bytes.Equal(got, []byte("456789ABCDEFGHIJ")) {
+	if got := r.Dump(0); !bytes.Equal(got, []byte("456789ABCDEFGHIJ")) {
 		t.Fatalf("snapshot = %q", got)
 	}
 	if r.Total() != 20 || r.Dropped() != 4 || r.Len() != 16 {
@@ -26,7 +26,7 @@ func TestRingChunkLargerThanCapKeepsTail(t *testing.T) {
 	r := NewRing(8)
 	input := []byte("a very long stream of bytes exceeding cap")
 	r.Push(input)
-	if got := r.Snapshot(); !bytes.Equal(got, []byte("ding cap")) {
+	if got := r.Dump(0); !bytes.Equal(got, []byte("ding cap")) {
 		t.Fatalf("snapshot = %q", got)
 	}
 	if r.Dropped() != uint64(len(input)-8) {
@@ -80,7 +80,7 @@ func TestRingClearKeepsCounters(t *testing.T) {
 		t.Fatalf("after clear: len=%d total=%d dropped=%d base=%d", r.Len(), r.Total(), r.Dropped(), r.Base())
 	}
 	r.Push([]byte("ab"))
-	if got := r.Snapshot(); !bytes.Equal(got, []byte("ab")) {
+	if got := r.Dump(0); !bytes.Equal(got, []byte("ab")) {
 		t.Fatalf("snapshot after clear = %q", got)
 	}
 }
@@ -108,7 +108,7 @@ func TestRingAgainstReferenceModel(t *testing.T) {
 					model = model[len(model)-cap:]
 				}
 
-				if !bytes.Equal(r.Snapshot(), model) {
+				if !bytes.Equal(r.Dump(0), model) {
 					t.Fatalf("step %d: snapshot mismatch (len=%d cap=%d)", step, r.Len(), cap)
 				}
 				if r.Total() != total {

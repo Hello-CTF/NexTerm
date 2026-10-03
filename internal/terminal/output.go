@@ -95,12 +95,6 @@ func NewOutput(tab *Tab, opts ...OutputOption) *Output {
 	return o
 }
 
-// Tab returns the pipeline's tab.
-func (o *Output) Tab() *Tab { return o.tab }
-
-// Fanout returns the subscriber set.
-func (o *Output) Fanout() *Fanout { return o.fanout }
-
 // Inflight returns the backpressure counter.
 func (o *Output) Inflight() *Inflight { return o.inflight }
 
@@ -212,9 +206,6 @@ func (o *Output) AttachFrom(ctx context.Context, id string, sink Sink, seq uint6
 
 // Detach removes one subscriber.
 func (o *Output) Detach(id string) bool { return o.fanout.Detach(id) }
-
-// DetachAll removes every subscriber.
-func (o *Output) DetachAll() int { return o.fanout.DetachAll() }
 
 // Close stops the hidden flusher. It is idempotent and does not close the
 // tab or flush; callers ending a stream should Flush first (Consume and

@@ -292,7 +292,7 @@ func TestSnapshotLinesSemantics(t *testing.T) {
 	if len(snap.Lines) == 0 || snap.Lines[0] != "ab" {
 		t.Fatalf("lines should trim trailing spaces: %q", snap.Lines)
 	}
-	// Empty trailing line after the final newline is dropped, Rust-style.
+	// A final newline does not produce an additional empty line.
 	for i, l := range snap.Lines {
 		if i > 0 && l != "" {
 			t.Fatalf("unexpected content at %d: %q", i, l)
