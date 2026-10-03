@@ -39,7 +39,7 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir)
-	cmd.Env = append(os.Environ(), "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=regression-master-key")
+	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=regression-master-key")
 	buffer := &bytes.Buffer{}
 	cmd.Stdout = buffer
 	cmd.Stderr = buffer
@@ -190,6 +190,26 @@ func buildServerBinary(t *testing.T) string {
 	return path
 }
 
+func serverProcessEnv(t *testing.T, extra ...string) []string {
+	t.Helper()
+	shared, err := os.MkdirTemp("", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shared) })
+	if err := os.Chmod(shared, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	env := make([]string, 0, len(os.Environ())+len(extra)+1)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "TMPDIR=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(append(env, "TMPDIR="+shared), extra...)
+}
+
 func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool) (*testServerProcess, string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -205,7 +225,7 @@ func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool) (*t
 		args = append(args, "--sync-only")
 	}
 	cmd := exec.Command(binary, args...)
-	cmd.Env = append(os.Environ(), "NEXTERM_WEB_ROOT=")
+	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
 	buffer := &bytes.Buffer{}
 	cmd.Stdout = buffer
 	cmd.Stderr = buffer
@@ -265,6 +285,7 @@ func waitForHealth(t *testing.T, process *testServerProcess, address string) cor
 func runServerToken(t *testing.T, binary, dataDir, command string) string {
 	t.Helper()
 	cmd := exec.Command(binary, command, "--data-dir", dataDir)
+	cmd.Env = serverProcessEnv(t)
 	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("%s: %v", command, err)

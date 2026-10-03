@@ -166,5 +166,5 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 
 func productionDurableSocketPath(dataDir string) string {
 	digest := sha256.Sum256([]byte(dataDir))
-	return filepath.Join(os.TempDir(), "nexterm-durable-"+fmt.Sprintf("%x", digest[:8])+".sock")
+	return filepath.Join(os.TempDir(), "nexterm-durable-"+fmt.Sprintf("%x", digest[:8]), "d.sock")
 }

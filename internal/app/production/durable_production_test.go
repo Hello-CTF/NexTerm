@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/durable"
@@ -126,6 +128,113 @@ func TestProductionDurableMissingTmuxIsUnavailableWithoutFallback(t *testing.T) 
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 0 {
 		t.Fatalf("volatile fallback created tabs: %+v", tabs)
 	}
+}
+
+func TestProductionDurableSocketPathStaysPrivateUnderWorldAccessibleTemp(t *testing.T) {
+	shared := worldAccessibleTempDir(t)
+	t.Setenv("TMPDIR", shared)
+	dataDir := filepath.Join(t.TempDir(), "data")
+	socketPath := productionDurableSocketPath(dataDir)
+	if parent := filepath.Dir(filepath.Dir(socketPath)); parent != shared {
+		t.Fatalf("socket path %q escapes the temp directory %q", socketPath, shared)
+	}
+	directory := filepath.Base(filepath.Dir(socketPath))
+	if !strings.HasPrefix(directory, "nexterm-durable-") || len(directory) != len("nexterm-durable-")+16 {
+		t.Fatalf("socket directory %q is not a hashed nexterm-durable directory", directory)
+	}
+	if filepath.Base(socketPath) != "d.sock" {
+		t.Fatalf("socket file = %q, want d.sock", filepath.Base(socketPath))
+	}
+	if again := productionDurableSocketPath(dataDir); again != socketPath {
+		t.Fatalf("socket path is not stable across restarts: %q vs %q", again, socketPath)
+	}
+	if other := productionDurableSocketPath(dataDir + "-other"); other == socketPath {
+		t.Fatal("distinct data directories share one durable socket path")
+	}
+	if len(socketPath) >= 104 {
+		t.Fatalf("socket path exceeds the unix domain socket limit: %d bytes", len(socketPath))
+	}
+}
+
+func TestProductionDurableComposesUnderWorldAccessibleTemp(t *testing.T) {
+	shared := worldAccessibleTempDir(t)
+	t.Setenv("TMPDIR", shared)
+	dataDir := t.TempDir()
+	binary := filepath.Join(t.TempDir(), "tmux-test-bin")
+	if err := os.WriteFile(binary, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{
+			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Streams: ipc.StreamFactoryFuncs{Binary: (&bridgeTestFactory{}).open},
+		},
+		DataDir: dataDir, Desktop: true, DurableBinary: binary,
+	})
+	if err != nil {
+		t.Fatalf("NewProduction under world-accessible temp parent: %v", err)
+	}
+	if production.Services.Durable == nil || production.Services.DurableErr != nil {
+		t.Fatalf("durable backend = %v, composition error = %v", production.Services.Durable, production.Services.DurableErr)
+	}
+	info, err := os.Lstat(filepath.Dir(productionDurableSocketPath(dataDir)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("socket directory is accessible by group or other users: %o", info.Mode().Perm())
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProductionDurableRealTmuxUnderWorldAccessibleTemp(t *testing.T) {
+	requireRealTmux(t)
+	shared := worldAccessibleTempDir(t)
+	t.Setenv("TMPDIR", shared)
+	dataDir := durableTestDataDir(t)
+	factory := &bridgeTestFactory{}
+	production := newDurableTestProduction(t, dataDir, factory)
+	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
+	var connected sessionInfoDTO
+	requireStoreTestResponse(t, connectedResponse, &connected)
+	channelID := "durable-shared-temp-channel"
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
+	var tabID string
+	requireStoreTestResponse(t, attachResponse, &tabID)
+	stream := factory.at(channelID, 0)
+	waitForProductionOutput(t, stream, "$ ")
+	writeDurableTestCommand(t, production, tabID, "shared-temp-marker", "client-a")
+	waitForProductionOutput(t, stream, "shared-temp-marker")
+	socketDir := filepath.Dir(productionDurableSocketPath(dataDir))
+	info, err := os.Lstat(socketDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("socket directory is accessible by group or other users: %o", info.Mode().Perm())
+	}
+	if _, err := os.Lstat(filepath.Join(socketDir, "d.sock")); err != nil {
+		t.Fatalf("tmux socket missing from the private directory: %v", err)
+	}
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
+}
+
+func worldAccessibleTempDir(t *testing.T) string {
+	t.Helper()
+	shared, err := os.MkdirTemp("", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shared) })
+	if err := os.Chmod(shared, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	return shared
 }
 
 func newDurableTestProduction(t *testing.T, dataDir string, factory *bridgeTestFactory) *Production {
