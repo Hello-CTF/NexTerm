@@ -234,9 +234,9 @@ function CredentialDetail({
   };
 
   const clearPassphrase = async () => {
-    const ok = await ask(
-      "清除这条私钥的口令？\n清除后，需要口令才能解开的私钥将无法连接。",
-    );
+    const ok = await ask("清除这条私钥的口令？\n清除后，需要口令才能解开的私钥将无法连接。", {
+      kind: "warning",
+    });
     if (!ok) return;
     try {
       await vaultApi.updateCredential(cred.id, { passphrase: "" });
@@ -255,6 +255,7 @@ function CredentialDetail({
             .map((u) => u.name)
             .join("、")}\n删除后引用置空，资产保留。确认删除？`
         : `未被引用，删除无影响。确认删除「${cred.name}」？`,
+      { kind: "warning" },
     );
     if (!ok) return;
     try {

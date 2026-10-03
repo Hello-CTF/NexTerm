@@ -182,7 +182,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   };
 
   const remove = async (id: string, label: string) => {
-    if (!(await ask(`停止转发 ${label}？\n\n已经建立的连接会被断开。`))) return;
+    if (!(await ask(`停止转发 ${label}？\n\n已经建立的连接会被断开。`, { kind: "warning" }))) return;
     try {
       await forwardApi.remove(id);
       refresh();

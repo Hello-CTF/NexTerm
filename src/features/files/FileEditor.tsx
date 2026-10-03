@@ -109,7 +109,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       try {
         const res = await fsApi.read(sessionId, path);
         if (cancelled) return;
-        if (res.size > 5 * 1024 * 1024 && !(await ask("文件超过 5MB，确定要编辑？"))) {
+        if (res.size > 5 * 1024 * 1024 && !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))) {
           onClose?.();
           return;
         }
@@ -248,7 +248,10 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       pushToast("info", "保存进行中，完成后才能切换编码");
       return;
     }
-    if (dirtyRef.current && !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？"))) {
+    if (
+      dirtyRef.current &&
+      !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？", { kind: "warning" }))
+    ) {
       return;
     }
     if (saveInFlightRef.current) {

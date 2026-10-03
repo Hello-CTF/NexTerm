@@ -177,6 +177,17 @@ function useWorkspaceViewport(): WorkspaceViewport {
   return viewport;
 }
 
+/**
+ * ask 的 kind → 共享浮层 level：warning / error 走警示图标 + 危险按钮；info 走信息图标；
+ * 不传 kind 的 ask 在本应用里几乎都是删除/断开类确认，按警示处理。
+ *
+ * 导出是为了让测试直接钉这条映射（R42 round-1 P1：缺省即 warning 曾让
+ * 「保持 info」的调用点实际渲染成警示浮层 —— 调用点必须显式传 kind:"info"）。
+ */
+export function dialogLevelForKind(kind?: string): "info" | "warning" {
+  return kind === "info" ? "info" : "warning";
+}
+
 export default function App() {
   const {
     workspaces,
@@ -465,10 +476,6 @@ export default function App() {
   /* ── 全局确认 / 提示弹框（替代原生 plugin-dialog / window.confirm）──── */
 
   useEffect(() => {
-    // ask 的 kind：warning / error 走警示图标 + 危险按钮；info 走信息图标；
-    // 不传 kind 的 ask 在本应用里几乎都是删除/断开类确认，按警示处理。
-    const level = (kind?: string): "info" | "warning" =>
-      kind === "info" ? "info" : "warning";
     registerDialogHandlers({
       ask: (message, options) =>
         new Promise<boolean>((resolve) => {
@@ -476,7 +483,7 @@ export default function App() {
             kind: "ask",
             message,
             title: options?.title,
-            level: level(options?.kind),
+            level: dialogLevelForKind(options?.kind),
             resolve,
           });
         }),
