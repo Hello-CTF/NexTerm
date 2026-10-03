@@ -11,6 +11,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/takeover"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
 	"github.com/cloudwego/eino/components/model"
 )
 
@@ -28,8 +29,26 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 		return err
 	}
 
+	// The outcome ledger is constructed exactly once, here, and reaches every
+	// execution through the shared registry dependencies; the agent runner and
+	// the subagent children reuse the same registry instead of holding their
+	// own ledger. Recorded canonical arguments are persisted unredacted —
+	// idempotence comparison needs the byte-exact arguments — so outcome_record
+	// and the kind='outcome' audit payload can carry sensitive tool arguments
+	// (file contents, sent keys, SQL) in full; the kind='exec' audit keeps its
+	// redaction.
+	outcomeStore, err := outcome.NewSQLiteStore(services.Store.DB())
+	if err != nil {
+		return err
+	}
+	outcomeLedger, err := outcome.New(outcome.Options{Store: outcomeStore, Auditor: services.Store.OutcomeAuditor()})
+	if err != nil {
+		return err
+	}
+
 	toolsDeps := tools.WithSession(tools.Dependencies{}, services.Sessions)
 	toolsDeps = tools.WithStore(toolsDeps, services.Store, services.Database)
+	toolsDeps.Outcome = outcomeLedger
 	if services.Docker != nil {
 		toolsDeps = tools.WithDocker(toolsDeps, services.Docker, "")
 	}
