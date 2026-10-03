@@ -27,6 +27,63 @@ type testServerProcess struct {
 	output *bytes.Buffer
 }
 
+func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir)
+	cmd.Env = append(os.Environ(), "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=regression-master-key")
+	buffer := &bytes.Buffer{}
+	cmd.Stdout = buffer
+	cmd.Stderr = buffer
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	process := &testServerProcess{cmd: cmd, wait: make(chan error, 1), output: buffer}
+	go func() { process.wait <- cmd.Wait() }()
+	defer process.stop(t)
+	health := waitForHealth(t, process, address)
+	if health.Vault == nil {
+		t.Fatal("health has no vault status")
+	}
+	encoded, err := json.Marshal(health.Vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Initialized bool `json:"initialized"`
+		Unlocked    bool `json:"unlocked"`
+	}
+	if err := json.Unmarshal(encoded, &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Initialized || !status.Unlocked {
+		t.Fatalf("vault status = %+v, want initialized and unlocked from NEXTERM_MASTER_KEY", status)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	created := requestFullRPC(t, client, address, "vault_set_credential", map[string]any{"args": map[string]any{"name": "regression", "kind": "password", "secret": "s3cret"}})
+	var createdData map[string]string
+	decodeRPCData(t, created, &createdData)
+	if createdData["id"] == "" {
+		t.Fatalf("vault_set_credential data = %+v", createdData)
+	}
+	revealed := requestFullRPC(t, client, address, "vault_reveal_credential", map[string]any{"id": createdData["id"]})
+	var revealedData struct {
+		Value string `json:"value"`
+	}
+	decodeRPCData(t, revealed, &revealedData)
+	if revealedData.Value != "s3cret" {
+		t.Fatalf("vault_reveal_credential value = %q", revealedData.Value)
+	}
+}
+
 func TestSyncOnlyProcessUsesRealTokenAndOnlyThreeRPCs(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
