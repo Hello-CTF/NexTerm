@@ -148,8 +148,6 @@ func TestR7StdinProducerModeling(t *testing.T) {
 		`at -l`,
 		`at -l -q a`,
 		`echo x | at -l`,
-		`echo -e 'ls' | at now`,
-		`printf '%s' 'ls' | at now`,
 		`echo -e 'id' | xargs -I{} echo {}`,
 	}
 	for _, command := range safe {
@@ -159,10 +157,15 @@ func TestR7StdinProducerModeling(t *testing.T) {
 			}
 		})
 	}
+	// at/batch install scheduled jobs, so even provably read-only payloads
+	// confirm at minimum (R5R4 contract).
 	confirm := []string{
 		`at -r 5`,
 		`at -d 5`,
 		`echo benign | batch -m`,
+		`echo -e 'ls' | at now`,
+		`printf '%s' 'ls' | at now`,
+		`echo 'id' | at now`,
 	}
 	for _, command := range confirm {
 		t.Run(command, func(t *testing.T) {
@@ -435,6 +438,9 @@ func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 		`git -c core.pager='id' status`,
 		`git -c core.pager id log`,
 		`git -ccore.pager='id' log`,
+		// R5R4: editor values are executable configs regardless of subcommand.
+		`git -c core.editor=vi status`,
+		`git -c sequence.editor=vi status`,
 		`mysql -e 'source /tmp/evil.sql'`,
 		`mysql -e 'SOURCE /tmp/evil.sql'`,
 		`mysql -e '\. /tmp/evil.sql'`,
@@ -478,7 +484,6 @@ func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 		`systemctl --user status ssh`,
 		`systemctl --no-block list-units`,
 		`git -C repo status --short`,
-		`git -c core.editor=vi status`,
 		`git clean -n`,
 		`git clean --dry-run`,
 		`git clean -ndx`,

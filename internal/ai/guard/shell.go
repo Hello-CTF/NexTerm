@@ -43,7 +43,7 @@ func classifyCommandDepth(command string, rules []string, depth int) Ruling {
 	}
 	segments, substitutions, err := parseShell(command)
 	if err != nil {
-		result = Worst(result, Confirm(KindUnknown, "命令无法可靠解析: "+err.Error()))
+		result = Worst(result, Dangerous("命令无法可靠解析: "+err.Error()))
 	}
 	for _, substitution := range substitutions {
 		result = Worst(result, Confirm(KindUnknown, "包含命令替换"), classifyCommandDepth(substitution, rules, depth+1))
@@ -67,7 +67,116 @@ func classifyCommandDepth(command string, rules []string, depth int) Ruling {
 			return result
 		}
 	}
+	return executionFloor(segments, result)
+}
+
+// executionFloor is the single conservative layer every classification
+// passes through. A pipe into an execution consumer (shells, interpreters,
+// at/batch/xargs — including through sudo, su, env and execution wrappers)
+// whose input bytes are not exactly determinable from a provable producer
+// (backslash-free echo, fully modeled printf) rules Danger: the consumer
+// would execute content the guard cannot review.
+func executionFloor(segments []shellSegment, result Ruling) Ruling {
+	if result.Risk >= Danger {
+		return result
+	}
+	for index := 1; index < len(segments); index++ {
+		if !containsString(segments[index-1].ops, "|") {
+			continue
+		}
+		tokens := stripDescriptors(segments[index].tokens)
+		if len(tokens) == 0 {
+			continue
+		}
+		consumer, resolved := floorConsumerName(tokens)
+		executor := !resolved || isInterpreter(consumer) || consumer == "at" || consumer == "batch" || consumer == "xargs" || consumer == "su"
+		if !executor {
+			continue
+		}
+		if !echoStdinHint(segments[index-1]).ok {
+			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+		}
+	}
 	return result
+}
+
+// floorConsumerName resolves the command that ultimately executes, looking
+// through env, privilege escalation and execution wrappers. resolved is
+// false when the structure cannot be aligned; callers treat that as an
+// execution consumer.
+func floorConsumerName(tokens []string) (string, bool) {
+	for len(tokens) > 0 {
+		if isAssignment(tokens[0]) {
+			tokens = tokens[1:]
+			continue
+		}
+		if len(tokens) == 0 {
+			return "", false
+		}
+		if commandName(tokens[0]) == "env" {
+			rest := envNestedTokens(tokens[1:])
+			if rest == nil {
+				return "", false
+			}
+			tokens = rest
+			continue
+		}
+		tokens = nestedExecutor(tokens)
+		if len(tokens) == 0 {
+			return "", false
+		}
+		return commandName(tokens[0]), true
+	}
+	return "", false
+}
+
+// envNestedTokens skips env options and assignments to reach the wrapped
+// command. It returns nil when the -S/--split-string payload makes the
+// wrapped command statically unresolvable.
+func envNestedTokens(args []string) []string {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return args[index+1:]
+		}
+		if strings.HasPrefix(arg, "--") {
+			option, _, attached, ok := resolveGNULongOption(arg, envLongOptions)
+			if !ok {
+				return nil
+			}
+			if option.name == "split-string" {
+				return nil
+			}
+			if option.takesValue && !attached {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				switch letters[0] {
+				case 'i', '0', 'v':
+					letters = letters[1:]
+				case 'u', 'C', 'a':
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				case 'S':
+					return nil
+				default:
+					return nil
+				}
+			}
+			continue
+		}
+		if isAssignment(arg) {
+			continue
+		}
+		return args[index:]
+	}
+	return []string{}
 }
 
 func echoStdinHint(segment shellSegment) stdinHint {
@@ -79,6 +188,14 @@ func echoStdinHint(segment shellSegment) stdinHint {
 		args := segment.tokens[1:]
 		for len(args) > 0 && echoOption(args[0]) {
 			args = args[1:]
+		}
+		// dash-family echo interprets backslash escapes by default and
+		// -e/-E make bash do the same, so the emitted bytes are only
+		// exactly determinable when no backslash is present.
+		for _, arg := range args {
+			if strings.ContainsRune(arg, '\\') {
+				return stdinHint{}
+			}
 		}
 		return stdinHint{text: strings.Join(args, " "), ok: true}
 	case "printf":
@@ -101,8 +218,10 @@ func echoOption(arg string) bool {
 
 // printfStdinHint models the bytes printf emits for a statically known
 // format string and arguments so downstream consumers (at, xargs) classify
-// the real payload instead of the format directives. Unsupported verbs or
-// truncated directives fail closed (ok == false).
+// the real payload instead of the format directives. Only the modeled
+// escapes and verbs are accepted; anything else (%b, hex/octal escapes,
+// unknown verbs) makes the output shell-dependent and fails closed
+// (ok == false), which consumers rate Danger.
 func printfStdinHint(args []string) stdinHint {
 	if len(args) == 0 {
 		return stdinHint{ok: true}
@@ -121,7 +240,10 @@ func printfStdinHint(args []string) stdinHint {
 	var out strings.Builder
 	for i := 0; i < len(format); i++ {
 		c := format[i]
-		if c == '\\' && i+1 < len(format) {
+		if c == '\\' {
+			if i+1 >= len(format) {
+				return stdinHint{}
+			}
 			i++
 			switch format[i] {
 			case 'n':
@@ -138,10 +260,12 @@ func printfStdinHint(args []string) stdinHint {
 				out.WriteByte('\f')
 			case 'v':
 				out.WriteByte('\v')
+			case '\\':
+				out.WriteByte('\\')
 			case 'c':
 				return stdinHint{text: out.String(), ok: true}
 			default:
-				out.WriteByte(format[i])
+				return stdinHint{}
 			}
 			continue
 		}
@@ -162,7 +286,7 @@ func printfStdinHint(args []string) stdinHint {
 		switch format[i] {
 		case '%':
 			out.WriteByte('%')
-		case 's', 'b', 'c', 'd', 'i', 'o', 'u', 'x', 'X', 'f', 'e', 'E', 'g', 'G':
+		case 's', 'c', 'd', 'i', 'o', 'u', 'x', 'X', 'f', 'e', 'E', 'g', 'G':
 			out.WriteString(takeArg())
 		default:
 			return stdinHint{}
@@ -815,7 +939,12 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 	case "nc", "ncat", "netcat", "socat":
 		for _, arg := range args {
 			lower := strings.ToLower(arg)
-			if arg == "-e" || arg == "-c" || lower == "--exec" || strings.HasPrefix(lower, "--exec=") || lower == "--sh-exec" || strings.HasPrefix(lower, "--sh-exec=") || lower == "--lua-exec" || strings.HasPrefix(lower, "--lua-exec=") {
+			if lower == "--exec" || strings.HasPrefix(lower, "--exec=") || lower == "--sh-exec" || strings.HasPrefix(lower, "--sh-exec=") || lower == "--lua-exec" || strings.HasPrefix(lower, "--lua-exec=") {
+				return Dangerous("网络工具执行命令")
+			}
+			if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsAny(arg[1:], "ec") {
+				// -e/-c execute a command; attached forms (-e/bin/sh) and
+				// clusters are execution capability just the same.
 				return Dangerous("网络工具执行命令")
 			}
 			if strings.HasPrefix(lower, "exec:") || strings.HasPrefix(lower, "system:") || strings.HasPrefix(lower, "shell") {
@@ -887,15 +1016,16 @@ func classifyInterpreter(name string, args []string, rules []string, depth int) 
 					takeCode(args[i+1])
 				}
 			case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.IndexByte(arg[1:], 'c') >= 0:
-				// Clustered or attached -c: everything after the first c is
-				// the script (getopt value semantics).
+				// Clustered -c. getopt-style shells (dash) treat the rest
+				// of the cluster as the attached script, while bash/zsh
+				// treat them as more flags and take the next argument.
+				// Classify both interpretations and keep the worse ruling.
 				position := strings.IndexByte(arg[1:], 'c')
-				code := arg[position+2:]
-				if code == "" && i+1 < len(args) {
-					code = args[i+1]
+				if remainder := arg[position+2:]; remainder != "" {
+					takeCode(remainder)
 				}
-				if code != "" {
-					takeCode(code)
+				if i+1 < len(args) {
+					takeCode(args[i+1])
 				}
 			}
 			continue
@@ -987,11 +1117,12 @@ func classifyDatabaseClient(name string, args, rules []string, ops []string, dep
 }
 
 // classifyDatabaseMetaCommand rates client-level escapes that execute files
-// or shell commands: mysql source/\. and psql \!, \i, \ir. Content read from
-// files cannot be verified statically, and \! runs through the shell.
+// or shell commands. MySQL splits -e input at statement boundaries, so
+// every statement is checked for source/\. and system; psql takes a single
+// command per -c, so only its leading escape executes.
 func classifyDatabaseMetaCommand(name, payload string, rules []string, depth int) Ruling {
-	trimmed := strings.TrimSpace(payload)
 	if name == "psql" {
+		trimmed := strings.TrimSpace(payload)
 		lower := strings.ToLower(trimmed)
 		switch {
 		case strings.HasPrefix(trimmed, `\!`):
@@ -1001,9 +1132,15 @@ func classifyDatabaseMetaCommand(name, payload string, rules []string, depth int
 		}
 		return Allow()
 	}
-	lower := strings.ToLower(trimmed)
-	if lower == "source" || strings.HasPrefix(lower, "source ") || strings.HasPrefix(trimmed, `\.`) {
-		return Dangerous("mysql 执行 SQL 文件，内容无法验证")
+	for _, statement := range strings.Split(payload, ";") {
+		trimmed := strings.TrimSpace(statement)
+		lower := strings.ToLower(trimmed)
+		switch {
+		case lower == "source" || strings.HasPrefix(lower, "source ") || strings.HasPrefix(trimmed, `\.`):
+			return Dangerous("mysql 执行 SQL 文件，内容无法验证")
+		case lower == "system" || strings.HasPrefix(lower, "system "):
+			return Worst(Dangerous("mysql 执行 shell 转义命令"), classifyCommandDepth(strings.TrimSpace(trimmed[len("system"):]), rules, depth+1))
+		}
 	}
 	return Allow()
 }
@@ -1274,18 +1411,41 @@ func classifySSHConfigValue(value string, rules []string, depth int) Ruling {
 
 func classifyService(name string, args []string) Ruling {
 	if name == "systemctl" {
-		valueGlobals := map[string]bool{"-H": true, "-M": true, "-t": true, "-o": true, "--host": true, "--machine": true, "--type": true, "--output": true, "--job-mode": true, "--root": true, "--image": true, "--image-policy": true, "--state": true, "--preset-mode": true, "--kill-who": true, "--signal": true}
 		index := 0
 		sawFailed := false
 		for index < len(args) && strings.HasPrefix(args[index], "-") {
 			arg := args[index]
-			index++
-			if arg == "--failed" {
-				sawFailed = true
-			}
-			if valueGlobals[arg] && index < len(args) {
+			if arg == "--" {
 				index++
+				break
 			}
+			if strings.HasPrefix(arg, "--") {
+				option, _, attached, ok := resolveGNULongOption(arg, systemctlLongOptions)
+				if !ok {
+					return Dangerous("systemctl 包含无法识别的全局选项")
+				}
+				index++
+				if option.name == "failed" {
+					sawFailed = true
+				}
+				if option.takesValue && !attached {
+					index++
+				}
+				continue
+			}
+			letters := arg[1:]
+			for len(letters) > 0 {
+				switch letters[0] {
+				case 'H', 'M', 't', 'o':
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				default:
+					return Dangerous("systemctl 包含无法识别的全局选项")
+				}
+			}
+			index++
 		}
 		if index >= len(args) {
 			if sawFailed {
@@ -1422,17 +1582,29 @@ func dockerForceFlag(args []string) bool {
 	return false
 }
 
+// substitutionTokens tokenizes a "$(...)" payload with the shell parser so
+// quoted arguments keep their boundaries; multi-segment payloads are not
+// statically alignable and report false.
+func substitutionTokens(payload string) ([]string, bool) {
+	segments, _, err := parseShell(payload)
+	if err != nil || len(segments) != 1 {
+		return nil, false
+	}
+	return segments[0].tokens, true
+}
+
 func dockerBulkDeletion(args []string) bool {
 	for _, arg := range args {
 		if !strings.HasPrefix(arg, "$(") || !strings.HasSuffix(arg, ")") {
 			continue
 		}
-		fields := strings.Fields(arg[2 : len(arg)-1])
-		if len(fields) != 0 {
-			if name := commandName(fields[0]); name == "sudo" || name == "doas" {
-				fields = stripCommandFlags(fields[1:])
-			}
+		fields, ok := substitutionTokens(arg[2 : len(arg)-1])
+		if !ok {
+			continue
 		}
+		// Look through privilege escalation and execution wrappers (sudo,
+		// nice, command, env, ...) to the docker/podman enumeration itself.
+		fields = nestedExecutor(fields)
 		if len(fields) == 0 || commandName(fields[0]) != "docker" && commandName(fields[0]) != "podman" {
 			continue
 		}
@@ -1499,17 +1671,39 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 			}
 			return Confirm(KindService, "kubectl 配置变更")
 		case "exec":
-			valueOptions := map[string]bool{"-c": true, "--container": true, "--namespace": true, "-n": true}
 			index := 1
 			for index < len(args) && strings.HasPrefix(args[index], "-") {
 				arg := args[index]
-				index++
 				if arg == "--" {
+					index++
 					break
 				}
-				if valueOptions[arg] && index < len(args) {
+				if strings.HasPrefix(arg, "--") {
+					option, _, attached, ok := resolveGNULongOption(arg, kubectlExecLongOptions)
+					if !ok {
+						return Dangerous("kubectl exec 包含无法识别的选项")
+					}
 					index++
+					if option.takesValue && !attached {
+						index++
+					}
+					continue
 				}
+				letters := arg[1:]
+				for len(letters) > 0 {
+					switch letters[0] {
+					case 'c', 'n':
+						if len(letters) == 1 {
+							index++
+						}
+						letters = ""
+					case 'i', 't', 'q':
+						letters = letters[1:]
+					default:
+						return Dangerous("kubectl exec 包含无法识别的选项")
+					}
+				}
+				index++
 			}
 			if index < len(args) {
 				index++
@@ -1562,9 +1756,47 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 			index++
 			continue
 		}
+		if strings.HasPrefix(arg, "--") {
+			name, value, attached := strings.Cut(arg[2:], "=")
+			if name == "exec-path" {
+				// Subcommands are executed from this directory, so it
+				// redirects execution regardless of the subcommand.
+				return Dangerous("git --exec-path 重定向子命令执行")
+			}
+			if name == "config-env" {
+				// The config value comes from an environment variable, so
+				// executable keys cannot be verified statically.
+				if !attached {
+					index++
+					if index < len(args) {
+						value = args[index]
+					}
+				}
+				if ruling, bad := gitConfigInjection(value, rules, depth); bad {
+					return ruling
+				}
+				index++
+				continue
+			}
+			if containsString(gitValueGlobals, name) {
+				if !attached {
+					index++
+				}
+				index++
+				continue
+			}
+			if containsString(gitFlagGlobals, name) {
+				index++
+				continue
+			}
+			return Dangerous("git 包含无法识别的全局选项")
+		}
 		if strings.HasPrefix(arg, "-") {
-			index++
-			continue
+			if containsString(gitFlagGlobals, arg) {
+				index++
+				continue
+			}
+			return Dangerous("git 包含无法识别的全局选项")
 		}
 		break
 	}
@@ -1606,10 +1838,7 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 		}
 		return Confirm(KindWriteFS, "Git 推送")
 	case "clean":
-		if containsAnyFold(rest[1:], "-n", "--dry-run") || hasShortFlag(rest[1:], 'n') {
-			return Allow()
-		}
-		return Dangerous("git clean 删除未跟踪文件")
+		return classifyGitClean(rest[1:])
 	case "reset":
 		if containsAnyFold(rest[1:], "--hard") {
 			return Dangerous("git reset --hard 丢弃提交与修改")
@@ -1622,20 +1851,77 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 	}
 }
 
+var gitValueGlobals = []string{"git-dir", "work-tree", "config-env", "namespace"}
+
+var gitFlagGlobals = []string{"-p", "-P", "--paginate", "--no-pager", "--bare", "--version", "--help", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks"}
+
+// classifyGitClean parses clean options with getopt semantics: -e/--exclude
+// consumes a value (so `git clean -fe -n` is NOT a dry run), and only a free
+// -n/--dry-run makes the read-only dry run.
+func classifyGitClean(args []string) Ruling {
+	dryRun := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, attached := strings.Cut(arg[2:], "=")
+			switch name {
+			case "dry-run":
+				dryRun = true
+			case "exclude":
+				if !attached {
+					index++
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				switch letters[0] {
+				case 'n':
+					dryRun = true
+					letters = letters[1:]
+				case 'e':
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				default:
+					letters = letters[1:]
+				}
+			}
+		}
+	}
+	if dryRun {
+		return Allow()
+	}
+	return Dangerous("git clean 删除未跟踪文件")
+}
+
 // gitConfigInjection rates git -c values that configure an executable hook
-// (pager, ssh command, proxy, fsmonitor, external diff, filters): the value
+// (pager, editor, ssh command, proxy, fsmonitor, external diff, filters,
+// shell aliases) or import configuration indirectly (include.*): the value
 // runs a command, so it is classified like one.
 func gitConfigInjection(value string, rules []string, depth int) (Ruling, bool) {
 	key, command, found := strings.Cut(value, "=")
 	lower := strings.ToLower(key)
-	executable := strings.Contains(lower, "pager") || strings.Contains(lower, "sshcommand") || strings.Contains(lower, "proxy") ||
+	executable := strings.Contains(lower, "pager") || strings.Contains(lower, "editor") || strings.Contains(lower, "sshcommand") || strings.Contains(lower, "proxy") ||
 		strings.Contains(lower, "hookspath") || strings.Contains(lower, "external") || strings.Contains(lower, "fsmonitor") ||
-		strings.HasPrefix(lower, "filter.")
+		strings.HasPrefix(lower, "filter.") || strings.HasPrefix(lower, "alias.") || strings.Contains(lower, "include")
 	if !executable {
 		return Ruling{}, false
 	}
-	if found && strings.TrimSpace(command) != "" {
-		return Worst(Dangerous("git -c 注入可执行配置"), classifyCommandDepth(command, rules, depth+1)), true
+	if found {
+		command = strings.TrimSpace(command)
+		if strings.HasPrefix(command, "!") {
+			command = strings.TrimSpace(command[1:])
+		}
+		if command != "" {
+			return Worst(Dangerous("git -c 注入可执行配置"), classifyCommandDepth(command, rules, depth+1)), true
+		}
 	}
 	return Dangerous("git -c 注入可执行配置"), true
 }

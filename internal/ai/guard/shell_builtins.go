@@ -133,6 +133,50 @@ var sudoLongOptions = []gnuLongOption{
 	{name: "close-from", takesValue: true},
 }
 
+var systemctlLongOptions = []gnuLongOption{
+	{name: "host", takesValue: true},
+	{name: "machine", takesValue: true},
+	{name: "type", takesValue: true},
+	{name: "output", takesValue: true},
+	{name: "job-mode", takesValue: true},
+	{name: "root", takesValue: true},
+	{name: "image", takesValue: true},
+	{name: "image-policy", takesValue: true},
+	{name: "state", takesValue: true},
+	{name: "preset-mode", takesValue: true},
+	{name: "kill-who", takesValue: true},
+	{name: "signal", takesValue: true},
+	{name: "lines", takesValue: true},
+	{name: "user"},
+	{name: "system"},
+	{name: "global"},
+	{name: "no-block"},
+	{name: "wait"},
+	{name: "quiet"},
+	{name: "failed"},
+	{name: "plain"},
+	{name: "all"},
+	{name: "full"},
+	{name: "recursive"},
+	{name: "no-legend"},
+	{name: "no-pager"},
+	{name: "show-transaction"},
+	{name: "dry-run"},
+	{name: "help"},
+	{name: "version"},
+}
+
+var kubectlExecLongOptions = []gnuLongOption{
+	{name: "container", takesValue: true},
+	{name: "namespace", takesValue: true},
+	{name: "context", takesValue: true},
+	{name: "kubeconfig", takesValue: true},
+	{name: "pod-running-timeout", takesValue: true},
+	{name: "stdin"},
+	{name: "tty"},
+	{name: "quiet"},
+}
+
 // sudoValueShorts lists the sudo/doas short options that consume a value,
 // matching privilegeOptionValue and stripCommandFlags.
 const sudoValueShorts = "ughpaCDTtUGR"

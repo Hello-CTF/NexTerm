@@ -50,14 +50,48 @@ func containsString(values []string, target string) bool {
 
 // wrapperScan is the parsed leading-option state shared by every wrapper.
 type wrapperScan struct {
-	pidMode    bool
-	replace    string
-	fileInput  string
-	listOnly   bool
-	removeOnly bool
+	pidMode      bool
+	replace      string
+	replaceSplit bool
+	fileInput    string
+	listOnly     bool
+	removeOnly   bool
 }
 
-func classifyWrapper(name string, wrapper execWrapper, args []string, rules []string, depth int, stdin stdinHint) Ruling {
+func (s *wrapperScan) recordValue(key, value string) {
+	switch key {
+	case "replace", "I":
+		s.replace = value
+	case "J":
+		// BSD -J: documented as line replacement, but real implementations
+		// word-split the line and only replace standalone placeholders.
+		// Both interpretations are classified.
+		s.replace = value
+		s.replaceSplit = true
+	case "file", "f", "arg-file", "a":
+		s.fileInput = value
+	}
+}
+
+func (s *wrapperScan) recordFlag(key string) {
+	switch key {
+	case "l":
+		s.listOnly = true
+	case "r", "d":
+		s.removeOnly = true
+	}
+}
+
+type wrapperParse struct {
+	scan   wrapperScan
+	nested []string
+	reason string
+}
+
+// parseWrapper consumes a wrapper's leading options with getopt semantics
+// and returns the wrapped command argv. Anything it cannot resolve (unknown
+// option, missing value) is reported through reason so callers fail closed.
+func parseWrapper(name string, wrapper execWrapper, args []string) wrapperParse {
 	index := 0
 	var scan wrapperScan
 	for index < len(args) {
@@ -88,7 +122,7 @@ func classifyWrapper(name string, wrapper execWrapper, args []string, rules []st
 				index++
 				continue
 			}
-			return Dangerous(name + " 包含无法识别的长选项")
+			return wrapperParse{reason: name + " 包含无法识别的长选项"}
 		}
 		if strings.HasPrefix(arg, "-") && arg != "-" {
 			letters := arg[1:]
@@ -114,13 +148,120 @@ func classifyWrapper(name string, wrapper execWrapper, args []string, rules []st
 					letters = letters[1:]
 					continue
 				}
-				return Dangerous(name + " 包含无法识别的选项")
+				return wrapperParse{reason: name + " 包含无法识别的选项"}
 			}
 			index++
 			continue
 		}
 		break
 	}
+	for skip := 0; skip < wrapper.skipArgs && index < len(args); skip++ {
+		index++
+	}
+	return wrapperParse{scan: scan, nested: args[index:]}
+}
+
+// nestedExecutor unwraps privilege escalation, env and execution wrappers so
+// the caller can identify the command that ultimately runs.
+func nestedExecutor(tokens []string) []string {
+	for len(tokens) > 0 {
+		name := commandName(tokens[0])
+		switch {
+		case name == "sudo" || name == "doas":
+			tokens = stripCommandFlags(tokens[1:])
+		case name == "su":
+			return tokens
+		case name == "env":
+			rest, ok := envUnwrap(tokens[1:])
+			if !ok {
+				return tokens
+			}
+			tokens = rest
+		default:
+			wrapper, ok := execWrappers[name]
+			if !ok || wrapper.stdinCommand || wrapper.stdinArgs {
+				return tokens
+			}
+			parsed := parseWrapper(name, wrapper, tokens[1:])
+			if parsed.reason != "" || len(parsed.nested) == 0 {
+				return tokens
+			}
+			tokens = parsed.nested
+		}
+	}
+	return tokens
+}
+
+// envUnwrap skips env options and assignments to reach the wrapped command.
+// The -S/--split-string payload is tokenized with env's "\_" unescape so
+// statically known payloads stay aligned; unparseable forms report false.
+func envUnwrap(args []string) ([]string, bool) {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return args[index+1:], true
+		}
+		if strings.HasPrefix(arg, "--") {
+			option, value, attached, ok := resolveGNULongOption(arg, envLongOptions)
+			if !ok {
+				return nil, false
+			}
+			if option.name == "split-string" {
+				if !attached {
+					index++
+					if index >= len(args) {
+						return nil, false
+					}
+					value = args[index]
+				}
+				return strings.Fields(strings.ReplaceAll(value, "\\_", " ")), true
+			}
+			if option.takesValue && !attached {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				switch letters[0] {
+				case 'i', '0', 'v':
+					letters = letters[1:]
+				case 'u', 'C', 'a':
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				case 'S':
+					payload := letters[1:]
+					if payload == "" {
+						index++
+						if index >= len(args) {
+							return nil, false
+						}
+						payload = args[index]
+					}
+					return strings.Fields(strings.ReplaceAll(payload, "\\_", " ")), true
+				default:
+					return nil, false
+				}
+			}
+			continue
+		}
+		if isAssignment(arg) {
+			continue
+		}
+		return args[index:], true
+	}
+	return []string{}, true
+}
+
+func classifyWrapper(name string, wrapper execWrapper, args []string, rules []string, depth int, stdin stdinHint) Ruling {
+	parsed := parseWrapper(name, wrapper, args)
+	if parsed.reason != "" {
+		return Dangerous(parsed.reason)
+	}
+	scan := parsed.scan
 	if wrapper.stdinCommand {
 		// at -f executes the file's content, which cannot be verified; it
 		// takes precedence over anything read from standard input.
@@ -134,53 +275,35 @@ func classifyWrapper(name string, wrapper execWrapper, args []string, rules []st
 			return Confirm(KindService, name+" 删除计划任务")
 		}
 		if stdin.ok && strings.TrimSpace(stdin.text) != "" {
-			return classifyCommandDepth(stdin.text, rules, depth+1)
+			// Installing a scheduled job always confirms at minimum; the
+			// payload itself is classified with the full model.
+			return Worst(Confirm(KindService, name+" 安装计划任务"), classifyCommandDepth(stdin.text, rules, depth+1))
 		}
 		return Dangerous(name + " 执行标准输入中的命令")
 	}
 	if wrapper.pidOption && scan.pidMode {
 		return Confirm(KindProcess, "进程调度参数变更")
 	}
-	for skip := 0; skip < wrapper.skipArgs && index < len(args); skip++ {
-		index++
-	}
-	if index >= len(args) {
+	if len(parsed.nested) == 0 {
 		if wrapper.stdinArgs {
-			return Dangerous("xargs 从标准输入构建命令")
+			// xargs with no command runs its built-in echo: reading stdin
+			// and printing it is the narrow read-only default.
+			return Allow()
 		}
 		return Dangerous(name + " 缺少要执行的命令")
 	}
-	nested := args[index:]
 	if wrapper.stdinArgs {
-		return classifyXargs(nested, scan, rules, depth, stdin)
+		return classifyXargs(parsed.nested, scan, rules, depth, stdin)
 	}
 	// The nested command runs with the wrapper's argv intact; classify the
 	// token slice so quoted scripts and clustered options keep their meaning.
-	return classifySegment(shellSegment{tokens: nested}, rules, depth+1, stdin)
+	return classifySegment(shellSegment{tokens: parsed.nested}, rules, depth+1, stdin)
 }
 
-func (s *wrapperScan) recordValue(key, value string) {
-	switch key {
-	case "replace", "I":
-		s.replace = value
-	case "file", "f", "arg-file", "a":
-		s.fileInput = value
-	}
-}
-
-func (s *wrapperScan) recordFlag(key string) {
-	switch key {
-	case "l":
-		s.listOnly = true
-	case "r", "d":
-		s.removeOnly = true
-	}
-}
-
-// classifyXargs models xargs semantics: with -I/--replace every occurrence
+// classifyXargs models xargs semantics: with -I/-J/--replace every occurrence
 // of the replacement string in the initial arguments is substituted with one
 // input line per invocation; without it, input words are appended to the
-// command. Unknown or empty input fails closed to Danger.
+// command. Unknown or non-determinable input fails closed to Danger.
 func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int, stdin stdinHint) Ruling {
 	if scan.fileInput != "" {
 		return Dangerous("xargs 从文件构建命令")
@@ -200,11 +323,7 @@ func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int,
 				continue
 			}
 			classified++
-			substituted := make([]string, len(nested))
-			for i, token := range nested {
-				substituted[i] = strings.ReplaceAll(token, scan.replace, line)
-			}
-			result = Worst(result, classifySegment(shellSegment{tokens: substituted}, rules, depth+1, stdinHint{}))
+			result = Worst(result, classifyXargsLine(nested, scan, line, rules, depth))
 			continue
 		}
 		words := strings.Fields(line)
@@ -219,6 +338,37 @@ func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int,
 	}
 	if classified == 0 {
 		return Dangerous("xargs 从标准输入构建命令")
+	}
+	return result
+}
+
+// classifyXargsLine classifies one input line under replacement semantics.
+// GNU -I replaces every placeholder occurrence with the whole line as one
+// argument; BSD -J replaces only standalone placeholder tokens with the
+// line's words. Because implementations disagree, both interpretations are
+// classified and the worse ruling wins.
+func classifyXargsLine(nested []string, scan wrapperScan, line string, rules []string, depth int) Ruling {
+	substituted := make([]string, len(nested))
+	for i, token := range nested {
+		substituted[i] = strings.ReplaceAll(token, scan.replace, line)
+	}
+	result := classifySegment(shellSegment{tokens: substituted}, rules, depth+1, stdinHint{})
+	if scan.replaceSplit {
+		words := strings.Fields(line)
+		combined := make([]string, 0, len(nested)+len(words))
+		replaced := false
+		for _, token := range nested {
+			if token == scan.replace {
+				combined = append(combined, words...)
+				replaced = true
+				continue
+			}
+			combined = append(combined, token)
+		}
+		if !replaced {
+			combined = append(combined, words...)
+		}
+		result = Worst(result, classifySegment(shellSegment{tokens: combined}, rules, depth+1, stdinHint{}))
 	}
 	return result
 }
