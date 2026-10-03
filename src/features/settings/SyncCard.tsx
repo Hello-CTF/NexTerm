@@ -18,6 +18,9 @@
 // 不管服务端装在哪，凭据都是**它自己生成的那串令牌**，桌面版抄过来填上就能连。
 // 「部署位置」那个下拉只影响「去哪儿抄」的提示，不影响发什么。
 //
+// 令牌的作用域是**受限同步接口 /sync/rpc**（读摘要、推拉资产），不是完整版 /rpc ——
+// 界面文案必须如实写这一点，别夸大成「完全控制权」（M58 审计抓到的旧文案就是这么错的）。
+//
 // ⚠️ 用户界面里**不要写「盒子」**。这个词是本项目内部的简称（懒猫微服那台硬件），
 // 用户看不懂 —— 界面上一律写「懒猫微服」「对端」。
 //
@@ -490,8 +493,19 @@ function ServerTokenBody({
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          <b>这个令牌等同于对这台服务端的完全控制权</b>，不只是同步资产 —— 它连的是
-          同一套命令接口。别贴到聊天、截图或工单里；怀疑泄露了就点「重置令牌」。
+          <b>这个令牌只能用于资产同步</b>：它只授权受限的 <span className="nx-code">/sync/rpc</span>
+          接口（读摘要、推拉资产），<b>不是</b>完整版 <span className="nx-code">/rpc</span> 的钥匙 ——
+          拿它操作不了这台服务端的终端、文件或容器。但它仍能读写这台服务端上参与同步的全部资产，
+          别贴到聊天、截图或工单里；怀疑泄露了就点「重置令牌」。
+        </div>
+      </div>
+
+      <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
+        <IconInfo size={14} className="mt-0.5 shrink-0" />
+        <div>
+          <b>要把完整版服务端开放到非回环地址？</b>浏览器界面和{" "}
+          <span className="nx-code">/rpc</span> 没有内置登录鉴权，能访问端口的人就能操作终端、
+          文件和容器。请保留回环监听，在前面配置带身份验证和 TLS 的反向代理（详见 README）。
         </div>
       </div>
     </>
