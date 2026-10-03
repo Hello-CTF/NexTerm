@@ -110,7 +110,7 @@ func startWindowsProcess(cmd *exec.Cmd, options windowsStartOptions) (*Process, 
 		return nil, err
 	}
 	pid := int(processInfo.ProcessId)
-	return newProcess(pid, tree, func() error {
+	return newProcess(tree, func() error {
 		status, err := windows.WaitForSingleObject(tree.process, windows.INFINITE)
 		if err != nil {
 			return err
@@ -183,19 +183,6 @@ func windowsEnvironmentBlock(env []string) []uint16 {
 		return strings.ToUpper(env[i]) < strings.ToUpper(env[j])
 	})
 	return utf16.Encode([]rune(strings.Join(env, "\x00") + "\x00\x00"))
-}
-
-func newProcessTree(process *os.Process) (processTree, error) {
-	handle, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(process.Pid))
-	if err != nil {
-		return nil, err
-	}
-	tree, err := newWindowsProcessTree(handle)
-	if err != nil {
-		_ = windows.CloseHandle(handle)
-		return nil, err
-	}
-	return tree, nil
 }
 
 func newWindowsProcessTree(process windows.Handle) (*windowsProcessTree, error) {

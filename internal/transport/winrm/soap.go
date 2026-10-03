@@ -87,11 +87,7 @@ func (r *libraryRunner) post(ctx context.Context, message *soap.SoapMessage) (st
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	requestCtx := ctx
-	cancel := func() {}
-	if r.requestTimeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, r.requestTimeout)
-	}
+	requestCtx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, r.endpoint, strings.NewReader(message.String()))
 	if err != nil {

@@ -35,7 +35,7 @@ func (f *fakeExecutor) Exec(_ context.Context, script string, options base.ExecO
 	return f.result, f.err
 }
 
-func TestListParsesSingleAndArrayFixtures(t *testing.T) {
+func TestListParsesArrayFixtures(t *testing.T) {
 	array, err := os.ReadFile("testdata/list-array.json")
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,10 @@ func TestListParsesSingleAndArrayFixtures(t *testing.T) {
 	}
 	entries, err = parseList(`C:\root\`, string(single))
 	if err != nil || len(entries) != 1 || entries[0].Path != `C:\root\O'Brien.txt` || entries[0].Size != 42 {
-		t.Fatalf("single object = %+v, %v", entries, err)
+		t.Fatalf("single entry = %+v, %v", entries, err)
+	}
+	if _, err := parseList(`C:\root`, `{"n":"legacy.txt","d":false,"l":1,"m":"2026-10-02T12:03:04Z"}`); err == nil {
+		t.Fatal("single-object JSON succeeded")
 	}
 	if entries, err = parseList(`C:\empty`, " \r\n"); err != nil || len(entries) != 0 {
 		t.Fatalf("empty directory = %+v, %v", entries, err)
@@ -169,7 +172,7 @@ func TestDirectoryAndMetadataOperations(t *testing.T) {
 		case strings.Contains(script, "Test-Path"):
 			return success("yes"), nil
 		case strings.Contains(script, ".Length"):
-			return success("12345"), nil
+			return success(" \r\n12345\r\n"), nil
 		default:
 			return success(""), nil
 		}

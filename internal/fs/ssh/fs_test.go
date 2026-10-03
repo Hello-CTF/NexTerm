@@ -117,7 +117,7 @@ func TestUploadDownloadResumeProgressAndEmptyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	var uploads []Progress
-	transferred, err := filesystem.Upload(ctx, source, "upload.bin", TransferOptions{Progress: func(p Progress) { uploads = append(uploads, p) }})
+	transferred, err := filesystem.Upload(ctx, source, "upload.bin", TransferOptions{Resume: true, Progress: func(p Progress) { uploads = append(uploads, p) }})
 	if err != nil || transferred != 10 {
 		t.Fatalf("upload = %d, %v", transferred, err)
 	}

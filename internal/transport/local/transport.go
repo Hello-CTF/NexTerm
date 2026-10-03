@@ -37,10 +37,6 @@ type Transport struct {
 	channels   map[string]io.Closer
 }
 
-func New() *Transport {
-	return NewWithConfig(Config{})
-}
-
 func NewWithConfig(config Config) *Transport {
 	shell := strings.TrimSpace(config.Shell)
 	if shell == "" {
