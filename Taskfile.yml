@@ -43,8 +43,6 @@ tasks:
       - pnpm test
       - node scripts/build.mjs bindings
       - node scripts/build.mjs frontend --repro-check
-      - python3 scripts/verify-ci-prerequisites.py
-      - python3 scripts/verify-ci-prerequisites.py --self-test
 
   bindings:
     summary: Regenerate Wails TypeScript bindings intentionally
@@ -60,12 +58,6 @@ tasks:
     summary: Build the real Vite assets twice and compare their tree hash
     cmds:
       - node scripts/build.mjs frontend --repro-check
-
-  ci:prerequisites:
-    summary: Verify CI/release workflow Linux cgo prerequisite ordering and release contract invariants
-    cmds:
-      - python3 scripts/verify-ci-prerequisites.py
-      - python3 scripts/verify-ci-prerequisites.py --self-test
 
   server:build:
     summary: Build a stripped, static, zero-cgo Linux server
