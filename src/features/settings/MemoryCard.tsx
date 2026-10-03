@@ -55,22 +55,29 @@ function versionConflict(e: unknown): { expected: number; actual: number } | nul
   return { expected, actual };
 }
 
-type EntryDraft = {
-  /** 非空 = 编辑既有条目（携带它的版本号做 CAS）；空 = 新建。 */
-  editingId: string | null;
-  editingVersion: number | null;
-  topic: string;
-  content: string;
-  secrets: MemorySecretPolicy;
-};
+/**
+ * 表单草稿：判别联合 —— create 是唯一允许走 memory_create 的形态；
+ * edit-loading 是「点编辑后正文还没读回来」的中间态，此时不渲染可提交表单，
+ * 从结构上杜绝「编辑被当成新建提交」和「迟到响应覆盖用户输入」。
+ */
+type EntryDraft =
+  | { kind: "create"; topic: string; content: string; secrets: MemorySecretPolicy }
+  | { kind: "edit-loading"; editingId: string }
+  | {
+      kind: "edit";
+      editingId: string;
+      editingVersion: number;
+      topic: string;
+      content: string;
+      secrets: MemorySecretPolicy;
+    };
 
-const EMPTY_DRAFT: EntryDraft = {
-  editingId: null,
-  editingVersion: null,
+const CREATE_DRAFT = (): EntryDraft => ({
+  kind: "create",
   topic: "",
   content: "",
   secrets: "reject",
-};
+});
 
 export function MemoryCard() {
   const { pushToast } = useUi();
@@ -95,11 +102,14 @@ export function MemoryCard() {
   // 陈旧完成防护：卸载后、或更新的读取已发出后，旧请求的迟到结果一律丢弃。
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
+  /** 编辑正文读取的代次：点编辑/取消都会推进，迟到响应不得填进更新的草稿。 */
+  const editGenRef = useRef(0);
   useEffect(() => {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
       loadGenRef.current++;
+      editGenRef.current++;
     };
   }, []);
 
@@ -117,6 +127,10 @@ export function MemoryCard() {
       setTopics(nextTopics);
     } catch (e) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
+      // 致命错误一律把列表清空：旧数据（包括空列表）不得在没有标注的情况下
+      // 继续冒充最新状态 —— 错误与重试必须可见。
+      setTopics(null);
+      setSettings(null);
       setError(describeError(e));
     } finally {
       if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
@@ -171,14 +185,21 @@ export function MemoryCard() {
     }
   };
 
-  /** 编辑：先把正文读出来再填表单（index 里没有 content）。 */
+  /**
+   * 编辑：先把正文读出来再填表单（index 里没有 content）。
+   *
+   * 读取期间草稿停留在 edit-loading —— 不渲染可提交表单；取消或改点另一条
+   * 编辑都会推进 editGenRef，迟到的 get 响应一律丢弃，不会覆盖新草稿。
+   */
   const startEdit = async (entry: MemoryIndexEntry) => {
+    const gen = ++editGenRef.current;
     setFormError(null);
-    setDraft({ ...EMPTY_DRAFT, editingId: entry.id, topic: "", content: "" });
+    setDraft({ kind: "edit-loading", editingId: entry.id });
     try {
       const full = await memoryApi.get(MEMORY_SCOPE, entry.id);
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || gen !== editGenRef.current) return;
       setDraft({
+        kind: "edit",
         editingId: full.id,
         editingVersion: full.version,
         topic: full.topic,
@@ -186,14 +207,23 @@ export function MemoryCard() {
         secrets: "reject",
       });
     } catch (e) {
-      if (!aliveRef.current) return;
+      if (!aliveRef.current || gen !== editGenRef.current) return;
       setDraft(null);
       pushToast("error", `读取记忆正文失败：${describeError(e)}`);
     }
   };
 
+  /** 取消/关闭表单：同时作废旧的在途正文读取。 */
+  const closeDraft = () => {
+    editGenRef.current++;
+    setDraft(null);
+    setFormError(null);
+  };
+
   const saveDraft = async () => {
     if (!draft || saving) return;
+    // 双保险：edit-loading 不渲染表单，这里再挡一次，绝不落入 create
+    if (draft.kind === "edit-loading") return;
     const topic = draft.topic.trim();
     const content = draft.content.trim();
     if (!topic || !content) {
@@ -203,7 +233,7 @@ export function MemoryCard() {
     setSaving(true);
     setFormError(null);
     try {
-      if (draft.editingId !== null && draft.editingVersion !== null) {
+      if (draft.kind === "edit") {
         await memoryApi.edit(
           MEMORY_SCOPE,
           draft.editingId,
@@ -323,10 +353,36 @@ export function MemoryCard() {
       </div>
 
       {/* 新建 / 编辑表单（内联，与凭据保护的内联表单同一模式） */}
-      {draft ? (
+      {draft === null ? (
+        <div className="mb-3">
+          <button
+            className="nx-btn nx-btn-outline nx-btn-sm"
+            onClick={() => {
+              setFormError(null);
+              setDraft(CREATE_DRAFT());
+            }}
+          >
+            <IconPlus size={11} />
+            新建一条记忆
+          </button>
+        </div>
+      ) : draft.kind === "edit-loading" ? (
+        /* 正文读取中：没有可提交的表单 —— 编辑绝不会被当成新建落库 */
+        <div
+          className="mb-3 flex items-center gap-2 border-b border-neutral-800/60 pb-3"
+          aria-busy="true"
+        >
+          <span className="text-[12.5px] text-neutral-200">读取记忆正文…</span>
+          <IconRefresh size={11} className="animate-spin text-neutral-500" />
+          <div className="nx-spacer" />
+          <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={closeDraft}>
+            取消
+          </button>
+        </div>
+      ) : (
         <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
           <div className="text-[12.5px] font-semibold text-neutral-200">
-            {draft.editingId ? "编辑记忆" : "新建记忆"}
+            {draft.kind === "edit" ? "编辑记忆" : "新建记忆"}
           </div>
           <input
             className="nx-input nx-input-sm"
@@ -366,10 +422,7 @@ export function MemoryCard() {
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
               disabled={saving}
-              onClick={() => {
-                setDraft(null);
-                setFormError(null);
-              }}
+              onClick={closeDraft}
             >
               取消
             </button>
@@ -384,19 +437,6 @@ export function MemoryCard() {
               <span className="min-w-0 break-words">{formError}</span>
             </div>
           )}
-        </div>
-      ) : (
-        <div className="mb-3">
-          <button
-            className="nx-btn nx-btn-outline nx-btn-sm"
-            onClick={() => {
-              setFormError(null);
-              setDraft({ ...EMPTY_DRAFT });
-            }}
-          >
-            <IconPlus size={11} />
-            新建一条记忆
-          </button>
         </div>
       )}
 
@@ -422,12 +462,6 @@ export function MemoryCard() {
         <div className="nx-hint py-2 text-[12px]">还没有记忆。开启开关后，AI 运行会注入这里的内容。</div>
       ) : (
         <div className="flex flex-col gap-2">
-          {error && (
-            <div className="nx-alert nx-alert-danger flex items-center gap-2 text-[12px]" role="alert">
-              <IconXCircle size={13} className="shrink-0" />
-              <span className="min-w-0 break-words">{error}</span>
-            </div>
-          )}
           {topics.map((t) => (
             <div key={t.topic}>
               <div className="mb-1 font-mono text-[11px] text-neutral-500">{t.topic}</div>

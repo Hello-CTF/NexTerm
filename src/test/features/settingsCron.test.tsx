@@ -385,4 +385,65 @@ describe("CronCard", () => {
     expect(button?.disabled).toBe(true);
     expect(mocks.register).not.toHaveBeenCalled();
   });
+
+  it("shows the gap error and retry instead of an empty state when failing sessions hide unknown jobs", async () => {
+    // c-1 成功但为空，c-2 失败 —— 不能据此断言「没有任务」
+    mocks.list.mockImplementation((sessionId: string) =>
+      sessionId === "c-1" ? Promise.resolve([]) : Promise.reject(new Error("磁盘炸了")),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("部分会话的任务读取失败");
+    expect(text).toContain("磁盘炸了");
+    expect(text).toContain("不能据此断定没有任务");
+    expect(text).not.toContain("还没有定时任务");
+
+    clickButton(mounted.container, "重试");
+    await flush();
+    expect(mocks.list).toHaveBeenCalledTimes(4);
+  });
+
+  it("shows the refresh failure instead of the stale list when conversationList fails after a successful load", async () => {
+    mocks.conversationList
+      .mockResolvedValueOnce([CONV_A, CONV_B])
+      .mockRejectedValueOnce(new Error("会话服务不可用"));
+    mounted = mount(createElement(CronCard));
+    await flush();
+    expect(mounted.container.textContent).toContain("磁盘巡检");
+
+    clickButton(mounted.container, "刷新");
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("会话服务不可用");
+    // 旧列表不得假装最新
+    expect(text).not.toContain("磁盘巡检");
+
+    clickButton(mounted.container, "重试");
+    await flush();
+    expect(mounted.container.textContent).toContain("磁盘巡检");
+    expect(mocks.conversationList).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a stale session-list result that lands after a newer reload", async () => {
+    const stale = deferred<TestJob[]>();
+    mocks.list
+      .mockReturnValueOnce(stale.promise) // c-1 首次（慢）
+      .mockResolvedValueOnce([JOB_B]) // c-2 首次
+      .mockResolvedValueOnce([JOB_A]) // c-1 刷新（新）
+      .mockResolvedValueOnce([JOB_B]); // c-2 刷新
+    mounted = mount(createElement(CronCard));
+    // 首次加载已发出（c-1 还挂在慢响应上），此时点刷新
+    await flush();
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).toContain("磁盘巡检");
+
+    stale.resolve([]);
+    await flush();
+    // 迟到的旧结果（空列表）不得把新列表里的任务抹掉
+    expect(mounted.container.textContent).toContain("磁盘巡检");
+  });
 });

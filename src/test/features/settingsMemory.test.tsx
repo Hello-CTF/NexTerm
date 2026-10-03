@@ -341,4 +341,94 @@ describe("MemoryCard", () => {
     expect(mounted.container.textContent).toContain("restart at 02:00");
     expect(mocks.get).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps the edit form unsubmittable while the body loads; a late response never clobbers a newer draft", async () => {
+    const slow = deferred<typeof ENTRY_FULL>();
+    mocks.get.mockReturnValue(slow.promise);
+    mounted = mount(createElement(MemoryCard));
+    await flush();
+
+    click(iconButton(mounted.container, "编辑记忆 m-1"));
+    await flush();
+    // 读取中：显式提示，且结构上就没有可提交的表单
+    expect(mounted.container.textContent).toContain("读取记忆正文…");
+    expect(mounted.container.querySelector('textarea[aria-label="记忆内容"]')).toBeNull();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.edit).not.toHaveBeenCalled();
+
+    // 读取期间取消并改为新建；迟到的 get 响应不得把新草稿覆盖成编辑
+    clickButton(mounted.container, "取消");
+    await flush();
+    clickButton(mounted.container, "新建一条记忆");
+    setInputValue(inputByLabel(mounted.container, "记忆主题"), "draft-topic");
+    slow.resolve(ENTRY_FULL);
+    await flush();
+    expect(mounted.container.textContent).toContain("新建记忆");
+    expect(inputByLabel(mounted.container, "记忆主题").value).toBe("draft-topic");
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.edit).not.toHaveBeenCalled();
+  });
+
+  it("closes the form and reports when the edit body fails to load", async () => {
+    mocks.get.mockRejectedValue(new Error("网络抖动"));
+    mounted = mount(createElement(MemoryCard));
+    await flush();
+
+    click(iconButton(mounted.container, "编辑记忆 m-1"));
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("读取记忆正文失败"),
+    );
+    // 表单已关，不会留着一个能误提交的壳
+    expect(mounted.container.querySelector('textarea[aria-label="记忆内容"]')).toBeNull();
+    expect(mounted.container.textContent).toContain("新建一条记忆");
+  });
+
+  it("shows the refresh failure instead of the empty state when a reload fails after an empty list", async () => {
+    mocks.index.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("磁盘炸了"));
+    mounted = mount(createElement(MemoryCard));
+    await flush();
+    expect(mounted.container.textContent).toContain("还没有记忆");
+
+    clickButton(mounted.container, "刷新");
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    // 空态不得在无标注的情况下冒充最新状态
+    expect(text).toContain("磁盘炸了");
+    expect(text).not.toContain("还没有记忆");
+
+    clickButton(mounted.container, "重试");
+    await flush();
+    expect(mounted.container.textContent).toContain("m-1");
+    expect(mocks.index).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows the refresh failure instead of stale entries when a reload fails", async () => {
+    mocks.index.mockResolvedValueOnce(INDEX_ONE).mockRejectedValueOnce(new Error("磁盘炸了"));
+    mounted = mount(createElement(MemoryCard));
+    await flush();
+    expect(mounted.container.textContent).toContain("m-1");
+
+    clickButton(mounted.container, "刷新");
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("磁盘炸了");
+    expect(text).not.toContain("m-1");
+  });
+
+  it("drops a stale list result that lands after a newer reload", async () => {
+    const stale = deferred<MemoryTopicIndex[]>();
+    mocks.index.mockReturnValueOnce(stale.promise).mockResolvedValue(INDEX_ONE);
+    mounted = mount(createElement(MemoryCard));
+
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).toContain("m-1");
+
+    stale.resolve([]);
+    await flush();
+    // 迟到的旧结果（空列表）不得覆盖新列表
+    expect(mounted.container.textContent).toContain("m-1");
+  });
 });

@@ -127,6 +127,9 @@ export function CronCard() {
       }
     } catch (e) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
+      // 致命错误一律把列表清空：旧列表（包括空列表）不得在无标注的情况下
+      // 继续冒充最新状态 —— 错误与重试必须可见。
+      setJobs(null);
       setError(describeError(e));
     } finally {
       if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
@@ -387,10 +390,9 @@ export function CronCard() {
             读取中…
           </div>
         )
-      ) : jobs.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">还没有定时任务。</div>
       ) : (
         <div className="flex flex-col gap-1.5">
+          {/* 缺口横幅独立于列表长度渲染：部分失败时绝不能给出「确定没有任务」的结论 */}
           {partialErrors.map((message) => (
             <div
               key={message}
@@ -401,7 +403,23 @@ export function CronCard() {
               <span className="min-w-0 break-words">{message}</span>
             </div>
           ))}
-          {jobs.map((job) => {
+          {jobs.length === 0 ? (
+            partialErrors.length === 0 ? (
+              <div className="nx-hint py-2 text-[12px]">还没有定时任务。</div>
+            ) : (
+              <div className="nx-hint py-2 text-[12px]">
+                成功读取的会话里没有任何任务；失败会话的任务未知，不能据此断定没有任务。
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-sm ml-2"
+                  onClick={() => void reload()}
+                >
+                  <IconRefresh size={11} />
+                  重试
+                </button>
+              </div>
+            )
+          ) : (
+            jobs.map((job) => {
             const status = jobStatus(job);
             const key = `${job.sessionId}/${job.id}`;
             const busy = actionBusy === key;
@@ -466,7 +484,8 @@ export function CronCard() {
                 </div>
               </div>
             );
-          })}
+          })
+          )}
         </div>
       )}
 
