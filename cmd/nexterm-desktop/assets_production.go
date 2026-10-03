@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	"path/filepath"
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -31,6 +30,10 @@ func newDesktopAssets(_ string) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("desktop web assets: open embedded dist: %w", err)
 	}
+	return newEmbeddedDesktopAssets(files)
+}
+
+func newEmbeddedDesktopAssets(files fs.FS) (*embeddedDesktopAssets, error) {
 	info, err := fs.Stat(files, "index.html")
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("desktop web assets: embedded index.html is missing: %w", err)
@@ -67,7 +70,7 @@ func (s *embeddedDesktopAssets) ServeHTTP(w http.ResponseWriter, r *http.Request
 			}
 			etag := desktopContentETag(data)
 			w.Header().Set("ETag", etag)
-			if strings.HasPrefix(filepath.ToSlash(relative), "assets/") {
+			if strings.HasPrefix(relative, "assets/") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			if desktopNotModified(r.Header.Get("If-None-Match"), etag) {
