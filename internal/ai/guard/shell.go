@@ -66,7 +66,7 @@ func classifyCommandText(command string, rules []string, depth int, nodes *int) 
 			result = Worst(result, Indeterminate("命令结构异常，无法安全分析"))
 		}
 	}()
-	return Worst(result, c.classifyStmts(file.Stmts))
+	return Worst(result, c.classifyStmts(file.Stmts, pipeInput{}))
 }
 
 // classifyText re-parses and classifies a nested command string (shell -c
@@ -87,10 +87,10 @@ func (c *classifier) overBudget() bool {
 	return *c.nodes > maxASTNodes
 }
 
-func (c *classifier) classifyStmts(stmts []*syntax.Stmt) Ruling {
+func (c *classifier) classifyStmts(stmts []*syntax.Stmt, pipeIn pipeInput) Ruling {
 	result := Allow()
 	for _, stmt := range stmts {
-		result = Worst(result, c.classifyStmt(stmt, pipeInput{}))
+		result = Worst(result, c.classifyStmt(stmt, pipeIn))
 		if result.Risk == Forbidden {
 			return result
 		}
@@ -118,27 +118,40 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	case *syntax.CallExpr:
 		result = Worst(result, c.classifyCallExpr(cmd, pipeIn))
 	case *syntax.BinaryCmd:
-		result = Worst(result, c.classifyBinaryCmd(cmd))
+		result = Worst(result, c.classifyBinaryCmd(cmd, pipeIn))
 	case *syntax.Subshell:
-		result = Worst(result, c.classifyStmts(cmd.Stmts))
+		result = Worst(result, c.classifyStmts(cmd.Stmts, pipeIn))
 	case *syntax.Block:
-		result = Worst(result, c.classifyStmts(cmd.Stmts))
+		result = Worst(result, c.classifyStmts(cmd.Stmts, pipeIn))
 	case *syntax.IfClause:
-		result = Worst(result, c.classifyIfClause(cmd))
+		result = Worst(result, c.classifyIfClause(cmd, pipeIn))
 	case *syntax.WhileClause:
-		result = Worst(result, c.classifyStmts(cmd.Cond), c.classifyStmts(cmd.Do))
+		result = Worst(result, c.classifyStmts(cmd.Cond, pipeIn), c.classifyStmts(cmd.Do, pipeIn))
 	case *syntax.ForClause:
-		result = Worst(result, c.classifyForClause(cmd))
+		result = Worst(result, c.classifyForClause(cmd, pipeIn))
 	case *syntax.CaseClause:
-		result = Worst(result, c.classifyCaseClause(cmd))
+		result = Worst(result, c.classifyCaseClause(cmd, pipeIn))
 	case *syntax.FuncDecl:
 		// Defining a function makes every later invocation of it opaque to
 		// the guard; the body is not executed by the declaration itself.
 		result = Worst(result, Indeterminate("函数定义会使后续调用无法审查"))
-	case *syntax.ArithmCmd, *syntax.LetClause:
-		result = Worst(result, Indeterminate("算术命令无法证明有界"))
+	case *syntax.ArithmCmd:
+		// The arithmetic itself cannot be proven, and substitutions inside
+		// it execute: classify them before failing closed.
+		ruling := Allow()
+		c.classifyArithmExpr(cmd.X, &ruling)
+		result = Worst(result, ruling, Indeterminate("算术命令无法证明有界"))
+	case *syntax.LetClause:
+		ruling := Allow()
+		for _, expr := range cmd.Exprs {
+			c.classifyArithmExpr(expr, &ruling)
+		}
+		result = Worst(result, ruling, Indeterminate("算术命令无法证明有界"))
 	case *syntax.TestClause:
-		// [[ ... ]] only evaluates conditions.
+		// [[ ... ]] only evaluates conditions, but its words still undergo
+		// expansion: substitutions inside them execute and dynamic words
+		// cannot be proven.
+		result = Worst(result, c.classifyTestExpr(cmd.X))
 	case *syntax.DeclClause:
 		for _, assign := range cmd.Args {
 			result = Worst(result, c.classifyAssign(assign))
@@ -146,22 +159,46 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	case *syntax.TimeClause:
 		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeIn))
 	case *syntax.CoprocClause:
-		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeInput{}))
+		// A coproc feeds the command from an undetermined pipe.
+		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeInput{kind: stdinPipe}))
 	default:
 		result = Worst(result, Indeterminate("命令结构无法识别"))
 	}
 	return result
 }
 
-func (c *classifier) classifyIfClause(clause *syntax.IfClause) Ruling {
+// classifyTestExpr walks every word of a [[ ... ]] expression: test operands
+// undergo expansion, so substitutions inside them execute and dynamic words
+// cannot be proven.
+func (c *classifier) classifyTestExpr(expr syntax.TestExpr) Ruling {
+	result := Allow()
+	if expr == nil {
+		return result
+	}
+	switch e := expr.(type) {
+	case *syntax.BinaryTest:
+		result = Worst(result, c.classifyTestExpr(e.X), c.classifyTestExpr(e.Y))
+	case *syntax.UnaryTest:
+		result = Worst(result, c.classifyTestExpr(e.X))
+	case *syntax.ParenTest:
+		result = Worst(result, c.classifyTestExpr(e.X))
+	case *syntax.Word:
+		if _, ok := c.literalWord(e, &result); !ok {
+			result = Worst(result, Indeterminate("测试表达式包含动态替换"))
+		}
+	}
+	return result
+}
+
+func (c *classifier) classifyIfClause(clause *syntax.IfClause, pipeIn pipeInput) Ruling {
 	if clause == nil {
 		return Allow()
 	}
-	return Worst(c.classifyStmts(clause.Cond), c.classifyStmts(clause.Then), c.classifyIfClause(clause.Else))
+	return Worst(c.classifyStmts(clause.Cond, pipeIn), c.classifyStmts(clause.Then, pipeIn), c.classifyIfClause(clause.Else, pipeIn))
 }
 
-func (c *classifier) classifyForClause(clause *syntax.ForClause) Ruling {
-	result := c.classifyStmts(clause.Do)
+func (c *classifier) classifyForClause(clause *syntax.ForClause, pipeIn pipeInput) Ruling {
+	result := c.classifyStmts(clause.Do, pipeIn)
 	switch loop := clause.Loop.(type) {
 	case *syntax.WordIter:
 		for _, item := range loop.Items {
@@ -176,29 +213,36 @@ func (c *classifier) classifyForClause(clause *syntax.ForClause) Ruling {
 	return result
 }
 
-func (c *classifier) classifyCaseClause(clause *syntax.CaseClause) Ruling {
+func (c *classifier) classifyCaseClause(clause *syntax.CaseClause, pipeIn pipeInput) Ruling {
 	result := Allow()
 	ruling := Allow()
 	if _, ok := c.literalWord(clause.Word, &ruling); !ok {
 		result = Worst(result, Indeterminate("case 取值包含动态替换"), ruling)
 	}
 	for _, item := range clause.Items {
+		// Case patterns undergo expansion just like any other word.
+		for _, pattern := range item.Patterns {
+			ruling := Allow()
+			if _, ok := c.literalWord(pattern, &ruling); !ok {
+				result = Worst(result, Indeterminate("case 模式包含动态替换"), ruling)
+			}
+		}
 		for _, body := range item.Stmts {
-			result = Worst(result, c.classifyStmt(body, pipeInput{}))
+			result = Worst(result, c.classifyStmt(body, pipeIn))
 		}
 	}
 	return result
 }
 
-func (c *classifier) classifyBinaryCmd(cmd *syntax.BinaryCmd) Ruling {
+func (c *classifier) classifyBinaryCmd(cmd *syntax.BinaryCmd, pipeIn pipeInput) Ruling {
 	if c.overBudget() {
 		return Indeterminate("命令结构超出分析预算")
 	}
 	switch cmd.Op {
 	case syntax.AndStmt, syntax.OrStmt:
-		return Worst(c.classifyStmt(cmd.X, pipeInput{}), c.classifyStmt(cmd.Y, pipeInput{}))
+		return Worst(c.classifyStmt(cmd.X, pipeIn), c.classifyStmt(cmd.Y, pipeIn))
 	case syntax.Pipe, syntax.PipeAll:
-		left := c.classifyStmt(cmd.X, pipeInput{})
+		left := c.classifyStmt(cmd.X, pipeIn)
 		text, ok := c.pipeProducer(cmd.X)
 		right := c.classifyStmt(cmd.Y, pipeInput{kind: stdinPipe, text: text, ok: ok})
 		return Worst(left, right)
@@ -248,102 +292,144 @@ func (c *classifier) pipeProducer(stmt *syntax.Stmt) (string, bool) {
 	case "printf":
 		return printfProducer(argv[1:])
 	case "cat":
+		// cat is a determinable producer only without file operands: with
+		// operands it copies the files and ignores its standard input, and
+		// "-" is the only operand that names stdin. cat has no value options.
+		for _, arg := range argv[1:] {
+			if arg == "-" || strings.HasPrefix(arg, "-") {
+				continue
+			}
+			return "", false
+		}
+		// Redirects apply left to right: only the last stdin-setting
+		// redirect decides whether stdin is a literal here-document.
+		var hdoc *syntax.Redirect
 		for _, r := range stmt.Redirs {
 			switch r.Op {
-			case syntax.Hdoc, syntax.DashHdoc:
-				if r.Hdoc == nil {
-					return "", false
-				}
-				body, ok := c.literalWord(r.Hdoc, &discarded)
-				return body, ok
-			case syntax.WordHdoc:
-				text, ok := c.literalWord(r.Word, &discarded)
-				return text + "\n", ok
+			case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc, syntax.RdrIn, syntax.RdrInOut, syntax.DplIn:
+				hdoc = r
 			}
 		}
+		if hdoc == nil {
+			return "", false
+		}
+		switch hdoc.Op {
+		case syntax.Hdoc, syntax.DashHdoc:
+			if hdoc.Hdoc == nil {
+				return "", false
+			}
+			body, ok := c.literalWord(hdoc.Hdoc, &discarded)
+			return body, ok
+		case syntax.WordHdoc:
+			text, ok := c.literalWord(hdoc.Word, &discarded)
+			return text + "\n", ok
+		}
+		return "", false
 	}
 	return "", false
 }
 
 // printfProducer models the bytes printf emits for a statically known format
-// string and arguments. Only the modeled escapes and verbs are accepted;
-// anything else (%b, hex/octal escapes, unknown verbs) makes the output
+// string and arguments: option handling (-- and -v var), escape sequences and
+// format reuse until the arguments run out (printf '%s' a b prints "ab").
+// Only the modeled escapes and verbs are accepted; anything else (%b,
+// hex/octal escapes, * width, unknown verbs) makes the output
 // shell-dependent and fails closed.
 func printfProducer(args []string) (string, bool) {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
+		switch {
+		case args[0] == "--":
+			args = args[1:]
+		case args[0] == "-v":
+			// -v var format... assigns to a variable; stdout stays empty.
+			return "", true
+		default:
+			// Unknown option: printf rejects it and prints nothing.
+			return "", true
+		}
+	}
 	if len(args) == 0 {
 		return "", true
 	}
 	format := args[0]
 	rest := args[1:]
 	argIndex := 0
-	takeArg := func() string {
-		if argIndex < len(rest) {
-			value := rest[argIndex]
-			argIndex++
-			return value
-		}
-		return ""
-	}
 	var out strings.Builder
-	for i := 0; i < len(format); i++ {
-		ch := format[i]
-		if ch == '\\' {
+	for {
+		consumed := 0
+		takeArg := func(numeric bool) string {
+			if argIndex < len(rest) {
+				value := rest[argIndex]
+				argIndex++
+				consumed++
+				return value
+			}
+			if numeric {
+				return "0"
+			}
+			return ""
+		}
+		for i := 0; i < len(format); i++ {
+			ch := format[i]
+			if ch == '\\' {
+				if i+1 >= len(format) {
+					return "", false
+				}
+				i++
+				switch format[i] {
+				case 'n':
+					out.WriteByte('\n')
+				case 't':
+					out.WriteByte('\t')
+				case 'r':
+					out.WriteByte('\r')
+				case 'a':
+					out.WriteByte('\a')
+				case 'b':
+					out.WriteByte('\b')
+				case 'f':
+					out.WriteByte('\f')
+				case 'v':
+					out.WriteByte('\v')
+				case '\\':
+					out.WriteByte('\\')
+				case 'c':
+					return out.String(), true
+				default:
+					return "", false
+				}
+				continue
+			}
+			if ch != '%' {
+				out.WriteByte(ch)
+				continue
+			}
 			if i+1 >= len(format) {
 				return "", false
 			}
 			i++
+			for i < len(format) && strings.ContainsRune("-+ #0.123456789", rune(format[i])) {
+				i++
+			}
+			if i >= len(format) {
+				return "", false
+			}
 			switch format[i] {
-			case 'n':
-				out.WriteByte('\n')
-			case 't':
-				out.WriteByte('\t')
-			case 'r':
-				out.WriteByte('\r')
-			case 'a':
-				out.WriteByte('\a')
-			case 'b':
-				out.WriteByte('\b')
-			case 'f':
-				out.WriteByte('\f')
-			case 'v':
-				out.WriteByte('\v')
-			case '\\':
-				out.WriteByte('\\')
-			case 'c':
-				return out.String(), true
+			case '%':
+				out.WriteByte('%')
+			case 's', 'c':
+				out.WriteString(takeArg(false))
+			case 'd', 'i', 'o', 'u', 'x', 'X', 'f', 'e', 'E', 'g', 'G':
+				out.WriteString(takeArg(true))
 			default:
 				return "", false
 			}
-			continue
 		}
-		if ch != '%' {
-			out.WriteByte(ch)
-			continue
+		// bash reuses the format only while arguments remain; a pass that
+		// consumes none ends the output (printf 'x' a b prints "x").
+		if consumed == 0 || argIndex >= len(rest) {
+			break
 		}
-		if i+1 >= len(format) {
-			return "", false
-		}
-		i++
-		for i < len(format) && strings.ContainsRune("-+ #0.123456789", rune(format[i])) {
-			i++
-		}
-		if i >= len(format) {
-			return "", false
-		}
-		switch format[i] {
-		case '%':
-			out.WriteByte('%')
-		case 's', 'c', 'd', 'i', 'o', 'u', 'x', 'X', 'f', 'e', 'E', 'g', 'G':
-			out.WriteString(takeArg())
-		default:
-			return "", false
-		}
-	}
-	for ; argIndex < len(rest); argIndex++ {
-		if out.Len() > 0 {
-			out.WriteByte(' ')
-		}
-		out.WriteString(rest[argIndex])
 	}
 	return out.String(), true
 }
@@ -497,11 +583,8 @@ func isNumeric(value string) bool {
 }
 
 // literalArgv extracts the argv of a simple command. Every word must be
-// provably literal: only plain or quoted literal parts, with no parameter
-// expansions, command substitutions, arithmetic, process substitutions or
-// extended globs. Dynamic words make the command Unknowable; command and
-// process substitutions inside them are still classified for their own
-// effects.
+// provably literal (see literalWord); dynamic words make the command
+// Unknowable while substitutions inside them are still classified.
 func (c *classifier) literalArgv(words []*syntax.Word) ([]string, bool, Ruling) {
 	result := Allow()
 	argv := make([]string, 0, len(words))
@@ -519,54 +602,98 @@ func (c *classifier) literalArgv(words []*syntax.Word) ([]string, bool, Ruling) 
 	return argv, provable, result
 }
 
+// literalWord extracts the text of a word. Every part must be provably
+// literal: only plain or quoted literal parts, with no parameter expansions,
+// command substitutions, arithmetic, process substitutions or extended globs.
+// Dynamic parts make the word unprovable; command and process substitutions
+// and any expansions nested inside parameter or arithmetic expansions are
+// still classified for their own effects.
 func (c *classifier) literalWord(word *syntax.Word, result *Ruling) (string, bool) {
 	if word == nil {
 		return "", true
 	}
+	return c.literalParts(word.Parts, result)
+}
+
+func (c *classifier) literalParts(parts []syntax.WordPart, result *Ruling) (string, bool) {
 	var out strings.Builder
 	ok := true
-	for _, part := range word.Parts {
-		switch p := part.(type) {
-		case *syntax.Lit:
-			out.WriteString(p.Value)
-		case *syntax.SglQuoted:
-			if p.Dollar {
-				// $'...' interprets escapes we do not decode.
-				ok = false
-				continue
-			}
-			out.WriteString(p.Value)
-		case *syntax.DblQuoted:
-			if p.Dollar {
-				ok = false
-				continue
-			}
-			for _, inner := range p.Parts {
-				switch part := inner.(type) {
-				case *syntax.Lit:
-					out.WriteString(part.Value)
-				case *syntax.CmdSubst:
-					ok = false
-					*result = Worst(*result, c.classifySubstStmts(part.Stmts))
-				case *syntax.ProcSubst:
-					ok = false
-					*result = Worst(*result, c.classifySubstStmts(part.Stmts))
-				default:
-					ok = false
-				}
-			}
-		case *syntax.CmdSubst:
-			ok = false
-			*result = Worst(*result, c.classifySubstStmts(p.Stmts))
-		case *syntax.ProcSubst:
-			ok = false
-			*result = Worst(*result, c.classifySubstStmts(p.Stmts))
-		default:
-			// ParamExp, ArithmExp, ExtGlob and any future part: dynamic.
-			ok = false
-		}
+	for _, part := range parts {
+		text, partOK := c.literalPart(part, result)
+		out.WriteString(text)
+		ok = ok && partOK
 	}
 	return out.String(), ok
+}
+
+func (c *classifier) literalPart(part syntax.WordPart, result *Ruling) (string, bool) {
+	switch p := part.(type) {
+	case *syntax.Lit:
+		return p.Value, true
+	case *syntax.SglQuoted:
+		if p.Dollar {
+			// $'...' interprets escapes we do not decode.
+			return "", false
+		}
+		return p.Value, true
+	case *syntax.DblQuoted:
+		if p.Dollar {
+			return "", false
+		}
+		return c.literalParts(p.Parts, result)
+	case *syntax.CmdSubst:
+		*result = Worst(*result, c.classifySubstStmts(p.Stmts))
+		return "", false
+	case *syntax.ProcSubst:
+		*result = Worst(*result, c.classifySubstStmts(p.Stmts))
+		return "", false
+	case *syntax.ParamExp:
+		c.classifyParamExp(p, result)
+		return "", false
+	case *syntax.ArithmExp:
+		c.classifyArithmExpr(p.X, result)
+		return "", false
+	default:
+		// ExtGlob and any future part: dynamic.
+		return "", false
+	}
+}
+
+// classifyParamExp walks every word and arithmetic expression nested inside a
+// parameter expansion (${x:-$(cmd)}, ${a:x:y}, ${a/x/y}, ${a[$(cmd)]}): the
+// expansion itself is always dynamic, but substitutions inside it execute.
+func (c *classifier) classifyParamExp(exp *syntax.ParamExp, result *Ruling) {
+	if exp == nil {
+		return
+	}
+	c.classifyArithmExpr(exp.Index, result)
+	if exp.Slice != nil {
+		c.classifyArithmExpr(exp.Slice.Offset, result)
+		c.classifyArithmExpr(exp.Slice.Length, result)
+	}
+	if exp.Repl != nil {
+		c.literalWord(exp.Repl.Orig, result)
+		c.literalWord(exp.Repl.With, result)
+	}
+	if exp.Exp != nil {
+		c.literalWord(exp.Exp.Word, result)
+	}
+}
+
+// classifyArithmExpr walks an arithmetic expression tree so command
+// substitutions hidden inside it ($(( $(cmd) ))) are classified.
+func (c *classifier) classifyArithmExpr(expr syntax.ArithmExpr, result *Ruling) {
+	switch e := expr.(type) {
+	case *syntax.BinaryArithm:
+		c.classifyArithmExpr(e.X, result)
+		c.classifyArithmExpr(e.Y, result)
+	case *syntax.UnaryArithm:
+		c.classifyArithmExpr(e.X, result)
+	case *syntax.ParenArithm:
+		c.classifyArithmExpr(e.X, result)
+	case *syntax.Word:
+		c.literalWord(e, result)
+	}
 }
 
 func (c *classifier) classifySubstStmts(stmts []*syntax.Stmt) Ruling {
@@ -598,7 +725,17 @@ func (c *classifier) classifyAssign(assign *syntax.Assign) Ruling {
 		return Allow()
 	}
 	if assign.Array != nil || assign.Index != nil {
-		return Indeterminate("数组或下标赋值无法证明有界")
+		// Array and subscript assignments cannot be proven, but
+		// substitutions inside the subscripts and elements still execute.
+		ruling := Allow()
+		c.classifyArithmExpr(assign.Index, &ruling)
+		if assign.Array != nil {
+			for _, elem := range assign.Array.Elems {
+				c.classifyArithmExpr(elem.Index, &ruling)
+				c.literalWord(elem.Value, &ruling)
+			}
+		}
+		return Worst(ruling, Indeterminate("数组或下标赋值无法证明有界"))
 	}
 	result := Allow()
 	if assign.Value != nil {
@@ -1033,7 +1170,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 	case "ssh":
 		return c.classifySSH(args)
 	case "scp", "sftp", "rsync":
-		return Confirm(KindUnknown, "远程传输或执行需要确认")
+		return c.classifyRemoteTransfer(name, args)
 	case "alias":
 		if len(args) == 0 {
 			return Allow()
@@ -1453,26 +1590,52 @@ func classifyCrontab(args []string) Ruling {
 	return Dangerous("crontab 从标准输入安装计划任务")
 }
 
+// sshValueShorts lists ssh short options that consume a value (attached or as
+// the next argument); sshFlagShorts lists the boolean ones. Anything outside
+// both tables makes the command line impossible to align, so it fails closed.
+const sshValueShorts = "BbcDeEFIiJLlmOoPpQRSWw"
+const sshFlagShorts = "46ACfGgKkMNnqstTVvXxYy"
+
 func (c *classifier) classifySSH(args []string) Ruling {
-	valueOptions := map[string]bool{"-p": true, "-i": true, "-l": true, "-E": true, "-F": true, "-J": true, "-L": true, "-W": true, "-b": true, "-c": true, "-m": true, "-S": true}
 	result := Confirm(KindUnknown, "远程传输或执行需要确认")
 	index := 0
 	for index < len(args) && strings.HasPrefix(args[index], "-") {
 		arg := args[index]
-		index++
-		if arg == "-o" {
-			if index < len(args) {
-				result = Worst(result, c.classifySSHConfigValue(args[index]))
-				index++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-o") && len(arg) > 2 {
-			result = Worst(result, c.classifySSHConfigValue(arg[2:]))
-			continue
-		}
-		if valueOptions[arg] && index < len(args) {
+		if arg == "--" {
 			index++
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			// ssh has no long options.
+			return Worst(result, Indeterminate("ssh 包含无法识别的长选项"))
+		}
+		index++
+		letters := arg[1:]
+		for len(letters) > 0 {
+			letter := letters[0]
+			switch {
+			case letter == 'o':
+				value := letters[1:]
+				if value == "" {
+					if index < len(args) {
+						value = args[index]
+						index++
+					}
+				}
+				if value != "" {
+					result = Worst(result, c.classifySSHConfigValue(value))
+				}
+				letters = ""
+			case strings.IndexByte(sshValueShorts, letter) >= 0:
+				if len(letters) == 1 && index < len(args) {
+					index++
+				}
+				letters = ""
+			case strings.IndexByte(sshFlagShorts, letter) >= 0:
+				letters = letters[1:]
+			default:
+				return Worst(result, Indeterminate("ssh 包含无法识别的选项"))
+			}
 		}
 	}
 	if index >= len(args) {
@@ -1489,18 +1652,90 @@ func (c *classifier) classifySSH(args []string) Ruling {
 
 // classifySSHConfigValue inspects -o values whose keywords run a command:
 // ProxyCommand and LocalCommand execute locally through a shell, and
-// RemoteCommand executes on the remote host.
+// RemoteCommand executes on the remote host. ssh_config accepts "Key=Value"
+// and "Key Value" forms, so the value splits at the first '=' or blank.
 func (c *classifier) classifySSHConfigValue(value string) Ruling {
-	key, command, found := strings.Cut(value, "=")
-	switch strings.ToLower(strings.TrimSpace(key)) {
+	value = strings.TrimSpace(value)
+	separator := strings.IndexAny(value, "= \t")
+	if separator < 0 {
+		return Allow()
+	}
+	key := strings.TrimSpace(value[:separator])
+	command := strings.TrimSpace(value[separator+1:])
+	command = strings.TrimSpace(strings.TrimPrefix(command, "="))
+	switch strings.ToLower(key) {
 	case "proxycommand", "localcommand", "remotecommand":
-		command = strings.TrimSpace(command)
-		if !found || command == "" || strings.EqualFold(command, "none") {
+		if command == "" || strings.EqualFold(command, "none") {
 			return Allow()
 		}
 		return Worst(Dangerous("ssh 选项执行本地或远端命令"), c.classifyText(command))
 	}
 	return Allow()
+}
+
+// classifyRemoteTransfer rates scp/sftp/rsync. Besides moving data, all
+// three can execute programs: -o passes ssh_config values (ProxyCommand and
+// friends run locally), scp -S replaces the transport program, sftp -b
+// executes a batch file, sftp -D runs a local server program, and rsync
+// -e/--rsh and --rsync-path run a shell or program on either side.
+func (c *classifier) classifyRemoteTransfer(name string, args []string) Ruling {
+	result := Confirm(KindUnknown, "远程传输或执行需要确认")
+	external := func(kind, value string) Ruling {
+		return Worst(Confirm(KindUnknown, kind), c.classifyText(value))
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			break
+		}
+		lower := strings.ToLower(arg)
+		switch {
+		case name != "rsync" && arg == "-o":
+			if index+1 < len(args) {
+				result = Worst(result, c.classifySSHConfigValue(args[index+1]))
+				index++
+			}
+		case name != "rsync" && strings.HasPrefix(arg, "-o") && len(arg) > 2:
+			result = Worst(result, c.classifySSHConfigValue(arg[2:]))
+		case name == "scp" && (arg == "-S" || strings.HasPrefix(arg, "-S") && len(arg) > 2):
+			value := arg[2:]
+			if value == "" && index+1 < len(args) {
+				value = args[index+1]
+				index++
+			}
+			if value != "" {
+				result = Worst(result, external("scp 替换传输程序", value))
+			}
+		case name == "sftp" && (arg == "-b" || strings.HasPrefix(arg, "-b") && len(arg) > 2):
+			return Dangerous("sftp 执行批处理文件，内容无法验证")
+		case name == "sftp" && (arg == "-D" || strings.HasPrefix(arg, "-D") && len(arg) > 2):
+			value := arg[2:]
+			if value == "" && index+1 < len(args) {
+				value = args[index+1]
+				index++
+			}
+			if value != "" {
+				result = Worst(result, external("sftp 直接执行服务器程序", value))
+			}
+		case name == "rsync" && (arg == "-e" || lower == "--rsh"):
+			if index+1 < len(args) {
+				result = Worst(result, external("rsync 执行传输 shell", args[index+1]))
+				index++
+			}
+		case name == "rsync" && strings.HasPrefix(arg, "-e") && len(arg) > 2:
+			result = Worst(result, external("rsync 执行传输 shell", arg[2:]))
+		case name == "rsync" && strings.HasPrefix(lower, "--rsh="):
+			result = Worst(result, external("rsync 执行传输 shell", arg[len("--rsh="):]))
+		case name == "rsync" && lower == "--rsync-path":
+			if index+1 < len(args) {
+				result = Worst(result, external("rsync 执行远端程序", args[index+1]))
+				index++
+			}
+		case name == "rsync" && strings.HasPrefix(lower, "--rsync-path="):
+			result = Worst(result, external("rsync 执行远端程序", arg[len("--rsync-path="):]))
+		}
+	}
+	return result
 }
 
 func classifyService(name string, args []string) Ruling {
@@ -1683,7 +1918,60 @@ func dockerExecCommandIndex(args []string) int {
 	return index
 }
 
+// kubectl inherited (global) options. kubectl uses pflag: only exact
+// spellings resolve, so anything outside these tables fails closed instead of
+// being guessed, which would misalign the subcommand dispatch.
+var kubectlValueGlobals = []string{"as", "as-group", "as-uid", "cache-dir", "certificate-authority", "client-certificate", "client-key", "cluster", "context", "kubeconfig", "namespace", "password", "profile", "profile-output", "request-timeout", "server", "tls-server-name", "token", "user", "username", "log-backtrace-at", "log-dir", "log-file", "log-file-max-size", "log-flush-frequency", "vmodule", "v"}
+
+var kubectlFlagGlobals = []string{"disable-compression", "insecure-skip-tls-verify", "match-server-version", "warnings-as-errors", "add-dir-header", "alsologtostderr", "logtostderr", "one-output", "skip-headers", "skip-log-headers"}
+
+// kubectlGlobalEnd consumes kubectl's leading inherited options, reporting
+// false when an option is not in the known tables.
+func kubectlGlobalEnd(args []string) (int, bool) {
+	index := 0
+	for index < len(args) && strings.HasPrefix(args[index], "-") {
+		arg := args[index]
+		if arg == "--" {
+			index++
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, attached := strings.Cut(arg[2:], "=")
+			switch {
+			case containsString(kubectlValueGlobals, name):
+				if !attached {
+					index++
+				}
+			case containsString(kubectlFlagGlobals, name):
+			default:
+				return index, false
+			}
+			index++
+			continue
+		}
+		letters := arg[1:]
+		for len(letters) > 0 {
+			switch letters[0] {
+			case 'n', 's', 'v':
+				if len(letters) == 1 {
+					index++
+				}
+				letters = ""
+			default:
+				return index, false
+			}
+		}
+		index++
+	}
+	return index, true
+}
+
 func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
+	index, ok := kubectlGlobalEnd(args)
+	if !ok {
+		return Indeterminate("kubectl 包含无法识别的全局选项")
+	}
+	args = args[index:]
 	if len(args) > 0 {
 		switch args[0] {
 		case "get", "describe", "logs", "top", "version", "cluster-info", "api-resources", "api-versions":
@@ -2018,7 +2306,7 @@ func classifyDownload(name string, args []string) Ruling {
 		if strings.HasPrefix(lower, "--stderr=") && strings.TrimPrefix(lower, "--stderr=") != "-" {
 			return Confirm(KindWriteFS, "curl 将错误输出写入文件")
 		}
-		if arg == "-D" || arg == "--dump-header" || arg == "--trace" || arg == "--trace-ascii" || strings.HasPrefix(arg, "-D") && len(arg) > 2 || strings.HasPrefix(lower, "--dump-header=") || strings.HasPrefix(lower, "--trace=") || strings.HasPrefix(lower, "--trace-ascii=") {
+		if arg == "-D" || arg == "--dump-header" || arg == "--trace" || arg == "--trace-ascii" || strings.HasPrefix(arg, "-D") && len(arg) > 2 && arg != "-D-" || strings.HasPrefix(lower, "--dump-header=") || strings.HasPrefix(lower, "--trace=") || strings.HasPrefix(lower, "--trace-ascii=") {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
 		switch arg {
@@ -2089,10 +2377,15 @@ func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 	for index := 1; index < len(arg); index++ {
 		value := arg[index+1:]
 		switch arg[index] {
-		case 'o', 'O', 'F', 'T', 'D', 'c':
+		case 'o', 'O', 'D', 'c':
 			return value != "-", false
+		case 'F', 'T':
+			// Uploads are HTTP writes even when the body is stdin ("-").
+			return true, false
 		case 'd':
-			return !getMode && value != "-", false
+			// Data from stdin ("-") is still a POST body; only GET mode
+			// keeps the read-only contract.
+			return !getMode, false
 		case 'K', 'J':
 			return true, false
 		case 'Q':
@@ -2104,20 +2397,55 @@ func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 	return false, false
 }
 
+// tarValueShorts lists tar short options that consume a value (attached or as
+// the next argument); they align short-option clusters so -I is never
+// mistaken for a flag or for another option's value.
+const tarValueShorts = "fbCVFXTKNgI"
+
 // classifyTar rates archive inspection and extraction. External-command
-// options (--to-command, --use-compress-program, --checkpoint-action=exec)
-// execute a shell command, which is classified itself.
+// options (-I/--use-compress-program, --to-command,
+// --checkpoint-action=exec) execute a shell command, which is classified
+// itself.
 func (c *classifier) classifyTar(args []string) Ruling {
 	for index, arg := range args {
 		lower := strings.ToLower(arg)
 		switch {
-		case lower == "--to-command" || lower == "--use-compress-program" || lower == "--checkpoint-action":
+		case lower == "--to-command" || lower == "--use-compress-program" || lower == "--checkpoint-action" || lower == "--info-script":
 			if index+1 < len(args) {
 				return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(args[index+1]))
 			}
 			return Confirm(KindUnknown, "tar 包含外部命令执行")
-		case strings.HasPrefix(lower, "--to-command=") || strings.HasPrefix(lower, "--use-compress-program=") || strings.HasPrefix(lower, "--checkpoint-action="):
+		case strings.HasPrefix(lower, "--to-command=") || strings.HasPrefix(lower, "--use-compress-program=") || strings.HasPrefix(lower, "--checkpoint-action=") || strings.HasPrefix(lower, "--info-script="):
 			return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(arg[strings.Index(arg, "=")+1:]))
+		}
+	}
+	// GNU tar runs -I (an alias of --use-compress-program) and -F
+	// (--info-script, which implies --checkpoint) as external programs; the
+	// value is the rest of the cluster or the next argument.
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if len(arg) < 2 || arg[0] != '-' || arg[1] == '-' {
+			continue
+		}
+		letters := arg[1:]
+		for len(letters) > 0 {
+			letter := letters[0]
+			if letter == 'I' || letter == 'F' {
+				value := letters[1:]
+				if value == "" && index+1 < len(args) {
+					value = args[index+1]
+				}
+				if value == "" {
+					return Indeterminate("tar -" + string(letter) + " 缺少外部程序")
+				}
+				return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(value))
+			}
+			if strings.IndexByte(tarValueShorts, letter) >= 0 {
+				// A value-taking letter owns the rest of the cluster.
+				letters = ""
+				continue
+			}
+			letters = letters[1:]
 		}
 	}
 	for index, arg := range args {

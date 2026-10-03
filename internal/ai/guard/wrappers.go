@@ -1,6 +1,9 @@
 package guard
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // execWrapper describes a command that wraps another command's execution.
 // Options are consumed with getopt semantics (attached or separate values,
@@ -50,12 +53,20 @@ func containsString(values []string, target string) bool {
 
 // wrapperScan is the parsed leading-option state shared by every wrapper.
 type wrapperScan struct {
+	forName      string
 	pidMode      bool
 	replace      string
 	replaceSplit bool
 	fileInput    string
 	listOnly     bool
 	removeOnly   bool
+	nulMode      bool
+	hasDelimiter bool
+	delimiter    string
+	maxArgs      string
+	linesLimit   string
+	sizeLimit    string
+	noRunIfEmpty bool
 }
 
 func (s *wrapperScan) recordValue(key, value string) {
@@ -70,6 +81,17 @@ func (s *wrapperScan) recordValue(key, value string) {
 		s.replaceSplit = true
 	case "file", "f", "arg-file", "a":
 		s.fileInput = value
+	case "d", "delimiter":
+		s.hasDelimiter = true
+		s.delimiter = value
+	case "n", "max-args":
+		s.maxArgs = value
+	case "L", "max-lines":
+		s.linesLimit = value
+	case "s", "max-chars":
+		if s.forName == "xargs" {
+			s.sizeLimit = value
+		}
 	}
 }
 
@@ -78,7 +100,20 @@ func (s *wrapperScan) recordFlag(key string) {
 	case "l":
 		s.listOnly = true
 	case "r", "d":
-		s.removeOnly = true
+		if s.forName == "xargs" {
+			s.noRunIfEmpty = true
+		} else {
+			s.removeOnly = true
+		}
+	case "i":
+		// GNU -i is --replace with the default placeholder.
+		if s.forName == "xargs" && s.replace == "" {
+			s.replace = "{}"
+		}
+	case "0", "null":
+		s.nulMode = true
+	case "no-run-if-empty":
+		s.noRunIfEmpty = true
 	}
 }
 
@@ -93,7 +128,7 @@ type wrapperParse struct {
 // option, missing value) is reported through reason so callers fail closed.
 func parseWrapper(name string, wrapper execWrapper, args []string) wrapperParse {
 	index := 0
-	var scan wrapperScan
+	scan := wrapperScan{forName: name}
 	for index < len(args) {
 		arg := args[index]
 		if arg == "--" {
@@ -213,10 +248,13 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 	return c.child().classifyArgv(parsed.nested, stdin)
 }
 
-// classifyXargs models xargs semantics: with -I/-J/--replace every occurrence
-// of the replacement string in the initial arguments is substituted with one
-// input line per invocation; without it, input words are appended to the
-// command. Unknown or non-determinable input fails closed to Danger.
+// classifyXargs models xargs semantics. With -I/-J/--replace, every
+// occurrence of the replacement string in the initial arguments is
+// substituted with one processed input line per invocation. Without it, the
+// whole input stream is parsed into words (default quoting rules, or literal
+// items under -0/-d) and the words are appended to the command: one single
+// invocation by default, or batches of -n words. Anything that cannot be
+// modeled exactly (-L, -s, unparseable input) fails closed to Danger.
 func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipeInput) Ruling {
 	if scan.fileInput != "" {
 		return Dangerous("xargs 从文件构建命令")
@@ -224,33 +262,66 @@ func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipe
 	if stdin.kind == stdinFile {
 		return Dangerous("xargs 从文件构建命令")
 	}
-	if stdin.kind != stdinPipe && stdin.kind != stdinHeredoc || !stdin.ok || strings.TrimSpace(stdin.text) == "" {
+	if stdin.kind != stdinPipe && stdin.kind != stdinHeredoc || !stdin.ok {
 		if recursiveDeleteCommand(nested) {
 			return Dangerous("xargs 以未受控输入调用递归删除")
 		}
 		return Dangerous("xargs 从标准输入构建命令")
 	}
-	result := Allow()
-	lines := strings.Split(stdin.text, "\n")
-	classified := 0
-	for _, line := range lines {
-		if scan.replace != "" {
-			if line == "" {
-				continue
-			}
-			classified++
-			result = Worst(result, c.classifyXargsLine(nested, scan, line))
-			continue
+	if scan.replace != "" {
+		return c.classifyXargsReplace(nested, scan, stdin.text)
+	}
+	if scan.linesLimit != "" || scan.sizeLimit != "" {
+		return Dangerous("xargs 的分批参数无法精确建模")
+	}
+	if scan.nulMode && scan.hasDelimiter {
+		return Dangerous("xargs 的分隔符参数冲突")
+	}
+	words, ok := xargsInputWords(scan, stdin.text)
+	if !ok {
+		return Dangerous("xargs 输入无法精确解析")
+	}
+	if len(words) == 0 {
+		if scan.noRunIfEmpty {
+			return Allow()
 		}
-		words := strings.Fields(line)
-		if len(words) == 0 {
+		// With input but no words, xargs still runs the command once with
+		// no appended arguments.
+		return c.child().classifyArgv(nested, pipeInput{})
+	}
+	batch := len(words)
+	if scan.maxArgs != "" {
+		value, err := strconv.Atoi(scan.maxArgs)
+		if err != nil || value <= 0 {
+			return Indeterminate("xargs -n 参数无效")
+		}
+		batch = value
+	}
+	result := Allow()
+	for start := 0; start < len(words); start += batch {
+		end := start + batch
+		if end > len(words) {
+			end = len(words)
+		}
+		argv := make([]string, 0, len(nested)+end-start)
+		argv = append(argv, nested...)
+		argv = append(argv, words[start:end]...)
+		result = Worst(result, c.child().classifyArgv(argv, pipeInput{}))
+	}
+	return result
+}
+
+// classifyXargsReplace handles -I/-J/--replace insert mode: one invocation
+// per nonblank input line.
+func (c *classifier) classifyXargsReplace(nested []string, scan wrapperScan, input string) Ruling {
+	result := Allow()
+	classified := 0
+	for _, line := range strings.Split(input, "\n") {
+		if line == "" {
 			continue
 		}
 		classified++
-		combined := make([]string, 0, len(nested)+len(words))
-		combined = append(combined, nested...)
-		combined = append(combined, words...)
-		result = Worst(result, c.child().classifyArgv(combined, pipeInput{}))
+		result = Worst(result, c.classifyXargsLine(nested, scan, line))
 	}
 	if classified == 0 {
 		return Dangerous("xargs 从标准输入构建命令")
@@ -258,19 +329,152 @@ func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipe
 	return result
 }
 
+// xargsInputWords parses the input stream into words for the non-replace
+// modes: -0 and -d take items literally, the default mode applies xargs
+// quoting rules.
+func xargsInputWords(scan wrapperScan, input string) ([]string, bool) {
+	switch {
+	case scan.hasDelimiter:
+		if scan.delimiter == "" {
+			return nil, false
+		}
+		items := strings.Split(input, scan.delimiter[:1])
+		if len(items) > 0 && items[len(items)-1] == "" {
+			items = items[:len(items)-1]
+		}
+		return items, true
+	case scan.nulMode:
+		items := strings.Split(input, "\x00")
+		if len(items) > 0 && items[len(items)-1] == "" {
+			items = items[:len(items)-1]
+		}
+		return items, true
+	default:
+		return xargsWords(input)
+	}
+}
+
+// xargsWords splits an xargs input stream into words with the default
+// quoting rules: blanks separate words, single and double quotes group
+// without becoming part of the word, and backslash escapes the next
+// character (including a newline). It reports false when the input cannot be
+// parsed exactly (unterminated quote or trailing backslash); real xargs then
+// fails without running any command.
+func xargsWords(input string) ([]string, bool) {
+	var words []string
+	var current strings.Builder
+	inWord := false
+	var quote byte
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+				continue
+			}
+			if quote == '"' && ch == '\\' && i+1 < len(input) {
+				if next := input[i+1]; next == '"' || next == '\\' || next == '$' || next == '`' || next == '\n' {
+					current.WriteByte(next)
+					i++
+					continue
+				}
+			}
+			current.WriteByte(ch)
+			continue
+		}
+		switch {
+		case ch == '\'' || ch == '"':
+			quote = ch
+			inWord = true
+		case ch == '\\':
+			if i+1 >= len(input) {
+				return nil, false
+			}
+			current.WriteByte(input[i+1])
+			i++
+			inWord = true
+		case ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\v' || ch == '\f':
+			if inWord {
+				words = append(words, current.String())
+				current.Reset()
+				inWord = false
+			}
+		default:
+			current.WriteByte(ch)
+			inWord = true
+		}
+	}
+	if quote != 0 {
+		return nil, false
+	}
+	if inWord {
+		words = append(words, current.String())
+	}
+	return words, true
+}
+
+// xargsProcessedLine applies xargs quote and backslash processing to one
+// input line while keeping blanks: -I replaces the placeholder with the
+// whole processed line as one argument.
+func xargsProcessedLine(line string) (string, bool) {
+	var out strings.Builder
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if quote != 0 {
+			if ch == quote {
+				quote = 0
+				continue
+			}
+			if quote == '"' && ch == '\\' && i+1 < len(line) {
+				if next := line[i+1]; next == '"' || next == '\\' || next == '$' || next == '`' || next == '\n' {
+					out.WriteByte(next)
+					i++
+					continue
+				}
+			}
+			out.WriteByte(ch)
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '\\':
+			if i+1 >= len(line) {
+				return "", false
+			}
+			out.WriteByte(line[i+1])
+			i++
+		default:
+			out.WriteByte(ch)
+		}
+	}
+	if quote != 0 {
+		return "", false
+	}
+	return out.String(), true
+}
+
 // classifyXargsLine classifies one input line under replacement semantics.
-// GNU -I replaces every placeholder occurrence with the whole line as one
-// argument; BSD -J replaces only standalone placeholder tokens with the
-// line's words. Because implementations disagree, both interpretations are
-// classified and the worse ruling wins.
+// GNU -I replaces every placeholder occurrence with the whole processed line
+// as one argument; BSD -J replaces only standalone placeholder tokens with
+// the line's words. Because implementations disagree, both interpretations
+// are classified and the worse ruling wins.
 func (c *classifier) classifyXargsLine(nested []string, scan wrapperScan, line string) Ruling {
+	processed, ok := xargsProcessedLine(line)
+	if !ok {
+		return Dangerous("xargs 输入无法精确解析")
+	}
 	substituted := make([]string, len(nested))
 	for i, token := range nested {
-		substituted[i] = strings.ReplaceAll(token, scan.replace, line)
+		substituted[i] = strings.ReplaceAll(token, scan.replace, processed)
 	}
 	result := c.child().classifyArgv(substituted, pipeInput{})
 	if scan.replaceSplit {
-		words := strings.Fields(line)
+		words, ok := xargsWords(line)
+		if !ok {
+			return Worst(result, Dangerous("xargs 输入无法精确解析"))
+		}
 		combined := make([]string, 0, len(nested)+len(words))
 		replaced := false
 		for _, token := range nested {

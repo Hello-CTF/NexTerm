@@ -21,7 +21,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 	var fields map[string]json.RawMessage
 	if len(args) != 0 {
 		if err := json.Unmarshal(args, &fields); err != nil {
-			return Confirm(KindUnknown, "工具参数不是有效 JSON 对象")
+			return Indeterminate("工具参数不是有效 JSON 对象")
 		}
 	}
 	if fields == nil {
@@ -37,8 +37,11 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return Confirm(KindWriteFS, "写入或编辑文件")
 	case "exec_commands":
 		var commands []string
-		if err := json.Unmarshal(fields["commands"], &commands); err != nil || len(commands) == 0 {
-			return Confirm(KindUnknown, "命令列表无效")
+		if err := json.Unmarshal(fields["commands"], &commands); err != nil || commands == nil {
+			return Indeterminate("命令列表无效")
+		}
+		if len(commands) == 0 {
+			return Allow()
 		}
 		result := Allow()
 		for _, command := range commands {
@@ -67,7 +70,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		}
 		return classifyRedis(command)
 	default:
-		return Confirm(KindUnknown, "未知工具")
+		return Indeterminate("未知工具")
 	}
 }
 
