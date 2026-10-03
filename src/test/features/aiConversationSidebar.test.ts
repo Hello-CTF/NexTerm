@@ -499,6 +499,52 @@ describe("AiSidebar conversation stream UX", () => {
     );
   });
 
+  it("does not resurrect a deleted id when the chat RPC resolves after the delete", async () => {
+    await send("第一轮");
+    emit({ type: "done", answer: "第一轮回答" });
+    await flush();
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+
+    // 两个 RPC 都在途：删除与第二轮 chat。人为固定响应顺序 —— 先 delete 后 chat
+    // （runner 先校验会话、后经 stream factory 才返回同 ID，删除可在其间提交）。
+    let resolveDelete: (() => void) | undefined;
+    mocks.conversationDelete.mockImplementationOnce(
+      () => new Promise<void>((res) => { resolveDelete = res; }),
+    );
+    let resolveChat: ((res: { jobId: string; conversationId: string }) => void) | undefined;
+    mocks.chat.mockImplementationOnce(
+      () => new Promise<{ jobId: string; conversationId: string }>((res) => { resolveChat = res; }),
+    );
+    click(view!.container.querySelector('button[title="删除「当前会话」"]')!);
+    await flush();
+    await send("第二轮");
+
+    // 删除先返回：行摘掉、ID 清除、流不 reset（第二轮仍活跃）。
+    resolveDelete?.();
+    await flush();
+    expect(textOf(view!)).not.toContain("当前会话");
+    expect(textOf(view!)).toContain("第一轮回答");
+
+    // chat 后返回同一个（已删除的）ID：不得写回。
+    resolveChat?.({ jobId: "job-2", conversationId: "conv-1" });
+    await flush();
+    // 本轮照常结算：事件照收、终态照落、busy 照放。
+    emit({ type: "delta", text: "第二轮输出" });
+    act(runFrames);
+    expect(textOf(view!)).toContain("第二轮输出");
+    emit({ type: "done", answer: "第二轮回答" });
+    await flush();
+    expect(textOf(view!)).toContain("本轮已完成");
+    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    // 下一轮另开新会话：不携带已删除的 conv-1。
+    await send("第三轮");
+    expect(mocks.chat).toHaveBeenLastCalledWith(
+      expect.objectContaining({ conversationId: undefined }),
+    );
+  });
+
   it("takeover streams narration and closes with a persistent outcome", async () => {
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();

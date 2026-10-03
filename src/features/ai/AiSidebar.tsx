@@ -143,6 +143,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     conversationIdRef.current = id;
     setConversationId(id);
   };
+  /**
+   * 已删除会话 ID 的 tombstone：删除 RPC 与在途 chat RPC 的响应可能倒序 ——
+   * 删除先返回、chat 后返回时，后者不得把已删除的 ID 写回（否则下一轮会重新
+   * 携带它发消息）。内核 ID 唯一且不复用，组件生命周期内永久抑制是安全的；
+   * 删除之后新发起的 chat 走 conversationId=undefined，拿到的是全新 ID，不受影响。
+   */
+  const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   /** 权限档位（+ 规则数量展示）。规则库本身在设置页，这里只留入口。 */
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permOpen, setPermOpen] = useState(false);
@@ -287,7 +294,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       // 即使终态早于 RPC 返回，也必须续用内核会话 id，否则下一轮会另开新会话。
-      updateConversationId(res.conversationId);
+      // 例外：该会话在本 RPC 在途期间被删除（响应倒序），写回会让下一轮重新
+      // 携带已删除的 ID —— 压掉写回，本轮照常结算，下一轮另开新会话。
+      if (!deletedConversationIdsRef.current.has(res.conversationId)) {
+        updateConversationId(res.conversationId);
+      }
       if (current.settled) {
         activeRunRef.current = finishAiRunSpawn(current);
         setAiBusy(false);
@@ -477,6 +488,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
     if (conversationIdRef.current === c.id) {
+      // tombstone：早于删除发起、之后才返回的 chat RPC 不得把这个 ID 写回来。
+      deletedConversationIdsRef.current.add(c.id);
       updateConversationId(undefined);
       if (!aiRunBlocksStart(activeRunRef.current)) stream.reset();
     }
