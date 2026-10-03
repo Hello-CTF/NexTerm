@@ -9,6 +9,7 @@ import (
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
@@ -88,6 +89,13 @@ type Config struct {
 	// MaxPendingSteers bounds the mid-run steering queue of one job;
 	// steer messages beyond it are rejected instead of piling up.
 	MaxPendingSteers int
+	// Memory is the opt-in long-term semantic memory store shared by every
+	// execution. The runner owns it: Close closes the store. Nil disables
+	// prompt injection, the model-facing memory tools and the memory IPC
+	// surface. MemoryScope is the single owner scope the runner operates
+	// under; it is configured once by the composition, never derived per call.
+	Memory      *memory.Store
+	MemoryScope memory.Scope
 }
 
 type ChatArgs struct {

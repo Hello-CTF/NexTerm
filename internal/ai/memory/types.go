@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	SchemaVersion   = 1
+	// SchemaVersion 2 adds memory_settings.tools_enabled: the opt-in switch
+	// for the model-facing memory tools, independent of prompt injection.
+	SchemaVersion   = 2
 	MaxTopicBytes   = 256
 	MaxContentBytes = 64 * 1024
 	maxScopeBytes   = 256
@@ -71,7 +73,15 @@ type TopicIndex struct {
 
 type Settings struct {
 	InjectionEnabled bool
+	ToolsEnabled     bool
 	Version          uint64
+}
+
+// SettingsInput carries the optional flag flips of one settings update; nil
+// fields keep their current value. At least one field must be set.
+type SettingsInput struct {
+	InjectionEnabled *bool
+	ToolsEnabled     *bool
 }
 
 type VersionConflictError struct {

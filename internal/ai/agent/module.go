@@ -10,7 +10,8 @@ import (
 )
 
 // Module exposes only the agent runtime surface: chat lifecycle, HITL
-// confirmation/answer, HITL reconnect replay and permission config.
+// confirmation/answer, HITL reconnect replay, permission config and — when the
+// runner owns a memory store — the restricted memory CRUD/settings commands.
 // Provider, model and conversation IPC commands are owned by the production
 // profiles module; registering them here as well fails composition with
 // duplicate-command errors.
@@ -93,6 +94,11 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
+			return err
+		}
+	}
+	if r.config.Memory != nil {
+		if err := r.registerMemoryCommands(dispatcher); err != nil {
 			return err
 		}
 	}
