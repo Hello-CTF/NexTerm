@@ -1493,6 +1493,13 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
+    case "ai_hitl_snapshot":
+    case "ai_hitl_events":
+      // 演示模式的交互走 pendingAi 内存模拟，没有内核 HITL 管理器 —— 显式报错，
+      // 而不是编一份假快照/假事件：前端对账拿到错误会静默降级（卡片保持原状），
+      // 假快照反而会把进行中的确认卡误清掉。
+      throwAppError("unsupported", "演示模式不提供 HITL 重连对账");
+
     case "ai_models":
       return ["deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "qwen-plus"];
 

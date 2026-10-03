@@ -8,6 +8,53 @@ export type JsonValue =
 
 export type AiScopeDto = { sessionId: string | null, tabId: string | null, connId: string | null, assetId: string | null, };
 
+/**
+ * HITL 运行事件（`ai_hitl_events` 的重放单元，与内核 `hitl.Event` 对齐）。
+ *
+ * `seq` 是 per-run 严格递增序号：重连后按它增量拉取，小于等于高水位的一律
+ * 是已处理过的重放，直接丢弃 —— 绝不按内容判断是否重放。
+ */
+export type AiHitlEventDto = { runId: string, checkpointId: string, requestId?: string, 
+/**
+ * interrupted | resumed | terminal
+ */
+kind: string, 
+/**
+ * completed | canceled | interrupted | failed | expired
+ */
+reason: string, message?: string, attempt: number, seq: number, };
+
+/**
+ * HITL 中断请求（与内核 `hitl.Interrupt` 对齐）。
+ *
+ * `id` 是稳定请求身份（同 run + checkpoint + 目标 + 调用 + 参数 + 问题 ⇒ 同 id），
+ * 重放/重连对账都按它匹配，不按内容猜；`nonce` 是单次回答的防伪随机数；
+ * `attempt`/`seq` 是 HITL 自己的运行序号空间（与流事件的 per-job seq 不同）。
+ */
+export type AiHitlInterruptDto = { id: string, runId: string, checkpointId: string, checkpointHash: string, targetId: string, callId: string, tool: string, 
+/**
+ * confirm | question
+ */
+kind: string, parameters: JsonValue, parameterHash: string, question?: AiHitlQuestionDto, nonce: string, 
+/**
+ * RFC3339（Go `time.Time` 线格式）。
+ */
+createdAt: string, expiresAt: string, attempt: number, seq: number, };
+
+export type AiHitlQuestionDto = { id: string, text: string, options?: Array<string>, };
+
+/**
+ * HITL 重连快照（`ai_hitl_snapshot`，与内核 `hitl.Snapshot` 对齐）。
+ *
+ * 权威状态：`pending` 之外残留的本地交互卡都是服务端已结束的；
+ * `seq` 是快照时刻的事件序号高水位，采纳快照即采纳到这一序号。
+ */
+export type AiHitlSnapshotDto = { runId: string, checkpointId: string, 
+/**
+ * running | interrupted | completed | canceled | failed | expired
+ */
+status: string, attempt: number, seq: number, pending: Array<AiHitlInterruptDto>, terminal?: AiHitlEventDto, };
+
 export type AppErrorDto = { code: string, message: string, detail: JsonValue | null, };
 
 export type AssetDto = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, options: JsonValue, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, 

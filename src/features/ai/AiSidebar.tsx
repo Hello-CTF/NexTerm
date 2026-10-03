@@ -16,7 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
-import { createAiChannel, disposeChannel } from "../../ipc/events";
+import { createAiChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
+import type { AiHitlEventDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { ModelPanel } from "./ModelPanel";
@@ -114,6 +115,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   const [input, setInput] = useState("");
   const [questionInput, setQuestionInput] = useState("");
+  /** 正在提交中的交互卡 id：在途期间同一张卡的重复点击不再发第二次 RPC。 */
+  const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
@@ -243,6 +246,28 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     return `[引用对象]\n${list}\n\n${text}`;
   };
 
+  /**
+   * HITL 重连对账：先按已见序号补事件（带结算标签），再用快照兜底（权威挂起列表）。
+   *
+   * 任何一步失败都静默降级 —— 流事件仍是主通道，对账只是安全网；事件拉取失败
+   * 不阻塞快照，快照失败时至少把已拉到的事件落账。
+   */
+  const replayHitl = async (generation: number, jobId: string) => {
+    const plan = stream.planHitlReplay(generation);
+    let events: AiHitlEventDto[] = [];
+    try {
+      events = await aiApi.hitlEvents(jobId, plan.afterSeq);
+    } catch {
+      events = [];
+    }
+    try {
+      const snapshot = await aiApi.hitlSnapshot(jobId);
+      stream.applyHitlReplay(generation, plan, events, snapshot);
+    } catch {
+      if (events.length > 0) stream.applyHitlReplay(generation, plan, events, null);
+    }
+  };
+
   const send = async (override?: { message?: string; planMode?: boolean }) => {
     const message = (override?.message ?? input).trim();
     if ((!message && images.length === 0) || aiBusy || aiRunBlocksStart(activeRunRef.current)) return;
@@ -263,7 +288,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const terminalEvent = type === "done" || type === "error";
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation) || current.settled) {
-        if (terminalEvent) disposeChannel(channel);
+        if (terminalEvent) dispose();
         return;
       }
       // 聚合层负责幂等与可见终态；这里只保留副作用（ownership / toast / 通道释放）。
@@ -276,8 +301,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       // 终态到达 ⇒ 这次作业彻底结束，释放本次作业专用的通道（重复 / 迟到终态也一样，
       // dispose 幂等）。不释放的话它对应的 WS 会一直挂着退避重连。
-      disposeChannel(channel);
+      dispose();
     });
+
+    // HITL 重连对账：通道重开 ⇒ 按 requestId/attempt/seq 补回中断状态与卡片。
+    // 只在 chat 通道挂 —— 接管的 job 不在 HITL 管理器里，快照只会回 not_found。
+    const offHitlReopen = onChannelReopen(channel, () => {
+      const current = activeRunRef.current;
+      if (!isCurrentAiRun(current, run.generation) || current.settled || !current.jobId) return;
+      void replayHitl(run.generation, current.jobId);
+    });
+    const dispose = () => {
+      offHitlReopen();
+      disposeChannel(channel);
+    };
 
     try {
       const res = await aiApi.chat({
@@ -290,7 +327,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       });
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation)) {
-        disposeChannel(channel);
+        dispose();
         return;
       }
       // 即使终态早于 RPC 返回，也必须续用内核会话 id，否则下一轮会另开新会话。
@@ -319,7 +356,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
         setAiBusy(false);
       }
-      disposeChannel(channel);
+      dispose();
     }
   };
 
@@ -343,13 +380,24 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("info", "这一轮还没启动完，稍等一下再点");
       return;
     }
+    // 上一次提交还在途：重复点击不再发第二次 RPC（后端的「已消费」拒绝不该靠它触发）。
+    if (submittingCardId) return;
+    setSubmittingCardId(card.id);
     try {
       await aiApi.confirm(
         confirmationInput({ jobId: id, callId: card.callId, nonce: card.nonce }, decision),
       );
     } catch (e) {
       pushToast("error", `确认失败：${describeError(e)}`);
+      // 迟到 / 重复 / 参数变化的拒绝：以服务端快照为准结算这张卡，
+      // 而不是让它永远挂着（对账失败时卡片保持原状，下次重连再算）。
+      // 接管的 job 不在 HITL 管理器里，对账对它是空转 —— 只给 chat 轮次对。
+      if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
+        void replayHitl(run.generation, id);
+      }
       return;
+    } finally {
+      setSubmittingCardId(null);
     }
     if (isCurrentAiRun(activeRunRef.current, run.generation)) {
       // 只结算这张卡（id + nonce 双重要件）：RPC 等待期间到来的新交互不受影响。
@@ -370,11 +418,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("info", "请先输入回答，或选择一个问题选项");
       return;
     }
+    if (submittingCardId) return;
+    setSubmittingCardId(card.id);
     try {
       await aiApi.answer(answerInput({ jobId: id, callId: card.callId, nonce: card.nonce }, text));
     } catch (e) {
       pushToast("error", `回答失败：${describeError(e)}`);
+      if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
+        void replayHitl(run.generation, id);
+      }
       return;
+    } finally {
+      setSubmittingCardId(null);
     }
     if (isCurrentAiRun(activeRunRef.current, run.generation)) {
       stream.resolveInteraction(run.generation, card.id, card.nonce, `已回答：${text}`);
@@ -842,16 +897,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
             </div>
             <div className="flex flex-wrap gap-1.5">
-              <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={() => void confirm("allow")}>
+              <button
+                className="nx-btn nx-btn-primary nx-btn-xs"
+                disabled={submittingCardId === confirmCard.id}
+                onClick={() => void confirm("allow")}
+              >
                 允许一次
               </button>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
+                disabled={submittingCardId === confirmCard.id}
                 onClick={() => void confirm("allow_session")}
               >
                 本会话允许此类
               </button>
-              <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void confirm("deny")}>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs"
+                disabled={submittingCardId === confirmCard.id}
+                onClick={() => void confirm("deny")}
+              >
                 拒绝
               </button>
               {/* 跳去设置页的规则库，并把这条命令预填成新规则的草稿 ——
@@ -895,6 +959,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                     key={option}
                     type="button"
                     className="nx-btn nx-btn-outline nx-btn-xs"
+                    disabled={submittingCardId === questionCard.id}
                     onClick={() => void answer(option)}
                   >
                     {option}
@@ -914,7 +979,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <button
                 type="submit"
                 className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
-                disabled={!questionInput.trim()}
+                disabled={!questionInput.trim() || submittingCardId === questionCard.id}
               >
                 回答
               </button>

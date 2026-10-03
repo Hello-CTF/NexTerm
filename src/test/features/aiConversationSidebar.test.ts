@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   confirm: vi.fn(),
   answer: vi.fn(),
+  hitlSnapshot: vi.fn(),
+  hitlEvents: vi.fn(),
   getPermission: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
@@ -32,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   dispose: vi.fn(),
   channels: [] as { onEvent: (ev: Record<string, unknown>) => void }[],
+  /** channel → 重连回调：测试据此模拟「通道重开」，驱动 HITL 对账。 */
+  reopens: new Map<unknown, () => void>(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -40,6 +44,8 @@ vi.mock("../../ipc/commands", () => ({
     cancel: mocks.cancel,
     confirm: mocks.confirm,
     answer: mocks.answer,
+    hitlSnapshot: mocks.hitlSnapshot,
+    hitlEvents: mocks.hitlEvents,
     getPermission: mocks.getPermission,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
@@ -62,6 +68,10 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
     return channel;
   },
   disposeChannel: mocks.dispose,
+  onChannelReopen: (channel: unknown, cb: () => void) => {
+    mocks.reopens.set(channel, cb);
+    return () => mocks.reopens.delete(channel);
+  },
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
@@ -82,6 +92,66 @@ function emit(ev: Record<string, unknown>, channelIndex = -1) {
   const channel = mocks.channels.at(channelIndex);
   if (!channel) throw new Error("no fake channel");
   act(() => channel.onEvent(ev));
+}
+
+/** 模拟「该通道的 WS 重连成功」：触发侧栏注册的 HITL 对账回调。 */
+function reconnect(channelIndex = -1) {
+  const channel = mocks.channels.at(channelIndex);
+  if (!channel) throw new Error("no fake channel");
+  const cb = mocks.reopens.get(channel);
+  if (!cb) throw new Error("no reopen callback registered for channel");
+  act(() => cb());
+}
+
+/**
+ * HITL 对账是「hitlEvents → hitlSnapshot → 落账」的多段链：一条 act 作用域里
+ * 多放几个 tick，把整条链落定（单 tick 的 flush 只够一段 RPC）。
+ */
+async function flushReplay() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+/** 构造一份 HITL 快照 DTO（字段与内核 hitl.Snapshot 线格式一致）。 */
+function hitlSnapshotOf(
+  status: string,
+  pending: Record<string, unknown>[],
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    runId: "job-1",
+    checkpointId: "job-1",
+    status,
+    attempt: 1,
+    seq: 1,
+    pending,
+    ...extra,
+  };
+}
+
+/** 构造一份 HITL 中断请求 DTO（字段与内核 hitl.Interrupt 线格式一致）。 */
+function hitlInterruptOf(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "req-1",
+    runId: "job-1",
+    checkpointId: "job-1",
+    checkpointHash: "hash-1",
+    targetId: "target-1",
+    callId: "call-1",
+    tool: "exec_commands",
+    kind: "confirm",
+    parameters: { command: "rm -rf /tmp/x" },
+    parameterHash: "phash-1",
+    nonce: "nonce-1",
+    createdAt: "2026-10-03T10:00:00Z",
+    expiresAt: "2026-10-03T10:05:00Z",
+    attempt: 1,
+    seq: 1,
+    ...overrides,
+  };
 }
 
 /** M23 落地实现（WithEventSequence）的身份：per-run 单调 seq，全事件共享计数。 */
@@ -129,7 +199,7 @@ function stubScroller(el: HTMLDivElement) {
 describe("AiSidebar conversation stream UX", () => {
   let view: MountedView | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     rafQueue = [];
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       rafQueue.push({ cb, cancelled: false });
@@ -140,10 +210,20 @@ describe("AiSidebar conversation stream UX", () => {
       if (entry) entry.cancelled = true;
     });
     mocks.channels.length = 0;
+    mocks.reopens.clear();
     mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
     mocks.cancel.mockResolvedValue(undefined);
     mocks.confirm.mockResolvedValue(undefined);
     mocks.answer.mockResolvedValue(undefined);
+    mocks.hitlSnapshot.mockResolvedValue({
+      runId: "job-1",
+      checkpointId: "job-1",
+      status: "running",
+      attempt: 1,
+      seq: 0,
+      pending: [],
+    });
+    mocks.hitlEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.conversationList.mockResolvedValue([]);
@@ -163,6 +243,9 @@ describe("AiSidebar conversation stream UX", () => {
       sessions: [],
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    // 挂载期副作用（ModelSelector 拉档案、AiSidebar 拉权限）在 act 内落定，
+    // 不留「未包 act」的悬挂更新。
+    await flush();
   });
 
   afterEach(() => {
@@ -598,6 +681,8 @@ describe("AiSidebar conversation stream UX", () => {
     act(() => useUi.setState({ rightOpen: false }));
     expect(view!.container.querySelector('[role="log"]')).toBeNull();
     act(() => useUi.setState({ rightOpen: true }));
+    // 重挂载的 ModelSelector / AiSidebar 副作用（拉档案、拉权限）在 act 内落定。
+    await flush();
     const sc = stubScroller(view!.container.querySelector('[role="log"]') as HTMLDivElement);
     expect(sc.el).not.toBe(first);
 
@@ -646,5 +731,266 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).toContain("haha!");
     expect(textOf(view!)).not.toContain("haha!haha!");
+  });
+
+  it("replays a pending HITL request on reconnect even when its live event was lost", async () => {
+    await send("跑个命令");
+    // 断线期间内核发起了确认，前端从没收到 confirmRequired。
+    mocks.hitlEvents.mockResolvedValueOnce([
+      {
+        runId: "job-1",
+        checkpointId: "job-1",
+        requestId: "req-1",
+        kind: "interrupted",
+        reason: "interrupted",
+        attempt: 1,
+        seq: 1,
+      },
+    ]);
+    mocks.hitlSnapshot.mockResolvedValueOnce(
+      hitlSnapshotOf("interrupted", [hitlInterruptOf({ callId: "call-9", nonce: "nonce-9" })]),
+    );
+    reconnect();
+    await flushReplay();
+    // 补回来的卡与原面板同一处渲染，不新增重复面板。
+    expect(textOf(view!)).toContain("需要你确认");
+    expect(view!.container.querySelectorAll(".nx-alert")).toHaveLength(1);
+    expect(mocks.hitlEvents).toHaveBeenCalledWith("job-1", 0);
+
+    // 补回来的卡可以正常回答，身份（callId + nonce）完整。
+    clickButton(view!.container, "允许一次");
+    await flush();
+    expect(mocks.confirm).toHaveBeenCalledWith({
+      jobId: "job-1",
+      callId: "call-9",
+      nonce: "nonce-9",
+      decision: "allow",
+    });
+    expect(textOf(view!)).not.toContain("需要你确认");
+    expect(textOf(view!)).toContain("exec_commands · 已允许一次");
+
+    // 迟到的流重放（同一 callId）不会重开已结算的卡，也不会出第二张卡。
+    emit({
+      type: "confirmRequired",
+      id: "call-9",
+      tool: "exec_commands",
+      rendered: "$ rm -rf /tmp/x",
+      confirmationNonce: "nonce-9",
+      requestId: "req-1",
+      attempt: 1,
+    });
+    expect(textOf(view!)).not.toContain("需要你确认");
+    expect(view!.container.querySelectorAll(".nx-alert")).toHaveLength(0);
+  });
+
+  it("replays a pending question from the snapshot and answers it", async () => {
+    await send("问吧");
+    // 事件通道没补到（缓存窗口之外），只剩快照兜底。
+    mocks.hitlEvents.mockResolvedValueOnce([]);
+    mocks.hitlSnapshot.mockResolvedValueOnce(
+      hitlSnapshotOf("interrupted", [
+        hitlInterruptOf({
+          id: "req-q",
+          callId: "q-1",
+          tool: "ask_user",
+          kind: "question",
+          parameters: {},
+          nonce: "nonce-q",
+          question: { id: "req-q", text: "继续吗？", options: ["继续", "停止"] },
+        }),
+      ]),
+    );
+    reconnect();
+    await flushReplay();
+    expect(textOf(view!)).toContain("AI 需要你回答");
+    expect(textOf(view!)).toContain("继续吗？");
+    clickButton(view!.container, "继续");
+    await flush();
+    expect(mocks.answer).toHaveBeenCalledWith({
+      jobId: "job-1",
+      callId: "q-1",
+      nonce: "nonce-q",
+      text: "继续",
+    });
+    expect(textOf(view!)).toContain("提问 · 已回答：继续");
+  });
+
+  it("settles a card that was answered elsewhere while disconnected", async () => {
+    await send("跑个命令");
+    emit({
+      type: "confirmRequired",
+      id: "call-1",
+      tool: "exec_commands",
+      rendered: "$ rm x",
+      confirmationNonce: "nonce-1",
+      requestId: "req-1",
+      attempt: 1,
+    });
+    expect(textOf(view!)).toContain("需要你确认");
+    // 断线期间另开窗口回答了它：resumed 事件 + 快照都不再挂起该请求。
+    mocks.hitlEvents.mockResolvedValueOnce([
+      {
+        runId: "job-1",
+        checkpointId: "job-1",
+        requestId: "req-1",
+        kind: "resumed",
+        reason: "",
+        attempt: 2,
+        seq: 2,
+      },
+    ]);
+    mocks.hitlSnapshot.mockResolvedValueOnce(hitlSnapshotOf("running", [], { attempt: 2, seq: 2 }));
+    reconnect();
+    await flushReplay();
+    expect(textOf(view!)).not.toContain("需要你确认");
+    expect(textOf(view!)).toContain("exec_commands · 已在服务端回答");
+  });
+
+  it("closes pending cards when the run terminated while disconnected", async () => {
+    await send("跑个命令");
+    emit({
+      type: "confirmRequired",
+      id: "call-1",
+      tool: "exec_commands",
+      rendered: "$ rm x",
+      confirmationNonce: "nonce-1",
+      requestId: "req-1",
+      attempt: 1,
+    });
+    mocks.hitlEvents.mockResolvedValueOnce([
+      {
+        runId: "job-1",
+        checkpointId: "job-1",
+        kind: "terminal",
+        reason: "completed",
+        attempt: 2,
+        seq: 2,
+      },
+    ]);
+    mocks.hitlSnapshot.mockResolvedValueOnce(
+      hitlSnapshotOf("completed", [], {
+        attempt: 2,
+        seq: 2,
+        terminal: {
+          runId: "job-1",
+          checkpointId: "job-1",
+          kind: "terminal",
+          reason: "completed",
+          attempt: 2,
+          seq: 2,
+        },
+      }),
+    );
+    reconnect();
+    await flushReplay();
+    expect(textOf(view!)).not.toContain("需要你确认");
+    expect(textOf(view!)).toContain("本轮已结束，交互已关闭");
+  });
+
+  it("settles a rejected confirmation from the server snapshot instead of hanging", async () => {
+    await send("跑个命令");
+    emit({
+      type: "confirmRequired",
+      id: "call-1",
+      tool: "exec_commands",
+      rendered: "$ rm x",
+      confirmationNonce: "nonce-1",
+      requestId: "req-1",
+      attempt: 1,
+    });
+    expect(textOf(view!)).toContain("需要你确认");
+    // 服务端拒绝（迟到 / 重复 / 参数变化，内核统一映射为「确认已过期…」）。
+    mocks.confirm.mockRejectedValueOnce(new Error("确认已过期、重复或不属于当前工具调用"));
+    // 对账快照：该请求已不在挂起列表（已被消费或过期）。
+    mocks.hitlSnapshot.mockResolvedValueOnce(hitlSnapshotOf("running", [], { attempt: 2, seq: 2 }));
+    clickButton(view!.container, "允许一次");
+    await flushReplay();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("确认已过期"));
+    // 卡片按服务端真相结算：不再挂起，也不能再点。
+    expect(textOf(view!)).not.toContain("需要你确认");
+    expect(textOf(view!)).toContain("exec_commands · 该交互已在服务端结束");
+    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).toBeNull();
+  });
+
+  it("keeps the card when a confirmation fails but the server still has it pending", async () => {
+    await send("跑个命令");
+    emit({
+      type: "confirmRequired",
+      id: "call-1",
+      tool: "exec_commands",
+      rendered: "$ rm x",
+      confirmationNonce: "nonce-1",
+      requestId: "req-1",
+      attempt: 1,
+    });
+    // 瞬时故障（不是拒绝）：快照里请求仍然挂起 ⇒ 卡片保留，可重试。
+    mocks.confirm.mockRejectedValueOnce(new Error("网络抖动"));
+    mocks.hitlSnapshot.mockResolvedValueOnce(
+      hitlSnapshotOf("interrupted", [hitlInterruptOf()], { attempt: 1, seq: 1 }),
+    );
+    clickButton(view!.container, "允许一次");
+    await flushReplay();
+    expect(textOf(view!)).toContain("需要你确认");
+    // 重试成功，正常结算。
+    clickButton(view!.container, "拒绝");
+    await flush();
+    expect(mocks.confirm).toHaveBeenLastCalledWith({
+      jobId: "job-1",
+      callId: "call-1",
+      nonce: "nonce-1",
+      decision: "deny",
+    });
+    expect(textOf(view!)).toContain("exec_commands · 已拒绝");
+  });
+
+  it("ignores a duplicate click while the confirmation RPC is in flight", async () => {
+    await send("跑个命令");
+    emit({
+      type: "confirmRequired",
+      id: "call-1",
+      tool: "exec_commands",
+      rendered: "$ rm x",
+      confirmationNonce: "nonce-1",
+    });
+    let release!: () => void;
+    mocks.confirm.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const allow = [...view!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "允许一次",
+    );
+    if (!allow) throw new Error("allow button not found");
+    click(allow);
+    click(allow);
+    await flush();
+    // 在途期间的第二次点击不发 RPC；放行后只结算一次。
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(textOf(view!)).toContain("exec_commands · 已允许一次");
+  });
+
+  it("does not fire HITL replay for a settled run or the takeover channel", async () => {
+    await send("跑个命令");
+    const chatChannel = mocks.channels.at(-1);
+    expect(mocks.reopens.has(chatChannel)).toBe(true);
+    emit({ type: "done", answer: "完成" });
+    await flush();
+    // 终态 ⇒ 通道释放、重连回调随之退订：已结算的轮次不会再触发对账。
+    expect(mocks.reopens.has(chatChannel)).toBe(false);
+    expect(mocks.hitlEvents).not.toHaveBeenCalled();
+    expect(mocks.hitlSnapshot).not.toHaveBeenCalled();
+
+    // 接管通道根本不注册 HITL 重连回调（接管的 job 不在 HITL 管理器里）。
+    click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
+    await flush();
+    await flush();
+    const takeoverChannel = mocks.channels.at(-1);
+    expect(takeoverChannel).toBeDefined();
+    expect(mocks.reopens.has(takeoverChannel)).toBe(false);
   });
 });
