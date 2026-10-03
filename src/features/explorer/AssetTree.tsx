@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
-import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
+import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
@@ -14,13 +14,19 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconClose,
+  IconCommand,
   IconEdit,
   IconFolder,
   IconKey,
+  IconLoader,
   IconPlay,
+  IconPlug,
   IconPlus,
   IconSearch,
+  IconTrash,
+  IconXCircle,
 } from "../../ui/icons";
+import { SnippetsPanel } from "./SnippetsPanel";
 
 /** 资产类型 → 中文名（新建弹窗与提示里用）。 */
 const KIND_LABEL: Record<string, string> = {
@@ -43,6 +49,13 @@ export function AssetTree() {
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   /** 从分组行上的 + 新建时 preset 为该分组；顶栏 + = 不分组。 */
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
+  /** 分组改名弹窗的目标；null = 关着。 */
+  const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
+  /** 正在执行删除的分组 id（行内 busy，防连点）。 */
+  const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
+  /** 分组操作失败的行内错误（附重试）；确认框已经点过「确定」，重试不再问一遍。 */
+  const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
 
   const assets = useQuery({
     queryKey: ["assets"],
@@ -58,6 +71,12 @@ export function AssetTree() {
   const credentials = useQuery({
     queryKey: ["credentials"],
     queryFn: () => vaultApi.listCredentials(),
+    refetchOnWindowFocus: false,
+  });
+  // 片段数量徽章：与片段面板（["snippets"]）共用同一份缓存
+  const snippets = useQuery({
+    queryKey: ["snippets"],
+    queryFn: () => assetApi.snippetList(),
     refetchOnWindowFocus: false,
   });
   const results = useQuery({
@@ -96,6 +115,33 @@ export function AssetTree() {
     } catch (e) {
       pushToast("error", `移动失败：${describeError(e)}`);
     }
+  };
+
+  /** 删除分组的实际执行（确认框之后的部分单独拆出来，行内「重试」复用）。 */
+  const runDeleteGroup = async (g: AssetGroup) => {
+    setGroupBusyId(g.id);
+    setGroupError(null);
+    try {
+      await assetApi.groupDelete(g.id);
+      void qc.invalidateQueries({ queryKey: ["groups"] });
+      // 组内资产的 group_id 由外键置空（ON DELETE SET NULL），列表要一起刷
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      pushToast("info", "已删除分组");
+    } catch (e) {
+      setGroupError({ id: g.id, message: describeError(e) });
+    } finally {
+      setGroupBusyId(null);
+    }
+  };
+
+  /** 删除分组：显式按钮 + 确认框；选中/展开分组不会触发任何写操作。 */
+  const deleteGroup = async (g: AssetGroup) => {
+    if (groupBusyId) return;
+    const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」；子分组会被一并删除。`, {
+      kind: "warning",
+    });
+    if (!ok) return;
+    await runDeleteGroup(g);
   };
 
   if (!leftOpen) return null;
@@ -172,6 +218,12 @@ export function AssetTree() {
               setPresetGroup(g.id);
               setEditing("asset");
             }}
+            busy={groupBusyId === g.id}
+            error={groupError?.id === g.id ? groupError.message : null}
+            onRename={() => setRenamingGroup(g)}
+            onDeleteGroup={() => void deleteGroup(g)}
+            onRetry={() => void runDeleteGroup(g)}
+            onDismissError={() => setGroupError(null)}
           />
         ))}
         {filtered.length === 0 && (
@@ -181,10 +233,23 @@ export function AssetTree() {
         )}
       </div>
 
+      {/* 片段入口：常驻底部（凭据上方）。片段是「资产区」的命令模板，
+          面板从这里打开，插入走当前终端（见 SnippetsPanel）。 */}
+      <button
+        className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
+        title="命令片段（插入当前终端）"
+        onClick={() => setSnippetsOpen(true)}
+      >
+        <IconCommand size={14} className="shrink-0 text-neutral-500" />
+        <span className="flex-1 text-left">命令片段</span>
+        <span className="nx-count">{snippets.data?.length ?? "…"}</span>
+        <IconChevronRight size={12} className="shrink-0 text-neutral-600" />
+      </button>
+
       {/* 凭据入口：常驻底部。凭据在语义上属于资产，入口放资产区；
           点击后左栏整体切成「凭据」形态（凭据有自己的侧边栏，不再占主区标签） */}
       <button
-        className="mx-1.5 mb-1.5 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
+        className="mx-1.5 mb-1.5 flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
         title="凭据库（左栏查看）"
         onClick={openCredentialsSidebar}
       >
@@ -223,6 +288,17 @@ export function AssetTree() {
           }}
         />
       )}
+      {renamingGroup && (
+        <GroupRenameDialog
+          group={renamingGroup}
+          onClose={() => setRenamingGroup(null)}
+          onRenamed={() => {
+            setRenamingGroup(null);
+            void qc.invalidateQueries({ queryKey: ["groups"] });
+          }}
+        />
+      )}
+      {snippetsOpen && <SnippetsPanel onClose={() => setSnippetsOpen(false)} />}
     </div>
   );
 }
@@ -310,6 +386,12 @@ function GroupNode({
   onEdit,
   onMoveAsset,
   onCreateIn,
+  busy,
+  error,
+  onRename,
+  onDeleteGroup,
+  onRetry,
+  onDismissError,
 }: {
   group: AssetGroup;
   assets: Asset[];
@@ -317,6 +399,14 @@ function GroupNode({
   onEdit: (a: Asset) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
+  /** 删除进行中：行内按钮禁用，防连点。 */
+  busy: boolean;
+  /** 上一次删除失败的错误文本（行内展示 + 重试）。 */
+  error: string | null;
+  onRename: () => void;
+  onDeleteGroup: () => void;
+  onRetry: () => void;
+  onDismissError: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const [over, setOver] = useState(false);
@@ -362,6 +452,7 @@ function GroupNode({
           <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="在分组内新建资产"
+            disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
               onCreateIn();
@@ -369,8 +460,45 @@ function GroupNode({
           >
             <IconPlus size={12} />
           </button>
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="重命名分组"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRename();
+            }}
+          >
+            <IconEdit size={12} />
+          </button>
+          <button
+            className="nx-icon-btn nx-icon-btn-sm is-danger"
+            title="删除分组"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteGroup();
+            }}
+          >
+            {busy ? <IconLoader size={12} className="animate-spin" /> : <IconTrash size={12} />}
+          </button>
         </span>
       </div>
+      {/* 删除失败的行内错误：确认已经点过，这里给的是直接重试，不再弹确认框 */}
+      {error && (
+        <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
+          <IconXCircle size={12} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate" title={error}>
+            删除失败:{error}
+          </span>
+          <button className="nx-link shrink-0" onClick={onRetry}>
+            重试
+          </button>
+          <button className="nx-link shrink-0" onClick={onDismissError}>
+            知道了
+          </button>
+        </div>
+      )}
       {open && (
         <div className="ml-3.5">
           {assets.map((a) => (
@@ -381,6 +509,88 @@ function GroupNode({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 分组改名弹窗：显式动作（行内按钮）才打开；保存失败错误留在弹窗里可直接重试。 */
+function GroupRenameDialog({
+  group,
+  onClose,
+  onRenamed,
+}: {
+  group: AssetGroup;
+  onClose: () => void;
+  onRenamed: () => void;
+}) {
+  const pushToast = useUi((s) => s.pushToast);
+  const [name, setName] = useState(group.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (saving) return;
+    const next = name.trim();
+    if (!next) {
+      setError("分组名不能为空");
+      return;
+    }
+    if (next === group.name) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await assetApi.groupUpdate(group.id, next);
+      pushToast("success", "已重命名");
+      onRenamed();
+    } catch (e) {
+      // 错误留在弹窗里：改完名字直接再点保存即重试，不必重新走一遍入口。
+      setError(describeError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="nx-overlay" onClick={onClose}>
+      <div className="nx-modal max-w-[340px]" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-header">
+          <span className="text-[13px] font-semibold text-neutral-100">重命名分组</span>
+        </div>
+        <div className="nx-modal-body">
+          <div className="nx-form-row">
+            <label className="nx-label">名称</label>
+            <input
+              className="nx-input"
+              value={name}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void save();
+              }}
+            />
+          </div>
+          {error && (
+            <div className="mb-2 flex items-center gap-1.5 text-[12px] text-red-400">
+              <IconXCircle size={13} /> {error}
+            </div>
+          )}
+        </div>
+        <div className="nx-modal-footer">
+          <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
+            取消
+          </button>
+          <button
+            className="nx-btn nx-btn-primary"
+            disabled={saving || !name.trim()}
+            onClick={() => void save()}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -429,6 +639,55 @@ export function AssetEditor({
     typeof initial?.options?.cwd === "string" ? (initial.options.cwd as string) : "",
   );
   const pushToast = useUi((s) => s.pushToast);
+
+  /** 测试连接（M59）：只对「主机 + 端口」做有界 TCP 探测，绝不携带任何凭据。 */
+  const [probe, setProbe] = useState<{ status: "idle" | "pending" | "ok" | "fail"; error?: string }>({
+    status: "idle",
+  });
+  /** 探测序号：在途结果回来时若已有更新的探测，旧结果直接丢弃（防陈旧覆盖）。 */
+  const probeSeq = useRef(0);
+  /** 上次发起探测的时间戳：简单限速 —— 探测是网络操作，不能拿按钮当连点器。 */
+  const probeAtRef = useRef(0);
+  /** host/port 的镜像：在途探测 resolve 时闭包里的是旧值，靠它判结果是否已陈旧。 */
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const portRef = useRef(port);
+  portRef.current = port;
+
+  // 目标一改，在途探测的结果就失去意义：作废序号并清掉旧结果。
+  useEffect(() => {
+    probeSeq.current += 1;
+    setProbe({ status: "idle" });
+  }, [host, port, groupKind]);
+
+  const runProbe = async () => {
+    const h = host.trim();
+    const p = Number(port);
+    if (!h || !Number.isFinite(p) || p <= 0 || p > 65535) {
+      pushToast("error", "先填写有效的主机和端口");
+      return;
+    }
+    if (probe.status === "pending") return; // 上一次没回来就不发新的（配合下方限速双保险）
+    const now = Date.now();
+    if (now - probeAtRef.current < 1500) return; // 限速：两次探测至少隔 1.5s
+    probeAtRef.current = now;
+    const seq = ++probeSeq.current;
+    setProbe({ status: "pending" });
+    try {
+      // 有界探测：显式 3s 超时（与内核缺省一致，不依赖缺省值）。
+      // probe 只收 host/port —— 密码 / 私钥 / 口令一概不出这个表单。
+      const res = await sessionApi.probe(h, p, 3000);
+      if (seq !== probeSeq.current) return; // 已有更新的探测，陈旧结果丢弃
+      if (hostRef.current.trim() !== h || Number(portRef.current) !== p) {
+        setProbe({ status: "idle" });
+        return;
+      }
+      setProbe(res.open ? { status: "ok" } : { status: "fail", error: res.error || "端口不可达" });
+    } catch (e) {
+      if (seq !== probeSeq.current) return;
+      setProbe({ status: "fail", error: describeError(e) });
+    }
+  };
 
   // 凭据绑定：默认跟随已有绑定；没有就「新建凭据」
   const [credChoice, setCredChoice] = useState<CredChoice>(initial?.credId ?? "new");
@@ -760,6 +1019,33 @@ export function AssetEditor({
                     onChange={(e) => setPort(Number(e.target.value))}
                   />
                 </div>
+              </div>
+
+              {/* 测试连接：显式按钮 + 有界探测（3s）。结果就地展示；
+                  只探测主机端口，不带任何凭据 —— 密码/私钥/口令不出这个表单。 */}
+              <div className="mb-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+                  disabled={!host.trim() || probe.status === "pending"}
+                  onClick={() => void runProbe()}
+                >
+                  {probe.status === "pending" ? (
+                    <IconLoader size={12} className="animate-spin" />
+                  ) : (
+                    <IconPlug size={12} />
+                  )}
+                  测试连接
+                </button>
+                {probe.status === "ok" && (
+                  <span className="text-[11.5px] text-emerald-400">端口可连接</span>
+                )}
+                {probe.status === "fail" && (
+                  <span className="min-w-0 truncate text-[11.5px] text-red-400" title={probe.error}>
+                    不可连接:{probe.error}
+                  </span>
+                )}
+                <span className="nx-hint ml-auto">只探测端口，不带凭据</span>
               </div>
 
               <div className="nx-form-row">
