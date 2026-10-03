@@ -28,7 +28,7 @@ func (f *FileSystem) ReadFile(ctx context.Context, path string, maxBytes int64) 
 	if err != nil {
 		return nil, err
 	}
-	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(output))
+	data, err := base64.StdEncoding.DecodeString(output)
 	if err != nil {
 		return nil, fmt.Errorf("decode WinRM file content: %w", err)
 	}

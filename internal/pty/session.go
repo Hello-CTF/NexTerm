@@ -25,7 +25,6 @@ type Config struct {
 	Rows       uint32
 	ID         string
 	Generation uint64
-	OnClose    func()
 }
 
 type terminal interface {
@@ -34,7 +33,6 @@ type terminal interface {
 	Wait(ctx context.Context) error
 	Kill() error
 	CleanupError() error
-	PID() int
 }
 
 type Session struct {
@@ -43,7 +41,6 @@ type Session struct {
 	cancel     context.CancelFunc
 	id         string
 	generation uint64
-	onClose    func()
 	writeMu    sync.Mutex
 	closeOnce  sync.Once
 	closeErr   error
@@ -82,7 +79,6 @@ func Start(ctx context.Context, config Config) (*Session, error) {
 		cancel:     cancel,
 		id:         config.ID,
 		generation: config.Generation,
-		onClose:    config.OnClose,
 	}
 	s.setStop(context.AfterFunc(sessionCtx, func() { _ = s.Close() }))
 	return s, nil
@@ -149,10 +145,6 @@ func (s *Session) Generation() uint64 {
 	return s.generation
 }
 
-func (s *Session) PID() int {
-	return s.terminal.PID()
-}
-
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		s.stopMu.Lock()
@@ -178,9 +170,6 @@ func (s *Session) Close() error {
 			normalizeCloseError(waitErr),
 			s.terminal.CleanupError(),
 		)
-		if s.onClose != nil {
-			s.onClose()
-		}
 	})
 	return s.closeErr
 }

@@ -65,7 +65,7 @@ func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options T
 			}
 			offset = size
 			targetExists = true
-		case errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err):
+		case errors.Is(err, fs.ErrNotExist):
 		default:
 			return 0, err
 		}

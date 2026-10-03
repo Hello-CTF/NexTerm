@@ -40,10 +40,6 @@ func (c *ExecConn) Generation() uint64 {
 	return c.channel.Generation()
 }
 
-func (c *ExecConn) NextOutput(ctx context.Context) (base.OutputEvent, error) {
-	return c.StreamConn.NextOutput(ctx)
-}
-
 var _ base.OrderedOutput = (*ExecConn)(nil)
 
 type sshAddr string

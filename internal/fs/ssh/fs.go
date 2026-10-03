@@ -100,7 +100,7 @@ func (f *FS) WriteFile(ctx context.Context, remotePath string, data []byte, back
 			if err := f.backup(ctx, remotePath, info.Mode()); err != nil {
 				return err
 			}
-		case errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err):
+		case errors.Is(err, fs.ErrNotExist):
 		default:
 			return fmt.Errorf("SFTP stat before backup: %w", err)
 		}
@@ -197,7 +197,7 @@ func (f *FS) Exists(ctx context.Context, remotePath string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	return false, err

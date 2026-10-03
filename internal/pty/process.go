@@ -16,7 +16,6 @@ type processTree interface {
 }
 
 type Process struct {
-	pid        int
 	tree       processTree
 	done       chan struct{}
 	waitErr    error
@@ -29,18 +28,8 @@ func StartProcess(cmd *exec.Cmd) (*Process, error) {
 	return startProcess(cmd)
 }
 
-func newStartedProcess(cmd *exec.Cmd) (*Process, error) {
-	tree, err := newProcessTree(cmd.Process)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return nil, err
-	}
-	return newProcess(cmd.Process.Pid, tree, cmd.Wait), nil
-}
-
-func newProcess(pid int, tree processTree, wait func() error) *Process {
-	p := &Process{pid: pid, tree: tree, done: make(chan struct{})}
+func newProcess(tree processTree, wait func() error) *Process {
+	p := &Process{tree: tree, done: make(chan struct{})}
 	go p.wait(wait)
 	return p
 }
@@ -57,10 +46,6 @@ func (p *Process) wait(wait func() error) {
 	p.terminated = true
 	close(p.done)
 	p.mu.Unlock()
-}
-
-func (p *Process) PID() int {
-	return p.pid
 }
 
 func (p *Process) Wait(ctx context.Context) error {

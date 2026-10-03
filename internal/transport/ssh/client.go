@@ -31,11 +31,7 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	connectCtx := ctx
-	cancel := func() {}
-	if cfg.ConnectTimeout > 0 {
-		connectCtx, cancel = context.WithTimeout(ctx, cfg.ConnectTimeout)
-	}
+	connectCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
 
 	auth, closers, err := authentication(connectCtx, cfg.Auth)

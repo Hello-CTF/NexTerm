@@ -14,7 +14,7 @@ func startProcess(cmd *exec.Cmd) (*Process, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return newStartedProcess(cmd)
+	return newStartedProcess(cmd), nil
 }
 
 func prepareCommand(cmd *exec.Cmd) {
@@ -32,8 +32,8 @@ type unixProcessTree struct {
 	process *os.Process
 }
 
-func newProcessTree(process *os.Process) (processTree, error) {
-	return &unixProcessTree{process: process}, nil
+func newStartedProcess(cmd *exec.Cmd) *Process {
+	return newProcess(&unixProcessTree{process: cmd.Process}, cmd.Wait)
 }
 
 func (t *unixProcessTree) Kill() error {

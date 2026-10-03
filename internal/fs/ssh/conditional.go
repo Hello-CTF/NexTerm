@@ -142,7 +142,7 @@ func (f *FS) lstatOccupied(remotePath string) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
-	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	return false, fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
@@ -152,7 +152,7 @@ func remoteAlreadyExists(expected conditional.Expectation) error {
 	return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
 }
 
-// uploadTemporary stages the replacement content in an exclusively created
+// uploadTemporary stages new content in an exclusively created
 // same-directory temporary file.
 func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (temporary string, err error) {
 	var suffix [8]byte

@@ -63,11 +63,7 @@ func parseList(path, output string) ([]base.FileEntry, error) {
 	}
 	var entries []listedEntry
 	if err := json.Unmarshal([]byte(output), &entries); err != nil {
-		var single listedEntry
-		if singleErr := json.Unmarshal([]byte(output), &single); singleErr != nil {
-			return nil, fmt.Errorf("parse WinRM directory JSON: %w", err)
-		}
-		entries = []listedEntry{single}
+		return nil, fmt.Errorf("parse WinRM directory JSON: %w", err)
 	}
 	result := make([]base.FileEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -154,7 +150,7 @@ func (f *FileSystem) Checksum(ctx context.Context, path, algorithm string) (stri
 	if err != nil {
 		return "", err
 	}
-	return strings.ToLower(strings.TrimSpace(output)), nil
+	return strings.ToLower(output), nil
 }
 
 func (f *FileSystem) Exists(ctx context.Context, path string) (bool, error) {
@@ -177,7 +173,7 @@ func (f *FileSystem) Size(ctx context.Context, path string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	size, err := strconv.ParseInt(strings.TrimSpace(output), 10, 64)
+	size, err := strconv.ParseInt(output, 10, 64)
 	if err != nil || size < 0 {
 		return 0, fmt.Errorf("parse WinRM file size %q", output)
 	}

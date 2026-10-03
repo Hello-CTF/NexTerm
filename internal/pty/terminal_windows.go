@@ -32,8 +32,6 @@ type windowsConPty struct {
 	stateMu     sync.Mutex
 	closing     bool
 	opMu        sync.RWMutex
-	closeOnce   sync.Once
-	closeErr    error
 }
 
 func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
@@ -108,10 +106,6 @@ func (t *windowsTerminal) CleanupError() error {
 	return t.process.CleanupError()
 }
 
-func (t *windowsTerminal) PID() int {
-	return t.process.PID()
-}
-
 func (t *windowsTerminal) Close() error {
 	return t.conpty.Close()
 }
@@ -170,31 +164,28 @@ func (c *windowsConPty) isClosing() bool {
 }
 
 func (c *windowsConPty) Close() error {
-	c.closeOnce.Do(func() {
-		c.stateMu.Lock()
-		c.closing = true
-		c.stateMu.Unlock()
-		_ = windows.CancelIoEx(c.outputRead, nil)
-		_ = windows.CancelIoEx(c.inputWrite, nil)
-		c.opMu.Lock()
-		defer c.opMu.Unlock()
-		slaveErr := c.closeSlave()
-		masterErr := errors.Join(windows.CloseHandle(c.inputWrite), windows.CloseHandle(c.outputRead))
-		c.attributes.Delete()
-		closed := make(chan struct{})
-		go func() {
-			windows.ClosePseudoConsole(c.hpc)
-			close(closed)
-		}()
-		var consoleErr error
-		select {
-		case <-closed:
-		case <-time.After(5 * time.Second):
-			consoleErr = fmt.Errorf("close ConPTY: %w", context.DeadlineExceeded)
-		}
-		c.closeErr = errors.Join(slaveErr, masterErr, consoleErr)
-	})
-	return c.closeErr
+	c.stateMu.Lock()
+	c.closing = true
+	c.stateMu.Unlock()
+	_ = windows.CancelIoEx(c.outputRead, nil)
+	_ = windows.CancelIoEx(c.inputWrite, nil)
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	slaveErr := c.closeSlave()
+	masterErr := errors.Join(windows.CloseHandle(c.inputWrite), windows.CloseHandle(c.outputRead))
+	c.attributes.Delete()
+	closed := make(chan struct{})
+	go func() {
+		windows.ClosePseudoConsole(c.hpc)
+		close(closed)
+	}()
+	var consoleErr error
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		consoleErr = fmt.Errorf("close ConPTY: %w", context.DeadlineExceeded)
+	}
+	return errors.Join(slaveErr, masterErr, consoleErr)
 }
 
 func (c *windowsConPty) closeHandles() error {

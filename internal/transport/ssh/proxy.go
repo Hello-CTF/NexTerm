@@ -41,14 +41,11 @@ func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, er
 		if err != nil {
 			return nil, fmt.Errorf("configure SOCKS5 proxy: %w", err)
 		}
-		if contextDialer, ok := d.(proxy.ContextDialer); ok {
-			conn, err := contextDialer.DialContext(ctx, "tcp", target)
-			if err != nil {
-				return nil, fmt.Errorf("SOCKS5 proxy connect: %w", err)
-			}
-			return conn, nil
+		contextDialer, ok := d.(proxy.ContextDialer)
+		if !ok {
+			return nil, fmt.Errorf("configure SOCKS5 proxy: context-aware dialing unsupported")
 		}
-		conn, err := dialWithContext(ctx, d, "tcp", target)
+		conn, err := contextDialer.DialContext(ctx, "tcp", target)
 		if err != nil {
 			return nil, fmt.Errorf("SOCKS5 proxy connect: %w", err)
 		}
@@ -66,31 +63,6 @@ func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, er
 		return tunnel, nil
 	default:
 		return nil, fmt.Errorf("unsupported SSH proxy scheme %q (use socks5:// or http://)", u.Scheme)
-	}
-}
-
-type dialResult struct {
-	conn net.Conn
-	err  error
-}
-
-func dialWithContext(ctx context.Context, dialer proxy.Dialer, network, address string) (net.Conn, error) {
-	result := make(chan dialResult, 1)
-	go func() {
-		conn, err := dialer.Dial(network, address)
-		result <- dialResult{conn: conn, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		go func() {
-			late := <-result
-			if late.conn != nil {
-				late.conn.Close()
-			}
-		}()
-		return nil, ctx.Err()
-	case result := <-result:
-		return result.conn, result.err
 	}
 }
 

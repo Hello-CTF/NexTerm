@@ -24,12 +24,7 @@ func startTerminal(cmd *exec.Cmd, cols, rows uint32) (terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-	process, err := newStartedProcess(cmd)
-	if err != nil {
-		_ = master.Close()
-		return nil, err
-	}
-	return &unixTerminal{master: master, process: process}, nil
+	return &unixTerminal{master: master, process: newStartedProcess(cmd)}, nil
 }
 
 func (t *unixTerminal) Read(p []byte) (int, error) {
@@ -69,10 +64,6 @@ func (t *unixTerminal) Kill() error {
 
 func (t *unixTerminal) CleanupError() error {
 	return t.process.CleanupError()
-}
-
-func (t *unixTerminal) PID() int {
-	return t.process.PID()
 }
 
 func (t *unixTerminal) Close() error {
