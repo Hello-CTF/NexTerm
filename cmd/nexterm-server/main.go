@@ -7,7 +7,9 @@ import (
 	"os"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
+	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
+	"github.com/ProbiusOfficial/NexTerm/internal/server"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
 
@@ -32,7 +34,7 @@ func run(args []string) int {
 
 	switch invocation.Command {
 	case core.CommandToken, core.CommandRotateToken:
-		if err := core.RunTokenCommand(context.Background(), invocation.Command, nil, os.Stdout); err != nil {
+		if err := runServerTokenCommand(invocation); err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 			return 1
 		}
@@ -65,20 +67,97 @@ func run(args []string) int {
 		}
 	}()
 
-	application, err := core.New(core.Config{Logger: logger.Logger})
+	ctx, stop := platform.NotifyContext(context.Background())
+	defer stop()
+	broker := server.NewEventBroker()
+	application, err := production.NewProduction(ctx, production.ProductionConfig{
+		Config: core.Config{
+			Logger: logger.Logger,
+			Events: broker,
+		},
+		DataDir:         paths.DataDir,
+		Desktop:         false,
+		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 1
 	}
-	ctx, stop := platform.NotifyContext(context.Background())
-	defer stop()
+	syncDispatcher, err := application.Services.Sync.PeerDispatcher()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 1
+	}
+	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
+	transport, err := server.New(server.Config{
+		Options: server.Options{
+			Listen:   invocation.Listen,
+			DataDir:  paths.DataDir,
+			WebRoot:  invocation.WebRoot,
+			SyncOnly: invocation.SyncOnly,
+		},
+		Dispatcher:   application.Dispatcher,
+		Environment:  application.Environment(""),
+		SyncRPC:      application.SyncRPCHandler(),
+		Events:       broker,
+		Channels:     hubAdapter,
+		ChannelStats: hubAdapter.Stats,
+		Vault:        application.Services.Vault,
+		Retention:    serverRetentionConfig(application.Services.Retention),
+		Logger:       logger.Logger,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 1
+	}
 	if err := application.Serve(ctx, core.ServeConfig{
-		Listen:   invocation.Listen,
-		WebRoot:  invocation.WebRoot,
-		SyncOnly: invocation.SyncOnly,
+		Listen:         invocation.Listen,
+		WebRoot:        invocation.WebRoot,
+		SyncOnly:       invocation.SyncOnly,
+		SyncRPC:        application.SyncRPCHandler(),
+		SyncDispatcher: syncDispatcher,
+		Transport:      transport.Handler(),
+		CloseTransport: transport.CloseContext,
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("server stopped", "error", err)
 		return 1
 	}
 	return 0
+}
+
+func serverRetentionConfig(runner *core.RetentionRunner) *server.RetentionConfig {
+	if runner == nil {
+		return nil
+	}
+	return &server.RetentionConfig{
+		Enabled: true,
+		Status: server.RetentionStatusFunc(func(ctx context.Context) (server.RetentionStatus, error) {
+			health, err := runner.Status(ctx)
+			status := server.RetentionStatus{LastError: health.LastError}
+			if health.LastAttemptAt != nil {
+				status.LastAttemptAt = *health.LastAttemptAt
+			}
+			if health.LastSuccessAt != nil {
+				status.LastSuccessAt = *health.LastSuccessAt
+			}
+			return status, err
+		}),
+	}
+}
+
+func runServerTokenCommand(invocation core.Invocation) error {
+	paths, err := platform.ServerPaths(invocation.DataDir)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	application, err := production.NewProduction(ctx, production.ProductionConfig{DataDir: paths.DataDir, Desktop: false})
+	if err != nil {
+		return err
+	}
+	if err := application.Start(ctx); err != nil {
+		return err
+	}
+	defer func() { _ = application.Shutdown(context.Background()) }()
+	return core.RunTokenCommand(ctx, invocation.Command, application.TokenStore(), os.Stdout)
 }

@@ -1,0 +1,119 @@
+//go:build darwin || linux
+
+package production
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/local"
+)
+
+type fsEventRecorder struct {
+	mu     sync.Mutex
+	events []ipc.Event
+}
+
+func (r *fsEventRecorder) Emit(_ context.Context, event ipc.Event) error {
+	r.mu.Lock()
+	r.events = append(r.events, event)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *fsEventRecorder) count(topic ipc.Topic) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	count := 0
+	for _, event := range r.events {
+		if event.Event == topic {
+			count++
+		}
+	}
+	return count
+}
+
+func TestProductionFSCommandsUseLiveTransportAndEmitProgress(t *testing.T) {
+	events := &fsEventRecorder{}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-local", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.txt")
+	response := production.Dispatcher.Dispatch(t.Context(), ipc.Request{
+		Command: "fs_write", Args: json.RawMessage(`{"args":{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"contentBase64":"` + base64.StdEncoding.EncodeToString([]byte("hello")) + `","backup":true}}`),
+	}, production.Environment(""))
+	requireProductionNull(t, response)
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_read", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"maxBytes":1024}`)}, production.Environment(""))
+	var read fsReadDTO
+	requireStoreTestResponse(t, response, &read)
+	decoded, err := base64.StdEncoding.DecodeString(read.ContentBase64)
+	if err != nil || string(decoded) != "hello" || read.Size != 5 {
+		t.Fatalf("fs_read = %+v, %q, %v", read, decoded, err)
+	}
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_list", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + jsonString(root) + `}`)}, production.Environment(""))
+	var entries []fsEntryDTO
+	requireStoreTestResponse(t, response, &entries)
+	if len(entries) != 1 || entries[0].Name != "remote.txt" || entries[0].Mode == "" || entries[0].Mtime == 0 {
+		t.Fatalf("fs_list = %+v", entries)
+	}
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_checksum", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"algo":"sha256"}`)}, production.Environment(""))
+	var checksum string
+	requireStoreTestResponse(t, response, &checksum)
+	if checksum != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("checksum = %q", checksum)
+	}
+
+	source := filepath.Join(root, "source.bin")
+	if err := os.WriteFile(source, []byte("upload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uploaded := filepath.Join(root, "uploaded.bin")
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_upload", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","localPath":` + jsonString(source) + `,"remotePath":` + jsonString(uploaded) + `}`)}, production.Environment(""))
+	var transferred int
+	requireStoreTestResponse(t, response, &transferred)
+	if transferred != 6 {
+		t.Fatalf("upload bytes = %d", transferred)
+	}
+	downloaded := filepath.Join(root, "downloaded.bin")
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_download", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","remotePath":` + jsonString(uploaded) + `,"localPath":` + jsonString(downloaded) + `}`)}, production.Environment(""))
+	requireStoreTestResponse(t, response, &transferred)
+	if data, err := os.ReadFile(downloaded); err != nil || string(data) != "upload" {
+		t.Fatalf("downloaded = %q, %v", data, err)
+	}
+	if events.count(ipc.TopicFSProgress) < 2 {
+		t.Fatalf("progress events = %d", events.count(ipc.TopicFSProgress))
+	}
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_pack_download", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","remotePath":` + jsonString(root) + `,"localPath":` + jsonString(filepath.Join(root, "pack.tgz")) + `}`)}, production.Environment(""))
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("local pack capability = %+v", response)
+	}
+	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_delete", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"isDir":false}`)}, production.Environment(""))
+	requireProductionNull(t, response)
+}
+
+func jsonString(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}

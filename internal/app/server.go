@@ -12,21 +12,27 @@ import (
 )
 
 type ServeConfig struct {
-	Listen   string
-	WebRoot  string
-	SyncOnly bool
-	SyncRPC  http.Handler
-	Static   http.Handler
+	Listen         string
+	WebRoot        string
+	SyncOnly       bool
+	SyncRPC        http.Handler
+	SyncDispatcher *ipc.Dispatcher
+	Static         http.Handler
+	// Transport, when non-nil, serves the real HTTP/WS transport
+	// (internal/server) instead of the built-in mux below.
+	Transport      http.Handler
+	CloseTransport func(context.Context) error
 }
 
 type Health struct {
-	OK       bool    `json:"ok"`
-	Service  string  `json:"service"`
-	Version  string  `json:"version"`
-	SyncOnly bool    `json:"syncOnly"`
-	Commands int     `json:"commands"`
-	WebRoot  *string `json:"webRoot"`
-	Vault    any     `json:"vault"`
+	OK        bool             `json:"ok"`
+	Service   string           `json:"service"`
+	Version   string           `json:"version"`
+	SyncOnly  bool             `json:"syncOnly"`
+	Commands  int              `json:"commands"`
+	WebRoot   *string          `json:"webRoot"`
+	Vault     any              `json:"vault"`
+	Retention *RetentionHealth `json:"retention"`
 }
 
 func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr error) {
@@ -43,20 +49,9 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		var webRoot *string
-		if config.Static != nil && config.WebRoot != "" {
-			webRoot = &config.WebRoot
-		}
-		_ = json.NewEncoder(w).Encode(Health{
-			OK:       true,
-			Service:  "nexterm-server",
-			Version:  a.version,
-			SyncOnly: config.SyncOnly,
-			Commands: a.Dispatcher.Len(),
-			WebRoot:  webRoot,
-		})
+		_ = json.NewEncoder(w).Encode(a.health(r.Context(), config))
 	})
 	if !config.SyncOnly {
 		mux.Handle("/rpc", ipc.NewRPCHandler(a.Dispatcher, a.Environment("")))
@@ -64,16 +59,24 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	if config.SyncRPC != nil {
 		mux.Handle("/sync/rpc", config.SyncRPC)
 	}
-	if config.Static != nil {
+	if !config.SyncOnly && config.Static != nil {
 		mux.Handle("/", config.Static)
 	}
 
+	handler := config.Transport
+	if handler == nil {
+		handler = mux
+	} else if config.CloseTransport != nil {
+		defer func() {
+			returnErr = errors.Join(returnErr, config.CloseTransport(context.Background()))
+		}()
+	}
 	if !loopbackListen(config.Listen) {
 		a.logger.Warn("HTTP server is listening on a non-loopback address", "listen", config.Listen)
 	}
 	server := &http.Server{
 		Addr:              config.Listen,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext: func(net.Listener) context.Context {
@@ -100,6 +103,41 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 			serveErr = nil
 		}
 		return errors.Join(shutdownErr, serveErr)
+	}
+}
+
+func (a *Application) health(ctx context.Context, config ServeConfig) Health {
+	var webRoot *string
+	if config.Static != nil && config.WebRoot != "" {
+		webRoot = &config.WebRoot
+	}
+	var vault any
+	if a.vaultStatus != nil {
+		status, err := a.vaultStatus(ctx)
+		if err != nil {
+			a.logger.Warn("vault status unavailable", "error", err)
+		} else {
+			vault = status
+		}
+	}
+	var retention *RetentionHealth
+	if a.retentionStatus != nil {
+		status, err := a.retentionStatus(ctx)
+		retention = &status
+		if err != nil {
+			a.logger.Warn("retention status unavailable", "error", err)
+			if retention.LastError == "" {
+				retention.LastError = err.Error()
+			}
+		}
+	}
+	commands := a.Dispatcher.Len()
+	if config.SyncOnly && config.SyncDispatcher != nil {
+		commands = config.SyncDispatcher.Len()
+	}
+	return Health{
+		OK: true, Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
+		Commands: commands, WebRoot: webRoot, Vault: vault, Retention: retention,
 	}
 }
 

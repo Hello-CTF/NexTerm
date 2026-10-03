@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
@@ -10,7 +11,8 @@ import (
 )
 
 type Service struct {
-	app *core.Application
+	app     *core.Application
+	streams *desktopStreamFactory
 }
 
 func (s *Service) ServiceName() string {
@@ -24,9 +26,13 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 func (s *Service) ServiceShutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return s.app.Shutdown(ctx)
+	return errors.Join(s.app.Shutdown(ctx), s.streams.Close())
 }
 
 func (s *Service) Call(ctx context.Context, request ipc.Request) ipc.Response {
-	return s.app.Dispatcher.Dispatch(ctx, request, s.app.Environment("desktop"))
+	clientID := request.ClientID
+	if clientID == "" {
+		clientID = "desktop"
+	}
+	return s.app.Dispatcher.Dispatch(ctx, request, s.app.Environment(clientID))
 }
