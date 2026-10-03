@@ -143,6 +143,14 @@ type job struct {
 	// races a half-initialized runtime.
 	steer *steer.Queue
 
+	// emitMu guards pendingEmits: events recorded by the model-boundary
+	// middleware (steered acks, thinking/compacting status) that the consume
+	// loop — the job's single event emitter — must emit before it processes
+	// the next model output. The middleware runs on the graph goroutine and
+	// must not emit directly: the consume loop may still owe events for the
+	// completed tool unit that precedes this boundary.
+	emitMu         sync.Mutex
+	pendingEmits   []Event
 	eventMu        sync.Mutex
 	finished       bool
 	finalOnce      sync.Once
@@ -159,6 +167,23 @@ func (j *job) emit(ctx context.Context, event Event) error {
 		return errors.New("AI job already finished")
 	}
 	return j.stream.Send(ctx, event)
+}
+
+// queueEmits records middleware events for the consume loop to emit in
+// record order. Called from the graph goroutine; see pendingEmits.
+func (j *job) queueEmits(events ...Event) {
+	j.emitMu.Lock()
+	j.pendingEmits = append(j.pendingEmits, events...)
+	j.emitMu.Unlock()
+}
+
+// drainEmits hands the queued middleware events to the consume loop.
+func (j *job) drainEmits() []Event {
+	j.emitMu.Lock()
+	defer j.emitMu.Unlock()
+	events := j.pendingEmits
+	j.pendingEmits = nil
+	return events
 }
 
 func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr error) {

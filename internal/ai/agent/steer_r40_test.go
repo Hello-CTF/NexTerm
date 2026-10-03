@@ -198,6 +198,93 @@ func TestSteerDeliveredAtModelBoundary(t *testing.T) {
 	}
 }
 
+// gatedEventStream parks the Send of one chosen event type until released,
+// so a test can hold the consume loop owing a toolResult while the graph has
+// already advanced past the next model-call boundary.
+type gatedEventStream struct {
+	*SliceStream
+	gateType string
+	reached  chan struct{}
+	release  chan struct{}
+	once     sync.Once
+}
+
+func (g *gatedEventStream) Send(ctx context.Context, event Event) error {
+	if event.Type == g.gateType {
+		g.once.Do(func() { close(g.reached) })
+		select {
+		case <-g.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return g.SliceStream.Send(ctx, event)
+}
+
+// Deterministic forcing of the boundary interleaving: the toolResult Send is
+// held open while the second model call starts, i.e. the boundary middleware
+// has drained the steer queue before the consume loop emitted the tool pair's
+// result. The steered ack must not leapfrog that toolResult — it may only
+// land once the consume loop reaches the post-boundary model output.
+func TestSteeredAckWaitsForPrecedingToolResult(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	secondCall := make(chan struct{})
+	var secondOnce sync.Once
+	chat := &recordingChat{}
+	chat.step = func(call int, _ []*schema.Message) *schema.Message {
+		if call == 1 {
+			return toolCallMessage(namedToolCall("probe", "docker_exec", `{"container_id":"web","cmd":"ls"}`))
+		}
+		secondOnce.Do(func() { close(secondCall) })
+		return schema.AssistantMessage("second done", nil)
+	}
+	runner := steerRunner(t, chat, tools.Dependencies{DockerExec: blockingDockerExec(started, release)}, 0)
+	silentPermission(runner)
+	stream := &gatedEventStream{SliceStream: &SliceStream{}, gateType: "toolResult", reached: make(chan struct{}), release: make(chan struct{})}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannelClosed(t, started, "tool did not start")
+	if err := runner.Steer(response.JobID, "second"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	waitChannelClosed(t, stream.reached, "toolResult emission did not start")
+	waitChannelClosed(t, secondCall, "second model call did not start")
+	// The graph is past the boundary and the consume loop still owes the
+	// toolResult: the ack must be queued, not emitted.
+	if events, _ := stream.Snapshot(); eventCount(events, "steered") != 0 {
+		t.Fatalf("steered ack leapfrogged the pending toolResult: %+v", events)
+	}
+	close(stream.release)
+	events := waitClosed(t, stream.SliceStream)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
+	}
+	if eventCount(events, "steered") != 1 {
+		t.Fatalf("steered events = %d, want 1: %+v", eventCount(events, "steered"), events)
+	}
+	steeredAt, toolResultAt, doneAt := eventIndex(events, "steered"), eventIndex(events, "toolResult"), eventIndex(events, "done")
+	if toolResultAt < 0 || steeredAt < toolResultAt || steeredAt > doneAt {
+		t.Fatalf("steered event out of order: toolResult=%d steered=%d done=%d", toolResultAt, steeredAt, doneAt)
+	}
+	chat.mu.Lock()
+	inputs := chat.inputs
+	chat.mu.Unlock()
+	if len(inputs) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(inputs))
+	}
+	if err := steer.ValidateHistory(inputs[1]); err != nil {
+		t.Fatalf("resumed model input has broken tool pairing: %v (%s)", err, describeMessages(inputs[1]))
+	}
+	second := inputs[1]
+	if len(second) < 2 || second[len(second)-1].Role != schema.User || second[len(second)-1].Content != "second" || second[len(second)-2].Role != schema.Tool {
+		t.Fatalf("steered message did not land after the complete tool pair: %s", describeMessages(second))
+	}
+}
+
 // The queue is bounded: a steer beyond the limit is rejected loudly instead
 // of piling up, and the rejected message never reaches the model.
 func TestSteerQueueFullIsRejected(t *testing.T) {
@@ -478,13 +565,10 @@ func TestSteerImmediatelyAfterStartDeliversExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitChannelClosed(t, gated.started, "initial history load did not start")
-	// Separate the two inserts by a millisecond boundary: MsgList orders by
-	// created_at with a ULID tiebreak, and same-millisecond ties fall to the
-	// ULID's random tail (a store property, not insertion order). The gate —
-	// not the sleep — holds the startup window open, so the race is unchanged.
-	time.Sleep(2 * time.Millisecond)
 	// The steer wins the startup window: persisted and queued before the
-	// initial history load completes.
+	// initial history load completes. The gate alone holds the window open —
+	// the store keeps true insertion order even when rows share a
+	// millisecond, so no timing crutch is needed here.
 	if err := runner.Steer(response.JobID, "dup"); err != nil {
 		t.Fatal(err)
 	}
