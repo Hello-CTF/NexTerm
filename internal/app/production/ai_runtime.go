@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
@@ -63,9 +64,12 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 	// Subagents enables the bounded spawn tool for every execution: the model
 	// factory follows the active profile like the main agent, and the child
 	// tool scope is intersected per execution with the parent's enabled set.
+	// The Permission hook hands unattended (cron) executions the Unattended
+	// decision mode; interactive executions keep the guard manager snapshot.
 	runner := agent.NewRunner(agent.Config{
 		Profiles:    services.Profiles,
 		Permissions: guardManager,
+		Permission:  unattendedPermissions(guardManager),
 		Tools:       registry,
 		Context:     builder,
 		Store:       services.Store,
@@ -83,6 +87,16 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 	services.Guard = guardManager
 	services.Agent = runner
 	services.Takeover = takeoverManager
+
+	// The cron scheduler borrows the one agent runner and the application
+	// store; the production module list registers its lifecycle component,
+	// and construction failures tear it down through closeAIRuntime.
+	cronRuntime, err := composeCronRuntime(ctx, services)
+	if err != nil {
+		return err
+	}
+	services.cron = cronRuntime
+
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)
 	return nil
 }
@@ -103,6 +117,12 @@ func aiModelFactory(manager *profiles.Manager) agent.ModelFactory {
 }
 
 func (s *ProductionServices) closeAIRuntime() {
+	if s.cron != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.cron.Shutdown(shutdownCtx)
+		s.cron = nil
+	}
 	if s.aiRelease != nil {
 		s.aiRelease()
 		s.aiRelease = nil
