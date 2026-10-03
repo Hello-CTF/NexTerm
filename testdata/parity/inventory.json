@@ -9,842 +9,848 @@
       "entries": [
         {
           "accessor": "systemApi.platform",
-          "line": 93,
+          "line": 97,
           "name": "app_platform",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.connect",
-          "line": 110,
+          "line": 114,
           "name": "session_connect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.connectLocal",
-          "line": 111,
+          "line": 115,
           "name": "session_connect_local",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.disconnect",
-          "line": 113,
+          "line": 117,
           "name": "session_disconnect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.reconnect",
-          "line": 122,
+          "line": 126,
           "name": "session_reconnect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.list",
-          "line": 123,
+          "line": 127,
           "name": "session_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.probe",
-          "line": 125,
+          "line": 129,
           "name": "session_probe",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.openLineTab",
-          "line": 129,
+          "line": 133,
           "name": "session_open_line_tab",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.lineExec",
-          "line": 137,
+          "line": 141,
           "name": "session_line_exec",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "sessionApi.cwd",
-          "line": 139,
+          "line": 143,
           "name": "session_cwd",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.attach",
-          "line": 194,
+          "line": 198,
           "name": "terminal_attach",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.attachTab",
-          "line": 208,
+          "line": 212,
           "name": "terminal_attach_tab",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.write",
-          "line": 215,
+          "line": 219,
           "name": "terminal_write",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.resize",
-          "line": 219,
+          "line": 223,
           "name": "terminal_resize",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.detach",
-          "line": 227,
+          "line": 231,
           "name": "terminal_detach",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.claim",
-          "line": 230,
+          "line": 234,
           "name": "terminal_claim",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.release",
-          "line": 233,
+          "line": 237,
           "name": "terminal_release",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.listLive",
-          "line": 235,
+          "line": 239,
           "name": "terminal_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.screenText",
-          "line": 236,
+          "line": 240,
           "name": "terminal_screen_text",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.snapshot",
-          "line": 238,
+          "line": 242,
           "name": "terminal_snapshot",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.tail",
-          "line": 240,
+          "line": 244,
           "name": "terminal_tail",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.setVisible",
-          "line": 242,
+          "line": 246,
           "name": "terminal_set_visible",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.dump",
-          "line": 244,
+          "line": 248,
           "name": "terminal_dump",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.switchEncoding",
-          "line": 246,
+          "line": 250,
           "name": "terminal_switch_encoding",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.recordStart",
-          "line": 248,
+          "line": 252,
           "name": "terminal_record_start",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.recordStop",
-          "line": 249,
+          "line": 253,
           "name": "terminal_record_stop",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.exportLog",
-          "line": 257,
+          "line": 261,
           "name": "terminal_export_log",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "terminalApi.closeTab",
-          "line": 273,
+          "line": 276,
           "name": "terminal_close_tab",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "layoutApi.get",
-          "line": 295,
+          "line": 298,
           "name": "layout_get",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "layoutApi.put",
-          "line": 297,
+          "line": 300,
           "name": "layout_put",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.list",
-          "line": 339,
+          "line": 342,
           "name": "asset_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.get",
-          "line": 340,
+          "line": 343,
           "name": "asset_get",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.create",
-          "line": 342,
+          "line": 345,
           "name": "asset_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.update",
-          "line": 344,
+          "line": 347,
           "name": "asset_update",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.saveKeyFile",
-          "line": 347,
+          "line": 350,
           "name": "asset_save_key_file",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.readKeyFile",
-          "line": 349,
+          "line": 352,
           "name": "asset_read_key_file",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.delete",
-          "line": 350,
+          "line": 353,
           "name": "asset_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.search",
-          "line": 351,
+          "line": 354,
           "name": "asset_search",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.groupList",
-          "line": 352,
+          "line": 355,
           "name": "group_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.groupCreate",
-          "line": 354,
+          "line": 357,
           "name": "group_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.groupUpdate",
-          "line": 356,
+          "line": 359,
           "name": "group_update",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.groupDelete",
-          "line": 357,
+          "line": 360,
           "name": "group_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.snippetList",
-          "line": 359,
+          "line": 362,
           "name": "snippet_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.snippetCreate",
-          "line": 363,
+          "line": 366,
           "name": "snippet_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.snippetUpdate",
-          "line": 365,
+          "line": 368,
           "name": "snippet_update",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.snippetDelete",
-          "line": 366,
+          "line": 369,
           "name": "snippet_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.auditQuery",
-          "line": 368,
+          "line": 371,
           "name": "audit_query",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.knownHostList",
-          "line": 369,
+          "line": 372,
           "name": "known_host_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.knownHostAccept",
-          "line": 371,
+          "line": 374,
           "name": "known_host_accept",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.knownHostRemove",
-          "line": 372,
+          "line": 375,
           "name": "known_host_remove",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "assetApi.appInfo",
-          "line": 374,
+          "line": 377,
           "name": "app_info",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.list",
-          "line": 393,
+          "line": 396,
           "name": "fs_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.read",
-          "line": 400,
+          "line": 403,
           "name": "fs_read",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.write",
-          "line": 410,
+          "line": 413,
           "name": "fs_write",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.mkdir",
-          "line": 412,
+          "line": 415,
           "name": "fs_mkdir",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.rename",
-          "line": 414,
+          "line": 417,
           "name": "fs_rename",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.delete",
-          "line": 416,
+          "line": 419,
           "name": "fs_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.chmod",
-          "line": 418,
+          "line": 421,
           "name": "fs_chmod",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.checksum",
-          "line": 420,
+          "line": 423,
           "name": "fs_checksum",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.upload",
-          "line": 422,
+          "line": 425,
           "name": "fs_upload",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.download",
-          "line": 424,
+          "line": 427,
           "name": "fs_download",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.packDownload",
-          "line": 427,
+          "line": 430,
           "name": "fs_pack_download",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "fsApi.extract",
-          "line": 430,
+          "line": 433,
           "name": "fs_extract",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "mountApi.capability",
-          "line": 437,
+          "line": 440,
           "name": "mount_capability",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "mountApi.list",
-          "line": 439,
+          "line": 442,
           "name": "mount_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "mountApi.create",
-          "line": 446,
+          "line": 449,
           "name": "mount_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "mountApi.remove",
-          "line": 448,
+          "line": 451,
           "name": "mount_remove",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.overview",
-          "line": 473,
+          "line": 476,
           "name": "docker_overview",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.ps",
-          "line": 477,
+          "line": 480,
           "name": "docker_ps",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.logsAttach",
-          "line": 484,
+          "line": 487,
           "name": "docker_logs_attach",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.execAttach",
-          "line": 501,
+          "line": 503,
           "name": "docker_exec_attach",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.action",
-          "line": 506,
+          "line": 508,
           "name": "docker_action",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.images",
-          "line": 507,
+          "line": 509,
           "name": "docker_images",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.imagePull",
-          "line": 509,
+          "line": 511,
           "name": "docker_image_pull",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.imageRemove",
-          "line": 511,
+          "line": 513,
           "name": "docker_image_remove",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.inspect",
-          "line": 513,
+          "line": 515,
           "name": "docker_inspect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.stats",
-          "line": 514,
+          "line": 516,
           "name": "docker_stats",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dockerApi.containerListDir",
-          "line": 516,
+          "line": 518,
           "name": "docker_container_list_dir",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.connect",
-          "line": 556,
+          "line": 558,
           "name": "db_connect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.disconnect",
-          "line": 557,
+          "line": 559,
           "name": "db_disconnect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.schemas",
-          "line": 558,
+          "line": 560,
           "name": "db_schemas",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.tables",
-          "line": 560,
+          "line": 562,
           "name": "db_tables",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.columns",
-          "line": 562,
+          "line": 564,
           "name": "db_columns",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.query",
-          "line": 564,
+          "line": 566,
           "name": "db_query",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.redisScan",
-          "line": 566,
+          "line": 568,
           "name": "redis_scan",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.redisInspect",
-          "line": 568,
+          "line": 570,
           "name": "redis_inspect",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.redisCommand",
-          "line": 570,
+          "line": 572,
           "name": "redis_command",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "dbApi.redisSetTtl",
-          "line": 572,
+          "line": 574,
           "name": "redis_set_ttl",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.chat",
-          "line": 619,
+          "line": 643,
           "name": "ai_chat",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.getPermission",
-          "line": 622,
+          "line": 646,
           "name": "ai_get_permission",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.setPermission",
-          "line": 624,
+          "line": 648,
           "name": "ai_set_permission",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.cancel",
-          "line": 625,
+          "line": 649,
           "name": "ai_cancel",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.confirm",
-          "line": 627,
+          "line": 650,
           "name": "ai_confirm",
           "source": "src/ipc/commands.ts"
         },
         {
+          "accessor": "aiApi.answer",
+          "line": 651,
+          "name": "ai_answer",
+          "source": "src/ipc/commands.ts"
+        },
+        {
           "accessor": "aiApi.models",
-          "line": 628,
+          "line": 652,
           "name": "ai_models",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.testProvider",
-          "line": 630,
+          "line": 654,
           "name": "ai_test_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.setProvider",
-          "line": 634,
+          "line": 658,
           "name": "ai_set_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.getProvider",
-          "line": 635,
+          "line": 659,
           "name": "ai_get_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.presets",
-          "line": 636,
+          "line": 660,
           "name": "ai_presets",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverEnter",
-          "line": 638,
+          "line": 662,
           "name": "ai_takeover_enter",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverExit",
-          "line": 640,
+          "line": 668,
           "name": "ai_takeover_exit",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverRun",
-          "line": 646,
+          "line": 677,
           "name": "ai_takeover_run",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationList",
-          "line": 648,
+          "line": 683,
           "name": "ai_conversation_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationDelete",
-          "line": 649,
+          "line": 684,
           "name": "ai_conversation_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationCreate",
-          "line": 651,
+          "line": 686,
           "name": "ai_conversation_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.messages",
-          "line": 653,
+          "line": 688,
           "name": "ai_messages",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.overview",
-          "line": 665,
+          "line": 699,
           "name": "ai_model_profiles",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.save",
-          "line": 668,
+          "line": 702,
           "name": "ai_model_save",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.remove",
-          "line": 669,
+          "line": 703,
           "name": "ai_model_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.activate",
-          "line": 670,
+          "line": 704,
           "name": "ai_model_activate",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.refresh",
-          "line": 676,
+          "line": 710,
           "name": "ai_model_refresh",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.presets",
-          "line": 677,
+          "line": 711,
           "name": "ai_presets",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.preset",
-          "line": 678,
+          "line": 712,
           "name": "ai_model_preset",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.status",
-          "line": 731,
+          "line": 765,
           "name": "vault_status",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.initMaster",
-          "line": 732,
+          "line": 766,
           "name": "vault_init_master",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.initDpapi",
-          "line": 733,
+          "line": 767,
           "name": "vault_init_dpapi",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.unlock",
-          "line": 734,
+          "line": 768,
           "name": "vault_unlock",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.lock",
-          "line": 735,
+          "line": 769,
           "name": "vault_lock",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.changePassword",
-          "line": 737,
+          "line": 771,
           "name": "vault_change_password",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.setCredential",
-          "line": 750,
+          "line": 784,
           "name": "vault_set_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.listCredentials",
-          "line": 760,
+          "line": 794,
           "name": "vault_list_credentials",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.deleteCredential",
-          "line": 761,
+          "line": 795,
           "name": "vault_delete_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.revealCredential",
-          "line": 762,
+          "line": 796,
           "name": "vault_reveal_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.updateCredential",
-          "line": 777,
+          "line": 811,
           "name": "credential_update",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.env",
-          "line": 790,
+          "line": 824,
           "name": "forward_env",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.create",
-          "line": 792,
+          "line": 826,
           "name": "forward_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.createSocks",
-          "line": 805,
+          "line": 839,
           "name": "forward_create_socks",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.list",
-          "line": 809,
+          "line": 844,
           "name": "forward_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.remove",
-          "line": 810,
+          "line": 845,
           "name": "forward_remove",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.digest",
-          "line": 833,
+          "line": 868,
           "name": "sync_digest",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.origin",
-          "line": 834,
+          "line": 869,
           "name": "sync_origin",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.exportAssets",
-          "line": 838,
+          "line": 873,
           "name": "sync_export",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.importBundle",
-          "line": 842,
+          "line": 877,
           "name": "sync_import",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.linkGet",
-          "line": 846,
+          "line": 881,
           "name": "sync_link_get",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.linkSet",
-          "line": 851,
+          "line": 886,
           "name": "sync_link_set",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.remoteDigest",
-          "line": 854,
+          "line": 889,
           "name": "sync_remote_digest",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.push",
-          "line": 858,
+          "line": 893,
           "name": "sync_push",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.pull",
-          "line": 861,
+          "line": 896,
           "name": "sync_pull",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.token",
-          "line": 866,
+          "line": 901,
           "name": "sync_token",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.rotateToken",
-          "line": 868,
+          "line": 903,
           "name": "sync_token_rotate",
           "source": "src/ipc/commands.ts"
         }
       ],
-      "method_count": 139,
+      "method_count": 140,
       "source": "src/ipc/commands.ts",
-      "unique_command_count": 138
+      "unique_command_count": 139
     },
     "reconciliation": {
       "duplicate_frontend_commands": [
@@ -856,8 +862,10 @@
           "name": "ai_presets"
         }
       ],
-      "equation": "139 Rust = 138 frontend unique + credential_save; 139 frontend methods = 138 unique + duplicate ai_presets wrapper",
-      "frontend_only": [],
+      "equation": "139 Rust = 138 frontend unique + rust_only ['credential_save']; 140 frontend methods = 139 unique + duplicate ai_presets wrapper; frontend_only ['ai_answer']",
+      "frontend_only": [
+        "ai_answer"
+      ],
       "rust_only": [
         "credential_save"
       ],
@@ -2269,25 +2277,25 @@
     "frontend_declared": [
       {
         "constant": "aiEvent",
-        "line": 29,
+        "line": 37,
         "name": "ai://event",
         "source": "src/ipc/events.ts"
       },
       {
         "constant": "appError",
-        "line": 30,
+        "line": 38,
         "name": "app://error",
         "source": "src/ipc/events.ts"
       },
       {
         "constant": "dockerStats",
-        "line": 28,
+        "line": 36,
         "name": "docker://stats",
         "source": "src/ipc/events.ts"
       },
       {
         "constant": "fsProgress",
-        "line": 27,
+        "line": 35,
         "name": "fs://progress",
         "source": "src/ipc/events.ts"
       },
@@ -2299,25 +2307,25 @@
       },
       {
         "constant": "sessionStatus",
-        "line": 17,
+        "line": 25,
         "name": "session://status",
         "source": "src/ipc/events.ts"
       },
       {
         "constant": "terminalControl",
-        "line": 26,
+        "line": 34,
         "name": "terminal://control",
         "source": "src/ipc/events.ts"
       },
       {
         "constant": "terminalExit",
-        "line": 18,
+        "line": 26,
         "name": "terminal://exit",
         "source": "src/ipc/events.ts"
       },
       {
         "constant": "terminalThrottled",
-        "line": 19,
+        "line": 27,
         "name": "terminal://throttled",
         "source": "src/ipc/events.ts"
       }
