@@ -308,6 +308,29 @@ async function layoutAcceptance(page) {
 async function wsAcceptance(page, server) {
   await page.navigate(`${server.origin}/healthz`);
   await page.evaluate(`window.__NEXTERM_TRANSPORT__ = 'web'; true`);
+  await page.evaluate(`(() => {
+    // 登记页面里的每一条 WebSocket，供 ws-reconnect-replay 主动掐线。
+    //
+    // 为什么必须自己掐：实测（headless Chromium 154，Linux CI 与本机 macOS 一致）
+    // Network.emulateNetworkConditions(offline) 只让**新建**连接失败；一条已建立的
+    // loopback WebSocket 在整个 offline 窗口内不会收到任何 close/error 事件
+    // （readyState 保持 OPEN，服务端 subscribers 计数也不掉），于是传输层永远等不到
+    // onclose、不会重连，reopened 恒为 0 —— 该检查自 0f65688 引入起就从未真正
+    // 跑到过重连路径。这里由 harness 显式 close 已建立的 socket，等价于网络分区对
+    // TCP 连接做的事；offline 仿真则保证重连尝试在窗口内真实失败。
+    const registry = window.__nxSockets = [];
+    const Orig = window.WebSocket;
+    window.WebSocket = function (url, protocols) {
+      const ws = protocols === undefined ? new Orig(url) : new Orig(url, protocols);
+      registry.push(ws);
+      return ws;
+    };
+    window.WebSocket.prototype = Orig.prototype;
+    for (const key of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]) {
+      Object.defineProperty(window.WebSocket, key, { value: Orig[key] });
+    }
+    return true;
+  })()`);
   await page.evaluate(`(async () => {
     const commands = await import('${VITE}/src/ipc/commands.ts');
     const events = await import('${VITE}/src/ipc/events.ts');
@@ -353,12 +376,24 @@ async function wsAcceptance(page, server) {
       return true;
     })()`);
     await page.send("Network.enable");
+    // 先掐断已建立的 socket（harness 代劳网络分区对 TCP 做的事，见 wsAcceptance 里
+    // 登记 __nxSockets 的说明），再置 offline：传输层的重连尝试（首退 300ms）在窗口内
+    // 真实失败，网络恢复后自动用同一通道 id 重连 → onChannelReopen → 重新 attach →
+    // 服务端重放 scrollback。断言不变，且每一步都是真实产品行为。
+    const dropped = await page.evaluate(`(() => {
+      let n = 0;
+      for (const ws of window.__nxSockets) {
+        if (ws.readyState === 0 || ws.readyState === 1) { ws.close(); n += 1; }
+      }
+      return n;
+    })()`);
     await page.send("Network.emulateNetworkConditions", { offline: true, latency: 180, downloadThroughput: 64 * 1024, uploadThroughput: 64 * 1024 });
     await sleep(1500);
     await page.send("Network.emulateNetworkConditions", { offline: false, latency: 180, downloadThroughput: 64 * 1024, uploadThroughput: 64 * 1024 });
     await page.waitFor(`__nxAcceptance.reopened > 0 && __nxAcceptance.reconnectAttached > 0 && __nxAcceptance.text.includes(__nxAcceptance.marker)`, 35_000);
     await page.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-    return { evidence: await page.evaluate(`({ reopened: __nxAcceptance.reopened, reconnectAttached: __nxAcceptance.reconnectAttached })`) };
+    const evidence = await page.evaluate(`({ reopened: __nxAcceptance.reopened, reconnectAttached: __nxAcceptance.reconnectAttached })`);
+    return { evidence: { ...evidence, droppedSockets: dropped } };
   });
 }
 
