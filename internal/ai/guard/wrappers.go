@@ -19,6 +19,10 @@ type execWrapper struct {
 	pidOption    bool
 	stdinCommand bool
 	stdinArgs    bool
+	// shellScript marks wrappers that run the wrapped command through
+	// "sh -c" by default (procps watch); their nested argv is re-joined
+	// and classified as shell text unless exec mode is requested.
+	shellScript bool
 }
 
 var execWrappers = map[string]execWrapper{
@@ -30,7 +34,7 @@ var execWrappers = map[string]execWrapper{
 	"builtin":     {},
 	"exec":        {valueShorts: "a", flagShorts: "cl"},
 	"time":        {flagShorts: "p"},
-	"watch":       {valueShorts: "n", valueLongs: []string{"interval"}, flagShorts: "bdeptx", flagLongs: []string{"beep", "color", "differences", "errexit", "chgexit", "precise", "no-title", "exec"}},
+	"watch":       {valueShorts: "n", valueLongs: []string{"interval"}, flagShorts: "bdeptx", flagLongs: []string{"beep", "color", "differences", "errexit", "chgexit", "precise", "no-title", "exec", "version", "help"}, shellScript: true},
 	"chrt":        {valueShorts: "p", valueLongs: []string{"pid"}, flagShorts: "frobFm", flagLongs: []string{"fifo", "rr", "other", "batch", "deadline", "reset-on-fork", "max"}, skipArgs: 1, pidOption: true},
 	"setsid":      {flagShorts: "cwf", flagLongs: []string{"ctty", "wait", "fork"}},
 	"ionice":      {valueShorts: "cnpu", valueLongs: []string{"class", "classdata", "uid", "pid"}, pidOption: true},
@@ -67,6 +71,7 @@ type wrapperScan struct {
 	linesLimit   string
 	sizeLimit    string
 	noRunIfEmpty bool
+	execMode     bool
 }
 
 func (s *wrapperScan) recordValue(key, value string) {
@@ -98,7 +103,14 @@ func (s *wrapperScan) recordValue(key, value string) {
 func (s *wrapperScan) recordFlag(key string) {
 	switch key {
 	case "l":
-		s.listOnly = true
+		if s.forName == "xargs" {
+			// GNU -l is -L with a default of 1.
+			if s.linesLimit == "" {
+				s.linesLimit = "1"
+			}
+		} else {
+			s.listOnly = true
+		}
 	case "r", "d":
 		if s.forName == "xargs" {
 			s.noRunIfEmpty = true
@@ -110,6 +122,8 @@ func (s *wrapperScan) recordFlag(key string) {
 		if s.forName == "xargs" && s.replace == "" {
 			s.replace = "{}"
 		}
+	case "x", "exec":
+		s.execMode = true
 	case "0", "null":
 		s.nulMode = true
 	case "no-run-if-empty":
@@ -245,6 +259,11 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 	if wrapper.stdinArgs {
 		return c.classifyXargs(parsed.nested, scan, stdin)
 	}
+	if wrapper.shellScript && !scan.execMode {
+		// procps watch runs the wrapped command through "sh -c" by default:
+		// the nested argv is one shell command line, not an exec argv.
+		return c.classifyText(strings.Join(parsed.nested, " "))
+	}
 	return c.child().classifyArgv(parsed.nested, stdin)
 }
 
@@ -253,8 +272,9 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 // substituted with one processed input line per invocation. Without it, the
 // whole input stream is parsed into words (default quoting rules, or literal
 // items under -0/-d) and the words are appended to the command: one single
-// invocation by default, or batches of -n words. Anything that cannot be
-// modeled exactly (-L, -s, unparseable input) fails closed to Danger.
+// invocation by default, batches of -n words, or logical-line groups under
+// -L/-l. Anything that cannot be modeled exactly (-s, unparseable input)
+// fails closed to Danger.
 func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipeInput) Ruling {
 	if scan.fileInput != "" {
 		return Dangerous("xargs 从文件构建命令")
@@ -271,8 +291,14 @@ func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipe
 	if scan.replace != "" {
 		return c.classifyXargsReplace(nested, scan, stdin.text)
 	}
-	if scan.linesLimit != "" || scan.sizeLimit != "" {
+	if scan.sizeLimit != "" {
 		return Dangerous("xargs 的分批参数无法精确建模")
+	}
+	if scan.linesLimit != "" {
+		if scan.maxArgs != "" {
+			return Dangerous("xargs 的分批参数冲突")
+		}
+		return c.classifyXargsLineBatches(nested, scan, stdin)
 	}
 	if scan.nulMode && scan.hasDelimiter {
 		return Dangerous("xargs 的分隔符参数冲突")
@@ -309,6 +335,62 @@ func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipe
 		result = Worst(result, c.child().classifyArgv(argv, pipeInput{}))
 	}
 	return result
+}
+
+// classifyXargsLineBatches models -L/-l: input is read as logical lines
+// (trailing blanks continue onto the next line, blank lines do not count),
+// and each group of at most N logical lines builds one invocation whose
+// parsed words are appended to the command.
+func (c *classifier) classifyXargsLineBatches(nested []string, scan wrapperScan, stdin pipeInput) Ruling {
+	limit, err := strconv.Atoi(scan.linesLimit)
+	if err != nil || limit <= 0 {
+		return Indeterminate("xargs -L 参数无效")
+	}
+	lines := xargsLogicalLines(stdin.text)
+	if len(lines) == 0 {
+		if scan.noRunIfEmpty {
+			return Allow()
+		}
+		return c.child().classifyArgv(nested, pipeInput{})
+	}
+	result := Allow()
+	for start := 0; start < len(lines); start += limit {
+		end := start + limit
+		if end > len(lines) {
+			end = len(lines)
+		}
+		words, ok := xargsWords(strings.Join(lines[start:end], "\n"))
+		if !ok {
+			return Dangerous("xargs 输入无法精确解析")
+		}
+		argv := make([]string, 0, len(nested)+len(words))
+		argv = append(argv, nested...)
+		argv = append(argv, words...)
+		result = Worst(result, c.child().classifyArgv(argv, pipeInput{}))
+	}
+	return result
+}
+
+// xargsLogicalLines groups an input stream into logical lines: a line with
+// trailing blanks continues onto the next line, and blank lines are dropped.
+func xargsLogicalLines(input string) []string {
+	physical := strings.Split(input, "\n")
+	var logical []string
+	for index := 0; index < len(physical); index++ {
+		line := physical[index]
+		for strings.HasSuffix(line, " ") || strings.HasSuffix(line, "\t") {
+			if index+1 >= len(physical) {
+				break
+			}
+			index++
+			line += physical[index]
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		logical = append(logical, line)
+	}
+	return logical
 }
 
 // classifyXargsReplace handles -I/-J/--replace insert mode: one invocation

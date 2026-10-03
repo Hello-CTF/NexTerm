@@ -247,8 +247,6 @@ func TestR9XargsStreamSemantics(t *testing.T) {
 		})
 	}
 	danger := []string{
-		`echo x | xargs -L2 rm`,
-		`echo x | xargs --max-lines=2 rm`,
 		`echo x | xargs -s 100 rm`,
 		`echo '"a' | xargs rm`,
 		`echo 'a\' | xargs rm`,
@@ -262,6 +260,18 @@ func TestR9XargsStreamSemantics(t *testing.T) {
 			}
 			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
 				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
+			}
+		})
+	}
+	// -L is precisely modeled per logical line (see R10).
+	for _, command := range []string{`echo x | xargs -L2 rm`, `echo x | xargs --max-lines=2 rm`} {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != NeedsConfirm {
+				t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAllow {
+				t.Fatalf("silent decision = %+v, want ActionAllow", decision)
 			}
 		})
 	}

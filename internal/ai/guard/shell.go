@@ -207,6 +207,14 @@ func (c *classifier) classifyForClause(clause *syntax.ForClause, pipeIn pipeInpu
 				result = Worst(result, Indeterminate("循环迭代值包含动态替换"), ruling)
 			}
 		}
+	case *syntax.CStyleLoop:
+		// The C-style header cannot be proven, and substitutions inside
+		// Init/Cond/Post execute: classify them before failing closed.
+		ruling := Allow()
+		c.classifyArithmExpr(loop.Init, &ruling)
+		c.classifyArithmExpr(loop.Cond, &ruling)
+		c.classifyArithmExpr(loop.Post, &ruling)
+		result = Worst(result, ruling, Indeterminate("C 风格循环无法证明有界"))
 	default:
 		result = Worst(result, Indeterminate("C 风格循环无法证明有界"))
 	}
@@ -337,16 +345,18 @@ func (c *classifier) pipeProducer(stmt *syntax.Stmt) (string, bool) {
 // shell-dependent and fails closed.
 func printfProducer(args []string) (string, bool) {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
-		switch {
-		case args[0] == "--":
+		if args[0] == "--" {
+			// -- ends option scanning; the next argument is the format even
+			// when it starts with a dash.
 			args = args[1:]
-		case args[0] == "-v":
+			break
+		}
+		if args[0] == "-v" {
 			// -v var format... assigns to a variable; stdout stays empty.
 			return "", true
-		default:
-			// Unknown option: printf rejects it and prints nothing.
-			return "", true
 		}
+		// Unknown option: printf rejects it and prints nothing.
+		return "", true
 	}
 	if len(args) == 0 {
 		return "", true
@@ -1171,6 +1181,15 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return c.classifySSH(args)
 	case "scp", "sftp", "rsync":
 		return c.classifyRemoteTransfer(name, args)
+	case "make", "gmake", "nmake", "bmake":
+		return classifyMake(args)
+	case "ninja":
+		return classifyNinja(args)
+	case "cmake":
+		if containsAny(args, "--build", "--install") {
+			return Dangerous("cmake 执行构建或安装脚本，内容无法验证")
+		}
+		return Confirm(KindWriteFS, "cmake 生成构建文件")
 	case "alias":
 		if len(args) == 0 {
 			return Allow()
@@ -1664,13 +1683,136 @@ func (c *classifier) classifySSHConfigValue(value string) Ruling {
 	command := strings.TrimSpace(value[separator+1:])
 	command = strings.TrimSpace(strings.TrimPrefix(command, "="))
 	switch strings.ToLower(key) {
-	case "proxycommand", "localcommand", "remotecommand":
+	case "proxycommand", "localcommand", "remotecommand", "knownhostscommand", "xauthlocation":
 		if command == "" || strings.EqualFold(command, "none") {
 			return Allow()
 		}
 		return Worst(Dangerous("ssh 选项执行本地或远端命令"), c.classifyText(command))
+	case "include":
+		// Included files can set executing keywords such as ProxyCommand,
+		// so their content cannot be verified.
+		return Dangerous("ssh Include 引入配置文件，内容无法验证")
 	}
 	return Allow()
+}
+
+// makeValueShorts and makeFlagShorts align GNU make's leading options so the
+// build-file decision is never made on a misaligned argument. The Makefile
+// is executed through /bin/sh: an implicit Makefile (no -f) is unverifiable
+// content like `at -f`, while an explicit -f file is the script-file case
+// from the interpreter precedent (bash script.sh).
+const makeValueShorts = "CjloW"
+const makeFlagShorts = "eiknqswBdprR"
+
+func classifyMake(args []string) Ruling {
+	file := ""
+	sawTouch := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, value, attached := strings.Cut(arg[2:], "=")
+			switch name {
+			case "file", "makefile":
+				if !attached && index+1 < len(args) {
+					value = args[index+1]
+					index++
+				}
+				file = value
+			case "eval":
+				// --eval evaluates Makefile syntax inline; $(shell) executes.
+				return Dangerous("make --eval 内联执行代码")
+			case "directory", "include-dir", "jobs", "load-average", "old-file", "assume-old", "what-if", "assume-new":
+				if !attached {
+					index++
+				}
+			case "touch":
+				sawTouch = true
+			case "just-print", "dry-run", "recon", "question", "no-print-directory", "warn-undefined-variables", "no-builtin-rules", "no-builtin-variables", "environment-overrides", "ignore-errors", "keep-going", "silent", "quiet", "always-make", "print-directory", "debug", "print-data-base", "trace", "help", "version":
+			default:
+				return Indeterminate("make 包含无法识别的长选项")
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				letter := letters[0]
+				switch {
+				case letter == 'f':
+					value := letters[1:]
+					if value == "" && index+1 < len(args) {
+						value = args[index+1]
+						index++
+					}
+					file = value
+					letters = ""
+				case letter == 't':
+					sawTouch = true
+					letters = letters[1:]
+				case strings.IndexByte(makeValueShorts, letter) >= 0:
+					if len(letters) == 1 && index+1 < len(args) {
+						index++
+					}
+					letters = ""
+				case strings.IndexByte(makeFlagShorts, letter) >= 0:
+					letters = letters[1:]
+				default:
+					return Indeterminate("make 包含无法识别的选项")
+				}
+			}
+			continue
+		}
+		// Target names and variable assignments still execute the Makefile.
+	}
+	if file != "" {
+		if sawTouch {
+			return Confirm(KindWriteFS, "make -t 触摸文件代替执行配方")
+		}
+		return Confirm(KindUnknown, "执行 Makefile 配方")
+	}
+	return Dangerous("make 执行 Makefile 配方，内容无法验证")
+}
+
+// classifyNinja rates ninja: build rules are executed from the (implicit or
+// explicit) build file, with the same script-file split as make.
+func classifyNinja(args []string) Ruling {
+	file := ""
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			switch arg {
+			case "-f", "--file":
+				if index+1 < len(args) {
+					file = args[index+1]
+					index++
+				}
+			case "-t", "--tool":
+				if index+1 < len(args) {
+					if args[index+1] == "clean" {
+						return Confirm(KindWriteFS, "ninja -t clean 删除构建产物")
+					}
+					return Confirm(KindUnknown, "ninja 子工具执行")
+				}
+			case "-C", "-j", "-l", "-k", "-d", "-w":
+				index++
+			case "-n", "--dry-run", "-v", "--verbose", "--version":
+			default:
+				return Indeterminate("ninja 包含无法识别的选项")
+			}
+			continue
+		}
+		// Target names still execute the build file.
+	}
+	if file != "" {
+		return Confirm(KindUnknown, "执行 ninja 构建规则")
+	}
+	return Dangerous("ninja 执行 build.ninja 规则，内容无法验证")
 }
 
 // classifyRemoteTransfer rates scp/sftp/rsync. Besides moving data, all
@@ -1865,7 +2007,9 @@ func (c *classifier) classifyDocker(args []string, stdin pipeInput) Ruling {
 		return Confirm(KindUnknown, "持续 Docker 统计需要确认")
 	case "exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
-		if commandIndex := dockerExecCommandIndex(rest); commandIndex >= 0 {
+		if commandIndex, ok := dockerExecCommandIndex(rest); !ok {
+			return Worst(result, Indeterminate("docker exec 包含无法识别的选项"))
+		} else if commandIndex < len(rest) {
 			result = Worst(result, c.child().classifyArgv(rest[commandIndex:], stdin))
 		}
 		return result
@@ -1893,29 +2037,61 @@ func (c *classifier) classifyDocker(args []string, stdin pipeInput) Ruling {
 	}
 }
 
-func dockerExecCommandIndex(args []string) int {
-	valueOptions := map[string]bool{
-		"-e": true, "--env": true, "--env-file": true, "-u": true, "--user": true, "-w": true, "--workdir": true, "--detach-keys": true,
-	}
+// dockerExecCommandIndex locates the container command argv in a docker exec
+// invocation. docker's CLI parses flags interspersed with positionals, so
+// flags may appear before or after the container name; the command starts at
+// the first non-flag argument (or right after "--"). The second return value
+// reports false when an option is outside the known tables.
+func dockerExecCommandIndex(args []string) (int, bool) {
 	index := 0
-	for index < len(args) && strings.HasPrefix(args[index], "-") {
+	sawContainer := false
+	for index < len(args) {
 		arg := args[index]
-		index++
 		if arg == "--" {
+			index++
 			break
 		}
-		if valueOptions[arg] && index < len(args) {
-			index++
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			if !sawContainer {
+				sawContainer = true
+				index++
+				continue
+			}
+			break
+		}
+		index++
+		if strings.HasPrefix(arg, "--") {
+			name, _, attached := strings.Cut(arg[2:], "=")
+			switch name {
+			case "env", "env-file", "user", "workdir", "detach-keys":
+				if !attached {
+					index++
+				}
+			case "detach", "interactive", "tty", "privileged":
+			default:
+				return index, false
+			}
+			continue
+		}
+		letters := arg[1:]
+		for len(letters) > 0 {
+			switch letters[0] {
+			case 'e', 'u', 'w':
+				if len(letters) == 1 {
+					index++
+				}
+				letters = ""
+			case 'd', 'i', 't':
+				letters = letters[1:]
+			default:
+				return index, false
+			}
 		}
 	}
-	if index >= len(args) {
-		return -1
+	if !sawContainer {
+		return index, false
 	}
-	index++
-	if index >= len(args) {
-		return -1
-	}
-	return index
+	return index, true
 }
 
 // kubectl inherited (global) options. kubectl uses pflag: only exact
@@ -1966,6 +2142,56 @@ func kubectlGlobalEnd(args []string) (int, bool) {
 	return index, true
 }
 
+// kubectlExecLongOption resolves an exec-level long option by its exact
+// pflag spelling.
+func kubectlExecLongOption(name string) (gnuLongOption, bool) {
+	for _, option := range kubectlExecLongOptions {
+		if option.name == name {
+			return option, true
+		}
+	}
+	return gnuLongOption{}, false
+}
+
+// kubectlExecOptions consumes kubectl exec options up to the next positional
+// argument or "--", whichever comes first.
+func kubectlExecOptions(args []string, index int) (int, bool) {
+	for index < len(args) && strings.HasPrefix(args[index], "-") && args[index] != "-" {
+		arg := args[index]
+		if arg == "--" {
+			return index, true
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, attached := strings.Cut(arg[2:], "=")
+			option, ok := kubectlExecLongOption(name)
+			if !ok {
+				return index, false
+			}
+			index++
+			if option.takesValue && !attached {
+				index++
+			}
+			continue
+		}
+		letters := arg[1:]
+		for len(letters) > 0 {
+			switch letters[0] {
+			case 'c', 'n':
+				if len(letters) == 1 {
+					index++
+				}
+				letters = ""
+			case 'i', 't', 'q':
+				letters = letters[1:]
+			default:
+				return index, false
+			}
+		}
+		index++
+	}
+	return index, true
+}
+
 func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
 	index, ok := kubectlGlobalEnd(args)
 	if !ok {
@@ -1985,45 +2211,33 @@ func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
 			}
 			return Confirm(KindService, "kubectl 配置变更")
 		case "exec":
+			// pflag interspersed semantics: exec options may appear before
+			// or after the pod name; the container command starts at the
+			// first non-option after the pod, or right after "--".
 			index := 1
-			for index < len(args) && strings.HasPrefix(args[index], "-") {
-				arg := args[index]
-				if arg == "--" {
-					index++
-					break
-				}
-				if strings.HasPrefix(arg, "--") {
-					option, _, attached, ok := resolveGNULongOption(arg, kubectlExecLongOptions)
-					if !ok {
-						return Indeterminate("kubectl exec 包含无法识别的选项")
-					}
-					index++
-					if option.takesValue && !attached {
-						index++
-					}
-					continue
-				}
-				letters := arg[1:]
-				for len(letters) > 0 {
-					switch letters[0] {
-					case 'c', 'n':
-						if len(letters) == 1 {
-							index++
-						}
-						letters = ""
-					case 'i', 't', 'q':
-						letters = letters[1:]
-					default:
-						return Indeterminate("kubectl exec 包含无法识别的选项")
-					}
-				}
-				index++
+			next, ok := kubectlExecOptions(args, index)
+			if !ok {
+				return Indeterminate("kubectl exec 包含无法识别的选项")
 			}
-			if index < len(args) {
-				index++
-			}
+			index = next
+			doubleDash := false
 			if index < len(args) && args[index] == "--" {
+				doubleDash = true
 				index++
+			}
+			if index >= len(args) {
+				return Confirm(KindService, "Kubernetes 资源或工作负载变更")
+			}
+			index++ // pod
+			if !doubleDash {
+				next, ok = kubectlExecOptions(args, index)
+				if !ok {
+					return Indeterminate("kubectl exec 包含无法识别的选项")
+				}
+				index = next
+				if index < len(args) && args[index] == "--" {
+					index++
+				}
 			}
 			if index < len(args) {
 				// kubectl exec passes the command argv to the container
@@ -2046,6 +2260,10 @@ func (c *classifier) classifyGit(args []string) Ruling {
 	index := 0
 	for index < len(args) {
 		arg := args[index]
+		if arg == "--" {
+			index++
+			break
+		}
 		if arg == "-C" || arg == "-c" {
 			if index+1 < len(args) {
 				if arg == "-c" {
@@ -2402,21 +2620,153 @@ func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 // mistaken for a flag or for another option's value.
 const tarValueShorts = "fbCVFXTKNgI"
 
+// tarLongOptions is GNU tar's documented long-option table for
+// unique-abbreviation resolution; anything that does not resolve exactly or
+// as a unique prefix fails closed instead of falling through to the
+// read-only listing path.
+var tarLongOptions = []gnuLongOption{
+	{name: "to-command", takesValue: true},
+	{name: "use-compress-program", takesValue: true},
+	{name: "checkpoint-action", takesValue: true},
+	{name: "info-script", takesValue: true},
+	{name: "file", takesValue: true},
+	{name: "files-from", takesValue: true},
+	{name: "directory", takesValue: true},
+	{name: "exclude", takesValue: true},
+	{name: "exclude-from", takesValue: true},
+	{name: "transform", takesValue: true},
+	{name: "strip-components", takesValue: true},
+	{name: "occurrence", takesValue: true},
+	{name: "mode", takesValue: true},
+	{name: "owner", takesValue: true},
+	{name: "group", takesValue: true},
+	{name: "mtime", takesValue: true},
+	{name: "newer", takesValue: true},
+	{name: "newer-mtime", takesValue: true},
+	{name: "newer-ctime", takesValue: true},
+	{name: "format", takesValue: true},
+	{name: "label", takesValue: true},
+	{name: "listed-incremental", takesValue: true},
+	{name: "index-file", takesValue: true},
+	{name: "suffix", takesValue: true},
+	{name: "record-size", takesValue: true},
+	{name: "tapesize", takesValue: true},
+	{name: "starting-file", takesValue: true},
+	{name: "time", takesValue: true},
+	{name: "pax-option", takesValue: true},
+	{name: "quote-chars", takesValue: true},
+	{name: "quote-style", takesValue: true},
+	{name: "rmt-command", takesValue: true},
+	{name: "rsh-command", takesValue: true},
+	{name: "sparse-version", takesValue: true},
+	{name: "volno-file", takesValue: true},
+	{name: "xattrs-exclude", takesValue: true},
+	{name: "xattrs-include", takesValue: true},
+	{name: "backup", optionalValue: true},
+	{name: "checkpoint", optionalValue: true},
+	{name: "list"},
+	{name: "extract"},
+	{name: "create"},
+	{name: "append"},
+	{name: "update"},
+	{name: "delete"},
+	{name: "diff"},
+	{name: "compare"},
+	{name: "concatenate"},
+	{name: "get"},
+	{name: "verbose"},
+	{name: "gzip"},
+	{name: "gunzip"},
+	{name: "bzip2"},
+	{name: "xz"},
+	{name: "lzma"},
+	{name: "lzip"},
+	{name: "lzop"},
+	{name: "zstd"},
+	{name: "compress"},
+	{name: "auto-compress"},
+	{name: "null"},
+	{name: "to-stdout"},
+	{name: "keep-old-files"},
+	{name: "keep-newer-files"},
+	{name: "overwrite"},
+	{name: "overwrite-dir"},
+	{name: "no-overwrite-dir"},
+	{name: "no-recursion"},
+	{name: "one-file-system"},
+	{name: "absolute-names"},
+	{name: "anchored"},
+	{name: "no-anchored"},
+	{name: "ignore-case"},
+	{name: "no-ignore-case"},
+	{name: "ignore-zeros"},
+	{name: "ignore-failed-read"},
+	{name: "ignore-command-error"},
+	{name: "check-device"},
+	{name: "no-check-device"},
+	{name: "wildcards"},
+	{name: "no-wildcards"},
+	{name: "wildcards-match-slash"},
+	{name: "no-wildcards-match-slash"},
+	{name: "exclude-vcs"},
+	{name: "exclude-vcs-ignores"},
+	{name: "exclude-backups"},
+	{name: "exclude-caches"},
+	{name: "exclude-caches-all"},
+	{name: "exclude-caches-under"},
+	{name: "same-owner"},
+	{name: "no-same-owner"},
+	{name: "numeric-owner"},
+	{name: "preserve-permissions"},
+	{name: "same-permissions"},
+	{name: "preserve-order"},
+	{name: "preserve"},
+	{name: "xattrs"},
+	{name: "force-local"},
+	{name: "multi-volume"},
+	{name: "interactive"},
+	{name: "keep-directory-symlink"},
+	{name: "sparse"},
+	{name: "show-defaults"},
+	{name: "show-omitted-dirs"},
+	{name: "show-transformed-names"},
+	{name: "utc"},
+	{name: "verify"},
+	{name: "version"},
+	{name: "help"},
+}
+
+// tarExecutingOptions are the long options whose value runs an external
+// program; they are classified as commands via classifyTarAction.
+var tarExecutingOptions = map[string]bool{
+	"to-command": true, "use-compress-program": true, "checkpoint-action": true, "info-script": true,
+}
+
 // classifyTar rates archive inspection and extraction. External-command
-// options (-I/--use-compress-program, --to-command,
-// --checkpoint-action=exec) execute a shell command, which is classified
-// itself.
+// options (-I/-F, --to-command/--use-compress-program/
+// --checkpoint-action=exec/--info-script, including unique long-option
+// abbreviations) execute a shell command, which is classified itself.
 func (c *classifier) classifyTar(args []string) Ruling {
-	for index, arg := range args {
-		lower := strings.ToLower(arg)
-		switch {
-		case lower == "--to-command" || lower == "--use-compress-program" || lower == "--checkpoint-action" || lower == "--info-script":
-			if index+1 < len(args) {
-				return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(args[index+1]))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if !strings.HasPrefix(arg, "--") || arg == "--" {
+			continue
+		}
+		option, value, attached, ok := resolveGNULongOption(arg, tarLongOptions)
+		if !ok {
+			return Indeterminate("tar 包含无法识别的长选项")
+		}
+		if tarExecutingOptions[option.name] {
+			if !attached && option.takesValue && index+1 < len(args) {
+				value = args[index+1]
 			}
-			return Confirm(KindUnknown, "tar 包含外部命令执行")
-		case strings.HasPrefix(lower, "--to-command=") || strings.HasPrefix(lower, "--use-compress-program=") || strings.HasPrefix(lower, "--checkpoint-action=") || strings.HasPrefix(lower, "--info-script="):
-			return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(arg[strings.Index(arg, "=")+1:]))
+			if value == "" {
+				return Indeterminate("tar 外部程序选项缺少值")
+			}
+			return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(value))
+		}
+		if option.takesValue && !attached && !option.optionalValue {
+			index++
 		}
 	}
 	// GNU tar runs -I (an alias of --use-compress-program) and -F

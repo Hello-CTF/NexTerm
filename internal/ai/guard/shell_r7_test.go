@@ -18,7 +18,6 @@ func TestR7WrapperArgvPreserved(t *testing.T) {
 		`stdbuf -o0 sh -c 'rm -rf /home/user'`,
 		`command sh -c 'rm -rf /home/user'`,
 		`time sh -c 'rm -rf /home/user'`,
-		`watch -n1 sh -c 'rm -rf /home/user'`,
 		`setsid sh -c 'rm -rf /home/user'`,
 		`systemd-run sh -c 'rm -rf /home/user'`,
 		`systemd-run --unit=x sh -c 'rm -rf /home/user'`,
@@ -88,6 +87,12 @@ func TestR7WrapperArgvPreserved(t *testing.T) {
 				t.Fatalf("ClassifyCommand(%q) = %v, want Safe or NeedsConfirm", command, ruling)
 			}
 		})
+	}
+	// procps watch re-joins its argv through "sh -c" (quotes are lost), so
+	// this form runs a bare `rm` with positional parameters — bounded, not
+	// the recursive delete the argv reading suggested.
+	if ruling := ClassifyCommand(`watch -n1 sh -c 'rm -rf /home/user'`, nil); ruling.Risk != NeedsConfirm {
+		t.Fatalf("watch re-join form = %v, want NeedsConfirm", ruling)
 	}
 }
 
@@ -668,7 +673,6 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 		{`stdbuf -o0 `, ``},
 		{`command `, ``},
 		{`time `, ``},
-		{`watch -n1 `, ``},
 		{`setsid `, ``},
 		{`systemd-run `, ``},
 		{`systemd-run --unit=u --description=d `, ``},
