@@ -31,6 +31,10 @@ type fakeDurableRecord struct {
 	killed      int
 	exitCode    *int
 	attachments []*fakeDurableAttachment
+	cols        uint32
+	rows        uint32
+	floorEvent  uint64
+	floorGrid   uint64
 }
 
 type fakeDurableAttachment struct {
@@ -113,6 +117,52 @@ func (a *fakeDurableAttachment) Wait(context.Context) error {
 		return nil
 	}
 	return &base.ExitError{Code: *record.exitCode}
+}
+
+func (a *fakeDurableAttachment) DurableVersions() (uint64, uint64, error) {
+	a.provider.mu.Lock()
+	defer a.provider.mu.Unlock()
+	record := a.provider.records[a.tabID]
+	if record == nil || record.identity != a.identity {
+		return 0, 0, errFakeDurableIdentity
+	}
+	return record.floorEvent, record.floorGrid, nil
+}
+
+func (a *fakeDurableAttachment) PersistDurableVersions(eventVersion, gridRevision uint64) error {
+	a.provider.mu.Lock()
+	defer a.provider.mu.Unlock()
+	record := a.provider.records[a.tabID]
+	if record == nil || record.identity != a.identity {
+		return errFakeDurableIdentity
+	}
+	record.floorEvent = max(record.floorEvent, eventVersion)
+	record.floorGrid = max(record.floorGrid, gridRevision)
+	return nil
+}
+
+func (a *fakeDurableAttachment) DurableGrid() (uint32, uint32, bool) {
+	a.provider.mu.Lock()
+	defer a.provider.mu.Unlock()
+	record := a.provider.records[a.tabID]
+	if record == nil || record.killed > 0 || record.cols == 0 || record.rows == 0 {
+		return 0, 0, false
+	}
+	return record.cols, record.rows, true
+}
+
+func (p *fakeDurableProvider) setGrid(id string, cols, rows uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[id]
+	record.cols, record.rows = cols, rows
+}
+
+func (p *fakeDurableProvider) floor(id string) (eventVersion, gridRevision uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[id]
+	return record.floorEvent, record.floorGrid
 }
 
 func (a *fakeDurableAttachment) emit(data []byte) error {

@@ -9,4 +9,8 @@
 // removed after a successful Kill. Completion is published by the recorder
 // only after it reaches real EOF; terminal output is never a lifecycle
 // instruction.
+//
+// Attachments also persist a monotonic per-tab event/grid version floor
+// alongside the recording, so a frontend that survived the daemon restart
+// never sees rewound versions or a replayed grid revision on recovery.
 package durable

@@ -30,6 +30,8 @@ var discoveryFormat = strings.Join([]string{
 	"#{pane_dead_status}",
 	"#{pane_pipe}",
 	"#{pane_dead_signal}",
+	"#{window_width}",
+	"#{window_height}",
 }, fieldSeparator)
 
 type record struct {
@@ -42,6 +44,8 @@ type record struct {
 	windowOption  string
 	deadStatus    string
 	recordingLive bool
+	cols          uint32
+	rows          uint32
 }
 
 func (b *Backend) List(ctx context.Context) ([]Info, error) {
@@ -174,7 +178,7 @@ func parseRecords(output []byte) ([]record, error) {
 	result := make([]record, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Split(line, fieldSeparator)
-		if len(fields) != 14 {
+		if len(fields) != 16 {
 			return nil, fmt.Errorf("malformed tmux discovery record: got %d fields in %q", len(fields), line)
 		}
 		created, err := strconv.ParseInt(fields[3], 10, 64)
@@ -193,6 +197,14 @@ func parseRecords(output []byte) ([]record, error) {
 		if err != nil {
 			return nil, fmt.Errorf("malformed tmux pane pipe flag: %w", err)
 		}
+		cols, err := parseDimension(fields[14])
+		if err != nil {
+			return nil, fmt.Errorf("malformed tmux window width: %w", err)
+		}
+		rows, err := parseDimension(fields[15])
+		if err != nil {
+			return nil, fmt.Errorf("malformed tmux window height: %w", err)
+		}
 		info := Info{
 			ID:        fields[4],
 			SessionID: fields[1],
@@ -200,6 +212,8 @@ func parseRecords(output []byte) ([]record, error) {
 			PID:       pid,
 			CreatedAt: time.Unix(created, 0),
 			Dead:      dead,
+			Cols:      cols,
+			Rows:      rows,
 		}
 		if dead && fields[11] != "" {
 			status, err := strconv.Atoi(fields[11])
@@ -221,6 +235,8 @@ func parseRecords(output []byte) ([]record, error) {
 			windowOption:  fields[7],
 			deadStatus:    fields[11],
 			recordingLive: pipe,
+			cols:          cols,
+			rows:          rows,
 		})
 	}
 	return result, nil
@@ -235,6 +251,17 @@ func parseFlag(value string) (bool, error) {
 	default:
 		return false, fmt.Errorf("expected 0 or 1, got %q", value)
 	}
+}
+
+// parseDimension accepts any positive window dimension; consumers apply
+// their own size limits before using it (an externally resized tmux window
+// beyond the supported maximum must not make discovery fail closed).
+func parseDimension(value string) (uint32, error) {
+	dimension, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || dimension == 0 {
+		return 0, fmt.Errorf("expected a positive dimension, got %q", value)
+	}
+	return uint32(dimension), nil
 }
 
 func validTmuxID(value string, prefix byte) bool {

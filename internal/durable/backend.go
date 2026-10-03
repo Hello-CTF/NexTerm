@@ -50,6 +50,10 @@ type Info struct {
 	Dead      bool
 	ExitCode  *int
 	Signal    string
+	// Cols/Rows are the live tmux window dimensions at discovery time. They
+	// change at runtime (resize-window) and are not part of the identity.
+	Cols uint32
+	Rows uint32
 }
 
 type Backend struct {
@@ -431,6 +435,12 @@ func (b *Backend) recorderClosingPath(id string) string {
 }
 func (b *Backend) recorderClosingTempPath(id string) string {
 	return filepath.Join(b.sessionDir(id), "recorder.closing.tmp")
+}
+func (b *Backend) versionsPath(id string) string {
+	return filepath.Join(b.sessionDir(id), "versions")
+}
+func (b *Backend) versionsTempPath(id string) string {
+	return filepath.Join(b.sessionDir(id), "versions.tmp")
 }
 
 func environmentValue(environment []string, name string) string {
