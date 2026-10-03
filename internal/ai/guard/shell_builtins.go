@@ -46,6 +46,10 @@ var envLongOptions = []gnuLongOption{
 	{name: "unset", takesValue: true},
 	{name: "chdir", takesValue: true},
 	{name: "split-string", takesValue: true},
+	{name: "block-signal", optionalValue: true},
+	{name: "default-signal", optionalValue: true},
+	{name: "ignore-signal", optionalValue: true},
+	{name: "list-signal-handling"},
 	{name: "debug"},
 	{name: "help"},
 	{name: "version"},
@@ -56,6 +60,7 @@ var sortLongOptions = []gnuLongOption{
 	{name: "dictionary-order"},
 	{name: "ignore-case"},
 	{name: "ignore-nonprinting"},
+	{name: "merge"},
 	{name: "month-sort"},
 	{name: "numeric-sort"},
 	{name: "general-numeric-sort"},
@@ -177,7 +182,7 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 				i++
 				continue
 			}
-			if arg == "-i" || arg == "-0" {
+			if arg == "-i" || arg == "-0" || arg == "-v" {
 				continue
 			}
 			if strings.HasPrefix(arg, "-") && arg != "-" {

@@ -736,7 +736,7 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 		}
 		return result
 	case "run", "create", "start", "stop", "restart", "rm", "kill", "pause", "unpause", "rename", "update", "cp", "commit", "import", "load", "pull", "push", "build", "tag", "rmi", "save", "attach":
-		if (sub == "rm" || sub == "rmi") && containsAnyFold(rest, "-f", "--force") && dockerBulkDeletion(rest) {
+		if (sub == "rm" || sub == "rmi") && dockerForceFlag(rest) && dockerBulkDeletion(rest) {
 			return Dangerous("强制删除全部 Docker 资源")
 		}
 		return Confirm(KindDockerMutate, "Docker 资源变更")
@@ -755,7 +755,7 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 		case "exec", "run":
 			return classifyDocker(append([]string{nested}, rest[1:]...), rules, depth)
 		case "rm", "rmi":
-			if containsAnyFold(rest[1:], "-f", "--force") && dockerBulkDeletion(rest[1:]) {
+			if dockerForceFlag(rest[1:]) && dockerBulkDeletion(rest[1:]) {
 				return Dangerous("强制删除全部 Docker 资源")
 			}
 			return Confirm(KindDockerMutate, "Docker 资源变更")
@@ -792,6 +792,18 @@ func dockerExecCommandIndex(args []string) int {
 	return index
 }
 
+func dockerForceFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--force" || strings.HasPrefix(arg, "--force=") {
+			return true
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsRune(arg[1:], 'f') {
+			return true
+		}
+	}
+	return false
+}
+
 func dockerBulkDeletion(args []string) bool {
 	for _, arg := range args {
 		if !strings.HasPrefix(arg, "$(") || !strings.HasSuffix(arg, ")") {
@@ -811,8 +823,24 @@ func dockerBulkDeletion(args []string) bool {
 		if offset >= len(rest) {
 			continue
 		}
-		sub := strings.ToLower(rest[offset])
-		if sub != "ps" && sub != "images" {
+		enumeration := ""
+		switch sub := strings.ToLower(rest[offset]); sub {
+		case "ps", "images":
+			enumeration = sub
+		case "container", "image":
+			if offset+1 < len(rest) {
+				nested := strings.ToLower(rest[offset+1])
+				if sub == "container" && (nested == "ps" || nested == "ls" || nested == "list") {
+					enumeration = "ps"
+					offset++
+				}
+				if sub == "image" && (nested == "ls" || nested == "list") {
+					enumeration = "images"
+					offset++
+				}
+			}
+		}
+		if enumeration == "" {
 			continue
 		}
 		all, quiet := false, false
@@ -830,7 +858,7 @@ func dockerBulkDeletion(args []string) bool {
 				quiet = true
 			}
 		}
-		if quiet && (sub == "images" || all) {
+		if quiet && (enumeration == "images" || all) {
 			return true
 		}
 	}
@@ -907,6 +935,12 @@ func classifyDownload(name string, args, ops []string) Ruling {
 			return Confirm(KindShellPipe, "网络内容通过管道交给其他命令")
 		}
 	}
+	getMode := false
+	for _, arg := range args {
+		if arg == "-G" || strings.EqualFold(arg, "--get") {
+			getMode = true
+		}
+	}
 	for i, arg := range args {
 		lower := strings.ToLower(arg)
 		if arg == "-K" || lower == "--config" || strings.HasPrefix(lower, "--config=") {
@@ -915,8 +949,11 @@ func classifyDownload(name string, args, ops []string) Ruling {
 		if lower == "--etag-save" || strings.HasPrefix(lower, "--etag-save=") {
 			return Confirm(KindWriteFS, "curl 保存 ETag 文件")
 		}
-		if arg == "-J" || lower == "--remote-header-name" {
+		if arg == "-J" || lower == "--remote-header-name" || lower == "--remote-name-all" {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+		}
+		if arg == "-Q" || lower == "--quote" || strings.HasPrefix(lower, "--quote=") {
+			return Confirm(KindWriteFS, "curl 在服务器端执行命令")
 		}
 		if lower == "--stderr" {
 			if i+1 < len(args) && args[i+1] != "-" {
@@ -930,12 +967,20 @@ func classifyDownload(name string, args, ops []string) Ruling {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
 		switch arg {
-		case "-o", "-O", "-d", "-F", "-T", "-c":
+		case "-o", "-O", "-F", "-T", "-c":
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+		case "-d":
+			if !getMode {
+				return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+			}
 		}
 		switch lower {
-		case "--remote-name", "--cookie-jar", "--output", "--output-document", "--data", "--data-binary", "--data-raw", "--form", "--upload-file", "--post-data", "--post-file", "--method", "--json":
+		case "--remote-name", "--cookie-jar", "--output", "--output-document", "--form", "--form-string", "--upload-file", "--post-data", "--post-file", "--method", "--json":
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+		case "--data", "--data-binary", "--data-raw", "--data-ascii", "--data-urlencode":
+			if !getMode {
+				return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+			}
 		case "-X", "--request":
 			if i+1 < len(args) && !strings.EqualFold(args[i+1], "GET") {
 				return Confirm(KindWriteFS, "非 GET 网络请求")
@@ -944,12 +989,19 @@ func classifyDownload(name string, args, ops []string) Ruling {
 		if strings.HasPrefix(lower, "--request=") && !strings.EqualFold(strings.TrimPrefix(lower, "--request="), "get") {
 			return Confirm(KindWriteFS, "非 GET 网络请求")
 		}
-		for _, prefix := range []string{"--cookie-jar=", "--data=", "--data-binary=", "--data-raw=", "--form=", "--json=", "--output=", "--upload-file=", "--output-document=", "--post-data=", "--post-file=", "--method="} {
+		for _, prefix := range []string{"--cookie-jar=", "--form=", "--form-string=", "--json=", "--output=", "--upload-file=", "--output-document=", "--post-data=", "--post-file=", "--method="} {
 			if strings.HasPrefix(lower, prefix) {
 				return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 			}
 		}
-		write, nonGet := curlShortOptionRisk(arg)
+		if !getMode {
+			for _, prefix := range []string{"--data=", "--data-binary=", "--data-raw=", "--data-ascii=", "--data-urlencode="} {
+				if strings.HasPrefix(lower, prefix) {
+					return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+				}
+			}
+		}
+		write, nonGet := curlShortOptionRisk(arg, getMode)
 		if write {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
@@ -963,16 +1015,20 @@ func classifyDownload(name string, args, ops []string) Ruling {
 	return Allow()
 }
 
-func curlShortOptionRisk(arg string) (bool, bool) {
+func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
 		return false, false
 	}
 	for index := 1; index < len(arg); index++ {
 		value := arg[index+1:]
 		switch arg[index] {
-		case 'o', 'O', 'd', 'F', 'T', 'D', 'c':
+		case 'o', 'O', 'F', 'T', 'D', 'c':
 			return value != "-", false
+		case 'd':
+			return !getMode && value != "-", false
 		case 'K', 'J':
+			return true, false
+		case 'Q':
 			return true, false
 		case 'X':
 			return false, !strings.EqualFold(value, "GET")
@@ -988,7 +1044,7 @@ func classifyRedis(args []string) Ruling {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
-			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--count", "--cursor", "--type", "--sni", "--lru-test", "--rdb", "--pipe-timeout", "--memkeys-samples", "--eval", "--cluster", "--show-pushes":
+			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--quoted-pattern", "--count", "--cursor", "--type", "--sni", "--lru-test", "--rdb", "--functions-rdb", "--pipe-timeout", "--memkeys-samples", "--keystats-samples", "--top", "--eval", "--cluster", "--show-pushes", "--name", "--tls-ciphers", "--tls-ciphersuites", "--intrinsic-latency":
 				i++
 			case "--scan":
 				scan = true
