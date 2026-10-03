@@ -6,14 +6,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 func TestCombinedCommandOutputPreservesTransportEventOrder(t *testing.T) {
-	events := make(chan CommandOutputEvent, 4)
-	events <- CommandOutputEvent{Data: []byte("out-1")}
-	events <- CommandOutputEvent{Data: []byte("err-1"), Stderr: true}
-	events <- CommandOutputEvent{Data: []byte("out-2")}
-	events <- CommandOutputEvent{Data: []byte("err-2"), Stderr: true}
+	events := make(chan base.OutputEvent, 4)
+	events <- base.OutputEvent{Data: []byte("out-1")}
+	events <- base.OutputEvent{Data: []byte("err-1"), Stderr: true}
+	events <- base.OutputEvent{Data: []byte("out-2")}
+	events <- base.OutputEvent{Data: []byte("err-2"), Stderr: true}
 	close(events)
 	stream := &eventCommandStream{events: events}
 	reader := combinedCommandOutput(stream)
@@ -77,18 +79,18 @@ func TestCombinedCommandOutputStderrReadyWhileStdoutBlocked(t *testing.T) {
 }
 
 type eventCommandStream struct {
-	events <-chan CommandOutputEvent
+	events <-chan base.OutputEvent
 }
 
-func (s *eventCommandStream) NextOutput(ctx context.Context) (CommandOutputEvent, error) {
+func (s *eventCommandStream) NextOutput(ctx context.Context) (base.OutputEvent, error) {
 	select {
 	case event, ok := <-s.events:
 		if !ok {
-			return CommandOutputEvent{}, io.EOF
+			return base.OutputEvent{}, io.EOF
 		}
 		return event, nil
 	case <-ctx.Done():
-		return CommandOutputEvent{}, ctx.Err()
+		return base.OutputEvent{}, ctx.Err()
 	}
 }
 func (s *eventCommandStream) Read([]byte) (int, error)                 { return 0, io.EOF }

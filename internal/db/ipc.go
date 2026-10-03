@@ -13,10 +13,6 @@ type connectionRequest struct {
 	ConnID string `json:"connId"`
 }
 
-type disconnectRequest struct {
-	ConnID string `json:"connId"`
-}
-
 type tablesRequest struct {
 	ConnID string `json:"connId"`
 	Schema string `json:"schema,omitempty"`
@@ -64,7 +60,7 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
-	if err := registerCommand(dispatcher, "db_disconnect", false, func(_ context.Context, input disconnectRequest) (any, error) {
+	if err := registerCommand(dispatcher, "db_disconnect", false, func(_ context.Context, input connectionRequest) (any, error) {
 		return nil, s.Disconnect(input.ConnID)
 	}); err != nil {
 		return err

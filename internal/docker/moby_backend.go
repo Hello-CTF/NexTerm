@@ -202,7 +202,6 @@ type mobyExecSession struct {
 	response client.HijackedResponse
 	tty      bool
 	close    sync.Once
-	closeErr error
 }
 
 func (s *mobyExecSession) Read(buffer []byte) (int, error) {
@@ -218,7 +217,7 @@ func (s *mobyExecSession) Close() error {
 		_ = s.response.CloseWrite()
 		s.response.Close()
 	})
-	return s.closeErr
+	return nil
 }
 
 func (s *mobyExecSession) CloseWrite() error {
