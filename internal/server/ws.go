@@ -15,13 +15,13 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, release, err := s.sockets.track(r.Context())
 	if err != nil {
-		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
+		_ = connection.CloseNow()
 		return
 	}
 	defer release()
 	subscriber, unsubscribe, err := s.events.subscribe()
 	if err != nil {
-		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
+		_ = connection.CloseNow()
 		return
 	}
 	defer unsubscribe()
@@ -44,13 +44,13 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, release, err := s.sockets.track(r.Context())
 	if err != nil {
-		_ = connection.Close(websocket.StatusGoingAway, "server is shutting down")
+		_ = connection.CloseNow()
 		return
 	}
 	defer release()
 	receiver, err := s.channels.BindChannel(r.PathValue("id"))
 	if err != nil {
-		_ = connection.Close(websocket.StatusInternalError, "channel unavailable")
+		_ = connection.CloseNow()
 		return
 	}
 	defer receiver.Close()
@@ -76,6 +76,9 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 	go func() {
 		defer close(readDone)
 		defer cancel()
+		if s.readGate != nil {
+			s.readGate()
+		}
 		for {
 			if _, _, err := connection.Read(ctx); err != nil {
 				return
@@ -84,7 +87,12 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 	}()
 	defer func() {
 		cancel()
-		_ = connection.Close(websocket.StatusNormalClosure, "")
+		// CloseNow tears the connection down without the close handshake:
+		// Close would block (up to the library's 5s close-handshake timeout)
+		// waiting for a peer close frame whenever the read loop has not
+		// touched the connection yet, stalling the socket drain past the
+		// Serve shutdown budget.
+		_ = connection.CloseNow()
 		<-readDone
 	}()
 
