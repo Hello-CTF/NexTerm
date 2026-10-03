@@ -247,7 +247,7 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 	}
 	messages = append(messages, userMessage(current.args))
-	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode}
+	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: r.config.Subagents}
 	einoTools, err := execution.Tools()
 	if err != nil {
 		return err

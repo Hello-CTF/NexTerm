@@ -78,6 +78,7 @@ type Config struct {
 	FallbackConfirm func(Confirmation) error
 	Checkpoints     adk.CheckPointStore
 	HITL            *hitl.Manager
+	Subagents       *tools.SubagentConfig
 	NewID           func() string
 	MaxTurns        int
 	MaxImages       int
