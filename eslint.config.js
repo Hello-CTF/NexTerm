@@ -13,7 +13,7 @@ export default tseslint.config(
   //
   // `.tower/worktrees` 里是独立检出，源码由各自 worktree 的质量门检查；
   // 根 lint 不应再递归扫描其中的源码、依赖或 dist/build 产物。
-  { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", ".tower/worktrees", "lazycat", "src-tauri", "target", "scripts", "*.cjs", "src/ipc/bindings"] },
+  { ignores: ["dist", "cmd/nexterm-desktop/dist", ".buildcheck", ".sitetest", ".tower/worktrees", "lazycat", "target", "scripts", "*.cjs", "src/ipc/bindings"] },
   tseslint.configs.recommended,
   {
     rules: {

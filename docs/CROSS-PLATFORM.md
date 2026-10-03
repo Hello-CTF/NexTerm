@@ -1,5 +1,16 @@
 # NexTerm 跨平台规范（Windows / macOS）
 
+> **历史文档（Tauri/Rust 时代），按证据保留，不再代表现行架构。**
+> 本文写于 `src-tauri/` 仍存在、桌面壳为 Tauri v2 的时期；文中所有 `cargo` / `tauri` 命令、
+> `src-tauri/src/...` 路径、`tauri.conf.json` / `tauri.<platform>.conf.json`、NSIS/DMG 发布矩阵
+> 均为当时实况的记录，不能再照跑。`src-tauri/` 整树已删除（`e3235e8`
+> 「chore(parity): freeze Rust registry baseline and remove the src-tauri tree」），
+> 安装包图标已迁往 `public/brand/`（`4416211` / `e28f544`）。
+> **现行架构是 Go**：桌面壳 = Wails v3（`cmd/nexterm-desktop`，前端经 `@wailsio/runtime` 桥接），
+> 服务端 = `cmd/nexterm-server`，前端仍是 `src/`（React + Vite）。
+> 平台门控的**思路**（§2 的五选一、§4 的提交前清单）仍有参考价值，具体手段以 Go 代码为准；
+> §6 的打包/签名/Spotlight 各节保留的是 Tauri 时代的排障证据。
+
 > 目的：让「改一侧、撑死另一侧」这类暗坑在**提交前**被抓住，而不是等对方在另一台机器上白屏。
 > 适用：`src-tauri/`（Rust 内核）+ `src/`（React 前端）+ `scripts/` + `.github/workflows/`。
 > 最后核对：2026-09-29（macOS 适配分支提交前审计）。
