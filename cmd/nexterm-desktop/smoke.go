@@ -63,45 +63,67 @@ func runDesktopSmoke(wailsApp *application.App, window *application.WebviewWindo
 			}
 		}
 	})
-	outcome := make(chan desktopSmokeResult, 1)
-	timedOut := make(chan struct{}, 1)
-	finished := make(chan struct{}, 1)
+	delivered := make(chan struct{})
+	go func() {
+		// On loaded CI runners the webview can need several seconds to commit the
+		// app page; a single fixed-delay injection may land in about:blank and die
+		// with the navigation. Re-inject until the first result arrives — the
+		// script's re-entry guard makes overlapping injections no-ops.
+		time.Sleep(1500 * time.Millisecond)
+		for {
+			select {
+			case <-delivered:
+				return
+			default:
+				window.ExecJS(desktopSmokeScript)
+			}
+			select {
+			case <-delivered:
+				return
+			case <-time.After(2500 * time.Millisecond):
+			}
+		}
+	}()
+	// The verdict must not travel through wailsApp.Run: on darwin Quit terminates
+	// via [NSApp terminate:], which exits the process with code 0 without
+	// unwinding Go, so a returned exit status would carry no signal. Exit
+	// explicitly once the evidence is on disk.
 	go func() {
 		select {
 		case result := <-results:
-			outcome <- result
+			close(delivered)
+			fmt.Printf("desktop smoke: %+v\n", result)
+			if result.OK && result.Ready == "complete" && result.Transport == "desktop" && result.Platform == runtime.GOOS && result.Body != "" && result.BinaryOK && result.ReopenOK && result.JSONOK && result.Error == "" {
+				os.Exit(0)
+			}
+			os.Exit(1)
 		case <-time.After(60 * time.Second):
-			timedOut <- struct{}{}
+			close(delivered)
+			fmt.Fprintln(os.Stderr, "desktop smoke: timed out")
+			os.Exit(1)
 		}
-		wailsApp.Quit()
-	}()
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		window.ExecJS(desktopSmokeScript)
 	}()
 	if err := wailsApp.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "desktop smoke: application run:", err)
 		return 1
 	}
-	close(finished)
-	select {
-	case result := <-outcome:
-		fmt.Printf("desktop smoke: %+v\n", result)
-		if result.OK && result.Ready == "complete" && result.Transport == "desktop" && result.Platform == runtime.GOOS && result.Body != "" && result.BinaryOK && result.ReopenOK && result.JSONOK && result.Error == "" {
-			return 0
-		}
-		return 1
-	case <-timedOut:
-		fmt.Fprintln(os.Stderr, "desktop smoke: timed out")
-		return 1
-	case <-finished:
-		fmt.Fprintln(os.Stderr, "desktop smoke: application stopped before result")
-		return 1
-	}
+	fmt.Fprintln(os.Stderr, "desktop smoke: application stopped before result")
+	return 1
 }
 
 const desktopSmokeScript = `(async () => {
-  const result = { ready: document.readyState, transport: window.__NEXTERM_TRANSPORT__, body: "", binaryOK: false, reopenOK: false, jsonOK: false, ok: false, error: "" };
+  if (window.__NEXTERM_SMOKE_ACTIVE__) return;
+  window.__NEXTERM_SMOKE_ACTIVE__ = true;
+  const result = { ready: "", transport: "", platform: "", body: "", binaryOK: false, reopenOK: false, jsonOK: false, ok: false, error: "" };
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Wait for the real app document: the desktop transport marker is injected
+  // into <head>, and the Go-side verdict requires readyState "complete".
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline && (document.readyState !== "complete" || window.__NEXTERM_TRANSPORT__ !== "desktop")) {
+    await wait(100);
+  }
+  result.ready = document.readyState;
+  result.transport = window.__NEXTERM_TRANSPORT__;
   window._wails = window._wails || {};
   const listeners = new Map();
   const nativeDispatch = window._wails.dispatchWailsEvent;
@@ -129,7 +151,6 @@ const desktopSmokeScript = `(async () => {
     if (!payload || payload.ok !== true) throw new Error(cmd + " failed: " + JSON.stringify(payload && payload.error ? payload.error : payload));
     return payload.data;
   };
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const bytes = (text) => Array.from(new TextEncoder().encode(text));
   const text = (frame) => new TextDecoder().decode(new Uint8Array(frame));
   try {
@@ -139,7 +160,7 @@ const desktopSmokeScript = `(async () => {
     const channelID = "desktop-smoke-" + Date.now();
     const frames = [];
     const off = on("channel://" + channelID, (event) => frames.push(event.data));
-    const tabID = await call("terminal_attach", { sessionId: connected.id, cols: 80, rows: 24 }, { channel: channelID, clientId: "desktop-smoke" });
+    const tabID = await call("terminal_attach_smoke", { sessionId: connected.id, cols: 80, rows: 24 }, { channel: channelID, clientId: "desktop-smoke" });
     await wait(200);
     result.body = JSON.stringify(await call("terminal_list"));
     await call("terminal_write", { args: { tabId: tabID, data: bytes("printf 'nexterm-smoke-ok\\n'\r"), clientId: "desktop-smoke" } });

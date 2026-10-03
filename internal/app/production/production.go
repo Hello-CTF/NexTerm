@@ -56,6 +56,7 @@ type ProductionServices struct {
 	terminalCommands *terminalCommandService
 	hostKeys         *productionHostKeyStore
 	dataDir          string
+	smokeAttach      bool
 	aiRelease        func()
 	cron             *cronRuntime
 }
@@ -78,7 +79,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Durable, services.DurableErr, services.channelBridge)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Durable, services.DurableErr, services.channelBridge, services.smokeAttach)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status

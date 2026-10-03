@@ -18,13 +18,14 @@ import (
 )
 
 type terminalCommandService struct {
-	database   *store.Store
-	sessions   *session.Manager
-	docker     *docker.Service
-	durable    *durable.Backend
-	durableErr error
-	bridge     *terminalBridge
-	grid       *ipc.Dispatcher
+	database    *store.Store
+	sessions    *session.Manager
+	docker      *docker.Service
+	durable     *durable.Backend
+	durableErr  error
+	bridge      *terminalBridge
+	grid        *ipc.Dispatcher
+	smokeAttach bool
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -123,10 +124,10 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableBackend *durable.Backend, durableErr error, bridge *terminalBridge) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableBackend *durable.Backend, durableErr error, bridge *terminalBridge, smokeAttach bool) *terminalCommandService {
 	return &terminalCommandService{
 		database: database, sessions: sessions, docker: dockerService, durable: durableBackend, durableErr: durableErr, bridge: bridge,
-		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream),
+		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), smokeAttach: smokeAttach,
 	}
 }
 
@@ -450,6 +451,25 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				return nil, terminalIPCError(err)
 			})
 		},
+	}
+	if s.smokeAttach {
+		// Desktop smoke builds only: open a plain PTY tab that never touches the
+		// durable tmux layer, so the smoke cannot race the app's own durable tab
+		// on the shared local session. Production builds never register this.
+		registrations = append(registrations, func() error {
+			return ipc.Register(dispatcher, "terminal_attach_smoke", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
+				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+					return "", terminalIPCError(err)
+				}
+				info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
+					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: input.Cols, Rows: input.Rows,
+				})
+				if err != nil {
+					s.bridge.Unbridge(call.Channel.ID)
+				}
+				return info.ID, terminalIPCError(err)
+			})
+		})
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
