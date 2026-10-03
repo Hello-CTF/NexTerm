@@ -25,8 +25,6 @@ func TestR6EnvSignalOptionsPreserveNestedRuling(t *testing.T) {
 	}
 	confirm := []string{
 		`env --default-signal=PIPE touch /tmp/x`,
-		`env --d ls`,
-		`env --de ls`,
 	}
 	for _, command := range confirm {
 		t.Run(command, func(t *testing.T) {
@@ -36,6 +34,19 @@ func TestR6EnvSignalOptionsPreserveNestedRuling(t *testing.T) {
 			}
 			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
 				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
+	// Ambiguous abbreviations cannot be resolved to a known option, so the
+	// wrapped command cannot be proven: Silent asks.
+	for _, command := range []string{`env --d ls`, `env --de ls`} {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
 			}
 		})
 	}
@@ -138,9 +149,11 @@ func TestR6RedisRemainingValueOptionsExposeCommand(t *testing.T) {
 	}
 }
 
+// TestR6DockerAliasesAndForceClusters pins dynamic deletion targets: command
+// substitutions are Unknowable, so Silent asks instead of pre-approving.
 func TestR6DockerAliasesAndForceClusters(t *testing.T) {
 	t.Parallel()
-	danger := []string{
+	ask := []string{
 		`docker rm -f $(docker container ps -aq)`,
 		`docker rm -f $(docker container ls -aq)`,
 		`docker rm -f $(docker container list -aq)`,
@@ -155,25 +168,16 @@ func TestR6DockerAliasesAndForceClusters(t *testing.T) {
 		`docker rm -fv $(docker ps -q)`,
 		`docker rm -f $(docker container ps -q)`,
 		`podman rm -fv $(podman container ps -aq)`,
+		`docker rm -v $(docker ps -aq)`,
 	}
-	for _, command := range danger {
+	for _, command := range ask {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
-			if ruling.Risk != Danger {
-				t.Fatalf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
 			}
 			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
 				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
-			}
-		})
-	}
-	confirm := []string{
-		`docker rm -v $(docker ps -aq)`,
-	}
-	for _, command := range confirm {
-		t.Run(command, func(t *testing.T) {
-			if ruling := ClassifyCommand(command, nil); ruling.Risk != NeedsConfirm {
-				t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
 			}
 		})
 	}

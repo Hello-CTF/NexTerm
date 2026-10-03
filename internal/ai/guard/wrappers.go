@@ -5,9 +5,8 @@ import "strings"
 // execWrapper describes a command that wraps another command's execution.
 // Options are consumed with getopt semantics (attached or separate values,
 // short clusters); the first remaining positional is the wrapped command.
-// Recursion preserves the nested argv token boundaries: the nested command
-// is classified from its token slice, never from a re-joined string, so a
-// quoted script argument stays a single argument.
+// The registry only unwraps to the real command: an option the table cannot
+// resolve makes the whole command Unknowable instead of being guessed away.
 type execWrapper struct {
 	valueShorts  string
 	valueLongs   []string
@@ -26,6 +25,7 @@ var execWrappers = map[string]execWrapper{
 	"stdbuf":      {valueShorts: "ioe", valueLongs: []string{"input", "output", "error"}},
 	"command":     {flagShorts: "pvV"},
 	"builtin":     {},
+	"exec":        {valueShorts: "a", flagShorts: "cl"},
 	"time":        {flagShorts: "p"},
 	"watch":       {valueShorts: "n", valueLongs: []string{"interval"}, flagShorts: "bdeptx", flagLongs: []string{"beep", "color", "differences", "errexit", "chgexit", "precise", "no-title", "exec"}},
 	"chrt":        {valueShorts: "p", valueLongs: []string{"pid"}, flagShorts: "frobFm", flagLongs: []string{"fifo", "rr", "other", "batch", "deadline", "reset-on-fork", "max"}, skipArgs: 1, pidOption: true},
@@ -158,108 +158,16 @@ func parseWrapper(name string, wrapper execWrapper, args []string) wrapperParse 
 	for skip := 0; skip < wrapper.skipArgs && index < len(args); skip++ {
 		index++
 	}
+	if index > len(args) {
+		index = len(args)
+	}
 	return wrapperParse{scan: scan, nested: args[index:]}
 }
 
-// nestedExecutor unwraps privilege escalation, env and execution wrappers so
-// the caller can identify the command that ultimately runs.
-func nestedExecutor(tokens []string) []string {
-	for len(tokens) > 0 {
-		name := commandName(tokens[0])
-		switch {
-		case name == "sudo" || name == "doas":
-			tokens = stripCommandFlags(tokens[1:])
-		case name == "su":
-			return tokens
-		case name == "env":
-			rest, ok := envUnwrap(tokens[1:])
-			if !ok {
-				return tokens
-			}
-			tokens = rest
-		default:
-			wrapper, ok := execWrappers[name]
-			if !ok || wrapper.stdinCommand || wrapper.stdinArgs {
-				return tokens
-			}
-			parsed := parseWrapper(name, wrapper, tokens[1:])
-			if parsed.reason != "" || len(parsed.nested) == 0 {
-				return tokens
-			}
-			tokens = parsed.nested
-		}
-	}
-	return tokens
-}
-
-// envUnwrap skips env options and assignments to reach the wrapped command.
-// The -S/--split-string payload is tokenized with env's "\_" unescape so
-// statically known payloads stay aligned; unparseable forms report false.
-func envUnwrap(args []string) ([]string, bool) {
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		if arg == "--" {
-			return args[index+1:], true
-		}
-		if strings.HasPrefix(arg, "--") {
-			option, value, attached, ok := resolveGNULongOption(arg, envLongOptions)
-			if !ok {
-				return nil, false
-			}
-			if option.name == "split-string" {
-				if !attached {
-					index++
-					if index >= len(args) {
-						return nil, false
-					}
-					value = args[index]
-				}
-				return strings.Fields(strings.ReplaceAll(value, "\\_", " ")), true
-			}
-			if option.takesValue && !attached {
-				index++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-") && arg != "-" {
-			letters := arg[1:]
-			for len(letters) > 0 {
-				switch letters[0] {
-				case 'i', '0', 'v':
-					letters = letters[1:]
-				case 'u', 'C', 'a':
-					if len(letters) == 1 {
-						index++
-					}
-					letters = ""
-				case 'S':
-					payload := letters[1:]
-					if payload == "" {
-						index++
-						if index >= len(args) {
-							return nil, false
-						}
-						payload = args[index]
-					}
-					return strings.Fields(strings.ReplaceAll(payload, "\\_", " ")), true
-				default:
-					return nil, false
-				}
-			}
-			continue
-		}
-		if isAssignment(arg) {
-			continue
-		}
-		return args[index:], true
-	}
-	return []string{}, true
-}
-
-func classifyWrapper(name string, wrapper execWrapper, args []string, rules []string, depth int, stdin stdinHint) Ruling {
+func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []string, stdin pipeInput) Ruling {
 	parsed := parseWrapper(name, wrapper, args)
 	if parsed.reason != "" {
-		return Dangerous(parsed.reason)
+		return Indeterminate(parsed.reason)
 	}
 	scan := parsed.scan
 	if wrapper.stdinCommand {
@@ -274,10 +182,13 @@ func classifyWrapper(name string, wrapper execWrapper, args []string, rules []st
 		if scan.removeOnly {
 			return Confirm(KindService, name+" 删除计划任务")
 		}
-		if stdin.ok && strings.TrimSpace(stdin.text) != "" {
+		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
+			if !stdin.ok {
+				return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+			}
 			// Installing a scheduled job always confirms at minimum; the
 			// payload itself is classified with the full model.
-			return Worst(Confirm(KindService, name+" 安装计划任务"), classifyCommandDepth(stdin.text, rules, depth+1))
+			return Worst(Confirm(KindService, name+" 安装计划任务"), c.classifyText(stdin.text))
 		}
 		return Dangerous(name + " 执行标准输入中的命令")
 	}
@@ -290,25 +201,30 @@ func classifyWrapper(name string, wrapper execWrapper, args []string, rules []st
 			// and printing it is the narrow read-only default.
 			return Allow()
 		}
-		return Dangerous(name + " 缺少要执行的命令")
+		if name == "exec" {
+			// exec with only redirections rearranges file descriptors.
+			return Allow()
+		}
+		return Indeterminate(name + " 缺少要执行的命令")
 	}
 	if wrapper.stdinArgs {
-		return classifyXargs(parsed.nested, scan, rules, depth, stdin)
+		return c.classifyXargs(parsed.nested, scan, stdin)
 	}
-	// The nested command runs with the wrapper's argv intact; classify the
-	// token slice so quoted scripts and clustered options keep their meaning.
-	return classifySegment(shellSegment{tokens: parsed.nested}, rules, depth+1, stdin)
+	return c.child().classifyArgv(parsed.nested, stdin)
 }
 
 // classifyXargs models xargs semantics: with -I/-J/--replace every occurrence
 // of the replacement string in the initial arguments is substituted with one
 // input line per invocation; without it, input words are appended to the
 // command. Unknown or non-determinable input fails closed to Danger.
-func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int, stdin stdinHint) Ruling {
+func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipeInput) Ruling {
 	if scan.fileInput != "" {
 		return Dangerous("xargs 从文件构建命令")
 	}
-	if !stdin.ok || strings.TrimSpace(stdin.text) == "" {
+	if stdin.kind == stdinFile {
+		return Dangerous("xargs 从文件构建命令")
+	}
+	if stdin.kind != stdinPipe && stdin.kind != stdinHeredoc || !stdin.ok || strings.TrimSpace(stdin.text) == "" {
 		if recursiveDeleteCommand(nested) {
 			return Dangerous("xargs 以未受控输入调用递归删除")
 		}
@@ -323,7 +239,7 @@ func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int,
 				continue
 			}
 			classified++
-			result = Worst(result, classifyXargsLine(nested, scan, line, rules, depth))
+			result = Worst(result, c.classifyXargsLine(nested, scan, line))
 			continue
 		}
 		words := strings.Fields(line)
@@ -334,7 +250,7 @@ func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int,
 		combined := make([]string, 0, len(nested)+len(words))
 		combined = append(combined, nested...)
 		combined = append(combined, words...)
-		result = Worst(result, classifySegment(shellSegment{tokens: combined}, rules, depth+1, stdinHint{}))
+		result = Worst(result, c.child().classifyArgv(combined, pipeInput{}))
 	}
 	if classified == 0 {
 		return Dangerous("xargs 从标准输入构建命令")
@@ -347,12 +263,12 @@ func classifyXargs(nested []string, scan wrapperScan, rules []string, depth int,
 // argument; BSD -J replaces only standalone placeholder tokens with the
 // line's words. Because implementations disagree, both interpretations are
 // classified and the worse ruling wins.
-func classifyXargsLine(nested []string, scan wrapperScan, line string, rules []string, depth int) Ruling {
+func (c *classifier) classifyXargsLine(nested []string, scan wrapperScan, line string) Ruling {
 	substituted := make([]string, len(nested))
 	for i, token := range nested {
 		substituted[i] = strings.ReplaceAll(token, scan.replace, line)
 	}
-	result := classifySegment(shellSegment{tokens: substituted}, rules, depth+1, stdinHint{})
+	result := c.child().classifyArgv(substituted, pipeInput{})
 	if scan.replaceSplit {
 		words := strings.Fields(line)
 		combined := make([]string, 0, len(nested)+len(words))
@@ -368,7 +284,7 @@ func classifyXargsLine(nested []string, scan wrapperScan, line string, rules []s
 		if !replaced {
 			combined = append(combined, words...)
 		}
-		result = Worst(result, classifySegment(shellSegment{tokens: combined}, rules, depth+1, stdinHint{}))
+		result = Worst(result, c.child().classifyArgv(combined, pipeInput{}))
 	}
 	return result
 }

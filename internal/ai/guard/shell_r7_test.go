@@ -6,7 +6,7 @@ import (
 )
 
 // R3 P1-1: wrapper/kubectl recursion preserves argv token boundaries and
-// xargs -I replacement is modeled. Silent auto-allows NeedsConfirm, so every
+// xargs -I replacement is modeled. Silent auto-allows T0/T1 only, so every
 // nested-execution bypass must rule at least Danger.
 func TestR7WrapperArgvPreserved(t *testing.T) {
 	t.Parallel()
@@ -125,8 +125,6 @@ func TestR7StdinProducerModeling(t *testing.T) {
 	danger := []string{
 		`echo benign | at -f /tmp/payload now`,
 		`echo benign | at -f/tmp/payload now`,
-		`echo benign | at --file=/tmp/payload now`,
-		`echo benign | at --file /tmp/payload now`,
 		`at -f /tmp/payload now`,
 		`printf '%q' 'rm -rf /home/user' | at now`,
 	}
@@ -141,6 +139,22 @@ func TestR7StdinProducerModeling(t *testing.T) {
 			}
 			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
 				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
+	// at long options are not in the wrapper table; unresolved options fail
+	// closed to Unknowable so Silent asks.
+	for _, command := range []string{
+		`echo benign | at --file=/tmp/payload now`,
+		`echo benign | at --file /tmp/payload now`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
 			}
 		})
 	}
@@ -209,7 +223,6 @@ func TestR7SuSudoAttachedAndClustered(t *testing.T) {
 	}
 	danger := []string{
 		`sudo -eu root /tmp/notes.txt`,
-		`sudo -e/tmp/notes.txt`,
 		`sudo -e /tmp/notes.txt`,
 	}
 	for _, command := range danger {
@@ -217,6 +230,19 @@ func TestR7SuSudoAttachedAndClustered(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
 			if ruling.Risk != Danger {
 				t.Fatalf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
+			}
+		})
+	}
+	// The cluster remainder after -e is not a valid sudo option, so the
+	// command cannot be proven: Silent asks.
+	for _, command := range []string{`sudo -e/tmp/notes.txt`} {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
 			}
 			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
 				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
@@ -315,11 +341,11 @@ func TestR7InterpreterInlineForms(t *testing.T) {
 	}
 }
 
-// R3 P1-5: force deletion fed by ID-producing enumerations is bulk
-// destruction; plain table listings stay NeedsConfirm.
+// R3 P1-5: force deletion fed by dynamic command substitutions can never be
+// proven bounded; every enumeration form is Unknowable and Silent asks.
 func TestR7DockerFormattedEnumeration(t *testing.T) {
 	t.Parallel()
-	danger := []string{
+	ask := []string{
 		`docker rm -f $(docker ps --format '{{.ID}}')`,
 		`docker rm -f $(docker ps --format='{{.ID}}')`,
 		`docker rm -f $(docker ps -q --format '{{.ID}}')`,
@@ -330,12 +356,15 @@ func TestR7DockerFormattedEnumeration(t *testing.T) {
 		`podman rm -f $(podman ps --format '{{.ID}}')`,
 		`docker rm -f $(sudo docker ps --format '{{.ID}}')`,
 		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps --format '{{.ID}}')`,
+		`docker rm -f $(docker ps)`,
+		`docker rm -f $(docker ps -a)`,
+		`docker rm $(docker ps -q)`,
 	}
-	for _, command := range danger {
+	for _, command := range ask {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
-			if ruling.Risk != Danger {
-				t.Fatalf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
 			}
 			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
 				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
@@ -346,9 +375,6 @@ func TestR7DockerFormattedEnumeration(t *testing.T) {
 		})
 	}
 	confirm := []string{
-		`docker rm -f $(docker ps)`,
-		`docker rm -f $(docker ps -a)`,
-		`docker rm $(docker ps -q)`,
 		`docker rm -f web`,
 	}
 	for _, command := range confirm {
@@ -718,7 +744,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
 		}
 	}
-	// Docker enumeration variants.
+	// Docker enumeration variants: dynamic substitutions are Unknowable.
 	for _, command := range []string{
 		`docker rm -f $(docker ps -q)`,
 		`docker rm -f $(docker ps --quiet)`,
@@ -743,8 +769,12 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 		`docker rm -f $(docker --host=tcp://127.0.0.1:2375 ps -q)`,
 		`docker rm -f $(docker --config /tmp/cfg ps -q)`,
 	} {
-		if ruling := ClassifyCommand(command, nil); ruling.Risk != Danger {
-			t.Errorf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+		ruling := ClassifyCommand(command, nil)
+		if ruling.Risk != Unknowable {
+			t.Errorf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+		}
+		if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+			t.Errorf("silent decision = %+v, want ActionAsk", decision)
 		}
 	}
 	// ssh/network execution variants.
@@ -799,7 +829,8 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Forbidden", command, ruling)
 		}
 	}
-	// Conservative floors for unparseable wrapper/nested forms.
+	// Conservative floors for unparseable wrapper/nested forms: unresolved
+	// options and structures fail closed to Unknowable.
 	for _, command := range []string{
 		`nice -x rm -rf /home/user`,
 		`nice --unknown rm -rf /home/user`,
@@ -809,8 +840,12 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 		`at -Z now`,
 		`echo x | batch -Z`,
 	} {
-		if ruling := ClassifyCommand(command, nil); ruling.Risk != Danger {
-			t.Errorf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+		ruling := ClassifyCommand(command, nil)
+		if ruling.Risk != Unknowable {
+			t.Errorf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+		}
+		if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+			t.Errorf("silent decision = %+v, want ActionAsk", decision)
 		}
 	}
 	// Read-only forms must keep their narrow positive allow.
@@ -830,9 +865,20 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Safe", command, ruling)
 		}
 	}
-	// Established NeedsConfirm boundaries must not drift.
+	// Dynamic deletion targets are Unknowable even in table-listing form.
 	for _, command := range []string{
 		`docker rm -f $(docker ps)`,
+	} {
+		ruling := ClassifyCommand(command, nil)
+		if ruling.Risk != Unknowable {
+			t.Errorf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+		}
+		if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+			t.Errorf("silent decision = %+v, want ActionAsk", decision)
+		}
+	}
+	// Established NeedsConfirm boundaries must not drift.
+	for _, command := range []string{
 		`ssh -o ProxyCommand=none h`,
 		`git push origin main`,
 		`git push --force origin main`,

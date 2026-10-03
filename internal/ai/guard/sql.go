@@ -20,7 +20,7 @@ func ClassifySQL(statement string, rules []string) Ruling {
 	}
 	statements, err := splitSQL(statement)
 	if err != nil {
-		return Worst(result, Confirm(KindDBWrite, "SQL 引号或注释未闭合，无法安全分析"))
+		return Worst(result, Indeterminate("SQL 引号或注释未闭合，无法安全分析"))
 	}
 	for _, tokens := range statements {
 		if len(tokens) == 0 {

@@ -15,9 +15,14 @@ const (
 
 type Risk uint8
 
+// Risk orders the capability tiers from provably bounded to always denied:
+// Safe (T0, read-only), NeedsConfirm (T1, bounded change), Unknowable
+// (dynamic input, unknown options, unparseable or over-budget structure),
+// Danger (known-dangerous capability), Forbidden (always denied).
 const (
 	Safe Risk = iota
 	NeedsConfirm
+	Unknowable
 	Danger
 	Forbidden
 )
@@ -28,6 +33,8 @@ func (r Risk) String() string {
 		return "safe"
 	case NeedsConfirm:
 		return "needs_confirm"
+	case Unknowable:
+		return "unknowable"
 	case Danger:
 		return "danger"
 	case Forbidden:
@@ -67,6 +74,13 @@ func Allow(reason ...string) Ruling {
 
 func Confirm(kind Kind, reason string) Ruling {
 	return Ruling{Risk: NeedsConfirm, Kind: kind, Kinds: []Kind{kind}, Reason: reason}
+}
+
+// Unknowable rates anything the guard cannot prove bounded: dynamic shell
+// words, unknown options during unwrapping, parse failures and budget
+// overruns. It is never auto-allowed, not even in Silent mode.
+func Indeterminate(reason string) Ruling {
+	return Ruling{Risk: Unknowable, Kind: KindUnknown, Kinds: []Kind{KindUnknown}, Reason: reason}
 }
 
 func Dangerous(reason string) Ruling {
@@ -160,6 +174,14 @@ type Decision struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// Decide maps a ruling to an action per permission mode:
+//
+//	ReadOnly:  T0 allow; T1/Unknowable/Danger/Forbidden deny
+//	ReadWrite: T0 allow; T1 ask (allow once every kind is remembered);
+//	           Unknowable/Danger ask; Forbidden deny
+//	Silent:    T0/T1 allow; Unknowable/Danger ask; Forbidden deny
+//
+// Only T1 rulings are rememberable; Unknowable and Danger always ask.
 func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	config = config.Normalized()
 	if ruling.Risk == Forbidden {
@@ -171,17 +193,19 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	if config.Mode == ReadOnly {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: "只读权限模式禁止此操作"}
 	}
-	remembered := len(ruling.ApprovalKinds()) != 0
-	for _, kind := range ruling.ApprovalKinds() {
-		remembered = remembered && memory != nil && memory.Contains(kind)
+	if ruling.Risk == NeedsConfirm {
+		remembered := len(ruling.ApprovalKinds()) != 0
+		for _, kind := range ruling.ApprovalKinds() {
+			remembered = remembered && memory != nil && memory.Contains(kind)
+		}
+		if remembered {
+			return Decision{Action: ActionAllow, Ruling: ruling}
+		}
+		if config.Mode == Silent {
+			return Decision{Action: ActionAllow, Ruling: ruling}
+		}
 	}
-	if ruling.Risk != Danger && remembered {
-		return Decision{Action: ActionAllow, Ruling: ruling}
-	}
-	if ruling.Risk == Danger || config.Mode == ReadWrite {
-		return Decision{Action: ActionAsk, Ruling: ruling, Reason: ruling.Reason}
-	}
-	return Decision{Action: ActionAllow, Ruling: ruling}
+	return Decision{Action: ActionAsk, Ruling: ruling, Reason: ruling.Reason}
 }
 
 type Memory struct {

@@ -7,8 +7,9 @@ import (
 
 // TestM64CorpusClassifications drives the M64 guard-semantics corpus as
 // table-driven classification + execution-policy regressions. The contract:
-// Silent auto-allows NeedsConfirm, so anything that can destroy or execute
-// arbitrarily must rule Danger or Forbidden.
+// Silent auto-allows T0 (Safe) and T1 (NeedsConfirm) only, so anything
+// dynamic, destructive or executing must rule Unknowable, Danger or
+// Forbidden.
 func TestM64CorpusClassifications(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -45,7 +46,6 @@ func TestM64CorpusClassifications(t *testing.T) {
 		// J. critical paths and critical write targets
 		`rm -rf ~root`,
 		`rm -rf /Users/alice`,
-		`rm -rf $HOME/sub`,
 		`rm -rf ~/sub`,
 		`dd if=/dev/zero of=/dev/disk0`,
 		`dd if=/dev/zero of=/dev/rdisk0`,
@@ -71,19 +71,13 @@ func TestM64CorpusClassifications(t *testing.T) {
 		})
 	}
 	danger := []string{
-		// A. wrappers with uncontrolled payloads or unparseable forms
-		`nice -x rm -rf /home/user`,
-		`timeout --unknown-option 5 rm -rf /home/user`,
+		// A. wrappers reading uncontrolled standard input
 		`xargs rm -rf`,
 		`at now`,
 		`batch`,
 		// C. sudo -e family
 		`sudo -e /tmp/notes.txt`,
 		`sudoedit /tmp/notes.txt`,
-		// F. docker running-state bulk and boolean =true forms
-		`docker rm -f $(docker ps -q)`,
-		`docker rm -f $(docker ps --quiet=true --all)`,
-		`docker rm -fv $(docker ps -q --filter name=web)`,
 		// G. network device redirects
 		`bash -i > /dev/tcp/127.0.0.1/4444 2>&1`,
 		`echo x > /dev/udp/127.0.0.1/53`,
@@ -142,12 +136,41 @@ func TestM64CorpusClassifications(t *testing.T) {
 			}
 		})
 	}
+	// Dynamic input, unknown options and unresolvable wrappers are
+	// Unknowable: never auto-allowed, Silent asks, ReadOnly denies.
+	unknowable := []string{
+		// A. wrappers with unresolvable options
+		`nice -x rm -rf /home/user`,
+		`timeout --unknown-option 5 rm -rf /home/user`,
+		// F. dynamic deletion targets
+		`docker rm -f $(docker ps -q)`,
+		`docker rm -f $(docker ps --quiet=true --all)`,
+		`docker rm -fv $(docker ps -q --filter name=web)`,
+		// I. unknown redis-cli options cannot be aligned with a command
+		`redis-cli --totally-unknown FLUSHALL`,
+		// J. dynamic words cannot be proven critical or bounded
+		`rm -rf $HOME/sub`,
+		`echo $((6*7))`,
+	}
+	for _, command := range unknowable {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
+			}
+			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
+				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
 	confirm := []string{
 		// wrappers with visible benign payloads keep their nested ruling
 		`su -c 'id'`,
 		`chrt -p 5`,
 		`ionice -p 5`,
-		`redis-cli --totally-unknown FLUSHALL`,
 		`echo hi | at now`,
 		`ssh host`,
 		`git reset --soft HEAD~1`,
@@ -173,7 +196,6 @@ func TestM64CorpusClassifications(t *testing.T) {
 		`docker image history img`,
 		`tr 'a-z' 'A-Z' < /tmp/x`,
 		`base64 -i /tmp/x`,
-		`echo $((6*7))`,
 		`export PATH=/usr/bin`,
 		`curl -sG -d foo=bar https://example.test`,
 		`curl -sG --data-urlencode foo=bar https://example.test`,
@@ -247,7 +269,7 @@ func TestM64OptionTableCompleteness(t *testing.T) {
 		`redis-cli --tls-ciphers DEFAULT FLUSHALL`:      Danger,
 		`redis-cli --vset-recall INFO FLUSHALL`:         Danger,
 		`redis-cli --functions-rdb /tmp/f.rdb FLUSHALL`: Danger,
-		`redis-cli --unknown-option-xyz PING`:           NeedsConfirm,
+		`redis-cli --unknown-option-xyz PING`:           Unknowable,
 		`redis-cli --raw PING`:                          Safe,
 		`redis-cli --json PING`:                         Safe,
 		`redis-cli -2 PING`:                             Safe,
@@ -262,21 +284,39 @@ func TestM64OptionTableCompleteness(t *testing.T) {
 
 func TestM64DecideLayerSilentContract(t *testing.T) {
 	t.Parallel()
-	// Silent auto-allows NeedsConfirm: pins the contract both layers rely on.
+	// Silent auto-allows T0 and T1 only; anything at Unknowable or above
+	// always asks (T1/Danger) or denies (Forbidden).
+	if decision := Decide(Config{Mode: Silent}, Allow("x"), nil); decision.Action != ActionAllow {
+		t.Fatalf("silent Safe decision = %+v, want ActionAllow", decision)
+	}
 	if decision := Decide(Config{Mode: Silent}, Confirm(KindWriteFS, "x"), nil); decision.Action != ActionAllow {
 		t.Fatalf("silent NeedsConfirm decision = %+v, want ActionAllow", decision)
+	}
+	if decision := Decide(Config{Mode: Silent}, Indeterminate("x"), nil); decision.Action != ActionAsk {
+		t.Fatalf("silent Unknowable decision = %+v, want ActionAsk", decision)
 	}
 	if decision := Decide(Config{Mode: Silent}, Dangerous("x"), nil); decision.Action != ActionAsk {
 		t.Fatalf("silent Danger decision = %+v, want ActionAsk", decision)
 	}
+	if decision := Decide(Config{Mode: Silent}, Deny("x"), nil); decision.Action != ActionDeny {
+		t.Fatalf("silent Forbidden decision = %+v, want ActionDeny", decision)
+	}
 	if decision := Decide(Config{Mode: ReadOnly}, Confirm(KindWriteFS, "x"), nil); decision.Action != ActionDeny {
 		t.Fatalf("read-only NeedsConfirm decision = %+v, want ActionDeny", decision)
+	}
+	if decision := Decide(Config{Mode: ReadOnly}, Indeterminate("x"), nil); decision.Action != ActionDeny {
+		t.Fatalf("read-only Unknowable decision = %+v, want ActionDeny", decision)
 	}
 	// Danger rulings stay askable in ReadWrite with memory: Danger never auto-allows.
 	memory := NewMemory()
 	memory.Add(KindWriteFS)
 	if decision := Decide(Config{Mode: Silent}, Dangerous("x"), memory); decision.Action != ActionAsk {
 		t.Fatalf("silent remembered Danger decision = %+v, want ActionAsk", decision)
+	}
+	// Memory only unlocks T1: Unknowable kinds are never rememberable.
+	memory.Add(KindUnknown)
+	if decision := Decide(Config{Mode: ReadWrite}, Indeterminate("x"), memory); decision.Action != ActionAsk {
+		t.Fatalf("read-write remembered Unknowable decision = %+v, want ActionAsk", decision)
 	}
 }
 

@@ -30,7 +30,7 @@ func TestSQLReadOnlyClassification(t *testing.T) {
 		{"/*!50000 DROP DATABASE prod */;", Forbidden},
 		{"/* ordinary comment only */", NeedsConfirm},
 		{"drop\nschema\nprod", Forbidden},
-		{"SELECT 'unterminated", NeedsConfirm},
+		{"SELECT 'unterminated", Unknowable},
 	}
 	for _, test := range tests {
 		t.Run(test.sql, func(t *testing.T) {

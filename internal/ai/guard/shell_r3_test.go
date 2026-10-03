@@ -16,10 +16,10 @@ func TestR3ShellAdversarialClassifications(t *testing.T) {
 		{`env -S'rm\_-rf\_/home/echo'`, Forbidden},
 		{`sudo -D /tmp rm -rf /home/user`, Forbidden},
 		{`docker exec c sudo -u root rm -rf /home/user`, Forbidden},
-		{`docker container rm -f $(docker ps -q -a)`, Danger},
-		{`docker container rm -f $(docker ps -aq)`, Danger},
-		{`docker rmi -f $(docker images -q)`, Danger},
-		{`echo =(touch /tmp/pwn)`, NeedsConfirm},
+		{`docker container rm -f $(docker ps -q -a)`, Unknowable},
+		{`docker container rm -f $(docker ps -aq)`, Unknowable},
+		{`docker rmi -f $(docker images -q)`, Unknowable},
+		{`echo =(touch /tmp/pwn)`, Unknowable},
 	}
 	for _, test := range tests {
 		t.Run(test.command, func(t *testing.T) {

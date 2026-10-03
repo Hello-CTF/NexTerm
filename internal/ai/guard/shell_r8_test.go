@@ -6,11 +6,14 @@ import "testing"
 // construct class from the R5R4 review — wrapper/pipe-to-shell/interpreter/
 // remote-execution/substitution/unknown-global/unparseable-escape forms —
 // must rule at least Danger so Silent never executes it, with attached,
-// case and global-option variants of each group.
+// case and global-option variants of each group. Structures the guard
+// cannot prove (dynamic substitutions, parse failures, unknown options)
+// rule Unknowable; either tier keeps Silent from allowing the command.
 func TestR8RiskFloorCrossBranch(t *testing.T) {
 	t.Parallel()
 	blocked := []string{
-		// R5R4-1: kubectl exec globals, BSD xargs -J, wrapped enumerators.
+		// R5R4-1: kubectl exec globals and BSD xargs -J reach the recursive
+		// checks; their payloads rule Forbidden.
 		`kubectl exec --context prod pod -- sh -c 'rm -rf /home/user'`,
 		`kubectl exec --context=prod pod -- sh -c 'rm -rf /home/user'`,
 		`kubectl exec --kubeconfig /tmp/k pod -- sh -c 'rm -rf /home/user'`,
@@ -19,15 +22,6 @@ func TestR8RiskFloorCrossBranch(t *testing.T) {
 		`kubectl exec -c c -n ns --context prod pod -- sh -c 'rm -rf /home/user'`,
 		`echo 'rm -rf /home/user' | xargs -J{} sh -c {}`,
 		`echo 'rm -rf /home/user' | xargs -J {} sh -c {}`,
-		`docker rm -f $(command docker ps -q)`,
-		`docker rm -f $(nice docker ps -q)`,
-		`docker rm -f $(nice -n 5 docker ps -q)`,
-		`docker rm -f $(timeout 5 docker ps -q)`,
-		`docker rm -f $(env docker ps -q)`,
-		`docker rm -f $(env -S 'docker ps -q')`,
-		`docker rm -f $(sudo nice docker ps -q)`,
-		`docker rm -f $(doas docker ps -q)`,
-		`docker rmi -f $(command docker images -q)`,
 		// R5R4-2: echo/printf escapes make the emitted bytes shell-dependent.
 		`echo -e 'rm\x20-rf\x20/home/user' | at now`,
 		`echo -e 'rm\t-rf\t/home/user' | at now`,
@@ -91,11 +85,6 @@ func TestR8RiskFloorCrossBranch(t *testing.T) {
 		`systemctl --ty service stop ssh`,
 		`systemctl --us stop ssh`,
 		`systemctl --no-b stop ssh`,
-		// Unparseable structures fail closed.
-		`echo 'unterminated`,
-		`kubectl exec --unknown-global pod -- id`,
-		`git --unknown-global status`,
-		`systemctl --unknown-global status ssh`,
 	}
 	for _, command := range blocked {
 		t.Run(command, func(t *testing.T) {
@@ -105,6 +94,37 @@ func TestR8RiskFloorCrossBranch(t *testing.T) {
 			}
 			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action == ActionAllow {
 				t.Fatalf("silent decision = %+v, must not allow", decision)
+			}
+			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
+				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
+	unknowable := []string{
+		// R5R4-1: dynamic enumeration targets cannot be proven bounded.
+		`docker rm -f $(command docker ps -q)`,
+		`docker rm -f $(nice docker ps -q)`,
+		`docker rm -f $(nice -n 5 docker ps -q)`,
+		`docker rm -f $(timeout 5 docker ps -q)`,
+		`docker rm -f $(env docker ps -q)`,
+		`docker rm -f $(env -S 'docker ps -q')`,
+		`docker rm -f $(sudo nice docker ps -q)`,
+		`docker rm -f $(doas docker ps -q)`,
+		`docker rmi -f $(command docker images -q)`,
+		// Unparseable structures fail closed.
+		`echo 'unterminated`,
+		`kubectl exec --unknown-global pod -- id`,
+		`git --unknown-global status`,
+		`systemctl --unknown-global status ssh`,
+	}
+	for _, command := range unknowable {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
 			}
 			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
 				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
@@ -180,6 +200,21 @@ func TestR8NarrowReadOnlyStaysUsable(t *testing.T) {
 			}
 		})
 	}
+	// Dynamic deletion targets are Unknowable: the Silent pre-approval the
+	// old model granted table-listing substitutions is gone.
+	for _, command := range []string{
+		`docker rm -f $(docker ps)`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
+			}
+		})
+	}
 	confirm := []string{
 		`echo hi | at now`,
 		`echo 'id' | at now`,
@@ -187,7 +222,6 @@ func TestR8NarrowReadOnlyStaysUsable(t *testing.T) {
 		`echo x | xargs rm`,
 		`git push origin main`,
 		`git push --force origin main`,
-		`docker rm -f $(docker ps)`,
 		`nc -l 127.0.0.1 4444`,
 		`mysql -e 'select 1'`,
 		`psql -c 'SELECT 1'`,
@@ -217,17 +251,6 @@ func TestR8NarrowReadOnlyStaysUsable(t *testing.T) {
 func TestR8FloorVariants(t *testing.T) {
 	t.Parallel()
 	variants := map[string][]string{
-		"docker enumerator wrappers": {
-			`docker rm -f $(command docker ps -q)`,
-			`docker rm -f $(command nice docker ps -q)`,
-			`docker rm -f $(nice -n5 docker ps -q)`,
-			`docker rm -f $(stdbuf -o0 docker ps -q)`,
-			`docker rm -f $(env -i docker ps -q)`,
-			`docker rm -f $(env -u FOO docker ps -q)`,
-			`docker rm -fv $(command docker ps -q)`,
-			`docker rmi -f $(nice docker image ls -q)`,
-			`docker rm -f $(sudo -u root docker ps -q)`,
-		},
 		"echo escape producers": {
 			`echo -e 'rm\x20-rf\x20/home/user' | at now`,
 			`echo -e 'rm\trf\t/home/user' | at now`,
@@ -360,6 +383,19 @@ func TestR8FloorVariants(t *testing.T) {
 			`kubectl exec -c c --context prod pod -- sh -c 'rm -rf /home/user'`,
 			`kubectl exec --context prod pod -- rm -rf /home/user`,
 		},
+	}
+	unknowableVariants := map[string][]string{
+		"docker enumerator wrappers": {
+			`docker rm -f $(command docker ps -q)`,
+			`docker rm -f $(command nice docker ps -q)`,
+			`docker rm -f $(nice -n5 docker ps -q)`,
+			`docker rm -f $(stdbuf -o0 docker ps -q)`,
+			`docker rm -f $(env -i docker ps -q)`,
+			`docker rm -f $(env -u FOO docker ps -q)`,
+			`docker rm -fv $(command docker ps -q)`,
+			`docker rmi -f $(nice docker image ls -q)`,
+			`docker rm -f $(sudo -u root docker ps -q)`,
+		},
 		"unparseable forms": {
 			`echo 'unterminated`,
 			`echo "unterminated`,
@@ -378,6 +414,19 @@ func TestR8FloorVariants(t *testing.T) {
 				}
 				if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action == ActionAllow {
 					t.Fatalf("silent decision = %+v, must not allow", decision)
+				}
+			})
+		}
+	}
+	for group, commands := range unknowableVariants {
+		for _, command := range commands {
+			t.Run(group+"/"+command, func(t *testing.T) {
+				ruling := ClassifyCommand(command, nil)
+				if ruling.Risk != Unknowable {
+					t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+				}
+				if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+					t.Fatalf("silent decision = %+v, want ActionAsk", decision)
 				}
 			})
 		}

@@ -11,16 +11,12 @@ func TestR5GNULongOptionAbbreviationsFailClosed(t *testing.T) {
 		`env --split-st='touch /tmp/pwn'`,
 		`env --split-string='touch /tmp/pwn'`,
 		`env --s touch /tmp/pwn`,
-		`env --unknown-long-option ls`,
 		`sort --o /tmp/out /etc/passwd`,
 		`sort --ou /tmp/out /etc/passwd`,
 		`sort --outp /tmp/out /etc/passwd`,
 		`sort --outpu /tmp/out /etc/passwd`,
 		`sort --output /tmp/out /etc/passwd`,
 		`sort --output=/tmp/out /etc/passwd`,
-		`sort --compress-program=/tmp/evil /etc/passwd`,
-		`sort --i /etc/passwd`,
-		`sort --unknown-long-option /etc/passwd`,
 	}
 	for _, command := range confirm {
 		t.Run(command, func(t *testing.T) {
@@ -30,6 +26,39 @@ func TestR5GNULongOptionAbbreviationsFailClosed(t *testing.T) {
 			}
 			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
 				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
+	// Options the tables cannot resolve fail closed to Unknowable: Silent
+	// must ask rather than pre-approve the command.
+	unknowable := []string{
+		`env --unknown-long-option ls`,
+		`sort --i /etc/passwd`,
+		`sort --unknown-long-option /etc/passwd`,
+	}
+	for _, command := range unknowable {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
+			}
+			if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
+				t.Fatalf("read-only decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
+	// Executing an external program whose content cannot be verified.
+	for _, command := range []string{`sort --compress-program=/tmp/evil /etc/passwd`} {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Danger {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
+				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
 			}
 		})
 	}
@@ -117,9 +146,12 @@ func TestR5CurlWriteOptionsAreNeverSafe(t *testing.T) {
 	}
 }
 
+// TestR5DockerBulkDeletionWithInnerGlobalOptions pins dynamic deletion
+// targets: command substitutions are Unknowable, so Silent asks instead of
+// pre-approving bulk deletion.
 func TestR5DockerBulkDeletionWithInnerGlobalOptions(t *testing.T) {
 	t.Parallel()
-	danger := []string{
+	ask := []string{
 		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps -aq)`,
 		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps -q)`,
 		`docker rm -f $(docker --host tcp://127.0.0.1:2375 ps -aq)`,
@@ -129,25 +161,16 @@ func TestR5DockerBulkDeletionWithInnerGlobalOptions(t *testing.T) {
 		`docker container rm -f $(docker -H tcp://127.0.0.1:2375 ps -aq)`,
 		`docker image rm -f $(docker -H tcp://127.0.0.1:2375 images -q)`,
 		`podman rm -f $(podman -H tcp://127.0.0.1:2375 ps -aq)`,
+		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps)`,
 	}
-	for _, command := range danger {
+	for _, command := range ask {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
-			if ruling.Risk != Danger {
-				t.Fatalf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+			if ruling.Risk != Unknowable {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Unknowable", command, ruling)
 			}
 			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionAsk {
 				t.Fatalf("silent decision = %+v, want ActionAsk", decision)
-			}
-		})
-	}
-	confirm := []string{
-		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps)`,
-	}
-	for _, command := range confirm {
-		t.Run(command, func(t *testing.T) {
-			if ruling := ClassifyCommand(command, nil); ruling.Risk != NeedsConfirm {
-				t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
 			}
 		})
 	}

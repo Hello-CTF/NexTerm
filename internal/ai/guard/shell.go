@@ -5,226 +5,273 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
-type shellToken struct {
-	text string
-	op   bool
-}
+// Analysis budgets. Commands beyond any budget cannot be proven bounded and
+// rate Unknowable.
+const (
+	maxClassifyDepth = 8
+	maxCommandBytes  = 64 << 10
+	maxASTNodes      = 4096
+)
 
-type shellRedirect struct {
-	op     string
-	target string
-}
+type stdinKind uint8
 
-type shellSegment struct {
-	tokens    []string
-	ops       []string
-	redirects []shellRedirect
-	raw       string
-}
+const (
+	stdinNone stdinKind = iota
+	stdinPipe
+	stdinHeredoc
+	stdinFile
+)
 
-type stdinHint struct {
+// pipeInput describes where a command's standard input comes from and, for
+// pipes and here-documents, whether the exact bytes are provably known.
+type pipeInput struct {
+	kind stdinKind
 	text string
 	ok   bool
 }
 
-func ClassifyCommand(command string, rules []string) Ruling {
-	return classifyCommandDepth(command, rules, 0)
+type classifier struct {
+	rules []string
+	depth int
+	nodes *int
 }
 
-func classifyCommandDepth(command string, rules []string, depth int) Ruling {
-	if depth > 8 {
-		return Dangerous("命令嵌套过深，无法安全分析")
-	}
-	result := Allow()
+func ClassifyCommand(command string, rules []string) Ruling {
+	nodes := 0
+	return classifyCommandText(command, rules, 0, &nodes)
+}
+
+func classifyCommandText(command string, rules []string, depth int, nodes *int) (result Ruling) {
+	result = Allow()
 	if matchDangerRule(command, rules) {
 		result = Dangerous("命中自定义危险规则")
 	}
-	segments, substitutions, err := parseShell(command)
+	if depth > maxClassifyDepth {
+		return Worst(result, Indeterminate("命令嵌套过深，无法安全分析"))
+	}
+	if len(command) > maxCommandBytes {
+		return Worst(result, Indeterminate("命令超出分析预算，无法安全分析"))
+	}
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
-		result = Worst(result, Dangerous("命令无法可靠解析: "+err.Error()))
+		return Worst(result, Indeterminate("命令无法可靠解析: "+err.Error()))
 	}
-	for _, substitution := range substitutions {
-		result = Worst(result, Confirm(KindUnknown, "包含命令替换"), classifyCommandDepth(substitution, rules, depth+1))
-	}
-	if len(segments) == 0 {
-		return result
-	}
-	for index, segment := range segments {
-		stdin := stdinHint{}
-		if index > 0 && containsString(segments[index-1].ops, "|") {
-			stdin = echoStdinHint(segments[index-1])
+	c := &classifier{rules: rules, depth: depth, nodes: nodes}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = Worst(result, Indeterminate("命令结构异常，无法安全分析"))
 		}
-		if len(segment.tokens) == 0 {
-			if segment.hasWriteRedirection() {
-				result = Worst(result, classifyRedirection(segment))
-			}
-			continue
-		}
-		result = Worst(result, classifySegment(segment, rules, depth, stdin))
-		if result.Risk == Forbidden {
-			return result
-		}
-	}
-	return executionFloor(segments, result)
+	}()
+	return Worst(result, c.classifyStmts(file.Stmts))
 }
 
-// executionFloor is the single conservative layer every classification
-// passes through. A pipe into an execution consumer (shells, interpreters,
-// at/batch/xargs — including through sudo, su, env and execution wrappers)
-// whose input bytes are not exactly determinable from a provable producer
-// (backslash-free echo, fully modeled printf) rules Danger: the consumer
-// would execute content the guard cannot review.
-func executionFloor(segments []shellSegment, result Ruling) Ruling {
-	if result.Risk >= Danger {
-		return result
-	}
-	for index := 1; index < len(segments); index++ {
-		if !containsString(segments[index-1].ops, "|") {
-			continue
-		}
-		tokens := stripDescriptors(segments[index].tokens)
-		if len(tokens) == 0 {
-			continue
-		}
-		consumer, resolved := floorConsumerName(tokens)
-		executor := !resolved || isInterpreter(consumer) || consumer == "at" || consumer == "batch" || consumer == "xargs" || consumer == "su"
-		if !executor {
-			continue
-		}
-		if !echoStdinHint(segments[index-1]).ok {
-			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+// classifyText re-parses and classifies a nested command string (shell -c
+// payloads, ssh remote commands, xargs lines, env split strings) one level
+// deeper, sharing the node budget of the outer classification.
+func (c *classifier) classifyText(text string) Ruling {
+	return classifyCommandText(text, c.rules, c.depth+1, c.nodes)
+}
+
+// child returns the classifier for one unwrap level deeper (sudo, su, env,
+// execution wrappers), sharing the node budget.
+func (c *classifier) child() *classifier {
+	return &classifier{rules: c.rules, depth: c.depth + 1, nodes: c.nodes}
+}
+
+func (c *classifier) overBudget() bool {
+	*c.nodes++
+	return *c.nodes > maxASTNodes
+}
+
+func (c *classifier) classifyStmts(stmts []*syntax.Stmt) Ruling {
+	result := Allow()
+	for _, stmt := range stmts {
+		result = Worst(result, c.classifyStmt(stmt, pipeInput{}))
+		if result.Risk == Forbidden {
+			return result
 		}
 	}
 	return result
 }
 
-// floorConsumerName resolves the command that ultimately executes, looking
-// through env, privilege escalation and execution wrappers. resolved is
-// false when the structure cannot be aligned; callers treat that as an
-// execution consumer.
-func floorConsumerName(tokens []string) (string, bool) {
-	for len(tokens) > 0 {
-		if isAssignment(tokens[0]) {
-			tokens = tokens[1:]
-			continue
+func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
+	if c.overBudget() {
+		return Indeterminate("命令结构超出分析预算")
+	}
+	if stmt == nil {
+		return Allow()
+	}
+	// Redirects apply to the whole statement and decide where stdin comes
+	// from: a redirect on the statement overrides the pipe feeding it.
+	redirResult, stdin := c.classifyRedirects(stmt.Redirs)
+	if stdin != nil {
+		pipeIn = *stdin
+	}
+	result := redirResult
+	switch cmd := stmt.Cmd.(type) {
+	case nil:
+		// Redirect-only statement; the redirects carry the whole risk.
+	case *syntax.CallExpr:
+		result = Worst(result, c.classifyCallExpr(cmd, pipeIn))
+	case *syntax.BinaryCmd:
+		result = Worst(result, c.classifyBinaryCmd(cmd))
+	case *syntax.Subshell:
+		result = Worst(result, c.classifyStmts(cmd.Stmts))
+	case *syntax.Block:
+		result = Worst(result, c.classifyStmts(cmd.Stmts))
+	case *syntax.IfClause:
+		result = Worst(result, c.classifyIfClause(cmd))
+	case *syntax.WhileClause:
+		result = Worst(result, c.classifyStmts(cmd.Cond), c.classifyStmts(cmd.Do))
+	case *syntax.ForClause:
+		result = Worst(result, c.classifyForClause(cmd))
+	case *syntax.CaseClause:
+		result = Worst(result, c.classifyCaseClause(cmd))
+	case *syntax.FuncDecl:
+		// Defining a function makes every later invocation of it opaque to
+		// the guard; the body is not executed by the declaration itself.
+		result = Worst(result, Indeterminate("函数定义会使后续调用无法审查"))
+	case *syntax.ArithmCmd, *syntax.LetClause:
+		result = Worst(result, Indeterminate("算术命令无法证明有界"))
+	case *syntax.TestClause:
+		// [[ ... ]] only evaluates conditions.
+	case *syntax.DeclClause:
+		for _, assign := range cmd.Args {
+			result = Worst(result, c.classifyAssign(assign))
 		}
-		if len(tokens) == 0 {
+	case *syntax.TimeClause:
+		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeIn))
+	case *syntax.CoprocClause:
+		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeInput{}))
+	default:
+		result = Worst(result, Indeterminate("命令结构无法识别"))
+	}
+	return result
+}
+
+func (c *classifier) classifyIfClause(clause *syntax.IfClause) Ruling {
+	if clause == nil {
+		return Allow()
+	}
+	return Worst(c.classifyStmts(clause.Cond), c.classifyStmts(clause.Then), c.classifyIfClause(clause.Else))
+}
+
+func (c *classifier) classifyForClause(clause *syntax.ForClause) Ruling {
+	result := c.classifyStmts(clause.Do)
+	switch loop := clause.Loop.(type) {
+	case *syntax.WordIter:
+		for _, item := range loop.Items {
+			ruling := Allow()
+			if _, ok := c.literalWord(item, &ruling); !ok {
+				result = Worst(result, Indeterminate("循环迭代值包含动态替换"), ruling)
+			}
+		}
+	default:
+		result = Worst(result, Indeterminate("C 风格循环无法证明有界"))
+	}
+	return result
+}
+
+func (c *classifier) classifyCaseClause(clause *syntax.CaseClause) Ruling {
+	result := Allow()
+	ruling := Allow()
+	if _, ok := c.literalWord(clause.Word, &ruling); !ok {
+		result = Worst(result, Indeterminate("case 取值包含动态替换"), ruling)
+	}
+	for _, item := range clause.Items {
+		for _, body := range item.Stmts {
+			result = Worst(result, c.classifyStmt(body, pipeInput{}))
+		}
+	}
+	return result
+}
+
+func (c *classifier) classifyBinaryCmd(cmd *syntax.BinaryCmd) Ruling {
+	if c.overBudget() {
+		return Indeterminate("命令结构超出分析预算")
+	}
+	switch cmd.Op {
+	case syntax.AndStmt, syntax.OrStmt:
+		return Worst(c.classifyStmt(cmd.X, pipeInput{}), c.classifyStmt(cmd.Y, pipeInput{}))
+	case syntax.Pipe, syntax.PipeAll:
+		left := c.classifyStmt(cmd.X, pipeInput{})
+		text, ok := c.pipeProducer(cmd.X)
+		right := c.classifyStmt(cmd.Y, pipeInput{kind: stdinPipe, text: text, ok: ok})
+		return Worst(left, right)
+	}
+	return Indeterminate("无法识别的命令连接符")
+}
+
+// pipeProducer computes the exact bytes a pipe segment writes into the pipe,
+// but only when they are provably determinable: echo without backslashes
+// (dash interprets escapes by default, -e/-E make bash do the same), a fully
+// modeled printf, or cat copying a literal here-document/here-string.
+func (c *classifier) pipeProducer(stmt *syntax.Stmt) (string, bool) {
+	if stmt == nil {
+		return "", false
+	}
+	if bin, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
+		if bin.Op == syntax.Pipe || bin.Op == syntax.PipeAll {
+			return c.pipeProducer(bin.Y)
+		}
+		return "", false
+	}
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return "", false
+	}
+	discarded := Allow()
+	argv := make([]string, 0, len(call.Args))
+	for _, word := range call.Args {
+		text, ok := c.literalWord(word, &discarded)
+		if !ok {
 			return "", false
 		}
-		if commandName(tokens[0]) == "env" {
-			rest := envNestedTokens(tokens[1:])
-			if rest == nil {
+		argv = append(argv, text)
+	}
+	switch commandName(argv[0]) {
+	case "echo":
+		args := argv[1:]
+		for len(args) > 0 && echoOption(args[0]) {
+			args = args[1:]
+		}
+		for _, arg := range args {
+			if strings.ContainsRune(arg, '\\') {
 				return "", false
 			}
-			tokens = rest
-			continue
 		}
-		tokens = nestedExecutor(tokens)
-		if len(tokens) == 0 {
-			return "", false
+		return strings.Join(args, " "), true
+	case "printf":
+		return printfProducer(argv[1:])
+	case "cat":
+		for _, r := range stmt.Redirs {
+			switch r.Op {
+			case syntax.Hdoc, syntax.DashHdoc:
+				if r.Hdoc == nil {
+					return "", false
+				}
+				body, ok := c.literalWord(r.Hdoc, &discarded)
+				return body, ok
+			case syntax.WordHdoc:
+				text, ok := c.literalWord(r.Word, &discarded)
+				return text + "\n", ok
+			}
 		}
-		return commandName(tokens[0]), true
 	}
 	return "", false
 }
 
-// envNestedTokens skips env options and assignments to reach the wrapped
-// command. It returns nil when the -S/--split-string payload makes the
-// wrapped command statically unresolvable.
-func envNestedTokens(args []string) []string {
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		if arg == "--" {
-			return args[index+1:]
-		}
-		if strings.HasPrefix(arg, "--") {
-			option, _, attached, ok := resolveGNULongOption(arg, envLongOptions)
-			if !ok {
-				return nil
-			}
-			if option.name == "split-string" {
-				return nil
-			}
-			if option.takesValue && !attached {
-				index++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-") && arg != "-" {
-			letters := arg[1:]
-			for len(letters) > 0 {
-				switch letters[0] {
-				case 'i', '0', 'v':
-					letters = letters[1:]
-				case 'u', 'C', 'a':
-					if len(letters) == 1 {
-						index++
-					}
-					letters = ""
-				case 'S':
-					return nil
-				default:
-					return nil
-				}
-			}
-			continue
-		}
-		if isAssignment(arg) {
-			continue
-		}
-		return args[index:]
-	}
-	return []string{}
-}
-
-func echoStdinHint(segment shellSegment) stdinHint {
-	if len(segment.tokens) < 2 {
-		return stdinHint{}
-	}
-	switch commandName(segment.tokens[0]) {
-	case "echo":
-		args := segment.tokens[1:]
-		for len(args) > 0 && echoOption(args[0]) {
-			args = args[1:]
-		}
-		// dash-family echo interprets backslash escapes by default and
-		// -e/-E make bash do the same, so the emitted bytes are only
-		// exactly determinable when no backslash is present.
-		for _, arg := range args {
-			if strings.ContainsRune(arg, '\\') {
-				return stdinHint{}
-			}
-		}
-		return stdinHint{text: strings.Join(args, " "), ok: true}
-	case "printf":
-		return printfStdinHint(segment.tokens[1:])
-	}
-	return stdinHint{}
-}
-
-func echoOption(arg string) bool {
-	if len(arg) < 2 || arg[0] != '-' {
-		return false
-	}
-	for _, r := range arg[1:] {
-		if r != 'n' && r != 'e' && r != 'E' {
-			return false
-		}
-	}
-	return true
-}
-
-// printfStdinHint models the bytes printf emits for a statically known
-// format string and arguments so downstream consumers (at, xargs) classify
-// the real payload instead of the format directives. Only the modeled
-// escapes and verbs are accepted; anything else (%b, hex/octal escapes,
-// unknown verbs) makes the output shell-dependent and fails closed
-// (ok == false), which consumers rate Danger.
-func printfStdinHint(args []string) stdinHint {
+// printfProducer models the bytes printf emits for a statically known format
+// string and arguments. Only the modeled escapes and verbs are accepted;
+// anything else (%b, hex/octal escapes, unknown verbs) makes the output
+// shell-dependent and fails closed.
+func printfProducer(args []string) (string, bool) {
 	if len(args) == 0 {
-		return stdinHint{ok: true}
+		return "", true
 	}
 	format := args[0]
 	rest := args[1:]
@@ -239,10 +286,10 @@ func printfStdinHint(args []string) stdinHint {
 	}
 	var out strings.Builder
 	for i := 0; i < len(format); i++ {
-		c := format[i]
-		if c == '\\' {
+		ch := format[i]
+		if ch == '\\' {
 			if i+1 >= len(format) {
-				return stdinHint{}
+				return "", false
 			}
 			i++
 			switch format[i] {
@@ -263,25 +310,25 @@ func printfStdinHint(args []string) stdinHint {
 			case '\\':
 				out.WriteByte('\\')
 			case 'c':
-				return stdinHint{text: out.String(), ok: true}
+				return out.String(), true
 			default:
-				return stdinHint{}
+				return "", false
 			}
 			continue
 		}
-		if c != '%' {
-			out.WriteByte(c)
+		if ch != '%' {
+			out.WriteByte(ch)
 			continue
 		}
 		if i+1 >= len(format) {
-			return stdinHint{}
+			return "", false
 		}
 		i++
 		for i < len(format) && strings.ContainsRune("-+ #0.123456789", rune(format[i])) {
 			i++
 		}
 		if i >= len(format) {
-			return stdinHint{}
+			return "", false
 		}
 		switch format[i] {
 		case '%':
@@ -289,7 +336,7 @@ func printfStdinHint(args []string) stdinHint {
 		case 's', 'c', 'd', 'i', 'o', 'u', 'x', 'X', 'f', 'e', 'E', 'g', 'G':
 			out.WriteString(takeArg())
 		default:
-			return stdinHint{}
+			return "", false
 		}
 	}
 	for ; argIndex < len(rest); argIndex++ {
@@ -298,522 +345,548 @@ func printfStdinHint(args []string) stdinHint {
 		}
 		out.WriteString(rest[argIndex])
 	}
-	return stdinHint{text: out.String(), ok: true}
+	return out.String(), true
 }
 
-func parseShell(input string) ([]shellSegment, []string, error) {
-	var segments []shellSegment
-	var current shellSegment
-	var word strings.Builder
-	var substitutions []string
-	var quote rune
-	escaped := false
-	wordSeen := false
-	redirectIndex := -1
-	flushWord := func() {
-		if wordSeen || word.Len() != 0 {
-			value := word.String()
-			current.tokens = append(current.tokens, value)
-			if redirectIndex >= 0 {
-				current.redirects[redirectIndex].target = value
-				redirectIndex = -1
-			}
-			word.Reset()
-			wordSeen = false
-		}
-	}
-	flushSegment := func() {
-		flushWord()
-		if len(current.tokens) != 0 || len(current.ops) != 0 {
-			current.raw = strings.TrimSpace(current.raw)
-			segments = append(segments, current)
-		}
-		current = shellSegment{}
-		redirectIndex = -1
-	}
-	runes := []rune(input)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		current.raw += string(r)
-		if escaped {
-			word.WriteRune(r)
-			wordSeen = true
-			escaped = false
-			continue
-		}
-		if quote != 0 {
-			if r == '\\' && quote == '"' {
-				escaped = true
-				continue
-			}
-			if r == quote {
-				quote = 0
-				wordSeen = true
-				continue
-			}
-			if quote == '"' && r == '`' {
-				value, next, ok := readBacktick(runes, i+1)
-				if !ok {
-					return segments, substitutions, strconv.ErrSyntax
-				}
-				substitutions = append(substitutions, value)
-				word.WriteString("$(" + value + ")")
-				i = next
-				continue
-			}
-			if quote == '"' && r == '$' && i+1 < len(runes) && runes[i+1] == '(' {
-				if i+2 < len(runes) && runes[i+2] == '(' {
-					end, ok := readArithmetic(runes, i+3)
-					if !ok {
-						return segments, substitutions, strconv.ErrSyntax
-					}
-					wordSeen = true
-					i = end
-					continue
-				}
-				value, next, ok := readBalanced(runes, i+2)
-				if !ok {
-					return segments, substitutions, strconv.ErrSyntax
-				}
-				substitutions = append(substitutions, value)
-				word.WriteString("$(" + value + ")")
-				wordSeen = true
-				i = next
-				continue
-			}
-			word.WriteRune(r)
-			wordSeen = true
-			continue
-		}
-		switch r {
-		case '\\':
-			escaped = true
-			wordSeen = true
-		case '\'', '"':
-			quote = r
-			wordSeen = true
-		case '`':
-			value, next, ok := readBacktick(runes, i+1)
-			if !ok {
-				return segments, substitutions, strconv.ErrSyntax
-			}
-			substitutions = append(substitutions, value)
-			word.WriteString("$(" + value + ")")
-			wordSeen = true
-			i = next
-		case '$':
-			if i+2 < len(runes) && runes[i+1] == '(' && runes[i+2] == '(' {
-				end, ok := readArithmetic(runes, i+3)
-				if !ok {
-					return segments, substitutions, strconv.ErrSyntax
-				}
-				wordSeen = true
-				i = end
-			} else if i+1 < len(runes) && runes[i+1] == '(' {
-				value, next, ok := readBalanced(runes, i+2)
-				if !ok {
-					return segments, substitutions, strconv.ErrSyntax
-				}
-				substitutions = append(substitutions, value)
-				word.WriteString("$(" + value + ")")
-				wordSeen = true
-				i = next
-			} else {
-				word.WriteRune(r)
-				wordSeen = true
-			}
-		case '#':
-			if !wordSeen && word.Len() == 0 {
-				for i+1 < len(runes) && runes[i+1] != '\n' {
-					i++
-				}
-			} else {
-				word.WriteRune(r)
-			}
-		case ' ', '\t', '\r':
-			flushWord()
-		case '\n', ';', '|', '&':
-			flushWord()
-			op := string(r)
-			if i+1 < len(runes) && ((r == '|' && runes[i+1] == '|') || (r == '&' && runes[i+1] == '&')) {
-				i++
-				current.raw += string(runes[i])
-				op += string(r)
-			}
-			current.ops = append(current.ops, op)
-			segments = append(segments, current)
-			current = shellSegment{}
-			redirectIndex = -1
-		case '=':
-			if i+1 < len(runes) && runes[i+1] == '(' {
-				value, next, ok := readBalanced(runes, i+2)
-				if !ok {
-					return segments, substitutions, strconv.ErrSyntax
-				}
-				substitutions = append(substitutions, value)
-				word.WriteString("=(" + value + ")")
-				wordSeen = true
-				i = next
-				continue
-			}
-			word.WriteRune(r)
-			wordSeen = true
-		case '>', '<':
-			if i+1 < len(runes) && runes[i+1] == '(' {
-				value, next, ok := readBalanced(runes, i+2)
-				if !ok {
-					return segments, substitutions, strconv.ErrSyntax
-				}
-				substitutions = append(substitutions, value)
-				word.WriteString(string(r) + "(" + value + ")")
-				wordSeen = true
-				i = next
-				continue
-			}
-			flushWord()
-			op := string(r)
-			if i+1 < len(runes) && (runes[i+1] == r || r == '>' && runes[i+1] == '&') {
-				i++
-				current.raw += string(runes[i])
-				op += string(runes[i])
-			}
-			current.ops = append(current.ops, op)
-			current.redirects = append(current.redirects, shellRedirect{op: op})
-			redirectIndex = len(current.redirects) - 1
-		default:
-			word.WriteRune(r)
-			wordSeen = true
-		}
-	}
-	if escaped || quote != 0 {
-		return segments, substitutions, strconv.ErrSyntax
-	}
-	flushSegment()
-	return segments, substitutions, nil
-}
-
-func readBacktick(runes []rune, start int) (string, int, bool) {
-	var value strings.Builder
-	escaped := false
-	for i := start; i < len(runes); i++ {
-		if escaped {
-			value.WriteRune(runes[i])
-			escaped = false
-			continue
-		}
-		if runes[i] == '\\' {
-			escaped = true
-			continue
-		}
-		if runes[i] == '`' {
-			return value.String(), i, true
-		}
-		value.WriteRune(runes[i])
-	}
-	return "", start, false
-}
-
-func readBalanced(runes []rune, start int) (string, int, bool) {
-	depth := 1
-	var quote rune
-	escaped := false
-	var value strings.Builder
-	for i := start; i < len(runes); i++ {
-		r := runes[i]
-		if escaped {
-			value.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' {
-			value.WriteRune(r)
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			value.WriteRune(r)
-			if r == quote {
-				quote = 0
-			}
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			value.WriteRune(r)
-			continue
-		}
-		if r == '(' {
-			depth++
-		}
-		if r == ')' {
-			depth--
-			if depth == 0 {
-				return value.String(), i, true
-			}
-		}
-		value.WriteRune(r)
-	}
-	return "", start, false
-}
-
-func readArithmetic(runes []rune, start int) (int, bool) {
-	depth := 0
-	for i := start; i+1 < len(runes); i++ {
-		switch runes[i] {
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 && runes[i+1] == ')' {
-				return i + 1, true
-			}
-			if depth > 0 {
-				depth--
-			}
-		}
-	}
-	return start, false
-}
-
-func (s shellSegment) hasWriteRedirection() bool {
-	writes := 0
-	target := ""
-	for _, redirect := range s.redirects {
-		if !strings.HasPrefix(redirect.op, ">") {
-			continue
-		}
-		_, numeric := strconv.Atoi(redirect.target)
-		if redirect.op == ">&" && (redirect.target == "-" || numeric == nil) {
-			continue
-		}
-		writes++
-		target = redirect.target
-	}
-	if writes == 1 && target == "/dev/null" {
+func echoOption(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
 		return false
 	}
-	return writes != 0
-}
-
-func classifyRedirection(segment shellSegment) Ruling {
-	for _, redirect := range segment.redirects {
-		if strings.HasPrefix(redirect.op, ">") {
-			if isCriticalWriteTarget(redirect.target) {
-				return Deny("禁止写入关键系统路径")
-			}
-			return Confirm(KindWriteFS, "包含文件重定向")
+	for _, r := range arg[1:] {
+		if r != 'n' && r != 'e' && r != 'E' {
+			return false
 		}
 	}
-	return Confirm(KindUnknown, "包含无法确认安全性的 shell 操作")
+	return true
 }
 
-func classifySegment(segment shellSegment, rules []string, depth int, stdin stdinHint) Ruling {
-	if depth > 8 {
-		return Dangerous("命令嵌套过深，无法安全分析")
-	}
-	tokens := stripDescriptors(segment.tokens)
-	for len(tokens) > 0 && isAssignment(tokens[0]) {
-		tokens = tokens[1:]
-	}
-	if len(tokens) == 0 {
-		return Allow()
-	}
-	for _, token := range tokens {
-		if strings.Contains(token, "/dev/tcp/") || strings.Contains(token, "/dev/udp/") {
-			return Dangerous("重定向到网络设备")
+// classifyRedirects checks every redirect attached to a statement and returns
+// the stdin source the redirects impose, if any.
+func (c *classifier) classifyRedirects(redirs []*syntax.Redirect) (Ruling, *pipeInput) {
+	result := Allow()
+	var stdin *pipeInput
+	writes := 0
+	lastWriteTarget := ""
+	for _, r := range redirs {
+		ruling, write, target, in := c.classifyRedirect(r)
+		result = Worst(result, ruling)
+		if result.Risk == Forbidden {
+			return result, nil
 		}
+		if write {
+			writes++
+			lastWriteTarget = target
+		}
+		if in != nil {
+			stdin = in
+		}
+	}
+	// A single write to /dev/null discards output and changes nothing.
+	if writes > 0 && !(writes == 1 && lastWriteTarget == "/dev/null") {
+		result = Worst(result, Confirm(KindWriteFS, "包含文件重定向"))
+	}
+	return result, stdin
+}
+
+func (c *classifier) classifyRedirect(r *syntax.Redirect) (Ruling, bool, string, *pipeInput) {
+	switch r.Op {
+	case syntax.Hdoc, syntax.DashHdoc:
+		return c.classifyHeredoc(r)
+	case syntax.WordHdoc:
+		result := Allow()
+		text, ok := c.literalWord(r.Word, &result)
+		if !ok {
+			result = Worst(result, Indeterminate("here-string 包含动态替换"))
+		}
+		return result, false, "", &pipeInput{kind: stdinHeredoc, text: text + "\n", ok: ok}
+	case syntax.RdrIn:
+		target, ruling := c.redirectTarget(r)
+		if isNetworkDevice(target) {
+			return Worst(ruling, Dangerous("重定向到网络设备")), false, "", nil
+		}
+		return ruling, false, "", &pipeInput{kind: stdinFile}
+	case syntax.RdrInOut:
+		target, ruling := c.redirectTarget(r)
+		if isNetworkDevice(target) {
+			return Worst(ruling, Dangerous("重定向到网络设备")), false, "", nil
+		}
+		return Worst(ruling, writeTargetRuling(target)), true, target, nil
+	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll:
+		target, ruling := c.redirectTarget(r)
+		if isNetworkDevice(target) {
+			return Worst(ruling, Dangerous("重定向到网络设备")), false, "", nil
+		}
+		return Worst(ruling, writeTargetRuling(target)), true, target, nil
+	case syntax.DplOut:
+		result := Allow()
+		word, ok := c.literalWord(r.Word, &result)
+		if !ok {
+			return Worst(result, Indeterminate("重定向目标包含动态替换")), false, "", nil
+		}
+		if word == "-" || isNumeric(word) {
+			return result, false, "", nil
+		}
+		// >&word with a non-fd word redirects stdout and stderr onto it.
+		if isNetworkDevice(word) {
+			return Worst(result, Dangerous("重定向到网络设备")), false, "", nil
+		}
+		return Worst(result, writeTargetRuling(word)), true, word, nil
+	case syntax.DplIn:
+		result := Allow()
+		word, ok := c.literalWord(r.Word, &result)
+		if !ok {
+			return Worst(result, Indeterminate("重定向目标包含动态替换")), false, "", nil
+		}
+		if word == "-" || isNumeric(word) {
+			return result, false, "", nil
+		}
+		return result, false, "", &pipeInput{kind: stdinFile}
+	}
+	return Indeterminate("无法识别的重定向"), false, "", nil
+}
+
+func (c *classifier) classifyHeredoc(r *syntax.Redirect) (Ruling, bool, string, *pipeInput) {
+	if r.N != nil && r.N.Value != "" && r.N.Value != "0" {
+		return Indeterminate("非常规文件描述符重定向无法证明有界"), false, "", nil
+	}
+	if r.Hdoc == nil {
+		return Indeterminate("here-document 内容缺失"), false, "", nil
 	}
 	result := Allow()
-	if segment.hasWriteRedirection() {
-		for _, redirect := range segment.redirects {
-			if strings.HasPrefix(redirect.op, ">") && isCriticalWriteTarget(redirect.target) {
-				return Deny("禁止写入关键系统路径")
-			}
-		}
-		result = Confirm(KindWriteFS, "包含文件重定向")
-		for i, token := range tokens {
-			if isBlockDevice(token) && i > 0 {
-				return Deny("禁止直接写入块设备")
-			}
-		}
+	text, ok := c.literalWord(r.Hdoc, &result)
+	if !ok {
+		result = Worst(result, Indeterminate("here-document 包含动态替换"))
 	}
-	for len(tokens) > 0 {
-		name := commandName(tokens[0])
-		if name == "sudo" || name == "doas" || name == "sudoedit" {
-			result = Worst(result, Confirm(KindSudo, "包含权限提升"))
-			if name == "sudoedit" || name == "sudo" && sudoEditFlag(tokens[1:]) {
-				for _, target := range stripCommandFlags(tokens[1:]) {
-					if isCriticalWriteTarget(target) {
-						return Deny("禁止以 root 编辑关键系统路径")
-					}
-				}
-				return Worst(result, Dangerous("以 root 编辑文件"))
-			}
-			tokens = stripCommandFlags(tokens[1:])
-			continue
-		}
-		if name == "su" {
-			result = Worst(result, Confirm(KindSudo, "包含身份切换"))
-			for index := 1; index < len(tokens); index++ {
-				arg := tokens[index]
-				if arg == "--" {
-					break
-				}
-				if strings.HasPrefix(arg, "--") {
-					option, value, attached, ok := resolveGNULongOption(arg, suLongOptions)
-					if !ok {
-						continue
-					}
-					switch option.name {
-					case "command", "session-command":
-						if !attached && index+1 < len(tokens) {
-							index++
-							value = tokens[index]
-						}
-						result = Worst(result, classifyCommandDepth(value, rules, depth+1))
-					default:
-						if option.takesValue && !attached {
-							index++
-						}
-					}
-					continue
-				}
-				if strings.HasPrefix(arg, "-") && len(arg) > 1 {
-					letters := arg[1:]
-					for len(letters) > 0 {
-						letter := letters[0]
-						switch {
-						case letter == 'c':
-							code := letters[1:]
-							if code == "" && index+1 < len(tokens) {
-								index++
-								code = tokens[index]
-							}
-							if code != "" {
-								result = Worst(result, classifyCommandDepth(code, rules, depth+1))
-							}
-							letters = ""
-						case letter == 'l' || letter == 'm' || letter == 'p':
-							letters = letters[1:]
-						case letter == 's' || letter == 'g' || letter == 'G' || letter == 'w':
-							if len(letters) == 1 {
-								index++
-							}
-							letters = ""
-						default:
-							letters = letters[1:]
-						}
-					}
-				}
-			}
-			return result
-		}
-		break
-	}
-	if len(tokens) == 0 {
-		return result
-	}
-	for len(tokens) > 0 && isAssignment(tokens[0]) {
-		tokens = tokens[1:]
-	}
-	if len(tokens) == 0 {
-		return result
-	}
-	return Worst(result, classifySimple(tokens, segment.ops, rules, depth, stdin))
+	return result, false, "", &pipeInput{kind: stdinHeredoc, text: text, ok: ok}
 }
 
-func stripDescriptors(tokens []string) []string {
-	result := make([]string, 0, len(tokens))
-	for _, token := range tokens {
-		if len(token) > 2 && (strings.HasSuffix(token, ">") || strings.HasSuffix(token, "<")) {
-			if _, err := strconv.Atoi(token[:len(token)-1]); err == nil {
+// redirectTarget proves a redirect target is a literal path: no expansions
+// and no glob metacharacters, since the shell would expand them at runtime.
+func (c *classifier) redirectTarget(r *syntax.Redirect) (string, Ruling) {
+	if r.N != nil && r.N.Value != "" && !isNumeric(r.N.Value) {
+		return "", Indeterminate("非常规文件描述符重定向无法证明有界")
+	}
+	result := Allow()
+	target, ok := c.literalWord(r.Word, &result)
+	if !ok {
+		return "", Worst(result, Indeterminate("重定向目标包含动态替换"))
+	}
+	if strings.ContainsAny(target, "*?[") {
+		return "", Worst(result, Indeterminate("重定向目标包含通配符"))
+	}
+	return target, result
+}
+
+func writeTargetRuling(target string) Ruling {
+	if isCriticalWriteTarget(target) {
+		return Deny("禁止写入关键系统路径")
+	}
+	if isBlockDevice(target) {
+		return Deny("禁止直接写入块设备")
+	}
+	return Allow()
+}
+
+func isNetworkDevice(target string) bool {
+	return strings.Contains(target, "/dev/tcp/") || strings.Contains(target, "/dev/udp/")
+}
+
+func isNumeric(value string) bool {
+	_, err := strconv.Atoi(value)
+	return err == nil
+}
+
+// literalArgv extracts the argv of a simple command. Every word must be
+// provably literal: only plain or quoted literal parts, with no parameter
+// expansions, command substitutions, arithmetic, process substitutions or
+// extended globs. Dynamic words make the command Unknowable; command and
+// process substitutions inside them are still classified for their own
+// effects.
+func (c *classifier) literalArgv(words []*syntax.Word) ([]string, bool, Ruling) {
+	result := Allow()
+	argv := make([]string, 0, len(words))
+	provable := true
+	for _, word := range words {
+		text, ok := c.literalWord(word, &result)
+		if !ok {
+			provable = false
+		}
+		argv = append(argv, text)
+	}
+	if !provable {
+		result = Worst(Indeterminate("命令包含动态替换，无法证明其内容"), result)
+	}
+	return argv, provable, result
+}
+
+func (c *classifier) literalWord(word *syntax.Word, result *Ruling) (string, bool) {
+	if word == nil {
+		return "", true
+	}
+	var out strings.Builder
+	ok := true
+	for _, part := range word.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			out.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			if p.Dollar {
+				// $'...' interprets escapes we do not decode.
+				ok = false
 				continue
 			}
+			out.WriteString(p.Value)
+		case *syntax.DblQuoted:
+			if p.Dollar {
+				ok = false
+				continue
+			}
+			for _, inner := range p.Parts {
+				switch part := inner.(type) {
+				case *syntax.Lit:
+					out.WriteString(part.Value)
+				case *syntax.CmdSubst:
+					ok = false
+					*result = Worst(*result, c.classifySubstStmts(part.Stmts))
+				case *syntax.ProcSubst:
+					ok = false
+					*result = Worst(*result, c.classifySubstStmts(part.Stmts))
+				default:
+					ok = false
+				}
+			}
+		case *syntax.CmdSubst:
+			ok = false
+			*result = Worst(*result, c.classifySubstStmts(p.Stmts))
+		case *syntax.ProcSubst:
+			ok = false
+			*result = Worst(*result, c.classifySubstStmts(p.Stmts))
+		default:
+			// ParamExp, ArithmExp, ExtGlob and any future part: dynamic.
+			ok = false
 		}
-		result = append(result, token)
+	}
+	return out.String(), ok
+}
+
+func (c *classifier) classifySubstStmts(stmts []*syntax.Stmt) Ruling {
+	child := c.child()
+	result := Allow()
+	for _, stmt := range stmts {
+		result = Worst(result, child.classifyStmt(stmt, pipeInput{}))
 	}
 	return result
 }
 
-func stripCommandFlags(tokens []string) []string {
-	valueFlags := map[string]bool{
-		"-u": true, "-g": true, "-h": true, "-p": true, "-a": true, "-C": true, "-D": true, "-T": true, "-t": true, "-U": true, "-G": true, "-R": true,
-		"--user": true, "--group": true, "--host": true, "--prompt": true, "--chdir": true, "--command-timeout": true, "--type": true, "--role": true,
-	}
-	for len(tokens) > 0 {
-		arg := tokens[0]
-		if arg == "--" {
-			return tokens[1:]
-		}
-		if !strings.HasPrefix(arg, "-") {
-			break
-		}
-		tokens = tokens[1:]
-		if valueFlags[arg] && len(tokens) > 0 {
-			tokens = tokens[1:]
-			continue
-		}
-		if value, ok := privilegeOptionValue(arg); ok && value == "" && len(tokens) > 0 {
-			tokens = tokens[1:]
-		}
-	}
-	return tokens
+// dangerousEnvAssignments are variable names whose value is executed or
+// loaded as code by the runtime; assigning them is a code-injection
+// capability regardless of how bounded the rest of the command looks.
+var dangerousEnvAssignments = map[string]bool{
+	"LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "LD_AUDIT": true,
+	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
+	"BASH_ENV": true, "ENV": true,
+	"NODE_OPTIONS": true, "RUBYOPT": true, "PERL5OPT": true, "PYTHONSTARTUP": true,
 }
 
-func privilegeOptionValue(arg string) (string, bool) {
-	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
-		return "", false
-	}
-	for index := 1; index < len(arg); index++ {
-		if strings.IndexByte(sudoValueShorts, arg[index]) >= 0 {
-			return arg[index+1:], true
-		}
-	}
-	return "", false
+func dangerousAssignmentName(value string) bool {
+	name, _, found := strings.Cut(value, "=")
+	return found && dangerousEnvAssignments[name]
 }
 
-// sudoEditFlag reports whether leading sudo options select edit mode. It
-// understands clustered short options (sudo -eu root means -e -u root),
-// attached forms, and GNU long-option abbreviations; scanning stops at the
-// wrapped command so command flags are never mistaken for sudo flags.
-func sudoEditFlag(args []string) bool {
+func (c *classifier) classifyAssign(assign *syntax.Assign) Ruling {
+	if assign == nil {
+		return Allow()
+	}
+	if assign.Array != nil || assign.Index != nil {
+		return Indeterminate("数组或下标赋值无法证明有界")
+	}
+	result := Allow()
+	if assign.Value != nil {
+		if _, ok := c.literalWord(assign.Value, &result); !ok {
+			result = Worst(Indeterminate("赋值包含动态替换，无法证明有界"), result)
+		}
+	}
+	if assign.Name != nil && dangerousEnvAssignments[assign.Name.Value] {
+		result = Worst(result, Dangerous("赋值注入可执行环境变量"))
+	}
+	return result
+}
+
+// classifyCallExpr classifies one simple command: leading assignments, then
+// the argv after every word is proven literal, then the unwrap chain.
+func (c *classifier) classifyCallExpr(cmd *syntax.CallExpr, stdin pipeInput) Ruling {
+	result := Allow()
+	for _, assign := range cmd.Assigns {
+		result = Worst(result, c.classifyAssign(assign))
+	}
+	if len(cmd.Args) == 0 {
+		return result
+	}
+	argv, provable, ruling := c.literalArgv(cmd.Args)
+	result = Worst(result, ruling)
+	if !provable || result.Risk == Forbidden {
+		return result
+	}
+	// A glob in command position would execute whatever matches at runtime;
+	// "[" itself is the POSIX test builtin, not a bracket expression.
+	if argv[0] != "[" && strings.ContainsAny(argv[0], "*?[") {
+		return Worst(result, Indeterminate("命令名包含通配符"))
+	}
+	return Worst(result, c.classifyArgv(argv, stdin))
+}
+
+// classifyArgv unwraps privilege escalation and execution wrappers down to
+// the command that ultimately runs. Options the wrapper tables cannot
+// resolve make the command Unknowable; nothing is guessed.
+func (c *classifier) classifyArgv(argv []string, stdin pipeInput) Ruling {
+	if c.depth > maxClassifyDepth {
+		return Indeterminate("命令嵌套过深，无法安全分析")
+	}
+	if len(argv) == 0 {
+		return Allow()
+	}
+	name := commandName(argv[0])
+	args := argv[1:]
+	switch name {
+	case "sudo", "doas", "sudoedit":
+		return c.classifySudo(name, args, stdin)
+	case "su":
+		return c.classifySu(args, stdin)
+	case "env":
+		return c.classifyEnv(args, stdin)
+	}
+	if wrapper, ok := execWrappers[name]; ok {
+		return c.classifyWrapper(name, wrapper, args, stdin)
+	}
+	return c.classifySimple(argv, stdin)
+}
+
+// sudoFlagShorts lists the sudo/doas short options that take no value.
+const sudoFlagShorts = "ABbeEHiKklnPsvV"
+
+func (c *classifier) classifySudo(name string, args []string, stdin pipeInput) Ruling {
+	edit := name == "sudoedit"
+	nonExec := false
+	rest := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		if arg == "--" {
-			return false
-		}
-		if !strings.HasPrefix(arg, "-") {
-			return false
+			rest = args[index+1:]
+			break
 		}
 		if strings.HasPrefix(arg, "--") {
 			option, _, attached, ok := resolveGNULongOption(arg, sudoLongOptions)
 			if !ok {
-				continue
+				return Indeterminate(name + " 包含无法识别的长选项")
 			}
 			if option.name == "edit" {
-				return true
+				edit = true
+			}
+			switch option.name {
+			case "list", "validate", "version", "help", "reset-timestamp", "kill":
+				nonExec = true
 			}
 			if option.takesValue && !attached {
 				index++
 			}
 			continue
 		}
-		letters := arg[1:]
-		for len(letters) > 0 {
-			letter := letters[0]
-			if letter == 'e' {
-				return true
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				letter := letters[0]
+				switch {
+				case letter == 'e':
+					edit = true
+					letters = letters[1:]
+				case strings.IndexByte(sudoValueShorts, letter) >= 0:
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				case strings.IndexByte(sudoFlagShorts, letter) >= 0:
+					if strings.IndexByte("lvVkK", letter) >= 0 {
+						nonExec = true
+					}
+					letters = letters[1:]
+				default:
+					return Indeterminate(name + " 包含无法识别的选项")
+				}
 			}
-			if strings.IndexByte(sudoValueShorts, letter) >= 0 {
-				if len(letters) == 1 {
+			continue
+		}
+		rest = args[index:]
+		break
+	}
+	result := Confirm(KindSudo, "包含权限提升")
+	if edit {
+		for _, target := range rest {
+			if isCriticalWriteTarget(target) {
+				return Deny("禁止以 root 编辑关键系统路径")
+			}
+		}
+		return Worst(result, Dangerous("以 root 编辑文件"))
+	}
+	if len(rest) == 0 {
+		if nonExec {
+			return result
+		}
+		return Worst(result, Dangerous(name+" 启动特权会话"))
+	}
+	return Worst(result, c.child().classifyArgv(rest, stdin))
+}
+
+func (c *classifier) classifySu(args []string, stdin pipeInput) Ruling {
+	result := Confirm(KindSudo, "包含身份切换")
+	code := ""
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			break
+		}
+		if arg == "-" {
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			option, value, attached, ok := resolveGNULongOption(arg, suLongOptions)
+			if !ok {
+				return Indeterminate("su 包含无法识别的长选项")
+			}
+			switch option.name {
+			case "command", "session-command":
+				if !attached && index+1 < len(args) {
+					index++
+					value = args[index]
+				}
+				code = value
+			case "shell", "group", "supp-group", "whitelist-environment":
+				if !attached {
 					index++
 				}
-				letters = ""
-				continue
 			}
-			letters = letters[1:]
+			continue
 		}
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				letter := letters[0]
+				switch {
+				case letter == 'c':
+					value := letters[1:]
+					if value == "" && index+1 < len(args) {
+						index++
+						value = args[index]
+					}
+					code = value
+					letters = ""
+				case letter == 'l' || letter == 'm' || letter == 'p':
+					letters = letters[1:]
+				case letter == 's' || letter == 'g' || letter == 'G' || letter == 'w':
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				default:
+					return Indeterminate("su 包含无法识别的选项")
+				}
+			}
+			continue
+		}
+		// The first non-option is the target user; anything after it is
+		// passed to the shell as positional parameters.
 	}
-	return false
+	if code != "" {
+		return Worst(result, c.classifyText(code))
+	}
+	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
+		if !stdin.ok {
+			return Worst(result, Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容"))
+		}
+		return Worst(result, Confirm(KindSudo, "su 从标准输入执行命令"), c.classifyText(stdin.text))
+	}
+	return Worst(result, Dangerous("su 启动身份切换会话"))
+}
+
+func (c *classifier) classifyEnv(args []string, stdin pipeInput) Ruling {
+	index := 0
+	for index < len(args) {
+		arg := args[index]
+		if arg == "--" || arg == "-" {
+			index++
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			option, value, attached, ok := resolveGNULongOption(arg, envLongOptions)
+			if !ok {
+				return Indeterminate("env 包含无法识别的长选项")
+			}
+			if option.name == "split-string" {
+				if !attached {
+					index++
+					if index >= len(args) {
+						return Indeterminate("env 字符串拆句缺少内容")
+					}
+					value = args[index]
+				}
+				return c.classifyEnvSplitString(value, args[index+1:])
+			}
+			if option.takesValue && !attached {
+				index++
+			}
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				switch letters[0] {
+				case 'i', '0', 'v':
+					letters = letters[1:]
+				case 'u', 'C', 'a':
+					if len(letters) == 1 {
+						index++
+					}
+					letters = ""
+				case 'S':
+					payload := letters[1:]
+					if payload == "" {
+						index++
+						if index >= len(args) {
+							return Indeterminate("env 字符串拆句缺少内容")
+						}
+						payload = args[index]
+					}
+					return c.classifyEnvSplitString(payload, args[index+1:])
+				default:
+					return Indeterminate("env 包含无法识别的选项")
+				}
+			}
+			index++
+			continue
+		}
+		if isAssignment(arg) {
+			if dangerousAssignmentName(arg) {
+				return Dangerous("赋值注入可执行环境变量")
+			}
+			index++
+			continue
+		}
+		break
+	}
+	rest := args[index:]
+	if len(rest) == 0 {
+		// env with no command prints the environment.
+		return Allow()
+	}
+	return c.child().classifyArgv(rest, stdin)
+}
+
+func (c *classifier) classifyEnvSplitString(payload string, rest []string) Ruling {
+	payload = strings.ReplaceAll(payload, "\\_", " ")
+	for _, extra := range rest {
+		payload += " " + quoteShellToken(extra)
+	}
+	return Worst(Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), c.classifyText(payload))
 }
 
 func isAssignment(value string) bool {
@@ -833,19 +906,33 @@ func commandName(value string) string {
 	return strings.ToLower(filepath.Base(strings.ReplaceAll(value, "\\", "/")))
 }
 
-func classifySimple(tokens []string, ops []string, rules []string, depth int, stdin stdinHint) Ruling {
-	name := commandName(tokens[0])
-	args := tokens[1:]
+func isInterpreter(name string) bool {
+	switch name {
+	case "sh", "bash", "zsh", "ksh", "dash", "fish", "python", "python2", "python3", "node", "nodejs", "deno", "bun", "perl", "ruby", "php", "lua", "osascript", "powershell", "pwsh", "cmd", "cmd.exe":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellInterpreter(name string) bool {
+	switch name {
+	case "sh", "bash", "zsh", "ksh", "dash", "fish":
+		return true
+	default:
+		return false
+	}
+}
+
+// interpreterCodeLetters lists the short options through which non-shell
+// interpreters accept inline source (-c/-e/-E/-r/-p, attached or separate).
+const interpreterCodeLetters = "ceErp"
+
+func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
+	name := commandName(argv[0])
+	args := argv[1:]
 	if isInterpreter(name) {
-		result := Worst(Confirm(KindUnknown, "解释器或脚本执行需要确认"), classifyInterpreter(name, args, rules, depth))
-		if stdin.ok && strings.TrimSpace(stdin.text) != "" {
-			if isShellInterpreter(name) {
-				result = Worst(result, classifyCommandDepth(stdin.text, rules, depth+1))
-			} else {
-				result = Worst(result, Dangerous(name+" 从标准输入执行代码"))
-			}
-		}
-		return result
+		return c.classifyInterpreter(name, args, stdin)
 	}
 	if ruling, ok := forbiddenCommand(name, args); ok {
 		return ruling
@@ -853,14 +940,11 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 	if ruling, ok := dangerousCommand(name, args); ok {
 		return ruling
 	}
-	if matchDangerRule(strings.Join(tokens, " "), rules) {
+	if matchDangerRule(strings.Join(argv, " "), c.rules) {
 		return Dangerous("命中自定义危险规则")
 	}
-	if ruling, ok := classifyStateChangingBuiltins(name, args, rules, depth, stdin); ok {
+	if ruling, ok := classifyStateChangingBuiltins(name, args); ok {
 		return ruling
-	}
-	if wrapper, ok := execWrappers[name]; ok {
-		return classifyWrapper(name, wrapper, args, rules, depth, stdin)
 	}
 	switch name {
 	case "rm", "rmdir", "mv", "cp", "dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "shred", "truncate":
@@ -893,40 +977,34 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 	case "crontab":
 		return classifyCrontab(args)
 	case "docker", "podman":
-		return classifyDocker(args, rules, depth)
+		return c.classifyDocker(args, stdin)
 	case "kubectl":
-		return classifyKubectl(args, rules, depth)
+		return c.classifyKubectl(args, stdin)
 	case "git":
-		return classifyGit(args, rules, depth)
+		return c.classifyGit(args)
 	case "redis-cli", "valkey-cli":
-		return classifyRedis(args)
+		result := classifyRedis(args)
+		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
+			// redis-cli executes commands read from standard input.
+			if !stdin.ok {
+				return Worst(result, Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容"))
+			}
+			result = Worst(result, Confirm(KindUnknown, "Redis 客户端从标准输入执行命令"))
+			for _, line := range strings.Split(stdin.text, "\n") {
+				if fields := strings.Fields(line); len(fields) > 0 {
+					result = Worst(result, classifyRedis(fields))
+				}
+			}
+		}
+		return result
 	case "mysql", "mariadb", "psql":
-		return classifyDatabaseClient(name, args, rules, ops, depth)
+		return c.classifyDatabaseClient(name, args, stdin)
 	case "sed", "awk", "gawk", "ed", "vim", "vi", "nano", "emacs":
 		return Confirm(KindUnknown, "命令具有编辑或执行子命令能力")
 	case "find":
-		return classifyFind(args, rules, depth)
+		return c.classifyFind(args)
 	case "tar":
-		for _, arg := range args {
-			lower := strings.ToLower(arg)
-			if lower == "--to-command" || lower == "--use-compress-program" || lower == "--checkpoint-action" || strings.HasPrefix(lower, "--checkpoint-action=") || strings.HasPrefix(lower, "--use-compress-program=") {
-				return Confirm(KindUnknown, "tar 包含外部命令执行")
-			}
-		}
-		for index, arg := range args {
-			if arg == "-C" || arg == "--directory" {
-				if index+1 < len(args) && isCriticalRoot(args[index+1]) {
-					return Dangerous("tar 解包到关键路径")
-				}
-			}
-			if strings.HasPrefix(arg, "--directory=") && isCriticalRoot(strings.TrimPrefix(arg, "--directory=")) {
-				return Dangerous("tar 解包到关键路径")
-			}
-		}
-		if !containsAny(args, "-t", "-tf", "--list") && !hasShortFlag(args, 't') {
-			return Confirm(KindWriteFS, "压缩包解包或创建需要确认")
-		}
-		return Allow()
+		return c.classifyTar(args)
 	case "gzip", "gunzip", "bzip2", "xz", "zip":
 		return Confirm(KindWriteFS, "压缩工具可能修改文件")
 	case "unzip":
@@ -935,7 +1013,7 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 		}
 		return Confirm(KindWriteFS, "解压会写入文件")
 	case "curl", "wget":
-		return classifyDownload(name, args, ops)
+		return classifyDownload(name, args)
 	case "nc", "ncat", "netcat", "socat":
 		for _, arg := range args {
 			lower := strings.ToLower(arg)
@@ -953,12 +1031,24 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 		}
 		return Confirm(KindUnknown, "网络工具需要确认")
 	case "ssh":
-		return classifySSH(args, rules, depth)
+		return c.classifySSH(args)
 	case "scp", "sftp", "rsync":
 		return Confirm(KindUnknown, "远程传输或执行需要确认")
+	case "alias":
+		if len(args) == 0 {
+			return Allow()
+		}
+		// Aliases rewrite how the shell parses every later command, so
+		// future rulings can no longer be proven against the visible text.
+		return Dangerous("别名定义会使后续命令无法审查")
+	case "unalias":
+		return Dangerous("别名删除会改变命令解析")
 	}
 	if safeFirstToken[name] {
 		return Allow()
+	}
+	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
+		return Indeterminate("管道输入进入无法识别的命令，无法证明有界")
 	}
 	return Confirm(KindUnknown, "未列入只读白名单的命令")
 }
@@ -972,48 +1062,19 @@ var safeFirstToken = func() map[string]bool {
 	return result
 }()
 
-func isInterpreter(name string) bool {
-	switch name {
-	case "sh", "bash", "zsh", "ksh", "dash", "fish", "python", "python2", "python3", "node", "nodejs", "deno", "bun", "perl", "ruby", "php", "lua", "osascript", "powershell", "pwsh", "cmd", "cmd.exe":
-		return true
-	default:
-		return false
-	}
-}
-
-func isShellInterpreter(name string) bool {
-	switch name {
-	case "sh", "bash", "zsh", "ksh", "dash", "fish":
-		return true
-	default:
-		return false
-	}
-}
-
-// interpreterCodeLetters lists the short options through which non-shell
-// interpreters accept inline source (-c/-e/-E/-r/-p, attached or separate).
-const interpreterCodeLetters = "ceErp"
-
-func classifyInterpreter(name string, args []string, rules []string, depth int) Ruling {
-	result := Allow()
+// classifyInterpreter rates shells and language runtimes. Inline code options
+// take precedence over stdin; then stdin-driven execution; then a script
+// file argument; a bare interpreter is an open execution session.
+func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeInput) Ruling {
 	shell := isShellInterpreter(name)
-	inlineCode := ""
-	inline := false
-	takeCode := func(code string) {
-		inline = true
-		if shell {
-			result = Worst(result, classifyCommandDepth(code, rules, depth+1))
-		} else {
-			inlineCode += " " + code
-		}
-	}
+	var codes []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if shell {
 			switch {
 			case arg == "-c":
 				if i+1 < len(args) {
-					takeCode(args[i+1])
+					codes = append(codes, args[i+1])
 				}
 			case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.IndexByte(arg[1:], 'c') >= 0:
 				// Clustered -c. getopt-style shells (dash) treat the rest
@@ -1022,10 +1083,10 @@ func classifyInterpreter(name string, args []string, rules []string, depth int) 
 				// Classify both interpretations and keep the worse ruling.
 				position := strings.IndexByte(arg[1:], 'c')
 				if remainder := arg[position+2:]; remainder != "" {
-					takeCode(remainder)
+					codes = append(codes, remainder)
 				}
 				if i+1 < len(args) {
-					takeCode(args[i+1])
+					codes = append(codes, args[i+1])
 				}
 			}
 			continue
@@ -1034,26 +1095,53 @@ func classifyInterpreter(name string, args []string, rules []string, depth int) 
 		switch {
 		case arg == "-c" || arg == "-e" || arg == "-E" || arg == "-r" || arg == "-p" || strings.EqualFold(arg, "-Command") || arg == "/c" || arg == "--eval" || arg == "--command" || arg == "--execute":
 			if i+1 < len(args) {
-				takeCode(args[i+1])
+				codes = append(codes, args[i+1])
 			}
 		case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--"):
 			letters := arg[1:]
 			for len(letters) > 0 {
 				if strings.IndexByte(interpreterCodeLetters, letters[0]) >= 0 {
-					takeCode(letters[1:])
+					codes = append(codes, letters[1:])
 					letters = ""
 					continue
 				}
 				letters = letters[1:]
 			}
 		case strings.HasPrefix(lower, "--eval=") || strings.HasPrefix(lower, "--command=") || strings.HasPrefix(lower, "--execute="):
-			takeCode(arg[strings.Index(arg, "=")+1:])
+			codes = append(codes, arg[strings.Index(arg, "=")+1:])
 		}
 	}
-	if inline && !shell {
-		result = Worst(result, Dangerous("解释器内联执行任意代码"), dangerousInterpreterText(inlineCode, rules))
+	if len(codes) > 0 {
+		if shell {
+			result := Confirm(KindUnknown, "解释器或脚本执行需要确认")
+			for _, code := range codes {
+				result = Worst(result, c.classifyText(code))
+			}
+			return result
+		}
+		return Worst(Dangerous("解释器内联执行任意代码"), dangerousInterpreterText(strings.Join(codes, " "), c.rules))
 	}
-	return result
+	if stdin.kind != stdinNone {
+		if stdin.kind == stdinFile {
+			return Dangerous(name + " 执行文件中的代码，内容无法验证")
+		}
+		if !stdin.ok {
+			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+		}
+		if shell {
+			return Worst(Confirm(KindUnknown, "解释器或脚本执行需要确认"), c.classifyText(stdin.text))
+		}
+		return Dangerous(name + " 从标准输入执行代码")
+	}
+	for _, arg := range args {
+		if arg == "-" {
+			return Dangerous(name + " 从标准输入执行代码")
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return Confirm(KindUnknown, "解释器或脚本执行需要确认")
+		}
+	}
+	return Dangerous("解释器会话可执行任意代码")
 }
 
 func dangerousInterpreterText(value string, rules []string) Ruling {
@@ -1063,12 +1151,28 @@ func dangerousInterpreterText(value string, rules []string) Ruling {
 	return Allow()
 }
 
-func classifyDatabaseClient(name string, args, rules []string, ops []string, depth int) Ruling {
-	result := Confirm(KindDBWrite, "交互式数据库客户端需要确认")
-	for _, op := range ops {
-		if op == "<" {
-			return Dangerous("数据库客户端执行重定向 SQL 文件")
+func containsDestructiveText(value string) bool {
+	lower := strings.ToLower(strings.ReplaceAll(value, " ", ""))
+	for _, text := range []string{"rm-rf/", "remove-item-force", "remove-item-recurse", "rmtree(\"/", "rmsync(\"/", "dropdatabase", "flushall"} {
+		if strings.Contains(lower, text) {
+			return true
 		}
+	}
+	return false
+}
+
+func (c *classifier) classifyDatabaseClient(name string, args []string, stdin pipeInput) Ruling {
+	result := Confirm(KindDBWrite, "交互式数据库客户端需要确认")
+	if stdin.kind == stdinFile {
+		return Dangerous("数据库客户端执行重定向 SQL 文件")
+	}
+	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
+		// The client executes SQL read from standard input; only exactly
+		// determinable input is classified.
+		if !stdin.ok {
+			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
+		}
+		result = Worst(result, ClassifySQL(stdin.text, c.rules))
 	}
 	for i, arg := range args {
 		if name == "psql" && (arg == "-f" || arg == "--file") {
@@ -1109,8 +1213,8 @@ func classifyDatabaseClient(name string, args, rules []string, ops []string, dep
 			}
 		}
 		if payload != "" {
-			result = Worst(result, classifyDatabaseMetaCommand(name, payload, rules, depth))
-			result = Worst(result, ClassifySQL(payload, rules))
+			result = Worst(result, classifyDatabaseMetaCommand(name, payload, c))
+			result = Worst(result, ClassifySQL(payload, c.rules))
 		}
 	}
 	return result
@@ -1120,13 +1224,13 @@ func classifyDatabaseClient(name string, args, rules []string, ops []string, dep
 // or shell commands. MySQL splits -e input at statement boundaries, so
 // every statement is checked for source/\. and system; psql takes a single
 // command per -c, so only its leading escape executes.
-func classifyDatabaseMetaCommand(name, payload string, rules []string, depth int) Ruling {
+func classifyDatabaseMetaCommand(name, payload string, c *classifier) Ruling {
 	if name == "psql" {
 		trimmed := strings.TrimSpace(payload)
 		lower := strings.ToLower(trimmed)
 		switch {
 		case strings.HasPrefix(trimmed, `\!`):
-			return Worst(Dangerous("psql 执行 shell 转义命令"), classifyCommandDepth(strings.TrimSpace(trimmed[2:]), rules, depth+1))
+			return Worst(Dangerous("psql 执行 shell 转义命令"), c.classifyText(strings.TrimSpace(trimmed[2:])))
 		case strings.HasPrefix(lower, `\i`) || strings.HasPrefix(lower, `\include`):
 			return Dangerous("psql 执行 SQL 文件，内容无法验证")
 		}
@@ -1139,20 +1243,10 @@ func classifyDatabaseMetaCommand(name, payload string, rules []string, depth int
 		case lower == "source" || strings.HasPrefix(lower, "source ") || strings.HasPrefix(trimmed, `\.`):
 			return Dangerous("mysql 执行 SQL 文件，内容无法验证")
 		case lower == "system" || strings.HasPrefix(lower, "system "):
-			return Worst(Dangerous("mysql 执行 shell 转义命令"), classifyCommandDepth(strings.TrimSpace(trimmed[len("system"):]), rules, depth+1))
+			return Worst(Dangerous("mysql 执行 shell 转义命令"), c.classifyText(strings.TrimSpace(trimmed[len("system"):])))
 		}
 	}
 	return Allow()
-}
-
-func containsDestructiveText(value string) bool {
-	lower := strings.ToLower(strings.ReplaceAll(value, " ", ""))
-	for _, text := range []string{"rm-rf/", "remove-item-force", "remove-item-recurse", "rmtree(\"/", "rmsync(\"/", "dropdatabase", "flushall"} {
-		if strings.Contains(lower, text) {
-			return true
-		}
-	}
-	return false
 }
 
 func forbiddenCommand(name string, args []string) (Ruling, bool) {
@@ -1311,7 +1405,7 @@ func writesCriticalTarget(name string, args []string) bool {
 	return false
 }
 
-func classifyFind(args []string, rules []string, depth int) Ruling {
+func (c *classifier) classifyFind(args []string) Ruling {
 	result := Allow()
 	writeAction := false
 	for index := 0; index < len(args); index++ {
@@ -1331,7 +1425,7 @@ func classifyFind(args []string, rules []string, depth int) Ruling {
 				}
 			}
 			if index+1 < end {
-				result = Worst(result, Dangerous("find 执行外部命令"), classifyCommandDepth(strings.Join(args[index+1:end], " "), rules, depth+1))
+				result = Worst(result, Dangerous("find 执行外部命令"), c.classifyText(strings.Join(args[index+1:end], " ")))
 			}
 			index = end
 		}
@@ -1359,7 +1453,7 @@ func classifyCrontab(args []string) Ruling {
 	return Dangerous("crontab 从标准输入安装计划任务")
 }
 
-func classifySSH(args []string, rules []string, depth int) Ruling {
+func (c *classifier) classifySSH(args []string) Ruling {
 	valueOptions := map[string]bool{"-p": true, "-i": true, "-l": true, "-E": true, "-F": true, "-J": true, "-L": true, "-W": true, "-b": true, "-c": true, "-m": true, "-S": true}
 	result := Confirm(KindUnknown, "远程传输或执行需要确认")
 	index := 0
@@ -1368,13 +1462,13 @@ func classifySSH(args []string, rules []string, depth int) Ruling {
 		index++
 		if arg == "-o" {
 			if index < len(args) {
-				result = Worst(result, classifySSHConfigValue(args[index], rules, depth))
+				result = Worst(result, c.classifySSHConfigValue(args[index]))
 				index++
 			}
 			continue
 		}
 		if strings.HasPrefix(arg, "-o") && len(arg) > 2 {
-			result = Worst(result, classifySSHConfigValue(arg[2:], rules, depth))
+			result = Worst(result, c.classifySSHConfigValue(arg[2:]))
 			continue
 		}
 		if valueOptions[arg] && index < len(args) {
@@ -1390,13 +1484,13 @@ func classifySSH(args []string, rules []string, depth int) Ruling {
 	}
 	// ssh flattens the remote command into a single string for the remote
 	// shell, so classification re-parses the joined text.
-	return Worst(result, classifyCommandDepth(strings.Join(args[index:], " "), rules, depth+1))
+	return Worst(result, c.classifyText(strings.Join(args[index:], " ")))
 }
 
 // classifySSHConfigValue inspects -o values whose keywords run a command:
 // ProxyCommand and LocalCommand execute locally through a shell, and
 // RemoteCommand executes on the remote host.
-func classifySSHConfigValue(value string, rules []string, depth int) Ruling {
+func (c *classifier) classifySSHConfigValue(value string) Ruling {
 	key, command, found := strings.Cut(value, "=")
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "proxycommand", "localcommand", "remotecommand":
@@ -1404,7 +1498,7 @@ func classifySSHConfigValue(value string, rules []string, depth int) Ruling {
 		if !found || command == "" || strings.EqualFold(command, "none") {
 			return Allow()
 		}
-		return Worst(Dangerous("ssh 选项执行本地或远端命令"), classifyCommandDepth(command, rules, depth+1))
+		return Worst(Dangerous("ssh 选项执行本地或远端命令"), c.classifyText(command))
 	}
 	return Allow()
 }
@@ -1422,7 +1516,7 @@ func classifyService(name string, args []string) Ruling {
 			if strings.HasPrefix(arg, "--") {
 				option, _, attached, ok := resolveGNULongOption(arg, systemctlLongOptions)
 				if !ok {
-					return Dangerous("systemctl 包含无法识别的全局选项")
+					return Indeterminate("systemctl 包含无法识别的全局选项")
 				}
 				index++
 				if option.name == "failed" {
@@ -1442,7 +1536,7 @@ func classifyService(name string, args []string) Ruling {
 					}
 					letters = ""
 				default:
-					return Dangerous("systemctl 包含无法识别的全局选项")
+					return Indeterminate("systemctl 包含无法识别的全局选项")
 				}
 			}
 			index++
@@ -1476,24 +1570,51 @@ func classifyPackage(args []string) Ruling {
 	return Confirm(KindPackage, "软件包管理操作")
 }
 
-func dockerGlobalEnd(args []string) int {
-	valueOptions := map[string]bool{"-H": true, "--host": true, "--config": true, "--context": true, "--log-level": true, "--tlscacert": true, "--tlscert": true, "--tlskey": true}
+var dockerValueGlobals = []string{"host", "config", "context", "log-level", "tlscacert", "tlscert", "tlskey"}
+
+var dockerFlagGlobals = []string{"version", "help"}
+
+// dockerGlobalEnd consumes docker's leading global options, reporting false
+// when an option is not in the known tables.
+func dockerGlobalEnd(args []string) (int, bool) {
 	index := 0
 	for index < len(args) && strings.HasPrefix(args[index], "-") {
 		arg := args[index]
-		index++
-		if valueOptions[arg] && index < len(args) {
+		if arg == "--" {
 			index++
+			break
 		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, attached := strings.Cut(arg[2:], "=")
+			switch {
+			case containsString(dockerValueGlobals, name):
+				if !attached {
+					index++
+				}
+			case containsString(dockerFlagGlobals, name):
+			default:
+				return index, false
+			}
+			index++
+			continue
+		}
+		if arg == "-H" {
+			index += 2
+			continue
+		}
+		return index, false
 	}
-	return index
+	return index, true
 }
 
-func classifyDocker(args []string, rules []string, depth int) Ruling {
+func (c *classifier) classifyDocker(args []string, stdin pipeInput) Ruling {
 	if len(args) == 0 {
 		return Confirm(KindUnknown, "docker 子命令不明确")
 	}
-	index := dockerGlobalEnd(args)
+	index, ok := dockerGlobalEnd(args)
+	if !ok {
+		return Indeterminate("docker 包含无法识别的全局选项")
+	}
 	if index >= len(args) {
 		return Allow("docker 全局信息查询")
 	}
@@ -1510,13 +1631,10 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 	case "exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
 		if commandIndex := dockerExecCommandIndex(rest); commandIndex >= 0 {
-			result = Worst(result, classifySegment(shellSegment{tokens: rest[commandIndex:]}, rules, depth, stdinHint{}))
+			result = Worst(result, c.child().classifyArgv(rest[commandIndex:], stdin))
 		}
 		return result
 	case "run", "create", "start", "stop", "restart", "rm", "kill", "pause", "unpause", "rename", "update", "cp", "commit", "import", "load", "pull", "push", "build", "tag", "rmi", "save", "attach":
-		if (sub == "rm" || sub == "rmi") && dockerForceFlag(rest) && dockerBulkDeletion(rest) {
-			return Dangerous("强制删除全部 Docker 资源")
-		}
 		return Confirm(KindDockerMutate, "Docker 资源变更")
 	case "prune":
 		return Dangerous("Docker 清理会删除资源")
@@ -1531,12 +1649,7 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 		case "prune":
 			return Dangerous("Docker 清理会删除资源")
 		case "exec", "run":
-			return classifyDocker(append([]string{nested}, rest[1:]...), rules, depth)
-		case "rm", "rmi":
-			if dockerForceFlag(rest[1:]) && dockerBulkDeletion(rest[1:]) {
-				return Dangerous("强制删除全部 Docker 资源")
-			}
-			return Confirm(KindDockerMutate, "Docker 资源变更")
+			return c.classifyDocker(append([]string{nested}, rest[1:]...), stdin)
 		default:
 			return Confirm(KindDockerMutate, "Docker 资源变更")
 		}
@@ -1570,94 +1683,7 @@ func dockerExecCommandIndex(args []string) int {
 	return index
 }
 
-func dockerForceFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "--force" || strings.HasPrefix(arg, "--force=") {
-			return true
-		}
-		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsRune(arg[1:], 'f') {
-			return true
-		}
-	}
-	return false
-}
-
-// substitutionTokens tokenizes a "$(...)" payload with the shell parser so
-// quoted arguments keep their boundaries; multi-segment payloads are not
-// statically alignable and report false.
-func substitutionTokens(payload string) ([]string, bool) {
-	segments, _, err := parseShell(payload)
-	if err != nil || len(segments) != 1 {
-		return nil, false
-	}
-	return segments[0].tokens, true
-}
-
-func dockerBulkDeletion(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "$(") || !strings.HasSuffix(arg, ")") {
-			continue
-		}
-		fields, ok := substitutionTokens(arg[2 : len(arg)-1])
-		if !ok {
-			continue
-		}
-		// Look through privilege escalation and execution wrappers (sudo,
-		// nice, command, env, ...) to the docker/podman enumeration itself.
-		fields = nestedExecutor(fields)
-		if len(fields) == 0 || commandName(fields[0]) != "docker" && commandName(fields[0]) != "podman" {
-			continue
-		}
-		rest := fields[1:]
-		offset := dockerGlobalEnd(rest)
-		if offset >= len(rest) {
-			continue
-		}
-		enumeration := ""
-		switch sub := strings.ToLower(rest[offset]); sub {
-		case "ps", "images":
-			enumeration = sub
-		case "container", "image":
-			if offset+1 < len(rest) {
-				nested := strings.ToLower(rest[offset+1])
-				if sub == "container" && (nested == "ps" || nested == "ls" || nested == "list") {
-					enumeration = "ps"
-					offset++
-				}
-				if sub == "image" && (nested == "ls" || nested == "list") {
-					enumeration = "images"
-					offset++
-				}
-			}
-		}
-		if enumeration == "" {
-			continue
-		}
-		quiet := false
-		formatted := false
-		for _, option := range rest[offset+1:] {
-			if option == "--quiet" || option == "--quiet=true" {
-				quiet = true
-			}
-			if option == "--format" || strings.HasPrefix(option, "--format=") {
-				formatted = true
-			}
-			if _, ok := shortOptionValue(option, 'q'); ok {
-				quiet = true
-			}
-		}
-		// Force-removing every enumerated container or image (running set
-		// included) is bulk destruction; quiet and --format enumerations
-		// produce exactly the IDs the deletion consumes, and filters cannot
-		// be verified statically. A plain table listing is not an ID source.
-		if quiet || formatted {
-			return true
-		}
-	}
-	return false
-}
-
-func classifyKubectl(args []string, rules []string, depth int) Ruling {
+func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
 	if len(args) > 0 {
 		switch args[0] {
 		case "get", "describe", "logs", "top", "version", "cluster-info", "api-resources", "api-versions":
@@ -1681,7 +1707,7 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 				if strings.HasPrefix(arg, "--") {
 					option, _, attached, ok := resolveGNULongOption(arg, kubectlExecLongOptions)
 					if !ok {
-						return Dangerous("kubectl exec 包含无法识别的选项")
+						return Indeterminate("kubectl exec 包含无法识别的选项")
 					}
 					index++
 					if option.takesValue && !attached {
@@ -1700,7 +1726,7 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 					case 'i', 't', 'q':
 						letters = letters[1:]
 					default:
-						return Dangerous("kubectl exec 包含无法识别的选项")
+						return Indeterminate("kubectl exec 包含无法识别的选项")
 					}
 				}
 				index++
@@ -1715,7 +1741,7 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 				// kubectl exec passes the command argv to the container
 				// process intact; classify the token slice, not a re-joined
 				// string, so quoted scripts keep their boundaries.
-				return Worst(Confirm(KindService, "Kubernetes 资源或工作负载变更"), classifySegment(shellSegment{tokens: args[index:]}, rules, depth+1, stdinHint{}))
+				return Worst(Confirm(KindService, "Kubernetes 资源或工作负载变更"), c.child().classifyArgv(args[index:], stdin))
 			}
 			return Confirm(KindService, "Kubernetes 资源或工作负载变更")
 		case "delete", "drain", "cordon", "uncordon", "apply", "create", "replace", "patch", "scale", "rollout", "port-forward", "cp", "edit", "set", "label", "annotate", "taint":
@@ -1725,7 +1751,7 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 	return Confirm(KindUnknown, "未知 kubectl 子命令")
 }
 
-func classifyGit(args []string, rules []string, depth int) Ruling {
+func (c *classifier) classifyGit(args []string) Ruling {
 	if len(args) == 0 {
 		return Allow()
 	}
@@ -1735,7 +1761,7 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 		if arg == "-C" || arg == "-c" {
 			if index+1 < len(args) {
 				if arg == "-c" {
-					if ruling, bad := gitConfigInjection(args[index+1], rules, depth); bad {
+					if ruling, bad := c.gitConfigInjection(args[index+1]); bad {
 						return ruling
 					}
 				}
@@ -1750,7 +1776,7 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 			continue
 		}
 		if strings.HasPrefix(arg, "-c") && len(arg) > 2 {
-			if ruling, bad := gitConfigInjection(arg[2:], rules, depth); bad {
+			if ruling, bad := c.gitConfigInjection(arg[2:]); bad {
 				return ruling
 			}
 			index++
@@ -1772,7 +1798,7 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 						value = args[index]
 					}
 				}
-				if ruling, bad := gitConfigInjection(value, rules, depth); bad {
+				if ruling, bad := c.gitConfigInjection(value); bad {
 					return ruling
 				}
 				index++
@@ -1789,14 +1815,14 @@ func classifyGit(args []string, rules []string, depth int) Ruling {
 				index++
 				continue
 			}
-			return Dangerous("git 包含无法识别的全局选项")
+			return Indeterminate("git 包含无法识别的全局选项")
 		}
 		if strings.HasPrefix(arg, "-") {
 			if containsString(gitFlagGlobals, arg) {
 				index++
 				continue
 			}
-			return Dangerous("git 包含无法识别的全局选项")
+			return Indeterminate("git 包含无法识别的全局选项")
 		}
 		break
 	}
@@ -1905,7 +1931,7 @@ func classifyGitClean(args []string) Ruling {
 // (pager, editor, ssh command, proxy, fsmonitor, external diff, filters,
 // shell aliases) or import configuration indirectly (include.*): the value
 // runs a command, so it is classified like one.
-func gitConfigInjection(value string, rules []string, depth int) (Ruling, bool) {
+func (c *classifier) gitConfigInjection(value string) (Ruling, bool) {
 	key, command, found := strings.Cut(value, "=")
 	lower := strings.ToLower(key)
 	executable := strings.Contains(lower, "pager") || strings.Contains(lower, "editor") || strings.Contains(lower, "sshcommand") || strings.Contains(lower, "proxy") ||
@@ -1920,7 +1946,7 @@ func gitConfigInjection(value string, rules []string, depth int) (Ruling, bool) 
 			command = strings.TrimSpace(command[1:])
 		}
 		if command != "" {
-			return Worst(Dangerous("git -c 注入可执行配置"), classifyCommandDepth(command, rules, depth+1)), true
+			return Worst(Dangerous("git -c 注入可执行配置"), c.classifyText(command)), true
 		}
 	}
 	return Dangerous("git -c 注入可执行配置"), true
@@ -1928,12 +1954,7 @@ func gitConfigInjection(value string, rules []string, depth int) (Ruling, bool) 
 
 const curlValueShorts = "odFTDcKQXAbeHuUxmYyzw"
 
-func classifyDownload(name string, args, ops []string) Ruling {
-	for _, op := range ops {
-		if op == "|" || op == "||" {
-			return Confirm(KindShellPipe, "网络内容通过管道交给其他命令")
-		}
-	}
+func classifyDownload(name string, args []string) Ruling {
 	getMode := false
 	for _, arg := range args {
 		if strings.EqualFold(arg, "--get") {
@@ -2080,6 +2101,49 @@ func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 	return false, false
 }
 
+// classifyTar rates archive inspection and extraction. External-command
+// options (--to-command, --use-compress-program, --checkpoint-action=exec)
+// execute a shell command, which is classified itself.
+func (c *classifier) classifyTar(args []string) Ruling {
+	for index, arg := range args {
+		lower := strings.ToLower(arg)
+		switch {
+		case lower == "--to-command" || lower == "--use-compress-program" || lower == "--checkpoint-action":
+			if index+1 < len(args) {
+				return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(args[index+1]))
+			}
+			return Confirm(KindUnknown, "tar 包含外部命令执行")
+		case strings.HasPrefix(lower, "--to-command=") || strings.HasPrefix(lower, "--use-compress-program=") || strings.HasPrefix(lower, "--checkpoint-action="):
+			return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(arg[strings.Index(arg, "=")+1:]))
+		}
+	}
+	for index, arg := range args {
+		if arg == "-C" || arg == "--directory" {
+			if index+1 < len(args) && isCriticalRoot(args[index+1]) {
+				return Dangerous("tar 解包到关键路径")
+			}
+		}
+		if strings.HasPrefix(arg, "--directory=") && isCriticalRoot(strings.TrimPrefix(arg, "--directory=")) {
+			return Dangerous("tar 解包到关键路径")
+		}
+	}
+	if !containsAny(args, "-t", "-tf", "--list") && !hasShortFlag(args, 't') {
+		return Confirm(KindWriteFS, "压缩包解包或创建需要确认")
+	}
+	return Allow()
+}
+
+func (c *classifier) classifyTarAction(value string) Ruling {
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "exec=") {
+		return c.classifyText(strings.TrimSpace(value[len("exec="):]))
+	}
+	if !strings.Contains(lower, "=") {
+		return c.classifyText(value)
+	}
+	return Allow()
+}
+
 func classifyRedis(args []string) Ruling {
 	filtered := make([]string, 0, len(args))
 	scan := false
@@ -2093,7 +2157,7 @@ func classifyRedis(args []string) Ruling {
 				scan = true
 			case "--no-raw", "--raw", "--csv", "--json", "--quoted-json", "--quoted-input", "--stat", "--bigkeys", "--hotkeys", "--memkeys", "--keystats", "--latency", "--latency-history", "--latency-dist", "--replica", "--pipe", "--trip", "--ldb", "--ldb-sync-mode", "--tls", "--insecure", "--verbose", "--no-auth-warning", "--askpass", "-2", "-3", "-4", "-6", "-c", "-e", "-v", "-x":
 			default:
-				return Confirm(KindUnknown, "redis-cli 包含无法识别的选项")
+				return Indeterminate("redis-cli 包含无法识别的选项")
 			}
 			continue
 		}
@@ -2172,15 +2236,4 @@ func hasShortFlag(args []string, flag rune) bool {
 		}
 	}
 	return false
-}
-
-func indexOfAny(values []string, targets ...string) int {
-	for i, value := range values {
-		for _, target := range targets {
-			if commandName(value) == target {
-				return i
-			}
-		}
-	}
-	return -1
 }

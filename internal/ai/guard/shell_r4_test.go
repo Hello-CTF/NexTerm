@@ -16,9 +16,9 @@ func TestR4OptionClusterAndBulkDeletionClassifications(t *testing.T) {
 		{`redis-cli -d INFO FLUSHALL`, Danger},
 		{`sudo -Eu root rm -rf /home/user`, Forbidden},
 		{`psql -qc 'DROP DATABASE prod'`, Forbidden},
-		{`docker rm -f $(docker ps -q -a)`, Danger},
-		{`docker rm -f $(docker ps -a -q)`, Danger},
-		{`docker rmi -f $(docker images -q)`, Danger},
+		{`docker rm -f $(docker ps -q -a)`, Unknowable},
+		{`docker rm -f $(docker ps -a -q)`, Unknowable},
+		{`docker rmi -f $(docker images -q)`, Unknowable},
 	}
 	for _, test := range tests {
 		t.Run(test.command, func(t *testing.T) {

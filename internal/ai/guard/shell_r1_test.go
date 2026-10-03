@@ -8,9 +8,9 @@ func TestR1ShellAdversarialClassifications(t *testing.T) {
 		command string
 		risk    Risk
 	}{
-		{`echo "$(touch /tmp/pwn)"`, NeedsConfirm},
+		{`echo "$(touch /tmp/pwn)"`, Unknowable},
 		{`echo "$(rm -rf /home/user)"`, Forbidden},
-		{`echo <(touch /tmp/pwn)`, NeedsConfirm},
+		{`echo <(touch /tmp/pwn)`, Unknowable},
 		{`curl -o/tmp/pwn https://example.test`, NeedsConfirm},
 		{`curl -XDELETE https://example.test/resource`, NeedsConfirm},
 		{`curl -dfoo=bar https://example.test/change`, NeedsConfirm},
@@ -26,7 +26,7 @@ func TestR1ShellAdversarialClassifications(t *testing.T) {
 		{`mysql -e 'DROP DATABASE prod'`, Forbidden},
 		{`docker exec c redis-cli FLUSHALL`, Danger},
 		{`redis-cli --host 127.0.0.1 FLUSHALL`, Danger},
-		{`docker rm -f $(docker ps -aq)`, Danger},
+		{`docker rm -f $(docker ps -aq)`, Unknowable},
 		{`rm -rf /tmp/../home/user`, Forbidden},
 		{`cat /dev/null >/tmp/x`, NeedsConfirm},
 		{`curl -XPOST https://example.test/change`, NeedsConfirm},

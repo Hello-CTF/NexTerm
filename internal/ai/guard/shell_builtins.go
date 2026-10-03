@@ -197,79 +197,8 @@ func shortOptionValue(arg string, option byte) (string, bool) {
 	return "", false
 }
 
-func classifyStateChangingBuiltins(name string, args, rules []string, depth int, stdin stdinHint) (Ruling, bool) {
+func classifyStateChangingBuiltins(name string, args []string) (Ruling, bool) {
 	switch name {
-	case "env":
-		splitString := func(payload string, rest []string) (Ruling, bool) {
-			payload = strings.ReplaceAll(payload, "\\_", " ")
-			for _, extra := range rest {
-				payload += " " + quoteShellToken(extra)
-			}
-			return Worst(Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), classifyCommandDepth(payload, rules, depth+1)), true
-		}
-		for i := 0; i < len(args); i++ {
-			arg := args[i]
-			if arg == "--" {
-				if i+1 < len(args) {
-					return classifySimple(args[i+1:], nil, rules, depth, stdin), true
-				}
-				return Allow(), true
-			}
-			if strings.HasPrefix(arg, "--") {
-				option, value, attached, ok := resolveGNULongOption(arg, envLongOptions)
-				if !ok {
-					return Confirm(KindUnknown, "env 包含无法识别的长选项"), true
-				}
-				switch option.name {
-				case "split-string":
-					if !attached {
-						if i+1 >= len(args) {
-							return Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), true
-						}
-						i++
-						value = args[i]
-					}
-					return splitString(value, args[i+1:])
-				case "unset", "chdir", "argv0":
-					if !attached {
-						i++
-					}
-				}
-				continue
-			}
-			if strings.HasPrefix(arg, "-") && arg != "-" {
-				letters := arg[1:]
-				for len(letters) > 0 {
-					switch letters[0] {
-					case 'i', '0', 'v':
-						letters = letters[1:]
-					case 'u', 'C', 'a':
-						if len(letters) == 1 {
-							i++
-						}
-						letters = ""
-					case 'S':
-						payload := letters[1:]
-						if payload == "" {
-							if i+1 >= len(args) {
-								return Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), true
-							}
-							i++
-							payload = args[i]
-						}
-						return splitString(payload, args[i+1:])
-					default:
-						return Confirm(KindUnknown, "env 包含无法识别的选项"), true
-					}
-				}
-				continue
-			}
-			if isAssignment(arg) {
-				continue
-			}
-			return classifySimple(args[i:], nil, rules, depth, stdin), true
-		}
-		return Allow(), true
 	case "sort":
 		for i := 0; i < len(args); i++ {
 			arg := args[i]
@@ -279,13 +208,13 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int,
 			if strings.HasPrefix(arg, "--") {
 				option, _, attached, ok := resolveGNULongOption(arg, sortLongOptions)
 				if !ok {
-					return Confirm(KindUnknown, "sort 包含无法识别的长选项"), true
+					return Indeterminate("sort 包含无法识别的长选项"), true
 				}
 				switch option.name {
 				case "output":
 					return Confirm(KindWriteFS, "sort 输出到文件"), true
 				case "compress-program":
-					return Confirm(KindUnknown, "sort 调用外部压缩程序"), true
+					return Dangerous("sort 调用外部程序，内容无法验证"), true
 				}
 				if option.takesValue && !attached && !option.optionalValue {
 					i++
