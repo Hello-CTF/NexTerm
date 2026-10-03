@@ -3,6 +3,7 @@ package subagent_test
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,22 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 )
+
+// acceptanceTemperature lets constrained providers (for example engines that
+// only accept temperature 1) run the same acceptance gate via
+// NEXTERM_AI_TEMPERATURE; the default keeps the deterministic 0.
+func acceptanceTemperature(t *testing.T) float64 {
+	t.Helper()
+	raw := os.Getenv("NEXTERM_AI_TEMPERATURE")
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		t.Fatalf("NEXTERM_AI_TEMPERATURE: %v", err)
+	}
+	return value
+}
 
 // TestRealProviderSpawnAcceptance drives the full production path —
 // profiles manager → NewProfileModelFactory → subagent manager spawn/wait —
@@ -31,7 +48,7 @@ func TestRealProviderSpawnAcceptance(t *testing.T) {
 	}
 	if _, err := manager.Save(ctx, profiles.Profile{
 		BaseURL: baseURL, APIKey: os.Getenv("NEXTERM_AI_API_KEY"), Model: modelName,
-		Temperature: 0, ContextWindow: 32768, Stream: true,
+		Temperature: acceptanceTemperature(t), ContextWindow: 32768, Stream: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
