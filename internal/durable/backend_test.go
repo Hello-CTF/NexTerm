@@ -44,6 +44,87 @@ func TestNewRejectsSharedDirectories(t *testing.T) {
 	}
 }
 
+func TestNewCreatesPrivateSocketDirectoryUnderWorldAccessibleTemp(t *testing.T) {
+	root := t.TempDir()
+	shared := filepath.Join(root, "tmp")
+	if err := os.Mkdir(shared, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(root, "tmux-test-bin")
+	if err := os.WriteFile(binary, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socketDir := filepath.Join(shared, "nexterm-durable-0123456789abcdef")
+	if _, err := New(Config{
+		Binary:     binary,
+		SocketPath: filepath.Join(socketDir, "d.sock"),
+		StateDir:   filepath.Join(root, "state"),
+	}); err != nil {
+		t.Fatalf("New under world-accessible temp parent: %v", err)
+	}
+	info, err := os.Lstat(socketDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("socket directory is not a real directory: %v", info.Mode())
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("socket directory is accessible by group or other users: %o", info.Mode().Perm())
+	}
+}
+
+func TestNewRejectsSymlinkedSocketDirectory(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "tmux-test-bin")
+	if err := os.WriteFile(binary, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "nexterm-durable-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_, err := New(Config{
+		Binary:     binary,
+		SocketPath: filepath.Join(link, "d.sock"),
+		StateDir:   filepath.Join(root, "state"),
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("New error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestNewRejectsSymlinkedStateDirectory(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "tmux-test-bin")
+	if err := os.WriteFile(binary, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "state-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_, err := New(Config{
+		Binary:     binary,
+		SocketPath: filepath.Join(root, "run", "d.sock"),
+		StateDir:   link,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("New error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestListDiscoversOnlyOwnedPrimaryPanes(t *testing.T) {
 	backend, runner := newUnitBackend(t)
 	touchUnitSocket(t, backend)
