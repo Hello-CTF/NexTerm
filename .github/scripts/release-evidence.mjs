@@ -27,10 +27,12 @@ const reportIDs = new Map([
     [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-full-linux-${arch}`],
   ]),
 ]);
+// Pass/fail comes from the artifact's own evidence: file integrity (sha256/size
+// vs report), target identity (id/version) and real content/static/cgo
+// assertions. Rust and custom-Go size comparisons are informational only
+// (user decision 2026-10-03) and never gate release.
 function gatesPassed(report) {
   return report.status === "passed"
-    && report.comparisons?.rust?.status === "passed"
-    && report.comparisons?.custom_go?.status === "measured"
     && Array.isArray(report.assertions)
     && report.assertions.length > 0
     && report.assertions.every((item) => item.status === "passed");
@@ -71,13 +73,13 @@ const unexpected = fs.readdirSync(directory).filter((name) => /\.(?:exe|dmg|tar\
 if (unexpected.length) failed = true;
 const gaps = JSON.parse(fs.readFileSync(path.join(ROOT, ".github/acceptance/real-target-gaps.json"), "utf8"));
 const evidence = {
-  schema_version: 1,
+  schema_version: 2,
   version,
   status: failed ? "failed" : "passed-with-explicit-real-target-gaps",
   expected_artifact_count: expected.length,
   artifacts,
   unexpected_artifacts: unexpected,
-  size_rule: "every release artifact is strictly smaller than its like-for-like Rust counterpart and reports full-Eino delta against a full custom-Go baseline",
+  gate_rule: "each candidate passes only on file integrity (reported sha256/size match), target identity (artifact id and version) and real content/static/cgo assertions; Rust and custom-Go size comparisons are informational only and never gate release (user decision 2026-10-03)",
   reports,
   supporting_reports: supportingReports,
   real_target_acceptance: gaps,

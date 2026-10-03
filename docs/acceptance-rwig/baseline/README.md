@@ -10,7 +10,7 @@ This baseline follows the latest goal: **Go must be internally consistent; Rust 
 # Rust test/frontend/release/benchmark baseline; needs Rust >= 1.98 and pnpm dependencies
 python3 scripts/parity/run_baseline.py
 
-# Go-native race tests, builds, loopback smoke, feature coverage, and size gates
+# Go-native race tests, builds, loopback smoke, feature coverage, and size comparisons
 python3 scripts/parity/go_selfcheck.py --go-root /path/to/go/module
 
 # Re-run Go checks, then validate every generated file and Python test
@@ -88,9 +88,9 @@ Of the eight final release artifacts, exactly **three** have an official same-fo
 | macOS desktop arm64 DMG | `NexTerm_0.2.1_aarch64.dmg` | 14,973,100 | `7c1f1ffee95930a33a924f05ebaeb36640decc3b63003728c1764bc9dea579df` |
 | Linux server amd64 archive | `NexTerm-0.2.1-linux-amd64.tar.gz` | 7,858,105 | `81fe2495191a9bbf2d6ba92ebc90f6c18de96cd07e40b034b4ac3d88b831a394` |
 
-The Linux server archive comparison is whole-archive like-for-like; its inner `nexterm-server` ELF is 17,360,408 B (`070d3b8289fdd186a96016444ab3fe9c4e35b126bcfd2242f9bfd166c7d67f12`). The Rust archive is a single-binary full server; the Go full archive intentionally carries both runtime units and both env examples (restricted `--sync-only` is a runtime mode, not a separate onlyServer package). Whole-archive bytes remain the comparison rule and the content difference is stated, never hidden.
+The Linux server archive comparison is whole-archive like-for-like; its inner `nexterm-server` ELF is 17,360,408 B (`070d3b8289fdd186a96016444ab3fe9c4e35b126bcfd2242f9bfd166c7d67f12`). The Rust archive is a single-binary full server; the Go full archive intentionally carries both runtime units and both env examples (restricted `--sync-only` is a runtime mode, not a separate onlyServer package). Whole-archive bytes remain the comparison reference and the content difference is stated, never hidden.
 
-The other **five** final artifacts are **genuinely unavailable** — no official Rust release (v0.1.0–v0.2.1) ever produced them: Windows desktop arm64 NSIS, macOS desktop x86_64 DMG, Linux desktop amd64/arm64 archives, Linux server arm64 archive. Per the release contract they stay evidence-gaps and must never be reported as passed.
+The other **five** final artifacts are **genuinely unavailable** — no official Rust release (v0.1.0–v0.2.1) ever produced them: Windows desktop arm64 NSIS, macOS desktop x86_64 DMG, Linux desktop amd64/arm64 archives, Linux server arm64 archive. They are reported as `unavailable` and never fabricated; they neither pass nor fail a release (user decision 2026-10-03).
 
 LazyCat LPK: no official release artifact exists (no `.lpk` was ever attached to a GitHub release; the store page exposes no verifiable listing without credentials). The recorded anchors are repo-documented values only — v0.1.3 at 15.97 MiB (embedded layer 15,918,870 B, sha256 `d90395a843f255e427679eaf7e376ac3d3cf3f8c92f6e693fe15b079ccfab742`) and dev-v0.2.0 at 18,718,208 B — and re-verification needs `lzc-cli`/box access.
 
@@ -112,21 +112,21 @@ Live command surface (surfaceprobe composing `production.NewProduction`, cross-c
 
 Feature acceptance is **not complete**: `go-coverage.json` records **2/139 commands verified** (`app_info`, `app_platform`), **136 implemented-unverified**, **1 not-implemented** (`credential_save`), **0/10 production events**, and **0/7 production streams**; `feature_complete=false`. Registration alone is implemented-unverified, never verified. Generic adapter tests do not count as production-feature passes.
 
-Raw-binary size gates **fail** against the current composed production binaries (the strict smaller-than-Rust rule):
+Raw-binary size comparison against the pinned Rust references (informational only since the 2026-10-03 user decision — historical Rust sizes are reference, never a release gate):
 
-| Artifact | Rust bytes | Go bytes | Go/Rust ratio | Gate |
+| Artifact | Rust bytes | Go bytes | Go/Rust ratio | Comparison |
 | --- | ---: | ---: | ---: | --- |
-| macOS desktop | 26,095,616 | 40,808,562 | 1.563809 | **failed** |
-| macOS server | 17,172,784 | 37,711,218 | 2.195987 | **failed** |
+| macOS desktop | 26,095,616 | 40,808,562 | 1.563809 | Go larger (recorded, not gated) |
+| macOS server | 17,172,784 | 37,711,218 | 2.195987 | Go larger (recorded, not gated) |
 
-The pre-Eino custom-Go baseline (`.github/baselines/custom-go.json`, pinned at `3e39138`, full-feature like-for-like) puts the full-Eino delta at +7,270,400 B for `server-linux-amd64` (34,844,834 → 42,115,234 B); no pre-Eino same-form measurement exists for `server-darwin-arm64` (evidence-gap). These deltas report size impact only; they never waive the Rust gate. The skeleton-era pass table (0.50×/0.35×) is retained in git history and is superseded by the failed gates above. Go DMG/NSIS/LPK package sizes are not produced by this raw-binary selfcheck, so no installer-package size pass is claimed.
+The pre-Eino custom-Go baseline (`.github/baselines/custom-go.json`, pinned at `3e39138`, full-feature like-for-like) puts the full-Eino delta at +7,270,400 B for `server-linux-amd64` (34,844,834 → 42,115,234 B); no pre-Eino same-form measurement exists for `server-darwin-arm64` (unavailable, never fabricated). These deltas report size impact only and never gate release. The skeleton-era pass table (0.50×/0.35×) is retained in git history and is superseded by the measurements above. Go DMG/NSIS/LPK package sizes are not produced by this raw-binary selfcheck, so no installer-package size comparison is claimed. Per-artifact release readiness is decided by integrity, target identity and real content/static/cgo checks; see `.github/ARTIFACTS.md` and `go-size-optimization-r37.md` for the R37 optimization measurements.
 
 ## Extend the harness
 
 - Add feature-specific passing evidence to `runtime.verified_commands`, `runtime.verified_events`, and `runtime.verified_streams` in a Go selfcheck report, then run `python3 scripts/parity/coverage.py`. Registration alone becomes `implemented-unverified`, never `verified`.
 - Use aliases only to map canonical feature IDs to Go-internal names; they do not weaken the requirement to supply real feature evidence.
 - Enforce full feature coverage with `coverage.py --require-complete`; the current report intentionally fails that gate.
-- Enforce a strict artifact comparison with `size_gate.py --require` or `go_selfcheck.py --require-size`. Equal/larger/missing artifacts do not pass.
+- The parity harness keeps a local strict comparison mode (`size_gate.py --require`, `go_selfcheck.py --require-size`); it is harness tooling, not the release gate — the release pipeline treats Rust sizes as informational only (user decision 2026-10-03).
 - `go_selfcheck.py --require-features` is the final feature gate; it is not used to disguise the current 2/139 state.
 
 Useful checks:

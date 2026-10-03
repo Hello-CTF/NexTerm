@@ -8,7 +8,7 @@ OUT="$ROOT/target/release-assets"
 BIN=""
 WEB="$ROOT/dist"
 ARCH="amd64"
-REQUIRE_SIZE=0
+REQUIRE_EVIDENCE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do
     --web=*) WEB="${1#*=}"; shift ;;
     --arch) ARCH="$2"; shift 2 ;;
     --arch=*) ARCH="${1#*=}"; shift ;;
-    --require-size) REQUIRE_SIZE=1; shift ;;
+    --require-evidence) REQUIRE_EVIDENCE=1; shift ;;
     -h|--help) sed -n '1,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -165,9 +165,10 @@ package_full() {
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
 (cd "$ROOT" && package_full)
 
-# Produce the candidate before a missing/failed size baseline stops publication.
-if [ "$REQUIRE_SIZE" -ne 0 ]; then
-  (cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT" --require-size)
+# Re-validate the candidate with the final evidence gate: real file/content/static
+# checks must pass; Rust and custom-Go size comparisons are informational only.
+if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
+  (cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT" --require-evidence)
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then digest="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"; else digest="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"; fi
