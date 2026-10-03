@@ -919,6 +919,9 @@ async function reclaimTerminals(
   const { askChoice } = await import("../ui/dialogs");
   const choice = await askChoice(`${scope}里有 ${tabIds.length} 个正在运行的终端，要如何处理？`, {
     title,
+    // 含「结束进程」这种不可撤销的选项：按 A11Y 共享对话框约定给 warning 级别，
+    // 弹框以警示形态呈现（alertdialog 语义 + 警示图标），不是普通信息确认。
+    level: "warning",
     choices: [
       {
         key: "detach",
@@ -987,6 +990,8 @@ export async function requestCloseTab(id: string): Promise<void> {
   const { askChoice } = await import("../ui/dialogs");
   const choice = await askChoice("这个终端在服务端还在运行，要如何处理？", {
     title: `关闭「${target.title}」`,
+    // 同 reclaimTerminals：含不可撤销的「结束进程」，必须给 warning 级别。
+    level: "warning",
     choices: [
       {
         key: "detach",

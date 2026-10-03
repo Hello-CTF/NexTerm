@@ -280,4 +280,38 @@ describe("XtermView production grid lifecycle", () => {
     expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 36, rows: 20 });
     expect(harness.attach).toHaveBeenCalledTimes(1);
   });
+
+  it("never touches the disposed terminal when unmounted during a resume attach", async () => {
+    let resolveAttach: ((v: unknown) => void) | undefined;
+    harness.attachTab.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAttach = resolve;
+        }),
+    );
+    await show(props({ resumeTabId: "tab-existing" }));
+    const term = harness.terminals[0];
+    term.resize.mockClear();
+
+    // 卸载发生在 attachTab 等待期间：cleanup 已 dispose 终端。
+    // 这时若再按远端尺寸 resize（applyRemoteDimensions），就是在已销毁的
+    // xterm 上操作 —— 真机上抛 Viewport.syncScrollArea TypeError。
+    await act(async () => root?.unmount());
+    root = null;
+
+    resolveAttach?.({
+      tabId: "tab-existing",
+      cols: 90,
+      rows: 30,
+      controller: "other",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+    });
+    await flushWork();
+
+    expect(term.resize).not.toHaveBeenCalled();
+    // 服务端订阅仍要按通道定向摘掉（只摘自己这条）。
+    expect(harness.detach).toHaveBeenCalledWith("tab-existing", "channel-1");
+  });
 });

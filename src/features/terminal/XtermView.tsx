@@ -265,6 +265,14 @@ export function XtermView(props: XtermViewProps) {
           // 不传 cols/rows —— 接管方无权改 PTY 尺寸（见 terminalApi.attachTab）。
           const info = await terminalApi.attachTab(resume, channel);
           id = info.tabId;
+          if (disposed) {
+            // 等待期间组件已卸载：cleanup 已经 term.dispose()，这时再
+            // applyRemoteDimensions 就是在已销毁的终端上 resize —— xterm 会抛
+            // Viewport.syncScrollArea TypeError（demo 里「关掉最后一个标签再重连」
+            // 必现）。服务端订阅也要按通道定向摘掉，同下方统一检查。
+            void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
+            return;
+          }
           initialGrid = { cols: info.cols, rows: info.rows };
           applyRemoteDimensions(info.cols, info.rows);
           onAttachInfoRef.current?.({
