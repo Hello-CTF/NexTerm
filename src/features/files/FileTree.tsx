@@ -376,19 +376,24 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   /**
    * 重命名成功后把本地路径状态（选中 / 展开 / 浏览根）整体搬到新路径。
    *
-   * 不搬的话：选中和展开还指着旧路径，树上表现为「刚改的名字没生效」；
+   * 两个必须同时成立的点：
+   *   · 命中的路径按**它自己的分隔符风格**替换 —— 消费端（expanded.includes /
+   *     selected === entry.path）拿的是后端原始串，Windows 会话在 rename 后
+   *     依旧返回反斜杠，统一 norm 成正斜杠反而让展开/选中全部失配；
+   *   · 未命中的路径原样保留 —— 一次改名不能把无关目录的展开态弄丢。
    * 旧路径前缀下的目录缓存由 useFileOps 负责失效，这里只管视图状态。
-   * 匹配与拼接两侧统一 norm —— Windows 会话的目录串可能带反斜杠，
-   * 不归一化的话 `~\sub` 下的后代永远命中不了 `~\sub/` 前缀。
    */
   const remapAfterRename = (from: string, to: string) => {
     const fromN = norm(from);
     const toN = norm(to);
+    /** 把归一化目标渲染成 styleOf 的分隔符风格。 */
+    const styled = (target: string, styleOf: string) =>
+      styleOf.includes("\\") ? target.replace(/\//g, "\\") : target;
     const remap = (p: string) => {
       const pn = norm(p);
-      if (pn === fromN) return toN;
-      if (pn.startsWith(`${fromN}/`)) return `${toN}${pn.slice(fromN.length)}`;
-      return pn;
+      if (pn === fromN) return styled(toN, p);
+      if (pn.startsWith(`${fromN}/`)) return styled(`${toN}${pn.slice(fromN.length)}`, p);
+      return p;
     };
     setSelected((cur) => (cur ? remap(cur) : cur));
     setExpanded((prev) => prev.map(remap));

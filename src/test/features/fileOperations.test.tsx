@@ -618,20 +618,23 @@ describe("重命名目录时后代 dirty 编辑器同样告警（评审 P2-3 回
   });
 });
 
-describe("Windows 反斜杠路径（评审 P2-2 回归）", () => {
-  // 后端 Windows 本地会话可能返回反斜杠路径：dirMap 的键（root/expanded 原始串）
-  // 与 parentOf 的归一化结果形态不同，比较前必须统一 norm。
+describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
+  // 后端 Windows 本地会话返回反斜杠路径，且 rename 之后**依旧**返回反斜杠 ——
+  // mock 在改名前后必须保持同一分隔符风格，否则测试给出虚假保证。
   beforeEach(async () => {
     let subRenamed = false;
     mocks.list.mockImplementation((_s: string, p: string) => {
       if (p === "~") {
         const sub = subRenamed
-          ? entry("sub2", "dir", { path: "~/sub2" })
+          ? entry("sub2", "dir", { path: "~\\sub2" })
           : entry("sub", "dir", { path: "~\\sub" });
         return Promise.resolve(
-          [sub, entry("a.txt", "file", { path: "~\\a.txt" }), entry("b.txt", "file", { path: "~\\b.txt" })].map(
-            (e) => ({ ...e }),
-          ),
+          [
+            sub,
+            entry("other", "dir", { path: "~\\other" }),
+            entry("a.txt", "file", { path: "~\\a.txt" }),
+            entry("b.txt", "file", { path: "~\\b.txt" }),
+          ].map((e) => ({ ...e })),
         );
       }
       if (p === "~\\sub") {
@@ -641,10 +644,13 @@ describe("Windows 反斜杠路径（评审 P2-2 回归）", () => {
           entry("b.txt", "file", { path: "~\\sub\\b.txt" }),
         ]);
       }
-      if (p === "~/sub2") {
+      if (p === "~\\other") {
+        return Promise.resolve([entry("o.txt", "file", { path: "~\\other\\o.txt" })]);
+      }
+      if (p === "~\\sub2") {
         return Promise.resolve([
-          entry("inner", "dir", { path: "~/sub2/inner" }),
-          entry("a.txt", "file", { path: "~/sub2/a.txt" }),
+          entry("inner", "dir", { path: "~\\sub2\\inner" }),
+          entry("a.txt", "file", { path: "~\\sub2\\a.txt" }),
         ]);
       }
       return Promise.resolve([]);
@@ -676,18 +682,35 @@ describe("Windows 反斜杠路径（评审 P2-2 回归）", () => {
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub\\a.txt", "~/sub/b.txt");
   });
 
-  it("目录改名后展开/选中状态按归一化新路径搬迁", async () => {
+  it("目录改名后展开/选中按原分隔符风格搬迁，后端仍回反斜杠", async () => {
+    mocks.promptText.mockResolvedValue("sub2");
+    openRowMenu(mounted!.container, "~\\sub");
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    // RPC 的 to 维持归一化（后端两种分隔符都接受）……
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub", "~/sub2");
+    // ……但视图状态按原风格 remap：展开键变成 ~\sub2 / ~\sub2\inner，
+    // 与 rename 后依旧返回反斜杠的真实后端 entry.path 保持匹配
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub2"));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub2\\inner"));
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, "~\\sub2").className).toContain("is-selected"),
+    );
+  });
+
+  it("未参与改名的目录展开态不受影响", async () => {
+    // 展开无关目录 other，再改 sub 的名
+    click(rowByPath(mounted!.container, "~\\other"));
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, "~\\other\\o.txt")).toBeTruthy(),
+    );
     mocks.promptText.mockResolvedValue("sub2");
     openRowMenu(mounted!.container, "~\\sub");
     clickMenuItem(mounted!.container, "重命名");
     await flush();
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub", "~/sub2");
-    // 展开态（含嵌套后代）remap 到归一化新路径 → 对新路径发列表
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub2"));
-    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub2/inner"));
-    // 右键选中的目录本身搬到新路径并保持选中
-    await waitFor(() =>
-      expect(rowByPath(mounted!.container, "~/sub2").className).toContain("is-selected"),
-    );
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub2"));
+    // other 没被 norm 也没有被折叠：子项行仍然渲染
+    expect(rowByPath(mounted!.container, "~\\other\\o.txt")).toBeTruthy();
   });
 });
