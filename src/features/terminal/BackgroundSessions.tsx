@@ -112,6 +112,8 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
   const kill = async (info: LiveTabInfo) => {
     const ok = await ask(
       `结束「${info.sessionName}」的这个后台终端？\n\n正在里面跑的进程会被终止，无法恢复。`,
+      // 终止进程不可撤销：按共享对话框约定给 warning 级别（警示图标 + alertdialog 语义）。
+      { kind: "warning" },
     );
     if (!ok) return;
     setBusy((b) => ({ ...b, [info.tabId]: "kill" }));

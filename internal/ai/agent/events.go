@@ -29,6 +29,8 @@ type Event struct {
 	Reason           string
 	Preview          *tools.Preview
 	Question         *tools.Question
+	RequestID        string
+	Attempt          uint64
 	TabID            string
 	Path             string
 	Before           string
@@ -69,8 +71,10 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["id"], payload["tool"], payload["args"], payload["risk"] = e.ID, e.Tool, rawObject(e.Args), e.Risk
 		payload["rendered"], payload["reason"], payload["preview"] = e.Rendered, e.Reason, e.Preview
 		payload["confirmationNonce"] = e.Nonce
+		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
 	case "questionRequired":
 		payload["id"], payload["question"], payload["confirmationNonce"] = e.ID, e.Question, e.Nonce
+		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
 	case "screen":
 		payload["tabId"], payload["text"] = e.TabID, e.Text
 	case "fileChange":

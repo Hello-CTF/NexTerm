@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "purpose": "Official same-form Rust release references for the strict per-artifact size gate. Every entry was verified by downloading the public GitHub release asset and matching the GitHub API SHA-256 digest (M26 survey; independently re-downloaded and re-hashed for this file). Entries here take priority over the same-host pinned baseline.json and the documented historical anchors.",
+  "release": {
+    "tag": "v0.2.1",
+    "commit": "59889b28ab905809d148a642cadcaf46e12e7b08",
+    "published_at": "2026-10-02T07:55:33Z",
+    "base_url": "https://github.com/ProbiusOfficial/NexTerm/releases/download/v0.2.1"
+  },
+  "artifacts": {
+    "desktop-nsis-windows-amd64": {
+      "file": "NexTerm_0.2.1_x64-setup.exe",
+      "size_bytes": 6967558,
+      "sha256": "52d43d74c8f0c36390d64313d8966aad94cf5016de0714be73d686ba0c1d8c62",
+      "form": "NSIS installer for the Rust Windows desktop amd64"
+    },
+    "desktop-dmg-darwin-arm64": {
+      "file": "NexTerm_0.2.1_aarch64.dmg",
+      "size_bytes": 14973100,
+      "sha256": "7c1f1ffee95930a33a924f05ebaeb36640decc3b63003728c1764bc9dea579df",
+      "form": "DMG for the Rust macOS desktop arm64; the same-host baseline.json DMG (14987015 B) is a different build of the same name and both are citable, the release asset is publicly verifiable"
+    },
+    "server-archive-full-linux-amd64": {
+      "file": "NexTerm-0.2.1-linux-amd64.tar.gz",
+      "size_bytes": 7858105,
+      "sha256": "81fe2495191a9bbf2d6ba92ebc90f6c18de96cd07e40b034b4ac3d88b831a394",
+      "form": "whole-archive comparison against the Go full server archive",
+      "contents_difference": "The Rust archive is a single-binary full server: nexterm-server ELF, web/ frontend, nexterm-server.service, one env example, README and LICENSE. The Go full archive intentionally carries both runtime units (nexterm-server.service and nexterm-onlyserver.service) and both env examples because restricted --sync-only is a runtime mode of the same binary, not a separate onlyServer package. Whole-archive bytes remain the like-for-like rule; the content difference is stated here and in the artifact report, never hidden."
+    },
+    "server-linux-amd64": {
+      "file": "NexTerm-0.2.1-linux-amd64.tar.gz",
+      "inner_path": "NexTerm-0.2.1-linux-amd64/nexterm-server",
+      "size_bytes": 17360408,
+      "sha256": "070d3b8289fdd186a96016444ab3fe9c4e35b126bcfd2242f9bfd166c7d67f12",
+      "form": "stripped ELF x86-64 (dynamic libc/libm/libgcc_s) inside the official full server archive; supersedes the smaller pre-release dev cross-build anchor in historical-metrics.json"
+    },
+    "desktop-darwin-arm64": {
+      "file": "NexTerm_aarch64.app.tar.gz",
+      "inner_path": "NexTerm.app/Contents/MacOS/nexterm",
+      "size_bytes": 25826144,
+      "sha256": "6e706ca3350691e982a29df7ea4f040178cff11f7ecab354255dccfe65184d00",
+      "form": "Mach-O arm64 inside the official macOS app archive; container NexTerm_aarch64.app.tar.gz is 12371322 B sha256 984bbcce06a9be1321b5d2f43d2852cd0d246188abd8736deb190107f0fd9d52"
+    }
+  },
+  "genuinely_unavailable": {
+    "note": "No official Rust release (v0.1.0-v0.2.1) ever produced these same-form artifacts; per the release contract they stay evidence-gap and must never be reported as passed.",
+    "ids": [
+      "desktop-nsis-windows-arm64",
+      "desktop-dmg-darwin-amd64",
+      "desktop-linux-archive-linux-amd64",
+      "desktop-linux-archive-linux-arm64",
+      "server-archive-full-linux-arm64"
+    ]
+  }
+}

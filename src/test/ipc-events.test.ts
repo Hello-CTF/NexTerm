@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import layoutSource from "../app/layout.ts?raw";
 import { createWailsMock, type WailsMock } from "./wailsMock";
+// 类型闸门（编译期生效、运行时被擦除）：events.ts 的共享事件 DTO 必须与
+// types.ts 及后端 StatusEvent/ExitEvent/ControlEvent 字段对齐，少一个 version
+// 或 grid 字段，`pnpm typecheck` 就会在这里变红。
+import type {
+  SessionStatusEvent as SessionStatusEventFromEvents,
+  TerminalExitEvent as TerminalExitEventFromEvents,
+  TerminalControlEvent,
+} from "../ipc/events";
+import type {
+  SessionStatusEvent as SessionStatusEventFromTypes,
+  TerminalExitEvent as TerminalExitEventFromTypes,
+} from "../ipc/types";
 
 type EventHandler = (event: { data: unknown }) => void;
 
@@ -157,5 +169,57 @@ describe("Wails events 与 channels", () => {
     expect(channel.toJSON()).toBeNull();
     expect(frames).toEqual([[9, 8]]);
     expect(runtime.Events.On).not.toHaveBeenCalled();
+  });
+});
+
+describe("共享事件 DTO 与版本高水位", () => {
+  it("events.ts 的 SessionStatusEvent/TerminalExitEvent 与 types.ts 同源（含 version）", () => {
+    // 编译期闸门：双向赋值要求两份 DTO 完全一致（字段缺失/类型漂移都会让
+    // `pnpm typecheck` 变红）；运行时断言导出确实携带 version。
+    const status: SessionStatusEventFromEvents = {
+      sessionId: "s-1",
+      status: "connected",
+      error: null,
+      version: 3,
+    };
+    const sameStatus: SessionStatusEventFromTypes = status;
+    expect(sameStatus.version).toBe(3);
+
+    const exit: TerminalExitEventFromEvents = { tabId: "t-1", exitCode: 0, version: 5 };
+    const sameExit: TerminalExitEventFromTypes = exit;
+    expect(sameExit.version).toBe(5);
+  });
+
+  it("TerminalControlEvent 携带权威网格与事件版本（对齐 Go ControlEvent）", () => {
+    const control: TerminalControlEvent = {
+      tabId: "t-1",
+      controller: null,
+      subscribers: 2,
+      viewers: 1,
+      exited: false,
+      cols: 120,
+      rows: 40,
+      gridRevision: 7,
+      version: 11,
+    };
+    expect(control.gridRevision).toBe(7);
+    expect(control.version).toBe(11);
+  });
+
+  it("EventVersionGate 接受递增版本，丢弃重放、乱序与非法版本", async () => {
+    const { EventVersionGate } = await import("../ipc/events");
+    const gate = new EventVersionGate();
+
+    expect(gate.accept("tab-1", 1)).toBe(true);
+    expect(gate.accept("tab-1", 2)).toBe(true);
+    // 重放（同版本重推）与乱序（旧版本迟到）都不得回退本地状态。
+    expect(gate.accept("tab-1", 2)).toBe(false);
+    expect(gate.accept("tab-1", 1)).toBe(false);
+    expect(gate.accept("tab-1", 0)).toBe(false);
+    expect(gate.accept("tab-1", Number.NaN)).toBe(false);
+    expect(gate.accept("", 3)).toBe(false);
+    // 不同 key 的高水位互不影响。
+    expect(gate.accept("tab-2", 1)).toBe(true);
+    expect(gate.accept("tab-1", 3)).toBe(true);
   });
 });

@@ -1,33 +1,26 @@
-/**
- * 全局自绘右键菜单（替代 WebView 自带的浏览器菜单）。
- *
- * 为什么要自绘：Tauri 的 WebView 默认弹的是浏览器那个「返回 / 前进 / 重新加载 /
- * 检查元素」菜单 —— 在一个运维终端里既没用又出戏；而且文件树、终端、资产树各自
- * 需要的动作完全不同，只有自绘才能把动作摆到手指边上。
- *
- * 形态：可分组（带灰色小标）、可带快捷键提示（右侧等宽灰字）、
- * 可挂子菜单（悬停展开，右边放不下自动翻到左边）。
- *
- * 定位策略：先按鼠标点挂载，`useLayoutEffect` 里量到真实尺寸后再做视口避让。
- * 光靠 CSS 的 `max-height` 躲不开右侧溢出 —— 那是横向的。
- */
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+// 全局自绘右键菜单：指针、触摸与键盘共用同一套动作。
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
+import { documentTabTarget, isImeKeyEvent, useOverlayFocus } from "./DialogHost";
 
 export type MenuItem =
   | { kind: "separator" }
-  /** 分组小标题。不参与交互，只是视觉分段。 */
   | { kind: "group"; label: string }
   | {
       kind: "item";
       label: string;
       icon?: ReactNode;
-      /** 右侧快捷键提示，如 "Ctrl+C" / "Ctrl+Shift+D"。 */
       accel?: string;
-      /** 右侧补充说明（和 accel 并存时 accel 更靠右）。 */
       hint?: string;
       danger?: boolean;
       disabled?: boolean;
-      /** 有子菜单时点击不执行 onSelect，而是悬停展开。 */
       submenu?: MenuItem[];
       onSelect?: () => void;
     };
@@ -36,12 +29,17 @@ export interface ContextMenuState {
   x: number;
   y: number;
   items: MenuItem[];
-  /** 菜单顶部的一行说明，通常是选中的路径或名称。 */
   title?: string;
 }
 
-/** 菜单离视口边缘至少留这么宽。 */
 const MARGIN = 8;
+
+function menuButtons(menu: ParentNode | null): HTMLButtonElement[] {
+  if (!menu) return [];
+  return [...menu.querySelectorAll<HTMLButtonElement>(":scope > .nx-menu-row > .nx-menu-item")].filter(
+    (button) => !button.disabled,
+  );
+}
 
 export function ContextMenu({
   state,
@@ -52,132 +50,235 @@ export function ContextMenu({
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const onCloseRef = useRef(onClose);
+  const closedRef = useRef(false);
+  onCloseRef.current = onClose;
+  const layer = useOverlayFocus(pos ? state : null, boxRef, {
+    modal: false,
+    initialFocus: () => menuButtons(boxRef.current)[0] ?? boxRef.current,
+  });
 
-  // 每次打开都重新量：不同节点的菜单项数量不同，尺寸也不同。
-  // 量完之前先 visibility:hidden，避免在原始位置闪一下再跳走。
+  const close = (): boolean => {
+    if (closedRef.current) return false;
+    closedRef.current = true;
+    onCloseRef.current();
+    return true;
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+
   useLayoutEffect(() => {
+    closedRef.current = false;
     if (!state) {
       setPos(null);
       return;
     }
-    const el = boxRef.current;
-    if (!el) return;
-    const { offsetWidth: w, offsetHeight: h } = el;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const element = boxRef.current;
+    if (!element) return;
+    const { offsetWidth: width, offsetHeight: height } = element;
     let left = state.x;
     let top = state.y;
-    if (left + w + MARGIN > vw) left = Math.max(MARGIN, vw - w - MARGIN);
-    if (top + h + MARGIN > vh) top = Math.max(MARGIN, vh - h - MARGIN);
+    if (left + width + MARGIN > window.innerWidth) left = Math.max(MARGIN, window.innerWidth - width - MARGIN);
+    if (top + height + MARGIN > window.innerHeight) top = Math.max(MARGIN, window.innerHeight - height - MARGIN);
     setPos({ left, top });
   }, [state]);
 
   useEffect(() => {
     if (!state) return;
-    // 捕获阶段监听：菜单项自己的 click 先跑，这里只负责"点别处就收"
-    const onDown = (e: PointerEvent) => {
-      if (boxRef.current?.contains(e.target as Node)) return;
-      onClose();
+    const onDown = (event: PointerEvent) => {
+      if (!layer.isTopmost() || boxRef.current?.contains(event.target as Node)) return;
+      closeRef.current();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || isImeKeyEvent(event) || !layer.isTopmost()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeRef.current();
     };
-    const dismiss = () => onClose();
+    const dismiss = () => closeRef.current();
+    const dismissOnScroll = () => {
+      if (layer.isTopmost()) closeRef.current();
+    };
     window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", dismiss);
     window.addEventListener("resize", dismiss);
-    // 滚动时不收掉的话，菜单会"漂"在旧位置指向别的东西，收掉更稳
-    window.addEventListener("wheel", dismiss, { passive: true });
+    window.addEventListener("wheel", dismissOnScroll, { passive: true });
     return () => {
       window.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", dismiss);
       window.removeEventListener("resize", dismiss);
-      window.removeEventListener("wheel", dismiss);
+      window.removeEventListener("wheel", dismissOnScroll);
     };
-  }, [state, onClose]);
+  }, [state, layer]);
 
   if (!state) return null;
+
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (isImeKeyEvent(event) || !layer.isTopmost()) return;
+    if (event.key === "Tab") {
+      event.preventDefault();
+      if (boxRef.current) {
+        const target = documentTabTarget(
+          layer.getReturnFocus(),
+          event.shiftKey ? -1 : 1,
+          boxRef.current,
+        );
+        layer.setReturnFocus(target);
+      }
+      close();
+      return;
+    }
+    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".nx-menu-item") : null;
+    if (!target || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = menuButtons(target.closest("[role='menu']"));
+    if (items.length === 0) return;
+    event.preventDefault();
+    const current = items.indexOf(target);
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : event.key === "ArrowDown"
+            ? (current + 1 + items.length) % items.length
+            : (current - 1 + items.length) % items.length;
+    items[next].focus();
+  };
 
   return (
     <div
       ref={boxRef}
       className="nx-menu"
       role="menu"
+      aria-label={state.title ?? "上下文菜单"}
+      tabIndex={-1}
       style={{
         left: pos?.left ?? state.x,
         top: pos?.top ?? state.y,
         visibility: pos ? "visible" : "hidden",
       }}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={onMenuKeyDown}
     >
       {state.title && (
         <div className="nx-menu-title" title={state.title}>
           {state.title}
         </div>
       )}
-      <MenuList items={state.items} onClose={onClose} />
+      <MenuList items={state.items} onClose={close} />
     </div>
   );
 }
 
-/**
- * 递归渲染一层菜单。
- *
- * 每层自己管「哪个子菜单开着」—— 这样悬停切换时不会互相踩，
- * 也不需要把状态提到顶层去。
- */
-function MenuList({ items, onClose }: { items: MenuItem[]; onClose: () => void }) {
+function MenuList({
+  items,
+  onClose,
+  onExit,
+}: {
+  items: MenuItem[];
+  onClose: () => boolean;
+  onExit?: () => void;
+}) {
   const [openSub, setOpenSub] = useState<number | null>(null);
+  const [focusSub, setFocusSub] = useState(false);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listId = useId();
+
+  const openForKeyboard = (index: number, submenuId: string) => {
+    if (openSub === index) {
+      menuButtons(document.getElementById(submenuId))[0]?.focus();
+      return;
+    }
+    setFocusSub(true);
+    setOpenSub(index);
+  };
 
   return (
     <>
-      {items.map((item, i) => {
-        if (item.kind === "separator") return <div key={`sep-${i}`} className="nx-menu-sep" />;
+      {items.map((item, index) => {
+        if (item.kind === "separator") {
+          return <div key={`sep-${index}`} className="nx-menu-sep" role="separator" />;
+        }
         if (item.kind === "group") {
           return (
-            <div key={`grp-${i}`} className="nx-menu-group">
+            <div key={`grp-${index}`} className="nx-menu-group" role="presentation">
               {item.label}
             </div>
           );
         }
 
-        const sub = item.submenu;
-        const hasSub = !!sub && sub.length > 0;
+        const submenu = item.submenu;
+        const hasSubmenu = !!submenu && submenu.length > 0;
+        const submenuId = `${listId}-submenu-${index}`;
+        const expanded = hasSubmenu && openSub === index;
+        const closeSubmenu = () => {
+          setOpenSub(null);
+          setFocusSub(false);
+          itemRefs.current[index]?.focus();
+        };
 
         return (
           <div
-            key={`${item.label}-${i}`}
+            key={`${item.label}-${index}`}
             className="nx-menu-row"
-            // 子菜单在 DOM 上是这一行的后代，所以鼠标移进子菜单不会触发
-            // 这一行的 mouseleave —— 不用额外写"延迟关闭"那套。
-            onMouseEnter={() => setOpenSub(hasSub ? i : null)}
-            onMouseLeave={() => setOpenSub((cur) => (cur === i ? null : cur))}
+            onMouseEnter={() => {
+              setFocusSub(false);
+              setOpenSub(hasSubmenu ? index : null);
+            }}
+            onMouseLeave={() => setOpenSub((current) => (current === index ? null : current))}
           >
             <button
+              ref={(element) => {
+                itemRefs.current[index] = element;
+              }}
               type="button"
               role="menuitem"
+              tabIndex={-1}
               className={`nx-menu-item ${item.danger ? "is-danger" : ""}`}
               disabled={item.disabled}
+              aria-haspopup={hasSubmenu ? "menu" : undefined}
+              aria-expanded={hasSubmenu ? expanded : undefined}
+              aria-controls={hasSubmenu ? submenuId : undefined}
               onClick={() => {
-                // 有子菜单的项只负责展开，点了不执行
-                if (hasSub) return;
-                // 先收菜单再执行：动作里可能弹模态框，菜单压在上面会很怪
-                onClose();
-                item.onSelect?.();
+                if (hasSubmenu) {
+                  setFocusSub(true);
+                  setOpenSub((current) => (current === index ? null : index));
+                  return;
+                }
+                if (onClose()) item.onSelect?.();
+              }}
+              onKeyDown={(event) => {
+                if (isImeKeyEvent(event)) return;
+                if (event.key === "ArrowLeft" && onExit) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onExit();
+                } else if (hasSubmenu && event.key === "ArrowRight") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openForKeyboard(index, submenuId);
+                }
               }}
             >
-              <span className="nx-menu-icon">{item.icon}</span>
+              <span className="nx-menu-icon" aria-hidden="true">{item.icon}</span>
               <span className="nx-menu-label">{item.label}</span>
               {item.hint && <span className="nx-menu-hint">{item.hint}</span>}
               {item.accel && <span className="nx-menu-accel">{item.accel}</span>}
-              {hasSub && <span className="nx-menu-arrow">›</span>}
+              {hasSubmenu && <span className="nx-menu-arrow" aria-hidden="true">›</span>}
             </button>
-            {hasSub && openSub === i && sub && <SubMenu items={sub} onClose={onClose} />}
+            {expanded && submenu && (
+              <SubMenu
+                id={submenuId}
+                items={submenu}
+                onClose={onClose}
+                onExit={closeSubmenu}
+                autoFocus={focusSub}
+                label={item.label}
+              />
+            )}
           </div>
         );
       })}
@@ -185,20 +286,40 @@ function MenuList({ items, onClose }: { items: MenuItem[]; onClose: () => void }
   );
 }
 
-/** 子菜单：默认贴父菜单右侧；右边实在放不下就翻到左侧。 */
-function SubMenu({ items, onClose }: { items: MenuItem[]; onClose: () => void }) {
+function SubMenu({
+  id,
+  items,
+  onClose,
+  onExit,
+  autoFocus,
+  label,
+}: {
+  id: string;
+  items: MenuItem[];
+  onClose: () => boolean;
+  onExit: () => void;
+  autoFocus: boolean;
+  label: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [flip, setFlip] = useState(false);
 
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setFlip(el.getBoundingClientRect().right + MARGIN > window.innerWidth);
-  }, [items]);
+    const element = ref.current;
+    if (!element) return;
+    setFlip(element.getBoundingClientRect().right + MARGIN > window.innerWidth);
+    if (autoFocus) menuButtons(element)[0]?.focus();
+  }, [items, autoFocus]);
 
   return (
-    <div ref={ref} className={`nx-submenu ${flip ? "is-flip" : ""}`} role="menu">
-      <MenuList items={items} onClose={onClose} />
+    <div
+      ref={ref}
+      id={id}
+      className={`nx-submenu ${flip ? "is-flip" : ""}`}
+      role="menu"
+      aria-label={label}
+    >
+      <MenuList items={items} onClose={onClose} onExit={onExit} />
     </div>
   );
 }

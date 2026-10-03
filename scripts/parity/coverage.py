@@ -23,6 +23,13 @@ def verified_index(items: list[dict[str, Any]], key: str) -> dict[str, str]:
     return {item[key]: item.get("evidence", "go-selfcheck.json") for item in items}
 
 
+def display_path(path: pathlib.Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def generate(inventory_path: pathlib.Path, aliases_path: pathlib.Path, report_path: pathlib.Path) -> dict[str, Any]:
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     aliases = json.loads(aliases_path.read_text(encoding="utf-8"))
@@ -94,7 +101,7 @@ def generate(inventory_path: pathlib.Path, aliases_path: pathlib.Path, report_pa
         "go_source": {
             "root": report.get("go_source", {}).get("root"),
             "commit": report.get("go_source", {}).get("commit"),
-            "report": str(report_path.relative_to(ROOT)),
+            "report": display_path(report_path),
         },
         "rules": {
             "verified_requires_passing_feature_evidence": True,

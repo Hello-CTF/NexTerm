@@ -36,9 +36,11 @@ import {
   baseName,
   crumbsOf,
   joinPath,
+  norm,
   normalizeTypedPath,
   parentOf,
 } from "./pathUtils";
+import { useFileOps } from "./useFileOps";
 import {
   IconArchive,
   IconArrowUp,
@@ -51,7 +53,9 @@ import {
   IconFoldAll,
   IconFolderPlus,
   IconHome,
+  IconLock,
   IconRefresh,
+  IconShieldCheck,
   IconTerminal,
   IconTrash,
   IconUpload,
@@ -85,6 +89,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const [draft, setDraft] = useState("");
   /** 行右键菜单（见 openRowMenu）。 */
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  /** rename / chmod / checksum（M60）：两处入口共用同一套预检与提醒。 */
+  const fileOps = useFileOps(sessionId);
 
   const beginEdit = () => {
     setDraft(root);
@@ -368,14 +374,57 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   };
 
   /**
+   * 重命名成功后把本地路径状态（选中 / 展开 / 浏览根）整体搬到新路径。
+   *
+   * 两个必须同时成立的点：
+   *   · 命中的路径按**它自己的分隔符风格**替换 —— 消费端（expanded.includes /
+   *     selected === entry.path）拿的是后端原始串，Windows 会话在 rename 后
+   *     依旧返回反斜杠，统一 norm 成正斜杠反而让展开/选中全部失配；
+   *   · 未命中的路径原样保留 —— 一次改名不能把无关目录的展开态弄丢。
+   * 旧路径前缀下的目录缓存由 useFileOps 负责失效，这里只管视图状态。
+   */
+  const remapAfterRename = (from: string, to: string) => {
+    const fromN = norm(from);
+    const toN = norm(to);
+    /** 把归一化目标渲染成 styleOf 的分隔符风格。 */
+    const styled = (target: string, styleOf: string) =>
+      styleOf.includes("\\") ? target.replace(/\//g, "\\") : target;
+    const remap = (p: string) => {
+      const pn = norm(p);
+      if (pn === fromN) return styled(toN, p);
+      if (pn.startsWith(`${fromN}/`)) return styled(`${toN}${pn.slice(fromN.length)}`, p);
+      return p;
+    };
+    setSelected((cur) => (cur ? remap(cur) : cur));
+    setExpanded((prev) => prev.map(remap));
+    if (norm(root) === fromN || norm(root).startsWith(`${fromN}/`)) setRoot(remap(root));
+  };
+
+  /**
+   * 条目的同目录 siblings（重命名覆盖预判用）。
+   *
+   * 直接按行的 `dir`（条目所在列表的缓存键）精确取 —— 不做 parentOf/norm 反推：
+   * 真实后端 list `~` 返回的是绝对 entry.path，反推出来的父路径和 `~` 键恒不相等，
+   * 会让根层同名覆盖确认被静默跳过（R1 评审 P1）。
+   */
+  const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
+
+  /**
    * 行右键。
    *
    * 菜单只留「必须对着某个具体文件/目录做」的动作，其余（编码、录制、
    * 上传下载的图标入口）交给工具栏，别在这里重复一遍。
    * 按类型收敛：目录给「打包下载当前文件夹」，文件给「在下方编辑 / 解压 / 下载」。
    * 目录落到它自己、文件落到它**所在的目录** —— 对文件路径本身 cd 没有意义。
+   *
+   * `listKey` 是这一行所在列表的缓存键（rows 的 dir 字段）：rename/chmod 的
+   * siblings 与缓存失效都认它，不做路径反推（见 useFileOps 的 listKey 契约）。
    */
-  const openRowMenu = (e: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
+  const openRowMenu = (
+    e: ReactMouseEvent<HTMLDivElement>,
+    entry: FileEntryDto,
+    listKey: string,
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     setSelected(entry.path); // 右键顺手选中，符合直觉
@@ -431,6 +480,36 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         label: "下载当前文件",
         icon: <IconDownload size={13} />,
         onSelect: () => void download(entry.path),
+      });
+    }
+    // 重命名 / 权限 / 校验值（M60）：目录与文件都有重命名和权限；
+    // 校验值只对非目录（符号链接算的是它指向的目标的内容）。
+    items.push(
+      {
+        kind: "item",
+        label: "重命名",
+        icon: <IconEdit size={13} />,
+        disabled: fileOps.busy !== null,
+        onSelect: () =>
+          void fileOps.renameEntry(entry, siblingsOf(listKey), listKey, remapAfterRename),
+      },
+      {
+        kind: "item",
+        label: "权限…",
+        icon: <IconLock size={13} />,
+        hint: "chmod",
+        disabled: fileOps.busy !== null,
+        onSelect: () => void fileOps.chmodEntry(entry, listKey),
+      },
+    );
+    if (!isDir) {
+      items.push({
+        kind: "item",
+        label: "校验值…",
+        icon: <IconShieldCheck size={13} />,
+        hint: "md5/sha256",
+        disabled: fileOps.busy !== null,
+        onSelect: () => void fileOps.checksumEntry(entry),
       });
     }
     items.push(
@@ -628,7 +707,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               }}
               // 双击目录 = 「进去」：把浏览根切到它，不必从 / 一路展开下来
               onDoubleClick={() => (isDir ? enterDir(entry.path) : openFile(entry))}
-              onContextMenu={(e) => openRowMenu(e, entry)}
+              onContextMenu={(e) => openRowMenu(e, entry, dir)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
             >
               {isDir ? (

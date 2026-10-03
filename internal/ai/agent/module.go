@@ -10,9 +10,10 @@ import (
 )
 
 // Module exposes only the agent runtime surface: chat lifecycle, HITL
-// confirmation/answer and permission config. Provider, model and conversation
-// IPC commands are owned by the production profiles module; registering them
-// here as well fails composition with duplicate-command errors.
+// confirmation/answer, HITL reconnect replay and permission config.
+// Provider, model and conversation IPC commands are owned by the production
+// profiles module; registering them here as well fails composition with
+// duplicate-command errors.
 func Module(runner *Runner) app.Module {
 	return app.Module{Name: "ai-agent", RegisterCommands: runner.RegisterCommands, Component: runnerComponent{runner: runner}}
 }
@@ -40,6 +41,21 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.Register(dispatcher, "ai_answer", func(_ context.Context, _ *ipc.Call, args Answer) (any, error) {
 				return nil, r.Answer(args)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_hitl_snapshot", func(_ context.Context, _ *ipc.Call, args struct {
+				JobID string `json:"jobId"`
+			}) (any, error) {
+				return r.HITLSnapshot(args.JobID)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_hitl_events", func(_ context.Context, _ *ipc.Call, args struct {
+				JobID    string `json:"jobId"`
+				AfterSeq uint64 `json:"afterSeq"`
+			}) (any, error) {
+				return r.HITLEvents(args.JobID, args.AfterSeq)
 			})
 		},
 		func() error {

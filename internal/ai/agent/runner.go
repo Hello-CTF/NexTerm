@@ -2,12 +2,15 @@ package agent
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/cloudwego/eino/adk"
@@ -17,6 +20,7 @@ type Runner struct {
 	config       Config
 	store        ConversationStore
 	checkpoints  adk.CheckPointStore
+	hitl         *hitl.Manager
 	mu           sync.Mutex
 	jobs         map[string]*job
 	reservedJobs map[string]struct{}
@@ -51,7 +55,15 @@ func NewRunner(config Config) *Runner {
 	if config.Checkpoints == nil {
 		config.Checkpoints = NewMemoryCheckpoints()
 	}
-	return &Runner{config: config, store: config.Store, checkpoints: config.Checkpoints, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
+	manager := config.HITL
+	if manager == nil {
+		var err error
+		manager, err = hitl.NewManager(hitl.Config{Checkpoints: config.Checkpoints})
+		if err != nil {
+			panic(fmt.Sprintf("agent: hitl manager: %v", err))
+		}
+	}
+	return &Runner{config: config, store: config.Store, checkpoints: config.Checkpoints, hitl: manager, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
 }
 
 func (r *Runner) reserveJobID(jobID string) error {
@@ -142,6 +154,20 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	r.jobs[jobID] = current
 	r.wg.Add(1)
 	r.mu.Unlock()
+	if _, err := r.hitl.RegisterRun(jobContext, jobID, jobID); err != nil {
+		r.mu.Lock()
+		if r.jobs[jobID] == current {
+			delete(r.jobs, jobID)
+		}
+		r.wg.Done()
+		r.mu.Unlock()
+		cancel()
+		forceCancel()
+		_ = stream.Close()
+		r.releaseJobID(jobID)
+		return StartResponse{}, err
+	}
+	go r.watchHITL(current)
 	go r.runJob(current)
 	return StartResponse{JobID: jobID, ConversationID: conversationID}, nil
 }
@@ -172,12 +198,12 @@ func (r *Runner) Cancel(jobID string) error {
 	current.pendingMu.Lock()
 	running := current.running
 	cancelFn := current.cancelFn
-	if !running {
-		current.pending = nil
-	}
 	current.pendingMu.Unlock()
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
+	}
+	if _, err := r.hitl.Cancel(jobID); err != nil && !errors.Is(err, hitl.ErrRunNotFound) {
+		return err
 	}
 	if !running {
 		r.complete(current, "", 0, usage.Usage{}, context.Canceled)
@@ -203,7 +229,25 @@ func (r *Runner) Confirm(confirmation Confirmation) error {
 		}
 		return ErrJobNotFound
 	}
-	return r.resume(current, "confirm", confirmation.CallID, confirmation.Nonce, confirmation.Decision)
+	if current.ctx.Err() != nil {
+		return ErrJobNotFound
+	}
+	request, err := r.pendingInterrupt(current.id, confirmation.CallID, confirmation.Nonce, hitl.KindConfirm)
+	if err != nil {
+		return err
+	}
+	answer := hitl.Answer{
+		ID:           r.config.NewID(),
+		RunID:        current.id,
+		RequestID:    request.ID,
+		CheckpointID: request.CheckpointID,
+		TargetID:     request.TargetID,
+		CallID:       request.CallID,
+		Nonce:        confirmation.Nonce,
+		Parameters:   request.Parameters,
+		Decision:     hitl.Decision(confirmation.Decision),
+	}
+	return r.resumeWithAnswer(current, answer)
 }
 
 func (r *Runner) Answer(answer Answer) error {
@@ -216,35 +260,92 @@ func (r *Runner) Answer(answer Answer) error {
 	if current == nil || current.ctx.Err() != nil {
 		return ErrJobNotFound
 	}
-	return r.resume(current, "question", answer.CallID, answer.Nonce, answer.Text)
+	request, err := r.pendingInterrupt(current.id, answer.CallID, answer.Nonce, hitl.KindQuestion)
+	if err != nil {
+		return err
+	}
+	hitlAnswer := hitl.Answer{
+		ID:           r.config.NewID(),
+		RunID:        current.id,
+		RequestID:    request.ID,
+		CheckpointID: request.CheckpointID,
+		TargetID:     request.TargetID,
+		CallID:       request.CallID,
+		Nonce:        answer.Nonce,
+		Parameters:   request.Parameters,
+		Text:         answer.Text,
+	}
+	return r.resumeWithAnswer(current, hitlAnswer)
 }
 
-func (r *Runner) resume(current *job, kind, callID, nonce, value string) error {
+func (r *Runner) pendingInterrupt(jobID, callID, nonce string, kind hitl.Kind) (hitl.Interrupt, error) {
+	snapshot, err := r.hitl.Snapshot(jobID)
+	if err != nil {
+		return hitl.Interrupt{}, mapResumeError(err)
+	}
+	for _, pending := range snapshot.Pending {
+		if pending.CallID == callID && pending.Kind == kind && subtle.ConstantTimeCompare([]byte(pending.Nonce), []byte(nonce)) == 1 {
+			return pending, nil
+		}
+	}
+	return hitl.Interrupt{}, fmt.Errorf("%w: 没有待处理的确认请求匹配该调用", ErrConfirmationStale)
+}
+
+// resumeWithAnswer hands a validated answer to the HITL manager and makes
+// sure exactly one consume loop drives the resumed event stream: the parked
+// loop picks it up when one is still winding down, otherwise a fresh loop
+// starts here.
+func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
 	current.pendingMu.Lock()
-	if current.ctx.Err() != nil {
+	if current.ctx.Err() != nil || current.eino == nil || current.eino.runner == nil {
 		current.pendingMu.Unlock()
 		return ErrJobNotFound
 	}
-	pending := current.pending
-	if pending == nil || pending.kind != kind || pending.callID != callID || pending.nonce != nonce || current.eino == nil {
+	resumer := current.eino.runner
+	_, iterator, err := r.hitl.Resume(context.Background(), resumer, answer)
+	if err != nil {
 		current.pendingMu.Unlock()
-		return ErrConfirmationStale
+		return mapResumeError(err)
 	}
-	start := !current.running
-	current.pending = nil
-	current.eino.resume = &adk.ResumeParams{Targets: map[string]any{nonce: value}}
-	if start {
-		current.running = true
+	if current.running {
+		current.resumeIterator = iterator
+		current.pendingMu.Unlock()
+		return nil
 	}
+	current.running = true
 	current.pendingMu.Unlock()
-	if start {
-		go r.runJob(current)
-	}
+	go r.consumeResumed(current, iterator)
 	return nil
+}
+
+func mapResumeError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, hitl.ErrRunFinished), errors.Is(err, hitl.ErrRunNotFound), errors.Is(err, hitl.ErrManagerClosed):
+		return fmt.Errorf("%w: %w", ErrJobNotFound, err)
+	case errors.Is(err, hitl.ErrInvalidArgument):
+		return fmt.Errorf("%w: %w", ErrInvalidConfirmation, err)
+	default:
+		return fmt.Errorf("%w: %w", ErrConfirmationStale, err)
+	}
+}
+
+// HITLSnapshot exposes the reconnect surface for one run: pending interrupt
+// requests with their stable request IDs plus the terminal event, if any.
+func (r *Runner) HITLSnapshot(jobID string) (hitl.Snapshot, error) {
+	return r.hitl.Snapshot(jobID)
+}
+
+// HITLEvents replays the per-run HITL event log strictly after the given
+// sequence so a reconnected client can resume mid-stream without guessing.
+func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
+	return r.hitl.Events(jobID, after)
 }
 
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
+		_, _ = r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
 		r.cleanup(current)
 	})
@@ -291,10 +392,16 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 			current.forceCancel()
 		}
 		current.cancel()
-		_, running, cancelFn := current.state()
+		running, cancelFn := current.state()
 		if cancelFn != nil && running {
 			_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 		}
+		// After a HITL resume the active execution runs on the manager's run
+		// context with a manager-held cancel function, so neither cancellation
+		// above reaches it; cancel every run through the manager before
+		// waiting, mirroring Runner.Cancel. Close is best-effort: a run that
+		// already finished or fails cleanup must not block the others.
+		_, _ = r.hitl.Cancel(current.id)
 		if !running {
 			r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 		}
@@ -306,8 +413,9 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return nil
+		return r.hitl.Close()
 	case <-ctx.Done():
+		_ = r.hitl.Close()
 		return ctx.Err()
 	}
 }

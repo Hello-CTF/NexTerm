@@ -6,7 +6,39 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
 )
+
+// OutcomeAuditKind is the audit_log kind for terminal outcome ledger records.
+const OutcomeAuditKind = "outcome"
+
+// OutcomeAuditor adapts AuditInsert to the outcome ledger's Auditor: every
+// terminal outcome record is inserted into the same audit_log the audit query
+// reads, so audit_query compatibility is preserved by construction.
+func (s *Store) OutcomeAuditor() outcome.Auditor {
+	return outcomeAuditor{store: s}
+}
+
+type outcomeAuditor struct {
+	store *Store
+}
+
+func (a outcomeAuditor) Append(ctx context.Context, record outcome.Record) error {
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+	}
+	input := AuditInput{Source: "ai", Kind: OutcomeAuditKind, Payload: json.RawMessage(payload)}
+	if record.Result.ExitCode != nil {
+		code := int32(*record.Result.ExitCode)
+		input.ExitCode = &code
+	}
+	if record.StartedAt != nil && record.FinishedAt != nil {
+		duration := record.FinishedAt.Sub(*record.StartedAt).Milliseconds()
+		input.DurationMS = &duration
+	}
+	return a.store.AuditInsert(ctx, input)
+}
 
 func (s *Store) AuditInsert(ctx context.Context, input AuditInput) error {
 	payload, err := json.Marshal(input.Payload)

@@ -19,28 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
-          # 与 ci.yml / release.yml / 锁文件保持同一口径（原为 9，与 pnpm-workspace.yaml
-          # 里按 pnpm 11 写的依赖构建白名单对不上）。
           version: 11
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm exec tsc -p tsconfig.json --noEmit
-
-      - name: Build web app
-        run: pnpm exec vite build --base=/NexTerm/demo/
-
-      - name: Assemble site
+      - name: Build reproducible demo assets through the shared Go/Wails delivery entry
+        run: node scripts/build.mjs frontend --repro-check --base=/NexTerm/demo/
+      - name: Assemble site without claiming deployed-target acceptance
         run: |
           mkdir -p _site
           cp -r website/. _site/
@@ -48,7 +38,7 @@ jobs:
           mkdir -p _site/images _site/brand
           cp docs/images/*.png _site/images/
           cp public/brand/nexterm-mark-128.png _site/brand/
-
+          cp .github/acceptance/real-target-gaps.json _site/acceptance-evidence-gaps.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
@@ -62,3 +52,5 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Deployed URL remains an M47 real-target acceptance input
+        run: echo "${{ steps.deployment.outputs.page_url }} deployed; run M47 real-target acceptance before marking deployed Pages passed"
