@@ -32,7 +32,7 @@
 | --- | --- |
 | Windows 10/11 x64 | 下载 `NexTerm_x.y.z_x64-setup.exe`，运行安装器。 |
 | macOS（Apple Silicon，arm64） | 下载 `NexTerm_x.y.z_aarch64.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
-| LinuxServer | 下载 `NexTerm-x.y.z-linux-*.tar.gz`，提供完整浏览器界面。 |
+| LinuxServer | 下载 `NexTerm-server_x.y.z_linux_*.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
 首次使用时，添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。按界面提示初始化凭据库后再保存密码或私钥。需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。
@@ -41,11 +41,11 @@
 
 ### LinuxServer
 
-LinuxServer 适合部署在常开的 Linux 机器上。解压后，按照包内 `README.md` 安装二进制、网页文件和 systemd 服务。以 amd64 包为例：
+LinuxServer 适合部署在常开的 Linux 机器上。解压后，按照包内 `README.md` 安装二进制、网页文件和所需的 systemd 服务。以 amd64 包为例：
 
 ```bash
-tar xzf NexTerm-x.y.z-linux-amd64.tar.gz
-cd NexTerm-x.y.z-linux-amd64
+tar xzf NexTerm-server_x.y.z_linux_amd64.tar.gz
+cd NexTerm-server_x.y.z_linux_amd64
 less README.md
 ```
 
@@ -83,7 +83,7 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 | `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。 |
 | `--sync-only` | — | 只启动资产同步接口。 |
 
-使用安装包的 systemd 服务时，密钥放在 `/etc/nexterm/nexterm.env`，文件权限设为 `0600`。不要把密钥直接写进可公开读取的 unit 文件。
+安装包中的 `nexterm-server.service` 与 `nexterm-onlyserver.service` 二选一，不要同时启用。完整版密钥放在 `/etc/nexterm/nexterm.env`，仅同步运行的密钥放在 `/etc/nexterm/onlyserver.env`，权限均设为 `0600`；不要把密钥直接写进可公开读取的 unit 文件。
 
 请备份密钥文件和数据目录。更换根密钥后，已有的密码类凭据将无法解密。
 
