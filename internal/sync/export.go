@@ -46,9 +46,7 @@ func (s *Service) Export(ctx context.Context, request ExportRequest) (Bundle, er
 		}
 		payload := payloadFromAsset(asset)
 		if request.WithCredentials {
-			if err := s.inlineAssetKey(ctx, &payload, derivedCredentials, &bundle.Warnings); err != nil {
-				return Bundle{}, err
-			}
+			s.inlineAssetKey(&payload, derivedCredentials, &bundle.Warnings)
 		}
 		bundle.Assets = append(bundle.Assets, payload)
 	}
@@ -80,9 +78,6 @@ func (s *Service) Export(ctx context.Context, request ExportRequest) (Bundle, er
 }
 
 func (s *Service) collectAncestors(ctx context.Context, groupID *string, bundle *Bundle, included map[string]bool) error {
-	if groupID == nil || *groupID == "" {
-		return nil
-	}
 	cursor := groupID
 	chain := []GroupPayload{}
 	visiting := map[string]bool{}
@@ -121,44 +116,24 @@ func (s *Service) collectAncestors(ctx context.Context, groupID *string, bundle 
 	return nil
 }
 
-func (s *Service) inlineAssetKey(ctx context.Context, asset *AssetPayload, derived map[string]CredentialPayload, warnings *[]string) error {
+func (s *Service) inlineAssetKey(asset *AssetPayload, derived map[string]CredentialPayload, warnings *[]string) {
 	if asset.AuthKind == nil || *asset.AuthKind != "key" || asset.KeyPath == nil || strings.TrimSpace(*asset.KeyPath) == "" {
-		return nil
+		return
 	}
 	path := *asset.KeyPath
 	body, err := os.ReadFile(path)
 	if err != nil {
 		*warnings = append(*warnings, fmt.Sprintf("资产 %s 的私钥文件 %s 无法读取，保留文件引用: %v", asset.ID, path, err))
-		return nil
-	}
-
-	var passphrase *string
-	if asset.CredID != nil && *asset.CredID != "" {
-		row, err := s.store.CredentialGetRow(ctx, *asset.CredID)
-		if isNotFound(err) {
-			*warnings = append(*warnings, fmt.Sprintf("资产 %s 的私钥口令凭据 %s 不存在，按无口令导出", asset.ID, *asset.CredID))
-		} else if err != nil {
-			return err
-		} else if row.Kind != vault.KindPrivateKey {
-			if s.vault == nil {
-				return ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
-			}
-			secret, err := s.vault.DecryptCredentialString(ctx, row)
-			if err != nil {
-				return err
-			}
-			passphrase = &secret
-		}
+		return
 	}
 
 	id := "synckey-" + asset.ID
 	derived[id] = CredentialPayload{
 		ID: id, Name: asset.Name + " key", Kind: vault.KindPrivateKey,
-		Secret: vault.InlinePrivateKey(string(body), passphrase).Encode(),
+		Secret: vault.InlinePrivateKey(string(body), nil).Encode(),
 	}
 	asset.KeyPath = nil
 	asset.CredID = &id
-	return nil
 }
 
 func (s *Service) exportCredential(ctx context.Context, id string, warnings *[]string) (CredentialPayload, error) {
@@ -175,7 +150,7 @@ func (s *Service) exportCredential(ctx context.Context, id string, warnings *[]s
 	}
 	if row.Kind == vault.KindPrivateKey {
 		payload := vault.ParsePrivateKeyPayload(secret)
-		if payload.IsRef() && payload.File != nil && strings.TrimSpace(*payload.File) != "" {
+		if payload.IsRef() && strings.TrimSpace(*payload.File) != "" {
 			path := *payload.File
 			body, err := os.ReadFile(path)
 			if err != nil {

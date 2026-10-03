@@ -114,10 +114,8 @@ func TestFileBackedKeyConversionIsDeterministicAndWarns(t *testing.T) {
 	if err := os.WriteFile(path, []byte("PRIVATE KEY BODY\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	passphraseID := ids.New()
-	putTestCredential(t, source, passphraseID, "key passphrase", vault.KindPassphrase, "passphrase-value")
 	asset := putTestAsset(t, source, store.AssetRow{
-		Name: "key asset", AuthKind: testPtr("key"), KeyPath: &path, CredID: &passphraseID, UpdatedAt: 1,
+		Name: "key asset", AuthKind: testPtr("key"), KeyPath: &path, UpdatedAt: 1,
 	})
 
 	first, err := source.service.Export(ctx, ExportRequest{AssetIDs: []string{asset.ID}, WithCredentials: true})
@@ -132,15 +130,14 @@ func TestFileBackedKeyConversionIsDeterministicAndWarns(t *testing.T) {
 		t.Fatalf("derived key credential is not deterministic: first=%+v second=%+v", first.Credentials, second.Credentials)
 	}
 	derived := first.Credentials[0]
-	if derived.ID != "synckey-"+asset.ID || derived.ID == passphraseID {
+	if derived.ID != "synckey-"+asset.ID {
 		t.Fatalf("unexpected derived credential %+v", derived)
 	}
 	if first.Assets[0].KeyPath != nil || first.Assets[0].CredID == nil || *first.Assets[0].CredID != derived.ID {
 		t.Fatalf("asset was not converted to inline key: %+v", first.Assets[0])
 	}
 	payload := vault.ParsePrivateKeyPayload(derived.Secret)
-	if payload.Key == nil || *payload.Key != "PRIVATE KEY BODY\n" || payload.File != nil ||
-		payload.Passphrase == nil || *payload.Passphrase != "passphrase-value" {
+	if payload.Key == nil || *payload.Key != "PRIVATE KEY BODY\n" || payload.File != nil || payload.Passphrase != nil {
 		t.Fatalf("private key payload lost content: %+v", payload)
 	}
 	report, err := target.service.Import(ctx, ImportRequest{Bundle: first})
@@ -152,9 +149,6 @@ func TestFileBackedKeyConversionIsDeterministicAndWarns(t *testing.T) {
 	if err != nil || plaintext != derived.Secret {
 		t.Fatalf("destination key plaintext=%q err=%v", plaintext, err)
 	}
-	if _, err := target.db.CredentialGetRow(ctx, passphraseID); !isNotFound(err) {
-		t.Fatalf("orphaned passphrase credential was exported: %v", err)
-	}
 
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -163,8 +157,8 @@ func TestFileBackedKeyConversionIsDeterministicAndWarns(t *testing.T) {
 	if err != nil || len(fallback.Warnings) != 1 || fallback.Assets[0].KeyPath == nil {
 		t.Fatalf("missing file fallback bundle=%+v err=%v", fallback, err)
 	}
-	if len(fallback.Credentials) != 1 || fallback.Credentials[0].ID != passphraseID {
-		t.Fatalf("fallback should carry original passphrase credential: %+v", fallback.Credentials)
+	if len(fallback.Credentials) != 0 {
+		t.Fatalf("missing file fallback generated credentials: %+v", fallback.Credentials)
 	}
 	report, err = target.service.Import(ctx, ImportRequest{Bundle: fallback})
 	if err != nil || len(report.Warnings) < 2 {

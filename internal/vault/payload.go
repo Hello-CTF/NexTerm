@@ -6,10 +6,7 @@ import (
 	"unicode"
 )
 
-const (
-	KindPrivateKey = "private_key"
-	KindPassphrase = "passphrase"
-)
+const KindPrivateKey = "private_key"
 
 type PrivateKeyPayload struct {
 	Key        *string `json:"key,omitempty"`
@@ -54,10 +51,5 @@ func ParsePrivateKeyPayload(raw string) PrivateKeyPayload {
 			return payload
 		}
 	}
-	return InlinePrivateKey(raw, nil)
-}
-
-func (p PrivateKeyPayload) WithPassphrase(passphrase *string) PrivateKeyPayload {
-	p.Passphrase = normalizePassphrase(passphrase)
-	return p
+	return PrivateKeyPayload{}
 }
