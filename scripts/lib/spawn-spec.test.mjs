@@ -65,6 +65,78 @@ test("win32 pnpm prefers npm_execpath when the harness runs under a pnpm script"
   });
 });
 
+test("win32 npm_execpath pointing at npm-cli.js is ignored and PATH shim resolution wins", () => {
+  // `npm run build:app` sets npm_execpath to npm's own CLI; executing it as
+  // "pnpm" would silently run npx semantics instead of pnpm exec.
+  const binDir = "C:\\Users\\runneradmin\\setup-pnpm\\node_modules\\.bin";
+  const sibling = "C:\\Users\\runneradmin\\setup-pnpm\\node_modules\\pnpm\\bin\\pnpm.cjs";
+  const npmCli = "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js";
+  const spec = resolveSpawnSpec("pnpm", ["exec", "tsc", "-p", "tsconfig.json", "--noEmit"], {
+    platform: "win32",
+    env: { PATH: `${binDir};C:\\Windows\\system32`, npm_execpath: npmCli },
+    execPath: "C:\\Program Files\\nodejs\\node.exe",
+    existsSync: fakeWindowsFs([npmCli, `${binDir}\\pnpm.CMD`, sibling]),
+  });
+  assert.deepEqual(spec, {
+    command: "C:\\Program Files\\nodejs\\node.exe",
+    args: [sibling, "exec", "tsc", "-p", "tsconfig.json", "--noEmit"],
+    options: {},
+  });
+  assert.ok(!spec.args[0].includes("npm-cli"), "npm-cli.js must never be executed as pnpm");
+});
+
+test("win32 npm_execpath pointing at yarn.js is ignored and PATH shim resolution wins", () => {
+  const prefix = "C:\\Users\\dev\\AppData\\Roaming\\npm";
+  const sibling = `${prefix}\\node_modules\\pnpm\\bin\\pnpm.cjs`;
+  const yarnCli = `${prefix}\\node_modules\\yarn\\bin\\yarn.js`;
+  const spec = resolveSpawnSpec("pnpm", ["--version"], {
+    platform: "win32",
+    env: { PATH: `${prefix};C:\\Windows\\system32`, npm_execpath: yarnCli },
+    execPath: NODE,
+    existsSync: fakeWindowsFs([yarnCli, `${prefix}\\pnpm.cmd`, sibling]),
+  });
+  assert.deepEqual(spec, { command: NODE, args: [sibling, "--version"], options: {} });
+  assert.ok(!spec.args[0].includes("yarn"), "yarn.js must never be executed as pnpm");
+});
+
+test("win32 a foreign npm_execpath with no PATH shim passes through instead of executing it", () => {
+  const npmCli = "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js";
+  const spec = resolveSpawnSpec("pnpm", ["--version"], {
+    platform: "win32",
+    env: { PATH: "C:\\Windows\\system32", npm_execpath: npmCli },
+    existsSync: fakeWindowsFs([npmCli]),
+  });
+  assert.deepEqual(spec, { command: "pnpm", args: ["--version"], options: {} });
+});
+
+test("win32 npm_execpath guard rejects lookalike entries outside pnpm-owned directories", () => {
+  const binDir = "C:\\tools";
+  for (const lookalike of [
+    "C:\\tools\\pnpm.js", // right basename, wrong location
+    "C:\\tools\\pnpm\\bin\\pnpx.cjs", // pnpx is not the pnpm CLI
+    "C:\\tools\\notpnpm\\bin\\pnpm.cjs", // wrong package directory name
+    "C:\\tools\\pnpm\\scripts\\pnpm.cjs", // not the bin directory
+  ]) {
+    const spec = resolveSpawnSpec("pnpm", ["--version"], {
+      platform: "win32",
+      env: { PATH: binDir, npm_execpath: lookalike },
+      existsSync: fakeWindowsFs([lookalike]),
+    });
+    assert.deepEqual(spec, { command: "pnpm", args: ["--version"], options: {} }, `lookalike ${lookalike} must not be taken`);
+  }
+});
+
+test("win32 npm_execpath accepts corepack's dist/pnpm.js entry", () => {
+  const entry = "C:\\Program Files\\nodejs\\node_modules\\corepack\\dist\\pnpm.js";
+  const spec = resolveSpawnSpec("pnpm", ["install", "--frozen-lockfile"], {
+    platform: "win32",
+    env: { PATH: "C:\\Windows\\system32", npm_execpath: entry },
+    execPath: NODE,
+    existsSync: fakeWindowsFs([entry]),
+  });
+  assert.deepEqual(spec, { command: NODE, args: [entry, "install", "--frozen-lockfile"], options: {} });
+});
+
 test("win32 resolves the pnpm/action-setup shim to its sibling JS entry without a shell", () => {
   const binDir = "C:\\Users\\runneradmin\\setup-pnpm\\node_modules\\.bin";
   const entry = "C:\\Users\\runneradmin\\setup-pnpm\\node_modules\\pnpm\\bin\\pnpm.cjs";

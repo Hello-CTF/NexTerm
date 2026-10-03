@@ -8,8 +8,11 @@
  * behavior, so the harness must never hand a bare batch shim to spawnSync.
  *
  * Resolution order for a command on win32:
- *   1. `npm_execpath` when launching pnpm from inside a pnpm script — it is
- *      already the real CLI JS entry.
+ *   1. `npm_execpath` when launching pnpm from inside a pnpm script — only
+ *      after isPnpmCliEntry proves the entry is pnpm's own CLI
+ *      (`pnpm/bin/pnpm.cjs|js|mjs` or corepack's `dist/pnpm.js`). When the
+ *      harness is entered via `npm run` / `yarn`, npm_execpath is that
+ *      package manager's CLI and must fall through to the PATH walk.
  *   2. A real `<name>.exe` found while walking PATH — batch shims are only
  *      used when no executable exists in an earlier-or-equal directory, so an
  *      exe hit means the default CreateProcess resolution is safe and the
@@ -38,6 +41,11 @@ import path from "node:path";
 
 const BATCH_FILE = /\.(?:cmd|bat)$/i;
 const JAVASCRIPT_ENTRY = /\.[cm]?js$/i;
+// pnpm's own CLI entries: <pkg>/pnpm/bin/pnpm.cjs|js|mjs (the .cjs compat shim
+// ships in pnpm 11's tarball) and corepack's dist/pnpm.js. Anything else —
+// npm-cli.js, yarn.js, or a stray pnpm.js outside a pnpm-owned directory —
+// must never be executed as "pnpm".
+const PNPM_ENTRY_BASENAME = /^pnpm\.[cm]?js$/i;
 // cmd.exe expands %VAR% before quote parsing, so `%` cannot be neutralized by
 // quoting; NUL/CR/LF would corrupt the command line outright. Everything else
 // (& | < > ^ ") is inert inside a double-quoted argument.
@@ -109,11 +117,24 @@ function resolveBatchShim(shimPath, args, { env, execPath, existsSync, pathImpl 
   };
 }
 
+/**
+ * Strict guard for the npm_execpath shortcut: the candidate must look like
+ * pnpm's own CLI entry (pnpm/bin/pnpm.cjs|js|mjs or corepack dist/pnpm.js),
+ * not merely any existing JavaScript file. Without this, entering the harness
+ * through `npm run` / `yarn` would execute npm-cli.js / yarn.js as "pnpm".
+ */
+function isPnpmCliEntry(candidate, pathImpl) {
+  if (typeof candidate !== "string" || !JAVASCRIPT_ENTRY.test(candidate)) return false;
+  if (!PNPM_ENTRY_BASENAME.test(pathImpl.basename(candidate))) return false;
+  const parent = pathImpl.basename(pathImpl.dirname(candidate)).toLowerCase();
+  const grandparent = pathImpl.basename(pathImpl.dirname(pathImpl.dirname(candidate))).toLowerCase();
+  return (parent === "bin" && grandparent === "pnpm") || (parent === "dist" && grandparent === "corepack");
+}
+
 function resolveWindowsSpec(command, args, { env, execPath, existsSync, pathImpl }) {
   const passthrough = { command, args: [...args], options: {} };
   if (pathImpl.basename(command).replace(BATCH_FILE, "").toLowerCase() === "pnpm"
-      && typeof env.npm_execpath === "string"
-      && JAVASCRIPT_ENTRY.test(env.npm_execpath)
+      && isPnpmCliEntry(env.npm_execpath, pathImpl)
       && existsSync(env.npm_execpath)) {
     return { command: execPath, args: [env.npm_execpath, ...args], options: {} };
   }
