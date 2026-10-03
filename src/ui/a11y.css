@@ -1,0 +1,160 @@
+.nx-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nx-overlay,
+.nx-modal,
+.nx-menu,
+.nx-command-modal [role="listbox"] {
+  overscroll-behavior: contain;
+}
+
+.nx-overlay :focus-visible,
+.nx-menu :focus-visible,
+.nx-menu:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.nx-menu-item:focus-visible {
+  background: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  color: var(--color-neutral-100);
+}
+
+.nx-prompt-hint {
+  margin-top: 6px;
+  color: #a3a3a3;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.nx-command-hint,
+.nx-command-help,
+.nx-command-empty {
+  color: #a3a3a3;
+}
+
+.nx-command-error {
+  padding: 8px 16px;
+  border-top: 1px solid var(--color-red-500);
+  background: var(--color-red-950);
+  color: #fecaca;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nx-menu-title,
+.nx-menu-group,
+.nx-menu-hint,
+.nx-menu-accel,
+.nx-menu-icon,
+.nx-menu-arrow {
+  color: #a3a3a3;
+}
+
+.nx-modal .nx-input::placeholder,
+.nx-modal .nx-textarea::placeholder,
+.nx-command-input::placeholder {
+  color: #a3a3a3;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-overlay,
+  .nx-overlay *,
+  .nx-menu,
+  .nx-menu *,
+  .nx-takeover-banner,
+  .nx-takeover-banner * {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nx-overlay {
+    background: rgb(0 0 0 / 0.86);
+    backdrop-filter: none;
+  }
+
+  .nx-modal,
+  .nx-menu {
+    border-color: #d4d4d4;
+    background: #09090b;
+  }
+
+  .nx-command-item.is-active,
+  .nx-menu-item:focus-visible {
+    background: #1e40af;
+    color: #fff;
+  }
+
+  .nx-overlay .nx-btn,
+  .nx-overlay .nx-input,
+  .nx-overlay .nx-textarea {
+    border-color: currentColor;
+  }
+}
+
+@media (forced-colors: active) {
+  .nx-overlay {
+    background: Canvas;
+    backdrop-filter: none;
+  }
+
+  .nx-modal,
+  .nx-menu,
+  .nx-command-error {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .nx-overlay :focus-visible,
+  .nx-menu :focus-visible,
+  .nx-menu:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .nx-command-item.is-active,
+  .nx-menu-item:focus-visible {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+
+@media (pointer: coarse) {
+  .nx-overlay .nx-btn,
+  .nx-command-input {
+    min-height: 44px;
+  }
+
+  .nx-menu-item,
+  .nx-command-item {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .nx-takeover-banner {
+    height: auto;
+    min-height: 52px;
+    flex-wrap: wrap;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .nx-takeover-banner .nx-btn {
+    min-height: 44px;
+  }
+}

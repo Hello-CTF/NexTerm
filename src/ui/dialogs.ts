@@ -57,6 +57,34 @@ interface DialogHandlers {
 
 let handlers: DialogHandlers | null = null;
 
+type DeferredTask = () => void;
+
+function createDeferredQueue() {
+  let running = false;
+  const pending: DeferredTask[] = [];
+  return <T>(start: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const run = () => {
+        running = true;
+        let result: Promise<T>;
+        try {
+          result = start();
+        } catch (error) {
+          result = Promise.reject(error);
+        }
+        result.then(resolve, reject).finally(() => {
+          running = false;
+          pending.shift()?.();
+        });
+      };
+      if (running) pending.push(run);
+      else run();
+    });
+}
+
+const deferDialog = createDeferredQueue();
+const deferPrompt = createDeferredQueue();
+
 /** App 挂载时注册应用内弹框实现（DialogHost）。 */
 export function registerDialogHandlers(h: DialogHandlers) {
   handlers = h;
@@ -92,16 +120,25 @@ const nativeChoose: ChooseFn = async (message, options) => {
   return null;
 };
 /** 确认框（取消 / 确定）。 */
-export const ask: AskFn = (message, options) =>
-  handlers ? handlers.ask(message, options) : nativeAsk(message, options);
+export const ask: AskFn = (message, options) => {
+  if (!handlers) return nativeAsk(message, options);
+  const current = handlers;
+  return deferDialog(() => current.ask(message, options));
+};
 
 /** 确认框（同 ask，无选项参数的别名场景）。 */
-export const confirmDialog: ConfirmFn = (message) =>
-  handlers ? handlers.confirm(message) : nativeConfirm(message);
+export const confirmDialog: ConfirmFn = (message) => {
+  if (!handlers) return nativeConfirm(message);
+  const current = handlers;
+  return deferDialog(() => current.confirm(message));
+};
 
 /** 消息提示框（单按钮）。 */
-export const messageBox: MessageFn = (message) =>
-  handlers ? handlers.message(message) : nativeMessage(message);
+export const messageBox: MessageFn = (message) => {
+  if (!handlers) return nativeMessage(message);
+  const current = handlers;
+  return deferDialog(() => current.message(message));
+};
 
 /**
  * 多选一弹框（关闭终端标签的「后台继续运行 / 结束进程」用）。
@@ -110,7 +147,9 @@ export const messageBox: MessageFn = (message) =>
  * 自己跑在哪种环境里。
  */
 export function askChoice(message: string, options: ChoiceOptions): Promise<string | null> {
-  return handlers ? handlers.choose(message, options) : nativeChoose(message, options);
+  if (!handlers) return nativeChoose(message, options);
+  const current = handlers;
+  return deferDialog(() => current.choose(message, options));
 }
 
 /** 选一个要上传的文件。取消返回 null；返回的是**内核能读到的路径**。
@@ -240,5 +279,6 @@ export function promptText(
   if (!promptHandler) {
     return Promise.resolve(NATIVE_BROWSER_DIALOG ? window.prompt(message, value) : null);
   }
-  return promptHandler(message, value, options);
+  const current = promptHandler;
+  return deferPrompt(() => current(message, value, options));
 }

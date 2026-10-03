@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, deferred, flush, mount, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -117,7 +117,9 @@ async function mountEditor(): Promise<MountedView> {
 function editDocument(text: string): void {
   const view = editors.views[editors.views.length - 1];
   const length = view.state.doc.length as number;
-  view.dispatch({ changes: { from: 0, to: length, insert: text } });
+  act(() => {
+    view.dispatch({ changes: { from: 0, to: length, insert: text } });
+  });
 }
 
 async function startSave(container: HTMLElement) {
@@ -127,6 +129,17 @@ async function startSave(container: HTMLElement) {
   if (!save) throw new Error("Save button not found");
   click(save);
   await waitFor(() => expect(mocks.write).toHaveBeenCalledOnce());
+}
+
+async function resolveInAct<T>(
+  pending: { promise: Promise<T>; resolve: (value: T) => void },
+  value: T,
+): Promise<void> {
+  await act(async () => {
+    pending.resolve(value);
+    await pending.promise;
+  });
+  await flush();
 }
 
 describe("FileEditor in-flight save safeguards", () => {
@@ -157,8 +170,7 @@ describe("FileEditor in-flight save safeguards", () => {
     expect(mocks.read).toHaveBeenCalledOnce();
     expect(mocks.ask).not.toHaveBeenCalled();
 
-    write.resolve();
-    await flush();
+    await resolveInAct(write, undefined);
     expect(mounted.container.textContent).not.toContain("未保存");
     expect(reload.disabled).toBe(false);
   });
@@ -178,8 +190,7 @@ describe("FileEditor in-flight save safeguards", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringMatching(/保存进行中/));
     expect(mounted.container.textContent).toContain("未保存");
 
-    write.resolve();
-    await flush();
+    await resolveInAct(write, undefined);
     expect(mounted.container.textContent).not.toContain("未保存");
   });
 
@@ -197,13 +208,11 @@ describe("FileEditor in-flight save safeguards", () => {
     await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
 
     await startSave(mounted.container);
-    confirmation.resolve(true);
-    await flush();
+    await resolveInAct(confirmation, true);
     expect(mocks.read).toHaveBeenCalledOnce();
     expect(editors.views).toHaveLength(1);
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringMatching(/保存进行中/));
 
-    write.resolve();
-    await flush();
+    await resolveInAct(write, undefined);
   });
 });
