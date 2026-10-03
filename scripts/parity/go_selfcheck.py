@@ -53,6 +53,72 @@ def write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def display_path(path: pathlib.Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def load_surface(path: pathlib.Path) -> dict[str, list[str]]:
+    surface = json.loads(path.read_text(encoding="utf-8"))
+    commands = surface.get("commands")
+    peer_commands = surface.get("peer_commands")
+    problems = []
+    if not isinstance(commands, list) or not commands or not all(isinstance(name, str) and name for name in commands):
+        problems.append("commands must be a non-empty list of names")
+        commands = []
+    else:
+        if len(set(commands)) != len(commands):
+            problems.append("commands contain duplicates")
+        if commands != sorted(commands):
+            problems.append("commands are not sorted")
+        for required in ("app_info", "app_platform"):
+            if required not in commands:
+                problems.append(f"commands are missing {required}")
+    if not isinstance(peer_commands, list) or not peer_commands or not all(
+        isinstance(name, str) and name for name in peer_commands
+    ):
+        problems.append("peer_commands must be a non-empty list of names")
+        peer_commands = []
+    else:
+        missing = [name for name in peer_commands if name not in commands]
+        if missing:
+            problems.append(f"peer commands missing from the full surface: {', '.join(missing)}")
+    if problems:
+        raise ValueError("invalid production command surface: " + "; ".join(problems))
+    return {"commands": list(commands), "peer_commands": list(peer_commands)}
+
+
+def expected_commands(surface: dict[str, list[str]], sync_only: bool) -> int:
+    return len(surface["peer_commands"] if sync_only else surface["commands"])
+
+
+def check_health(health: dict[str, Any], surface: dict[str, list[str]], sync_only: bool) -> int:
+    if not health.get("ok") or health.get("service") != "nexterm-server":
+        raise AssertionError(f"invalid health response: {health}")
+    if health.get("syncOnly") != sync_only:
+        raise AssertionError(f"health deployment shape mismatch: {health}")
+    expected = expected_commands(surface, sync_only)
+    if health.get("commands") != expected:
+        mode = "sync-only" if sync_only else "full"
+        raise AssertionError(
+            f"{mode} health reports {health.get('commands')} commands, "
+            f"but the production surface registers {expected}"
+        )
+    return expected
+
+
+def live_smoke_skip_reason(server_build_passed: bool, surface: dict[str, list[str]] | None) -> str:
+    if server_build_passed and surface is not None:
+        raise ValueError("live smoke skip reason requested although the server build and surface probe passed")
+    if not server_build_passed and surface is None:
+        return "Go server binary build and production command surface probe failed"
+    if not server_build_passed:
+        return "Go server binary build failed"
+    return "production command surface probe failed"
+
+
 def run_step(
     step_id: str,
     command: list[str],
@@ -89,7 +155,7 @@ def run_step(
         "status": "passed" if code == 0 else "failed",
         "exit_code": code,
         "duration_seconds": round(time.monotonic() - started, 3),
-        "log": log.relative_to(ROOT).as_posix(),
+        "log": display_path(log),
     }
     print(f"{step_id}: {record['status']}", flush=True)
     return record, text
@@ -129,6 +195,7 @@ def server_smoke(
     binary: pathlib.Path,
     work: pathlib.Path,
     log_dir: pathlib.Path,
+    surface: dict[str, list[str]],
     sync_only: bool = False,
 ) -> dict[str, Any]:
     port = free_port()
@@ -139,18 +206,20 @@ def server_smoke(
     if sync_only:
         command.append("--sync-only")
     evidence = []
-    runtime: dict[str, Any] = {"verified_commands": [], "implemented_commands": []}
+    runtime: dict[str, Any] = {"verified_commands": [], "health_commands": None}
     with log.open("w", encoding="utf-8") as output:
         process = subprocess.Popen(command, cwd=work, stdout=output, stderr=subprocess.STDOUT)
         try:
             health = wait_health(port, process)
-            evidence.append({"health": health})
-            expected_commands = 2
-            if not health.get("ok") or health.get("service") != "nexterm-server":
-                raise AssertionError(f"invalid health response: {health}")
-            if health.get("commands") != expected_commands or health.get("syncOnly") != sync_only:
-                raise AssertionError(f"health deployment shape mismatch: {health}")
-            runtime["implemented_commands"] = ["app_info", "app_platform"]
+            expected = check_health(health, surface, sync_only)
+            runtime["health_commands"] = health.get("commands")
+            evidence.append(
+                {
+                    "health": health,
+                    "expected_commands": expected,
+                    "surface_source": "tests/parity/go/cmd/surfaceprobe",
+                }
+            )
             if sync_only:
                 try:
                     urllib.request.urlopen(f"http://127.0.0.1:{port}/rpc", timeout=2)
@@ -167,7 +236,7 @@ def server_smoke(
                 runtime["verified_commands"].append(
                     {
                         "name": "app_platform",
-                        "evidence": f"{log.relative_to(ROOT).as_posix()}#app_platform",
+                        "evidence": f"{display_path(log)}#app_platform",
                     }
                 )
                 evidence.append({"app_platform": platform_response})
@@ -178,7 +247,7 @@ def server_smoke(
                 runtime["verified_commands"].append(
                     {
                         "name": "app_info",
-                        "evidence": f"{log.relative_to(ROOT).as_posix()}#app_info",
+                        "evidence": f"{display_path(log)}#app_info",
                     }
                 )
                 evidence.append({"app_info": info_response})
@@ -196,7 +265,7 @@ def server_smoke(
         output.write("\nSELFCheck observations (Go runtime only; no Rust expected payloads):\n")
         output.write(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n")
     runtime["observations"] = evidence
-    runtime["log"] = log.relative_to(ROOT).as_posix()
+    runtime["log"] = display_path(log)
     return runtime
 
 
@@ -206,6 +275,7 @@ def main() -> int:
     parser.add_argument("--baseline", type=pathlib.Path, default=DOCS / "baseline.json")
     parser.add_argument("--output", type=pathlib.Path, default=DOCS / "go-selfcheck.json")
     parser.add_argument("--coverage-output", type=pathlib.Path, default=DOCS / "go-coverage.json")
+    parser.add_argument("--log-dir", type=pathlib.Path, default=DOCS / "logs")
     parser.add_argument("--require-size", action="store_true")
     parser.add_argument("--require-features", action="store_true")
     args = parser.parse_args()
@@ -220,7 +290,7 @@ def main() -> int:
     shutil.copytree(ROOT / "tests/parity/go", harness)
     artifacts = ROOT / "target/parity-go-artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
-    log_dir = DOCS / "logs"
+    log_dir = args.log_dir
     steps = []
     runtime: dict[str, Any] = {
         "verified_commands": [],
@@ -250,6 +320,43 @@ def main() -> int:
     )
     steps.append(step)
 
+    probe_output = work / "command-surface.json"
+    step, _ = run_step(
+        "go-surface-probe",
+        [
+            "go",
+            "run",
+            "-mod=readonly",
+            "./cmd/surfaceprobe",
+            "--data-dir",
+            str(work / "surface-probe-data"),
+            "--out",
+            str(probe_output),
+        ],
+        harness,
+        env,
+        log_dir,
+    )
+    surface: dict[str, list[str]] | None = None
+    if step["status"] == "passed":
+        try:
+            surface = load_surface(probe_output)
+        except (OSError, ValueError) as error:
+            step["status"] = "failed"
+            step["exit_code"] = 1
+            step["failure"] = str(error)
+            print(f"go-surface-probe: failed ({error})", flush=True)
+    steps.append(step)
+    if surface is not None:
+        runtime["implemented_commands"] = surface["commands"]
+        runtime["command_surface"] = {
+            "source": "tests/parity/go/cmd/surfaceprobe",
+            "composition": "production.NewProduction (Desktop=false), same wiring as cmd/nexterm-server",
+            "commands_count": len(surface["commands"]),
+            "peer_commands_count": len(surface["peer_commands"]),
+            "sync_only_commands": surface["peer_commands"],
+        }
+
     server_binary = artifacts / "nexterm-server"
     server_env = dict(env)
     server_env["CGO_ENABLED"] = "0"
@@ -261,14 +368,17 @@ def main() -> int:
         log_dir,
     )
     steps.append(step)
-    if step["status"] == "passed":
+    server_build_passed = step["status"] == "passed"
+    if server_build_passed and surface is not None:
         started = time.monotonic()
         try:
-            full = server_smoke(server_binary, work, log_dir)
+            full = server_smoke(server_binary, work, log_dir, surface)
             runtime["verified_commands"] = full["verified_commands"]
-            runtime["implemented_commands"] = full["implemented_commands"]
             runtime["full_server"] = full["observations"]
-            runtime["sync_only_server"] = server_smoke(server_binary, work, log_dir, sync_only=True)["observations"]
+            sync_only_runtime = server_smoke(server_binary, work, log_dir, surface, sync_only=True)
+            runtime["sync_only_server"] = sync_only_runtime["observations"]
+            runtime["command_surface"]["health_full_commands"] = full["health_commands"]
+            runtime["command_surface"]["health_sync_only_commands"] = sync_only_runtime["health_commands"]
             smoke_status = "passed"
             smoke_code = 0
         except Exception as error:
@@ -282,7 +392,7 @@ def main() -> int:
                 "status": smoke_status,
                 "exit_code": smoke_code,
                 "duration_seconds": round(time.monotonic() - started, 3),
-                "log": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log",
+                "log": display_path(log_dir / "go-server-smoke.log"),
             }
         )
         print(f"go-server-live-smoke: {smoke_status}", flush=True)
@@ -291,7 +401,7 @@ def main() -> int:
             {
                 "id": "go-server-live-smoke",
                 "status": "not-run-dependency-failed",
-                "reason": "Go server binary build failed",
+                "reason": live_smoke_skip_reason(server_build_passed, surface),
             }
         )
 
@@ -331,7 +441,7 @@ def main() -> int:
         "not_produced": [
             {
                 "item": "Go DMG/NSIS/LPK package-size acceptance",
-                "reason": "this skeleton selfcheck builds raw desktop/server binaries only; no installer-package pass is claimed",
+                "reason": "this selfcheck builds raw desktop/server binaries only; no installer-package pass is claimed",
             }
         ],
     }
