@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -126,6 +127,9 @@ class GoCoverageTest(unittest.TestCase):
             139,
         )
         self.assertFalse(summary["feature_complete"])
+        verified = [feature["id"] for feature in coverage["commands"] if feature["status"] == "verified"]
+        self.assertEqual(set(verified), {"app_info", "app_platform"})
+        self.assertEqual(summary["commands_verified"], len(verified))
         for feature in coverage["commands"]:
             self.assertIn(feature["status"], {"verified", "implemented-unverified", "not-implemented"})
             if feature["status"] != "verified":
@@ -136,6 +140,73 @@ class GoCoverageTest(unittest.TestCase):
         self.assertFalse(report["summary"]["installer_package_gates_passed"])
         for gate in report["size_gates"]:
             self.assertEqual(gate["smaller"], gate["go_bytes"] < gate["rust_bytes"])
+
+
+class GoSelfcheckSurfaceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.module = load_module("parity_go_selfcheck", ROOT / "scripts/parity/go_selfcheck.py")
+
+    def valid_surface(self):
+        return {
+            "commands": ["app_info", "app_platform", "sync_digest", "sync_export", "sync_import"],
+            "peer_commands": ["sync_digest", "sync_export", "sync_import"],
+        }
+
+    def write_surface(self, directory, value):
+        path = directory / "surface.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return path
+
+    def test_load_surface_accepts_valid_probe_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            surface = self.module.load_surface(self.write_surface(pathlib.Path(directory), self.valid_surface()))
+        self.assertEqual(surface["commands"][:2], ["app_info", "app_platform"])
+        self.assertEqual(len(surface["peer_commands"]), 3)
+
+    def test_load_surface_rejects_incomplete_or_inconsistent_output(self):
+        cases = [
+            {"commands": [], "peer_commands": ["sync_digest"]},
+            {"commands": ["app_platform", "app_info", "sync_digest"], "peer_commands": ["sync_digest"]},
+            {"commands": ["app_info", "app_info", "app_platform"], "peer_commands": ["app_info"]},
+            {"commands": ["app_info", "sync_digest"], "peer_commands": ["sync_digest"]},
+            {"commands": ["app_info", "app_platform"], "peer_commands": ["sync_digest"]},
+            {"commands": ["app_info", "app_platform"]},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            for value in cases:
+                with self.assertRaises(ValueError):
+                    self.module.load_surface(self.write_surface(pathlib.Path(directory), value))
+
+    def test_expected_commands_tracks_mode(self):
+        surface = self.valid_surface()
+        self.assertEqual(self.module.expected_commands(surface, sync_only=False), 5)
+        self.assertEqual(self.module.expected_commands(surface, sync_only=True), 3)
+
+    def test_check_health_validates_the_live_surface(self):
+        surface = self.valid_surface()
+        full_health = {"ok": True, "service": "nexterm-server", "syncOnly": False, "commands": 5}
+        sync_health = {"ok": True, "service": "nexterm-server", "syncOnly": True, "commands": 3}
+        self.assertEqual(self.module.check_health(full_health, surface, sync_only=False), 5)
+        self.assertEqual(self.module.check_health(sync_health, surface, sync_only=True), 3)
+        with self.assertRaises(AssertionError):
+            self.module.check_health({**full_health, "commands": 2}, surface, sync_only=False)
+        with self.assertRaises(AssertionError):
+            self.module.check_health({**sync_health, "commands": 5}, surface, sync_only=True)
+        with self.assertRaises(AssertionError):
+            self.module.check_health(full_health, surface, sync_only=True)
+        with self.assertRaises(AssertionError):
+            self.module.check_health({"ok": False, "service": "nexterm-server", "syncOnly": False, "commands": 5}, surface, sync_only=False)
+
+    def test_surface_probe_is_wired_into_the_selfcheck(self):
+        probe = ROOT / "tests/parity/go/cmd/surfaceprobe/main.go"
+        self.assertTrue(probe.is_file())
+        source = probe.read_text(encoding="utf-8")
+        self.assertIn("package main", source)
+        self.assertIn("PeerDispatcher", source)
+        selfcheck = (ROOT / "scripts/parity/go_selfcheck.py").read_text(encoding="utf-8")
+        self.assertIn("cmd/surfaceprobe", selfcheck)
+        self.assertIn("go-surface-probe", selfcheck)
 
 
 if __name__ == "__main__":
