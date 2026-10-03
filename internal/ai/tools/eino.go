@@ -411,7 +411,31 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 		return nil, err
 	}
 	manager = composed
-	return subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()})
+	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()})
+	if err != nil {
+		return nil, err
+	}
+	return spawnOutputTool{InvokableTool: spawn}, nil
+}
+
+// spawnOutputTool adapts the subagent spawn tool to the domain result
+// contract: the agent runner parses every tool message as tools.Output JSON,
+// so the child's plain-text output is wrapped on success while errors keep
+// propagating unchanged (cancellation included).
+type spawnOutputTool struct {
+	tool.InvokableTool
+}
+
+func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (string, error) {
+	output, err := s.InvokableTool.InvokableRun(ctx, arguments, opts...)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(OK(output))
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 // scopedSubagentTools is the scoped tool registry adapter: the child receives
