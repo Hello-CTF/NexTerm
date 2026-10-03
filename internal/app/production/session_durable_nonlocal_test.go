@@ -56,15 +56,15 @@ type fakePTYChannel struct {
 	generation uint64
 }
 
-func (c *fakePTYChannel) Read([]byte) (int, error)                       { return 0, io.EOF }
-func (c *fakePTYChannel) Write(data []byte) (int, error)                 { return len(data), nil }
-func (c *fakePTYChannel) Close() error                                   { return nil }
-func (c *fakePTYChannel) Stderr() io.Reader                              { return nil }
-func (c *fakePTYChannel) Resize(context.Context, uint32, uint32) error   { return nil }
-func (c *fakePTYChannel) Wait(context.Context) error                     { return nil }
-func (c *fakePTYChannel) CloseWrite() error                              { return nil }
-func (c *fakePTYChannel) ID() string                                     { return c.id }
-func (c *fakePTYChannel) Generation() uint64                             { return c.generation }
+func (c *fakePTYChannel) Read([]byte) (int, error)                     { return 0, io.EOF }
+func (c *fakePTYChannel) Write(data []byte) (int, error)               { return len(data), nil }
+func (c *fakePTYChannel) Close() error                                 { return nil }
+func (c *fakePTYChannel) Stderr() io.Reader                            { return nil }
+func (c *fakePTYChannel) Resize(context.Context, uint32, uint32) error { return nil }
+func (c *fakePTYChannel) Wait(context.Context) error                   { return nil }
+func (c *fakePTYChannel) CloseWrite() error                            { return nil }
+func (c *fakePTYChannel) ID() string                                   { return c.id }
+func (c *fakePTYChannel) Generation() uint64                           { return c.generation }
 
 func TestProductionMissingTmuxDoesNotBlockNonLocalTerminal(t *testing.T) {
 	factory := &bridgeTestFactory{}
@@ -135,7 +135,7 @@ func (fakeDockerBackend) Action(context.Context, docker.ActionOptions) error  { 
 func (fakeDockerBackend) PullImage(context.Context, docker.PullOptions) (string, error) {
 	return "", nil
 }
-func (fakeDockerBackend) RemoveImage(context.Context, string, bool) error   { return nil }
+func (fakeDockerBackend) RemoveImage(context.Context, string, bool) error { return nil }
 func (fakeDockerBackend) OpenLogs(context.Context, docker.LogsOptions) (docker.LogStream, error) {
 	return docker.LogStream{}, nil
 }
@@ -165,9 +165,9 @@ func (s *fakeExecSession) Close() error {
 	s.once.Do(func() { close(s.done) })
 	return nil
 }
-func (s *fakeExecSession) CloseWrite() error                          { return nil }
-func (s *fakeExecSession) Resize(context.Context, uint, uint) error   { return nil }
-func (s *fakeExecSession) IsTTY() bool                                { return true }
+func (s *fakeExecSession) CloseWrite() error                        { return nil }
+func (s *fakeExecSession) Resize(context.Context, uint, uint) error { return nil }
+func (s *fakeExecSession) IsTTY() bool                              { return true }
 func (s *fakeExecSession) Wait(ctx context.Context) (int, error) {
 	select {
 	case <-s.done:
