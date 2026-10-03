@@ -3,8 +3,10 @@ package outcome
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestPreCanceledExecuteRecordsNotAttempted(t *testing.T) {
@@ -245,5 +247,136 @@ func TestCancellationAfterLostClaimReturnsTerminalRecord(t *testing.T) {
 	stored := store.snapshot(t, request.IdempotenceKey)
 	if stored.Outcome != OutcomeAccepted || stored.State != ExecutionFinished || stored.Audit.State != AuditPersisted {
 		t.Fatalf("final record = %+v", stored)
+	}
+}
+
+// TestCancellationReloadFailureReturnsNoFabricatedRecord covers the lost-CAS
+// interleaving when the detached reload itself fails or times out: the
+// durable state is unknown, so the caller must receive no record at all
+// rather than the unpersisted not_attempted proposal.
+func TestCancellationReloadFailureReturnsNoFabricatedRecord(t *testing.T) {
+	getErr := errors.New("outcome store get failed")
+	tests := []struct {
+		name             string
+		getError         func(context.Context, string) error
+		timeout          time.Duration
+		wantGetErr       error
+		claimantFinishes bool
+	}{
+		{
+			name:       "get error, claimant running",
+			getError:   func(context.Context, string) error { return getErr },
+			timeout:    time.Second,
+			wantGetErr: getErr,
+		},
+		{
+			name:             "get error, claimant terminal",
+			getError:         func(context.Context, string) error { return getErr },
+			timeout:          time.Second,
+			wantGetErr:       getErr,
+			claimantFinishes: true,
+		},
+		{
+			name: "get deadline, claimant running",
+			getError: func(ctx context.Context, _ string) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			timeout:    25 * time.Millisecond,
+			wantGetErr: context.DeadlineExceeded,
+		},
+		{
+			name: "get deadline, claimant terminal",
+			getError: func(ctx context.Context, _ string) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			timeout:          25 * time.Millisecond,
+			wantGetErr:       context.DeadlineExceeded,
+			claimantFinishes: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newMemoryStore()
+			auditor := &memoryAuditor{}
+			ledger, err := New(Options{Store: store, Auditor: auditor, AuditTimeout: test.timeout})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := testRequest("cancel-lost-claim-reload")
+			ctx, cancel := context.WithCancel(context.Background())
+
+			claimantState := make(chan struct{})
+			store.afterUpdate = func(_ context.Context, record Record) {
+				if (!test.claimantFinishes && record.State == ExecutionRunning) ||
+					(test.claimantFinishes && record.State == ExecutionFinished && record.Audit.State == AuditPending) {
+					close(claimantState)
+				}
+			}
+			effectRelease := make(chan struct{})
+			var effectCalls atomic.Int64
+			var orchestrated atomic.Bool
+			bDone := make(chan error, 1)
+			store.afterReserve = func(context.Context, Record) {
+				if !orchestrated.CompareAndSwap(false, true) {
+					return
+				}
+				go func() {
+					_, err := ledger.Execute(context.Background(), request, func(context.Context) (Completion, error) {
+						effectCalls.Add(1)
+						if !test.claimantFinishes {
+							<-effectRelease
+						}
+						return Completion{}, nil
+					})
+					bDone <- err
+				}()
+				<-claimantState
+				store.mu.Lock()
+				store.getError = test.getError
+				store.mu.Unlock()
+				cancel()
+			}
+
+			canceledRecord, err := ledger.Execute(ctx, request, func(context.Context) (Completion, error) {
+				effectCalls.Add(1)
+				return Completion{}, nil
+			})
+			if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrRevisionConflict) || !errors.Is(err, test.wantGetErr) {
+				t.Fatalf("canceled caller error = %v", err)
+			}
+			if errors.Is(err, ErrInProgress) {
+				t.Fatalf("unknown durable state reported as in progress: %v", err)
+			}
+			if !reflect.DeepEqual(canceledRecord, Record{}) {
+				t.Fatalf("canceled caller received fabricated record: %+v", canceledRecord)
+			}
+
+			store.mu.Lock()
+			store.getError = nil
+			store.mu.Unlock()
+			if !test.claimantFinishes {
+				stored := store.snapshot(t, request.IdempotenceKey)
+				if stored.State != ExecutionRunning || stored.Outcome != OutcomeUnknown || stored.Revision != 2 {
+					t.Fatalf("canceled caller mutated durable state: %+v", stored)
+				}
+				close(effectRelease)
+			}
+			if err := <-bDone; err != nil {
+				t.Fatalf("claimant error = %v", err)
+			}
+			if got := effectCalls.Load(); got != 1 {
+				t.Fatalf("effect calls = %d", got)
+			}
+			audits := auditor.snapshots()
+			if len(audits) != 1 || audits[0].Outcome != OutcomeAccepted || audits[0].State != ExecutionFinished {
+				t.Fatalf("audit attempts = %+v", audits)
+			}
+			stored := store.snapshot(t, request.IdempotenceKey)
+			if stored.Outcome != OutcomeAccepted || stored.State != ExecutionFinished || stored.Audit.State != AuditPersisted {
+				t.Fatalf("final record = %+v", stored)
+			}
+		})
 	}
 }

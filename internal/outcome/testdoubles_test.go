@@ -15,6 +15,7 @@ type memoryStore struct {
 	afterReserve func(context.Context, Record)
 	afterUpdate  func(context.Context, Record)
 	updateError  func(Record) error
+	getError     func(context.Context, string) error
 }
 
 func newMemoryStore() *memoryStore {
@@ -76,6 +77,14 @@ func (s *memoryStore) Update(ctx context.Context, record Record, expectedRevisio
 func (s *memoryStore) Get(ctx context.Context, key string) (Record, error) {
 	if err := ctx.Err(); err != nil {
 		return Record{}, err
+	}
+	s.mu.Lock()
+	getError := s.getError
+	s.mu.Unlock()
+	if getError != nil {
+		if err := getError(ctx, key); err != nil {
+			return Record{}, err
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

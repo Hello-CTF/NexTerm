@@ -66,7 +66,8 @@ func (l *Ledger) NotAttempted(ctx context.Context, request Request, reason error
 // A duplicate pending key may acquire the reservation through the same
 // compare-and-swap transition used by its original caller. When cancellation
 // finalization loses that compare-and-swap race, the current stored record is
-// returned instead of the unpersisted proposal.
+// returned instead of the unpersisted proposal; if the stored record cannot
+// be reloaded, no record is returned.
 func (l *Ledger) Execute(ctx context.Context, request Request, effect Effect) (Record, error) {
 	if effect == nil {
 		return Record{}, fmt.Errorf("%w: effect is required", ErrInvalidRequest)
@@ -208,13 +209,14 @@ func (l *Ledger) persistTerminalAndAudit(ctx context.Context, record Record, exp
 // resolveTerminalConflict reloads the current record after a lost terminal
 // compare-and-swap so the caller receives the durable state instead of the
 // unpersisted proposal. A finished record is the actual outcome; a record
-// still in flight resolves to ErrInProgress.
+// still in flight resolves to ErrInProgress. When the reload itself fails,
+// the durable state is unknown, so no record is returned at all.
 func (l *Ledger) resolveTerminalConflict(ctx context.Context, record Record, persistErr error) (Record, error) {
 	reloadCtx, cancel := l.detachedContext(ctx)
 	stored, err := l.store.Get(reloadCtx, record.IdempotenceKey)
 	cancel()
 	if err != nil {
-		return record, errors.Join(persistErr, err)
+		return Record{}, errors.Join(persistErr, err)
 	}
 	stored = cloneRecord(stored)
 	switch stored.State {
@@ -256,10 +258,13 @@ func (l *Ledger) finalizeAudit(ctx context.Context, record Record) (Record, erro
 	return record, errors.Join(auditErr, statusErr)
 }
 
+// resolveClaimConflict reloads the current record after a lost running-state
+// compare-and-swap. When the reload itself fails, the durable state is
+// unknown, so no record is returned at all.
 func (l *Ledger) resolveClaimConflict(ctx context.Context, record Record, request Request, claimErr error) (Record, error) {
 	stored, err := l.store.Get(ctx, record.IdempotenceKey)
 	if err != nil {
-		return record, errors.Join(claimErr, err)
+		return Record{}, errors.Join(claimErr, err)
 	}
 	record = cloneRecord(stored)
 	if err := l.checkExisting(record, request); err != nil {

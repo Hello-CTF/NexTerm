@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -150,6 +151,114 @@ func TestConcurrentPendingClaimUsesCompareAndSwap(t *testing.T) {
 	close(errorsCh)
 	for err := range errorsCh {
 		t.Errorf("competing claim: %v", err)
+	}
+	if got := effectCalls.Load(); got != 1 {
+		t.Fatalf("effect calls = %d", got)
+	}
+	if got := len(auditor.snapshots()); got != 1 {
+		t.Fatalf("audit attempts = %d", got)
+	}
+	if record := base.snapshot(t, request.IdempotenceKey); record.Outcome != OutcomeAccepted || record.Audit.State != AuditPersisted {
+		t.Fatalf("final record = %+v", record)
+	}
+}
+
+// firstClaimGateStore parks the first running-state update so a second
+// claimant can pass the pending check, win the claim, and leave the parked
+// caller to lose the compare-and-swap.
+type firstClaimGateStore struct {
+	*memoryStore
+	arrived chan struct{}
+	release chan struct{}
+	gated   atomic.Bool
+}
+
+func (s *firstClaimGateStore) Update(ctx context.Context, record Record, expectedRevision uint64) error {
+	if record.State == ExecutionRunning && s.gated.CompareAndSwap(false, true) {
+		s.arrived <- struct{}{}
+		<-s.release
+	}
+	return s.memoryStore.Update(ctx, record, expectedRevision)
+}
+
+// TestClaimConflictReloadFailureReturnsNoFabricatedRecord covers a lost
+// running-state compare-and-swap whose reload fails: the durable state is
+// unknown, so the losing caller must receive no record rather than the
+// unpersisted running proposal.
+func TestClaimConflictReloadFailureReturnsNoFabricatedRecord(t *testing.T) {
+	base := newMemoryStore()
+	store := &firstClaimGateStore{
+		memoryStore: base,
+		arrived:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	auditor := &memoryAuditor{}
+	ledger := newTestLedger(t, store, auditor)
+	request := testRequest("claim-reload-failure")
+	pending, err := ledger.newRecord(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, reserved, err := base.Reserve(context.Background(), pending); err != nil || !reserved {
+		t.Fatalf("seed pending record: reserved=%v err=%v", reserved, err)
+	}
+
+	runningPersisted := make(chan struct{})
+	base.afterUpdate = func(_ context.Context, record Record) {
+		if record.State == ExecutionRunning {
+			close(runningPersisted)
+		}
+	}
+	effectRelease := make(chan struct{})
+	var effectCalls atomic.Int64
+	type executeResult struct {
+		record Record
+		err    error
+	}
+	loserDone := make(chan executeResult, 1)
+	go func() {
+		record, err := ledger.Execute(context.Background(), request, func(context.Context) (Completion, error) {
+			effectCalls.Add(1)
+			return Completion{}, nil
+		})
+		loserDone <- executeResult{record: record, err: err}
+	}()
+	<-store.arrived
+
+	claimantDone := make(chan error, 1)
+	go func() {
+		_, err := ledger.Execute(context.Background(), request, func(context.Context) (Completion, error) {
+			effectCalls.Add(1)
+			<-effectRelease
+			return Completion{}, nil
+		})
+		claimantDone <- err
+	}()
+	<-runningPersisted
+
+	getErr := errors.New("outcome store get failed")
+	base.mu.Lock()
+	base.getError = func(context.Context, string) error { return getErr }
+	base.mu.Unlock()
+	close(store.release)
+
+	loser := <-loserDone
+	if !errors.Is(loser.err, ErrRevisionConflict) || !errors.Is(loser.err, getErr) {
+		t.Fatalf("losing claimant error = %v", loser.err)
+	}
+	if errors.Is(loser.err, ErrInProgress) {
+		t.Fatalf("unknown durable state reported as in progress: %v", loser.err)
+	}
+	if !reflect.DeepEqual(loser.record, Record{}) {
+		t.Fatalf("losing claimant received fabricated record: %+v", loser.record)
+	}
+
+	base.mu.Lock()
+	base.getError = nil
+	base.mu.Unlock()
+	close(effectRelease)
+	if err := <-claimantDone; err != nil {
+		t.Fatalf("claimant error = %v", err)
 	}
 	if got := effectCalls.Load(); got != 1 {
 		t.Fatalf("effect calls = %d", got)
