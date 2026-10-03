@@ -10,17 +10,20 @@ job 里 Wails CLI 的安装也必须排在 apt 之后。本脚本把这条顺序
 （八目标矩阵、wails3 版本钉、tag 前置条件、evidence gate、cgo 策略）固化成
 静态断言，防止同类回归，也防止靠删测试/删矩阵/删 gate 来让 CI 变绿。
 
-匹配语义（round-1 评审后收紧）：
+匹配语义（round-1/round-2 评审后收紧）：
 
-1. 只审计**可执行** shell 命令 —— 每个 run 块先做引号感知的 shell 注释剔除
-   （整行注释与行内注释），被注释掉的 apt/go test/--require-evidence 不再算数。
-2. 显式禁用的步骤（`if: false`、`if: ${{ false }}`）视为不存在：被禁用的
-   前置步骤不能满足顺序要求，被禁用的 gate 等同于被删除。
-3. 矩阵 job 按腿（matrix include leg）评估前置步骤的 `if` 条件覆盖：
-   只支持 `matrix.K == 'V'` / `!=` 与 `&&`/`||` 组合（本仓库用到的形式）；
-   无法判定的表达式按可满足处理（不误伤），但任何需要 gtk 的 Linux 腿
-   （desktop 腿编译 cgo；server 腿按 build.mjs cgo 策略为 CGO_ENABLED=0）
-   都必须有覆盖该腿的启用前置步骤排在第一个敏感步骤之前。
+1. 只审计**可执行** shell 命令 —— 每个 run 块先做引号感知的 shell 注释剔除：
+   `#` 只要是新 token 的开头（行首、空白后、shell 运算符 `| & ; ( ) < >` 后）
+   就开始注释（与 bash 实测行为一致），被注释掉的 apt/go test/--require-evidence
+   不再算数；引号内的 `#` 与 `${#files[@]}` 不受影响。
+2. 显式禁用的步骤（`if: false`、`if: ${{ false }}` 等恒假条件）视为不存在：
+   被禁用的前置步骤不能满足顺序要求，被禁用的 gate 等同于被删除。
+3. 矩阵 job 按腿（matrix include leg）评估前置步骤的 `if` 条件覆盖，采用完整
+   Kleene 三值逻辑：`unknown && false == false`、`unknown || true == true`，
+   与操作数顺序无关；只支持 `matrix.K == 'V'` / `!=` 与 `&&`/`||` 组合
+   （本仓库用到的形式），无法判定的表达式按可满足处理（不误伤），但任何需要
+   gtk 的 Linux 腿（desktop 腿编译 cgo；server 腿按 build.mjs cgo 策略为
+   CGO_ENABLED=0）都必须有覆盖该腿的启用前置步骤排在第一个敏感步骤之前。
 
 `--self-test` 运行变异负对照：对解析后的工作流做注释化/禁用/删腿等变异，
 断言对应审计必然失败，防止本检查器自身退化成橡皮图章。
@@ -119,16 +122,23 @@ def load_yaml():
     return yaml, Loader
 
 
-def strip_shell_comments(text: str) -> str:
-    """剔除 bash 风格的注释（整行与行内），保留引号内的 `#` 与 `${#var}`。
+SHELL_COMMENT_BOUNDARY = set(" \t|&;()<>")
 
-    `#` 只在行首或空白之后才开始注释（与 bash/pwsh 的 token 规则一致），
-    因此 `printf '### x'` 与 `${#files[@]}` 不受影响。
+
+def strip_shell_comments(text: str) -> str:
+    """剔除 bash 风格的注释（整行、行内、shell 运算符边界），保留引号内的 `#`。
+
+    `#` 在 bash 词法中只要是**新 token 的开头**就开始注释：行首、空白之后，
+    或 shell 运算符/分隔符（`| & ; ( ) < >`）之后都算（已用 bash 实测：
+    `;#`、`&&#`、`|#`、`&#`、`(#`、`>#` 均不再执行其后的命令，而 `>#`
+    也不会创建 `#` 文件）。引号状态机保证 `printf '### x'` 与 `${#files[@]}`
+    （`#` 前是 `{`，非 token 边界）不受影响；引号状态跨行延续，与 bash 对
+    多行引号串的处理一致。
     """
     lines = []
+    quote = None
     for line in text.splitlines():
         kept = []
-        quote = None
         index = 0
         while index < len(line):
             char = line[index]
@@ -147,7 +157,7 @@ def strip_shell_comments(text: str) -> str:
                 kept.append(char)
                 index += 1
                 continue
-            if char == "#" and (index == 0 or line[index - 1] in " \t"):
+            if char == "#" and (index == 0 or line[index - 1] in SHELL_COMMENT_BOUNDARY):
                 break
             kept.append(char)
             index += 1
@@ -179,12 +189,53 @@ def split_boolean(text: str, operator: str) -> list[str]:
     return parts
 
 
+def eval_atom(atom: str, leg: dict):
+    """求值单个条件原子：True / False / None（未知）。
+
+    可判定的形式：`true`/`false`/`always()`/`success()` 字面量与
+    `matrix.K == 'V'` / `matrix.K != 'V'`（键不在该腿上时未知）。
+    其余表达式（github.*、env.*、函数调用等）返回 None。
+    """
+    lowered = atom.lower()
+    if lowered in TRUE_ATOMS:
+        return True
+    if lowered in FALSE_ATOMS:
+        return False
+    match = MATRIX_ATOM.match(atom)
+    if not match:
+        return None
+    key, op = match.group(1), match.group(2)
+    wanted = match.group(3) if match.group(3) is not None else match.group(4)
+    if key not in leg:
+        return None
+    actual = str(leg[key])
+    return (actual == wanted) if op == "==" else (actual != wanted)
+
+
+def eval_and(operands: list):
+    """Kleene 三值 AND：false 主导 unknown（unknown && false == false），与操作数顺序无关。"""
+    if any(value is False for value in operands):
+        return False
+    if any(value is None for value in operands):
+        return None
+    return True
+
+
+def eval_or(operands: list):
+    """Kleene 三值 OR：true 主导 unknown（unknown || true == true），与操作数顺序无关。"""
+    if any(value is True for value in operands):
+        return True
+    if any(value is None for value in operands):
+        return None
+    return False
+
+
 def eval_condition_on_leg(condition, leg: dict):
     """在一条 matrix 腿上求值 `if` 条件；无法判定时返回 None（按可满足处理）。
 
-    只判定 `true`/`false`/`always()`/`success()` 字面量与
-    `matrix.K == 'V'` / `matrix.K != 'V'`（可 && / || 组合）；其余表达式
-    （github.*、env.*、函数调用等）返回 None，避免对合法条件误报。
+    完整三值逻辑：`&&` 优先级高于 `||`；AND/OR 都满足交换律 —
+    unknown && false 与 false && unknown 都是 False，unknown || true 与
+    true || unknown 都是 True，不会因操作数顺序提前返回。
     """
     text = str(condition).strip()
     wrapped = re.fullmatch(r"\$\{\{(.*)\}\}", text, re.DOTALL)
@@ -192,39 +243,10 @@ def eval_condition_on_leg(condition, leg: dict):
         text = wrapped.group(1).strip()
     if not text:
         return None
-    for or_part in split_boolean(text, "||"):
-        and_value = True
-        and_known = True
-        for and_part in split_boolean(or_part, "&&"):
-            atom = and_part.strip()
-            lowered = atom.lower()
-            if lowered in TRUE_ATOMS:
-                atom_value = True
-            elif lowered in FALSE_ATOMS:
-                atom_value = False
-            else:
-                match = MATRIX_ATOM.match(atom)
-                if match:
-                    key, op = match.group(1), match.group(2)
-                    wanted = match.group(3) if match.group(3) is not None else match.group(4)
-                    if key not in leg:
-                        atom_value = None
-                    else:
-                        actual = str(leg[key])
-                        atom_value = (actual == wanted) if op == "==" else (actual != wanted)
-                else:
-                    atom_value = None
-            if atom_value is None:
-                if and_value:
-                    and_known = False
-                    break
-            else:
-                and_value = and_value and atom_value
-        if not and_known:
-            return None
-        if and_value:
-            return True
-    return False
+    return eval_or([
+        eval_and([eval_atom(atom.strip(), leg) for atom in split_boolean(or_part, "&&")])
+        for or_part in split_boolean(text, "||")
+    ])
 
 
 def step_is_enabled(step: dict) -> bool:
@@ -625,7 +647,39 @@ def _mutate_weaken_publish_gate(documents: dict[str, dict]) -> None:
     _replace(step, "-eq 11", "-eq 10")
 
 
-# (名称, 变异函数, 期望出现的失败消息子串) —— 覆盖 round-1 评审的四个误判场景，
+def _mutate_semicolon_comment_gtk_apt(documents: dict[str, dict]) -> None:
+    step = _find_step(documents[CI_WORKFLOW], "quality", "libgtk-4-dev")
+    step["run"] = "sudo apt-get update;# sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev"
+
+
+def _mutate_semicolon_comment_go_test(documents: dict[str, dict]) -> None:
+    step = _find_step(documents[CI_WORKFLOW], "quality", "go test -mod=readonly ./...")
+    step["run"] = ":;# go test -mod=readonly ./..."
+
+
+def _mutate_semicolon_comment_require_evidence(documents: dict[str, dict]) -> None:
+    step = _find_step(documents[RELEASE_WORKFLOW], "desktop", "--package")
+    _replace(step, "--package --require-evidence", "--package;# --require-evidence")
+
+
+def _mutate_unknown_and_false_gtk(documents: dict[str, dict]) -> None:
+    _find_step(documents[CI_WORKFLOW], "quality", "libgtk-4-dev")["if"] = "github.event_name == 'push' && false"
+
+
+def _mutate_false_and_unknown_gtk(documents: dict[str, dict]) -> None:
+    _find_step(documents[CI_WORKFLOW], "quality", "libgtk-4-dev")["if"] = "false && github.event_name == 'push'"
+
+
+def _mutate_true_or_unknown_gtk(documents: dict[str, dict]) -> None:
+    _find_step(documents[CI_WORKFLOW], "quality", "libgtk-4-dev")["if"] = "github.event_name == 'push' || true"
+
+
+def _mutate_false_or_unknown_gtk(documents: dict[str, dict]) -> None:
+    _find_step(documents[CI_WORKFLOW], "quality", "libgtk-4-dev")["if"] = "false || github.event_name == 'push'"
+
+
+# (名称, 变异函数, 期望出现的失败消息子串) —— 负对照：每个变异都必须被对应断言拒绝。
+# 覆盖 round-1 的注释/禁用场景、round-2 的 `;#` token 边界与三值逻辑顺序场景，
 # 外加前置/CLI/矩阵/发布门的关键变异，确保本检查器自身不退化。
 MUTATIONS = (
     ("commented-out GTK apt install is rejected", _mutate_comment_gtk_apt, "libgtk-4-dev"),
@@ -633,6 +687,11 @@ MUTATIONS = (
     ("${{ false }} GTK apt step is rejected", _mutate_disable_gtk_apt_expression, "libgtk-4-dev"),
     ("commented-out go test gate is rejected", _mutate_comment_go_test, "go test gate"),
     ("inline-commented --require-evidence is rejected", _mutate_inline_comment_require_evidence, "--require-evidence"),
+    (";# GTK apt install bypass is rejected", _mutate_semicolon_comment_gtk_apt, "libgtk-4-dev"),
+    (";# go test bypass is rejected", _mutate_semicolon_comment_go_test, "go test gate"),
+    (";# --require-evidence bypass is rejected", _mutate_semicolon_comment_require_evidence, "--require-evidence"),
+    ("unknown&&false disabled GTK step is rejected", _mutate_unknown_and_false_gtk, "libgtk-4-dev"),
+    ("false&&unknown disabled GTK step is rejected", _mutate_false_and_unknown_gtk, "libgtk-4-dev"),
     ("xvfb removed from the native apt step is rejected", _mutate_remove_xvfb, "xvfb"),
     ("disabled pinned Wails CLI install is rejected", _mutate_disable_wails_install, "pinned Wails CLI install"),
     ("commented-out Wails CLI install is rejected", _mutate_comment_wails_install, "pinned Wails CLI install"),
@@ -640,6 +699,52 @@ MUTATIONS = (
     ("dropped native matrix leg is rejected", _mutate_drop_matrix_leg, "eight-target contract"),
     ("weakened publish file-count gate is rejected", _mutate_weaken_publish_gate, "8 packages + 3 evidence files"),
 )
+
+# (名称, 变异函数) —— 正对照：这些合法变异不得触发任何断言失败
+# （恒真/不可判定的条件必须保持“启用且满足覆盖”，防止三值逻辑过度误伤）。
+POSITIVE_MUTATIONS = (
+    ("unknown||true condition keeps the GTK step covered", _mutate_true_or_unknown_gtk),
+    ("false||unknown condition stays permissive", _mutate_false_or_unknown_gtk),
+)
+
+
+def truth_table_self_test() -> list[str]:
+    """三值逻辑真值表正对照：AND/OR 必须满足 Kleene 真值表且与操作数顺序无关。"""
+    leg = {"os": "linux"}
+    known_true = "matrix.os == 'linux'"
+    known_false = "matrix.os == 'windows'"
+    unknown = "github.event_name == 'push'"
+    cases = (
+        (f"{known_false} && {unknown}", False),
+        (f"{unknown} && {known_false}", False),
+        (f"{known_true} && {unknown}", None),
+        (f"{unknown} && {known_true}", None),
+        (f"{unknown} && {unknown}", None),
+        (f"{known_true} && {known_true}", True),
+        (f"{known_false} && {known_false}", False),
+        (f"{known_true} && {known_false}", False),
+        (f"{known_false} && {known_true}", False),
+        (f"{known_false} || {unknown}", None),
+        (f"{unknown} || {known_false}", None),
+        (f"{known_true} || {unknown}", True),
+        (f"{unknown} || {known_true}", True),
+        (f"{unknown} || {unknown}", None),
+        (f"{known_true} || {known_true}", True),
+        (f"{known_false} || {known_false}", False),
+        (f"{known_true} || {known_false}", True),
+        (f"{known_false} || {known_true}", True),
+        (f"{known_true} && {unknown} || {known_true}", True),
+        (f"{known_false} && {unknown} || {known_false}", False),
+        ("matrix.kind == 'desktop'", None),
+        (f"${{{{ {known_false} && {unknown} }}}}", False),
+        (f"${{{{ {unknown} || {known_true} }}}}", True),
+    )
+    failures = []
+    for condition, expected in cases:
+        actual = eval_condition_on_leg(condition, leg)
+        if actual is not expected:
+            failures.append(f"{condition!r} -> {actual!r}, expected {expected!r}")
+    return failures
 
 
 def self_test(root: Path, documents: dict[str, dict]) -> int:
@@ -653,6 +758,14 @@ def self_test(root: Path, documents: dict[str, dict]) -> int:
         print(f"FAIL self-test: unmutated documents must pass, got: {control.failures}")
     else:
         print("ok   self-test: unmutated documents pass (positive control)")
+
+    truth_failures = truth_table_self_test()
+    if truth_failures:
+        failures.append("three-valued truth table")
+        for failure in truth_failures:
+            print(f"FAIL self-test: truth table {failure}")
+    else:
+        print("ok   self-test: three-valued truth table holds (all operand orders)")
 
     for name, mutate, expected in MUTATIONS:
         mutated = copy.deepcopy(documents)
@@ -670,10 +783,26 @@ def self_test(root: Path, documents: dict[str, dict]) -> int:
             failures.append(name)
             print(f"FAIL self-test: {name} was NOT rejected (expected a failure containing {expected!r}; got {audit.failures or 'NO FAILURES'})")
 
+    for name, mutate in POSITIVE_MUTATIONS:
+        mutated = copy.deepcopy(documents)
+        try:
+            mutate(mutated)
+        except AssertionError as error:
+            failures.append(name)
+            print(f"FAIL self-test: {name} setup error: {error}")
+            continue
+        audit = Audit(quiet=True)
+        run_all_audits(audit, root, mutated)
+        if audit.failures:
+            failures.append(name)
+            print(f"FAIL self-test: {name} must stay accepted, got: {audit.failures}")
+        else:
+            print(f"ok   self-test: {name}")
+
     if failures:
         print(f"\nself-test FAILED for: {', '.join(failures)}")
         return 1
-    print(f"\n全部 {len(MUTATIONS)} 个变异负对照均被正确拒绝。")
+    print(f"\n全部 {len(MUTATIONS)} 个变异负对照被正确拒绝，{len(POSITIVE_MUTATIONS)} 个正对照与三值真值表通过。")
     return 0
 
 
