@@ -34,10 +34,10 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 140)
-        self.assertEqual(frontend["unique_command_count"], 139)
+        self.assertEqual(frontend["method_count"], 141)
+        self.assertEqual(frontend["unique_command_count"], 140)
         self.assertEqual(commands["reconciliation"]["rust_only"], ["credential_save"])
-        self.assertEqual(commands["reconciliation"]["frontend_only"], ["ai_answer"])
+        self.assertEqual(commands["reconciliation"]["frontend_only"], ["ai_answer", "terminal_resize_flush"])
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
             [{"name": "ai_presets", "accessors": ["aiApi.presets", "modelApi.presets"]}],
