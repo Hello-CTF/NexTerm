@@ -26,6 +26,7 @@ import { describeError } from "../../ui/errorText";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
+import { useFileOps } from "./useFileOps";
 import {
   IconAlert,
   IconArchive,
@@ -36,7 +37,9 @@ import {
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconLock,
   IconRefresh,
+  IconShieldCheck,
   IconTerminal,
   IconTrash,
   IconUpload,
@@ -52,6 +55,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   /** 行 / 空白处右键菜单（见 openRowMenu / openBlankMenu）。 */
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  /** rename / chmod / checksum（M60）：与左栏文件树同一套预检与提醒。 */
+  const fileOps = useFileOps(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const entries = useQuery({
@@ -327,6 +332,38 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           onSelect: () => void copyPath(entry.path),
         },
       );
+    }
+    // 重命名 / 权限 / 校验值（M60）：目录与文件都有重命名和权限；
+    // 校验值只对非目录（符号链接算的是它指向的目标的内容）。
+    items.push(
+      {
+        kind: "item",
+        label: "重命名",
+        icon: <IconEdit size={13} />,
+        disabled: fileOps.busy !== null,
+        onSelect: () =>
+          void fileOps.renameEntry(entry, list, (from, to) =>
+            setSelected((cur) => (cur === from ? to : cur)),
+          ),
+      },
+      {
+        kind: "item",
+        label: "权限…",
+        icon: <IconLock size={13} />,
+        hint: "chmod",
+        disabled: fileOps.busy !== null,
+        onSelect: () => void fileOps.chmodEntry(entry),
+      },
+    );
+    if (!isDir) {
+      items.push({
+        kind: "item",
+        label: "校验值…",
+        icon: <IconShieldCheck size={13} />,
+        hint: "md5/sha256",
+        disabled: fileOps.busy !== null,
+        onSelect: () => void fileOps.checksumEntry(entry),
+      });
     }
     items.push(
       { kind: "separator" },
