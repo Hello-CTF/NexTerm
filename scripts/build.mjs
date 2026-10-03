@@ -403,7 +403,27 @@ function packageAssertions(kind, file, goos, goarch) {
   return [];
 }
 
+function officialRustBaseline(id) {
+  const relative = option("rust-official-baseline", ".github/baselines/rust-official-v0.2.1.json");
+  const absolute = path.resolve(ROOT, relative);
+  if (!fs.existsSync(absolute)) return null;
+  const document = JSON.parse(fs.readFileSync(absolute, "utf8"));
+  const entry = document.artifacts?.[id];
+  if (!entry?.size_bytes) return null;
+  return {
+    source: `${relative}#${id} (${document.release?.tag} ${entry.file}${entry.inner_path ? `#${entry.inner_path}` : ""})`,
+    url: `${document.release?.base_url}/${entry.file}`,
+    sha256: entry.sha256,
+    provenance: "official-release",
+    historical: false,
+    size_bytes: entry.size_bytes,
+    contents_difference: entry.contents_difference,
+  };
+}
+
 function rustBaseline(id) {
+  const official = officialRustBaseline(id);
+  if (official) return official;
   const pinned = {
     "desktop-darwin-arm64": ["docs/acceptance-rwig/baseline/baseline.json", "artifacts", "rust-desktop-macos-arm64"],
     "server-darwin-arm64": ["docs/acceptance-rwig/baseline/baseline.json", "artifacts", "rust-server-macos-arm64"],
@@ -420,6 +440,7 @@ function rustBaseline(id) {
   if (!entry?.size_bytes) return { status: "evidence-gap", reason: `${relative} has no byte measurement for ${label}` };
   return {
     source: `${relative}#${label}`,
+    provenance: collection === "entries" ? "historical-documented" : "same-host-pinned",
     historical: collection === "entries",
     size_bytes: entry.size_bytes,
   };
@@ -469,7 +490,8 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     ? binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requireEmbedded })
     : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
   const comparisons = sizeComparisons(id, bytes);
-  const failed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed") || comparisons.rust.status === "failed";
+  const assertionsFailed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed");
+  const sizeGateFailed = comparisons.rust.status === "failed";
   const gap = comparisons.rust.status === "evidence-gap" || comparisons.custom_go.status !== "measured";
   const report = {
     schema_version: 1,
@@ -483,6 +505,9 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     build: {
       go: output("go", ["env", "GOVERSION"], { allowFailure: true })?.trim() || "unknown",
       wails_cli: WAILS_VERSION,
+      node: process.version,
+      pnpm: output(PNPM, ["--version"], { allowFailure: true })?.trim() || "unknown",
+      toolchain_pin: "CI pins Go 1.26.8, Node 22 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
       module_mode: "-mod=readonly",
       reproducible_flags: ["-trimpath", "-buildvcs=false", "-ldflags=-s -w + version/commit"],
       dependency_accounting: "the complete composed Go module, including Eino where imported; no feature-removing build tags",
@@ -490,7 +515,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     format: inspected.inspected,
     assertions: inspected.assertions,
     comparisons,
-    status: failed ? "failed" : gap ? "evidence-gap" : "passed",
+    status: assertionsFailed || sizeGateFailed ? "failed" : gap ? "evidence-gap" : "passed",
     feature_parity_claim: false,
     real_target_acceptance_claim: false,
   };
@@ -498,7 +523,10 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`);
   log(`${id}: ${bytes} bytes; Rust=${comparisons.rust.status}; custom-Go=${comparisons.custom_go.status}; report=${destination}`);
-  if (failed) die(`${id} has failed artifact assertions or the Rust size gate; see ${destination}`);
+  // Assertion failures mean a broken build and stop the pipeline; a failed Rust
+  // size comparison is recorded honestly and enforced only by --require-size so
+  // smoke and packaging still run and the publish gate sees full evidence.
+  if (assertionsFailed) die(`${id} has failed artifact assertions; see ${destination}`);
   if (requireSize) requireReportPassed(report);
   return report;
 }
@@ -624,11 +652,15 @@ function reportOnly() {
   const goarch = targetArch();
   const kind = option("kind", "server-archive");
   const flavor = option("flavor", "full");
-  const defaultID = kind === "desktop" || kind === "server" ? `${kind}-${goos}-${goarch}` : `${kind}-${flavor}-${goos}-${goarch}`;
+  const defaultID = kind === "desktop" || kind === "server"
+    ? `${kind}-${goos}-${goarch}`
+    : kind === "server-archive"
+      ? `server-archive-${flavor}-${goos}-${goarch}`
+      : `${kind}-${goos}-${goarch}`;
   const id = option("id", defaultID);
   if (kind === "server-archive" && flavor !== "full") die("only --flavor=full is published; --sync-only remains a runtime mode, not an archive");
   if (!options.file) die("report requires --file=PATH");
-  writeArtifactReport({ id, kind, goos, goarch, file, requireSize: flag("require-size"), stripped: true });
+  writeArtifactReport({ id, kind, goos, goarch, file, cgo: option("cgo", "0"), requireSize: flag("require-size"), stripped: true });
 }
 
 switch (command) {

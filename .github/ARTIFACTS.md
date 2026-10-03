@@ -31,7 +31,7 @@ Every raw binary and final installer/archive gets an adjacent `*.artifact.json`.
 
 The full Linux archive report independently lists the tar and requires `nexterm-server`, `web/index.html`, `nexterm-server.service`, `nexterm-onlyserver.service`, `nexterm.env.example`, `onlyserver.env.example`, `LICENSE` and `README.md`. The restricted runtime's three-command RPC and `/rpc` 404 behavior remains covered by live server tests even though no restricted archive is published.
 
-Rust references come from the pinned `docs/acceptance-rwig/baseline/baseline.json` and the identified historical Linux server entry. Historical measurements are labelled, not silently described as same-host. Package types and architectures are never substituted for one another.
+Rust references come from the official same-form release file `.github/baselines/rust-official-v0.2.1.json` (GitHub release v0.2.1 assets, SHA-256 verified by download), then the pinned `docs/acceptance-rwig/baseline/baseline.json`, then the identified historical Linux server entry; each comparison records its provenance. Historical measurements are labelled, not silently described as same-host. Package types and architectures are never substituted for one another. The Go linux-server archive intentionally differs in content from the Rust single-binary archive (both runtime units and both env examples); the whole-archive comparison is the like-for-like rule and that content difference is stated in the baseline file and the artifact report.
 
 `.github/baselines/custom-go.json` accepts only entries of this form:
 
@@ -48,7 +48,7 @@ Rust references come from the pinned `docs/acceptance-rwig/baseline/baseline.jso
 }
 ```
 
-A skeleton or feature-reduced binary is invalid. The full-Eino release is measured against this custom-Go baseline and must independently be strictly smaller than every like-for-like Rust counterpart. Missing custom-Go or Rust evidence makes the report `evidence-gap`; `--require-size` turns either gap or a failed size comparison into a release failure. Final draft publication additionally requires every contracted package and all final and supporting raw reports to pass.
+A skeleton or feature-reduced binary is invalid. `full-pre-eino` is measured at commit 3e39138 (the parent of b4c5a2b): the complete production composition — desktop core, sync boundary, durable tmux recovery and vault — as it stood immediately before the full-Eino AI runtime adoption, which landed in the same commit series; the AI runtime did not exist yet at that tree, so no feature-removing build tag is used. The measurement reports the full-Eino size delta only; it is not a claim of strict like-for-like composition with the final release, and each entry's `source` records the commit and this ruling. The full-Eino release is measured against this custom-Go baseline and must independently be strictly smaller than every like-for-like Rust counterpart. Missing custom-Go or Rust evidence makes the report `evidence-gap`; `--require-size` turns either gap or a failed size comparison into a release failure. Final draft publication additionally requires every contracted package and all final and supporting raw reports to pass.
 
 ## M47 LazyCat and Pages inputs
 

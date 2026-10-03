@@ -1,5 +1,107 @@
 {
   "schema_version": 1,
   "purpose": "Full-feature, like-for-like custom-Go measurements immediately before full-Eino adoption. Skeleton or feature-reduced binaries are not valid baselines.",
-  "artifacts": {}
+  "measurement": {
+    "commit": "3e391384a09d439382f204a4a7c0f963a27f7105",
+    "commit_note": "Parent of b4c5a2b (feat(app): compose AI runtime owners and wire real server transport). The tree carries the complete production composition of its line — desktop core (ab398d1), production sync boundary (7ff50bb), durable tmux recovery (89520fe) and vault payload adaptation (3e39138) — immediately before the full-Eino AI runtime adoption; the AI runtime did not exist yet, so no feature-removing build tag was used. Tower ruling 2026-10-03: these values report the full-Eino size delta only, are not a claim of strict like-for-like composition with the final release, and never waive any Rust gate.",
+    "method": "Stripped release builds (Go 1.26.8, -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w' -tags production, version/commit stamped, production Vite frontend embedded for desktops). linux/amd64 and linux/arm64 desktops built cgo-enabled in a golang:1.26.8-trixie container with libgtk-4-dev/libwebkitgtk-6.0-dev (amd64 via x86_64-linux-gnu-gcc multiarch cross). Archives are GNU tar --sort=name fixed-metadata tar.gz; NSIS via makensis 3.12 with the committed NexTerm.nsi and the Wails WebView2 bootstrapper; DMG via hdiutil UDZO with ad-hoc codesign. like_for_like means same artifact form as the final artifact (raw vs raw, installer vs installer), not identical feature composition."
+  },
+  "artifacts": {
+    "server-linux-amd64": {
+      "size_bytes": 34844834,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw static CGO_ENABLED=0 server, measured on macOS arm64 host"
+    },
+    "server-linux-arm64": {
+      "size_bytes": 29687970,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw static CGO_ENABLED=0 server, measured on macOS arm64 host"
+    },
+    "desktop-windows-amd64": {
+      "size_bytes": 40048128,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw CGO_ENABLED=0 desktop with embedded production frontend, measured on macOS arm64 host"
+    },
+    "desktop-windows-arm64": {
+      "size_bytes": 34265088,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw CGO_ENABLED=0 desktop with embedded production frontend, measured on macOS arm64 host"
+    },
+    "desktop-darwin-amd64": {
+      "size_bytes": 39036272,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw cgo desktop (clang -arch x86_64, MACOSX_DEPLOYMENT_TARGET=12.0) with embedded production frontend, measured on macOS arm64 host"
+    },
+    "desktop-darwin-arm64": {
+      "size_bytes": 33912930,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw native cgo desktop with embedded production frontend, measured on macOS arm64 host"
+    },
+    "desktop-linux-amd64": {
+      "size_bytes": 39400176,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw cgo desktop (x86_64-linux-gnu-gcc, libgtk-4-dev/libwebkitgtk-6.0-dev:amd64) with embedded production frontend, measured in golang:1.26.8-trixie container"
+    },
+    "desktop-linux-arm64": {
+      "size_bytes": 34115944,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 raw native cgo desktop (libgtk-4-dev/libwebkitgtk-6.0-dev) with embedded production frontend, measured in golang:1.26.8-trixie container"
+    },
+    "server-archive-full-linux-amd64": {
+      "size_bytes": 13242608,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 full server archive (binary + web + both systemd units + both env examples + LICENSE + README), GNU tar fixed metadata, measured in golang:1.26.8-trixie container"
+    },
+    "server-archive-full-linux-arm64": {
+      "size_bytes": 11147436,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 full server archive (binary + web + both systemd units + both env examples + LICENSE + README), GNU tar fixed metadata, measured in golang:1.26.8-trixie container"
+    },
+    "desktop-nsis-windows-amd64": {
+      "size_bytes": 12433360,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 NSIS installer via committed .github/packaging/windows/NexTerm.nsi and makensis 3.12, measured on macOS arm64 host"
+    },
+    "desktop-nsis-windows-arm64": {
+      "size_bytes": 10267659,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 NSIS installer via committed .github/packaging/windows/NexTerm.nsi and makensis 3.12, measured on macOS arm64 host"
+    },
+    "desktop-dmg-darwin-amd64": {
+      "size_bytes": 18676038,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 DMG (app bundle + ad-hoc codesign + hdiutil UDZO), measured on macOS arm64 host"
+    },
+    "desktop-dmg-darwin-arm64": {
+      "size_bytes": 16053533,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 DMG (app bundle + ad-hoc codesign + hdiutil UDZO), measured on macOS arm64 host"
+    },
+    "desktop-linux-archive-linux-amd64": {
+      "size_bytes": 14253110,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 Linux desktop archive (binary + LICENSE + README), GNU tar fixed metadata, measured in golang:1.26.8-trixie container"
+    },
+    "desktop-linux-archive-linux-arm64": {
+      "size_bytes": 12073196,
+      "like_for_like": true,
+      "feature_set": "full-pre-eino",
+      "source": "3e39138 Linux desktop archive (binary + LICENSE + README), GNU tar fixed metadata, measured in golang:1.26.8-trixie container"
+    }
+  }
 }
