@@ -224,6 +224,7 @@ describe("asset group controls", () => {
     mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted!.container, "删除分组"));
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledWith("g1"));
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
   });
 
   it("shows a delete failure inline and retries without re-asking", async () => {
@@ -428,6 +429,8 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
+    // 第二次 ask 必须被真正消费（防止 once 配置被 reset 静默吞掉）
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
     // 已确认的含换行插入，结果提示不得再绝对声称「未执行」
     const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
     expect(toastText).not.toContain("未执行");
@@ -452,6 +455,7 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
     const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
     // 内容字节原样保留（含中间的 0x0d），确认 ≠ 删改
     expect(new TextDecoder().decode(bytes)).toBe("echo M59_R_EXECUTED\r#");
@@ -476,6 +480,7 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
     const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
     expect(new TextDecoder().decode(bytes)).toBe("echo a\recho b");
   });
@@ -497,6 +502,7 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
     const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
     expect(new TextDecoder().decode(bytes)).toBe("echo a\r\necho b");
   });
@@ -519,10 +525,80 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
     const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
     expect(new TextDecoder().decode(bytes)).toBe("echo a\u0003");
     const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
     expect(toastText).not.toContain("未执行");
+  });
+
+  it("gates Tab — programmable completion runs shell code without Enter", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "tab", body: "foo \t", groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("tab"));
+
+    // 未授权前绝不写入
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(new TextDecoder().decode(bytes)).toBe("foo \t");
+    const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
+    expect(toastText).not.toContain("未执行");
+  });
+
+  it.each([
+    ["DEL", "ab\u007f"],
+    ["NUL", "a\u0000b"],
+    ["ESC", "a\u001bb"],
+    ["C1 NEL", "a\u0085b"],
+  ])("gates %s as a terminal-state control character", async (_label, body) => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "边界", body, groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("边界"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(new TextDecoder().decode(bytes)).toBe(body);
+  });
+
+  it("does not gate truly printable content (space, ~, CJK)", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "可打印", body: "df -h ~ /中文", groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("可打印"));
+
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    expect(mocks.ask).not.toHaveBeenCalled();
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(new TextDecoder().decode(bytes)).toBe("df -h ~ /中文");
   });
 
   it("refuses to insert with a clear toast when no terminal is active", async () => {
@@ -548,5 +624,6 @@ describe("snippets panel", () => {
     mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted.container, "删除片段"));
     await waitFor(() => expect(mocks.snippetDelete).toHaveBeenCalledWith("sn1"));
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
   });
 });

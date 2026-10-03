@@ -3,9 +3,10 @@
 // 安全红线（别改坏）：
 // · 选中 / 编辑片段只碰字符串，**绝不执行内容** —— 内容进入终端的唯一路径是
 //   显式的「插入」按钮。
-// · 插入按风险分级（见 insertRisk）：可打印内容只是「打字」（写入 ≠ 执行，
-//   回车才运行）；含回车/换行（PTY 里 \r 就是回车，提交即执行）或终端控制
-//   字符（Ctrl-C / Ctrl-D / ESC 序列等）的片段必须先显式确认，不允许静默跑。
+// · 插入按风险分级（见 insertRisk）：只有真正可打印的内容才只是「打字」
+//   （写入 ≠ 执行，回车才运行）；含回车/换行（PTY 里 \r 就是回车，提交即执行）
+//   或任何控制字符（Tab 补全 / Ctrl-C / Ctrl-D / ESC 序列等）的片段必须先
+//   显式确认，不允许静默跑。
 // · 确认 ≠ 删改：任何片段都按原字节写入，分级只决定要不要先问。
 // · 插入目标是**当前工作区的当前终端标签**；没有就明确提示，不偷偷开新终端。
 import { useState } from "react";
@@ -50,10 +51,12 @@ function activeTerminalTabId(): string | null {
  * 插入风险分级：
  * - `"execute"`：含 `\r` 或 `\n` —— 规范模式下两者都提交当前输入行
  *   （PTY 里裸 `\r` 就是回车），写入即逐行执行，必须显式确认；
- * - `"control"`：含其余 C0（Tab 除外）或 C1 控制字符 —— 不会执行命令行，
- *   但可能中断前台进程（Ctrl-C / Ctrl-Z）、结束输入（Ctrl-D）或经 ESC 序列
- *   改变终端状态，同样必须显式确认；
- * - `"none"`：可打印字符加 Tab / 退格等普通按键 —— 只是「打字」，写入不执行。
+ * - `"control"`：含任何非可打印字符（全部 C0、DEL、C1）—— 不会替你执行
+ *   命令行，但 Tab 会触发 programmable completion（补全钩子是 shell 代码，
+ *   不需要回车就会运行），DEL/其余 C0/C1 可能中断前台进程、结束输入或
+ *   经 ESC 序列 / readline 绑定改变终端状态，必须显式确认；
+ * - `"none"`：仅真正可打印字符（0x20–0x7e 与 ≥0xa0 的 Unicode）——
+ *   只是「打字」，写入不执行。
  */
 type InsertRisk = "none" | "execute" | "control";
 
@@ -63,12 +66,10 @@ function insertRisk(body: string): InsertRisk {
     const c = ch.codePointAt(0) ?? 0;
     if (c === 0x0a || c === 0x0d) return "execute";
   }
-  // 第二遍：其余 C0（Tab 除外）与 C1 —— 不执行命令行，但可能改变终端/进程状态
+  // 第二遍：可打印白名单之外的统统要确认（含 Tab 补全与 DEL），不再设例外
   for (const ch of body) {
     const c = ch.codePointAt(0) ?? 0;
-    if (c <= 0x08 || (c >= 0x0b && c <= 0x0c) || (c >= 0x0e && c <= 0x1f) || (c >= 0x80 && c <= 0x9f)) {
-      return "control";
-    }
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return "control";
   }
   return "none";
 }
@@ -105,7 +106,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       if (!ok) return;
     } else if (risk === "control") {
       const ok = await ask(
-        `片段「${s.name}」包含终端控制字符（如 Ctrl-C / Ctrl-D / ESC 序列）：\n插入不会替你执行命令行，但可能中断前台进程、结束输入或改变终端状态。\n仍要插入吗？`,
+        `片段「${s.name}」包含终端控制字符（Tab 补全 / DEL / Ctrl-C / Ctrl-D / ESC 序列等）：\n插入不会替你执行命令行，但 Tab 补全钩子本身就是 shell 代码（不需要回车就会运行），其他控制字符也可能触发 readline/终端绑定动作、中断前台进程或改变终端状态。\n仍要插入吗？`,
         { kind: "warning" },
       );
       if (!ok) return;
