@@ -105,22 +105,39 @@ func (s *Store) ConvDelete(ctx context.Context, id string) (returnErr error) {
 	return nil
 }
 
+// MsgInsert appends a message and assigns the conversation's next seq — the
+// per-conversation monotonic insertion order MsgList reads back. seq is
+// allocated inside the insert transaction (the DSN's immediate tx lock
+// serializes writers), so same-millisecond rows keep their true insertion
+// order instead of falling to the ULID's random tail.
 func (s *Store) MsgInsert(ctx context.Context, conversationID, role string, content any, tokensIn, tokensOut *int64) error {
 	contentJSON, err := marshalJSON(content)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO ai_message(id, conversation_id, role, content_json, tokens_in, tokens_out, created_at)
-VALUES(?,?,?,?,?,?,?)`, ids.New(), conversationID, role, contentJSON, tokensIn, tokensOut, ids.NowMS())
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return dbError(err)
 	}
-	return s.ConvTouch(ctx, conversationID)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `INSERT INTO ai_message(id, conversation_id, role, content_json, tokens_in, tokens_out, created_at, seq)
+VALUES(?,?,?,?,?,?,?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM ai_message WHERE conversation_id = ?))`,
+		ids.New(), conversationID, role, contentJSON, tokensIn, tokensOut, ids.NowMS(), conversationID)
+	if err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE ai_conversation SET updated_at=? WHERE id=?", ids.NowMS(), conversationID); err != nil {
+		return dbError(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return dbError(err)
+	}
+	return nil
 }
 
 func (s *Store) MsgList(ctx context.Context, conversationID string) ([]MessageRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, role, content_json, tokens_in, tokens_out, created_at
-FROM ai_message WHERE conversation_id = ? ORDER BY created_at, id`, conversationID)
+FROM ai_message WHERE conversation_id = ? ORDER BY seq`, conversationID)
 	if err != nil {
 		return nil, dbError(err)
 	}

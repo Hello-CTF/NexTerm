@@ -292,22 +292,21 @@ func (r *Runner) initializeEino(current *job) error {
 			// Mid-run steering lands exactly here, at the model-call boundary:
 			// queued user messages join the state after the completed
 			// tool-call unit the agent just finished — never inside one — and
-			// are part of this round's budget.
+			// are part of this round's budget. The acks are queued, not
+			// emitted: this hook runs on the graph goroutine while the consume
+			// loop may still owe the toolResult of that unit, and only the
+			// consume loop may put events on the stream.
+			var pending []Event
 			for _, steered := range current.steer.Drain() {
 				state.Messages = append(state.Messages, steered)
-				if err := current.emit(current.ctx, Event{Type: "steered", Text: steered.Content}); err != nil {
-					return err
-				}
+				pending = append(pending, Event{Type: "steered", Text: steered.Content})
 			}
-			if err := current.emit(current.ctx, statusEvent("thinking", runtime.currentTurn())); err != nil {
-				return err
-			}
+			pending = append(pending, statusEvent("thinking", runtime.currentTurn()))
 			messages, compacted, err := fitMessageBudget(state.Messages, runtime.contextWindow)
 			if compacted {
-				if err := current.emit(current.ctx, statusEvent("compacting", runtime.currentTurn())); err != nil {
-					return err
-				}
+				pending = append(pending, statusEvent("compacting", runtime.currentTurn()))
 			}
+			current.queueEmits(pending...)
 			state.Messages = messages
 			return err
 		}}},
@@ -340,8 +339,44 @@ func imageParts(image string) (string, string) {
 	return "image/png", image
 }
 
+// flushPendingEvents emits middleware-recorded events (steered acks,
+// thinking/compacting status). The consume loop is the job's only event
+// emitter, so a boundary ack always lands after the toolResult of the unit
+// that precedes it and before the model output it influenced. On exit paths
+// the flush is best-effort against a bounded delivery context: a broken
+// stream must not mask the run's own outcome.
+func (r *Runner) flushPendingEvents(current *job, bestEffort bool) error {
+	pending := current.drainEmits()
+	if len(pending) == 0 {
+		return nil
+	}
+	ctx := current.ctx
+	if bestEffort {
+		parent := current.deliveryCtx
+		if parent == nil {
+			parent = context.WithoutCancel(current.ctx)
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
+	}
+	for _, event := range pending {
+		if err := current.emit(ctx, event); err != nil {
+			if bestEffort {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEvent]) (string, int, usage.Usage, error) {
 	runtime := current.eino
+	// Whatever the run's outcome, queued boundary acks are accounted for
+	// before the terminal event: a steer accepted into a model call is
+	// reported as delivered, never silently dropped.
+	defer func() { _ = r.flushPendingEvents(current, true) }()
 	for {
 		event, ok := iterator.Next()
 		if !ok {
@@ -361,6 +396,15 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 			continue
 		}
 		variant := event.Output.MessageOutput
+		if variant.Role == schema.Assistant {
+			// The first event of the model call that follows a boundary: the
+			// iterator is FIFO, so every event of the preceding tool unit is
+			// already emitted — flushing here is what keeps a steered ack
+			// from leapfrogging its toolResult.
+			if err := r.flushPendingEvents(current, false); err != nil {
+				return runtime.failure(err)
+			}
+		}
 		message, err := r.consumeMessageVariant(current, variant)
 		if err != nil {
 			return runtime.failure(err)
