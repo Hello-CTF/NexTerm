@@ -10,7 +10,7 @@
  *   node scripts/build.mjs desktop --release --os=darwin --arch=arm64 --package
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \
- *     --flavor=full --file=target/release-assets/NexTerm.tar.gz --require-size
+ *     --flavor=full --file=target/release-assets/NexTerm.tar.gz --require-evidence
  */
 
 import { spawnSync } from "node:child_process";
@@ -294,9 +294,9 @@ function buildBinary(kind) {
       file: packaged,
       cgo: buildEnvironment(goos, goarch, kind).CGO_ENABLED,
       stripped: true,
-      requireSize: flag("require-size"),
+      requireEvidence: flag("require-evidence"),
     });
-  } else if (flag("require-size")) {
+  } else if (flag("require-evidence")) {
     requireReportPassed(report);
   }
   return { outputPath, report };
@@ -433,11 +433,11 @@ function rustBaseline(id) {
     "server-linux-amd64": ["docs/acceptance-rwig/baseline/historical-metrics.json", "entries", "server-release-linux-amd64-lazycat"],
   };
   const reference = pinned[id] || historical[id];
-  if (!reference) return { status: "evidence-gap", reason: `no like-for-like recorded Rust baseline for ${id}` };
+  if (!reference) return { status: "unavailable", reason: `no like-for-like recorded Rust baseline for ${id}` };
   const [relative, collection, label] = reference;
   const document = JSON.parse(fs.readFileSync(path.join(ROOT, relative), "utf8"));
   const entry = document[collection]?.find((candidate) => (candidate.label || candidate.id) === label);
-  if (!entry?.size_bytes) return { status: "evidence-gap", reason: `${relative} has no byte measurement for ${label}` };
+  if (!entry?.size_bytes) return { status: "unavailable", reason: `${relative} has no byte measurement for ${label}` };
   return {
     source: `${relative}#${label}`,
     provenance: collection === "entries" ? "historical-documented" : "same-host-pinned",
@@ -449,32 +449,37 @@ function rustBaseline(id) {
 function customGoBaseline(id) {
   const relative = option("custom-go-baseline", ".github/baselines/custom-go.json");
   const absolute = path.resolve(ROOT, relative);
-  if (!fs.existsSync(absolute)) return { status: "evidence-gap", reason: `custom-Go baseline does not exist: ${relative}` };
+  if (!fs.existsSync(absolute)) return { status: "unavailable", reason: `custom-Go baseline does not exist: ${relative}` };
   const document = JSON.parse(fs.readFileSync(absolute, "utf8"));
   const entry = document.artifacts?.[id];
   if (!entry || !Number.isInteger(entry.size_bytes) || entry.size_bytes <= 0 || entry.like_for_like !== true || entry.feature_set !== "full-pre-eino") {
-    return { status: "evidence-gap", reason: `no full like-for-like pre-Eino custom-Go measurement for ${id}` };
+    return { status: "unavailable", reason: `no full like-for-like pre-Eino custom-Go measurement for ${id}` };
   }
   return { source: `${relative}#${id}`, size_bytes: entry.size_bytes };
 }
 
 function sizeComparisons(id, bytes) {
+  // User decision 2026-10-03: historical Rust sizes are reference only, never a
+  // release gate. Measurements and deltas are recorded honestly; an unavailable
+  // reference is reported as such, never fabricated and never a failure.
   const rust = rustBaseline(id);
   if (rust.size_bytes) {
     rust.go_bytes = bytes;
     rust.delta_bytes = bytes - rust.size_bytes;
     rust.go_to_rust_ratio = bytes / rust.size_bytes;
     rust.smaller = bytes < rust.size_bytes;
-    rust.status = rust.smaller ? "passed" : "failed";
-    rust.rule = "release artifact must be strictly smaller than its like-for-like Rust artifact";
+    rust.status = "measured";
   }
+  rust.informational = true;
+  rust.rule = "historical reference only; never a pass/fail gate";
   const custom = customGoBaseline(id);
   if (Number.isInteger(custom.size_bytes) && custom.size_bytes > 0) {
     custom.release_bytes = bytes;
     custom.eino_delta_bytes = bytes - custom.size_bytes;
     custom.status = "measured";
-    custom.rule = "full-Eino size impact is reported; it never waives the Rust gate";
   }
+  custom.informational = true;
+  custom.rule = "full-Eino size impact reporting only; never a pass/fail gate";
   return { rust, custom_go: custom };
 }
 
@@ -482,7 +487,7 @@ function sha256(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped = true, requireEmbedded = false, requireSize = false }) {
+function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped = true, requireEmbedded = false, requireEvidence = false }) {
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) die(`artifact does not exist: ${file}`);
   const bytes = fs.statSync(file).size;
   const rawBinary = kind === "desktop" || kind === "server";
@@ -491,10 +496,8 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
     : { assertions: packageAssertions(kind, file, goos, goarch), inspected: null };
   const comparisons = sizeComparisons(id, bytes);
   const assertionsFailed = inspected.assertions.length === 0 || inspected.assertions.some((item) => item.status === "failed");
-  const sizeGateFailed = comparisons.rust.status === "failed";
-  const gap = comparisons.rust.status === "evidence-gap" || comparisons.custom_go.status !== "measured";
   const report = {
-    schema_version: 1,
+    schema_version: 2,
     id,
     kind,
     platform: { os: goos, arch: goarch, cgo: cgo === "1" ? "enabled-only-for-wails-platform-layer" : "disabled" },
@@ -510,12 +513,13 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
       toolchain_pin: "CI pins Go 1.26.8, Node 22 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
       module_mode: "-mod=readonly",
       reproducible_flags: ["-trimpath", "-buildvcs=false", "-ldflags=-s -w + version/commit"],
+      runtime_metadata: "Go pclntab and build info are preserved for stack symbolization; no UPX and no manual symbol-table or pclntab stripping",
       dependency_accounting: "the complete composed Go module, including Eino where imported; no feature-removing build tags",
     },
     format: inspected.inspected,
     assertions: inspected.assertions,
     comparisons,
-    status: assertionsFailed || sizeGateFailed ? "failed" : gap ? "evidence-gap" : "passed",
+    status: assertionsFailed ? "failed" : "passed",
     feature_parity_claim: false,
     real_target_acceptance_claim: false,
   };
@@ -523,22 +527,20 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`);
   log(`${id}: ${bytes} bytes; Rust=${comparisons.rust.status}; custom-Go=${comparisons.custom_go.status}; report=${destination}`);
-  // Assertion failures mean a broken build and stop the pipeline; a failed Rust
-  // size comparison is recorded honestly and enforced only by --require-size so
-  // smoke and packaging still run and the publish gate sees full evidence.
+  // Assertion failures mean a broken build and stop the pipeline. Rust and
+  // custom-Go size comparisons are informational only (user decision 2026-10-03:
+  // historical Rust sizes are reference, not a release gate) and never fail a
+  // build; --require-evidence enforces the real file/content/static/cgo checks.
   if (assertionsFailed) die(`${id} has failed artifact assertions; see ${destination}`);
-  if (requireSize) requireReportPassed(report);
+  if (requireEvidence) requireReportPassed(report);
   return report;
 }
 
 function requireReportPassed(report) {
   const assertionsPassed = Array.isArray(report.assertions) && report.assertions.length > 0 && report.assertions.every((item) => item.status === "passed");
-  const ready = report.status === "passed"
-    && report.comparisons?.rust?.status === "passed"
-    && report.comparisons?.custom_go?.status === "measured"
-    && assertionsPassed;
+  const ready = report.status === "passed" && assertionsPassed;
   if (!ready) {
-    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/static checks, a strict Rust comparison, and a like-for-like custom-Go comparison`);
+    die(`${report.id} is not release-ready (${report.status}); every artifact needs passing file/content/static/cgo checks, while Rust and custom-Go size comparisons stay informational and never gate release`);
   }
 }
 
@@ -660,7 +662,7 @@ function reportOnly() {
   const id = option("id", defaultID);
   if (kind === "server-archive" && flavor !== "full") die("only --flavor=full is published; --sync-only remains a runtime mode, not an archive");
   if (!options.file) die("report requires --file=PATH");
-  writeArtifactReport({ id, kind, goos, goarch, file, cgo: option("cgo", "0"), requireSize: flag("require-size"), stripped: true });
+  writeArtifactReport({ id, kind, goos, goarch, file, cgo: option("cgo", "0"), requireEvidence: flag("require-evidence"), stripped: true });
 }
 
 switch (command) {
@@ -695,7 +697,7 @@ switch (command) {
     options.release = "true";
     options.package = "true";
     options["repro-check"] = "true";
-    options["require-size"] = "true";
+    options["require-evidence"] = "true";
     options.os = HOST_OS;
     options.arch = HOST_ARCH;
     options["skip-frontend"] = "true";

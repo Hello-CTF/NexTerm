@@ -82,8 +82,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify bindings
         run: node scripts/build.mjs bindings
-      - name: Build, package and enforce final artifact size evidence
-        run: node scripts/build.mjs desktop --release --repro-check --os=${{ matrix.os }} --arch=${{ matrix.arch }} --package --require-size
+      - name: Build, package and enforce final artifact evidence
+        run: node scripts/build.mjs desktop --release --repro-check --os=${{ matrix.os }} --arch=${{ matrix.arch }} --package --require-evidence
       - name: Upload candidate and raw/final reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -127,8 +127,8 @@ jobs:
           node scripts/build.mjs frontend --repro-check
       - name: Exercise the packaged server before archiving
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
-      - name: Produce and validate the full archive with final size gates
-        run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-size
+      - name: Produce and validate the full archive with final evidence gates
+        run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidates and raw/final reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -167,7 +167,7 @@ jobs:
               find "candidate/$directory" -depth -type d -empty -delete
             fi
           done
-      - name: Require every final artifact, hash and size report
+      - name: Require every final artifact, hash and evidence report
         run: node .github/scripts/release-evidence.mjs candidate
       - name: Assemble release notes
         shell: bash
