@@ -3,13 +3,16 @@
  *
  * Release run 37149307116: `choco install nsis --version=3.11` succeeded on
  * both Windows runner families, but the windows-latest job failed with
- * `makensis: spawnSync makensis ENOENT`. The nsis.install package deploys
- * makensis.exe to `C:\Program Files (x86)\NSIS` and never creates a
- * `C:\ProgramData\chocolatey\bin` shim; the NSIS setup only appends that
- * directory to the machine PATH, which an already-running GitHub Actions job
- * never sees (its environment was captured when the runner service started).
- * The windows-11-arm job passed by image luck: that runner image preinstalls
- * NSIS 3.10, so the directory was already on PATH before the job began.
+ * `makensis: spawnSync makensis ENOENT`. The nsis.install package runs the
+ * official NSIS setup, which deploys makensis.exe to
+ * `C:\Program Files (x86)\NSIS`, creates no `C:\ProgramData\chocolatey\bin`
+ * shim, and writes no PATH entry of any kind (the v3.11 installer script
+ * contains no Environment writes) — so a mid-job install leaves the running
+ * job's PATH without any NSIS directory. The windows-11-arm job passed by
+ * image luck: the runner image build adds `C:\Program Files (x86)\NSIS\` to
+ * the machine PATH itself (runner-images Install-NSIS.ps1,
+ * Add-MachinePathItem) and preinstalls NSIS 3.10, so the directory was
+ * already on PATH before the job began.
  *
  * Resolution order (first hit wins; every root comes from the environment,
  * so nothing here is tied to one runner family's accidental layout):

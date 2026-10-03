@@ -627,9 +627,9 @@ function packageWindows(binary, goarch) {
     `NEXTERM_EXE_NAME=${path.basename(binary)}`,
   ];
   // Resolve makensis deterministically instead of trusting PATH: the
-  // Chocolatey nsis.install package deploys to ProgramFiles(x86)\NSIS
-  // without a shim, and the machine-PATH update its setup performs is never
-  // seen by an already-running CI job (release run 37149307116 ENOENT).
+  // Chocolatey nsis.install package deploys to ProgramFiles(x86)\NSIS with
+  // no shim and no PATH entry of any kind, so a mid-job install leaves the
+  // running CI job unable to see makensis (release run 37149307116 ENOENT).
   const makensis = resolveMakensis({ env: process.env });
   log(`makensis: ${makensis.command} (${makensis.source})`);
   run(makensis.command, [...defines.map((define) => `-D${define}`), path.join(ROOT, ".github/packaging/windows/NexTerm.nsi")]);
