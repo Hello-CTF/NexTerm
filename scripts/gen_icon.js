@@ -1,4 +1,8 @@
-// 生成 NexTerm 应用图标源图（1024x1024 PNG）。
+// 程序化生成 1024x1024 PNG —— 注意：这是**旧版像素 "N" 占位图**的生成器，
+// 不是当前线上图标的来源。现行应用图标是霓虹猫娘栅格画（带辉光/渐变），
+// 无法用代码复现；其 1024 母版维护在 `public/brand/nexterm-icon-1024.png`，
+// 安装包图标 `public/brand/icon.icns` / `public/brand/icon.ico` 由它导出。
+// 不带参数运行会用像素 "N" **覆盖**现有母版，仅在确定要换这套占位图时才跑。
 // 用法：node scripts/gen_icon.js <output.png>
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
@@ -89,6 +93,6 @@ const png = Buffer.concat([
   chunk("IEND", Buffer.alloc(0)),
 ]);
 
-const out = process.argv[2] ?? "src-tauri/icons/source.png";
+const out = process.argv[2] ?? "public/brand/nexterm-icon-1024.png";
 writeFileSync(out, png);
 console.log(`written ${out} (${png.length} bytes)`);

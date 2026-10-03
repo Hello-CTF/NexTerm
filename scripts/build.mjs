@@ -579,7 +579,7 @@ function packageDarwin(binary, goarch) {
   fs.mkdirSync(path.join(app, "Contents/Resources"), { recursive: true });
   fs.copyFileSync(binary, path.join(app, "Contents/MacOS/NexTerm"));
   fs.chmodSync(path.join(app, "Contents/MacOS/NexTerm"), 0o755);
-  const icon = path.join(ROOT, "src-tauri/icons/icon.icns");
+  const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
   const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>CFBundleDisplayName</key><string>NexTerm</string>\n<key>CFBundleExecutable</key><string>NexTerm</string>\n<key>CFBundleIdentifier</key><string>${wailsConfig.info.productIdentifier}</string>\n<key>CFBundleIconFile</key><string>icon.icns</string>\n<key>CFBundleName</key><string>NexTerm</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>${VERSION}</string>\n<key>CFBundleVersion</key><string>${VERSION}</string>\n<key>LSMinimumSystemVersion</key><string>12.0</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n`;
@@ -605,7 +605,7 @@ function packageWindows(binary, goarch) {
   run("wails3", ["generate", "webview2bootstrapper", "-dir", work]);
   const bootstrapper = path.join(work, "MicrosoftEdgeWebview2Setup.exe");
   if (!fs.existsSync(bootstrapper)) die("Wails did not generate the WebView2 bootstrapper");
-  const icon = path.join(ROOT, "src-tauri/icons/icon.ico");
+  const icon = path.join(ROOT, "public/brand/icon.ico");
   if (!fs.existsSync(icon)) die("Windows icon.ico asset is missing");
   const setupArch = goarch === "amd64" ? "x64" : "arm64";
   const installer = path.join(assets, `NexTerm_${VERSION}_${setupArch}-setup.exe`);
