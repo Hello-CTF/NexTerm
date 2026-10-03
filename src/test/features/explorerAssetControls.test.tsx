@@ -376,6 +376,101 @@ describe("snippets panel", () => {
     );
   });
 
+  it("creates a snippet with leading/trailing spaces and Tab preserved verbatim", async () => {
+    mocks.snippetCreate.mockResolvedValue({ id: "sn9" });
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+
+    click(buttonByTitle(mounted.container, "新建片段"));
+    const modal = mounted.container.querySelectorAll(".nx-modal")[1];
+    const name = modal?.querySelectorAll("input.nx-input")[0];
+    const body = modal?.querySelector("textarea");
+    if (!name || !body) throw new Error("Snippet editor fields not found");
+    setInputValue(name as HTMLInputElement, "带空白");
+    // 首尾空格 / Tab 都可能有语义：保存路径一个字节都不能动（trim 只做空白校验）
+    setInputValue(body as HTMLTextAreaElement, "  docker ps \t ");
+    clickButton(mounted.container, "保存");
+    await waitFor(() => expect(mocks.snippetCreate).toHaveBeenCalledTimes(1));
+    expect(mocks.snippetCreate).toHaveBeenCalledWith("带空白", "  docker ps \t ");
+  });
+
+  it("edits a snippet keeping the raw body — trailing CR/LF is meaningful content", async () => {
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "带CRLF", body: "echo done\r\n", groupId: null, sort: 1 },
+    ]);
+    mocks.snippetUpdate.mockResolvedValue(undefined);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("带CRLF"));
+
+    click(buttonByTitle(mounted.container, "编辑片段"));
+    // 不动正文直接保存：状态里的原始 body（含 \r\n）必须原样传给 update，
+    // 不能被 trim 成 "echo done"
+    clickButton(mounted.container, "保存");
+    await waitFor(() => expect(mocks.snippetUpdate).toHaveBeenCalledTimes(1));
+    expect(mocks.snippetUpdate).toHaveBeenCalledWith("sn9", "带CRLF", "echo done\r\n");
+  });
+
+  it("refuses a whitespace-only body — trim is validation, not a write", async () => {
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+
+    click(buttonByTitle(mounted.container, "新建片段"));
+    const modal = mounted.container.querySelectorAll(".nx-modal")[1];
+    const name = modal?.querySelectorAll("input.nx-input")[0];
+    const body = modal?.querySelector("textarea");
+    if (!name || !body) throw new Error("Snippet editor fields not found");
+    setInputValue(name as HTMLInputElement, "空白正文");
+    setInputValue(body as HTMLTextAreaElement, " \t\r\n ");
+    const save = [...mounted.container.querySelectorAll(".nx-modal")[1]!.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "保存",
+    );
+    if (!save) throw new Error("Save button not found");
+    // 纯空白正文：保存按钮直接禁用，任何写都不会发生
+    expect(save).toHaveProperty("disabled", true);
+    click(save);
+    await flush();
+    expect(mocks.snippetCreate).not.toHaveBeenCalled();
+    expect(mocks.snippetUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a saved multi-line snippet inserts with one execute-risk confirm and original bytes", async () => {
+    setTerminalWorkspace("kernel-1");
+    const created = { id: "sn9", name: "两段", body: "echo a\necho b", groupId: null, sort: 3 };
+    mocks.snippetCreate.mockResolvedValue({ id: "sn9" });
+    mocks.snippetList
+      .mockResolvedValueOnce(SNIPPETS.map((s) => ({ ...s })))
+      .mockResolvedValue([...SNIPPETS.map((s) => ({ ...s })), created]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
+
+    click(buttonByTitle(mounted.container, "新建片段"));
+    const modal = mounted.container.querySelectorAll(".nx-modal")[1];
+    const name = modal?.querySelectorAll("input.nx-input")[0];
+    const body = modal?.querySelector("textarea");
+    if (!name || !body) throw new Error("Snippet editor fields not found");
+    setInputValue(name as HTMLInputElement, "两段");
+    setInputValue(body as HTMLTextAreaElement, "echo a\necho b");
+    clickButton(mounted.container, "保存");
+    await waitFor(() => expect(mocks.snippetCreate).toHaveBeenCalledWith("两段", "echo a\necho b"));
+    // 保存后列表刷新，新片段出现在面板里
+    await waitFor(() => expect(mounted!.container.textContent).toContain("两段"));
+
+    const rows = [...mounted.container.querySelectorAll(".nx-row")];
+    const createdRow = rows.find((r) => r.textContent?.includes("两段"));
+    if (!createdRow) throw new Error("Created snippet row not found");
+    click(buttonByTitle(createdRow, "插入到当前终端"));
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    // 保存 → 插入串联：恰好一次 execute-risk 确认（文案如实说明逐行提交），写入原始字节
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("回车/换行"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    const [tabId, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(tabId).toBe("kernel-1");
+    expect(new TextDecoder().decode(bytes)).toBe("echo a\necho b");
+  });
+
   it("edits a snippet without ever writing to the terminal", async () => {
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));

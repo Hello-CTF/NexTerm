@@ -8,6 +8,7 @@
 //   或任何控制字符（Tab 补全 / Ctrl-C / Ctrl-D / ESC 序列等）的片段必须先
 //   显式确认，不允许静默跑。
 // · 确认 ≠ 删改：任何片段都按原字节写入，分级只决定要不要先问。
+// · 保存 ≠ 删改：新建 / 编辑按原字节入库，trim 只做「是否空白」校验。
 // · 插入目标是**当前工作区的当前终端标签**；没有就明确提示，不偷偷开新终端。
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -266,8 +267,9 @@ function SnippetEditor({
   const save = async () => {
     if (saving) return;
     const n = name.trim();
-    const b = body.trim();
-    if (!n || !b) {
+    // trim 只用于空白校验：正文按原字节保存（首尾空格 / Tab / CR / LF 都可能有语义，
+    // 尾部 CR/LF 正是「确认后提交执行」的内容），与插入路径一样不改字节。
+    if (!n || !body.trim()) {
       setError("名称和内容都不能为空");
       return;
     }
@@ -275,9 +277,9 @@ function SnippetEditor({
     setError(null);
     try {
       if (initial) {
-        await assetApi.snippetUpdate(initial.id, n, b);
+        await assetApi.snippetUpdate(initial.id, n, body);
       } else {
-        await assetApi.snippetCreate(n, b);
+        await assetApi.snippetCreate(n, body);
       }
       pushToast("success", initial ? "已保存" : "已创建");
       onSaved();
