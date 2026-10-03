@@ -8,6 +8,7 @@ import (
 
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
@@ -76,6 +77,7 @@ type Config struct {
 	FallbackCancel  func(string) error
 	FallbackConfirm func(Confirmation) error
 	Checkpoints     adk.CheckPointStore
+	HITL            *hitl.Manager
 	NewID           func() string
 	MaxTurns        int
 	MaxImages       int
@@ -111,12 +113,6 @@ type Answer struct {
 	Text   string `json:"text"`
 }
 
-type pendingRequest struct {
-	callID string
-	nonce  string
-	kind   string
-}
-
 type job struct {
 	id          string
 	args        ChatArgs
@@ -129,13 +125,13 @@ type job struct {
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
 
-	eventMu      sync.Mutex
-	finished     bool
-	finalOnce    sync.Once
-	completeOnce sync.Once
-	pendingMu    sync.Mutex
-	pending      *pendingRequest
-	running      bool
+	eventMu        sync.Mutex
+	finished       bool
+	finalOnce      sync.Once
+	completeOnce   sync.Once
+	pendingMu      sync.Mutex
+	resumeIterator *adk.AsyncIterator[*adk.AgentEvent]
+	running        bool
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {
@@ -171,15 +167,9 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 		}
 		j.eventMu.Unlock()
 		j.pendingMu.Lock()
-		j.pending = nil
+		j.resumeIterator = nil
 		j.pendingMu.Unlock()
 	})
-}
-
-func (j *job) setPending(pending *pendingRequest) {
-	j.pendingMu.Lock()
-	j.pending = pending
-	j.pendingMu.Unlock()
 }
 
 func (j *job) setRunning(value bool) {
@@ -188,8 +178,8 @@ func (j *job) setRunning(value bool) {
 	j.pendingMu.Unlock()
 }
 
-func (j *job) state() (*pendingRequest, bool, adk.AgentCancelFunc) {
+func (j *job) state() (bool, adk.AgentCancelFunc) {
 	j.pendingMu.Lock()
 	defer j.pendingMu.Unlock()
-	return j.pending, j.running, j.cancelFn
+	return j.running, j.cancelFn
 }

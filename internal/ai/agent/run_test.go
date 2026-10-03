@@ -64,7 +64,12 @@ func waitClosedTimeout(t *testing.T, stream *SliceStream, timeout time.Duration)
 
 func waitEvent(t *testing.T, stream *SliceStream, kind string) Event {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	return waitEventTimeout(t, stream, kind, 5*time.Second)
+}
+
+func waitEventTimeout(t *testing.T, stream *SliceStream, kind string, timeout time.Duration) Event {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	seen := 0
 	for time.Now().Before(deadline) {
 		events, _ := stream.Snapshot()

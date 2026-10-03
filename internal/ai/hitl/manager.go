@@ -528,6 +528,17 @@ func (m *Manager) Events(runID string, after uint64) ([]Event, error) {
 	return events, nil
 }
 
+// Done returns a channel closed when the run reaches a terminal state,
+// either through Finish/Cancel or through manager-initiated expiry and
+// shutdown. Callers use it to observe termination they did not initiate.
+func (m *Manager) Done(runID string) (<-chan struct{}, error) {
+	run, err := m.run(runID)
+	if err != nil {
+		return nil, err
+	}
+	return run.ctx.Done(), nil
+}
+
 func (m *Manager) NextSequence(runID string) (uint64, error) {
 	run, err := m.run(runID)
 	if err != nil {
