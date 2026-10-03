@@ -9,7 +9,7 @@
 //   · 状态纪律：double-submit 被 busy 挡住，卸载后的完成回调不碰任何状态，
 //     传输进度条与无关 dirty 编辑器不受操作影响。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -271,6 +271,11 @@ describe("重命名（FileBrowser）", () => {
       expect.stringContaining("已存在"),
       expect.objectContaining({ kind: "warning" }),
     );
+    // 覆盖方向必须讲清：被销毁的是既有目标 b 的内容，不是被重命名的源
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("旧「b.txt」的内容将丢失"),
+      expect.anything(),
+    );
     expect(mocks.rename).not.toHaveBeenCalled();
 
     mocks.ask.mockResolvedValueOnce(true);
@@ -517,5 +522,172 @@ describe("操作不破坏既有状态", () => {
       }),
     ).toBe(true);
     setFileEditorDirty(SID, "~/other.txt", false);
+  });
+});
+
+describe("React StrictMode 下的操作（评审 P1 回归）", () => {
+  function mountBrowserStrict(): MountedView {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return mount(
+      createElement(
+        StrictMode,
+        null,
+        createElement(
+          QueryClientProvider,
+          { client },
+          createElement(FileBrowser, { sessionId: SID }),
+        ),
+      ),
+    );
+  }
+
+  beforeEach(async () => {
+    mounted = mountBrowserStrict();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+  });
+
+  it("rename 在 StrictMode 下真正发出 RPC 并有结果提示", async () => {
+    mocks.promptText.mockResolvedValue("c.txt");
+    openRowMenu(mounted!.container, "~/a.txt");
+    clickMenuItem(mounted!.container, "重命名");
+    await waitFor(() => expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
+  });
+
+  it("chmod 在 StrictMode 下真正发出 RPC", async () => {
+    mocks.promptText.mockResolvedValue("600");
+    openRowMenu(mounted!.container, "~/a.txt");
+    clickMenuItem(mounted!.container, "权限…");
+    await waitFor(() => expect(mocks.chmod).toHaveBeenCalledWith(SID, "~/a.txt", 0o600));
+  });
+
+  it("checksum 在 StrictMode 下真正发出 RPC 并呈现结果", async () => {
+    mocks.askChoice.mockResolvedValue("sha256");
+    openRowMenu(mounted!.container, "~/a.txt");
+    clickMenuItem(mounted!.container, "校验值…");
+    await waitFor(() => expect(mocks.checksum).toHaveBeenCalledWith(SID, "~/a.txt", "sha256"));
+    expect(mocks.promptText).toHaveBeenCalledWith(
+      expect.stringContaining("SHA-256"),
+      "deadbeef",
+      expect.anything(),
+    );
+  });
+});
+
+describe("重命名目录时后代 dirty 编辑器同样告警（评审 P2-3 回归）", () => {
+  beforeEach(async () => {
+    mocks.list.mockImplementation((_s: string, p: string) => {
+      if (p === "~/sub") return Promise.resolve([entry("a.txt", "file", { path: "~/sub/a.txt" })]);
+      return Promise.resolve(p === "~" ? [entry("sub", "dir"), entry("a.txt", "file")] : []);
+    });
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+  });
+
+  it("目录内未保存文件触发旧路径告警", async () => {
+    const tab = editorTab("~/sub/a.txt");
+    act(() => {
+      useUi.setState({
+        workspaces: [
+          {
+            id: "ws",
+            kind: "session",
+            title: "w",
+            panes: [{ id: "p", tabs: [tab], activeTabId: tab.id }],
+            activePaneId: "p",
+            splitRatio: 0.5,
+            closable: true,
+          },
+        ],
+        activeWorkspaceId: "ws",
+      });
+    });
+    setFileEditorDirty(SID, "~/sub/a.txt", true);
+    mocks.promptText.mockResolvedValue("sub2");
+    openRowMenu(mounted!.container, "~/sub");
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("未保存"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("目录"), expect.anything());
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~/sub", "~/sub2");
+    expect(isDirtyFileEditor(tab)).toBe(true);
+    setFileEditorDirty(SID, "~/sub/a.txt", false);
+  });
+});
+
+describe("Windows 反斜杠路径（评审 P2-2 回归）", () => {
+  // 后端 Windows 本地会话可能返回反斜杠路径：dirMap 的键（root/expanded 原始串）
+  // 与 parentOf 的归一化结果形态不同，比较前必须统一 norm。
+  beforeEach(async () => {
+    let subRenamed = false;
+    mocks.list.mockImplementation((_s: string, p: string) => {
+      if (p === "~") {
+        const sub = subRenamed
+          ? entry("sub2", "dir", { path: "~/sub2" })
+          : entry("sub", "dir", { path: "~\\sub" });
+        return Promise.resolve(
+          [sub, entry("a.txt", "file", { path: "~\\a.txt" }), entry("b.txt", "file", { path: "~\\b.txt" })].map(
+            (e) => ({ ...e }),
+          ),
+        );
+      }
+      if (p === "~\\sub") {
+        return Promise.resolve([
+          entry("inner", "dir", { path: "~\\sub\\inner" }),
+          entry("a.txt", "file", { path: "~\\sub\\a.txt" }),
+          entry("b.txt", "file", { path: "~\\sub\\b.txt" }),
+        ]);
+      }
+      if (p === "~/sub2") {
+        return Promise.resolve([
+          entry("inner", "dir", { path: "~/sub2/inner" }),
+          entry("a.txt", "file", { path: "~/sub2/a.txt" }),
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mocks.rename.mockImplementation(() => {
+      subRenamed = true;
+      return Promise.resolve();
+    });
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~\\sub")).toBeTruthy());
+    // 展开子目录与其嵌套目录，让 dirMap 拿到反斜杠键与反斜杠后代
+    click(rowByPath(mounted!.container, "~\\sub"));
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, "~\\sub\\a.txt")).toBeTruthy(),
+    );
+    click(rowByPath(mounted!.container, "~\\sub\\inner"));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub\\inner"));
+  });
+
+  it("嵌套反斜杠目录下同名冲突照常弹覆盖确认", async () => {
+    mocks.promptText.mockResolvedValue("b.txt");
+    openRowMenu(mounted!.container, "~\\sub\\a.txt");
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("已存在"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub\\a.txt", "~/sub/b.txt");
+  });
+
+  it("目录改名后展开/选中状态按归一化新路径搬迁", async () => {
+    mocks.promptText.mockResolvedValue("sub2");
+    openRowMenu(mounted!.container, "~\\sub");
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub", "~/sub2");
+    // 展开态（含嵌套后代）remap 到归一化新路径 → 对新路径发列表
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub2"));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub2/inner"));
+    // 右键选中的目录本身搬到新路径并保持选中
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, "~/sub2").className).toContain("is-selected"),
+    );
   });
 });

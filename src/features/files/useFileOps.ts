@@ -21,7 +21,7 @@ import { useUi, type AppTab } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
 import { isDirtyFileEditor } from "./editorGuards";
-import { joinPath, parentOf } from "./pathUtils";
+import { joinPath, norm, parentOf } from "./pathUtils";
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
@@ -41,13 +41,25 @@ const OP_LABEL: Record<FileOpKind, string> = {
   checksum: "计算校验值",
 };
 
-/** 该会话里所有指向某个路径的文件编辑标签。 */
-function editorTabsOf(sessionId: string, path: string): AppTab[] {
+/**
+ * 该会话里受重命名影响的文件编辑标签。
+ *
+ * 目录要按前缀匹配后代（`~/sub` 改名会让 `~/sub/a.txt` 的标签指向旧路径）；
+ * 两侧统一 norm —— 路径形态（正/反斜杠）不该影响匹配结果。
+ */
+function editorTabsOf(sessionId: string, path: string, kind: string): AppTab[] {
+  const target = norm(path);
+  const hit = (p: string) => {
+    const pn = norm(p);
+    return kind === "dir" ? pn === target || pn.startsWith(`${target}/`) : pn === target;
+  };
   const out: AppTab[] = [];
   for (const w of useUi.getState().workspaces) {
     for (const p of w.panes) {
       for (const t of p.tabs) {
-        if (t.kind === "files" && t.sessionId === sessionId && t.path === path) out.push(t);
+        if (t.kind === "files" && t.sessionId === sessionId && t.path && hit(t.path)) {
+          out.push(t);
+        }
       }
     }
   }
@@ -63,14 +75,17 @@ export function useFileOps(sessionId: string) {
   const mountedRef = useRef(true);
   const seqRef = useRef(0);
 
-  useEffect(
-    () => () => {
+  // setup 必须显式重置 true：StrictMode（main.tsx 全 App 启用）在开发模式会
+  // 重放 setup→cleanup→setup，只靠 useRef 初值的话 mountedRef 会永远停在 false，
+  // 三个操作都会在首个 await 后静默中止。
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
       // 作废所有在途操作：它们随后的完成回调会因序号对不上而静默退出。
       seqRef.current++;
-    },
-    [],
-  );
+    };
+  }, []);
 
   /** 还活着吗：组件没卸载，且这是最新一次操作（防 stale completion）。 */
   const alive = (seq: number) => mountedRef.current && seqRef.current === seq;
@@ -120,11 +135,13 @@ export function useFileOps(sessionId: string) {
           `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。重命名只改链接本身的名字，不影响它指向的目标。`,
         );
       }
-      const tabs = editorTabsOf(sessionId, entry.path);
+      const tabs = editorTabsOf(sessionId, entry.path, entry.kind);
       const dirty = tabs.some(isDirtyFileEditor);
       if (dirty) {
         notes.push(
-          "该文件正在编辑器中打开且有未保存的修改。重命名后，已打开的标签仍指向旧路径，未保存的内容仍会写到旧文件。",
+          entry.kind === "dir"
+            ? "该目录（含其子目录）内有文件正在编辑器中打开且有未保存的修改。重命名后，已打开的标签仍指向旧路径，未保存的内容仍会写到旧文件。"
+            : "该文件正在编辑器中打开且有未保存的修改。重命名后，已打开的标签仍指向旧路径，未保存的内容仍会写到旧文件。",
         );
       }
       if (notes.length) {
@@ -147,7 +164,7 @@ export function useFileOps(sessionId: string) {
       const conflict = findSibling(siblings, name);
       if (conflict) {
         const go = await ask(
-          `「${name}」已存在（${conflict.kind === "dir" ? "目录" : "文件"}）。继续将请求后端用它覆盖被重命名的项 —— 能否覆盖由后端最终决定，部分后端（如 SFTP）会拒绝。\n\n覆盖「${name}」？`,
+          `「${name}」已存在（${conflict.kind === "dir" ? "目录" : "文件"}）。继续将请求后端用重命名后的项替换已存在的「${name}」—— 旧「${name}」的内容将丢失；能否覆盖由后端最终决定，部分后端（如 SFTP）会拒绝。\n\n替换「${name}」？`,
           { title: "覆盖确认", kind: "warning" },
         );
         if (!go || !alive(seq)) return;

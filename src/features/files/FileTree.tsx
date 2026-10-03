@@ -36,6 +36,7 @@ import {
   baseName,
   crumbsOf,
   joinPath,
+  norm,
   normalizeTypedPath,
   parentOf,
 } from "./pathUtils";
@@ -377,13 +378,36 @@ export function FileTree({ sessionId }: { sessionId: string }) {
    *
    * 不搬的话：选中和展开还指着旧路径，树上表现为「刚改的名字没生效」；
    * 旧路径前缀下的目录缓存由 useFileOps 负责失效，这里只管视图状态。
+   * 匹配与拼接两侧统一 norm —— Windows 会话的目录串可能带反斜杠，
+   * 不归一化的话 `~\sub` 下的后代永远命中不了 `~\sub/` 前缀。
    */
   const remapAfterRename = (from: string, to: string) => {
-    const remap = (p: string) =>
-      p === from ? to : p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : p;
+    const fromN = norm(from);
+    const toN = norm(to);
+    const remap = (p: string) => {
+      const pn = norm(p);
+      if (pn === fromN) return toN;
+      if (pn.startsWith(`${fromN}/`)) return `${toN}${pn.slice(fromN.length)}`;
+      return pn;
+    };
     setSelected((cur) => (cur ? remap(cur) : cur));
     setExpanded((prev) => prev.map(remap));
-    if (root === from || root.startsWith(`${from}/`)) setRoot(remap(root));
+    if (norm(root) === fromN || norm(root).startsWith(`${fromN}/`)) setRoot(remap(root));
+  };
+
+  /**
+   * 条目的同目录 siblings（重命名覆盖预判用）。
+   *
+   * dirMap 的键是 root/expanded 的原始串，可能带反斜杠（Windows 本地会话）；
+   * parentOf 返回归一化路径 —— 两侧统一 norm 再比，否则嵌套目录永远查空，
+   * 同名覆盖确认在 Windows 文件树上不会弹出。
+   */
+  const siblingsOf = (path: string): FileEntryDto[] => {
+    const parent = norm(parentOf(path) ?? "");
+    for (const [dir, list] of dirMap) {
+      if (norm(dir) === parent) return list;
+    }
+    return [];
   };
 
   /**
@@ -461,11 +485,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         icon: <IconEdit size={13} />,
         disabled: fileOps.busy !== null,
         onSelect: () =>
-          void fileOps.renameEntry(
-            entry,
-            dirMap.get(parentOf(entry.path) ?? "") ?? [],
-            remapAfterRename,
-          ),
+          void fileOps.renameEntry(entry, siblingsOf(entry.path), remapAfterRename),
       },
       {
         kind: "item",
