@@ -54,9 +54,11 @@ import type { ContainerSummary } from "../../ipc/commands";
 import {
   buildInspectViewModel,
   isSensitiveFileName,
+  redactContainerPath,
   redactFileName,
   redactInspectTree,
   redactMountSource,
+  redactPathInText,
   REDACTED_MARK,
 } from "../../features/docker/dockerRedact";
 import { parseStatsOutput } from "../../features/docker/statsParse";
@@ -411,6 +413,66 @@ describe("Docker insight controls (M61)", () => {
     }
   });
 
+  it("files tab never leaks a sensitive parent path via descendant titles, breadcrumbs or error echo", async () => {
+    mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
+      if (path === "/") return Promise.resolve(["secrets/"]);
+      if (path === "/secrets") return Promise.resolve(["app/"]);
+      if (path === "/secrets/app") return Promise.resolve(["server.js"]);
+      // 真实 Go ListDir 会把 ls stderr 连同请求路径包进错误（review r2 P2）
+      return Promise.reject(new Error(`ls: ${path}: Not a directory`));
+    });
+    const m = (mounted = mountPanel());
+    await openInsight(m, 0);
+    clickButton(m.container, "文件");
+    await waitFor(() => expect(mockedText()).toContain("敏感"));
+
+    // 敏感父目录行：自身遮蔽显示；点击导航仍用原始值
+    const secretsRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
+      r.textContent?.includes("敏感"),
+    );
+    if (!secretsRow) throw new Error("secrets row not found");
+    click(secretsRow);
+    await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets"));
+
+    // 非敏感后代 app/：文本正常，但完整路径 title 逐段脱敏（父段 secrets 不上屏）
+    await waitFor(() => expect(mockedText()).toContain("app"));
+    const appRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
+      r.textContent?.includes("app"),
+    );
+    if (!appRow) throw new Error("app row not found");
+    expect(appRow.getAttribute("title")).toBe(`/${REDACTED_MARK}/app`);
+    expect(appRow.getAttribute("title")).not.toContain("secrets");
+
+    // 深入 /secrets/app：上级按钮与面包屑 title 同样逐段脱敏
+    click(appRow);
+    await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app"));
+    await waitFor(() => expect(mockedText()).toContain("server.js"));
+    const titles = [...m.container.querySelectorAll("[title]")].map(
+      (el) => el.getAttribute("title") ?? "",
+    );
+    expect(titles.some((t) => t === `上级：/${REDACTED_MARK}`)).toBe(true);
+    expect(titles.some((t) => t === `/${REDACTED_MARK}/app`)).toBe(true);
+    for (const t of titles) expect(t).not.toContain("secrets");
+
+    // 错误回显：server.js 不是目录，ls stderr 带原始路径 —— 回显必须脱敏
+    const serverRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
+      r.textContent?.includes("server.js"),
+    );
+    if (!serverRow) throw new Error("server.js row not found");
+    click(serverRow);
+    await waitFor(() =>
+      expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app/server.js"),
+    );
+    await waitFor(() => expect(mockedText()).toContain("Not a directory"));
+    expect(mockedText()).toContain(`/${REDACTED_MARK}/app/server.js`);
+    expect(mockedText()).not.toContain("secrets");
+
+    // 后端导航参数始终是原始路径（前端过滤不替代后端授权，只影响显示）
+    expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets");
+    expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app");
+    expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app/server.js");
+  });
+
   it("files tab shows inaccessible path errors with retry and a way back", async () => {
     mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
       if (path === "/") return Promise.resolve(["etc/"]);
@@ -503,6 +565,25 @@ describe("dockerRedact helpers", () => {
     expect(redactFileName("cert.pem")).toBe(REDACTED_MARK); // 扩展名本身敏感
     expect(redactFileName("passwd")).toBe(REDACTED_MARK);
     expect(redactFileName("app_secret.yaml")).toBe(`${REDACTED_MARK}.yaml`);
+  });
+
+  it("redactContainerPath masks every sensitive segment, not just the last", () => {
+    expect(redactContainerPath("/secrets/app")).toBe(`/${REDACTED_MARK}/app`);
+    expect(redactContainerPath("/secrets/app/server.js")).toBe(`/${REDACTED_MARK}/app/server.js`);
+    expect(redactContainerPath("/home/alice/app")).toBe("/home/alice/app");
+    expect(redactContainerPath("/")).toBe("/");
+  });
+
+  it("redactPathInText replaces the raw path in backend error echoes", () => {
+    // 前缀替换同时盖住「错误里带了更深层子路径」的形态
+    expect(redactPathInText("ls: /secrets/app: Permission denied", "/secrets")).toBe(
+      `ls: /${REDACTED_MARK}/app: Permission denied`,
+    );
+    expect(redactPathInText("ls: /secrets: Not a directory", "/secrets")).toBe(
+      `ls: /${REDACTED_MARK}: Not a directory`,
+    );
+    expect(redactPathInText("daemon down", "/secrets")).toBe("daemon down");
+    expect(redactPathInText("ls: /: Permission denied", "/")).toBe("ls: /: Permission denied");
   });
 
   it("buildInspectViewModel redacts everything the DOM renders, with real mount shapes", () => {

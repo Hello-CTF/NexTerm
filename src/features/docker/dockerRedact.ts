@@ -72,6 +72,29 @@ export function redactFileName(name: string): string {
 }
 
 /**
+ * 完整路径的逐段脱敏显示（review r2 P2）：任何一段敏感都只遮那一段，结构保留。
+ * 所有 title / 导航展示 / 错误回显一律用本函数的输出；原始路径只保留在
+ * setPath / RPC 参数 / query key 等导航内部。非敏感后代的完整路径也走这里 ——
+ * 否则 `/secrets/app` 里的 `secrets` 会从 title 上屏。
+ */
+export function redactContainerPath(path: string): string {
+  return path
+    .split("/")
+    .map((seg) => (seg && isSensitiveFileName(seg) ? redactFileName(seg) : seg))
+    .join("/");
+}
+
+/**
+ * 错误回显脱敏：后端 `ls` stderr 会把请求路径原样包进错误（如
+ * `ls: /secrets/app: Permission denied`）。把文本里的原始路径替换成逐段脱敏
+ * 显示路径 —— 前缀替换同时盖住「错误里带了更深层子路径」的形态。
+ */
+export function redactPathInText(text: string, rawPath: string): string {
+  if (!rawPath || rawPath === "/") return text;
+  return text.split(rawPath).join(redactContainerPath(rawPath));
+}
+
+/**
  * 递归脱敏 inspect JSON（`docker inspect` 的原始结构：对象或单元素数组）。
  *
  * 规则：

@@ -24,7 +24,13 @@ import {
   IconShield,
   IconTable,
 } from "../../ui/icons";
-import { buildInspectViewModel, isSensitiveFileName, redactFileName } from "./dockerRedact";
+import {
+  buildInspectViewModel,
+  isSensitiveFileName,
+  redactContainerPath,
+  redactFileName,
+  redactPathInText,
+} from "./dockerRedact";
 import { parseStatsOutput } from "./statsParse";
 
 interface InsightProps {
@@ -451,7 +457,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
       <div className="nx-pathbar">
         <button
           className="nx-tree-caret"
-          title={up ? `上级：${up}` : "已经在根目录"}
+          title={up ? `上级：${redactContainerPath(up)}` : "已经在根目录"}
           disabled={!up || q.isFetching}
           onClick={() => up && setPath(up)}
         >
@@ -464,7 +470,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
               <button
                 className={`nx-path-crumb ${i === all.length - 1 ? "is-current" : ""}`}
                 onClick={() => setPath(c.path)}
-                title={c.sensitive ? "已遮蔽" : c.path}
+                title={c.sensitive ? "已遮蔽" : redactContainerPath(c.path)}
               >
                 {c.label}
               </button>
@@ -486,7 +492,9 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
           <InsightLoading text="读取容器目录…" />
         ) : q.isError ? (
           <InsightError
-            error={q.error}
+            // 后端 ls stderr 会把原始路径包进错误（review r2 P2）—— 回显前用
+            // 逐段脱敏路径替换；describeError 对字符串原样返回，直接传脱敏文本。
+            error={redactPathInText(describeError(q.error), path)}
             onRetry={() => void q.refetch()}
             extra={
               up ? (
@@ -512,7 +520,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                   <tr
                     key={entry}
                     className="cursor-pointer"
-                    title={sensitive ? "已遮蔽" : joinContainerPath(path, name)}
+                    title={sensitive ? "已遮蔽" : redactContainerPath(joinContainerPath(path, name))}
                     onClick={() => setPath(joinContainerPath(path, name))}
                   >
                     <td className="truncate text-neutral-200">
