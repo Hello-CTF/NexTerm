@@ -244,6 +244,12 @@ type InteractionState struct {
 	TerminalInput  string
 	TerminalCursor int
 	Info           Interaction
+	// AuthorizationID is the tools.GuardAuthorizationID of the guard decision
+	// that produced the confirmation interrupt. The resumed execution binds it
+	// to the call so the outcome ledger records the effect under the decision
+	// that actually gated it; an empty value (for example a checkpoint written
+	// before this binding existed) leaves the call unbound with prior behavior.
+	AuthorizationID string
 }
 
 func init() {
@@ -546,6 +552,7 @@ func (e *Execution) run(ctx context.Context, name string, input any) (Output, er
 				e.Memory.Add(state.MemoryKind)
 			}
 		}
+		call.AuthorizationID = state.AuthorizationID
 		return e.Registry.Execute(ctx, e.JobID, e.Scope, call, nil), nil
 	}
 	return e.initial(ctx, call)
@@ -594,9 +601,10 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 			rendered = DisplaySendKeys(call, terminalInput, cursor)
 		}
 		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Preview: preparation.Preview}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision)}
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
+	call.AuthorizationID = GuardAuthorizationID(decision)
 	result := e.Registry.Execute(ctx, e.JobID, e.Scope, call, preparation)
 	if result.Question != nil {
 		info := Interaction{Kind: "question", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Question: result.Question}
