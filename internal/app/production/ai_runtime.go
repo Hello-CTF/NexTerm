@@ -8,6 +8,7 @@ import (
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/takeover"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/cloudwego/eino/components/model"
@@ -40,12 +41,16 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 	}
 	builder := aicontext.NewBuilder(contextDeps)
 
+	// Subagents enables the bounded spawn tool for every execution: the model
+	// factory follows the active profile like the main agent, and the child
+	// tool scope is intersected per execution with the parent's enabled set.
 	runner := agent.NewRunner(agent.Config{
 		Profiles:    services.Profiles,
 		Permissions: guardManager,
 		Tools:       registry,
 		Context:     builder,
 		Store:       services.Store,
+		Subagents:   &tools.SubagentConfig{Model: subagent.NewProfileModelFactory(services.Profiles)},
 	})
 
 	takeoverDeps := takeover.Dependencies{
