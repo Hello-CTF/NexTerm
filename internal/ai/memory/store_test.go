@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -230,6 +231,69 @@ func TestRedactTextRecognizesOperationalSecrets(t *testing.T) {
 	redacted, changed := RedactText(value)
 	if changed || redacted != value {
 		t.Fatalf("safe content changed to %q", redacted)
+	}
+}
+
+func TestRedactTextLeavesBenignContentUnchanged(t *testing.T) {
+	t.Parallel()
+	benign := []string{
+		"Rotate DB passwords every 90 days",
+		"passwords are stored in Vault",
+		"check tokens_used in the usage report",
+		"the secretary called at noon",
+		"tokenizer: cl100k_base",
+		`{"max_tokens": 4096}`,
+		`{"token_limit": 4096}`,
+		"token bucket refills each second",
+		"secret sauce recipe",
+		"authorization required for this path",
+		"session notes: deploy went fine",
+		"api design review on Friday",
+		"passphrase prompt",
+		"pass the health check",
+		"2026-10-03 02:00:00 backup window",
+		`{"retention": {"days": 30}}`,
+	}
+	for _, content := range benign {
+		redacted, changed := RedactText(content)
+		if changed || redacted != content {
+			t.Errorf("RedactText(%q) = %q, changed = %v", content, redacted, changed)
+		}
+	}
+}
+
+func TestBenignContentAcceptedByDefaultAndUnmangled(t *testing.T) {
+	ctx := context.Background()
+	benign := []string{
+		"Rotate DB passwords every 90 days",
+		"passwords are stored in Vault",
+		"check tokens_used in the usage report",
+		"the secretary called at noon",
+		"tokenizer: cl100k_base",
+		`{"max_tokens": 4096}`,
+		`{"token_limit": 4096}`,
+	}
+	for _, content := range benign {
+		store, _ := newMemoryStore(t)
+		entry, err := store.Create(ctx, testScope, CreateInput{Topic: "operations", Content: content})
+		if err != nil {
+			t.Fatalf("default create rejected benign content %q: %v", content, err)
+		}
+		if entry.Redacted || entry.Content != content {
+			t.Fatalf("benign entry = %+v, want unredacted %q", entry, content)
+		}
+		redactEntry, err := store.Create(ctx, testScope, CreateInput{
+			Topic: "operations", Content: content, Secrets: SecretRedact,
+		})
+		if err != nil {
+			t.Fatalf("redact-policy create rejected benign content %q: %v", content, err)
+		}
+		if redactEntry.Redacted || redactEntry.Content != content {
+			t.Fatalf("redact-policy mangled benign content: %+v", redactEntry)
+		}
+		if strings.HasPrefix(content, "{") && (!json.Valid([]byte(entry.Content)) || !json.Valid([]byte(redactEntry.Content))) {
+			t.Fatalf("benign JSON mangled into invalid JSON: %q / %q", entry.Content, redactEntry.Content)
+		}
 	}
 }
 
