@@ -1,0 +1,261 @@
+package cron
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
+)
+
+// SQLiteStore is the durable Store backed by the application SQLite database.
+// The schema comes from migrations/0005_cron.sql; the constructor fails when
+// the migration has not been applied. The db handle must be opened with
+// _txlock=immediate (as internal/store does) so the per-session bound check
+// and the insert inside Create are one serialized write.
+type SQLiteStore struct {
+	db *sql.DB
+}
+
+var _ Store = (*SQLiteStore)(nil)
+
+func NewSQLiteStore(ctx context.Context, db *sql.DB) (*SQLiteStore, error) {
+	if db == nil {
+		return nil, errors.New("cron: sqlite store requires a database handle")
+	}
+	var name string
+	err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cron_job'`).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("cron: cron_job table is missing; apply migrations/0005_cron.sql first")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cron: check cron_job schema: %w", err)
+	}
+	return &SQLiteStore{db: db}, nil
+}
+
+func (s *SQLiteStore) List(ctx context.Context) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM cron_job ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := make([]Job, 0)
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+// Create enforces the per-session bound in the same serialized write as the
+// insert, so concurrent schedulers sharing the database cannot overshoot it.
+func (s *SQLiteStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM cron_job WHERE id = ?`, job.ID).Scan(&existing); err != nil {
+		return Job{}, err
+	}
+	if existing > 0 {
+		return Job{}, ErrConflict
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM cron_job WHERE session_id = ?`, job.SessionID).Scan(&count); err != nil {
+		return Job{}, err
+	}
+	if count >= maxPerSession {
+		return Job{}, ErrJobLimit
+	}
+	job.Revision = 1
+	if _, err := tx.ExecContext(ctx, `INSERT INTO cron_job (`+jobColumns+`) VALUES (`+jobPlaceholders+`)`,
+		jobValues(job)...); err != nil {
+		if isConstraintError(err) {
+			return Job{}, ErrConflict
+		}
+		return Job{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, err
+	}
+	return job, nil
+}
+
+// CompareAndSwap replaces the stored row only when the expected revision and
+// the owning session still match, and returns the job with its new revision.
+func (s *SQLiteStore) CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var sessionID string
+	var revision uint64
+	err = tx.QueryRowContext(ctx, `SELECT session_id, revision FROM cron_job WHERE id = ?`, job.ID).Scan(&sessionID, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Job{}, ErrNotFound
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	if revision != expectedRevision || sessionID != job.SessionID {
+		return Job{}, ErrConflict
+	}
+	job.Revision = revision + 1
+	// jobValues leads with the id; the UPDATE addresses the row in its WHERE.
+	values := append(jobValues(job)[1:], job.ID, expectedRevision, job.SessionID)
+	result, err := tx.ExecContext(ctx, `UPDATE cron_job SET `+jobAssignments+` WHERE id = ? AND revision = ? AND session_id = ?`, values...)
+	if err != nil {
+		return Job{}, err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return Job{}, err
+	} else if affected != 1 {
+		return Job{}, ErrConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, err
+	}
+	return job, nil
+}
+
+// Delete removes a job only within its owning session and only when the
+// expected revision still matches.
+func (s *SQLiteStore) Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentSession string
+	var revision uint64
+	err = tx.QueryRowContext(ctx, `SELECT session_id, revision FROM cron_job WHERE id = ?`, jobID).Scan(&currentSession, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if currentSession != sessionID {
+		return ErrNotFound
+	}
+	if revision != expectedRevision {
+		return ErrConflict
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM cron_job WHERE id = ? AND revision = ? AND session_id = ?`, jobID, expectedRevision, sessionID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return ErrConflict
+	}
+	return tx.Commit()
+}
+
+const jobColumns = `id, session_id, name, prompt, schedule, timezone, enabled, timeout_ms,
+	created_at, updated_at, revision, next_run_at, retry_at, circuit_open_until,
+	consecutive_failures, last_run_at, last_scheduled_for, last_coalesced, last_error,
+	lease_owner, lease_expires_at, run_id, run_scheduled_for, run_started_at, run_deadline, run_coalesced`
+
+const jobPlaceholders = `?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
+
+const jobAssignments = `session_id = ?, name = ?, prompt = ?, schedule = ?, timezone = ?, enabled = ?, timeout_ms = ?,
+	created_at = ?, updated_at = ?, revision = ?, next_run_at = ?, retry_at = ?, circuit_open_until = ?,
+	consecutive_failures = ?, last_run_at = ?, last_scheduled_for = ?, last_coalesced = ?, last_error = ?,
+	lease_owner = ?, lease_expires_at = ?, run_id = ?, run_scheduled_for = ?, run_started_at = ?, run_deadline = ?, run_coalesced = ?`
+
+func jobValues(job Job) []any {
+	return []any{
+		job.ID, job.SessionID, job.Name, job.Prompt, job.Schedule, job.Timezone, boolInt(job.Enabled), job.Timeout.Milliseconds(),
+		timeMS(job.CreatedAt), timeMS(job.UpdatedAt), job.Revision, timeMS(job.NextRunAt), optionalTimeMS(job.RetryAt), optionalTimeMS(job.CircuitOpenUntil),
+		job.ConsecutiveFailures, optionalTimeMS(job.LastRunAt), optionalTimeMS(job.LastScheduledFor), boolInt(job.LastCoalesced), job.LastError,
+		job.Lease.Owner, optionalTimeMS(job.Lease.ExpiresAt), job.Run.ID, optionalTimeMS(job.Run.ScheduledFor), optionalTimeMS(job.Run.StartedAt), optionalTimeMS(job.Run.Deadline), boolInt(job.Run.Coalesced),
+	}
+}
+
+type jobScanner interface {
+	Scan(...any) error
+}
+
+func scanJob(scanner jobScanner) (Job, error) {
+	var job Job
+	var enabled, lastCoalesced, runCoalesced int
+	var timeoutMS int64
+	var createdAt, updatedAt, nextRunAt int64
+	var retryAt, circuitOpenUntil, lastRunAt, lastScheduledFor sql.NullInt64
+	var leaseExpiresAt, runScheduledFor, runStartedAt, runDeadline sql.NullInt64
+	err := scanner.Scan(
+		&job.ID, &job.SessionID, &job.Name, &job.Prompt, &job.Schedule, &job.Timezone, &enabled, &timeoutMS,
+		&createdAt, &updatedAt, &job.Revision, &nextRunAt, &retryAt, &circuitOpenUntil,
+		&job.ConsecutiveFailures, &lastRunAt, &lastScheduledFor, &lastCoalesced, &job.LastError,
+		&job.Lease.Owner, &leaseExpiresAt, &job.Run.ID, &runScheduledFor, &runStartedAt, &runDeadline, &runCoalesced,
+	)
+	if err != nil {
+		return Job{}, err
+	}
+	job.Enabled = enabled != 0
+	job.Timeout = time.Duration(timeoutMS) * time.Millisecond
+	job.CreatedAt = time.UnixMilli(createdAt).UTC()
+	job.UpdatedAt = time.UnixMilli(updatedAt).UTC()
+	job.NextRunAt = time.UnixMilli(nextRunAt).UTC()
+	job.RetryAt = nullTimeMS(retryAt)
+	job.CircuitOpenUntil = nullTimeMS(circuitOpenUntil)
+	job.LastRunAt = nullTimeMS(lastRunAt)
+	job.LastScheduledFor = nullTimeMS(lastScheduledFor)
+	job.LastCoalesced = lastCoalesced != 0
+	if job.Lease.Owner != "" {
+		job.Lease.ExpiresAt = nullTimeMS(leaseExpiresAt)
+	}
+	if job.Run.ID != "" {
+		job.Run.ScheduledFor = nullTimeMS(runScheduledFor)
+		job.Run.StartedAt = nullTimeMS(runStartedAt)
+		job.Run.Deadline = nullTimeMS(runDeadline)
+		job.Run.Coalesced = runCoalesced != 0
+	}
+	return job, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func timeMS(value time.Time) int64 {
+	return value.UnixMilli()
+}
+
+func optionalTimeMS(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.UnixMilli()
+}
+
+func nullTimeMS(value sql.NullInt64) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return time.UnixMilli(value.Int64).UTC()
+}
+
+func isConstraintError(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code&0xff == sqlite3.SQLITE_CONSTRAINT && (code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY || code == sqlite3.SQLITE_CONSTRAINT_UNIQUE)
+}
