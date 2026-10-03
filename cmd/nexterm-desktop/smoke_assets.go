@@ -22,6 +22,10 @@ func desktopSmokeAssetHandler(handler http.Handler) http.Handler {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			if err := os.MkdirAll(".buildcheck/m27", 0o700); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			if err := os.WriteFile(".buildcheck/m27/webview-smoke-result.json", raw, 0o600); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return

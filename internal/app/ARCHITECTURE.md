@@ -27,7 +27,7 @@ This module is a foundation, not a second set of business implementations. Its c
 
 - Components implement `Start(context.Context)` and `Shutdown(context.Context)`. `Application` starts them in order, rolls back partial startup, and shuts them down in reverse order.
 - `Module.RegisterCommands` centralizes each domain's registration; `Module.Component` attaches its shared lifecycle. Desktop and server must receive the same module composition, with capability-specific behavior decided inside shared services rather than duplicated handlers.
-- `Application.Serve` mounts `/healthz` and, unless sync-only, `/rpc`. `ServeConfig.SyncRPC` is the injection point for the authenticated, restricted sync dispatcher; `ServeConfig.Static` is the future web/static adapter. Do not expose the unrestricted dispatcher as `/sync/rpc`.
+- `Application.Serve` mounts `/healthz` and, unless sync-only, `/rpc`. `ServeConfig.SyncRPC` is the injection point for the authenticated, restricted sync dispatcher; `ServeConfig.Static` is the web/static adapter; `ServeConfig.Transport` replaces the built-in mux with the real HTTP/WS transport (`internal/server`) that the server binary composes. Do not expose the unrestricted dispatcher as `/sync/rpc`.
 - `RunTokenCommand` is the only token-output path. The production sync service implements `TokenStore`; token commands print exactly one token plus newline to stdout and do not initialize logging.
 - `production.NewProduction` builds the concrete shared domain graph. Session output stays in the Go hub for HTTP/WS; the production channel bridge pumps it to external stream factories such as Wails before attach/open so replay and early frames are not lost.
 
