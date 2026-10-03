@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -22,7 +23,6 @@ import (
 type einoRuntime struct {
 	runner        *adk.Runner
 	input         []*schema.Message
-	resume        *adk.ResumeParams
 	contextWindow uint64
 	mu            sync.Mutex
 	turns         int
@@ -100,38 +100,110 @@ func (r *Runner) runJob(current *job) {
 	var turns int
 	var total usage.Usage
 	var runErr error
-	paused := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			runErr = fmt.Errorf("AI 任务内部错误: %v", recovered)
-			paused = false
 		}
-		resumePaused := false
-		current.pendingMu.Lock()
-		if paused && current.ctx.Err() == nil && current.eino.resume != nil {
-			resumePaused = true
-			current.running = true
-		} else {
-			current.running = false
-		}
-		current.pendingMu.Unlock()
-		if resumePaused {
-			go r.runJob(current)
-			return
-		}
-		if paused && current.ctx.Err() != nil {
-			paused = false
-			runErr = current.ctx.Err()
-		}
-		if paused {
+		if errors.Is(runErr, errRunPaused) {
+			r.parkOrHandoff(current)
 			return
 		}
 		r.complete(current, answer, turns, total, runErr)
 	}()
 	answer, turns, total, runErr = r.run(current)
-	if errors.Is(runErr, errRunPaused) {
-		paused = true
-		runErr = nil
+}
+
+// consumeResumed drives the event stream produced by a HITL resume. The
+// iterator is owned by exactly one consume loop at any time; a further
+// interrupt parks the job again through parkOrHandoff.
+func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.AgentEvent]) {
+	var answer string
+	var turns int
+	var total usage.Usage
+	var runErr error
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			runErr = fmt.Errorf("AI 任务内部错误: %v", recovered)
+		}
+		if errors.Is(runErr, errRunPaused) {
+			r.parkOrHandoff(current)
+			return
+		}
+		if runErr == nil {
+			if err := r.persistAssistant(current.ctx, current.args.ConversationID, answer, total); err != nil {
+				runErr = err
+			}
+		}
+		r.complete(current, answer, turns, total, runErr)
+	}()
+	answer, turns, total, runErr = r.consume(current, iterator)
+}
+
+// parkOrHandoffTestHook is a test-only scheduling point inside the park
+// transition, invoked with pendingMu held after the iterator fetch. It must
+// not call back into the runner. Nil in production.
+var parkOrHandoffTestHook func()
+
+// parkOrHandoff moves a consume loop that hit an interrupt to the parked
+// state. The iterator fetch and the running=false transition happen in one
+// pendingMu critical section: a resume confirmed while the loop was still
+// winding down is either handed off here or observes running==false and
+// starts its own consume loop, so an accepted resume is never stranded
+// without a loop to drain it.
+func (r *Runner) parkOrHandoff(current *job) {
+	current.pendingMu.Lock()
+	if current.ctx.Err() != nil {
+		current.running = false
+		current.pendingMu.Unlock()
+		r.complete(current, "", 0, usage.Usage{}, current.ctx.Err())
+		return
+	}
+	iterator := current.resumeIterator
+	current.resumeIterator = nil
+	if parkOrHandoffTestHook != nil {
+		parkOrHandoffTestHook()
+	}
+	if iterator != nil {
+		current.pendingMu.Unlock()
+		go r.consumeResumed(current, iterator)
+		return
+	}
+	current.running = false
+	current.pendingMu.Unlock()
+}
+
+// watchHITL completes the job when the HITL manager terminates the run on
+// its own (request expiry, failed resume, manager shutdown) and no consume
+// loop is left to observe it.
+func (r *Runner) watchHITL(current *job) {
+	done, err := r.hitl.Done(current.id)
+	if err != nil {
+		return
+	}
+	select {
+	case <-done:
+		snapshot, err := r.hitl.Snapshot(current.id)
+		if err != nil || snapshot.Terminal == nil {
+			return
+		}
+		r.complete(current, "", 0, usage.Usage{}, hitlTerminalError(snapshot.Terminal))
+	case <-current.ctx.Done():
+	}
+}
+
+func hitlTerminalError(terminal *hitl.Event) error {
+	switch terminal.Reason {
+	case hitl.TerminalExpired:
+		return errors.New("AI 确认请求已过期，请重新发送")
+	case hitl.TerminalFailed:
+		if terminal.Message != "" {
+			return errors.New(terminal.Message)
+		}
+		return errors.New("AI 任务失败")
+	case hitl.TerminalCanceled:
+		return context.Canceled
+	default:
+		return errors.New("AI 任务已结束")
 	}
 }
 
@@ -146,18 +218,7 @@ func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
 	current.pendingMu.Lock()
 	current.cancelFn = cancelFn
 	current.pendingMu.Unlock()
-	options := []adk.AgentRunOption{cancelOption, adk.WithCheckPointID(current.id)}
-	var iterator *adk.AsyncIterator[*adk.AgentEvent]
-	var err error
-	if runtime.resume != nil {
-		iterator, err = runtime.runner.ResumeWithParams(current.ctx, current.id, runtime.resume, options...)
-		runtime.resume = nil
-	} else {
-		iterator = runtime.runner.Run(current.ctx, runtime.input, options...)
-	}
-	if err != nil {
-		return runtime.failure(err)
-	}
+	iterator := runtime.runner.Run(current.ctx, runtime.input, cancelOption, adk.WithCheckPointID(current.id))
 	answer, turns, total, err := r.consume(current, iterator)
 	if err == nil {
 		if err := r.persistAssistant(current.ctx, current.args.ConversationID, answer, total); err != nil {
@@ -198,7 +259,7 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 	}
 	messages = append(messages, userMessage(current.args))
-	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode}
+	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: r.config.Subagents}
 	einoTools, err := execution.Tools()
 	if err != nil {
 		return err
@@ -431,23 +492,50 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 		if !ok {
 			continue
 		}
-		current.setPending(&pendingRequest{callID: interaction.CallID, nonce: context.ID, kind: interaction.Kind})
-		args := withNonce(json.RawMessage(interaction.Args), context.ID)
-		switch interaction.Kind {
-		case "confirm":
-			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: context.ID, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview}); err != nil {
+		kind, question, err := hitlInteraction(interaction)
+		if err != nil {
+			return err
+		}
+		request, err := r.hitl.Interrupt(current.ctx, context, hitl.InterruptInput{
+			RunID:        current.id,
+			CheckpointID: current.id,
+			CallID:       interaction.CallID,
+			Tool:         interaction.Tool,
+			Kind:         kind,
+			Parameters:   json.RawMessage(interaction.Args),
+			Question:     question,
+		})
+		if err != nil {
+			return err
+		}
+		args := withNonce(json.RawMessage(interaction.Args), request.Nonce)
+		switch kind {
+		case hitl.KindConfirm:
+			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: request.Nonce, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview, RequestID: request.ID, Attempt: request.Attempt}); err != nil {
 				return err
 			}
-		case "question":
-			if err := current.emit(current.ctx, Event{Type: "questionRequired", ID: interaction.CallID, Nonce: context.ID, Question: interaction.Question}); err != nil {
+		case hitl.KindQuestion:
+			if err := current.emit(current.ctx, Event{Type: "questionRequired", ID: interaction.CallID, Nonce: request.Nonce, Question: interaction.Question, RequestID: request.ID, Attempt: request.Attempt}); err != nil {
 				return err
 			}
-		default:
-			return fmt.Errorf("未知 HITL 类型 %s", interaction.Kind)
 		}
 		return nil
 	}
 	return errors.New("收到无法识别的 Eino interrupt")
+}
+
+func hitlInteraction(interaction tools.Interaction) (hitl.Kind, *hitl.Question, error) {
+	switch interaction.Kind {
+	case "confirm":
+		return hitl.KindConfirm, nil, nil
+	case "question":
+		if interaction.Question == nil {
+			return "", nil, fmt.Errorf("未知 HITL 类型 %s", interaction.Kind)
+		}
+		return hitl.KindQuestion, &hitl.Question{Text: interaction.Question.Question, Options: interaction.Question.Options}, nil
+	default:
+		return "", nil, fmt.Errorf("未知 HITL 类型 %s", interaction.Kind)
+	}
 }
 
 func interactionValue(value any) (tools.Interaction, bool) {
