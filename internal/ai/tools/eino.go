@@ -5,8 +5,10 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
@@ -210,6 +212,16 @@ type Execution struct {
 	Permission guard.Config
 	Memory     *guard.Memory
 	PlanMode   bool
+	Subagents  *SubagentConfig
+}
+
+// SubagentConfig carries the long-lived dependencies needed to compose
+// bounded subagent runs inside one execution. Nil disables the spawn tool.
+// Model is required when set; production wires subagent.NewProfileModelFactory.
+type SubagentConfig struct {
+	Model        subagent.ModelFactory
+	AllowedTools []string
+	Limits       subagent.Config
 }
 
 type Interaction struct {
@@ -325,7 +337,7 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 			})
 		},
 	}
-	result := make([]tool.BaseTool, 0, len(makers))
+	result := make([]tool.BaseTool, 0, len(makers)+1)
 	for index, makeTool := range makers {
 		if !e.enabled(einoNames[index]) {
 			continue
@@ -335,6 +347,13 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 			return nil, err
 		}
 		result = append(result, current)
+	}
+	if e.enabled(subagent.SpawnToolName) {
+		spawn, err := e.subagentSpawnTool()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, spawn)
 	}
 	return result, nil
 }
@@ -366,9 +385,90 @@ func (e *Execution) enabled(name string) bool {
 		return deps.ListAssets != nil
 	case "exit_plan_mode":
 		return e.PlanMode
+	case subagent.SpawnToolName:
+		return e.Subagents != nil
 	default:
 		return true
 	}
+}
+
+// subagentSpawnTool composes the per-execution subagent manager from the
+// configured model factory and the scoped tool registry adapter, then binds
+// the spawn tool to the caller-configured child scope. The model input can
+// only append a persona for style; the scope itself grants no permissions.
+func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
+	if e.Subagents == nil || e.Subagents.Model == nil {
+		return nil, errors.New("subagent model factory is not configured")
+	}
+	limits := e.Subagents.Limits
+	limits.NewModel = e.Subagents.Model
+	var manager *subagent.Manager
+	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
+		return e.scopedSubagentTools(ctx, manager)
+	}
+	composed, err := subagent.NewManager(limits)
+	if err != nil {
+		return nil, err
+	}
+	manager = composed
+	return subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()})
+}
+
+// scopedSubagentTools is the scoped tool registry adapter: the child receives
+// the same registry, session scope, permission snapshot and approval memory as
+// the parent execution, so its available tools are exactly the parent's
+// enabled set and the permission intersection is preserved by construction.
+func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.Manager) ([]tool.BaseTool, error) {
+	child := &Execution{JobID: e.JobID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode}
+	available, err := child.Tools()
+	if err != nil {
+		return nil, err
+	}
+	scoped := make([]tool.BaseTool, 0, len(available)+1)
+	for _, candidate := range available {
+		info, err := candidate.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if info.Name == "exit_plan_mode" {
+			continue
+		}
+		scoped = append(scoped, candidate)
+	}
+	if manager != nil {
+		spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{})
+		if err != nil {
+			return nil, err
+		}
+		scoped = append(scoped, spawn)
+	}
+	return scoped, nil
+}
+
+// subagentAllowedTools intersects the configured child scope with the tools
+// this execution actually enables: a subagent never receives a tool the
+// parent cannot use under the current session scope, plan mode and permission
+// snapshot. ask_user and exit_plan_mode never propagate because bounded
+// isolated runs cannot interact with the user or submit the parent's plan.
+func (e *Execution) subagentAllowedTools() []string {
+	configured := e.Subagents.AllowedTools
+	if len(configured) == 0 {
+		configured = einoNames
+	}
+	allowed := make([]string, 0, len(configured))
+	seen := make(map[string]struct{}, len(configured))
+	for _, name := range configured {
+		name = strings.TrimSpace(name)
+		if name == "" || name == "ask_user" || name == "exit_plan_mode" {
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate || !e.enabled(name) {
+			continue
+		}
+		seen[name] = struct{}{}
+		allowed = append(allowed, name)
+	}
+	return allowed
 }
 
 func (e *Execution) run(ctx context.Context, name string, input any) (Output, error) {

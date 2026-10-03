@@ -23,7 +23,7 @@ func NewSpawnTool(manager *Manager, scope Scope) (tool.InvokableTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	return utils.InferTool(SpawnToolName, "Run one bounded isolated task using only the caller-configured tool scope; nested tasks are rejected.", func(ctx context.Context, input SpawnInput) (string, error) {
+	return utils.InferTool(SpawnToolName, "运行一个有界隔离子任务：只能使用调用方配置的工具范围；嵌套 spawn 会被拒绝，也不能请求用户交互。", func(ctx context.Context, input SpawnInput) (string, error) {
 		handle, err := manager.Spawn(ctx, Request{Task: input.Task, Persona: input.Persona, Scope: &normalized})
 		if errors.Is(err, ErrNestedSpawn) {
 			return err.Error(), nil
