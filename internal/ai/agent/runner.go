@@ -184,6 +184,12 @@ func decodedImageSize(image string) (int, error) {
 	return len(decoded), err
 }
 
+// cancelTestHook is a test-only scheduling point inside Cancel, invoked
+// after the job context and any in-flight execution are canceled but
+// before the HITL manager cancel. It must not call back into the runner.
+// Nil in production.
+var cancelTestHook func()
+
 func (r *Runner) Cancel(jobID string) error {
 	r.mu.Lock()
 	current := r.jobs[jobID]
@@ -202,13 +208,34 @@ func (r *Runner) Cancel(jobID string) error {
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
-	if _, err := r.hitl.Cancel(jobID); err != nil && !errors.Is(err, hitl.ErrRunNotFound) {
-		return err
+	if cancelTestHook != nil {
+		cancelTestHook()
 	}
+	err := r.cancelRun(jobID)
 	if !running {
 		r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 	}
-	return nil
+	return err
+}
+
+// cancelRun cancels the HITL run. Cancel races the run's own completion:
+// when the run reaches a terminal state first the manager reports
+// ErrRunFinished, and the cancel is already satisfied, so it succeeds
+// idempotently — but only once that terminal state is confirmed, and never
+// for any other error, which must reach the caller.
+func (r *Runner) cancelRun(jobID string) error {
+	_, err := r.hitl.Cancel(jobID)
+	if err == nil || errors.Is(err, hitl.ErrRunNotFound) {
+		return nil
+	}
+	if !errors.Is(err, hitl.ErrRunFinished) {
+		return err
+	}
+	snapshot, snapshotErr := r.hitl.Snapshot(jobID)
+	if snapshotErr == nil && snapshot.Terminal != nil {
+		return nil
+	}
+	return err
 }
 
 func (r *Runner) Confirm(confirmation Confirmation) error {
