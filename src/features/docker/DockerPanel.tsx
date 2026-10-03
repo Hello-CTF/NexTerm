@@ -11,6 +11,7 @@ import {
   IconBox,
   IconDownload,
   IconList,
+  IconMonitor,
   IconPlay,
   IconRefresh,
   IconRestart,
@@ -18,6 +19,7 @@ import {
   IconTerminal,
   IconTrash,
 } from "../../ui/icons";
+import { ContainerInsight } from "./ContainerInsight";
 
 /** 一次「查看日志」的 attach 结果。 */
 interface LogAttach {
@@ -63,6 +65,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const { addTab, pushToast } = useUi();
   const [tab, setTab] = useState<"containers" | "images">("containers");
   const [attached, setAttached] = useState<LogAttach | null>(null);
+  /** 洞察钻取（M61）：选中的容器。key 绑容器 id，切换即重建，旧响应不落新容器。 */
+  const [insight, setInsight] = useState<ContainerSummary | null>(null);
   /** 勾选集合：存行 key（容器 = id，镜像 = imageKey）。 */
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   /** 正在删除的行 key：挡住「点了没反应就再点一下」的并发删除。 */
@@ -335,6 +339,21 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     );
   }
 
+  // 洞察钻取（M61）：与日志跟随同款的整页替换。`key={insight.id}` 保证切换容器时
+  // 整个详情树重建 —— 上一个容器的在途响应（inspect / stats / listDir）只能落进
+  // 旧缓存键，不会渲染到新容器头上。
+  if (insight) {
+    return (
+      <ContainerInsight
+        key={insight.id}
+        sessionId={sessionId}
+        container={insight}
+        visible={visible}
+        onClose={() => setInsight(null)}
+      />
+    );
+  }
+
   const running = cRows.filter((c) => c.state === "running").length;
   const rowCount = tab === "containers" ? cRows.length : iRows.length;
   const allPicked =
@@ -400,6 +419,10 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         </button>
         <span className="nx-hint">5s 自动刷新</span>
       </div>
+
+      {/* 主机概览条（M61）：走 docker_overview，与列表的 5s 轮询分开，30s 慢一拍。
+          切到镜像页 / 钻取详情时整条卸载，轮询随之中断。 */}
+      {tab === "containers" && <OverviewStrip sessionId={sessionId} visible={visible} />}
 
       <div className="min-h-0 flex-1 overflow-auto">
         {/* 两个分支的 <table> 同类型同位置，React 会复用同一个 DOM 节点。
@@ -477,6 +500,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   </td>
                   <td className="nx-right">
                     <span className="inline-flex items-center gap-0.5">
+                      <button className="nx-icon-btn nx-icon-btn-sm" title="详情 / 统计 / 文件" onClick={() => setInsight(c)}>
+                        <IconMonitor size={13} />
+                      </button>
                       <button className="nx-icon-btn nx-icon-btn-sm" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
                         <IconList size={13} />
                       </button>
@@ -702,6 +728,63 @@ function PullBar({ sessionId }: { sessionId: string }) {
         {pulling ? <IconRefresh size={13} className="animate-spin" /> : <IconDownload size={13} />}
         {pulling ? "拉取中…" : "拉取"}
       </button>
+    </div>
+  );
+}
+
+/** 主机概览条（M61）：docker_overview 的 hostStats。键名分两套契约 ——
+ *  Go 后端给 containersRunning/containersTotal/images，演示模式给
+ *  cpuPercent/memUsedMb/…，未知键按原键名直出，两种契约都能渲染。 */
+const HOST_STAT_LABELS: Record<string, string> = {
+  containersRunning: "运行中",
+  containersTotal: "容器总数",
+  images: "镜像",
+  cpuPercent: "CPU",
+  memUsedMb: "内存占用 (MB)",
+  memTotalMb: "内存总量 (MB)",
+  diskPercent: "磁盘",
+};
+
+function OverviewStrip({ sessionId, visible }: { sessionId: string; visible: boolean }) {
+  const overview = useQuery({
+    queryKey: ["docker-overview", sessionId],
+    queryFn: () => dockerApi.overview(sessionId),
+    refetchInterval: visible ? 30000 : false,
+  });
+
+  if (overview.isPending) {
+    return (
+      <div className="shrink-0 border-b border-neutral-800/60 px-3 py-1.5">
+        <span className="nx-hint">主机概览加载中…</span>
+      </div>
+    );
+  }
+  if (overview.isError) {
+    return (
+      <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5">
+        <span className="nx-hint">主机概览加载失败 · {describeError(overview.error)}</span>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void overview.refetch()}>
+          <IconRefresh size={12} />
+          重试
+        </button>
+      </div>
+    );
+  }
+
+  const hostStats = overview.data.hostStats ?? {};
+  const entries = Object.entries(hostStats);
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-800/60 px-3 py-1.5">
+      <span className="shrink-0 text-[11px] text-neutral-500">主机概览</span>
+      {entries.length === 0 && <span className="nx-hint">内核未返回主机统计</span>}
+      {entries.map(([key, value]) => (
+        <span key={key} className="nx-chip shrink-0" title={key}>
+          {HOST_STAT_LABELS[key] ?? key}
+          <span className="nx-mono text-neutral-200">
+            {typeof value === "number" && !Number.isInteger(value) ? value.toFixed(1) : String(value)}
+          </span>
+        </span>
+      ))}
     </div>
   );
 }
