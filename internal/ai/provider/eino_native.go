@@ -168,7 +168,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 		return nativeResult{}, errors.New("AI stream returned no reader")
 	}
 	defer reader.Close()
-	aggregate := streamState{pending: make(map[uint64]*pendingToolCall), handler: trackedItems, requestedModel: servingModel}
+	aggregate := streamState{pending: make(map[uint64]*pendingToolCall), handler: trackedItems}
 	for {
 		message, recvErr := reader.Recv()
 		if errors.Is(recvErr, io.EOF) {
@@ -283,9 +283,6 @@ func (c *Client) finishCompletion(completion Completion, state *attemptState) Co
 	completion.RunID = state.runID
 	completion.CallID = state.callID
 	completion.Model = state.actualModel()
-	if completion.Model == "" {
-		completion.Model = state.requestedModel
-	}
 	completion.Usage.RunID = completion.RunID
 	completion.Usage.CallID = completion.CallID
 	completion.Usage.Model = completion.Model

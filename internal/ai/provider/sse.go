@@ -15,13 +15,12 @@ type pendingToolCall struct {
 }
 
 type streamState struct {
-	completion     Completion
-	content        strings.Builder
-	reasoning      strings.Builder
-	pending        map[uint64]*pendingToolCall
-	handler        StreamHandler
-	requestedModel string
-	sawPayload     bool
+	completion Completion
+	content    strings.Builder
+	reasoning  strings.Builder
+	pending    map[uint64]*pendingToolCall
+	handler    StreamHandler
+	sawPayload bool
 }
 
 func (s *streamState) consumeMessage(ctx context.Context, message *schema.Message) error {
@@ -89,8 +88,4 @@ func (s *streamState) finishTools() {
 	}
 	s.completion.Content = s.content.String()
 	s.completion.Reasoning = s.reasoning.String()
-	if s.completion.Model == "" {
-		s.completion.Model = s.requestedModel
-	}
-	s.completion.Usage.Model = s.completion.Model
 }
