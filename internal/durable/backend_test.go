@@ -167,7 +167,7 @@ func TestListDiscoversOnlyOwnedPrimaryPanes(t *testing.T) {
 		t.Fatalf("dead info = %+v, present = %v", deadInfo, ok)
 	}
 	calls := runner.recordedCalls()
-	if len(calls) != 1 || !reflect.DeepEqual(calls[0][:3], []string{"list-panes", "-s", "-F"}) {
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0][:3], []string{"list-panes", "-a", "-F"}) {
 		t.Fatalf("discovery calls = %+v", calls)
 	}
 }
