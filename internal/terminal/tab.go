@@ -54,13 +54,11 @@ type recording struct {
 type Tab struct {
 	id        string
 	sessionID string
-	term      string
 
 	cols atomic.Int64
 	rows atomic.Int64
 
 	visible    atomic.Bool
-	exited     atomic.Bool
 	lastOutput atomic.Int64 // Unix milliseconds
 	closed     atomic.Bool
 
@@ -138,7 +136,6 @@ func NewTab(id, sessionID string, cols, rows int, enc Encoding, opts ...TabOptio
 	t := &Tab{
 		id:        id,
 		sessionID: sessionID,
-		term:      "xterm-256color",
 		ring:      NewRing(cfg.ringBytes),
 		tr:        NewTranscoder(enc),
 		modes:     NewModeTracker(),
@@ -162,9 +159,6 @@ func (t *Tab) ID() string { return t.id }
 // SessionID returns the owning session identifier.
 func (t *Tab) SessionID() string { return t.sessionID }
 
-// Term returns the terminal type name (xterm-256color).
-func (t *Tab) Term() string { return t.term }
-
 // Cols returns the current width in cells.
 func (t *Tab) Cols() int { return int(t.cols.Load()) }
 
@@ -177,12 +171,6 @@ func (t *Tab) SetVisible(visible bool) { t.visible.Store(visible) }
 
 // IsVisible reports the visibility flag.
 func (t *Tab) IsVisible() bool { return t.visible.Load() }
-
-// MarkExited records that the peer process ended.
-func (t *Tab) MarkExited() { t.exited.Store(true) }
-
-// HasExited reports whether the peer process ended.
-func (t *Tab) HasExited() bool { return t.exited.Load() }
 
 // SetResponseHandler installs the callback receiving terminal-generated
 // replies (cursor reports, device attributes). Transports must write
@@ -247,13 +235,6 @@ func (t *Tab) State() State {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.state
-}
-
-// Encoding returns the current source encoding.
-func (t *Tab) Encoding() Encoding {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.tr.Encoding()
 }
 
 // SwitchEncoding changes the source encoding at runtime; buffered partial
@@ -331,14 +312,14 @@ func (t *Tab) ScrollbackLen() int {
 	return t.scr.scrollbackLen()
 }
 
-// splitScreenLines splits like Rust str::lines (no trailing empty element
-// after a final newline) and trims trailing whitespace per line.
+// splitScreenLines omits the trailing empty element after a final newline
+// and trims trailing whitespace per line.
 func splitScreenLines(text string) []string {
 	if text == "" {
 		return nil
 	}
 	lines := strings.Split(text, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
+	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	for i, line := range lines {

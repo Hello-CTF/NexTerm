@@ -74,7 +74,7 @@ func (m *Manager) startResponses(tab *Tab) bool {
 			if item, ok := tab.responses.next(); ok {
 				tab.mu.Lock()
 				channel := tab.channel
-				current := !tab.closed && tab.generation == item.generation && tab.responses.generation.Load() == item.generation
+				current := !tab.closed && tab.generation == item.generation
 				tab.mu.Unlock()
 				if current && channel != nil {
 					tab.writeMu.Lock()

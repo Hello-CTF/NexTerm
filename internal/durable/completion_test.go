@@ -12,17 +12,17 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
-func legacyCompletionMarker(id string) []byte {
+func opaqueCompletionMarker(id string) []byte {
 	digest := sha256.Sum256([]byte("nexterm-durable-completion-v1\x00" + id))
 	return []byte("\x1b]73733;" + hex.EncodeToString(digest[:]) + "\x07")
 }
 
-func TestLiteralLegacyMarkerRoundTrip(t *testing.T) {
+func TestOpaqueControlSequenceRoundTrip(t *testing.T) {
 	backend, runner := newUnitBackend(t)
 	touchUnitSocket(t, backend)
 	current := unitRecord(backend, ids.New())
 	installRecords(backend, runner, current)
-	payload := append([]byte("before-"), legacyCompletionMarker(current.info.ID)...)
+	payload := append([]byte("before-"), opaqueCompletionMarker(current.info.ID)...)
 	payload = append(payload, []byte("-after")...)
 	session := newUnitSession(t, backend, current, payload)
 	var live []byte

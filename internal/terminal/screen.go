@@ -326,11 +326,10 @@ func (s *screen) print(r rune) {
 	s.put(r, w)
 }
 
-// maxCombiningRunes caps the zero-width runes attached to one cell
-// (documented resource bound, like the size-capped Rust cells): further
-// zero-width runes are dropped from the CELL only. Raw bytes in the ring
-// and replay are never affected, and ordinary combining sequences and
-// emoji chains fit comfortably.
+// maxCombiningRunes caps the zero-width runes attached to one cell:
+// further zero-width runes are dropped from the CELL only. Raw bytes in
+// the ring and replay are never affected, and ordinary combining sequences
+// and emoji chains fit comfortably.
 const maxCombiningRunes = 8
 
 // putCombining attaches a zero-width rune to the most recent cell, like

@@ -46,7 +46,7 @@ func TestRealTmuxLiteralCompletionCollision(t *testing.T) {
 		defer cleanupCancel()
 		_ = backend.Kill(cleanupCtx, id)
 	})
-	marker := legacyCompletionMarker(id)
+	marker := opaqueCompletionMarker(id)
 	payload := append([]byte("before-"), marker...)
 	payload = append(payload, []byte("-middle-")...)
 	payload = append(payload, marker...)
@@ -101,7 +101,7 @@ func TestRealTmuxLiteralCompletionCollision(t *testing.T) {
 	if err := backend.Kill(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("two full legacy markers and fragmented surrounding bytes round-tripped live and after fresh dead replay")
+	t.Logf("two full opaque markers and fragmented surrounding bytes round-tripped live and after fresh dead replay")
 }
 
 type readFullResult struct {

@@ -145,9 +145,6 @@ func (r *Ring) ReplayFrom(seq uint64, max int) (data []byte, start uint64) {
 	return r.copyAt(start, n), start
 }
 
-// Snapshot returns all retained bytes.
-func (r *Ring) Snapshot() []byte { return r.Dump(0) }
-
 // Clear empties the ring. Total and Dropped keep counting; Base moves to
 // the current Total.
 func (r *Ring) Clear() {
