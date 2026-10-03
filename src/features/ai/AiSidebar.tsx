@@ -361,6 +361,38 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   };
 
   /**
+   * 运行中补充（mid-run steering）：不开新轮、不另开面板，文字进当前 job 的
+   * steering 队列，内核在下一个模型调用边界（工具配对完整之后）注入。
+   * 气泡先以「等待注入」落账，内核 steered 事件到了翻「已注入」；RPC 被拒
+   * （任务刚好结束 / 队列满）标「未送达」并把文字还回输入框。
+   */
+  const steer = async () => {
+    const message = input.trim();
+    const run = activeRunRef.current;
+    if (!message || !run || run.settled || run.spawnPending) return;
+    if (images.length > 0) {
+      pushToast("info", "运行中的补充指令暂不支持图片，请先移除图片");
+      return;
+    }
+    const target = run;
+    const jobId = run.jobId;
+    if (run.kind !== "chat" || !jobId) {
+      pushToast("info", "终端接管这一轮不支持补充指令");
+      return;
+    }
+    const text = composeMessage(message);
+    setInput("");
+    const itemId = stream.appendSteer(target.generation, message);
+    try {
+      await aiApi.steer(jobId, text);
+    } catch (e) {
+      stream.resolveSteer(target.generation, itemId, "dropped");
+      setInput((prev) => (prev ? `${message}\n${prev}` : message));
+      pushToast("error", `补充指令未送达：${describeError(e)}`);
+    }
+  };
+
+  /**
    * 批准计划：关掉计划模式，把方案原样回灌一条消息重新发起。
    *
    * 不复用 exit_plan_mode 那一轮的 job —— 那一轮已经结束了；而且新的一轮本该
@@ -1107,9 +1139,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           ref={inputRef}
           className="nx-textarea max-h-40 min-h-[64px] w-full"
           placeholder={
-            sessionId
-              ? "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
-              : "未连接会话（仍可全局提问）"
+            aiBusy
+              ? "运行中：Enter 发送补充指令，将在当前步骤完成后注入"
+              : sessionId
+                ? "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
+                : "未连接会话（仍可全局提问）"
           }
           value={input}
           rows={3}
@@ -1123,7 +1157,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              void send();
+              // 运行中 Enter 不再是「另开一轮」（send 本就被 aiBusy 挡下），
+              // 而是给当前 job 发补充指令 —— 同一个输入框，两种语义按状态分流。
+              if (aiBusy) void steer();
+              else void send();
             }
           }}
         />
@@ -1295,6 +1332,15 @@ function ChatBubble({
           </div>
         ) : null}
         <pre className="font-sans whitespace-pre-wrap">{item.text}</pre>
+        {item.steer ? (
+          <div className="mt-1 text-[10.5px] text-blue-200/70">
+            {item.steer === "pending"
+              ? "补充指令 · 等待注入…"
+              : item.steer === "delivered"
+                ? "补充指令 · 已注入当前运行"
+                : "补充指令 · 未送达（模型未看到）"}
+          </div>
+        ) : null}
       </div>
     );
   }

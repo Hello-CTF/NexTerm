@@ -34,6 +34,14 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_steer", func(_ context.Context, _ *ipc.Call, args struct {
+				JobID   string `json:"jobId"`
+				Message string `json:"message"`
+			}) (any, error) {
+				return nil, r.Steer(args.JobID, args.Message)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_confirm", func(_ context.Context, _ *ipc.Call, args Confirmation) (any, error) {
 				return nil, r.Confirm(args)
 			})

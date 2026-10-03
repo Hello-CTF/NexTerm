@@ -31,8 +31,18 @@ interface ItemBase {
   attempt: number | null;
 }
 
+/**
+ * 运行中补充（steering）的送达状态。
+ *
+ * 气泡在 RPC 成功前就以 `pending` 落在消息流里（内核事件可能比 RPC 响应
+ * 先回来，先落气泡才不会漏接 `steered`）；内核在模型调用边界真正注入后推
+ * `steered` 翻成 `delivered`；轮到终态也没注入的由 `steerDropped`（或本地
+ * 终态兜底）标成 `dropped` —— 「模型从没看到这条」必须可见，不能默默消失。
+ */
+export type SteerDelivery = "pending" | "delivered" | "dropped";
+
 export type ChatItem =
-  | (ItemBase & { role: "user"; text: string; imageCount?: number })
+  | (ItemBase & { role: "user"; text: string; imageCount?: number; steer?: SteerDelivery })
   | (ItemBase & { role: "assistant"; text: string })
   | (ItemBase & { role: "reasoning"; text: string })
   | (ItemBase & {
@@ -192,6 +202,66 @@ export function appendUserMessage(
   return appendItems({ ...state, seq }, [
     { id, attempt: generation, role: "user", text, imageCount: imageCount || undefined },
   ]);
+}
+
+/**
+ * 运行中补充的气泡：与 appendUserMessage 同一身份方案，但带送达状态。
+ * 返回新状态与条目 id —— RPC 失败时调用方按 id 把它标成 dropped。
+ */
+export function appendSteerMessage(
+  state: ConversationState,
+  generation: number,
+  text: string,
+): { state: ConversationState; id: string } {
+  const { id, seq } = nextId(state, "u");
+  return {
+    state: appendItems({ ...state, seq }, [{ id, attempt: generation, role: "user", text, steer: "pending" }]),
+    id,
+  };
+}
+
+/** 按 id 结算一条补充气泡（RPC 拒绝路径；已结算过的一律不动）。 */
+export function resolveSteerById(
+  state: ConversationState,
+  generation: number,
+  itemId: string,
+  delivery: SteerDelivery,
+): ConversationState {
+  const item = state.items.find((i) => i.id === itemId);
+  if (!item || item.attempt !== generation || item.role !== "user" || item.steer !== "pending") {
+    return state;
+  }
+  return replaceItem(state, itemId, { ...item, steer: delivery });
+}
+
+/**
+ * 内核的 steered / steerDropped 与气泡按**先后次序**配对（两边都是 FIFO，
+ * 不按内容猜 —— 重复文本的连续补充也必须各就各位）。找不到待送达气泡 ⇒
+ * 迟到 / 重复事件，如实上报未接受。
+ */
+function resolveOldestSteer(
+  state: ConversationState,
+  generation: number,
+  delivery: SteerDelivery,
+): { state: ConversationState; matched: boolean } {
+  const index = state.items.findIndex(
+    (item) => item.attempt === generation && item.role === "user" && item.steer === "pending",
+  );
+  if (index < 0) return { state, matched: false };
+  const item = state.items[index] as Extract<ChatItem, { role: "user" }>;
+  return { state: replaceItem(state, item.id, { ...item, steer: delivery }), matched: true };
+}
+
+/** 终态兜底：仍 pending 的补充一律标 dropped（内核的 steerDropped 帧可能因断线缺失）。 */
+function settlePendingSteers(state: ConversationState, generation: number): ConversationState {
+  return {
+    ...state,
+    items: state.items.map((item) =>
+      item.attempt === generation && item.role === "user" && item.steer === "pending"
+        ? { ...item, steer: "dropped" as const }
+        : item,
+    ),
+  };
 }
 
 /** RPC 返回后回填 jobId；待处理的交互卡也一并补上，保持身份字段一致。 */
@@ -432,6 +502,16 @@ export function applyAiEvent(
       return accepted({ ...appendStreamText(state, generation, "assistant", textOf(ev)), status: null });
     case "reasoning":
       return accepted(appendStreamText(state, generation, "reasoning", textOf(ev)));
+    case "steered": {
+      // 内核在模型调用边界注入了最早那条 pending 补充。
+      const resolved = resolveOldestSteer(state, generation, "delivered");
+      return resolved.matched ? accepted(resolved.state) : rejected(state);
+    }
+    case "steerDropped": {
+      // 轮到终态也没注入的补充：如实标 dropped，模型从没看到它。
+      const resolved = resolveOldestSteer(state, generation, "dropped");
+      return resolved.matched ? accepted(resolved.state) : rejected(state);
+    }
     case "toolArgs":
       // 参数还在长：只更新状态条（内核已节流），不产生消息条目。
       return accepted({
@@ -597,6 +677,7 @@ export function applyAiEvent(
       const message = (ev.message as string) || "未知错误";
       let next = patchAttempt(state, generation, { outcome: "error", planPending: false });
       next = closeInteractions({ ...next, status: null }, generation, "本轮已出错，交互已关闭");
+      next = settlePendingSteers(next, generation);
       next = appendOutcome(next, generation, "error", message);
       return accepted(next, "error");
     }
@@ -619,6 +700,7 @@ function finishDone(
   const wasPlan = attempt.planPending;
   let next = patchAttempt(state, generation, { outcome: "done", planPending: false });
   next = closeInteractions({ ...next, status: null }, generation, "本轮已结束，交互已关闭");
+  next = settlePendingSteers(next, generation);
 
   if (attempt.kind === "takeover") {
     const { id, seq } = nextId(next, "a");
@@ -710,6 +792,7 @@ export function cancelRun(
   const attempt = attemptOf(state, generation);
   if (!attempt || attempt.outcome) return state;
   let next = closeInteractions({ ...state, status: null }, generation, "本轮已停止，交互已关闭");
+  next = settlePendingSteers(next, generation);
   if (!settle) return next;
   next = patchAttempt(next, generation, { outcome: "canceled", planPending: false });
   return appendOutcome(next, generation, "canceled", "已停止本轮");

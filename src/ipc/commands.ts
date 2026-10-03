@@ -649,6 +649,12 @@ export const aiApi = {
   setPermission: (config: AiPermissionConfig) =>
     call<void>("ai_set_permission", { config }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
+  /**
+   * 运行中补充（mid-run steering）：把一条用户消息交给正在运行的 job，
+   * 内核在下一个模型调用边界（工具配对完整之后）注入 —— 不开新轮。
+   * 拒绝语义：任务已结束 ⇒ not_found；队列满 ⇒ 稍后再试。
+   */
+  steer: (jobId: string, message: string) => call<void>("ai_steer", { jobId, message }),
   confirm: (input: AiConfirmationInput) => call<void>("ai_confirm", { ...input }),
   answer: (input: AiAnswerInput) => call<void>("ai_answer", { ...input }),
   /**

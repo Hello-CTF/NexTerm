@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 )
 
 type Runner struct {
@@ -40,6 +43,9 @@ func NewRunner(config Config) *Runner {
 	}
 	if config.MaxImageBytes <= 0 {
 		config.MaxImageBytes = 5 << 20
+	}
+	if config.MaxPendingSteers <= 0 {
+		config.MaxPendingSteers = 16
 	}
 	if config.Permission == nil && config.Permissions != nil {
 		config.Permission = config.Permissions.Snapshot
@@ -140,8 +146,18 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		forceCancel()
 		return StartResponse{}, errors.New("AI 事件流为空")
 	}
+	// Persist the user's message — bound to this job — before the job
+	// becomes steerable: a Steer accepted right after Start returns must
+	// never outrank the question it supplements in the conversation record.
+	if err := r.store.MsgInsert(ctx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
+		r.releaseJobID(jobID)
+		cancel()
+		forceCancel()
+		_ = stream.Close()
+		return StartResponse{}, err
+	}
 	stream = WithEventSequence(stream)
-	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), running: true}
+	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true}
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -216,6 +232,35 @@ func (r *Runner) Cancel(jobID string) error {
 		r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 	}
 	return err
+}
+
+// Steer queues a user message for delivery at the job's next model-call
+// boundary. The message is persisted immediately — it is part of the
+// conversation record whether or not the run lives long enough to act on
+// it — and is injected between complete tool-call units only, so tool-pair
+// integrity is never broken. Steering grants no privileges: the text
+// reaches the model as an ordinary user message and the permission
+// snapshot taken at run start is untouched.
+func (r *Runner) Steer(jobID, message string) error {
+	if strings.TrimSpace(message) == "" {
+		return errors.New("AI 补充指令不能为空")
+	}
+	r.mu.Lock()
+	current := r.jobs[jobID]
+	r.mu.Unlock()
+	if current == nil || current.ctx.Err() != nil {
+		return ErrJobNotFound
+	}
+	if err := current.steer.Push(schema.UserMessage(message)); err != nil {
+		return fmt.Errorf("%w: %w", ErrSteerQueueFull, err)
+	}
+	// The row carries this job's ID: initializeEino skips this job's steered
+	// rows when assembling the initial history (the queue delivers them at
+	// the boundary instead), while later runs read them as ordinary history.
+	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": message, "steered": true, "jobId": current.id}, nil, nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 // cancelRun cancels the HITL run. Cancel races the run's own completion:
@@ -372,10 +417,34 @@ func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
+		r.reportSteerLeftover(current)
 		_, _ = r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
 		r.cleanup(current)
 	})
+}
+
+// reportSteerLeftover emits steerDropped for steering messages that were
+// accepted but never reached a model-call boundary — the run finished or
+// was canceled first. Emitted before the terminal event so the client can
+// mark exactly which user messages the model never saw. Best-effort: a
+// closed stream must not block completion.
+func (r *Runner) reportSteerLeftover(current *job) {
+	leftover := current.steer.Drain()
+	if len(leftover) == 0 {
+		return
+	}
+	parent := current.deliveryCtx
+	if parent == nil {
+		parent = context.WithoutCancel(current.ctx)
+	}
+	// Same 5s bound as the terminal event: a wedged stream must not stall
+	// completion forever.
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	for _, message := range leftover {
+		_ = current.emit(ctx, Event{Type: "steerDropped", Text: message.Content})
+	}
 }
 
 func (r *Runner) cleanup(current *job) {

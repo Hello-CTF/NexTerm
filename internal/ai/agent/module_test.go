@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	if err := runner.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	runtime := []string{"ai_chat", "ai_cancel", "ai_confirm", "ai_answer", "ai_hitl_snapshot", "ai_hitl_events", "ai_get_permission", "ai_set_permission"}
+	runtime := []string{"ai_chat", "ai_cancel", "ai_steer", "ai_confirm", "ai_answer", "ai_hitl_snapshot", "ai_hitl_events", "ai_get_permission", "ai_set_permission"}
 	registered := dispatcher.Commands()
 	if len(registered) != len(runtime) {
 		t.Fatalf("agent module must register exactly the runtime surface, got %v", registered)
@@ -106,6 +107,31 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	}
 	if terminals != 1 || stream.events[len(stream.events)-1]["type"] != "done" {
 		t.Fatalf("events=%+v", stream.events)
+	}
+}
+
+// TestSteerDispatchParsesWireArgs drives ai_steer through the real dispatcher:
+// the JSON args must reach the handler (unknown job and empty message surface
+// their distinct errors), proving the wire contract beyond handler-level tests.
+func TestSteerDispatchParsesWireArgs(t *testing.T) {
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	runner := NewRunner(Config{Store: storage})
+	defer runner.Close()
+	dispatcher := ipc.NewDispatcher()
+	if err := runner.RegisterCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	unknown := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_steer", Args: json.RawMessage(`{"jobId":"job-missing","message":"hi"}`)}, ipc.Environment{})
+	if unknown.OK || unknown.Error == nil || !strings.Contains(unknown.Error.Message, ErrJobNotFound.Error()) {
+		t.Fatalf("unknown job dispatch = %+v", unknown)
+	}
+	empty := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_steer", Args: json.RawMessage(`{"jobId":"job-missing","message":"  "}`)}, ipc.Environment{})
+	if empty.OK || empty.Error == nil || !strings.Contains(empty.Error.Message, "补充指令不能为空") {
+		t.Fatalf("empty message dispatch = %+v", empty)
 	}
 }
 
