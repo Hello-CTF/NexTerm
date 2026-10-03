@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NexTerm — 一体化开发运维终端</title>
-  <meta name="description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。桌面 App 与浏览器版共用同一份 Rust 内核，凭据加密存储，AI 全程在权限护栏内执行。" />
+  <meta name="description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口。桌面 App 与浏览器版共用同一个 Go 内核，凭据加密存储，AI 全程在权限护栏内执行。" />
   <link rel="icon" type="image/png" href="brand/nexterm-mark-128.png" />
   <meta property="og:title" content="NexTerm — 一体化开发运维终端" />
   <meta property="og:description" content="SSH · WinRM · 文件 · Docker · 数据库 · AI，装进同一个窗口；也能部署成服务端，浏览器打开即用。" />
@@ -58,7 +58,7 @@
           <a class="btn btn-ghost" href="https://github.com/ProbiusOfficial/NexTerm" target="_blank" rel="noopener">GitHub 源码</a>
         </div>
         <div class="hero-meta">
-          <span>桌面版 <span class="os">Windows · macOS</span>，服务端 <span class="os">Linux / 容器</span></span>
+          <span>桌面版 <span class="os">Windows · macOS · Linux</span>，服务端 <span class="os">Linux / 容器</span></span>
           <span>凭据加密存储 · 数据不出本机</span>
         </div>
       </div>
@@ -82,7 +82,7 @@
     </div>
 
     <div class="proto-row">
-      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>XChaCha20</span><span>DPAPI</span><span>xterm.js</span><span>Tauri</span><span>axum</span><span>WebSocket</span><span>SQLite</span><span>Rust</span>
+      <span>SSH</span><span>SFTP</span><span>WinRM</span><span>ConPTY</span><span>真 PTY</span><span>Docker</span><span>MySQL</span><span>Redis</span><span>SOCKS5</span><span>Argon2id</span><span>XChaCha20</span><span>DPAPI</span><span>xterm.js</span><span>Wails</span><span>Go</span><span>WebSocket</span><span>SQLite</span>
     </div>
   </div>
 </header>
@@ -150,18 +150,18 @@
     <div class="section-head">
       <span class="pk">nexterm --forms</span>
       <h2>一个内核，两种形态</h2>
-      <p>同一份 Rust 代码 —— 装在本机是桌面 App，部署到服务器就是浏览器里的运维终端。</p>
+      <p>同一个 Go 核心 —— 装在本机是桌面 App，部署到服务器就是浏览器里的运维终端。</p>
     </div>
 
     <div class="figure">
-      <img src="images/01-dual-form.png" alt="桌面 App 与服务端共用同一份 Rust 内核" loading="lazy" />
+      <img src="images/01-dual-form.png" alt="桌面 App 与服务端共用同一个 Go 内核" loading="lazy" />
     </div>
 
     <div class="duo">
       <div class="cell">
-        <span class="tag">DESKTOP · TAURI</span>
+        <span class="tag">DESKTOP · WAILS</span>
         <h3>桌面 App</h3>
-        <p>本地优先、功能完整。Windows 与 macOS 安装即用，凭据加密存在自己机器上。</p>
+        <p>本地优先、功能完整。Windows、macOS 与 Linux 安装即用，凭据加密存在自己机器上。</p>
         <ul>
           <li>本地终端 · SSH · WinRM · 文件 · Docker · 数据库</li>
           <li>AI 助手：工具调用 · 权限护栏 · 终端接管</li>
@@ -169,7 +169,7 @@
         </ul>
       </div>
       <div class="cell">
-        <span class="tag">SERVER · AXUM</span>
+        <span class="tag">SERVER · GO</span>
         <h3>服务端 nexterm-server</h3>
         <p>部署一次，随处可用。浏览器打开就是完整界面，不用装任何客户端 —— 而且运行态在服务端，不只是「投屏」。</p>
         <ul>
@@ -314,13 +314,13 @@
       <div class="get-steps">
         <span class="pk">nexterm install</span>
         <h3>获取与部署</h3>
-        <p>每次发版五类产物：Windows / macOS 客户端、懒猫微服专版，以及 Linux 服务端的两个包。</p>
+        <p>每次发版八个产物：Windows / macOS / Linux 桌面客户端（各 amd64 与 arm64）、Linux 服务端包（amd64 与 arm64）；懒猫微服专版在应用中心安装，不经 Release 下载。</p>
         <ul>
-          <li>桌面版：<code>.exe</code> / <code>.dmg</code>，下载双击即装</li>
-          <li>LinuxServer：<code>tar.gz</code>，含前端与 systemd 单元</li>
-          <li>onlyServer：同样的包减掉界面，公网只当同步中转</li>
+          <li>桌面版：<code>NexTerm_&lt;版本&gt;_x64-setup.exe</code> / <code>_arm64-setup.exe</code>、<code>_x86_64.dmg</code> / <code>_aarch64.dmg</code>、<code>NexTerm-desktop_&lt;版本&gt;_linux_&lt;架构&gt;.tar.gz</code></li>
+          <li>服务端：<code>NexTerm-server_&lt;版本&gt;_linux_&lt;架构&gt;.tar.gz</code>，含前端、两个 systemd 单元与两份 env 示例</li>
+          <li>sync-only 不是独立包：同一个二进制加 <code>--sync-only</code> 即只挂同步端点</li>
           <li>懒猫微服：在微服应用中心里安装，不经 Release 下载</li>
-          <li>从源码构建：Rust stable + Node 22+ + pnpm</li>
+          <li>从源码构建：Go 1.26 + Node 22+ + pnpm</li>
         </ul>
       </div>
       <div class="code-block">
@@ -328,11 +328,11 @@
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
           <span class="term-title">nexterm-server — bash</span>
         </div>
-        <pre><span class="c"># 完整版：界面 + 全部 139 条命令</span>
+        <pre><span class="c"># 完整版：界面 + 全部 140 条命令</span>
 <span class="c"># 裸启动就是 serve（容器里就这条）</span>
 <span class="p">$</span> nexterm-server
 
-<span class="c"># onlyServer：只有 3 条同步命令</span>
+<span class="c"># sync-only：同一个二进制，只有 3 条同步命令</span>
 <span class="p">$</span> nexterm-server --sync-only \
       --data-dir /var/lib/nexterm
 
@@ -341,13 +341,13 @@
 
 <span class="c"># 自查：两个数对不对</span>
 <span class="p">$</span> curl -s 127.0.0.1:8080/healthz
-  <span class="c"># commands:139 | 3</span></pre>
+  <span class="c"># commands:140 | 3</span></pre>
       </div>
     </div>
 
     <div class="duo">
       <div class="cell">
-        <span class="tag">LINUX · LINUXSERVER</span>
+        <span class="tag">LINUX · 完整版</span>
         <h3>自建机器 / 内网 VPS</h3>
         <p>带完整浏览器界面，打开 <code>http://&lt;地址&gt;:8080</code> 即用。</p>
         <ul>
@@ -355,18 +355,18 @@
           <li>单元默认只听 <code>127.0.0.1</code>，对外自己接反代</li>
           <li>⛔ <code>/rpc</code> 无自身鉴权 —— 不建议公网部署</li>
         </ul>
-        <span class="file">NexTerm-x.y.z-linux-amd64.tar.gz</span>
+        <span class="file">NexTerm-server_x.y.z_linux_amd64.tar.gz · _arm64.tar.gz</span>
       </div>
       <div class="cell">
-        <span class="tag">LINUX · ONLYSERVER</span>
+        <span class="tag">LINUX · SYNC-ONLY 模式</span>
         <h3>公网只做同步中转</h3>
         <p>同一个二进制加 <code>--sync-only</code>：只挂 <code>/sync/rpc</code> 与 <code>/healthz</code>。</p>
         <ul>
           <li>命令表只有 <code>sync_digest</code> / <code>sync_export</code> / <code>sync_import</code></li>
           <li>令牌泄漏也拿不到终端、文件与容器</li>
-          <li>命令行配置，<code>ssh</code> 上去就能管</li>
+          <li>同一个服务端包内附 <code>nexterm-onlyserver.service</code>，换装即切换</li>
         </ul>
-        <span class="file">NexTerm-onlyServer-x.y.z-linux-amd64.tar.gz</span>
+        <span class="file">随 NexTerm-server 同一个 tar.gz 分发</span>
       </div>
     </div>
   </div>
@@ -385,15 +385,15 @@
       </details>
       <details>
         <summary>支持哪些操作系统？</summary>
-        <div class="faq-body">桌面版支持 Windows 10/11 与 macOS（Apple Silicon）；服务端是同一份内核编译的 Linux（amd64）二进制，可装进容器，也可直接装在任意 Linux 机器上、用浏览器访问，因而不限客户端操作系统。Linux 桌面版尚未验收。</div>
+        <div class="faq-body">桌面版支持 Windows 10/11、macOS 与 Linux（amd64 / arm64 安装包）；服务端是同一个 Go 核心编译的 Linux（amd64 / arm64）静态二进制，可装进容器，也可直接装在任意 Linux 机器上、用浏览器访问，因而不限客户端操作系统。</div>
       </details>
       <details>
         <summary>服务端放公网安全吗？</summary>
-        <div class="faq-body">完整版<em>不建议</em>公网部署：它的 <code>/rpc</code> 与浏览器界面自身没有鉴权（在懒猫微服上由平台登录门挡着，裸机上那道门不存在），能连上端口就等于拿到终端、文件与容器。公网只想做资产同步，请用 <code>onlyServer</code>（<code>--sync-only</code>）—— 它只注册同步用的三条命令，令牌泄漏也只能读写这份资产库，且令牌走请求头，前面必须终止 TLS。</div>
+        <div class="faq-body">完整版<em>不建议</em>公网部署：它的 <code>/rpc</code> 与浏览器界面自身没有鉴权（在懒猫微服上由平台登录门挡着，裸机上那道门不存在），能连上端口就等于拿到终端、文件与容器。公网只想做资产同步，请用 <code>--sync-only</code> 模式 —— 它只注册同步用的三条命令，令牌泄漏也只能读写这份资产库，且令牌走请求头，前面必须终止 TLS。</div>
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>
-        <div class="faq-body">不是。两端共用同一份 Rust 内核与同一份命令清单（139 条），差异由平台门控收束，所以界面与行为一致。区别在运行态：桌面版的进程随窗口结束，服务端版把终端进程、回滚缓冲与工作区布局都留在服务端，于是关掉网页不丢、换设备能接着用。</div>
+        <div class="faq-body">不是。两端共用同一个 Go 核心与同一份命令清单（140 条），差异由平台门控收束，所以界面与行为一致。区别在运行态：桌面版的进程随窗口结束，服务端版把终端进程、回滚缓冲与工作区布局都留在服务端，于是关掉网页不丢、换设备能接着用。</div>
       </details>
       <details>
         <summary>几个人可以同时用同一台服务端吗？</summary>
@@ -441,7 +441,7 @@
       <a href="#sync">资产同步</a>
       <a href="#faq">常见问题</a>
     </div>
-    <div class="footer-meta">基于 xterm.js、russh 与 Tauri 构建 · MIT 协议 · © 2026 ProbiusOfficial</div>
+    <div class="footer-meta">基于 xterm.js、Go 与 Wails 构建 · MIT 协议 · © 2026 ProbiusOfficial</div>
   </div>
 </footer>
 

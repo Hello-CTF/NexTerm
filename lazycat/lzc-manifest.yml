@@ -19,7 +19,7 @@
 # 换到 services 之后这些字段要跟着搬家（见下）。
 
 usage: |
-  首次进入请到「设置 → 网络安全 → 凭据库」确认凭据库状态。
+  首次进入请到「凭据」面板确认凭据库状态。
 
   终端进程、会话与工作区布局都跑在这台微服上，浏览器只是接上去看：
   关掉网页不会结束会话，换一台设备打开即可接管原来那条终端，接着看原来的输出。
@@ -59,7 +59,7 @@ application:
     #
     # 短名同时解决两个问题：dev / release 通用，且不必知道最终包 ID。
     #
-    # `/=` 命中全部路径：/rpc、/ws/events、/ws/channel/{id}、/healthz 与静态资源都从这里进。
+    # `/=` 命中全部路径：/rpc、/ws/events、/ws/channel/{id}、/files/blob、/healthz 与静态资源都从这里进。
     - /=http://nexterm-server:8080/
 
   # 独立鉴权：把**同步入口**从平台登录门里放出来。
@@ -74,9 +74,10 @@ application:
   # 为什么可以只放这一条：
   #   · 放行的**只有** `/sync/rpc` 一条路径，页面、`/rpc`、`/healthz`、静态资源
   #     与 `/ws/*` 全部照旧要过平台账密 —— 人类用浏览器打开这个应用，体验不变。
-  #   · `/sync/rpc` 自己**有独立鉴权**：容器里的 `authorize_sync()` 要求
-  #     `X-NexTerm-Sync-Token` 与本实例令牌一致（`ct_eq` 常量时间比较），
-  #     否则 401。所以「放行」放的是平台的账密，不是应用的门。
+  #   · `/sync/rpc` 自己**有独立鉴权**：服务端校验 `X-NexTerm-Sync-Token`
+  #     请求头（`internal/sync`，`crypto/subtle` 常量时间比较），不匹配即 401。
+  #     平台网关注入 `X-HC-User-ID` 头时视为平台已鉴权，直接放行。
+  #     所以「放行」放的是平台的账密，不是应用的门。
   #   · 令牌 = 本实例的完全控制权，所以**绝不能**写成 `public_path: [/]`
   #     （Gitea 那种把整个应用公开的写法在我们是危险的）。官方注意事项原文：
   #     「请不要对外暴露敏感 API」。
@@ -103,7 +104,7 @@ application:
   #
   # 《社区激励规则》§8 warning 原文（developer.lazycat.cloud/store-rule.md）：
   #   如果应用有上传/下载功能，需要接入懒猫网盘的自动拦截文件选择器，未接入无法在懒猫商店上架。
-  # NexTerm 有上传/下载（`fs_upload` / `fs_download`，见 `commands/mod.rs`），必然命中。
+  # NexTerm 有上传/下载（浏览器原生文件入口 + 服务端 `/files/blob` 暂存），必然命中。
   #
   # ⚠️ 两条 inject **缺一不可**，官方专门警告过「不要只复制 browser inject」：
   #
@@ -213,7 +214,10 @@ services:
     image: embed:nexterm-server
 
     # 端口与进程内默认值一致，写出来是为了**在容器里一眼能看见**，
-    # 改端口时不必去翻 Rust 源码。
+    # 改端口时不必去翻 Go 源码。
+    #
+    # 刻意**不设日志级别环境变量**：服务端日志是固定 info 级的 slog
+    # （stderr + 数据目录 logs/nexterm.log），没有运行期级别开关。
     environment:
       # 凭据库根密钥。`stable_secret` 在「同一微服 + 同一应用」内稳定，
       # 且**不需要用户交互** —— 这是浏览器版能直接拿到解锁态凭据库的唯一干净做法。
@@ -233,4 +237,3 @@ services:
       #
       # 取值目前只有 `lazycat` 有意义；不设 = 非懒猫（自建服务端），转发可用。
       - NEXTERM_PLATFORM=lazycat
-      - RUST_LOG=info

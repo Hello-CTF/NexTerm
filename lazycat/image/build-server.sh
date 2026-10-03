@@ -5,30 +5,24 @@
 # 由 `lzc-cli project build` 按 lzc-build.yml 的 `buildscript` 调用，
 # 在**开发机**上跑（不是盒子）。也可以手工跑，幂等。
 #
-# ── Rust 部分怎么编（这是本脚本最需要解释的一件事）────────────────────────
+# ── Go 部分怎么编 ─────────────────────────────────────────────────────────
 #
-# 产物必须是 **x86-64 的 Linux 二进制**（微服盒子是 Intel，见下），
-# 而开发机可能是 Apple Silicon —— 于是有三条路，本脚本走第 3 条：
+# 产物是 **Linux 的静态 ELF**（CGO_ENABLED=0），微服盒子是 x86-64（见下）。
+# Go 的交叉编译是工具链内建能力：设 GOOS/GOARCH 即可，**不需要容器、
+# 不需要 qemu、不需要交叉 gcc** —— 整条 docker 编译链路因此不存在。
 #
-#   1. macOS → Linux 交叉编译（不在容器里）
-#      依赖树里有 sqlite（C）、aws-lc-sys（C + AVX 汇编），要凑一整套 sysroot，
-#      慢且脆。**不采用**。
+# 编译统一走共享交付入口（scripts/build.mjs，版本唯一来源 wails.json）：
 #
-#   2. 容器跑 `--platform linux/amd64`（qemu 模拟）
-#      看起来最省事，实测**不可靠**：在 2 vCPU / 4 GiB 的 Docker 虚拟机里编
-#      aws-lc-sys 时，cc-rs 会报 `status code exit status: 4`，
-#      失败的文件一会儿是 `mlkem_..._avx2_asm.S`、一会儿是 `rsaz-3k-avx512.S`。
-#      **把并发压到 1 也一样**，而同一条 cc 命令单独跑是 exit 0 ——
-#      也就是说不是汇编器不支持、不是代码问题，是模拟执行本身不稳。
-#      **不采用**。
+#   node scripts/build.mjs frontend                 # 前端 → dist/
+#   node scripts/build.mjs server --release \
+#       --os=linux --arch=<amd64|arm64>             # 服务端 → target/go-build/
 #
-#   3. **arm64 容器（原生执行）+ Debian 交叉工具链编到 x86_64** ← 本脚本的做法
-#      gcc 自己是 arm64 原生二进制（不做模拟），只有它*产出*的目标是 x86_64。
-#      `CC_x86_64_unknown_linux_gnu` 指过去即可，cargo 侧用 `--target`。
-#      速度与原生构建相当，且不受 Docker 虚拟机规格影响。
+# 该入口已经强制了发布门禁（-mod=readonly -trimpath -buildvcs=false、
+# CGO_ENABLED=0、版本注入与 wails.json 一致），这里不再重复实现，只做
+# 消费与自检。产物命名与 scripts/pack-linux-server.sh 的默认输入一致。
 #
-# 同一架构的机器（amd64 主机 / amd64 CI）走同一条代码路径：`--target` 等于宿主 triple，
-# `CC_*` 不设置、cc-rs 用系统 cc，等价于原生编译 —— 不需要第二套分支。
+# 同一架构的机器（amd64 主机 / amd64 CI）与异构机器（Apple Silicon）走
+# 同一条代码路径 —— Go 交叉编译没有「原生/交叉」的分支。
 
 set -euo pipefail
 
@@ -42,63 +36,22 @@ OUT_BIN="$HERE/nexterm-server"
 # 懒猫微服的盒子是 **x86-64**（LC-02 用 Intel Core i5-1155G7，LZCOS 基于 Debian 12）。
 # 别和同厂「懒猫 AI 算力舱 X5-T4000/T5000」搞混 —— 那台是 Arm Neoverse + Ubuntu，另一条产品线。
 #
-# ⚠️ `LZC_ARCH` 只覆盖**二进制**这一半。镜像那一半在 `image/Dockerfile` 里，
-# 靠 `ARG TARGETARCH` 锁定；`lzc-cli` 不支持传 `--build-arg`，所以**两处只能手动对齐**。
-# 改这里时同步改 Dockerfile 的默认值，改完两边一起提交。
-# ⚠️ 这里有两套命名，**不能共用同一个变量**（踩过）：
-#     · CROSS_PREFIX    —— 编译程序的**前缀**，用下划线：`x86_64-linux-gnu-gcc`
-#     · GCC_CROSS_PKG   —— apt 的**包名**，用连字符：`gcc-x86-64-linux-gnu`
-#   写错成 `gcc-x86_64-linux-gnu` 的报错是 `E: Unable to locate package`，
-#   看着像「源里没有」，其实是名字拼错。
+# 服务端发布矩阵是 linux/amd64 + linux/arm64（与共享交付入口一致）；
+# 这里默认 amd64（盒子），arm64 留给 Arm 形态的设备验证。
 LZC_ARCH="${LZC_ARCH:-amd64}"
 case "$LZC_ARCH" in
-  amd64)
-    ELF_ARCH="x86-64"
-    TARGET_TRIPLE="x86_64-unknown-linux-gnu"
-    CROSS_PREFIX="x86_64-linux-gnu"
-    GCC_CROSS_PKG="gcc-x86-64-linux-gnu"
-    LIBC_CROSS_PKG="libc6-dev-amd64-cross"
-    ;;
-  arm64)
-    ELF_ARCH="aarch64"
-    TARGET_TRIPLE="aarch64-unknown-linux-gnu"
-    CROSS_PREFIX="aarch64-linux-gnu"
-    GCC_CROSS_PKG="gcc-aarch64-linux-gnu"
-    LIBC_CROSS_PKG="libc6-dev-arm64-cross"
-    ;;
+  amd64) ELF_ARCH="x86-64" ;;
+  arm64) ELF_ARCH="aarch64" ;;
   *)
     echo "[lzc-build] ✗ LZC_ARCH 只能是 amd64 或 arm64，收到：$LZC_ARCH" >&2
     exit 1
     ;;
 esac
 
-# 变量名要给 cargo/cc 用，得是下划线式与全大写式两种拼法。
-TRIPLE_UNDER="${TARGET_TRIPLE//-/_}"
-TRIPLE_UPPER="$(printf '%s' "$TRIPLE_UNDER" | tr '[:lower:]' '[:upper:]')"
-
 echo "[lzc-build] 仓库根: $ROOT"
 # ⚠️ 变量展开后面跟中文字符时**必须写 ${VAR}**：`$LZC_ARCH（` 会让 bash 把全角括号的
 # 首字节当成变量名的一部分，报 `LZC_ARCH?: unbound variable`（已在真机上踩到一次）。
-echo "[lzc-build] 目标架构: ${LZC_ARCH}（${TARGET_TRIPLE}）"
-
-# ── 要不要交叉工具链 ──────────────────────────────────────────────────
-#
-# 用 Docker daemon 的架构（= 容器会以哪种架构原生执行）和自己的目标比。
-# 相同 ⇒ 什么都不用装（amd64 机器上的常规路径）；不同 ⇒ 装 Debian 的交叉工具链。
-#
-# `CC_*` 只在需要交叉时才设：同架构下留空，cc-rs 会用系统 `cc`（本来就是对的架构）。
-DAEMON_ARCH="$(docker version --format '{{.Server.Arch}}' 2>/dev/null || echo unknown)"
-CROSS_ENV=()
-if [ "$DAEMON_ARCH" != "$LZC_ARCH" ]; then
-  echo "[lzc-build] Docker daemon 是 ${DAEMON_ARCH}，目标是 ${LZC_ARCH} ⇒ 用 Debian 交叉工具链（容器内原生执行，不做 qemu 模拟）"
-  CROSS_ENV=(
-    -e "CC_${TRIPLE_UNDER}=${CROSS_PREFIX}-gcc"
-    -e "AR_${TRIPLE_UNDER}=${CROSS_PREFIX}-ar"
-    -e "CARGO_TARGET_${TRIPLE_UPPER}_LINKER=${CROSS_PREFIX}-gcc"
-  )
-else
-  echo "[lzc-build] Docker daemon 架构与目标一致（${LZC_ARCH}），原生编译"
-fi
+echo "[lzc-build] 目标架构: ${LZC_ARCH}（linux/${LZC_ARCH}，Go 交叉编译）"
 
 # ── 1. 基线镜像断言（只检查，不拉取）──────────────────────────────────
 #
@@ -123,7 +76,7 @@ case "$BASE_REF" in
 esac
 
 # ── 2. 前端 ────────────────────────────────────────────────────────────
-echo "[lzc-build] 2/4 构建前端（pnpm build → dist/）"
+echo "[lzc-build] 2/4 构建前端（node scripts/build.mjs frontend → dist/）"
 cd "$ROOT"
 
 # 依赖已装就跳过 install。
@@ -143,10 +96,9 @@ else
   echo "[lzc-build]     node_modules 已存在，跳过 pnpm install（强制重装：NEXTERM_FORCE_INSTALL=1）"
 fi
 
-# `--config.verify-deps-before-run=false`：pnpm 在 `run` 前会做一次依赖校验，
-# 判定「过期」时会**自己再跑一次 install** —— 那等于在打包中途改依赖状态，
-# 而且会踩上面同一个软链问题。依赖由上一段显式管，这里不要再有隐式安装。
-pnpm --config.verify-deps-before-run=false run build
+# 共享交付入口内部跑 `pnpm exec vite build`；它**不做**依赖安装与隐式校验，
+# 依赖状态由上一段显式管，这里也不要有隐式安装。
+node scripts/build.mjs frontend
 
 rm -rf "$CONTENT/web"
 mkdir -p "$CONTENT"
@@ -162,44 +114,35 @@ echo "[lzc-build]     前端就位: $CONTENT/web"
 # `content/` 整个在 .gitignore 里（每次构建重生成），放进去这份脚本就没有版本记录了。
 # 它是**第三方产物**，必须能被 review 到版本与来源（见同目录的 README）。
 # 只拷 `.js`：同目录的 README 是给仓库读者看的来源说明，没必要进包。
+#
+# ⚠️ 下面这条 cp 被 `scripts/verify-manifest-injects.py` 按字面正则断言
+# （manifest 的 file:// 引用、这里的落点、仓库源文件三者必须一致），改写法要同步改校验。
 rm -rf "$CONTENT/lazycat-injects"
 mkdir -p "$CONTENT/lazycat-injects"
 cp "$HERE"/../injects/*.js "$CONTENT/lazycat-injects/"
 echo "[lzc-build]     注入脚本就位: $CONTENT/lazycat-injects"
 
-# ── 2. 服务端二进制 ────────────────────────────────────────────────────
+# ── 3. 服务端二进制 ────────────────────────────────────────────────────
 #
-# CARGO_TARGET_DIR 指到仓库内的 target-linux/<arch>/（已在 .gitignore 里）：
-# 默认的 target/ 会被 macOS 的产物占着，混用会让 cargo 反复重编。
-# 单独一个 cargo registry 卷：容器里的 root 和宿主用户不同，共用宿主
-# ~/.cargo 会有一堆权限问题。
+# 产物：target/go-build/nexterm-server-linux-${LZC_ARCH}
+# （与 scripts/pack-linux-server.sh 的默认输入同一路径约定）。
 #
-# ⚠️ **注意这里没有 `--platform`**：容器按 daemon 的原生架构跑（快且稳），
-# 跨架构靠 `--target` + 交叉 gcc 解决。见文件头第 3 条。
-echo "[lzc-build] 3/4 构建服务端二进制（${TARGET_TRIPLE}，rust:1-bookworm，可能需要几分钟）"
-docker run --rm \
-  -v "$ROOT":/src \
-  -v nexterm-cargo-registry:/usr/local/cargo/registry \
-  -w /src \
-  -v "$HERE/pick-target.sh:/usr/local/bin/pick-target.sh:ro" \
-  -e CARGO_TARGET_DIR="/src/target-linux/$LZC_ARCH" \
-  -e "NEXTERM_BUILD_TARGET=$TARGET_TRIPLE" \
-  -e "NEXTERM_CROSS_PREFIX=$CROSS_PREFIX" \
-  -e "NEXTERM_GCC_CROSS_PKG=$GCC_CROSS_PKG" \
-  -e "NEXTERM_LIBC_CROSS_PKG=$LIBC_CROSS_PKG" \
-  "${CROSS_ENV[@]}" \
-  rust:1-bookworm \
-  bash /usr/local/bin/pick-target.sh
+# Go 交叉编译不需要容器：GOOS/GOARCH 由共享入口设置，CGO_ENABLED=0 产出
+# 静态 ELF。构建缓存就是宿主 Go 的常规缓存，不需要单独的 registry 卷。
+echo "[lzc-build] 3/4 构建服务端二进制（linux/${LZC_ARCH}，node scripts/build.mjs server，可能需要几分钟）"
+node scripts/build.mjs server --release --os=linux --arch="$LZC_ARCH"
 
-install -m 0755 "$ROOT/target-linux/$LZC_ARCH/$TARGET_TRIPLE/release/nexterm-server" "$OUT_BIN"
+GO_BIN="$ROOT/target/go-build/nexterm-server-linux-${LZC_ARCH}"
+install -m 0755 "$GO_BIN" "$OUT_BIN"
 echo "[lzc-build]     二进制就位: $OUT_BIN"
 
-# ── 3. 自检 ────────────────────────────────────────────────────────────
+# ── 4. 自检 ────────────────────────────────────────────────────────────
 #
 # 这几条都是「**不报错的**静默失败」，事后极难查，所以在打包前就断掉：
 #   · 二进制架构不对（arm64 产物搬去 x86-64 盒子 ⇒ Exec format error，
 #     而 LPK 照样能构建、能安装，只是启动即崩）
-#   · 二进制是 macOS 的（同上）
+#   · 二进制不是静态链接（盒子基线里没有 glibc 之外的运行库保证；
+#     共享入口已强制 CGO_ENABLED=0，这里复核最终结果）
 #   · 前端 index.html 找不到（打开就是 404，而且没有任何日志说为什么）
 echo "[lzc-build] 4/4 自检"
 FILE_OUT="$(file -b "$OUT_BIN" || true)"
@@ -207,10 +150,24 @@ case "$FILE_OUT" in
   *ELF*"$ELF_ARCH"*) ;;
   *)
     echo "[lzc-build] ✗ 产出不是 Linux/${ELF_ARCH} 的 ELF：$FILE_OUT" >&2
-    echo "[lzc-build]   目标架构是 LZC_ARCH=${LZC_ARCH}（${TARGET_TRIPLE}）。" >&2
+    echo "[lzc-build]   目标架构是 LZC_ARCH=${LZC_ARCH}。" >&2
     exit 1
     ;;
 esac
+case "$FILE_OUT" in
+  *statically\ linked*) ;;
+  *)
+    echo "[lzc-build] ✗ 产出不是静态链接：$FILE_OUT" >&2
+    echo "[lzc-build]   服务端必须 CGO_ENABLED=0（共享交付入口已强制，这里不应发生）。" >&2
+    exit 1
+    ;;
+esac
+if command -v go >/dev/null 2>&1; then
+  if ! go version -m "$OUT_BIN" | grep -q 'CGO_ENABLED=0'; then
+    echo "[lzc-build] ✗ go version -m 里没有 CGO_ENABLED=0 标记" >&2
+    exit 1
+  fi
+fi
 if [ ! -f "$CONTENT/web/index.html" ]; then
   echo "[lzc-build] ✗ $CONTENT/web/index.html 不存在：前端没构建成功？" >&2
   exit 1
