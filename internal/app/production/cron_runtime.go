@@ -16,17 +16,23 @@ import (
 )
 
 // unattendedPermissions is the agent runner's Permission hook: cron-triggered
-// executions carry guard.WithUnattended(ctx) and receive the Unattended
+// executions carry guard.WithUnattended(ctx) and run under the Unattended
 // decision mode, so NeedsConfirm and Forbidden rulings are denied explicitly
 // instead of being executed silently or parked on a confirmation no one will
-// answer. Interactive executions keep the user's configured guard mode, and
-// remembered approvals never authorize unattended execution.
+// answer. The user's guard configuration is preserved — only the Mode is
+// overridden, so custom danger rules keep upgrading matched calls to Danger
+// and are denied like any other non-Safe ruling; remembered approvals never
+// authorize unattended execution. Snapshot errors surface to the caller.
 func unattendedPermissions(manager *guard.Manager) func(context.Context) (guard.Config, error) {
 	return func(ctx context.Context) (guard.Config, error) {
-		if guard.UnattendedFrom(ctx) {
-			return guard.Config{Mode: guard.Unattended}, nil
+		config, err := manager.Snapshot(ctx)
+		if err != nil {
+			return guard.Config{}, err
 		}
-		return manager.Snapshot(ctx)
+		if guard.UnattendedFrom(ctx) {
+			config.Mode = guard.Unattended
+		}
+		return config, nil
 	}
 }
 

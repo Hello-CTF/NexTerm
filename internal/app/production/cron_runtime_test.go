@@ -15,6 +15,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/cron"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -315,6 +316,95 @@ func TestComposedCronInteractiveControlKeepsHITL(t *testing.T) {
 	ctx := context.Background()
 	const command = "systemctl restart nginx"
 	services, _, transport, sessionID := composeOutcomeRuntime(t, command)
+
+	stream := &agent.SliceStream{}
+	response, err := services.Agent.Start(ctx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := waitOutcomeEvent(t, stream, "confirmRequired")
+	if confirmation.ID != "call-exec-1" {
+		t.Fatalf("confirmRequired = %+v", confirmation)
+	}
+	if got := transport.effectCalls(command); got != 0 {
+		t.Fatalf("effect ran before confirmation: %d", got)
+	}
+	if err := services.Agent.Cancel(response.JobID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestComposedCronUnattendedKeepsCustomDangerRules is the round-1 review
+// regression: the unattended permission snapshot must preserve the user's
+// custom danger rules. A built-in Safe command that matches a custom rule is
+// upgraded to Danger at classification time and denied under cron — zero
+// transport executions — while the interactive control still parks on a
+// confirmation.
+func TestComposedCronUnattendedKeepsCustomDangerRules(t *testing.T) {
+	ctx := context.Background()
+	const command = "echo hi"
+	services, database, transport, sessionID := composeOutcomeRuntime(t, command)
+	if err := services.Guard.Set(ctx, guard.Config{Mode: guard.ReadWrite, DangerRules: []string{command}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity: the custom rule upgrades the otherwise Safe command to Danger.
+	permission, err := services.Guard.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(tools.ExecCommandsArgs{Commands: []string{command}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ruling := guard.ClassifyTool("exec_commands", args, permission); ruling.Risk != guard.Danger {
+		t.Fatalf("test setup: ruling = %+v, want Danger from the custom rule", ruling)
+	}
+
+	conversation, err := database.ConvCreate(ctx, "cron target", map[string]any{"scope": tools.Scope{SessionID: sessionID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := services.cron.scheduler.Register(ctx, cron.Registration{
+		SessionID: conversation.ID, Prompt: "run the maintenance command", Schedule: "* * * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make the job due immediately: the composed scheduler polls real time.
+	if _, err := database.DB().ExecContext(ctx,
+		`UPDATE cron_job SET next_run_at = ? WHERE id = ?`,
+		time.Now().Add(-time.Minute).UnixMilli(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := services.cron.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = services.cron.Shutdown(shutdownCtx)
+	})
+
+	finished := waitCronJobFinished(t, services.cron.scheduler, conversation.ID, job.ID)
+	if finished.LastError != "" || finished.ConsecutiveFailures != 0 {
+		t.Fatalf("unattended run did not complete cleanly: %+v", finished)
+	}
+	if got := transport.effectCalls(command); got != 0 {
+		t.Fatalf("custom-rule command executed %d times under cron: %v", got, transport.calls())
+	}
+}
+
+// TestComposedCronInteractiveControlKeepsCustomDangerRules is the interactive
+// half of the regression: with the same custom danger rule, the matched
+// command parks on a confirmation instead of being denied at decision time.
+func TestComposedCronInteractiveControlKeepsCustomDangerRules(t *testing.T) {
+	ctx := context.Background()
+	const command = "echo hi"
+	services, _, transport, sessionID := composeOutcomeRuntime(t, command)
+	if err := services.Guard.Set(ctx, guard.Config{Mode: guard.ReadWrite, DangerRules: []string{command}}); err != nil {
+		t.Fatal(err)
+	}
 
 	stream := &agent.SliceStream{}
 	response, err := services.Agent.Start(ctx, agent.ChatArgs{Message: "run it", Scope: tools.Scope{SessionID: sessionID}}, agent.StaticStream(stream))
