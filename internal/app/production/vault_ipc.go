@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -204,7 +205,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						}
 					}
 					if input.Passphrase != nil {
-						payload = payload.WithPassphrase(input.Passphrase)
+						payload.Passphrase = normalizedPassphrase(input.Passphrase)
 					}
 					plaintext = payload.Encode()
 				} else if input.Secret != nil {
@@ -239,4 +240,15 @@ func productionKeySource(payload vault.PrivateKeyPayload) *string {
 		source = "file"
 	}
 	return &source
+}
+
+func normalizedPassphrase(passphrase *string) *string {
+	if passphrase == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*passphrase)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
 }
