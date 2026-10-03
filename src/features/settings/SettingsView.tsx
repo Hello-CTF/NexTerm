@@ -15,6 +15,7 @@ import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
+import { KnownHostsCard } from "./KnownHostsCard";
 import { SyncCard } from "./SyncCard";
 import { describeError } from "../../ui/errorText";
 import {
@@ -415,6 +416,9 @@ export function SettingsView() {
             </div>
           )}
         </section>
+
+        {/* 已知主机：SSH 指纹信任库，只能列出 / 撤销（接受只能走首次连接的确认流程） */}
+        <KnownHostsCard />
 
         {/* 资产同步：桌面与微服之间搬资产。桌面是发起方，浏览器版是被同步的一端 */}
         <SyncCard />
