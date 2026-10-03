@@ -12,7 +12,7 @@ import (
 )
 
 // openMigratedStore opens a real in-memory SQLite database with every
-// migration applied, including 0005_outcome, and wraps it as an outcome
+// migration applied, including 0004_outcome, and wraps it as an outcome
 // store.
 func openMigratedStore(t *testing.T) (*store.Store, *outcome.SQLiteStore) {
 	t.Helper()
@@ -22,8 +22,8 @@ func openMigratedStore(t *testing.T) (*store.Store, *outcome.SQLiteStore) {
 	}
 	t.Cleanup(func() { _ = storage.Close() })
 	var version int64
-	if err := storage.DB().QueryRowContext(context.Background(), `SELECT version FROM schema_migrations WHERE version = 5`).Scan(&version); err != nil {
-		t.Fatalf("migration 0005 not applied: %v", err)
+	if err := storage.DB().QueryRowContext(context.Background(), `SELECT version FROM schema_migrations WHERE version = 4`).Scan(&version); err != nil {
+		t.Fatalf("migration 0004 not applied: %v", err)
 	}
 	sqliteStore, err := outcome.NewSQLiteStore(storage.DB())
 	if err != nil {

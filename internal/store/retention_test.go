@@ -275,7 +275,7 @@ func TestRetentionMigrationPreservesStoreAndVaultRows(t *testing.T) {
 	_, err := db.DB().Exec(`CREATE INDEX idx_audit_ts ON audit_log(ts DESC);
 DROP INDEX idx_audit_retention;
 DROP INDEX idx_terminal_recording_retention;
-DELETE FROM schema_migrations WHERE version IN (3, 5)`)
+DELETE FROM schema_migrations WHERE version IN (3, 4)`)
 	if err != nil {
 		t.Fatal(err)
 	}

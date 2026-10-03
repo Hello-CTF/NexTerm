@@ -10,7 +10,7 @@ import (
 )
 
 // SQLiteStore is the durable Store backed by the application's SQLite
-// database. The schema is created by migration 0005 (outcome_record).
+// database. The schema is created by migration 0004 (outcome_record).
 type SQLiteStore struct {
 	db *sql.DB
 }
