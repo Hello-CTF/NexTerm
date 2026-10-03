@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   create: vi.fn(),
   createSocks: vi.fn(),
+  remove: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock("../../ipc/commands", () => ({
     list: mocks.list,
     create: mocks.create,
     createSocks: mocks.createSocks,
+    remove: mocks.remove,
   },
   dbApi: {},
   sessionApi: {},
@@ -129,5 +131,55 @@ describe("SOCKS exposure confirmation", () => {
       expect.stringMatching(/0\.0\.0\.0:1080/),
     );
     env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+  });
+});
+
+describe("停止转发确认（R42）", () => {
+  let mounted: MountedView | undefined;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.replaceChildren();
+    mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+    mocks.list.mockResolvedValue([]);
+    mocks.remove.mockResolvedValue(undefined);
+    mocks.ask.mockResolvedValue(true);
+    useUi.setState({ pushToast: mocks.toast, sessions: [] });
+  });
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = undefined;
+  });
+
+  it("asks with warning before dropping established connections, cancel aborts", async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: "f9",
+        sessionId: "s",
+        listenPort: 13306,
+        targetHost: "10.0.0.8",
+        targetPort: 3306,
+        kind: "local",
+        createdAt: 1,
+      },
+    ]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const m = mount(
+      createElement(QueryClientProvider, { client }, createElement(ForwardPanel, { sessionId: "s" })),
+    );
+    mounted = m;
+    await waitFor(() => expect(m.container.textContent).toContain("10.0.0.8"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    clickButton(m.container, "停止");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("已经建立的连接会被断开"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.remove).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    clickButton(m.container, "停止");
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("f9"));
   });
 });

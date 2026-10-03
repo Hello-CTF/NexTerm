@@ -284,7 +284,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     const entry = findEntry(path);
     const isDir = entry?.kind === "dir";
     const tip = isDir ? "\n\n目录会被递归删除，不可恢复。" : "";
-    if (!(await ask(`删除 ${path}？${tip}`))) return;
+    if (!(await ask(`删除 ${path}？${tip}`, { kind: "warning" }))) return;
     try {
       await fsApi.delete(sessionId, path, isDir);
       setSelected(null);

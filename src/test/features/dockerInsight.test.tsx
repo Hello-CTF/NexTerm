@@ -24,6 +24,10 @@ const mocks = vi.hoisted(() => ({
   inspect: vi.fn(),
   stats: vi.fn(),
   listDir: vi.fn(),
+  action: vi.fn(),
+  imageRemove: vi.fn(),
+  ask: vi.fn(),
+  toast: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -34,8 +38,8 @@ vi.mock("../../ipc/commands", () => ({
     inspect: mocks.inspect,
     stats: mocks.stats,
     containerListDir: mocks.listDir,
-    action: vi.fn(),
-    imageRemove: vi.fn(),
+    action: mocks.action,
+    imageRemove: mocks.imageRemove,
     imagePull: vi.fn(),
     logsAttach: vi.fn(),
     execAttach: vi.fn(),
@@ -47,10 +51,10 @@ vi.mock("../../ipc/events", () => ({
   disposeChannel: vi.fn(),
   onChannelReopen: vi.fn(() => () => undefined),
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
+vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { DockerPanel } from "../../features/docker/DockerPanel";
-import type { ContainerSummary } from "../../ipc/commands";
+import type { ContainerSummary, ImageSummary } from "../../ipc/commands";
 import {
   buildInspectViewModel,
   isSensitiveFileName,
@@ -520,6 +524,109 @@ describe("Docker insight controls (M61)", () => {
   function mockedText(): string {
     return mounted?.container.textContent ?? "";
   }
+});
+
+describe("destructive delete confirmations (R42)", () => {
+  const imageA: ImageSummary = {
+    id: "sha256:aaa111",
+    repository: "nginx",
+    tag: "1.25",
+    size: "50MB",
+    createdSince: "2 days ago",
+  };
+  let mounted: MountedView | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    document.body.replaceChildren();
+    useUi.setState({ pushToast: mocks.toast });
+    mocks.ps.mockResolvedValue([containerA, containerB]);
+    mocks.images.mockResolvedValue([imageA]);
+    mocks.overview.mockResolvedValue({
+      containers: [containerA, containerB],
+      hostStats: { containersRunning: 1, containersTotal: 2, images: 1 },
+    });
+    mocks.action.mockResolvedValue(undefined);
+    mocks.imageRemove.mockResolvedValue(undefined);
+    mocks.ask.mockResolvedValue(true);
+  });
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = undefined;
+  });
+
+  function segmentItem(container: ParentNode, label: string): HTMLButtonElement {
+    const button = [...container.querySelectorAll(".nx-segment-item")].find((b) =>
+      b.textContent?.includes(label),
+    );
+    if (!button) throw new Error(`Segment item not found: ${label}`);
+    return button as HTMLButtonElement;
+  }
+
+  it("asks with warning before removing a container, cancel aborts", async () => {
+    const m = (mounted = mountPanel());
+    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(m.container.querySelector('button[title="删除"]')!);
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("删除容器 web"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.action).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(m.container.querySelector('button[title="删除"]')!);
+    await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "remove"));
+  });
+
+  it("asks with warning before removing an image, cancel aborts", async () => {
+    const m = (mounted = mountPanel());
+    await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
+    click(segmentItem(m.container, "镜像"));
+    await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(m.container.querySelector('button[title="删除镜像"]')!);
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("删除镜像 nginx:1.25"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.imageRemove).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(m.container.querySelector('button[title="删除镜像"]')!);
+    await waitFor(() => expect(mocks.imageRemove).toHaveBeenCalledWith("s1", "nginx:1.25", false));
+  });
+
+  it("asks with warning before bulk-removing picked containers, cancel aborts", async () => {
+    const m = (mounted = mountPanel());
+    await waitFor(() => expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(2));
+
+    const pickA = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 web"]');
+    const pickB = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 worker"]');
+    if (!pickA || !pickB) throw new Error("pick checkboxes not found");
+    click(pickA);
+    click(pickB);
+    await waitFor(() => expect(m.container.textContent).toContain("已选 2"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    clickButton(m.container, "删除选中 (2)");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("删除选中的 2 个容器"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.action).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    clickButton(m.container, "删除选中 (2)");
+    await waitFor(() => expect(mocks.action).toHaveBeenCalledTimes(2));
+    expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "remove");
+    expect(mocks.action).toHaveBeenCalledWith("s1", containerB.id, "remove");
+  });
 });
 
 describe("dockerRedact helpers", () => {

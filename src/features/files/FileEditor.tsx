@@ -248,7 +248,10 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       pushToast("info", "保存进行中，完成后才能切换编码");
       return;
     }
-    if (dirtyRef.current && !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？"))) {
+    if (
+      dirtyRef.current &&
+      !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？", { kind: "warning" }))
+    ) {
       return;
     }
     if (saveInFlightRef.current) {

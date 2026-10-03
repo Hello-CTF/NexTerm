@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   listCredentials: vi.fn(),
   probe: vi.fn(),
   write: vi.fn(),
+  assetDelete: vi.fn(),
   ask: vi.fn(),
   pickKeyFile: vi.fn(),
   toast: vi.fn(),
@@ -51,7 +52,7 @@ vi.mock("../../ipc/commands", () => ({
     list: mocks.list,
     search: vi.fn(),
     update: vi.fn(),
-    delete: vi.fn(),
+    delete: mocks.assetDelete,
     groupList: mocks.groupList,
     groupUpdate: mocks.groupUpdate,
     groupDelete: mocks.groupDelete,
@@ -720,5 +721,52 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "删除片段"));
     await waitFor(() => expect(mocks.snippetDelete).toHaveBeenCalledWith("sn1"));
     expect(mocks.ask).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ───────── R42 审计钉板：资产删除保持 info ─────────
+//
+// Grid 报告把 AssetTree 的删除列进了候选，逐项审计后的结论是**不动**：
+// 那是软删除（文案自述「可恢复；关联凭据保留」），不是 genuinely destructive。
+// 这条回归把「保持默认 info 级别」钉住，防止后续无差别补 warning 把它误标。
+
+describe("asset delete confirmation (R42 audit pin)", () => {
+  it("asset delete stays info-level: soft delete is recoverable", async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: "a1",
+        groupId: null,
+        kind: "ssh",
+        name: "web-1",
+        host: "10.0.0.8",
+        port: 22,
+        username: "root",
+        authKind: "password",
+        keyPath: null,
+        credId: null,
+        options: {},
+        tags: "",
+        note: "",
+        sort: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        deletedAt: null,
+        builtin: false,
+      },
+    ]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted!.container, "删除"));
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("软删除，可恢复"));
+    // 钉住审计结论：单参数调用（没有 { kind: "warning" }）
+    expect(mocks.ask.mock.calls[0]).toHaveLength(1);
+    expect(mocks.assetDelete).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted!.container, "删除"));
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
   });
 });

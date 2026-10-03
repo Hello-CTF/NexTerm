@@ -17,6 +17,7 @@ import {
   deferred,
   flush,
   mount,
+  setSelectValue,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   finishSave: vi.fn(),
   discardStaged: vi.fn(),
   list: vi.fn(),
+  read: vi.fn(),
   rename: vi.fn(),
   chmod: vi.fn(),
   checksum: vi.fn(),
@@ -55,6 +57,7 @@ vi.mock("../../ui/dialogs", () => ({
 vi.mock("../../ipc/commands", () => ({
   fsApi: {
     list: mocks.list,
+    read: mocks.read,
     rename: mocks.rename,
     chmod: mocks.chmod,
     checksum: mocks.checksum,
@@ -82,6 +85,88 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
+// FileEditor（R42 编码切换回归）走 editorAsync.test.ts 同款的 CodeMirror 替身：
+// jsdom 量不到布局，真 EditorView 起不来；测的是确认框与读盘纪律，不是编辑器本身。
+interface FakeEditorState {
+  doc: { toString: () => string; length: number };
+  extensions: unknown[];
+}
+interface FakeEditorView {
+  state: FakeEditorState;
+  dispatch: (change: { changes: { from: number; to: number; insert: string } }) => void;
+}
+const editors = vi.hoisted(() => ({ views: [] as FakeEditorView[] }));
+
+vi.mock("@codemirror/state", () => {
+  class Doc {
+    constructor(private readonly text: string) {}
+    toString() {
+      return this.text;
+    }
+    get length() {
+      return this.text.length;
+    }
+  }
+  return {
+    EditorState: {
+      create: ({ doc, extensions }: { doc: string; extensions: unknown[] }) => ({
+        doc: new Doc(doc),
+        extensions,
+      }),
+    },
+    Prec: { highest: (extension: unknown) => extension },
+  };
+});
+vi.mock("@codemirror/view", () => {
+  class EditorView {
+    static updateListener = {
+      of: (listener: unknown) => ({ codeMirrorListener: listener }),
+    };
+    state: FakeEditorState;
+    private readonly listeners: Array<(update: unknown) => void> = [];
+    constructor(config: { state: FakeEditorState }) {
+      this.state = config.state;
+      const visit = (value: unknown): void => {
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+        } else if (value && typeof value === "object") {
+          if ("codeMirrorListener" in value) {
+            this.listeners.push((value as { codeMirrorListener: (update: unknown) => void }).codeMirrorListener);
+          } else {
+            Object.values(value).forEach(visit);
+          }
+        }
+      };
+      visit(this.state.extensions);
+      editors.views.push(this);
+    }
+    dispatch({ changes }: { changes: { from: number; to: number; insert: string } }) {
+      const current = this.state.doc.toString() as string;
+      const next = `${current.slice(0, changes.from)}${changes.insert}${current.slice(changes.to)}`;
+      this.state = { ...this.state, doc: { toString: () => next, length: next.length } };
+      this.listeners.forEach((listener) => listener({ docChanged: true, state: this.state }));
+    }
+    destroy() {}
+  }
+  return { EditorView, keymap: { of: (bindings: unknown) => bindings } };
+});
+vi.mock("codemirror", () => ({ basicSetup: [] }));
+vi.mock("@codemirror/commands", () => ({
+  indentWithTab: {},
+  redo: vi.fn(),
+  undo: vi.fn(),
+}));
+vi.mock("@codemirror/search", () => ({ search: () => [], openSearchPanel: vi.fn() }));
+vi.mock("@codemirror/language", () => ({ StreamLanguage: { define: (mode: unknown) => mode } }));
+vi.mock("@codemirror/lang-sql", () => ({ sql: () => [] }));
+vi.mock("@codemirror/legacy-modes/mode/shell", () => ({ shell: {} }));
+vi.mock("@codemirror/legacy-modes/mode/nginx", () => ({ nginx: {} }));
+vi.mock("@codemirror/legacy-modes/mode/yaml", () => ({ yaml: {} }));
+vi.mock("@codemirror/legacy-modes/mode/properties", () => ({ properties: {} }));
+vi.mock("@codemirror/legacy-modes/mode/javascript", () => ({ javascript: {} }));
+vi.mock("@codemirror/legacy-modes/mode/python", () => ({ python: {} }));
+vi.mock("../../ui/editorTheme", () => ({ nxHighlight: [] }));
+
 import type { AppTab } from "../../app/store";
 import { useUi } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
@@ -95,6 +180,7 @@ import {
 } from "../../features/files/fileOps";
 import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
+import { FileEditor } from "../../features/files/FileEditor";
 
 const SID = "s1";
 
@@ -896,5 +982,96 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
       expect.objectContaining({ kind: "warning" }),
     );
     expect(mocks.rename).not.toHaveBeenCalled();
+  });
+});
+
+// ───────── R42：destructive 确认走共享 warning 语义 ─────────
+//
+// Grid 报告的 files feature 调用点：FileBrowser / FileTree 的删除（递归、不可恢复）
+// 与 FileEditor 切换编码（丢弃未保存改动）。每处都要：warning 级别 + 取消即中止。
+// 大文件编辑确认（FileEditor :112）是性能提醒而非破坏，刻意保持 info，不在此列。
+
+describe("删除确认（R42 destructive dialogs）", () => {
+  beforeEach(() => {
+    editors.views = [];
+    mocks.read.mockResolvedValue({
+      path: "~/a.txt",
+      size: 8,
+      contentBase64: btoa("original"),
+    });
+  });
+
+  it("FileBrowser 删除文件：warning 确认，取消即中止", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+
+    mocks.ask.mockResolvedValueOnce(false);
+    openRowMenu(mounted!.container, "~/a.txt");
+    clickMenuItem(mounted!.container, "删除");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("删除 ~/a.txt"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.remove).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    openRowMenu(mounted!.container, "~/a.txt");
+    clickMenuItem(mounted!.container, "删除");
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
+  });
+
+  it("FileTree 删除目录：warning 确认并讲清递归删除不可恢复", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+
+    mocks.ask.mockResolvedValueOnce(false);
+    openRowMenu(mounted!.container, "~/sub");
+    clickMenuItem(mounted!.container, "删除");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("递归删除，不可恢复"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.remove).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    openRowMenu(mounted!.container, "~/sub");
+    clickMenuItem(mounted!.container, "删除");
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/sub", true));
+  });
+
+  it("FileEditor 切换编码：脏文档先 warning 确认，取消即不重新读盘", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(
+      createElement(QueryClientProvider, { client }, createElement(FileEditor, { sessionId: SID, path: "~/a.txt" })),
+    );
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+
+    // 制造未保存改动（走 fake view 的 dispatch，updateListener 会接上 dirty 标记）
+    const view = editors.views[0];
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 8, insert: "changed!" } });
+    });
+    await flush();
+
+    const select = mounted.container.querySelector<HTMLSelectElement>("select");
+    if (!select) throw new Error("Encoding select not found");
+    mocks.ask.mockResolvedValueOnce(false);
+    setSelectValue(select, "gbk");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("未保存的改动会丢失"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.read).toHaveBeenCalledTimes(1); // 取消：不重新读盘
+
+    mocks.ask.mockResolvedValueOnce(true);
+    // 确认步换一个目标编码：React 对 select 的 value 跟踪会吞掉「设回同一个值」的
+    // change 事件；且 reloadEnc 初值是 "auto"，必须换成别的值才会触发重新读盘。
+    setSelectValue(select, "utf-8");
+    // switchEnc 的确认链（ask → setEnc/setReloadEnc → 重读 effect）要一个 act 周期落地
+    await flush();
+    await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
   });
 });

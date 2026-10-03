@@ -156,7 +156,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
   const removePath = async (remotePath: string, isDir: boolean) => {
     const tip = isDir ? "\n\n目录会被递归删除，不可恢复。" : "";
-    if (!(await ask(`删除 ${remotePath}？${tip}`))) return;
+    if (!(await ask(`删除 ${remotePath}？${tip}`, { kind: "warning" }))) return;
     try {
       await fsApi.delete(sessionId, remotePath, isDir);
       if (selected === remotePath) setSelected(null);

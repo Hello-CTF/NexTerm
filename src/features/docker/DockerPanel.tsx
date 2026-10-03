@@ -169,7 +169,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const key = c.id;
     if (action === "remove") {
       if (pending.has(key)) return;
-      if (!(await ask(`删除容器 ${c.name}？\n\n该操作不可恢复。`))) return;
+      if (!(await ask(`删除容器 ${c.name}？\n\n该操作不可恢复。`, { kind: "warning" }))) return;
     }
     markPending(key, true);
     const snapshot = qc.getQueryData<ContainerSummary[]>(["docker-ps", sessionId]);
@@ -197,7 +197,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const key = imageKey(i);
     const ref = imageRef(i);
     if (pending.has(key)) return;
-    if (!(await ask(`删除镜像 ${ref}？\n\n该操作不可恢复。`))) return;
+    if (!(await ask(`删除镜像 ${ref}？\n\n该操作不可恢复。`, { kind: "warning" }))) return;
     markPending(key, true);
     const snapshot = qc.getQueryData<ImageSummary[]>(["docker-images", sessionId]);
     qc.setQueryData<ImageSummary[]>(["docker-images", sessionId], (old) =>
@@ -222,7 +222,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     if (!keys.length || bulkBusy) return;
     const isContainer = tab === "containers";
     const label = isContainer ? "容器" : "镜像";
-    if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n该操作不可恢复。`))) return;
+    if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n该操作不可恢复。`, { kind: "warning" })))
+      return;
 
     setBulkBusy(true);
     const targets = isContainer
