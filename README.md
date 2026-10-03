@@ -31,7 +31,7 @@
 | 使用方式 | 安装方法 |
 | --- | --- |
 | Windows 10/11 x64 | 下载 `NexTerm_x.y.z_x64-setup.exe`，运行安装器。 |
-| macOS | 下载与你的 Mac 芯片对应的 `.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
+| macOS（Apple Silicon，arm64） | 下载 `NexTerm_x.y.z_aarch64.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
 | LinuxServer | 下载 `NexTerm-x.y.z-linux-*.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
