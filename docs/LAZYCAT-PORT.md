@@ -24,7 +24,7 @@
 | 现行代码 | `cmd/nexterm-desktop` / `cmd/nexterm-server` / `internal/` | Go 1.26（CI 钉 `go1.26.8`）；前端 `src/`（React 19）；构建入口 `scripts/build.mjs`（`pnpm build:app` / `pnpm build:release`） |
 | 懒猫 LPK 打包（现行） | `lazycat/` | 已切换为 Go 静态二进制（`CGO_ENABLED=0`）：`lazycat/image/build-server.sh` 产出 → `lazycat/image/Dockerfile` 打包；其中注释引用的本文 §x.y 是历史背景，不是现行步骤 |
 | Linux 部署单元 | `deploy/systemd/` | `nexterm-server.service` / `nexterm-onlyserver.service` |
-| 商店工具脚本（现行） | `scripts/store-submit-review.py` / `scripts/store-shots.py` / `scripts/verify-manifest-injects.py` | 其注释引用的本文 §15.8 / §16 / §15.6 是当时的实测记录 |
+| 商店工具脚本（现行） | `scripts/store-submit-review.py` / `scripts/store-shots.py` / `scripts/verify-manifest-injects.py` | 相关提审、截图与文件选择器的历史实测分别见本文 §15.8 / §16 / §15.6 |
 | Rust/Tauri 旧实现 | `src-tauri/`（保留未删） | 本文所述内容的对应实现；已退出发布线 |
 
 本文之后的功能演进（资产同步、端口转发按部署形态开关、服务端权威运行态等）的**现行语义**，
