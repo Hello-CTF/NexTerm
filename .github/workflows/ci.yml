@@ -72,6 +72,12 @@ jobs:
         run: node scripts/build.mjs bindings
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
+      - name: Go production tests with embedded desktop assets
+        run: |
+          rm -rf cmd/nexterm-desktop/dist
+          cp -R dist cmd/nexterm-desktop/dist
+          go test -mod=readonly -tags production ./...
+          rm -rf cmd/nexterm-desktop/dist
       - name: Go self-consistency and LazyCat static contracts
         run: |
           python3 -m unittest discover -s tests/parity -v
