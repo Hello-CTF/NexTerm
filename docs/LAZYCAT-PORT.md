@@ -1,4 +1,36 @@
-# 懒猫微服上架调研（核实版）
+# 懒猫微服上架调研（核实版）—— Rust/Tauri 时代历史存档
+
+> ⛔ **本文是历史文档，不是现行发布流程。**
+> 本文是 2026-09-30 ~ 2026-10-02 期间的调研与工程日志，当时 NexTerm 是
+> **Rust 内核（`src-tauri/`）+ Tauri v2 桌面壳**。文中所有 `cargo`、`src-tauri/`、
+> `tauri::`、`rust:1-bookworm`、`#[tauri::command]`、「132 条命令」等表述都是**当时的事实**，
+> 不要当作现行发布链照着做。现行发布架构已切换为 **Go 1.26 + Wails v3**，导航见下节。
+> 本文保留在 `docs/LAZYCAT-PORT.md` 原位（不移入 `docs/archive/`）：仓库内 11 个文件、
+> 16 处 `docs/LAZYCAT-PORT.md §x.y` 引用（`lazycat/`、`scripts/`、`deploy/`、`.gitignore`、
+> `src-tauri/` 等）以本文作为历史依据，移动会打断这些链接。
+> 注意区分两类内容：**平台机制类实测**（懒猫 ingress、官方 registry、WebSocket 穿网关、
+> 文件选择器接入等）不依赖实现语言，**仍然有效**；**架构类前提**（Rust/Tauri、`cargo` 构建）
+> 已成历史，以文首导航指向的现行文档为准。
+
+## 现行发布流程导航（Go 1.26 + Wails v3）
+
+> 本节为 2026-10-03 补写的**现行**索引；下文 §0–§22 全部为历史记录。
+
+| 你想了解 | 现行位置 | 说明 |
+|---|---|---|
+| 发布流水线（tag → 产物） | `.github/workflows/release.yml` | 打 `v*` tag 触发；前置校验 `wails.json` 版本号；desktop 六目标矩阵（Windows / macOS / Linux × amd64 / arm64）；`server` job 产 Linux 全量包；`publish` 汇总证据并建 draft Release（8 个安装包 + 3 份证据文件） |
+| 发布说明 | `docs/releases/`（`v0.1.3.md` / `v0.2.0.md` / `v0.2.1.md`） | 由 `publish` job 自动拼装进 Release 正文 |
+| 安装与部署（用户视角） | `README.md` | 桌面安装包、LinuxServer、仅同步（`--sync-only`）、懒猫微服 |
+| 现行代码 | `cmd/nexterm-desktop` / `cmd/nexterm-server` / `internal/` | Go 1.26（CI 钉 `go1.26.8`）；前端 `src/`（React 19）；构建入口 `scripts/build.mjs`（`pnpm build:app` / `pnpm build:release`） |
+| 懒猫 LPK 打包（现行） | `lazycat/` | 已切换为 Go 静态二进制（`CGO_ENABLED=0`）：`lazycat/image/build-server.sh` 产出 → `lazycat/image/Dockerfile` 打包；其中注释引用的本文 §x.y 是历史背景，不是现行步骤 |
+| Linux 部署单元 | `deploy/systemd/` | `nexterm-server.service` / `nexterm-onlyserver.service` |
+| 商店工具脚本（现行） | `scripts/store-submit-review.py` / `scripts/store-shots.py` / `scripts/verify-manifest-injects.py` | 其注释引用的本文 §15.8 / §16 / §15.6 是当时的实测记录 |
+| Rust/Tauri 旧实现 | `src-tauri/`（保留未删） | 本文所述内容的对应实现；已退出发布线 |
+
+本文之后的功能演进（资产同步、端口转发按部署形态开关、服务端权威运行态等）的**现行语义**，
+以 `README.md` 与 `docs/releases/` 为准；本文 §17–§22 记录的是这些能力在 Rust/Tauri 时代的落地过程。
+
+---
 
 > 调研对象：`https://dev.lazycore.heiyu.space/`（实测登录后确认：它是**微服开发者工具箱应用**，不是文档站）
 > 权威文档：**https://developer.lazycat.cloud**（VitePress，每页都有给 LLM 用的 `.md` 原文版）
@@ -10,6 +42,10 @@
 ---
 
 ## 0. 结论先行
+
+> ⚠️ 本节是 **2026-09-30 当时的结论快照**：「Rust 内核编 Linux 二进制进容器」「Tauri IPC 换 HTTP+WS」
+> 等前提是 Rust/Tauri 时代的。现行实现为 Go 1.26 + Wails v3，发布链见文首导航；
+> 平台机制结论（LPK 形态、审核门槛、ingress 行为）不依赖实现语言，仍然有效。
 
 | 问题 | 答案 | 证据 |
 |---|---|---|
@@ -585,6 +621,9 @@ application:
 >
 > 最终落地的写法是**工作负载放 `services.<name>`、路由指向
 > `http://<service>.<package>.lzcapp:<port>/`**，理由与实测证据见 §14。
+>
+> 另：本节骨架里的 `rust:1-bookworm`、`cargo build -p nexterm-server` 属于 Rust/Tauri 时代；
+> **现行打包以 `lazycat/image/` 为准**（Go 静态二进制，见文首导航）。
 
 **`lzc-build.yml`**
 ```yml
@@ -760,6 +799,8 @@ S1 与 S2 **可以并行**（契约就是 §7.1 那三个端点）。
 
 ## 11. 待拍板
 
+> ✅ 本节 5 个问题在当时均已拍板并落地（结果见 §13 起的记录）。现行实现以 Go 代码库与 `README.md` 为准。
+
 1. **是否走 A 方案**（做 `nexterm-server` 服务端版本）—— 建议的唯一正路
 2. 若走 A：是否现在就在仓库里落 `lazycat/` 目录（Dockerfile + run.sh + 三个 yml + icon）
 3. S1（`nexterm-server`）与 S2（前端 web transport）是否并行启动
@@ -772,6 +813,10 @@ S1 与 S2 **可以并行**（契约就是 §7.1 那三个端点）。
 
 > §7 讲了「换哪 3 个抽象」，但**没讲清各选项的代价与先决条件**。这一节补齐，
 > 所有数字均为本仓库实测（带 `文件:行号`）。
+>
+> ⚠️ §12–§13、§17–§22 的 `src-tauri/` 路径与 Rust 实现细节（ipc_shim、宏 crate、
+> cargo feature 双态）随架构切换已成历史；保留价值在于**平台机制实测**
+> （懒猫 registry、ingress、WebSocket、文件选择器等），那部分不依赖实现语言。
 
 ### 12.1 仓库落位：**同仓库 + 同 crate**，不拆
 
