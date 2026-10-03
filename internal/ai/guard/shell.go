@@ -1879,7 +1879,10 @@ func (c *classifier) classifyGit(args []string) Ruling {
 
 var gitValueGlobals = []string{"git-dir", "work-tree", "config-env", "namespace"}
 
-var gitFlagGlobals = []string{"-p", "-P", "--paginate", "--no-pager", "--bare", "--version", "--help", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks"}
+// gitFlagGlobals mixes bare long-option names (matched after the leading
+// "--" is stripped) with the short flags -p/-P (matched against the whole
+// argument).
+var gitFlagGlobals = []string{"-p", "-P", "paginate", "no-pager", "bare", "version", "help", "no-replace-objects", "literal-pathspecs", "glob-pathspecs", "noglob-pathspecs", "icase-pathspecs", "no-optional-locks"}
 
 // classifyGitClean parses clean options with getopt semantics: -e/--exclude
 // consumes a value (so `git clean -fe -n` is NOT a dry run), and only a free
