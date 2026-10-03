@@ -12,6 +12,7 @@ DATA = ROOT / "testdata/parity"
 OUTPUT = DATA / "manifest.json"
 ROLES = {
     "source.json": "pinned Rust feature and artifact baseline commit",
+    "rust-registry.json": "Rust command/event/stream registry frozen from the removed Rust tree at the pinned commit; parity reads this instead of Rust sources",
     "inventory.json": "source-derived command/event/stream feature inventory",
     "go-aliases.json": "optional canonical feature IDs to Go-internal names; no wire compatibility requirement",
 }
@@ -40,7 +41,6 @@ def generate() -> dict:
         },
         "producers": {
             "inventory": "python3 scripts/parity/inventory.py",
-            "rust_baseline": "python3 scripts/parity/run_baseline.py",
             "go_selfcheck": "python3 scripts/parity/go_selfcheck.py --go-root <go-module-root>",
             "verification": "python3 scripts/parity/verify.py --go-root <go-module-root>",
         },
