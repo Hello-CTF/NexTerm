@@ -33,7 +33,6 @@
 | Windows 10/11 x64 | 下载 `NexTerm_x.y.z_x64-setup.exe`，运行安装器。 |
 | macOS | 下载与你的 Mac 芯片对应的 `.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
 | LinuxServer | 下载 `NexTerm-x.y.z-linux-*.tar.gz`，提供完整浏览器界面。 |
-| onlyServer | 下载 `NexTerm-onlyServer-x.y.z-linux-*.tar.gz`，只用于资产同步，不提供浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
 首次使用时，添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。按界面提示初始化凭据库后再保存密码或私钥。需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。
@@ -54,15 +53,17 @@ less README.md
 
 > **不要把完整版服务端直接暴露到公网。** 浏览器界面和 `/rpc` 没有内置登录鉴权；能访问端口的人就能操作终端、文件和容器。对外访问时，保留回环监听，并在前面配置带身份验证和 TLS 的反向代理。
 
-### onlyServer
+### 仅同步运行
 
-onlyServer 只保留资产同步接口，适合作为同步对端。安装后获取同步令牌：
+在同一个 `nexterm-server` 上启用 `--sync-only`，即可只提供资产同步：
 
 ```bash
-sudo -u nexterm /opt/nexterm/nexterm-server token --data-dir /var/lib/nexterm
+nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 ```
 
-然后在桌面端的「设置 → 资产同步」中填写服务端地址和令牌。公网同步必须使用 HTTPS，并妥善保管令牌。需要换令牌时使用 `rotate-token`；旧令牌会立即失效，桌面端也要同步更新。
+该模式只开放 `/sync/rpc` 和 `/healthz`，RPC 仅有 `sync_digest`、`sync_export`、`sync_import` 三条，不提供浏览器界面或 `/rpc`。同步令牌泄漏的影响因此限于这份资产库，不会获得终端、文件或容器控制接口。
+
+使用 `nexterm-server token --data-dir /var/lib/nexterm` 获取令牌，然后在桌面端的「设置 → 资产同步」中填写服务端地址和令牌。公网同步必须使用 HTTPS，并妥善保管令牌。需要换令牌时使用 `rotate-token`；旧令牌会立即失效，桌面端也要同步更新。
 
 ### 懒猫微服
 
@@ -78,11 +79,11 @@ sudo -u nexterm /opt/nexterm/nexterm-server token --data-dir /var/lib/nexterm
 | --- | --- | --- |
 | `--listen` | `NEXTERM_LISTEN` | 监听地址。直接运行二进制时默认为 `0.0.0.0:8080`；安装包的 systemd 配置使用 `127.0.0.1:8080`。 |
 | `--data-dir` | `NEXTERM_DATA_DIR` | 数据库、日志和同步令牌等数据的保存目录。 |
-| `--web-root` | `NEXTERM_WEB_ROOT` | 浏览器界面的静态文件目录，onlyServer 不需要。 |
+| `--web-root` | `NEXTERM_WEB_ROOT` | 浏览器界面的静态文件目录，仅同步模式不需要。 |
 | `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。 |
 | `--sync-only` | — | 只启动资产同步接口。 |
 
-使用安装包的 systemd 服务时，完整版的密钥放在 `/etc/nexterm/nexterm.env`，onlyServer 的密钥放在 `/etc/nexterm/onlyserver.env`，文件权限设为 `0600`。不要把密钥直接写进可公开读取的 unit 文件。
+使用安装包的 systemd 服务时，密钥放在 `/etc/nexterm/nexterm.env`，文件权限设为 `0600`。不要把密钥直接写进可公开读取的 unit 文件。
 
 请备份密钥文件和数据目录。更换根密钥后，已有的密码类凭据将无法解密。
 
@@ -105,7 +106,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 systemctl status nexterm-server
 ```
 
-onlyServer 的服务名是 `nexterm-onlyserver`，它没有浏览器界面，健康检查通过即可。如果本机检查正常但外部无法访问，请检查监听地址、防火墙以及反向代理的鉴权和 TLS 配置，不要直接放开公网端口来代替排查。
+`--sync-only` 模式没有浏览器界面，健康检查通过即可。如果本机检查正常但外部无法访问，请检查监听地址、防火墙以及反向代理的鉴权和 TLS 配置，不要直接放开公网端口来代替排查。
 
 ### 保存密码或同步凭据失败
 
