@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   answer: vi.fn(),
   getPermission: vi.fn(),
   conversationList: vi.fn(),
+  conversationDelete: vi.fn(),
   messages: vi.fn(),
   overview: vi.fn(),
   promptText: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../../ipc/commands", () => ({
     answer: mocks.answer,
     getPermission: mocks.getPermission,
     conversationList: mocks.conversationList,
+    conversationDelete: mocks.conversationDelete,
     messages: mocks.messages,
     takeoverEnter: mocks.takeoverEnter,
     takeoverRun: mocks.takeoverRun,
@@ -145,6 +147,7 @@ describe("AiSidebar conversation stream UX", () => {
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.conversationList.mockResolvedValue([]);
+    mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
     mocks.promptText.mockResolvedValue("安装 nginx");
     mocks.ask.mockResolvedValue(true);
@@ -351,6 +354,59 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).not.toContain("旧问题");
     expect(textOf(view!)).toContain("命令与输出全程留痕");
+  });
+
+  it("deletes a history conversation only after explicit confirmation", async () => {
+    mocks.conversationList.mockResolvedValue([
+      { id: "c-1", title: "会话一", updatedAt: 0 },
+      { id: "c-2", title: "会话二", updatedAt: 0 },
+    ]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+
+    // 弹框取消：不发起删除，行还在。
+    mocks.ask.mockResolvedValueOnce(false);
+    click(view!.container.querySelector('button[title="删除「会话二」"]')!);
+    await flush();
+    expect(mocks.conversationDelete).not.toHaveBeenCalled();
+    expect(textOf(view!)).toContain("会话二");
+
+    // 确认后：按 id 删除，只摘掉那一行。
+    click(view!.container.querySelector('button[title="删除「会话二」"]')!);
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("会话二"), expect.anything());
+    expect(mocks.conversationDelete).toHaveBeenCalledWith("c-2");
+    expect(textOf(view!)).not.toContain("会话二");
+    expect(textOf(view!)).toContain("会话一");
+  });
+
+  it("deleting the open conversation drops back to a fresh one", async () => {
+    await send("当前问题");
+    emit({ type: "done", answer: "当前回答" });
+    await flush();
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    expect(textOf(view!)).toContain("旧问题");
+
+    // 删掉正在看的会话：本地视图立即回到全新会话，不留空壳。
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    click(view!.container.querySelector('button[title="删除「旧会话」"]')!);
+    await flush();
+    expect(mocks.conversationDelete).toHaveBeenCalledWith("c-9");
+    expect(textOf(view!)).not.toContain("旧问题");
+    expect(textOf(view!)).toContain("命令与输出全程留痕");
+    // 删完接着能正常开聊（新会话不再挂已删 id）。
+    mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-2" });
+    await send("继续");
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
+    expect(mocks.chat).toHaveBeenLastCalledWith(
+      expect.objectContaining({ conversationId: undefined }),
+    );
   });
 
   it("takeover streams narration and closes with a persistent outcome", async () => {

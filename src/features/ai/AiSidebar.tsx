@@ -60,6 +60,7 @@ import {
   IconPlay,
   IconPlus,
   IconShield,
+  IconTrash,
   IconXCircle,
 } from "../../ui/icons";
 
@@ -436,6 +437,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setHistoryOpen(false);
   };
 
+  /** 删除历史会话：先弹框确认；删掉正在看的会话就回到全新会话，避免留着空壳。 */
+  const deleteConversation = async (c: { id: string; title: string }) => {
+    const ok = await ask(`删除会话「${c.title || "(未命名会话)"}」？消息记录一并清除，不可恢复。`, {
+      kind: "warning",
+    });
+    if (!ok) return;
+    try {
+      await aiApi.conversationDelete(c.id);
+    } catch (e) {
+      pushToast("error", `删除会话失败：${describeError(e)}`);
+      return;
+    }
+    setConversations((prev) => prev.filter((it) => it.id !== c.id));
+    if (conversationId === c.id) {
+      setConversationId(undefined);
+      stream.reset();
+    }
+  };
+
   /* ── 输入区：@ 引用 / 粘贴图片 ─────────────────────────────────────── */
 
   const onInputChange = (v: string) => {
@@ -620,17 +640,26 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <div className="nx-hint px-2 py-3 text-center text-[11.5px]">还没有历史会话</div>
           ) : (
             conversations.map((c) => (
-              <button
-                key={c.id}
-                className="nx-menu-item w-full"
-                title={c.title || "(未命名会话)"}
-                onClick={() => void openConversation(c.id)}
-              >
-                <span className="nx-menu-label">{c.title || "(未命名会话)"}</span>
-                <span className="nx-menu-hint">
-                  {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : ""}
-                </span>
-              </button>
+              <div key={c.id} className="flex items-center gap-0.5">
+                <button
+                  className="nx-menu-item flex-1"
+                  title={c.title || "(未命名会话)"}
+                  onClick={() => void openConversation(c.id)}
+                >
+                  <span className="nx-menu-label">{c.title || "(未命名会话)"}</span>
+                  <span className="nx-menu-hint">
+                    {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : ""}
+                  </span>
+                </button>
+                <button
+                  className="nx-icon-btn nx-icon-btn-sm shrink-0"
+                  title={`删除「${c.title || "(未命名会话)"}」`}
+                  aria-label={`删除会话「${c.title || "(未命名会话)"}」`}
+                  onClick={() => void deleteConversation(c)}
+                >
+                  <IconTrash size={12} />
+                </button>
+              </div>
             ))
           )}
         </div>

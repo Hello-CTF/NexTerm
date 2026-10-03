@@ -162,7 +162,14 @@ export type SessionInfoDto = { id: string, assetId: string | null, name: string,
  */
 status: string, tabs: Array<string>, createdAt: number, };
 
-export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, };
+/**
+ * 会话状态事件（`session://status`）。
+ *
+ * `version` 是会话内单调递增的事件版本号（内核 `Session.eventVersion`）：
+ * 重连/重放可能把旧状态事件重新推到前端，按版本号比较即可丢弃乱序的旧事件，
+ * 不需要按内容猜测。
+ */
+export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, version: number, };
 
 export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, };
 
@@ -212,7 +219,11 @@ verifiedAt: number,
  */
 lastError: string | null, };
 
-export type TerminalExitEvent = { tabId: string, exitCode: number | null, };
+/**
+ * 终端退出事件（`terminal://exit`）。`version` 同 `SessionStatusEvent`：
+ * 标签内单调递增，用于识别重连重放的旧事件。
+ */
+export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
 
 export type VaultStatusDto = { initialized: boolean, 
 /**
