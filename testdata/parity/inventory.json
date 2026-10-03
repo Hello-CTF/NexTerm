@@ -566,309 +566,315 @@
           "source": "src/ipc/commands.ts"
         },
         {
+          "accessor": "aiApi.steer",
+          "line": 657,
+          "name": "ai_steer",
+          "source": "src/ipc/commands.ts"
+        },
+        {
           "accessor": "aiApi.confirm",
-          "line": 652,
+          "line": 658,
           "name": "ai_confirm",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.answer",
-          "line": 653,
+          "line": 659,
           "name": "ai_answer",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.hitlSnapshot",
-          "line": 659,
+          "line": 665,
           "name": "ai_hitl_snapshot",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.hitlEvents",
-          "line": 662,
+          "line": 668,
           "name": "ai_hitl_events",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.models",
-          "line": 663,
+          "line": 669,
           "name": "ai_models",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.testProvider",
-          "line": 665,
+          "line": 671,
           "name": "ai_test_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.setProvider",
-          "line": 669,
+          "line": 675,
           "name": "ai_set_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.getProvider",
-          "line": 670,
+          "line": 676,
           "name": "ai_get_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.presets",
-          "line": 671,
+          "line": 677,
           "name": "ai_presets",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverEnter",
-          "line": 673,
+          "line": 679,
           "name": "ai_takeover_enter",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverExit",
-          "line": 679,
+          "line": 685,
           "name": "ai_takeover_exit",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverRun",
-          "line": 688,
+          "line": 694,
           "name": "ai_takeover_run",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationList",
-          "line": 694,
+          "line": 700,
           "name": "ai_conversation_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationDelete",
-          "line": 695,
+          "line": 701,
           "name": "ai_conversation_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationCreate",
-          "line": 697,
+          "line": 703,
           "name": "ai_conversation_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.messages",
-          "line": 699,
+          "line": 705,
           "name": "ai_messages",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.overview",
-          "line": 710,
+          "line": 716,
           "name": "ai_model_profiles",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.save",
-          "line": 713,
+          "line": 719,
           "name": "ai_model_save",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.remove",
-          "line": 714,
+          "line": 720,
           "name": "ai_model_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.activate",
-          "line": 715,
+          "line": 721,
           "name": "ai_model_activate",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.refresh",
-          "line": 721,
+          "line": 727,
           "name": "ai_model_refresh",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.presets",
-          "line": 722,
+          "line": 728,
           "name": "ai_presets",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.preset",
-          "line": 723,
+          "line": 729,
           "name": "ai_model_preset",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.status",
-          "line": 776,
+          "line": 782,
           "name": "vault_status",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.initMaster",
-          "line": 777,
+          "line": 783,
           "name": "vault_init_master",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.initDpapi",
-          "line": 778,
+          "line": 784,
           "name": "vault_init_dpapi",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.unlock",
-          "line": 779,
+          "line": 785,
           "name": "vault_unlock",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.lock",
-          "line": 780,
+          "line": 786,
           "name": "vault_lock",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.changePassword",
-          "line": 782,
+          "line": 788,
           "name": "vault_change_password",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.setCredential",
-          "line": 795,
+          "line": 801,
           "name": "vault_set_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.listCredentials",
-          "line": 805,
+          "line": 811,
           "name": "vault_list_credentials",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.deleteCredential",
-          "line": 806,
+          "line": 812,
           "name": "vault_delete_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.revealCredential",
-          "line": 807,
+          "line": 813,
           "name": "vault_reveal_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.updateCredential",
-          "line": 822,
+          "line": 828,
           "name": "credential_update",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.env",
-          "line": 835,
+          "line": 841,
           "name": "forward_env",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.create",
-          "line": 837,
+          "line": 843,
           "name": "forward_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.createSocks",
-          "line": 850,
+          "line": 856,
           "name": "forward_create_socks",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.list",
-          "line": 855,
+          "line": 861,
           "name": "forward_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.remove",
-          "line": 856,
+          "line": 862,
           "name": "forward_remove",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.digest",
-          "line": 879,
+          "line": 885,
           "name": "sync_digest",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.origin",
-          "line": 880,
+          "line": 886,
           "name": "sync_origin",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.exportAssets",
-          "line": 884,
+          "line": 890,
           "name": "sync_export",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.importBundle",
-          "line": 888,
+          "line": 894,
           "name": "sync_import",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.linkGet",
-          "line": 892,
+          "line": 898,
           "name": "sync_link_get",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.linkSet",
-          "line": 897,
+          "line": 903,
           "name": "sync_link_set",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.remoteDigest",
-          "line": 900,
+          "line": 906,
           "name": "sync_remote_digest",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.push",
-          "line": 904,
+          "line": 910,
           "name": "sync_push",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.pull",
-          "line": 907,
+          "line": 913,
           "name": "sync_pull",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.token",
-          "line": 912,
+          "line": 918,
           "name": "sync_token",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.rotateToken",
-          "line": 914,
+          "line": 920,
           "name": "sync_token_rotate",
           "source": "src/ipc/commands.ts"
         }
       ],
-      "method_count": 143,
+      "method_count": 144,
       "source": "src/ipc/commands.ts",
-      "unique_command_count": 142
+      "unique_command_count": 143
     },
     "reconciliation": {
       "duplicate_frontend_commands": [
@@ -880,11 +886,12 @@
           "name": "ai_presets"
         }
       ],
-      "equation": "139 Rust = 138 frontend unique + rust_only ['credential_save']; 143 frontend methods = 142 unique + duplicate ai_presets wrapper; frontend_only ['ai_answer', 'ai_hitl_events', 'ai_hitl_snapshot', 'terminal_resize_flush']",
+      "equation": "139 Rust = 138 frontend unique + rust_only ['credential_save']; 144 frontend methods = 143 unique + duplicate ai_presets wrapper; frontend_only ['ai_answer', 'ai_hitl_events', 'ai_hitl_snapshot', 'ai_steer', 'terminal_resize_flush']",
       "frontend_only": [
         "ai_answer",
         "ai_hitl_events",
         "ai_hitl_snapshot",
+        "ai_steer",
         "terminal_resize_flush"
       ],
       "rust_only": [
