@@ -109,7 +109,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       try {
         const res = await fsApi.read(sessionId, path);
         if (cancelled) return;
-        if (res.size > 5 * 1024 * 1024 && !(await ask("文件超过 5MB，确定要编辑？"))) {
+        if (res.size > 5 * 1024 * 1024 && !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))) {
           onClose?.();
           return;
         }

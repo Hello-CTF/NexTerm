@@ -9,11 +9,12 @@
 //   · 状态纪律：double-submit 被 busy 挡住，卸载后的完成回调不碰任何状态，
 //     传输进度条与无关 dirty 编辑器不受操作影响。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, StrictMode } from "react";
+import { act, StrictMode, type ReactElement } from "react";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
+  clickButton,
   deferred,
   flush,
   mount,
@@ -24,6 +25,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
+  realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   askChoice: vi.fn(),
   promptText: vi.fn(),
   pickLocalFile: vi.fn(),
@@ -45,36 +47,53 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   listenEvent: vi.fn(),
 }));
-vi.mock("../../ui/dialogs", () => ({
-  ask: mocks.ask,
-  askChoice: mocks.askChoice,
-  promptText: mocks.promptText,
-  pickLocalFile: mocks.pickLocalFile,
-  pickSavePath: mocks.pickSavePath,
-  finishSave: mocks.finishSave,
-  discardStaged: mocks.discardStaged,
-}));
-vi.mock("../../ipc/commands", () => ({
-  fsApi: {
-    list: mocks.list,
-    read: mocks.read,
-    rename: mocks.rename,
-    chmod: mocks.chmod,
-    checksum: mocks.checksum,
-    mkdir: mocks.mkdir,
-    delete: mocks.remove,
-    upload: mocks.upload,
-    download: mocks.download,
-    packDownload: mocks.packDownload,
-    extract: mocks.extract,
-  },
-  terminalApi: { write: mocks.termWrite },
-  sessionApi: {},
-}));
-vi.mock("../../ipc/events", () => ({
-  listenEvent: mocks.listenEvent,
-  EVENTS: { fsProgress: "fs://progress" },
-}));
+// R42 真实浮层验收：dialogs/commands/events 三个工厂在既有覆盖之上 spread 真实模块 ——
+// 组件照旧走 mocks.ask 等替身，但钉板测试可把 mocks.ask 委托回真实 ask()，
+// 经真实 registerDialogHandlers + 真实映射（App 的 dialogLevelForKind）+ 真实
+// store/DialogHost 渲染，断言浮层的真实级别（role=dialog vs alertdialog）。
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  mocks.realAsk = actual.ask;
+  return {
+    ...actual,
+    ask: mocks.ask,
+    askChoice: mocks.askChoice,
+    promptText: mocks.promptText,
+    pickLocalFile: mocks.pickLocalFile,
+    pickSavePath: mocks.pickSavePath,
+    finishSave: mocks.finishSave,
+    discardStaged: mocks.discardStaged,
+  };
+});
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    fsApi: {
+      list: mocks.list,
+      read: mocks.read,
+      rename: mocks.rename,
+      chmod: mocks.chmod,
+      checksum: mocks.checksum,
+      mkdir: mocks.mkdir,
+      delete: mocks.remove,
+      upload: mocks.upload,
+      download: mocks.download,
+      packDownload: mocks.packDownload,
+      extract: mocks.extract,
+    },
+    terminalApi: { write: mocks.termWrite },
+    sessionApi: {},
+  };
+});
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return {
+    ...actual,
+    listenEvent: mocks.listenEvent,
+    EVENTS: { fsProgress: "fs://progress" },
+  };
+});
 // jsdom 没有 ResizeObserver，虚拟滚动永远量不到尺寸、一行都不渲染。
 // 这里把整个列表按行高铺平 —— 测的是操作逻辑，不是虚拟滚动本身。
 vi.mock("@tanstack/react-virtual", () => ({
@@ -169,6 +188,9 @@ vi.mock("../../ui/editorTheme", () => ({ nxHighlight: [] }));
 
 import type { AppTab } from "../../app/store";
 import { useUi } from "../../app/store";
+import { dialogLevelForKind } from "../../app/App";
+import { registerDialogHandlers } from "../../ui/dialogs";
+import { DialogHost } from "../../ui/DialogHost";
 import type { FileEntryDto } from "../../ipc/types";
 import { isDirtyFileEditor, setFileEditorDirty } from "../../features/files/editorGuards";
 import {
@@ -183,6 +205,42 @@ import { FileTree } from "../../features/files/FileTree";
 import { FileEditor } from "../../features/files/FileEditor";
 
 const SID = "s1";
+
+type AskOptions = { title?: string; kind?: "info" | "warning" | "error" };
+
+/** R42 真实浮层：把 mocks.ask 委托回真实 ask()（注册制 + 排队都是真的）。 */
+function useRealAsk(): void {
+  mocks.ask.mockImplementation((message: string, options?: AskOptions) =>
+    mocks.realAsk!(message, options),
+  );
+}
+
+/** R42 真实浮层：按 App 的注册形态接管共享弹框（真实映射 + 真实 store）。 */
+function installRealDialogs(): void {
+  registerDialogHandlers({
+    ask: (message, options) =>
+      new Promise<boolean>((resolve) => {
+        useUi.getState().openAppDialog({
+          kind: "ask",
+          message,
+          title: options?.title,
+          level: dialogLevelForKind(options?.kind),
+          resolve,
+        });
+      }),
+    confirm: (message) =>
+      new Promise<boolean>((resolve) => {
+        useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+      }),
+    message: (message) =>
+      new Promise<void>((resolve) => {
+        useUi
+          .getState()
+          .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+      }),
+    choose: mocks.askChoice,
+  });
+}
 
 function entry(name: string, kind: string, extra: Partial<FileEntryDto> = {}): FileEntryDto {
   return {
@@ -985,13 +1043,16 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
   });
 });
 
-// ───────── R42：destructive 确认走共享 warning 语义 ─────────
+// ───────── R42：destructive 确认走共享 warning 语义（真实浮层验收）─────────
 //
 // Grid 报告的 files feature 调用点：FileBrowser / FileTree 的删除（递归、不可恢复）
-// 与 FileEditor 切换编码（丢弃未保存改动）。每处都要：warning 级别 + 取消即中止。
-// 大文件编辑确认（FileEditor :112）是性能提醒而非破坏，刻意保持 info，不在此列。
+// 与 FileEditor 切换编码（丢弃未保存改动）—— 必须渲染为警示浮层（alertdialog）。
+// 大文件编辑确认（FileEditor :112）是性能提醒而非破坏 —— 普通信息浮层（dialog）。
+// round-1 P1：App 共享映射对缺省 kind 默认 warning，所以「保持 info」必须显式声明。
+// 以下用例全部走真实管道：真实 ask() → 真实映射 dialogLevelForKind → 真实 store
+// → 真实 DialogHost，断言渲染出的 role 与文案，并用 取消/确定 驱动后续流程。
 
-describe("删除确认（R42 destructive dialogs）", () => {
+describe("删除与丢弃确认（R42 destructive dialogs）", () => {
   beforeEach(() => {
     editors.views = [];
     mocks.read.mockResolvedValue({
@@ -999,53 +1060,78 @@ describe("删除确认（R42 destructive dialogs）", () => {
       size: 8,
       contentBase64: btoa("original"),
     });
+    useUi.setState({ appDialog: null });
+    useRealAsk();
+    installRealDialogs();
   });
 
-  it("FileBrowser 删除文件：warning 确认，取消即中止", async () => {
-    mounted = mountBrowser();
+  /** 组件与真实 DialogHost 并列挂载，浮层渲染进同一容器。 */
+  function mountWithDialogHost(element: ReactElement): MountedView {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return mount(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement("div", null, element, createElement(DialogHost)),
+      ),
+    );
+  }
+
+  async function openModal(): Promise<HTMLElement> {
+    await waitFor(() =>
+      expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull(),
+    );
+    return mounted!.container.querySelector<HTMLElement>(".nx-modal")!;
+  }
+
+  async function closeModal(modal: HTMLElement, button: "取消" | "确定"): Promise<void> {
+    clickButton(modal, button);
+    await waitFor(() =>
+      expect(mounted!.container.querySelector(".nx-modal")).toBeNull(),
+    );
+  }
+
+  it("FileBrowser 删除文件：警示浮层（alertdialog），取消即中止", async () => {
+    mounted = mountWithDialogHost(createElement(FileBrowser, { sessionId: SID }));
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
-    mocks.ask.mockResolvedValueOnce(false);
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "删除");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("删除 ~/a.txt"),
-      expect.objectContaining({ kind: "warning" }),
-    );
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("删除 ~/a.txt");
+    await closeModal(modal, "取消");
     expect(mocks.remove).not.toHaveBeenCalled();
 
-    mocks.ask.mockResolvedValueOnce(true);
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "删除");
+    const modal2 = await openModal();
+    expect(modal2.getAttribute("role")).toBe("alertdialog");
+    await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
   });
 
-  it("FileTree 删除目录：warning 确认并讲清递归删除不可恢复", async () => {
-    mounted = mountTree();
+  it("FileTree 删除目录：警示浮层并讲清递归删除不可恢复", async () => {
+    mounted = mountWithDialogHost(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
 
-    mocks.ask.mockResolvedValueOnce(false);
     openRowMenu(mounted!.container, "~/sub");
     clickMenuItem(mounted!.container, "删除");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("递归删除，不可恢复"),
-      expect.objectContaining({ kind: "warning" }),
-    );
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("递归删除，不可恢复");
+    await closeModal(modal, "取消");
     expect(mocks.remove).not.toHaveBeenCalled();
 
-    mocks.ask.mockResolvedValueOnce(true);
     openRowMenu(mounted!.container, "~/sub");
     clickMenuItem(mounted!.container, "删除");
+    const modal2 = await openModal();
+    await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/sub", true));
   });
 
-  it("FileEditor 切换编码：脏文档先 warning 确认，取消即不重新读盘", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mounted = mount(
-      createElement(QueryClientProvider, { client }, createElement(FileEditor, { sessionId: SID, path: "~/a.txt" })),
-    );
+  it("FileEditor 切换编码：脏文档先警示确认，取消即不重新读盘", async () => {
+    mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/a.txt" }));
     await waitFor(() => expect(editors.views).toHaveLength(1));
 
     // 制造未保存改动（走 fake view 的 dispatch，updateListener 会接上 dirty 标记）
@@ -1057,21 +1143,38 @@ describe("删除确认（R42 destructive dialogs）", () => {
 
     const select = mounted.container.querySelector<HTMLSelectElement>("select");
     if (!select) throw new Error("Encoding select not found");
-    mocks.ask.mockResolvedValueOnce(false);
     setSelectValue(select, "gbk");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("未保存的改动会丢失"),
-      expect.objectContaining({ kind: "warning" }),
-    );
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("未保存的改动会丢失");
+    await closeModal(modal, "取消");
     expect(mocks.read).toHaveBeenCalledTimes(1); // 取消：不重新读盘
 
-    mocks.ask.mockResolvedValueOnce(true);
     // 确认步换一个目标编码：React 对 select 的 value 跟踪会吞掉「设回同一个值」的
     // change 事件；且 reloadEnc 初值是 "auto"，必须换成别的值才会触发重新读盘。
     setSelectValue(select, "utf-8");
+    const modal2 = await openModal();
+    await closeModal(modal2, "确定");
     // switchEnc 的确认链（ask → setEnc/setReloadEnc → 重读 effect）要一个 act 周期落地
     await flush();
     await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
+  });
+
+  it("FileEditor 大文件提示：性能提醒显式 info（普通浮层），取消即关闭编辑器", async () => {
+    mocks.read.mockResolvedValue({
+      path: "~/big.log",
+      size: 6 * 1024 * 1024,
+      contentBase64: "",
+    });
+    const onClose = vi.fn();
+    mounted = mountWithDialogHost(
+      createElement(FileEditor, { sessionId: SID, path: "~/big.log", onClose }),
+    );
+
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.textContent).toContain("文件超过 5MB");
+    await closeModal(modal, "取消");
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 });

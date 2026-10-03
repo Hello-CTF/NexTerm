@@ -1,8 +1,12 @@
 /** @vitest-environment jsdom */
 //
-// R42 审计钉板：断开挂载**不是** destructive —— 远端数据原样保留，重新挂载即恢复，
-// 所以确认框刻意保持默认 info 级别。这条回归把该结论钉住，防止后续「无差别补 warning」
-// 把它误标（Grid 报告把它列进了候选清单，逐项审计后决定不动）。
+// R42 审计钉板：断开挂载**不是** destructive —— 远端数据原样保留，重新挂载即恢复。
+//
+// 关键背景（round-1 P1）：App 的共享映射（src/app/App.tsx:470-471）对**不传 kind**
+// 的 ask 默认按 warning 渲染，所以「保持 info」必须在调用点显式传 { kind: "info" }。
+// 本测试走真实管道 —— 真实 ask()（注册制 + 排队）→ registerDialogHandlers →
+// 真实 store openAppDialog → 真实 DialogHost —— 断言渲染出来的是 role="dialog"
+// （info 浮层）而不是 alertdialog（warning 警示浮层），而不是只断言调用形状。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
@@ -13,21 +17,26 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   create: vi.fn(),
   remove: vi.fn(),
-  ask: vi.fn(),
   toast: vi.fn(),
 }));
-vi.mock("../../ipc/commands", () => ({
-  mountApi: {
-    list: mocks.list,
-    create: mocks.create,
-    remove: mocks.remove,
-  },
-  sessionApi: {},
-}));
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    mountApi: {
+      list: mocks.list,
+      create: mocks.create,
+      remove: mocks.remove,
+    },
+    sessionApi: {},
+  };
+});
 
+import { registerDialogHandlers } from "../../ui/dialogs";
+import { DialogHost } from "../../ui/DialogHost";
 import { MountPanel } from "../../features/files/MountPanel";
 import { useUi } from "../../app/store";
+import { dialogLevelForKind } from "../../app/App";
 
 let mounted: MountedView | undefined;
 beforeEach(() => {
@@ -37,35 +46,79 @@ beforeEach(() => {
     { id: "m1", localPoint: "Z:", remote: "\\\\nas\\share", sessionId: "s1", createdAt: 1 },
   ]);
   mocks.remove.mockResolvedValue(undefined);
-  mocks.ask.mockResolvedValue(true);
-  useUi.setState({ pushToast: mocks.toast, sessions: [] });
+  useUi.setState({ pushToast: mocks.toast, sessions: [], appDialog: null });
+  // 与 App.tsx 的注册形态相同，映射直接用真实导出（dialogLevelForKind）
+  registerDialogHandlers({
+    ask: (message, options) =>
+      new Promise<boolean>((resolve) => {
+        useUi.getState().openAppDialog({
+          kind: "ask",
+          message,
+          title: options?.title,
+          level: dialogLevelForKind(options?.kind),
+          resolve,
+        });
+      }),
+    confirm: (message) =>
+      new Promise<boolean>((resolve) => {
+        useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+      }),
+    message: (message) =>
+      new Promise<void>((resolve) => {
+        useUi
+          .getState()
+          .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+      }),
+    choose: vi.fn(),
+  });
 });
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
 });
 
-describe("断开挂载确认（R42 审计结论：保持 info）", () => {
-  it("unmount is reversible — the confirm stays at the default info level", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mounted = mount(
+function mountPanelWithDialogHost(): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(
+    createElement(
+      QueryClientProvider,
+      { client },
       createElement(
-        QueryClientProvider,
-        { client },
+        "div",
+        null,
         createElement(MountPanel, { sessionId: "s1" }),
+        createElement(DialogHost),
       ),
-    );
+    ),
+  );
+}
+
+describe("断开挂载确认（R42 审计结论：显式 info）", () => {
+  it("renders a plain info dialog (role=dialog, not alertdialog), cancel aborts", async () => {
+    mounted = mountPanelWithDialogHost();
     await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));
 
-    mocks.ask.mockResolvedValueOnce(false);
     clickButton(mounted!.container, "断开");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    // 钉住审计结论：单参数调用（没有 { kind: "warning" }）—— 断开可逆，不是 destructive
-    expect(mocks.ask).toHaveBeenCalledWith("断开 Z:？");
-    expect(mocks.remove).not.toHaveBeenCalled();
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+    const modal = mounted!.container.querySelector(".nx-modal")!;
+    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.querySelector(".nx-modal-body")?.textContent).toContain("断开 Z:？");
 
-    mocks.ask.mockResolvedValueOnce(true);
+    clickButton(modal, "取消");
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).toBeNull());
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("confirm proceeds through the same info dialog", async () => {
+    mounted = mountPanelWithDialogHost();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));
+
     clickButton(mounted!.container, "断开");
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+    const modal = mounted!.container.querySelector(".nx-modal")!;
+    expect(modal.getAttribute("role")).toBe("dialog");
+
+    clickButton(modal, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("Z:", "s1"));
   });
 });

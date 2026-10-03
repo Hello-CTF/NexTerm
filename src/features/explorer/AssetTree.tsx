@@ -98,7 +98,9 @@ export function AssetTree() {
   }, [filtered]);
 
   const onDelete = async (a: Asset) => {
-    const ok = await ask(`删除资产「${a.name}」？软删除，可恢复；关联凭据保留。`);
+    const ok = await ask(`删除资产「${a.name}」？软删除，可恢复；关联凭据保留。`, {
+      kind: "info",
+    });
     if (!ok) return;
     await assetApi.delete(a.id);
     void qc.invalidateQueries({ queryKey: ["assets"] });

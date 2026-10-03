@@ -27,34 +27,53 @@ const mocks = vi.hoisted(() => ({
   action: vi.fn(),
   imageRemove: vi.fn(),
   ask: vi.fn(),
+  realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   toast: vi.fn(),
 }));
 
-vi.mock("../../ipc/commands", () => ({
-  dockerApi: {
-    overview: mocks.overview,
-    ps: mocks.ps,
-    images: mocks.images,
-    inspect: mocks.inspect,
-    stats: mocks.stats,
-    containerListDir: mocks.listDir,
-    action: mocks.action,
-    imageRemove: mocks.imageRemove,
-    imagePull: vi.fn(),
-    logsAttach: vi.fn(),
-    execAttach: vi.fn(),
-  },
-  terminalApi: { closeTab: vi.fn() },
-}));
-vi.mock("../../ipc/events", () => ({
-  createBinaryChannel: vi.fn(),
-  disposeChannel: vi.fn(),
-  onChannelReopen: vi.fn(() => () => undefined),
-}));
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+// R42 真实浮层验收：工厂在既有覆盖之上 spread 真实模块 —— 组件照旧走 mocks.ask，
+// 钉板测试把 mocks.ask 委托回真实 ask()，经真实 registerDialogHandlers +
+// 真实映射（App 的 dialogLevelForKind）+ 真实 store/DialogHost 渲染验收级别。
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    dockerApi: {
+      overview: mocks.overview,
+      ps: mocks.ps,
+      images: mocks.images,
+      inspect: mocks.inspect,
+      stats: mocks.stats,
+      containerListDir: mocks.listDir,
+      action: mocks.action,
+      imageRemove: mocks.imageRemove,
+      imagePull: vi.fn(),
+      logsAttach: vi.fn(),
+      execAttach: vi.fn(),
+    },
+    terminalApi: { closeTab: vi.fn() },
+  };
+});
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return {
+    ...actual,
+    createBinaryChannel: vi.fn(),
+    disposeChannel: vi.fn(),
+    onChannelReopen: vi.fn(() => () => undefined),
+  };
+});
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  mocks.realAsk = actual.ask;
+  return { ...actual, ask: mocks.ask };
+});
 
 import { DockerPanel } from "../../features/docker/DockerPanel";
 import type { ContainerSummary, ImageSummary } from "../../ipc/commands";
+import { dialogLevelForKind } from "../../app/App";
+import { registerDialogHandlers } from "../../ui/dialogs";
+import { DialogHost } from "../../ui/DialogHost";
 import {
   buildInspectViewModel,
   isSensitiveFileName,
@@ -526,7 +545,7 @@ describe("Docker insight controls (M61)", () => {
   }
 });
 
-describe("destructive delete confirmations (R42)", () => {
+describe("destructive delete confirmations (R42, real DialogHost)", () => {
   const imageA: ImageSummary = {
     id: "sha256:aaa111",
     repository: "nginx",
@@ -539,7 +558,7 @@ describe("destructive delete confirmations (R42)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
-    useUi.setState({ pushToast: mocks.toast });
+    useUi.setState({ pushToast: mocks.toast, appDialog: null });
     mocks.ps.mockResolvedValue([containerA, containerB]);
     mocks.images.mockResolvedValue([imageA]);
     mocks.overview.mockResolvedValue({
@@ -548,12 +567,63 @@ describe("destructive delete confirmations (R42)", () => {
     });
     mocks.action.mockResolvedValue(undefined);
     mocks.imageRemove.mockResolvedValue(undefined);
-    mocks.ask.mockResolvedValue(true);
+    // 真实浮层：mocks.ask 委托回真实 ask()，按 App 的注册形态接管共享弹框
+    mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
+      mocks.realAsk!(message, options),
+    );
+    registerDialogHandlers({
+      ask: (message, options) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({
+            kind: "ask",
+            message,
+            title: options?.title,
+            level: dialogLevelForKind(options?.kind),
+            resolve,
+          });
+        }),
+      confirm: (message) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+        }),
+      message: (message) =>
+        new Promise<void>((resolve) => {
+          useUi
+            .getState()
+            .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+        }),
+      choose: vi.fn(),
+    });
   });
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
   });
+
+  function mountPanelWithDialogHost(): MountedView {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return mount(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement("div", null, createElement(DockerPanel, { sessionId: "s1", visible: true }), createElement(DialogHost)),
+      ),
+    );
+  }
+
+  async function openModal(): Promise<HTMLElement> {
+    await waitFor(() =>
+      expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull(),
+    );
+    return mounted!.container.querySelector<HTMLElement>(".nx-modal")!;
+  }
+
+  async function closeModal(modal: HTMLElement, button: "取消" | "确定"): Promise<void> {
+    clickButton(modal, button);
+    await waitFor(() =>
+      expect(mounted!.container.querySelector(".nx-modal")).toBeNull(),
+    );
+  }
 
   function segmentItem(container: ParentNode, label: string): HTMLButtonElement {
     const button = [...container.querySelectorAll(".nx-segment-item")].find((b) =>
@@ -563,46 +633,45 @@ describe("destructive delete confirmations (R42)", () => {
     return button as HTMLButtonElement;
   }
 
-  it("asks with warning before removing a container, cancel aborts", async () => {
-    const m = (mounted = mountPanel());
+  it("container remove renders an alertdialog, cancel aborts", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
     await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
 
-    mocks.ask.mockResolvedValueOnce(false);
     click(m.container.querySelector('button[title="删除"]')!);
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("删除容器 web"),
-      expect.objectContaining({ kind: "warning" }),
-    );
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("删除容器 web");
+    await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
 
-    mocks.ask.mockResolvedValueOnce(true);
     click(m.container.querySelector('button[title="删除"]')!);
+    const modal2 = await openModal();
+    expect(modal2.getAttribute("role")).toBe("alertdialog");
+    await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "remove"));
   });
 
-  it("asks with warning before removing an image, cancel aborts", async () => {
-    const m = (mounted = mountPanel());
+  it("image remove renders an alertdialog, cancel aborts", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
     await waitFor(() => expect(m.container.querySelector('button[title="删除"]')).not.toBeNull());
     click(segmentItem(m.container, "镜像"));
     await waitFor(() => expect(m.container.querySelector('button[title="删除镜像"]')).not.toBeNull());
 
-    mocks.ask.mockResolvedValueOnce(false);
     click(m.container.querySelector('button[title="删除镜像"]')!);
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("删除镜像 nginx:1.25"),
-      expect.objectContaining({ kind: "warning" }),
-    );
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("删除镜像 nginx:1.25");
+    await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
 
-    mocks.ask.mockResolvedValueOnce(true);
     click(m.container.querySelector('button[title="删除镜像"]')!);
+    const modal2 = await openModal();
+    await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.imageRemove).toHaveBeenCalledWith("s1", "nginx:1.25", false));
   });
 
-  it("asks with warning before bulk-removing picked containers, cancel aborts", async () => {
-    const m = (mounted = mountPanel());
+  it("bulk remove renders an alertdialog with the count, cancel aborts", async () => {
+    const m = (mounted = mountPanelWithDialogHost());
     await waitFor(() => expect(m.container.querySelectorAll('button[title="删除"]').length).toBe(2));
 
     const pickA = m.container.querySelector<HTMLInputElement>('input[aria-label="选择 web"]');
@@ -612,17 +681,16 @@ describe("destructive delete confirmations (R42)", () => {
     click(pickB);
     await waitFor(() => expect(m.container.textContent).toContain("已选 2"));
 
-    mocks.ask.mockResolvedValueOnce(false);
     clickButton(m.container, "删除选中 (2)");
-    await waitFor(() => expect(mocks.ask).toHaveBeenCalledOnce());
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("删除选中的 2 个容器"),
-      expect.objectContaining({ kind: "warning" }),
-    );
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("alertdialog");
+    expect(modal.textContent).toContain("删除选中的 2 个容器");
+    await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
 
-    mocks.ask.mockResolvedValueOnce(true);
     clickButton(m.container, "删除选中 (2)");
+    const modal2 = await openModal();
+    await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.action).toHaveBeenCalledTimes(2));
     expect(mocks.action).toHaveBeenCalledWith("s1", containerA.id, "remove");
     expect(mocks.action).toHaveBeenCalledWith("s1", containerB.id, "remove");

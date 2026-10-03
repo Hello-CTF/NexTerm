@@ -38,46 +38,65 @@ const mocks = vi.hoisted(() => ({
   write: vi.fn(),
   assetDelete: vi.fn(),
   ask: vi.fn(),
+  realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   pickKeyFile: vi.fn(),
   toast: vi.fn(),
 }));
 
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, pickKeyFile: mocks.pickKeyFile }));
-vi.mock("../../ipc/webFiles", () => ({
-  browserFilesAvailable: () => false,
-  pickBrowserFile: vi.fn(),
-}));
-vi.mock("../../ipc/commands", () => ({
-  assetApi: {
-    list: mocks.list,
-    search: vi.fn(),
-    update: vi.fn(),
-    delete: mocks.assetDelete,
-    groupList: mocks.groupList,
-    groupUpdate: mocks.groupUpdate,
-    groupDelete: mocks.groupDelete,
-    snippetList: mocks.snippetList,
-    snippetCreate: mocks.snippetCreate,
-    snippetUpdate: mocks.snippetUpdate,
-    snippetDelete: mocks.snippetDelete,
-    readKeyFile: vi.fn(),
-  },
-  vaultApi: {
-    listCredentials: mocks.listCredentials,
-    setCredential: vi.fn(),
-  },
-  sessionApi: {
-    probe: mocks.probe,
-    connect: vi.fn(),
-    list: vi.fn(),
-  },
-  terminalApi: { write: mocks.write },
-  dbApi: {},
-}));
+// R42 真实浮层验收：工厂在既有覆盖之上 spread 真实模块 —— 组件照旧走 mocks.ask，
+// 钉板测试把 mocks.ask 委托回真实 ask()，经真实 registerDialogHandlers +
+// 真实映射（App 的 dialogLevelForKind）+ 真实 store/DialogHost 渲染验收级别。
+vi.mock("../../ui/dialogs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ui/dialogs")>();
+  mocks.realAsk = actual.ask;
+  return { ...actual, ask: mocks.ask, pickKeyFile: mocks.pickKeyFile };
+});
+vi.mock("../../ipc/webFiles", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/webFiles")>();
+  return {
+    ...actual,
+    browserFilesAvailable: () => false,
+    pickBrowserFile: vi.fn(),
+  };
+});
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    assetApi: {
+      list: mocks.list,
+      search: vi.fn(),
+      update: vi.fn(),
+      delete: mocks.assetDelete,
+      groupList: mocks.groupList,
+      groupUpdate: mocks.groupUpdate,
+      groupDelete: mocks.groupDelete,
+      snippetList: mocks.snippetList,
+      snippetCreate: mocks.snippetCreate,
+      snippetUpdate: mocks.snippetUpdate,
+      snippetDelete: mocks.snippetDelete,
+      readKeyFile: vi.fn(),
+    },
+    vaultApi: {
+      listCredentials: mocks.listCredentials,
+      setCredential: vi.fn(),
+    },
+    sessionApi: {
+      probe: mocks.probe,
+      connect: vi.fn(),
+      list: vi.fn(),
+    },
+    terminalApi: { write: mocks.write },
+    dbApi: {},
+  };
+});
 
 import { AssetTree, AssetEditor } from "../../features/explorer/AssetTree";
 import { SnippetsPanel } from "../../features/explorer/SnippetsPanel";
 import { useUi } from "../../app/store";
+import { dialogLevelForKind } from "../../app/App";
+import { registerDialogHandlers } from "../../ui/dialogs";
+import { DialogHost } from "../../ui/DialogHost";
 
 const GROUP = {
   id: "g1",
@@ -724,14 +743,44 @@ describe("snippets panel", () => {
   });
 });
 
-// ───────── R42 审计钉板：资产删除保持 info ─────────
+// ───────── R42 审计钉板：资产删除显式 info ─────────
 //
-// Grid 报告把 AssetTree 的删除列进了候选，逐项审计后的结论是**不动**：
+// Grid 报告把 AssetTree 的删除列进了候选，逐项审计后的结论是**标 info**：
 // 那是软删除（文案自述「可恢复；关联凭据保留」），不是 genuinely destructive。
-// 这条回归把「保持默认 info 级别」钉住，防止后续无差别补 warning 把它误标。
+// 注意（round-1 P1）：App 共享映射对**不传 kind** 的 ask 默认按 warning 渲染
+// （App.tsx:470-471），所以「保持 info」必须显式传 { kind: "info" } ——
+// 这条回归把显式 info 钉住，防止后续无差别改动把它变成警示浮层。
 
-describe("asset delete confirmation (R42 audit pin)", () => {
-  it("asset delete stays info-level: soft delete is recoverable", async () => {
+describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
+  it("asset delete renders a plain info dialog: soft delete is recoverable", async () => {
+    // 真实浮层：mocks.ask 委托回真实 ask()，按 App 的注册形态接管共享弹框
+    mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
+      mocks.realAsk!(message, options),
+    );
+    registerDialogHandlers({
+      ask: (message, options) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({
+            kind: "ask",
+            message,
+            title: options?.title,
+            level: dialogLevelForKind(options?.kind),
+            resolve,
+          });
+        }),
+      confirm: (message) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().openAppDialog({ kind: "confirm", message, level: "warning", resolve });
+        }),
+      message: (message) =>
+        new Promise<void>((resolve) => {
+          useUi
+            .getState()
+            .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
+        }),
+      choose: vi.fn(),
+    });
+    useUi.setState({ appDialog: null });
     mocks.list.mockResolvedValue([
       {
         id: "a1",
@@ -754,19 +803,40 @@ describe("asset delete confirmation (R42 audit pin)", () => {
         builtin: false,
       },
     ]);
-    mounted = mountWithClient(createElement(AssetTree));
+    mounted = mountWithClient(
+      createElement(
+        "div",
+        null,
+        createElement(AssetTree),
+        createElement(DialogHost),
+      ),
+    );
     await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
 
-    mocks.ask.mockResolvedValueOnce(false);
+    async function openModal(): Promise<HTMLElement> {
+      await waitFor(() =>
+        expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull(),
+      );
+      return mounted!.container.querySelector<HTMLElement>(".nx-modal")!;
+    }
+    async function closeModal(modal: HTMLElement, button: "取消" | "确定"): Promise<void> {
+      clickButton(modal, button);
+      await waitFor(() =>
+        expect(mounted!.container.querySelector(".nx-modal")).toBeNull(),
+      );
+    }
+
     click(buttonByTitle(mounted!.container, "删除"));
-    await flush();
-    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("软删除，可恢复"));
-    // 钉住审计结论：单参数调用（没有 { kind: "warning" }）
-    expect(mocks.ask.mock.calls[0]).toHaveLength(1);
+    const modal = await openModal();
+    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.textContent).toContain("软删除，可恢复");
+    await closeModal(modal, "取消");
     expect(mocks.assetDelete).not.toHaveBeenCalled();
 
-    mocks.ask.mockResolvedValueOnce(true);
     click(buttonByTitle(mounted!.container, "删除"));
+    const modal2 = await openModal();
+    expect(modal2.getAttribute("role")).toBe("dialog");
+    await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
   });
 });
