@@ -28,6 +28,7 @@ type ProductionConfig struct {
 	Config                  Config
 	DataDir                 string
 	Desktop                 bool
+	DesktopSmoke            bool
 	ForwardPlatform         string
 	Connector               session.Connector
 	Terminals               session.TerminalFactory
@@ -151,6 +152,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
 		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, hostKeys: hostKeys, dataDir: config.DataDir,
+		smokeAttach: config.DesktopSmoke,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
 		services.closeAIRuntime()

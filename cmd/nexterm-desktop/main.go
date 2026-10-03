@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
@@ -34,6 +35,15 @@ func run(args []string) int {
 	if invocation.Command != core.CommandDesktop {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop: use the nexterm-server binary for", invocation.Command)
 		return 2
+	}
+
+	if desktopSmokeEnabled() && runtime.GOOS == "linux" {
+		// CI runners restrict the unprivileged namespaces that WebKitGTK's
+		// bubblewrap sandbox needs ("bwrap: loopback: Failed RTM_NEWADDR"),
+		// which kills the web process before it can produce smoke evidence.
+		// The smoke-tagged binary exists only for this gate, so its web process
+		// may run unsandboxed; production binaries keep the sandbox.
+		os.Setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1")
 	}
 
 	paths, err := platform.DesktopPaths(invocation.DataDir)
@@ -81,6 +91,7 @@ func run(args []string) int {
 		},
 		DataDir:         paths.DataDir,
 		Desktop:         true,
+		DesktopSmoke:    desktopSmokeEnabled(),
 		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
 	})
 	if err != nil {
