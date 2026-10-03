@@ -651,6 +651,15 @@ export const aiApi = {
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
   confirm: (input: AiConfirmationInput) => call<void>("ai_confirm", { ...input }),
   answer: (input: AiAnswerInput) => call<void>("ai_answer", { ...input }),
+  /**
+   * HITL 重连对账：某 job 的权威中断状态（待处理请求 + 终态）。
+   * 重连后先按已见序号补事件，再用快照兜底 —— 快照是权威，事件只补标签。
+   */
+  hitlSnapshot: (jobId: string) =>
+    call<import("./types").AiHitlSnapshotDto>("ai_hitl_snapshot", { jobId }),
+  /** HITL 事件增量重放：严格大于 `afterSeq` 的事件，按 seq 升序。 */
+  hitlEvents: (jobId: string, afterSeq: number) =>
+    call<import("./types").AiHitlEventDto[]>("ai_hitl_events", { jobId, afterSeq }),
   models: () => call<string[]>("ai_models"),
   testProvider: () =>
     call<{ modelsOk: boolean; modelsError?: string; chatOk: boolean; chatError?: string }>(

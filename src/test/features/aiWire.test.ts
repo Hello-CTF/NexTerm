@@ -3,6 +3,7 @@ import {
   answerInput,
   confirmationInput,
   confirmationNonceOf,
+  interactionIdentityOf,
   questionFromEvent,
 } from "../../features/ai/aiWire";
 
@@ -35,5 +36,32 @@ describe("AI interaction wire mapping", () => {
   it("does not invent fields for malformed question or nonce payloads", () => {
     expect(questionFromEvent({ question: null })).toEqual({ question: "", options: [] });
     expect(confirmationNonceOf({ nonce: "wrong-field" })).toBe("");
+  });
+
+  it("reads HITL identity (requestId/attempt) from interaction events", () => {
+    expect(interactionIdentityOf({ requestId: "req-1", attempt: 3 })).toEqual({
+      requestId: "req-1",
+      hitlAttempt: 3,
+    });
+    expect(interactionIdentityOf({ requestId: "req-1" })).toEqual({ requestId: "req-1" });
+  });
+
+  it("returns an empty identity for missing or malformed HITL fields", () => {
+    expect(interactionIdentityOf({})).toEqual({});
+    expect(interactionIdentityOf({ requestId: "", attempt: 0 })).toEqual({});
+    expect(interactionIdentityOf({ requestId: 7, attempt: "2" })).toEqual({});
+  });
+
+  it("keeps the HITL identity off the confirmation and answer wire payloads", () => {
+    // requestId/hitlAttempt 是本地对账身份；ai_confirm / ai_answer 的线格式不变。
+    expect(
+      confirmationInput({ jobId: "job", callId: "call", nonce: "n", requestId: "req", hitlAttempt: 2 }, "deny"),
+    ).toEqual({ jobId: "job", callId: "call", nonce: "n", decision: "deny" });
+    expect(answerInput({ jobId: "job", callId: "call", nonce: "n", requestId: "req" }, "继续")).toEqual({
+      jobId: "job",
+      callId: "call",
+      nonce: "n",
+      text: "继续",
+    });
   });
 });

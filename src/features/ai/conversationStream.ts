@@ -16,6 +16,9 @@
 //   · **绝不按片段内容去重**：模型本来就会输出重复 token，字节相同什么也
 //     证明不了。没有有效 seq 的事件一律按新事件落账 —— 宁可保留交给
 //     done.answer 终态对账，也绝不误删任何可能是新内容的片段。
+//
+// HITL 对账（hitlReplay.ts）走**另一个**序号空间：内核 HITL 运行事件的
+// per-run seq。两套身份互不通用，各自按各自的高水位去重，都不按内容猜。
 import {
   applyAiEvent,
   appendUserMessage,
@@ -30,6 +33,13 @@ import {
   type ChatItem,
   type ConversationState,
 } from "./conversation";
+import {
+  applyHitlReplay as foldHitlReplay,
+  planHitlReplay as planHitlReplayFold,
+  type HitlFoldResult,
+  type HitlReplayPlan,
+} from "./hitlReplay";
+import type { AiHitlEventDto, AiHitlSnapshotDto } from "../../ipc/types";
 
 /** 调度一次回调，返回取消函数。浏览器用 rAF；测试注入手动帧实现确定性。 */
 export type StreamScheduler = (cb: () => void) => () => void;
@@ -78,6 +88,20 @@ export interface ConversationStream {
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
   cancelRun(generation: number, settle: boolean): void;
   reset(items?: ChatItem[]): void;
+  /** 已处理的 HITL 事件序号高水位（per-run seq 空间，与流事件 seq 无关）。 */
+  hitlSeq(generation: number): number;
+  /**
+   * 开始一次 HITL 对账：返回已见序号（增量拉取的 afterSeq）与当前未决交互
+   * 身份快照 —— 对账途中 racing 到达的新流事件不被本次清扫误伤。
+   */
+  planHitlReplay(generation: number): HitlReplayPlan;
+  /** 把 HITL 事件 / 快照折进会话（重连恢复、交互失败后的服务端对账）。 */
+  applyHitlReplay(
+    generation: number,
+    plan: HitlReplayPlan,
+    events: AiHitlEventDto[],
+    snapshot: AiHitlSnapshotDto | null,
+  ): void;
   /** 立刻把 pending 文本落账（边界 flush；幂等）。 */
   flush(): void;
   /** 卸载边界：最后一次 flush，取消已排度的帧，之后拒绝一切写入。 */
@@ -95,6 +119,8 @@ export function createConversationStream(
   const listeners = new Set<(state: ConversationState) => void>();
   /** 每个 attempt 已见过的 per-job seq：精确重放身份，与片段内容无关。 */
   const seenSequences = new Map<number, Set<number>>();
+  /** 每个 attempt 已处理的 HITL 事件序号高水位（HITL 自己的 per-run seq 空间）。 */
+  const hitlSequences = new Map<number, number>();
   const seenOf = (generation: number): Set<number> => {
     let seen = seenSequences.get(generation);
     if (!seen) {
@@ -103,6 +129,7 @@ export function createConversationStream(
     }
     return seen;
   };
+  const hitlSeqOf = (generation: number): number => hitlSequences.get(generation) ?? 0;
 
   const publish = () => {
     for (const listener of [...listeners]) listener(state);
@@ -220,7 +247,10 @@ export function createConversationStream(
       const result = applyAiEvent(state, generation, ev);
       if (result.accepted) {
         state = result.state;
-        if (result.terminal) seenSequences.delete(generation);
+        if (result.terminal) {
+          seenSequences.delete(generation);
+          hitlSequences.delete(generation);
+        }
         publish();
       }
       return result;
@@ -239,7 +269,10 @@ export function createConversationStream(
         const next = cancelRun(state, generation, settle);
         if (next !== state) {
           state = next;
-          if (settle) seenSequences.delete(generation);
+          if (settle) {
+            seenSequences.delete(generation);
+            hitlSequences.delete(generation);
+          }
           publish();
         }
       });
@@ -248,8 +281,33 @@ export function createConversationStream(
       mutate(() => {
         state = resetConversation(state, items);
         seenSequences.clear();
+        hitlSequences.clear();
         publish();
       });
+    },
+    hitlSeq: hitlSeqOf,
+    planHitlReplay(generation) {
+      return planHitlReplayFold(state, generation, hitlSeqOf(generation));
+    },
+    applyHitlReplay(generation, plan, events, snapshot) {
+      if (disposed) return;
+      // 顺序边界：与工具卡 / 交互卡 / 终态同一待遇，先 flush 再落账。
+      flush();
+      const result: HitlFoldResult = foldHitlReplay(
+        state,
+        generation,
+        plan,
+        events,
+        snapshot,
+        hitlSeqOf(generation),
+      );
+      if (result.lastSeq !== hitlSeqOf(generation)) {
+        hitlSequences.set(generation, result.lastSeq);
+      }
+      if (result.changed) {
+        state = result.state;
+        publish();
+      }
     },
     flush,
     dispose() {
@@ -258,6 +316,7 @@ export function createConversationStream(
       disposed = true;
       cancelFrame();
       seenSequences.clear();
+      hitlSequences.clear();
       listeners.clear();
     },
   };

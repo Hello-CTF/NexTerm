@@ -7,7 +7,8 @@
 //   · 纯数据不依赖 React / IPC，测试可以用假事件流确定性地驱动全部分支。
 //
 // 线格式字段与内核 `AiEvent` 对齐（camelCase、`type` 标签），这里只读不改。
-import { confirmationNonceOf, questionFromEvent } from "./aiWire";
+import { confirmationNonceOf, interactionIdentityOf, questionFromEvent } from "./aiWire";
+import type { AiHitlInterruptDto } from "../../ipc/types";
 import type { AiUsage } from "./UsageRing";
 
 /** 写文件类工具的改动预览（与内核 `FilePreview` 对应）。 */
@@ -61,6 +62,10 @@ export type ChatItem =
       /** 写文件类工具的改动预览：**批准之前**就能看到改什么。 */
       preview?: FilePreviewItem | null;
       nonce: string;
+      /** HITL 请求的稳定身份（内核 interrupt id）：重连对账按它匹配。 */
+      requestId?: string;
+      /** HITL 运行 attempt（第几次中断）；与 `ItemBase.attempt`（前端轮次）无关。 */
+      hitlAttempt?: number;
       /** 已有定论的交互：决定文案（"已允许一次"…）或关闭原因；undefined = 仍待处理。 */
       resolution?: string;
     })
@@ -71,6 +76,8 @@ export type ChatItem =
       nonce: string;
       question: string;
       options: string[];
+      requestId?: string;
+      hitlAttempt?: number;
       resolution?: string;
     })
   | (ItemBase & {
@@ -297,6 +304,71 @@ export function pendingInteraction<K extends "confirm" | "question">(
   return null;
 }
 
+/** 快照补卡时确认卡的参数兜底文案：内核给多少就展示多少，不做渲染层猜测。 */
+function renderInterruptParameters(parameters: unknown): string {
+  try {
+    return JSON.stringify(parameters, null, 2) ?? "";
+  } catch {
+    return String(parameters);
+  }
+}
+
+/**
+ * 从 HITL 快照的中断请求补一张交互卡（重连对账专用）。
+ *
+ * 与 confirmRequired/questionRequired 共用同一套 id 方案：同一 callId 的流事件
+ * 后到时按 id 去重，不会出第二张卡；id 已被占（同 callId 的旧请求已结算）时
+ * 退回本地自增 id。快照没有渲染层字段（rendered/preview），确认卡只能退回
+ * 展示原始参数。已终态的轮次不补卡 —— 终态是可见结果，不被快照复活。
+ */
+export function appendHitlInterrupt(
+  state: ConversationState,
+  generation: number,
+  request: AiHitlInterruptDto,
+): ConversationState {
+  const attempt = attemptOf(state, generation);
+  if (!attempt || attempt.outcome) return state;
+  const role = request.kind === "question" ? "question" : "confirm";
+  const callId = request.callId || "";
+  const kernelId = callId ? `g${generation}:${role}:${callId}` : "";
+  let id = kernelId;
+  let seq = state.seq;
+  if (!id || hasItem(state, id)) {
+    const local = nextId(state, role === "confirm" ? "c" : "q");
+    id = local.id;
+    seq = local.seq;
+  }
+  const base = {
+    id,
+    attempt: generation,
+    jobId: attempt.jobId ?? "",
+    callId,
+    nonce: request.nonce,
+    requestId: request.id || undefined,
+    hitlAttempt: request.attempt >= 1 ? request.attempt : undefined,
+  };
+  if (role === "question") {
+    return appendItems({ ...state, seq }, [
+      {
+        ...base,
+        role: "question",
+        question: request.question?.text ?? "",
+        options: request.question?.options ?? [],
+      },
+    ]);
+  }
+  return appendItems({ ...state, seq }, [
+    {
+      ...base,
+      role: "confirm",
+      tool: request.tool,
+      rendered: renderInterruptParameters(request.parameters),
+      reason: "",
+      preview: null,
+    },
+  ]);
+}
+
 export interface ApplyResult {
   state: ConversationState;
   /** false =  stale / 迟到 / 重复事件，状态未变（终态除外，见 terminal）。 */
@@ -453,6 +525,7 @@ export function applyAiEvent(
             // 没有改动预览就是 null —— 卡片退回展示原始参数，这里不做任何猜测。
             preview: (ev.preview as FilePreviewItem | null) ?? null,
             nonce: confirmationNonceOf(ev),
+            ...interactionIdentityOf(ev),
           },
         ]),
       );
@@ -474,6 +547,7 @@ export function applyAiEvent(
             callId,
             nonce: confirmationNonceOf(ev),
             ...question,
+            ...interactionIdentityOf(ev),
           },
         ]),
       );

@@ -4,6 +4,13 @@ export interface AiInteractionRequest {
   jobId: string;
   callId: string;
   nonce: string;
+  /**
+   * HITL 请求的稳定身份（内核 interrupt id）：重连对账按它匹配卡片，
+   * 不按内容猜。旧内核事件可能缺省。
+   */
+  requestId?: string;
+  /** HITL 运行 attempt（第几次中断），同样来自事件，缺省表示旧内核。 */
+  hitlAttempt?: number;
 }
 
 export interface AiQuestionData {
@@ -13,6 +20,19 @@ export interface AiQuestionData {
 
 export function confirmationNonceOf(event: Record<string, unknown>): string {
   return typeof event.confirmationNonce === "string" ? event.confirmationNonce : "";
+}
+
+/** 从 confirmRequired / questionRequired 事件解析 HITL 身份（requestId/attempt）。 */
+export function interactionIdentityOf(event: Record<string, unknown>): {
+  requestId?: string;
+  hitlAttempt?: number;
+} {
+  const requestId = typeof event.requestId === "string" && event.requestId ? event.requestId : undefined;
+  const attempt =
+    typeof event.attempt === "number" && Number.isSafeInteger(event.attempt) && event.attempt >= 1
+      ? event.attempt
+      : undefined;
+  return attempt === undefined && requestId === undefined ? {} : { requestId, hitlAttempt: attempt };
 }
 
 export function questionFromEvent(event: Record<string, unknown>): AiQuestionData {
@@ -29,11 +49,12 @@ export function confirmationInput(
   request: AiInteractionRequest,
   decision: AiDecision,
 ): AiConfirmationInput {
-  return { ...request, decision };
+  // 只带后端消费的字段：requestId/hitlAttempt 是本地对账身份，不上线。
+  return { jobId: request.jobId, callId: request.callId, nonce: request.nonce, decision };
 }
 
 export function answerInput(request: AiInteractionRequest, text: string): AiAnswerInput {
-  return { ...request, text };
+  return { jobId: request.jobId, callId: request.callId, nonce: request.nonce, text };
 }
 
 export type AiInteractionKind = "confirm" | "question";
