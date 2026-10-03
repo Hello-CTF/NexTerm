@@ -25,7 +25,6 @@ import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
 import { answerInput, confirmationInput } from "./aiWire";
-import { steerJob } from "./steerApi";
 import {
   historyToItems,
   pendingInteraction,
@@ -385,7 +384,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setInput("");
     const itemId = stream.appendSteer(target.generation, message);
     try {
-      await steerJob(jobId, text);
+      await aiApi.steer(jobId, text);
     } catch (e) {
       stream.resolveSteer(target.generation, itemId, "dropped");
       setInput((prev) => (prev ? `${message}\n${prev}` : message));
