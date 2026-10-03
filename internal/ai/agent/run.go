@@ -1,0 +1,628 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+)
+
+type einoRuntime struct {
+	runner        *adk.Runner
+	input         []*schema.Message
+	resume        *adk.ResumeParams
+	contextWindow uint64
+	mu            sync.Mutex
+	turns         int
+	total         usage.Usage
+	answer        string
+}
+
+func (r *einoRuntime) currentTurn() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.turns
+}
+
+func (r *einoRuntime) addTurn() {
+	r.mu.Lock()
+	r.turns++
+	r.mu.Unlock()
+}
+
+func (r *einoRuntime) setAnswer(answer string) {
+	r.mu.Lock()
+	r.answer = answer
+	r.mu.Unlock()
+}
+
+func (r *einoRuntime) addUsage(value usage.Usage) {
+	r.mu.Lock()
+	r.total.Accumulate(value)
+	r.mu.Unlock()
+}
+
+func (r *einoRuntime) summary() (string, int, usage.Usage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.answer, r.turns, r.total
+}
+
+func (r *einoRuntime) failure(err error) (string, int, usage.Usage, error) {
+	_, turns, total := r.summary()
+	return "", turns, total, err
+}
+
+type memoryCheckpoints struct {
+	mu     sync.RWMutex
+	values map[string][]byte
+}
+
+func NewMemoryCheckpoints() *memoryCheckpoints {
+	return &memoryCheckpoints{values: make(map[string][]byte)}
+}
+
+func (s *memoryCheckpoints) Get(_ context.Context, id string) ([]byte, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.values[id]
+	return append([]byte(nil), value...), ok, nil
+}
+
+func (s *memoryCheckpoints) Set(_ context.Context, id string, value []byte) error {
+	s.mu.Lock()
+	s.values[id] = append([]byte(nil), value...)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *memoryCheckpoints) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	delete(s.values, id)
+	s.mu.Unlock()
+	return nil
+}
+
+func (r *Runner) runJob(current *job) {
+	var answer string
+	var turns int
+	var total usage.Usage
+	var runErr error
+	paused := false
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			runErr = fmt.Errorf("AI 任务内部错误: %v", recovered)
+			paused = false
+		}
+		resumePaused := false
+		current.pendingMu.Lock()
+		if paused && current.ctx.Err() == nil && current.eino.resume != nil {
+			resumePaused = true
+			current.running = true
+		} else {
+			current.running = false
+		}
+		current.pendingMu.Unlock()
+		if resumePaused {
+			go r.runJob(current)
+			return
+		}
+		if paused && current.ctx.Err() != nil {
+			paused = false
+			runErr = current.ctx.Err()
+		}
+		if paused {
+			return
+		}
+		r.complete(current, answer, turns, total, runErr)
+	}()
+	answer, turns, total, runErr = r.run(current)
+	if errors.Is(runErr, errRunPaused) {
+		paused = true
+		runErr = nil
+	}
+}
+
+func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
+	if current.eino == nil {
+		if err := r.initializeEino(current); err != nil {
+			return "", 0, usage.Usage{}, err
+		}
+	}
+	runtime := current.eino
+	cancelOption, cancelFn := adk.WithCancel()
+	current.pendingMu.Lock()
+	current.cancelFn = cancelFn
+	current.pendingMu.Unlock()
+	options := []adk.AgentRunOption{cancelOption, adk.WithCheckPointID(current.id)}
+	var iterator *adk.AsyncIterator[*adk.AgentEvent]
+	var err error
+	if runtime.resume != nil {
+		iterator, err = runtime.runner.ResumeWithParams(current.ctx, current.id, runtime.resume, options...)
+		runtime.resume = nil
+	} else {
+		iterator = runtime.runner.Run(current.ctx, runtime.input, options...)
+	}
+	if err != nil {
+		return runtime.failure(err)
+	}
+	answer, turns, total, err := r.consume(current, iterator)
+	if err == nil {
+		if err := r.persistAssistant(current.ctx, current.args.ConversationID, answer, total); err != nil {
+			return "", turns, total, err
+		}
+	}
+	return answer, turns, total, err
+}
+
+func (r *Runner) initializeEino(current *job) error {
+	rows, err := r.store.MsgList(current.ctx, current.args.ConversationID)
+	if err != nil {
+		return err
+	}
+	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": current.args.Message, "imageCount": len(current.args.Images)}, nil, nil); err != nil {
+		return err
+	}
+	if r.config.Model == nil || r.config.Tools == nil {
+		return errors.New("Eino ChatModel 或工具注册表未配置")
+	}
+	permission, err := r.config.Permission(current.ctx)
+	if err != nil {
+		return err
+	}
+	permission = permission.Normalized()
+	chatModel, contextWindow, err := r.config.Model(current.ctx)
+	if err != nil {
+		return err
+	}
+	if contextWindow == 0 {
+		contextWindow = 32768
+	}
+	messages := historyMessages(rows)
+	if r.config.Context != nil {
+		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
+		if bundle.Volatile != "" {
+			messages = append(messages, schema.UserMessage("[环境上下文]\n"+bundle.Volatile))
+		}
+	}
+	messages = append(messages, userMessage(current.args))
+	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode}
+	einoTools, err := execution.Tools()
+	if err != nil {
+		return err
+	}
+	runtime := &einoRuntime{input: messages, contextWindow: contextWindow}
+	instruction := systemPrompt()
+	returnDirectly := map[string]bool{}
+	if current.args.PlanMode {
+		instruction = planSystemPrompt()
+		returnDirectly["exit_plan_mode"] = true
+	}
+	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
+		Name: "nexterm-ai", Description: "NexTerm 运维助手", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
+		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
+			if err := current.emit(current.ctx, statusEvent("thinking", runtime.currentTurn())); err != nil {
+				return err
+			}
+			messages, compacted, err := fitMessageBudget(state.Messages, runtime.contextWindow)
+			if compacted {
+				if err := current.emit(current.ctx, statusEvent("compacting", runtime.currentTurn())); err != nil {
+					return err
+				}
+			}
+			state.Messages = messages
+			return err
+		}}},
+	})
+	if err != nil {
+		return err
+	}
+	runtime.runner = adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: chatAgent, EnableStreaming: true, CheckPointStore: r.checkpoints})
+	current.eino = runtime
+	return nil
+}
+
+func userMessage(args ChatArgs) *schema.Message {
+	if len(args.Images) == 0 {
+		return schema.UserMessage(args.Message)
+	}
+	parts := []schema.MessageInputPart{{Type: schema.ChatMessagePartTypeText, Text: args.Message}}
+	for _, image := range args.Images {
+		mime, encoded := imageParts(image)
+		parts = append(parts, schema.MessageInputPart{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{Base64Data: &encoded, MIMEType: mime}}})
+	}
+	return &schema.Message{Role: schema.User, UserInputMultiContent: parts}
+}
+
+func imageParts(image string) (string, string) {
+	if index := strings.Index(image, ";base64,"); index >= 0 {
+		mime := strings.TrimPrefix(image[:index], "data:")
+		return mime, image[index+8:]
+	}
+	return "image/png", image
+}
+
+func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEvent]) (string, int, usage.Usage, error) {
+	runtime := current.eino
+	for {
+		event, ok := iterator.Next()
+		if !ok {
+			answer, turns, total := runtime.summary()
+			return answer, turns, total, nil
+		}
+		if event.Err != nil {
+			return runtime.failure(event.Err)
+		}
+		if event.Action != nil && event.Action.Interrupted != nil {
+			if err := r.handleInterrupt(current, event.Action.Interrupted.InterruptContexts); err != nil {
+				return runtime.failure(err)
+			}
+			return runtime.failure(errRunPaused)
+		}
+		if event.Output == nil || event.Output.MessageOutput == nil {
+			continue
+		}
+		variant := event.Output.MessageOutput
+		message, err := r.consumeMessageVariant(current, variant)
+		if err != nil {
+			return runtime.failure(err)
+		}
+		if message == nil {
+			continue
+		}
+		switch variant.Role {
+		case schema.Assistant:
+			runtime.addTurn()
+			runtime.setAnswer(message.Content)
+			if !variant.IsStreaming {
+				if err := emitAssistantText(current, message); err != nil {
+					return runtime.failure(err)
+				}
+			}
+			if err := r.emitUsage(current, message); err != nil {
+				return runtime.failure(err)
+			}
+			if err := r.emitToolCalls(current, message.ToolCalls); err != nil {
+				return runtime.failure(err)
+			}
+		case schema.Tool:
+			if err := r.emitToolResult(current, message); err != nil {
+				return runtime.failure(err)
+			}
+		}
+	}
+}
+
+func (r *Runner) consumeMessageVariant(current *job, variant *adk.MessageVariant) (*schema.Message, error) {
+	if !variant.IsStreaming {
+		return variant.Message, nil
+	}
+	defer variant.MessageStream.Close()
+	var frames []*schema.Message
+	progress := make(map[string]int)
+	lastProgress := time.Time{}
+	for {
+		frame, err := variant.MessageStream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		frames = append(frames, frame)
+		if err := emitAssistantText(current, frame); err != nil {
+			return nil, err
+		}
+		for _, call := range frame.ToolCalls {
+			key := call.ID
+			if key == "" && call.Index != nil {
+				key = fmt.Sprintf("index-%d", *call.Index)
+			}
+			progress[key] += len(call.Function.Arguments)
+			now := time.Now()
+			if !lastProgress.IsZero() && now.Sub(lastProgress) < 120*time.Millisecond {
+				continue
+			}
+			lastProgress = now
+			if err := current.emit(current.ctx, Event{Type: "toolArgs", Tool: call.Function.Name, Chars: progress[key]}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(frames) == 0 {
+		return nil, nil
+	}
+	return schema.ConcatMessages(frames)
+}
+
+func emitAssistantText(current *job, message *schema.Message) error {
+	if message.ReasoningContent != "" {
+		if err := current.emit(current.ctx, Event{Type: "reasoning", Text: message.ReasoningContent}); err != nil {
+			return err
+		}
+	}
+	if message.Content != "" {
+		if err := current.emit(current.ctx, Event{Type: "delta", Text: message.Content}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) emitUsage(current *job, message *schema.Message) error {
+	runtime := current.eino
+	if message.ResponseMeta == nil || message.ResponseMeta.Usage == nil {
+		return nil
+	}
+	value := message.ResponseMeta.Usage
+	window := runtime.contextWindow
+	if configured, ok := message.Extra["context_window"].(uint64); ok && configured > 0 {
+		window = configured
+	} else if configured, ok := message.Extra["context_window"].(float64); ok && configured > 0 {
+		window = uint64(configured)
+	}
+	currentUsage := usage.Usage{PromptTokens: uint64(value.PromptTokens), CompletionTokens: uint64(value.CompletionTokens), CachedTokens: uint64(value.PromptTokenDetails.CachedTokens), ContextWindow: window}
+	runtime.addUsage(currentUsage)
+	modelName, _ := message.Extra["model"].(string)
+	runID, _ := message.Extra["run_id"].(string)
+	callID, _ := message.Extra["call_id"].(string)
+	return current.emit(current.ctx, Event{Type: "usage", Model: modelName, RunID: runID, CallID: callID, PromptTokens: currentUsage.PromptTokens, CompletionTokens: currentUsage.CompletionTokens, CachedTokens: currentUsage.CachedTokens, ContextWindow: window})
+}
+
+func (r *Runner) emitToolCalls(current *job, calls []schema.ToolCall) error {
+	for _, call := range calls {
+		toolCall := tools.Call{ID: call.ID, Name: call.Function.Name, Args: json.RawMessage(call.Function.Arguments)}
+		if toolCall.ID == "" {
+			return errors.New("模型返回了空 tool call ID")
+		}
+		if err := current.emit(current.ctx, Event{Type: "toolCall", ID: toolCall.ID, Name: toolCall.Name, Args: toolCall.Args, Display: tools.DisplayCall(toolCall)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) emitToolResult(current *job, message *schema.Message) error {
+	var result tools.Output
+	if err := json.Unmarshal([]byte(message.Content), &result); err != nil {
+		return fmt.Errorf("解析领域工具 %s 结果失败: %w", message.ToolName, err)
+	}
+	if result.Change != nil {
+		if err := current.emit(current.ctx, Event{Type: "fileChange", ID: result.Change.ID, Path: result.Change.Path, Before: result.Change.Before, After: result.Change.After}); err != nil {
+			return err
+		}
+	}
+	text, cut := prefixBytes(result.Text, 64<<10)
+	result.Truncated = result.Truncated || cut
+	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode}); err != nil {
+		return err
+	}
+	if result.Todos != nil {
+		if err := current.emit(current.ctx, Event{Type: "todos", Items: result.Todos}); err != nil {
+			return err
+		}
+	}
+	if result.Plan != "" && current.args.PlanMode {
+		if err := current.emit(current.ctx, Event{Type: "planSubmitted", Plan: result.Plan}); err != nil {
+			return err
+		}
+		current.eino.setAnswer(result.Plan)
+	}
+	return nil
+}
+
+func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) error {
+	for i := len(contexts) - 1; i >= 0; i-- {
+		context := contexts[i]
+		interaction, ok := interactionValue(context.Info)
+		if !ok {
+			continue
+		}
+		current.setPending(&pendingRequest{callID: interaction.CallID, nonce: context.ID, kind: interaction.Kind})
+		args := withNonce(json.RawMessage(interaction.Args), context.ID)
+		switch interaction.Kind {
+		case "confirm":
+			if err := current.emit(current.ctx, Event{Type: "confirmRequired", ID: interaction.CallID, Tool: interaction.Tool, Args: args, Nonce: context.ID, Risk: interaction.Risk, Rendered: interaction.Rendered, Reason: interaction.Reason, Preview: interaction.Preview}); err != nil {
+				return err
+			}
+		case "question":
+			if err := current.emit(current.ctx, Event{Type: "questionRequired", ID: interaction.CallID, Nonce: context.ID, Question: interaction.Question}); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("未知 HITL 类型 %s", interaction.Kind)
+		}
+		return nil
+	}
+	return errors.New("收到无法识别的 Eino interrupt")
+}
+
+func interactionValue(value any) (tools.Interaction, bool) {
+	switch typed := value.(type) {
+	case tools.Interaction:
+		return typed, true
+	case *tools.Interaction:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return tools.Interaction{}, false
+}
+
+func withNonce(raw json.RawMessage, nonce string) json.RawMessage {
+	var fields map[string]any
+	_ = json.Unmarshal(raw, &fields)
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["confirmationNonce"] = nonce
+	encoded, _ := json.Marshal(fields)
+	return encoded
+}
+
+func (r *Runner) persistAssistant(ctx context.Context, conversationID, answer string, total usage.Usage) error {
+	tokensIn := int64(min64(total.PromptTokens, uint64(^uint64(0)>>1)))
+	tokensOut := int64(min64(total.CompletionTokens, uint64(^uint64(0)>>1)))
+	return r.store.MsgInsert(ctx, conversationID, "assistant", map[string]any{"role": "assistant", "content": answer}, &tokensIn, &tokensOut)
+}
+
+func historyMessages(rows []store.MessageRow) []*schema.Message {
+	messages := make([]*schema.Message, 0, len(rows))
+	for _, row := range rows {
+		var persisted struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil || persisted.Content == "" {
+			continue
+		}
+		role := persisted.Role
+		if role == "" {
+			role = row.Role
+		}
+		switch role {
+		case "user":
+			messages = append(messages, schema.UserMessage(persisted.Content))
+		case "assistant":
+			messages = append(messages, schema.AssistantMessage(persisted.Content, nil))
+		}
+	}
+	return messages
+}
+
+func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Message, bool, error) {
+	if window == 0 {
+		return messages, false, nil
+	}
+	limit := int(window * 3)
+	compacted := false
+	for estimatedMessages(messages) > limit {
+		changed := false
+		kept := 0
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role != schema.Tool {
+				continue
+			}
+			kept++
+			if kept > 4 && messages[i].Content != "[较早的工具输出已省略]" {
+				messages[i].Content = "[较早的工具输出已省略]"
+				compacted = true
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	for estimatedMessages(messages) > limit && len(messages) > 2 {
+		var dropped bool
+		messages, dropped = dropOldestMessageUnit(messages)
+		if !dropped {
+			break
+		}
+		compacted = true
+	}
+	if estimatedMessages(messages) > limit {
+		return nil, compacted, fmt.Errorf("当前输入与系统上下文超过模型预算（%d > %d 字节），请缩短输入或提高 contextWindow", estimatedMessages(messages), limit)
+	}
+	return messages, compacted, nil
+}
+
+func dropOldestMessageUnit(messages []*schema.Message) ([]*schema.Message, bool) {
+	start := 0
+	for start < len(messages) && messages[start].Role == schema.System {
+		start++
+	}
+	latestUser := -1
+	for index := len(messages) - 1; index >= start; index-- {
+		if messages[index].Role == schema.User {
+			latestUser = index
+			break
+		}
+	}
+	for index := start; index < len(messages); index++ {
+		if messages[index].Role == schema.User && index == latestUser {
+			continue
+		}
+		if messages[index].Role == schema.Assistant && len(messages[index].ToolCalls) > 0 {
+			end := index + 1
+			for end < len(messages) && messages[end].Role == schema.Tool {
+				end++
+			}
+			return append(messages[:index], messages[end:]...), true
+		}
+		if messages[index].Role == schema.Tool && index > start && messages[index-1].Role == schema.Assistant && len(messages[index-1].ToolCalls) > 0 {
+			start := index - 1
+			end := index + 1
+			for end < len(messages) && messages[end].Role == schema.Tool {
+				end++
+			}
+			return append(messages[:start], messages[end:]...), true
+		}
+		return append(messages[:index], messages[index+1:]...), true
+	}
+	return messages, false
+}
+
+func toolMessagesPaired(messages []*schema.Message) bool {
+	for i, message := range messages {
+		if message.Role == schema.Tool && (i == 0 || len(messages[i-1].ToolCalls) == 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func estimatedMessages(messages []*schema.Message) int {
+	total := 0
+	for _, message := range messages {
+		total += len(message.Content) + len(message.ReasoningContent)
+		for _, call := range message.ToolCalls {
+			total += len(call.Function.Arguments)
+		}
+		if len(message.UserInputMultiContent) != 0 {
+			encoded, _ := json.Marshal(message.UserInputMultiContent)
+			total += len(encoded)
+		}
+	}
+	return total
+}
+
+func summarize(text string) string {
+	if len(text) <= 400 {
+		return text
+	}
+	trimmed, _ := prefixBytes(text, 400)
+	return trimmed + "…"
+}
+
+func prefixBytes(text string, limit int) (string, bool) {
+	if len(text) <= limit {
+		return text, false
+	}
+	for limit > 0 && !utf8.ValidString(text[:limit]) {
+		limit--
+	}
+	return text[:limit], true
+}
+
+func min64(value, maximum uint64) uint64 {
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
