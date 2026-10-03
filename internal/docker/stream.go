@@ -113,7 +113,6 @@ type managedStream struct {
 	registry  *streamRegistry
 	reader    io.ReadCloser
 	exec      ExecSession
-	tty       bool
 	ctx       context.Context
 	cancel    context.CancelFunc
 	done      chan StreamExit
@@ -392,7 +391,6 @@ func (s *Service) AttachLogs(ctx context.Context, request LogsAttachRequest) (st
 	}
 	managed := newManagedStream(s.streams, request.SessionID, streamLogs, request.Sink, streamCtx, streamCancel)
 	managed.reader = demultiplexReadCloser(logStream.Reader, logStream.TTY)
-	managed.tty = logStream.TTY
 	if err := s.streams.add(managed, token); err != nil {
 		_ = managed.close(err)
 		return "", err
@@ -447,7 +445,6 @@ func (s *Service) AttachExec(ctx context.Context, request ExecAttachRequest) (st
 	managed := newManagedStream(s.streams, request.SessionID, streamExec, request.Sink, streamCtx, streamCancel)
 	managed.reader = session
 	managed.exec = session
-	managed.tty = session.IsTTY()
 	managed.replay.limit = s.config.ExecReplayBytes
 	if err := s.streams.add(managed, token); err != nil {
 		_ = managed.close(err)

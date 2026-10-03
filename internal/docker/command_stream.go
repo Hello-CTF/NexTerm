@@ -9,14 +9,10 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-type CommandOutputEvent = base.OutputEvent
-
-type OrderedCommandOutput = base.OrderedOutput
-
 func combinedCommandOutput(stream CommandStream) io.ReadCloser {
 	ctx, cancel := context.WithCancel(context.Background())
-	var ordered OrderedCommandOutput
-	if output, ok := stream.(OrderedCommandOutput); ok {
+	var ordered base.OrderedOutput
+	if output, ok := stream.(base.OrderedOutput); ok {
 		ordered = output
 	} else {
 		provider, ok := stream.(interface{ Stderr() io.Reader })

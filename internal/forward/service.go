@@ -14,6 +14,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/session"
 )
 
 type Service struct {
@@ -153,7 +154,7 @@ func (s *Service) validateSession(ctx context.Context, sessionID string) error {
 	}
 	dialer, err := s.provider.CurrentDialer(ctx, sessionID)
 	if err != nil {
-		return providerIPCError(err)
+		return session.IPCError(err)
 	}
 	if dialer == nil {
 		return ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH direct-tcpip 的会话")

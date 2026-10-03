@@ -192,13 +192,11 @@ func (s *Service) RedisSetTTL(ctx context.Context, connID, key string, seconds i
 	if err != nil {
 		return err
 	}
-	command := "EXPIRE"
+	args := []any{"EXPIRE", key, seconds}
 	if seconds < 0 {
-		command = "PERSIST"
-		_, err = connection.client.Do(ctx, command, key).Int64()
-	} else {
-		_, err = connection.client.Do(ctx, command, key, seconds).Int64()
+		args = []any{"PERSIST", key}
 	}
+	_, err = connection.client.Do(ctx, args...).Int64()
 	if err != nil {
 		return internalError("Redis 设置 TTL 失败", err)
 	}

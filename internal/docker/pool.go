@@ -117,12 +117,8 @@ func (p *GenerationalProvider) CloseSession(sessionID string) error {
 func (p *GenerationalProvider) Close() error {
 	p.mu.Lock()
 	entries := make([]*poolEntry, 0, len(p.entries))
-	seen := make(map[*poolEntry]struct{})
 	for _, entry := range p.entries {
-		if _, ok := seen[entry]; !ok {
-			seen[entry] = struct{}{}
-			entries = append(entries, entry)
-		}
+		entries = append(entries, entry)
 	}
 	p.entries = make(map[poolKey]*poolEntry)
 	p.mu.Unlock()
