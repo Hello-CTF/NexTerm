@@ -66,6 +66,8 @@ jobs:
           pnpm typecheck
           pnpm lint
           pnpm test
+      - name: Build harness unit tests (Windows spawn resolution)
+        run: node --test scripts/lib/spawn-spec.test.mjs
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
       - name: Reproducible real frontend
