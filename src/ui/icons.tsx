@@ -42,16 +42,17 @@ function Svg({ size = 16, children, ...rest }: IconProps & { children: ReactNode
  * 资产来源与规格：
  *   `public/brand/nexterm-mark-128.png` ← 品牌图 1.375x 局部裁切（脸 + 耳机 + 终端）
  *   128px 是给 2x 屏上 52px 空态用的；图标栏 26px 也走它，缩放质量足够。
- *   应用图标（任务栏 / 安装包）由 1024 母版 `src-tauri/icons/source.png`
- *   经 `pnpm tauri icon` 生成，见 `src-tauri/icons/`。
+ *   应用图标（任务栏 / 安装包）的 1024 母版是 `public/brand/nexterm-icon-1024.png`，
+ *   导出的 `public/brand/icon.icns` / `public/brand/icon.ico` 供 DMG / NSIS 打包取用
+ *   （自 `src-tauri/icons/` 迁入；src-tauri 移除后打包不再依赖旧路径）。
  *
  * 背景是**纯透明**，不是早期的 `#0B0E14` 实底方砖 —— 实底会在 Dock / 任务栏上
  * 显出一个黑方块。品牌标刻意比应用图标裁得紧：全幅缩到 26px 只剩一团，
  * 深色侧栏（`--color-neutral-950`）上连轮廓都糊掉；同时仍保留透明边，
  * 否则裁成满幅又变成一个「方砖」。
  *
- * 换方案：把 `public/brand/` 换成新图、`src-tauri/icons/source.png` 换成 1024 母版，
- * 再跑一次 `pnpm tauri icon`。
+ * 换方案：把 `public/brand/nexterm-mark-*.png` 换成新裁切、`nexterm-icon-1024.png`
+ * 换成新 1024 母版，并从母版重新导出 icon.icns / icon.ico。
  */
 export function Logo({ size = 26 }: { size?: number }) {
   return (
