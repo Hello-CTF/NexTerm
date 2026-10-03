@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
@@ -150,10 +151,12 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 	j.finalOnce.Do(func() {
 		j.eventMu.Lock()
 		j.finished = true
-		ctx := j.deliveryCtx
-		if ctx == nil {
-			ctx = context.WithoutCancel(j.ctx)
+		parent := j.deliveryCtx
+		if parent == nil {
+			parent = context.WithoutCancel(j.ctx)
 		}
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
 		var event Event
 		if terminalErr != nil {
 			event = errorEvent(terminalErr, !errors.Is(terminalErr, context.Canceled))
@@ -161,7 +164,7 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 			event = doneEvent(answer, turns, total.PromptTokens, total.CompletionTokens)
 		}
 		sendErr := j.stream.Send(ctx, event)
-		if sendErr == nil && ctx.Err() == nil {
+		if sendErr == nil && parent.Err() == nil {
 			_ = CloseStreamGracefully(j.stream)
 		} else {
 			_ = j.stream.Close()

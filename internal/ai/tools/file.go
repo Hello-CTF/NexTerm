@@ -157,12 +157,12 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 }
 
 func (r *Registry) reconcileIndeterminateWrite(ctx context.Context, jobID string, scope Scope, call Call, change *preparedChange, writeErr error) Output {
-	files, err := r.fileSystem(ctx, scope)
-	if err != nil {
-		return Fail(err)
-	}
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	files, err := r.fileSystem(readCtx, scope)
+	if err != nil {
+		return Fail(fmt.Errorf("%w；解析文件服务以确认结果失败: %v", writeErr, err))
+	}
 	after, err := files.ReadFile(readCtx, change.path, 2<<20)
 	if err != nil {
 		return Fail(fmt.Errorf("%w；读取目标以确认结果失败: %v", writeErr, err))

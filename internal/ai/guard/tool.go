@@ -173,6 +173,38 @@ func decodeKeyActions(keys, buffered string, cursor int, enter bool) ([]string, 
 		current.reset()
 	}
 	for i := 0; i < len(runes); i++ {
+		if runes[i] == 27 && i+2 < len(runes) && runes[i+1] == '[' {
+			handled := true
+			switch runes[i+2] {
+			case 'A':
+				controls = append(controls, "up")
+			case 'B':
+				controls = append(controls, "down")
+			case 'C':
+				if current.cursor < len(current.value) {
+					current.cursor++
+				}
+			case 'D':
+				if current.cursor > 0 {
+					current.cursor--
+				}
+			case 'H':
+				current.cursor = 0
+			case 'F':
+				current.cursor = len(current.value)
+			default:
+				handled = false
+			}
+			if handled {
+				i += 2
+				continue
+			}
+		}
+		if runes[i] == 27 && i+3 < len(runes) && runes[i+1] == '[' && runes[i+2] == '3' && runes[i+3] == '~' {
+			current.deleteNext()
+			i += 3
+			continue
+		}
 		if runes[i] == '\t' {
 			controls = append(controls, "tab completion")
 			current.insert(runes[i])

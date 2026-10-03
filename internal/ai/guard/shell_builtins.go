@@ -30,6 +30,18 @@ func quoteShellToken(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
+func shortOptionValue(arg string, option byte) (string, bool) {
+	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
+		return "", false
+	}
+	for index := 1; index < len(arg); index++ {
+		if arg[index] == option {
+			return arg[index+1:], true
+		}
+	}
+	return "", false
+}
+
 func classifyStateChangingBuiltins(name string, args, rules []string, depth int) (Ruling, bool) {
 	switch name {
 	case "env":
@@ -63,7 +75,10 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 		return Allow(), true
 	case "sort":
 		for _, arg := range args {
-			if arg == "-o" || arg == "--output" || strings.HasPrefix(arg, "--output=") || strings.HasPrefix(arg, "-o") && len(arg) > 2 {
+			if arg == "-o" || arg == "--output" || strings.HasPrefix(arg, "--output=") {
+				return Confirm(KindWriteFS, "sort 输出到文件"), true
+			}
+			if value, ok := shortOptionValue(arg, 'o'); ok && value != "-" {
 				return Confirm(KindWriteFS, "sort 输出到文件"), true
 			}
 		}
@@ -80,7 +95,7 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 				return Confirm(KindWriteFS, "xxd 反向转换会写入输出文件"), true
 			}
 			switch arg {
-			case "-a", "-c", "-g", "-l", "-s":
+			case "-c", "-g", "-l", "-s":
 				skipValue = true
 				continue
 			}

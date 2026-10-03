@@ -15,14 +15,15 @@ import (
 )
 
 type Manager struct {
-	deps        Dependencies
-	checkpoints adk.CheckPointStore
-	mu          sync.Mutex
-	owners      map[string]*ownership
-	jobs        map[string]*runState
-	locks       map[string]*sync.Mutex
-	closed      bool
-	wg          sync.WaitGroup
+	deps           Dependencies
+	checkpoints    adk.CheckPointStore
+	mu             sync.Mutex
+	owners         map[string]*ownership
+	jobs           map[string]*runState
+	locks          map[string]*sync.Mutex
+	operationLocks map[string]*sync.Mutex
+	closed         bool
+	wg             sync.WaitGroup
 }
 
 func NewManager(deps Dependencies) *Manager {
@@ -43,7 +44,7 @@ func NewManager(deps Dependencies) *Manager {
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = agent.NewMemoryCheckpoints()
 	}
-	return &Manager{deps: deps, checkpoints: deps.Checkpoints, owners: make(map[string]*ownership), jobs: make(map[string]*runState), locks: make(map[string]*sync.Mutex)}
+	return &Manager{deps: deps, checkpoints: deps.Checkpoints, owners: make(map[string]*ownership), jobs: make(map[string]*runState), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
 }
 
 func (m *Manager) tabLock(tabID string) *sync.Mutex {
@@ -53,6 +54,17 @@ func (m *Manager) tabLock(tabID string) *sync.Mutex {
 	if lock == nil {
 		lock = &sync.Mutex{}
 		m.locks[tabID] = lock
+	}
+	return lock
+}
+
+func (m *Manager) operationLock(tabID string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lock := m.operationLocks[tabID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.operationLocks[tabID] = lock
 	}
 	return lock
 }
@@ -72,6 +84,9 @@ func (m *Manager) Enter(ctx context.Context, tabID string) (string, error) {
 }
 
 func (m *Manager) enterOwned(tabID string) (*ownership, error) {
+	operation := m.operationLock(tabID)
+	operation.Lock()
+	defer operation.Unlock()
 	lock := m.tabLock(tabID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -222,9 +237,6 @@ func (m *Manager) Cancel(jobID string) error {
 
 func (m *Manager) cancelState(state *runState, reason string) {
 	state.setReason(reason)
-	if state.forceCancel != nil {
-		state.forceCancel()
-	}
 	state.cancel()
 	state.pendingMu.Lock()
 	running := state.running
@@ -283,6 +295,9 @@ func (m *Manager) Exit(ctx context.Context, tabID, token, reason string) error {
 	if tabID == "" || token == "" {
 		return ErrStaleOwnership
 	}
+	operation := m.operationLock(tabID)
+	operation.Lock()
+	defer operation.Unlock()
 	lock := m.tabLock(tabID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -320,7 +335,10 @@ func (m *Manager) UserWrite(ctx context.Context, tabID string, data []byte) erro
 	if m.deps.WriteUser == nil {
 		return errors.New("用户终端写入未配置")
 	}
-	m.preemptOwnership(tabID, "用户夺回")
+	operation := m.operationLock(tabID)
+	operation.Lock()
+	defer operation.Unlock()
+	m.preemptOwnershipLocked(tabID, "用户夺回")
 	lock := m.tabLock(tabID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -332,6 +350,13 @@ func (m *Manager) Preempt(tabID string) {
 }
 
 func (m *Manager) preemptOwnership(tabID, reason string) {
+	operation := m.operationLock(tabID)
+	operation.Lock()
+	defer operation.Unlock()
+	m.preemptOwnershipLocked(tabID, reason)
+}
+
+func (m *Manager) preemptOwnershipLocked(tabID, reason string) {
 	m.mu.Lock()
 	owner := m.owners[tabID]
 	if owner != nil {
@@ -345,9 +370,6 @@ func (m *Manager) preemptOwnership(tabID, reason string) {
 		m.cancelState(state, reason)
 	}
 	owner.cancel()
-	lock := m.tabLock(tabID)
-	lock.Lock()
-	defer lock.Unlock()
 	_ = m.injectExit(context.Background(), tabID, reason)
 }
 

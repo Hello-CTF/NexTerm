@@ -145,9 +145,6 @@ func (r *Runner) Cancel(jobID string) error {
 		}
 		return ErrJobNotFound
 	}
-	if current.forceCancel != nil {
-		current.forceCancel()
-	}
 	current.cancel()
 	current.pendingMu.Lock()
 	running := current.running

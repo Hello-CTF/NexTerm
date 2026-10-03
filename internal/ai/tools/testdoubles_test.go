@@ -21,6 +21,7 @@ type fakeFS struct {
 	writeErr              error
 	writeErrAfterCommit   bool
 	writeCalls            int
+	writeHook             func()
 	existsErr             error
 	listCalls             []string
 	conditionalCreateHook func()
@@ -64,6 +65,11 @@ func (f *fakeFS) WriteFile(_ context.Context, name string, content []byte, backu
 		f.files[name+".nexterm-bak"] = append([]byte(nil), previous...)
 	}
 	f.files[name] = append([]byte(nil), content...)
+	if f.writeHook != nil {
+		hook := f.writeHook
+		f.writeHook = nil
+		hook()
+	}
 	if f.writeErrAfterCommit {
 		return f.writeErr
 	}
@@ -92,6 +98,11 @@ func (f *fakeFS) WriteFileVersion(_ context.Context, name string, content []byte
 		return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
 	}
 	f.files[name] = append([]byte(nil), content...)
+	if f.writeHook != nil {
+		hook := f.writeHook
+		f.writeHook = nil
+		hook()
+	}
 	if f.writeErrAfterCommit {
 		return f.writeErr
 	}

@@ -114,12 +114,14 @@ func (s *runState) finish(event agent.Event) {
 	s.finalOnce.Do(func() {
 		s.eventMu.Lock()
 		s.finished = true
-		ctx := s.deliveryCtx
-		if ctx == nil {
-			ctx = context.WithoutCancel(s.ctx)
+		parent := s.deliveryCtx
+		if parent == nil {
+			parent = context.WithoutCancel(s.ctx)
 		}
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
 		sendErr := s.stream.Send(ctx, event)
-		if sendErr == nil && ctx.Err() == nil {
+		if sendErr == nil && parent.Err() == nil {
 			_ = agent.CloseStreamGracefully(s.stream)
 		} else {
 			_ = s.stream.Close()

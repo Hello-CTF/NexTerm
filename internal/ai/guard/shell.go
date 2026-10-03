@@ -385,9 +385,26 @@ func stripCommandFlags(tokens []string) []string {
 		tokens = tokens[1:]
 		if valueFlags[arg] && len(tokens) > 0 {
 			tokens = tokens[1:]
+			continue
+		}
+		if value, ok := privilegeOptionValue(arg); ok && value == "" && len(tokens) > 0 {
+			tokens = tokens[1:]
 		}
 	}
 	return tokens
+}
+
+func privilegeOptionValue(arg string) (string, bool) {
+	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
+		return "", false
+	}
+	for index := 1; index < len(arg); index++ {
+		switch arg[index] {
+		case 'u', 'g', 'h', 'p', 'C', 'T', 't', 'U', 'G', 'R':
+			return arg[index+1:], true
+		}
+	}
+	return "", false
 }
 
 func isAssignment(value string) bool {
@@ -545,6 +562,19 @@ func classifyDatabaseClient(name string, args, rules []string) Ruling {
 			payload = arg[2:]
 		case name == "psql" && strings.HasPrefix(arg, "-c") && len(arg) > 2:
 			payload = arg[2:]
+		}
+		if payload == "" {
+			flag := byte('e')
+			if name == "psql" {
+				flag = 'c'
+			}
+			if value, ok := shortOptionValue(arg, flag); ok {
+				if value != "" {
+					payload = value
+				} else if i+1 < len(args) {
+					payload = args[i+1]
+				}
+			}
 		}
 		if payload != "" {
 			result = Worst(result, ClassifySQL(payload, rules))
@@ -740,11 +770,33 @@ func dockerExecCommandIndex(args []string) int {
 
 func dockerBulkDeletion(args []string) bool {
 	for _, arg := range args {
-		compact := strings.NewReplacer(" ", "", "\t", "").Replace(strings.ToLower(arg))
-		if !strings.Contains(compact, "$(dockerps") && !strings.Contains(compact, "$(podmanps") {
+		if !strings.HasPrefix(arg, "$(") || !strings.HasSuffix(arg, ")") {
 			continue
 		}
-		if strings.Contains(compact, "-aq") || strings.Contains(compact, "-a-q") {
+		fields := strings.Fields(arg[2 : len(arg)-1])
+		if len(fields) < 2 || commandName(fields[0]) != "docker" && commandName(fields[0]) != "podman" {
+			continue
+		}
+		sub := strings.ToLower(fields[1])
+		if sub != "ps" && sub != "images" {
+			continue
+		}
+		all, quiet := false, false
+		for _, option := range fields[2:] {
+			if option == "--all" {
+				all = true
+			}
+			if option == "--quiet" {
+				quiet = true
+			}
+			if _, ok := shortOptionValue(option, 'a'); ok {
+				all = true
+			}
+			if _, ok := shortOptionValue(option, 'q'); ok {
+				quiet = true
+			}
+		}
+		if quiet && (sub == "images" || all) {
 			return true
 		}
 	}
@@ -846,21 +898,34 @@ func classifyDownload(name string, args, ops []string) Ruling {
 				return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 			}
 		}
-		if arg != "-o-" && arg != "-O-" && !strings.HasPrefix(arg, "--") && len(arg) > 2 {
-			for _, prefix := range []string{"-o", "-O", "-d", "-F", "-T"} {
-				if strings.HasPrefix(arg, prefix) {
-					return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
-				}
-			}
-			if strings.HasPrefix(arg, "-X") && !strings.EqualFold(arg[2:], "GET") {
-				return Confirm(KindWriteFS, "非 GET 网络请求")
-			}
+		write, nonGet := curlShortOptionRisk(arg)
+		if write {
+			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+		}
+		if nonGet {
+			return Confirm(KindWriteFS, "非 GET 网络请求")
 		}
 	}
 	if name == "wget" && !containsAny(args, "-qO-", "-O-", "--spider", "--server-response", "-S") {
 		return Confirm(KindWriteFS, "wget 默认会保存文件")
 	}
 	return Allow()
+}
+
+func curlShortOptionRisk(arg string) (bool, bool) {
+	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
+		return false, false
+	}
+	for index := 1; index < len(arg); index++ {
+		value := arg[index+1:]
+		switch arg[index] {
+		case 'o', 'O', 'd', 'F', 'T', 'D':
+			return value != "-", false
+		case 'X':
+			return false, !strings.EqualFold(value, "GET")
+		}
+	}
+	return false, false
 }
 
 func classifyRedis(args []string) Ruling {
@@ -870,7 +935,7 @@ func classifyRedis(args []string) Ruling {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
-			case "-h", "-p", "-a", "-s", "--user", "--pass", "-n", "-u", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--count", "--cursor", "--type":
+			case "-h", "-p", "-a", "-s", "-d", "-D", "--user", "--pass", "-n", "-u", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--count", "--cursor", "--type":
 				i++
 			case "--scan":
 				scan = true
