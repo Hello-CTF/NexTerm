@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Official same-form Rust release references for the strict per-artifact size gate. Every entry was verified by downloading the public GitHub release asset and matching the GitHub API SHA-256 digest (M26 survey; independently re-downloaded and re-hashed for this file). Entries here take priority over the same-host pinned baseline.json and the documented historical anchors.",
+  "purpose": "Official same-form Rust release references for informational size comparison only (user decision 2026-10-03: historical Rust sizes are reference, never a release gate). Every entry was verified by downloading the public GitHub release asset and matching the GitHub API SHA-256 digest (M26 survey; independently re-downloaded and re-hashed for this file). Entries here take priority over the same-host pinned baseline.json and the documented historical anchors.",
   "release": {
     "tag": "v0.2.1",
     "commit": "59889b28ab905809d148a642cadcaf46e12e7b08",
@@ -43,7 +43,7 @@
     }
   },
   "genuinely_unavailable": {
-    "note": "No official Rust release (v0.1.0-v0.2.1) ever produced these same-form artifacts; per the release contract they stay evidence-gap and must never be reported as passed.",
+    "note": "No official Rust release (v0.1.0-v0.2.1) ever produced these same-form artifacts; they are reported as unavailable and never fabricated, and they neither pass nor fail a release (user decision 2026-10-03).",
     "ids": [
       "desktop-nsis-windows-arm64",
       "desktop-dmg-darwin-amd64",
