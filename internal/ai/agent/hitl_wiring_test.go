@@ -390,3 +390,102 @@ func TestHITLWiringConfirmBeforeParkedResumesExactlyOnce(t *testing.T) {
 		t.Fatal("post-terminal confirmation accepted")
 	}
 }
+
+// TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce forces the
+// interleaving from the r1 review: the consume loop is paused inside the
+// park transition (scheduling point, pendingMu held) while a Confirm is in
+// flight. The atomic transition must exclude the acceptance until running=false
+// is set, so the resumed stream is still drained by exactly one consume loop.
+// On the pre-fix two-section shape the Confirm completes inside the window
+// and the resume is stranded; the blocked-acceptance assertion catches it.
+func TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce(t *testing.T) {
+	var actions atomic.Int64
+	parkEntered := make(chan struct{})
+	releasePark := make(chan struct{})
+	var parkOnce sync.Once
+	parkOrHandoffTestHook = func() {
+		parkOnce.Do(func() { close(parkEntered) })
+		<-releasePark
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(releasePark)
+		}
+		parkOrHandoffTestHook = nil
+	}()
+	runner, stream, response := confirmRunner(t, dockerConfirmChat(), tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { actions.Add(1); return nil }})
+	confirmation := waitEvent(t, stream, "confirmRequired")
+	<-parkEntered
+
+	confirmReturned := make(chan error, 1)
+	go func() {
+		confirmReturned <- runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
+	}()
+	select {
+	case err := <-confirmReturned:
+		t.Fatalf("confirm completed inside the park transition; the handoff is not atomic: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releasePark)
+	released = true
+	select {
+	case err := <-confirmReturned:
+		if err != nil {
+			t.Fatalf("confirm after the park transition: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("confirm did not return after the park transition")
+	}
+	events := waitClosed(t, stream)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
+	}
+	if actions.Load() != 1 {
+		t.Fatalf("actions = %d", actions.Load())
+	}
+	replay, err := runner.HITLEvents(response.JobID, 0)
+	if err != nil || len(replay) != 3 || replay[0].Kind != hitl.EventInterrupted || replay[1].Kind != hitl.EventResumed || replay[2].Kind != hitl.EventTerminal || replay[2].Reason != hitl.TerminalCompleted {
+		t.Fatalf("replay = %+v err=%v", replay, err)
+	}
+}
+
+// TestHITLWiringCloseContextCancelsResumedExecution pins the shutdown path:
+// a job confirmed and resumed, then blocked inside the model, must still be
+// canceled through the manager — the resumed execution runs on the manager's
+// run context, so CloseContext must return bounded with a single terminal
+// event instead of waiting for the provider forever.
+func TestHITLWiringCloseContextCancelsResumedExecution(t *testing.T) {
+	blocked := make(chan struct{})
+	var blockOnce sync.Once
+	var calls atomic.Int64
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("call", "docker_control", `{"container_id":"web","action":"start"}`))}), nil
+		}
+		blockOnce.Do(func() { close(blocked) })
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	runner, _ := testRunner(t, chat, tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}, 0)
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	confirmation := waitEvent(t, stream, "confirmRequired")
+	if err := runner.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	<-blocked
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := runner.CloseContext(ctx); err != nil {
+		t.Fatalf("CloseContext must return once the resumed execution is canceled: %v", err)
+	}
+	events := waitClosed(t, stream)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
+	}
+	replay, err := runner.HITLEvents(response.JobID, 0)
+	if err != nil || len(replay) != 3 || replay[0].Kind != hitl.EventInterrupted || replay[1].Kind != hitl.EventResumed || replay[2].Kind != hitl.EventTerminal || replay[2].Reason != hitl.TerminalCanceled {
+		t.Fatalf("replay = %+v err=%v", replay, err)
+	}
+}

@@ -139,6 +139,11 @@ func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.A
 	answer, turns, total, runErr = r.consume(current, iterator)
 }
 
+// parkOrHandoffTestHook is a test-only scheduling point inside the park
+// transition, invoked with pendingMu held after the iterator fetch. It must
+// not call back into the runner. Nil in production.
+var parkOrHandoffTestHook func()
+
 // parkOrHandoff moves a consume loop that hit an interrupt to the parked
 // state. The iterator fetch and the running=false transition happen in one
 // pendingMu critical section: a resume confirmed while the loop was still
@@ -153,8 +158,12 @@ func (r *Runner) parkOrHandoff(current *job) {
 		r.complete(current, "", 0, usage.Usage{}, current.ctx.Err())
 		return
 	}
-	if iterator := current.resumeIterator; iterator != nil {
-		current.resumeIterator = nil
+	iterator := current.resumeIterator
+	current.resumeIterator = nil
+	if parkOrHandoffTestHook != nil {
+		parkOrHandoffTestHook()
+	}
+	if iterator != nil {
 		current.pendingMu.Unlock()
 		go r.consumeResumed(current, iterator)
 		return

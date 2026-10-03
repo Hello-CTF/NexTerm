@@ -396,6 +396,12 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		if cancelFn != nil && running {
 			_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 		}
+		// After a HITL resume the active execution runs on the manager's run
+		// context with a manager-held cancel function, so neither cancellation
+		// above reaches it; cancel every run through the manager before
+		// waiting, mirroring Runner.Cancel. Close is best-effort: a run that
+		// already finished or fails cleanup must not block the others.
+		_, _ = r.hitl.Cancel(current.id)
 		if !running {
 			r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 		}
