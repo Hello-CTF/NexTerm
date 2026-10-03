@@ -16,7 +16,7 @@
 | LazyCat 构建链（Go 共享入口） | ✅ 全链通过 | `bash lazycat/image/build-server.sh`：前端构建（tree sha256 `4852a371…`）→ `lazycat/content/web` + `lazycat-injects` 就位 → `node scripts/build.mjs server --release --os=linux --arch=amd64` → 静态 ELF x86-64、CGO_ENABLED=0，4/4 自检通过。无 cargo-container、无 qemu、无 pick-target.sh |
 | 服务端二进制（linux/amd64） | ✅ 本机交叉编译通过 | 42,115,234 B，sha256 `353b9a6c…`；`file` 实测静态 ELF x86-64，`go version -m` 含 `CGO_ENABLED=0`（报告 `target/go-build/nexterm-server-linux-amd64.artifact.json`） |
 | 健康检查 | ✅ 合成数据实测 | 完整版 `GET /healthz` → `commands:140, syncOnly:false, version:0.2.1`，vault/retention 状态在位；`--sync-only` → `commands:3, syncOnly:true, webRoot:null` |
-| 完整版 vs sync-only 路由差异 | ✅ 合成数据实测 | sync-only 下 `POST /rpc` → 404、`GET /` → 404、`POST /sync/rpc` 无令牌 → 403「同步令牌无效或缺失」；完整版三者行为相反 |
+| 完整版 vs sync-only 路由差异 | ✅ 合成数据实测 | sync-only 下 `POST /rpc` → 404、`GET /` → 404；完整版额外提供 `/rpc` 与 `/`（均 200）。未认证 `POST /sync/rpc` 在**两种模式下都是 401**（`error.code=forbidden`「同步令牌无效或缺失」）——sync-only 放行的不是这条路径的鉴权，而是只挂同步端点 |
 | RPC | ✅ 合成数据实测 | `POST /rpc {"cmd":"app_info"}` → `{"ok":true,"data":{"name":"NexTerm",…}}`；未知命令 → `not_found` 错误信封 |
 | 静态站点接线 | ✅ 合成数据实测 | 完整版 `GET /` 返回 `index.html`（注入 `window.__NEXTERM_TRANSPORT__="web"` 标记）；SPA marker/缓存/HEAD/路径穿越拒绝由 `internal/server/static_test.go` 覆盖 |
 | 令牌/bootstrap 行为 | ✅ 实测 | `nexterm-server token --data-dir …` 与 `rotate-token` 均返回真实令牌（令牌存储与静态接线已随 M25 组合落地，不再是「尚未接入」） |
