@@ -69,6 +69,12 @@ type Server struct {
 	sockets        socketTracker
 	closeOnce      sync.Once
 	closeErr       error
+
+	// readGate optionally parks a pumpSocket read loop before its first read.
+	// It is a test seam: production leaves it nil, tests use it to reproduce
+	// the teardown interleaving where the read loop has not touched the
+	// connection yet.
+	readGate func()
 }
 
 type Health struct {

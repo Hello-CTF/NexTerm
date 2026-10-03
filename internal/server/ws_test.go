@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -259,6 +260,67 @@ func TestWebSocketEventsEnvelopeAndUnsubscribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return server.Events().SubscriberCount() == 0 })
+}
+
+func TestPumpSocketTeardownDoesNotWaitForPeerCloseFrame(t *testing.T) {
+	// Regression for the production-gate CI failure: pumpSocket's teardown
+	// must not perform a blocking close handshake. When the read loop has not
+	// touched the connection yet (parked on readGate here, a lost startup
+	// race in CI), a graceful connection.Close blocks on the wire — up to the
+	// library's 5s close-handshake timeout — waiting for a peer close frame,
+	// stalling socketTracker.closeAndWait past the Serve shutdown budget
+	// (TestServeBootstrapRealHTTPAndGracefulShutdown then fails with
+	// "graceful shutdown = context deadline exceeded").
+	server, err := New(testConfig(t, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := make(chan struct{})
+	gate := make(chan struct{})
+	var gateOnce sync.Once
+	openGate := func() { gateOnce.Do(func() { close(gate) }) }
+	server.readGate = func() {
+		close(parked)
+		<-gate
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{})
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		server.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+			<-ctx.Done()
+			return 0, nil, ctx.Err()
+		})
+		close(returned)
+	}))
+	defer httpServer.Close()
+	defer cancel()
+	defer openGate()
+	connection, _, err := websocket.Dial(context.Background(), strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/channel/parked", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	select {
+	case <-parked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("read loop did not park")
+	}
+
+	cancel()
+	// Let the teardown path reach the connection close while the read loop is
+	// provably parked: the read mutex is untouched and the connection open.
+	time.Sleep(100 * time.Millisecond)
+	openGate()
+
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pumpSocket teardown blocked on the peer's close frame")
+	}
 }
 
 func TestCloseContextBoundsBlockedChannelBinder(t *testing.T) {
