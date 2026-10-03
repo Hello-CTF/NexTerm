@@ -21,6 +21,7 @@ require (
 	golang.org/x/net v0.58.0
 	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.60.1
+	mvdan.cc/sh/v3 v3.12.0
 )
 
 require (
@@ -62,7 +63,6 @@ require (
 	golang.org/x/arch v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	mvdan.cc/sh/v3 v3.12.0 // indirect
 )
 
 require (
