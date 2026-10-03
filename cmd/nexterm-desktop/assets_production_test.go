@@ -8,7 +8,67 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
+
+// The embedded handler must answer nested asset requests with the asset
+// itself, not the SPA index fallback. On Windows the lookup once received
+// native-separator paths, which embed.FS rejects, so every /assets/*.js
+// request silently returned index.html; WebView2 blocked the module scripts
+// and the desktop smoke timed out without a verdict (M68).
+func TestProductionEmbeddedServesNestedAssetsAsFiles(t *testing.T) {
+	files := fstest.MapFS{
+		"index.html":                    &fstest.MapFile{Data: []byte(`<!doctype html><html><head></head><body><div id="root"></div><script type="module" src="/assets/index-abc123.js"></script></body></html>`)},
+		"assets/index-abc123.js":        &fstest.MapFile{Data: []byte(`export const nested = "js-module-payload";`)},
+		"assets/nested/chunk-def456.js": &fstest.MapFile{Data: []byte(`export const nested = "deep-chunk-payload";`)},
+		"icon.png":                      &fstest.MapFile{Data: []byte("\x89PNG\r\n\x1a\n")},
+	}
+	handler, err := newEmbeddedDesktopAssets(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path    string
+		payload string
+	}{
+		{path: "/assets/index-abc123.js", payload: "js-module-payload"},
+		{path: "/assets/nested/chunk-def456.js", payload: "deep-chunk-payload"},
+	} {
+		response := productionAssetRequest(t, handler, http.MethodGet, test.path, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", test.path, response.Code)
+		}
+		body := response.Body.String()
+		if !strings.Contains(body, test.payload) {
+			t.Fatalf("%s body = %q, want the asset payload (index fallback?)", test.path, body)
+		}
+		if strings.Contains(body, `<div id="root">`) {
+			t.Fatalf("%s served the SPA index fallback: %q", test.path, body)
+		}
+		if contentType := response.Header().Get("Content-Type"); !strings.Contains(contentType, "javascript") {
+			t.Fatalf("%s Content-Type = %q, want a JavaScript MIME type", test.path, contentType)
+		}
+		if cacheControl := response.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "immutable") {
+			t.Fatalf("%s Cache-Control = %q", test.path, cacheControl)
+		}
+		if response.Header().Get("ETag") == "" {
+			t.Fatalf("%s ETag is missing", test.path)
+		}
+	}
+	// A single-segment asset serves as a file; an unknown path falls back to
+	// the SPA index.
+	icon := productionAssetRequest(t, handler, http.MethodGet, "/icon.png", "")
+	if icon.Code != http.StatusOK || !strings.Contains(icon.Header().Get("Content-Type"), "image/png") {
+		t.Fatalf("single-segment asset: status %d, Content-Type %q, body %q", icon.Code, icon.Header().Get("Content-Type"), icon.Body.String())
+	}
+	missing := productionAssetRequest(t, handler, http.MethodGet, "/assets/missing-123.js", "")
+	if missing.Code != http.StatusOK || missing.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("unknown asset should fall back to the SPA index, got status %d, Content-Type %q", missing.Code, missing.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(missing.Body.String(), desktopTransportMarker) {
+		t.Fatalf("SPA fallback must serve the injected index, got %q", missing.Body.String())
+	}
+}
 
 func TestProductionEmbeddedReactDist(t *testing.T) {
 	handler, err := newDesktopAssets("")

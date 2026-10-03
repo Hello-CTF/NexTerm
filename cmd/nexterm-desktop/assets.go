@@ -27,7 +27,7 @@ func (s *desktopAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	candidate := filepath.Join(s.root, relative)
+	candidate := filepath.Join(s.root, filepath.FromSlash(relative))
 	isIndex := relative == "" || relative == "index.html"
 	if !isIndex {
 		if info, statErr := os.Stat(candidate); statErr == nil && info.Mode().IsRegular() {
@@ -73,6 +73,15 @@ func (s *desktopAssets) serveFile(w http.ResponseWriter, r *http.Request, path s
 	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), file)
 }
 
+// desktopAssetPath converts an escaped request path into a validated,
+// slash-separated relative path (the io/fs convention). The result is
+// consumed by embed.FS lookups, which reject native separators: a
+// filepath.FromSlash result works on POSIX but yields backslashes on
+// Windows, where every nested asset lookup then fails and silently falls
+// back to index.html — the WebView2 module scripts are blocked by the HTML
+// MIME type and the desktop smoke times out without a verdict (M68).
+// Callers that reach the OS filesystem convert via filepath.FromSlash at
+// that boundary.
 func desktopAssetPath(escapedPath string) (string, error) {
 	trimmed := strings.TrimLeft(escapedPath, "/")
 	decoded, err := url.PathUnescape(trimmed)
@@ -90,7 +99,7 @@ func desktopAssetPath(escapedPath string) (string, error) {
 			return "", fmt.Errorf("path escapes web root")
 		}
 	}
-	return filepath.FromSlash(decoded), nil
+	return decoded, nil
 }
 
 func injectDesktopTransportMarker(html string) string {
