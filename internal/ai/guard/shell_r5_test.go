@@ -121,6 +121,7 @@ func TestR5DockerBulkDeletionWithInnerGlobalOptions(t *testing.T) {
 	t.Parallel()
 	danger := []string{
 		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps -aq)`,
+		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps -q)`,
 		`docker rm -f $(docker --host tcp://127.0.0.1:2375 ps -aq)`,
 		`docker rm -f $(docker --host=tcp://127.0.0.1:2375 ps -aq)`,
 		`docker rmi -f $(docker --config /tmp/cfg images -q)`,
@@ -141,7 +142,6 @@ func TestR5DockerBulkDeletionWithInnerGlobalOptions(t *testing.T) {
 		})
 	}
 	confirm := []string{
-		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps -q)`,
 		`docker rm -f $(docker -H tcp://127.0.0.1:2375 ps)`,
 	}
 	for _, command := range confirm {

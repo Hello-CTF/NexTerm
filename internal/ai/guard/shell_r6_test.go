@@ -152,6 +152,8 @@ func TestR6DockerAliasesAndForceClusters(t *testing.T) {
 		`docker container rm -fv $(docker container ls -aq)`,
 		`docker image rm -f $(docker image list -q)`,
 		`docker rm -f $(docker -H tcp://127.0.0.1:2375 container ps -aq)`,
+		`docker rm -fv $(docker ps -q)`,
+		`docker rm -f $(docker container ps -q)`,
 		`podman rm -fv $(podman container ps -aq)`,
 	}
 	for _, command := range danger {
@@ -166,9 +168,7 @@ func TestR6DockerAliasesAndForceClusters(t *testing.T) {
 		})
 	}
 	confirm := []string{
-		`docker rm -fv $(docker ps -q)`,
 		`docker rm -v $(docker ps -aq)`,
-		`docker rm -f $(docker container ps -q)`,
 	}
 	for _, command := range confirm {
 		t.Run(command, func(t *testing.T) {

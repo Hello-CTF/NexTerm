@@ -10,6 +10,7 @@ type sqlToken struct {
 	text    string
 	keyword bool
 	quoted  bool
+	literal string
 }
 
 func ClassifySQL(statement string, rules []string) Ruling {
@@ -66,10 +67,17 @@ func classifySQLStatement(tokens []sqlToken) Ruling {
 		if hasKeywordSequence(tokens, "DATABASE") || hasKeywordSequence(tokens, "SCHEMA") {
 			return Deny("禁止 DROP DATABASE / DROP SCHEMA")
 		}
-		return Confirm(KindDBWrite, "DROP 会修改数据库对象")
+		return Dangerous("DROP 会删除数据库对象")
 	case "TRUNCATE":
 		return Dangerous("TRUNCATE 会清空数据表")
-	case "INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "CREATE", "ALTER", "RENAME", "GRANT", "REVOKE", "SET", "USE", "CALL", "DO", "LOAD", "IMPORT", "ATTACH", "DETACH", "VACUUM", "OPTIMIZE", "ANALYZE", "LOCK", "UNLOCK", "BEGIN", "START", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE":
+	case "DELETE":
+		return Dangerous("DELETE 会删除数据")
+	case "COPY":
+		if hasKeywordSequence(tokens, "PROGRAM") {
+			return Dangerous("COPY PROGRAM 执行系统命令")
+		}
+		return Confirm(KindDBWrite, "COPY 会读写数据库或文件")
+	case "INSERT", "UPDATE", "REPLACE", "MERGE", "CREATE", "ALTER", "RENAME", "GRANT", "REVOKE", "SET", "USE", "CALL", "DO", "LOAD", "IMPORT", "ATTACH", "DETACH", "VACUUM", "OPTIMIZE", "ANALYZE", "LOCK", "UNLOCK", "BEGIN", "START", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE":
 		return Confirm(KindDBWrite, "SQL 写入、会话或事务控制")
 	default:
 		return Confirm(KindDBWrite, "未知 SQL 语句需要确认")
@@ -96,9 +104,15 @@ func classifyReadSQL(tokens []sqlToken) Ruling {
 			}
 			return Confirm(KindDBWrite, "只读前缀中包含写操作")
 		case "OUTFILE", "DUMPFILE":
+			if i+1 < len(tokens) && isCriticalWriteTarget(tokens[i+1].literal) {
+				return Dangerous("SELECT 写入关键系统路径")
+			}
 			return Confirm(KindWriteFS, "SELECT 会写入服务器文件")
 		case "INTO":
 			if i+1 < len(tokens) && tokens[i+1].keyword && (tokens[i+1].text == "OUTFILE" || tokens[i+1].text == "DUMPFILE") {
+				if i+2 < len(tokens) && isCriticalWriteTarget(tokens[i+2].literal) {
+					return Dangerous("SELECT 写入关键系统路径")
+				}
 				return Confirm(KindWriteFS, "SELECT 会写入服务器文件")
 			}
 			if startsWithKeyword(tokens[0], "SELECT") {
@@ -254,7 +268,7 @@ func splitSQL(input string) ([][]sqlToken, error) {
 			if quote == '`' || quote == '"' {
 				current = append(current, sqlToken{text: strings.ToUpper(quoted.String()), quoted: true})
 			} else {
-				current = append(current, sqlToken{text: "<literal>"})
+				current = append(current, sqlToken{text: "<literal>", literal: quoted.String()})
 			}
 			continue
 		}
@@ -305,7 +319,7 @@ func isSQLKeyword(value string) bool {
 }
 
 var sqlKeywords = func() map[string]struct{} {
-	values := strings.Fields(`SELECT SHOW DESC DESCRIBE VALUES TABLE WITH EXPLAIN ANALYZE INSERT UPDATE DELETE REPLACE MERGE CREATE ALTER DROP TRUNCATE GRANT REVOKE SET USE CALL DO LOAD IMPORT ATTACH DETACH VACUUM OPTIMIZE LOCK UNLOCK BEGIN START COMMIT ROLLBACK SAVEPOINT RELEASE DATABASE SCHEMA OUTFILE DUMPFILE INTO FOR SHARE MODE RENAME AS FROM WHERE JOIN INNER LEFT RIGHT FULL OUTER CROSS ON GROUP ORDER BY HAVING LIMIT OFFSET UNION ALL DISTINCT CASE WHEN THEN ELSE END CAST COLLATE ASC NULL NOT AND OR IS IN BETWEEN LIKE OVER PARTITION WINDOW`)
+	values := strings.Fields(`SELECT SHOW DESC DESCRIBE VALUES TABLE WITH EXPLAIN ANALYZE INSERT UPDATE DELETE REPLACE MERGE CREATE ALTER DROP TRUNCATE GRANT REVOKE SET USE CALL DO LOAD IMPORT ATTACH DETACH VACUUM OPTIMIZE LOCK UNLOCK BEGIN START COMMIT ROLLBACK SAVEPOINT RELEASE DATABASE SCHEMA OUTFILE DUMPFILE INTO FOR SHARE MODE RENAME AS FROM WHERE JOIN INNER LEFT RIGHT FULL OUTER CROSS ON GROUP ORDER BY HAVING LIMIT OFFSET UNION ALL DISTINCT CASE WHEN THEN ELSE END CAST COLLATE ASC NULL NOT AND OR IS IN BETWEEN LIKE OVER PARTITION WINDOW COPY PROGRAM`)
 	result := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		result[value] = struct{}{}

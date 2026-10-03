@@ -4,7 +4,7 @@ import "testing"
 
 func TestR1AllowSessionRemembersEveryCompoundKind(t *testing.T) {
 	t.Parallel()
-	ruling := ClassifyCommand("touch /tmp/x; kill 123", nil)
+	ruling := ClassifyCommand("touch /tmp/x; chmod 644 /tmp/x", nil)
 	kinds := ruling.ApprovalKinds()
 	if len(kinds) != 2 {
 		t.Fatalf("approval kinds = %v, ruling = %+v", kinds, ruling)

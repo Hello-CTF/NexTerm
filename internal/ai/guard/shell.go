@@ -24,6 +24,11 @@ type shellSegment struct {
 	raw       string
 }
 
+type stdinHint struct {
+	text string
+	ok   bool
+}
+
 func ClassifyCommand(command string, rules []string) Ruling {
 	return classifyCommandDepth(command, rules, 0)
 }
@@ -46,19 +51,36 @@ func classifyCommandDepth(command string, rules []string, depth int) Ruling {
 	if len(segments) == 0 {
 		return result
 	}
-	for _, segment := range segments {
+	for index, segment := range segments {
+		stdin := stdinHint{}
+		if index > 0 && containsString(segments[index-1].ops, "|") {
+			stdin = echoStdinHint(segments[index-1])
+		}
 		if len(segment.tokens) == 0 {
 			if segment.hasWriteRedirection() {
-				result = Worst(result, classifyRedirection(segment.ops))
+				result = Worst(result, classifyRedirection(segment))
 			}
 			continue
 		}
-		result = Worst(result, classifySegment(segment, rules, depth))
+		result = Worst(result, classifySegment(segment, rules, depth, stdin))
 		if result.Risk == Forbidden {
 			return result
 		}
 	}
 	return result
+}
+
+func echoStdinHint(segment shellSegment) stdinHint {
+	if len(segment.tokens) < 2 {
+		return stdinHint{}
+	}
+	switch commandName(segment.tokens[0]) {
+	case "echo":
+		return stdinHint{text: strings.Join(segment.tokens[1:], " "), ok: true}
+	case "printf":
+		return stdinHint{text: segment.tokens[1], ok: true}
+	}
+	return stdinHint{}
 }
 
 func parseShell(input string) ([]shellSegment, []string, error) {
@@ -122,6 +144,15 @@ func parseShell(input string) ([]shellSegment, []string, error) {
 				continue
 			}
 			if quote == '"' && r == '$' && i+1 < len(runes) && runes[i+1] == '(' {
+				if i+2 < len(runes) && runes[i+2] == '(' {
+					end, ok := readArithmetic(runes, i+3)
+					if !ok {
+						return segments, substitutions, strconv.ErrSyntax
+					}
+					wordSeen = true
+					i = end
+					continue
+				}
 				value, next, ok := readBalanced(runes, i+2)
 				if !ok {
 					return segments, substitutions, strconv.ErrSyntax
@@ -153,7 +184,14 @@ func parseShell(input string) ([]shellSegment, []string, error) {
 			wordSeen = true
 			i = next
 		case '$':
-			if i+1 < len(runes) && runes[i+1] == '(' {
+			if i+2 < len(runes) && runes[i+1] == '(' && runes[i+2] == '(' {
+				end, ok := readArithmetic(runes, i+3)
+				if !ok {
+					return segments, substitutions, strconv.ErrSyntax
+				}
+				wordSeen = true
+				i = end
+			} else if i+1 < len(runes) && runes[i+1] == '(' {
 				value, next, ok := readBalanced(runes, i+2)
 				if !ok {
 					return segments, substitutions, strconv.ErrSyntax
@@ -300,6 +338,24 @@ func readBalanced(runes []rune, start int) (string, int, bool) {
 	return "", start, false
 }
 
+func readArithmetic(runes []rune, start int) (int, bool) {
+	depth := 0
+	for i := start; i+1 < len(runes); i++ {
+		switch runes[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 && runes[i+1] == ')' {
+				return i + 1, true
+			}
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return start, false
+}
+
 func (s shellSegment) hasWriteRedirection() bool {
 	writes := 0
 	target := ""
@@ -320,16 +376,19 @@ func (s shellSegment) hasWriteRedirection() bool {
 	return writes != 0
 }
 
-func classifyRedirection(ops []string) Ruling {
-	for _, op := range ops {
-		if strings.HasPrefix(op, ">") {
+func classifyRedirection(segment shellSegment) Ruling {
+	for _, redirect := range segment.redirects {
+		if strings.HasPrefix(redirect.op, ">") {
+			if isCriticalWriteTarget(redirect.target) {
+				return Deny("禁止写入关键系统路径")
+			}
 			return Confirm(KindWriteFS, "包含文件重定向")
 		}
 	}
 	return Confirm(KindUnknown, "包含无法确认安全性的 shell 操作")
 }
 
-func classifySegment(segment shellSegment, rules []string, depth int) Ruling {
+func classifySegment(segment shellSegment, rules []string, depth int, stdin stdinHint) Ruling {
 	tokens := stripDescriptors(segment.tokens)
 	for len(tokens) > 0 && isAssignment(tokens[0]) {
 		tokens = tokens[1:]
@@ -337,8 +396,18 @@ func classifySegment(segment shellSegment, rules []string, depth int) Ruling {
 	if len(tokens) == 0 {
 		return Allow()
 	}
+	for _, token := range tokens {
+		if strings.Contains(token, "/dev/tcp/") || strings.Contains(token, "/dev/udp/") {
+			return Dangerous("重定向到网络设备")
+		}
+	}
 	result := Allow()
 	if segment.hasWriteRedirection() {
+		for _, redirect := range segment.redirects {
+			if strings.HasPrefix(redirect.op, ">") && isCriticalWriteTarget(redirect.target) {
+				return Deny("禁止写入关键系统路径")
+			}
+		}
 		result = Confirm(KindWriteFS, "包含文件重定向")
 		for i, token := range tokens {
 			if isBlockDevice(token) && i > 0 {
@@ -348,13 +417,31 @@ func classifySegment(segment shellSegment, rules []string, depth int) Ruling {
 	}
 	for len(tokens) > 0 {
 		name := commandName(tokens[0])
-		if name == "sudo" || name == "doas" {
+		if name == "sudo" || name == "doas" || name == "sudoedit" {
 			result = Worst(result, Confirm(KindSudo, "包含权限提升"))
+			if name == "sudoedit" || containsAny(tokens[1:], "-e", "--edit") {
+				for _, target := range stripCommandFlags(tokens[1:]) {
+					if isCriticalWriteTarget(target) {
+						return Deny("禁止以 root 编辑关键系统路径")
+					}
+				}
+				return Worst(result, Dangerous("以 root 编辑文件"))
+			}
 			tokens = stripCommandFlags(tokens[1:])
 			continue
 		}
 		if name == "su" {
-			return Worst(result, Confirm(KindSudo, "包含身份切换"))
+			result = Worst(result, Confirm(KindSudo, "包含身份切换"))
+			for index := 1; index < len(tokens); index++ {
+				arg := tokens[index]
+				if (arg == "-c" || arg == "--command" || arg == "--session-command") && index+1 < len(tokens) {
+					result = Worst(result, classifyCommandDepth(tokens[index+1], rules, depth+1))
+				}
+				if strings.HasPrefix(arg, "--command=") || strings.HasPrefix(arg, "--session-command=") {
+					result = Worst(result, classifyCommandDepth(arg[strings.Index(arg, "=")+1:], rules, depth+1))
+				}
+			}
+			return result
 		}
 		break
 	}
@@ -367,7 +454,7 @@ func classifySegment(segment shellSegment, rules []string, depth int) Ruling {
 	if len(tokens) == 0 {
 		return result
 	}
-	return Worst(result, classifySimple(tokens, segment.ops, rules, depth))
+	return Worst(result, classifySimple(tokens, segment.ops, rules, depth, stdin))
 }
 
 func stripDescriptors(tokens []string) []string {
@@ -385,7 +472,7 @@ func stripDescriptors(tokens []string) []string {
 
 func stripCommandFlags(tokens []string) []string {
 	valueFlags := map[string]bool{
-		"-u": true, "-g": true, "-h": true, "-p": true, "-C": true, "-D": true, "-T": true, "-t": true, "-U": true, "-G": true, "-R": true,
+		"-u": true, "-g": true, "-h": true, "-p": true, "-a": true, "-C": true, "-D": true, "-T": true, "-t": true, "-U": true, "-G": true, "-R": true,
 		"--user": true, "--group": true, "--host": true, "--prompt": true, "--chdir": true, "--command-timeout": true, "--type": true, "--role": true,
 	}
 	for len(tokens) > 0 {
@@ -414,7 +501,7 @@ func privilegeOptionValue(arg string) (string, bool) {
 	}
 	for index := 1; index < len(arg); index++ {
 		switch arg[index] {
-		case 'u', 'g', 'h', 'p', 'C', 'D', 'T', 't', 'U', 'G', 'R':
+		case 'u', 'g', 'h', 'p', 'a', 'C', 'D', 'T', 't', 'U', 'G', 'R':
 			return arg[index+1:], true
 		}
 	}
@@ -438,7 +525,7 @@ func commandName(value string) string {
 	return strings.ToLower(filepath.Base(strings.ReplaceAll(value, "\\", "/")))
 }
 
-func classifySimple(tokens []string, ops []string, rules []string, depth int) Ruling {
+func classifySimple(tokens []string, ops []string, rules []string, depth int, stdin stdinHint) Ruling {
 	name := commandName(tokens[0])
 	args := tokens[1:]
 	if isInterpreter(name) {
@@ -453,8 +540,11 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int) Ru
 	if matchDangerRule(strings.Join(tokens, " "), rules) {
 		return Dangerous("命中自定义危险规则")
 	}
-	if ruling, ok := classifyStateChangingBuiltins(name, args, rules, depth); ok {
+	if ruling, ok := classifyStateChangingBuiltins(name, args, rules, depth, stdin); ok {
 		return ruling
+	}
+	if wrapper, ok := execWrappers[name]; ok {
+		return classifyWrapper(name, wrapper, args, rules, depth, stdin)
 	}
 	switch name {
 	case "rm", "rmdir", "mv", "cp", "dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "shred", "truncate":
@@ -473,31 +563,42 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int) Ru
 	case "apt", "apt-get", "yum", "dnf", "zypper", "pacman", "dpkg", "rpm", "apk", "brew", "choco", "winget":
 		return classifyPackage(args)
 	case "kill", "pkill", "killall":
-		return Confirm(KindProcess, "进程控制")
-	case "chmod", "chown", "chgrp", "chattr", "setfacl", "useradd", "userdel", "usermod", "passwd", "crontab":
+		return Dangerous("进程终止")
+	case "chmod", "chown", "chgrp", "chattr", "setfacl":
 		return Confirm(KindPermission, "权限或账户变更")
+	case "useradd", "userdel", "usermod", "passwd":
+		return Dangerous("账户变更")
+	case "crontab":
+		return classifyCrontab(args)
 	case "docker", "podman":
 		return classifyDocker(args, rules, depth)
 	case "kubectl":
-		return classifyKubectl(args)
+		return classifyKubectl(args, rules, depth)
 	case "git":
 		return classifyGit(args)
 	case "redis-cli", "valkey-cli":
 		return classifyRedis(args)
 	case "mysql", "mariadb", "psql":
-		return classifyDatabaseClient(name, args, rules)
+		return classifyDatabaseClient(name, args, rules, ops)
 	case "sed", "awk", "gawk", "ed", "vim", "vi", "nano", "emacs":
 		return Confirm(KindUnknown, "命令具有编辑或执行子命令能力")
 	case "find":
-		if containsAnyFold(args, "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls") {
-			return Confirm(KindWriteFS, "find 包含写入或执行动作")
-		}
-		return Allow()
+		return classifyFind(args, rules, depth)
 	case "tar":
 		for _, arg := range args {
 			lower := strings.ToLower(arg)
 			if lower == "--to-command" || lower == "--use-compress-program" || lower == "--checkpoint-action" || strings.HasPrefix(lower, "--checkpoint-action=") || strings.HasPrefix(lower, "--use-compress-program=") {
 				return Confirm(KindUnknown, "tar 包含外部命令执行")
+			}
+		}
+		for index, arg := range args {
+			if arg == "-C" || arg == "--directory" {
+				if index+1 < len(args) && isCriticalRoot(args[index+1]) {
+					return Dangerous("tar 解包到关键路径")
+				}
+			}
+			if strings.HasPrefix(arg, "--directory=") && isCriticalRoot(strings.TrimPrefix(arg, "--directory=")) {
+				return Dangerous("tar 解包到关键路径")
 			}
 		}
 		if !containsAny(args, "-t", "-tf", "--list") && !hasShortFlag(args, 't') {
@@ -513,7 +614,16 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int) Ru
 		return Confirm(KindWriteFS, "解压会写入文件")
 	case "curl", "wget":
 		return classifyDownload(name, args, ops)
-	case "ssh", "scp", "sftp", "rsync":
+	case "nc", "ncat", "netcat", "socat":
+		for _, arg := range args {
+			if arg == "-e" || arg == "-c" || strings.HasPrefix(arg, "exec:") || strings.HasPrefix(arg, "system:") || strings.HasPrefix(arg, "shell") {
+				return Dangerous("网络工具执行命令")
+			}
+		}
+		return Confirm(KindUnknown, "网络工具需要确认")
+	case "ssh":
+		return classifySSH(args, rules, depth)
+	case "scp", "sftp", "rsync":
 		return Confirm(KindUnknown, "远程传输或执行需要确认")
 	}
 	if safeFirstToken[name] {
@@ -523,7 +633,7 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int) Ru
 }
 
 var safeFirstToken = func() map[string]bool {
-	values := strings.Fields(`ls ll pwd cat head tail tac nl grep egrep fgrep rg cut sort uniq wc stat file tree diff comm jq xxd hexdump od strings ps pidof df du free vmstat iostat lscpu lsblk uname whoami id hostname hostnamectl uptime date cal env printenv which whereis type echo printf dmesg journalctl ss netstat ip ifconfig arp route ping traceroute dig nslookup host lsof top htop atop sar w who last history md5sum sha1sum sha256sum zcat zipinfo basename dirname readlink realpath getent ulimit tput resize lsb_release arch nproc true false sleep clear select show describe desc explain cd pushd popd`)
+	values := strings.Fields(`ls ll pwd cat head tail tac nl grep egrep fgrep rg cut sort uniq wc stat file tree diff comm jq xxd hexdump od strings ps pidof df du free vmstat iostat lscpu lsblk uname whoami id hostname hostnamectl uptime date cal env printenv which whereis type echo printf dmesg journalctl ss netstat ip ifconfig arp route ping traceroute dig nslookup host lsof top htop atop sar w who last history md5sum sha1sum sha256sum zcat zipinfo basename dirname readlink realpath getent ulimit tput resize lsb_release arch nproc true false sleep clear select show describe desc explain cd pushd popd tr base64 base32 seq shuf export unset readonly`)
 	result := make(map[string]bool, len(values))
 	for _, value := range values {
 		result[value] = true
@@ -542,26 +652,47 @@ func isInterpreter(name string) bool {
 
 func classifyInterpreter(name string, args []string, rules []string, depth int) Ruling {
 	result := Allow()
-	shell := name == "sh" || name == "bash" || name == "zsh" || name == "ksh" || name == "dash" || name == "fish" || name == "powershell" || name == "pwsh" || name == "cmd" || name == "cmd.exe"
+	shell := name == "sh" || name == "bash" || name == "zsh" || name == "ksh" || name == "dash" || name == "fish"
+	inlineCode := ""
+	inline := false
 	for i, arg := range args {
-		inline := arg == "-c" || strings.EqualFold(arg, "-Command") || arg == "/c"
+		inlineArg := arg == "-c" || strings.EqualFold(arg, "-Command") || arg == "/c" || !shell && (arg == "-e" || arg == "-E" || arg == "-r")
 		if shell && strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg[1:], "c") {
-			inline = true
+			inlineArg = true
 		}
-		if inline && i+1 < len(args) {
+		if inlineArg && i+1 < len(args) {
+			inline = true
 			if shell {
 				result = Worst(result, classifyCommandDepth(args[i+1], rules, depth+1))
-			} else if matchDangerRule(args[i+1], rules) || containsDestructiveText(args[i+1]) {
-				result = Worst(result, Dangerous("解释器代码包含危险操作"))
+			} else {
+				inlineCode += " " + args[i+1]
 			}
 		}
+	}
+	if inline && !shell {
+		result = Worst(result, Dangerous("解释器内联执行任意代码"), dangerousInterpreterText(inlineCode, rules))
 	}
 	return result
 }
 
-func classifyDatabaseClient(name string, args, rules []string) Ruling {
+func dangerousInterpreterText(value string, rules []string) Ruling {
+	if matchDangerRule(value, rules) || containsDestructiveText(value) {
+		return Dangerous("解释器代码包含危险操作")
+	}
+	return Allow()
+}
+
+func classifyDatabaseClient(name string, args, rules []string, ops []string) Ruling {
 	result := Confirm(KindDBWrite, "交互式数据库客户端需要确认")
+	for _, op := range ops {
+		if op == "<" {
+			return Dangerous("数据库客户端执行重定向 SQL 文件")
+		}
+	}
 	for i, arg := range args {
+		if name == "psql" && (arg == "-f" || arg == "--file") {
+			return Dangerous("psql 执行 SQL 文件，内容无法验证")
+		}
 		payload := ""
 		switch {
 		case (arg == "-e" && name != "psql") || (arg == "-c" && name == "psql") || arg == "--execute" || arg == "--command":
@@ -605,7 +736,7 @@ func classifyDatabaseClient(name string, args, rules []string) Ruling {
 
 func containsDestructiveText(value string) bool {
 	lower := strings.ToLower(strings.ReplaceAll(value, " ", ""))
-	for _, text := range []string{"rm-rf/", "remove-item/-force", "rmtree(\"/\")", "dropdatabase", "flushall"} {
+	for _, text := range []string{"rm-rf/", "remove-item-force", "remove-item-recurse", "rmtree(\"/", "rmsync(\"/", "dropdatabase", "flushall"} {
 		if strings.Contains(lower, text) {
 			return true
 		}
@@ -641,7 +772,7 @@ func forbiddenCommand(name string, args []string) (Ruling, bool) {
 }
 
 func dangerousCommand(name string, args []string) (Ruling, bool) {
-	if name == "chmod" && containsAny(args, "-R", "--recursive") && containsAny(args, "777", "0777", "a+rwx") {
+	if name == "chmod" && containsAny(args, "-R", "--recursive") && containsAny(args, "777", "0777", "a+rwx", "ugo+rwx", "7777") {
 		for _, arg := range args {
 			if isCriticalRoot(arg) {
 				return Dangerous("递归放开关键目录权限"), true
@@ -660,6 +791,16 @@ func isCriticalRoot(value string) bool {
 	if value == "" || value == "~" || value == "$HOME" || value == "${HOME}" {
 		return true
 	}
+	if strings.HasPrefix(value, "~/") || strings.HasPrefix(value, "$HOME/") || strings.HasPrefix(value, "${HOME}/") {
+		return true
+	}
+	if strings.HasPrefix(value, "~") && !strings.Contains(value, "/") {
+		return true
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(value, "\\", "/"))
+	if strings.HasPrefix(normalized, "c:/users") || normalized == "c:" || normalized == "c:/" {
+		return true
+	}
 	if strings.HasPrefix(value, "/") {
 		value = filepath.Clean(value)
 	}
@@ -667,13 +808,29 @@ func isCriticalRoot(value string) bool {
 	case "/", "/*", "/~", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/home", "/sbin", "/sys", "/usr", "/var", "C:", "c:":
 		return true
 	default:
-		return strings.HasPrefix(value, "/home/") || strings.HasPrefix(value, "/root/")
+		return strings.HasPrefix(value, "/home/") || strings.HasPrefix(value, "/root/") || strings.HasPrefix(value, "/Users/")
 	}
+}
+
+func isCriticalWriteTarget(value string) bool {
+	target := strings.ToLower(strings.ReplaceAll(strings.Trim(strings.TrimSpace(value), "'\""), "\\", "/"))
+	if target == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"/etc/cron", "/var/spool/cron", "/etc/sudoers", "/etc/shadow", "/etc/passwd", "/etc/ssh", "/etc/ld.so.preload",
+		"/etc/systemd/system", "/etc/profile", "/etc/bash.bashrc", "/etc/zsh",
+	} {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(target, "authorized_keys") || strings.Contains(target, "/.ssh/")
 }
 
 func isBlockDevice(value string) bool {
 	value = strings.Trim(value, "'\"")
-	for _, prefix := range []string{"/dev/sd", "/dev/hd", "/dev/nvme", "/dev/mapper/", "/dev/vd", "/dev/xvd"} {
+	for _, prefix := range []string{"/dev/sd", "/dev/hd", "/dev/nvme", "/dev/mapper/", "/dev/vd", "/dev/xvd", "/dev/disk", "/dev/rdisk"} {
 		if strings.HasPrefix(value, prefix) {
 			return true
 		}
@@ -681,11 +838,81 @@ func isBlockDevice(value string) bool {
 	return false
 }
 
+func classifyFind(args []string, rules []string, depth int) Ruling {
+	result := Allow()
+	writeAction := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch arg {
+		case "-delete":
+			return Dangerous("find -delete 递归删除")
+		case "-fprint", "-fprint0", "-fprintf", "-fls":
+			writeAction = true
+		case "-exec", "-execdir", "-ok", "-okdir":
+			writeAction = true
+			end := len(args)
+			for scan := index + 1; scan < len(args); scan++ {
+				if args[scan] == ";" || args[scan] == "+" {
+					end = scan
+					break
+				}
+			}
+			if index+1 < end {
+				result = Worst(result, Dangerous("find 执行外部命令"), classifyCommandDepth(strings.Join(args[index+1:end], " "), rules, depth+1))
+			}
+			index = end
+		}
+	}
+	if writeAction {
+		return Worst(result, Confirm(KindWriteFS, "find 包含写入或执行动作"))
+	}
+	return result
+}
+
+func classifyCrontab(args []string) Ruling {
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "-l":
+			return Allow()
+		case "-u", "-s":
+			index++
+		case "-i":
+		case "-r", "-e":
+			return Dangerous("crontab 变更计划任务")
+		default:
+			return Dangerous("crontab 安装计划任务")
+		}
+	}
+	return Dangerous("crontab 从标准输入安装计划任务")
+}
+
+func classifySSH(args []string, rules []string, depth int) Ruling {
+	valueOptions := map[string]bool{"-p": true, "-i": true, "-l": true, "-o": true, "-E": true, "-F": true, "-J": true, "-L": true, "-W": true, "-b": true, "-c": true, "-m": true, "-S": true}
+	index := 0
+	for index < len(args) && strings.HasPrefix(args[index], "-") {
+		arg := args[index]
+		index++
+		if valueOptions[arg] && index < len(args) {
+			index++
+		}
+	}
+	if index >= len(args) {
+		return Confirm(KindUnknown, "远程传输或执行需要确认")
+	}
+	index++
+	if index >= len(args) {
+		return Confirm(KindUnknown, "远程传输或执行需要确认")
+	}
+	return Worst(Confirm(KindUnknown, "远程传输或执行需要确认"), classifyCommandDepth(strings.Join(args[index:], " "), rules, depth+1))
+}
+
 func classifyService(name string, args []string) Ruling {
 	if name == "systemctl" && len(args) > 0 {
 		switch args[0] {
 		case "status", "show", "list-units", "list-unit-files", "is-active", "is-enabled", "--failed", "list-dependencies", "cat":
 			return Allow()
+		case "stop", "mask", "kill", "isolate", "poweroff", "reboot", "halt":
+			return Dangerous("系统服务停止或隔离")
 		}
 	}
 	if name == "service" && len(args) > 1 && args[1] == "status" {
@@ -738,7 +965,7 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 	case "exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
 		if commandIndex := dockerExecCommandIndex(rest); commandIndex >= 0 {
-			result = Worst(result, classifySegment(shellSegment{tokens: rest[commandIndex:]}, rules, depth))
+			result = Worst(result, classifySegment(shellSegment{tokens: rest[commandIndex:]}, rules, depth, stdinHint{}))
 		}
 		return result
 	case "run", "create", "start", "stop", "restart", "rm", "kill", "pause", "unpause", "rename", "update", "cp", "commit", "import", "load", "pull", "push", "build", "tag", "rmi", "save", "attach":
@@ -754,7 +981,7 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 		}
 		nested := strings.ToLower(rest[0])
 		switch nested {
-		case "ls", "inspect", "ps", "config", "logs", "version":
+		case "ls", "inspect", "ps", "config", "logs", "version", "df", "top", "history":
 			return Allow()
 		case "prune":
 			return Dangerous("Docker 清理会删除资源")
@@ -849,29 +1076,25 @@ func dockerBulkDeletion(args []string) bool {
 		if enumeration == "" {
 			continue
 		}
-		all, quiet := false, false
+		quiet := false
 		for _, option := range rest[offset+1:] {
-			if option == "--all" {
-				all = true
-			}
-			if option == "--quiet" {
+			if option == "--quiet" || option == "--quiet=true" {
 				quiet = true
-			}
-			if _, ok := shortOptionValue(option, 'a'); ok {
-				all = true
 			}
 			if _, ok := shortOptionValue(option, 'q'); ok {
 				quiet = true
 			}
 		}
-		if quiet && (enumeration == "images" || all) {
+		// Force-removing every enumerated container or image (running set
+		// included) is bulk destruction; filters cannot be verified statically.
+		if quiet {
 			return true
 		}
 	}
 	return false
 }
 
-func classifyKubectl(args []string) Ruling {
+func classifyKubectl(args []string, rules []string, depth int) Ruling {
 	if len(args) > 0 {
 		switch args[0] {
 		case "get", "describe", "logs", "top", "version", "cluster-info", "api-resources", "api-versions":
@@ -884,7 +1107,30 @@ func classifyKubectl(args []string) Ruling {
 				}
 			}
 			return Confirm(KindService, "kubectl 配置变更")
-		case "delete", "drain", "cordon", "uncordon", "apply", "create", "replace", "patch", "scale", "rollout", "exec", "port-forward", "cp", "edit", "set", "label", "annotate", "taint":
+		case "exec":
+			valueOptions := map[string]bool{"-c": true, "--container": true, "--namespace": true, "-n": true}
+			index := 1
+			for index < len(args) && strings.HasPrefix(args[index], "-") {
+				arg := args[index]
+				index++
+				if arg == "--" {
+					break
+				}
+				if valueOptions[arg] && index < len(args) {
+					index++
+				}
+			}
+			if index < len(args) {
+				index++
+			}
+			if index < len(args) && args[index] == "--" {
+				index++
+			}
+			if index < len(args) {
+				return Worst(Confirm(KindService, "Kubernetes 资源或工作负载变更"), classifyCommandDepth(strings.Join(args[index:], " "), rules, depth+1))
+			}
+			return Confirm(KindService, "Kubernetes 资源或工作负载变更")
+		case "delete", "drain", "cordon", "uncordon", "apply", "create", "replace", "patch", "scale", "rollout", "port-forward", "cp", "edit", "set", "label", "annotate", "taint":
 			return Confirm(KindService, "Kubernetes 资源或工作负载变更")
 		}
 	}
@@ -928,12 +1174,21 @@ func classifyGit(args []string) Ruling {
 			return Confirm(KindWriteFS, "Git 强制推送")
 		}
 		return Confirm(KindWriteFS, "Git 推送")
-	case "clean", "reset", "checkout", "switch", "restore", "rm", "mv", "commit", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "config", "clone", "fetch", "pull", "submodule", "worktree", "stash", "tag", "add":
+	case "clean":
+		return Dangerous("git clean 删除未跟踪文件")
+	case "reset":
+		if containsAnyFold(args[1:], "--hard") {
+			return Dangerous("git reset --hard 丢弃提交与修改")
+		}
+		return Confirm(KindWriteFS, "Git 仓库或远端变更")
+	case "checkout", "switch", "restore", "rm", "mv", "commit", "merge", "rebase", "cherry-pick", "revert", "am", "apply", "config", "clone", "fetch", "pull", "submodule", "worktree", "stash", "tag", "add":
 		return Confirm(KindWriteFS, "Git 仓库或远端变更")
 	default:
 		return Confirm(KindUnknown, "未知 Git 子命令")
 	}
 }
+
+const curlValueShorts = "odFTDcKQXAbeHuUxmYyzw"
 
 func classifyDownload(name string, args, ops []string) Ruling {
 	for _, op := range ops {
@@ -943,8 +1198,23 @@ func classifyDownload(name string, args, ops []string) Ruling {
 	}
 	getMode := false
 	for _, arg := range args {
-		if arg == "-G" || strings.EqualFold(arg, "--get") {
+		if strings.EqualFold(arg, "--get") {
 			getMode = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") {
+			letters := arg[1:]
+			for len(letters) > 0 {
+				if letters[0] == 'G' {
+					getMode = true
+					letters = letters[1:]
+					continue
+				}
+				if strings.IndexByte(curlValueShorts, letters[0]) >= 0 {
+					break
+				}
+				letters = letters[1:]
+			}
 		}
 	}
 	for i, arg := range args {
@@ -957,6 +1227,17 @@ func classifyDownload(name string, args, ops []string) Ruling {
 		}
 		if arg == "-J" || lower == "--remote-header-name" || lower == "--remote-name-all" {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+		}
+		if lower == "--libcurl" || strings.HasPrefix(lower, "--libcurl=") || lower == "--alt-svc" || strings.HasPrefix(lower, "--alt-svc=") || lower == "--hsts" || strings.HasPrefix(lower, "--hsts=") {
+			return Confirm(KindWriteFS, "curl 写入本地缓存或代码文件")
+		}
+		if name == "wget" && (lower == "--output-document" || arg == "-O") {
+			if i+1 < len(args) && args[i+1] == "-" {
+				continue
+			}
+		}
+		if name == "wget" && strings.HasPrefix(lower, "--output-document=-") {
+			continue
 		}
 		if arg == "-Q" || lower == "--quote" || strings.HasPrefix(lower, "--quote=") {
 			return Confirm(KindWriteFS, "curl 在服务器端执行命令")
@@ -1015,10 +1296,22 @@ func classifyDownload(name string, args, ops []string) Ruling {
 			return Confirm(KindWriteFS, "非 GET 网络请求")
 		}
 	}
-	if name == "wget" && !containsAny(args, "-qO-", "-O-", "--spider", "--server-response", "-S") {
+	if name == "wget" && !wgetWritesStdout(args) && !containsAny(args, "-qO-", "-O-", "--spider", "--server-response", "-S") {
 		return Confirm(KindWriteFS, "wget 默认会保存文件")
 	}
 	return Allow()
+}
+
+func wgetWritesStdout(args []string) bool {
+	for index, arg := range args {
+		if (arg == "-O" || arg == "--output-document") && index+1 < len(args) && args[index+1] == "-" {
+			return true
+		}
+		if strings.HasPrefix(arg, "--output-document=-") {
+			return true
+		}
+	}
+	return false
 }
 
 func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
@@ -1050,10 +1343,13 @@ func classifyRedis(args []string) Ruling {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
-			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--quoted-pattern", "--count", "--cursor", "--type", "--sni", "--lru-test", "--rdb", "--functions-rdb", "--pipe-timeout", "--memkeys-samples", "--keystats-samples", "--top", "--eval", "--cluster", "--show-pushes", "--name", "--tls-ciphers", "--tls-ciphersuites", "--intrinsic-latency":
+			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--quoted-pattern", "--count", "--cursor", "--type", "--sni", "--lru-test", "--rdb", "--functions-rdb", "--pipe-timeout", "--memkeys-samples", "--keystats-samples", "--top", "--eval", "--cluster", "--show-pushes", "--name", "--tls-ciphers", "--tls-ciphersuites", "--intrinsic-latency", "--vset-recall", "--vset-recall-count", "-ef", "-ele":
 				i++
 			case "--scan":
 				scan = true
+			case "--no-raw", "--raw", "--csv", "--json", "--quoted-json", "--quoted-input", "--stat", "--bigkeys", "--hotkeys", "--memkeys", "--keystats", "--latency", "--latency-history", "--latency-dist", "--replica", "--pipe", "--trip", "--ldb", "--ldb-sync-mode", "--tls", "--insecure", "--verbose", "--no-auth-warning", "--askpass", "-2", "-3", "-4", "-6", "-c", "-e", "-v", "-x":
+			default:
+				return Confirm(KindUnknown, "redis-cli 包含无法识别的选项")
 			}
 			continue
 		}

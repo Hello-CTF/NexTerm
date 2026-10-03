@@ -45,6 +45,7 @@ var envLongOptions = []gnuLongOption{
 	{name: "null"},
 	{name: "unset", takesValue: true},
 	{name: "chdir", takesValue: true},
+	{name: "argv0", takesValue: true},
 	{name: "split-string", takesValue: true},
 	{name: "block-signal", optionalValue: true},
 	{name: "default-signal", optionalValue: true},
@@ -91,24 +92,6 @@ var sortLongOptions = []gnuLongOption{
 	{name: "version"},
 }
 
-func envSplitString(arg string) (string, bool, bool) {
-	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || arg == "-" {
-		return "", false, false
-	}
-	for index := 1; index < len(arg); index++ {
-		switch arg[index] {
-		case 'S':
-			if index+1 == len(arg) {
-				return "", false, true
-			}
-			return arg[index+1:], true, true
-		case 'u', 'C':
-			return "", false, false
-		}
-	}
-	return "", false, false
-}
-
 func quoteShellToken(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
@@ -125,7 +108,7 @@ func shortOptionValue(arg string, option byte) (string, bool) {
 	return "", false
 }
 
-func classifyStateChangingBuiltins(name string, args, rules []string, depth int) (Ruling, bool) {
+func classifyStateChangingBuiltins(name string, args, rules []string, depth int, stdin stdinHint) (Ruling, bool) {
 	switch name {
 	case "env":
 		splitString := func(payload string, rest []string) (Ruling, bool) {
@@ -139,7 +122,7 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 			arg := args[i]
 			if arg == "--" {
 				if i+1 < len(args) {
-					return classifySimple(args[i+1:], nil, rules, depth), true
+					return classifySimple(args[i+1:], nil, rules, depth, stdin), true
 				}
 				return Allow(), true
 			}
@@ -158,37 +141,44 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 						value = args[i]
 					}
 					return splitString(value, args[i+1:])
-				case "unset", "chdir":
+				case "unset", "chdir", "argv0":
 					if !attached {
 						i++
 					}
 				}
 				continue
 			}
-			if payload, attached, ok := envSplitString(arg); ok {
-				if !attached {
-					if i+1 >= len(args) {
-						return Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), true
+			if strings.HasPrefix(arg, "-") && arg != "-" {
+				letters := arg[1:]
+				for len(letters) > 0 {
+					switch letters[0] {
+					case 'i', '0', 'v':
+						letters = letters[1:]
+					case 'u', 'C', 'a':
+						if len(letters) == 1 {
+							i++
+						}
+						letters = ""
+					case 'S':
+						payload := letters[1:]
+						if payload == "" {
+							if i+1 >= len(args) {
+								return Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), true
+							}
+							i++
+							payload = args[i]
+						}
+						return splitString(payload, args[i+1:])
+					default:
+						return Confirm(KindUnknown, "env 包含无法识别的选项"), true
 					}
-					i++
-					payload = args[i]
 				}
-				return splitString(payload, args[i+1:])
+				continue
 			}
 			if isAssignment(arg) {
 				continue
 			}
-			if arg == "-u" || arg == "-C" {
-				i++
-				continue
-			}
-			if arg == "-i" || arg == "-0" || arg == "-v" {
-				continue
-			}
-			if strings.HasPrefix(arg, "-") && arg != "-" {
-				return Confirm(KindUnknown, "env 包含无法识别的选项"), true
-			}
-			return classifySimple(args[i:], nil, rules, depth), true
+			return classifySimple(args[i:], nil, rules, depth, stdin), true
 		}
 		return Allow(), true
 	case "sort":
