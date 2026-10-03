@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,10 +22,29 @@ import (
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 )
 
+// syncBuffer guards the process output buffer: os/exec copy goroutines write
+// to it while the test goroutine reads diagnostics from it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 type testServerProcess struct {
 	cmd    *exec.Cmd
 	wait   chan error
-	output *bytes.Buffer
+	output *syncBuffer
 }
 
 func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
@@ -40,7 +60,7 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	}
 	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir)
 	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=regression-master-key")
-	buffer := &bytes.Buffer{}
+	buffer := &syncBuffer{}
 	cmd.Stdout = buffer
 	cmd.Stderr = buffer
 	if err := cmd.Start(); err != nil {
@@ -226,7 +246,7 @@ func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool) (*t
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
-	buffer := &bytes.Buffer{}
+	buffer := &syncBuffer{}
 	cmd.Stdout = buffer
 	cmd.Stderr = buffer
 	if err := cmd.Start(); err != nil {
