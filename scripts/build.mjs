@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WAILS_VERSION = "v3.0.0-alpha.98";
@@ -47,7 +48,6 @@ if (!SOURCE_DATE_EPOCH || !/^\d+$/.test(SOURCE_DATE_EPOCH)) {
 
 const HOST_OS = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
 const HOST_ARCH = { arm64: "arm64", x64: "amd64" }[process.arch];
-const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 function log(message) {
   console.log(message);
@@ -59,13 +59,20 @@ function die(message) {
 }
 
 function run(command, args, { cwd = ROOT, env = process.env, allowFailure = false, quiet = false, timeout = 0 } = {}) {
-  if (!quiet) log(`\n$ ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, {
+  // On Windows a bare `pnpm` resolves through PATH to a pnpm.cmd shim, which
+  // spawnSync refuses to launch without a shell since the CVE-2024-27980 fix
+  // (EINVAL on Node 22/24). resolveSpawnSpec deterministically upgrades such
+  // shims to the real JS entry under the current node, or to a strictly
+  // quoted cmd.exe fallback — never a shell-joined string.
+  const spec = resolveSpawnSpec(command, args, { platform: process.platform, env, execPath: process.execPath });
+  if (!quiet) log(`\n$ ${spec.command} ${spec.args.join(" ")}`);
+  const result = spawnSync(spec.command, spec.args, {
     cwd,
     env: { ...env, SOURCE_DATE_EPOCH: String(SOURCE_DATE_EPOCH), TZ: "UTC" },
     stdio: quiet ? "pipe" : "inherit",
     encoding: quiet ? "utf8" : undefined,
     timeout: timeout || undefined,
+    ...spec.options,
   });
   if (result.error && !allowFailure) die(`${command}: ${result.error.message}`);
   if ((result.status !== 0 || result.signal) && !allowFailure) {
@@ -164,12 +171,12 @@ function treeHash(root) {
 function buildFrontend({ repro = false, base = "" } = {}) {
   const viteArgs = ["exec", "vite", "build"];
   if (base) viteArgs.push(`--base=${base}`);
-  run(PNPM, ["exec", "tsc", "-p", "tsconfig.json", "--noEmit"], { env: { ...process.env, NODE_OPTIONS: "" } });
-  run(PNPM, viteArgs, { env: { ...process.env, NODE_OPTIONS: "" } });
+  run("pnpm", ["exec", "tsc", "-p", "tsconfig.json", "--noEmit"], { env: { ...process.env, NODE_OPTIONS: "" } });
+  run("pnpm", viteArgs, { env: { ...process.env, NODE_OPTIONS: "" } });
   const first = treeHash(path.join(ROOT, "dist"));
   distManifest();
   if (repro) {
-    run(PNPM, viteArgs, { env: { ...process.env, NODE_OPTIONS: "" } });
+    run("pnpm", viteArgs, { env: { ...process.env, NODE_OPTIONS: "" } });
     const second = treeHash(path.join(ROOT, "dist"));
     if (first !== second) die(`frontend is not reproducible: ${first} != ${second}`);
     log(`frontend reproducibility: sha256:${second}`);
@@ -509,7 +516,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
       go: output("go", ["env", "GOVERSION"], { allowFailure: true })?.trim() || "unknown",
       wails_cli: WAILS_VERSION,
       node: process.version,
-      pnpm: output(PNPM, ["--version"], { allowFailure: true })?.trim() || "unknown",
+      pnpm: output("pnpm", ["--version"], { allowFailure: true })?.trim() || "unknown",
       toolchain_pin: "CI pins Go 1.26.8, Node 22 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
       module_mode: "-mod=readonly",
       reproducible_flags: ["-trimpath", "-buildvcs=false", "-ldflags=-s -w + version/commit"],
@@ -638,14 +645,44 @@ function runDesktopSmoke(binary, goos, goarch) {
     timeout: 90_000,
   });
   const evidence = path.join(work, ".buildcheck/m27/webview-smoke-result.json");
-  if (result.status !== 0 || !fs.existsSync(evidence)) {
-    die(`native desktop smoke failed (exit ${result.status ?? result.signal}); no passing WebView evidence was produced`);
-  }
-  const parsed = JSON.parse(fs.readFileSync(evidence, "utf8"));
-  if (parsed.ok !== true) die(`native desktop smoke returned ok!=true: ${evidence}`);
   const destination = path.join(ROOT, "target/release-assets");
+  const preserved = path.join(destination, `desktop-smoke-${goos}-${goarch}.json`);
+  // Failure evidence is a first-class artifact: CI uploads target/release-assets
+  // with if: always(), so a failed smoke must leave its record there instead of
+  // only in the ephemeral temp dir. The pass criteria below are unchanged.
+  const preserveEvidence = () => {
+    fs.mkdirSync(destination, { recursive: true });
+    if (fs.existsSync(evidence)) {
+      fs.copyFileSync(evidence, preserved);
+      return;
+    }
+    fs.writeFileSync(preserved, `${JSON.stringify({
+      ok: false,
+      reason: "the desktop smoke process exited before producing webview-smoke-result.json",
+      exit: { status: result.status ?? null, signal: result.signal ?? null },
+      binary,
+      target: `${goos}/${goarch}`,
+      host: `${HOST_OS}/${HOST_ARCH}`,
+      workdir: work,
+    }, null, 2)}\n`);
+  };
+  if (result.status !== 0 || !fs.existsSync(evidence)) {
+    preserveEvidence();
+    die(`native desktop smoke failed (exit ${result.status ?? result.signal}); failure evidence preserved at ${preserved}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(evidence, "utf8"));
+  } catch (error) {
+    preserveEvidence();
+    die(`native desktop smoke evidence is not valid JSON (${error.message}); raw copy preserved at ${preserved}`);
+  }
+  if (parsed.ok !== true) {
+    preserveEvidence();
+    die(`native desktop smoke returned ok!=true: ${preserved}`);
+  }
   fs.mkdirSync(destination, { recursive: true });
-  fs.copyFileSync(evidence, path.join(destination, `desktop-smoke-${goos}-${goarch}.json`));
+  fs.copyFileSync(evidence, preserved);
 }
 
 function reportOnly() {
