@@ -37,4 +37,11 @@ func TestExecutionToolsFollowScopeCapabilities(t *testing.T) {
 	if len(names) != 4 || !names["list_assets"] || !names["ask_user"] || !names["todo_write"] || !names["exit_plan_mode"] || names["docker_control"] {
 		t.Fatalf("plan-mode names=%v", names)
 	}
+	mixed := NewRegistry(Dependencies{Terminal: &fakeTerminal{}, TabSession: func(string) string { return "other" }})
+	names = toolNames(&Execution{JobID: "j", Registry: mixed, Scope: Scope{SessionID: "s", TabID: "t"}})
+	for _, unavailable := range []string{"read_screen", "send_keys", "wait_for"} {
+		if names[unavailable] {
+			t.Errorf("%s exposed in mixed scope: %v", unavailable, names)
+		}
+	}
 }

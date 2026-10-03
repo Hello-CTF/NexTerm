@@ -20,6 +20,7 @@ type Manager struct {
 	mu             sync.Mutex
 	owners         map[string]*ownership
 	jobs           map[string]*runState
+	reservedJobs   map[string]struct{}
 	locks          map[string]*sync.Mutex
 	operationLocks map[string]*sync.Mutex
 	closed         bool
@@ -44,7 +45,7 @@ func NewManager(deps Dependencies) *Manager {
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = agent.NewMemoryCheckpoints()
 	}
-	return &Manager{deps: deps, checkpoints: deps.Checkpoints, owners: make(map[string]*ownership), jobs: make(map[string]*runState), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
+	return &Manager{deps: deps, checkpoints: deps.Checkpoints, owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
 }
 
 func (m *Manager) tabLock(tabID string) *sync.Mutex {
@@ -126,6 +127,9 @@ func (m *Manager) reserveJob(owner *ownership, jobID string) error {
 	if m.closed || m.owners[owner.tabID] != owner {
 		return ErrStaleOwnership
 	}
+	if _, exists := m.reservedJobs[jobID]; m.jobs[jobID] != nil || exists {
+		return errors.New("接管 job ID 重复")
+	}
 	if owner.jobID != "" {
 		return ErrOwnershipActive
 	}
@@ -134,12 +138,14 @@ func (m *Manager) reserveJob(owner *ownership, jobID string) error {
 			return ErrOwnershipActive
 		}
 	}
+	m.reservedJobs[jobID] = struct{}{}
 	owner.jobID = jobID
 	return nil
 }
 
 func (m *Manager) releaseJob(owner *ownership, jobID string) {
 	m.mu.Lock()
+	delete(m.reservedJobs, jobID)
 	if owner.jobID == jobID {
 		owner.jobID = ""
 	}
@@ -396,6 +402,7 @@ func (m *Manager) cleanup(state *runState, reason string) {
 	if m.jobs[state.id] == state {
 		delete(m.jobs, state.id)
 	}
+	delete(m.reservedJobs, state.id)
 	if state.owner.jobID == state.id {
 		state.owner.jobID = ""
 	}

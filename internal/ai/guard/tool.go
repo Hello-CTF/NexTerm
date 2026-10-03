@@ -205,6 +205,15 @@ func decodeKeyActions(keys, buffered string, cursor int, enter bool) ([]string, 
 			i += 3
 			continue
 		}
+		if runes[i] == 15 {
+			submits = true
+			flush()
+			continue
+		}
+		if runes[i] == '\b' {
+			current.backspace()
+			continue
+		}
 		if runes[i] == '\t' {
 			controls = append(controls, "tab completion")
 			current.insert(runes[i])
@@ -225,7 +234,7 @@ func decodeKeyActions(keys, buffered string, cursor int, enter bool) ([]string, 
 				tag := string(runes[i+1 : end])
 				lower := strings.ToLower(strings.TrimSpace(tag))
 				switch lower {
-				case "enter", "return", "ctrl+m", "ctrl+j", "c-m", "c-j":
+				case "enter", "return", "ctrl+m", "ctrl+j", "c-m", "c-j", "ctrl+o", "c-o":
 					submits = true
 					flush()
 				case "lt":
@@ -280,6 +289,10 @@ func decodeKeyActions(keys, buffered string, cursor int, enter bool) ([]string, 
 		commands = commands[:len(commands)-1]
 	}
 	return commands, controls, submits
+}
+
+func EffectiveKeyActions(keys, buffered string, cursor int, enter bool) ([]string, []string, bool) {
+	return decodeKeyActions(keys, buffered, cursor, enter)
 }
 
 func indexRune(values []rune, target rune) int {

@@ -479,7 +479,7 @@ func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs
 		return tools.Fail(errors.New("权限策略已拒绝: " + ruling.Reason)), nil
 	}
 	if decision.Action == guard.ActionAsk {
-		info := tools.Interaction{Kind: "confirm", CallID: callID, Tool: "send_keys", Args: string(encodedArgs), Risk: ruling.Risk.String(), Rendered: tools.DisplaySendKeys(tools.Call{ID: callID, Name: "send_keys", Args: encodedArgs}, terminalInput), Reason: ruling.Reason}
+		info := tools.Interaction{Kind: "confirm", CallID: callID, Tool: "send_keys", Args: string(encodedArgs), Risk: ruling.Risk.String(), Rendered: tools.DisplaySendKeys(tools.Call{ID: callID, Name: "send_keys", Args: encodedArgs}, terminalInput, cursor), Reason: ruling.Reason}
 		state := tools.InteractionState{Kind: "confirm", CallID: callID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
 		return tools.Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}

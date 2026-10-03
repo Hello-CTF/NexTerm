@@ -348,7 +348,10 @@ func (e *Execution) enabled(name string) bool {
 	case "exec_commands", "read_file", "write_file", "list_dir", "search_files", "edit_file":
 		return deps.Transport != nil && e.Scope.SessionID != ""
 	case "read_screen", "send_keys", "wait_for":
-		return deps.Terminal != nil && e.Scope.TabID != ""
+		if deps.Terminal == nil || e.Scope.TabID == "" {
+			return false
+		}
+		return e.Scope.SessionID == "" || deps.TabSession == nil || deps.TabSession(e.Scope.TabID) == e.Scope.SessionID
 	case "docker_ps":
 		return deps.DockerPS != nil && e.Scope.SessionID != ""
 	case "docker_logs":
@@ -464,7 +467,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	if decision.Action == guard.ActionAsk {
 		rendered := DisplayCall(call)
 		if call.Name == "send_keys" {
-			rendered = DisplaySendKeys(call, terminalInput)
+			rendered = DisplaySendKeys(call, terminalInput, cursor)
 		}
 		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Preview: preparation.Preview}
 		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}

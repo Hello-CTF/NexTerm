@@ -98,7 +98,7 @@ const (
 )
 
 func writeSemanticsForChange(change *preparedChange) string {
-	if change.before.missing {
+	if change.create {
 		return writeCreateSemantics
 	}
 	return writeReplaceSemantics
@@ -121,18 +121,14 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 	if _, ok := r.state(jobID).readVersion(change.key); !ok {
 		return Fail(ErrReadRequired)
 	}
+	exists, err := files.Exists(ctx, change.path)
+	if err != nil {
+		return Fail(err)
+	}
+	change.create = !change.version.Exists || !exists
 	var writeErr error
-	if change.version.Exists {
-		if err := ctx.Err(); err != nil {
-			return Fail(err)
-		}
-		writeErr = files.WriteFile(ctx, change.path, []byte(change.after), true)
-	} else {
-		exists, err := files.Exists(ctx, change.path)
-		if err != nil {
-			return Fail(err)
-		}
-		if exists {
+	if change.create {
+		if !change.version.Exists && exists {
 			return Fail(ErrFileChanged)
 		}
 		writer, ok := any(files).(conditional.Writer)
@@ -143,6 +139,11 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 			return Fail(err)
 		}
 		writeErr = writer.WriteFileVersion(ctx, change.path, []byte(change.after), false, conditional.Absent())
+	} else {
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		writeErr = files.WriteFile(ctx, change.path, []byte(change.after), true)
 	}
 	if writeErr != nil {
 		if errors.Is(writeErr, conditional.ErrVersionMismatch) {
@@ -177,7 +178,7 @@ func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope,
 	semantics := writeSemanticsForChange(change)
 	r.state(jobID).rememberRead(change.key, versionOf([]byte(change.after)))
 	var result Output
-	if change.before.missing {
+	if change.create {
 		result = OK(fmt.Sprintf("已创建 %s（%d 字节，原子 no-clobber）", change.path, len(change.after)))
 	} else if call.Name == "edit_file" {
 		result = OK(fmt.Sprintf("已编辑 %s（替换 %d 处，已备份原文件；非事务覆盖，可能覆盖确认后的外部修改）", change.path, change.replacements))
@@ -193,7 +194,9 @@ func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope,
 	} else {
 		payload["bytes"] = len(change.after)
 	}
-	files, err := r.fileSystem(ctx, scope)
+	afterCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	files, err := r.fileSystem(afterCtx, scope)
 	if err == nil {
 		after, readErr := files.ReadFile(ctx, change.path, MaxDiffBytes)
 		if readErr == nil && utf8.Valid(after) && change.before.known {

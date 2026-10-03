@@ -14,13 +14,14 @@ import (
 )
 
 type Runner struct {
-	config      Config
-	store       ConversationStore
-	checkpoints adk.CheckPointStore
-	mu          sync.Mutex
-	jobs        map[string]*job
-	closed      bool
-	wg          sync.WaitGroup
+	config       Config
+	store        ConversationStore
+	checkpoints  adk.CheckPointStore
+	mu           sync.Mutex
+	jobs         map[string]*job
+	reservedJobs map[string]struct{}
+	closed       bool
+	wg           sync.WaitGroup
 }
 
 func NewRunner(config Config) *Runner {
@@ -50,7 +51,23 @@ func NewRunner(config Config) *Runner {
 	if config.Checkpoints == nil {
 		config.Checkpoints = NewMemoryCheckpoints()
 	}
-	return &Runner{config: config, store: config.Store, checkpoints: config.Checkpoints, jobs: make(map[string]*job)}
+	return &Runner{config: config, store: config.Store, checkpoints: config.Checkpoints, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
+}
+
+func (r *Runner) reserveJobID(jobID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.reservedJobs[jobID]; r.closed || r.jobs[jobID] != nil || exists {
+		return errors.New("AI runner 已关闭或 job ID 重复")
+	}
+	r.reservedJobs[jobID] = struct{}{}
+	return nil
+}
+
+func (r *Runner) releaseJobID(jobID string) {
+	r.mu.Lock()
+	delete(r.reservedJobs, jobID)
+	r.mu.Unlock()
 }
 
 func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory) (StartResponse, error) {
@@ -93,15 +110,20 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	if strings.TrimSpace(jobID) == "" {
 		return StartResponse{}, errors.New("AI job ID 为空")
 	}
+	if err := r.reserveJobID(jobID); err != nil {
+		return StartResponse{}, err
+	}
 	jobContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	stream, err := factory(ctx, args.ChannelID, jobID)
 	if err != nil {
+		r.releaseJobID(jobID)
 		cancel()
 		forceCancel()
 		return StartResponse{}, err
 	}
 	if stream == nil {
+		r.releaseJobID(jobID)
 		cancel()
 		forceCancel()
 		return StartResponse{}, errors.New("AI 事件流为空")
@@ -111,6 +133,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
+		r.releaseJobID(jobID)
 		cancel()
 		forceCancel()
 		_ = stream.Close()
@@ -234,6 +257,7 @@ func (r *Runner) cleanup(current *job) {
 	}
 	r.mu.Unlock()
 	current.cancel()
+	r.releaseJobID(current.id)
 	if current.forceCancel != nil {
 		current.forceCancel()
 	}

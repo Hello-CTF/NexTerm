@@ -188,6 +188,20 @@ func parseShell(input string) ([]shellSegment, []string, error) {
 			segments = append(segments, current)
 			current = shellSegment{}
 			redirectIndex = -1
+		case '=':
+			if i+1 < len(runes) && runes[i+1] == '(' {
+				value, next, ok := readBalanced(runes, i+2)
+				if !ok {
+					return segments, substitutions, strconv.ErrSyntax
+				}
+				substitutions = append(substitutions, value)
+				word.WriteString("=(" + value + ")")
+				wordSeen = true
+				i = next
+				continue
+			}
+			word.WriteRune(r)
+			wordSeen = true
 		case '>', '<':
 			if i+1 < len(runes) && runes[i+1] == '(' {
 				value, next, ok := readBalanced(runes, i+2)
@@ -371,7 +385,7 @@ func stripDescriptors(tokens []string) []string {
 
 func stripCommandFlags(tokens []string) []string {
 	valueFlags := map[string]bool{
-		"-u": true, "-g": true, "-h": true, "-p": true, "-C": true, "-T": true, "-t": true, "-U": true, "-G": true, "-R": true,
+		"-u": true, "-g": true, "-h": true, "-p": true, "-C": true, "-D": true, "-T": true, "-t": true, "-U": true, "-G": true, "-R": true,
 		"--user": true, "--group": true, "--host": true, "--prompt": true, "--chdir": true, "--command-timeout": true, "--type": true, "--role": true,
 	}
 	for len(tokens) > 0 {
@@ -400,7 +414,7 @@ func privilegeOptionValue(arg string) (string, bool) {
 	}
 	for index := 1; index < len(arg); index++ {
 		switch arg[index] {
-		case 'u', 'g', 'h', 'p', 'C', 'T', 't', 'U', 'G', 'R':
+		case 'u', 'g', 'h', 'p', 'C', 'D', 'T', 't', 'U', 'G', 'R':
 			return arg[index+1:], true
 		}
 	}
@@ -713,7 +727,7 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 	case "exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
 		if commandIndex := dockerExecCommandIndex(rest); commandIndex >= 0 {
-			result = Worst(result, classifySimple(rest[commandIndex:], nil, rules, depth))
+			result = Worst(result, classifySegment(shellSegment{tokens: rest[commandIndex:]}, rules, depth))
 		}
 		return result
 	case "run", "create", "start", "stop", "restart", "rm", "kill", "pause", "unpause", "rename", "update", "cp", "commit", "import", "load", "pull", "push", "build", "tag", "rmi", "save", "attach":
@@ -735,6 +749,11 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 			return Dangerous("Docker 清理会删除资源")
 		case "exec", "run":
 			return classifyDocker(append([]string{nested}, rest[1:]...), rules, depth)
+		case "rm", "rmi":
+			if containsAnyFold(rest[1:], "-f", "--force") && dockerBulkDeletion(rest[1:]) {
+				return Dangerous("强制删除全部 Docker 资源")
+			}
+			return Confirm(KindDockerMutate, "Docker 资源变更")
 		default:
 			return Confirm(KindDockerMutate, "Docker 资源变更")
 		}
@@ -879,11 +898,11 @@ func classifyDownload(name string, args, ops []string) Ruling {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
 		switch arg {
-		case "-o", "-O", "-d", "-F", "-T":
+		case "-o", "-O", "-d", "-F", "-T", "-c":
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
 		switch lower {
-		case "--output", "--output-document", "--data", "--data-binary", "--data-raw", "--form", "--upload-file", "--post-data", "--post-file", "--method", "--json":
+		case "--remote-name", "--cookie-jar", "--output", "--output-document", "--data", "--data-binary", "--data-raw", "--form", "--upload-file", "--post-data", "--post-file", "--method", "--json":
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		case "-X", "--request":
 			if i+1 < len(args) && !strings.EqualFold(args[i+1], "GET") {
@@ -893,7 +912,7 @@ func classifyDownload(name string, args, ops []string) Ruling {
 		if strings.HasPrefix(lower, "--request=") && !strings.EqualFold(strings.TrimPrefix(lower, "--request="), "get") {
 			return Confirm(KindWriteFS, "非 GET 网络请求")
 		}
-		for _, prefix := range []string{"--data=", "--data-binary=", "--data-raw=", "--form=", "--json=", "--output=", "--upload-file=", "--output-document=", "--post-data=", "--post-file=", "--method="} {
+		for _, prefix := range []string{"--cookie-jar=", "--data=", "--data-binary=", "--data-raw=", "--form=", "--json=", "--output=", "--upload-file=", "--output-document=", "--post-data=", "--post-file=", "--method="} {
 			if strings.HasPrefix(lower, prefix) {
 				return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 			}
@@ -919,7 +938,7 @@ func curlShortOptionRisk(arg string) (bool, bool) {
 	for index := 1; index < len(arg); index++ {
 		value := arg[index+1:]
 		switch arg[index] {
-		case 'o', 'O', 'd', 'F', 'T', 'D':
+		case 'o', 'O', 'd', 'F', 'T', 'D', 'c':
 			return value != "-", false
 		case 'X':
 			return false, !strings.EqualFold(value, "GET")

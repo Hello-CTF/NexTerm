@@ -7,8 +7,8 @@ func TestR1QuotedStoredFunctionIsNotReadOnly(t *testing.T) {
 	if got := ClassifySQL("SELECT `mutating_stored_function`()", nil); got.Risk != NeedsConfirm {
 		t.Fatalf("quoted stored function = %v, want NeedsConfirm", got)
 	}
-	if got := ClassifySQL("SELECT `COUNT`(*)", nil); got.Risk != Safe {
-		t.Fatalf("quoted read-only function = %v, want Safe", got)
+	if got := ClassifySQL("SELECT `COUNT`(*)", nil); got.Risk != NeedsConfirm {
+		t.Fatalf("quoted allowlisted function is not implicitly trusted: %v", got)
 	}
 	if got := ClassifySQL(`SELECT "mutating_stored_function"()`, nil); got.Risk != NeedsConfirm {
 		t.Fatalf("double-quoted stored function = %v, want NeedsConfirm", got)

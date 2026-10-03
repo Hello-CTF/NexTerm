@@ -177,6 +177,7 @@ type preparedChange struct {
 	before       fileState
 	after        string
 	replacements int
+	create       bool
 }
 
 type fileState struct {

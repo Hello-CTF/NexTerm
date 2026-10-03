@@ -9,6 +9,12 @@ func envSplitString(arg string) (string, bool, bool) {
 	if strings.HasPrefix(arg, "--split-string=") {
 		return strings.TrimPrefix(arg, "--split-string="), true, true
 	}
+	if arg == "--split-s" {
+		return "", false, true
+	}
+	if strings.HasPrefix(arg, "--split-s=") {
+		return strings.TrimPrefix(arg, "--split-s="), true, true
+	}
 	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
 		return "", false, false
 	}
@@ -55,6 +61,7 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 					i++
 					payload = args[i]
 				}
+				payload = strings.ReplaceAll(payload, "\\_", " ")
 				for _, arg := range args[i+1:] {
 					payload += " " + quoteShellToken(arg)
 				}
@@ -75,7 +82,7 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 		return Allow(), true
 	case "sort":
 		for _, arg := range args {
-			if arg == "-o" || arg == "--output" || strings.HasPrefix(arg, "--output=") {
+			if arg == "-o" || arg == "--output" || arg == "--out" || strings.HasPrefix(arg, "--output=") || strings.HasPrefix(arg, "--out=") {
 				return Confirm(KindWriteFS, "sort 输出到文件"), true
 			}
 			if value, ok := shortOptionValue(arg, 'o'); ok && value != "-" {

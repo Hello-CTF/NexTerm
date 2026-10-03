@@ -6,6 +6,9 @@ func hasUnknownSQLFunction(tokens []sqlToken) bool {
 			continue
 		}
 		name := tokens[i-1]
+		if name.quoted {
+			return true
+		}
 		if name.keyword || name.text == "<literal>" || name.text == "." {
 			continue
 		}

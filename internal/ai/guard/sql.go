@@ -9,6 +9,7 @@ import (
 type sqlToken struct {
 	text    string
 	keyword bool
+	quoted  bool
 }
 
 func ClassifySQL(statement string, rules []string) Ruling {
@@ -251,7 +252,7 @@ func splitSQL(input string) ([][]sqlToken, error) {
 				return nil, strconv.ErrSyntax
 			}
 			if quote == '`' || quote == '"' {
-				current = append(current, sqlToken{text: strings.ToUpper(quoted.String())})
+				current = append(current, sqlToken{text: strings.ToUpper(quoted.String()), quoted: true})
 			} else {
 				current = append(current, sqlToken{text: "<literal>"})
 			}

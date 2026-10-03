@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
@@ -36,5 +37,21 @@ func TestR1ZeroCursorColumnIsPreserved(t *testing.T) {
 	}
 	if got := guard.ClassifySendKeysWithCursor("<delete><enter>", buffered, cursor, false, nil); got.Risk != guard.Forbidden {
 		t.Fatalf("zero-column deletion ruling = %v", got)
+	}
+}
+
+func TestR3PendingInputIncludesBelowRowsAndCommonPrompt(t *testing.T) {
+	screen := Screen{Text: "$ echo \n; rm -rf /home/user", CursorRow: 0}
+	buffered, _ := TerminalInputCursor(screen)
+	if !strings.Contains(buffered, "rm -rf /home/user") {
+		t.Fatalf("pending suffix missing from %q", buffered)
+	}
+	if got := guard.ClassifySendKeysWithBuffer("ls<enter>", buffered, false, nil); got.Risk != guard.Forbidden {
+		t.Fatalf("below-row pending command ruling = %v", got)
+	}
+	common := Screen{Text: "root@host:~# rm -rf /home/user"}
+	buffered, _ = TerminalInputCursor(common)
+	if buffered != "rm -rf /home/user" {
+		t.Fatalf("common prompt buffer = %q", buffered)
 	}
 }

@@ -26,3 +26,15 @@ func TestR1AuditRedactsAuthorizationAndInlineMySQLPassword(t *testing.T) {
 		t.Fatalf("arguments contain credentials: %s", text)
 	}
 }
+
+func TestR3DisplayKeepsDangerousTail(t *testing.T) {
+	prefix := strings.Repeat("harmless ", 30)
+	display := DisplaySendKeys(
+		Call{Name: "send_keys", Args: json.RawMessage(`{"keys":"; reboot<enter>"}`)},
+		prefix,
+		-1,
+	)
+	if !strings.Contains(display, "reboot") || !strings.Contains(display, "<enter>") {
+		t.Fatalf("display = %q", display)
+	}
+}
