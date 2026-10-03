@@ -578,285 +578,297 @@
           "source": "src/ipc/commands.ts"
         },
         {
+          "accessor": "aiApi.hitlSnapshot",
+          "line": 659,
+          "name": "ai_hitl_snapshot",
+          "source": "src/ipc/commands.ts"
+        },
+        {
+          "accessor": "aiApi.hitlEvents",
+          "line": 662,
+          "name": "ai_hitl_events",
+          "source": "src/ipc/commands.ts"
+        },
+        {
           "accessor": "aiApi.models",
-          "line": 654,
+          "line": 663,
           "name": "ai_models",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.testProvider",
-          "line": 656,
+          "line": 665,
           "name": "ai_test_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.setProvider",
-          "line": 660,
+          "line": 669,
           "name": "ai_set_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.getProvider",
-          "line": 661,
+          "line": 670,
           "name": "ai_get_provider",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.presets",
-          "line": 662,
+          "line": 671,
           "name": "ai_presets",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverEnter",
-          "line": 664,
+          "line": 673,
           "name": "ai_takeover_enter",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverExit",
-          "line": 670,
+          "line": 679,
           "name": "ai_takeover_exit",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.takeoverRun",
-          "line": 679,
+          "line": 688,
           "name": "ai_takeover_run",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationList",
-          "line": 685,
+          "line": 694,
           "name": "ai_conversation_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationDelete",
-          "line": 686,
+          "line": 695,
           "name": "ai_conversation_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.conversationCreate",
-          "line": 688,
+          "line": 697,
           "name": "ai_conversation_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "aiApi.messages",
-          "line": 690,
+          "line": 699,
           "name": "ai_messages",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.overview",
-          "line": 701,
+          "line": 710,
           "name": "ai_model_profiles",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.save",
-          "line": 704,
+          "line": 713,
           "name": "ai_model_save",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.remove",
-          "line": 705,
+          "line": 714,
           "name": "ai_model_delete",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.activate",
-          "line": 706,
+          "line": 715,
           "name": "ai_model_activate",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.refresh",
-          "line": 712,
+          "line": 721,
           "name": "ai_model_refresh",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.presets",
-          "line": 713,
+          "line": 722,
           "name": "ai_presets",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "modelApi.preset",
-          "line": 714,
+          "line": 723,
           "name": "ai_model_preset",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.status",
-          "line": 767,
+          "line": 776,
           "name": "vault_status",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.initMaster",
-          "line": 768,
+          "line": 777,
           "name": "vault_init_master",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.initDpapi",
-          "line": 769,
+          "line": 778,
           "name": "vault_init_dpapi",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.unlock",
-          "line": 770,
+          "line": 779,
           "name": "vault_unlock",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.lock",
-          "line": 771,
+          "line": 780,
           "name": "vault_lock",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.changePassword",
-          "line": 773,
+          "line": 782,
           "name": "vault_change_password",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.setCredential",
-          "line": 786,
+          "line": 795,
           "name": "vault_set_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.listCredentials",
-          "line": 796,
+          "line": 805,
           "name": "vault_list_credentials",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.deleteCredential",
-          "line": 797,
+          "line": 806,
           "name": "vault_delete_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.revealCredential",
-          "line": 798,
+          "line": 807,
           "name": "vault_reveal_credential",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "vaultApi.updateCredential",
-          "line": 813,
+          "line": 822,
           "name": "credential_update",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.env",
-          "line": 826,
+          "line": 835,
           "name": "forward_env",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.create",
-          "line": 828,
+          "line": 837,
           "name": "forward_create",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.createSocks",
-          "line": 841,
+          "line": 850,
           "name": "forward_create_socks",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.list",
-          "line": 846,
+          "line": 855,
           "name": "forward_list",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "forwardApi.remove",
-          "line": 847,
+          "line": 856,
           "name": "forward_remove",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.digest",
-          "line": 870,
+          "line": 879,
           "name": "sync_digest",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.origin",
-          "line": 871,
+          "line": 880,
           "name": "sync_origin",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.exportAssets",
-          "line": 875,
+          "line": 884,
           "name": "sync_export",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.importBundle",
-          "line": 879,
+          "line": 888,
           "name": "sync_import",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.linkGet",
-          "line": 883,
+          "line": 892,
           "name": "sync_link_get",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.linkSet",
-          "line": 888,
+          "line": 897,
           "name": "sync_link_set",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.remoteDigest",
-          "line": 891,
+          "line": 900,
           "name": "sync_remote_digest",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.push",
-          "line": 895,
+          "line": 904,
           "name": "sync_push",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.pull",
-          "line": 898,
+          "line": 907,
           "name": "sync_pull",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.token",
-          "line": 903,
+          "line": 912,
           "name": "sync_token",
           "source": "src/ipc/commands.ts"
         },
         {
           "accessor": "syncApi.rotateToken",
-          "line": 905,
+          "line": 914,
           "name": "sync_token_rotate",
           "source": "src/ipc/commands.ts"
         }
       ],
-      "method_count": 141,
+      "method_count": 143,
       "source": "src/ipc/commands.ts",
-      "unique_command_count": 140
+      "unique_command_count": 142
     },
     "reconciliation": {
       "duplicate_frontend_commands": [
@@ -868,9 +880,11 @@
           "name": "ai_presets"
         }
       ],
-      "equation": "139 Rust = 138 frontend unique + rust_only ['credential_save']; 141 frontend methods = 140 unique + duplicate ai_presets wrapper; frontend_only ['ai_answer', 'terminal_resize_flush']",
+      "equation": "139 Rust = 138 frontend unique + rust_only ['credential_save']; 143 frontend methods = 142 unique + duplicate ai_presets wrapper; frontend_only ['ai_answer', 'ai_hitl_events', 'ai_hitl_snapshot', 'terminal_resize_flush']",
       "frontend_only": [
         "ai_answer",
+        "ai_hitl_events",
+        "ai_hitl_snapshot",
         "terminal_resize_flush"
       ],
       "rust_only": [
