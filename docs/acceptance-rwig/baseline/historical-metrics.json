@@ -33,7 +33,7 @@
       "artifact": "ELF 64-bit LSB pie executable, x86-64",
       "size_bytes": 16337808,
       "reproduce": "cargo build --release --target x86_64-unknown-linux-gnu",
-      "source": "docs/LAZYCAT-PORT.md:1070-1084"
+      "source": "docs/LAZYCAT-PORT.md:1127-1129"
     },
     {
       "id": "lazycat-lpk-v0.1.3",
@@ -43,7 +43,7 @@
       "embedded_layer_bytes": 15918870,
       "sha256": "d90395a843f255e427679eaf7e376ac3d3cf3f8c92f6e693fe15b079ccfab742",
       "reproduce": "lzc-cli project build",
-      "source": "docs/LAZYCAT-PORT.md:1409-1438"
+      "source": "docs/LAZYCAT-PORT.md:1454-1483"
     },
     {
       "id": "lazycat-lpk-dev-v0.2.0",
@@ -54,7 +54,7 @@
       "embedded_layer_reported_mib": 15.53,
       "signed": false,
       "reproduce": "lzc-cli project build",
-      "source": "docs/LAZYCAT-PORT.md:3028-3029"
+      "source": "docs/LAZYCAT-PORT.md:3073-3074"
     },
     {
       "id": "desktop-startup-rss-windows",

@@ -4,8 +4,6 @@ target
 
 # 历史遗留的备用构建目录，防止误提交
 target-alt
-src-tauri/target
-src-tauri/gen/schemas
 
 *.log
 .DS_Store
