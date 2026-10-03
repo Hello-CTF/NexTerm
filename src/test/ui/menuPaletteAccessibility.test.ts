@@ -50,13 +50,36 @@ function menuItem(container: ParentNode, label: string): HTMLButtonElement {
   return item;
 }
 
+// jsdom 不做布局，getClientRects 恒为空。这里给“已渲染”元素一个非空矩形、
+// 给 display:none / hidden 子树空矩形，让 documentTabTarget 的可见性筛选可测。
+function hasRenderedLayout(element: HTMLElement): boolean {
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    if (current.hidden || current.style.display === "none") return false;
+  }
+  return true;
+}
+
+function installLayoutRects(): () => void {
+  const original = HTMLElement.prototype.getClientRects;
+  HTMLElement.prototype.getClientRects = function (this: HTMLElement): DOMRectList {
+    return hasRenderedLayout(this)
+      ? ([{ width: 10, height: 10 }] as unknown as DOMRectList)
+      : ([] as unknown as DOMRectList);
+  };
+  return () => {
+    HTMLElement.prototype.getClientRects = original;
+  };
+}
+
 describe("menu and command palette accessibility", () => {
   let mounted: MountedView | undefined;
+  let uninstallLayoutRects: (() => void) | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
     document.body.style.overflow = "";
+    uninstallLayoutRects = installLayoutRects();
     mocks.list.mockResolvedValue([]);
     useUi.setState({
       sessions: [],
@@ -69,6 +92,8 @@ describe("menu and command palette accessibility", () => {
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
+    uninstallLayoutRects?.();
+    uninstallLayoutRects = undefined;
     document.body.style.overflow = "";
     document.body.replaceChildren();
   });
@@ -299,5 +324,32 @@ describe("menu and command palette accessibility", () => {
     mounted = undefined;
     await flush();
     expect(document.activeElement).toBe(shiftKey ? before : after);
+  });
+
+  it("hands Shift+Tab to the visible previous control, not a hidden button or BODY", async () => {
+    const expand = document.createElement("button");
+    expand.textContent = "展开";
+    const hiddenPanel = document.createElement("div");
+    hiddenPanel.style.display = "none";
+    const hiddenDelete = document.createElement("button");
+    hiddenDelete.textContent = "删除";
+    hiddenPanel.appendChild(hiddenDelete);
+    const trigger = document.createElement("button");
+    document.body.append(expand, hiddenPanel, trigger);
+    trigger.focus();
+    mounted = mount(
+      createElement(ContextMenu, {
+        state: { x: 0, y: 0, items: [{ kind: "item", label: "动作" }] },
+        onClose: vi.fn(),
+      }),
+    );
+
+    keyDown(menuItem(mounted.container, "动作"), "Tab", { shiftKey: true });
+    mounted.unmount();
+    mounted = undefined;
+    await flush();
+    expect(document.activeElement).toBe(expand);
+    expect(document.activeElement).not.toBe(hiddenDelete);
+    expect(document.activeElement).not.toBe(document.body);
   });
 });

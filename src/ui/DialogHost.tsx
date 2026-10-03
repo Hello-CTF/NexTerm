@@ -240,18 +240,27 @@ export function useOverlayFocus<T extends HTMLElement>(
   return handleRef.current;
 }
 
+function isDocumentTabStop(element: HTMLElement): boolean {
+  if (element.tabIndex < 0) return false;
+  if (element.matches(":disabled")) return false;
+  if (element.hidden) return false;
+  if (element.closest('[aria-hidden="true"]')) return false;
+  if (element.closest("[inert]")) return false;
+  // display:none 祖先（含隐藏面板、关闭的 details）不产生布局盒，focus() 会被浏览器静默拒绝
+  if (element.getClientRects().length === 0) return false;
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    if (getComputedStyle(current).visibility === "hidden") return false;
+  }
+  return true;
+}
+
 export function documentTabTarget(
   origin: HTMLElement | null,
   direction: 1 | -1,
   exclude: HTMLElement,
 ): HTMLElement | null {
   const candidates = [...document.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) =>
-      element.tabIndex >= 0 &&
-      !exclude.contains(element) &&
-      !element.hidden &&
-      element.getAttribute("aria-hidden") !== "true" &&
-      !element.closest("[inert]"),
+    (element) => !exclude.contains(element) && isDocumentTabStop(element),
   );
   if (!origin) return null;
   const index = candidates.indexOf(origin);
