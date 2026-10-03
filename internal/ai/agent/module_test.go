@@ -60,10 +60,15 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	if err := runner.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"ai_chat", "ai_cancel", "ai_confirm", "ai_answer", "ai_models", "ai_test_provider", "ai_get_permission", "ai_set_permission", "ai_conversation_create", "ai_conversation_list", "ai_conversation_delete", "ai_messages"} {
+	runtime := []string{"ai_chat", "ai_cancel", "ai_confirm", "ai_answer", "ai_get_permission", "ai_set_permission"}
+	registered := dispatcher.Commands()
+	if len(registered) != len(runtime) {
+		t.Fatalf("agent module must register exactly the runtime surface, got %v", registered)
+	}
+	for _, command := range runtime {
 		found := false
-		for _, registered := range dispatcher.Commands() {
-			found = found || registered == command
+		for _, name := range registered {
+			found = found || name == command
 		}
 		if !found {
 			t.Errorf("missing command %s", command)
@@ -101,5 +106,44 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	}
 	if terminals != 1 || stream.events[len(stream.events)-1]["type"] != "done" {
 		t.Fatalf("events=%+v", stream.events)
+	}
+}
+
+// TestModuleComposesAfterOwnerModules reproduces the production composition:
+// the profiles owner module registers provider/model/conversation commands
+// first, then the agent runtime module must register without duplicates.
+func TestModuleComposesAfterOwnerModules(t *testing.T) {
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	runner := NewRunner(Config{Store: storage})
+	defer runner.Close()
+	dispatcher := ipc.NewDispatcher()
+	ownerCommands := []string{
+		"ai_conversation_create", "ai_conversation_list", "ai_conversation_delete", "ai_messages",
+		"ai_presets", "ai_models", "ai_model_refresh", "ai_model_profiles", "ai_model_save",
+		"ai_model_delete", "ai_model_activate", "ai_model_preset",
+		"ai_test_provider", "ai_get_provider", "ai_set_provider",
+	}
+	for _, command := range ownerCommands {
+		if err := dispatcher.RegisterRaw(command, func(context.Context, *ipc.Call) (any, error) { return nil, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Module(runner).RegisterCommands(dispatcher); err != nil {
+		t.Fatalf("agent module must compose after owner modules: %v", err)
+	}
+	for _, command := range ownerCommands {
+		for _, name := range dispatcher.Commands() {
+			if name != command {
+				continue
+			}
+			response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: command}, ipc.Environment{})
+			if !response.OK {
+				t.Fatalf("owner command %s shadowed: %+v", command, response.Error)
+			}
+		}
 	}
 }

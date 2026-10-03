@@ -2,20 +2,92 @@ package guard
 
 import "strings"
 
+// gnuLongOption describes one documented long option of a GNU-style command.
+type gnuLongOption struct {
+	name          string // option name without the leading "--"
+	takesValue    bool   // value may be attached (=value) or given as the next argument
+	optionalValue bool   // value only accepted attached (e.g. --check)
+}
+
+// resolveGNULongOption resolves a "--name[=value]" argument against the known
+// option table using GNU unique-abbreviation semantics: an exact match wins,
+// otherwise a prefix is accepted only when exactly one known option starts
+// with it. Unknown or ambiguous prefixes fail closed (ok == false) so callers
+// never silently skip an option they do not understand.
+func resolveGNULongOption(arg string, known []gnuLongOption) (option gnuLongOption, value string, attached, ok bool) {
+	if !strings.HasPrefix(arg, "--") || arg == "--" {
+		return gnuLongOption{}, "", false, false
+	}
+	name, value, attached := strings.Cut(arg[2:], "=")
+	for _, candidate := range known {
+		if candidate.name == name {
+			return candidate, value, attached, true
+		}
+	}
+	var matched *gnuLongOption
+	ambiguous := false
+	for index := range known {
+		if strings.HasPrefix(known[index].name, name) {
+			if matched != nil {
+				ambiguous = true
+			}
+			matched = &known[index]
+		}
+	}
+	if matched == nil || ambiguous {
+		return gnuLongOption{}, "", false, false
+	}
+	return *matched, value, attached, true
+}
+
+var envLongOptions = []gnuLongOption{
+	{name: "ignore-environment"},
+	{name: "null"},
+	{name: "unset", takesValue: true},
+	{name: "chdir", takesValue: true},
+	{name: "split-string", takesValue: true},
+	{name: "debug"},
+	{name: "help"},
+	{name: "version"},
+}
+
+var sortLongOptions = []gnuLongOption{
+	{name: "ignore-leading-blanks"},
+	{name: "dictionary-order"},
+	{name: "ignore-case"},
+	{name: "ignore-nonprinting"},
+	{name: "month-sort"},
+	{name: "numeric-sort"},
+	{name: "general-numeric-sort"},
+	{name: "human-numeric-sort"},
+	{name: "version-sort"},
+	{name: "natural-sort"},
+	{name: "reverse"},
+	{name: "sort", takesValue: true},
+	{name: "random-sort"},
+	{name: "random-source", takesValue: true},
+	{name: "key", takesValue: true},
+	{name: "field-separator", takesValue: true},
+	{name: "temporary-directory", takesValue: true},
+	{name: "buffer-size", takesValue: true},
+	{name: "batch-size", takesValue: true},
+	{name: "compress-program", takesValue: true},
+	{name: "parallel", takesValue: true},
+	{name: "files0-from", takesValue: true},
+	{name: "output", takesValue: true},
+	{name: "check", optionalValue: true},
+	{name: "quiet"},
+	{name: "silent"},
+	{name: "stable"},
+	{name: "unique"},
+	{name: "zero-terminated"},
+	{name: "debug"},
+	{name: "help"},
+	{name: "version"},
+}
+
 func envSplitString(arg string) (string, bool, bool) {
-	if arg == "-S" || arg == "--split-string" {
-		return "", false, true
-	}
-	if strings.HasPrefix(arg, "--split-string=") {
-		return strings.TrimPrefix(arg, "--split-string="), true, true
-	}
-	if arg == "--split-s" {
-		return "", false, true
-	}
-	if strings.HasPrefix(arg, "--split-s=") {
-		return strings.TrimPrefix(arg, "--split-s="), true, true
-	}
-	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") {
+	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || arg == "-" {
 		return "", false, false
 	}
 	for index := 1; index < len(arg); index++ {
@@ -51,8 +123,43 @@ func shortOptionValue(arg string, option byte) (string, bool) {
 func classifyStateChangingBuiltins(name string, args, rules []string, depth int) (Ruling, bool) {
 	switch name {
 	case "env":
+		splitString := func(payload string, rest []string) (Ruling, bool) {
+			payload = strings.ReplaceAll(payload, "\\_", " ")
+			for _, extra := range rest {
+				payload += " " + quoteShellToken(extra)
+			}
+			return Worst(Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), classifyCommandDepth(payload, rules, depth+1)), true
+		}
 		for i := 0; i < len(args); i++ {
 			arg := args[i]
+			if arg == "--" {
+				if i+1 < len(args) {
+					return classifySimple(args[i+1:], nil, rules, depth), true
+				}
+				return Allow(), true
+			}
+			if strings.HasPrefix(arg, "--") {
+				option, value, attached, ok := resolveGNULongOption(arg, envLongOptions)
+				if !ok {
+					return Confirm(KindUnknown, "env 包含无法识别的长选项"), true
+				}
+				switch option.name {
+				case "split-string":
+					if !attached {
+						if i+1 >= len(args) {
+							return Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), true
+						}
+						i++
+						value = args[i]
+					}
+					return splitString(value, args[i+1:])
+				case "unset", "chdir":
+					if !attached {
+						i++
+					}
+				}
+				continue
+			}
 			if payload, attached, ok := envSplitString(arg); ok {
 				if !attached {
 					if i+1 >= len(args) {
@@ -61,29 +168,45 @@ func classifyStateChangingBuiltins(name string, args, rules []string, depth int)
 					i++
 					payload = args[i]
 				}
-				payload = strings.ReplaceAll(payload, "\\_", " ")
-				for _, arg := range args[i+1:] {
-					payload += " " + quoteShellToken(arg)
-				}
-				return Worst(Confirm(KindUnknown, "env 的字符串拆句执行需要确认"), classifyCommandDepth(payload, rules, depth+1)), true
+				return splitString(payload, args[i+1:])
 			}
 			if isAssignment(arg) {
 				continue
 			}
-			if arg == "-u" || arg == "--unset" || arg == "-C" || arg == "--chdir" {
+			if arg == "-u" || arg == "-C" {
 				i++
 				continue
 			}
-			if strings.HasPrefix(arg, "-") {
+			if arg == "-i" || arg == "-0" {
 				continue
+			}
+			if strings.HasPrefix(arg, "-") && arg != "-" {
+				return Confirm(KindUnknown, "env 包含无法识别的选项"), true
 			}
 			return classifySimple(args[i:], nil, rules, depth), true
 		}
 		return Allow(), true
 	case "sort":
-		for _, arg := range args {
-			if arg == "-o" || arg == "--output" || arg == "--out" || strings.HasPrefix(arg, "--output=") || strings.HasPrefix(arg, "--out=") {
-				return Confirm(KindWriteFS, "sort 输出到文件"), true
+		for i := 0; i < len(args); i++ {
+			arg := args[i]
+			if arg == "--" {
+				break
+			}
+			if strings.HasPrefix(arg, "--") {
+				option, _, attached, ok := resolveGNULongOption(arg, sortLongOptions)
+				if !ok {
+					return Confirm(KindUnknown, "sort 包含无法识别的长选项"), true
+				}
+				switch option.name {
+				case "output":
+					return Confirm(KindWriteFS, "sort 输出到文件"), true
+				case "compress-program":
+					return Confirm(KindUnknown, "sort 调用外部压缩程序"), true
+				}
+				if option.takesValue && !attached && !option.optionalValue {
+					i++
+				}
+				continue
 			}
 			if value, ok := shortOptionValue(arg, 'o'); ok && value != "-" {
 				return Confirm(KindWriteFS, "sort 输出到文件"), true

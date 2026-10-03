@@ -173,7 +173,7 @@ func decodeKeyActions(keys, buffered string, cursor int, enter bool) ([]string, 
 		current.reset()
 	}
 	for i := 0; i < len(runes); i++ {
-		if runes[i] == 27 && i+2 < len(runes) && runes[i+1] == '[' {
+		if runes[i] == 27 && i+2 < len(runes) && (runes[i+1] == '[' || runes[i+1] == 'O') {
 			handled := true
 			switch runes[i+2] {
 			case 'A':

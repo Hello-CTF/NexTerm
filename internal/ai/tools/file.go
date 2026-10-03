@@ -198,7 +198,7 @@ func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope,
 	defer cancel()
 	files, err := r.fileSystem(afterCtx, scope)
 	if err == nil {
-		after, readErr := files.ReadFile(ctx, change.path, MaxDiffBytes)
+		after, readErr := files.ReadFile(afterCtx, change.path, MaxDiffBytes)
 		if readErr == nil && utf8.Valid(after) && change.before.known {
 			actual := string(after)
 			if actual != change.before.content && len(change.before.content)+len(actual) <= MaxPreviewSize {

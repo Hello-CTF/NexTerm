@@ -698,10 +698,7 @@ func classifyPackage(args []string) Ruling {
 	return Confirm(KindPackage, "软件包管理操作")
 }
 
-func classifyDocker(args []string, rules []string, depth int) Ruling {
-	if len(args) == 0 {
-		return Confirm(KindUnknown, "docker 子命令不明确")
-	}
+func dockerGlobalEnd(args []string) int {
 	valueOptions := map[string]bool{"-H": true, "--host": true, "--config": true, "--context": true, "--log-level": true, "--tlscacert": true, "--tlscert": true, "--tlskey": true}
 	index := 0
 	for index < len(args) && strings.HasPrefix(args[index], "-") {
@@ -711,6 +708,14 @@ func classifyDocker(args []string, rules []string, depth int) Ruling {
 			index++
 		}
 	}
+	return index
+}
+
+func classifyDocker(args []string, rules []string, depth int) Ruling {
+	if len(args) == 0 {
+		return Confirm(KindUnknown, "docker 子命令不明确")
+	}
+	index := dockerGlobalEnd(args)
 	if index >= len(args) {
 		return Allow("docker 全局信息查询")
 	}
@@ -793,15 +798,25 @@ func dockerBulkDeletion(args []string) bool {
 			continue
 		}
 		fields := strings.Fields(arg[2 : len(arg)-1])
-		if len(fields) < 2 || commandName(fields[0]) != "docker" && commandName(fields[0]) != "podman" {
+		if len(fields) != 0 {
+			if name := commandName(fields[0]); name == "sudo" || name == "doas" {
+				fields = stripCommandFlags(fields[1:])
+			}
+		}
+		if len(fields) == 0 || commandName(fields[0]) != "docker" && commandName(fields[0]) != "podman" {
 			continue
 		}
-		sub := strings.ToLower(fields[1])
+		rest := fields[1:]
+		offset := dockerGlobalEnd(rest)
+		if offset >= len(rest) {
+			continue
+		}
+		sub := strings.ToLower(rest[offset])
 		if sub != "ps" && sub != "images" {
 			continue
 		}
 		all, quiet := false, false
-		for _, option := range fields[2:] {
+		for _, option := range rest[offset+1:] {
 			if option == "--all" {
 				all = true
 			}
@@ -894,6 +909,23 @@ func classifyDownload(name string, args, ops []string) Ruling {
 	}
 	for i, arg := range args {
 		lower := strings.ToLower(arg)
+		if arg == "-K" || lower == "--config" || strings.HasPrefix(lower, "--config=") {
+			return Confirm(KindWriteFS, "curl 配置文件可指定任意选项")
+		}
+		if lower == "--etag-save" || strings.HasPrefix(lower, "--etag-save=") {
+			return Confirm(KindWriteFS, "curl 保存 ETag 文件")
+		}
+		if arg == "-J" || lower == "--remote-header-name" {
+			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
+		}
+		if lower == "--stderr" {
+			if i+1 < len(args) && args[i+1] != "-" {
+				return Confirm(KindWriteFS, "curl 将错误输出写入文件")
+			}
+		}
+		if strings.HasPrefix(lower, "--stderr=") && strings.TrimPrefix(lower, "--stderr=") != "-" {
+			return Confirm(KindWriteFS, "curl 将错误输出写入文件")
+		}
 		if arg == "-D" || arg == "--dump-header" || arg == "--trace" || arg == "--trace-ascii" || strings.HasPrefix(arg, "-D") && len(arg) > 2 || strings.HasPrefix(lower, "--dump-header=") || strings.HasPrefix(lower, "--trace=") || strings.HasPrefix(lower, "--trace-ascii=") {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
@@ -940,6 +972,8 @@ func curlShortOptionRisk(arg string) (bool, bool) {
 		switch arg[index] {
 		case 'o', 'O', 'd', 'F', 'T', 'D', 'c':
 			return value != "-", false
+		case 'K', 'J':
+			return true, false
 		case 'X':
 			return false, !strings.EqualFold(value, "GET")
 		}
@@ -954,7 +988,7 @@ func classifyRedis(args []string) Ruling {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
-			case "-h", "-p", "-a", "-s", "-d", "-D", "--user", "--pass", "-n", "-u", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--count", "--cursor", "--type":
+			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--count", "--cursor", "--type", "--sni", "--lru-test", "--rdb", "--pipe-timeout", "--memkeys-samples", "--eval", "--cluster", "--show-pushes":
 				i++
 			case "--scan":
 				scan = true

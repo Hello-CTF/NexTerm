@@ -49,13 +49,4 @@ func TestR1ConfigFacadesUseWrappersWithoutZeroingState(t *testing.T) {
 	if unchanged := permissions.Get(); unchanged.Mode != config.Mode || len(unchanged.DangerRules) != 1 {
 		t.Fatalf("missing config zeroed permissions: %+v", unchanged)
 	}
-	before, _ := profileManager.ActiveProfile()
-	response = dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_set_provider", Args: json.RawMessage(`{}`)}, ipc.Environment{})
-	if response.OK {
-		t.Fatal("missing provider config accepted")
-	}
-	after, _ := profileManager.ActiveProfile()
-	if after.BaseURL != before.BaseURL || after.Model != before.Model || after.ContextWindow != before.ContextWindow {
-		t.Fatalf("missing config zeroed provider: before=%+v after=%+v", before, after)
-	}
 }
