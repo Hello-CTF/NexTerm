@@ -335,6 +335,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     }
     // 重命名 / 权限 / 校验值（M60）：目录与文件都有重命名和权限；
     // 校验值只对非目录（符号链接算的是它指向的目标的内容）。
+    // rename/chmod 传入的 `path` 是当前列表的缓存键 —— 真实后端的 entry.path
+    // 是绝对路径，不能拿它反推缓存键（见 useFileOps 的 listKey 契约）。
     items.push(
       {
         kind: "item",
@@ -342,7 +344,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         icon: <IconEdit size={13} />,
         disabled: fileOps.busy !== null,
         onSelect: () =>
-          void fileOps.renameEntry(entry, list, (from, to) =>
+          void fileOps.renameEntry(entry, list, path, (from, to) =>
             setSelected((cur) => (cur === from ? to : cur)),
           ),
       },
@@ -352,7 +354,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         icon: <IconLock size={13} />,
         hint: "chmod",
         disabled: fileOps.busy !== null,
-        onSelect: () => void fileOps.chmodEntry(entry),
+        onSelect: () => void fileOps.chmodEntry(entry, path),
       },
     );
     if (!isDir) {

@@ -714,3 +714,187 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     expect(rowByPath(mounted!.container, "~\\other\\o.txt")).toBeTruthy();
   });
 });
+
+describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审 P1/P2 回归）", () => {
+  // 镜像 Go `internal/fs/local/filesystem.go` 的 real()：list 参数里的 `~` 先展开成
+  // 绝对家目录，entry.path 一律返回展开后的绝对路径；而前端查询键保留 `~`/`~/sub`
+  // 形态（FileTree 初始 root、FileBrowser 的 joinPath 导航）。之前测试 mock 让
+  // list(`~`) 返回 `~/x` 形态 entry.path，与真实后端相反，掩盖了根层 siblings
+  // 失配（跳过覆盖确认）与失效打不中 `~` 键（列表不刷新）两个失效。
+  const HOME_ABS = "/home/u";
+  let renamedRoot = false;
+  let renamedSub = false;
+
+  const homeEntries = (): FileEntryDto[] => [
+    entry("sub", "dir", { path: `${HOME_ABS}/sub` }),
+    renamedRoot
+      ? entry("c.txt", "file", { path: `${HOME_ABS}/c.txt` })
+      : entry("a.txt", "file", { path: `${HOME_ABS}/a.txt` }),
+    entry("b.txt", "file", { path: `${HOME_ABS}/b.txt` }),
+  ];
+  const subEntries = (): FileEntryDto[] => [
+    renamedSub
+      ? entry("c.txt", "file", { path: `${HOME_ABS}/sub/c.txt` })
+      : entry("a.txt", "file", { path: `${HOME_ABS}/sub/a.txt` }),
+    entry("b.txt", "file", { path: `${HOME_ABS}/sub/b.txt` }),
+  ];
+
+  /** 某个列表键被拉取的次数（初始加载也算，断言时看增量）。 */
+  const listCalls = (key: string): number =>
+    mocks.list.mock.calls.filter((c) => c[1] === key).length;
+
+  const dblclickRow = (container: HTMLElement, path: string): void => {
+    act(() => {
+      rowByPath(container, path).dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      );
+    });
+  };
+
+  beforeEach(async () => {
+    renamedRoot = false;
+    renamedSub = false;
+    mocks.list.mockImplementation((_s: string, p: string) => {
+      // FileTree 展开子目录用 entry.path（绝对）作键；FileBrowser 双击导航用
+      // joinPath 拼出的 `~/sub` 作键 —— 两种键后端都认（real() 同样展开 `~/`）。
+      if (p === "~" || p === HOME_ABS) return Promise.resolve(homeEntries().map((e) => ({ ...e })));
+      if (p === "~/sub" || p === `${HOME_ABS}/sub`)
+        return Promise.resolve(subEntries().map((e) => ({ ...e })));
+      return Promise.resolve([]);
+    });
+    mocks.rename.mockImplementation((_s: string, from: string) => {
+      if (from === `${HOME_ABS}/a.txt`) renamedRoot = true;
+      if (from === `${HOME_ABS}/sub/a.txt`) renamedSub = true;
+      return Promise.resolve();
+    });
+  });
+
+  it("FileTree 根层：同名覆盖确认照常弹出，取消即中止（P1-1）", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
+
+    mocks.promptText.mockResolvedValue("b.txt");
+    mocks.ask.mockResolvedValueOnce(false);
+    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    // siblings 必须来自 `~` 键的真实列表（绝对 entry.path），覆盖确认不能被跳过
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("已存在"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.rename).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, `${HOME_ABS}/a.txt`, `${HOME_ABS}/b.txt`);
+  });
+
+  it("FileTree 根层：rename 后 `~` 键列表真实刷新（P2-1）", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
+    const before = listCalls("~");
+
+    mocks.promptText.mockResolvedValue("c.txt");
+    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    expect(mocks.rename).toHaveBeenCalledWith(SID, `${HOME_ABS}/a.txt`, `${HOME_ABS}/c.txt`);
+    // 失效必须打中 `~` 键（而不是绝对父路径）→ 重新拉取并渲染出新名字
+    await waitFor(() => expect(listCalls("~")).toBeGreaterThan(before));
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, `${HOME_ABS}/c.txt`)).toBeTruthy(),
+    );
+    expect(
+      [...mounted!.container.querySelectorAll("div[title]")].some((d) =>
+        (d.getAttribute("title") ?? "").startsWith(`${HOME_ABS}/a.txt`),
+      ),
+    ).toBe(false);
+  });
+
+  it("FileTree 嵌套层：rename/chmod 后对应层列表刷新", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/sub`)).toBeTruthy());
+    click(rowByPath(mounted!.container, `${HOME_ABS}/sub`));
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, `${HOME_ABS}/sub/a.txt`)).toBeTruthy(),
+    );
+
+    mocks.promptText.mockResolvedValue("c.txt");
+    openRowMenu(mounted!.container, `${HOME_ABS}/sub/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, `${HOME_ABS}/sub/c.txt`)).toBeTruthy(),
+    );
+
+    const beforeChmod = listCalls(`${HOME_ABS}/sub`);
+    mocks.promptText.mockResolvedValue("600");
+    openRowMenu(mounted!.container, `${HOME_ABS}/sub/b.txt`);
+    clickMenuItem(mounted!.container, "权限…");
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("权限已更新")),
+    );
+    // chmod 失效的是条目所在层（绝对键的展开目录），不是 parentOf 反推
+    await waitFor(() => expect(listCalls(`${HOME_ABS}/sub`)).toBeGreaterThan(beforeChmod));
+  });
+
+  it("FileBrowser 根层：rename 后 `~` 键列表真实刷新", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
+    const before = listCalls("~");
+
+    mocks.promptText.mockResolvedValue("c.txt");
+    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    await waitFor(() => expect(listCalls("~")).toBeGreaterThan(before));
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, `${HOME_ABS}/c.txt`)).toBeTruthy(),
+    );
+  });
+
+  it("FileBrowser 子目录：rename/chmod 后 `~/sub` 键列表刷新", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/sub`)).toBeTruthy());
+    dblclickRow(mounted!.container, `${HOME_ABS}/sub`);
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, `${HOME_ABS}/sub/a.txt`)).toBeTruthy(),
+    );
+
+    mocks.promptText.mockResolvedValue("c.txt");
+    openRowMenu(mounted!.container, `${HOME_ABS}/sub/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    await waitFor(() =>
+      expect(rowByPath(mounted!.container, `${HOME_ABS}/sub/c.txt`)).toBeTruthy(),
+    );
+
+    const beforeChmod = listCalls("~/sub");
+    mocks.promptText.mockResolvedValue("600");
+    openRowMenu(mounted!.container, `${HOME_ABS}/sub/b.txt`);
+    clickMenuItem(mounted!.container, "权限…");
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("权限已更新")),
+    );
+    await waitFor(() => expect(listCalls("~/sub")).toBeGreaterThan(beforeChmod));
+  });
+
+  it("FileBrowser 根层：绝对 entry.path 下覆盖确认照常弹出", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
+
+    mocks.promptText.mockResolvedValue("b.txt");
+    mocks.ask.mockResolvedValueOnce(false);
+    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
+    clickMenuItem(mounted!.container, "重命名");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("已存在"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.rename).not.toHaveBeenCalled();
+  });
+});

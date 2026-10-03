@@ -403,17 +403,11 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   /**
    * 条目的同目录 siblings（重命名覆盖预判用）。
    *
-   * dirMap 的键是 root/expanded 的原始串，可能带反斜杠（Windows 本地会话）；
-   * parentOf 返回归一化路径 —— 两侧统一 norm 再比，否则嵌套目录永远查空，
-   * 同名覆盖确认在 Windows 文件树上不会弹出。
+   * 直接按行的 `dir`（条目所在列表的缓存键）精确取 —— 不做 parentOf/norm 反推：
+   * 真实后端 list `~` 返回的是绝对 entry.path，反推出来的父路径和 `~` 键恒不相等，
+   * 会让根层同名覆盖确认被静默跳过（R1 评审 P1）。
    */
-  const siblingsOf = (path: string): FileEntryDto[] => {
-    const parent = norm(parentOf(path) ?? "");
-    for (const [dir, list] of dirMap) {
-      if (norm(dir) === parent) return list;
-    }
-    return [];
-  };
+  const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
 
   /**
    * 行右键。
@@ -422,8 +416,15 @@ export function FileTree({ sessionId }: { sessionId: string }) {
    * 上传下载的图标入口）交给工具栏，别在这里重复一遍。
    * 按类型收敛：目录给「打包下载当前文件夹」，文件给「在下方编辑 / 解压 / 下载」。
    * 目录落到它自己、文件落到它**所在的目录** —— 对文件路径本身 cd 没有意义。
+   *
+   * `listKey` 是这一行所在列表的缓存键（rows 的 dir 字段）：rename/chmod 的
+   * siblings 与缓存失效都认它，不做路径反推（见 useFileOps 的 listKey 契约）。
    */
-  const openRowMenu = (e: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
+  const openRowMenu = (
+    e: ReactMouseEvent<HTMLDivElement>,
+    entry: FileEntryDto,
+    listKey: string,
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     setSelected(entry.path); // 右键顺手选中，符合直觉
@@ -490,7 +491,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         icon: <IconEdit size={13} />,
         disabled: fileOps.busy !== null,
         onSelect: () =>
-          void fileOps.renameEntry(entry, siblingsOf(entry.path), remapAfterRename),
+          void fileOps.renameEntry(entry, siblingsOf(listKey), listKey, remapAfterRename),
       },
       {
         kind: "item",
@@ -498,7 +499,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         icon: <IconLock size={13} />,
         hint: "chmod",
         disabled: fileOps.busy !== null,
-        onSelect: () => void fileOps.chmodEntry(entry),
+        onSelect: () => void fileOps.chmodEntry(entry, listKey),
       },
     );
     if (!isDir) {
@@ -706,7 +707,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               }}
               // 双击目录 = 「进去」：把浏览根切到它，不必从 / 一路展开下来
               onDoubleClick={() => (isDir ? enterDir(entry.path) : openFile(entry))}
-              onContextMenu={(e) => openRowMenu(e, entry)}
+              onContextMenu={(e) => openRowMenu(e, entry, dir)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
             >
               {isDir ? (

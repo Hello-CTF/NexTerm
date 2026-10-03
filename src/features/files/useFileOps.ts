@@ -13,6 +13,12 @@
 //     （防 stale completion / unmount 后 setState）；
 //   · 操作不碰 editorGuards 的 dirty 集合与传输进度 —— 别人的未保存修改和
 //     正在进行的传输原样保留。
+//
+// listKey 契约（R1 评审 P1/P2）：条目所在列表的**缓存键**必须由调用方传入 ——
+// 真实后端 list `~` 时把 `~` 展开成绝对路径返回 entry.path，而前端查询键保留
+// `~`/`~/sub` 形态；用 parentOf(entry.path) 反推键在根层恒失配（覆盖确认被跳过、
+// 失效打不中可见列表）。调用方的键（FileTree 行的 dir / FileBrowser 当前 path）
+// 与建查询时用的是同一串，天然兼容 `~`、绝对路径与 Windows 反斜杠。
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { fsApi } from "../../ipc/commands";
@@ -106,15 +112,24 @@ export function useFileOps(sessionId: string) {
     if (mountedRef.current) setBusy(null);
   };
 
-  /** 成功后刷新受影响的目录缓存：父目录（列表里的名字/mode）+ 旧路径前缀（展开中的子目录）。 */
-  const invalidateAfterRename = (from: string) => {
-    const parent = parentOf(from);
-    if (parent) void qc.invalidateQueries({ queryKey: ["fs", sessionId, parent] });
+  /**
+   * 成功后刷新受影响的目录缓存。
+   *
+   * · `listKey`（调用方传入）：条目实际所在列表的键 —— 改名后列表里的名字靠它刷新；
+   * · `from`：被改名目录自己的旧键作废。注意 react-query 的 queryKey 匹配没有
+   *   字符串前缀语义，后代目录**不是**被这里失效的 —— FileTree 把展开态 remap 到
+   *   新路径后，新键无缓存会自动拉取。
+   */
+  const invalidateAfterRename = (listKey: string, from: string) => {
+    void qc.invalidateQueries({ queryKey: ["fs", sessionId, listKey] });
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, from] });
   };
 
   /**
    * 重命名：只改同目录下的名字，不做移动。
+   *
+   * `listKey` 是条目所在列表的缓存键（见文件头的 listKey 契约）；`siblings` 是
+   * 该键对应的列表，两者都由调用方给出，不做任何路径反推。
    *
    * 三道前端关卡（都只是预检/告知，裁决权在后端）：
    *   1. 符号链接 → 提醒「改的是链接本身，不是它指向的目标」；
@@ -124,6 +139,7 @@ export function useFileOps(sessionId: string) {
   const renameEntry = async (
     entry: FileEntryDto,
     siblings: FileEntryDto[],
+    listKey: string,
     onRenamed?: (from: string, to: string) => void,
   ) => {
     const seq = begin("rename", entry.path);
@@ -171,7 +187,7 @@ export function useFileOps(sessionId: string) {
       }
       await fsApi.rename(sessionId, entry.path, to);
       if (!alive(seq)) return;
-      invalidateAfterRename(entry.path);
+      invalidateAfterRename(listKey, entry.path);
       onRenamed?.(entry.path, to);
       pushToast("success", `已重命名：${entry.name} → ${name}`);
     } catch (e) {
@@ -184,12 +200,15 @@ export function useFileOps(sessionId: string) {
   /**
    * 改权限（chmod）：八进制 000–777。
    *
+   * `listKey` 是条目所在列表的缓存键（见文件头的 listKey 契约）——mode 展示
+   * 靠刷新这个键更新。
+   *
    * · 符号链接 → chmod 跟随链接改的是**目标**，先讲清楚；
    * · 新权限移除所有者的读/写 → 危险确认（可能自我锁死）；
    * · Windows 类目标 → 后端报「不支持」，原样呈现，前端不预先藏入口
    *   （入口可见性不是授权，且平台判定只有后端说了算）。
    */
-  const chmodEntry = async (entry: FileEntryDto) => {
+  const chmodEntry = async (entry: FileEntryDto, listKey: string) => {
     const seq = begin("chmod", entry.path);
     if (seq === null) return;
     try {
@@ -224,8 +243,7 @@ export function useFileOps(sessionId: string) {
       if (!go || !alive(seq)) return;
       await fsApi.chmod(sessionId, entry.path, next);
       if (!alive(seq)) return;
-      const parent = parentOf(entry.path);
-      if (parent) void qc.invalidateQueries({ queryKey: ["fs", sessionId, parent] });
+      void qc.invalidateQueries({ queryKey: ["fs", sessionId, listKey] });
       pushToast("success", `权限已更新：${entry.path} → ${formatMode(next)}`);
     } catch (e) {
       if (alive(seq)) pushToast("error", `修改权限失败：${describeError(e)}`);
