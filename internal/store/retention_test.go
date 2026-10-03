@@ -275,7 +275,7 @@ func TestRetentionMigrationPreservesStoreAndVaultRows(t *testing.T) {
 	_, err := db.DB().Exec(`CREATE INDEX idx_audit_ts ON audit_log(ts DESC);
 DROP INDEX idx_audit_retention;
 DROP INDEX idx_terminal_recording_retention;
-DELETE FROM schema_migrations WHERE version=3`)
+DELETE FROM schema_migrations WHERE version IN (3, 4)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ DELETE FROM schema_migrations WHERE version=3`)
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 3)
+	requireTableCount(t, reopened, migrationsTable, 4)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

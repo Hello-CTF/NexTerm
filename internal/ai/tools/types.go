@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
+	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -48,6 +49,11 @@ type Call struct {
 	Name   string          `json:"name"`
 	Args   json.RawMessage `json:"args"`
 	Reason string          `json:"reason,omitempty"`
+	// AuthorizationID binds the call to the guard decision that authorized
+	// it, derived with GuardAuthorizationID. The outcome ledger only wraps
+	// side-effecting calls that carry this binding; unbound calls execute
+	// exactly as they did before the ledger existed.
+	AuthorizationID string `json:"authorizationId,omitempty"`
 }
 
 type Output struct {
@@ -161,8 +167,14 @@ type Dependencies struct {
 	DockerAct           func(context.Context, string, string, string) error
 	DockerActionAudited bool
 	Audit               func(context.Context, AuditEntry) error
-	Now                 func() time.Time
-	PollInterval        time.Duration
+	// Outcome, when non-nil, records every side-effecting call that carries a
+	// guard-decision binding (Call.AuthorizationID) in the durable outcome
+	// ledger: the running state is persisted before the effect runs, the
+	// terminal outcome and its audit record are finalized after, and a
+	// redispatch replays the record instead of duplicating the effect.
+	Outcome      *outcome.Ledger
+	Now          func() time.Time
+	PollInterval time.Duration
 }
 
 type Preparation struct {
