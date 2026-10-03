@@ -8,7 +8,6 @@
   },
   "producers": {
     "inventory": "python3 scripts/parity/inventory.py",
-    "rust_baseline": "python3 scripts/parity/run_baseline.py",
     "go_selfcheck": "python3 scripts/parity/go_selfcheck.py --go-root <go-module-root>",
     "verification": "python3 scripts/parity/verify.py --go-root <go-module-root>"
   },
@@ -18,6 +17,12 @@
       "role": "pinned Rust feature and artifact baseline commit",
       "bytes": 167,
       "sha256": "03ecc791753a47a51ac6e76f7b31d69349247b50749b6d58d054070c895647ed"
+    },
+    {
+      "path": "testdata/parity/rust-registry.json",
+      "role": "Rust command/event/stream registry frozen from the removed Rust tree at the pinned commit; parity reads this instead of Rust sources",
+      "bytes": 31149,
+      "sha256": "fbfc6a0294b8311f551083161bc7e098066567201d40e1afc507b445ffeb4493"
     },
     {
       "path": "testdata/parity/inventory.json",

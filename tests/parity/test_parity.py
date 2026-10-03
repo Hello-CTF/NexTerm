@@ -76,6 +76,20 @@ class InventoryTest(unittest.TestCase):
         self.assertIn("planSubmitted", streams["ai_event_variants"])
 
 
+class RustTreeIndependenceTest(unittest.TestCase):
+    def test_parity_scripts_do_not_reference_the_removed_rust_tree(self):
+        for path in sorted((ROOT / "scripts/parity").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("src-tauri", text, path.name)
+            self.assertNotIn("Cargo", text, path.name)
+
+    def test_frozen_registry_is_pinned_to_the_baseline_commit(self):
+        registry = load(DATA / "rust-registry.json")
+        source = load(DATA / "source.json")
+        self.assertEqual(registry["source"]["commit"], source["commit"])
+        self.assertEqual(registry["source"]["implementation"], "rust")
+
+
 class BaselineReportTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

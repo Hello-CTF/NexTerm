@@ -7,19 +7,15 @@ import difflib
 import json
 import pathlib
 import re
-import subprocess
 import sys
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "testdata/parity/inventory.json"
-RUST_COMMANDS = ROOT / "src-tauri/src/commands/mod.rs"
+RUST_REGISTRY = ROOT / "testdata/parity/rust-registry.json"
 FRONTEND_COMMANDS = ROOT / "src/ipc/commands.ts"
-RUST_EVENTS = ROOT / "src-tauri/src/events.rs"
 FRONTEND_EVENTS = ROOT / "src/ipc/events.ts"
-AI_TYPES = ROOT / "src-tauri/src/ai/mod.rs"
-LAYOUT_COMMANDS = ROOT / "src-tauri/src/commands/layout.rs"
-SYNC_ONLY = ["sync_digest", "sync_export", "sync_import"]
+FRONTEND_LAYOUT = ROOT / "src/app/layout.ts"
 
 
 def rel(path: pathlib.Path) -> str:
@@ -35,30 +31,14 @@ def source_commit() -> str:
     return source["commit"]
 
 
-def rust_commands() -> list[dict[str, Any]]:
-    text = RUST_COMMANDS.read_text(encoding="utf-8")
-    start = text.index("$cb! {")
-    end = text.index("\n        }", start)
-    body = text[start:end]
-    entries = []
-    for match in re.finditer(
-        r"^\s*([a-z][a-z0-9_]*(?:::[a-z][a-z0-9_]*)?),\s*(?://.*)?$",
-        body,
-        re.MULTILINE,
-    ):
-        rust_path = match.group(1)
-        offset = start + match.start()
-        entries.append(
-            {
-                "name": rust_path.rsplit("::", 1)[-1],
-                "rust_path": rust_path,
-                "source": rel(RUST_COMMANDS),
-                "line": line_at(text, offset),
-                "sync_only": rust_path.rsplit("::", 1)[-1] in SYNC_ONLY,
-            }
-        )
+def load_rust_registry() -> dict[str, Any]:
+    return json.loads(RUST_REGISTRY.read_text(encoding="utf-8"))
+
+
+def rust_commands(registry: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = [dict(entry) for entry in registry["commands"]["entries"]]
     if not entries:
-        raise RuntimeError("Rust command registry extraction returned no entries")
+        raise RuntimeError("frozen Rust command registry is empty")
     return entries
 
 
@@ -116,30 +96,11 @@ def frontend_commands() -> list[dict[str, Any]]:
     return calls
 
 
-def named_events() -> dict[str, Any]:
-    rust_text = RUST_EVENTS.read_text(encoding="utf-8")
-    rust = [
-        {
-            "constant": match.group(1),
-            "name": match.group(2),
-            "source": rel(RUST_EVENTS),
-            "line": line_at(rust_text, match.start()),
-        }
-        for match in re.finditer(
-            r"pub const (\w+): &str = \"([^\"]+)\";", rust_text
-        )
-    ]
-    layout_text = LAYOUT_COMMANDS.read_text(encoding="utf-8")
-    layout = re.search(r"pub const (LAYOUT_CHANGED): &str = \"([^\"]+)\";", layout_text)
-    if layout:
-        rust.append(
-            {
-                "constant": layout.group(1),
-                "name": layout.group(2),
-                "source": rel(LAYOUT_COMMANDS),
-                "line": line_at(layout_text, layout.start()),
-            }
-        )
+def named_events(registry: dict[str, Any]) -> dict[str, Any]:
+    rust = [dict(entry) for entry in registry["events"]["declared"]]
+    layout_name = next(
+        (entry["name"] for entry in rust if entry["constant"] == "LAYOUT_CHANGED"), None
+    )
 
     frontend_text = FRONTEND_EVENTS.read_text(encoding="utf-8")
     frontend = [
@@ -151,20 +112,20 @@ def named_events() -> dict[str, Any]:
         }
         for match in re.finditer(r"^  (\w+): \"([^\"]+)\",", frontend_text, re.MULTILINE)
     ]
-    if layout:
+    if layout_name:
         frontend.append(
             {
                 "constant": "layoutChanged",
-                "name": layout.group(2),
-                "source": "src/app/layout.ts",
+                "name": layout_name,
+                "source": rel(FRONTEND_LAYOUT),
                 "line": next(
                     (
                         index
                         for index, line in enumerate(
-                            (ROOT / "src/app/layout.ts").read_text(encoding="utf-8").splitlines(),
+                            FRONTEND_LAYOUT.read_text(encoding="utf-8").splitlines(),
                             1,
                         )
-                        if layout.group(2) in line
+                        if layout_name in line
                     ),
                     None,
                 ),
@@ -172,60 +133,26 @@ def named_events() -> dict[str, Any]:
         )
 
     frontend_by_name = {entry["name"]: entry for entry in frontend}
+    reserved = registry["events"]["reserved"]
     for entry in rust:
         entry["frontend_constant"] = frontend_by_name.get(entry["name"], {}).get(
             "constant"
         )
-        entry["declared_only"] = entry["name"] == "sync://status"
+        entry["declared_only"] = entry["name"] in reserved
     return {
         "rust_declared": sorted(rust, key=lambda entry: entry["name"]),
         "frontend_declared": sorted(frontend, key=lambda entry: entry["name"]),
         "rust_declared_count": len(rust),
         "frontend_declared_count": len(frontend),
         "union_count": len({entry["name"] for entry in rust + frontend}),
-        "reserved_rust_events": ["sync://status"],
+        "reserved_rust_events": list(reserved),
     }
 
 
-def streams(rust_entries: list[dict[str, Any]]) -> dict[str, Any]:
-    registered = {entry["name"] for entry in rust_entries}
-    references = []
-    for path in sorted((ROOT / "src-tauri/src/commands").glob("*.rs")):
-        text = path.read_text(encoding="utf-8")
-        current_function = None
-        for line_number, line in enumerate(text.splitlines(), 1):
-            function = re.search(r"pub(?:\s+async)?\s+fn\s+(\w+)", line)
-            if function:
-                current_function = function.group(1)
-            if "Channel<" not in line or current_function not in registered:
-                continue
-            if "Channel<Vec<u8>>" in line:
-                kind = "binary"
-                rust_type = "Channel<Vec<u8>>"
-            elif "Channel<AiEvent>" in line:
-                kind = "ai_json"
-                rust_type = "Channel<AiEvent>"
-            else:
-                continue
-            references.append(
-                {
-                    "kind": kind,
-                    "command": current_function,
-                    "rust_type": rust_type,
-                    "source": rel(path),
-                    "line": line_number,
-                }
-            )
-
-    ai_text = AI_TYPES.read_text(encoding="utf-8")
-    enum_start = ai_text.index("pub enum AiEvent {")
-    enum_end = ai_text.index("\n}", enum_start)
-    variants = []
-    for match in re.finditer(
-        r"^    (\w+)(?:\s*\{|\s*\(|\s*,)", ai_text[enum_start:enum_end], re.MULTILINE
-    ):
-        variant = match.group(1)
-        variants.append(variant[:1].lower() + variant[1:])
+def streams(registry: dict[str, Any]) -> dict[str, Any]:
+    data = registry["streams"]
+    references = [dict(entry) for entry in data["references"]]
+    variants = list(data["ai_event_variants"])
     return {
         "references": references,
         "binary_commands": sorted(
@@ -236,13 +163,14 @@ def streams(rust_entries: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "ai_event_variants": variants,
         "ai_event_variant_count": len(variants),
-        "ordering": "per-channel send order",
-        "binary_encoding": "raw bytes; JSON fixture representation uses number arrays",
+        "ordering": data["ordering"],
+        "binary_encoding": data["binary_encoding"],
     }
 
 
 def generate() -> dict[str, Any]:
-    rust = rust_commands()
+    registry = load_rust_registry()
+    rust = rust_commands(registry)
     frontend = frontend_commands()
     rust_names = collections.Counter(entry["name"] for entry in rust)
     frontend_names = collections.Counter(entry["name"] for entry in frontend)
@@ -262,6 +190,7 @@ def generate() -> dict[str, Any]:
         if count > 1
     ]
     duplicate_rust = sorted(name for name, count in rust_names.items() if count > 1)
+    sync_only = sorted(entry["name"] for entry in rust if entry["sync_only"])
     return {
         "schema_version": 1,
         "baseline": {
@@ -271,7 +200,7 @@ def generate() -> dict[str, Any]:
         },
         "commands": {
             "rust_registry": {
-                "source": rel(RUST_COMMANDS),
+                "source": registry["commands"]["registry_source"],
                 "count": len(rust),
                 "unique_count": len(rust_names),
                 "duplicate_names": duplicate_rust,
@@ -297,11 +226,11 @@ def generate() -> dict[str, Any]:
                     )
                     + f"; frontend_only {frontend_only}"
                 ),
-                "sync_only_commands": SYNC_ONLY,
+                "sync_only_commands": sync_only,
             },
         },
-        "events": named_events(),
-        "streams": streams(rust),
+        "events": named_events(registry),
+        "streams": streams(registry),
     }
 
 
@@ -310,7 +239,9 @@ def render(value: Any) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate or verify the Rust IPC parity inventory")
+    parser = argparse.ArgumentParser(
+        description="Generate or verify the IPC parity inventory from the frozen Rust registry and the live frontend facade"
+    )
     parser.add_argument("--output", type=pathlib.Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
