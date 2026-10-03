@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -211,6 +213,12 @@ func TestRedactTextRecognizesOperationalSecrets(t *testing.T) {
 		{"-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----", "private-material"},
 		{"db://user:private-password@example.test/database", "private-password"},
 		{"eyJabcde.abcdefghijk.abcdefghijk", "eyJabcde.abcdefghijk.abcdefghijk"},
+		{`{"password": "hunter2secret"}`, "hunter2secret"},
+		{`{"api_key": "sk-hunter2secret"}`, "sk-hunter2secret"},
+		{`"token":"hunter2secret"`, "hunter2secret"},
+		{`DB_PASSWORD=hunter2secret`, "hunter2secret"},
+		{`MYSQL_ROOT_PASSWORD: hunter2secret`, "hunter2secret"},
+		{`export AWS_SECRET_ACCESS_KEY=hunter2secret`, "hunter2secret"},
 	}
 	for _, test := range tests {
 		redacted, changed := RedactText(test.content)
@@ -222,6 +230,118 @@ func TestRedactTextRecognizesOperationalSecrets(t *testing.T) {
 	redacted, changed := RedactText(value)
 	if changed || redacted != value {
 		t.Fatalf("safe content changed to %q", redacted)
+	}
+}
+
+func TestJSONAndEnvSecretFormatsRejectedRedactedAndInjectedSafely(t *testing.T) {
+	ctx := context.Background()
+	formats := []struct{ name, content, secret string }{
+		{"json password", `{"password": "hunter2secret"}`, "hunter2secret"},
+		{"json api key", `{"api_key": "sk-hunter2secret"}`, "sk-hunter2secret"},
+		{"json token", `"token":"hunter2secret"`, "hunter2secret"},
+		{"env password", `DB_PASSWORD=hunter2secret`, "hunter2secret"},
+		{"env prefixed password", `MYSQL_ROOT_PASSWORD: hunter2secret`, "hunter2secret"},
+		{"env export access key", `export AWS_SECRET_ACCESS_KEY=hunter2secret`, "hunter2secret"},
+	}
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			store, _ := newMemoryStore(t)
+			_, err := store.Create(ctx, testScope, CreateInput{Topic: "credential", Content: format.content})
+			if !errors.Is(err, ErrSensitiveContent) {
+				t.Fatalf("default create err = %v", err)
+			}
+			if strings.Contains(err.Error(), format.secret) {
+				t.Fatalf("error contains secret: %v", err)
+			}
+			var count int
+			if err := store.db.QueryRow("SELECT count(*) FROM memory_entry").Scan(&count); err != nil || count != 0 {
+				t.Fatalf("rejected secret persisted rows = %d, err = %v", count, err)
+			}
+
+			entry, err := store.Create(ctx, testScope, CreateInput{
+				Topic: "credential", Content: format.content, Secrets: SecretRedact,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !entry.Redacted || strings.Contains(entry.Content, format.secret) || !strings.Contains(entry.Content, redactedValue) {
+				t.Fatalf("redacted entry = %+v", entry)
+			}
+			var persisted string
+			if err := store.db.QueryRow("SELECT content FROM memory_entry WHERE id = ?", entry.ID).Scan(&persisted); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(persisted, format.secret) {
+				t.Fatalf("database contains secret: %q", persisted)
+			}
+
+			mustEnableInjection(t, store, testScope)
+			injection, err := store.Inject(ctx, testScope, nil, Selection{}, Budget{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if injection.Memory == nil || strings.Contains(injection.Memory.Content, format.secret) {
+				t.Fatalf("prompt contains secret: %+v", injection)
+			}
+
+			if _, err := store.db.Exec("UPDATE memory_entry SET content = ? WHERE id = ?", format.content, entry.ID); err != nil {
+				t.Fatal(err)
+			}
+			injection, err = store.Inject(ctx, testScope, nil, Selection{}, Budget{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if injection.Memory == nil || strings.Contains(injection.Memory.Content, format.secret) || injection.Redactions != 1 {
+				t.Fatalf("secret injection = %+v", injection)
+			}
+		})
+	}
+}
+
+func TestOpenAcceptsRelativeDatabasePaths(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	store, err := Open(ctx, filepath.Join("rel", "memory.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := mustCreate(t, store, testScope, "operations", "relative path content")
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rel", "memory.db")); err != nil {
+		t.Fatalf("relative database not created under working directory: %v", err)
+	}
+	bare, err := Open(ctx, "memory.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bare.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "memory.db")); err != nil {
+		t.Fatalf("bare database not created under working directory: %v", err)
+	}
+	reopened := openMemoryStore(t, filepath.Join("rel", "memory.db"))
+	got, err := reopened.Get(ctx, testScope, entry.ID)
+	if err != nil || got != entry {
+		t.Fatalf("reopened relative entry = %+v, want %+v, err = %v", got, entry, err)
+	}
+}
+
+func TestOpenAcceptsSpecialCharacterPaths(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "mem #1?% dir", "memory #1?%.db")
+	store := openMemoryStore(t, path)
+	entry := mustCreate(t, store, testScope, "operations", "special path content")
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openMemoryStore(t, path)
+	got, err := reopened.Get(ctx, testScope, entry.ID)
+	if err != nil || got != entry {
+		t.Fatalf("reopened special-path entry = %+v, want %+v, err = %v", got, entry, err)
 	}
 }
 

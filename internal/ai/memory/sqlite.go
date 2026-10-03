@@ -25,6 +25,11 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("%w: empty database path", ErrInvalidInput)
 	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolve semantic memory database path: %v", ErrInvalidInput, err)
+	}
+	path = absolute
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create semantic memory directory: %w", err)
