@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/takeover"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
@@ -46,10 +49,14 @@ type ProductionServices struct {
 	Durable          *durable.Backend
 	DurableErr       error
 	Retention        *RetentionRunner
+	Guard            *guard.Manager
+	Agent            *agent.Runner
+	Takeover         *takeover.Manager
 	channelBridge    *terminalBridge
 	terminalCommands *terminalCommandService
 	hostKeys         *productionHostKeyStore
 	dataDir          string
+	aiRelease        func()
 }
 
 type Production struct {
@@ -156,5 +163,23 @@ func productionModules(services ProductionServices) []Module {
 	if services.Retention != nil {
 		modules = append(modules, Module{Name: "retention", Component: services.Retention})
 	}
+	if services.Agent != nil {
+		modules = append(modules, agent.Module(services.Agent))
+	}
+	if services.Takeover != nil {
+		modules = append(modules, takeover.Module(services.Takeover))
+	}
+	if services.aiRelease != nil {
+		modules = append(modules, Module{Name: "ai-session-hooks", Component: aiHooksComponent{release: services.aiRelease}})
+	}
 	return modules
+}
+
+type aiHooksComponent struct{ release func() }
+
+func (c aiHooksComponent) Start(context.Context) error { return nil }
+
+func (c aiHooksComponent) Shutdown(context.Context) error {
+	c.release()
+	return nil
 }

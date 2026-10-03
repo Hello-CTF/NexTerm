@@ -18,6 +18,10 @@ type ServeConfig struct {
 	SyncRPC        http.Handler
 	SyncDispatcher *ipc.Dispatcher
 	Static         http.Handler
+	// Transport, when non-nil, serves the real HTTP/WS transport
+	// (internal/server) instead of the built-in mux below.
+	Transport      http.Handler
+	CloseTransport func(context.Context) error
 }
 
 type Health struct {
@@ -59,12 +63,20 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		mux.Handle("/", config.Static)
 	}
 
+	handler := config.Transport
+	if handler == nil {
+		handler = mux
+	} else if config.CloseTransport != nil {
+		defer func() {
+			returnErr = errors.Join(returnErr, config.CloseTransport(context.Background()))
+		}()
+	}
 	if !loopbackListen(config.Listen) {
 		a.logger.Warn("HTTP server is listening on a non-loopback address", "listen", config.Listen)
 	}
 	server := &http.Server{
 		Addr:              config.Listen,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext: func(net.Listener) context.Context {

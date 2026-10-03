@@ -38,10 +38,19 @@ func TestConcreteProductionCompositionAndPersistentTaskReopen(t *testing.T) {
 	if got := len(production.Dispatcher.Commands()); got < 120 {
 		t.Fatalf("production command count = %d, commands = %v", got, production.Dispatcher.Commands())
 	}
-	for _, command := range []string{"ai_chat", "ai_cancel", "ai_confirm", "ai_answer", "ai_get_permission", "ai_set_permission", "ai_takeover_enter", "ai_takeover_exit", "ai_takeover_run"} {
-		if slices.Contains(production.Dispatcher.Commands(), command) {
-			t.Fatalf("unfinished AI command %s was registered", command)
+	for _, command := range []string{
+		"ai_chat", "ai_cancel", "ai_confirm", "ai_answer", "ai_get_permission", "ai_set_permission",
+		"ai_takeover_enter", "ai_takeover_exit", "ai_takeover_run",
+		"ai_models", "ai_test_provider", "ai_get_provider", "ai_set_provider", "ai_presets",
+		"ai_model_profiles", "ai_model_save", "ai_model_delete", "ai_model_activate", "ai_model_refresh", "ai_model_preset",
+		"ai_conversation_list", "ai_conversation_create", "ai_conversation_delete", "ai_messages",
+	} {
+		if !slices.Contains(production.Dispatcher.Commands(), command) {
+			t.Fatalf("production is missing AI command %s", command)
 		}
+	}
+	if production.Services.Guard == nil || production.Services.Agent == nil || production.Services.Takeover == nil {
+		t.Fatal("AI runtime services are not composed")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)

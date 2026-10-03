@@ -36,6 +36,7 @@ type ProductionConfig struct {
 	DurableBinary           string
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
+	TakeoverUserClientID    string
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -55,6 +56,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	if config.Config.Version == "" {
 		config.Config.Version = version.Version
+	}
+	if config.TakeoverUserClientID == "" {
+		config.TakeoverUserClientID = "desktop"
 	}
 	database, err := store.OpenWithOptions(ctx, filepath.Join(config.DataDir, "data.db"), store.OpenOptions{Logger: config.Config.Logger})
 	if err != nil {
@@ -148,8 +152,13 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
 		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, hostKeys: hostKeys, dataDir: config.DataDir,
 	}
+	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
+		services.closeAIRuntime()
+		return nil, err
+	}
 	production, err := NewProductionWithServices(config.Config, services)
 	if err != nil {
+		services.closeAIRuntime()
 		return nil, err
 	}
 	return production, nil
