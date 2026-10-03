@@ -287,7 +287,16 @@ def generate() -> dict[str, Any]:
                 "rust_only": rust_only,
                 "frontend_only": frontend_only,
                 "duplicate_frontend_commands": duplicates,
-                "equation": "139 Rust = 138 frontend unique + credential_save; 139 frontend methods = 138 unique + duplicate ai_presets wrapper",
+                "equation": (
+                    f"{len(rust_names)} Rust = {len(set(rust_names) & set(frontend_names))} frontend unique"
+                    f" + rust_only {rust_only}; {len(frontend)} frontend methods = {len(frontend_names)} unique"
+                    + (
+                        " + duplicate " + ", ".join(entry["name"] for entry in duplicates) + " wrapper"
+                        if duplicates
+                        else ""
+                    )
+                    + f"; frontend_only {frontend_only}"
+                ),
                 "sync_only_commands": SYNC_ONLY,
             },
         },

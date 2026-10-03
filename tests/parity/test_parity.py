@@ -33,17 +33,17 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 139)
-        self.assertEqual(frontend["unique_command_count"], 138)
+        self.assertEqual(frontend["method_count"], 140)
+        self.assertEqual(frontend["unique_command_count"], 139)
         self.assertEqual(commands["reconciliation"]["rust_only"], ["credential_save"])
-        self.assertEqual(commands["reconciliation"]["frontend_only"], [])
+        self.assertEqual(commands["reconciliation"]["frontend_only"], ["ai_answer"])
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
             [{"name": "ai_presets", "accessors": ["aiApi.presets", "modelApi.presets"]}],
         )
         self.assertEqual(commands["reconciliation"]["sync_only_commands"], ["sync_digest", "sync_export", "sync_import"])
         self.assertEqual(frontend["entries"][0]["accessor"], "systemApi.platform")
-        self.assertEqual(frontend["entries"][0]["line"], 93)
+        self.assertEqual(frontend["entries"][0]["line"], 97)
         self.assertFalse(any(entry["accessor"].startswith("unknown") for entry in frontend["entries"]))
 
     def test_events_and_streams_are_explicit(self):
