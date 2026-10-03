@@ -52,17 +52,19 @@ Critical system paths are protected with one canonicalized target model (`filepa
 
 `Decide(config, ruling, memory)` maps a ruling to an action:
 
-| Ruling \ Mode | ReadOnly | ReadWrite | Silent |
-| --- | --- | --- | --- |
-| Safe (T0) | allow | allow | allow |
-| NeedsConfirm (T1) | deny | ask (allow once every kind is remembered) | allow |
-| Unknowable | deny | ask | ask |
-| Danger | deny | ask (never remembered) | ask |
-| Forbidden | deny | deny | deny |
+| Ruling \ Mode | ReadOnly | ReadWrite | Silent | Unattended |
+| --- | --- | --- | --- | --- |
+| Safe (T0) | allow | allow | allow | allow |
+| NeedsConfirm (T1) | deny | ask (allow once every kind is remembered) | allow | deny |
+| Unknowable | deny | ask | ask | deny |
+| Danger | deny | ask (never remembered) | ask | deny |
+| Forbidden | deny | deny | deny | deny |
 
-Silent auto-allows only T0 and T1. Unknowable is **not** pre-approved: dynamic input, unknown options, unresolvable wrappers and parse failures always ask, in every mode except ReadOnly (which denies everything above T0). This is a behavior change from the previous contract, where a single unknown top-level command ruled NeedsConfirm and Silent pre-approved it; under the new model anything dynamic rates Unknowable and asks.
+Silent auto-allows only T0 and T1. Unknowable is **not** pre-approved: dynamic input, unknown options, unresolvable wrappers and parse failures always ask, in every mode except ReadOnly and Unattended (which deny everything above T0). This is a behavior change from the previous contract, where a single unknown top-level command ruled NeedsConfirm and Silent pre-approved it; under the new model anything dynamic rates Unknowable and asks.
 
-The memory escape hatch is unchanged in shape: approving a T1 ruling in ReadWrite remembers its kinds, and later T1 rulings whose kinds are all remembered run without asking. Unknowable and Danger rulings carry no rememberable kinds (`KindUnknown` and `KindDanger` are rejected by `Memory`), so they always ask.
+Unattended is the explicit decision mode for executions with no human present (cron-triggered runs, marked via `WithUnattended`). Everything above T0 is denied with the ruling's reason preserved under an unattended prefix — NeedsConfirm is never silently allowed and never parks on a confirmation no one will answer, Forbidden stays denied, and remembered approvals are ignored: interactive consent never authorizes unattended execution.
+
+The memory escape hatch is unchanged in shape: approving a T1 ruling in ReadWrite remembers its kinds, and later T1 rulings whose kinds are all remembered run without asking. Unknowable and Danger rulings carry no rememberable kinds (`KindUnknown` and `KindDanger` are rejected by `Memory`), so they always ask outside Unattended mode.
 
 ## Documented design boundaries
 

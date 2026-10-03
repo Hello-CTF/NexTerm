@@ -12,5 +12,6 @@
 // loss also bound their side effects.
 //
 // Listing another session does not activate, unregister, or delete anything.
-// Application and RPC composition belongs in adapters.
+// Application and RPC composition belongs in adapters; see COMPOSITION.md for
+// the wiring the app/RPC composition root still has to provide.
 package cron

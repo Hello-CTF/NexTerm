@@ -62,13 +62,13 @@ func TestMigrationCreatesCompleteSchema(t *testing.T) {
 		tables[name] = true
 	}
 	for _, name := range []string{"asset_group", "asset", "credential", "setting", "audit_log",
-		"ai_conversation", "ai_message", "snippet", "known_host", "terminal_recording", "outcome_record", migrationsTable} {
+		"ai_conversation", "ai_message", "snippet", "known_host", "terminal_recording", "outcome_record", "cron_job", migrationsTable} {
 		if !tables[name] {
 			t.Errorf("missing table %s", name)
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 4 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 5 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -131,7 +131,7 @@ func TestMigrationConcurrentFirstOpen(t *testing.T) {
 		}
 		for _, db := range stores {
 			var count int
-			if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 4 {
+			if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 5 {
 				t.Errorf("round %d migration count=%d err=%v", round, count, err)
 				failed = true
 			}

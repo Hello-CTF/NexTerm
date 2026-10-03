@@ -8,9 +8,10 @@ import (
 type Mode string
 
 const (
-	ReadOnly  Mode = "read_only"
-	ReadWrite Mode = "read_write"
-	Silent    Mode = "silent"
+	ReadOnly   Mode = "read_only"
+	ReadWrite  Mode = "read_write"
+	Silent     Mode = "silent"
+	Unattended Mode = "unattended"
 )
 
 type Risk uint8
@@ -139,7 +140,7 @@ type Config struct {
 }
 
 func (c Config) Normalized() Config {
-	if c.Mode != ReadOnly && c.Mode != ReadWrite && c.Mode != Silent {
+	if c.Mode != ReadOnly && c.Mode != ReadWrite && c.Mode != Silent && c.Mode != Unattended {
 		c.Mode = ReadWrite
 	}
 	seen := make(map[string]struct{}, len(c.DangerRules))
@@ -176,12 +177,16 @@ type Decision struct {
 
 // Decide maps a ruling to an action per permission mode:
 //
-//	ReadOnly:  T0 allow; T1/Unknowable/Danger/Forbidden deny
-//	ReadWrite: T0 allow; T1 ask (allow once every kind is remembered);
-//	           Unknowable/Danger ask; Forbidden deny
-//	Silent:    T0/T1 allow; Unknowable/Danger ask; Forbidden deny
+//	ReadOnly:    T0 allow; T1/Unknowable/Danger/Forbidden deny
+//	ReadWrite:   T0 allow; T1 ask (allow once every kind is remembered);
+//	             Unknowable/Danger ask; Forbidden deny
+//	Silent:      T0/T1 allow; Unknowable/Danger ask; Forbidden deny
+//	Unattended:  T0 allow; T1/Unknowable/Danger/Forbidden deny — no human is
+//	             present to confirm, and remembered approvals never authorize
+//	             unattended execution, so nothing above T0 runs silently.
 //
-// Only T1 rulings are rememberable; Unknowable and Danger always ask.
+// Only T1 rulings are rememberable; Unknowable and Danger always ask outside
+// Unattended mode.
 func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	config = config.Normalized()
 	if ruling.Risk == Forbidden {
@@ -189,6 +194,10 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	}
 	if ruling.Risk == Safe {
 		return Decision{Action: ActionAllow, Ruling: ruling}
+	}
+	if config.Mode == Unattended {
+		ruling.Reason = unattendedReason(ruling)
+		return Decision{Action: ActionDeny, Ruling: ruling, Reason: ruling.Reason}
 	}
 	if config.Mode == ReadOnly {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: "只读权限模式禁止此操作"}
