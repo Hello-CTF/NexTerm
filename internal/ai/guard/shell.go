@@ -76,11 +76,105 @@ func echoStdinHint(segment shellSegment) stdinHint {
 	}
 	switch commandName(segment.tokens[0]) {
 	case "echo":
-		return stdinHint{text: strings.Join(segment.tokens[1:], " "), ok: true}
+		args := segment.tokens[1:]
+		for len(args) > 0 && echoOption(args[0]) {
+			args = args[1:]
+		}
+		return stdinHint{text: strings.Join(args, " "), ok: true}
 	case "printf":
-		return stdinHint{text: segment.tokens[1], ok: true}
+		return printfStdinHint(segment.tokens[1:])
 	}
 	return stdinHint{}
+}
+
+func echoOption(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false
+	}
+	for _, r := range arg[1:] {
+		if r != 'n' && r != 'e' && r != 'E' {
+			return false
+		}
+	}
+	return true
+}
+
+// printfStdinHint models the bytes printf emits for a statically known
+// format string and arguments so downstream consumers (at, xargs) classify
+// the real payload instead of the format directives. Unsupported verbs or
+// truncated directives fail closed (ok == false).
+func printfStdinHint(args []string) stdinHint {
+	if len(args) == 0 {
+		return stdinHint{ok: true}
+	}
+	format := args[0]
+	rest := args[1:]
+	argIndex := 0
+	takeArg := func() string {
+		if argIndex < len(rest) {
+			value := rest[argIndex]
+			argIndex++
+			return value
+		}
+		return ""
+	}
+	var out strings.Builder
+	for i := 0; i < len(format); i++ {
+		c := format[i]
+		if c == '\\' && i+1 < len(format) {
+			i++
+			switch format[i] {
+			case 'n':
+				out.WriteByte('\n')
+			case 't':
+				out.WriteByte('\t')
+			case 'r':
+				out.WriteByte('\r')
+			case 'a':
+				out.WriteByte('\a')
+			case 'b':
+				out.WriteByte('\b')
+			case 'f':
+				out.WriteByte('\f')
+			case 'v':
+				out.WriteByte('\v')
+			case 'c':
+				return stdinHint{text: out.String(), ok: true}
+			default:
+				out.WriteByte(format[i])
+			}
+			continue
+		}
+		if c != '%' {
+			out.WriteByte(c)
+			continue
+		}
+		if i+1 >= len(format) {
+			return stdinHint{}
+		}
+		i++
+		for i < len(format) && strings.ContainsRune("-+ #0.123456789", rune(format[i])) {
+			i++
+		}
+		if i >= len(format) {
+			return stdinHint{}
+		}
+		switch format[i] {
+		case '%':
+			out.WriteByte('%')
+		case 's', 'b', 'c', 'd', 'i', 'o', 'u', 'x', 'X', 'f', 'e', 'E', 'g', 'G':
+			out.WriteString(takeArg())
+		default:
+			return stdinHint{}
+		}
+	}
+	for ; argIndex < len(rest); argIndex++ {
+		if out.Len() > 0 {
+			out.WriteByte(' ')
+		}
+		out.WriteString(rest[argIndex])
+	}
+	return stdinHint{text: out.String(), ok: true}
 }
 
 func parseShell(input string) ([]shellSegment, []string, error) {
@@ -389,6 +483,9 @@ func classifyRedirection(segment shellSegment) Ruling {
 }
 
 func classifySegment(segment shellSegment, rules []string, depth int, stdin stdinHint) Ruling {
+	if depth > 8 {
+		return Dangerous("命令嵌套过深，无法安全分析")
+	}
 	tokens := stripDescriptors(segment.tokens)
 	for len(tokens) > 0 && isAssignment(tokens[0]) {
 		tokens = tokens[1:]
@@ -419,7 +516,7 @@ func classifySegment(segment shellSegment, rules []string, depth int, stdin stdi
 		name := commandName(tokens[0])
 		if name == "sudo" || name == "doas" || name == "sudoedit" {
 			result = Worst(result, Confirm(KindSudo, "包含权限提升"))
-			if name == "sudoedit" || containsAny(tokens[1:], "-e", "--edit") {
+			if name == "sudoedit" || name == "sudo" && sudoEditFlag(tokens[1:]) {
 				for _, target := range stripCommandFlags(tokens[1:]) {
 					if isCriticalWriteTarget(target) {
 						return Deny("禁止以 root 编辑关键系统路径")
@@ -434,11 +531,54 @@ func classifySegment(segment shellSegment, rules []string, depth int, stdin stdi
 			result = Worst(result, Confirm(KindSudo, "包含身份切换"))
 			for index := 1; index < len(tokens); index++ {
 				arg := tokens[index]
-				if (arg == "-c" || arg == "--command" || arg == "--session-command") && index+1 < len(tokens) {
-					result = Worst(result, classifyCommandDepth(tokens[index+1], rules, depth+1))
+				if arg == "--" {
+					break
 				}
-				if strings.HasPrefix(arg, "--command=") || strings.HasPrefix(arg, "--session-command=") {
-					result = Worst(result, classifyCommandDepth(arg[strings.Index(arg, "=")+1:], rules, depth+1))
+				if strings.HasPrefix(arg, "--") {
+					option, value, attached, ok := resolveGNULongOption(arg, suLongOptions)
+					if !ok {
+						continue
+					}
+					switch option.name {
+					case "command", "session-command":
+						if !attached && index+1 < len(tokens) {
+							index++
+							value = tokens[index]
+						}
+						result = Worst(result, classifyCommandDepth(value, rules, depth+1))
+					default:
+						if option.takesValue && !attached {
+							index++
+						}
+					}
+					continue
+				}
+				if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+					letters := arg[1:]
+					for len(letters) > 0 {
+						letter := letters[0]
+						switch {
+						case letter == 'c':
+							code := letters[1:]
+							if code == "" && index+1 < len(tokens) {
+								index++
+								code = tokens[index]
+							}
+							if code != "" {
+								result = Worst(result, classifyCommandDepth(code, rules, depth+1))
+							}
+							letters = ""
+						case letter == 'l' || letter == 'm' || letter == 'p':
+							letters = letters[1:]
+						case letter == 's' || letter == 'g' || letter == 'G' || letter == 'w':
+							if len(letters) == 1 {
+								index++
+							}
+							letters = ""
+						default:
+							letters = letters[1:]
+						}
+					}
 				}
 			}
 			return result
@@ -500,12 +640,56 @@ func privilegeOptionValue(arg string) (string, bool) {
 		return "", false
 	}
 	for index := 1; index < len(arg); index++ {
-		switch arg[index] {
-		case 'u', 'g', 'h', 'p', 'a', 'C', 'D', 'T', 't', 'U', 'G', 'R':
+		if strings.IndexByte(sudoValueShorts, arg[index]) >= 0 {
 			return arg[index+1:], true
 		}
 	}
 	return "", false
+}
+
+// sudoEditFlag reports whether leading sudo options select edit mode. It
+// understands clustered short options (sudo -eu root means -e -u root),
+// attached forms, and GNU long-option abbreviations; scanning stops at the
+// wrapped command so command flags are never mistaken for sudo flags.
+func sudoEditFlag(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return false
+		}
+		if !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		if strings.HasPrefix(arg, "--") {
+			option, _, attached, ok := resolveGNULongOption(arg, sudoLongOptions)
+			if !ok {
+				continue
+			}
+			if option.name == "edit" {
+				return true
+			}
+			if option.takesValue && !attached {
+				index++
+			}
+			continue
+		}
+		letters := arg[1:]
+		for len(letters) > 0 {
+			letter := letters[0]
+			if letter == 'e' {
+				return true
+			}
+			if strings.IndexByte(sudoValueShorts, letter) >= 0 {
+				if len(letters) == 1 {
+					index++
+				}
+				letters = ""
+				continue
+			}
+			letters = letters[1:]
+		}
+	}
+	return false
 }
 
 func isAssignment(value string) bool {
@@ -529,7 +713,15 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 	name := commandName(tokens[0])
 	args := tokens[1:]
 	if isInterpreter(name) {
-		return Worst(Confirm(KindUnknown, "解释器或脚本执行需要确认"), classifyInterpreter(name, args, rules, depth))
+		result := Worst(Confirm(KindUnknown, "解释器或脚本执行需要确认"), classifyInterpreter(name, args, rules, depth))
+		if stdin.ok && strings.TrimSpace(stdin.text) != "" {
+			if isShellInterpreter(name) {
+				result = Worst(result, classifyCommandDepth(stdin.text, rules, depth+1))
+			} else {
+				result = Worst(result, Dangerous(name+" 从标准输入执行代码"))
+			}
+		}
+		return result
 	}
 	if ruling, ok := forbiddenCommand(name, args); ok {
 		return ruling
@@ -548,8 +740,14 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 	}
 	switch name {
 	case "rm", "rmdir", "mv", "cp", "dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "shred", "truncate":
+		if writesCriticalTarget(name, args) {
+			return Deny("禁止写入关键系统路径")
+		}
 		return Confirm(KindWriteFS, "文件系统写操作")
-	case "touch", "mkdir", "install", "ln", "unlink":
+	case "touch", "mkdir", "install", "ln", "unlink", "tee":
+		if writesCriticalTarget(name, args) {
+			return Deny("禁止写入关键系统路径")
+		}
 		return Confirm(KindWriteFS, "文件系统写操作")
 	case "reboot", "shutdown", "poweroff", "halt":
 		return Dangerous("系统关机或重启")
@@ -575,11 +773,11 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 	case "kubectl":
 		return classifyKubectl(args, rules, depth)
 	case "git":
-		return classifyGit(args)
+		return classifyGit(args, rules, depth)
 	case "redis-cli", "valkey-cli":
 		return classifyRedis(args)
 	case "mysql", "mariadb", "psql":
-		return classifyDatabaseClient(name, args, rules, ops)
+		return classifyDatabaseClient(name, args, rules, ops, depth)
 	case "sed", "awk", "gawk", "ed", "vim", "vi", "nano", "emacs":
 		return Confirm(KindUnknown, "命令具有编辑或执行子命令能力")
 	case "find":
@@ -616,7 +814,11 @@ func classifySimple(tokens []string, ops []string, rules []string, depth int, st
 		return classifyDownload(name, args, ops)
 	case "nc", "ncat", "netcat", "socat":
 		for _, arg := range args {
-			if arg == "-e" || arg == "-c" || strings.HasPrefix(arg, "exec:") || strings.HasPrefix(arg, "system:") || strings.HasPrefix(arg, "shell") {
+			lower := strings.ToLower(arg)
+			if arg == "-e" || arg == "-c" || lower == "--exec" || strings.HasPrefix(lower, "--exec=") || lower == "--sh-exec" || strings.HasPrefix(lower, "--sh-exec=") || lower == "--lua-exec" || strings.HasPrefix(lower, "--lua-exec=") {
+				return Dangerous("网络工具执行命令")
+			}
+			if strings.HasPrefix(lower, "exec:") || strings.HasPrefix(lower, "system:") || strings.HasPrefix(lower, "shell") {
 				return Dangerous("网络工具执行命令")
 			}
 		}
@@ -650,23 +852,72 @@ func isInterpreter(name string) bool {
 	}
 }
 
+func isShellInterpreter(name string) bool {
+	switch name {
+	case "sh", "bash", "zsh", "ksh", "dash", "fish":
+		return true
+	default:
+		return false
+	}
+}
+
+// interpreterCodeLetters lists the short options through which non-shell
+// interpreters accept inline source (-c/-e/-E/-r/-p, attached or separate).
+const interpreterCodeLetters = "ceErp"
+
 func classifyInterpreter(name string, args []string, rules []string, depth int) Ruling {
 	result := Allow()
-	shell := name == "sh" || name == "bash" || name == "zsh" || name == "ksh" || name == "dash" || name == "fish"
+	shell := isShellInterpreter(name)
 	inlineCode := ""
 	inline := false
-	for i, arg := range args {
-		inlineArg := arg == "-c" || strings.EqualFold(arg, "-Command") || arg == "/c" || !shell && (arg == "-e" || arg == "-E" || arg == "-r")
-		if shell && strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg[1:], "c") {
-			inlineArg = true
+	takeCode := func(code string) {
+		inline = true
+		if shell {
+			result = Worst(result, classifyCommandDepth(code, rules, depth+1))
+		} else {
+			inlineCode += " " + code
 		}
-		if inlineArg && i+1 < len(args) {
-			inline = true
-			if shell {
-				result = Worst(result, classifyCommandDepth(args[i+1], rules, depth+1))
-			} else {
-				inlineCode += " " + args[i+1]
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if shell {
+			switch {
+			case arg == "-c":
+				if i+1 < len(args) {
+					takeCode(args[i+1])
+				}
+			case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.IndexByte(arg[1:], 'c') >= 0:
+				// Clustered or attached -c: everything after the first c is
+				// the script (getopt value semantics).
+				position := strings.IndexByte(arg[1:], 'c')
+				code := arg[position+2:]
+				if code == "" && i+1 < len(args) {
+					code = args[i+1]
+				}
+				if code != "" {
+					takeCode(code)
+				}
 			}
+			continue
+		}
+		lower := strings.ToLower(arg)
+		switch {
+		case arg == "-c" || arg == "-e" || arg == "-E" || arg == "-r" || arg == "-p" || strings.EqualFold(arg, "-Command") || arg == "/c" || arg == "--eval" || arg == "--command" || arg == "--execute":
+			if i+1 < len(args) {
+				takeCode(args[i+1])
+			}
+		case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--"):
+			letters := arg[1:]
+			for len(letters) > 0 {
+				if strings.IndexByte(interpreterCodeLetters, letters[0]) >= 0 {
+					takeCode(letters[1:])
+					letters = ""
+					continue
+				}
+				letters = letters[1:]
+			}
+		case strings.HasPrefix(lower, "--eval=") || strings.HasPrefix(lower, "--command=") || strings.HasPrefix(lower, "--execute="):
+			takeCode(arg[strings.Index(arg, "=")+1:])
 		}
 	}
 	if inline && !shell {
@@ -682,7 +933,7 @@ func dangerousInterpreterText(value string, rules []string) Ruling {
 	return Allow()
 }
 
-func classifyDatabaseClient(name string, args, rules []string, ops []string) Ruling {
+func classifyDatabaseClient(name string, args, rules []string, ops []string, depth int) Ruling {
 	result := Confirm(KindDBWrite, "交互式数据库客户端需要确认")
 	for _, op := range ops {
 		if op == "<" {
@@ -728,10 +979,33 @@ func classifyDatabaseClient(name string, args, rules []string, ops []string) Rul
 			}
 		}
 		if payload != "" {
+			result = Worst(result, classifyDatabaseMetaCommand(name, payload, rules, depth))
 			result = Worst(result, ClassifySQL(payload, rules))
 		}
 	}
 	return result
+}
+
+// classifyDatabaseMetaCommand rates client-level escapes that execute files
+// or shell commands: mysql source/\. and psql \!, \i, \ir. Content read from
+// files cannot be verified statically, and \! runs through the shell.
+func classifyDatabaseMetaCommand(name, payload string, rules []string, depth int) Ruling {
+	trimmed := strings.TrimSpace(payload)
+	if name == "psql" {
+		lower := strings.ToLower(trimmed)
+		switch {
+		case strings.HasPrefix(trimmed, `\!`):
+			return Worst(Dangerous("psql 执行 shell 转义命令"), classifyCommandDepth(strings.TrimSpace(trimmed[2:]), rules, depth+1))
+		case strings.HasPrefix(lower, `\i`) || strings.HasPrefix(lower, `\include`):
+			return Dangerous("psql 执行 SQL 文件，内容无法验证")
+		}
+		return Allow()
+	}
+	lower := strings.ToLower(trimmed)
+	if lower == "source" || strings.HasPrefix(lower, "source ") || strings.HasPrefix(trimmed, `\.`) {
+		return Dangerous("mysql 执行 SQL 文件，内容无法验证")
+	}
+	return Allow()
 }
 
 func containsDestructiveText(value string) bool {
@@ -805,7 +1079,7 @@ func isCriticalRoot(value string) bool {
 		value = filepath.Clean(value)
 	}
 	switch value {
-	case "/", "/*", "/~", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/home", "/sbin", "/sys", "/usr", "/var", "C:", "c:":
+	case "/", "/*", "/~", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/home", "/sbin", "/sys", "/usr", "/var", "/Users", "C:", "c:":
 		return true
 	default:
 		return strings.HasPrefix(value, "/home/") || strings.HasPrefix(value, "/root/") || strings.HasPrefix(value, "/Users/")
@@ -816,6 +1090,9 @@ func isCriticalWriteTarget(value string) bool {
 	target := strings.ToLower(strings.ReplaceAll(strings.Trim(strings.TrimSpace(value), "'\""), "\\", "/"))
 	if target == "" {
 		return false
+	}
+	if strings.HasPrefix(target, "/") {
+		target = filepath.Clean(target)
 	}
 	for _, prefix := range []string{
 		"/etc/cron", "/var/spool/cron", "/etc/sudoers", "/etc/shadow", "/etc/passwd", "/etc/ssh", "/etc/ld.so.preload",
@@ -829,9 +1106,68 @@ func isCriticalWriteTarget(value string) bool {
 }
 
 func isBlockDevice(value string) bool {
-	value = strings.Trim(value, "'\"")
+	value = filepath.Clean(strings.Trim(value, "'\""))
 	for _, prefix := range []string{"/dev/sd", "/dev/hd", "/dev/nvme", "/dev/mapper/", "/dev/vd", "/dev/xvd", "/dev/disk", "/dev/rdisk"} {
 		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// writesCriticalTarget reports whether a file-producing command writes to a
+// critical system path. It shares the canonicalized target model with
+// redirection and sudo-edit protection.
+func writesCriticalTarget(name string, args []string) bool {
+	valueFlags := map[string]bool{
+		"-t": true, "--target-directory": true, "-s": true, "--size": true, "-n": true,
+		"-m": true, "-o": true, "-g": true, "-d": true, "-S": true, "--suffix": true,
+	}
+	var positionals []string
+	skip := false
+	for _, arg := range args {
+		if skip {
+			skip = false
+			continue
+		}
+		if arg == "--" {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			if valueFlags[arg] {
+				skip = true
+			}
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	var targets []string
+	switch name {
+	case "dd":
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "of=") {
+				targets = append(targets, strings.TrimPrefix(arg, "of="))
+			}
+		}
+	case "cp", "mv", "install", "ln":
+		if len(positionals) > 0 {
+			targets = append(targets, positionals[len(positionals)-1])
+		}
+		for index, arg := range args {
+			if (arg == "-t" || arg == "--target-directory") && index+1 < len(args) {
+				targets = append(targets, args[index+1])
+			}
+			if strings.HasPrefix(arg, "--target-directory=") {
+				targets = append(targets, strings.TrimPrefix(arg, "--target-directory="))
+			}
+		}
+	case "rm", "rmdir", "unlink", "tee", "truncate", "shred":
+		targets = append(targets, positionals...)
+	default:
+		return false
+	}
+	for _, target := range targets {
+		if isCriticalWriteTarget(target) {
 			return true
 		}
 	}
@@ -887,29 +1223,78 @@ func classifyCrontab(args []string) Ruling {
 }
 
 func classifySSH(args []string, rules []string, depth int) Ruling {
-	valueOptions := map[string]bool{"-p": true, "-i": true, "-l": true, "-o": true, "-E": true, "-F": true, "-J": true, "-L": true, "-W": true, "-b": true, "-c": true, "-m": true, "-S": true}
+	valueOptions := map[string]bool{"-p": true, "-i": true, "-l": true, "-E": true, "-F": true, "-J": true, "-L": true, "-W": true, "-b": true, "-c": true, "-m": true, "-S": true}
+	result := Confirm(KindUnknown, "远程传输或执行需要确认")
 	index := 0
 	for index < len(args) && strings.HasPrefix(args[index], "-") {
 		arg := args[index]
 		index++
+		if arg == "-o" {
+			if index < len(args) {
+				result = Worst(result, classifySSHConfigValue(args[index], rules, depth))
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-o") && len(arg) > 2 {
+			result = Worst(result, classifySSHConfigValue(arg[2:], rules, depth))
+			continue
+		}
 		if valueOptions[arg] && index < len(args) {
 			index++
 		}
 	}
 	if index >= len(args) {
-		return Confirm(KindUnknown, "远程传输或执行需要确认")
+		return result
 	}
 	index++
 	if index >= len(args) {
-		return Confirm(KindUnknown, "远程传输或执行需要确认")
+		return result
 	}
-	return Worst(Confirm(KindUnknown, "远程传输或执行需要确认"), classifyCommandDepth(strings.Join(args[index:], " "), rules, depth+1))
+	// ssh flattens the remote command into a single string for the remote
+	// shell, so classification re-parses the joined text.
+	return Worst(result, classifyCommandDepth(strings.Join(args[index:], " "), rules, depth+1))
+}
+
+// classifySSHConfigValue inspects -o values whose keywords run a command:
+// ProxyCommand and LocalCommand execute locally through a shell, and
+// RemoteCommand executes on the remote host.
+func classifySSHConfigValue(value string, rules []string, depth int) Ruling {
+	key, command, found := strings.Cut(value, "=")
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "proxycommand", "localcommand", "remotecommand":
+		command = strings.TrimSpace(command)
+		if !found || command == "" || strings.EqualFold(command, "none") {
+			return Allow()
+		}
+		return Worst(Dangerous("ssh 选项执行本地或远端命令"), classifyCommandDepth(command, rules, depth+1))
+	}
+	return Allow()
 }
 
 func classifyService(name string, args []string) Ruling {
-	if name == "systemctl" && len(args) > 0 {
-		switch args[0] {
-		case "status", "show", "list-units", "list-unit-files", "is-active", "is-enabled", "--failed", "list-dependencies", "cat":
+	if name == "systemctl" {
+		valueGlobals := map[string]bool{"-H": true, "-M": true, "-t": true, "-o": true, "--host": true, "--machine": true, "--type": true, "--output": true, "--job-mode": true, "--root": true, "--image": true, "--image-policy": true, "--state": true, "--preset-mode": true, "--kill-who": true, "--signal": true}
+		index := 0
+		sawFailed := false
+		for index < len(args) && strings.HasPrefix(args[index], "-") {
+			arg := args[index]
+			index++
+			if arg == "--failed" {
+				sawFailed = true
+			}
+			if valueGlobals[arg] && index < len(args) {
+				index++
+			}
+		}
+		if index >= len(args) {
+			if sawFailed {
+				return Allow()
+			}
+			return Confirm(KindService, "服务或防火墙配置变更")
+		}
+		switch args[index] {
+		case "status", "show", "list-units", "list-unit-files", "is-active", "is-enabled", "list-dependencies", "cat":
 			return Allow()
 		case "stop", "mask", "kill", "isolate", "poweroff", "reboot", "halt":
 			return Dangerous("系统服务停止或隔离")
@@ -1077,17 +1462,23 @@ func dockerBulkDeletion(args []string) bool {
 			continue
 		}
 		quiet := false
+		formatted := false
 		for _, option := range rest[offset+1:] {
 			if option == "--quiet" || option == "--quiet=true" {
 				quiet = true
+			}
+			if option == "--format" || strings.HasPrefix(option, "--format=") {
+				formatted = true
 			}
 			if _, ok := shortOptionValue(option, 'q'); ok {
 				quiet = true
 			}
 		}
 		// Force-removing every enumerated container or image (running set
-		// included) is bulk destruction; filters cannot be verified statically.
-		if quiet {
+		// included) is bulk destruction; quiet and --format enumerations
+		// produce exactly the IDs the deletion consumes, and filters cannot
+		// be verified statically. A plain table listing is not an ID source.
+		if quiet || formatted {
 			return true
 		}
 	}
@@ -1127,7 +1518,10 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 				index++
 			}
 			if index < len(args) {
-				return Worst(Confirm(KindService, "Kubernetes 资源或工作负载变更"), classifyCommandDepth(strings.Join(args[index:], " "), rules, depth+1))
+				// kubectl exec passes the command argv to the container
+				// process intact; classify the token slice, not a re-joined
+				// string, so quoted scripts keep their boundaries.
+				return Worst(Confirm(KindService, "Kubernetes 资源或工作负载变更"), classifySegment(shellSegment{tokens: args[index:]}, rules, depth+1, stdinHint{}))
 			}
 			return Confirm(KindService, "Kubernetes 资源或工作负载变更")
 		case "delete", "drain", "cordon", "uncordon", "apply", "create", "replace", "patch", "scale", "rollout", "port-forward", "cp", "edit", "set", "label", "annotate", "taint":
@@ -1137,24 +1531,61 @@ func classifyKubectl(args []string, rules []string, depth int) Ruling {
 	return Confirm(KindUnknown, "未知 kubectl 子命令")
 }
 
-func classifyGit(args []string) Ruling {
+func classifyGit(args []string, rules []string, depth int) Ruling {
 	if len(args) == 0 {
 		return Allow()
 	}
-	for _, arg := range args[1:] {
+	index := 0
+	for index < len(args) {
+		arg := args[index]
+		if arg == "-C" || arg == "-c" {
+			if index+1 < len(args) {
+				if arg == "-c" {
+					if ruling, bad := gitConfigInjection(args[index+1], rules, depth); bad {
+						return ruling
+					}
+				}
+				index += 2
+				continue
+			}
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "-C") && len(arg) > 2 {
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "-c") && len(arg) > 2 {
+			if ruling, bad := gitConfigInjection(arg[2:], rules, depth); bad {
+				return ruling
+			}
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			index++
+			continue
+		}
+		break
+	}
+	rest := args[index:]
+	if len(rest) == 0 {
+		return Allow()
+	}
+	for _, arg := range rest[1:] {
 		lower := strings.ToLower(arg)
 		if lower == "--output" || lower == "-o" || lower == "--exec" || strings.HasPrefix(lower, "--output=") || strings.HasPrefix(lower, "--exec=") || strings.HasPrefix(lower, "-o") && len(lower) > 2 {
 			return Confirm(KindWriteFS, "Git 输出文件或扩展命令")
 		}
 	}
-	switch args[0] {
+	switch rest[0] {
 	case "status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "shortlog", "describe":
 		return Allow()
 	case "branch":
-		if len(args) == 1 {
+		if len(rest) == 1 {
 			return Allow()
 		}
-		for _, arg := range args[1:] {
+		for _, arg := range rest[1:] {
 			switch arg {
 			case "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "--show-current":
 			default:
@@ -1165,19 +1596,22 @@ func classifyGit(args []string) Ruling {
 		}
 		return Allow()
 	case "remote":
-		if len(args) == 1 || len(args) == 2 && (args[1] == "-v" || args[1] == "--verbose" || args[1] == "show" || args[1] == "get-url") {
+		if len(rest) == 1 || len(rest) == 2 && (rest[1] == "-v" || rest[1] == "--verbose" || rest[1] == "show" || rest[1] == "get-url") {
 			return Allow()
 		}
 		return Confirm(KindWriteFS, "Git 远端配置变更")
 	case "push":
-		if containsAnyFold(args[1:], "--force", "-f", "--force-with-lease") {
+		if containsAnyFold(rest[1:], "--force", "-f", "--force-with-lease") {
 			return Confirm(KindWriteFS, "Git 强制推送")
 		}
 		return Confirm(KindWriteFS, "Git 推送")
 	case "clean":
+		if containsAnyFold(rest[1:], "-n", "--dry-run") || hasShortFlag(rest[1:], 'n') {
+			return Allow()
+		}
 		return Dangerous("git clean 删除未跟踪文件")
 	case "reset":
-		if containsAnyFold(args[1:], "--hard") {
+		if containsAnyFold(rest[1:], "--hard") {
 			return Dangerous("git reset --hard 丢弃提交与修改")
 		}
 		return Confirm(KindWriteFS, "Git 仓库或远端变更")
@@ -1186,6 +1620,24 @@ func classifyGit(args []string) Ruling {
 	default:
 		return Confirm(KindUnknown, "未知 Git 子命令")
 	}
+}
+
+// gitConfigInjection rates git -c values that configure an executable hook
+// (pager, ssh command, proxy, fsmonitor, external diff, filters): the value
+// runs a command, so it is classified like one.
+func gitConfigInjection(value string, rules []string, depth int) (Ruling, bool) {
+	key, command, found := strings.Cut(value, "=")
+	lower := strings.ToLower(key)
+	executable := strings.Contains(lower, "pager") || strings.Contains(lower, "sshcommand") || strings.Contains(lower, "proxy") ||
+		strings.Contains(lower, "hookspath") || strings.Contains(lower, "external") || strings.Contains(lower, "fsmonitor") ||
+		strings.HasPrefix(lower, "filter.")
+	if !executable {
+		return Ruling{}, false
+	}
+	if found && strings.TrimSpace(command) != "" {
+		return Worst(Dangerous("git -c 注入可执行配置"), classifyCommandDepth(command, rules, depth+1)), true
+	}
+	return Dangerous("git -c 注入可执行配置"), true
 }
 
 const curlValueShorts = "odFTDcKQXAbeHuUxmYyzw"
@@ -1228,7 +1680,13 @@ func classifyDownload(name string, args, ops []string) Ruling {
 		if arg == "-J" || lower == "--remote-header-name" || lower == "--remote-name-all" {
 			return Confirm(KindWriteFS, "下载保存或 HTTP 写入")
 		}
-		if lower == "--libcurl" || strings.HasPrefix(lower, "--libcurl=") || lower == "--alt-svc" || strings.HasPrefix(lower, "--alt-svc=") || lower == "--hsts" || strings.HasPrefix(lower, "--hsts=") {
+		if lower == "--libcurl" || strings.HasPrefix(lower, "--libcurl=") {
+			if (lower == "--libcurl" && i+1 < len(args) && args[i+1] == "-") || strings.HasPrefix(lower, "--libcurl=-") {
+				continue
+			}
+			return Confirm(KindWriteFS, "curl 写入本地缓存或代码文件")
+		}
+		if lower == "--alt-svc" || strings.HasPrefix(lower, "--alt-svc=") || lower == "--hsts" || strings.HasPrefix(lower, "--hsts=") {
 			return Confirm(KindWriteFS, "curl 写入本地缓存或代码文件")
 		}
 		if name == "wget" && (lower == "--output-document" || arg == "-O") {

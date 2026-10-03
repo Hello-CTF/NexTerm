@@ -92,6 +92,51 @@ var sortLongOptions = []gnuLongOption{
 	{name: "version"},
 }
 
+var suLongOptions = []gnuLongOption{
+	{name: "command", takesValue: true},
+	{name: "session-command", takesValue: true},
+	{name: "login"},
+	{name: "preserve-environment"},
+	{name: "shell", takesValue: true},
+	{name: "group", takesValue: true},
+	{name: "supp-group", takesValue: true},
+	{name: "whitelist-environment", takesValue: true},
+	{name: "help"},
+	{name: "version"},
+}
+
+var sudoLongOptions = []gnuLongOption{
+	{name: "edit"},
+	{name: "login"},
+	{name: "non-interactive"},
+	{name: "set-home"},
+	{name: "preserve-env", optionalValue: true},
+	{name: "shell"},
+	{name: "background"},
+	{name: "askpass"},
+	{name: "stdin"},
+	{name: "validate"},
+	{name: "kill"},
+	{name: "list"},
+	{name: "reset-timestamp"},
+	{name: "preserve-group-vector"},
+	{name: "help"},
+	{name: "version"},
+	{name: "user", takesValue: true},
+	{name: "group", takesValue: true},
+	{name: "host", takesValue: true},
+	{name: "prompt", takesValue: true},
+	{name: "chdir", takesValue: true},
+	{name: "command-timeout", takesValue: true},
+	{name: "type", takesValue: true},
+	{name: "role", takesValue: true},
+	{name: "close-from", takesValue: true},
+}
+
+// sudoValueShorts lists the sudo/doas short options that consume a value,
+// matching privilegeOptionValue and stripCommandFlags.
+const sudoValueShorts = "ughpaCDTtUGR"
+
 func quoteShellToken(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
