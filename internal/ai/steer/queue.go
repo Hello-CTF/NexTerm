@@ -23,8 +23,9 @@ type Queue struct {
 }
 
 // NewQueue creates a queue holding at most limit messages. A limit <= 0
-// falls back to the Runner default so misconfiguration degrades to the
-// bounded behavior rather than an unbounded one.
+// falls back to 64, the package default shared with the M7 Runner; callers
+// with their own bound (the agent runner uses 16) pass it explicitly, so
+// misconfiguration degrades to a bounded queue rather than an unbounded one.
 func NewQueue(limit int) *Queue {
 	if limit <= 0 {
 		limit = 64

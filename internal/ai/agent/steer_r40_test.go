@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -429,6 +430,147 @@ func TestSteerEventSequenceAndPersistence(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("steered message was not persisted: %+v", messages)
+	}
+}
+
+// gatedHistoryStore blocks the first MsgList until released, forcing a
+// Steer into the startup window between Start and the initial history
+// load — the exact race from review round 1.
+type gatedHistoryStore struct {
+	ConversationStore
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (g *gatedHistoryStore) MsgList(ctx context.Context, conversationID string) ([]store.MessageRow, error) {
+	g.once.Do(func() { close(g.started) })
+	<-g.release
+	return g.ConversationStore.MsgList(ctx, conversationID)
+}
+
+// A steer accepted immediately after Start must reach the model exactly
+// once, at the boundary, after the question it supplements — never
+// duplicated through the initial history load — and the conversation
+// record must keep the same order. Later runs read the steered row as
+// ordinary history.
+func TestSteerImmediatelyAfterStartDeliversExactlyOnce(t *testing.T) {
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated := &gatedHistoryStore{ConversationStore: storage, started: make(chan struct{}), release: make(chan struct{})}
+	chat := &recordingChat{}
+	chat.step = func(_ int, _ []*schema.Message) *schema.Message {
+		return schema.AssistantMessage("ok", nil)
+	}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: gated,
+	})
+	t.Cleanup(func() {
+		_ = runner.Close()
+		_ = storage.Close()
+	})
+	stream := &SliceStream{}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannelClosed(t, gated.started, "initial history load did not start")
+	// Separate the two inserts by a millisecond boundary: MsgList orders by
+	// created_at with a ULID tiebreak, and same-millisecond ties fall to the
+	// ULID's random tail (a store property, not insertion order). The gate —
+	// not the sleep — holds the startup window open, so the race is unchanged.
+	time.Sleep(2 * time.Millisecond)
+	// The steer wins the startup window: persisted and queued before the
+	// initial history load completes.
+	if err := runner.Steer(response.JobID, "dup"); err != nil {
+		t.Fatal(err)
+	}
+	close(gated.release)
+	events := waitClosed(t, stream)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
+	}
+	if eventCount(events, "steered") != 1 || eventCount(events, "steerDropped") != 0 {
+		t.Fatalf("startup-window steer must be delivered exactly once: %+v", events)
+	}
+
+	chat.mu.Lock()
+	inputs := chat.inputs
+	chat.mu.Unlock()
+	if len(inputs) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(inputs))
+	}
+	input := inputs[0]
+	if err := steer.ValidateHistory(input); err != nil {
+		t.Fatalf("model input has broken tool pairing: %v (%s)", err, describeMessages(input))
+	}
+	goIndex, dupIndex, dupCount := -1, -1, 0
+	for i, message := range input {
+		if message.Role != schema.User {
+			continue
+		}
+		if message.Content == "go" {
+			goIndex = i
+		}
+		if message.Content == "dup" {
+			dupCount++
+			dupIndex = i
+		}
+	}
+	if dupCount != 1 || goIndex < 0 || dupIndex < goIndex {
+		t.Fatalf("steered message must appear exactly once, after the initial question: %s", describeMessages(input))
+	}
+
+	// Record order: the question precedes its supplement, and the steered
+	// row is bound to this job.
+	rows, err := storage.MsgList(context.Background(), response.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("persisted rows = %d, want question + supplement + answer: %+v", len(rows), rows)
+	}
+	var first, second struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+		Steered bool   `json:"steered"`
+		JobID   string `json:"jobId"`
+	}
+	if json.Unmarshal([]byte(rows[0].ContentJSON), &first) != nil || json.Unmarshal([]byte(rows[1].ContentJSON), &second) != nil {
+		t.Fatal("persisted rows are not valid JSON")
+	}
+	if first.Content != "go" || first.JobID != response.JobID || second.Content != "dup" || !second.Steered || second.JobID != response.JobID {
+		t.Fatalf("record order or binding wrong: first=%+v second=%+v", first, second)
+	}
+
+	// A later run reads the steered row as ordinary history, in order.
+	secondStream := &SliceStream{}
+	_, err = runner.Start(context.Background(), ChatArgs{ConversationID: response.ConversationID, Message: "next", Scope: tools.Scope{SessionID: "session"}}, StaticStream(secondStream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, secondStream)
+	chat.mu.Lock()
+	later := chat.inputs[len(chat.inputs)-1]
+	chat.mu.Unlock()
+	goIndex, dupIndex, dupCount = -1, -1, 0
+	for i, message := range later {
+		if message.Role != schema.User {
+			continue
+		}
+		if message.Content == "go" {
+			goIndex = i
+		}
+		if message.Content == "dup" {
+			dupCount++
+			dupIndex = i
+		}
+	}
+	if dupCount != 1 || goIndex < 0 || dupIndex < goIndex {
+		t.Fatalf("later run must see the full ordered history: %s", describeMessages(later))
 	}
 }
 

@@ -233,9 +233,6 @@ func (r *Runner) initializeEino(current *job) error {
 	if err != nil {
 		return err
 	}
-	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": current.args.Message, "imageCount": len(current.args.Images)}, nil, nil); err != nil {
-		return err
-	}
 	if r.config.Model == nil || r.config.Tools == nil {
 		return errors.New("Eino ChatModel 或工具注册表未配置")
 	}
@@ -251,7 +248,7 @@ func (r *Runner) initializeEino(current *job) error {
 	if contextWindow == 0 {
 		contextWindow = 32768
 	}
-	messages := historyMessages(rows)
+	messages := historyMessages(rows, current.id)
 	if r.config.Context != nil {
 		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
 		if bundle.Volatile != "" {
@@ -577,14 +574,25 @@ func (r *Runner) persistAssistant(ctx context.Context, conversationID, answer st
 	return r.store.MsgInsert(ctx, conversationID, "assistant", map[string]any{"role": "assistant", "content": answer}, &tokensIn, &tokensOut)
 }
 
-func historyMessages(rows []store.MessageRow) []*schema.Message {
+func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(rows))
 	for _, row := range rows {
 		var persisted struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
+			Steered bool   `json:"steered"`
+			JobID   string `json:"jobId"`
 		}
 		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil || persisted.Content == "" {
+			continue
+		}
+		// Rows bound to this job are delivered by the run itself, not by
+		// history: the initial question is re-appended from the job args and
+		// its steered rows arrive through the steer queue at the model-call
+		// boundary — loading either here would duplicate them. Rows of other
+		// jobs (including their steered rows) are ordinary history and stay
+		// visible to every later run.
+		if persisted.JobID != "" && persisted.JobID == jobID {
 			continue
 		}
 		role := persisted.Role

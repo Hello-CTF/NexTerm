@@ -146,6 +146,16 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		forceCancel()
 		return StartResponse{}, errors.New("AI 事件流为空")
 	}
+	// Persist the user's message — bound to this job — before the job
+	// becomes steerable: a Steer accepted right after Start returns must
+	// never outrank the question it supplements in the conversation record.
+	if err := r.store.MsgInsert(ctx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
+		r.releaseJobID(jobID)
+		cancel()
+		forceCancel()
+		_ = stream.Close()
+		return StartResponse{}, err
+	}
 	stream = WithEventSequence(stream)
 	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true}
 	r.mu.Lock()
@@ -244,7 +254,10 @@ func (r *Runner) Steer(jobID, message string) error {
 	if err := current.steer.Push(schema.UserMessage(message)); err != nil {
 		return fmt.Errorf("%w: %w", ErrSteerQueueFull, err)
 	}
-	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": message, "steered": true}, nil, nil); err != nil {
+	// The row carries this job's ID: initializeEino skips this job's steered
+	// rows when assembling the initial history (the queue delivers them at
+	// the boundary instead), while later runs read them as ordinary history.
+	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": message, "steered": true, "jobId": current.id}, nil, nil); err != nil {
 		return err
 	}
 	return nil
