@@ -14,9 +14,7 @@ var errIndexFault = errors.New("injected index repair failure")
 // faultIndexWrites fails every checkpoint write until restored.
 func faultIndexWrites(t *testing.T) (restore func()) {
 	t.Helper()
-	prev := spoolIndexWriter
-	spoolIndexWriter = func(path string, value any) error { return errIndexFault }
-	restore = func() { spoolIndexWriter = prev }
+	restore = spoolIndexWriter.swap(func(path string, value any) error { return errIndexFault })
 	t.Cleanup(restore)
 	return restore
 }
@@ -54,6 +52,34 @@ func runRepairFaultOpens(t *testing.T, dir, base string, failCount int, wantTota
 		t.Fatal(err)
 	}
 	assertSpoolState(t, again, wantTotal, wantDropped, wantHead, wantTail)
+}
+
+// TestFaultIndexWritesConcurrentSwap is the spool-side counterpart of
+// TestFaultMetaWritesConcurrentSwap: spoolIndexWriter was the same kind of
+// unsynchronized package-level fault hook. It swaps the hook while
+// concurrent checkpoint writes are in flight; with the unsynchronized
+// global this trips -race.
+func TestFaultIndexWritesConcurrentSwap(t *testing.T) {
+	dir := t.TempDir()
+	s, err := createSpool(dir, "swap", 4, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const iterations = 200
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < iterations; i++ {
+			s.mu.Lock()
+			_ = s.writeIndexLocked()
+			s.mu.Unlock()
+		}
+	}()
+	for i := 0; i < iterations; i++ {
+		restore := spoolIndexWriter.swap(func(path string, value any) error { return errIndexFault })
+		restore()
+	}
+	<-done
 }
 
 // TestSpoolRepairFailureRepeatedOpens covers fail-once and persistent repair

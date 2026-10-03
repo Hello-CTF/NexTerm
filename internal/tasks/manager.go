@@ -660,7 +660,7 @@ func (m *Manager) writeMetaLocked(t *task) error {
 	t.info.OutputBytes = info.OutputBytes
 	t.info.DroppedBytes = info.DroppedBytes
 	info.PersistError = ""
-	err := metaFileWriter(m.dir, info)
+	err := metaFileWriter.get()(m.dir, info)
 	if err != nil {
 		t.persistErr = err
 		t.info.PersistError = err.Error()
@@ -672,8 +672,9 @@ func (m *Manager) writeMetaLocked(t *task) error {
 }
 
 // metaFileWriter is the durable record sink; tests replace it to inject
-// filesystem failures.
-var metaFileWriter = writeMetaFile
+// filesystem failures. The faultHook keeps installs and restores
+// synchronized with concurrent reads in writeMetaLocked.
+var metaFileWriter = faultHook[func(dir string, info Info) error]{fn: writeMetaFile}
 
 func writeMetaFile(dir string, info Info) error {
 	raw, err := json.Marshal(info)
