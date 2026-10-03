@@ -212,3 +212,34 @@ func TestR6SortMergeAndAbbreviations(t *testing.T) {
 		})
 	}
 }
+
+func TestR6DatabaseClientInitCommandPayload(t *testing.T) {
+	t.Parallel()
+	forbidden := []string{
+		`mysql --init-command='DROP DATABASE prod'`,
+		`mysql --init-command 'DROP DATABASE prod'`,
+		`mariadb --init-command='DROP DATABASE prod'`,
+	}
+	for _, command := range forbidden {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Forbidden {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Forbidden", command, ruling)
+			}
+			if decision := Decide(Config{Mode: Silent}, ruling, nil); decision.Action != ActionDeny {
+				t.Fatalf("silent decision = %+v, want ActionDeny", decision)
+			}
+		})
+	}
+	confirm := []string{
+		`mysql --init-command='CREATE TABLE t (id INT)'`,
+		`mysql --init-command='SELECT 1'`,
+	}
+	for _, command := range confirm {
+		t.Run(command, func(t *testing.T) {
+			if ruling := ClassifyCommand(command, nil); ruling.Risk != NeedsConfirm {
+				t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
+			}
+		})
+	}
+}

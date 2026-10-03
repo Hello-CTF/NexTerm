@@ -568,10 +568,16 @@ func classifyDatabaseClient(name string, args, rules []string) Ruling {
 			if i+1 < len(args) {
 				payload = args[i+1]
 			}
+		case arg == "--init-command" && name != "psql":
+			if i+1 < len(args) {
+				payload = args[i+1]
+			}
 		case strings.HasPrefix(arg, "--execute="):
 			payload = strings.TrimPrefix(arg, "--execute=")
 		case strings.HasPrefix(arg, "--command="):
 			payload = strings.TrimPrefix(arg, "--command=")
+		case name != "psql" && strings.HasPrefix(arg, "--init-command="):
+			payload = strings.TrimPrefix(arg, "--init-command=")
 		case name != "psql" && strings.HasPrefix(arg, "-e") && len(arg) > 2:
 			payload = arg[2:]
 		case name == "psql" && strings.HasPrefix(arg, "-c") && len(arg) > 2:
