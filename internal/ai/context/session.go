@@ -52,6 +52,13 @@ func WithSession(deps Dependencies, manager *session.Manager, storage *store.Sto
 		}
 		return manager.TailLines(tabID, count)
 	}
+	deps.TabSession = func(tabID string) string {
+		tab, err := manager.Tab(tabID)
+		if err != nil {
+			return ""
+		}
+		return tab.SessionID
+	}
 	deps.Transport = manager.Transport
 	if database != nil {
 		deps.Tables = func(ctx context.Context, connID string) ([]TableBrief, error) {

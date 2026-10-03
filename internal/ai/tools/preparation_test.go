@@ -26,10 +26,10 @@ func TestPreparedWriteUsesItsOwnBaseVersion(t *testing.T) {
 		t.Fatalf("first write failed: %+v", result)
 	}
 	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s"}, second, prepareSecond)
-	if result.OK || !strings.Contains(result.Text, ErrFileChanged.Error()) {
-		t.Fatalf("stale preparation was allowed: %+v", result)
+	if !result.OK || !strings.Contains(result.Text, "非事务覆盖") {
+		t.Fatalf("non-CAS overwrite was not explicit: %+v", result)
 	}
-	if string(files.files["/a"]) != "one" {
-		t.Fatalf("stale write replaced content: %q", files.files["/a"])
+	if string(files.files["/a"]) != "two" || string(files.files["/a.nexterm-bak"]) != "one" {
+		t.Fatalf("non-CAS content=%q backup=%q", files.files["/a"], files.files["/a.nexterm-bak"])
 	}
 }

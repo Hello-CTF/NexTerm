@@ -45,7 +45,7 @@ func TestLegacySetProviderPreservesFallbackModel(t *testing.T) {
 	if err := runner.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_set_provider", Args: json.RawMessage(`{"baseUrl":"http://127.0.0.1:1/v1","model":"primary","fallbackModel":"fallback","contextWindow":64000,"stream":true}`)}, ipc.Environment{})
+	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_set_provider", Args: json.RawMessage(`{"config":{"baseUrl":"http://127.0.0.1:1/v1","model":"primary","fallbackModel":"fallback","contextWindow":64000,"stream":true}}`)}, ipc.Environment{})
 	if !response.OK {
 		t.Fatalf("set provider failed: %+v", response.Error)
 	}

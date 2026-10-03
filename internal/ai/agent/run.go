@@ -102,10 +102,26 @@ func (r *Runner) runJob(current *job) {
 	var runErr error
 	paused := false
 	defer func() {
-		current.setRunning(false)
 		if recovered := recover(); recovered != nil {
 			runErr = fmt.Errorf("AI 任务内部错误: %v", recovered)
 			paused = false
+		}
+		resumePaused := false
+		current.pendingMu.Lock()
+		if paused && current.ctx.Err() == nil && current.eino.resume != nil {
+			resumePaused = true
+			current.running = true
+		} else {
+			current.running = false
+		}
+		current.pendingMu.Unlock()
+		if resumePaused {
+			go r.runJob(current)
+			return
+		}
+		if paused && current.ctx.Err() != nil {
+			paused = false
+			runErr = current.ctx.Err()
 		}
 		if paused {
 			return
@@ -152,6 +168,13 @@ func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
 }
 
 func (r *Runner) initializeEino(current *job) error {
+	rows, err := r.store.MsgList(current.ctx, current.args.ConversationID)
+	if err != nil {
+		return err
+	}
+	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": current.args.Message, "imageCount": len(current.args.Images)}, nil, nil); err != nil {
+		return err
+	}
 	if r.config.Model == nil || r.config.Tools == nil {
 		return errors.New("Eino ChatModel 或工具注册表未配置")
 	}
@@ -166,13 +189,6 @@ func (r *Runner) initializeEino(current *job) error {
 	}
 	if contextWindow == 0 {
 		contextWindow = 32768
-	}
-	rows, err := r.store.MsgList(current.ctx, current.args.ConversationID)
-	if err != nil {
-		return err
-	}
-	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": current.args.Message, "imageCount": len(current.args.Images)}, nil, nil); err != nil {
-		return err
 	}
 	messages := historyMessages(rows)
 	if r.config.Context != nil {
@@ -527,8 +543,19 @@ func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Mess
 }
 
 func dropOldestMessageUnit(messages []*schema.Message) ([]*schema.Message, bool) {
-	for index := 1; index < len(messages); index++ {
+	start := 0
+	for start < len(messages) && messages[start].Role == schema.System {
+		start++
+	}
+	latestUser := -1
+	for index := len(messages) - 1; index >= start; index-- {
 		if messages[index].Role == schema.User {
+			latestUser = index
+			break
+		}
+	}
+	for index := start; index < len(messages); index++ {
+		if messages[index].Role == schema.User && index == latestUser {
 			continue
 		}
 		if messages[index].Role == schema.Assistant && len(messages[index].ToolCalls) > 0 {
@@ -538,7 +565,7 @@ func dropOldestMessageUnit(messages []*schema.Message) ([]*schema.Message, bool)
 			}
 			return append(messages[:index], messages[end:]...), true
 		}
-		if messages[index].Role == schema.Tool && messages[index-1].Role == schema.Assistant && len(messages[index-1].ToolCalls) > 0 {
+		if messages[index].Role == schema.Tool && index > start && messages[index-1].Role == schema.Assistant && len(messages[index-1].ToolCalls) > 0 {
 			start := index - 1
 			end := index + 1
 			for end < len(messages) && messages[end].Role == schema.Tool {

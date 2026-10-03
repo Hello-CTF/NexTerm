@@ -34,7 +34,7 @@ func EncodeKeys(input string, enter bool) ([]byte, error) {
 			output.WriteRune('<')
 		} else if strings.HasPrefix(tag, "ctrl+") || strings.HasPrefix(tag, "c-") {
 			letter := tag[strings.LastIndex(tag, "-")+1:]
-			if tag[:5] == "ctrl+" {
+			if strings.HasPrefix(tag, "ctrl+") {
 				letter = tag[5:]
 			}
 			if len(letter) != 1 {

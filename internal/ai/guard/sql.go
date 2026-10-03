@@ -147,7 +147,7 @@ func splitSQL(input string) ([][]sqlToken, error) {
 			flush()
 			continue
 		}
-		if r == '-' && i+1 < len(runes) && runes[i+1] == '-' {
+		if r == '-' && i+2 < len(runes) && runes[i+1] == '-' && (unicode.IsSpace(runes[i+2]) || unicode.IsControl(runes[i+2])) {
 			flush()
 			i += 2
 			for i < len(runes) && runes[i] != '\n' {
@@ -228,25 +228,33 @@ func splitSQL(input string) ([][]sqlToken, error) {
 			flush()
 			quote := r
 			closed := false
+			var quoted strings.Builder
 			for i+1 < len(runes) {
 				i++
 				if runes[i] == '\\' && quote != '`' && i+1 < len(runes) {
 					i++
+					quoted.WriteRune(runes[i])
 					continue
 				}
 				if runes[i] == quote {
 					if i+1 < len(runes) && runes[i+1] == quote {
 						i++
+						quoted.WriteRune(quote)
 						continue
 					}
 					closed = true
 					break
 				}
+				quoted.WriteRune(runes[i])
 			}
 			if !closed {
 				return nil, strconv.ErrSyntax
 			}
-			current = append(current, sqlToken{text: "<literal>"})
+			if quote == '`' || quote == '"' {
+				current = append(current, sqlToken{text: strings.ToUpper(quoted.String())})
+			} else {
+				current = append(current, sqlToken{text: "<literal>"})
+			}
 			continue
 		}
 		if r == '$' {

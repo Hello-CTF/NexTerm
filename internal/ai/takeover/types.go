@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("接管任务不存在或已结束")
-	ErrStaleOwnership = errors.New("接管令牌已过期")
-	ErrWriteDisabled  = errors.New("本次接管禁止终端写入")
-	errRunPaused      = errors.New("接管等待用户确认")
+	ErrNotFound        = errors.New("接管任务不存在或已结束")
+	ErrStaleOwnership  = errors.New("接管令牌已过期")
+	ErrOwnershipActive = errors.New("当前接管已有活动任务")
+	ErrWriteDisabled   = errors.New("本次接管禁止终端写入")
+	errRunPaused       = errors.New("接管等待用户确认")
 )
 
 const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 — 按 Esc 或任意键夺回]\x1b[0m\r\n"
@@ -53,6 +54,7 @@ type RunResponse struct {
 type ownership struct {
 	tabID  string
 	token  string
+	jobID  string
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -67,6 +69,8 @@ type runState struct {
 	args         RunArgs
 	ctx          context.Context
 	cancel       context.CancelFunc
+	deliveryCtx  context.Context
+	forceCancel  context.CancelFunc
 	owner        *ownership
 	stream       agent.Stream
 	memory       *guard.Memory
@@ -110,8 +114,16 @@ func (s *runState) finish(event agent.Event) {
 	s.finalOnce.Do(func() {
 		s.eventMu.Lock()
 		s.finished = true
-		_ = s.stream.Send(context.WithoutCancel(s.ctx), event)
-		_ = s.stream.Close()
+		ctx := s.deliveryCtx
+		if ctx == nil {
+			ctx = context.WithoutCancel(s.ctx)
+		}
+		sendErr := s.stream.Send(ctx, event)
+		if sendErr == nil && ctx.Err() == nil {
+			_ = agent.CloseStreamGracefully(s.stream)
+		} else {
+			_ = s.stream.Close()
+		}
 		s.eventMu.Unlock()
 		s.pendingMu.Lock()
 		s.pending = nil

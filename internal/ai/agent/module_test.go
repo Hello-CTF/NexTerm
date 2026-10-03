@@ -75,7 +75,7 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 		channels <- channel.ID
 		return stream, nil
 	}}
-	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_chat", Args: json.RawMessage(`{"message":"hello"}`), Channel: ipc.ChannelRef{ID: "channel-1"}}, ipc.Environment{Streams: factory})
+	response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_chat", Args: json.RawMessage(`{"args":{"message":"hello"}}`), Channel: ipc.ChannelRef{ID: "channel-1"}}, ipc.Environment{Streams: factory})
 	if !response.OK {
 		t.Fatalf("dispatch failed: %+v", response.Error)
 	}

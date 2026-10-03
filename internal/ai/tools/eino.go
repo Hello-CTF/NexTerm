@@ -98,7 +98,7 @@ var einoNames = []string{
 var einoDescriptions = map[string]string{
 	"exec_commands":  "在当前会话按顺序执行 shell 命令（1-20 条）。",
 	"read_file":      "读取 UTF-8 文本文件，并为后续写入记录内容版本。",
-	"write_file":     "备份并写入文本文件；写入前必须读取或确认目标不存在。",
+	"write_file":     "新文件以原子 no-clobber 创建；现有文件为用户授权的非事务覆盖并保留备份，可能覆盖确认后的外部修改；写入前必须读取或确认不存在。",
 	"list_dir":       "列出目录内容，最多 500 项。",
 	"search_files":   "按文件名 glob 或文件内容正则搜索，不经过 shell。",
 	"read_screen":    "读取当前作用域终端的可见屏幕。",
@@ -114,7 +114,7 @@ var einoDescriptions = map[string]string{
 	"redis_scan":     "从 cursor 0 开始执行一次 Redis SCAN。",
 	"list_assets":    "列出可用连接资产。",
 	"ask_user":       "暂停代理并等待用户回答问题。",
-	"edit_file":      "精确替换文本并保留备份；写入前必须读取。",
+	"edit_file":      "精确替换文本并保留备份；现有文件为用户授权的非事务覆盖，可能覆盖确认后的外部修改；写入前必须读取。",
 	"todo_write":     "替换当前任务的完整待办列表。",
 	"exit_plan_mode": "提交计划供用户审核，不自动执行。",
 }
@@ -225,10 +225,13 @@ type Interaction struct {
 }
 
 type InteractionState struct {
-	Kind       string
-	CallID     string
-	MemoryKind guard.Kind
-	Info       Interaction
+	Kind           string
+	CallID         string
+	MemoryKind     guard.Kind
+	MemoryKinds    []guard.Kind
+	TerminalInput  string
+	TerminalCursor int
+	Info           Interaction
 }
 
 func init() {
@@ -337,7 +340,7 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 }
 
 func (e *Execution) enabled(name string) bool {
-	if e.Registry == nil {
+	if e.Registry == nil || e.PlanMode && !PlanAllowed(name) {
 		return false
 	}
 	deps := e.Registry.deps
@@ -356,6 +359,10 @@ func (e *Execution) enabled(name string) bool {
 		return deps.DockerAct != nil && e.Scope.SessionID != ""
 	case "db_list_tables", "db_describe", "db_query", "redis_scan":
 		return deps.Database != nil && e.Scope.ConnID != ""
+	case "list_assets":
+		return deps.ListAssets != nil
+	case "exit_plan_mode":
+		return e.PlanMode
 	default:
 		return true
 	}
@@ -390,8 +397,27 @@ func (e *Execution) run(ctx context.Context, name string, input any) (Output, er
 		if data != "allow" && data != "allow_session" {
 			return Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
+		if call.Name == "send_keys" {
+			tabID, err := e.Registry.resolveTab(e.Scope, "")
+			if err != nil {
+				return Fail(err), nil
+			}
+			screen, err := e.Registry.deps.Terminal.Snapshot(ctx, tabID)
+			if err != nil {
+				return Fail(err), nil
+			}
+			buffered, cursor := TerminalInputCursor(screen)
+			if buffered != state.TerminalInput || cursor != state.TerminalCursor {
+				return Fail(ErrTerminalInputChanged), nil
+			}
+		}
 		if data == "allow_session" {
-			e.Memory.Add(state.MemoryKind)
+			for _, kind := range state.MemoryKinds {
+				e.Memory.Add(kind)
+			}
+			if len(state.MemoryKinds) == 0 {
+				e.Memory.Add(state.MemoryKind)
+			}
 		}
 		return e.Registry.Execute(ctx, e.JobID, e.Scope, call, nil), nil
 	}
@@ -408,7 +434,25 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	if call.Name == "exit_plan_mode" && !e.PlanMode {
 		return Fail(errorsNewPlanModeOnly()), nil
 	}
+	terminalInput := ""
+	cursor := 0
 	ruling := guard.ClassifyTool(call.Name, call.Args, e.Permission)
+	if call.Name == "send_keys" {
+		var input SendKeysArgs
+		if err := json.Unmarshal(call.Args, &input); err != nil {
+			return Fail(err), nil
+		}
+		tabID, err := e.Registry.resolveTab(e.Scope, "")
+		if err != nil {
+			return Fail(err), nil
+		}
+		screen, err := e.Registry.deps.Terminal.Snapshot(ctx, tabID)
+		if err != nil {
+			return Fail(err), nil
+		}
+		terminalInput, cursor = TerminalInputCursor(screen)
+		ruling = guard.Worst(ruling, guard.ClassifySendKeysWithCursor(input.Keys, terminalInput, cursor, input.Enter, e.Permission.DangerRules))
+	}
 	decision := guard.Decide(e.Permission, ruling, e.Memory)
 	if decision.Action == guard.ActionDeny {
 		return Fail(errors.New("权限策略已拒绝: " + decision.Ruling.Reason)), nil
@@ -418,8 +462,12 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		return Fail(err), nil
 	}
 	if decision.Action == guard.ActionAsk {
-		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: DisplayCall(call), Reason: ruling.Reason, Preview: preparation.Preview}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, Info: info}
+		rendered := DisplayCall(call)
+		if call.Name == "send_keys" {
+			rendered = DisplaySendKeys(call, terminalInput)
+		}
+		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Preview: preparation.Preview}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	result := e.Registry.Execute(ctx, e.JobID, e.Scope, call, preparation)

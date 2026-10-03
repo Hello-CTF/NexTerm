@@ -41,10 +41,26 @@ func (m *Manager) runJob(state *runState) {
 	result := runResult{}
 	paused := false
 	defer func() {
-		state.setRunning(false)
 		if recovered := recover(); recovered != nil {
 			result.err = fmt.Errorf("接管任务内部错误: %v", recovered)
 			paused = false
+		}
+		resumePaused := false
+		state.pendingMu.Lock()
+		if paused && state.ctx.Err() == nil && state.eino.resume != nil {
+			resumePaused = true
+			state.running = true
+		} else {
+			state.running = false
+		}
+		state.pendingMu.Unlock()
+		if resumePaused {
+			go m.runJob(state)
+			return
+		}
+		if paused && state.ctx.Err() != nil {
+			paused = false
+			result = controlledResult(state, result.steps)
 		}
 		if paused {
 			return
@@ -431,22 +447,40 @@ func (e *actionExecution) sendKeys(ctx context.Context, input tools.SendKeysArgs
 		if decision != "allow" && decision != "allow_session" {
 			return tools.Fail(errors.New("确认结果无效，操作未执行")), nil
 		}
+		screen, err := e.manager.deps.Snapshot(e.state.ctx, e.state.args.TabID)
+		if err != nil {
+			return tools.Fail(err), nil
+		}
+		buffered, cursor := tools.TerminalInputCursor(screen)
+		if buffered != state.TerminalInput || cursor != state.TerminalCursor {
+			return tools.Fail(tools.ErrTerminalInputChanged), nil
+		}
 		if decision == "allow_session" {
-			e.state.memory.Add(state.MemoryKind)
+			for _, kind := range state.MemoryKinds {
+				e.state.memory.Add(kind)
+			}
+			if len(state.MemoryKinds) == 0 {
+				e.state.memory.Add(state.MemoryKind)
+			}
 		}
 		return e.writeKeys(ctx, callID, input, encodedArgs)
 	}
 	if !e.runtime.allowWrite {
 		return tools.Fail(ErrWriteDisabled), nil
 	}
-	ruling := guard.ClassifySendKeys(input.Keys, input.Enter, e.runtime.permission.DangerRules)
+	screen, err := e.manager.deps.Snapshot(e.state.ctx, e.state.args.TabID)
+	if err != nil {
+		return tools.Fail(err), nil
+	}
+	terminalInput, cursor := tools.TerminalInputCursor(screen)
+	ruling := guard.ClassifySendKeysWithCursor(input.Keys, terminalInput, cursor, input.Enter, e.runtime.permission.DangerRules)
 	decision := guard.Decide(e.runtime.permission, ruling, e.state.memory)
 	if decision.Action == guard.ActionDeny {
 		return tools.Fail(errors.New("权限策略已拒绝: " + ruling.Reason)), nil
 	}
 	if decision.Action == guard.ActionAsk {
-		info := tools.Interaction{Kind: "confirm", CallID: callID, Tool: "send_keys", Args: string(encodedArgs), Risk: ruling.Risk.String(), Rendered: tools.DisplayCall(tools.Call{ID: callID, Name: "send_keys", Args: encodedArgs}), Reason: ruling.Reason}
-		state := tools.InteractionState{Kind: "confirm", CallID: callID, MemoryKind: ruling.Kind, Info: info}
+		info := tools.Interaction{Kind: "confirm", CallID: callID, Tool: "send_keys", Args: string(encodedArgs), Risk: ruling.Risk.String(), Rendered: tools.DisplaySendKeys(tools.Call{ID: callID, Name: "send_keys", Args: encodedArgs}, terminalInput), Reason: ruling.Reason}
+		state := tools.InteractionState{Kind: "confirm", CallID: callID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
 		return tools.Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	return e.writeKeys(ctx, callID, input, encodedArgs)

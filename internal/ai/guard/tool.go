@@ -72,11 +72,21 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 }
 
 func ClassifySendKeys(keys string, enter bool, rules []string) Ruling {
-	commands, controls, submits := decodeKeyActions(keys, enter)
+	return ClassifySendKeysWithBuffer(keys, "", enter, rules)
+}
+
+func ClassifySendKeysWithBuffer(keys, buffered string, enter bool, rules []string) Ruling {
+	return ClassifySendKeysWithCursor(keys, buffered, -1, enter, rules)
+}
+
+func ClassifySendKeysWithCursor(keys, buffered string, cursor int, enter bool, rules []string) Ruling {
+	commands, controls, submits := decodeKeyActions(keys, buffered, cursor, enter)
 	result := Allow()
 	for _, control := range controls {
-		lower := strings.ToLower(control)
-		if strings.Contains(lower, "ctrl") || strings.Contains(lower, "c-") {
+		switch strings.ToLower(strings.TrimSpace(control)) {
+		case "up", "down", "tab completion":
+			result = Worst(result, Dangerous("无法验证历史或补全后的终端输入"))
+		default:
 			result = Worst(result, Confirm(KindProcess, "终端控制键可能中断或改变程序"))
 		}
 	}
@@ -96,17 +106,87 @@ func ClassifySendKeys(keys string, enter bool, rules []string) Ruling {
 	return result
 }
 
-func decodeKeyActions(keys string, enter bool) ([]string, []string, bool) {
+type keyInput struct {
+	value  []rune
+	cursor int
+}
+
+func newKeyInput(value string, cursor int) keyInput {
+	runes := []rune(value)
+	if cursor < 0 || cursor > len(runes) {
+		cursor = len(runes)
+	}
+	return keyInput{value: runes, cursor: cursor}
+}
+
+func (b *keyInput) insert(r rune) {
+	if b.cursor < 0 {
+		b.cursor = 0
+	}
+	if b.cursor > len(b.value) {
+		b.cursor = len(b.value)
+	}
+	b.value = append(b.value, 0)
+	copy(b.value[b.cursor+1:], b.value[b.cursor:])
+	b.value[b.cursor] = r
+	b.cursor++
+}
+
+func (b *keyInput) write(value string) {
+	for _, r := range value {
+		b.insert(r)
+	}
+}
+
+func (b *keyInput) backspace() {
+	if b.cursor == 0 {
+		return
+	}
+	copy(b.value[b.cursor-1:], b.value[b.cursor:])
+	b.value = b.value[:len(b.value)-1]
+	b.cursor--
+}
+
+func (b *keyInput) deleteNext() {
+	if b.cursor >= len(b.value) {
+		return
+	}
+	copy(b.value[b.cursor:], b.value[b.cursor+1:])
+	b.value = b.value[:len(b.value)-1]
+}
+
+func (b *keyInput) text() string { return string(b.value) }
+
+func (b *keyInput) reset() {
+	b.value = nil
+	b.cursor = 0
+}
+
+func decodeKeyActions(keys, buffered string, cursor int, enter bool) ([]string, []string, bool) {
 	var commands []string
 	var controls []string
-	var current strings.Builder
+	current := newKeyInput(buffered, cursor)
 	submits := enter
 	runes := []rune(keys)
 	flush := func() {
-		commands = append(commands, current.String())
-		current.Reset()
+		commands = append(commands, current.text())
+		current.reset()
 	}
 	for i := 0; i < len(runes); i++ {
+		if runes[i] == '\t' {
+			controls = append(controls, "tab completion")
+			current.insert(runes[i])
+			continue
+		}
+		if runes[i] < 32 && runes[i] != '\t' && runes[i] != '\r' && runes[i] != '\n' {
+			controls = append(controls, "raw C0")
+			current.insert(runes[i])
+			continue
+		}
+		if runes[i] == 127 {
+			current.backspace()
+			continue
+		}
 		if runes[i] == '<' {
 			if end := indexRune(runes[i+1:], '>'); end >= 0 {
 				end += i + 1
@@ -117,16 +197,33 @@ func decodeKeyActions(keys string, enter bool) ([]string, []string, bool) {
 					submits = true
 					flush()
 				case "lt":
-					current.WriteRune('<')
+					current.insert('<')
 				case "space":
-					current.WriteRune(' ')
+					current.insert(' ')
 				case "tab":
-					current.WriteRune('\t')
+					current.insert('\t')
+					controls = append(controls, "tab completion")
+				case "backspace":
+					current.backspace()
+				case "delete":
+					current.deleteNext()
+				case "left":
+					if current.cursor > 0 {
+						current.cursor--
+					}
+				case "right":
+					if current.cursor < len(current.value) {
+						current.cursor++
+					}
+				case "home":
+					current.cursor = 0
+				case "end":
+					current.cursor = len(current.value)
 				default:
 					if terminalActionTag(lower) {
 						controls = append(controls, tag)
 					} else {
-						current.WriteString("<" + tag + ">")
+						current.write("<" + tag + ">")
 					}
 				}
 				i = end
@@ -141,11 +238,11 @@ func decodeKeyActions(keys string, enter bool) ([]string, []string, bool) {
 			}
 			continue
 		}
-		current.WriteRune(runes[i])
+		current.insert(runes[i])
 	}
-	if current.Len() != 0 {
+	if current.text() != "" {
 		if submits {
-			commands = append(commands, current.String())
+			commands = append(commands, current.text())
 		}
 	} else if len(commands) > 1 && commands[len(commands)-1] == "" {
 		commands = commands[:len(commands)-1]

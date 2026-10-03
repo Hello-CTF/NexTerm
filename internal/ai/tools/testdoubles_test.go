@@ -9,17 +9,21 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
+	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type fakeFS struct {
-	mu        sync.Mutex
-	files     map[string][]byte
-	dirs      map[string][]base.FileEntry
-	readErr   error
-	writeErr  error
-	existsErr error
-	listCalls []string
+	mu                    sync.Mutex
+	files                 map[string][]byte
+	dirs                  map[string][]base.FileEntry
+	readErr               error
+	writeErr              error
+	writeErrAfterCommit   bool
+	writeCalls            int
+	existsErr             error
+	listCalls             []string
+	conditionalCreateHook func()
 }
 
 func newFakeFS() *fakeFS {
@@ -52,13 +56,45 @@ func (f *fakeFS) ReadFile(_ context.Context, name string, maximum int64) ([]byte
 func (f *fakeFS) WriteFile(_ context.Context, name string, content []byte, backup bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.writeErr != nil {
+	f.writeCalls++
+	if f.writeErr != nil && !f.writeErrAfterCommit {
 		return f.writeErr
 	}
 	if previous, ok := f.files[name]; ok && backup {
 		f.files[name+".nexterm-bak"] = append([]byte(nil), previous...)
 	}
 	f.files[name] = append([]byte(nil), content...)
+	if f.writeErrAfterCommit {
+		return f.writeErr
+	}
+	return nil
+}
+
+func (f *fakeFS) WriteFileVersion(_ context.Context, name string, content []byte, _ bool, expected conditional.Expectation) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writeCalls++
+	if expected.Exists {
+		return base.ErrUnsupported
+	}
+	if f.writeErr != nil && !f.writeErrAfterCommit {
+		return f.writeErr
+	}
+	if f.conditionalCreateHook != nil {
+		hook := f.conditionalCreateHook
+		f.conditionalCreateHook = nil
+		hook()
+	}
+	if _, exists := f.files[name]; exists {
+		return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
+	}
+	if _, exists := f.dirs[name]; exists {
+		return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
+	}
+	f.files[name] = append([]byte(nil), content...)
+	if f.writeErrAfterCommit {
+		return f.writeErr
+	}
 	return nil
 }
 

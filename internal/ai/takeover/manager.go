@@ -86,6 +86,9 @@ func (m *Manager) enterOwned(tabID string) (*ownership, error) {
 	m.owners[tabID] = owner
 	m.mu.Unlock()
 	if previous != nil {
+		for _, state := range m.statesForOwner(previous) {
+			m.cancelState(state, "新的接管")
+		}
 		previous.cancel()
 	}
 	if m.deps.Inject != nil {
@@ -100,6 +103,32 @@ func (m *Manager) enterOwned(tabID string) (*ownership, error) {
 		}
 	}
 	return owner, nil
+}
+
+func (m *Manager) reserveJob(owner *ownership, jobID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.owners[owner.tabID] != owner {
+		return ErrStaleOwnership
+	}
+	if owner.jobID != "" {
+		return ErrOwnershipActive
+	}
+	for _, state := range m.jobs {
+		if state.owner == owner {
+			return ErrOwnershipActive
+		}
+	}
+	owner.jobID = jobID
+	return nil
+}
+
+func (m *Manager) releaseJob(owner *ownership, jobID string) {
+	m.mu.Lock()
+	if owner.jobID == jobID {
+		owner.jobID = ""
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFactory) (RunResponse, error) {
@@ -134,24 +163,44 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 	if strings.TrimSpace(jobID) == "" {
 		return RunResponse{}, errors.New("接管 job ID 为空")
 	}
+	if err := m.reserveJob(owner, jobID); err != nil {
+		return RunResponse{}, err
+	}
 	jobContext, cancel := context.WithCancel(owner.ctx)
+	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	stream, err := factory(ctx, args.ChannelID, jobID)
 	if err != nil {
+		m.releaseJob(owner, jobID)
 		cancel()
+		forceCancel()
 		return RunResponse{}, err
 	}
 	if stream == nil {
+		m.releaseJob(owner, jobID)
 		cancel()
+		forceCancel()
 		return RunResponse{}, errors.New("接管事件流为空")
 	}
 	stream = agent.WithEventSequence(stream)
-	state := &runState{id: jobID, args: args, ctx: jobContext, cancel: cancel, owner: owner, stream: stream, memory: guard.NewMemory(), running: true}
+	state := &runState{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, owner: owner, stream: stream, memory: guard.NewMemory(), running: true}
 	m.mu.Lock()
 	if m.closed || m.owners[args.TabID] != owner || m.jobs[jobID] != nil {
 		m.mu.Unlock()
+		m.releaseJob(owner, jobID)
 		cancel()
+		forceCancel()
 		_ = stream.Close()
 		return RunResponse{}, ErrStaleOwnership
+	}
+	for _, existing := range m.jobs {
+		if existing.owner == owner {
+			m.mu.Unlock()
+			m.releaseJob(owner, jobID)
+			cancel()
+			forceCancel()
+			_ = stream.Close()
+			return RunResponse{}, ErrOwnershipActive
+		}
 	}
 	m.jobs[jobID] = state
 	m.wg.Add(1)
@@ -173,8 +222,17 @@ func (m *Manager) Cancel(jobID string) error {
 
 func (m *Manager) cancelState(state *runState, reason string) {
 	state.setReason(reason)
+	if state.forceCancel != nil {
+		state.forceCancel()
+	}
 	state.cancel()
-	_, running, cancelFn := state.state()
+	state.pendingMu.Lock()
+	running := state.running
+	cancelFn := state.cancelFn
+	if !running {
+		state.pending = nil
+	}
+	state.pendingMu.Unlock()
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
@@ -199,16 +257,25 @@ func (m *Manager) Confirm(confirmation agent.Confirmation) error {
 		return ErrNotFound
 	}
 	state.pendingMu.Lock()
+	if state.ctx.Err() != nil {
+		state.pendingMu.Unlock()
+		return ErrNotFound
+	}
 	pending := state.pending
-	if pending == nil || pending.callID != confirmation.CallID || pending.nonce != confirmation.Nonce || state.running || state.eino == nil {
+	if pending == nil || pending.callID != confirmation.CallID || pending.nonce != confirmation.Nonce || state.eino == nil {
 		state.pendingMu.Unlock()
 		return agent.ErrConfirmationStale
 	}
+	start := !state.running
 	state.pending = nil
 	state.eino.resume = &adk.ResumeParams{Targets: map[string]any{confirmation.Nonce: confirmation.Decision}}
-	state.running = true
+	if start {
+		state.running = true
+	}
 	state.pendingMu.Unlock()
-	go m.runJob(state)
+	if start {
+		go m.runJob(state)
+	}
 	return nil
 }
 
@@ -307,6 +374,9 @@ func (m *Manager) cleanup(state *runState, reason string) {
 	if m.jobs[state.id] == state {
 		delete(m.jobs, state.id)
 	}
+	if state.owner.jobID == state.id {
+		state.owner.jobID = ""
+	}
 	current := m.owners[state.owner.tabID] == state.owner
 	if current {
 		delete(m.owners, state.owner.tabID)
@@ -317,6 +387,9 @@ func (m *Manager) cleanup(state *runState, reason string) {
 		state.owner.cancel()
 	}
 	state.cancel()
+	if state.forceCancel != nil {
+		state.forceCancel()
+	}
 	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.Background(), state.id)
 	}
@@ -324,6 +397,10 @@ func (m *Manager) cleanup(state *runState, reason string) {
 }
 
 func (m *Manager) Close() error {
+	return m.CloseContext(context.Background())
+}
+
+func (m *Manager) CloseContext(ctx context.Context) error {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -336,8 +413,20 @@ func (m *Manager) Close() error {
 	}
 	m.mu.Unlock()
 	for _, state := range states {
+		if state.forceCancel != nil {
+			state.forceCancel()
+		}
 		m.cancelState(state, "服务关闭")
 	}
-	m.wg.Wait()
-	return nil
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

@@ -8,8 +8,14 @@ import (
 )
 
 var secretPattern = regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key)(\s*[:=]\s*|\s+)([^\s,;]+)`)
+var authorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)([^\s,;]+)`)
+var bearerPattern = regexp.MustCompile(`(?i)(bearer\s+)([^\s,;]+)`)
+var mysqlPasswordPattern = regexp.MustCompile(`(?i)(mysql(?:\.exe)?\s+[^\r\n]*?-p)([^\s]+)`)
 
 func RedactText(value string) string {
+	value = authorizationPattern.ReplaceAllString(value, "$1<redacted>")
+	value = bearerPattern.ReplaceAllString(value, "$1<redacted>")
+	value = mysqlPasswordPattern.ReplaceAllString(value, "$1<redacted>")
 	return secretPattern.ReplaceAllString(value, "$1$2<redacted>")
 }
 

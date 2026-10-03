@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/cloudwego/eino/components/model"
@@ -47,12 +48,27 @@ func (f *fakeModel) next(ctx context.Context) (fakeStep, error) {
 	return f.steps[index], nil
 }
 
+func cloneFakeMessage(message *schema.Message) *schema.Message {
+	if message == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		panic(err)
+	}
+	var cloned schema.Message
+	if err := json.Unmarshal(encoded, &cloned); err != nil {
+		panic(err)
+	}
+	return &cloned
+}
+
 func (f *fakeModel) Generate(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.Message, error) {
 	step, err := f.next(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return step.message, step.err
+	return cloneFakeMessage(step.message), step.err
 }
 
 func (f *fakeModel) Stream(ctx context.Context, messages []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
@@ -70,7 +86,11 @@ func (f *fakeModel) Stream(ctx context.Context, messages []*schema.Message, opti
 	if len(chunks) == 0 && step.message != nil {
 		chunks = []*schema.Message{step.message}
 	}
-	return schema.StreamReaderFromArray(chunks), nil
+	cloned := make([]*schema.Message, len(chunks))
+	for index, chunk := range chunks {
+		cloned[index] = cloneFakeMessage(chunk)
+	}
+	return schema.StreamReaderFromArray(cloned), nil
 }
 
 func assistantWithUsage(content string, prompt, completion int) *schema.Message {

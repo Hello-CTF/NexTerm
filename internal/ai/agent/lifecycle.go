@@ -10,6 +10,6 @@ func (c runnerComponent) Start(context.Context) error {
 	return nil
 }
 
-func (c runnerComponent) Shutdown(context.Context) error {
-	return c.runner.Close()
+func (c runnerComponent) Shutdown(ctx context.Context) error {
+	return c.runner.CloseContext(ctx)
 }

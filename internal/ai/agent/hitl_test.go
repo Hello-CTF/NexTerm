@@ -58,7 +58,7 @@ func localDeps(transport base.Transport) tools.Dependencies {
 	return tools.Dependencies{Transport: func(context.Context, string) (base.Transport, error) { return transport, nil }}
 }
 
-func TestEinoWriteRechecksVersionAfterConfirmation(t *testing.T) {
+func TestEinoExistingOverwriteAfterConfirmationIsNonCAS(t *testing.T) {
 	transport, directory := localTransport(t)
 	path := filepath.Join(directory, "config.txt")
 	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
@@ -88,15 +88,19 @@ func TestEinoWriteRechecksVersionAfterConfirmation(t *testing.T) {
 			break
 		}
 	}
-	if result.OK || !strings.Contains(result.Text, tools.ErrFileChanged.Error()) {
+	if !result.OK || !strings.Contains(result.Text, "非事务覆盖") {
 		t.Fatalf("result=%+v", result)
 	}
 	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
 		t.Fatalf("terminal events done=%d error=%d", done, failed)
 	}
 	content, err := os.ReadFile(path)
-	if err != nil || string(content) != "external" {
+	if err != nil || string(content) != "approved" {
 		t.Fatalf("content=%q err=%v", content, err)
+	}
+	backup, err := os.ReadFile(path + ".nexterm-bak")
+	if err != nil || string(backup) != "external" {
+		t.Fatalf("backup=%q err=%v", backup, err)
 	}
 }
 

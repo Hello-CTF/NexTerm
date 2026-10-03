@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/fs/conditional"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 func (r *Registry) prepareFile(ctx context.Context, jobID string, scope Scope, call Call) (*preparedChange, *Preview, error) {
@@ -88,6 +92,18 @@ func (r *Registry) prepareFile(ctx context.Context, jobID string, scope Scope, c
 	return change, preview, nil
 }
 
+const (
+	writeCreateSemantics  = "atomic_no_clobber_create"
+	writeReplaceSemantics = "non_cas_overwrite"
+)
+
+func writeSemanticsForChange(change *preparedChange) string {
+	if change.before.missing {
+		return writeCreateSemantics
+	}
+	return writeReplaceSemantics
+}
+
 func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
 	if preparation == nil || preparation.change == nil {
 		if stored, ok := r.state(jobID).preparation(call.ID); ok {
@@ -105,11 +121,12 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 	if _, ok := r.state(jobID).readVersion(change.key); !ok {
 		return Fail(ErrReadRequired)
 	}
+	var writeErr error
 	if change.version.Exists {
-		current, err := files.ReadFile(ctx, change.path, 2<<20)
-		if err != nil || versionOf(current) != change.version {
-			return Fail(ErrFileChanged)
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
 		}
+		writeErr = files.WriteFile(ctx, change.path, []byte(change.after), true)
 	} else {
 		exists, err := files.Exists(ctx, change.path)
 		if err != nil {
@@ -118,32 +135,77 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 		if exists {
 			return Fail(ErrFileChanged)
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return Fail(err)
-	}
-	if err := files.WriteFile(ctx, change.path, []byte(change.after), true); err != nil {
-		return Fail(err)
-	}
-	r.state(jobID).rememberRead(change.key, versionOf([]byte(change.after)))
-	result := OK(fmt.Sprintf("已写入 %s（%d 字节，已备份原文件）", change.path, len(change.after)))
-	kind := "write_file"
-	payload := map[string]any{"path": change.path, "bytes": len(change.after)}
-	if call.Name == "edit_file" {
-		result = OK(fmt.Sprintf("已编辑 %s（替换 %d 处，已备份原文件）", change.path, change.replacements))
-		kind = "edit_file"
-		payload = map[string]any{"path": change.path, "replacements": change.replacements}
-	}
-	after, readErr := files.ReadFile(ctx, change.path, MaxDiffBytes)
-	if readErr == nil && utf8.Valid(after) && change.before.known {
-		actual := string(after)
-		if actual != change.before.content && len(change.before.content)+len(actual) <= MaxPreviewSize {
-			result.Change = &Change{ID: call.ID, Path: change.path, Before: change.before.content, After: actual}
+		writer, ok := any(files).(conditional.Writer)
+		if !ok {
+			return Fail(fmt.Errorf("当前文件服务不支持安全条件创建: %w", base.ErrUnsupported))
 		}
-		r.state(jobID).rememberRead(change.key, versionOf(after))
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		writeErr = writer.WriteFileVersion(ctx, change.path, []byte(change.after), false, conditional.Absent())
+	}
+	if writeErr != nil {
+		if errors.Is(writeErr, conditional.ErrVersionMismatch) {
+			return Fail(ErrFileChanged)
+		}
+		if errors.Is(writeErr, conditional.ErrCommitIndeterminate) {
+			return r.reconcileIndeterminateWrite(ctx, jobID, scope, call, change, writeErr)
+		}
+		return Fail(writeErr)
+	}
+	return r.completeWrite(ctx, jobID, scope, call, change, "committed")
+}
+
+func (r *Registry) reconcileIndeterminateWrite(ctx context.Context, jobID string, scope Scope, call Call, change *preparedChange, writeErr error) Output {
+	files, err := r.fileSystem(ctx, scope)
+	if err != nil {
+		return Fail(err)
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	after, err := files.ReadFile(readCtx, change.path, 2<<20)
+	if err != nil {
+		return Fail(fmt.Errorf("%w；读取目标以确认结果失败: %v", writeErr, err))
+	}
+	if !utf8.Valid(after) || string(after) != change.after {
+		return Fail(fmt.Errorf("%w；目标内容与本次写入不一致，未重试", writeErr))
+	}
+	return r.completeWrite(ctx, jobID, scope, call, change, "indeterminate_content_confirmed")
+}
+
+func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope, call Call, change *preparedChange, outcome string) Output {
+	semantics := writeSemanticsForChange(change)
+	r.state(jobID).rememberRead(change.key, versionOf([]byte(change.after)))
+	var result Output
+	if change.before.missing {
+		result = OK(fmt.Sprintf("已创建 %s（%d 字节，原子 no-clobber）", change.path, len(change.after)))
+	} else if call.Name == "edit_file" {
+		result = OK(fmt.Sprintf("已编辑 %s（替换 %d 处，已备份原文件；非事务覆盖，可能覆盖确认后的外部修改）", change.path, change.replacements))
+	} else {
+		result = OK(fmt.Sprintf("已写入 %s（%d 字节，已备份原文件；非事务覆盖，可能覆盖确认后的外部修改）", change.path, len(change.after)))
+	}
+	if outcome == "indeterminate_content_confirmed" {
+		result.Text += "（原始写入结果不确定，未重试）"
+	}
+	payload := map[string]any{"path": change.path, "writeSemantics": semantics, "outcome": outcome}
+	if call.Name == "edit_file" {
+		payload["replacements"] = change.replacements
+	} else {
+		payload["bytes"] = len(change.after)
+	}
+	files, err := r.fileSystem(ctx, scope)
+	if err == nil {
+		after, readErr := files.ReadFile(ctx, change.path, MaxDiffBytes)
+		if readErr == nil && utf8.Valid(after) && change.before.known {
+			actual := string(after)
+			if actual != change.before.content && len(change.before.content)+len(actual) <= MaxPreviewSize {
+				result.Change = &Change{ID: call.ID, Path: change.path, Before: change.before.content, After: actual}
+			}
+			r.state(jobID).rememberRead(change.key, versionOf(after))
+		}
 	}
 	if r.deps.Audit != nil {
-		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: kind, Payload: payload})
+		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: call.Name, Payload: payload})
 	}
 	return result
 }

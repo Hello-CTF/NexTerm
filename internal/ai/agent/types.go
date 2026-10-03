@@ -117,14 +117,16 @@ type pendingRequest struct {
 }
 
 type job struct {
-	id       string
-	args     ChatArgs
-	ctx      context.Context
-	cancel   context.CancelFunc
-	stream   Stream
-	memory   *guard.Memory
-	eino     *einoRuntime
-	cancelFn adk.AgentCancelFunc
+	id          string
+	args        ChatArgs
+	ctx         context.Context
+	cancel      context.CancelFunc
+	deliveryCtx context.Context
+	forceCancel context.CancelFunc
+	stream      Stream
+	memory      *guard.Memory
+	eino        *einoRuntime
+	cancelFn    adk.AgentCancelFunc
 
 	eventMu      sync.Mutex
 	finished     bool
@@ -148,15 +150,22 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 	j.finalOnce.Do(func() {
 		j.eventMu.Lock()
 		j.finished = true
-		ctx := context.WithoutCancel(j.ctx)
+		ctx := j.deliveryCtx
+		if ctx == nil {
+			ctx = context.WithoutCancel(j.ctx)
+		}
 		var event Event
 		if terminalErr != nil {
 			event = errorEvent(terminalErr, !errors.Is(terminalErr, context.Canceled))
 		} else {
 			event = doneEvent(answer, turns, total.PromptTokens, total.CompletionTokens)
 		}
-		_ = j.stream.Send(ctx, event)
-		_ = j.stream.Close()
+		sendErr := j.stream.Send(ctx, event)
+		if sendErr == nil && ctx.Err() == nil {
+			_ = CloseStreamGracefully(j.stream)
+		} else {
+			_ = j.stream.Close()
+		}
 		j.eventMu.Unlock()
 		j.pendingMu.Lock()
 		j.pending = nil

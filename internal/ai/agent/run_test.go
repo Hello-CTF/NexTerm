@@ -281,13 +281,9 @@ func TestPlanMode(t *testing.T) {
 		if called.Load() {
 			t.Fatal("plan mode resolved command transport")
 		}
-		result := waitEvent(t, stream, "toolResult")
-		if result.OK {
-			t.Fatal("exec succeeded in plan mode")
-		}
-		done, _ := terminalCounts(events)
-		if done != 1 {
-			t.Fatal("run did not finish")
+		done, failed := terminalCounts(events)
+		if done != 0 || failed != 1 {
+			t.Fatalf("unadvertised plan-mode tool was not rejected: %+v", events)
 		}
 	})
 }

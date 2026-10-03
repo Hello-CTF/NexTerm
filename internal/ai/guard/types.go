@@ -57,6 +57,7 @@ const (
 type Ruling struct {
 	Risk   Risk   `json:"risk"`
 	Kind   Kind   `json:"kind"`
+	Kinds  []Kind `json:"kinds,omitempty"`
 	Reason string `json:"reason"`
 }
 
@@ -65,15 +66,15 @@ func Allow(reason ...string) Ruling {
 }
 
 func Confirm(kind Kind, reason string) Ruling {
-	return Ruling{Risk: NeedsConfirm, Kind: kind, Reason: reason}
+	return Ruling{Risk: NeedsConfirm, Kind: kind, Kinds: []Kind{kind}, Reason: reason}
 }
 
 func Dangerous(reason string) Ruling {
-	return Ruling{Risk: Danger, Kind: KindDanger, Reason: reason}
+	return Ruling{Risk: Danger, Kind: KindDanger, Kinds: []Kind{KindDanger}, Reason: reason}
 }
 
 func Deny(reason string) Ruling {
-	return Ruling{Risk: Forbidden, Kind: KindDanger, Reason: reason}
+	return Ruling{Risk: Forbidden, Kind: KindDanger, Kinds: []Kind{KindDanger}, Reason: reason}
 }
 
 func Worst(rulings ...Ruling) Ruling {
@@ -83,7 +84,32 @@ func Worst(rulings ...Ruling) Ruling {
 			result = ruling
 		}
 	}
+	result.Kinds = nil
+	for _, ruling := range rulings {
+		if ruling.Risk != result.Risk {
+			continue
+		}
+		for _, kind := range ruling.ApprovalKinds() {
+			seen := false
+			for _, existing := range result.Kinds {
+				seen = seen || existing == kind
+			}
+			if !seen {
+				result.Kinds = append(result.Kinds, kind)
+			}
+		}
+	}
 	return result
+}
+
+func (r Ruling) ApprovalKinds() []Kind {
+	if len(r.Kinds) != 0 {
+		return append([]Kind(nil), r.Kinds...)
+	}
+	if r.Kind != KindNone {
+		return []Kind{r.Kind}
+	}
+	return nil
 }
 
 func first(values []string) string {
@@ -145,7 +171,11 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	if config.Mode == ReadOnly {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: "只读权限模式禁止此操作"}
 	}
-	if ruling.Risk != Danger && memory != nil && memory.Contains(ruling.Kind) {
+	remembered := len(ruling.ApprovalKinds()) != 0
+	for _, kind := range ruling.ApprovalKinds() {
+		remembered = remembered && memory != nil && memory.Contains(kind)
+	}
+	if ruling.Risk != Danger && remembered {
 		return Decision{Action: ActionAllow, Ruling: ruling}
 	}
 	if ruling.Risk == Danger || config.Mode == ReadWrite {

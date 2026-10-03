@@ -51,3 +51,20 @@ func TestBudgetCompactionNeverOrphansToolResponses(t *testing.T) {
 		t.Fatalf("user request was lost during compaction: %+v", fitted)
 	}
 }
+
+func TestR1BudgetCompactionDropsHistoricalUsersButKeepsCurrent(t *testing.T) {
+	t.Parallel()
+	messages := []*schema.Message{
+		schema.SystemMessage("system"),
+		schema.UserMessage(strings.Repeat("old-1", 200)),
+		schema.UserMessage(strings.Repeat("old-2", 200)),
+		schema.UserMessage("current"),
+	}
+	fitted, compacted, err := fitMessageBudget(messages, 100)
+	if err != nil || !compacted {
+		t.Fatalf("fit failed: compacted=%v err=%v", compacted, err)
+	}
+	if len(fitted) != 2 || fitted[0].Role != schema.System || fitted[1].Role != schema.User || fitted[1].Content != "current" {
+		t.Fatalf("historical users were not compacted safely: %+v", fitted)
+	}
+}

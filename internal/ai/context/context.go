@@ -35,6 +35,7 @@ type Bundle struct {
 
 type Dependencies struct {
 	Session    func(context.Context, string) (SessionBrief, error)
+	TabSession func(string) string
 	Screen     func(context.Context, string) (tools.Screen, error)
 	Tail       func(context.Context, string, int) ([]string, error)
 	Tables     func(context.Context, string) ([]TableBrief, error)
@@ -79,7 +80,11 @@ func (b *Builder) Build(ctx context.Context, scope tools.Scope, selection string
 			bundle.Session = &session
 		}
 	}
-	if b.deps.Screen != nil && scope.TabID != "" {
+	tabAllowed := scope.TabID != ""
+	if tabAllowed && scope.SessionID != "" && b.deps.TabSession != nil {
+		tabAllowed = b.deps.TabSession(scope.TabID) == scope.SessionID
+	}
+	if b.deps.Screen != nil && tabAllowed {
 		if screen, err := b.deps.Screen(ctx, scope.TabID); err == nil {
 			bundle.Screen = screen.Text
 			if len(screen.Tail) != 0 {
@@ -87,7 +92,7 @@ func (b *Builder) Build(ctx context.Context, scope tools.Scope, selection string
 			}
 		}
 	}
-	if b.deps.Tail != nil && scope.TabID != "" {
+	if b.deps.Tail != nil && tabAllowed {
 		if tail, err := b.deps.Tail(ctx, scope.TabID, 80); err == nil {
 			bundle.Tail = append([]string(nil), tail...)
 		}

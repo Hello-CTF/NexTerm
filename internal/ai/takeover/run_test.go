@@ -18,6 +18,7 @@ import (
 type harness struct {
 	manager    *Manager
 	mu         sync.Mutex
+	screen     tools.Screen
 	aiWrites   [][]byte
 	userWrites [][]byte
 	banners    []string
@@ -25,12 +26,14 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
-	h := &harness{}
+	h := &harness{screen: tools.Screen{Text: "$ ", Tail: []string{"$ "}, IdleMS: 301, CursorCol: 2}}
 	deps := Dependencies{
 		Model:      func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
 		Permission: func(context.Context) (guard.Config, error) { return guard.Config{Mode: guard.ReadWrite}, nil },
 		Snapshot: func(context.Context, string) (tools.Screen, error) {
-			return tools.Screen{Text: "$ ", Tail: []string{"$ "}, IdleMS: 301}, nil
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			return h.screen, nil
 		},
 		PollInterval: time.Millisecond,
 	}

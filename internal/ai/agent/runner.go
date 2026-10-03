@@ -94,21 +94,25 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, errors.New("AI job ID 为空")
 	}
 	jobContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	stream, err := factory(ctx, args.ChannelID, jobID)
 	if err != nil {
 		cancel()
+		forceCancel()
 		return StartResponse{}, err
 	}
 	if stream == nil {
 		cancel()
+		forceCancel()
 		return StartResponse{}, errors.New("AI 事件流为空")
 	}
 	stream = WithEventSequence(stream)
-	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, stream: stream, memory: guard.NewMemory(), running: true}
+	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), running: true}
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
 		cancel()
+		forceCancel()
 		_ = stream.Close()
 		return StartResponse{}, errors.New("AI runner 已关闭或 job ID 重复")
 	}
@@ -141,8 +145,17 @@ func (r *Runner) Cancel(jobID string) error {
 		}
 		return ErrJobNotFound
 	}
+	if current.forceCancel != nil {
+		current.forceCancel()
+	}
 	current.cancel()
-	_, running, cancelFn := current.state()
+	current.pendingMu.Lock()
+	running := current.running
+	cancelFn := current.cancelFn
+	if !running {
+		current.pending = nil
+	}
+	current.pendingMu.Unlock()
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
@@ -188,16 +201,25 @@ func (r *Runner) Answer(answer Answer) error {
 
 func (r *Runner) resume(current *job, kind, callID, nonce, value string) error {
 	current.pendingMu.Lock()
+	if current.ctx.Err() != nil {
+		current.pendingMu.Unlock()
+		return ErrJobNotFound
+	}
 	pending := current.pending
-	if pending == nil || pending.kind != kind || pending.callID != callID || pending.nonce != nonce || current.running || current.eino == nil {
+	if pending == nil || pending.kind != kind || pending.callID != callID || pending.nonce != nonce || current.eino == nil {
 		current.pendingMu.Unlock()
 		return ErrConfirmationStale
 	}
+	start := !current.running
 	current.pending = nil
 	current.eino.resume = &adk.ResumeParams{Targets: map[string]any{nonce: value}}
-	current.running = true
+	if start {
+		current.running = true
+	}
 	current.pendingMu.Unlock()
-	go r.runJob(current)
+	if start {
+		go r.runJob(current)
+	}
 	return nil
 }
 
@@ -215,6 +237,9 @@ func (r *Runner) cleanup(current *job) {
 	}
 	r.mu.Unlock()
 	current.cancel()
+	if current.forceCancel != nil {
+		current.forceCancel()
+	}
 	if r.config.Tools != nil {
 		r.config.Tools.Release(current.id)
 	}
@@ -225,6 +250,10 @@ func (r *Runner) cleanup(current *job) {
 }
 
 func (r *Runner) Close() error {
+	return r.CloseContext(context.Background())
+}
+
+func (r *Runner) CloseContext(ctx context.Context) error {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -237,6 +266,9 @@ func (r *Runner) Close() error {
 	}
 	r.mu.Unlock()
 	for _, current := range jobs {
+		if current.forceCancel != nil {
+			current.forceCancel()
+		}
 		current.cancel()
 		_, running, cancelFn := current.state()
 		if cancelFn != nil && running {
@@ -246,6 +278,15 @@ func (r *Runner) Close() error {
 			r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 		}
 	}
-	r.wg.Wait()
-	return nil
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

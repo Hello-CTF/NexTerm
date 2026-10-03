@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 
@@ -39,21 +40,48 @@ func (s *sequencedStream) Close() error {
 	return s.stream.Close()
 }
 
+func (s *sequencedStream) CloseGracefully() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if graceful, ok := s.stream.(interface{ CloseGracefully() error }); ok {
+		return graceful.CloseGracefully()
+	}
+	return s.stream.Close()
+}
+
+func CloseStreamGracefully(stream Stream) error {
+	if graceful, ok := stream.(interface{ CloseGracefully() error }); ok {
+		return graceful.CloseGracefully()
+	}
+	return stream.Close()
+}
+
 type ipcStream struct {
-	stream *ipc.TypedJSONStream[Event]
+	stream ipc.JSONStream
 }
 
 func (s *ipcStream) Send(ctx context.Context, event Event) error {
-	return s.stream.Send(ctx, event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return s.stream.SendJSON(ctx, data)
 }
 
 func (s *ipcStream) Close() error {
 	return s.stream.Close()
 }
 
+func (s *ipcStream) CloseGracefully() error {
+	if graceful, ok := s.stream.(interface{ CloseGracefully() error }); ok {
+		return graceful.CloseGracefully()
+	}
+	return s.stream.Close()
+}
+
 func IPCStreamFactory(factory ipc.StreamFactory) StreamFactory {
 	return func(ctx context.Context, channelID, _ string) (Stream, error) {
-		stream, err := ipc.OpenTypedJSONStream[Event](ctx, factory, ipc.ChannelRef{ID: channelID})
+		stream, err := factory.OpenJSON(ctx, ipc.ChannelRef{ID: channelID})
 		if err != nil {
 			return nil, err
 		}

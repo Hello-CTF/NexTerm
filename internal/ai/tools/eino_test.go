@@ -6,25 +6,35 @@ import (
 )
 
 func TestExecutionToolsFollowScopeCapabilities(t *testing.T) {
-	execution := &Execution{JobID: "j", Registry: NewRegistry(Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}), Scope: Scope{SessionID: "s"}}
-	einoTools, err := execution.Tools()
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make(map[string]bool, len(einoTools))
-	for _, current := range einoTools {
-		info, err := current.Info(context.Background())
+	toolNames := func(execution *Execution) map[string]bool {
+		t.Helper()
+		einoTools, err := execution.Tools()
 		if err != nil {
 			t.Fatal(err)
 		}
-		names[info.Name] = true
+		names := make(map[string]bool, len(einoTools))
+		for _, current := range einoTools {
+			info, err := current.Info(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			names[info.Name] = true
+		}
+		return names
 	}
-	if len(names) != 5 || !names["docker_control"] || !names["list_assets"] || !names["ask_user"] || !names["todo_write"] || !names["exit_plan_mode"] {
+	deps := Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}
+	names := toolNames(&Execution{JobID: "j", Registry: NewRegistry(deps), Scope: Scope{SessionID: "s"}})
+	if len(names) != 3 || !names["docker_control"] || !names["ask_user"] || !names["todo_write"] {
 		t.Fatalf("names=%v", names)
 	}
-	for _, unavailable := range []string{"exec_commands", "read_file", "read_screen", "docker_ps", "docker_logs", "docker_exec", "db_query"} {
+	for _, unavailable := range []string{"exec_commands", "read_file", "read_screen", "docker_ps", "docker_logs", "docker_exec", "db_query", "list_assets", "exit_plan_mode"} {
 		if names[unavailable] {
 			t.Errorf("%s exposed without capability: %v", unavailable, names)
 		}
+	}
+	deps.ListAssets = func(context.Context) ([]Asset, error) { return nil, nil }
+	names = toolNames(&Execution{JobID: "j", Registry: NewRegistry(deps), Scope: Scope{SessionID: "s"}, PlanMode: true})
+	if len(names) != 4 || !names["list_assets"] || !names["ask_user"] || !names["todo_write"] || !names["exit_plan_mode"] || names["docker_control"] {
+		t.Fatalf("plan-mode names=%v", names)
 	}
 }

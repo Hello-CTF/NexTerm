@@ -23,7 +23,15 @@ func executeTool(registry *Registry, job, name, args string) Output {
 func TestReadBeforeWriteAndVersionCheck(t *testing.T) {
 	files := newFakeFS()
 	files.files["/a"] = []byte("old")
-	registry, _ := fileRegistry(files)
+	transport := &fakeTransport{files: files}
+	var audits []AuditEntry
+	registry := NewRegistry(Dependencies{
+		Transport: func(context.Context, string) (base.Transport, error) { return transport, nil },
+		Audit: func(_ context.Context, entry AuditEntry) error {
+			audits = append(audits, entry)
+			return nil
+		},
+	})
 	write := Call{ID: "w", Name: "write_file", Args: json.RawMessage(`{"path":"/a","content":"new"}`)}
 	if _, err := registry.Prepare(context.Background(), "j", Scope{SessionID: "s"}, write); !errors.Is(err, ErrReadRequired) {
 		t.Fatalf("write without read: %v", err)
@@ -37,11 +45,22 @@ func TestReadBeforeWriteAndVersionCheck(t *testing.T) {
 	}
 	files.files["/a"] = []byte("external")
 	result := registry.Execute(context.Background(), "j", Scope{SessionID: "s"}, write, preparation)
-	if result.OK || !strings.Contains(result.Text, ErrFileChanged.Error()) {
+	if !result.OK || !strings.Contains(result.Text, "非事务覆盖") {
 		t.Fatalf("result=%+v", result)
 	}
-	if string(files.files["/a"]) != "external" {
-		t.Fatal("stale approved content overwrote external edit")
+	if string(files.files["/a"]) != "new" || string(files.files["/a.nexterm-bak"]) != "external" {
+		t.Fatalf("non-CAS overwrite content=%q backup=%q", files.files["/a"], files.files["/a.nexterm-bak"])
+	}
+	verified := false
+	for _, entry := range audits {
+		if entry.Kind != "write_file" {
+			continue
+		}
+		payload, ok := entry.Payload.(map[string]any)
+		verified = ok && payload["writeSemantics"] == writeReplaceSemantics && payload["outcome"] == "committed"
+	}
+	if !verified {
+		t.Fatalf("missing non-CAS audit semantics: %+v", audits)
 	}
 }
 
