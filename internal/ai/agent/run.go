@@ -275,6 +275,16 @@ func (r *Runner) initializeEino(current *job) error {
 		Name: "nexterm-ai", Description: "NexTerm 运维助手", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
+			// Mid-run steering lands exactly here, at the model-call boundary:
+			// queued user messages join the state after the completed
+			// tool-call unit the agent just finished — never inside one — and
+			// are part of this round's budget.
+			for _, steered := range current.steer.Drain() {
+				state.Messages = append(state.Messages, steered)
+				if err := current.emit(current.ctx, Event{Type: "steered", Text: steered.Content}); err != nil {
+					return err
+				}
+			}
 			if err := current.emit(current.ctx, statusEvent("thinking", runtime.currentTurn())); err != nil {
 				return err
 			}

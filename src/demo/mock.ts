@@ -1485,6 +1485,22 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
+    case "ai_steer": {
+      const jobId = str(a.jobId);
+      const message = str(a.message);
+      // 与真机同口径：已结束 / 已取消的 job 一律「不存在或已结束」——
+      // 前端据此把补充气泡标成未送达并把文字还回输入框。
+      if (!message.trim()) throwAppError("invalid_argument", "补充指令不能为空");
+      if (cancelledAiJobs.has(jobId) || !aiChannels.has(jobId)) {
+        throwAppError("internal", "AI 任务不存在或已结束");
+      }
+      // 演示的回答时间线是固定排程，没法像真机那样在「下一个模型调用边界」
+      // 注入；这里受理即推 steered，让气泡从「等待注入」翻成
+      // 「已注入当前运行」—— 送达语义看得见，演示不假装能改时间线。
+      pushEvent(aiChannels.get(jobId), { type: "steered", text: message });
+      return null;
+    }
+
     case "ai_confirm": {
       const jobId = str(a.jobId);
       const fn = pendingAi.get(jobId);

@@ -10,6 +10,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -21,6 +22,7 @@ var (
 	ErrJobNotFound         = errors.New("AI 任务不存在或已结束")
 	ErrConfirmationStale   = errors.New("确认已过期、重复或不属于当前工具调用")
 	ErrInvalidConfirmation = errors.New("确认必须包含 callId、nonce 和有效 decision")
+	ErrSteerQueueFull      = errors.New("AI 补充指令队列已满，请稍后再试")
 	errRunPaused           = errors.New("AI 任务等待用户交互")
 )
 
@@ -83,6 +85,9 @@ type Config struct {
 	MaxTurns        int
 	MaxImages       int
 	MaxImageBytes   int
+	// MaxPendingSteers bounds the mid-run steering queue of one job;
+	// steer messages beyond it are rejected instead of piling up.
+	MaxPendingSteers int
 }
 
 type ChatArgs struct {
@@ -125,6 +130,10 @@ type job struct {
 	memory      *guard.Memory
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
+	// steer holds user messages accepted mid-run, drained at the next
+	// model-call boundary. Created with the job so a steer RPC never
+	// races a half-initialized runtime.
+	steer *steer.Queue
 
 	eventMu        sync.Mutex
 	finished       bool

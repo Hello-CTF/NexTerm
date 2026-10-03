@@ -21,6 +21,7 @@
 // per-run seq。两套身份互不通用，各自按各自的高水位去重，都不按内容猜。
 import {
   applyAiEvent,
+  appendSteerMessage,
   appendUserMessage,
   attemptOf,
   beginRun,
@@ -29,9 +30,11 @@ import {
   createConversation,
   resetConversation,
   resolveInteraction,
+  resolveSteerById,
   type ApplyResult,
   type ChatItem,
   type ConversationState,
+  type SteerDelivery,
 } from "./conversation";
 import {
   applyHitlReplay as foldHitlReplay,
@@ -83,6 +86,13 @@ export interface ConversationStream {
   subscribe(listener: (state: ConversationState) => void): () => void;
   beginRun(generation: number, kind?: "chat" | "takeover"): void;
   appendUser(generation: number, text: string, imageCount?: number): void;
+  /**
+   * 运行中补充：pending 气泡立即落账（内核 steered 事件可能比 RPC 响应先
+   * 回来），返回条目 id 供 RPC 失败时按 id 结算。
+   */
+  appendSteer(generation: number, text: string): string;
+  /** RPC 拒绝路径：把这条补充气泡标成 dropped（已结算过的一律不动）。 */
+  resolveSteer(generation: number, itemId: string, delivery: SteerDelivery): void;
   bindJob(generation: number, jobId: string): void;
   pushEvent(generation: number, ev: Record<string, unknown>): ApplyResult;
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
@@ -196,6 +206,25 @@ export function createConversationStream(
       mutate(() => {
         state = appendUserMessage(state, generation, text, imageCount);
         publish();
+      });
+    },
+    appendSteer(generation, text) {
+      let id = "";
+      mutate(() => {
+        const appended = appendSteerMessage(state, generation, text);
+        state = appended.state;
+        id = appended.id;
+        publish();
+      });
+      return id;
+    },
+    resolveSteer(generation, itemId, delivery) {
+      mutate(() => {
+        const next = resolveSteerById(state, generation, itemId, delivery);
+        if (next !== state) {
+          state = next;
+          publish();
+        }
       });
     },
     bindJob(generation, jobId) {

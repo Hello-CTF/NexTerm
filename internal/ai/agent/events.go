@@ -59,6 +59,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["phase"], payload["detail"], payload["turn"] = e.Phase, e.Detail, e.Turn
 	case "delta", "reasoning":
 		payload["text"] = e.Text
+	case "steered", "steerDropped":
+		payload["text"] = e.Text
 	case "toolArgs":
 		payload["tool"], payload["chars"] = e.Tool, e.Chars
 	case "toolCall":
