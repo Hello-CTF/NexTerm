@@ -35,7 +35,7 @@ export function toAppError(e: unknown): AppError {
  * mock 用动态 import：让假数据 + 虚拟 shell 独立成一个 chunk，
  * 桌面生产包不会加载它。
  */
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     if (DEMO) {
       const { mockInvoke } = await import("../demo/mock");

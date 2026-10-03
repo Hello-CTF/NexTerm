@@ -57,6 +57,7 @@ type ProductionServices struct {
 	hostKeys         *productionHostKeyStore
 	dataDir          string
 	aiRelease        func()
+	cron             *cronRuntime
 }
 
 type Production struct {
@@ -165,6 +166,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Agent != nil {
 		modules = append(modules, agent.Module(services.Agent))
+	}
+	if services.cron != nil {
+		modules = append(modules, cronModule(services.cron))
 	}
 	if services.Takeover != nil {
 		modules = append(modules, takeover.Module(services.Takeover))
