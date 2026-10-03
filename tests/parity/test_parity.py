@@ -198,6 +198,23 @@ class GoSelfcheckSurfaceTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.module.check_health({"ok": False, "service": "nexterm-server", "syncOnly": False, "commands": 5}, surface, sync_only=False)
 
+    def test_live_smoke_skip_reason_names_the_real_dependency(self):
+        surface = self.valid_surface()
+        self.assertEqual(
+            self.module.live_smoke_skip_reason(True, None),
+            "production command surface probe failed",
+        )
+        self.assertEqual(
+            self.module.live_smoke_skip_reason(False, surface),
+            "Go server binary build failed",
+        )
+        self.assertEqual(
+            self.module.live_smoke_skip_reason(False, None),
+            "Go server binary build and production command surface probe failed",
+        )
+        with self.assertRaises(ValueError):
+            self.module.live_smoke_skip_reason(True, surface)
+
     def test_surface_probe_is_wired_into_the_selfcheck(self):
         probe = ROOT / "tests/parity/go/cmd/surfaceprobe/main.go"
         self.assertTrue(probe.is_file())

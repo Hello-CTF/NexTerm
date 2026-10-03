@@ -109,6 +109,16 @@ def check_health(health: dict[str, Any], surface: dict[str, list[str]], sync_onl
     return expected
 
 
+def live_smoke_skip_reason(server_build_passed: bool, surface: dict[str, list[str]] | None) -> str:
+    if server_build_passed and surface is not None:
+        raise ValueError("live smoke skip reason requested although the server build and surface probe passed")
+    if not server_build_passed and surface is None:
+        return "Go server binary build and production command surface probe failed"
+    if not server_build_passed:
+        return "Go server binary build failed"
+    return "production command surface probe failed"
+
+
 def run_step(
     step_id: str,
     command: list[str],
@@ -391,9 +401,7 @@ def main() -> int:
             {
                 "id": "go-server-live-smoke",
                 "status": "not-run-dependency-failed",
-                "reason": "Go server binary build failed"
-                if server_build_passed
-                else "production command surface probe failed",
+                "reason": live_smoke_skip_reason(server_build_passed, surface),
             }
         )
 
