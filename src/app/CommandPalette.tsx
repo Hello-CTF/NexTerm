@@ -259,7 +259,7 @@ export function CommandPalette({
             }}
           />
         </div>
-        <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label="命令结果">
+        <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label="命令结果" tabIndex={-1}>
           {filtered.map((action, index) => (
             <button
               key={action.id}

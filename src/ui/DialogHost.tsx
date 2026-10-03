@@ -73,6 +73,7 @@ export function hasActiveOverlay(): boolean {
 function focusableElements(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
     (element) =>
+      element.tabIndex >= 0 &&
       !element.hidden &&
       element.getAttribute("aria-hidden") !== "true" &&
       !element.closest("[inert]"),
@@ -246,6 +247,7 @@ export function documentTabTarget(
 ): HTMLElement | null {
   const candidates = [...document.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
     (element) =>
+      element.tabIndex >= 0 &&
       !exclude.contains(element) &&
       !element.hidden &&
       element.getAttribute("aria-hidden") !== "true" &&

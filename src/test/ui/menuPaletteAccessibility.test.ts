@@ -123,6 +123,40 @@ describe("menu and command palette accessibility", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("traps Tab and Shift+Tab on the combobox so focus matches the active option", async () => {
+    const trigger = document.body.appendChild(document.createElement("button"));
+    trigger.focus();
+    mounted = mount(createElement(CommandPalette, { onClose: vi.fn() }));
+    await flush();
+
+    const input = mounted.container.querySelector<HTMLInputElement>('[role="combobox"]');
+    if (!input) throw new Error("Combobox not found");
+    const activeOption = document.getElementById(input.getAttribute("aria-activedescendant") ?? "");
+    expect(activeOption?.tabIndex).toBe(-1);
+    const listbox = mounted.container.querySelector<HTMLElement>('[role="listbox"]');
+    expect(listbox?.tabIndex).toBe(-1);
+
+    const tab = keyDown(input, "Tab");
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(input);
+    const shiftTab = keyDown(input, "Tab", { shiftKey: true });
+    expect(shiftTab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(document.activeElement?.getAttribute("role")).not.toBe("option");
+
+    setInputValue(input, "设置");
+    keyDown(input, "Tab");
+    keyDown(input, "Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(input);
+    keyDown(input, "Enter");
+    expect(mocks.addTab).toHaveBeenCalledExactlyOnceWith({
+      id: "settings",
+      kind: "settings",
+      title: "设置",
+      closable: true,
+    });
+  });
+
   it("surfaces deferred asset loading errors through an inline alert", async () => {
     mocks.list.mockRejectedValue(new Error("offline"));
     mounted = mount(createElement(CommandPalette, { onClose: vi.fn() }));
