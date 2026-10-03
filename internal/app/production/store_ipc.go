@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -321,13 +322,27 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 		},
 		func() error {
 			return ipc.Register(dispatcher, "snippet_create", func(ctx context.Context, _ *ipc.Call, input idRequest) (map[string]string, error) {
-				row, err := database.SnippetCreate(ctx, input.Name, input.Body, nil, 0)
+				name, err := validatedSnippetName(input.Name)
+				if err != nil {
+					return nil, err
+				}
+				if err := validateSnippetBody(input.Body); err != nil {
+					return nil, err
+				}
+				row, err := database.SnippetCreate(ctx, name, input.Body, nil, 0)
 				return map[string]string{"id": row.ID}, err
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "snippet_update", func(ctx context.Context, _ *ipc.Call, input idRequest) (any, error) {
-				return nil, database.SnippetUpdate(ctx, input.ID, input.Name, input.Body)
+				name, err := validatedSnippetName(input.Name)
+				if err != nil {
+					return nil, err
+				}
+				if err := validateSnippetBody(input.Body); err != nil {
+					return nil, err
+				}
+				return nil, database.SnippetUpdate(ctx, input.ID, name, input.Body)
 			})
 		},
 		func() error {
@@ -395,4 +410,25 @@ func productionJSONText(raw json.RawMessage, fallback string) string {
 		return fallback
 	}
 	return string(raw)
+}
+
+// validatedSnippetName mirrors the frontend snippet editor contract: the UI
+// trims the name and rejects it when blank. The backend stays authoritative so
+// direct IPC callers get the same normalization and rejection.
+func validatedSnippetName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", ipc.BadParam(fmt.Errorf("snippet name must not be empty"))
+	}
+	return trimmed, nil
+}
+
+// validateSnippetBody mirrors the frontend snippet editor contract: trimming is
+// only the blankness check. Leading/trailing spaces, Tab and CR/LF in the body
+// are meaningful bytes and must be persisted exactly as received.
+func validateSnippetBody(body string) error {
+	if strings.TrimSpace(body) == "" {
+		return ipc.BadParam(fmt.Errorf("snippet body must not be empty"))
+	}
+	return nil
 }
