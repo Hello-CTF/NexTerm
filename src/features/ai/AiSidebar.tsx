@@ -134,6 +134,15 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [planMode, setPlanMode] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
+  /**
+   * conversationId 的 ref 镜像：删除会话的异步链路（弹框 / RPC 在途）里 state
+   * 闭包可能是旧值，重算「删的是不是当前会话」必须以最新值为准。
+   */
+  const conversationIdRef = useRef<string | undefined>(undefined);
+  const updateConversationId = (id: string | undefined) => {
+    conversationIdRef.current = id;
+    setConversationId(id);
+  };
   /** 权限档位（+ 规则数量展示）。规则库本身在设置页，这里只留入口。 */
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permOpen, setPermOpen] = useState(false);
@@ -278,7 +287,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       // 即使终态早于 RPC 返回，也必须续用内核会话 id，否则下一轮会另开新会话。
-      setConversationId(res.conversationId);
+      updateConversationId(res.conversationId);
       if (current.settled) {
         activeRunRef.current = finishAiRunSpawn(current);
         setAiBusy(false);
@@ -420,7 +429,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         return;
       }
       stream.reset(historyToItems(stream.getState(), msgs));
-      setConversationId(id);
+      updateConversationId(id);
       setHistoryOpen(false);
     } catch (e) {
       pushToast("error", `打开会话失败：${describeError(e)}`);
@@ -432,17 +441,34 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("info", "这一轮仍在运行，请先停止再新建会话");
       return;
     }
-    setConversationId(undefined);
+    updateConversationId(undefined);
     stream.reset();
     setHistoryOpen(false);
   };
 
-  /** 删除历史会话：先弹框确认；删掉正在看的会话就回到全新会话，避免留着空壳。 */
+  /**
+   * 删除历史会话：先弹框确认；删掉正在看的会话就回到全新会话，避免留着空壳。
+   *
+   * 与 open/new 同一道闸：正在运行的一轮（chat 或 takeover）所在会话不允许删除 ——
+   * reset 会清空未结算的 attempt，终态到达时被聚合层拒收，ownership 悬置、busy 卡死。
+   * 弹框与删除 RPC 都是异步的，每一程之后都按最新 ref 重算，堵住「确认后才发起运行」
+   * 的竞态；RPC 在途期间起的轮次不 reset，终态照常结算，只是下一条消息另开新会话。
+   */
   const deleteConversation = async (c: { id: string; title: string }) => {
+    const blocksReset = (id: string) =>
+      id === conversationIdRef.current && aiRunBlocksStart(activeRunRef.current);
+    if (blocksReset(c.id)) {
+      pushToast("info", "这一轮仍在运行，请先停止再删除当前会话");
+      return;
+    }
     const ok = await ask(`删除会话「${c.title || "(未命名会话)"}」？消息记录一并清除，不可恢复。`, {
       kind: "warning",
     });
     if (!ok) return;
+    if (blocksReset(c.id)) {
+      pushToast("info", "这一轮仍在运行，请先停止再删除当前会话");
+      return;
+    }
     try {
       await aiApi.conversationDelete(c.id);
     } catch (e) {
@@ -450,9 +476,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       return;
     }
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
-    if (conversationId === c.id) {
-      setConversationId(undefined);
-      stream.reset();
+    if (conversationIdRef.current === c.id) {
+      updateConversationId(undefined);
+      if (!aiRunBlocksStart(activeRunRef.current)) stream.reset();
     }
   };
 

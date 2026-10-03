@@ -409,6 +409,96 @@ describe("AiSidebar conversation stream UX", () => {
     );
   });
 
+  it("refuses to delete the current conversation while its run is active", async () => {
+    await send("运行中的问题");
+    // chat 已返回（conversationId=conv-1），但这一轮还没终态 —— 正是评审指的窗口。
+    await flush();
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+
+    click(view!.container.querySelector('button[title="删除「当前会话」"]')!);
+    await flush();
+    // 连确认弹框都不该出现：不 ask、不 RPC、行保留，并给出与 open/new 一致的提示。
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.conversationDelete).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("请先停止"));
+    expect(textOf(view!)).toContain("当前会话");
+
+    // 终态照常结算：删除被拦没有扰动这一轮。
+    emit({ type: "done", answer: "运行中的回答" });
+    await flush();
+    expect(textOf(view!)).toContain("本轮已完成");
+    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+  });
+
+  it("re-checks the run guard after the confirm dialog resolves", async () => {
+    await send("第一轮");
+    emit({ type: "done", answer: "第一轮回答" });
+    await flush();
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+
+    // 弹框挂起期间发起了新一轮：确认时必须重新把关，不能删。
+    let resolveAsk: ((ok: boolean) => void) | undefined;
+    mocks.ask.mockImplementationOnce(
+      () => new Promise<boolean>((res) => { resolveAsk = res; }),
+    );
+    click(view!.container.querySelector('button[title="删除「当前会话」"]')!);
+    await send("第二轮");
+    resolveAsk?.(true);
+    await flush();
+    expect(mocks.conversationDelete).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("请先停止"));
+    expect(textOf(view!)).toContain("当前会话");
+
+    emit({ type: "done", answer: "第二轮回答" });
+    await flush();
+    expect(textOf(view!)).toContain("本轮已完成");
+  });
+
+  it("keeps the run settleable when it starts while the delete RPC is in flight", async () => {
+    await send("第一轮");
+    emit({ type: "done", answer: "第一轮回答" });
+    await flush();
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+
+    // 删除 RPC 挂起期间发起新一轮：RPC 返回后绝不能 reset —— 否则终态被拒收、
+    // ownership 悬置、busy 卡死（评审 P1 的异步竞态）。
+    let resolveDelete: (() => void) | undefined;
+    mocks.conversationDelete.mockImplementationOnce(
+      () => new Promise<void>((res) => { resolveDelete = res; }),
+    );
+    click(view!.container.querySelector('button[title="删除「当前会话」"]')!);
+    await flush();
+    expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
+    await send("第二轮");
+
+    resolveDelete?.();
+    await flush();
+    // 行已摘、会话 id 已清，但消息流保留：旧内容还在，新内容继续上屏。
+    expect(textOf(view!)).not.toContain("当前会话");
+    expect(textOf(view!)).toContain("第一轮回答");
+    expect(textOf(view!)).not.toContain("命令与输出全程留痕");
+    emit({ type: "delta", text: "第二轮输出" });
+    act(runFrames);
+    expect(textOf(view!)).toContain("第二轮输出");
+
+    // 终态正常结算，busy 释放，没有被卡死。
+    emit({ type: "done", answer: "第二轮回答" });
+    await flush();
+    expect(textOf(view!)).toContain("本轮已完成");
+    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    // 下一条消息另开新会话，不再挂已删除的 id。
+    await send("第三轮");
+    expect(mocks.chat).toHaveBeenLastCalledWith(
+      expect.objectContaining({ conversationId: undefined }),
+    );
+  });
+
   it("takeover streams narration and closes with a persistent outcome", async () => {
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
