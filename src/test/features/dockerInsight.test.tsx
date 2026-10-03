@@ -52,8 +52,11 @@ vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
 import { DockerPanel } from "../../features/docker/DockerPanel";
 import type { ContainerSummary } from "../../ipc/commands";
 import {
+  buildInspectViewModel,
   isSensitiveFileName,
+  redactFileName,
   redactInspectTree,
+  redactMountSource,
   REDACTED_MARK,
 } from "../../features/docker/dockerRedact";
 import { parseStatsOutput } from "../../features/docker/statsParse";
@@ -88,7 +91,15 @@ const inspectA = {
     Labels: { "com.docker.compose.project": "shop", "x-api-token": "tok-123456" },
   },
   Mounts: [
-    { Type: "volume", Name: "db-passwords", Source: "", Destination: "/secrets", RW: false },
+    {
+      Type: "volume",
+      Name: "db-passwords",
+      // 真实 named-volume 契约：Source 路径里带卷名 —— 只遮 Name 会从 Source
+      // 原样漏出（review r1 P2），fixture 必须用这个真实形状做回归。
+      Source: "/var/lib/docker/volumes/db-passwords/_data",
+      Destination: "/secrets",
+      RW: false,
+    },
     { Type: "bind", Name: "", Source: "/home/alice/app", Destination: "/app", RW: true },
   ],
 };
@@ -177,7 +188,7 @@ describe("Docker insight controls (M61)", () => {
 
   // ── inspect ──
 
-  it("inspect renders loading, summary and redacts secrets by default", async () => {
+  it("inspect renders loading, summary and keeps secrets out of the DOM entirely", async () => {
     const pending = deferred<Record<string, unknown>>();
     mocks.inspect.mockReturnValue(pending.promise);
     const m = (mounted = mountPanel());
@@ -190,23 +201,44 @@ describe("Docker insight controls (M61)", () => {
     // 摘要与结构照常渲染
     expect(mockedText()).toContain("nginx:1.25");
     expect(mockedText()).toContain("POSTGRES_PASSWORD");
-    // 敏感值一律不上屏：env 值、敏感 label 值、敏感卷名
+    // 敏感值一律不上屏：env 值、敏感 label 值、敏感卷名（含 Source 路径里的卷名段）
     expect(mockedText()).not.toContain("hunter2secret");
     expect(mockedText()).not.toContain("tok-123456");
     expect(mockedText()).not.toContain("db-passwords");
     expect(mockedText()).toContain(REDACTED_MARK);
+    // Source 的目录结构保留、只有卷名段被遮蔽
+    expect(mockedText()).toContain("/var/lib/docker/volumes/");
     // 非敏感信息不受影响
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
     // 口径提示：展示级脱敏 ≠ 授权
     expect(mockedText()).toContain("所有权与强制遮蔽以内核为准");
+    // review r1 P1：不存在任何 reveal 入口，DOM 只消费脱敏 view model
+    expect(mockedText()).not.toContain("显示敏感值");
 
-    // 「显示敏感值」开关：显式打开后才明文
-    clickButton(m.container, "显示敏感值");
-    await waitFor(() => expect(mockedText()).toContain("hunter2secret"));
-    expect(mockedText()).toContain("tok-123456");
-    expect(mockedText()).toContain("db-passwords");
+    // 挂载 RW 按真实 boolean 渲染（review r1 P2）：bind RW:true → RW，volume RW:false → RO
+    const rowOf = (needle: string) =>
+      [...m.container.querySelectorAll("tbody tr")].find((r) => r.textContent?.includes(needle));
+    const bindRow = rowOf("/home/alice/app");
+    const volumeRow = rowOf("/var/lib/docker/volumes/");
+    if (!bindRow || !volumeRow) throw new Error("mount rows not found");
+    expect(bindRow.textContent).toContain("RW");
+    expect(bindRow.textContent).not.toContain("RO");
+    expect(volumeRow.textContent).toContain("RO");
+    expect(volumeRow.textContent).not.toContain("RW");
+
+    // 负向：任何交互（刷新 / 切页签再切回）都不得把真实 secret 带进 DOM
+    clickButton(m.container, "刷新");
+    clickButton(m.container, "统计");
+    await waitFor(() => expect(mockedText()).toContain("3s 轮询"));
+    clickButton(m.container, "文件");
+    await waitFor(() => expect(mockedText()).toContain("仅列出容器内目录"));
+    clickButton(m.container, "详情");
+    await waitFor(() => expect(mockedText()).toContain("环境变量"));
+    expect(mockedText()).not.toContain("hunter2secret");
+    expect(mockedText()).not.toContain("tok-123456");
+    expect(mockedText()).not.toContain("db-passwords");
   });
 
   it("inspect failure keeps the view open and retries in place", async () => {
@@ -318,18 +350,65 @@ describe("Docker insight controls (M61)", () => {
     // `.` / `..` 被过滤，其余 4 条上屏
     expect(rows.length).toBe(4);
     expect(mockedText()).not.toContain("etc/nginx");
-    // 敏感文件名只打标，不读内容
+    // review r1 P2：敏感文件名不是「打标了事」——文本与 title 都按统一口径遮蔽
+    expect(mockedText()).not.toContain(".env");
+    expect(mockedText()).toContain(REDACTED_MARK);
     expect(mockedText()).toContain("敏感");
+    for (const el of m.container.querySelectorAll("[title]")) {
+      expect(el.getAttribute("title")).not.toContain(".env");
+    }
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/");
 
-    // 进入 etc/
+    // 进入 etc/（passwd 也是敏感名：遮蔽显示，但点击导航仍用原始值）
     const etcRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("etc"),
     );
     if (!etcRow) throw new Error("etc row not found");
     click(etcRow);
     await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/etc"));
-    await waitFor(() => expect(mockedText()).toContain("passwd"));
+    await waitFor(() => expect(mockedText()).toContain(REDACTED_MARK));
+    expect(mockedText()).not.toContain("passwd");
+    const passwdRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
+      r.textContent?.includes(REDACTED_MARK),
+    );
+    if (!passwdRow) throw new Error("masked passwd row not found");
+    expect(passwdRow.getAttribute("title")).toBe("已遮蔽");
+    click(passwdRow);
+    await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/etc/passwd"));
+  });
+
+  it("files tab masks sensitive directory names in rows and breadcrumbs but navigates by raw value", async () => {
+    mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
+      if (path === "/") return Promise.resolve(["secrets/", "app/", "id_rsa", ".env.production", "cert.pem"]);
+      if (path === "/secrets") return Promise.resolve(["token.txt"]);
+      return Promise.resolve([]);
+    });
+    const m = (mounted = mountPanel());
+    await openInsight(m, 0);
+    clickButton(m.container, "文件");
+    await waitFor(() => expect(mockedText()).toContain("app"));
+
+    // 敏感条目（.env.production / id_rsa / cert.pem / secrets/）一律不上屏
+    expect(mockedText()).not.toContain(".env.production");
+    expect(mockedText()).not.toContain("id_rsa");
+    expect(mockedText()).not.toContain("cert.pem");
+    expect(mockedText()).not.toContain("secrets");
+
+    // 点击遮蔽显示的 secrets 行：导航用原始值，面包屑段同样遮蔽显示
+    const secretsRow = [...m.container.querySelectorAll("tbody tr")].find(
+      (r) => r.textContent?.includes("敏感") && r.textContent?.includes("目录"),
+    );
+    if (!secretsRow) throw new Error("masked secrets row not found");
+    expect(secretsRow.getAttribute("title")).toBe("已遮蔽");
+    click(secretsRow);
+    await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets"));
+    // 面包屑：/ + 遮蔽段；原始目录名不出现在任何 title
+    expect(mockedText()).toContain(REDACTED_MARK);
+    expect(mockedText()).not.toContain("secrets");
+    expect(mockedText()).not.toContain("token.txt");
+    for (const el of m.container.querySelectorAll("[title]")) {
+      expect(el.getAttribute("title")).not.toContain("secrets");
+    }
   });
 
   it("files tab shows inaccessible path errors with retry and a way back", async () => {
@@ -378,7 +457,7 @@ describe("Docker insight controls (M61)", () => {
 });
 
 describe("dockerRedact helpers", () => {
-  it("masks sensitive env entries and label values but keeps structure", () => {
+  it("masks sensitive env entries, label values and mount name/source segments but keeps structure", () => {
     const input = {
       Config: {
         Env: ["PATH=/usr/bin", "API_SECRET=s3cr3t", "NO_VALUE"],
@@ -386,23 +465,71 @@ describe("dockerRedact helpers", () => {
       },
       Nested: { DbPassword: "p@ss" },
       Mounts: [
-        { Type: "volume", Name: "db-passwords", Destination: "/secrets" },
-        { Type: "bind", Name: "", Source: "/home/alice/app" },
+        {
+          Type: "volume",
+          Name: "db-passwords",
+          Source: "/var/lib/docker/volumes/db-passwords/_data",
+          Destination: "/secrets",
+          RW: false,
+        },
+        { Type: "bind", Name: "", Source: "/home/alice/app", RW: true },
       ],
     };
-    const out = redactInspectTree(input, false) as typeof input;
+    const out = redactInspectTree(input) as typeof input;
     expect(out.Config.Env[0]).toBe("PATH=/usr/bin");
     expect(out.Config.Env[1]).toBe(`API_SECRET=${REDACTED_MARK}`);
     expect(out.Config.Env[2]).toBe("NO_VALUE");
     expect(out.Config.Labels["com.example.ok"]).toBe("fine");
     expect(out.Config.Labels["auth.token"]).toBe(REDACTED_MARK);
     expect(out.Nested.DbPassword).toBe(REDACTED_MARK);
-    // 卷名按值判敏感；源路径保留（排查挂载必须看到源）
+    // 卷名与 Source 里的卷名段都遮蔽；目录结构与非敏感源路径保留
     expect(out.Mounts[0].Name).toBe(REDACTED_MARK);
+    expect(out.Mounts[0].Source).toBe(`/var/lib/docker/volumes/${REDACTED_MARK}/_data`);
     expect(out.Mounts[0].Destination).toBe("/secrets");
     expect(out.Mounts[1].Source).toBe("/home/alice/app");
-    // reveal 时原样返回
-    expect(redactInspectTree(input, true)).toEqual(input);
+  });
+
+  it("redactMountSource masks only sensitive path segments", () => {
+    expect(redactMountSource("/var/lib/docker/volumes/db-passwords/_data")).toBe(
+      `/var/lib/docker/volumes/${REDACTED_MARK}/_data`,
+    );
+    expect(redactMountSource("/home/alice/app")).toBe("/home/alice/app");
+    expect(redactMountSource("")).toBe("");
+  });
+
+  it("redactFileName masks the name, keeping only non-sensitive extensions", () => {
+    expect(redactFileName(".env.production")).toBe(REDACTED_MARK);
+    expect(redactFileName("id_rsa")).toBe(REDACTED_MARK);
+    expect(redactFileName("cert.pem")).toBe(REDACTED_MARK); // 扩展名本身敏感
+    expect(redactFileName("passwd")).toBe(REDACTED_MARK);
+    expect(redactFileName("app_secret.yaml")).toBe(`${REDACTED_MARK}.yaml`);
+  });
+
+  it("buildInspectViewModel redacts everything the DOM renders, with real mount shapes", () => {
+    const vm = buildInspectViewModel(inspectA);
+    expect(vm.name).toBe("web");
+    expect(vm.image).toBe("nginx:1.25");
+    expect(vm.env).toEqual([
+      { key: "PATH", value: "/usr/bin" },
+      { key: "POSTGRES_PASSWORD", value: REDACTED_MARK },
+      { key: "TZ", value: "UTC" },
+    ]);
+    expect(vm.labels).toEqual([
+      { key: "com.docker.compose.project", value: "shop" },
+      { key: "x-api-token", value: REDACTED_MARK },
+    ]);
+    // RW 是真实 boolean：true → RW / false → RO 的数据源
+    expect(vm.mounts[0]).toMatchObject({
+      name: REDACTED_MARK,
+      source: `/var/lib/docker/volumes/${REDACTED_MARK}/_data`,
+      rw: false,
+    });
+    expect(vm.mounts[1]).toMatchObject({ source: "/home/alice/app", rw: true });
+    // 序列化 dump 同样不含任何 secret
+    expect(vm.json).not.toContain("hunter2secret");
+    expect(vm.json).not.toContain("tok-123456");
+    expect(vm.json).not.toContain("db-passwords");
+    expect(vm.json).toContain("POSTGRES_PASSWORD");
   });
 
   it("flags sensitive-looking container file names", () => {

@@ -4,9 +4,10 @@
 // docker_container_list_dir），sessionId 一律来自标签上下文 —— 用户没有任何输入
 // session 的入口，缓存键也全部带 sessionId，跨会话不会互相读到对方的缓存。
 //
-// 脱敏口径：env / label / mount / 文件名里的敏感值默认**不在界面明文渲染**
-// （见 dockerRedact.ts）。这只是展示级遮蔽 —— 所有权校验与强制遮蔽以内核为准，
-// 界面上的遮蔽开关不构成授权，也不替代内核检查。
+// 脱敏口径（review r1 P1）：当前 RPC 契约返回的是未脱敏原始 inspect，前端不提供
+// 任何「显示真实值」的路径 —— 详情页 DOM 只消费 buildInspectViewModel 产出的
+// 脱敏 view model，文件页的显示值与导航值分离（见 dockerRedact.ts）。这只是
+// 展示级遮蔽：所有权校验与强制遮蔽以内核为准，前端过滤不构成授权。
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,15 +24,7 @@ import {
   IconShield,
   IconTable,
 } from "../../ui/icons";
-import {
-  isSensitiveFileName,
-  isSensitiveName,
-  pickInspectNumber,
-  pickInspectString,
-  redactInspectTree,
-  REDACTED_MARK,
-  splitEnvEntry,
-} from "./dockerRedact";
+import { buildInspectViewModel, isSensitiveFileName, redactFileName } from "./dockerRedact";
 import { parseStatsOutput } from "./statsParse";
 
 interface InsightProps {
@@ -129,13 +122,11 @@ function InsightError({
 }
 
 /** 展示级脱敏的统一口径提示。 */
-function RedactHint({ revealed }: { revealed: boolean }) {
+function RedactHint() {
   return (
     <span className="nx-hint inline-flex items-center gap-1">
       <IconShield size={11} />
-      {revealed
-        ? "敏感值正在明文显示 · 遮蔽只是展示层，所有权与强制遮蔽以内核为准"
-        : "敏感值已遮蔽 · 展示级脱敏，所有权与强制遮蔽以内核为准"}
+      敏感值已遮蔽 · 展示级脱敏，所有权与强制遮蔽以内核为准
     </span>
   );
 }
@@ -143,7 +134,6 @@ function RedactHint({ revealed }: { revealed: boolean }) {
 // ───────── 详情（inspect） ─────────
 
 function InspectView({ sessionId, containerId }: { sessionId: string; containerId: string }) {
-  const [reveal, setReveal] = useState(false);
   const q = useQuery({
     queryKey: ["docker-inspect", sessionId, containerId],
     queryFn: () => dockerApi.inspect(sessionId, containerId),
@@ -154,45 +144,14 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
     return <InsightError error={q.error} onRetry={() => void q.refetch()} />;
   }
 
-  const raw = q.data;
-  // docker CLI 的 inspect 输出是单元素数组，moby SDK 返回单个对象，两种都接。
-  const root = Array.isArray(raw) ? raw[0] : raw;
-  const redacted = redactInspectTree(raw, reveal);
-
-  const name = pickInspectString(root, "Name").replace(/^\//, "");
-  const image = pickInspectString(root, "Config.Image");
-  const state = pickInspectString(root, "State.Status");
-  const startedAt = pickInspectString(root, "State.StartedAt");
-  const restartCount = pickInspectNumber(root, "State.RestartCount");
-
-  const envEntries = readStringArray(root, "Config.Env");
-  const labels = readStringRecord(root, "Config.Labels");
-  const mounts = readObjectArray(root, "Mounts").map((m) => {
-    const rawName = pickInspectString(m, "Name");
-    return {
-      type: pickInspectString(m, "Type"),
-      // 卷名本身可能带敏感词（如 db-password-token）；`Name` 这个键名不敏感，
-      // 键值规则盖不到它，所以在这里按值显式判一次。主机路径保留 ——
-      // 排查挂载问题必须看到源路径。
-      name: !reveal && rawName && isSensitiveName(rawName) ? REDACTED_MARK : rawName,
-      source: pickInspectString(m, "Source"),
-      destination: pickInspectString(m, "Destination"),
-      rw: pickInspectString(m, "RW") || "false",
-    };
-  });
+  // DOM 的唯一数据源：脱敏 view model。原始 inspect JSON 不出 dockerRedact 模块，
+  // 也没有任何交互路径能拿到未脱敏值（review r1 P1 —— reveal 开关已移除）。
+  const vm = buildInspectViewModel(q.data);
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
-        <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
-          onClick={() => setReveal((v) => !v)}
-          aria-pressed={reveal}
-        >
-          <IconShield size={12} />
-          {reveal ? "遮蔽敏感值" : "显示敏感值"}
-        </button>
-        <RedactHint revealed={reveal} />
+        <RedactHint />
         <div className="nx-spacer" />
         {q.isFetching && <span className="nx-hint">刷新中…</span>}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void q.refetch()}>
@@ -202,16 +161,16 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 px-3 py-3 md:grid-cols-3">
-        <Field label="名称" value={name} />
-        <Field label="镜像" value={image} mono />
-        <Field label="状态" value={state} />
-        <Field label="启动时间" value={startedAt} mono />
-        <Field label="重启次数" value={restartCount} />
+        <Field label="名称" value={vm.name} />
+        <Field label="镜像" value={vm.image} mono />
+        <Field label="状态" value={vm.state} />
+        <Field label="启动时间" value={vm.startedAt} mono />
+        <Field label="重启次数" value={vm.restartCount} />
         <Field label="ID" value={containerId} mono />
       </div>
 
-      <Section title={`环境变量 (${envEntries.length})`}>
-        {envEntries.length === 0 ? (
+      <Section title={`环境变量 (${vm.env.length})`}>
+        {vm.env.length === 0 ? (
           <span className="nx-hint">没有环境变量</span>
         ) : (
           <table className="nx-table nx-table-fixed">
@@ -222,27 +181,23 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
               </tr>
             </thead>
             <tbody>
-              {envEntries.map((entry) => {
-                const { name: k, value } = splitEnvEntry(entry);
-                const hidden = !reveal && isSensitiveName(k);
-                return (
-                  <tr key={entry}>
-                    <td className="nx-mono truncate text-neutral-200" title={k}>
-                      {k}
-                    </td>
-                    <td className="nx-mono truncate text-neutral-400" title={hidden ? "已遮蔽" : value}>
-                      {hidden ? REDACTED_MARK : value || "—"}
-                    </td>
-                  </tr>
-                );
-              })}
+              {vm.env.map((row) => (
+                <tr key={row.key}>
+                  <td className="nx-mono truncate text-neutral-200" title={row.key}>
+                    {row.key}
+                  </td>
+                  <td className="nx-mono truncate text-neutral-400" title={row.value}>
+                    {row.value || "—"}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
       </Section>
 
-      <Section title={`标签 (${Object.keys(labels).length})`}>
-        {Object.keys(labels).length === 0 ? (
+      <Section title={`标签 (${vm.labels.length})`}>
+        {vm.labels.length === 0 ? (
           <span className="nx-hint">没有标签</span>
         ) : (
           <table className="nx-table nx-table-fixed">
@@ -253,26 +208,23 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
               </tr>
             </thead>
             <tbody>
-              {Object.entries(labels).map(([k, v]) => {
-                const hidden = !reveal && isSensitiveName(k);
-                return (
-                  <tr key={k}>
-                    <td className="nx-mono truncate text-neutral-200" title={k}>
-                      {k}
-                    </td>
-                    <td className="nx-mono truncate text-neutral-400" title={hidden ? "已遮蔽" : v}>
-                      {hidden ? REDACTED_MARK : v || "—"}
-                    </td>
-                  </tr>
-                );
-              })}
+              {vm.labels.map((row) => (
+                <tr key={row.key}>
+                  <td className="nx-mono truncate text-neutral-200" title={row.key}>
+                    {row.key}
+                  </td>
+                  <td className="nx-mono truncate text-neutral-400" title={row.value}>
+                    {row.value || "—"}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
       </Section>
 
-      <Section title={`挂载 (${mounts.length})`}>
-        {mounts.length === 0 ? (
+      <Section title={`挂载 (${vm.mounts.length})`}>
+        {vm.mounts.length === 0 ? (
           <span className="nx-hint">没有挂载</span>
         ) : (
           <table className="nx-table nx-table-fixed">
@@ -286,7 +238,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
               </tr>
             </thead>
             <tbody>
-              {mounts.map((m, i) => (
+              {vm.mounts.map((m, i) => (
                 <tr key={`${m.source}-${m.destination}-${i}`}>
                   <td>{m.type || "—"}</td>
                   <td className="nx-mono truncate" title={m.name}>
@@ -298,7 +250,8 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
                   <td className="nx-mono truncate" title={m.destination}>
                     {m.destination || "—"}
                   </td>
-                  <td>{m.rw === "true" ? "RW" : "RO"}</td>
+                  {/* RW 是真实 boolean（兼容字符串），true → RW / false → RO */}
+                  <td>{m.rw ? "RW" : "RO"}</td>
                 </tr>
               ))}
             </tbody>
@@ -307,9 +260,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
       </Section>
 
       <Section title="完整配置（已脱敏）">
-        <pre className="nx-pre m-3 whitespace-pre-wrap break-all">
-          {JSON.stringify(redacted, null, 2)}
-        </pre>
+        <pre className="nx-pre m-3 whitespace-pre-wrap break-all">{vm.json}</pre>
       </Section>
     </div>
   );
@@ -332,41 +283,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="mb-1.5 text-[11px] font-medium text-neutral-400">{title}</div>
       {children}
     </div>
-  );
-}
-
-function readStringArray(root: unknown, path: string): string[] {
-  let node: unknown = root;
-  for (const part of path.split(".")) {
-    if (!node || typeof node !== "object") return [];
-    node = (node as Record<string, unknown>)[part];
-  }
-  return Array.isArray(node) ? node.filter((v): v is string => typeof v === "string") : [];
-}
-
-function readStringRecord(root: unknown, path: string): Record<string, string> {
-  let node: unknown = root;
-  for (const part of path.split(".")) {
-    if (!node || typeof node !== "object") return {};
-    node = (node as Record<string, unknown>)[part];
-  }
-  if (!node || typeof node !== "object" || Array.isArray(node)) return {};
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    if (typeof v === "string") out[k] = v;
-  }
-  return out;
-}
-
-function readObjectArray(root: unknown, path: string): Record<string, unknown>[] {
-  let node: unknown = root;
-  for (const part of path.split(".")) {
-    if (!node || typeof node !== "object") return [];
-    node = (node as Record<string, unknown>)[part];
-  }
-  if (!Array.isArray(node)) return [];
-  return node.filter(
-    (v): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v),
   );
 }
 
@@ -499,12 +415,14 @@ function parentOfContainerPath(path: string): string | null {
   return idx <= 0 ? "/" : path.slice(0, idx);
 }
 
-function crumbsOf(path: string): { label: string; path: string }[] {
-  const crumbs = [{ label: "/", path: "/" }];
+/** 面包屑段：path 是原始导航值，label 是遮蔽后的显示值（review r1 P2）。 */
+function crumbsOf(path: string): { label: string; path: string; sensitive: boolean }[] {
+  const crumbs = [{ label: "/", path: "/", sensitive: false }];
   let acc = "";
   for (const seg of path.split("/").filter(Boolean)) {
     acc += `/${seg}`;
-    crumbs.push({ label: seg, path: acc });
+    const sensitive = isSensitiveFileName(seg);
+    crumbs.push({ label: sensitive ? redactFileName(seg) : seg, path: acc, sensitive });
   }
   return crumbs;
 }
@@ -546,7 +464,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
               <button
                 className={`nx-path-crumb ${i === all.length - 1 ? "is-current" : ""}`}
                 onClick={() => setPath(c.path)}
-                title={c.path}
+                title={c.sensitive ? "已遮蔽" : c.path}
               >
                 {c.label}
               </button>
@@ -587,25 +505,25 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                 const isDir = entry.endsWith("/");
                 const name = entry.replace(/\/+$/, "");
                 const sensitive = isSensitiveFileName(name);
-                // Go 后端是裸 `ls -1a` 输出（目录名不带 `/` 后缀），前端无法可靠区分
-                // 文件与目录 —— 所有条目都可点，当作目录进入；点到文件时后端会报错，
-                // 原地给重试 / 返回上级（见上面的错误分支）。
+                // 显示值与导航值分离（review r1 P2）：敏感条目的文本与 title 一律
+                // 用遮蔽显示，原始文件名不上屏；点击导航仍用原始 name。
+                const display = sensitive ? redactFileName(name) : name;
                 return (
                   <tr
                     key={entry}
                     className="cursor-pointer"
-                    title="作为目录进入"
+                    title={sensitive ? "已遮蔽" : joinContainerPath(path, name)}
                     onClick={() => setPath(joinContainerPath(path, name))}
                   >
-                    <td className="truncate text-neutral-200" title={joinContainerPath(path, name)}>
+                    <td className="truncate text-neutral-200">
                       {isDir ? (
                         <IconFolder size={13} className="mr-1.5 inline align-[-2px] text-neutral-500" />
                       ) : (
                         <IconFile size={13} className="mr-1.5 inline align-[-2px] text-neutral-600" />
                       )}
-                      {name}
+                      {display}
                       {sensitive && (
-                        <span className="nx-badge nx-badge-amber ml-1.5" title="疑似敏感文件：仅列出名称，不提供内容读取">
+                        <span className="nx-badge nx-badge-amber ml-1.5" title="疑似敏感文件：名称已遮蔽，不提供内容读取">
                           敏感
                         </span>
                       )}
