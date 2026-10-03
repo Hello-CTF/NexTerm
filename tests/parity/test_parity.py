@@ -34,10 +34,22 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 141)
-        self.assertEqual(frontend["unique_command_count"], 140)
+        self.assertEqual(frontend["method_count"], 143)
+        self.assertEqual(frontend["unique_command_count"], 142)
         self.assertEqual(commands["reconciliation"]["rust_only"], ["credential_save"])
-        self.assertEqual(commands["reconciliation"]["frontend_only"], ["ai_answer", "terminal_resize_flush"])
+        self.assertEqual(
+            commands["reconciliation"]["frontend_only"],
+            ["ai_answer", "ai_hitl_events", "ai_hitl_snapshot", "terminal_resize_flush"],
+        )
+        hitl = {entry["name"]: entry for entry in frontend["entries"] if "hitl" in entry["name"]}
+        self.assertEqual(
+            [(hitl["ai_hitl_snapshot"]["accessor"], hitl["ai_hitl_snapshot"]["line"])],
+            [("aiApi.hitlSnapshot", 659)],
+        )
+        self.assertEqual(
+            [(hitl["ai_hitl_events"]["accessor"], hitl["ai_hitl_events"]["line"])],
+            [("aiApi.hitlEvents", 662)],
+        )
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
             [{"name": "ai_presets", "accessors": ["aiApi.presets", "modelApi.presets"]}],
