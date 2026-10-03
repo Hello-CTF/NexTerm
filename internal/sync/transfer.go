@@ -27,11 +27,7 @@ func (p AssetPayload) storeRow() store.AssetRow {
 	}
 }
 
-func hasCode(err error, code ipc.Code) bool {
-	var appErr *ipc.Error
-	return errors.As(err, &appErr) && appErr.Code == code
-}
-
 func isNotFound(err error) bool {
-	return hasCode(err, ipc.CodeNotFound)
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound
 }

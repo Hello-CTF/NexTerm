@@ -172,7 +172,7 @@ func warnMissingReferencedKey(credential CredentialPayload, report *ImportReport
 		return
 	}
 	payload := vault.ParsePrivateKeyPayload(credential.Secret)
-	if !payload.IsRef() || payload.File == nil || strings.TrimSpace(*payload.File) == "" {
+	if !payload.IsRef() || strings.TrimSpace(*payload.File) == "" {
 		return
 	}
 	if _, err := os.Stat(*payload.File); err != nil {

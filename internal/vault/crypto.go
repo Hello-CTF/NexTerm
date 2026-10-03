@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	DEKLength       = 32
-	CipherAES256GCM = "aes256gcm-v1"
-	nonceLength     = 12
+	DEKLength   = 32
+	nonceLength = 12
 )
 
 var (
