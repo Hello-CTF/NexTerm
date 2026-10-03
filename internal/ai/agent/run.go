@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -256,11 +257,27 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 	}
 	messages = append(messages, userMessage(current.args))
+	if r.config.Memory != nil {
+		// Opt-in long-term memory joins as a transient system message on a
+		// fresh message slice: the persisted conversation history is never
+		// touched, and with the settings flag off (the default) Inject
+		// returns the history copy unchanged.
+		injection, err := r.config.Memory.Inject(current.ctx, r.config.MemoryScope, messages, memory.Selection{}, memory.Budget{})
+		if err != nil {
+			return err
+		}
+		messages = injection.Messages
+	}
 	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: r.config.Subagents}
 	einoTools, err := execution.Tools()
 	if err != nil {
 		return err
 	}
+	memoryTools, err := r.memoryTools(current.ctx, current.args.PlanMode)
+	if err != nil {
+		return err
+	}
+	einoTools = append(einoTools, memoryTools...)
 	runtime := &einoRuntime{input: messages, contextWindow: contextWindow}
 	instruction := systemPrompt()
 	returnDirectly := map[string]bool{}

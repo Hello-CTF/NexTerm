@@ -507,11 +507,22 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		r.wg.Wait()
 		close(done)
 	}()
+	// The runner owns the memory store handed to it by the composition and
+	// closes it exactly once, after every job has drained.
 	select {
 	case <-done:
-		return r.hitl.Close()
+		err := r.hitl.Close()
+		if r.config.Memory != nil {
+			if closeErr := r.config.Memory.Close(); err == nil {
+				err = closeErr
+			}
+		}
+		return err
 	case <-ctx.Done():
 		_ = r.hitl.Close()
+		if r.config.Memory != nil {
+			_ = r.config.Memory.Close()
+		}
 		return ctx.Err()
 	}
 }

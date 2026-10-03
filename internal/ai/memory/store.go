@@ -264,8 +264,8 @@ func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 		return Settings{}, err
 	}
 	var settings Settings
-	err = s.db.QueryRowContext(ctx, `SELECT injection_enabled, version FROM memory_settings
-		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).Scan(&settings.InjectionEnabled, &settings.Version)
+	err = s.db.QueryRowContext(ctx, `SELECT injection_enabled, tools_enabled, version FROM memory_settings
+		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).Scan(&settings.InjectionEnabled, &settings.ToolsEnabled, &settings.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Settings{}, nil
 	}
@@ -275,10 +275,22 @@ func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 	return settings, nil
 }
 
+// SetInjectionEnabled flips the prompt-injection opt-in with compare-and-swap
+// semantics on the settings version.
 func (s *Store) SetInjectionEnabled(ctx context.Context, scope Scope, enabled bool, expectedVersion uint64) (Settings, error) {
+	return s.UpdateSettings(ctx, scope, SettingsInput{InjectionEnabled: &enabled}, expectedVersion)
+}
+
+// UpdateSettings applies the given flag flips atomically: the expected version
+// must match the stored one, otherwise a VersionConflictError is returned and
+// nothing changes.
+func (s *Store) UpdateSettings(ctx context.Context, scope Scope, input SettingsInput, expectedVersion uint64) (Settings, error) {
 	scope, err := normalizeScope(scope)
 	if err != nil {
 		return Settings{}, err
+	}
+	if input.InjectionEnabled == nil && input.ToolsEnabled == nil {
+		return Settings{}, fmt.Errorf("%w: settings update requires at least one flag", ErrInvalidInput)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -290,21 +302,30 @@ func (s *Store) SetInjectionEnabled(ctx context.Context, scope Scope, enabled bo
 			_ = tx.Rollback()
 		}
 	}()
-	var actual uint64
-	err = tx.QueryRowContext(ctx, "SELECT version FROM memory_settings WHERE tenant = ? AND subject = ?",
-		scope.Tenant, scope.Subject).Scan(&actual)
+	var current Settings
+	err = tx.QueryRowContext(ctx, `SELECT injection_enabled, tools_enabled, version FROM memory_settings
+		WHERE tenant = ? AND subject = ?`, scope.Tenant, scope.Subject).
+		Scan(&current.InjectionEnabled, &current.ToolsEnabled, &current.Version)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Settings{}, fmt.Errorf("read semantic memory settings: %w", err)
 	}
-	if actual != expectedVersion {
-		return Settings{}, &VersionConflictError{ID: "injection-settings", Expected: expectedVersion, Actual: actual}
+	if current.Version != expectedVersion {
+		return Settings{}, &VersionConflictError{ID: "memory-settings", Expected: expectedVersion, Actual: current.Version}
 	}
-	next := Settings{InjectionEnabled: enabled, Version: actual + 1}
+	next := current
+	if input.InjectionEnabled != nil {
+		next.InjectionEnabled = *input.InjectionEnabled
+	}
+	if input.ToolsEnabled != nil {
+		next.ToolsEnabled = *input.ToolsEnabled
+	}
+	next.Version = current.Version + 1
 	_, err = tx.ExecContext(ctx, `INSERT INTO memory_settings
-		(tenant, subject, injection_enabled, version, updated_at) VALUES(?,?,?,?,?)
+		(tenant, subject, injection_enabled, tools_enabled, version, updated_at) VALUES(?,?,?,?,?,?)
 		ON CONFLICT(tenant, subject) DO UPDATE SET
-		injection_enabled = excluded.injection_enabled, version = excluded.version, updated_at = excluded.updated_at`,
-		scope.Tenant, scope.Subject, next.InjectionEnabled, next.Version, s.now())
+		injection_enabled = excluded.injection_enabled, tools_enabled = excluded.tools_enabled,
+		version = excluded.version, updated_at = excluded.updated_at`,
+		scope.Tenant, scope.Subject, next.InjectionEnabled, next.ToolsEnabled, next.Version, s.now())
 	if err != nil {
 		return Settings{}, fmt.Errorf("update semantic memory settings: %w", err)
 	}

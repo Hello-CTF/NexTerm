@@ -125,14 +125,115 @@ const layoutState: { revision: number; updatedAt: number; data: unknown | null }
   data: null,
 };
 
+/* ── 长期语义记忆 ──────────────────────────────────────────────────────── */
+
+interface DemoMemoryEntry {
+  id: string;
+  tenant: string;
+  subject: string;
+  topic: string;
+  content: string;
+  version: number;
+  redacted: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface DemoMemorySettings {
+  injectionEnabled: boolean;
+  toolsEnabled: boolean;
+  version: number;
+}
+
+const demoMemoryEntries: DemoMemoryEntry[] = [
+  {
+    id: "mem-nginx-restart",
+    tenant: "local",
+    subject: "default",
+    topic: "operations",
+    content: "web-01 的 nginx 每天 02:00 定时重启，重启后需要确认 80 端口返回 200。",
+    version: 1,
+    redacted: false,
+    createdAt: Date.now() - 86_400_000,
+    updatedAt: Date.now() - 86_400_000,
+  },
+];
+const demoMemorySettings = new Map<string, DemoMemorySettings>();
+
+/**
+ * 演示模式的密钥规则：与内核 `memory.RedactText` 同口径的完整规则集 ——
+ * 私钥块、Bearer、JWT、URI 内嵌凭据，以及赋值型密钥（password/token/
+ * api_key 等关键词作为下划线分段出现的 key: value / key=value）。命中时
+ * reject 策略整体拒写，redact 策略把命中片段替换为 [REDACTED]。
+ */
+const demoSecretRules = [
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g,
+  /([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s/@]+@/gi,
+  /(?:[a-z0-9]+_)*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|client[_-]?secret|password|passwd|secret|token|authorization)(?:_(?:access|key|keys))*["']?\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+];
+
+function demoMemoryRedact(content: string): { content: string; changed: boolean } {
+  let redacted = content;
+  for (const rule of demoSecretRules) {
+    redacted = redacted.replace(rule, "[REDACTED]");
+  }
+  return { content: redacted, changed: redacted !== content };
+}
+
+function demoMemorySanitize(content: string, policy: string): { content: string; redacted: boolean } {
+  if (policy !== "reject" && policy !== "redact") {
+    throwAppError("bad_param", "secrets 必须是 reject 或 redact");
+  }
+  const result = demoMemoryRedact(content);
+  if (result.changed && policy !== "redact") {
+    throwAppError("bad_param", "semantic memory contains a possible secret");
+  }
+  return { content: result.content, redacted: result.changed };
+}
+
+function demoMemoryScopeKey(tenant: string, subject: string): string {
+  return `${tenant}\n${subject}`;
+}
+
+/** 与内核 normalizeScope 对齐：空 scope 一律 forbidden，先于任何行查找。 */
+function demoMemoryRequireScope(scope: { tenant?: string; subject?: string }): { tenant: string; subject: string } {
+  const tenant = str(scope.tenant).trim();
+  const subject = str(scope.subject).trim();
+  if (!tenant || !subject) throwAppError("forbidden", "semantic memory access denied");
+  return { tenant, subject };
+}
+
+function demoMemoryFind(scope: { tenant: string; subject: string }, id: string): DemoMemoryEntry {
+  const entry = demoMemoryEntries.find((e) => e.id === id);
+  if (!entry) throwAppError("not_found", `semantic memory not found: ${id}`);
+  if (entry.tenant !== scope.tenant || entry.subject !== scope.subject) {
+    throwAppError("forbidden", "semantic memory access denied");
+  }
+  return entry;
+}
+
+/** 与内核 IPC 的 VersionConflictError 对齐：bad_param + expected/actual detail。 */
+function demoMemoryCAS(entry: { id: string; version: number }, expectedVersion: number) {
+  if (entry.version !== expectedVersion) {
+    throwAppError(
+      "bad_param",
+      `semantic memory version conflict: ${entry.id} (expected ${expectedVersion}, actual ${entry.version})`,
+      { id: entry.id, expected: expectedVersion, actual: entry.version },
+    );
+  }
+}
+
 /**
  * 演示模式的错误：形状对齐内核的 `AppError`（`ipc/commands.ts::toAppError` 只看 `code`）。
  *
  * 不能 `throw new Error(...)` —— 那样 code 会退化成 `internal`，前端就分不出
- * 「别人正在操作终端」（not_controller）和真正的错误了。
+ * 「别人正在操作终端」（not_controller）和真正的错误了。`detail` 对齐内核 IPC
+ * 错误的 Detail 字段（如 memory CAS 冲突的 expected/actual）。
  */
-function throwAppError(code: string, message: string): never {
-  throw { code, message };
+function throwAppError(code: string, message: string, detail?: Record<string, unknown>): never {
+  throw { code, message, ...(detail === undefined ? {} : { detail }) };
 }
 
 /**
@@ -1663,6 +1764,111 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         }),
       );
       return jobId;
+    }
+
+    /* ─────────────── memory（长期语义记忆）─────────────── */
+    case "memory_create": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const topic = str(a.topic).trim();
+      const content = str(a.content);
+      if (!topic || !content.trim()) throwAppError("bad_param", "invalid semantic memory input: invalid topic or content");
+      const sanitized = demoMemorySanitize(content, str(a.secrets, "reject"));
+      const now = Date.now();
+      const entry: DemoMemoryEntry = {
+        id: uid("mem"),
+        tenant: scope.tenant,
+        subject: scope.subject,
+        topic,
+        content: sanitized.content,
+        version: 1,
+        redacted: sanitized.redacted,
+        createdAt: now,
+        updatedAt: now,
+      };
+      demoMemoryEntries.push(entry);
+      const { tenant: _t, subject: _s, ...dto } = entry;
+      return dto;
+    }
+
+    case "memory_get": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const entry = demoMemoryFind(scope, str(a.id));
+      const { tenant: _t, subject: _s, ...dto } = entry;
+      return dto;
+    }
+
+    case "memory_edit": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const entry = demoMemoryFind(scope, str(a.id));
+      const expectedVersion = num(a.expectedVersion);
+      if (!expectedVersion) throwAppError("bad_param", "invalid semantic memory input: expected version must be positive");
+      demoMemoryCAS(entry, expectedVersion);
+      const hasTopic = typeof a.topic === "string";
+      const hasContent = typeof a.content === "string";
+      if (!hasTopic && !hasContent) throwAppError("bad_param", "invalid semantic memory input: edit requires topic or content");
+      if (hasTopic) {
+        const topic = (a.topic as string).trim();
+        if (!topic) throwAppError("bad_param", "invalid semantic memory input: invalid topic");
+        entry.topic = topic;
+      }
+      if (hasContent) {
+        const content = a.content as string;
+        if (!content.trim()) throwAppError("bad_param", "invalid semantic memory input: invalid content");
+        const sanitized = demoMemorySanitize(content, str(a.secrets, "reject"));
+        entry.content = sanitized.content;
+        entry.redacted = sanitized.redacted;
+      }
+      entry.version += 1;
+      entry.updatedAt = Date.now();
+      const { tenant: _t, subject: _s, ...dto } = entry;
+      return dto;
+    }
+
+    case "memory_delete": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const entry = demoMemoryFind(scope, str(a.id));
+      const expectedVersion = num(a.expectedVersion);
+      if (!expectedVersion) throwAppError("bad_param", "invalid semantic memory input: expected version must be positive");
+      demoMemoryCAS(entry, expectedVersion);
+      demoMemoryEntries.splice(demoMemoryEntries.indexOf(entry), 1);
+      return null;
+    }
+
+    case "memory_index": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const topics = new Map<string, { id: string; version: number; redacted: boolean; updatedAt: number }[]>();
+      for (const entry of demoMemoryEntries) {
+        if (entry.tenant !== scope.tenant || entry.subject !== scope.subject) continue;
+        const list = topics.get(entry.topic) ?? [];
+        list.push({ id: entry.id, version: entry.version, redacted: entry.redacted, updatedAt: entry.updatedAt });
+        topics.set(entry.topic, list);
+      }
+      return [...topics.entries()]
+        .sort(([x], [y]) => x.localeCompare(y))
+        .map(([topic, entries]) => ({ topic, entries }));
+    }
+
+    case "memory_settings_get": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const settings = demoMemorySettings.get(demoMemoryScopeKey(scope.tenant, scope.subject));
+      return settings ?? { injectionEnabled: false, toolsEnabled: false, version: 0 };
+    }
+
+    case "memory_settings_set": {
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const key = demoMemoryScopeKey(scope.tenant, scope.subject);
+      const current = demoMemorySettings.get(key) ?? { injectionEnabled: false, toolsEnabled: false, version: 0 };
+      if (typeof a.injectionEnabled !== "boolean" && typeof a.toolsEnabled !== "boolean") {
+        throwAppError("bad_param", "invalid semantic memory input: settings update requires at least one flag");
+      }
+      demoMemoryCAS({ id: "memory-settings", version: current.version }, num(a.expectedVersion));
+      const next: DemoMemorySettings = {
+        injectionEnabled: typeof a.injectionEnabled === "boolean" ? a.injectionEnabled : current.injectionEnabled,
+        toolsEnabled: typeof a.toolsEnabled === "boolean" ? a.toolsEnabled : current.toolsEnabled,
+        version: current.version + 1,
+      };
+      demoMemorySettings.set(key, next);
+      return next;
     }
 
     /* ─────────────── vault ─────────────── */

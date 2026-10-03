@@ -3,11 +3,13 @@ package production
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/takeover"
@@ -16,11 +18,18 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
+// productionMemoryScope is the single owner scope every agent execution uses
+// for the long-term semantic memory. NexTerm is a single-user product: one
+// local tenant, one default subject. The composition decides it once here so
+// neither the runner nor the IPC handlers ever derive or duplicate it.
+var productionMemoryScope = memory.Scope{Tenant: "local", Subject: "default"}
+
 // composeAIRuntime builds the single production owner of the AI surface:
-// guard settings, the shared tool registry, the agent runner and the
-// takeover manager. Every binary gets the same composition; the agent and
-// takeover modules only register their own runtime commands, while the
-// profiles owner module keeps provider/model/conversation commands.
+// guard settings, the shared tool registry, the opt-in semantic memory store,
+// the agent runner and the takeover manager. Every binary gets the same
+// composition; the agent and takeover modules only register their own runtime
+// commands, while the profiles owner module keeps provider/model/conversation
+// commands.
 func composeAIRuntime(ctx context.Context, services *ProductionServices, userClientID string) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
 		return errors.New("AI runtime requires store, sessions and profiles services")
@@ -61,6 +70,23 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 	}
 	builder := aicontext.NewBuilder(contextDeps)
 
+	// The opt-in long-term semantic memory store lives at the platform data
+	// path as its own self-contained SQLite database. The runner owns it from
+	// here on — Close closes the store — and the owner scope is decided once,
+	// in this composition, never derived per call: every execution reads and
+	// writes under productionMemoryScope, and the restricted memory_* IPC
+	// commands stay scope-authorized by the store itself. An empty data dir
+	// (tests composing a partial runtime) skips the store instead of leaving
+	// a stray database in the working directory.
+	var memoryStore *memory.Store
+	if services.dataDir != "" {
+		store, err := memory.Open(ctx, filepath.Join(services.dataDir, "memory.db"))
+		if err != nil {
+			return err
+		}
+		memoryStore = store
+	}
+
 	// Subagents enables the bounded spawn tool for every execution: the model
 	// factory follows the active profile like the main agent, and the child
 	// tool scope is intersected per execution with the parent's enabled set.
@@ -74,6 +100,8 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 		Context:     builder,
 		Store:       services.Store,
 		Subagents:   &tools.SubagentConfig{Model: subagent.NewProfileModelFactory(services.Profiles)},
+		Memory:      memoryStore,
+		MemoryScope: productionMemoryScope,
 	})
 
 	takeoverDeps := takeover.Dependencies{
