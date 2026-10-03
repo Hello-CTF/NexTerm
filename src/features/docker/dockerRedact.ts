@@ -58,6 +58,18 @@ export function redactMountSource(source: string): string {
 }
 
 /**
+ * `HostConfig.Binds` 条目（`源:目标[:选项]`）的源遮蔽：命名卷整名遮蔽
+ * （`db-passwords` 无斜杠，`redactMountSource` 的单段分支正好覆盖），bind 源
+ * 路径逐段遮蔽；目标与选项原样保留。真实 inspect 里 Mounts[].Name/Source
+ * 之外的卷名泄漏面（M16 实测 docker 29.4）。
+ */
+export function redactBindEntry(entry: string): string {
+  const parts = entry.split(":");
+  if (parts.length < 2) return redactMountSource(entry);
+  return [redactMountSource(parts[0]), ...parts.slice(1)].join(":");
+}
+
+/**
  * 敏感文件名的遮蔽显示值。**导航用原始值，DOM 只用这个显示值**（review r1 P2）：
  * 文本、title、面包屑一律用本函数的输出，原始文件名不上屏。
  * 保留非敏感的扩展名（如 `.yaml`）以便区分文件类型；扩展名本身敏感
@@ -101,6 +113,7 @@ export function redactPathInText(text: string, rawPath: string): string {
  *  - 对象键命中 SENSITIVE_KEY → 整棵子树替换为 REDACTED_MARK；
  *  - `Env` 数组（`Config.Env` 的 `K=V` 字符串）→ 键敏感时值遮蔽；
  *  - `Mounts[]` 的 `Name`（卷名）与 `Source`（路径段）按值/段遮蔽；
+ *  - `Binds` 数组（`HostConfig.Binds` 的 `源:目标[:选项]` 字符串）→ 源遮蔽；
  *  - 其余原样保留 —— 用户排查问题需要看到真实结构，只遮值不遮形。
  */
 export function redactInspectTree(value: unknown): unknown {
@@ -118,6 +131,12 @@ function walk(value: unknown, keyHint: string | undefined): unknown {
         const { name } = splitEnvEntry(entry);
         return isSensitiveName(name) ? `${name}=${REDACTED_MARK}` : entry;
       });
+    }
+    // Binds 是 string[]（`源:目标[:选项]`），源里的卷名/敏感路径段遮蔽（M16）。
+    if (keyHint === "Binds") {
+      return value.map((entry) =>
+        typeof entry === "string" ? redactBindEntry(entry) : walk(entry, undefined),
+      );
     }
     // 数组元素带一个 `键[]` 提示，供对象分支做容器内判断（见下）。
     return value.map((item) => walk(item, keyHint ? `${keyHint}[]` : undefined));

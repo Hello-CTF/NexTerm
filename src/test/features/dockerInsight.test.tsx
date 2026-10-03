@@ -54,6 +54,7 @@ import type { ContainerSummary } from "../../ipc/commands";
 import {
   buildInspectViewModel,
   isSensitiveFileName,
+  redactBindEntry,
   redactContainerPath,
   redactFileName,
   redactInspectTree,
@@ -104,6 +105,9 @@ const inspectA = {
     },
     { Type: "bind", Name: "", Source: "/home/alice/app", Destination: "/app", RW: true },
   ],
+  // 真实 inspect 契约（M16 对 docker 29.4 实测）：HostConfig.Binds 以
+  // `卷名:目标[:选项]` 原样带出卷名 —— Mounts[].Name/Source 之外的泄漏面。
+  HostConfig: { Binds: ["db-passwords:/secrets", "/home/alice/app:/app:ro"] },
 };
 
 const STATS_JSON_LINES = [
@@ -526,6 +530,7 @@ describe("dockerRedact helpers", () => {
         Labels: { "com.example.ok": "fine", "auth.token": "t0k" },
       },
       Nested: { DbPassword: "p@ss" },
+      HostConfig: { Binds: ["db-passwords:/secrets:rw", "/home/alice/app:/app"] },
       Mounts: [
         {
           Type: "volume",
@@ -544,11 +549,23 @@ describe("dockerRedact helpers", () => {
     expect(out.Config.Labels["com.example.ok"]).toBe("fine");
     expect(out.Config.Labels["auth.token"]).toBe(REDACTED_MARK);
     expect(out.Nested.DbPassword).toBe(REDACTED_MARK);
+    // Binds 源里的卷名整名遮蔽，目标与选项原样保留；非敏感 bind 源不动
+    expect(out.HostConfig.Binds[0]).toBe(`${REDACTED_MARK}:/secrets:rw`);
+    expect(out.HostConfig.Binds[1]).toBe("/home/alice/app:/app");
     // 卷名与 Source 里的卷名段都遮蔽；目录结构与非敏感源路径保留
     expect(out.Mounts[0].Name).toBe(REDACTED_MARK);
     expect(out.Mounts[0].Source).toBe(`/var/lib/docker/volumes/${REDACTED_MARK}/_data`);
     expect(out.Mounts[0].Destination).toBe("/secrets");
     expect(out.Mounts[1].Source).toBe("/home/alice/app");
+  });
+
+  it("redactBindEntry masks only the source of a bind spec", () => {
+    expect(redactBindEntry("db-passwords:/secrets")).toBe(`${REDACTED_MARK}:/secrets`);
+    expect(redactBindEntry("db-passwords:/secrets:ro")).toBe(`${REDACTED_MARK}:/secrets:ro`);
+    expect(redactBindEntry("/home/alice/secret-keys:/keys:ro")).toBe(
+      `/home/alice/${REDACTED_MARK}:/keys:ro`,
+    );
+    expect(redactBindEntry("/tmp/nx-acc-data:/data")).toBe("/tmp/nx-acc-data:/data");
   });
 
   it("redactMountSource masks only sensitive path segments", () => {
