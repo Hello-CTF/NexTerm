@@ -21,7 +21,12 @@ import { modelApi, type ModelProfile, type ModelProfilesView } from "../../ipc/c
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { selectModelProfileId } from "./modelLifecycle";
+import {
+  fallbackModelFromInput,
+  fallbackModelLabel,
+  sameModelProfile,
+  selectModelProfileId,
+} from "./modelLifecycle";
 import {
   IconCheck,
   IconClose,
@@ -50,21 +55,9 @@ function blankProfile(): ModelProfile {
     contextWindow: 32768,
     proxy: null,
     stream: true,
+    // 新档案明确不带回退；已有档案的草稿是整份展开，原值不会被这里碰到。
+    fallbackModel: null,
   };
-}
-
-/** 两份档案在「可编辑字段」上是否等价（用于判断有没有未保存的改动）。 */
-function sameProfile(a: ModelProfile, b: ModelProfile): boolean {
-  return (
-    a.name === b.name &&
-    a.baseUrl === b.baseUrl &&
-    a.apiKey === b.apiKey &&
-    a.model === b.model &&
-    a.temperature === b.temperature &&
-    a.contextWindow === b.contextWindow &&
-    (a.proxy ?? "") === (b.proxy ?? "") &&
-    a.stream === b.stream
-  );
 }
 
 /* ── 可内联的模型管理主体 ───────────────────────────────────────────────── */
@@ -102,7 +95,7 @@ export function ModelManager({
 
   const isNew = !!draft && draft.id === "";
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
-  const dirty = !!draft && (!savedProfile || !sameProfile(savedProfile, draft));
+  const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft));
   const isActive = !!draft && !!draft.id && view?.activeId === draft.id;
 
   // 只把「脏没脏」透出去，不把草稿本身交出去 —— 父级不需要、也不该改草稿。
@@ -391,6 +384,21 @@ export function ModelManager({
                       ))}
                     </div>
                   )}
+                </div>
+              </Field>
+
+              {/* 回退模型：草稿整份携带原值，不碰它 ⇒ 保存任何其它字段都原样保留；
+                  只有在这个框里清空才是「明确清除」。两种动作都不藏。 */}
+              <Field label="回退模型（可选）">
+                <input
+                  className="nx-input font-mono"
+                  placeholder="主模型失败时改用的模型名"
+                  aria-label="回退模型"
+                  value={fallbackModelLabel(draft)}
+                  onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
+                />
+                <div className="nx-hint mt-1 text-[10.5px]">
+                  不改这里就保留原设置；清空后保存 = 明确移除回退。
                 </div>
               </Field>
 

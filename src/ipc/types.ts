@@ -121,7 +121,17 @@ contextWindow: number,
 /**
  * None = 跟随系统代理（与 SSH/WinRM 策略相反，§8.7）。
  */
-proxy: string | null, stream: boolean, };
+proxy: string | null, stream: boolean,
+/**
+ * 回退模型（可选）：主模型调用失败时改用的模型名。
+ *
+ * 三态语义，保存方必须区分「清除」与「别动它」：
+ *   · 字符串 = 设置回退模型；
+ *   · `null` = **明确清除**（不使用回退）；
+ *   · 字段缺失（undefined）= 旧数据 / 旧内核没有这一项 —— 整包保存时必须
+ *     原样带回读到的值，不得因为表单没碰过它就当成 `null` 清掉。
+ */
+fallbackModel?: string | null, };
 
 /**
  * 档案表：全部档案 + 当前激活项的 id。
@@ -132,7 +142,13 @@ export type ModelProfilesView = { profiles: Array<ModelProfile>, activeId: strin
 
 export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
 
-export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature: number, contextWindow: number, proxy: string | null, stream: boolean, };
+export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature: number, contextWindow: number, proxy: string | null, stream: boolean,
+/**
+ * 回退模型（可选）：主模型调用失败时改用的模型名。
+ * 三态语义与 [`ModelProfile`] 相同：字符串 = 设置；`null` = 明确清除；
+ * 缺失 = 没有这一项，保存与展示无关字段时不得顺带清掉。
+ */
+fallbackModel?: string | null, };
 
 export type QueryResultDto = { columns: Array<string>, rows: Array<Array<JsonValue>>, rowsAffected: number, durationMs: number, truncated: boolean, error: string | null, };
 
@@ -146,7 +162,14 @@ export type SessionInfoDto = { id: string, assetId: string | null, name: string,
  */
 status: string, tabs: Array<string>, createdAt: number, };
 
-export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, };
+/**
+ * 会话状态事件（`session://status`）。
+ *
+ * `version` 是会话内单调递增的事件版本号（内核 `Session.eventVersion`）：
+ * 重连/重放可能把旧状态事件重新推到前端，按版本号比较即可丢弃乱序的旧事件，
+ * 不需要按内容猜测。
+ */
+export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, version: number, };
 
 export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, };
 
@@ -196,7 +219,11 @@ verifiedAt: number,
  */
 lastError: string | null, };
 
-export type TerminalExitEvent = { tabId: string, exitCode: number | null, };
+/**
+ * 终端退出事件（`terminal://exit`）。`version` 同 `SessionStatusEvent`：
+ * 标签内单调递增，用于识别重连重放的旧事件。
+ */
+export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
 
 export type VaultStatusDto = { initialized: boolean, 
 /**
