@@ -28,6 +28,15 @@ const (
 // cannot flood the conversation budget.
 const memoryRecallMaxBytes = 16 << 10
 
+// memoryListMaxEntries and memoryListMaxBytes bound the directory listing the
+// same way: the model-facing tool message itself must stay small, because the
+// 64 KiB cap in the runner only trims the UI event, long after the model
+// context is spent.
+const (
+	memoryListMaxEntries = 64
+	memoryListMaxBytes   = 8 << 10
+)
+
 type memorySaveArgs struct {
 	Topic   string `json:"topic" jsonschema:"required"`
 	Content string `json:"content" jsonschema:"required"`
@@ -69,7 +78,7 @@ func (r *Runner) memoryTools(ctx context.Context, planMode bool) ([]tool.BaseToo
 			})
 		},
 		func() (tool.InvokableTool, error) {
-			return utils.InferTool(memoryListTool, "列出长期语义记忆的目录（主题、ID、版本），可按主题过滤。", func(ctx context.Context, input memoryListArgs) (tools.Output, error) {
+			return utils.InferTool(memoryListTool, "列出长期语义记忆的目录（主题、ID、版本），可按主题过滤；条数与字节有限额，超出部分会省略并标注。", func(ctx context.Context, input memoryListArgs) (tools.Output, error) {
 				return memoryListOutput(ctx, store, scope, input), nil
 			})
 		},
@@ -112,8 +121,14 @@ func memoryListOutput(ctx context.Context, store *memory.Store, scope memory.Sco
 	if err != nil {
 		return tools.Fail(err)
 	}
+	// Index is ordered by (topic, id), so the listing and what the budget
+	// keeps are deterministic: entries are admitted in order until the entry
+	// cap or the byte cap binds; the rest is reported as Omitted, never
+	// silently dropped and never partially written.
 	var builder strings.Builder
+	bytes := 0
 	count := 0
+	omitted := 0
 	for _, topic := range index {
 		if input.Topic != "" && topic.Topic != input.Topic {
 			continue
@@ -123,14 +138,27 @@ func memoryListOutput(ctx context.Context, store *memory.Store, scope memory.Sco
 			if entry.Redacted {
 				marker = " [已脱敏]"
 			}
-			fmt.Fprintf(&builder, "%s\t%s\tv%d%s\n", topic.Topic, entry.ID, entry.Version, marker)
+			line := fmt.Sprintf("%s\t%s\tv%d%s\n", topic.Topic, entry.ID, entry.Version, marker)
+			if count >= memoryListMaxEntries || bytes+len(line) > memoryListMaxBytes {
+				omitted++
+				continue
+			}
+			builder.WriteString(line)
+			bytes += len(line)
 			count++
 		}
 	}
-	if count == 0 {
+	if count == 0 && omitted == 0 {
+		if input.Topic != "" {
+			return tools.OK("（该主题下没有记忆）")
+		}
 		return tools.OK("（记忆库为空）")
 	}
-	return tools.OK(builder.String())
+	text := builder.String()
+	if omitted > 0 {
+		text += fmt.Sprintf("[已省略 %d 条]\n", omitted)
+	}
+	return tools.OK(text)
 }
 
 func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.Scope, input memoryRecallArgs) tools.Output {
@@ -138,6 +166,7 @@ func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.S
 		return tools.Fail(errors.New("ids 不能为空"))
 	}
 	var builder strings.Builder
+	redactions := 0
 	for _, id := range input.IDs {
 		entry, err := store.Get(ctx, scope, id)
 		if err != nil {
@@ -146,13 +175,24 @@ func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.S
 			}
 			return tools.Fail(err)
 		}
+		// The privacy boundary from the injection path holds here too: the
+		// persisted content is re-redacted on the way to the model, so a
+		// secret that landed in the database by a direct write or an older
+		// rule set never reaches the provider.
+		content, redacted := memory.RedactText(entry.Content)
 		marker := ""
-		if entry.Redacted {
+		if entry.Redacted || redacted {
 			marker = " [已脱敏]"
 		}
-		fmt.Fprintf(&builder, "— %s（主题 %s，版本 %d%s）\n%s\n", entry.ID, entry.Topic, entry.Version, marker, entry.Content)
+		if redacted {
+			redactions++
+		}
+		fmt.Fprintf(&builder, "— %s（主题 %s，版本 %d%s）\n%s\n", entry.ID, entry.Topic, entry.Version, marker, content)
 	}
 	text, cut := prefixBytes(builder.String(), memoryRecallMaxBytes)
+	if redactions > 0 {
+		text += fmt.Sprintf("\n[%d 条内容含已脱敏的疑似密钥]", redactions)
+	}
 	if cut {
 		text += "\n[输出已截断]"
 	}

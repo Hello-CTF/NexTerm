@@ -68,11 +68,27 @@ func TestRealProviderMemoryAcceptance(t *testing.T) {
 	if done != 1 || failed != 0 {
 		t.Fatalf("real provider memory terminal events: done=%d error=%d events=%+v", done, failed, events)
 	}
+	// The canary: "02:00" exists only inside the injected memory entry, so it
+	// can appear in the assistant output only if the injection actually
+	// reached the model and the model used it. The run ends with a bare "OK"
+	// turn, so the canary is asserted on the aggregated streamed answer —
+	// store-and-terminal assertions alone would pass even with injection
+	// completely broken.
+	var answer strings.Builder
 	saved := false
 	for _, event := range events {
+		if event.Type == "delta" {
+			answer.WriteString(event.Text)
+		}
+		if event.Type == "done" {
+			answer.WriteString(event.Answer)
+		}
 		if event.Type == "toolResult" && event.OK && strings.Contains(event.Summary, "已保存记忆") {
 			saved = true
 		}
+	}
+	if !strings.Contains(answer.String(), "02:00") {
+		t.Fatalf("injected memory canary never reached the assistant answer: %q", answer.String())
 	}
 	if !saved {
 		t.Fatalf("memory_save never succeeded: %+v", events)

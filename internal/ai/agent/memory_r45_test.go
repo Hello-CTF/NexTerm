@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
@@ -40,12 +43,19 @@ func (c *captureModel) inputs() [][]*schema.Message {
 
 func openRunnerMemory(t *testing.T) *memory.Store {
 	t.Helper()
-	store, err := memory.Open(context.Background(), t.TempDir()+"/memory.db")
+	store, _ := openRunnerMemoryAt(t)
+	return store
+}
+
+func openRunnerMemoryAt(t *testing.T) (*memory.Store, string) {
+	t.Helper()
+	path := t.TempDir() + "/memory.db"
+	store, err := memory.Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return store
+	return store, path
 }
 
 func memoryRunner(t *testing.T, chat model.BaseChatModel, memoryStore *memory.Store) (*Runner, *store.Store) {
@@ -315,4 +325,161 @@ func TestRunnerCloseClosesMemoryStore(t *testing.T) {
 	if _, err := memoryStore.Settings(context.Background(), runnerMemoryScope); err == nil {
 		t.Fatal("runner.Close did not close the memory store")
 	}
+}
+
+// TestMemoryRecallReRedactsPersistedSecrets is the recall-path privacy
+// regression: a secret that reached the database by a direct write (old
+// database, out-of-band fix, rules upgraded after the fact) must never flow
+// into the model input, mirroring the injection path's re-redaction.
+func TestMemoryRecallReRedactsPersistedSecrets(t *testing.T) {
+	ctx := context.Background()
+	memoryStore, path := openRunnerMemoryAt(t)
+	entry, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{Topic: "operations", Content: "clean"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "persisted-raw-secret-42"
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.ExecContext(ctx, "UPDATE memory_entry SET content = ? WHERE id = ?", "api_key="+secret, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	output := memoryRecallOutput(ctx, memoryStore, runnerMemoryScope, memoryRecallArgs{IDs: []string{entry.ID}})
+	if !output.OK {
+		t.Fatalf("recall = %+v", output)
+	}
+	if strings.Contains(output.Text, secret) {
+		t.Fatalf("recall leaked a persisted secret: %q", output.Text)
+	}
+	if !strings.Contains(output.Text, "[REDACTED]") || !strings.Contains(output.Text, "[已脱敏]") || !strings.Contains(output.Text, "1 条内容含已脱敏") {
+		t.Fatalf("recall redaction metadata = %q", output.Text)
+	}
+	listed := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{})
+	if !listed.OK || !strings.Contains(listed.Text, entry.ID) || strings.Contains(listed.Text, secret) {
+		t.Fatalf("list = %+v", listed)
+	}
+}
+
+// TestMemoryListBudgetKeepsDeterministicWholeLines proves the directory
+// listing is bounded before it reaches the model: the entry cap and the byte
+// cap admit whole lines in (topic, id) order and report the rest as omitted.
+func TestMemoryListBudgetKeepsDeterministicWholeLines(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("entry cap", func(t *testing.T) {
+		memoryStore := openRunnerMemory(t)
+		total := memoryListMaxEntries + 6
+		for i := 0; i < total; i++ {
+			if _, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{
+				Topic: "budget", Content: fmt.Sprintf("entry-%03d", i),
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		output := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{})
+		if !output.OK {
+			t.Fatalf("list = %+v", output)
+		}
+		lines := completeLines(t, output.Text)
+		if len(lines) != memoryListMaxEntries {
+			t.Fatalf("listed lines = %d, want %d", len(lines), memoryListMaxEntries)
+		}
+		if !strings.Contains(output.Text, "[已省略 6 条]") {
+			t.Fatalf("missing omitted marker: %q", output.Text)
+		}
+		// The kept entries are exactly the first 64 in (topic, id) order.
+		index, err := memoryStore.Index(ctx, runnerMemoryScope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kept := make(map[string]bool, len(lines))
+		for _, line := range lines {
+			kept[strings.Split(line, "\t")[1]] = true
+		}
+		for position, entry := range index[0].Entries {
+			if position < memoryListMaxEntries && !kept[entry.ID] {
+				t.Fatalf("entry %d (%s) dropped before the cap", position, entry.ID)
+			}
+			if position >= memoryListMaxEntries && kept[entry.ID] {
+				t.Fatalf("entry %d (%s) kept past the cap", position, entry.ID)
+			}
+		}
+	})
+
+	t.Run("byte cap with multi-byte topics", func(t *testing.T) {
+		memoryStore := openRunnerMemory(t)
+		longTopic := strings.Repeat("主题", 40) // 240 bytes, valid UTF-8
+		for i := 0; i < 40; i++ {
+			if _, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{
+				Topic: longTopic, Content: fmt.Sprintf("entry-%03d", i),
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		output := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{})
+		if !output.OK {
+			t.Fatalf("list = %+v", output)
+		}
+		if len(output.Text) > memoryListMaxBytes+len("[已省略 999 条]\n") {
+			t.Fatalf("list exceeds the byte budget: %d bytes", len(output.Text))
+		}
+		lines := completeLines(t, output.Text)
+		if len(lines) == 0 || len(lines) >= 40 {
+			t.Fatalf("byte-capped listing kept %d of 40 entries", len(lines))
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, longTopic) {
+				t.Fatalf("line is not a whole entry: %q", line)
+			}
+		}
+	})
+
+	t.Run("small store lists everything without markers", func(t *testing.T) {
+		memoryStore := openRunnerMemory(t)
+		first, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{Topic: "a", Content: "one"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{Topic: "b", Content: "two"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{})
+		if !output.OK || strings.Contains(output.Text, "已省略") {
+			t.Fatalf("small list = %+v", output)
+		}
+		for _, id := range []string{first.ID, second.ID} {
+			if !strings.Contains(output.Text, id) {
+				t.Fatalf("small list missing %s: %q", id, output.Text)
+			}
+		}
+		filtered := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{Topic: "a"})
+		if !filtered.OK || strings.Contains(filtered.Text, second.ID) || strings.Contains(filtered.Text, "已省略") {
+			t.Fatalf("filtered list = %+v", filtered)
+		}
+		missing := memoryListOutput(ctx, memoryStore, runnerMemoryScope, memoryListArgs{Topic: "zzz"})
+		if !missing.OK || !strings.Contains(missing.Text, "该主题下没有记忆") {
+			t.Fatalf("empty filter list = %+v", missing)
+		}
+	})
+}
+
+// completeLines splits the listing into lines and requires every line except
+// the omitted marker to be a whole, well-formed entry line.
+func completeLines(t *testing.T, text string) []string {
+	t.Helper()
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+		if strings.HasPrefix(line, "[已省略 ") {
+			continue
+		}
+		if !utf8.ValidString(line) || len(strings.Split(line, "\t")) != 3 {
+			t.Fatalf("partial or malformed line %q", line)
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }

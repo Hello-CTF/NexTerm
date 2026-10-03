@@ -161,14 +161,24 @@ const demoMemoryEntries: DemoMemoryEntry[] = [
 const demoMemorySettings = new Map<string, DemoMemorySettings>();
 
 /**
- * 演示模式的密钥规则：与内核同口径的「赋值型密钥」识别（password/token/
+ * 演示模式的密钥规则：与内核 `memory.RedactText` 同口径的完整规则集 ——
+ * 私钥块、Bearer、JWT、URI 内嵌凭据，以及赋值型密钥（password/token/
  * api_key 等关键词作为下划线分段出现的 key: value / key=value）。命中时
- * reject 策略整体拒写，redact 策略把值替换为 [REDACTED]。
+ * reject 策略整体拒写，redact 策略把命中片段替换为 [REDACTED]。
  */
-const demoSecretRule = /(?:[a-z0-9]+_)*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|client[_-]?secret|password|passwd|secret|token|authorization)(?:_(?:access|key|keys))*["']?\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi;
+const demoSecretRules = [
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
+  /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g,
+  /([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s/@]+@/gi,
+  /(?:[a-z0-9]+_)*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|client[_-]?secret|password|passwd|secret|token|authorization)(?:_(?:access|key|keys))*["']?\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
+];
 
 function demoMemoryRedact(content: string): { content: string; changed: boolean } {
-  const redacted = content.replace(demoSecretRule, "[REDACTED]");
+  let redacted = content;
+  for (const rule of demoSecretRules) {
+    redacted = redacted.replace(rule, "[REDACTED]");
+  }
   return { content: redacted, changed: redacted !== content };
 }
 
@@ -187,6 +197,14 @@ function demoMemoryScopeKey(tenant: string, subject: string): string {
   return `${tenant}\n${subject}`;
 }
 
+/** 与内核 normalizeScope 对齐：空 scope 一律 forbidden，先于任何行查找。 */
+function demoMemoryRequireScope(scope: { tenant?: string; subject?: string }): { tenant: string; subject: string } {
+  const tenant = str(scope.tenant).trim();
+  const subject = str(scope.subject).trim();
+  if (!tenant || !subject) throwAppError("forbidden", "semantic memory access denied");
+  return { tenant, subject };
+}
+
 function demoMemoryFind(scope: { tenant: string; subject: string }, id: string): DemoMemoryEntry {
   const entry = demoMemoryEntries.find((e) => e.id === id);
   if (!entry) throwAppError("not_found", `semantic memory not found: ${id}`);
@@ -196,11 +214,13 @@ function demoMemoryFind(scope: { tenant: string; subject: string }, id: string):
   return entry;
 }
 
+/** 与内核 IPC 的 VersionConflictError 对齐：bad_param + expected/actual detail。 */
 function demoMemoryCAS(entry: { id: string; version: number }, expectedVersion: number) {
   if (entry.version !== expectedVersion) {
     throwAppError(
       "bad_param",
       `semantic memory version conflict: ${entry.id} (expected ${expectedVersion}, actual ${entry.version})`,
+      { id: entry.id, expected: expectedVersion, actual: entry.version },
     );
   }
 }
@@ -209,10 +229,11 @@ function demoMemoryCAS(entry: { id: string; version: number }, expectedVersion: 
  * 演示模式的错误：形状对齐内核的 `AppError`（`ipc/commands.ts::toAppError` 只看 `code`）。
  *
  * 不能 `throw new Error(...)` —— 那样 code 会退化成 `internal`，前端就分不出
- * 「别人正在操作终端」（not_controller）和真正的错误了。
+ * 「别人正在操作终端」（not_controller）和真正的错误了。`detail` 对齐内核 IPC
+ * 错误的 Detail 字段（如 memory CAS 冲突的 expected/actual）。
  */
-function throwAppError(code: string, message: string): never {
-  throw { code, message };
+function throwAppError(code: string, message: string, detail?: Record<string, unknown>): never {
+  throw { code, message, ...(detail === undefined ? {} : { detail }) };
 }
 
 /**
@@ -1747,10 +1768,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     /* ─────────────── memory（长期语义记忆）─────────────── */
     case "memory_create": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const tenant = str(scope.tenant);
-      const subject = str(scope.subject);
-      if (!tenant || !subject) throwAppError("forbidden", "semantic memory access denied");
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
       const topic = str(a.topic).trim();
       const content = str(a.content);
       if (!topic || !content.trim()) throwAppError("bad_param", "invalid semantic memory input: invalid topic or content");
@@ -1758,8 +1776,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const now = Date.now();
       const entry: DemoMemoryEntry = {
         id: uid("mem"),
-        tenant,
-        subject,
+        tenant: scope.tenant,
+        subject: scope.subject,
         topic,
         content: sanitized.content,
         version: 1,
@@ -1773,15 +1791,15 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "memory_get": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const entry = demoMemoryFind({ tenant: str(scope.tenant), subject: str(scope.subject) }, str(a.id));
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const entry = demoMemoryFind(scope, str(a.id));
       const { tenant: _t, subject: _s, ...dto } = entry;
       return dto;
     }
 
     case "memory_edit": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const entry = demoMemoryFind({ tenant: str(scope.tenant), subject: str(scope.subject) }, str(a.id));
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const entry = demoMemoryFind(scope, str(a.id));
       const expectedVersion = num(a.expectedVersion);
       if (!expectedVersion) throwAppError("bad_param", "invalid semantic memory input: expected version must be positive");
       demoMemoryCAS(entry, expectedVersion);
@@ -1794,7 +1812,9 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         entry.topic = topic;
       }
       if (hasContent) {
-        const sanitized = demoMemorySanitize(a.content as string, str(a.secrets, "reject"));
+        const content = a.content as string;
+        if (!content.trim()) throwAppError("bad_param", "invalid semantic memory input: invalid content");
+        const sanitized = demoMemorySanitize(content, str(a.secrets, "reject"));
         entry.content = sanitized.content;
         entry.redacted = sanitized.redacted;
       }
@@ -1805,8 +1825,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "memory_delete": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const entry = demoMemoryFind({ tenant: str(scope.tenant), subject: str(scope.subject) }, str(a.id));
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const entry = demoMemoryFind(scope, str(a.id));
       const expectedVersion = num(a.expectedVersion);
       if (!expectedVersion) throwAppError("bad_param", "invalid semantic memory input: expected version must be positive");
       demoMemoryCAS(entry, expectedVersion);
@@ -1815,13 +1835,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "memory_index": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const tenant = str(scope.tenant);
-      const subject = str(scope.subject);
-      if (!tenant || !subject) throwAppError("forbidden", "semantic memory access denied");
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
       const topics = new Map<string, { id: string; version: number; redacted: boolean; updatedAt: number }[]>();
       for (const entry of demoMemoryEntries) {
-        if (entry.tenant !== tenant || entry.subject !== subject) continue;
+        if (entry.tenant !== scope.tenant || entry.subject !== scope.subject) continue;
         const list = topics.get(entry.topic) ?? [];
         list.push({ id: entry.id, version: entry.version, redacted: entry.redacted, updatedAt: entry.updatedAt });
         topics.set(entry.topic, list);
@@ -1832,14 +1849,14 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "memory_settings_get": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const settings = demoMemorySettings.get(demoMemoryScopeKey(str(scope.tenant), str(scope.subject)));
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const settings = demoMemorySettings.get(demoMemoryScopeKey(scope.tenant, scope.subject));
       return settings ?? { injectionEnabled: false, toolsEnabled: false, version: 0 };
     }
 
     case "memory_settings_set": {
-      const scope = (a.scope ?? {}) as { tenant?: string; subject?: string };
-      const key = demoMemoryScopeKey(str(scope.tenant), str(scope.subject));
+      const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
+      const key = demoMemoryScopeKey(scope.tenant, scope.subject);
       const current = demoMemorySettings.get(key) ?? { injectionEnabled: false, toolsEnabled: false, version: 0 };
       if (typeof a.injectionEnabled !== "boolean" && typeof a.toolsEnabled !== "boolean") {
         throwAppError("bad_param", "invalid semantic memory input: settings update requires at least one flag");
