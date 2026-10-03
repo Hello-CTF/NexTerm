@@ -6,7 +6,7 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { resolveWinrmMode } from "./terminalPolicy";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
-import { listenEvent, EVENTS, type TerminalControlEvent } from "../../ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, useUi } from "../../app/store";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
@@ -51,12 +51,6 @@ export interface TerminalPaneProps {
 }
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
-
-type GridControlEvent = TerminalControlEvent & {
-  cols?: number;
-  rows?: number;
-  gridRevision?: number;
-};
 
 /** 命令块数量达到这个值就自动展开侧栏（3 条以上已经值得一眼看到）。 */
 const AUTO_OPEN_BLOCKS = 3;
@@ -306,24 +300,24 @@ export function TerminalPane({
    *
    * 只订阅一次（挂载时）：事件回调读 `kernelTabIdRef`，避免因为 kernelTabId
    * 从 null 变成 id 而重订一遍（重订期间会漏事件）。
+   *
+   * 版本高水位：事件带内核 `Tab.eventVersion`，重连重放的旧事件版本号必然
+   * 小于等于已见的最大值，整条丢弃 —— 控制权/观看人数/网格都不回退。
    */
+  const controlVersions = useRef(new EventVersionGate());
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
-    void listenEvent<GridControlEvent>(EVENTS.terminalControl, (p) => {
+    void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, (p) => {
       if (p.tabId !== kernelTabIdRef.current) return;
+      if (!controlVersions.current.accept(p.tabId, p.version)) return;
       setControl({
         controller: p.controller,
         subscribers: p.subscribers,
         viewers: p.viewers,
         exited: p.exited,
       });
-      if (
-        typeof p.gridRevision === "number" &&
-        p.gridRevision > 0 &&
-        typeof p.cols === "number" &&
-        typeof p.rows === "number"
-      ) {
+      if (p.gridRevision > 0) {
         setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
       }
     }).then((off) => {

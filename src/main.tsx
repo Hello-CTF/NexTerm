@@ -4,7 +4,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
-import { listenEvent, EVENTS, type SessionStatusEvent } from "./ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { mountApi, systemApi } from "./ipc/commands";
 import { useUi } from "./app/store";
 import { setMacPlatform } from "./app/platform";
@@ -15,7 +15,12 @@ const queryClient = new QueryClient({
 });
 
 // 全局事件 → store（§6.3）
+// 版本高水位：重连后内核可能把旧事件重放过来，按会话/标签记下已见的最大
+// version，旧版本直接丢弃，避免状态回退（重复弹退出提示、状态徽标回跳）。
+const eventVersions = new EventVersionGate();
+
 void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
+  if (!eventVersions.accept(p.sessionId, p.version)) return;
   const { sessions, setSessions, pushToast } = useUi.getState();
   setSessions(
     sessions.map((s) =>
@@ -27,7 +32,8 @@ void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
   }
 });
 
-void listenEvent<{ tabId: string; exitCode: number | null }>(EVENTS.terminalExit, (p) => {
+void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
+  if (!eventVersions.accept(p.tabId, p.version)) return;
   const { pushToast } = useUi.getState();
   if (p.exitCode !== null && p.exitCode !== 0) {
     pushToast("info", `终端进程退出（exit ${p.exitCode}）`);

@@ -181,6 +181,27 @@ describe("terminal grid runtime lifecycle", () => {
     expect(resize).toHaveBeenCalledWith("replacement", { cols: 90, rows: 20 });
   });
 
+  it("denies observer grids for the controller so its own resize echo never applies", () => {
+    const resize = vi.fn().mockResolvedValue(undefined);
+    const local: TerminalGrid[] = [];
+    const coordinator = new TerminalGridCoordinator(
+      { resize },
+      (grid) => local.push(grid),
+      { visible: true, canResize: true },
+    );
+    coordinator.attach("tab", null, false);
+    coordinator.update({ widthPx: 800, heightPx: 400 }, cells);
+
+    // 控制端 resize 后内核会把新网格广播回来（回声）；控制端必须拒绝它，
+    // 否则本地测量结果被自己的回声覆盖，来回拉锯。
+    expect(coordinator.observe(3, { cols: 100, rows: 30 })).toBe(false);
+    expect(coordinator.observe(1, { cols: 50, rows: 10 })).toBe(false);
+    expect(local).toEqual([{ cols: 80, rows: 20 }]);
+    expect(resize).toHaveBeenCalledTimes(1);
+    expect(resize).toHaveBeenCalledWith("tab", { cols: 80, rows: 20 });
+    expect(coordinator.snapshot().observedRevision).toBe(0);
+  });
+
   it("does not commit a disconnected resize and finishes the final intent on reattach", async () => {
     const first = deferred();
     const second = deferred();
