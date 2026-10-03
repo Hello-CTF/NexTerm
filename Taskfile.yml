@@ -1,92 +1,116 @@
 version: '3'
 
 vars:
-  VERSION: '{{.VERSION | default "dev"}}'
-  COMMIT: '{{.COMMIT | default "unknown"}}'
-  BIN_DIR: '{{.BIN_DIR | default "bin"}}'
-  WAILS: '{{.WAILS | default "wails3"}}'
-  LDFLAGS: '-s -w -X github.com/ProbiusOfficial/NexTerm/internal/version.Version={{.VERSION}} -X github.com/ProbiusOfficial/NexTerm/internal/version.Commit={{.COMMIT}}'
+  GOFLAGS: '-mod=readonly'
 
 tasks:
   fmt:
-    summary: Format the Go sources
+    summary: Format all Go sources
     cmds:
-      - gofmt -w ./cmd ./internal/app ./internal/ipc ./internal/platform ./internal/version
+      - gofmt -w ./cmd ./internal ./migrations
 
   fmt:check:
     summary: Check Go formatting
     cmds:
       - |
-        files="$(gofmt -l ./cmd ./internal/app ./internal/ipc ./internal/platform ./internal/version)"
+        files="$(gofmt -l ./cmd ./internal ./migrations)"
         if [ -n "$files" ]; then
           printf 'gofmt required:\n%s\n' "$files" >&2
           exit 1
         fi
 
   vet:
-    summary: Run go vet
+    summary: Run go vet without updating dependency pins
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
     cmds:
       - go vet ./...
 
   test:
-    summary: Run all Go tests
+    summary: Run all Go tests without updating dependency pins
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
     cmds:
       - go test ./...
 
   check:
-    summary: Run formatting, vet, and tests
+    summary: Run Go, frontend, generated-bindings and reproducibility quality gates
     deps: [fmt:check, vet, test]
-
-  server:build:
-    summary: Build the pure-Go server without cgo
-    env:
-      CGO_ENABLED: '0'
     cmds:
-      - mkdir -p '{{.BIN_DIR}}'
-      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-server' ./cmd/nexterm-server
-
-  desktop:build:
-    summary: Build the desktop application for the host
-    cmds:
-      - mkdir -p '{{.BIN_DIR}}'
-      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop' ./cmd/nexterm-desktop
-
-  windows:desktop:
-    summary: Cross-build the zero-cgo Windows desktop application
-    env:
-      CGO_ENABLED: '0'
-      GOOS: windows
-      GOARCH: amd64
-    cmds:
-      - mkdir -p '{{.BIN_DIR}}'
-      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop-windows-amd64.exe' ./cmd/nexterm-desktop
-
-  darwin:desktop:
-    summary: Build the macOS desktop application with the Wails platform layer
-    env:
-      CGO_ENABLED: '1'
-      GOOS: darwin
-      CGO_CFLAGS: '-mmacosx-version-min=12.0'
-      CGO_LDFLAGS: '-mmacosx-version-min=12.0'
-      MACOSX_DEPLOYMENT_TARGET: '12.0'
-    cmds:
-      - mkdir -p '{{.BIN_DIR}}'
-      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop-darwin' ./cmd/nexterm-desktop
-
-  linux:desktop:
-    summary: Build the Linux desktop application with the Wails platform layer
-    env:
-      CGO_ENABLED: '1'
-      GOOS: linux
-    cmds:
-      - mkdir -p '{{.BIN_DIR}}'
-      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o '{{.BIN_DIR}}/nexterm-desktop-linux' ./cmd/nexterm-desktop
+      - go mod verify
+      - pnpm typecheck
+      - pnpm lint
+      - pnpm test
+      - node scripts/build.mjs bindings
+      - node scripts/build.mjs frontend --repro-check
 
   bindings:
-    summary: Generate Wails TypeScript bindings
+    summary: Regenerate Wails TypeScript bindings intentionally
     cmds:
-      - '{{.WAILS}} generate bindings -ts -i -d src/ipc/bindings ./cmd/nexterm-desktop'
+      - wails3 generate bindings -ts -i -d src/ipc/bindings ./cmd/nexterm-desktop
+
+  bindings:check:
+    summary: Generate into a temporary directory and reject bindings drift
+    cmds:
+      - node scripts/build.mjs bindings
+
+  frontend:
+    summary: Build the real Vite assets twice and compare their tree hash
+    cmds:
+      - node scripts/build.mjs frontend --repro-check
+
+  server:build:
+    summary: Build a stripped, static, zero-cgo Linux server
+    cmds:
+      - node scripts/build.mjs server --release --repro-check --os={{.GOOS | default "linux"}} --arch={{.GOARCH | default "amd64"}}
+
+  desktop:build:
+    summary: Build the Wails desktop with real frontend assets for the host
+    cmds:
+      - node scripts/build.mjs desktop --release --repro-check
+
+  desktop:smoke:
+    summary: Run the native WebView smoke with early/replay/binary/JSON assertions
+    cmds:
+      - node scripts/build.mjs desktop --release --repro-check --smoke
+
+  windows:desktop:
+    summary: Build the zero-cgo Windows amd64/arm64 Wails desktop
+    cmds:
+      - node scripts/build.mjs desktop --release --repro-check --os=windows --arch={{.GOARCH | default "amd64"}}
+
+  darwin:desktop:
+    summary: Build the native cgo-enabled macOS Wails desktop
+    cmds:
+      - node scripts/build.mjs desktop --release --repro-check --os=darwin --arch={{.GOARCH | default "arm64"}}
+
+  linux:desktop:
+    summary: Build the native cgo-enabled Linux amd64/arm64 Wails desktop
+    cmds:
+      - node scripts/build.mjs desktop --release --repro-check --os=linux --arch={{.GOARCH | default "amd64"}}
+
+  package:
+    summary: Package the host desktop and enforce all artifact size evidence
+    cmds:
+      - node scripts/build.mjs release
+
+  linux:package:
+    summary: Produce one full Linux server archive with both runtime units
+    cmds:
+      - bash scripts/pack-linux-server.sh --arch={{.GOARCH | default "amd64"}}
+
+  sync:e2e:
+    summary: Exercise Go-only two-instance sync and sync-only HTTP boundaries
+    cmds:
+      - python3 scripts/e2e-sync-local.py
+
+  acceptance:browser:
+    summary: Run real-Chromium responsive and WebSocket acceptance with explicit gaps
+    cmds:
+      - node .github/scripts/browser-acceptance.mjs
 
   verify:
-    summary: Verify tests and native builds
-    deps: [check, server:build, desktop:build]
+    summary: Run quality gates and native host build/smoke checks
+    deps: [check]
+    cmds:
+      - node scripts/build.mjs desktop --release --repro-check --smoke

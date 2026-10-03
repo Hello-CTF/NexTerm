@@ -110,6 +110,14 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 1
 	}
+	// The composed application entry below does not pass through server.Serve,
+	// so bootstrap the credential vault from the CLI/env master key here; the
+	// systemd units rely on NEXTERM_MASTER_KEY from the environment file.
+	if invocation.MasterKey == "" {
+		logger.Warn("no vault master key provided; credential synchronization may be unavailable")
+	} else if err := server.BootstrapVault(ctx, application.Services.Vault, invocation.MasterKey); err != nil {
+		logger.Error("vault bootstrap failed", "error", err)
+	}
 	if err := application.Serve(ctx, core.ServeConfig{
 		Listen:         invocation.Listen,
 		WebRoot:        invocation.WebRoot,
