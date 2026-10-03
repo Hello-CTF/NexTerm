@@ -66,6 +66,11 @@ jobs:
         with:
           go-version: 1.26.8
           cache: true
+      - name: Install Linux WebView packaging dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install the pinned Wails CLI
         run: |
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
@@ -73,11 +78,6 @@ jobs:
       - name: Install NSIS
         if: matrix.os == 'windows'
         run: choco install nsis --version=3.11 --yes --no-progress
-      - name: Install Linux WebView packaging dependencies
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Verify bindings
