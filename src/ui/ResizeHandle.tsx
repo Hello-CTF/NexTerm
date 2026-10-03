@@ -1,26 +1,115 @@
-/**
- * 侧栏宽度拖拽手柄。
- *
- * 用 Pointer Events + `setPointerCapture`，而不是在 window 上挂 mousemove：
- * 指针拖出窗口时仍然收得到 move，松手也不会"卡在拖拽态"—— 而在 window 上挂
- * 监听就必须在 unmount / 松手两条路径上都记得摘，漏一条就留下一个幽灵拖拽。
- *
- * ⚠️ 拖拽标志用 **ref** 而不是 useState：`pointerdown` 里 setState 之后，
- * 同一帧内紧跟着到达的 `pointermove` 读到的还是旧值（React 批量更新是异步的），
- * 于是第一个 move 会被自己判成"没在拖"而丢掉。真实鼠标下这一帧通常看不出来，
- * 自动化测试里必定翻车。ref 是同步的，没有这个问题。
- */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+export const RESIZE_END_EVENT = "nexterm:resize-end";
+
+interface FrameDriver {
+  request: (callback: () => void) => number;
+  cancel: (handle: number) => void;
+}
+
+const browserFrames: FrameDriver = {
+  request: (callback) => requestAnimationFrame(callback),
+  cancel: (handle) => cancelAnimationFrame(handle),
+};
+
+export interface FrameCoalescer<T> {
+  schedule: (value: T) => void;
+  flush: (value?: T) => void;
+  cancel: () => void;
+}
+
+export function createFrameCoalescer<T>(
+  publish: (value: T) => void,
+  driver: FrameDriver = browserFrames,
+): FrameCoalescer<T> {
+  let frame: number | null = null;
+  let latest: T | undefined;
+  let hasValue = false;
+
+  const cancel = () => {
+    if (frame !== null) driver.cancel(frame);
+    frame = null;
+    latest = undefined;
+    hasValue = false;
+  };
+
+  return {
+    schedule(value) {
+      latest = value;
+      hasValue = true;
+      if (frame !== null) return;
+      frame = driver.request(() => {
+        frame = null;
+        if (!hasValue) return;
+        const next = latest as T;
+        latest = undefined;
+        hasValue = false;
+        publish(next);
+      });
+    },
+    flush(value) {
+      if (arguments.length > 0) {
+        latest = value;
+        hasValue = true;
+      }
+      if (frame !== null) driver.cancel(frame);
+      frame = null;
+      if (!hasValue) return;
+      const next = latest as T;
+      latest = undefined;
+      hasValue = false;
+      publish(next);
+    },
+    cancel,
+  };
+}
 
 export interface ResizeHandleProps {
-  /** `left` = 手柄贴左栏右侧（往右拖变宽）；`right` = 手柄贴右栏左侧（往左拖变宽）。 */
   side: "left" | "right";
   width: number;
   min: number;
   max: number;
-  /** 双击复位到该宽度。 */
   defaultWidth: number;
-  onChange: (w: number) => void;
+  onChange: (width: number) => void;
+}
+
+export function widthForPointer(
+  side: "left" | "right",
+  startWidth: number,
+  startX: number,
+  clientX: number,
+  min: number,
+  max: number,
+): number {
+  const delta = clientX - startX;
+  const next = side === "left" ? startWidth + delta : startWidth - delta;
+  return Math.min(max, Math.max(min, next));
+}
+
+export function widthForKey(
+  side: "left" | "right",
+  width: number,
+  key: string,
+  min: number,
+  max: number,
+  shiftKey = false,
+): number | null {
+  const step = shiftKey ? 50 : 10;
+  const direction = side === "left" ? 1 : -1;
+  switch (key) {
+    case "ArrowLeft":
+      return Math.min(max, Math.max(min, width - step * direction));
+    case "ArrowRight":
+      return Math.min(max, Math.max(min, width + step * direction));
+    case "Home":
+      return min;
+    case "End":
+      return max;
+    case "Enter":
+      return null;
+    default:
+      return null;
+  }
 }
 
 export function ResizeHandle({
@@ -31,46 +120,80 @@ export function ResizeHandle({
   defaultWidth,
   onChange,
 }: ResizeHandleProps) {
-  /** 同步的拖拽标志（见文件头注释）。 */
   const dragging = useRef(false);
-  /** 纯样式用：决定要不要亮起那条高亮。 */
   const [active, setActive] = useState(false);
-  /** 拖拽起点的指针位置与当时宽度。 */
-  const start = useRef({ x: 0, w: 0 });
+  const start = useRef({ x: 0, width: 0 });
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const framesRef = useRef<FrameCoalescer<number> | null>(null);
+  if (!framesRef.current) {
+    framesRef.current = createFrameCoalescer<number>((next) => onChangeRef.current(next));
+  }
 
-  const stop = (e: React.PointerEvent<HTMLDivElement>) => {
+  useEffect(() => () => framesRef.current?.cancel(), []);
+
+  const finish = (clientX?: number) => {
+    if (!dragging.current) return;
     dragging.current = false;
     setActive(false);
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+    if (clientX === undefined) framesRef.current?.flush();
+    else {
+      framesRef.current?.flush(
+        widthForPointer(side, start.current.width, start.current.x, clientX, min, max),
+      );
     }
+    window.dispatchEvent(new Event(RESIZE_END_EVENT));
   };
 
   return (
     <div
       role="separator"
+      tabIndex={0}
       aria-orientation="vertical"
       aria-label={side === "left" ? "调整左栏宽度" : "调整 AI 侧栏宽度"}
-      title="拖动调整宽度（双击复位）"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(width)}
+      aria-valuetext={`${Math.round(width)} 像素`}
+      title="拖动调整宽度（双击或回车复位，方向键微调）"
       className={`nx-resize-handle ${active ? "is-dragging" : ""}`}
-      onPointerDown={(e) => {
-        e.preventDefault();
-        // 光标离开这条 5px 的窄条后仍要收到 move —— 必须捕获指针
-        e.currentTarget.setPointerCapture(e.pointerId);
-        start.current = { x: e.clientX, w: width };
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        start.current = { x: event.clientX, width };
         dragging.current = true;
         setActive(true);
       }}
-      onPointerMove={(e) => {
+      onPointerMove={(event) => {
         if (!dragging.current) return;
-        const dx = e.clientX - start.current.x;
-        // 左栏挂在它自己右边 → 往右拖变宽；右栏挂在左边 → 往左拖变宽
-        const next = side === "left" ? start.current.w + dx : start.current.w - dx;
-        onChange(Math.min(max, Math.max(min, next)));
+        framesRef.current?.schedule(
+          widthForPointer(side, start.current.width, start.current.x, event.clientX, min, max),
+        );
       }}
-      onPointerUp={stop}
-      onPointerCancel={stop}
-      onDoubleClick={() => onChange(defaultWidth)}
+      onPointerUp={(event) => {
+        finish(event.clientX);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+      onPointerCancel={() => finish()}
+      onLostPointerCapture={() => finish()}
+      onDoubleClick={() => {
+        framesRef.current?.cancel();
+        onChangeRef.current(defaultWidth);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onChangeRef.current(defaultWidth);
+          return;
+        }
+        const next = widthForKey(side, width, event.key, min, max, event.shiftKey);
+        if (next === null) return;
+        event.preventDefault();
+        onChangeRef.current(next);
+      }}
     />
   );
 }

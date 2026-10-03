@@ -27,6 +27,18 @@ import {
   type Pane,
   type Workspace,
 } from "./store";
+import {
+  clampSplitRatio,
+  splitRatioAt,
+  splitRatioForKey,
+  workspaceViewport,
+  type WorkspaceViewport,
+} from "../features/terminal/workspaceLayout";
+import {
+  createFrameCoalescer,
+  RESIZE_END_EVENT,
+  type FrameCoalescer,
+} from "../ui/ResizeHandle";
 import { layoutBootstrapped, startLayoutSync } from "./layout";
 import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
@@ -138,6 +150,33 @@ function tabIcon(t: AppTab) {
 /** 首启动自动连「当前设备」的一次性标记（StrictMode 下 effect 会跑两遍）。 */
 let bootLocalTried = false;
 
+function readWorkspaceViewport(): WorkspaceViewport {
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  return workspaceViewport(window.innerWidth, coarse);
+}
+
+function useWorkspaceViewport(): WorkspaceViewport {
+  const [viewport, setViewport] = useState(readWorkspaceViewport);
+
+  useEffect(() => {
+    const frames = createFrameCoalescer<WorkspaceViewport>(setViewport);
+    const update = () => frames.schedule(readWorkspaceViewport());
+    const coarseQuery = window.matchMedia?.("(pointer: coarse)");
+    window.addEventListener("resize", update);
+    window.visualViewport?.addEventListener("resize", update);
+    coarseQuery?.addEventListener("change", update);
+    update();
+    return () => {
+      frames.cancel();
+      window.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("resize", update);
+      coarseQuery?.removeEventListener("change", update);
+    };
+  }, []);
+
+  return viewport;
+}
+
 export default function App() {
   const {
     workspaces,
@@ -150,11 +189,11 @@ export default function App() {
     sessions,
     setSessions,
     leftOpen,
-    setLeftOpen,
+    setLeftOpen: setLeftOpenStore,
     leftMode,
     setLeftMode,
     rightOpen,
-    setRightOpen,
+    setRightOpen: setRightOpenStore,
     leftWidth,
     setLeftWidth,
     rightWidth,
@@ -172,6 +211,29 @@ export default function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<string>("…");
+  const viewport = useWorkspaceViewport();
+  const [overlayDock, setOverlayDock] = useState<"left" | "right" | null>(null);
+  const leftDockOpen = viewport.overlaySidebars
+    ? overlayDock === "left" && leftOpen
+    : leftOpen;
+  const rightDockOpen = viewport.overlaySidebars
+    ? overlayDock === "right" && rightOpen
+    : rightOpen;
+
+  const setLeftOpen = useCallback(
+    (open: boolean) => {
+      setLeftOpenStore(open);
+      setOverlayDock(viewport.overlaySidebars && open ? "left" : null);
+    },
+    [setLeftOpenStore, viewport.overlaySidebars],
+  );
+  const setRightOpen = useCallback(
+    (open: boolean) => {
+      setRightOpenStore(open);
+      setOverlayDock(viewport.overlaySidebars && open ? "right" : null);
+    },
+    [setRightOpenStore, viewport.overlaySidebars],
+  );
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   // 左栏文件树、AI 侧栏都跟着"当前工作区的机器"走，而不是"最后一个打开过标签的机器"
@@ -357,10 +419,10 @@ export default function App() {
         setPaletteOpen(true);
       } else if (mod && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        setLeftOpen(!leftOpen);
+        setLeftOpen(!leftDockOpen);
       } else if (mod && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setRightOpen(!rightOpen);
+        setRightOpen(!rightDockOpen);
       } else if (mod && e.key.toLowerCase() === "t") {
         e.preventDefault();
         void openLocalTerminal();
@@ -381,8 +443,8 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
-    leftOpen,
-    rightOpen,
+    leftDockOpen,
+    rightDockOpen,
     activeTabId,
     setLeftOpen,
     setRightOpen,
@@ -560,7 +622,10 @@ export default function App() {
       key: "credentials",
       label: "凭据",
       icon: IconKey,
-      onClick: openCredentialsSidebar,
+      onClick: () => {
+        openCredentialsSidebar();
+        setLeftOpen(true);
+      },
     },
     {
       key: "files",
@@ -605,13 +670,16 @@ export default function App() {
   ];
 
   const railBottom = [
-    { key: "ai", label: "AI 助手", icon: IconSparkles, onClick: () => setRightOpen(!rightOpen) },
+    { key: "ai", label: "AI 助手", icon: IconSparkles, onClick: () => setRightOpen(!rightDockOpen) },
     { key: "audit", label: "审计日志", icon: IconHistory, onClick: openAudit },
     { key: "settings", label: "设置", icon: IconSettings, onClick: openSettings },
   ];
 
   return (
-    <div className="flex h-full flex-col" onDoubleClick={onDragRegionDoubleClick}>
+    <div
+      className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
+      onDoubleClick={onDragRegionDoubleClick}
+    >
       {/* 接管横幅（§8.6）：置顶占满整行，非空即表示 AI 正在操作某个终端 */}
       <TakeoverBanner />
 
@@ -829,14 +897,22 @@ export default function App() {
           </header>
 
         {/* 三栏主体 */}
-        <div className="flex min-h-0 flex-1 bg-neutral-900">
+        <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
+          {viewport.overlaySidebars && (leftDockOpen || rightDockOpen) && (
+            <button
+              type="button"
+              className="nx-dock-backdrop"
+              aria-label="收起侧栏"
+              onClick={() => setOverlayDock(null)}
+            />
+          )}
           {/*
             左栏三种形态：资产列表（管理）、凭据库（资源）、当前工作区的文件树（干活）。
             连上机器后默认是文件树 —— 这台机器就是接下来一段时间的工作面。
             用 key=sessionId 让每台机器各自保留自己的展开状态与选中项。
           */}
-          {!leftOpen ? null : (
-            <>
+          {leftDockOpen && (
+            <div className="nx-left-dock">
               {leftMode === "credentials" ? (
                 <CredentialsSidebar />
               ) : leftMode === "files" && ws?.sessionId ? (
@@ -852,10 +928,10 @@ export default function App() {
                 defaultWidth={LEFT_WIDTH_RANGE.default}
                 onChange={setLeftWidth}
               />
-            </>
+            </div>
           )}
 
-          <main className="min-w-0 flex-1">
+          <main className="nx-workspace-main min-w-0 flex-1">
             {/*
               关键：**所有工作区、所有面板、所有标签都保持挂载**，非激活的用 `hidden` 藏起来。
               以前是 `key={active.id}` + 条件渲染，切标签会卸载/重建组件 →
@@ -879,6 +955,7 @@ export default function App() {
                     key={p.id}
                     pane={p}
                     active={wsActive && p.id === w.activePaneId}
+                    visible={wsActive}
                     split={split}
                     canSplit={!split}
                     /* 「取消分屏」始终收掉下面那一栏，符合直觉 */
@@ -888,8 +965,8 @@ export default function App() {
                     }}
                     onActivate={() => setActivePane(p.id, w.id)}
                     onNewTerminal={openNewTerminal}
-                    leftOpen={leftOpen}
-                    onToggleLeft={() => setLeftOpen(!leftOpen)}
+                    leftOpen={leftDockOpen}
+                    onToggleLeft={() => setLeftOpen(!leftDockOpen)}
                   />
                 ));
                 return (
@@ -912,21 +989,23 @@ export default function App() {
             )}
           </main>
 
-          {rightOpen && (
-            <ResizeHandle
-              side="right"
-              width={rightWidth}
-              min={RIGHT_WIDTH_RANGE.min}
-              max={RIGHT_WIDTH_RANGE.max}
-              defaultWidth={RIGHT_WIDTH_RANGE.default}
-              onChange={setRightWidth}
-            />
-          )}
-          <AiSidebar sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
+          <div className={`nx-right-dock ${rightDockOpen ? "" : "is-hidden"}`}>
+            {rightDockOpen && (
+              <ResizeHandle
+                side="right"
+                width={rightWidth}
+                min={RIGHT_WIDTH_RANGE.min}
+                max={RIGHT_WIDTH_RANGE.max}
+                defaultWidth={RIGHT_WIDTH_RANGE.default}
+                onChange={setRightWidth}
+              />
+            )}
+            <AiSidebar sessionId={activeSessionId} tabId={active?.kind === "terminal" ? active.tabId : undefined} />
+          </div>
         </div>
 
         {/* 状态栏 */}
-        <footer className="flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
+        <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
           <span className="flex items-center gap-1.5">
             <IconServer size={11} />
             <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
@@ -970,7 +1049,7 @@ export default function App() {
       </div>
 
       {/* Toast */}
-      <div className="pointer-events-none fixed right-4 bottom-9 z-[95] flex w-[380px] flex-col gap-2">
+      <div className="nx-toasts pointer-events-none fixed right-4 bottom-9 z-[95] flex flex-col gap-2">
         {toasts.map((t) => {
           const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
           const tone =
@@ -1014,8 +1093,10 @@ export default function App() {
 
 interface PaneGroupProps {
   pane: Pane;
-  /** 该面板是激活面板，且它所在的工作区也激活（隐藏时两个都为 false）。 */
+  /** 该面板是否拥有输入焦点；仅影响激活样式与焦点切换。 */
   active: boolean;
+  /** 所在工作区是否可见；分屏里的两个面板会同时为 true。 */
+  visible: boolean;
   /** 所在工作区是否处于分屏状态（决定激活态的视觉提示强弱）。 */
   split: boolean;
   canSplit: boolean;
@@ -1034,6 +1115,7 @@ interface PaneGroupProps {
 function PaneGroup({
   pane,
   active,
+  visible,
   split,
   canSplit,
   onToggleSplit,
@@ -1147,11 +1229,10 @@ function PaneGroup({
         ) : (
           pane.tabs.map((t) => (
             <div key={t.id} className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}>
-              {/* visible 必须同时满足「标签激活」与「所在栏激活」：
-                  隐藏的面板里 fit() 会量到 0 高度，还会连带把远端 PTY 改小 */}
+              {/* 同一工作区的两个分屏都可见；焦点面板只决定激活样式。 */}
               <PaneForTab
                 tab={t}
-                active={t.id === activeTabId && active}
+                active={t.id === activeTabId && visible}
                 onClose={() => void requestCloseTab(t.id)}
               />
             </div>
@@ -1192,58 +1273,88 @@ function SplitStack({
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
-  // 用 ref 存回调，避免每次渲染都重挂 window 监听
-  const ratioRef = useRef(onRatio);
-  ratioRef.current = onRatio;
+  const [active, setActive] = useState(false);
+  const currentRatio = clampSplitRatio(ratio);
+  const ratioRef = useRef(currentRatio);
+  ratioRef.current = currentRatio;
+  const onRatioRef = useRef(onRatio);
+  onRatioRef.current = onRatio;
+  const framesRef = useRef<FrameCoalescer<number> | null>(null);
+  if (!framesRef.current) {
+    framesRef.current = createFrameCoalescer<number>((next) => onRatioRef.current(next));
+  }
 
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const box = boxRef.current?.getBoundingClientRect();
-      if (!box || box.height < 80) return;
-      // 拖拽期间每帧写一次 store：splitRatio 就在工作区上，够便宜
-      ratioRef.current((e.clientY - box.top) / box.height);
-    };
-    const stop = () => {
-      if (!dragging.current) return;
-      dragging.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-    };
-  }, []);
+  useEffect(() => () => framesRef.current?.cancel(), []);
 
+  const measure = (clientY: number) => {
+    const rect = boxRef.current?.getBoundingClientRect();
+    return rect
+      ? splitRatioAt(clientY, rect, ratioRef.current)
+      : ratioRef.current;
+  };
+  const finish = (clientY?: number) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    setActive(false);
+    if (clientY === undefined) framesRef.current?.flush();
+    else framesRef.current?.flush(measure(clientY));
+    window.dispatchEvent(new Event(RESIZE_END_EVENT));
+  };
   const split = bottom != null;
 
   return (
     <div ref={boxRef} className="flex h-full min-h-0 flex-col">
       <div
-        className="flex min-h-[60px] flex-col"
-        style={split ? { flex: `0 0 calc(${ratio * 100}% - 3px)` } : { flex: "1 1 auto" }}
+        className="flex min-h-0 flex-col"
+        style={split ? { flex: `0 0 calc(${currentRatio * 100}% - 3px)` } : { flex: "1 1 auto" }}
       >
         {top}
       </div>
       {split && (
         <>
           <div
-            className="nx-split-handle"
-            title="拖动调整上下比例"
-            onPointerDown={() => {
+            role="separator"
+            tabIndex={0}
+            aria-orientation="horizontal"
+            aria-label="调整上下分屏比例"
+            aria-valuemin={15}
+            aria-valuemax={85}
+            aria-valuenow={Math.round(currentRatio * 100)}
+            aria-valuetext={`上栏 ${Math.round(currentRatio * 100)}%`}
+            className={`nx-split-handle ${active ? "is-dragging" : ""}`}
+            title="拖动调整上下比例（双击或回车复位，方向键微调）"
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
               dragging.current = true;
-              document.body.style.cursor = "row-resize";
-              document.body.style.userSelect = "none";
+              setActive(true);
+            }}
+            onPointerMove={(event) => {
+              if (dragging.current) framesRef.current?.schedule(measure(event.clientY));
+            }}
+            onPointerUp={(event) => {
+              finish(event.clientY);
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onPointerCancel={() => finish()}
+            onLostPointerCapture={() => finish()}
+            onDoubleClick={() => {
+              framesRef.current?.cancel();
+              onRatioRef.current(0.5);
+            }}
+            onKeyDown={(event) => {
+              const next = splitRatioForKey(ratioRef.current, event.key, event.shiftKey);
+              if (next === null) return;
+              event.preventDefault();
+              onRatioRef.current(next);
             }}
           >
             <span className="nx-split-grip" />
           </div>
-          <div className="flex min-h-[60px] flex-1 flex-col">{bottom}</div>
+          <div className="flex min-h-0 flex-1 flex-col">{bottom}</div>
         </>
       )}
     </div>

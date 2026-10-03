@@ -1,0 +1,317 @@
+/** @vitest-environment jsdom */
+
+import { act } from "react";
+import { createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
+
+const harness = vi.hoisted(() => ({
+  terminals: [] as Array<{
+    cols: number;
+    rows: number;
+    resize: ReturnType<typeof vi.fn>;
+  }>,
+  observers: [] as Array<() => void>,
+  frames: new Map<number, () => void>(),
+  reopen: null as (() => void) | null,
+  geometry: { widthPx: 360, heightPx: 400 },
+  attach: vi.fn(),
+  attachTab: vi.fn(),
+  execAttach: vi.fn(),
+  openLineTab: vi.fn(),
+  resize: vi.fn(),
+  flush: vi.fn(),
+  detach: vi.fn(),
+  setVisible: vi.fn(),
+}));
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class {
+    cols = 80;
+    rows = 24;
+    options = { scrollback: 1000 };
+    element: HTMLElement | null = null;
+    resize = vi.fn((cols: number, rows: number) => {
+      this.cols = cols;
+      this.rows = rows;
+    });
+
+    constructor() {
+      harness.terminals.push(this);
+    }
+    open(element: HTMLElement) {
+      this.element = element;
+    }
+    loadAddon() {}
+    write() {}
+    writeln() {}
+    clear() {}
+    dispose() {}
+    focus() {}
+    getSelection() {
+      return "";
+    }
+    onData() {
+      return { dispose: vi.fn() };
+    }
+  },
+}));
+vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
+vi.mock("@xterm/addon-canvas", () => ({ CanvasAddon: class {} }));
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class {
+    findNext() {}
+    findPrevious() {}
+  },
+}));
+vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class {} }));
+vi.mock("../../features/terminal/commandBlocks", () => ({
+  CommandBlockManager: class {
+    copyBlock() { return ""; }
+    getBlockText() { return ""; }
+    scrollTo() {}
+    navigate() { return null; }
+    clear() {}
+    dispose() {}
+    feedInput() {}
+  },
+}));
+vi.mock("../../features/terminal/terminalGeometry", () => ({
+  measureTerminalGeometry: () => {
+    const { widthPx, heightPx } = harness.geometry;
+    if (widthPx <= 0 || heightPx <= 0) return null;
+    return {
+      viewport: { widthPx, heightPx },
+      metrics: { widthPx: 10, heightPx: 20 },
+      grid: {
+        cols: Math.max(1, Math.floor(widthPx / 10)),
+        rows: Math.max(1, Math.floor(heightPx / 20)),
+      },
+    };
+  },
+  resizeTerminalToGrid: (
+    term: { resize: (cols: number, rows: number) => void },
+    grid: { cols: number; rows: number },
+  ) => term.resize(grid.cols, grid.rows),
+}));
+vi.mock("../../features/terminal/gridRuntimeAdapter", () => ({
+  productionGridRuntime: { resize: harness.resize, flush: harness.flush },
+}));
+vi.mock("../../ipc/commands", () => ({
+  terminalApi: {
+    attach: harness.attach,
+    attachTab: harness.attachTab,
+    detach: harness.detach,
+    setVisible: harness.setVisible,
+    write: vi.fn().mockResolvedValue(undefined),
+  },
+  dockerApi: { execAttach: harness.execAttach },
+  sessionApi: { openLineTab: harness.openLineTab },
+}));
+vi.mock("../../ipc/events", () => ({
+  channelIdOf: () => "channel-1",
+  createBinaryChannel: () => ({}),
+  disposeChannel: vi.fn(),
+  onChannelReopen: (_channel: unknown, callback: () => void) => {
+    harness.reopen = callback;
+    return vi.fn();
+  },
+}));
+vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
+
+import { XtermView, type XtermViewProps } from "../../features/terminal/XtermView";
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+let frameId = 0;
+
+async function flushWork(): Promise<void> {
+  await act(async () => {
+    const callbacks = [...harness.frames.values()];
+    harness.frames.clear();
+    for (const callback of callbacks) callback();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function show(props: XtermViewProps): Promise<void> {
+  if (!root) {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  }
+  await act(async () => {
+    root?.render(createElement(XtermView, props));
+  });
+  await flushWork();
+}
+
+function props(overrides: Partial<XtermViewProps> = {}): XtermViewProps {
+  return { sessionId: "session", tabId: "pending", ...overrides };
+}
+
+beforeEach(() => {
+  harness.terminals.length = 0;
+  harness.observers.length = 0;
+  harness.frames.clear();
+  harness.reopen = null;
+  harness.geometry = { widthPx: 360, heightPx: 400 };
+  harness.attach.mockReset().mockResolvedValue("tab-new");
+  harness.attachTab.mockReset().mockResolvedValue({
+    tabId: "tab-existing",
+    cols: 90,
+    rows: 30,
+    controller: "other",
+    subscribers: 1,
+    viewers: 1,
+    exited: false,
+  });
+  harness.execAttach.mockReset().mockResolvedValue("tab-exec");
+  harness.openLineTab.mockReset().mockResolvedValue("tab-line");
+  harness.resize.mockReset().mockResolvedValue(undefined);
+  harness.flush.mockReset().mockResolvedValue(undefined);
+  harness.detach.mockReset().mockResolvedValue(undefined);
+  harness.setVisible.mockReset().mockResolvedValue(undefined);
+  frameId = 0;
+
+  vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
+    const id = ++frameId;
+    harness.frames.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => harness.frames.delete(id));
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) {
+      harness.observers.push(callback);
+    }
+    observe() {}
+    disconnect() {}
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
+    .IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(() => {
+  if (root) act(() => root?.unmount());
+  root = null;
+  container?.remove();
+  container = null;
+});
+
+describe("XtermView production grid lifecycle", () => {
+  it("opens a new PTY with measured geometry instead of the terminal default", async () => {
+    await show(props());
+    expect(harness.attach).toHaveBeenCalledWith(
+      "session",
+      36,
+      20,
+      expect.anything(),
+    );
+    expect(harness.attach).not.toHaveBeenCalledWith(
+      "session",
+      80,
+      24,
+      expect.anything(),
+    );
+  });
+
+  it("waits for visibility before a new attach and measures again on resume", async () => {
+    await show(props({ visible: false }));
+    expect(harness.attach).not.toHaveBeenCalled();
+
+    await show(props({ visible: true }));
+    expect(harness.attach).toHaveBeenCalledWith(
+      "session",
+      36,
+      20,
+      expect.anything(),
+    );
+  });
+
+  it("flushes the final measured grid at the workspace resize boundary", async () => {
+    await show(props());
+    harness.resize.mockClear();
+    harness.flush.mockClear();
+    harness.geometry = { widthPx: 560, heightPx: 400 };
+
+    window.dispatchEvent(new Event(RESIZE_END_EVENT));
+    await flushWork();
+
+    expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 56, rows: 20 });
+    expect(harness.flush).toHaveBeenCalledWith("tab-new");
+  });
+
+  it("applies authoritative observer grids without submitting local resize", async () => {
+    await show(props({ resumeTabId: "tab-existing", canResize: false }));
+    const term = harness.terminals[0];
+    term.resize.mockClear();
+    harness.resize.mockClear();
+
+    await show(
+      props({
+        resumeTabId: "tab-existing",
+        canResize: false,
+        remoteGrid: { cols: 100, rows: 32, revision: 2 },
+      }),
+    );
+
+    expect(term.resize).toHaveBeenCalledWith(100, 32);
+    expect(harness.resize).not.toHaveBeenCalled();
+  });
+
+  it("reuses the existing tab on channel reopen and synchronizes the latest grid", async () => {
+    await show(props());
+    harness.resize.mockClear();
+    harness.attachTab.mockResolvedValue({
+      tabId: "tab-new",
+      cols: 90,
+      rows: 30,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+    });
+
+    harness.reopen?.();
+    await flushWork();
+
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything());
+    expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 36, rows: 20 });
+    expect(harness.attach).toHaveBeenCalledTimes(1);
+  });
+
+  it("never touches the disposed terminal when unmounted during a resume attach", async () => {
+    let resolveAttach: ((v: unknown) => void) | undefined;
+    harness.attachTab.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAttach = resolve;
+        }),
+    );
+    await show(props({ resumeTabId: "tab-existing" }));
+    const term = harness.terminals[0];
+    term.resize.mockClear();
+
+    // 卸载发生在 attachTab 等待期间：cleanup 已 dispose 终端。
+    // 这时若再按远端尺寸 resize（applyRemoteDimensions），就是在已销毁的
+    // xterm 上操作 —— 真机上抛 Viewport.syncScrollArea TypeError。
+    await act(async () => root?.unmount());
+    root = null;
+
+    resolveAttach?.({
+      tabId: "tab-existing",
+      cols: 90,
+      rows: 30,
+      controller: "other",
+      subscribers: 1,
+      viewers: 1,
+      exited: false,
+    });
+    await flushWork();
+
+    expect(term.resize).not.toHaveBeenCalled();
+    // 服务端订阅仍要按通道定向摘掉（只摘自己这条）。
+    expect(harness.detach).toHaveBeenCalledWith("tab-existing", "channel-1");
+  });
+});

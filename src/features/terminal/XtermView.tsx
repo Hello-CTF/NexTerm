@@ -1,7 +1,6 @@
 // 终端视图：xterm.js + WebGL + attach 到内核通道（M0-T5 / §4.5）。
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
@@ -12,8 +11,11 @@ import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } fro
 import { clientId } from "../../ipc/env";
 import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
+import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
-import { shouldFitTerminal, shouldSendTerminalResize } from "./terminalPolicy";
+import { measureTerminalGeometry, resizeTerminalToGrid } from "./terminalGeometry";
+import { TerminalGridCoordinator } from "./terminalGrid";
+import { productionGridRuntime } from "./gridRuntimeAdapter";
 
 // 终端配色：与 styles.css 的令牌保持一致（画布 #101217），
 // 前景与 ANSI 十六色统一压低饱和度，和整体界面（微冷深灰）同调。
@@ -65,6 +67,8 @@ export interface TerminalHandle {
   clear: () => void;
   /** 当前选中的文本（没选中时是空串）。右键「向 AI 提问」用它取内容。 */
   getSelection: () => string;
+  /** 聚焦终端输入代理；移动端用它主动唤起系统键盘。 */
+  focus: () => void;
   /** 接管控制权后按当前宿主重新计算行列。 */
   fit: () => void;
   /** 当前终端尺寸。接管控制权后要按它把 PTY 尺寸推过去（最后活跃者赢）。 */
@@ -81,8 +85,7 @@ export interface XtermViewProps {
    * 所在标签是否处于激活状态（§4.4）。
    *
    * 由标签激活状态驱动而不是 IntersectionObserver：容器 `display:none` 时
-   * 高度算出 0，FitAddon 会提出 2x1 这种尺寸并**连带把远端 PTY 也改小**，
-   * 所以隐藏期间绝不能 fit。
+   * 高度为 0，隐藏期间不提交测量，也不改变远端 PTY。
    */
   /**
    * 要**接管**的内核标签 id（从服务端恢复工作区时带上来）。
@@ -116,6 +119,8 @@ export interface XtermViewProps {
    * 否则别的设备一打开页面就会把正在操作那端的画面重排。
    */
   canResize?: boolean;
+  /** 控制端提交的权威网格；observer 按 revision 应用，不在本地回写。 */
+  remoteGrid?: { cols: number; rows: number; revision: number };
   visible?: boolean;
   onClosed?: () => void;
   onAttach?: (kernelTabId: string) => void;
@@ -141,8 +146,8 @@ export interface XtermViewProps {
 export function XtermView(props: XtermViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const searchRef = useRef<SearchAddon | null>(null);
+  const gridRef = useRef<TerminalGridCoordinator | null>(null);
+  const onGeometryRef = useRef<(() => void) | null>(null);
   /** 内核标签 id（跨 effect 访问，主 effect 里的局部变量取不到）。 */
   const kernelTabIdRef = useRef<string>("");
   // 回调放 ref：避免它们进入 effect 依赖导致终端被反复重建
@@ -162,22 +167,18 @@ export function XtermView(props: XtermViewProps) {
   onAttachInfoRef.current = props.onAttachInfo;
   onAttachFailedRef.current = props.onAttachFailed;
   onDataRef.current = props.onData;
-  /**
-   * 能不能改 PTY 尺寸。放 ref 而不是进 effect 依赖：它只是"要不要发 resize"的
-   * 开关，不该因为它变化就把整个终端重建一遍。
-   */
-  const canResizeRef = useRef(props.canResize !== false);
-  canResizeRef.current = props.canResize !== false;
 
-  /** 只在容器有真实尺寸且本端有权改 PTY 时 fit；claim 成功后可显式越过观察者限制。 */
-  const fitIfSized = (afterClaim = false) => {
+  const fitIfSized = (afterClaim = false, final = false) => {
     const host = hostRef.current;
-    const fit = fitRef.current;
-    if (!host || !fit) return;
-    if (!shouldFitTerminal(host.clientWidth, host.clientHeight, afterClaim || canResizeRef.current)) {
-      return;
-    }
-    fit.fit();
+    const term = termRef.current;
+    const coordinator = gridRef.current;
+    if (!host || !term || !coordinator) return;
+    if (afterClaim) coordinator.setCanResize(true);
+    const geometry = measureTerminalGeometry(term, host);
+    if (!geometry) return;
+    coordinator.update(geometry.viewport, geometry.metrics);
+    if (final) coordinator.flush();
+    onGeometryRef.current?.();
   };
 
   useEffect(() => {
@@ -192,14 +193,10 @@ export function XtermView(props: XtermViewProps) {
       cursorBlink: true,
       theme: { ...THEME, cursor: accentColor() },
     });
-    const fit = new FitAddon();
     const search = new SearchAddon();
-    term.loadAddon(fit);
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon());
     termRef.current = term;
-    fitRef.current = fit;
-    searchRef.current = search;
     term.open(hostRef.current);
     // WebGL 优先，失败降级 Canvas（§4.5）
     try {
@@ -211,10 +208,16 @@ export function XtermView(props: XtermViewProps) {
         // 软件渲染兜底
       }
     }
-    fitIfSized();
 
     let kernelTabId = "";
     let disposed = false;
+    const coordinator = new TerminalGridCoordinator(
+      productionGridRuntime,
+      (grid) => resizeTerminalToGrid(term, grid),
+      { visible: props.visible !== false, canResize: props.canResize !== false },
+    );
+    gridRef.current = coordinator;
+    fitIfSized();
 
     // ── 命令块（M1-T9）：吃按键流还原命令边界，不拦截不改写 ──
     const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list));
@@ -225,6 +228,7 @@ export function XtermView(props: XtermViewProps) {
       clearBlocks: () => blocks.clear(),
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),
+      focus: () => term.focus(),
       fit: () => fitIfSized(true),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
@@ -233,24 +237,22 @@ export function XtermView(props: XtermViewProps) {
     const channel = createBinaryChannel((bytes) => {
       term.write(bytes);
     });
-    let applyingRemoteDimensions = false;
     const applyRemoteDimensions = (cols: number, rows: number) => {
-      if (term.cols === cols && term.rows === rows) return;
-      applyingRemoteDimensions = true;
-      try {
-        term.resize(cols, rows);
-      } finally {
-        applyingRemoteDimensions = false;
-      }
+      resizeTerminalToGrid(term, { cols, rows });
     };
+    let attaching = false;
     const doAttach = async () => {
+      if (disposed || kernelTabId || attaching) return;
+      const resume = props.resumeTabId;
+      const dimensions = coordinator.desiredGrid();
+      // 新 PTY 必须使用真实测量尺寸；隐藏宿主先等待可见后的 ResizeObserver。
+      if (!resume && !dimensions) return;
+      attaching = true;
       try {
-        const cols = term.cols;
-        const rows = term.rows;
+        let initialGrid = dimensions;
         // ⚠️ 依赖里带 resumeTabId：恢复出来的标签必须走"接管"分支。
         // 忘了加，就会在每次恢复时新开一个 shell（用户看到的是"我原来的任务不见了，
         // 眼前是个空终端"，而远端悄悄多了一个泄漏的 shell）。
-        const resume = props.resumeTabId;
         let id: string;
         if (resume) {
           // 接管**优先于** containerId / winrm 分支。
@@ -263,6 +265,15 @@ export function XtermView(props: XtermViewProps) {
           // 不传 cols/rows —— 接管方无权改 PTY 尺寸（见 terminalApi.attachTab）。
           const info = await terminalApi.attachTab(resume, channel);
           id = info.tabId;
+          if (disposed) {
+            // 等待期间组件已卸载：cleanup 已经 term.dispose()，这时再
+            // applyRemoteDimensions 就是在已销毁的终端上 resize —— xterm 会抛
+            // Viewport.syncScrollArea TypeError（demo 里「关掉最后一个标签再重连」
+            // 必现）。服务端订阅也要按通道定向摘掉，同下方统一检查。
+            void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
+            return;
+          }
+          initialGrid = { cols: info.cols, rows: info.rows };
           applyRemoteDimensions(info.cols, info.rows);
           onAttachInfoRef.current?.({
             tabId: info.tabId,
@@ -272,11 +283,12 @@ export function XtermView(props: XtermViewProps) {
             exited: info.exited,
           });
         } else if (props.containerId) {
+          if (!dimensions) return;
           id = await dockerApi.execAttach(
             props.sessionId,
             props.containerId,
-            cols,
-            rows,
+            dimensions.cols,
+            dimensions.rows,
             channel,
           );
           onAttachInfoRef.current?.({
@@ -287,8 +299,9 @@ export function XtermView(props: XtermViewProps) {
             exited: false,
           });
         } else if (props.winrm) {
+          if (!dimensions) return;
           id = await import("../../ipc/commands").then((m) =>
-            m.sessionApi.openLineTab(props.sessionId, cols, rows, channel),
+            m.sessionApi.openLineTab(props.sessionId, dimensions.cols, dimensions.rows, channel),
           );
           onAttachInfoRef.current?.({
             tabId: id,
@@ -298,7 +311,8 @@ export function XtermView(props: XtermViewProps) {
             exited: false,
           });
         } else {
-          id = await terminalApi.attach(props.sessionId, cols, rows, channel);
+          if (!dimensions) return;
+          id = await terminalApi.attach(props.sessionId, dimensions.cols, dimensions.rows, channel);
           onAttachInfoRef.current?.({
             tabId: id,
             controller: clientId(),
@@ -318,6 +332,7 @@ export function XtermView(props: XtermViewProps) {
           void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
           return;
         }
+        coordinator.attach(id, initialGrid, false);
         kernelTabId = id;
         kernelTabIdRef.current = id;
         props.onAttach?.(id);
@@ -340,8 +355,11 @@ export function XtermView(props: XtermViewProps) {
         } else {
           term.writeln(`\r\n\x1b[31m[attach 失败] ${describeError(e)}\x1b[0m`);
         }
+      } finally {
+        attaching = false;
       }
     };
+    onGeometryRef.current = () => void doAttach();
 
     /**
      * 通道 WS 重连后**重新登记订阅**（bfcache 恢复 / 网络抖动都会走到这里）。
@@ -369,6 +387,7 @@ export function XtermView(props: XtermViewProps) {
           if (disposed) return;
           kernelTabIdRef.current = info.tabId;
           applyRemoteDimensions(info.cols, info.rows);
+          coordinator.attach(info.tabId, { cols: info.cols, rows: info.rows }, true);
           onAttachInfoRef.current?.({
             tabId: info.tabId,
             controller: info.controller,
@@ -411,32 +430,53 @@ export function XtermView(props: XtermViewProps) {
           .catch(() => undefined);
       }
     });
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      // 观察者不发：内核会拒（not_controller），而且会把正在操作那端的 PTY 尺寸改掉。
-      if (!shouldSendTerminalResize(!!kernelTabId, applyingRemoteDimensions, canResizeRef.current)) {
-        return;
-      }
-      void terminalApi.resize(kernelTabId, cols, rows).catch(() => undefined);
-    });
-
-    // ── 可见性降频（§4.4）──
-    // 注意：这里**不再**用 IntersectionObserver 做 fit。fit 只由 props.visible 驱动，
-    // 否则「隐藏容器算出 0 高 → fit 出 2x1 → 连带改小远端 PTY」会把 shell 布局搞坏。
     props.registerSearch?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
     });
 
-    const ro = new ResizeObserver(() => fitIfSized());
+    let measureFrame: number | null = null;
+    let finalFrame = false;
+    let windowResizeTimer: number | null = null;
+    const scheduleMeasure = (final = false) => {
+      finalFrame = finalFrame || final;
+      if (measureFrame !== null) return;
+      measureFrame = requestAnimationFrame(() => {
+        measureFrame = null;
+        const accurate = finalFrame;
+        finalFrame = false;
+        fitIfSized(false, accurate);
+      });
+    };
+    const onFinalResize = () => scheduleMeasure(true);
+    const onWindowResize = () => {
+      scheduleMeasure();
+      if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
+      windowResizeTimer = window.setTimeout(() => {
+        windowResizeTimer = null;
+        scheduleMeasure(true);
+      }, 120);
+    };
+    const ro = new ResizeObserver(() => scheduleMeasure());
     ro.observe(hostRef.current);
+    window.addEventListener(RESIZE_END_EVENT, onFinalResize);
+    window.addEventListener("resize", onWindowResize);
+    window.visualViewport?.addEventListener("resize", onWindowResize);
 
     return () => {
       disposed = true;
+      coordinator.close();
+      gridRef.current = null;
+      onGeometryRef.current = null;
       offReopen();
       window.clearTimeout(attachTimer);
+      if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
+      if (measureFrame !== null) cancelAnimationFrame(measureFrame);
+      window.removeEventListener(RESIZE_END_EVENT, onFinalResize);
+      window.removeEventListener("resize", onWindowResize);
+      window.visualViewport?.removeEventListener("resize", onWindowResize);
       ro.disconnect();
       dataDisposable.dispose();
-      resizeDisposable.dispose();
       blocks.dispose();
       if (kernelTabId) {
         // 只 detach（断开前端通道），不 close —— 内核标签的生命周期由 store.closeTab
@@ -457,27 +497,26 @@ export function XtermView(props: XtermViewProps) {
       term.dispose();
       termRef.current = null;
     };
-      }, [props.sessionId, props.containerId, props.resumeTabId]);
+  }, [props.sessionId, props.containerId, props.resumeTabId]);
 
-  // ── 标签激活状态 → 可见性 + 重新 fit（§4.4）──
-  // 切标签时组件不再卸载（见 App.tsx 的「全部挂载、隐藏非激活」），
-  // 所以这里必须显式把可见性同步给内核，并在重新可见时补一次 fit。
-  //
-  // 依赖里带 props.tabId：attach 是延迟发的，若 attach 完成时标签已被切走，
-  // kernelTabIdRef 才刚有值，需要靠 tabId 变化再补一次同步。
   useEffect(() => {
     const visible = props.visible !== false;
+    gridRef.current?.setVisible(visible);
     const tabId = kernelTabIdRef.current;
-    if (tabId) {
-      void terminalApi.setVisible(tabId, visible).catch(() => undefined);
-    }
+    if (tabId) void terminalApi.setVisible(tabId, visible).catch(() => undefined);
     if (!visible) return;
-    // display 生效后再量尺寸，否则量到的仍是 0
-    const raf = requestAnimationFrame(() => {
-      fitIfSized();
-    });
+    const raf = requestAnimationFrame(() => fitIfSized());
     return () => cancelAnimationFrame(raf);
   }, [props.visible, props.tabId]);
+
+  useEffect(() => {
+    gridRef.current?.setCanResize(props.canResize !== false);
+  }, [props.canResize]);
+
+  useEffect(() => {
+    const remote = props.remoteGrid;
+    if (remote) gridRef.current?.observe(remote.revision, remote);
+  }, [props.remoteGrid]);
 
   return <div ref={hostRef} className="h-full w-full min-h-0" />;
 }

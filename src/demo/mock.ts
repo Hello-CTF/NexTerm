@@ -59,6 +59,18 @@ const sessions: DemoSession[] = [
   },
 ];
 
+/**
+ * 演示模式的状态事件版本号，与内核 `Session.eventVersion` 同语义（会话内单调递增）。
+ * 前端按 version 做高水位丢弃，演示模式不给 version 的话状态事件会被全部丢掉。
+ */
+const sessionEventVersions = new Map<string, number>();
+
+function emitSessionStatus(sessionId: string, status: string, error: string | null) {
+  const version = (sessionEventVersions.get(sessionId) ?? 0) + 1;
+  sessionEventVersions.set(sessionId, version);
+  emit("session://status", { sessionId, status, error, version });
+}
+
 /* ── 终端 ─────────────────────────────────────────────────────────────── */
 
 const shells = new Map<string, DemoShell>();
@@ -599,7 +611,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
 
   function finish(finalAnswer: string) {
     later(0, () => {
-      emit("session://status", { sessionId: "s-web01", status: "connected", error: null });
+      emitSessionStatus("s-web01", "connected", null);
       pushEvent(channel, { type: "done", answer: finalAnswer });
     });
   }
@@ -682,7 +694,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       sessions.push(s);
       later(420, () => {
         s.status = "connected";
-        emit("session://status", { sessionId: s.id, status: "connected", error: null });
+        emitSessionStatus(s.id, "connected", null);
       });
       return { ...s };
     }
@@ -703,7 +715,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         }
         // 不发这条事件的话，前端的状态徽标会一直停在「已连接」，
         // 于是「重新连接」永远是禁用态 —— 演示模式里这条路径就验不了。
-        emit("session://status", { sessionId: s.id, status: "disconnected", error: null });
+        emitSessionStatus(s.id, "disconnected", null);
       }
       return null;
     }
@@ -718,10 +730,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       // 跟内核一样，先判"有没有重连这回事"：本机会话与没绑定资产的都不可重连
       if (!s || !s.assetId || s.kind === "local") return false;
       s.status = "connecting";
-      emit("session://status", { sessionId: s.id, status: "connecting", error: null });
+      emitSessionStatus(s.id, "connecting", null);
       later(600, () => {
         s.status = "connected";
-        emit("session://status", { sessionId: s.id, status: "connected", error: null });
+        emitSessionStatus(s.id, "connected", null);
       });
       return true;
     }
@@ -828,6 +840,15 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (lt) {
         lt.cols = num(a.cols, lt.cols);
         lt.rows = num(a.rows, lt.rows);
+      }
+      return null;
+    }
+
+    case "terminal_resize_flush": {
+      const lt = liveTabs.get(str(a.tabId));
+      const client = str(a.clientId);
+      if (lt && client && lt.controller && lt.controller !== client) {
+        throwAppError("not_controller", "终端正在其他设备上操作中");
       }
       return null;
     }

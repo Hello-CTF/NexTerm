@@ -38,21 +38,14 @@ export const EVENTS = {
   appError: "app://error",
 } as const;
 
-export interface SessionStatusEvent {
-  sessionId: string;
-  status: string;
-  error: string | null;
-}
-
-export interface TerminalExitEvent {
-  tabId: string;
-  exitCode: number | null;
-}
+// 共享事件 DTO 与 M9 的 types.ts（亦即 Go 侧 StatusEvent/ExitEvent）保持同源：
+// 这里不再另起一套接口，避免两边字段漂移（version 曾只在 types.ts 里）。
+export type { SessionStatusEvent, TerminalExitEvent } from "./types";
 
 /**
- * `terminal://control` 的 payload（camelCase，与 Go `TerminalControlPayload` 对齐）。
+ * `terminal://control` 的 payload（camelCase，与 Go `ControlEvent` 对齐）。
  *
- * 五个字段每次都给全，前端按同一份快照覆盖本地状态即可，不必做增量推断。
+ * 每次都给全量快照，前端按同一份快照覆盖本地状态即可，不必做增量推断。
  * `subscribers` 是内核原值（**含收到事件的那一端自己**），与 `terminal_list` 同口径；
  * 它是**通道数**（同一台设备开两个页面就 +2），不是设备数。
  * `viewers` 是**按设备去重**后的观看设备数 —— 界面上「N 个设备正在观看」用它。
@@ -66,6 +59,33 @@ export interface TerminalControlEvent {
   /** 观看设备数（按 clientId 去重）：同一台设备多开页面不重复计数。 */
   viewers: number;
   exited: boolean;
+  /** 控制端提交的权威网格（内核终端网格模型的当前值）。 */
+  cols: number;
+  rows: number;
+  /** 网格修订号：观察者按它应用远端网格，乱序/重放的旧修订直接丢弃。 */
+  gridRevision: number;
+  /** 标签内单调递增（内核 Tab.eventVersion）：整份快照的版本，旧版本事件不得回退本地状态。 */
+  version: number;
+}
+
+/**
+ * 事件版本高水位：重连/重放会把旧事件重新推过来，按 key 记录已见的最大 version，
+ * 小于等于高水位的一律丢弃（旧版本回退防护）。
+ *
+ * 内核每次发事件前自增 `eventVersion`，所以同一份快照重放时 version 必然不变、
+ * 更新的事件 version 必然更大 —— 「等于」也算旧事件。
+ */
+export class EventVersionGate {
+  private readonly highWater = new Map<string, number>();
+
+  /** 这条事件比已见的更新才返回 true；调用方据此决定要不要应用。 */
+  accept(key: string, version: number): boolean {
+    if (!key || !Number.isFinite(version) || version <= 0) return false;
+    const seen = this.highWater.get(key) ?? 0;
+    if (version <= seen) return false;
+    this.highWater.set(key, version);
+    return true;
+  }
 }
 
 export interface FsProgressEvent {
