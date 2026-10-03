@@ -7,21 +7,23 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 type Session struct {
-	backend   *Backend
-	expected  record
-	log       *os.File
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	readMu    sync.Mutex
-	writeMu   sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
+	backend    *Backend
+	expected   record
+	log        *os.File
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	readMu     sync.Mutex
+	writeMu    sync.Mutex
+	versionsMu sync.Mutex
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func newSession(backend *Backend, expected record, log *os.File) *Session {
@@ -195,6 +197,62 @@ func (s *Session) Detach() error {
 }
 
 func (s *Session) Close() error { return s.Detach() }
+
+// Versions returns the persisted per-tab event/grid version floor recorded
+// by previous attachments of this durable identity. A missing floor (fresh
+// identity, or a session created before floors existed) reads as zeroes.
+func (s *Session) Versions() (eventVersion, gridRevision uint64, err error) {
+	s.versionsMu.Lock()
+	defer s.versionsMu.Unlock()
+	return s.readVersions()
+}
+
+// PersistVersions records the given per-tab event/grid versions as the new
+// floor. The floor never rewinds: concurrent attachments of the same
+// identity may race, and recovery only needs a monotonic lower bound so
+// reconnected clients never see versions they already observed.
+func (s *Session) PersistVersions(eventVersion, gridRevision uint64) error {
+	s.versionsMu.Lock()
+	defer s.versionsMu.Unlock()
+	currentEvent, currentGrid, err := s.readVersions()
+	if err != nil {
+		return err
+	}
+	eventVersion = max(eventVersion, currentEvent)
+	gridRevision = max(gridRevision, currentGrid)
+	data := []byte(strconv.FormatUint(eventVersion, 10) + " " + strconv.FormatUint(gridRevision, 10) + "\n")
+	path := s.backend.versionsTempPath(s.expected.info.ID)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write durable versions: %w", err)
+	}
+	if err := os.Rename(path, s.backend.versionsPath(s.expected.info.ID)); err != nil {
+		return fmt.Errorf("commit durable versions: %w", err)
+	}
+	return nil
+}
+
+func (s *Session) readVersions() (eventVersion, gridRevision uint64, err error) {
+	data, err := os.ReadFile(s.backend.versionsPath(s.expected.info.ID))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("read durable versions: %w", err)
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("parse durable versions: expected 2 fields, got %q", data)
+	}
+	eventVersion, err = strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse durable event version: %w", err)
+	}
+	gridRevision, err = strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse durable grid revision: %w", err)
+	}
+	return eventVersion, gridRevision, nil
+}
 
 func (s *Session) current(ctx context.Context, requireRunning bool) (record, error) {
 	current, err := s.backend.resolve(ctx, s.expected.info.ID)

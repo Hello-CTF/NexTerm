@@ -44,6 +44,40 @@ type tmuxDurableAttachment struct {
 	session *durable.Session
 }
 
+// durableVersionFloor is implemented by durable attachments that persist the
+// per-tab event/grid version floor across backend restarts. Recovery seeds
+// the replacement Tab from the floor so reconnected clients never see
+// versions at or below their high-water mark; every version bump is
+// persisted before the corresponding event is emitted.
+type durableVersionFloor interface {
+	DurableVersions() (eventVersion, gridRevision uint64, err error)
+	PersistDurableVersions(eventVersion, gridRevision uint64) error
+}
+
+// durableGridSource is implemented by durable attachments that can report
+// the live tmux window size. Recovery initializes the replacement Tab with
+// the real size instead of a fabricated default, so reattaching clients do
+// not echo a spurious grid change back into the shared window.
+type durableGridSource interface {
+	DurableGrid() (cols, rows uint32, ok bool)
+}
+
+func (a *tmuxDurableAttachment) DurableVersions() (eventVersion, gridRevision uint64, err error) {
+	return a.session.Versions()
+}
+
+func (a *tmuxDurableAttachment) PersistDurableVersions(eventVersion, gridRevision uint64) error {
+	return a.session.PersistVersions(eventVersion, gridRevision)
+}
+
+func (a *tmuxDurableAttachment) DurableGrid() (cols, rows uint32, ok bool) {
+	info := a.session.Info()
+	if info.Cols == 0 || info.Rows == 0 {
+		return 0, 0, false
+	}
+	return info.Cols, info.Rows, true
+}
+
 func (a *tmuxDurableAttachment) Read(buffer []byte) (int, error) {
 	return a.session.Read(buffer)
 }

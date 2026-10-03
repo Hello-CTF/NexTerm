@@ -78,6 +78,8 @@ func unitRecord(backend *Backend, id string) record {
 			PaneID:    "%1",
 			PID:       4321,
 			CreatedAt: time.Unix(1700000000, 0),
+			Cols:      80,
+			Rows:      24,
 		},
 		name:          backend.sessionName(id),
 		windowID:      "@1",
@@ -87,6 +89,8 @@ func unitRecord(backend *Backend, id string) record {
 		windowOption:  "@1",
 		deadStatus:    "0",
 		recordingLive: true,
+		cols:          80,
+		rows:          24,
 	}
 }
 
@@ -118,6 +122,8 @@ func discoveryLine(backend *Backend, current record) string {
 		status,
 		pipe,
 		current.info.Signal,
+		strconv.FormatUint(uint64(current.cols), 10),
+		strconv.FormatUint(uint64(current.rows), 10),
 	}
 	return strings.Join(fields, fieldSeparator) + "\n"
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
 	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
@@ -80,6 +81,7 @@ func (t *Tab) infoLocked() TabInfo {
 func (t *Tab) controlEventLocked() ControlEvent {
 	info := t.infoLocked()
 	t.eventVersion++
+	t.persistVersionFloorLocked()
 	return ControlEvent{
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		Controller: info.Controller, Subscribers: info.Subscribers,
@@ -89,7 +91,21 @@ func (t *Tab) controlEventLocked() ControlEvent {
 
 func (t *Tab) exitEventLocked(exitCode *int) ExitEvent {
 	t.eventVersion++
+	t.persistVersionFloorLocked()
 	return ExitEvent{TabID: t.ID, ExitCode: exitCode, Version: t.eventVersion}
+}
+
+// persistVersionFloorLocked records the new version floor before the event
+// carrying it is emitted, so a restart recovering this durable identity
+// resumes strictly above anything a connected client may already have seen.
+// Best-effort: a failed write only lowers the next recovery's floor, it
+// never blocks the event itself.
+func (t *Tab) persistVersionFloorLocked() {
+	store, ok := t.durable.(durableVersionFloor)
+	if !ok {
+		return
+	}
+	_ = store.PersistDurableVersions(t.eventVersion, t.gridRevision)
 }
 
 func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo, error) {
@@ -147,16 +163,17 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable != nil && kind != KindLocal {
 		return TabInfo{}, ErrUnsupported
 	}
-
-	terminal, err := m.terminals.NewTerminal(TerminalConfig{
-		TabID: tabID, SessionID: session.ID, Cols: options.Cols, Rows: options.Rows, Encoding: encoding,
-	})
-	if err != nil {
+	// Validate the encoding before opening any channel: a bad encoding must
+	// not leave a PTY or durable process behind.
+	if err := validateEncoding(encoding); err != nil {
 		return TabInfo{}, err
 	}
+
+	cols, rows := options.Cols, options.Rows
 	var channel *channelHandle
 	var durableAttachment base.DurableAttachment
 	destroyOnFailure := options.Durable != nil && !options.Durable.Recover
+	var terminal TerminalState
 	cleanup := func() error {
 		var killErr error
 		if destroyOnFailure && durableAttachment != nil {
@@ -165,9 +182,12 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if channel != nil {
 			_ = channel.Close()
 		}
-		terminal.Close()
+		if terminal != nil {
+			terminal.Close()
+		}
 		return killErr
 	}
+	var err error
 	if options.Durable != nil {
 		var opened base.DurableAttachment
 		if options.Durable.Recover {
@@ -187,6 +207,16 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 		if channel == nil {
 			return TabInfo{}, errors.Join(errors.New("durable provider returned a nil attachment"), cleanup())
+		}
+		if options.Durable.Recover {
+			// Adopt the durable window's real size: a fabricated default here
+			// would echo a spurious grid change into the shared tmux window on
+			// the reattaching client's first fit.
+			if grid, ok := durableAttachment.(durableGridSource); ok {
+				if actualCols, actualRows, ok := grid.DurableGrid(); ok && validSize(actualCols, actualRows) {
+					cols, rows = actualCols, actualRows
+				}
+			}
 		}
 	} else if ptyBacked(kind) {
 		ptyTransport, ok := transport.Transport.(base.PTYTransport)
@@ -211,12 +241,30 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 	}
 
+	terminal, err = m.terminals.NewTerminal(TerminalConfig{
+		TabID: tabID, SessionID: session.ID, Cols: cols, Rows: rows, Encoding: encoding,
+	})
+	if err != nil {
+		return TabInfo{}, errors.Join(err, cleanup())
+	}
+
 	tabCtx, cancel := context.WithCancel(m.ctx)
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal,
-		ephemeral: options.Ephemeral, cols: options.Cols, rows: options.Rows,
+		ephemeral: options.Ephemeral, cols: cols, rows: rows,
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
+	}
+	if options.Durable != nil && options.Durable.Recover {
+		// Resume the persisted version floor so per-tab event versions and
+		// grid revisions stay monotonic across the restart for every client
+		// that kept its high-water mark (shared event DTO gate).
+		if store, ok := durableAttachment.(durableVersionFloor); ok {
+			if eventVersion, gridRevision, err := store.DurableVersions(); err == nil {
+				tab.eventVersion = eventVersion
+				tab.gridRevision = gridRevision
+			}
+		}
 	}
 	tab.feedGate <- struct{}{}
 	if err := m.initGrid(tab, channel, generation); err != nil {
@@ -600,6 +648,14 @@ func writeAll(writer io.Writer, data []byte) error {
 		data = data[written:]
 	}
 	return nil
+}
+
+func validateEncoding(encoding string) error {
+	if encoding == "" {
+		return nil
+	}
+	_, err := terminal.ParseEncoding(encoding)
+	return err
 }
 
 func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows uint32) error {
