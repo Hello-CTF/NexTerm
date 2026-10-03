@@ -17,14 +17,12 @@ var errMetaFault = errors.New("injected meta write failure")
 // records. The returned restore function re-enables writes mid-test.
 func faultMetaWrites(t *testing.T, match func(info Info) bool) (restore func()) {
 	t.Helper()
-	prev := metaFileWriter
-	metaFileWriter = func(dir string, info Info) error {
+	restore = metaFileWriter.swap(func(dir string, info Info) error {
 		if match == nil || match(info) {
 			return errMetaFault
 		}
 		return writeMetaFile(dir, info)
-	}
-	restore = func() { metaFileWriter = prev }
+	})
 	t.Cleanup(restore)
 	return restore
 }
@@ -126,6 +124,43 @@ func TestCloseSurfacesPersistenceFault(t *testing.T) {
 		t.Fatalf("Close must surface persistence failures, got %v", err)
 	}
 	restore()
+}
+
+// TestFaultMetaWritesConcurrentSwap is a regression for the release CI data
+// race: faultMetaWrites installed and restored the package-level
+// metaFileWriter without synchronizing against the reads in
+// writeMetaLocked. It swaps the hook while concurrent meta writes are in
+// flight; with the unsynchronized global this trips -race.
+func TestFaultMetaWritesConcurrentSwap(t *testing.T) {
+	requireShell(t)
+	m := testManager(t, nil)
+	ctx := context.Background()
+	gate := filepath.Join(t.TempDir(), "gate")
+	res, err := m.Run(ctx, ownerA, gatedCommand(gate, "x", "y"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.RLock()
+	tk := m.tasks[res.Info.ID]
+	m.mu.RUnlock()
+	if tk == nil {
+		t.Fatal("task missing from manager map")
+	}
+	const iterations = 200
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < iterations; i++ {
+			tk.mu.Lock()
+			_ = m.writeMetaLocked(tk)
+			tk.mu.Unlock()
+		}
+	}()
+	for i := 0; i < iterations; i++ {
+		restore := metaFileWriter.swap(func(dir string, info Info) error { return errMetaFault })
+		restore()
+	}
+	<-done
 }
 
 func TestRetentionSkipsUnpersisted(t *testing.T) {

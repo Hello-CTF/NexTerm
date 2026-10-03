@@ -274,11 +274,12 @@ func (s *spool) crash(stage string) {
 }
 
 // spoolIndexWriter is the checkpoint sink; tests replace it to inject
-// checkpoint repair failures.
-var spoolIndexWriter = writeJSONAtomic
+// checkpoint repair failures. The faultHook keeps installs and restores
+// synchronized with concurrent reads in writeIndexLocked.
+var spoolIndexWriter = faultHook[func(path string, value any) error]{fn: writeJSONAtomic}
 
 func (s *spool) writeIndexLocked() error {
-	return spoolIndexWriter(s.indexPath(), spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
+	return spoolIndexWriter.get()(s.indexPath(), spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
 }
 
 // Stats reports the total bytes ever written and the elided middle size.
