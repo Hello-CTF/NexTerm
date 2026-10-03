@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="public/brand/nexterm-mark-256.png" width="96" alt="NexTerm">
-
 # NexTerm
 
 **SSH、WinRM、文件、Docker、数据库和 AI，集中在一个工作台。**
@@ -13,8 +11,6 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 </div>
-
-![NexTerm 主界面](docs/images/hero-ai-terminal.png)
 
 ## 功能
 
@@ -31,8 +27,11 @@
 | 使用方式 | 安装方法 |
 | --- | --- |
 | Windows 10/11 x64 | 下载 `NexTerm_x.y.z_x64-setup.exe`，运行安装器。 |
+| Windows 10/11 ARM64 | 下载 `NexTerm_x.y.z_arm64-setup.exe`，运行安装器。 |
 | macOS（Apple Silicon，arm64） | 下载 `NexTerm_x.y.z_aarch64.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
-| LinuxServer | 下载 `NexTerm-server_x.y.z_linux_*.tar.gz`，提供完整浏览器界面。 |
+| macOS（Intel） | 下载 `NexTerm_x.y.z_x86_64.dmg`，同样拖入「应用程序」。 |
+| Linux 桌面（amd64 / arm64） | 下载 `NexTerm-desktop_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-desktop_x.y.z_linux_arm64.tar.gz`，解压后运行（自包含二进制，非 AppImage/deb）。 |
+| LinuxServer | 下载 `NexTerm-server_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-server_x.y.z_linux_arm64.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
 首次使用时，添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。按界面提示初始化凭据库后再保存密码或私钥。需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。
@@ -91,7 +90,7 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 
 ### macOS 提示无法验证开发者
 
-打开「系统设置 → 隐私与安全性」，在安全性区域找到 NexTerm，点击「仍要打开」。如果提示应用「已损坏」，可在终端执行：
+打开「系统设置 → 隐私与安全性」，在安全性区域找到 NexTerm，点击「仍要打开」。如果提示应用「已损坏」，先升级到最新版本；仍出现时可在终端执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/NexTerm.app
