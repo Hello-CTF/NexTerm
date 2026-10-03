@@ -3,6 +3,7 @@ package outcome
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 )
 
@@ -110,5 +111,139 @@ func TestDefiniteResultWinsWhenEffectReturnsAfterCancellation(t *testing.T) {
 	}
 	if record.Audit.State != AuditPersisted {
 		t.Fatalf("audit = %+v", record.Audit)
+	}
+}
+
+// TestCancellationAfterLostClaimReturnsRunningRecord reproduces the
+// interleaving where caller A reserves a pending record, caller B acquires
+// that reservation and persists running, and A then observes cancellation.
+// A's terminal compare-and-swap must lose to B, and A must receive B's live
+// running record rather than its own unpersisted not_attempted proposal.
+func TestCancellationAfterLostClaimReturnsRunningRecord(t *testing.T) {
+	store := newMemoryStore()
+	auditor := &memoryAuditor{}
+	ledger := newTestLedger(t, store, auditor)
+	request := testRequest("cancel-lost-claim-running")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	effectRelease := make(chan struct{})
+	runningPersisted := make(chan struct{})
+	store.afterUpdate = func(_ context.Context, record Record) {
+		if record.State == ExecutionRunning {
+			close(runningPersisted)
+		}
+	}
+	var effectCalls atomic.Int64
+	var orchestrated atomic.Bool
+	bDone := make(chan error, 1)
+	store.afterReserve = func(context.Context, Record) {
+		if !orchestrated.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			_, err := ledger.Execute(context.Background(), request, func(context.Context) (Completion, error) {
+				effectCalls.Add(1)
+				<-effectRelease
+				return Completion{}, nil
+			})
+			bDone <- err
+		}()
+		<-runningPersisted
+		cancel()
+	}
+
+	canceledRecord, err := ledger.Execute(ctx, request, func(context.Context) (Completion, error) {
+		effectCalls.Add(1)
+		return Completion{}, nil
+	})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrInProgress) {
+		t.Fatalf("canceled caller error = %v", err)
+	}
+	if canceledRecord.State != ExecutionRunning || canceledRecord.Outcome != OutcomeUnknown || canceledRecord.FinishedAt != nil {
+		t.Fatalf("canceled caller received unpersisted snapshot: %+v", canceledRecord)
+	}
+	if got := len(auditor.snapshots()); got != 0 {
+		t.Fatalf("audit appended before terminal state: %d", got)
+	}
+
+	close(effectRelease)
+	if err := <-bDone; err != nil {
+		t.Fatalf("claimant error = %v", err)
+	}
+	if got := effectCalls.Load(); got != 1 {
+		t.Fatalf("effect calls = %d", got)
+	}
+	audits := auditor.snapshots()
+	if len(audits) != 1 || audits[0].Outcome != OutcomeAccepted || audits[0].State != ExecutionFinished {
+		t.Fatalf("audit attempts = %+v", audits)
+	}
+	stored := store.snapshot(t, request.IdempotenceKey)
+	if stored.Outcome != OutcomeAccepted || stored.State != ExecutionFinished || stored.Audit.State != AuditPersisted {
+		t.Fatalf("final record = %+v", stored)
+	}
+}
+
+// TestCancellationAfterLostClaimReturnsTerminalRecord covers the same
+// interleaving with B already finished before A's canceled finalization
+// reloads: A must receive the actual terminal outcome, not its own
+// unpersisted not_attempted proposal.
+func TestCancellationAfterLostClaimReturnsTerminalRecord(t *testing.T) {
+	store := newMemoryStore()
+	auditor := &memoryAuditor{}
+	ledger := newTestLedger(t, store, auditor)
+	request := testRequest("cancel-lost-claim-terminal")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	terminalPersisted := make(chan struct{})
+	store.afterUpdate = func(_ context.Context, record Record) {
+		if record.State == ExecutionFinished && record.Audit.State == AuditPending {
+			close(terminalPersisted)
+		}
+	}
+	var effectCalls atomic.Int64
+	var orchestrated atomic.Bool
+	bDone := make(chan error, 1)
+	store.afterReserve = func(context.Context, Record) {
+		if !orchestrated.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			_, err := ledger.Execute(context.Background(), request, func(context.Context) (Completion, error) {
+				effectCalls.Add(1)
+				return Completion{}, nil
+			})
+			bDone <- err
+		}()
+		<-terminalPersisted
+		cancel()
+	}
+
+	canceledRecord, err := ledger.Execute(ctx, request, func(context.Context) (Completion, error) {
+		effectCalls.Add(1)
+		return Completion{}, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled caller error = %v", err)
+	}
+	if errors.Is(err, ErrInProgress) {
+		t.Fatalf("finished record reported as in progress: %v", err)
+	}
+	if canceledRecord.State != ExecutionFinished || canceledRecord.Outcome != OutcomeAccepted || canceledRecord.FinishedAt == nil {
+		t.Fatalf("canceled caller received unpersisted snapshot: %+v", canceledRecord)
+	}
+
+	if err := <-bDone; err != nil {
+		t.Fatalf("claimant error = %v", err)
+	}
+	if got := effectCalls.Load(); got != 1 {
+		t.Fatalf("effect calls = %d", got)
+	}
+	audits := auditor.snapshots()
+	if len(audits) != 1 || audits[0].Outcome != OutcomeAccepted || audits[0].State != ExecutionFinished {
+		t.Fatalf("audit attempts = %+v", audits)
+	}
+	stored := store.snapshot(t, request.IdempotenceKey)
+	if stored.Outcome != OutcomeAccepted || stored.State != ExecutionFinished || stored.Audit.State != AuditPersisted {
+		t.Fatalf("final record = %+v", stored)
 	}
 }

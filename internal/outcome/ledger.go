@@ -64,7 +64,9 @@ func (l *Ledger) NotAttempted(ctx context.Context, request Request, reason error
 // effect once for that reservation. A duplicate terminal key returns its
 // existing record without invoking effect or appending another audit record.
 // A duplicate pending key may acquire the reservation through the same
-// compare-and-swap transition used by its original caller.
+// compare-and-swap transition used by its original caller. When cancellation
+// finalization loses that compare-and-swap race, the current stored record is
+// returned instead of the unpersisted proposal.
 func (l *Ledger) Execute(ctx context.Context, request Request, effect Effect) (Record, error) {
 	if effect == nil {
 		return Record{}, fmt.Errorf("%w: effect is required", ErrInvalidRequest)
@@ -195,9 +197,34 @@ func (l *Ledger) persistTerminalAndAudit(ctx context.Context, record Record, exp
 	err := l.store.Update(persistCtx, cloneRecord(record), expectedRevision)
 	cancel()
 	if err != nil {
+		if errors.Is(err, ErrRevisionConflict) {
+			return l.resolveTerminalConflict(ctx, record, err)
+		}
 		return record, fmt.Errorf("outcome: persist terminal state: %w", err)
 	}
 	return l.finalizeAudit(ctx, record)
+}
+
+// resolveTerminalConflict reloads the current record after a lost terminal
+// compare-and-swap so the caller receives the durable state instead of the
+// unpersisted proposal. A finished record is the actual outcome; a record
+// still in flight resolves to ErrInProgress.
+func (l *Ledger) resolveTerminalConflict(ctx context.Context, record Record, persistErr error) (Record, error) {
+	reloadCtx, cancel := l.detachedContext(ctx)
+	stored, err := l.store.Get(reloadCtx, record.IdempotenceKey)
+	cancel()
+	if err != nil {
+		return record, errors.Join(persistErr, err)
+	}
+	stored = cloneRecord(stored)
+	switch stored.State {
+	case ExecutionFinished:
+		return stored, nil
+	case ExecutionRunning, ExecutionPending:
+		return stored, errors.Join(persistErr, ErrInProgress)
+	default:
+		return stored, fmt.Errorf("%w: stored record has invalid state %q", persistErr, stored.State)
+	}
 }
 
 func (l *Ledger) finalizeAudit(ctx context.Context, record Record) (Record, error) {
