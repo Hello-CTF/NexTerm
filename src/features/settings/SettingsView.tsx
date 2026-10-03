@@ -16,6 +16,8 @@ import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
 import { KnownHostsCard } from "./KnownHostsCard";
+import { MemoryCard } from "./MemoryCard";
+import { CronCard } from "./CronCard";
 import { SyncCard } from "./SyncCard";
 import { describeError } from "../../ui/errorText";
 import {
@@ -308,6 +310,12 @@ export function SettingsView() {
             规则命中 → 先确认；不可逆操作（格式化磁盘、清空系统目录、删库）→ 直接拒绝。
           </p>
         </section>
+
+        {/* AI 长期记忆（M46）：opt-in 开关 + 条目 CRUD，与 AI 运行同一份 scope */}
+        <MemoryCard />
+
+        {/* 无人值守定时任务（M46）：持久 job 的列表 / 启停 / 注册 / 注销 */}
+        <CronCard />
 
         {/* 凭据保护：文案只写"会发生什么"，不出现算法与密钥层级 */}
         <section className="nx-card">
