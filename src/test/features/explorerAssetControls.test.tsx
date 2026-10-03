@@ -139,7 +139,9 @@ function setTerminalWorkspace(tabId: string | null) {
 
 let mounted: MountedView | undefined;
 beforeEach(() => {
-  vi.clearAllMocks();
+  // reset（而非 clear）：连 once 队列一起清掉，避免上一个用例没吃完的
+  // mockResolvedValueOnce 漏进下一个用例的 ask 队列
+  vi.resetAllMocks();
   document.body.replaceChildren();
   mocks.list.mockResolvedValue([]);
   mocks.groupList.mockResolvedValue([{ ...GROUP }]);
@@ -395,8 +397,10 @@ describe("snippets panel", () => {
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
 
-    click(buttonByTitle(mounted.container, "插入到当前终端（不执行）"));
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
+    // 可打印内容无执行风险：不需要确认
+    expect(mocks.ask).not.toHaveBeenCalled();
     const [tabId, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
     expect(tabId).toBe("kernel-1");
     const text = new TextDecoder().decode(bytes);
@@ -415,15 +419,110 @@ describe("snippets panel", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("两段"));
 
     mocks.ask.mockResolvedValueOnce(false);
-    click(buttonByTitle(mounted.container, "插入到当前终端（不执行）"));
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.write).not.toHaveBeenCalled();
 
     mocks.ask.mockResolvedValueOnce(true);
-    click(buttonByTitle(mounted.container, "插入到当前终端（不执行）"));
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
+    // 已确认的含换行插入，结果提示不得再绝对声称「未执行」
+    const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
+    expect(toastText).not.toContain("未执行");
+  });
+
+  it("gates a CR-only snippet — bare \\r submits the line in a PTY", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "cr", body: "echo M59_R_EXECUTED\r#", groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("cr"));
+
+    // 未授权前绝不写入
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    // 内容字节原样保留（含中间的 0x0d），确认 ≠ 删改
+    expect(new TextDecoder().decode(bytes)).toBe("echo M59_R_EXECUTED\r#");
+    const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
+    expect(toastText).not.toContain("未执行");
+  });
+
+  it("gates a snippet with an embedded CR mid-body", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "内嵌CR", body: "echo a\recho b", groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("内嵌CR"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(new TextDecoder().decode(bytes)).toBe("echo a\recho b");
+  });
+
+  it("gates a CRLF snippet like any other line submission", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "CRLF", body: "echo a\r\necho b", groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("CRLF"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(new TextDecoder().decode(bytes)).toBe("echo a\r\necho b");
+  });
+
+  it("gates terminal control characters that can change state without executing", async () => {
+    setTerminalWorkspace("kernel-1");
+    mocks.snippetList.mockResolvedValue([
+      { id: "sn9", name: "ctrl", body: "echo a\u0003", groupId: null, sort: 1 },
+    ]);
+    mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("ctrl"));
+
+    mocks.ask.mockResolvedValueOnce(false);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.write).not.toHaveBeenCalled();
+
+    mocks.ask.mockResolvedValueOnce(true);
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    await flush();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+    const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
+    expect(new TextDecoder().decode(bytes)).toBe("echo a\u0003");
+    const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
+    expect(toastText).not.toContain("未执行");
   });
 
   it("refuses to insert with a clear toast when no terminal is active", async () => {
@@ -431,7 +530,7 @@ describe("snippets panel", () => {
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
 
-    click(buttonByTitle(mounted.container, "插入到当前终端（不执行）"));
+    click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端"));
     expect(mocks.write).not.toHaveBeenCalled();

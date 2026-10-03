@@ -2,9 +2,11 @@
 //
 // 安全红线（别改坏）：
 // · 选中 / 编辑片段只碰字符串，**绝不执行内容** —— 内容进入终端的唯一路径是
-//   显式的「插入」按钮，且只写按键、**不带回车**（写入 ≠ 执行，回车才运行）。
-// · 多行片段里的换行在 PTY 里等价于回车（会逐行立即执行），所以插入前必须
-//   显式确认，不允许静默执行。
+//   显式的「插入」按钮。
+// · 插入按风险分级（见 insertRisk）：可打印内容只是「打字」（写入 ≠ 执行，
+//   回车才运行）；含回车/换行（PTY 里 \r 就是回车，提交即执行）或终端控制
+//   字符（Ctrl-C / Ctrl-D / ESC 序列等）的片段必须先显式确认，不允许静默跑。
+// · 确认 ≠ 删改：任何片段都按原字节写入，分级只决定要不要先问。
 // · 插入目标是**当前工作区的当前终端标签**；没有就明确提示，不偷偷开新终端。
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -44,6 +46,33 @@ function activeTerminalTabId(): string | null {
   return tab.tabId;
 }
 
+/**
+ * 插入风险分级：
+ * - `"execute"`：含 `\r` 或 `\n` —— 规范模式下两者都提交当前输入行
+ *   （PTY 里裸 `\r` 就是回车），写入即逐行执行，必须显式确认；
+ * - `"control"`：含其余 C0（Tab 除外）或 C1 控制字符 —— 不会执行命令行，
+ *   但可能中断前台进程（Ctrl-C / Ctrl-Z）、结束输入（Ctrl-D）或经 ESC 序列
+ *   改变终端状态，同样必须显式确认；
+ * - `"none"`：可打印字符加 Tab / 退格等普通按键 —— 只是「打字」，写入不执行。
+ */
+type InsertRisk = "none" | "execute" | "control";
+
+function insertRisk(body: string): InsertRisk {
+  // 第一遍：回车/换行优先 —— 规范模式下 \r 与 \n 都提交当前输入行，写入即执行
+  for (const ch of body) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c === 0x0a || c === 0x0d) return "execute";
+  }
+  // 第二遍：其余 C0（Tab 除外）与 C1 —— 不执行命令行，但可能改变终端/进程状态
+  for (const ch of body) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c <= 0x08 || (c >= 0x0b && c <= 0x0c) || (c >= 0x0e && c <= 0x1f) || (c >= 0x80 && c <= 0x9f)) {
+      return "control";
+    }
+  }
+  return "none";
+}
+
 export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
@@ -65,18 +94,34 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       pushToast("info", "请先在当前工作区打开一个终端，再插入片段");
       return;
     }
-    // 多行片段：换行 = 回车 = 立即执行。必须显式确认，不能静默跑。
-    if (s.body.includes("\n")) {
+    const risk = insertRisk(s.body);
+    if (risk === "execute") {
+      // 文案如实说明执行风险：回车/换行在 PTY 里就是「替你按回车」。
+      const n = s.body.match(/[\r\n]/g)?.length ?? 0;
       const ok = await ask(
-        `片段「${s.name}」包含 ${s.body.split("\n").length} 行，插入后每一行都会**立即执行**。\n仍要插入吗？`,
+        `片段「${s.name}」包含 ${n} 处回车/换行：插入时每一处都会立即提交执行（相当于替你按回车）。\n仍要插入吗？`,
+        { kind: "warning" },
+      );
+      if (!ok) return;
+    } else if (risk === "control") {
+      const ok = await ask(
+        `片段「${s.name}」包含终端控制字符（如 Ctrl-C / Ctrl-D / ESC 序列）：\n插入不会替你执行命令行，但可能中断前台进程、结束输入或改变终端状态。\n仍要插入吗？`,
         { kind: "warning" },
       );
       if (!ok) return;
     }
     try {
-      // 只写按键、不带回车：命令落到终端输入行，由用户检查后再决定回车。
+      // body 永远按原字节写入（确认 ≠ 删改）；risk=none 时不含任何提交/控制字符，
+      // 只是「打字」，落到终端输入行，由用户检查后再决定回车。
       await terminalApi.write(tabId, new TextEncoder().encode(s.body));
-      pushToast("success", `已插入「${s.name}」 · 未执行，确认后回车运行`);
+      pushToast(
+        "success",
+        risk === "none"
+          ? `已插入「${s.name}」 · 未执行，确认后回车运行`
+          : risk === "execute"
+            ? `已插入「${s.name}」 · 已按原样写入，其中回车/换行处已逐行执行`
+            : `已插入「${s.name}」 · 已按原样写入，控制字符可能已改变终端状态`,
+      );
       onClose();
     } catch (e) {
       pushToast("error", `插入失败：${describeError(e)}`);
@@ -131,7 +176,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           )}
           {snippets.data && snippets.data.length === 0 && (
             <div className="nx-hint px-1 py-8 text-center">
-              还没有片段 — 点右上角 + 新建一个。插入只把命令写进终端，不会直接执行。
+              还没有片段 — 点右上角 + 新建一个。插入只把命令写进终端，含回车/换行或控制字符时会先确认。
             </div>
           )}
           {snippets.data?.map((s) => (
@@ -141,7 +186,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
               <span className="nx-row-actions">
                 <button
                   className="nx-icon-btn nx-icon-btn-sm"
-                  title="插入到当前终端（不执行）"
+                  title="插入到当前终端"
                   disabled={deletingId === s.id}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -181,7 +226,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <div className="nx-modal-footer">
-          <span className="nx-hint mr-auto">插入 = 只写入终端输入行，回车才执行</span>
+          <span className="nx-hint mr-auto">插入 = 写入终端输入行；回车/换行或控制字符会先确认</span>
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             关闭
           </button>
@@ -271,7 +316,7 @@ function SnippetEditor({
               placeholder="docker ps --format '{{.Names}}'"
             />
             <div className="nx-hint mt-1.5">
-              ↳ 插入终端时只写入输入行，不会自动执行；含换行的片段插入前会再确认一次。
+              ↳ 插入终端时只写入输入行，不会自动执行；含回车/换行或控制字符的片段插入前会再确认一次。
             </div>
           </div>
           {error && (
