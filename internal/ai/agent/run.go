@@ -140,24 +140,27 @@ func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.A
 }
 
 // parkOrHandoff moves a consume loop that hit an interrupt to the parked
-// state. A resume confirmed while the loop was still winding down is handed
-// off to a fresh consume loop instead of parking, so the resumed stream is
-// always drained by exactly one loop.
+// state. The iterator fetch and the running=false transition happen in one
+// pendingMu critical section: a resume confirmed while the loop was still
+// winding down is either handed off here or observes running==false and
+// starts its own consume loop, so an accepted resume is never stranded
+// without a loop to drain it.
 func (r *Runner) parkOrHandoff(current *job) {
 	current.pendingMu.Lock()
-	iterator := current.resumeIterator
-	current.resumeIterator = nil
-	current.pendingMu.Unlock()
 	if current.ctx.Err() != nil {
-		current.setRunning(false)
+		current.running = false
+		current.pendingMu.Unlock()
 		r.complete(current, "", 0, usage.Usage{}, current.ctx.Err())
 		return
 	}
-	if iterator != nil {
+	if iterator := current.resumeIterator; iterator != nil {
+		current.resumeIterator = nil
+		current.pendingMu.Unlock()
 		go r.consumeResumed(current, iterator)
 		return
 	}
-	current.setRunning(false)
+	current.running = false
+	current.pendingMu.Unlock()
 }
 
 // watchHITL completes the job when the HITL manager terminates the run on

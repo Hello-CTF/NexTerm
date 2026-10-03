@@ -173,12 +173,6 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 	})
 }
 
-func (j *job) setRunning(value bool) {
-	j.pendingMu.Lock()
-	j.running = value
-	j.pendingMu.Unlock()
-}
-
 func (j *job) state() (bool, adk.AgentCancelFunc) {
 	j.pendingMu.Lock()
 	defer j.pendingMu.Unlock()

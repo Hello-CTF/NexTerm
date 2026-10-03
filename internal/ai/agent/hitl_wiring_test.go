@@ -323,3 +323,70 @@ func TestHITLWiringReplayCommandsDispatch(t *testing.T) {
 	}
 	_ = waitClosed(t, stream)
 }
+
+// confirmEmitStream synchronously confirms a confirmRequired event from
+// inside Send, so the acceptance lands after hitl.Manager.Interrupt but
+// before the consume loop reaches parkOrHandoff: the tightest
+// confirm-before-parked boundary, without relying on scheduling luck.
+type confirmEmitStream struct {
+	*SliceStream
+	confirm func(Event) error
+}
+
+func (s *confirmEmitStream) Send(ctx context.Context, event Event) error {
+	if event.Type == "confirmRequired" && s.confirm != nil {
+		if err := s.confirm(event); err != nil {
+			return err
+		}
+	}
+	return s.SliceStream.Send(ctx, event)
+}
+
+// TestHITLWiringConfirmBeforeParkedResumesExactlyOnce pins the handoff
+// boundary found in review: a resume accepted while the interrupted loop is
+// still winding down must be drained by exactly one consume loop and reach a
+// single terminal state — never stranded with a consumed request and no
+// loop driving the resumed stream.
+func TestHITLWiringConfirmBeforeParkedResumesExactlyOnce(t *testing.T) {
+	const jobID = "hitl-confirm-before-parked"
+	var actions atomic.Int64
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return dockerConfirmChat(), 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { actions.Add(1); return nil }}),
+		Store: storage,
+		NewID: func() string { return jobID },
+	})
+	defer runner.Close()
+	stream := &confirmEmitStream{SliceStream: &SliceStream{}, confirm: func(event Event) error {
+		return runner.Confirm(Confirmation{JobID: jobID, CallID: event.ID, Nonce: event.Nonce, Decision: "allow"})
+	}}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.JobID != jobID {
+		t.Fatalf("job ID = %q", response.JobID)
+	}
+	events := waitClosed(t, stream.SliceStream)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
+	}
+	if actions.Load() != 1 {
+		t.Fatalf("actions = %d", actions.Load())
+	}
+	replay, err := runner.HITLEvents(jobID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replay) != 3 || replay[0].Kind != hitl.EventInterrupted || replay[1].Kind != hitl.EventResumed || replay[2].Kind != hitl.EventTerminal || replay[2].Reason != hitl.TerminalCompleted {
+		t.Fatalf("replay = %+v", replay)
+	}
+	if err := runner.Confirm(Confirmation{JobID: jobID, CallID: "call", Nonce: "stale", Decision: "allow"}); err == nil {
+		t.Fatal("post-terminal confirmation accepted")
+	}
+}
