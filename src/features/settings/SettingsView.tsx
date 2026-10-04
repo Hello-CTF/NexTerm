@@ -7,7 +7,6 @@ import {
   type VaultStatus,
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
-import { modHint } from "../../app/platform";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -16,6 +15,7 @@ import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { CronCard } from "./CronCard";
+import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { describeError } from "../../ui/errorText";
 import {
@@ -442,31 +442,7 @@ export function SettingsView() {
 
         <SyncCard />
 
-        <section className="nx-card">
-          <div className="mb-3 flex items-center gap-2">
-            <IconSettings size={15} className="text-neutral-400" />
-            <span className="nx-card-title">快捷键</span>
-          </div>
-          <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
-            {(
-              [
-                ["Ctrl+Shift+P / Ctrl+K", "命令面板"],
-                ["Ctrl+T", "新建本地终端"],
-                ["Ctrl+B", "收起 / 展开资产树"],
-                ["Ctrl+J", "收起 / 展开 AI 侧栏"],
-                ["Ctrl+W", "关闭当前标签"],
-                [`${modHint()}+F`, "终端内搜索"],
-                ["Esc", "AI 接管中一键夺回"],
-                ["Ctrl+Enter", "SQL 编辑器内运行"],
-              ] as [string, string][]
-            ).map(([k, label]) => (
-              <div key={k} className="flex items-center gap-2 text-xs text-neutral-400">
-                <span className="nx-kbd">{k}</span>
-                <span>{label}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <ShortcutsCard />
       </div>
     </div>
   );

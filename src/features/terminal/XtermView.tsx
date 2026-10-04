@@ -11,11 +11,13 @@ import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
+import { getInputPrefs } from "../../app/preferences";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import { createOscStreamFilter } from "./oscStream";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
+import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { wrapBracketedPaste } from "./terminalPaste";
 
 const THEME = {
@@ -88,6 +90,7 @@ export interface XtermViewProps {
   onTitle?: (title: string) => void;
   onNotification?: (body: string) => void;
   onClipboard?: (payload: string) => void;
+  onSelectionCopy?: (text: string, error: unknown | null) => void;
 }
 
 export function XtermView(props: XtermViewProps) {
@@ -105,6 +108,7 @@ export function XtermView(props: XtermViewProps) {
   const onTitleRef = useRef(props.onTitle);
   const onNotificationRef = useRef(props.onNotification);
   const onClipboardRef = useRef(props.onClipboard);
+  const onSelectionCopyRef = useRef(props.onSelectionCopy);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachInfoRef.current = props.onAttachInfo;
@@ -113,6 +117,7 @@ export function XtermView(props: XtermViewProps) {
   onTitleRef.current = props.onTitle;
   onNotificationRef.current = props.onNotification;
   onClipboardRef.current = props.onClipboard;
+  onSelectionCopyRef.current = props.onSelectionCopy;
 
   const fitIfSized = (afterClaim = false, final = false) => {
     const host = hostRef.current;
@@ -323,6 +328,13 @@ export function XtermView(props: XtermViewProps) {
 
     const dataDisposable = term.onData((data) => sendInput(data));
     const titleDisposable = term.onTitleChange((t) => onTitleRef.current?.(t));
+    const autoCopy = createSelectionAutoCopy({
+      isEnabled: () => getInputPrefs().selectionAutoCopy,
+      getSelection: () => term.getSelection(),
+      onCopied: (text) => onSelectionCopyRef.current?.(text, null),
+      onError: (error) => onSelectionCopyRef.current?.("", error),
+    });
+    const selectionDisposable = term.onSelectionChange(() => autoCopy.notifySelectionChanged());
     props.registerSearch?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
@@ -377,6 +389,8 @@ export function XtermView(props: XtermViewProps) {
       dataDisposable.dispose();
       scrollDisposable.dispose();
       titleDisposable.dispose();
+      selectionDisposable.dispose();
+      autoCopy.dispose();
       blocks.dispose();
       if (kernelTabId) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);

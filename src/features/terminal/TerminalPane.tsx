@@ -9,7 +9,7 @@ import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
-import { isMac, modHint } from "../../app/platform";
+import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
@@ -113,7 +113,8 @@ export function TerminalPane({
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
   const blocksSupported = !effectiveWinrm;
-  const mod = modHint();
+  const bindings = useKeybindings();
+  const searchBindingLabel = formatBinding(bindings.terminalSearch);
   const sessionNameRef = useRef(sessionName);
   sessionNameRef.current = sessionName;
   const osc52Handler = useRef(
@@ -266,10 +267,7 @@ export function TerminalPane({
     if (!pane) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || isImeKeyEvent(e)) return;
-      const mac = isMac();
-      const primary = mac ? e.metaKey : e.ctrlKey;
-      const secondary = mac ? e.ctrlKey : e.metaKey;
-      if (!primary || secondary || e.shiftKey || e.altKey || e.key.toLowerCase() !== "f") return;
+      if (!matchKeybinding(e, "terminalSearch")) return;
       e.preventDefault();
       e.stopPropagation();
       const selected = (handleRef.current?.getSelection() ?? "").trim();
@@ -386,6 +384,16 @@ export function TerminalPane({
     }
   };
 
+  const handleSelectionCopy = (text: string, error: unknown | null) => {
+    if (error) {
+      const name = (error as { name?: string } | null)?.name;
+      const reason = name === "NotAllowedError" ? "剪贴板权限被拒绝" : describeError(error);
+      pushToast("error", `自动复制选中内容失败：${reason}`);
+      return;
+    }
+    pushToast("success", `已自动复制 ${text.length} 个字符`);
+  };
+
   const disconnectSession = async () => {
     await disconnectSessionWithConfirm(sessionId, sessionName);
   };
@@ -478,7 +486,7 @@ export function TerminalPane({
         kind: "item",
         label: "搜索选中内容",
         icon: <IconSearch size={13} />,
-        accel: `${mod}+F`,
+        accel: searchBindingLabel,
         disabled: !hasSel,
         onSelect: () => {
           setQuery(firstLine);
@@ -531,7 +539,7 @@ export function TerminalPane({
         kind: "item",
         label: isSplit ? "取消分屏" : "上下分屏",
         icon: isSplit ? <IconMergeH size={13} /> : <IconSplitH size={13} />,
-        accel: `${modHint()}+\\`,
+        accel: formatBinding(bindings.toggleSplit),
         disabled: !isSplit && !splitAllowedForHeight(window.innerHeight),
         hint:
           !isSplit && !splitAllowedForHeight(window.innerHeight)
@@ -580,7 +588,7 @@ export function TerminalPane({
 
         <button
           className={`nx-btn nx-btn-ghost nx-btn-sm ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-          title={`搜索终端内容 (${mod}+F)`}
+          title={`搜索终端内容 (${searchBindingLabel})`}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <IconSearch size={13} />
@@ -732,6 +740,7 @@ export function TerminalPane({
               onHandle={(h) => {
                 handleRef.current = h;
               }}
+              onSelectionCopy={handleSelectionCopy}
               registerSearch={(api) => {
                 searchApi.current = api;
               }}

@@ -92,7 +92,7 @@ describe("SettingsView 响应式结构", () => {
     expect(grid).toBeTruthy();
     expect(grid!.className).toContain("grid-cols-1");
     expect(grid!.className).toContain("min-[480px]:grid-cols-2");
-    expect(grid!.querySelectorAll(".nx-kbd").length).toBe(8);
+    expect(grid!.querySelectorAll(".nx-kbd").length).toBe(10);
   });
 
   it("AI 模型卡头可换行、连通性测试按钮可折行", async () => {
