@@ -57,7 +57,20 @@ func makeDirPrivate(path string) error {
 		return fmt.Errorf("current process token: %w", err)
 	}
 	if !windows.EqualSid(owner, user.User.Sid) {
-		return fmt.Errorf("%w: %s is owned by another user", ErrInvalidInput, path)
+		groups, err := token.GetTokenGroups()
+		if err != nil {
+			return fmt.Errorf("current process token groups: %w", err)
+		}
+		owned := false
+		for _, group := range groups.AllGroups() {
+			if windows.EqualSid(owner, group.Sid) {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			return fmt.Errorf("%w: %s is owned by another user", ErrInvalidInput, path)
+		}
 	}
 	sid, err := currentUserSIDString()
 	if err != nil {
