@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -68,8 +69,15 @@ func TestRealForwardMountModulesThroughApplicationAndHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
-	if got := application.Dispatcher.Len(); got != 22 {
-		t.Fatalf("application command count = %d, want 22", got)
+	registered := application.Dispatcher.Commands()
+	for _, command := range []string{
+		"sync_digest", "sync_export", "sync_import", "sync_bundle_read", "sync_bundle_write",
+		"forward_env", "forward_create", "forward_create_socks", "forward_list", "forward_remove",
+		"mount_capability", "mount_create", "mount_list", "mount_remove",
+	} {
+		if !slices.Contains(registered, command) {
+			t.Fatalf("application dispatcher missing command %s (registered: %v)", command, registered)
+		}
 	}
 	config.Dispatcher = application.Dispatcher
 	config.Environment = application.Environment("")

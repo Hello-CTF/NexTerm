@@ -245,6 +245,45 @@ describe("SyncBundleCard 导入", () => {
     expect(mocks.importBundle).toHaveBeenCalledWith(BUNDLE, true);
   });
 
+  it("仅分组更新且资产全跳过时仍判定为成功写入", async () => {
+    mocks.pickBundleFile.mockResolvedValue({
+      name: "groups-only.json",
+      text: JSON.stringify({
+        protocol: 1,
+        origin: "other-device",
+        exportedAt: Date.now(),
+        groups: [{ id: "g1", parentId: null, name: "只有分组", sort: 0, createdAt: 1, updatedAt: 2 }],
+        assets: [{ ...BUNDLE.assets[0], updatedAt: 50 }],
+        creds: [],
+      }),
+    });
+    mocks.importBundle.mockResolvedValue({
+      groupsCreated: 0,
+      groupsUpdated: 1,
+      assetsCreated: 0,
+      assetsUpdated: 0,
+      credsCreated: 0,
+      credsUpdated: 0,
+      skippedNewer: 1,
+      refused: 0,
+      warnings: ["资产 a1 的本机版本较新，已跳过；如需覆盖请使用强制同步"],
+    });
+    await mountCard();
+    clickButton(mounted!.container, "选择资产包文件…");
+    await flushUntil(() => text().includes("确认导入 1 条资产"));
+    clickButton(mounted!.container, "确认导入 1 条资产");
+    await flushUntil(() => text().includes("导入结果"));
+    const successToast = mocks.toast.mock.calls.find(
+      (c) => c[0] === "success" && String(c[1]).includes("导入完成"),
+    );
+    expect(successToast).toBeTruthy();
+    expect(String(successToast?.[1])).toContain("更新 1");
+    const reportBox = [...mounted!.container.querySelectorAll(".nx-alert")].find((el) =>
+      el.textContent?.includes("导入结果"),
+    );
+    expect(reportBox?.className).not.toContain("nx-alert-danger");
+  });
+
   it("含删除标记的包：预览提示会标记删除本机资产", async () => {
     const withTombstone = {
       ...BUNDLE,

@@ -1947,8 +1947,43 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         credsUpdated: 0,
         skippedNewer: 0,
         refused: 0,
-        warnings: [] as string[],
+        warnings: Array.isArray(bundle.warnings)
+          ? (bundle.warnings as unknown[]).filter((w): w is string => typeof w === "string")
+          : [],
       };
+      const bundleAssets = Array.isArray(bundle.assets) ? bundle.assets : [];
+      const effectiveRevision = (updatedAt: unknown, deletedAt: unknown): number =>
+        Math.max(num(updatedAt, 0), typeof deletedAt === "number" ? deletedAt : 0);
+      const assetDecisions = (bundleAssets as Record<string, unknown>[]).map((p) => {
+        const id = str(p?.id).trim();
+        const existing = assets.find((x) => x.id === id);
+        if (existing?.builtin) {
+          return { acceptance: "refused" as const, warning: "内置「当前设备」不接受同步覆盖" };
+        }
+        if (!id || !str(p.name).trim()) {
+          return {
+            acceptance: "refused" as const,
+            warning: `资产 ${id || "(空)"} 的 ID 或名称不合法，已拒绝导入`,
+          };
+        }
+        if (
+          existing &&
+          !force &&
+          effectiveRevision(existing.updatedAt, existing.deletedAt) >
+            effectiveRevision(p.updatedAt, p.deletedAt)
+        ) {
+          return {
+            acceptance: "skipped" as const,
+            warning: `资产 ${id} 的本机版本较新，已跳过；如需覆盖请使用强制同步`,
+          };
+        }
+        return { acceptance: "accepted" as const, warning: "" };
+      });
+      const blockedCredIds = new Set<string>();
+      (bundleAssets as Record<string, unknown>[]).forEach((p, i) => {
+        const credId = str(p?.credId).trim();
+        if (credId && assetDecisions[i].acceptance !== "accepted") blockedCredIds.add(credId);
+      });
       const bundleGroups = Array.isArray(bundle.groups) ? bundle.groups : [];
       for (const g of bundleGroups as Record<string, unknown>[]) {
         const id = str(g?.id).trim();
@@ -1982,6 +2017,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           report.warnings.push("拒绝了 ID 为空的凭据");
           continue;
         }
+        if (blockedCredIds.has(id)) {
+          report.warnings.push(`凭据 ${id} 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变`);
+          continue;
+        }
         const existing = demoCredentials.find((x) => x.id === id);
         const secret = str(c.secret);
         if (existing) {
@@ -2002,26 +2041,17 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           report.credsCreated += 1;
         }
       }
-      const bundleAssets = Array.isArray(bundle.assets) ? bundle.assets : [];
-      for (const p of bundleAssets as Record<string, unknown>[]) {
-        const id = str(p?.id).trim();
-        if (!id) {
-          report.refused += 1;
-          report.warnings.push("拒绝了 ID 为空的资产");
-          continue;
+      (bundleAssets as Record<string, unknown>[]).forEach((p, i) => {
+        const decision = assetDecisions[i];
+        if (decision.acceptance !== "accepted") {
+          if (decision.acceptance === "skipped") report.skippedNewer += 1;
+          else report.refused += 1;
+          report.warnings.push(decision.warning);
+          return;
         }
+        const id = str(p.id).trim();
         const existing = assets.find((x) => x.id === id);
-        if (existing?.builtin) {
-          report.refused += 1;
-          report.warnings.push(`资产 ${id} 是内置资产，已拒绝`);
-          continue;
-        }
         const incomingUpdated = num(p.updatedAt, 0);
-        if (existing && existing.updatedAt > incomingUpdated && !force) {
-          report.skippedNewer += 1;
-          report.warnings.push(`资产 ${id} 本机版本较新，已跳过`);
-          continue;
-        }
         const credId = str(p.credId).trim();
         const groupId = str(p.groupId).trim();
         let options: Record<string, unknown> = {};
@@ -2067,7 +2097,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           assets.push(row);
           report.assetsCreated += 1;
         }
-      }
+      });
       return report;
     }
 

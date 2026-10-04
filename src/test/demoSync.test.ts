@@ -137,4 +137,152 @@ describe("demo 资产包 mock", () => {
     const digest = (await mockInvoke("sync_digest")) as { assets: { id: string }[] };
     expect(digest.assets.map((a) => a.id)).toContain("a-imported");
   });
+
+  it("本机较新时关联凭据不被包内旧值覆盖", async () => {
+    const newer: DemoBundle = {
+      protocol: 1,
+      origin: "other",
+      exportedAt: Date.now(),
+      groups: [],
+      assets: [
+        {
+          id: "a-web01",
+          groupId: null,
+          kind: "ssh",
+          name: "web-01",
+          host: "127.0.0.1",
+          port: 22,
+          username: "deploy",
+          authKind: "password",
+          keyPath: null,
+          credId: "cred-web01",
+          optionsJson: "{}",
+          tags: "",
+          note: "",
+          sort: 0,
+          createdAt: 1,
+          updatedAt: 2_000_000_000_000,
+          deletedAt: null,
+        },
+      ],
+      creds: [{ id: "cred-web01", name: "web-01", kind: "password", secret: "new-local-value" }],
+      warnings: [],
+    };
+    const first = (await mockInvoke("sync_import", { args: { bundle: newer, force: false } })) as Record<
+      string,
+      number
+    >;
+    expect(first.assetsUpdated).toBe(1);
+    expect(first.credsUpdated).toBe(1);
+
+    const older: DemoBundle = {
+      ...newer,
+      assets: [{ ...newer.assets[0], updatedAt: 1_000_000_000_000 }],
+      creds: [{ id: "cred-web01", name: "web-01", kind: "password", secret: "stale-value" }],
+    };
+    const second = (await mockInvoke("sync_import", { args: { bundle: older, force: false } })) as Record<
+      string,
+      number | string[]
+    >;
+    expect(second.skippedNewer).toBe(1);
+    expect(second.assetsUpdated).toBe(0);
+    expect(second.credsUpdated).toBe(0);
+    expect(second.credsCreated).toBe(0);
+    expect((second.warnings as string[]).join("\n")).toContain("受到保护");
+    const revealed = (await mockInvoke("vault_reveal_credential", { args: { id: "cred-web01" } })) as {
+      value: string;
+    };
+    expect(revealed.value).toBe("new-local-value");
+  });
+
+  it("本机较新的删除标记不被包内 live 行复活", async () => {
+    await mockInvoke("asset_delete", { args: { id: "a-web01" } });
+    const bundle: DemoBundle = {
+      protocol: 1,
+      origin: "other",
+      exportedAt: Date.now(),
+      groups: [],
+      assets: [
+        {
+          id: "a-web01",
+          groupId: null,
+          kind: "ssh",
+          name: "web-01",
+          host: "127.0.0.1",
+          port: 22,
+          username: "deploy",
+          authKind: "password",
+          keyPath: null,
+          credId: null,
+          optionsJson: "{}",
+          tags: "",
+          note: "",
+          sort: 0,
+          createdAt: 1,
+          updatedAt: Date.now() - 60_000,
+          deletedAt: null,
+        },
+      ],
+      creds: [],
+      warnings: [],
+    };
+    const report = (await mockInvoke("sync_import", { args: { bundle, force: false } })) as Record<
+      string,
+      number
+    >;
+    expect(report.skippedNewer).toBe(1);
+    expect(report.assetsUpdated).toBe(0);
+    const digest = (await mockInvoke("sync_digest")) as {
+      assets: { id: string; deletedAt: number | null }[];
+    };
+    expect(digest.assets.find((a) => a.id === "a-web01")?.deletedAt).not.toBeNull();
+  });
+
+  it("内置资产被拒绝时其关联凭据保持不变", async () => {
+    const before = (await mockInvoke("vault_reveal_credential", { args: { id: "cred-web01" } })) as {
+      value: string;
+    };
+    const bundle: DemoBundle = {
+      protocol: 1,
+      origin: "other",
+      exportedAt: Date.now(),
+      groups: [],
+      assets: [
+        {
+          id: "a-local",
+          groupId: null,
+          kind: "local",
+          name: "伪造本地",
+          host: null,
+          port: null,
+          username: null,
+          authKind: "none",
+          keyPath: null,
+          credId: "cred-web01",
+          optionsJson: "{}",
+          tags: "",
+          note: "",
+          sort: 0,
+          createdAt: 1,
+          updatedAt: Date.now(),
+          deletedAt: null,
+        },
+      ],
+      creds: [{ id: "cred-web01", name: "web-01", kind: "password", secret: "attacker-value" }],
+      warnings: [],
+    };
+    const report = (await mockInvoke("sync_import", { args: { bundle, force: false } })) as Record<
+      string,
+      number | string[]
+    >;
+    expect(report.refused).toBe(1);
+    expect(report.assetsUpdated).toBe(0);
+    expect(report.credsUpdated).toBe(0);
+    expect(report.credsCreated).toBe(0);
+    expect((report.warnings as string[]).join("\n")).toContain("受到保护");
+    const after = (await mockInvoke("vault_reveal_credential", { args: { id: "cred-web01" } })) as {
+      value: string;
+    };
+    expect(after.value).toBe(before.value);
+  });
 });

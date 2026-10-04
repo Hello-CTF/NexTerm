@@ -181,11 +181,18 @@ export function SyncBundleCard() {
       void qc.invalidateQueries();
       await refreshDigest();
       const touched =
-        data.assetsCreated + data.assetsUpdated + data.groupsCreated + data.credsCreated + data.credsUpdated;
+        data.assetsCreated +
+        data.assetsUpdated +
+        data.groupsCreated +
+        data.groupsUpdated +
+        data.credsCreated +
+        data.credsUpdated;
       pushToast(
         touched > 0 ? "success" : "error",
         touched > 0
-          ? `导入完成：新建 ${data.assetsCreated} · 更新 ${data.assetsUpdated}`
+          ? `导入完成：新建 ${data.assetsCreated + data.groupsCreated + data.credsCreated} · 更新 ${
+              data.assetsUpdated + data.groupsUpdated + data.credsUpdated
+            }`
           : "没有任何条目被写入，请看下方原因",
       );
     } catch (e) {
@@ -418,7 +425,12 @@ export function SyncBundleCard() {
 
 function ImportReportBody({ data }: { data: ImportReport }) {
   const touched =
-    data.assetsCreated + data.assetsUpdated + data.groupsCreated + data.credsCreated + data.credsUpdated;
+    data.assetsCreated +
+    data.assetsUpdated +
+    data.groupsCreated +
+    data.groupsUpdated +
+    data.credsCreated +
+    data.credsUpdated;
   return (
     <div className={`mt-3 nx-alert ${touched > 0 ? "" : "nx-alert-danger"}`}>
       <div className="mb-1 font-semibold">导入结果</div>
