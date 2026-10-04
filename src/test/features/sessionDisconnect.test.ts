@@ -113,6 +113,22 @@ describe("session disconnect confirmation", () => {
     expect(message).toContain("2 个正在运行的终端");
   });
 
+  it("does not recount a local tab whose backend twin already exited", async () => {
+    seed([terminal("a")]);
+    mocks.listLive.mockResolvedValue([
+      liveTab("kernel-a", "s1", true),
+      liveTab("kernel-bg", "s1"),
+      liveTab("kernel-other", "s2"),
+    ]);
+
+    expect(await runningTerminalCount("s1")).toBe(1);
+
+    await disconnectSessionWithConfirm("s1", "web-01");
+
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("1 个正在运行的终端");
+  });
+
   it("cancelling the confirmation keeps the connection", async () => {
     seed([terminal("a")]);
     mocks.listLive.mockResolvedValue([liveTab("kernel-a", "s1"), liveTab("kernel-bg", "s1")]);

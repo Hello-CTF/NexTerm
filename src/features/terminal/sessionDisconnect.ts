@@ -26,8 +26,9 @@ export async function runningTerminalCount(sessionId: string): Promise<number> {
   } catch {
     return local.length;
   }
-  const live = listed.filter((t) => t.sessionId === sessionId && !t.exited);
-  const listedIds = new Set(live.map((t) => t.tabId));
+  const sessionTabs = listed.filter((t) => t.sessionId === sessionId);
+  const listedIds = new Set(sessionTabs.map((t) => t.tabId));
+  const live = sessionTabs.filter((t) => !t.exited);
   return live.length + local.filter((tabId) => !listedIds.has(tabId)).length;
 }
 

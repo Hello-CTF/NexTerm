@@ -541,7 +541,16 @@ async function closeBackgroundAcceptance(page) {
     await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
     await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length === 2`);
     await sleep(800);
-    await clickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab'] button[aria-label^="关闭标签"]`);
+    await rightClickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab']`);
+    const menuCopy = await page.evaluate(`(() => {
+      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("关闭标签"));
+      return item?.textContent ?? "";
+    })()`);
+    assert.ok(
+      menuCopy.includes("结束 WinRM 非交互进程") && !menuCopy.includes("转入后台"),
+      `winrm tab menu must not promise a background entry: ${menuCopy}`,
+    );
+    assert.equal(await page.evaluate(clickByText("关闭标签")), true);
     await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
     const message = await page.evaluate(dialogText);
     assert.ok(message.includes("WinRM 非交互") && message.includes("不支持转入后台"), `winrm close must confirm instead of faking background: ${message}`);

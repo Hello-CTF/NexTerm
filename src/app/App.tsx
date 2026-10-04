@@ -19,6 +19,7 @@ import {
   requestKillTab,
   requestKillWorkspaceTerminals,
   closeTabHint,
+  closeActionHint,
   countBlockedTerminals,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
@@ -1268,7 +1269,7 @@ function PaneGroup({
       kind: "item",
       label: "关闭标签",
       icon: <IconClose size={12} />,
-      hint: running ? (t.containerId ? "结束容器 exec 进程" : "转入后台运行") : undefined,
+      hint: closeActionHint(t),
       disabled: !t.closable,
       onSelect: () => void requestCloseTab(t.id),
     });

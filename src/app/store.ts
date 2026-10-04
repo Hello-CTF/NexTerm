@@ -748,7 +748,10 @@ export function countBlockedTerminals(tabs: AppTab[]): number {
 async function reclaimTerminals(tabs: AppTab[], scope: string, title: string): Promise<boolean> {
   const st = useUi.getState();
   const live = tabs.filter(isRunningTerminal);
-  if (live.length === 0) return true;
+  const cleanup = tabs.filter(
+    (t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited,
+  );
+  if (live.length === 0 && cleanup.length === 0) return true;
   const blocked = live.filter((t) => detachBlockOf(t, st.sessions) !== null);
   const detachable = live.filter((t) => detachBlockOf(t, st.sessions) === null);
   if (blocked.length > 0) {
@@ -769,17 +772,21 @@ async function reclaimTerminals(tabs: AppTab[], scope: string, title: string): P
   const results = await Promise.allSettled([
     ...detachable.map((t) => terminalApi.closeTab(t.tabId as string, "detach")),
     ...blocked.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+    ...cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
   ]);
   const failed = results.filter((r) => r.status === "rejected");
   const { pushToast } = useUi.getState();
   if (failed.length) {
     pushToast(
       "error",
-      `${failed.length}/${live.length} 个终端回收失败：${describeError((failed[0] as PromiseRejectedResult).reason)}`,
+      `${failed.length}/${live.length + cleanup.length} 个终端回收失败：${describeError((failed[0] as PromiseRejectedResult).reason)}`,
     );
   }
   const detachedOk = results.filter((r, i) => r.status === "fulfilled" && i < detachable.length).length;
-  const blockedOk = results.filter((r, i) => r.status === "fulfilled" && i >= detachable.length).length;
+  const blockedOk = results.filter(
+    (r, i) =>
+      r.status === "fulfilled" && i >= detachable.length && i < detachable.length + blocked.length,
+  ).length;
   if (detachedOk) {
     pushToast("info", `${detachedOk} 个终端已转入后台，可在「后台会话」接管`);
   }
@@ -789,13 +796,19 @@ async function reclaimTerminals(tabs: AppTab[], scope: string, title: string): P
   return true;
 }
 
+export function closeActionHint(t: AppTab): string | undefined {
+  if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
+  const block = detachBlockOf(t, useUi.getState().sessions);
+  if (block === "exec") return "结束容器 exec 进程";
+  if (block === "winrm") return "结束 WinRM 非交互进程";
+  return "转入后台运行";
+}
+
 export function closeTabHint(t: AppTab): string {
   if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签";
   if (t.exited) return "关闭标签（进程已结束）";
-  const block = detachBlockOf(t, useUi.getState().sessions);
-  if (block === "exec") return "关闭标签（结束容器 exec 进程）";
-  if (block === "winrm") return "关闭标签（结束 WinRM 非交互进程）";
-  return "关闭标签（转入后台运行）";
+  const action = closeActionHint(t);
+  return action ? `关闭标签（${action}）` : "关闭标签";
 }
 
 export async function requestCloseTab(id: string): Promise<void> {

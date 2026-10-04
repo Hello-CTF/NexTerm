@@ -17,6 +17,7 @@ vi.mock("../../ipc/commands", () => ({
 
 import type { AppTab, Pane, Workspace } from "../../app/store";
 import {
+  closeActionHint,
   closeTabHint,
   requestCloseTab,
   requestKillTab,
@@ -221,6 +222,56 @@ describe("close = detach (M111)", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
+
+  it("workspace close cleans up exited backend tabs without asking", async () => {
+    const tabs = [terminal("t1"), { ...terminal("x1"), exited: true }];
+    seed([{ id: "p", tabs, activeTabId: "t1" }]);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("unsplit cleans up exited backend tabs without asking", async () => {
+    const panes = [
+      { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
+      { id: "p2", tabs: [{ ...terminal("x1"), exited: true }], activeTabId: "x1" },
+    ];
+    seed(panes);
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+  });
+
+  it("workspace close with only exited tabs asks nothing and still reclaims them", async () => {
+    const tabs = [{ ...terminal("x1"), exited: true }, { ...terminal("x2"), exited: true }];
+    seed([{ id: "p", tabs, activeTabId: "x1" }]);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledTimes(2);
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("workspace close combines detach, confirmed blocked kill, and exited cleanup", async () => {
+    const tabs = [terminal("t1"), execTerminal("e1"), { ...terminal("x1"), exited: true }];
+    seed([{ id: "p", tabs, activeTabId: "t1" }]);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
 });
 
 describe("kill danger actions", () => {
@@ -346,10 +397,13 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
   it("closeTabHint reflects detach capability per tab kind", () => {
     seed([{ id: "p", tabs: [], activeTabId: null }], "winrm");
     expect(closeTabHint(terminal())).toBe("关闭标签（结束 WinRM 非交互进程）");
-    expect(closeTabHint(execTerminal())).toBe("关闭标签（结束容器 exec 进程）");
-    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签（进程已结束）");
+    expect(closeActionHint(terminal())).toBe("结束 WinRM 非交互进程");
+    expect(closeActionHint(execTerminal())).toBe("结束容器 exec 进程");
     seed([{ id: "p", tabs: [], activeTabId: null }], "ssh");
     expect(closeTabHint(terminal())).toBe("关闭标签（转入后台运行）");
+    expect(closeActionHint(terminal())).toBe("转入后台运行");
+    expect(closeActionHint({ ...terminal(), exited: true })).toBeUndefined();
+    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签（进程已结束）");
     expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签");
   });
 });
