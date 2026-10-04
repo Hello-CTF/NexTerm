@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { aiApi } from "../../ipc/commands";
+import { aiApi, modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { cronApi, cronTimeoutMs, type CronJob } from "../../ipc/cron";
 import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { profileKeyUnavailable } from "../ai/modelLifecycle";
 import {
   IconClock,
+  IconEdit,
   IconPlus,
   IconRefresh,
   IconTrash,
@@ -22,6 +24,7 @@ type RegisterDraft = {
   schedule: string;
   timezone: string;
   timeoutSec: string;
+  modelProfileId: string;
 };
 
 function jobStatus(job: CronJob): { label: string; cls: string } {
@@ -43,6 +46,7 @@ function formatTime(rfc3339: string | undefined): string | null {
 
 export function CronCard() {
   const { pushToast } = useUi();
+  const profilesRevision = useUi((s) => s.modelProfilesRevision);
 
   const [conversations, setConversations] = useState<ConversationOption[] | null>(null);
   const [jobs, setJobs] = useState<CronJob[] | null>(null);
@@ -50,8 +54,12 @@ export function CronCard() {
   const [error, setError] = useState<string | null>(null);
   const [partialErrors, setPartialErrors] = useState<string[]>([]);
 
+  const [profilesView, setProfilesView] = useState<ModelProfilesView | null>(null);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
+
   const [registerOpen, setRegisterOpen] = useState(false);
   const [draft, setDraft] = useState<RegisterDraft | null>(null);
+  const [editingJob, setEditingJob] = useState<CronJob | null>(null);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
@@ -66,6 +74,24 @@ export function CronCard() {
       loadGenRef.current++;
     };
   }, []);
+
+  const loadProfiles = useCallback(async () => {
+    try {
+      const view = await modelApi.overview();
+      if (!aliveRef.current) return;
+      setProfilesView(view);
+      setProfilesError(null);
+    } catch (e) {
+      if (!aliveRef.current) return;
+      setProfilesView(null);
+      setProfilesError(describeError(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (DEMO) return;
+    void loadProfiles();
+  }, [loadProfiles, profilesRevision]);
 
   const reload = useCallback(async () => {
     const gen = ++loadGenRef.current;
@@ -120,8 +146,12 @@ export function CronCard() {
   const titleOf = (sessionId: string) =>
     conversations?.find((c) => c.id === sessionId)?.title ?? sessionId;
 
+  const profileById = (id: string) => profilesView?.profiles.find((p) => p.id === id);
+  const activeProfile = profilesView?.activeId ? profileById(profilesView.activeId) : undefined;
+
   const openRegister = () => {
     setRegisterError(null);
+    setEditingJob(null);
     setDraft({
       sessionId: conversations?.[0]?.id ?? "",
       name: "",
@@ -129,6 +159,22 @@ export function CronCard() {
       schedule: "",
       timezone: "UTC",
       timeoutSec: "",
+      modelProfileId: "",
+    });
+    setRegisterOpen(true);
+  };
+
+  const openEdit = (job: CronJob) => {
+    setRegisterError(null);
+    setEditingJob(job);
+    setDraft({
+      sessionId: job.sessionId,
+      name: job.name ?? "",
+      prompt: job.prompt,
+      schedule: job.schedule,
+      timezone: job.timezone,
+      timeoutSec: job.timeout > 0 ? String(Math.round(cronTimeoutMs(job) / 1000)) : "",
+      modelProfileId: job.modelProfileId ?? "",
     });
     setRegisterOpen(true);
   };
@@ -152,6 +198,15 @@ export function CronCard() {
       setRegisterError("超时必须是正数（秒）");
       return;
     }
+    const modelProfileId = draft.modelProfileId.trim();
+    if (
+      modelProfileId &&
+      profilesView &&
+      !profilesView.profiles.some((p) => p.id === modelProfileId)
+    ) {
+      setRegisterError("所选模型档案已不存在，请重新选择");
+      return;
+    }
     setRegistering(true);
     setRegisterError(null);
     try {
@@ -162,10 +217,22 @@ export function CronCard() {
         schedule: draft.schedule.trim(),
         timezone: draft.timezone.trim() || "UTC",
         ...(timeoutSec !== null ? { timeoutMs: Math.round(timeoutSec * 1000) } : {}),
+        ...(modelProfileId ? { modelProfileId } : {}),
+        ...(editingJob && !editingJob.enabled ? { disabled: true } : {}),
       });
-      pushToast("success", "定时任务已注册");
+      if (editingJob) {
+        try {
+          await cronApi.unregister(editingJob.sessionId, editingJob.id);
+          pushToast("success", "定时任务已更新");
+        } catch (e) {
+          pushToast("error", `新任务已创建，但旧任务注销失败：${describeError(e)}`);
+        }
+      } else {
+        pushToast("success", "定时任务已注册");
+      }
       setRegisterOpen(false);
       setDraft(null);
+      setEditingJob(null);
       await reload();
     } catch (e) {
       setRegisterError(describeError(e));
@@ -220,7 +287,13 @@ export function CronCard() {
         <span className="nx-card-title">定时任务</span>
         {jobs && <span className="nx-badge">{jobs.length} 个</span>}
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
+        <button
+          className="nx-btn nx-btn-ghost nx-btn-sm"
+          onClick={() => {
+            void reload();
+            void loadProfiles();
+          }}
+        >
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
           刷新
         </button>
@@ -232,7 +305,9 @@ export function CronCard() {
 
       {registerOpen && draft ? (
         <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
-          <div className="text-[12.5px] font-semibold text-neutral-200">注册定时任务</div>
+          <div className="text-[12.5px] font-semibold text-neutral-200">
+            {editingJob ? "编辑定时任务" : "注册定时任务"}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="nx-hint text-[11px]" htmlFor="cron-register-session">
               所属会话
@@ -266,6 +341,44 @@ export function CronCard() {
             onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
           />
           <div className="flex flex-wrap items-center gap-2">
+            <label className="nx-hint text-[11px]" htmlFor="cron-register-model-profile">
+              模型档案
+            </label>
+            <select
+              id="cron-register-model-profile"
+              className="nx-select nx-input-sm min-w-0 flex-1"
+              aria-label="模型档案"
+              value={draft.modelProfileId}
+              onChange={(e) => setDraft({ ...draft, modelProfileId: e.target.value })}
+            >
+              <option value="">
+                {activeProfile
+                  ? `跟随当前激活档案「${activeProfile.name}」`
+                  : "跟随当前激活档案（当前未设置）"}
+              </option>
+              {draft.modelProfileId && !profileById(draft.modelProfileId) && (
+                <option value={draft.modelProfileId}>
+                  未知档案（可能已删除）· {draft.modelProfileId}
+                </option>
+              )}
+              {(profilesView?.profiles ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {`${p.name} · ${p.model}${profileKeyUnavailable(p) ? "（密钥不可用）" : ""}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          {profilesError && (
+            <div className="nx-hint text-[11px] text-red-300" role="alert">
+              模型档案读取失败：{profilesError}（档案列表可能不完整；「跟随当前激活档案」不受影响）
+            </div>
+          )}
+          {editingJob && editingJob.modelProfileId && !profileById(editingJob.modelProfileId) && (
+            <div className="nx-hint text-[11px] text-amber-300">
+              该任务保存的模型档案已不存在（可能已删除）；请选择其它档案，或改回「跟随当前激活档案」。
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
             <input
               className="nx-input nx-input-sm w-[130px] font-mono"
               placeholder="0 2 * * *"
@@ -295,7 +408,13 @@ export function CronCard() {
               disabled={registering}
               onClick={() => void submitRegister()}
             >
-              {registering ? "注册中…" : "注册"}
+              {registering
+                ? editingJob
+                  ? "保存中…"
+                  : "注册中…"
+                : editingJob
+                  ? "保存"
+                  : "注册"}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -303,6 +422,7 @@ export function CronCard() {
               onClick={() => {
                 setRegisterOpen(false);
                 setDraft(null);
+                setEditingJob(null);
                 setRegisterError(null);
               }}
             >
@@ -312,6 +432,9 @@ export function CronCard() {
           <p className="nx-hint text-[11px]">
             表达式为 5 段 cron（分 时 日 月 周），时区缺省 UTC；超时缺省 60 秒。
             重新启用时从当前时刻起算下一次执行，不补跑停用期间的点。
+            {editingJob
+              ? " 保存会以这些值重新创建任务：任务标识与执行历史不保留，下次执行从当前时刻起算。"
+              : ""}
           </p>
           {registerError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]" role="alert">
@@ -394,6 +517,10 @@ export function CronCard() {
             const busy = actionBusy === key;
             const nextRun = formatTime(job.nextRunAt);
             const lastRun = formatTime(job.lastRunAt);
+            const jobProfileId = job.modelProfileId ?? "";
+            const jobProfile = jobProfileId ? profileById(jobProfileId) : undefined;
+            const profileUnknown = !!jobProfileId && !!profilesView && !jobProfile;
+            const profileUnavailable = !!jobProfile && profileKeyUnavailable(jobProfile);
             return (
               <div key={key} className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -407,13 +534,26 @@ export function CronCard() {
                         连续失败 {job.consecutiveFailures} 次
                       </span>
                     ) : null}
+                    {profileUnknown && <span className="nx-badge nx-badge-red">档案已删除</span>}
+                    {profileUnavailable && (
+                      <span className="nx-badge nx-badge-amber">档案密钥不可用</span>
+                    )}
                   </div>
                   <div className="nx-hint mt-0.5 text-[11px]">
                     会话「{titleOf(job.sessionId)}」 ·{" "}
                     <span className="font-mono">
                       {job.schedule}（{job.timezone}）
                     </span>{" "}
-                    · 超时 {Math.round(cronTimeoutMs(job) / 1000)}s
+                    · 超时 {Math.round(cronTimeoutMs(job) / 1000)}s ·{" "}
+                    {jobProfile ? (
+                      <>档案「{jobProfile.name}」</>
+                    ) : jobProfileId ? (
+                      <span className="break-words font-mono" title={jobProfileId}>
+                        档案 {jobProfileId}
+                      </span>
+                    ) : (
+                      <>跟随激活档案{activeProfile ? `「${activeProfile.name}」` : ""}</>
+                    )}
                   </div>
                   <div className="nx-hint text-[11px]">
                     {nextRun ? `下次执行 ${nextRun}` : "没有待执行的时间点"}
@@ -429,6 +569,15 @@ export function CronCard() {
                   )}
                 </div>
                 <div className="flex shrink-0 flex-col gap-1">
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-sm"
+                    disabled={actionBusy !== null || !!job.run.id}
+                    title={job.run.id ? "执行中不能编辑" : "编辑定时任务"}
+                    onClick={() => openEdit(job)}
+                  >
+                    <IconEdit size={11} />
+                    编辑
+                  </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm"
                     disabled={actionBusy !== null}

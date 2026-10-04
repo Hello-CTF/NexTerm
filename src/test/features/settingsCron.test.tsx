@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import {
   click,
   clickButton,
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     register: vi.fn(),
     setEnabled: vi.fn(),
     unregister: vi.fn(),
+    modelOverview: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -36,6 +37,7 @@ vi.mock("../../ipc/cron", () => ({
 }));
 vi.mock("../../ipc/commands", () => ({
   aiApi: { conversationList: mocks.conversationList },
+  modelApi: { overview: mocks.modelOverview },
   dbApi: {},
   sessionApi: {},
   terminalApi: {},
@@ -58,6 +60,7 @@ type TestJob = {
   timezone: string;
   enabled: boolean;
   timeout: number;
+  modelProfileId?: string;
   createdAt: string;
   updatedAt: string;
   revision: number;
@@ -96,6 +99,40 @@ const JOB_B = job({
   consecutiveFailures: 2,
 });
 
+type TestProfile = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  temperature: number;
+  contextWindow: number;
+  proxy: string | null;
+  stream: boolean;
+};
+
+function profile(overrides: Partial<TestProfile> & { id: string; name: string }): TestProfile {
+  return {
+    baseUrl: "https://api.example.com",
+    apiKey: "sk-real-key",
+    model: "example-model",
+    temperature: 0.3,
+    contextWindow: 32768,
+    proxy: null,
+    stream: true,
+    ...overrides,
+  };
+}
+
+const PROFILE_ACTIVE = profile({ id: "p-active", name: "生产档案" });
+const PROFILE_OTHER = profile({ id: "p-other", name: "备用档案", model: "backup-model" });
+const PROFILE_MASKED = profile({ id: "p-masked", name: "同步档案", apiKey: "********" });
+
+const OVERVIEW = {
+  profiles: [PROFILE_ACTIVE, PROFILE_OTHER, PROFILE_MASKED],
+  activeId: "p-active",
+};
+
 function clickRowButton(container: ParentNode, rowText: string, buttonText: string): void {
   const button = [...container.querySelectorAll("button")].find(
     (candidate) =>
@@ -117,6 +154,10 @@ describe("CronCard", () => {
     mocks.list.mockImplementation((sessionId: string) =>
       Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
     );
+    mocks.modelOverview.mockResolvedValue(OVERVIEW);
+    mocks.register.mockResolvedValue(job({ id: "j-new", sessionId: "c-1" }));
+    mocks.setEnabled.mockResolvedValue(undefined);
+    mocks.unregister.mockResolvedValue(undefined);
   });
   afterEach(() => {
     mounted?.unmount();
@@ -435,5 +476,320 @@ describe("CronCard", () => {
     expect(text).toContain("没有待执行的时间点");
     expect(text).toContain("任务持久保存在本机，重启后继续生效。");
     expect(text).not.toContain("对账");
+  });
+
+  it("模型档案选择器：默认项显式指向当前激活档案，列出全部档案且不暴露密钥", async () => {
+    mounted = mount(createElement(CronCard));
+    await flush();
+    clickButton(mounted.container, "注册定时任务");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect(select.value).toBe("");
+    const labels = [...select.options].map((o) => o.textContent ?? "");
+    expect(labels[0]).toContain("跟随当前激活档案「生产档案」");
+    expect(labels.some((l) => l.includes("生产档案 · example-model"))).toBe(true);
+    expect(labels.some((l) => l.includes("备用档案 · backup-model"))).toBe(true);
+    expect(labels.some((l) => l.includes("同步档案 · example-model（密钥不可用）"))).toBe(true);
+    expect(labels.join("\n")).not.toContain("sk-real-key");
+    expect(mocks.modelOverview).toHaveBeenCalled();
+  });
+
+  it("注册时把所选模型档案随任务持久化", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-9", sessionId: "c-2" }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickButton(mounted.container, "注册定时任务");
+    setSelectValue(
+      mounted.container.querySelector<HTMLSelectElement>('select[aria-label="模型档案"]')!,
+      "p-other",
+    );
+    setInputValue(
+      mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
+      "truncate old logs",
+    );
+    setInputValue(
+      mounted.container.querySelector<HTMLInputElement>('input[aria-label="cron 表达式"]')!,
+      "0 4 * * *",
+    );
+    clickButton(mounted.container, "注册");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith({
+      sessionId: "c-1",
+      prompt: "truncate old logs",
+      schedule: "0 4 * * *",
+      timezone: "UTC",
+      modelProfileId: "p-other",
+    });
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已注册");
+  });
+
+  it("注册允许选择密钥不可用档案，选项中如实标注", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-9", sessionId: "c-1" }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickButton(mounted.container, "注册定时任务");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    setSelectValue(select, "p-masked");
+    setInputValue(
+      mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
+      "do something",
+    );
+    setInputValue(
+      mounted.container.querySelector<HTMLInputElement>('input[aria-label="cron 表达式"]')!,
+      "0 4 * * *",
+    );
+    clickButton(mounted.container, "注册");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ modelProfileId: "p-masked" }),
+    );
+  });
+
+  it("编辑任务：预填当前值并如实说明重建语义，保存时先建后删", async () => {
+    const withProfile = job({
+      id: "j-1",
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      modelProfileId: "p-other",
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [withProfile] : [JOB_B]),
+    );
+    mocks.register.mockResolvedValue(
+      job({ id: "j-10", sessionId: "c-1", modelProfileId: "p-active" }),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("编辑定时任务");
+    expect(text).toContain("任务标识与执行历史不保留");
+
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect(select.value).toBe("p-other");
+    setSelectValue(select, "p-active");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith({
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      prompt: "check disk",
+      schedule: "0 2 * * *",
+      timezone: "UTC",
+      timeoutMs: 60_000,
+      modelProfileId: "p-active",
+    });
+    expect(mocks.unregister).toHaveBeenCalledWith("c-1", "j-1");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
+  it("编辑已停用任务时保持停用状态", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-11", sessionId: "c-2", enabled: false }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "backup db", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith({
+      sessionId: "c-2",
+      prompt: "backup db",
+      schedule: "0 3 * * *",
+      timezone: "UTC",
+      timeoutMs: 60_000,
+      disabled: true,
+    });
+    expect(mocks.unregister).toHaveBeenCalledWith("c-2", "j-2");
+  });
+
+  it("编辑保存后旧任务注销失败时如实报错", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1" }));
+    mocks.unregister.mockRejectedValue(new Error("只读数据库"));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("旧任务注销失败：只读数据库"),
+    );
+  });
+
+  it("执行中的任务不能编辑", async () => {
+    const running = job({
+      id: "j-1",
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      run: { id: "r-1", scheduledFor: "", startedAt: "", deadline: "" },
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [running] : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    const edit = [...mounted.container.querySelectorAll("button")].find(
+      (b) =>
+        b.textContent?.trim() === "编辑" &&
+        b.parentElement?.parentElement?.textContent?.includes("磁盘巡检"),
+    );
+    expect(edit?.disabled).toBe(true);
+    expect(edit?.getAttribute("title")).toBe("执行中不能编辑");
+  });
+
+  it("未指定档案的任务显示跟随激活档案", async () => {
+    mounted = mount(createElement(CronCard));
+    await flush();
+    expect(mounted.container.textContent).toContain("跟随激活档案「生产档案」");
+  });
+
+  it("任务保存的档案已删除时如实标注，编辑时给出未知档案选项与警告", async () => {
+    const orphan = job({
+      id: "j-1",
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      modelProfileId: "p-ghost",
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [orphan] : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("档案已删除");
+    expect(text).toContain("p-ghost");
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    expect(mounted.container.textContent).toContain("该任务保存的模型档案已不存在");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect(select.value).toBe("p-ghost");
+    const labels = [...select.options].map((o) => o.textContent ?? "");
+    expect(labels.some((l) => l.includes("未知档案（可能已删除）") && l.includes("p-ghost"))).toBe(
+      true,
+    );
+  });
+
+  it("任务档案密钥不可用时如实标注", async () => {
+    const masked = job({
+      id: "j-1",
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      modelProfileId: "p-masked",
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [masked] : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("档案密钥不可用");
+    expect(text).toContain("档案「同步档案」");
+  });
+
+  it("档案读取失败时如实提示，任务列表与注册不受影响", async () => {
+    mocks.modelOverview.mockRejectedValue(new Error("档案服务不可用"));
+    const withProfile = job({
+      id: "j-1",
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      modelProfileId: "p-other",
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [withProfile] : [JOB_B]),
+    );
+    mocks.register.mockResolvedValue(job({ id: "j-9", sessionId: "c-1" }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("磁盘巡检");
+    expect(text).toContain("档案 p-other");
+    expect(text).not.toContain("档案已删除");
+
+    clickButton(mounted.container, "注册定时任务");
+    expect(mounted.container.textContent).toContain("模型档案读取失败：档案服务不可用");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      "跟随当前激活档案（当前未设置）",
+    ]);
+
+    setInputValue(
+      mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
+      "do something",
+    );
+    setInputValue(
+      mounted.container.querySelector<HTMLInputElement>('input[aria-label="cron 表达式"]')!,
+      "0 1 * * *",
+    );
+    clickButton(mounted.container, "注册");
+    await flush();
+    expect(mocks.register).toHaveBeenCalledWith({
+      sessionId: "c-1",
+      prompt: "do something",
+      schedule: "0 1 * * *",
+      timezone: "UTC",
+    });
+  });
+
+  it("提交前发现所选档案已删除时拒绝注册并如实提示", async () => {
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickButton(mounted.container, "注册定时任务");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    setSelectValue(select, "p-other");
+    mocks.modelOverview.mockResolvedValue({ profiles: [PROFILE_ACTIVE], activeId: "p-active" });
+    act(() => useUi.getState().bumpModelProfilesRevision());
+    await flush();
+
+    setInputValue(
+      mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
+      "do something",
+    );
+    setInputValue(
+      mounted.container.querySelector<HTMLInputElement>('input[aria-label="cron 表达式"]')!,
+      "0 1 * * *",
+    );
+    clickButton(mounted.container, "注册");
+    await flush();
+
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("所选模型档案已不存在");
+  });
+
+  it("档案变更（revision 递增）后刷新档案数据", async () => {
+    mocks.modelOverview.mockResolvedValue({ profiles: [], activeId: null });
+    mounted = mount(createElement(CronCard));
+    await flush();
+    expect(mounted.container.textContent).toContain("跟随激活档案");
+
+    mocks.modelOverview.mockResolvedValue(OVERVIEW);
+    act(() => useUi.getState().bumpModelProfilesRevision());
+    await flush();
+    expect(mounted.container.textContent).toContain("跟随激活档案「生产档案」");
+    expect(mocks.modelOverview).toHaveBeenCalledTimes(2);
   });
 });

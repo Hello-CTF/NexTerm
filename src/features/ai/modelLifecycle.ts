@@ -42,6 +42,11 @@ export function modelParamsAtDefaults(profile: ModelProfile): boolean {
   );
 }
 
+export function profileKeyUnavailable(profile: ModelProfile): boolean {
+  const trimmed = profile.apiKey.trim();
+  return trimmed !== "" && /^[*•●·…]+$/.test(trimmed);
+}
+
 export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
   return (
     a.name === b.name &&
