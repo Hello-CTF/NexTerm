@@ -319,6 +319,7 @@ async function killSeedBackgroundTab(page) {
   await clickSelector(page, `${VISIBLE} .nx-table button[title="停止这个终端里的进程"]`);
   await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
   await page.evaluate(clickDialogButton("确定"));
+  await page.waitFor(`${toastText}.includes("已结束进程")`);
   await page.waitFor(`${bgCount} === 0`);
 }
 
