@@ -18,6 +18,9 @@ func nextTakeoverHubEvent(t *testing.T, receiver *hub.Receiver) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := receiver.Ack(frame.Sequence); err != nil {
+		t.Fatal(err)
+	}
 	var event map[string]any
 	if err := json.Unmarshal(frame.Data, &event); err != nil {
 		t.Fatal(err)

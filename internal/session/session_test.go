@@ -453,6 +453,9 @@ func receiveTestFrame(t *testing.T, receiver *hub.Receiver) hub.Frame {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := receiver.Ack(frame.Sequence); err != nil {
+		t.Fatal(err)
+	}
 	return frame
 }
 
