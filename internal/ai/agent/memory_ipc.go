@@ -8,11 +8,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
-// memory_* IPC commands: the restricted CRUD and settings surface of the
-// semantic memory store. Every command carries the owner scope explicitly and
-// the store authorizes each row against it, so one scope can never read or
-// mutate another scope's entries. The agent runner registers this surface
-// only when it owns a memory store.
 const (
 	memoryCommandCreate      = "memory_create"
 	memoryCommandGet         = "memory_get"
@@ -60,7 +55,7 @@ type memoryCreateRequest struct {
 	Scope   memoryScopeDTO `json:"scope"`
 	Topic   string         `json:"topic"`
 	Content string         `json:"content"`
-	// Secrets is "reject" (default) or "redact".
+
 	Secrets string `json:"secrets,omitempty"`
 }
 
@@ -112,8 +107,6 @@ func memorySettings(settings memory.Settings) memorySettingsDTO {
 	}
 }
 
-// memorySecretPolicy maps the wire policy name to the store policy; the empty
-// string means the safe default, reject-on-write.
 func memorySecretPolicy(name string) (memory.SecretPolicy, error) {
 	switch name {
 	case "", "reject":
@@ -125,9 +118,6 @@ func memorySecretPolicy(name string) (memory.SecretPolicy, error) {
 	}
 }
 
-// memoryIPCError maps the store's sentinel errors onto IPC codes so the
-// frontend can branch: stale versions and invalid input are bad_param, a
-// missing entry is not_found and a scope mismatch is forbidden.
 func memoryIPCError(err error) *ipc.Error {
 	var conflict *memory.VersionConflictError
 	switch {

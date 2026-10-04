@@ -18,8 +18,6 @@ import (
 
 var runnerMemoryScope = memory.Scope{Tenant: "tenant-a", Subject: "subject-a"}
 
-// captureModel records the exact message slice every model call receives so
-// tests can assert what the composed runtime handed to the model.
 type captureModel struct {
 	*fakeModel
 	mu       sync.Mutex
@@ -91,10 +89,6 @@ func persistedContents(t *testing.T, storage *store.Store, conversationID string
 	return contents
 }
 
-// TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory proves the
-// composition contract: with the opt-in flag unset, the model input carries no
-// memory message; with the flag on, the memory joins as one ephemeral system
-// message and the persisted conversation record never contains it.
 func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 	ctx := context.Background()
 	memoryStore := openRunnerMemory(t)
@@ -150,9 +144,7 @@ func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 	if ephemeral.Role != schema.System || !strings.Contains(ephemeral.Content, "restart at 02:00") {
 		t.Fatalf("ephemeral message = %+v", ephemeral)
 	}
-	// The adk agent leads with its own instruction system message; the
-	// ephemeral memory must sit right after the leading system block, before
-	// the conversation messages.
+
 	for index := 0; index < position; index++ {
 		if inputs[0][index].Role != schema.System {
 			t.Fatalf("memory message at %d follows non-system message: %+v", position, inputs[0])
@@ -167,9 +159,6 @@ func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 	}
 }
 
-// TestMemoryToolsOptInAndRoundTrip drives the model-facing tools through a
-// scripted model: off by default, and once enabled a save round-trips into
-// the store with the store's secret guard intact.
 func TestMemoryToolsOptInAndRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	memoryStore := openRunnerMemory(t)
@@ -314,8 +303,6 @@ func TestMemoryToolOutputsRespectScopeAndCAS(t *testing.T) {
 	}
 }
 
-// TestRunnerCloseClosesMemoryStore proves the ownership handoff: the runner
-// closes the memory store it was composed with.
 func TestRunnerCloseClosesMemoryStore(t *testing.T) {
 	memoryStore := openRunnerMemory(t)
 	runner := NewRunner(Config{Memory: memoryStore, MemoryScope: runnerMemoryScope})
@@ -327,10 +314,6 @@ func TestRunnerCloseClosesMemoryStore(t *testing.T) {
 	}
 }
 
-// TestMemoryRecallReRedactsPersistedSecrets is the recall-path privacy
-// regression: a secret that reached the database by a direct write (old
-// database, out-of-band fix, rules upgraded after the fact) must never flow
-// into the model input, mirroring the injection path's re-redaction.
 func TestMemoryRecallReRedactsPersistedSecrets(t *testing.T) {
 	ctx := context.Background()
 	memoryStore, path := openRunnerMemoryAt(t)
@@ -363,9 +346,6 @@ func TestMemoryRecallReRedactsPersistedSecrets(t *testing.T) {
 	}
 }
 
-// TestMemoryListBudgetKeepsDeterministicWholeLines proves the directory
-// listing is bounded before it reaches the model: the entry cap and the byte
-// cap admit whole lines in (topic, id) order and report the rest as omitted.
 func TestMemoryListBudgetKeepsDeterministicWholeLines(t *testing.T) {
 	ctx := context.Background()
 
@@ -390,7 +370,7 @@ func TestMemoryListBudgetKeepsDeterministicWholeLines(t *testing.T) {
 		if !strings.Contains(output.Text, "[已省略 6 条]") {
 			t.Fatalf("missing omitted marker: %q", output.Text)
 		}
-		// The kept entries are exactly the first 64 in (topic, id) order.
+
 		index, err := memoryStore.Index(ctx, runnerMemoryScope)
 		if err != nil {
 			t.Fatal(err)
@@ -411,7 +391,7 @@ func TestMemoryListBudgetKeepsDeterministicWholeLines(t *testing.T) {
 
 	t.Run("byte cap with multi-byte topics", func(t *testing.T) {
 		memoryStore := openRunnerMemory(t)
-		longTopic := strings.Repeat("主题", 40) // 240 bytes, valid UTF-8
+		longTopic := strings.Repeat("主题", 40)
 		for i := 0; i < 40; i++ {
 			if _, err := memoryStore.Create(ctx, runnerMemoryScope, memory.CreateInput{
 				Topic: longTopic, Content: fmt.Sprintf("entry-%03d", i),
@@ -467,8 +447,6 @@ func TestMemoryListBudgetKeepsDeterministicWholeLines(t *testing.T) {
 	})
 }
 
-// completeLines splits the listing into lines and requires every line except
-// the omitted marker to be a whole, well-formed entry line.
 func completeLines(t *testing.T, text string) []string {
 	t.Helper()
 	var lines []string

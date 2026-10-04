@@ -86,14 +86,9 @@ type Config struct {
 	MaxTurns        int
 	MaxImages       int
 	MaxImageBytes   int
-	// MaxPendingSteers bounds the mid-run steering queue of one job;
-	// steer messages beyond it are rejected instead of piling up.
+
 	MaxPendingSteers int
-	// Memory is the opt-in long-term semantic memory store shared by every
-	// execution. The runner owns it: Close closes the store. Nil disables
-	// prompt injection, the model-facing memory tools and the memory IPC
-	// surface. MemoryScope is the single owner scope the runner operates
-	// under; it is configured once by the composition, never derived per call.
+
 	Memory      *memory.Store
 	MemoryScope memory.Scope
 }
@@ -138,17 +133,9 @@ type job struct {
 	memory      *guard.Memory
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
-	// steer holds user messages accepted mid-run, drained at the next
-	// model-call boundary. Created with the job so a steer RPC never
-	// races a half-initialized runtime.
+
 	steer *steer.Queue
 
-	// emitMu guards pendingEmits: events recorded by the model-boundary
-	// middleware (steered acks, thinking/compacting status) that the consume
-	// loop — the job's single event emitter — must emit before it processes
-	// the next model output. The middleware runs on the graph goroutine and
-	// must not emit directly: the consume loop may still owe events for the
-	// completed tool unit that precedes this boundary.
 	emitMu         sync.Mutex
 	pendingEmits   []Event
 	eventMu        sync.Mutex
@@ -169,15 +156,12 @@ func (j *job) emit(ctx context.Context, event Event) error {
 	return j.stream.Send(ctx, event)
 }
 
-// queueEmits records middleware events for the consume loop to emit in
-// record order. Called from the graph goroutine; see pendingEmits.
 func (j *job) queueEmits(events ...Event) {
 	j.emitMu.Lock()
 	j.pendingEmits = append(j.pendingEmits, events...)
 	j.emitMu.Unlock()
 }
 
-// drainEmits hands the queued middleware events to the consume loop.
 func (j *job) drainEmits() []Event {
 	j.emitMu.Lock()
 	defer j.emitMu.Unlock()

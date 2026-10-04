@@ -224,8 +224,6 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 	return result
 }
 
-// sideEffectKind maps a tool name to the outcome ledger kind of the external
-// system it affects. Read-only tools and local-state tools return "".
 func sideEffectKind(name string) outcome.Kind {
 	switch name {
 	case "exec_commands", "send_keys", "docker_exec", "docker_control":
@@ -239,18 +237,10 @@ func sideEffectKind(name string) outcome.Kind {
 	}
 }
 
-// OutcomeKey derives the ledger idempotence key from the job and call
-// identity. The length prefix keeps distinct (job, call) pairs from
-// colliding on ambiguous separators; a redispatched call keeps its key, so
-// the ledger replays the recorded outcome instead of duplicating the effect.
 func OutcomeKey(jobID, callID string) string {
 	return strconv.Itoa(len(jobID)) + ":" + jobID + callID
 }
 
-// GuardAuthorizationID derives the stable ledger authorization id bound to a
-// guard decision. A replay of the same call under a different decision yields
-// a different id and is rejected as an idempotence conflict rather than
-// silently reusing the earlier authorization.
 func GuardAuthorizationID(decision guard.Decision) string {
 	encoded, err := json.Marshal(decision)
 	if err != nil {
@@ -260,10 +250,6 @@ func GuardAuthorizationID(decision guard.Decision) string {
 	return "guard:" + hex.EncodeToString(sum[:])
 }
 
-// executeRecorded runs a side-effecting branch inside the outcome ledger.
-// The effect runs at most once per job/call identity: a redispatch replays
-// the durable record, an in-flight duplicate is rejected without re-running,
-// and a conflicting authorization or arguments never reaches the effect.
 func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
 	request := outcome.Request{
 		IdempotenceKey:  OutcomeKey(jobID, call.ID),
@@ -292,10 +278,7 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	case !ranEffect:
 		return Fail(fmt.Errorf("执行结果记录失败: %w", err))
 	case record.State != outcome.ExecutionFinished || record.Audit.State == outcome.AuditPending:
-		// The effect ran but its terminal state is not durably recorded; the
-		// ledger keeps the conservative running state, so a redispatch cannot
-		// duplicate it. Report the recording failure instead of an
-		// unrecorded result.
+
 		return Fail(fmt.Errorf("执行已发生但结果未能记录: %w", err))
 	case record.Audit.State == outcome.AuditFailed:
 		branch.Text += "\n[结果审计写入失败: " + record.Audit.Error + "]"
@@ -305,18 +288,8 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	}
 }
 
-// execFailureMarker is emitted by exec_commands when the transport itself
-// failed: the command may or may not have run, so the external result is
-// ambiguous even though the branch reports a completed batch.
 const execFailureMarker = "[执行失败:"
 
-// completionFromOutput maps a branch result to an outcome completion. A
-// branch that ran to completion reports OK with the observed process exit
-// code (zero for tools without process semantics): exit 0 is accepted and an
-// observed nonzero exit is a definite failure. A branch failure, a truncated
-// transcript, or a transport error may have left an ambiguous external
-// result, so it maps to unknown — the ledger never retries it and never
-// records it as a definite failure.
 func completionFromOutput(output Output) (outcome.Completion, error) {
 	if !output.OK {
 		return outcome.Completion{}, errors.New(output.Text)
@@ -331,12 +304,6 @@ func completionFromOutput(output Output) (outcome.Completion, error) {
 	return outcome.Completion{Outcome: outcome.OutcomeAccepted, ExitCode: &code}, nil
 }
 
-// replayOutput surfaces the durable outcome record for a redispatched call
-// without re-running the effect. The shape mirrors the branch's own result:
-// accepted and failed replay as a completed call with the recorded exit code,
-// while unknown, not-attempted and rejected replay as an unfinished call.
-// Unknown outcomes stay unknown: the replay text reports what the ledger
-// recorded instead of claiming a definite failure, and nothing is retried.
 func replayOutput(record outcome.Record) Output {
 	text := fmt.Sprintf("调用已执行过，返回账本记录的结果（outcome=%s）", record.Outcome)
 	switch record.Outcome {

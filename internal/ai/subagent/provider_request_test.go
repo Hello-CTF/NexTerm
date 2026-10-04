@@ -13,9 +13,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 )
 
-// TestAcceptanceTemperatureDefaultAndConfigured pins the
-// NEXTERM_AI_TEMPERATURE contract shared with the agent acceptance tests:
-// unset keeps the deterministic 0, a configured value is parsed verbatim.
 func TestAcceptanceTemperatureDefaultAndConfigured(t *testing.T) {
 	t.Setenv("NEXTERM_AI_TEMPERATURE", "")
 	if got := acceptanceTemperature(t); got != 0 {
@@ -31,11 +28,6 @@ func TestAcceptanceTemperatureDefaultAndConfigured(t *testing.T) {
 	}
 }
 
-// TestProfileModelFactorySendsConfiguredTemperature drives the production
-// subagent path — profiles manager → NewProfileModelFactory → subagent
-// manager spawn/wait — against a local HTTP server and asserts the active
-// profile's temperature arrives verbatim in the chat completion request
-// body. It is offline, deterministic, and credential-free by construction.
 func TestProfileModelFactorySendsConfiguredTemperature(t *testing.T) {
 	const configured = 1.25
 	var mu sync.Mutex

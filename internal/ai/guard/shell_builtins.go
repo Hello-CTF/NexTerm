@@ -2,18 +2,12 @@ package guard
 
 import "strings"
 
-// gnuLongOption describes one documented long option of a GNU-style command.
 type gnuLongOption struct {
-	name          string // option name without the leading "--"
-	takesValue    bool   // value may be attached (=value) or given as the next argument
-	optionalValue bool   // value only accepted attached (e.g. --check)
+	name          string
+	takesValue    bool
+	optionalValue bool
 }
 
-// resolveGNULongOption resolves a "--name[=value]" argument against the known
-// option table using GNU unique-abbreviation semantics: an exact match wins,
-// otherwise a prefix is accepted only when exactly one known option starts
-// with it. Unknown or ambiguous prefixes fail closed (ok == false) so callers
-// never silently skip an option they do not understand.
 func resolveGNULongOption(arg string, known []gnuLongOption) (option gnuLongOption, value string, attached, ok bool) {
 	if !strings.HasPrefix(arg, "--") || arg == "--" {
 		return gnuLongOption{}, "", false, false
@@ -177,8 +171,6 @@ var kubectlExecLongOptions = []gnuLongOption{
 	{name: "quiet"},
 }
 
-// sudoValueShorts lists the sudo/doas short options that consume a value,
-// matching privilegeOptionValue and stripCommandFlags.
 const sudoValueShorts = "ughpaCDTtUGR"
 
 func quoteShellToken(value string) string {

@@ -5,15 +5,10 @@ import (
 	"testing"
 )
 
-// TestM64CorpusClassifications drives the M64 guard-semantics corpus as
-// table-driven classification + execution-policy regressions. The contract:
-// Silent auto-allows T0 (Safe) and T1 (NeedsConfirm) only, so anything
-// dynamic, destructive or executing must rule Unknowable, Danger or
-// Forbidden.
 func TestM64CorpusClassifications(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
-		// A. execution wrappers recurse into the nested command
+
 		`nice rm -rf /home/user`,
 		`nohup rm -rf /home/user`,
 		`timeout 5 rm -rf /home/user`,
@@ -30,20 +25,20 @@ func TestM64CorpusClassifications(t *testing.T) {
 		`systemd-run rm -rf /home/user`,
 		`echo /home/user | xargs rm -rf`,
 		`echo rm -rf /home/user | at now`,
-		// B. su -c recursion
+
 		`su -c 'rm -rf /home/user'`,
 		`su root -c 'rm -rf /home/user'`,
 		`su --command='rm -rf /home/user'`,
-		// C. doas -a consumes its value
+
 		`doas -a su rm -rf /home/user`,
-		// D. env remaining forms
+
 		`env --argv0=rm /bin/rm -rf /home/user`,
 		`env -a rm /bin/rm -rf /home/user`,
 		`env -uFOO rm -rf /home/user`,
 		`env -iu FOO rm -rf /home/user`,
-		// ssh remote payloads recurse
+
 		`ssh user@host 'rm -rf /home/user'`,
-		// J. critical paths and critical write targets
+
 		`rm -rf ~root`,
 		`rm -rf /Users/alice`,
 		`rm -rf ~/sub`,
@@ -56,7 +51,7 @@ func TestM64CorpusClassifications(t *testing.T) {
 		`sudo -e /etc/passwd`,
 		`sudo -e /root/.ssh/authorized_keys`,
 		`sudoedit /etc/sudoers`,
-		// K. kubectl exec recurses into the container command
+
 		`kubectl exec pod -- rm -rf /home/user`,
 	}
 	for _, command := range forbidden {
@@ -71,30 +66,30 @@ func TestM64CorpusClassifications(t *testing.T) {
 		})
 	}
 	danger := []string{
-		// A. wrappers reading uncontrolled standard input
+
 		`xargs rm -rf`,
 		`at now`,
 		`batch`,
-		// C. sudo -e family
+
 		`sudo -e /tmp/notes.txt`,
 		`sudoedit /tmp/notes.txt`,
-		// G. network device redirects
+
 		`bash -i > /dev/tcp/127.0.0.1/4444 2>&1`,
 		`echo x > /dev/udp/127.0.0.1/53`,
 		`exec 3<>/dev/tcp/127.0.0.1/4444`,
-		// H. interpreter inline execution
+
 		`python3 -c 'import shutil; shutil.rmtree("/home/user")'`,
 		`node -e 'require("fs").rmSync("/home/user",{recursive:true})'`,
 		`perl -e 'system("rm -rf /home/user")'`,
 		`osascript -e 'do shell script "rm -rf /home/user"'`,
 		`powershell -Command "Remove-Item -Force C:\Users\alice"`,
 		`python3 -c 'print(1)'`,
-		// I. redis value options consumed; unknown options fail closed (Silent asks via table)
+
 		`redis-cli --vset-recall INFO FLUSHALL`,
 		`redis-cli --vset-recall-count 5 FLUSHALL`,
 		`redis-cli -ef INFO FLUSHALL`,
 		`redis-cli -ele INFO FLUSHALL`,
-		// K. destructive confirmations escalated
+
 		`mysql -e 'DROP TABLE users'`,
 		`psql -c 'DROP TABLE users'`,
 		`psql -f /tmp/evil.sql`,
@@ -114,11 +109,11 @@ func TestM64CorpusClassifications(t *testing.T) {
 		`git reset --hard HEAD~5`,
 		`tar -xf x.tar -C /`,
 		`tar -xf x.tar --directory=/etc`,
-		// L. executable network tools
+
 		`nc -e /bin/sh 127.0.0.1 4444`,
 		`ncat -c /bin/sh 127.0.0.1 4444`,
 		`socat exec:/bin/sh tcp:127.0.0.1:4444`,
-		// J. recursive permission opening
+
 		`chmod -R ugo+rwx /home/user`,
 		`chmod -R 7777 /home/user`,
 	}
@@ -136,19 +131,18 @@ func TestM64CorpusClassifications(t *testing.T) {
 			}
 		})
 	}
-	// Dynamic input, unknown options and unresolvable wrappers are
-	// Unknowable: never auto-allowed, Silent asks, ReadOnly denies.
+
 	unknowable := []string{
-		// A. wrappers with unresolvable options
+
 		`nice -x rm -rf /home/user`,
 		`timeout --unknown-option 5 rm -rf /home/user`,
-		// F. dynamic deletion targets
+
 		`docker rm -f $(docker ps -q)`,
 		`docker rm -f $(docker ps --quiet=true --all)`,
 		`docker rm -fv $(docker ps -q --filter name=web)`,
-		// I. unknown redis-cli options cannot be aligned with a command
+
 		`redis-cli --totally-unknown FLUSHALL`,
-		// J. dynamic words cannot be proven critical or bounded
+
 		`rm -rf $HOME/sub`,
 		`echo $((6*7))`,
 	}
@@ -167,14 +161,14 @@ func TestM64CorpusClassifications(t *testing.T) {
 		})
 	}
 	confirm := []string{
-		// wrappers with visible benign payloads keep their nested ruling
+
 		`su -c 'id'`,
 		`chrt -p 5`,
 		`ionice -p 5`,
 		`echo hi | at now`,
 		`ssh host`,
 		`git reset --soft HEAD~1`,
-		// documented network-write contract stays NeedsConfirm
+
 		`git push origin main`,
 		`git push --force origin main`,
 	}
@@ -187,7 +181,7 @@ func TestM64CorpusClassifications(t *testing.T) {
 		})
 	}
 	safe := []string{
-		// M. false positives that must stay usable
+
 		`wget --output-document=- https://example.test`,
 		`wget -q -O - https://example.test`,
 		`wget -qO- https://example.test`,
@@ -284,8 +278,7 @@ func TestM64OptionTableCompleteness(t *testing.T) {
 
 func TestM64DecideLayerSilentContract(t *testing.T) {
 	t.Parallel()
-	// Silent auto-allows T0 and T1 only; anything at Unknowable or above
-	// always asks (T1/Danger) or denies (Forbidden).
+
 	if decision := Decide(Config{Mode: Silent}, Allow("x"), nil); decision.Action != ActionAllow {
 		t.Fatalf("silent Safe decision = %+v, want ActionAllow", decision)
 	}
@@ -307,13 +300,13 @@ func TestM64DecideLayerSilentContract(t *testing.T) {
 	if decision := Decide(Config{Mode: ReadOnly}, Indeterminate("x"), nil); decision.Action != ActionDeny {
 		t.Fatalf("read-only Unknowable decision = %+v, want ActionDeny", decision)
 	}
-	// Danger rulings stay askable in ReadWrite with memory: Danger never auto-allows.
+
 	memory := NewMemory()
 	memory.Add(KindWriteFS)
 	if decision := Decide(Config{Mode: Silent}, Dangerous("x"), memory); decision.Action != ActionAsk {
 		t.Fatalf("silent remembered Danger decision = %+v, want ActionAsk", decision)
 	}
-	// Memory only unlocks T1: Unknowable kinds are never rememberable.
+
 	memory.Add(KindUnknown)
 	if decision := Decide(Config{Mode: ReadWrite}, Indeterminate("x"), memory); decision.Action != ActionAsk {
 		t.Fatalf("read-write remembered Unknowable decision = %+v, want ActionAsk", decision)

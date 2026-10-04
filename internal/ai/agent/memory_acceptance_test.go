@@ -14,11 +14,6 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-// TestRealProviderMemoryAcceptance proves the opt-in memory composition
-// against a real provider: the injected entry must be visible to the model
-// (prompt injection works on the wire, not just in unit fakes) and the
-// model-facing memory_save tool must round-trip into the store. It never
-// skips silently: without credentials it reports the exact gap.
 func TestRealProviderMemoryAcceptance(t *testing.T) {
 	if os.Getenv("NEXTERM_AI_ACCEPTANCE_PROVIDER") != "1" {
 		t.Skip("set NEXTERM_AI_ACCEPTANCE_PROVIDER=1 and provider environment to run")
@@ -68,12 +63,7 @@ func TestRealProviderMemoryAcceptance(t *testing.T) {
 	if done != 1 || failed != 0 {
 		t.Fatalf("real provider memory terminal events: done=%d error=%d events=%+v", done, failed, events)
 	}
-	// The canary: "02:00" exists only inside the injected memory entry, so it
-	// can appear in the assistant output only if the injection actually
-	// reached the model and the model used it. The run ends with a bare "OK"
-	// turn, so the canary is asserted on the aggregated streamed answer —
-	// store-and-terminal assertions alone would pass even with injection
-	// completely broken.
+
 	var answer strings.Builder
 	saved := false
 	for _, event := range events {

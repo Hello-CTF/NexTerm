@@ -110,9 +110,6 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	}
 }
 
-// TestSteerDispatchParsesWireArgs drives ai_steer through the real dispatcher:
-// the JSON args must reach the handler (unknown job and empty message surface
-// their distinct errors), proving the wire contract beyond handler-level tests.
 func TestSteerDispatchParsesWireArgs(t *testing.T) {
 	storage, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -135,9 +132,6 @@ func TestSteerDispatchParsesWireArgs(t *testing.T) {
 	}
 }
 
-// TestModuleComposesAfterOwnerModules reproduces the production composition:
-// the profiles owner module registers provider/model/conversation commands
-// first, then the agent runtime module must register without duplicates.
 func TestModuleComposesAfterOwnerModules(t *testing.T) {
 	storage, err := store.OpenInMemory(context.Background())
 	if err != nil {

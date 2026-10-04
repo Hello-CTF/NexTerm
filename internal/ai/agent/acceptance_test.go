@@ -16,9 +16,6 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-// acceptanceTemperature lets constrained providers (for example engines that
-// only accept temperature 1) run the same acceptance gate via
-// NEXTERM_AI_TEMPERATURE; the default keeps the deterministic 0.
 func acceptanceTemperature(t *testing.T) float64 {
 	t.Helper()
 	raw := os.Getenv("NEXTERM_AI_TEMPERATURE")
@@ -81,9 +78,6 @@ func TestRealProviderAcceptance(t *testing.T) {
 	}
 }
 
-// waitConfirmOrTerminal fails fast with the full event log when the run
-// reaches a terminal state without ever asking for confirmation, which is
-// the difference between "model refused the tool" and "HITL never fired".
 func waitConfirmOrTerminal(t *testing.T, stream *SliceStream, timeout time.Duration) Event {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -104,10 +98,6 @@ func waitConfirmOrTerminal(t *testing.T, stream *SliceStream, timeout time.Durat
 	return Event{}
 }
 
-// TestRealProviderHITLAcceptance drives the full confirm→resume loop against
-// a real provider: the model must call a guarded tool, the runner must pause,
-// the confirmation must resume the exact call, and the run must complete.
-// It never skips silently: without credentials it reports the exact gap.
 func TestRealProviderHITLAcceptance(t *testing.T) {
 	if os.Getenv("NEXTERM_AI_ACCEPTANCE_PROVIDER") != "1" {
 		t.Skip("set NEXTERM_AI_ACCEPTANCE_PROVIDER=1 and provider environment to run")

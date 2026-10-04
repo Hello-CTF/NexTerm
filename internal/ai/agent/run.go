@@ -114,9 +114,6 @@ func (r *Runner) runJob(current *job) {
 	answer, turns, total, runErr = r.run(current)
 }
 
-// consumeResumed drives the event stream produced by a HITL resume. The
-// iterator is owned by exactly one consume loop at any time; a further
-// interrupt parks the job again through parkOrHandoff.
 func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.AgentEvent]) {
 	var answer string
 	var turns int
@@ -140,17 +137,8 @@ func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.A
 	answer, turns, total, runErr = r.consume(current, iterator)
 }
 
-// parkOrHandoffTestHook is a test-only scheduling point inside the park
-// transition, invoked with pendingMu held after the iterator fetch. It must
-// not call back into the runner. Nil in production.
 var parkOrHandoffTestHook func()
 
-// parkOrHandoff moves a consume loop that hit an interrupt to the parked
-// state. The iterator fetch and the running=false transition happen in one
-// pendingMu critical section: a resume confirmed while the loop was still
-// winding down is either handed off here or observes running==false and
-// starts its own consume loop, so an accepted resume is never stranded
-// without a loop to drain it.
 func (r *Runner) parkOrHandoff(current *job) {
 	current.pendingMu.Lock()
 	if current.ctx.Err() != nil {
@@ -173,9 +161,6 @@ func (r *Runner) parkOrHandoff(current *job) {
 	current.pendingMu.Unlock()
 }
 
-// watchHITL completes the job when the HITL manager terminates the run on
-// its own (request expiry, failed resume, manager shutdown) and no consume
-// loop is left to observe it.
 func (r *Runner) watchHITL(current *job) {
 	done, err := r.hitl.Done(current.id)
 	if err != nil {
@@ -258,10 +243,7 @@ func (r *Runner) initializeEino(current *job) error {
 	}
 	messages = append(messages, userMessage(current.args))
 	if r.config.Memory != nil {
-		// Opt-in long-term memory joins as a transient system message on a
-		// fresh message slice: the persisted conversation history is never
-		// touched, and with the settings flag off (the default) Inject
-		// returns the history copy unchanged.
+
 		injection, err := r.config.Memory.Inject(current.ctx, r.config.MemoryScope, messages, memory.Selection{}, memory.Budget{})
 		if err != nil {
 			return err
@@ -289,13 +271,7 @@ func (r *Runner) initializeEino(current *job) error {
 		Name: "nexterm-ai", Description: "NexTerm 运维助手", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
-			// Mid-run steering lands exactly here, at the model-call boundary:
-			// queued user messages join the state after the completed
-			// tool-call unit the agent just finished — never inside one — and
-			// are part of this round's budget. The acks are queued, not
-			// emitted: this hook runs on the graph goroutine while the consume
-			// loop may still owe the toolResult of that unit, and only the
-			// consume loop may put events on the stream.
+
 			var pending []Event
 			for _, steered := range current.steer.Drain() {
 				state.Messages = append(state.Messages, steered)
@@ -339,12 +315,6 @@ func imageParts(image string) (string, string) {
 	return "image/png", image
 }
 
-// flushPendingEvents emits middleware-recorded events (steered acks,
-// thinking/compacting status). The consume loop is the job's only event
-// emitter, so a boundary ack always lands after the toolResult of the unit
-// that precedes it and before the model output it influenced. On exit paths
-// the flush is best-effort against a bounded delivery context: a broken
-// stream must not mask the run's own outcome.
 func (r *Runner) flushPendingEvents(current *job, bestEffort bool) error {
 	pending := current.drainEmits()
 	if len(pending) == 0 {
@@ -373,9 +343,7 @@ func (r *Runner) flushPendingEvents(current *job, bestEffort bool) error {
 
 func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEvent]) (string, int, usage.Usage, error) {
 	runtime := current.eino
-	// Whatever the run's outcome, queued boundary acks are accounted for
-	// before the terminal event: a steer accepted into a model call is
-	// reported as delivered, never silently dropped.
+
 	defer func() { _ = r.flushPendingEvents(current, true) }()
 	for {
 		event, ok := iterator.Next()
@@ -397,10 +365,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		}
 		variant := event.Output.MessageOutput
 		if variant.Role == schema.Assistant {
-			// The first event of the model call that follows a boundary: the
-			// iterator is FIFO, so every event of the preceding tool unit is
-			// already emitted — flushing here is what keeps a steered ack
-			// from leapfrogging its toolResult.
+
 			if err := r.flushPendingEvents(current, false); err != nil {
 				return runtime.failure(err)
 			}
@@ -647,12 +612,7 @@ func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {
 		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil || persisted.Content == "" {
 			continue
 		}
-		// Rows bound to this job are delivered by the run itself, not by
-		// history: the initial question is re-appended from the job args and
-		// its steered rows arrive through the steer queue at the model-call
-		// boundary — loading either here would duplicate them. Rows of other
-		// jobs (including their steered rows) are ordinary history and stay
-		// visible to every later run.
+
 		if persisted.JobID != "" && persisted.JobID == jobID {
 			continue
 		}

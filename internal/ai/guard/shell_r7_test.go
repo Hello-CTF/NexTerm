@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// R3 P1-1: wrapper/kubectl recursion preserves argv token boundaries and
-// xargs -I replacement is modeled. Silent auto-allows T0/T1 only, so every
-// nested-execution bypass must rule at least Danger.
 func TestR7WrapperArgvPreserved(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -40,7 +37,7 @@ func TestR7WrapperArgvPreserved(t *testing.T) {
 			}
 		})
 	}
-	// Uncontrolled xargs input must not fall to NeedsConfirm either.
+
 	forbidden = append(forbidden,
 		`echo 'rm -rf /home/user' | xargs -I{} sh -c {} | cat`,
 	)
@@ -71,7 +68,7 @@ func TestR7WrapperArgvPreserved(t *testing.T) {
 			}
 		})
 	}
-	// Benign nested commands keep their ruling through the argv path.
+
 	safe := []string{
 		`nice sh -c 'id'`,
 		`timeout 5 sh -c 'id'`,
@@ -88,16 +85,12 @@ func TestR7WrapperArgvPreserved(t *testing.T) {
 			}
 		})
 	}
-	// procps watch re-joins its argv through "sh -c" (quotes are lost), so
-	// this form runs a bare `rm` with positional parameters — bounded, not
-	// the recursive delete the argv reading suggested.
+
 	if ruling := ClassifyCommand(`watch -n1 sh -c 'rm -rf /home/user'`, nil); ruling.Risk != NeedsConfirm {
 		t.Fatalf("watch re-join form = %v, want NeedsConfirm", ruling)
 	}
 }
 
-// R3 P1-2: echo/printf producers emit the real payload; at -f takes
-// precedence over stdin; at -l stays read-only.
 func TestR7StdinProducerModeling(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -147,8 +140,7 @@ func TestR7StdinProducerModeling(t *testing.T) {
 			}
 		})
 	}
-	// at long options are not in the wrapper table; unresolved options fail
-	// closed to Unknowable so Silent asks.
+
 	for _, command := range []string{
 		`echo benign | at --file=/tmp/payload now`,
 		`echo benign | at --file /tmp/payload now`,
@@ -176,8 +168,7 @@ func TestR7StdinProducerModeling(t *testing.T) {
 			}
 		})
 	}
-	// at/batch install scheduled jobs, so even provably read-only payloads
-	// confirm at minimum (R5R4 contract).
+
 	confirm := []string{
 		`at -r 5`,
 		`at -d 5`,
@@ -195,8 +186,6 @@ func TestR7StdinProducerModeling(t *testing.T) {
 	}
 }
 
-// R3 P1-3: su/sudo attached and clustered option forms reach the recursive
-// and edit checks.
 func TestR7SuSudoAttachedAndClustered(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -241,8 +230,7 @@ func TestR7SuSudoAttachedAndClustered(t *testing.T) {
 			}
 		})
 	}
-	// The cluster remainder after -e is not a valid sudo option, so the
-	// command cannot be proven: Silent asks.
+
 	for _, command := range []string{`sudo -e/tmp/notes.txt`} {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
@@ -254,7 +242,7 @@ func TestR7SuSudoAttachedAndClustered(t *testing.T) {
 			}
 		})
 	}
-	// Established benign and recursive forms must not regress.
+
 	confirm := []string{
 		`su -c 'id'`,
 		`su --session-command 'id'`,
@@ -283,8 +271,6 @@ func TestR7SuSudoAttachedAndClustered(t *testing.T) {
 	}
 }
 
-// R3 P1-4: non-shell interpreter inline execution covers attached short
-// options and long --eval=/--command= forms; shells keep recursion.
 func TestR7InterpreterInlineForms(t *testing.T) {
 	t.Parallel()
 	danger := []string{
@@ -346,8 +332,6 @@ func TestR7InterpreterInlineForms(t *testing.T) {
 	}
 }
 
-// R3 P1-5: force deletion fed by dynamic command substitutions can never be
-// proven bounded; every enumeration form is Unknowable and Silent asks.
 func TestR7DockerFormattedEnumeration(t *testing.T) {
 	t.Parallel()
 	ask := []string{
@@ -391,8 +375,6 @@ func TestR7DockerFormattedEnumeration(t *testing.T) {
 	}
 }
 
-// R3 P1-6: ssh -o execution keywords and network-tool exec forms are local
-// code execution and must not stay NeedsConfirm.
 func TestR7SSHAndNetworkExecutionOptions(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -454,8 +436,6 @@ func TestR7SSHAndNetworkExecutionOptions(t *testing.T) {
 	}
 }
 
-// R3 P1-7: global options before systemctl/git subcommands and database
-// client escape forms are classified by their real effect.
 func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 	t.Parallel()
 	danger := []string{
@@ -469,7 +449,7 @@ func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 		`git -c core.pager='id' status`,
 		`git -c core.pager id log`,
 		`git -ccore.pager='id' log`,
-		// R5R4: editor values are executable configs regardless of subcommand.
+
 		`git -c core.editor=vi status`,
 		`git -c sequence.editor=vi status`,
 		`mysql -e 'source /tmp/evil.sql'`,
@@ -546,8 +526,7 @@ func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 			}
 		})
 	}
-	// Plain clean without -f/-n refuses to run (clean.requireForce); the
-	// pinned conservative ruling stays Danger.
+
 	for _, command := range []string{`git clean`, `git -C repo clean`} {
 		t.Run(command, func(t *testing.T) {
 			if ruling := ClassifyCommand(command, nil); ruling.Risk != Danger {
@@ -557,8 +536,6 @@ func TestR7GlobalOptionsAndClientEscapes(t *testing.T) {
 	}
 }
 
-// R3 P1-8: critical-path protection is canonical and covers exact roots and
-// file-producing commands, not only redirection and sudo-edit.
 func TestR7CanonicalCriticalTargets(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -618,7 +595,6 @@ func TestR7CanonicalCriticalTargets(t *testing.T) {
 	}
 }
 
-// R3 P2-1: E-section write options and su --session-command regressions.
 func TestR7CurlCacheWritesAndSuSessionCommand(t *testing.T) {
 	t.Parallel()
 	confirm := []string{
@@ -659,9 +635,6 @@ func TestR7CurlCacheWritesAndSuSessionCommand(t *testing.T) {
 	}
 }
 
-// TestR7VariantCorpusSweep generates attached/separate/clustered/case/alias
-// variants of every R3 finding and asserts the conservative floor: nothing
-// that executes, deletes or writes critically may fall to NeedsConfirm.
 func TestR7VariantCorpusSweep(t *testing.T) {
 	t.Parallel()
 	payloads := []string{`rm -rf /home/user`, `id`}
@@ -698,7 +671,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			}
 		}
 	}
-	// xargs replacement variants.
+
 	for _, command := range []string{
 		`echo 'rm -rf /home/user' | xargs -I{} sh -c {}`,
 		`echo 'rm -rf /home/user' | xargs -I {} sh -c {}`,
@@ -712,7 +685,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Forbidden", command, ruling)
 		}
 	}
-	// su/sudo attached, separated, clustered and case variants.
+
 	for _, command := range []string{
 		`su -c'rm -rf /home/user'`,
 		`su -c 'rm -rf /home/user'`,
@@ -734,7 +707,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Forbidden", command, ruling)
 		}
 	}
-	// Interpreter inline variants.
+
 	for _, command := range []string{
 		`python3 -c'print(1)'`,
 		`python3 -c 'print(1)'`,
@@ -755,7 +728,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
 		}
 	}
-	// Docker enumeration variants: dynamic substitutions are Unknowable.
+
 	for _, command := range []string{
 		`docker rm -f $(docker ps -q)`,
 		`docker rm -f $(docker ps --quiet)`,
@@ -788,7 +761,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("silent decision = %+v, want ActionAsk", decision)
 		}
 	}
-	// ssh/network execution variants.
+
 	for _, command := range []string{
 		`ssh -o ProxyCommand='id' h`,
 		`ssh -oProxyCommand='id' h`,
@@ -801,7 +774,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
 		}
 	}
-	// Global-option and escape variants.
+
 	for _, command := range []string{
 		`systemctl stop ssh`,
 		`systemctl --no-block stop ssh`,
@@ -822,7 +795,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
 		}
 	}
-	// Canonical target aliases.
+
 	for _, command := range []string{
 		`rm -rf /Users`,
 		`rm -rf /Users/`,
@@ -840,8 +813,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Forbidden", command, ruling)
 		}
 	}
-	// Conservative floors for unparseable wrapper/nested forms: unresolved
-	// options and structures fail closed to Unknowable.
+
 	for _, command := range []string{
 		`nice -x rm -rf /home/user`,
 		`nice --unknown rm -rf /home/user`,
@@ -859,7 +831,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("silent decision = %+v, want ActionAsk", decision)
 		}
 	}
-	// Read-only forms must keep their narrow positive allow.
+
 	for _, command := range []string{
 		`nice ls`,
 		`timeout 5 ls`,
@@ -876,7 +848,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want Safe", command, ruling)
 		}
 	}
-	// Dynamic deletion targets are Unknowable even in table-listing form.
+
 	for _, command := range []string{
 		`docker rm -f $(docker ps)`,
 	} {
@@ -888,7 +860,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("silent decision = %+v, want ActionAsk", decision)
 		}
 	}
-	// Established NeedsConfirm boundaries must not drift.
+
 	for _, command := range []string{
 		`ssh -o ProxyCommand=none h`,
 		`git push origin main`,
@@ -898,7 +870,7 @@ func TestR7VariantCorpusSweep(t *testing.T) {
 			t.Errorf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
 		}
 	}
-	// Read-only HTTP GET stays Safe by design.
+
 	for _, command := range []string{
 		`curl https://example.test`,
 		`curl -sG -d foo=bar https://example.test`,

@@ -92,9 +92,6 @@ type wireRun struct {
 	interrupted bool
 }
 
-// runWireAgent drives the real Eino dispatch surface: Execution.Tools() feeds
-// a ChatModelAgent whose tool calls go through the composed tools node,
-// exactly like the production agent runner wires them.
 func runWireAgent(ctx context.Context, t *testing.T, execution *tools.Execution, chat model.BaseChatModel, task string) wireRun {
 	t.Helper()
 	einoTools, err := execution.Tools()

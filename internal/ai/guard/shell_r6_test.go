@@ -37,8 +37,7 @@ func TestR6EnvSignalOptionsPreserveNestedRuling(t *testing.T) {
 			}
 		})
 	}
-	// Ambiguous abbreviations cannot be resolved to a known option, so the
-	// wrapped command cannot be proven: Silent asks.
+
 	for _, command := range []string{`env --d ls`, `env --de ls`} {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
@@ -149,8 +148,6 @@ func TestR6RedisRemainingValueOptionsExposeCommand(t *testing.T) {
 	}
 }
 
-// TestR6DockerAliasesAndForceClusters pins dynamic deletion targets: command
-// substitutions are Unknowable, so Silent asks instead of pre-approving.
 func TestR6DockerAliasesAndForceClusters(t *testing.T) {
 	t.Parallel()
 	ask := []string{

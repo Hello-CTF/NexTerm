@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// Schedule is a parsed five-field calendar schedule or an @every interval.
-// Calendar evaluation uses the supplied location.
 type Schedule struct {
 	expression string
 	location   *time.Location
@@ -22,9 +20,6 @@ type Schedule struct {
 	weekdayAny bool
 }
 
-// ParseSchedule accepts minute, hour, day-of-month, month, and day-of-week
-// fields with numbers, names, lists, ranges, and steps. It also accepts
-// @hourly, @daily, @weekly, @monthly, @yearly, and @every <duration>.
 func ParseSchedule(expression string, location *time.Location) (*Schedule, error) {
 	if location == nil {
 		location = time.UTC
@@ -155,11 +150,6 @@ func parseScheduleValue(raw string, names map[string]int) (int, error) {
 	return value, nil
 }
 
-// Next returns the first valid occurrence strictly after after. Nonexistent
-// local wall times are skipped. When a wall time occurs twice, only its earliest
-// instant is used, so the repeated instant cannot produce a duplicate run.
-// Calendar search is strictly increasing and bounded to ten years; false means
-// that no valid occurrence was found.
 func (s *Schedule) Next(after time.Time) (time.Time, bool) {
 	if s.every > 0 {
 		return after.Add(s.every), true

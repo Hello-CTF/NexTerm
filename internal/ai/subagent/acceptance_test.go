@@ -12,9 +12,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 )
 
-// acceptanceTemperature lets constrained providers (for example engines that
-// only accept temperature 1) run the same acceptance gate via
-// NEXTERM_AI_TEMPERATURE; the default keeps the deterministic 0.
 func acceptanceTemperature(t *testing.T) float64 {
 	t.Helper()
 	raw := os.Getenv("NEXTERM_AI_TEMPERATURE")
@@ -28,10 +25,6 @@ func acceptanceTemperature(t *testing.T) float64 {
 	return value
 }
 
-// TestRealProviderSpawnAcceptance drives the full production path —
-// profiles manager → NewProfileModelFactory → subagent manager spawn/wait —
-// against a real provider. It is skipped unless the provider environment is
-// provided; a skip is not an acceptance result.
 func TestRealProviderSpawnAcceptance(t *testing.T) {
 	if os.Getenv("NEXTERM_AI_ACCEPTANCE_PROVIDER") != "1" {
 		t.Skip("set NEXTERM_AI_ACCEPTANCE_PROVIDER=1 and provider environment to run")

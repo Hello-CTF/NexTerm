@@ -2,13 +2,6 @@ package guard
 
 import "testing"
 
-// R9: regression coverage for the independent review round. Every construct
-// class is pinned with the payload variant, the preserved benign form and the
-// decision-layer consequence, so Silent can never auto-execute the dangerous
-// form and the read-only forms stay usable.
-
-// R9 P1-1: [[ ... ]] operands and case patterns undergo expansion:
-// substitutions inside them execute and dynamic words cannot be proven.
 func TestR9TestClauseAndCasePatterns(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -70,9 +63,6 @@ func TestR9TestClauseAndCasePatterns(t *testing.T) {
 	}
 }
 
-// R9 P1-2: pipes and here-documents feed compound statements; the stdin
-// source propagates into subshells, blocks, conditionals, loops and case
-// bodies instead of being dropped.
 func TestR9CompoundStatementStdin(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -152,9 +142,6 @@ func TestR9CompoundStatementStdin(t *testing.T) {
 	}
 }
 
-// R9 P1-3: the determinable pipe producer model matches real printf
-// (option handling, format reuse) and real cat (no file operands, last
-// stdin-setting redirect wins).
 func TestR9DeterminableProducers(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -218,9 +205,6 @@ func TestR9DeterminableProducers(t *testing.T) {
 	}
 }
 
-// R9 P1-4: xargs parses the whole input stream with its quoting and
-// delimiter rules and batches words into invocations; -n batches, -L/-s
-// fail closed, unparseable input fails closed.
 func TestR9XargsStreamSemantics(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -263,7 +247,7 @@ func TestR9XargsStreamSemantics(t *testing.T) {
 			}
 		})
 	}
-	// -L is precisely modeled per logical line (see R10).
+
 	for _, command := range []string{`echo x | xargs -L2 rm`, `echo x | xargs --max-lines=2 rm`} {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
@@ -324,8 +308,6 @@ func TestR9XargsStreamSemantics(t *testing.T) {
 	}
 }
 
-// R9 P1-5: GNU tar's -I short option runs an external filter program just
-// like --use-compress-program.
 func TestR9TarShortExternalCommand(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -371,10 +353,6 @@ func TestR9TarShortExternalCommand(t *testing.T) {
 	}
 }
 
-// R9 P1-6: kubectl inherited globals are consumed before subcommand
-// dispatch; ssh consumes its full value/flag tables so options like -R/-D
-// never shift the remote command, and -o accepts the space-separated
-// ssh_config syntax.
 func TestR9KubectlSSHGlobalOptions(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -473,9 +451,6 @@ func TestR9KubectlSSHGlobalOptions(t *testing.T) {
 	}
 }
 
-// R9 P2-1: command substitutions nested inside parameter and arithmetic
-// expansions execute and must be aggregated; the dynamic outer construct
-// keeps its Unknowable floor when the inner content is benign.
 func TestR9NestedExpansionSubstitutions(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -528,7 +503,6 @@ func TestR9NestedExpansionSubstitutions(t *testing.T) {
 	}
 }
 
-// R9 P2-2: attached -T-/-d- are uploads and POSTs, not the stdout exemption.
 func TestR9CurlAttachedStdinForms(t *testing.T) {
 	t.Parallel()
 	confirm := []string{
@@ -566,8 +540,6 @@ func TestR9CurlAttachedStdinForms(t *testing.T) {
 	}
 }
 
-// R9 P2-3: tool-call parse failures and unknown tools are Unknowable, never
-// Silent-pre-approved.
 func TestR9ToolCallFailClosed(t *testing.T) {
 	t.Parallel()
 	unknowable := []struct {
@@ -606,8 +578,6 @@ func TestR9ToolCallFailClosed(t *testing.T) {
 	}
 }
 
-// R9 preserved boundaries: the fixes must not move the established benign
-// rulings.
 func TestR9PreservedBoundaries(t *testing.T) {
 	t.Parallel()
 	safe := []string{
@@ -642,9 +612,6 @@ func TestR9PreservedBoundaries(t *testing.T) {
 	}
 }
 
-// TestR9XargsWordParsing pins the stream parsing directly: -0 and -d take
-// items literally, the default mode applies quoting rules, and unparseable
-// input reports false.
 func TestR9XargsWordParsing(t *testing.T) {
 	t.Parallel()
 	words, ok := xargsInputWords(wrapperScan{nulMode: true}, "-rf\x00/\x00")
@@ -675,9 +642,6 @@ func TestR9XargsWordParsing(t *testing.T) {
 	}
 }
 
-// R9 sibling sweep: tar -F/--info-script and the scp/sftp/rsync program
-// execution options are the same external-command class as -I and ssh
-// ProxyCommand.
 func TestR9ExternalCommandSiblings(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{

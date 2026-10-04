@@ -16,10 +16,6 @@ const (
 
 type Risk uint8
 
-// Risk orders the capability tiers from provably bounded to always denied:
-// Safe (T0, read-only), NeedsConfirm (T1, bounded change), Unknowable
-// (dynamic input, unknown options, unparseable or over-budget structure),
-// Danger (known-dangerous capability), Forbidden (always denied).
 const (
 	Safe Risk = iota
 	NeedsConfirm
@@ -77,9 +73,6 @@ func Confirm(kind Kind, reason string) Ruling {
 	return Ruling{Risk: NeedsConfirm, Kind: kind, Kinds: []Kind{kind}, Reason: reason}
 }
 
-// Unknowable rates anything the guard cannot prove bounded: dynamic shell
-// words, unknown options during unwrapping, parse failures and budget
-// overruns. It is never auto-allowed, not even in Silent mode.
 func Indeterminate(reason string) Ruling {
 	return Ruling{Risk: Unknowable, Kind: KindUnknown, Kinds: []Kind{KindUnknown}, Reason: reason}
 }
@@ -175,18 +168,6 @@ type Decision struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// Decide maps a ruling to an action per permission mode:
-//
-//	ReadOnly:    T0 allow; T1/Unknowable/Danger/Forbidden deny
-//	ReadWrite:   T0 allow; T1 ask (allow once every kind is remembered);
-//	             Unknowable/Danger ask; Forbidden deny
-//	Silent:      T0/T1 allow; Unknowable/Danger ask; Forbidden deny
-//	Unattended:  T0 allow; T1/Unknowable/Danger/Forbidden deny — no human is
-//	             present to confirm, and remembered approvals never authorize
-//	             unattended execution, so nothing above T0 runs silently.
-//
-// Only T1 rulings are rememberable; Unknowable and Danger always ask outside
-// Unattended mode.
 func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	config = config.Normalized()
 	if ruling.Risk == Forbidden {

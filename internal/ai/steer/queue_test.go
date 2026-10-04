@@ -42,8 +42,7 @@ func TestQueueBoundedAndReusableAfterDrain(t *testing.T) {
 		t.Fatalf("third Push error = %v, want ErrQueueFull", err)
 	}
 	_ = queue.Drain()
-	// A drained slot must be reusable — Drain, not Push failure, is what
-	// frees capacity at each model-call boundary.
+
 	if err := queue.Push(schema.UserMessage("four")); err != nil {
 		t.Fatalf("Push after Drain: %v", err)
 	}
@@ -78,8 +77,7 @@ func TestQueueConcurrentPushAndDrain(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	// Whatever interleaving happened, the invariant is: Len never exceeds
-	// the limit and Drain hands over exactly what remained before it.
+
 	if queue.Len() > 32 {
 		t.Fatalf("Len = %d exceeds limit", queue.Len())
 	}
