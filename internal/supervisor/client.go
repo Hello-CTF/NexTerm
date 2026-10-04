@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -25,6 +26,9 @@ func NewClient(socketPath string) *Client {
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
+	if options.Attempt == "" {
+		options.Attempt = ids.New()
+	}
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return Info{}, err
@@ -32,6 +36,7 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 	defer func() { _ = conn.Close() }()
 	kind, payload, err := conn.request(ctx, frameCreate, createMsg{
 		ID:      options.ID,
+		Attempt: options.Attempt,
 		Command: options.Command,
 		Dir:     options.Dir,
 		Env:     options.Env,
@@ -106,6 +111,22 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 	}
 	go stream.readLoop()
 	return stream, nil
+}
+
+func (c *Client) ReconcileCreate(ctx context.Context, id, attempt string) error {
+	conn, err := c.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	kind, _, err := conn.request(ctx, frameKillSession, killSessionMsg{ID: id, Attempt: attempt})
+	if err != nil {
+		return err
+	}
+	if kind != frameOK {
+		return protocolMismatch(kind)
+	}
+	return nil
 }
 
 func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {

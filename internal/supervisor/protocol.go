@@ -48,6 +48,7 @@ type helloMsg struct {
 
 type createMsg struct {
 	ID      string   `json:"id,omitempty"`
+	Attempt string   `json:"attempt,omitempty"`
 	Command []string `json:"command,omitempty"`
 	Dir     string   `json:"dir,omitempty"`
 	Env     []string `json:"env,omitempty"`
@@ -63,6 +64,7 @@ type attachMsg struct {
 
 type killSessionMsg struct {
 	ID                string `json:"id"`
+	Attempt           string `json:"attempt,omitempty"`
 	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
 }

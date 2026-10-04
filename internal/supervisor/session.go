@@ -20,6 +20,7 @@ type Session struct {
 	supervisor *Supervisor
 	entry      registryEntry
 	identity   Identity
+	attempt    string
 
 	pty       *pty.Session
 	recording *os.File
@@ -54,6 +55,7 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		ID:          id,
 		CreatedAt:   now,
 		Incarnation: incarnation,
+		Attempt:     options.Attempt,
 		Cols:        options.Cols,
 		Rows:        options.Rows,
 		Command:     options.Command,
@@ -64,6 +66,7 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		supervisor:  supervisor,
 		entry:       entry,
 		identity:    Identity{CreatedAt: now, Incarnation: incarnation},
+		attempt:     options.Attempt,
 		pty:         ptySession,
 		recording:   recording,
 		attachments: make(map[*Attachment]struct{}),
@@ -82,6 +85,7 @@ func newRecoveredSession(supervisor *Supervisor, entry registryEntry) *Session {
 		supervisor:  supervisor,
 		entry:       entry,
 		identity:    Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation},
+		attempt:     entry.Attempt,
 		attachments: make(map[*Attachment]struct{}),
 		inputQueue:  make(chan []byte, inputQueueSlots),
 		inputDone:   make(chan struct{}),
@@ -106,6 +110,10 @@ func (s *Session) ID() string {
 
 func (s *Session) Identity() Identity {
 	return s.identity
+}
+
+func (s *Session) Attempt() string {
+	return s.attempt
 }
 
 func (s *Session) Info() Info {

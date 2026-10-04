@@ -237,6 +237,7 @@ func (c *serverConn) handleCreate(payload []byte) {
 	}
 	session, err := c.server.supervisor.Create(context.Background(), CreateOptions{
 		ID:      msg.ID,
+		Attempt: msg.Attempt,
 		Command: msg.Command,
 		Dir:     msg.Dir,
 		Env:     msg.Env,
@@ -316,6 +317,14 @@ func (c *serverConn) handleKillSession(payload []byte) {
 	var msg killSessionMsg
 	if err := unmarshalFrame(payload, &msg); err != nil {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	if msg.Attempt != "" {
+		if err := c.server.supervisor.killByAttempt(context.Background(), msg.ID, msg.Attempt); err != nil {
+			c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+			return
+		}
+		_ = c.reply(frameOK, struct{}{})
 		return
 	}
 	var expected *Identity

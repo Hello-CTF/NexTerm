@@ -85,6 +85,8 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	if err != nil {
 		return nil, err
 	}
+	s.killMu.Lock()
+	defer s.killMu.Unlock()
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
@@ -217,6 +219,12 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 		if !present {
 			return fmt.Errorf("%w: %s", ErrNotFound, id)
 		}
+		if expected != nil {
+			entry, err := readEntry(sessionsRoot(s.stateDir), id)
+			if err != nil || !sameIdentity(*expected, Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation}) {
+				return fmt.Errorf("%w: leftover artifacts for %s cannot be proven to belong to the expected identity", ErrIdentity, id)
+			}
+		}
 		if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
 			return fmt.Errorf("clean up leftover supervisor artifacts for %s: %w", id, err)
 		}
@@ -227,6 +235,58 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 	}
 	if expected != nil && !sameIdentity(*expected, session.Identity()) {
 		return fmt.Errorf("%w: %s", ErrIdentity, id)
+	}
+	if err := session.killAndWait(ctx, s.commandTimeout); err != nil {
+		return err
+	}
+	if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
+		return fmt.Errorf("supervisor session killed but artifacts remain: %w", err)
+	}
+	s.mu.Lock()
+	delete(s.sessions, id)
+	s.killed[id] = struct{}{}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Supervisor) killByAttempt(ctx context.Context, id, attempt string) error {
+	if !ids.Valid(id) {
+		return fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
+	}
+	if !ids.Valid(attempt) {
+		return fmt.Errorf("%w: invalid supervisor create attempt", ErrInvalidInput)
+	}
+	s.killMu.Lock()
+	defer s.killMu.Unlock()
+	s.mu.Lock()
+	session, exists := s.sessions[id]
+	_, killed := s.killed[id]
+	s.mu.Unlock()
+	if !exists {
+		if killed {
+			return nil
+		}
+		present, err := s.artifactsPresent(id)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		entry, err := readEntry(sessionsRoot(s.stateDir), id)
+		if err != nil || entry.Attempt != attempt {
+			return fmt.Errorf("%w: leftover artifacts for %s do not match the create attempt", ErrIdentity, id)
+		}
+		if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
+			return fmt.Errorf("clean up leftover supervisor artifacts for %s: %w", id, err)
+		}
+		s.mu.Lock()
+		s.killed[id] = struct{}{}
+		s.mu.Unlock()
+		return nil
+	}
+	if session.Attempt() != attempt {
+		return fmt.Errorf("%w: session %s belongs to a different create attempt", ErrIdentity, id)
 	}
 	if err := session.killAndWait(ctx, s.commandTimeout); err != nil {
 		return err

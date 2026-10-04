@@ -146,12 +146,13 @@ var remoteProviderAttach = func(ctx context.Context, client *Client, id string, 
 }
 
 func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
-	generated := options.ID == ""
-	if generated {
+	if options.ID == "" {
 		options.ID = ids.New()
 	}
+	attempt := ids.New()
 	info, err := remoteProviderCreate(ctx, p.client, CreateOptions{
 		ID:      options.ID,
+		Attempt: attempt,
 		Command: options.Command,
 		Dir:     options.Dir,
 		Env:     options.Env,
@@ -159,8 +160,8 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		Rows:    options.Rows,
 	})
 	if err != nil {
-		if generated && !definiteCreateRejection(err) {
-			p.compensateCreate(options.ID, nil)
+		if !definiteCreateRejection(err) {
+			p.compensateCreateAttempt(options.ID, attempt)
 		}
 		return nil, translateError(err)
 	}
@@ -182,6 +183,12 @@ func (p *RemoteProvider) compensateCreate(id string, expected *Identity) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = p.client.Kill(cleanupCtx, id, expected)
+}
+
+func (p *RemoteProvider) compensateCreateAttempt(id, attempt string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = p.client.ReconcileCreate(cleanupCtx, id, attempt)
 }
 
 func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {

@@ -21,6 +21,7 @@ type Config struct {
 
 type CreateOptions struct {
 	ID      string
+	Attempt string
 	Command []string
 	Dir     string
 	Env     []string
@@ -56,6 +57,9 @@ func normalizeCreate(options CreateOptions) (CreateOptions, string, error) {
 	}
 	if !ids.Valid(id) {
 		return CreateOptions{}, "", fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
+	}
+	if options.Attempt != "" && !ids.Valid(options.Attempt) {
+		return CreateOptions{}, "", fmt.Errorf("%w: invalid supervisor create attempt", ErrInvalidInput)
 	}
 	if options.Cols == 0 {
 		options.Cols = 80

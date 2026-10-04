@@ -22,6 +22,7 @@ type registryEntry struct {
 	ID          string     `json:"id"`
 	CreatedAt   time.Time  `json:"created_at"`
 	Incarnation string     `json:"incarnation"`
+	Attempt     string     `json:"attempt,omitempty"`
 	Cols        uint32     `json:"cols"`
 	Rows        uint32     `json:"rows"`
 	Command     []string   `json:"command,omitempty"`

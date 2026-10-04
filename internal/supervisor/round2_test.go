@@ -162,7 +162,7 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit ID lost response is never blind-killed", func(t *testing.T) {
+	t.Run("explicit ID lost response is rolled back by attempt", func(t *testing.T) {
 		remoteProviderCreate = lostResponse
 		id := ids.New()
 		_, err := provider.Create(context.Background(), base.DurableCreateOptions{
@@ -177,8 +177,30 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 		if listErr != nil {
 			t.Fatal(listErr)
 		}
-		if len(infos) != 1 || infos[0].ID != id {
-			t.Fatalf("explicit-ID session must be preserved without ownership proof: %+v", infos)
+		if len(infos) != 0 {
+			t.Fatalf("create attempt ownership must allow rollback of the explicit-ID session: %+v", infos)
+		}
+	})
+
+	t.Run("attempt mismatch never kills an existing session", func(t *testing.T) {
+		remoteProviderCreate = realCreate
+		id := ids.New()
+		if _, err := client.Create(context.Background(), CreateOptions{
+			ID:      id,
+			Command: []string{"/bin/sh", "-c", "sleep 30"},
+			Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.ReconcileCreate(context.Background(), id, ids.New()); !errors.Is(err, ErrIdentity) {
+			t.Fatalf("reconcile with foreign attempt = %v, want ErrIdentity", err)
+		}
+		infos, listErr := supervisor.List(context.Background())
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(infos) != 1 {
+			t.Fatalf("foreign attempt must not kill the session: %+v", infos)
 		}
 		if err := supervisor.Kill(context.Background(), id); err != nil {
 			t.Fatal(err)
