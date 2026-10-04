@@ -3,8 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" type="image/png" sizes="48x48" href="/icon.png" />
     <title>NexTerm</title>
+    <script>
+      (function () {
+        var mode = "system";
+        try {
+          var saved = localStorage.getItem("nexterm.theme.v1");
+          if (saved === "light" || saved === "dark" || saved === "system") mode = saved;
+        } catch (e) {}
+        var resolved = mode;
+        if (mode === "system") {
+          try {
+            resolved = window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          } catch (e) {
+            resolved = "dark";
+          }
+        }
+        document.documentElement.dataset.nxTheme = resolved;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

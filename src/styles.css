@@ -6,11 +6,12 @@
   --color-neutral-800: #252932;
   --color-neutral-700: #31363f;
   --color-neutral-600: #3e444f;
-  --color-neutral-500: #616877;
-  --color-neutral-400: #8a919f;
+  --color-neutral-500: #8a919f;
+  --color-neutral-400: #99a1af;
   --color-neutral-300: #b3bac6;
   --color-neutral-200: #d3d8e1;
   --color-neutral-100: #eef1f6;
+  --color-neutral-50: #f7f9fc;
 
   --color-term: #101217;
 
@@ -23,11 +24,14 @@
   --color-blue-700: #3d509e;
   --color-blue-900: #293461;
 
+  --color-green-100: #d9f2e4;
   --color-green-300: #7fd6a4;
   --color-green-400: #55c483;
   --color-green-500: #37a86a;
   --color-green-600: #2b8b57;
   --color-green-700: #226e46;
+  --color-red-100: #fcd9d9;
+  --color-red-200: #f6bcbc;
   --color-red-300: #f0a0a0;
   --color-red-400: #e87b7b;
   --color-red-500: #db5b5b;
@@ -61,6 +65,152 @@
   --shadow-soft: 0 6px 20px -10px rgb(0 0 0 / 0.6);
 }
 
+:root {
+  --nx-fg: var(--color-neutral-300);
+  --nx-fg-strong: var(--color-neutral-100);
+  --nx-fg-emphasis: var(--color-neutral-200);
+  --nx-fg-soft: var(--color-neutral-400);
+  --nx-fg-tertiary: var(--color-neutral-500);
+  --nx-bg-canvas: var(--color-neutral-950);
+  --nx-bg-pane: var(--color-neutral-900);
+  --nx-bg-raised: var(--color-neutral-800);
+  --nx-bg-hover: var(--color-neutral-700);
+  --nx-border: var(--color-neutral-800);
+  --nx-border-strong: var(--color-neutral-700);
+  --nx-focus-ring: #93c5fd;
+  --nx-scrim: rgb(8 9 12 / 0.56);
+  --nx-dock-shadow-left: 16px 0 40px rgb(0 0 0 / 0.45);
+  --nx-dock-shadow-right: -16px 0 40px rgb(0 0 0 / 0.45);
+  --nx-code-inline-bg: rgb(255 255 255 / 0.07);
+  --nx-code-inline-fg: #a5d8f3;
+  --nx-diff-add-fg: #7fd8c4;
+  --nx-diff-add-bg: rgb(45 212 191 / 0.13);
+  --nx-diff-del-fg: #f0a878;
+  --nx-diff-del-bg: rgb(249 115 22 / 0.13);
+  --nx-term-fg: #c6cbd6;
+}
+
+:root[data-nx-theme="light"] {
+  color-scheme: light;
+
+  --color-neutral-950: #e7ebf1;
+  --color-neutral-900: #f4f6fa;
+  --color-neutral-800: #e2e7ef;
+  --color-neutral-700: #ccd3de;
+  --color-neutral-600: #aeb7c5;
+  --color-neutral-500: #5d6572;
+  --color-neutral-400: #4b5260;
+  --color-neutral-300: #2f3642;
+  --color-neutral-200: #232a35;
+  --color-neutral-100: #171c26;
+  --color-neutral-50: #10141b;
+
+  --color-blue-50: #eef2fc;
+  --color-blue-300: #3b5bd0;
+  --color-blue-400: #516cd6;
+  --color-blue-500: #3c59cc;
+  --color-blue-600: #3450c0;
+  --color-blue-700: #324a9e;
+  --color-blue-900: #23306b;
+
+  --color-green-300: #1a6b41;
+  --color-green-400: #2b8b57;
+  --color-green-500: #37a86a;
+  --color-green-600: #267347;
+  --color-green-700: #1d5c39;
+
+  --color-red-950: #fdeaea;
+  --color-red-900: #7f1d1d;
+  --color-red-600: #c13a3a;
+  --color-red-500: #db5b5b;
+  --color-red-400: #c23636;
+  --color-red-300: #b52a2a;
+  --color-red-200: #a12222;
+  --color-red-100: #8f1c1c;
+
+  --color-amber-300: #8a5a00;
+  --color-amber-400: #b0791f;
+  --color-amber-500: #cc9639;
+  --color-amber-600: #a87a2c;
+
+  --color-purple-300: #6440b8;
+  --color-purple-400: #7a5cd6;
+  --color-purple-500: #8b6ae0;
+
+  --nx-focus-ring: #1d4ed8;
+  --nx-scrim: rgb(15 23 42 / 0.4);
+  --nx-dock-shadow-left: 16px 0 40px rgb(15 23 42 / 0.18);
+  --nx-dock-shadow-right: -16px 0 40px rgb(15 23 42 / 0.18);
+  --nx-code-inline-bg: rgb(15 23 42 / 0.06);
+  --nx-code-inline-fg: #0e5a9e;
+  --nx-diff-add-fg: #0f766e;
+  --nx-diff-add-bg: rgb(13 148 136 / 0.12);
+  --nx-diff-del-fg: #9a3412;
+  --nx-diff-del-bg: rgb(249 115 22 / 0.12);
+
+  --shadow-pop:
+    0 18px 48px -16px rgb(15 23 42 / 0.25), 0 4px 12px -4px rgb(15 23 42 / 0.12);
+  --shadow-soft: 0 6px 20px -10px rgb(15 23 42 / 0.18);
+}
+
+:root[data-nx-theme="light"] .bg-term {
+  --color-neutral-950: #17191e;
+  --color-neutral-900: #1d2026;
+  --color-neutral-800: #252932;
+  --color-neutral-700: #31363f;
+  --color-neutral-600: #3e444f;
+  --color-neutral-500: #8a919f;
+  --color-neutral-400: #99a1af;
+  --color-neutral-300: #b3bac6;
+  --color-neutral-200: #d3d8e1;
+  --color-neutral-100: #eef1f6;
+  --color-neutral-50: #f7f9fc;
+
+  --color-blue-50: #f2f3f8;
+  --color-blue-300: #acb9ec;
+  --color-blue-400: #8b9de4;
+  --color-blue-500: #516cd6;
+  --color-blue-600: #3c59cc;
+  --color-blue-700: #3d509e;
+  --color-blue-900: #293461;
+
+  --color-green-300: #7fd6a4;
+  --color-green-400: #55c483;
+  --color-green-500: #37a86a;
+  --color-green-600: #2b8b57;
+  --color-green-700: #226e46;
+
+  --color-red-950: #3a1719;
+  --color-red-900: #6b2626;
+  --color-red-600: #c94848;
+  --color-red-500: #db5b5b;
+  --color-red-400: #e87b7b;
+  --color-red-300: #f0a0a0;
+  --color-red-200: #f6bcbc;
+  --color-red-100: #fcd9d9;
+
+  --color-amber-300: #e9c489;
+  --color-amber-400: #dfae57;
+  --color-amber-500: #cc9639;
+  --color-amber-600: #a87a2c;
+
+  --color-purple-300: #b79ce8;
+  --color-purple-400: #a184e4;
+  --color-purple-500: #8b6ae0;
+
+  --nx-fg: var(--color-neutral-300);
+  --nx-fg-strong: var(--color-neutral-100);
+  --nx-fg-emphasis: var(--color-neutral-200);
+  --nx-fg-soft: var(--color-neutral-400);
+  --nx-fg-tertiary: var(--color-neutral-500);
+  --nx-bg-canvas: var(--color-neutral-950);
+  --nx-bg-pane: var(--color-neutral-900);
+  --nx-bg-raised: var(--color-neutral-800);
+  --nx-bg-hover: var(--color-neutral-700);
+  --nx-border: var(--color-neutral-800);
+  --nx-border-strong: var(--color-neutral-700);
+}
+
 @layer base {
   :root {
     color-scheme: dark;
@@ -74,8 +224,8 @@
   }
 
   body {
-    background: var(--color-neutral-950);
-    color: var(--color-neutral-300);
+    background: var(--nx-bg-canvas);
+    color: var(--nx-fg);
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.55;
@@ -111,12 +261,12 @@
 
   ::selection {
     background: color-mix(in srgb, var(--color-accent) 34%, transparent);
-    color: #fff;
+    color: var(--nx-fg-strong);
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-neutral-700) transparent;
+    scrollbar-color: var(--nx-border-strong) transparent;
   }
   ::-webkit-scrollbar {
     width: 10px;
@@ -133,7 +283,7 @@
   }
   *:hover::-webkit-scrollbar-thumb,
   *:focus-within::-webkit-scrollbar-thumb {
-    background: var(--color-neutral-700);
+    background: var(--nx-bg-hover);
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
@@ -169,12 +319,12 @@
   }
 
   .nx-diff-add {
-    color: #7fd8c4;
-    background: rgba(45, 212, 191, 0.13);
+    color: var(--nx-diff-add-fg);
+    background: var(--nx-diff-add-bg);
   }
   .nx-diff-del {
-    color: #f0a878;
-    background: rgba(249, 115, 22, 0.13);
+    color: var(--nx-diff-del-fg);
+    background: var(--nx-diff-del-bg);
   }
 
   .nx-md {
@@ -196,7 +346,7 @@
   .nx-md-h3,
   .nx-md-h4 {
     font-weight: 600;
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
   .nx-md-h1 {
     font-size: 13.5px;
@@ -209,7 +359,7 @@
   }
   .nx-md-h4 {
     font-size: 12.3px;
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
   }
   .nx-md-bold {
     font-weight: 600;
@@ -217,7 +367,7 @@
   }
   .nx-md-em {
     font-style: italic;
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
   }
   .nx-md-link {
     color: var(--color-blue-300);
@@ -227,32 +377,32 @@
   .nx-md-code {
     padding: 0 3px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--nx-code-inline-bg);
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.92em;
-    color: #a5d8f3;
+    color: var(--nx-code-inline-fg);
     word-break: break-all;
   }
   .nx-md-pre {
-    border: 1px solid var(--color-neutral-800);
+    border: 1px solid var(--nx-border);
     border-radius: 7px;
     overflow: hidden;
-    background: var(--color-neutral-950);
+    background: var(--nx-bg-canvas);
   }
   .nx-md-pre-bar {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 1px 4px 1px 8px;
-    border-bottom: 1px solid var(--color-neutral-800);
-    background: var(--color-neutral-900);
+    border-bottom: 1px solid var(--nx-border);
+    background: var(--nx-bg-pane);
   }
   .nx-md-pre-lang {
     flex: 1;
     font-size: 9.5px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
   .nx-md-pre-body {
     margin: 0;
@@ -261,7 +411,7 @@
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 10.5px;
     line-height: 1.65;
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
     white-space: pre;
   }
   .nx-md-ul,
@@ -280,23 +430,23 @@
   }
   .nx-md-ul li::marker,
   .nx-md-ol li::marker {
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
   .nx-md-quote {
     margin: 0;
     padding-left: 8px;
-    border-left: 2px solid var(--color-neutral-700);
-    color: var(--color-neutral-400);
+    border-left: 2px solid var(--nx-border-strong);
+    color: var(--nx-fg-soft);
     white-space: pre-wrap;
   }
   .nx-md-hr {
     margin: 2px 0;
     border: 0;
-    border-top: 1px solid var(--color-neutral-800);
+    border-top: 1px solid var(--nx-border);
   }
   .nx-md-table-wrap {
     overflow-x: auto;
-    border: 1px solid var(--color-neutral-800);
+    border: 1px solid var(--nx-border);
     border-radius: 7px;
   }
   .nx-md-table {
@@ -308,11 +458,11 @@
     padding: 3px 8px;
     text-align: left;
     white-space: nowrap;
-    border-bottom: 1px solid var(--color-neutral-800);
+    border-bottom: 1px solid var(--nx-border);
   }
   .nx-md-table th {
-    background: var(--color-neutral-900);
-    color: var(--color-neutral-300);
+    background: var(--nx-bg-pane);
+    color: var(--nx-fg);
     font-weight: 600;
   }
   .nx-md-table tr:last-child td {
@@ -329,7 +479,7 @@
     border-radius: 9999px;
     border: 1px solid color-mix(in srgb, var(--color-neutral-700) 70%, transparent);
     background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
     transition:
       background-color 120ms ease,
       border-color 120ms ease,
@@ -408,8 +558,8 @@
     height: 100%;
     min-height: 0;
     flex-direction: column;
-    background: var(--color-neutral-900);
-    color: var(--color-neutral-300);
+    background: var(--nx-bg-pane);
+    color: var(--nx-fg);
     font-size: 13px;
   }
 
@@ -426,7 +576,7 @@
   }
 
   .nx-toolbar-title {
-    color: var(--color-neutral-200);
+    color: var(--nx-fg-emphasis);
     font-size: 12.5px;
     font-weight: 550;
     letter-spacing: 0.01em;
@@ -437,7 +587,7 @@
     height: 14px;
     flex: 0 0 auto;
     margin: 0 2px;
-    background: var(--color-neutral-700);
+    background: var(--nx-border-strong);
   }
 
   .nx-spacer {
@@ -455,16 +605,16 @@
     padding: 0 10px;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-200);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-emphasis);
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
   }
   .nx-btn:hover:not(:disabled) {
-    background: var(--color-neutral-700);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-hover);
+    color: var(--nx-fg-strong);
   }
   .nx-btn:active:not(:disabled) {
     transform: translateY(0.5px);
@@ -485,22 +635,22 @@
 
   .nx-btn-ghost {
     background: transparent;
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
   }
   .nx-btn-ghost:hover:not(:disabled) {
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
   }
 
   .nx-btn-outline {
     background: transparent;
-    border-color: var(--color-neutral-700);
-    color: var(--color-neutral-300);
+    border-color: var(--nx-border-strong);
+    color: var(--nx-fg);
   }
   .nx-btn-outline:hover:not(:disabled) {
     border-color: var(--color-neutral-600);
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
   }
 
   .nx-btn-danger {
@@ -541,12 +691,12 @@
     height: 26px;
     border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     cursor: pointer;
   }
   .nx-icon-btn:hover:not(:disabled) {
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
   }
   .nx-icon-btn:disabled {
     opacity: 0.35;
@@ -571,16 +721,16 @@
     min-width: 0;
     height: 30px;
     padding: 0 9px;
-    border: 1px solid var(--color-neutral-700);
+    border: 1px solid var(--nx-border-strong);
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-neutral-950) 55%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
     font-size: 12.5px;
     outline: none;
   }
   .nx-input::placeholder,
   .nx-textarea::placeholder {
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
   .nx-input:hover,
   .nx-select:hover,
@@ -628,8 +778,8 @@
     background-repeat: no-repeat;
   }
   .nx-select option {
-    background: var(--color-neutral-900);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-pane);
+    color: var(--nx-fg-strong);
   }
 
   .nx-input-sm {
@@ -641,7 +791,7 @@
   .nx-label {
     display: block;
     margin-bottom: 5px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -658,7 +808,7 @@
     position: absolute;
     left: 8px;
     display: flex;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     pointer-events: none;
   }
   .nx-field .nx-input {
@@ -682,7 +832,7 @@
     padding: 0 8px;
     border-bottom: 1px solid
       color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
-    background: var(--color-neutral-950);
+    background: var(--nx-bg-canvas);
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
@@ -704,17 +854,17 @@
     box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--color-accent) 58%, transparent);
   }
   .nx-tabstrip.is-sub.is-split:not(.is-active-pane) {
-    background: var(--color-neutral-950);
+    background: var(--nx-bg-canvas);
   }
   .nx-tabstrip.is-sub.is-split:not(.is-active-pane) .nx-tab {
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
 
   .nx-split-handle {
     position: relative;
     height: 6px;
     flex: 0 0 auto;
-    background: var(--color-neutral-950);
+    background: var(--nx-bg-canvas);
     cursor: row-resize;
   }
   .nx-split-grip {
@@ -742,19 +892,19 @@
     padding: 0 8px 0 10px;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     font-size: 12.5px;
     white-space: nowrap;
     cursor: pointer;
   }
   .nx-ws:hover {
     background: color-mix(in srgb, var(--color-neutral-800) 55%, transparent);
-    color: var(--color-neutral-200);
+    color: var(--nx-fg-emphasis);
   }
   .nx-ws.is-active {
     border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
     font-weight: 500;
   }
 
@@ -785,19 +935,19 @@
     padding: 0 8px 0 10px;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     font-size: 12px;
     white-space: nowrap;
     cursor: pointer;
   }
   .nx-tab:hover {
     background: color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
-    color: var(--color-neutral-200);
+    color: var(--nx-fg-emphasis);
   }
   .nx-tab.is-active {
     border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
     box-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset;
   }
 
@@ -809,7 +959,7 @@
     height: 16px;
     flex: 0 0 auto;
     border-radius: 4px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
   .nx-tab:hover .nx-tab-close,
   .nx-tab.is-active .nx-tab-close,
@@ -830,8 +980,8 @@
     height: 18px;
     padding: 0 6px;
     border-radius: 5px;
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-400);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-soft);
     font-size: 10.5px;
     font-weight: 500;
     letter-spacing: 0.01em;
@@ -866,8 +1016,8 @@
     height: 17px;
     padding: 0 5px;
     border-radius: 9px;
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-500);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-tertiary);
     font-size: 10px;
     font-variant-numeric: tabular-nums;
   }
@@ -882,7 +1032,7 @@
       color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
     border-radius: 6px;
     background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     font-size: 10.5px;
     white-space: nowrap;
   }
@@ -923,9 +1073,9 @@
     top: 0;
     z-index: 1;
     padding: 7px 10px;
-    border-bottom: 1px solid var(--color-neutral-800);
-    background: var(--color-neutral-900);
-    color: var(--color-neutral-500);
+    border-bottom: 1px solid var(--nx-border);
+    background: var(--nx-bg-pane);
+    color: var(--nx-fg-tertiary);
     font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.03em;
@@ -936,7 +1086,7 @@
     padding: 7px 10px;
     border-bottom: 1px solid
       color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
     vertical-align: middle;
   }
   .nx-table tbody tr:last-child td {
@@ -948,7 +1098,7 @@
   .nx-table .nx-mono {
     font-family: var(--font-mono);
     font-size: 11.5px;
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
   }
   .nx-table .nx-right {
     text-align: right;
@@ -956,7 +1106,7 @@
 
   .nx-table-empty {
     padding: 40px 16px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 12px;
     text-align: center;
   }
@@ -967,7 +1117,7 @@
     gap: 7px;
     padding: 5px 8px;
     border-radius: var(--radius-sm);
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
     font-size: 12.5px;
     cursor: pointer;
   }
@@ -976,7 +1126,7 @@
   }
   .nx-row.is-selected {
     background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
   .nx-row-actions {
     display: none;
@@ -997,7 +1147,7 @@
   }
 
   .nx-card-title {
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
     font-size: 13px;
     font-weight: 550;
     letter-spacing: 0.01em;
@@ -1013,7 +1163,7 @@
     padding: 9px 0;
     border-right: 1px solid
       color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
-    background: var(--color-neutral-950);
+    background: var(--nx-bg-canvas);
   }
 
   .nx-rail-btn {
@@ -1025,12 +1175,12 @@
     height: 34px;
     border-radius: var(--radius-md);
     background: transparent;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     cursor: pointer;
   }
   .nx-rail-btn:hover {
     background: color-mix(in srgb, var(--color-neutral-800) 80%, transparent);
-    color: var(--color-neutral-200);
+    color: var(--nx-fg-emphasis);
   }
   .nx-rail-btn.is-active {
     background: color-mix(in srgb, var(--color-accent) 15%, transparent);
@@ -1051,7 +1201,7 @@
     color: var(--color-neutral-700);
   }
   .nx-rail-btn.is-unavailable:hover {
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
   .nx-rail-off {
     position: absolute;
@@ -1069,9 +1219,9 @@
     min-width: 188px;
     max-width: 340px;
     padding: 4px;
-    border: 1px solid var(--color-neutral-700);
+    border: 1px solid var(--nx-border-strong);
     border-radius: var(--radius-md);
-    background: var(--color-neutral-900);
+    background: var(--nx-bg-pane);
     box-shadow: var(--shadow-pop);
     user-select: none;
   }
@@ -1081,7 +1231,7 @@
     padding: 6px 10px 5px;
     border-bottom: 1px solid
       color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 10.5px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1097,7 +1247,7 @@
     border: none;
     border-radius: var(--radius-xs);
     background: transparent;
-    color: var(--color-neutral-200);
+    color: var(--nx-fg-emphasis);
     font-size: 12.5px;
     text-align: left;
     cursor: default;
@@ -1105,7 +1255,7 @@
 
   .nx-menu-item:hover:not(:disabled) {
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
 
   .nx-menu-item.is-danger:hover:not(:disabled) {
@@ -1123,7 +1273,7 @@
     align-items: center;
     justify-content: center;
     width: 15px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
 
   .nx-menu-item:hover:not(:disabled) .nx-menu-icon {
@@ -1140,7 +1290,7 @@
 
   .nx-menu-hint {
     flex-shrink: 0;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-family: var(--font-mono);
     font-size: 10.5px;
   }
@@ -1153,7 +1303,7 @@
 
   .nx-menu-group {
     padding: 6px 10px 3px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 10.5px;
   }
 
@@ -1165,14 +1315,14 @@
     flex-shrink: 0;
     margin-left: auto;
     padding-left: 14px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-family: var(--font-mono);
     font-size: 10.5px;
   }
 
   .nx-menu-arrow {
     flex-shrink: 0;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 14px;
     line-height: 1;
   }
@@ -1186,9 +1336,9 @@
     max-width: 340px;
     margin-left: 2px;
     padding: 4px;
-    border: 1px solid var(--color-neutral-700);
+    border: 1px solid var(--nx-border-strong);
     border-radius: var(--radius-md);
-    background: var(--color-neutral-900);
+    background: var(--nx-bg-pane);
     box-shadow: var(--shadow-pop);
   }
 
@@ -1207,7 +1357,7 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgb(8 9 12 / 0.56);
+    background: var(--nx-scrim);
     backdrop-filter: blur(2px);
   }
 
@@ -1215,9 +1365,9 @@
     width: 100%;
     max-height: 100%;
     overflow: auto;
-    border: 1px solid var(--color-neutral-700);
+    border: 1px solid var(--nx-border-strong);
     border-radius: var(--radius-xl);
-    background: var(--color-neutral-900);
+    background: var(--nx-bg-pane);
     box-shadow: var(--shadow-pop);
   }
 
@@ -1251,12 +1401,12 @@
       color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
     background: transparent;
     padding: 15px 18px;
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
     font-size: 13.5px;
     outline: none;
   }
   .nx-command-input::placeholder {
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
 
   .nx-command-item {
@@ -1266,7 +1416,7 @@
     gap: 10px;
     border-radius: var(--radius-sm);
     padding: 8px 10px;
-    color: var(--color-neutral-300);
+    color: var(--nx-fg);
     font-size: 12.5px;
     text-align: left;
     cursor: pointer;
@@ -1276,7 +1426,7 @@
   }
   .nx-command-item.is-active {
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
 
   .nx-segment {
@@ -1294,22 +1444,22 @@
     height: 24px;
     padding: 0 10px;
     border-radius: var(--radius-sm);
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     font-size: 11.5px;
     font-weight: 500;
     cursor: pointer;
   }
   .nx-segment-item:hover {
-    color: var(--color-neutral-200);
+    color: var(--nx-fg-emphasis);
   }
   .nx-segment-item.is-active {
-    background: var(--color-neutral-800);
-    color: var(--color-neutral-100);
+    background: var(--nx-bg-raised);
+    color: var(--nx-fg-strong);
     box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
   }
 
   .nx-hint {
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 11.5px;
     line-height: 1.6;
   }
@@ -1319,10 +1469,10 @@
     align-items: center;
     height: 19px;
     padding: 0 6px;
-    border: 1px solid var(--color-neutral-700);
+    border: 1px solid var(--nx-border-strong);
     border-radius: 5px;
     background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     font-family: var(--font-mono);
     font-size: 10.5px;
     line-height: 1;
@@ -1334,11 +1484,11 @@
   }
 
   .nx-link {
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     cursor: pointer;
   }
   .nx-link:hover {
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
 
   .nx-pre {
@@ -1346,7 +1496,7 @@
     padding: 8px 10px;
     border-radius: var(--radius-sm);
     background: var(--color-term);
-    color: var(--color-neutral-300);
+    color: var(--nx-term-fg);
     font-family: var(--font-mono);
     font-size: 11.5px;
     line-height: 1.6;
@@ -1358,14 +1508,14 @@
   .nx-code {
     font-family: var(--font-mono);
     font-size: 11.5px;
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
   }
 
   .nx-progress {
     height: 3px;
     width: 100%;
     overflow: hidden;
-    background: var(--color-neutral-800);
+    background: var(--nx-bg-raised);
   }
   .nx-progress-bar {
     height: 100%;
@@ -1381,7 +1531,7 @@
     justify-content: center;
     gap: 10px;
     padding: 32px 20px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     font-size: 12px;
     text-align: center;
   }
@@ -1393,7 +1543,7 @@
     height: 40px;
     border-radius: var(--radius-lg);
     background: color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
   }
 
   .nx-alert {
@@ -1426,13 +1576,13 @@
     margin-left: 2px;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     cursor: pointer;
   }
   .nx-tab-new:hover {
     border-color: color-mix(in srgb, var(--color-neutral-700) 80%, transparent);
     background: color-mix(in srgb, var(--color-neutral-800) 85%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
 
   .nx-pathbar {
@@ -1449,17 +1599,17 @@
   .nx-path-crumb {
     padding: 2px 5px;
     border-radius: 4px;
-    color: var(--color-neutral-400);
+    color: var(--nx-fg-soft);
     white-space: nowrap;
     cursor: pointer;
   }
   .nx-path-crumb:hover {
     background: color-mix(in srgb, var(--color-neutral-800) 85%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
   .nx-path-crumb.is-current {
     background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
     font-weight: 500;
   }
 
@@ -1471,12 +1621,12 @@
     width: 14px;
     height: 14px;
     border-radius: 4px;
-    color: var(--color-neutral-500);
+    color: var(--nx-fg-tertiary);
     cursor: pointer;
   }
   .nx-tree-caret:hover:not(:disabled) {
     background: color-mix(in srgb, var(--color-neutral-700) 90%, transparent);
-    color: var(--color-neutral-100);
+    color: var(--nx-fg-strong);
   }
   .nx-tree-caret:disabled {
     opacity: 0.3;
@@ -1665,7 +1815,7 @@
   padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
   overflow-x: auto;
   border-top: 1px solid color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
-  background: var(--color-neutral-950);
+  background: var(--nx-bg-canvas);
   scrollbar-width: none;
 }
 
@@ -1678,10 +1828,10 @@
   height: 29px;
   flex: 0 0 auto;
   padding: 0 8px;
-  border: 1px solid var(--color-neutral-700);
+  border: 1px solid var(--nx-border-strong);
   border-radius: var(--radius-sm);
-  background: var(--color-neutral-800);
-  color: var(--color-neutral-200);
+  background: var(--nx-bg-raised);
+  color: var(--nx-fg-emphasis);
   font-family: var(--font-mono);
   font-size: 12px;
   touch-action: manipulation;
@@ -1706,7 +1856,7 @@
     bottom: 0;
     z-index: 45;
     max-width: calc(100% - 24px);
-    box-shadow: 16px 0 40px rgb(0 0 0 / 0.45);
+    box-shadow: var(--nx-dock-shadow-left);
   }
 
   .nx-left-dock {
@@ -1715,7 +1865,7 @@
 
   .nx-right-dock {
     right: 0;
-    box-shadow: -16px 0 40px rgb(0 0 0 / 0.45);
+    box-shadow: var(--nx-dock-shadow-right);
   }
 
   .nx-left-dock > :first-child,
@@ -1730,7 +1880,7 @@
     display: block;
     padding: 0;
     border: 0;
-    background: rgb(0 0 0 / 0.48);
+    background: var(--nx-scrim);
     cursor: default;
     backdrop-filter: blur(1px);
   }

@@ -10,6 +10,7 @@ import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
+import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { CronCard } from "./CronCard";
@@ -166,6 +167,8 @@ export function SettingsView() {
             </div>
           </section>
         )}
+
+        <AppearanceCard />
 
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">

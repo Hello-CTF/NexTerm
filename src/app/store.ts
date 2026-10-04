@@ -2,6 +2,15 @@ import { create } from "zustand";
 import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { dirtyFileEditors } from "../features/files/editorGuards";
+import {
+  getResolvedTheme,
+  getThemeMode,
+  initTheme,
+  setThemeMode as persistThemeMode,
+  subscribeTheme,
+  type ResolvedTheme,
+  type ThemeMode,
+} from "./theme";
 
 export type PaneKind =
   | "terminal"
@@ -119,6 +128,9 @@ interface UiState {
   leftOpen: boolean;
   leftMode: LeftMode;
   rightOpen: boolean;
+  themeMode: ThemeMode;
+  resolvedTheme: ResolvedTheme;
+  setThemeMode: (m: ThemeMode) => void;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   sessions: SessionInfo[];
@@ -244,6 +256,12 @@ export const useUi = create<UiState>((set, get) => ({
   leftOpen: true,
   leftMode: "assets",
   rightOpen: true,
+  themeMode: getThemeMode(),
+  resolvedTheme: getResolvedTheme(),
+  setThemeMode: (m) => {
+    persistThemeMode(m);
+    set({ themeMode: m, resolvedTheme: getResolvedTheme() });
+  },
   leftWidth: initialLayout.leftWidth,
   rightWidth: initialLayout.rightWidth,
   workspaces: [],
@@ -571,6 +589,11 @@ export const useUi = create<UiState>((set, get) => ({
   dismissToast: (id) =>
     set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
 }));
+
+initTheme();
+subscribeTheme((m, resolved) => {
+  useUi.setState({ themeMode: m, resolvedTheme: resolved });
+});
 
 function resolveWorkspaceId(
   tab: AppTab,
