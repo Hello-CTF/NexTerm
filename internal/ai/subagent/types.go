@@ -29,6 +29,33 @@ type ModelFactory func(context.Context) (model.BaseChatModel, error)
 
 type ToolFactory func(context.Context, Scope) ([]tool.BaseTool, error)
 
+type EventKind string
+
+const (
+	EventDelta      EventKind = "delta"
+	EventToolCall   EventKind = "toolCall"
+	EventToolResult EventKind = "toolResult"
+	EventDone       EventKind = "done"
+)
+
+type Event struct {
+	Kind      EventKind
+	TaskID    string
+	CallID    string
+	Name      string
+	Text      string
+	OK        bool
+	Summary   string
+	Truncated bool
+	ExitCode  int
+	Status    Status
+	Err       string
+}
+
+type Observer func(Event)
+
+type ObserverFactory func(context.Context) Observer
+
 type Config struct {
 	NewModel           ModelFactory
 	NewTools           ToolFactory
@@ -48,11 +75,12 @@ type Scope struct {
 }
 
 type Request struct {
-	ID      string
-	Task    string
-	Persona string
-	Scope   *Scope
-	Timeout time.Duration
+	ID       string
+	Task     string
+	Persona  string
+	Scope    *Scope
+	Timeout  time.Duration
+	Observer Observer
 }
 
 type Handle struct {

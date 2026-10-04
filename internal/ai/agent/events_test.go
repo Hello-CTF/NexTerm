@@ -30,6 +30,10 @@ func TestEventGoldenJSON(t *testing.T) {
 		{Event{Type: "planSubmitted", Plan: "p"}, `{"plan":"p","type":"planSubmitted"}`},
 		{Event{Type: "done", Answer: "a", Turns: 2, TokensIn: 3, TokensOut: 4}, `{"answer":"a","tokensIn":3,"tokensOut":4,"turns":2,"type":"done"}`},
 		{Event{Type: "error", Message: "m", Retryable: true}, `{"message":"m","retryable":true,"type":"error"}`},
+		{Event{Type: "subagentDelta", ParentCallID: "sp", SubagentID: "sub", Depth: 1, Text: "d"}, `{"depth":1,"parentCallId":"sp","subagentId":"sub","text":"d","type":"subagentDelta"}`},
+		{Event{Type: "subagentToolCall", ParentCallID: "sp", SubagentID: "sub", Depth: 1, ID: "c", Name: "list_assets"}, `{"depth":1,"id":"c","name":"list_assets","parentCallId":"sp","subagentId":"sub","type":"subagentToolCall"}`},
+		{Event{Type: "subagentToolResult", ParentCallID: "sp", SubagentID: "sub", Depth: 1, ID: "c", OK: true, Summary: "s", Text: "t", ExitCode: 0}, `{"depth":1,"exitCode":0,"id":"c","ok":true,"parentCallId":"sp","subagentId":"sub","summary":"s","text":"t","truncated":false,"type":"subagentToolResult"}`},
+		{Event{Type: "subagentDone", ParentCallID: "sp", SubagentID: "sub", Depth: 1, Status: "completed", Summary: "s"}, `{"depth":1,"error":"","parentCallId":"sp","status":"completed","subagentId":"sub","summary":"s","type":"subagentDone"}`},
 	}
 	for _, test := range tests {
 		test.event.Seq = 1

@@ -50,6 +50,10 @@ type Event struct {
 	TokensOut        uint64
 	Message          string
 	Retryable        bool
+	ParentCallID     string
+	SubagentID       string
+	Depth            int
+	Status           string
 }
 
 func (e Event) MarshalJSON() ([]byte, error) {
@@ -104,6 +108,19 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["answer"], payload["turns"], payload["tokensIn"], payload["tokensOut"] = e.Answer, e.Turns, e.TokensIn, e.TokensOut
 	case "error":
 		payload["message"], payload["retryable"] = e.Message, e.Retryable
+	case "subagentDelta":
+		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
+		payload["text"] = e.Text
+	case "subagentToolCall":
+		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
+		payload["id"], payload["name"] = e.ID, e.Name
+	case "subagentToolResult":
+		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
+		payload["id"], payload["ok"], payload["summary"], payload["text"] = e.ID, e.OK, e.Summary, e.Text
+		payload["truncated"], payload["exitCode"] = e.Truncated, e.ExitCode
+	case "subagentDone":
+		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
+		payload["status"], payload["summary"], payload["error"] = e.Status, e.Summary, e.Message
 	}
 	return json.Marshal(payload)
 }

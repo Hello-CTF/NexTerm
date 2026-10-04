@@ -13,6 +13,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -258,7 +259,12 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 		messages = injection.Messages
 	}
-	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: r.config.Subagents}
+	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: r.config.Subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
+		if event.Kind == "" {
+			return
+		}
+		_ = current.emit(context.WithoutCancel(ctx), mapSubagentEvent(parentCallID, depth, event))
+	}}
 	einoTools, err := execution.Tools()
 	if err != nil {
 		return err
@@ -491,6 +497,22 @@ func (r *Runner) emitToolCalls(current *job, calls []schema.ToolCall) error {
 		}
 	}
 	return nil
+}
+
+func mapSubagentEvent(parentCallID string, depth int, event subagent.Event) Event {
+	mapped := Event{ParentCallID: parentCallID, SubagentID: event.TaskID, Depth: depth}
+	switch event.Kind {
+	case subagent.EventDelta:
+		mapped.Type, mapped.Text = "subagentDelta", event.Text
+	case subagent.EventToolCall:
+		mapped.Type, mapped.ID, mapped.Name = "subagentToolCall", event.CallID, event.Name
+	case subagent.EventToolResult:
+		mapped.Type, mapped.ID, mapped.OK, mapped.Summary, mapped.Text = "subagentToolResult", event.CallID, event.OK, event.Summary, event.Text
+		mapped.Truncated, mapped.ExitCode = event.Truncated, event.ExitCode
+	case subagent.EventDone:
+		mapped.Type, mapped.Status, mapped.Summary, mapped.Message = "subagentDone", string(event.Status), event.Summary, event.Err
+	}
+	return mapped
 }
 
 func (r *Runner) emitToolResult(current *job, message *schema.Message) error {

@@ -38,8 +38,9 @@ export const MAX_PENDING_CHARS = 64 * 1024;
 
 interface PendingFragment {
   generation: number;
-  role: "assistant" | "reasoning";
+  role: "assistant" | "reasoning" | "subagent";
   text: string;
+  subagent?: { parentCallId: string; subagentId: string; depth: number };
 }
 
 function positiveSafeInteger(value: unknown): value is number {
@@ -114,10 +115,19 @@ export function createConversationStream(
     pendingChars = 0;
     let changed = false;
     for (const fragment of fragments) {
-      const result = applyAiEvent(state, fragment.generation, {
-        type: fragment.role === "assistant" ? "delta" : "reasoning",
-        text: fragment.text,
-      });
+      const result =
+        fragment.role === "subagent" && fragment.subagent
+          ? applyAiEvent(state, fragment.generation, {
+              type: "subagentDelta",
+              text: fragment.text,
+              parentCallId: fragment.subagent.parentCallId,
+              subagentId: fragment.subagent.subagentId,
+              depth: fragment.subagent.depth,
+            })
+          : applyAiEvent(state, fragment.generation, {
+              type: fragment.role === "assistant" ? "delta" : "reasoning",
+              text: fragment.text,
+            });
       if (result.accepted) {
         state = result.state;
         changed = true;
@@ -212,6 +222,36 @@ export function createConversationStream(
           last.text += text;
         } else {
           pending.push({ generation, role, text });
+        }
+        pendingChars += text.length;
+        if (pendingChars > MAX_PENDING_CHARS) {
+          flush();
+        } else {
+          scheduleFlush();
+        }
+        return { state, accepted: true, terminal: null };
+      }
+      if (type === "subagentDelta") {
+        const attempt = attemptOf(state, generation);
+        if (!attempt || attempt.outcome) return { state, accepted: false, terminal: null };
+        const text = typeof ev.text === "string" ? ev.text : "";
+        if (!text) return { state, accepted: true, terminal: null };
+        const identity = {
+          parentCallId: typeof ev.parentCallId === "string" ? ev.parentCallId : "",
+          subagentId: typeof ev.subagentId === "string" ? ev.subagentId : "",
+          depth: Number(ev.depth) >= 1 ? Number(ev.depth) : 1,
+        };
+        const last = pending[pending.length - 1];
+        if (
+          last &&
+          last.generation === generation &&
+          last.role === "subagent" &&
+          last.subagent?.parentCallId === identity.parentCallId &&
+          last.subagent.subagentId === identity.subagentId
+        ) {
+          last.text += text;
+        } else {
+          pending.push({ generation, role: "subagent", text, subagent: identity });
         }
         pendingChars += text.length;
         if (pendingChars > MAX_PENDING_CHARS) {

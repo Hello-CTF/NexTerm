@@ -18,6 +18,7 @@ import {
   type ConfirmItem,
   type QuestionItem,
   type StatusLine,
+  type SubagentTimeline,
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
@@ -1464,6 +1465,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           <span className="font-mono text-[10px] text-neutral-500">{item.exitCode}</span>
         )}
       </div>
+      {item.subagent ? <SubagentTimelineView timeline={item.subagent} /> : null}
       {body && (
         <pre
           className={`mt-1.5 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] ${
@@ -1483,6 +1485,74 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           {open ? "收起" : `展开完整输出（${full.length} 字符）`}
         </button>
       )}
+    </div>
+  );
+}
+
+function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
+  const [open, setOpen] = useState(timeline.status === "running");
+  const running = timeline.status === "running";
+  const label = running
+    ? "子代理 · 运行中"
+    : timeline.status === "completed"
+      ? "子代理 · 已完成"
+      : timeline.status === "canceled"
+        ? "子代理 · 已取消"
+        : "子代理 · 失败";
+  return (
+    <div className="mt-1.5 border-t border-neutral-800 pt-1.5">
+      <button
+        className="flex w-full items-center gap-1.5 text-[10.5px] text-neutral-400 hover:text-neutral-200"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {running ? (
+          <IconLoader size={10} className="shrink-0 animate-spin text-amber-300" />
+        ) : timeline.status === "completed" ? (
+          <IconCheck size={11} className="shrink-0 text-green-300" />
+        ) : (
+          <IconXCircle size={11} className="shrink-0 text-red-300" />
+        )}
+        <IconBot size={11} className="shrink-0 text-neutral-500" />
+        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+        <span className="shrink-0 text-neutral-600">
+          {timeline.text.length} 字 · {timeline.tools.length} 个工具
+        </span>
+        <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
+      </button>
+      {open ? (
+        <div className="mt-1 space-y-1">
+          {timeline.text ? (
+            <pre className="max-h-24 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-400">
+              {timeline.text}
+            </pre>
+          ) : null}
+          {timeline.tools.map((tool) => (
+            <div key={tool.callId} className="flex items-center gap-1.5 text-[10.5px]">
+              {tool.status === "running" ? (
+                <IconLoader size={9} className="shrink-0 animate-spin text-amber-300" />
+              ) : tool.status === "ok" ? (
+                <IconCheck size={10} className="shrink-0 text-green-300" />
+              ) : (
+                <IconXCircle size={10} className="shrink-0 text-red-300" />
+              )}
+              <span className="shrink-0 font-mono text-neutral-400">{tool.name || "tool"}</span>
+              {tool.summary ? (
+                <span className="min-w-0 flex-1 truncate text-neutral-600" title={tool.summary}>
+                  {tool.summary}
+                </span>
+              ) : null}
+            </div>
+          ))}
+          {!running ? (
+            <div className="text-[10.5px] text-neutral-500">
+              {timeline.status === "completed"
+                ? (timeline.summary ?? "已完成")
+                : (timeline.error ?? timeline.summary ?? "已结束")}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
