@@ -81,8 +81,15 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 }
 
 func (r *Runner) finishRecoveredRun(ctx context.Context, runID, status, message string, retryable bool) {
-	_, _ = r.runs.RunAppendEvent(ctx, runID, "error", func(seq uint64) ([]byte, error) {
-		return json.Marshal(Event{Type: "error", Seq: seq, Message: message, Retryable: retryable})
+	eventType := "error"
+	event := Event{Type: "error", Message: message, Retryable: retryable}
+	if status == store.RunStatusCanceled {
+		eventType = "canceled"
+		event = Event{Type: "canceled", Message: message}
+	}
+	_, _ = r.runs.RunAppendEvent(ctx, runID, eventType, func(seq uint64) ([]byte, error) {
+		event.Seq = seq
+		return json.Marshal(event)
 	})
 	total := r.recoveredUsage(ctx, runID)
 	_ = r.runs.RunFinishUsage(ctx, runID, status, "", message, 0,
@@ -154,7 +161,8 @@ func (r *Runner) watchRestoredRun(row store.RunRow) {
 			status = store.RunStatusCompleted
 			message = ""
 		}
-		r.finishRecoveredRun(ctx, row.ID, status, message, false)
+		retryable := status == store.RunStatusFailed || status == store.RunStatusInterrupted
+		r.finishRecoveredRun(ctx, row.ID, status, message, retryable)
 	}()
 }
 

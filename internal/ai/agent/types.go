@@ -191,7 +191,11 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 		defer cancel()
 		var event Event
 		if terminalErr != nil {
-			event = errorEvent(terminalErr, !errors.Is(terminalErr, context.Canceled))
+			if isCancellation(terminalErr) {
+				event = Event{Type: "canceled", Message: "已停止本轮"}
+			} else {
+				event = errorEvent(terminalErr, true)
+			}
 		} else {
 			event = doneEvent(answer, turns, total.PromptTokens, total.CompletionTokens)
 		}

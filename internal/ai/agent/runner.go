@@ -481,6 +481,11 @@ func (r *Runner) profileIDFor(args ChatArgs) string {
 	return ""
 }
 
+func isCancellation(err error) bool {
+	var cancelErr *adk.CancelError
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &cancelErr)
+}
+
 func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) {
 	if r.runs == nil {
 		return
@@ -497,7 +502,7 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 		case hitl.TerminalFailed:
 			status = store.RunStatusFailed
 		default:
-			if errors.Is(terminalErr, context.Canceled) {
+			if isCancellation(terminalErr) {
 				status = store.RunStatusCanceled
 			} else {
 				status = store.RunStatusFailed

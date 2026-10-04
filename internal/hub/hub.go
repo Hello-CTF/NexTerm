@@ -16,6 +16,7 @@ var (
 	ErrHubClosed      = errors.New("hub closed")
 	ErrInvalidChannel = errors.New("通道 ID 不能为空")
 	ErrInvalidJSON    = errors.New("hub JSON frame is invalid")
+	ErrQueueFull      = errors.New("hub queue full")
 )
 
 type FrameKind uint8
@@ -133,6 +134,45 @@ func (p *Producer) SendJSON(ctx context.Context, data json.RawMessage) error {
 		return ErrInvalidJSON
 	}
 	return p.send(ctx, Frame{Kind: FrameJSON, Data: data})
+}
+
+func (p *Producer) TrySendBinary(ctx context.Context, data []byte) error {
+	return p.trySend(ctx, Frame{Kind: FrameBinary, Data: data})
+}
+
+func (p *Producer) TrySendJSON(ctx context.Context, data json.RawMessage) error {
+	if !json.Valid(data) {
+		return ErrInvalidJSON
+	}
+	return p.trySend(ctx, Frame{Kind: FrameJSON, Data: data})
+}
+
+func (p *Producer) trySend(ctx context.Context, frame Frame) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	frame.Data = append([]byte(nil), frame.Data...)
+	c := p.channel
+	c.mu.Lock()
+	if c.closed || c.draining {
+		c.mu.Unlock()
+		return ErrClosed
+	}
+	if c.producer != p.generation {
+		c.mu.Unlock()
+		return ErrReplaced
+	}
+	if c.fullLocked(len(frame.Data)) {
+		c.mu.Unlock()
+		return ErrQueueFull
+	}
+	c.nextSeq++
+	frame.Sequence = c.nextSeq
+	c.queue = append(c.queue, frame)
+	c.queuedBytes += len(frame.Data)
+	c.signalLocked()
+	c.mu.Unlock()
+	return nil
 }
 
 func (p *Producer) send(ctx context.Context, frame Frame) error {

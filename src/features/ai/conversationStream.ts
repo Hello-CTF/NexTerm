@@ -63,6 +63,8 @@ export interface ConversationStream {
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
   cancelRun(generation: number, settle: boolean): void;
   reset(items?: ChatItem[]): void;
+  lastSeq(generation: number): number;
+  hasGap(generation: number): boolean;
   hitlSeq(generation: number): number;
   planHitlReplay(generation: number): HitlReplayPlan;
   applyHitlReplay(
@@ -75,6 +77,8 @@ export interface ConversationStream {
   dispose(): void;
 }
 
+const REORDER_CAP = 1024;
+
 export function createConversationStream(
   scheduler: StreamScheduler = rafScheduler,
 ): ConversationStream {
@@ -84,16 +88,10 @@ export function createConversationStream(
   let cancelScheduled: (() => void) | null = null;
   let disposed = false;
   const listeners = new Set<(state: ConversationState) => void>();
-  const seenSequences = new Map<number, Set<number>>();
+  const lastSequences = new Map<number, number>();
+  const reorderBuffers = new Map<number, Map<number, Record<string, unknown>>>();
   const hitlSequences = new Map<number, number>();
-  const seenOf = (generation: number): Set<number> => {
-    let seen = seenSequences.get(generation);
-    if (!seen) {
-      seen = new Set();
-      seenSequences.set(generation, seen);
-    }
-    return seen;
-  };
+  const lastSeqOf = (generation: number): number => lastSequences.get(generation) ?? 0;
   const hitlSeqOf = (generation: number): number => hitlSequences.get(generation) ?? 0;
 
   const publish = () => {
@@ -150,6 +148,88 @@ export function createConversationStream(
     fn();
   };
 
+  const applyEvent = (generation: number, ev: Record<string, unknown>): ApplyResult => {
+    const type = ev.type as string;
+    if (type === "delta" || type === "reasoning") {
+      const attempt = attemptOf(state, generation);
+      if (!attempt || attempt.outcome) return { state, accepted: false, terminal: null };
+      const text = typeof ev.text === "string" ? ev.text : "";
+      if (!text) return { state, accepted: true, terminal: null };
+      const role = type === "delta" ? "assistant" : "reasoning";
+      const last = pending[pending.length - 1];
+      if (last && last.generation === generation && last.role === role) {
+        last.text += text;
+      } else {
+        pending.push({ generation, role, text });
+      }
+      pendingChars += text.length;
+      if (pendingChars > MAX_PENDING_CHARS) {
+        flush();
+      } else {
+        scheduleFlush();
+      }
+      return { state, accepted: true, terminal: null };
+    }
+    if (type === "subagentDelta") {
+      const attempt = attemptOf(state, generation);
+      if (!attempt || attempt.outcome) return { state, accepted: false, terminal: null };
+      const text = typeof ev.text === "string" ? ev.text : "";
+      if (!text) return { state, accepted: true, terminal: null };
+      const identity = {
+        parentCallId: typeof ev.parentCallId === "string" ? ev.parentCallId : "",
+        subagentId: typeof ev.subagentId === "string" ? ev.subagentId : "",
+        depth: Number(ev.depth) >= 1 ? Number(ev.depth) : 1,
+      };
+      const last = pending[pending.length - 1];
+      if (
+        last &&
+        last.generation === generation &&
+        last.role === "subagent" &&
+        last.subagent?.parentCallId === identity.parentCallId &&
+        last.subagent.subagentId === identity.subagentId
+      ) {
+        last.text += text;
+      } else {
+        pending.push({ generation, role: "subagent", text, subagent: identity });
+      }
+      pendingChars += text.length;
+      if (pendingChars > MAX_PENDING_CHARS) {
+        flush();
+      } else {
+        scheduleFlush();
+      }
+      return { state, accepted: true, terminal: null };
+    }
+    flush();
+    const result = applyAiEvent(state, generation, ev);
+    if (result.accepted) {
+      state = result.state;
+      if (result.terminal) {
+        hitlSequences.delete(generation);
+        reorderBuffers.delete(generation);
+      }
+      publish();
+    }
+    return result;
+  };
+
+  const drainBuffer = (generation: number, fromSeq: number, terminal: ApplyResult["terminal"]): ApplyResult["terminal"] => {
+    const buffer = reorderBuffers.get(generation);
+    if (!buffer) return terminal;
+    let next = fromSeq + 1;
+    let result = terminal;
+    while (buffer.has(next)) {
+      const buffered = buffer.get(next) as Record<string, unknown>;
+      buffer.delete(next);
+      const drained = applyEvent(generation, buffered);
+      lastSequences.set(generation, next);
+      if (drained.terminal) result = drained.terminal;
+      next += 1;
+    }
+    if (buffer.size === 0) reorderBuffers.delete(generation);
+    return result;
+  };
+
   return {
     getState: () => state,
     subscribe(listener) {
@@ -201,77 +281,32 @@ export function createConversationStream(
     },
     pushEvent(generation, ev): ApplyResult {
       if (disposed) return { state, accepted: false, terminal: null };
-      const type = ev.type as string;
-      const terminalEvent = type === "done" || type === "error" ? (type as "done" | "error") : null;
       const seq = eventSequence(ev);
-      if (seq !== null) {
-        const seen = seenOf(generation);
-        if (seen.has(seq)) {
-          return { state, accepted: false, terminal: terminalEvent };
+      if (seq === null) return applyEvent(generation, ev);
+      const last = lastSeqOf(generation);
+      const type = ev.type as string;
+      const terminalEvent =
+        type === "done" || type === "error" || type === "canceled"
+          ? (type as "done" | "error" | "canceled")
+          : null;
+      if (seq <= last) return { state, accepted: false, terminal: terminalEvent };
+      if (seq > last + 1) {
+        let buffer = reorderBuffers.get(generation);
+        if (!buffer) {
+          buffer = new Map();
+          reorderBuffers.set(generation, buffer);
         }
-        seen.add(seq);
+        const gap = { from: last + 1, to: seq - 1 };
+        if (buffer.size >= REORDER_CAP) {
+          return { state, accepted: false, terminal: null, gap };
+        }
+        buffer.set(seq, ev);
+        return { state, accepted: false, terminal: null, gap };
       }
-      if (type === "delta" || type === "reasoning") {
-        const attempt = attemptOf(state, generation);
-        if (!attempt || attempt.outcome) return { state, accepted: false, terminal: null };
-        const text = typeof ev.text === "string" ? ev.text : "";
-        if (!text) return { state, accepted: true, terminal: null };
-        const role = type === "delta" ? "assistant" : "reasoning";
-        const last = pending[pending.length - 1];
-        if (last && last.generation === generation && last.role === role) {
-          last.text += text;
-        } else {
-          pending.push({ generation, role, text });
-        }
-        pendingChars += text.length;
-        if (pendingChars > MAX_PENDING_CHARS) {
-          flush();
-        } else {
-          scheduleFlush();
-        }
-        return { state, accepted: true, terminal: null };
-      }
-      if (type === "subagentDelta") {
-        const attempt = attemptOf(state, generation);
-        if (!attempt || attempt.outcome) return { state, accepted: false, terminal: null };
-        const text = typeof ev.text === "string" ? ev.text : "";
-        if (!text) return { state, accepted: true, terminal: null };
-        const identity = {
-          parentCallId: typeof ev.parentCallId === "string" ? ev.parentCallId : "",
-          subagentId: typeof ev.subagentId === "string" ? ev.subagentId : "",
-          depth: Number(ev.depth) >= 1 ? Number(ev.depth) : 1,
-        };
-        const last = pending[pending.length - 1];
-        if (
-          last &&
-          last.generation === generation &&
-          last.role === "subagent" &&
-          last.subagent?.parentCallId === identity.parentCallId &&
-          last.subagent.subagentId === identity.subagentId
-        ) {
-          last.text += text;
-        } else {
-          pending.push({ generation, role: "subagent", text, subagent: identity });
-        }
-        pendingChars += text.length;
-        if (pendingChars > MAX_PENDING_CHARS) {
-          flush();
-        } else {
-          scheduleFlush();
-        }
-        return { state, accepted: true, terminal: null };
-      }
-      flush();
-      const result = applyAiEvent(state, generation, ev);
-      if (result.accepted) {
-        state = result.state;
-        if (result.terminal) {
-          seenSequences.delete(generation);
-          hitlSequences.delete(generation);
-        }
-        publish();
-      }
-      return result;
+      const result = applyEvent(generation, ev);
+      lastSequences.set(generation, seq);
+      const terminal = drainBuffer(generation, seq, result.terminal);
+      return { ...result, terminal };
     },
     resolveInteraction(generation, itemId, nonce, label) {
       mutate(() => {
@@ -288,8 +323,8 @@ export function createConversationStream(
         if (next !== state) {
           state = next;
           if (settle) {
-            seenSequences.delete(generation);
             hitlSequences.delete(generation);
+            reorderBuffers.delete(generation);
           }
           publish();
         }
@@ -298,11 +333,14 @@ export function createConversationStream(
     reset(items = []) {
       mutate(() => {
         state = resetConversation(state, items);
-        seenSequences.clear();
+        lastSequences.clear();
+        reorderBuffers.clear();
         hitlSequences.clear();
         publish();
       });
     },
+    lastSeq: lastSeqOf,
+    hasGap: (generation) => (reorderBuffers.get(generation)?.size ?? 0) > 0,
     hitlSeq: hitlSeqOf,
     planHitlReplay(generation) {
       return planHitlReplayFold(state, generation, hitlSeqOf(generation));
@@ -332,7 +370,8 @@ export function createConversationStream(
       flush();
       disposed = true;
       cancelFrame();
-      seenSequences.clear();
+      lastSequences.clear();
+      reorderBuffers.clear();
       hitlSequences.clear();
       listeners.clear();
     },

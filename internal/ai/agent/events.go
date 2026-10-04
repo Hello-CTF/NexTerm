@@ -117,6 +117,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["answer"], payload["turns"], payload["tokensIn"], payload["tokensOut"] = e.Answer, e.Turns, e.TokensIn, e.TokensOut
 	case "error":
 		payload["message"], payload["retryable"] = e.Message, e.Retryable
+	case "canceled":
+		payload["message"] = e.Message
 	case "subagentDelta":
 		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
 		payload["text"] = e.Text

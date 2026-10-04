@@ -14,7 +14,7 @@ func channelStreamFactory(call *ipc.Call) StreamFactory {
 	if call == nil || call.Channel.ID == "" {
 		return nil
 	}
-	base := IPCStreamFactory(call.Streams)
+	base := ResilientIPCStreamFactory(call.Streams)
 	return func(ctx context.Context, _, jobID string) (Stream, error) {
 		return base(ctx, call.Channel.ID, jobID)
 	}
@@ -29,7 +29,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.RegisterNested(dispatcher, "ai_chat", func(ctx context.Context, call *ipc.Call, args ChatArgs) (StartResponse, error) {
 				args.ChannelID = call.Channel.ID
-				return r.Start(ctx, args, IPCStreamFactory(call.Streams))
+				return r.Start(ctx, args, ResilientIPCStreamFactory(call.Streams))
 			})
 		},
 		func() error {

@@ -344,7 +344,7 @@ func TestSteerCancelReportsLeftover(t *testing.T) {
 	if eventCount(events, "steered") != 0 || eventCount(events, "steerDropped") != 1 {
 		t.Fatalf("cancel must drop, not deliver, the queued steer: %+v", events)
 	}
-	droppedAt, errorAt := eventIndex(events, "steerDropped"), eventIndex(events, "error")
+	droppedAt, errorAt := eventIndex(events, "steerDropped"), eventIndex(events, "canceled")
 	if droppedAt < 0 || errorAt < 0 || droppedAt > errorAt {
 		t.Fatalf("steerDropped must precede the terminal event: dropped=%d error=%d", droppedAt, errorAt)
 	}
