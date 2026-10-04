@@ -292,11 +292,39 @@ describe("ForwardPanel 文案", () => {
 });
 
 describe("AuditView 文案", () => {
-  it("页脚不承诺不存在的导出能力，不引用内部章节号", async () => {
+  it("页脚只承诺来源与有退出码时展示，不承诺齐全，不引用内部章节号", async () => {
+    mocks.auditQuery.mockResolvedValue([
+      {
+        id: 1,
+        ts: 1,
+        sessionId: "s1",
+        assetId: null,
+        source: "user",
+        kind: "exec",
+        payload: { cmd: "ls" },
+        exitCode: 0,
+        durationMs: 12,
+      },
+      {
+        id: 2,
+        ts: 2,
+        sessionId: null,
+        assetId: null,
+        source: "ai",
+        kind: "file.write",
+        payload: { path: "/tmp/x" },
+        exitCode: null,
+        durationMs: null,
+      },
+    ]);
     mounted = mount(createElement(AuditView));
-    await flushUntil(() => text().includes("落库"));
-    expect(text()).toContain("所有会话命令、AI 动作、文件写操作都会落库，来源与退出码齐全。");
+    await flushUntil(() => text().includes("✓ 0"));
+    expect(text()).toContain("所有会话命令、AI 动作、文件写操作都会落库，逐条标注来源；有退出码的记录会一并展示。");
+    expect(text()).not.toContain("齐全");
     expect(text()).not.toContain("可导出");
     expect(text()).not.toContain("§");
+    const rows = [...mounted.container.querySelectorAll("tbody tr")];
+    expect(rows[0].textContent).toContain("✓ 0");
+    expect(rows[1].textContent).toContain("—");
   });
 });

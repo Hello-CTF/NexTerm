@@ -687,7 +687,7 @@ function ReportBody({ dir, data }: { dir: "push" | "pull"; data: ImportReport })
       <div className="font-mono text-[11px]">
         资产 新建 {data.assetsCreated} / 更新 {data.assetsUpdated}； 凭据 新建 {data.credsCreated} / 更新{" "}
         {data.credsUpdated}； 分组 新建 {data.groupsCreated} / 更新 {data.groupsUpdated}；
-        跳过（对端较新） {data.skippedNewer}； 被拒 {data.refused}
+        跳过（{dir === "push" ? "对端较新" : "本机较新"}） {data.skippedNewer}； 被拒 {data.refused}
       </div>
       {data.warnings.length > 0 && (
         <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">

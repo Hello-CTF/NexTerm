@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => {
     token: vi.fn(),
     linkSet: vi.fn(),
     remoteDigest: vi.fn(),
+    push: vi.fn(),
+    pull: vi.fn(),
     overview: vi.fn(),
     presets: vi.fn(),
     save: vi.fn(),
@@ -31,8 +33,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       token: mocks.token,
       linkSet: mocks.linkSet,
       remoteDigest: mocks.remoteDigest,
-      push: vi.fn(),
-      pull: vi.fn(),
+      push: mocks.push,
+      pull: mocks.pull,
       rotateToken: vi.fn(),
     },
     modelApi: {
@@ -360,5 +362,52 @@ describe("ModelPanel 弹层键盘行为", () => {
     await flush();
     expect(mocks.ask).toHaveBeenCalledOnce();
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("SyncCard 同步报告方向", () => {
+  const REPORT_BASE = {
+    groupsCreated: 0,
+    groupsUpdated: 0,
+    assetsCreated: 0,
+    assetsUpdated: 0,
+    credsCreated: 0,
+    credsUpdated: 0,
+    skippedNewer: 1,
+    refused: 0,
+    warnings: [] as string[],
+  };
+
+  async function selectComparableRow(): Promise<void> {
+    mocks.linkGet.mockResolvedValue(SAVED_LINK);
+    mocks.linkSet.mockImplementation(async (l: typeof SAVED_LINK) => l);
+    mocks.remoteDigest.mockResolvedValue({ origin: "remote", assets: [REMOTE_ASSET] });
+    mocks.digest.mockResolvedValue({ origin: "local", assets: [REMOTE_ASSET] });
+    mounted = withClient(createElement(SyncCard));
+    await waitForTestButtonEnabled();
+    clickButton(mounted!.container, "保存并测试连接");
+    await flushUntil(() => text().includes("web-01"));
+    const row = [...mounted!.container.querySelectorAll("label")].find((l) =>
+      l.textContent?.includes("web-01"),
+    );
+    click(row!.querySelector('input[type="checkbox"]')!);
+  }
+
+  it("推送报告：skippedNewer 是对端较新", async () => {
+    mocks.push.mockResolvedValue({ ...REPORT_BASE });
+    await selectComparableRow();
+    clickButton(mounted!.container, "推送到对端 (1)");
+    await flushUntil(() => text().includes("推送结果"));
+    expect(text()).toContain("跳过（对端较新） 1");
+    expect(text()).not.toContain("跳过（本机较新）");
+  });
+
+  it("拉取报告：skippedNewer 是本机较新", async () => {
+    mocks.pull.mockResolvedValue({ ...REPORT_BASE });
+    await selectComparableRow();
+    clickButton(mounted!.container, "从对端拉取 (1)");
+    await flushUntil(() => text().includes("拉取结果"));
+    expect(text()).toContain("跳过（本机较新） 1");
+    expect(text()).not.toContain("跳过（对端较新）");
   });
 });
