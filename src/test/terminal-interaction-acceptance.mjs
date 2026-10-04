@@ -392,7 +392,9 @@ async function wheel(page, deltaY) {
 }
 
 async function selectViaSearch(page, text) {
-  await clickSelector(page, '.nx-toolbar button[title^="搜索终端内容"]');
+  await clickSelector(page, '.nx-toolbar button[aria-label="更多终端操作"]');
+  await page.waitFor(`Boolean(document.querySelector('[role="menu"]'))`);
+  await clickMenuItem(page, "搜索终端内容");
   await page.waitFor(`Boolean(document.querySelector('input[placeholder="搜索终端内容…"]'))`);
   await page.evaluate(`(() => {
     const input = document.querySelector('input[placeholder="搜索终端内容…"]');

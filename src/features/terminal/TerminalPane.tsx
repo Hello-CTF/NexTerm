@@ -510,6 +510,79 @@ export function TerminalPane({
     }
   };
 
+  const toggleBlocksPanel = () => {
+    const next = !blocksOpen;
+    setBlocksOpen(next);
+    userClosedBlocks.current = !next;
+  };
+
+  const buildToolbarOverflowMenu = (): MenuItem[] => [
+    { kind: "group", label: "操作" },
+    {
+      kind: "item",
+      label: "搜索终端内容",
+      icon: <IconSearch size={13} />,
+      accel: `${mod}+F`,
+      onSelect: () => {
+        const next = !searchOpen;
+        setSearchOpen(next);
+        if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      },
+    },
+    {
+      kind: "item",
+      label: recording ? "停止录制" : "录制输出",
+      icon: recording ? <IconStop size={13} /> : <IconSave size={13} />,
+      hint: "保存到文件",
+      disabled: !kernelTabId,
+      onSelect: () => void toggleRecord(),
+    },
+    ...(blocksSupported
+      ? ([
+          { kind: "separator" },
+          { kind: "group", label: "命令块" },
+          {
+            kind: "item",
+            label: "定位到上一条命令",
+            icon: <IconArrowUp size={13} />,
+            disabled: !blocks.length,
+            onSelect: () => handleRef.current?.navigateBlock("prev"),
+          },
+          {
+            kind: "item",
+            label: "定位到下一条命令",
+            icon: <IconArrowDown size={13} />,
+            disabled: !blocks.length,
+            onSelect: () => handleRef.current?.navigateBlock("next"),
+          },
+          {
+            kind: "item",
+            label: "命令块",
+            icon: <IconList size={13} />,
+            hint: blocks.length > 0 ? `${blocks.length} 条` : "折叠输出 / 复制 / 定位",
+            onSelect: toggleBlocksPanel,
+          },
+        ] satisfies MenuItem[])
+      : []),
+    { kind: "separator" },
+    {
+      kind: "item",
+      label: "字符编码",
+      submenu: ENCODINGS.map((enc) => ({
+        kind: "item",
+        label: enc,
+        hint: enc === encoding ? "当前" : undefined,
+        onSelect: () => void applyEncoding(enc),
+      })),
+    },
+  ];
+
+  const openToolbarOverflow = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({ x: r.left, y: r.bottom, title: "终端操作", items: buildToolbarOverflowMenu() });
+  };
+
   const buildTerminalMenu = (): MenuItem[] => {
     const selected = (handleRef.current?.getSelection() ?? "").trim();
     const hasSel = selected.length > 0;
@@ -657,7 +730,7 @@ export function TerminalPane({
         <div className="nx-spacer" />
 
         <button
-          className={`nx-btn nx-btn-ghost nx-btn-sm ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
+          className={`nx-btn nx-btn-ghost nx-btn-sm max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
           title={`搜索终端内容 (${searchBindingLabel})`}
           onClick={() => setSearchOpen((v) => !v)}
         >
@@ -666,7 +739,7 @@ export function TerminalPane({
         </button>
 
         <select
-          className="nx-select nx-input-sm w-[88px] font-mono"
+          className="nx-select nx-input-sm w-[88px] font-mono max-[560px]:hidden"
           value={encoding}
           title="终端字符编码（右键菜单里也有）"
           onChange={(e) => void applyEncoding(e.target.value)}
@@ -679,7 +752,7 @@ export function TerminalPane({
         </select>
 
         <button
-          className={`nx-btn nx-btn-sm ${recording ? "nx-btn-danger" : "nx-btn-ghost"}`}
+          className={`nx-btn nx-btn-sm max-[560px]:hidden ${recording ? "nx-btn-danger" : "nx-btn-ghost"}`}
           title="把终端输出录制到文件"
           onClick={() => void toggleRecord()}
         >
@@ -689,9 +762,9 @@ export function TerminalPane({
 
         {blocksSupported && (
           <>
-            <span className="nx-divider-v" />
+            <span className="nx-divider-v max-[560px]:hidden" />
             <button
-              className="nx-icon-btn nx-icon-btn-sm"
+              className="nx-icon-btn nx-icon-btn-sm max-[560px]:hidden"
               disabled={!blocks.length}
               title="定位到上一条命令"
               onClick={() => handleRef.current?.navigateBlock("prev")}
@@ -699,7 +772,7 @@ export function TerminalPane({
               <IconArrowUp size={13} />
             </button>
             <button
-              className="nx-icon-btn nx-icon-btn-sm"
+              className="nx-icon-btn nx-icon-btn-sm max-[560px]:hidden"
               disabled={!blocks.length}
               title="定位到下一条命令"
               onClick={() => handleRef.current?.navigateBlock("next")}
@@ -707,14 +780,9 @@ export function TerminalPane({
               <IconArrowDown size={13} />
             </button>
             <button
-              className={`nx-btn nx-btn-sm ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+              className={`nx-btn nx-btn-sm max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
               title="命令块：折叠输出 / 复制 / 定位"
-              onClick={() => {
-                const next = !blocksOpen;
-                setBlocksOpen(next);
-                if (!next) userClosedBlocks.current = true;
-                else userClosedBlocks.current = false;
-              }}
+              onClick={toggleBlocksPanel}
             >
               <IconList size={13} />
               命令块
@@ -722,6 +790,14 @@ export function TerminalPane({
             </button>
           </>
         )}
+        <button
+          className="nx-icon-btn nx-icon-btn-sm hidden max-[560px]:flex"
+          title="更多终端操作（搜索 / 编码 / 录制 / 命令块）"
+          aria-label="更多终端操作"
+          onClick={openToolbarOverflow}
+        >
+          ⋯
+        </button>
       </div>
 
       {searchOpen && (

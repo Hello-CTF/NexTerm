@@ -900,7 +900,7 @@ async function main() {
     page.close();
     stop(chrome.process);
     stop(vite);
-    fs.rmSync(chrome.profile, { recursive: true, force: true });
+    fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
   }
 
   const summary = {

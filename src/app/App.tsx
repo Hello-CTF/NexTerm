@@ -1198,43 +1198,46 @@ export default function App() {
         </div>
 
         <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
-          <span className="flex items-center gap-1.5">
-            <IconServer size={11} />
-            <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
-          </span>
-          <span className="text-neutral-700">|</span>
-          <span
-            className={
-              sessions.some((s) => s.status === "connected")
-                ? "flex items-center gap-1.5 text-green-300"
-                : "flex items-center gap-1.5"
-            }
-          >
-            <span className="nx-dot" />
-            <strong className="font-medium">{sessions.filter((s) => s.status === "connected").length}</strong> 已连接
-          </span>
-          <span className="text-neutral-700">|</span>
-          <span className="flex items-center gap-1.5">
-            <IconLock size={11} />
-            {vaultStatus}
-          </span>
-          <div className="nx-spacer" />
-          {DEMO && (
-            <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，未连接真实服务器">
-              演示模式
+          <div className="nx-statusbar-info">
+            <span className="flex items-center gap-1.5">
+              <IconServer size={11} />
+              <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
             </span>
-          )}
-          <span className="flex items-center gap-1.5">
-            <IconNetwork size={11} />
-            同步：本地模式
-          </span>
-          <span className="text-neutral-700">|</span>
-          <button className="nx-link" onClick={openAudit}>
-            审计
-          </button>
-          <button className="nx-link" onClick={openSettings}>
-            设置
-          </button>
+            <span className="text-neutral-700">|</span>
+            <span
+              className={
+                sessions.some((s) => s.status === "connected")
+                  ? "flex items-center gap-1.5 text-green-300"
+                  : "flex items-center gap-1.5"
+              }
+            >
+              <span className="nx-dot" />
+              <strong className="font-medium">{sessions.filter((s) => s.status === "connected").length}</strong> 已连接
+            </span>
+            <span className="text-neutral-700">|</span>
+            <span className="nx-statusbar-truncate flex items-center gap-1.5" title={vaultStatus}>
+              <IconLock size={11} />
+              {vaultStatus}
+            </span>
+          </div>
+          <div className="nx-statusbar-side">
+            {DEMO && (
+              <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，未连接真实服务器">
+                演示模式
+              </span>
+            )}
+            <span className="nx-statusbar-truncate flex items-center gap-1.5">
+              <IconNetwork size={11} />
+              同步：本地模式
+            </span>
+            <span className="text-neutral-700">|</span>
+            <button className="nx-link" onClick={openAudit}>
+              审计
+            </button>
+            <button className="nx-link" onClick={openSettings}>
+              设置
+            </button>
+          </div>
         </footer>
       </div>
 

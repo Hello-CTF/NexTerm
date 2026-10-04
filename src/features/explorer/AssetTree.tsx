@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
@@ -54,6 +54,21 @@ function treeRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   rows[next]?.focus();
 }
 
+function subscribeCoarse(callback: () => void): () => void {
+  const query = window.matchMedia?.("(pointer: coarse)");
+  if (!query) return () => {};
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+
+function useCoarsePointer(): boolean {
+  return useSyncExternalStore(
+    subscribeCoarse,
+    () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
+    () => false,
+  );
+}
+
 export function AssetTree() {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
@@ -65,7 +80,7 @@ export function AssetTree() {
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
   const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
-  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset } | null>(null);
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
   const { hiddenIds, showHidden, setShowHidden, hide, unhide } = useAssetVisibility();
 
   const assets = useQuery({
@@ -175,6 +190,60 @@ export function AssetTree() {
     await runDeleteGroup(g);
   };
 
+  const buildRowMenu = (asset: Asset, full: boolean): MenuItem[] => {
+    const remove: MenuItem | null = asset.builtin
+      ? null
+      : {
+          kind: "item",
+          label: "删除",
+          icon: <IconClose size={13} />,
+          danger: true,
+          onSelect: () => void onDelete(asset),
+        };
+    const primary: MenuItem[] = full
+      ? [
+          {
+            kind: "item",
+            label: "连接",
+            icon: <IconPlay size={13} />,
+            onSelect: () => void connectAsset(asset),
+          },
+          {
+            kind: "item",
+            label: "编辑",
+            icon: <IconEdit size={13} />,
+            onSelect: () => setEditingAsset(asset),
+          },
+          ...(remove ? [remove] : []),
+          { kind: "separator" },
+        ]
+      : [];
+    return [
+      ...primary,
+      {
+        kind: "item",
+        label: "克隆",
+        icon: <IconCopy size={13} />,
+        hint: "共享凭据引用",
+        onSelect: () => void onClone(asset),
+      },
+      isHidden(asset.id)
+        ? {
+            kind: "item",
+            label: "取消隐藏",
+            icon: <IconEye size={13} />,
+            onSelect: () => onUnhide(asset),
+          }
+        : {
+            kind: "item",
+            label: "隐藏",
+            icon: <IconEyeOff size={13} />,
+            hint: "仅界面隐藏",
+            onSelect: () => onHide(asset),
+          },
+    ];
+  };
+
   if (!leftOpen) return null;
 
   return (
@@ -251,7 +320,7 @@ export function AssetTree() {
             hidden={isHidden(a.id)}
             onDelete={() => void onDelete(a)}
             onEdit={() => setEditingAsset(a)}
-            onMore={(x, y) => setRowMenu({ x, y, asset: a })}
+            onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
           />
         ))}
         {(groups.data ?? []).map((g: AssetGroup) => (
@@ -262,7 +331,7 @@ export function AssetTree() {
             hiddenIds={hiddenIds}
             onDelete={(a) => void onDelete(a)}
             onEdit={(a) => setEditingAsset(a)}
-            onMore={(a, x, y) => setRowMenu({ x, y, asset: a })}
+            onMore={(a, x, y, full) => setRowMenu({ x, y, asset: a, full })}
             onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
             onCreateIn={() => {
               setPresetGroup(g.id);
@@ -356,29 +425,7 @@ export function AssetTree() {
                 x: rowMenu.x,
                 y: rowMenu.y,
                 title: rowMenu.asset.name,
-                items: [
-                  {
-                    kind: "item",
-                    label: "克隆",
-                    icon: <IconCopy size={13} />,
-                    hint: "共享凭据引用",
-                    onSelect: () => void onClone(rowMenu.asset),
-                  },
-                  isHidden(rowMenu.asset.id)
-                    ? {
-                        kind: "item",
-                        label: "取消隐藏",
-                        icon: <IconEye size={13} />,
-                        onSelect: () => onUnhide(rowMenu.asset),
-                      }
-                    : {
-                        kind: "item",
-                        label: "隐藏",
-                        icon: <IconEyeOff size={13} />,
-                        hint: "仅界面隐藏",
-                        onSelect: () => onHide(rowMenu.asset),
-                      },
-                ] satisfies MenuItem[],
+                items: buildRowMenu(rowMenu.asset, rowMenu.full === true),
               }
             : null
         }
@@ -401,8 +448,9 @@ function AssetRow({
   hidden?: boolean;
   onDelete: () => void;
   onEdit: () => void;
-  onMore: (x: number, y: number) => void;
+  onMore: (x: number, y: number, full?: boolean) => void;
 }) {
+  const coarse = useCoarsePointer();
   const Icon = assetIcon(asset.kind);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const label = asset.name;
@@ -430,7 +478,7 @@ function AssetRow({
       onDoubleClick={() => void connectAsset(asset)}
       onContextMenu={(e) => {
         e.preventDefault();
-        onMore(e.clientX, e.clientY);
+        onMore(e.clientX, e.clientY, coarse);
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
@@ -444,72 +492,87 @@ function AssetRow({
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="nx-row-name min-w-0 flex-auto truncate">{label}</span>
       {hidden ? (
         <span className="nx-badge">已隐藏</span>
       ) : (
-        target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>
+        target && <span className="nx-row-target min-w-0 truncate text-[11px] text-neutral-500">{target}</span>
       )}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
-      <span className="nx-row-actions [@media(pointer:coarse)]:flex">
-        {connecting ? (
-          <span
-            className="nx-icon-btn nx-icon-btn-sm"
-            title="连接中…"
-            aria-label={`${asset.name} 连接中`}
-          >
-            <IconLoader size={12} className="animate-spin" />
-          </span>
-        ) : (
-          <button
-            className="nx-icon-btn nx-icon-btn-sm"
-            title="连接"
-            aria-label={`连接 ${asset.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              void connectAsset(asset);
-            }}
-          >
-            <IconPlay size={12} />
-          </button>
-        )}
+      {coarse ? (
         <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="编辑"
-          aria-label={`编辑 ${asset.name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
-        >
-          <IconEdit size={12} />
-        </button>
-        {!asset.builtin && (
-          <button
-            className="nx-icon-btn nx-icon-btn-sm is-danger"
-            title="删除"
-            aria-label={`删除 ${asset.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <IconClose size={12} />
-          </button>
-        )}
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
+          className="nx-icon-btn nx-icon-btn-sm nx-row-more"
           title="更多操作"
           aria-label={`更多操作 ${asset.name}`}
           onClick={(e) => {
             e.stopPropagation();
             const r = e.currentTarget.getBoundingClientRect();
-            onMore(r.left, r.bottom);
+            onMore(r.left, r.bottom, true);
           }}
         >
           ⋯
         </button>
-      </span>
+      ) : (
+        <span className="nx-row-actions">
+          {connecting ? (
+            <span
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="连接中…"
+              aria-label={`${asset.name} 连接中`}
+            >
+              <IconLoader size={12} className="animate-spin" />
+            </span>
+          ) : (
+            <button
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="连接"
+              aria-label={`连接 ${asset.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void connectAsset(asset);
+              }}
+            >
+              <IconPlay size={12} />
+            </button>
+          )}
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="编辑"
+            aria-label={`编辑 ${asset.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+          >
+            <IconEdit size={12} />
+          </button>
+          {!asset.builtin && (
+            <button
+              className="nx-icon-btn nx-icon-btn-sm is-danger"
+              title="删除"
+              aria-label={`删除 ${asset.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              <IconClose size={12} />
+            </button>
+          )}
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="更多操作"
+            aria-label={`更多操作 ${asset.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = e.currentTarget.getBoundingClientRect();
+              onMore(r.left, r.bottom);
+            }}
+          >
+            ⋯
+          </button>
+        </span>
+      )}
     </div>
   );
 }
@@ -535,7 +598,7 @@ function GroupNode({
   hiddenIds: string[];
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
-  onMore: (a: Asset, x: number, y: number) => void;
+  onMore: (a: Asset, x: number, y: number, full?: boolean) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
   busy: boolean;
@@ -547,6 +610,8 @@ function GroupNode({
 }) {
   const [open, setOpen] = useState(true);
   const [over, setOver] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const coarse = useCoarsePointer();
   const isAssetDrag = (e: React.DragEvent) =>
     e.dataTransfer.types.includes(DRAG_ASSET);
   return (
@@ -599,7 +664,7 @@ function GroupNode({
     >
       <div className="nx-row group w-full text-neutral-400">
         <button
-          className="flex min-w-0 flex-1 items-center gap-1 text-left"
+          className="flex min-w-0 flex-auto items-center gap-1 text-left"
           onClick={() => setOpen((v) => !v)}
         >
           {open ? (
@@ -608,47 +673,63 @@ function GroupNode({
             <IconChevronRight size={12} className="shrink-0" />
           )}
           <IconFolder size={13} className="shrink-0 text-neutral-500" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">{group.name}</span>
+          <span className="nx-row-name min-w-0 flex-1 truncate text-xs font-medium">{group.name}</span>
         </button>
         <span className="nx-count">{assets.length}</span>
-        <span className="nx-row-actions [@media(pointer:coarse)]:flex">
+        {coarse ? (
           <button
-            className="nx-icon-btn nx-icon-btn-sm"
-            title="在分组内新建资产"
-            aria-label={`在分组「${group.name}」内新建资产`}
+            className="nx-icon-btn nx-icon-btn-sm nx-row-more"
+            title="更多操作"
+            aria-label={`更多操作 ${group.name}`}
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
-              onCreateIn();
+              const r = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: r.left, y: r.bottom });
             }}
           >
-            <IconPlus size={12} />
+            ⋯
           </button>
-          <button
-            className="nx-icon-btn nx-icon-btn-sm"
-            title="重命名分组"
-            aria-label={`重命名分组「${group.name}」`}
-            disabled={busy}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRename();
-            }}
-          >
-            <IconEdit size={12} />
-          </button>
-          <button
-            className="nx-icon-btn nx-icon-btn-sm is-danger"
-            title="删除分组"
-            aria-label={`删除分组「${group.name}」`}
-            disabled={busy}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteGroup();
-            }}
-          >
-            {busy ? <IconLoader size={12} className="animate-spin" /> : <IconTrash size={12} />}
-          </button>
-        </span>
+        ) : (
+          <span className="nx-row-actions">
+            <button
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="在分组内新建资产"
+              aria-label={`在分组「${group.name}」内新建资产`}
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateIn();
+              }}
+            >
+              <IconPlus size={12} />
+            </button>
+            <button
+              className="nx-icon-btn nx-icon-btn-sm"
+              title="重命名分组"
+              aria-label={`重命名分组「${group.name}」`}
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRename();
+              }}
+            >
+              <IconEdit size={12} />
+            </button>
+            <button
+              className="nx-icon-btn nx-icon-btn-sm is-danger"
+              title="删除分组"
+              aria-label={`删除分组「${group.name}」`}
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteGroup();
+              }}
+            >
+              {busy ? <IconLoader size={12} className="animate-spin" /> : <IconTrash size={12} />}
+            </button>
+          </span>
+        )}
       </div>
       {error && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
@@ -674,7 +755,7 @@ function GroupNode({
               hidden={hiddenIds.includes(a.id)}
               onDelete={() => onDelete(a)}
               onEdit={() => onEdit(a)}
-              onMore={(x, y) => onMore(a, x, y)}
+              onMore={(x, y, full) => onMore(a, x, y, full)}
             />
           ))}
           {assets.length === 0 && (
@@ -682,6 +763,42 @@ function GroupNode({
           )}
         </div>
       )}
+      <ContextMenu
+        state={
+          menu
+            ? {
+                x: menu.x,
+                y: menu.y,
+                title: group.name,
+                items: [
+                  {
+                    kind: "item",
+                    label: "在分组内新建资产",
+                    icon: <IconPlus size={13} />,
+                    disabled: busy,
+                    onSelect: onCreateIn,
+                  },
+                  {
+                    kind: "item",
+                    label: "重命名分组",
+                    icon: <IconEdit size={13} />,
+                    disabled: busy,
+                    onSelect: onRename,
+                  },
+                  {
+                    kind: "item",
+                    label: "删除分组",
+                    icon: <IconTrash size={13} />,
+                    danger: true,
+                    disabled: busy,
+                    onSelect: onDeleteGroup,
+                  },
+                ] satisfies MenuItem[],
+              }
+            : null
+        }
+        onClose={() => setMenu(null)}
+      />
     </div>
   );
 }

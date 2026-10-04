@@ -1802,6 +1802,45 @@
   white-space: nowrap;
 }
 
+.nx-statusbar-info,
+.nx-statusbar-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nx-statusbar-info {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.nx-statusbar-info > * {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-statusbar-side {
+  flex: 0 0 auto;
+}
+
+.nx-statusbar-side > * {
+  flex: 0 0 auto;
+}
+
+.nx-statusbar-info > .nx-statusbar-truncate,
+.nx-statusbar-side > .nx-statusbar-truncate {
+  flex: 0 1 auto;
+}
+
+.nx-statusbar-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .nx-overlay {
   padding-bottom: calc(24px + var(--nx-kb-inset, 0px));
 }
@@ -1960,20 +1999,12 @@
 
   .nx-statusbar {
     gap: 8px;
-    overflow-x: auto;
-    scrollbar-width: none;
+    overflow: hidden;
   }
 
-  .nx-statusbar::-webkit-scrollbar {
-    height: 0;
-  }
-
-  .nx-statusbar > * {
-    flex-shrink: 0;
-  }
-
-  .nx-statusbar > .nx-spacer {
-    display: none;
+  .nx-statusbar-info,
+  .nx-statusbar-side {
+    gap: 8px;
   }
 }
 
