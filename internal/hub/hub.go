@@ -290,11 +290,14 @@ func (r *Receiver) Next(ctx context.Context) (Frame, error) {
 	if r.closed.Load() {
 		return Frame{}, ErrClosed
 	}
-	frame, drained, err := r.channel.next(ctx, r.generation)
-	if drained {
+	return r.channel.next(ctx, r.generation)
+}
+
+func (r *Receiver) Ack(sequence uint64) error {
+	if drained := r.channel.ack(sequence); drained {
 		r.hub.finalizeDrained(r.channelID, r.channel)
 	}
-	return frame, err
+	return nil
 }
 
 func (r *Receiver) Close() error {
@@ -323,6 +326,7 @@ type channel struct {
 	head           int
 	queuedBytes    int
 	nextSeq        uint64
+	inFlight       uint64
 	generation     uint64
 	producer       uint64
 	bound          bool
@@ -381,54 +385,66 @@ func (c *channel) sendProducer(ctx context.Context, frame Frame, producer uint64
 	}
 }
 
-func (c *channel) next(ctx context.Context, generation uint64) (Frame, bool, error) {
+func (c *channel) next(ctx context.Context, generation uint64) (Frame, error) {
 	for {
 		c.mu.Lock()
 		if c.closed {
 			c.mu.Unlock()
-			return Frame{}, false, ErrClosed
+			return Frame{}, ErrClosed
 		}
 		if !c.bound || c.generation != generation {
 			replaced := c.generation > generation && c.bound
 			c.mu.Unlock()
 			if replaced {
-				return Frame{}, false, ErrReplaced
+				return Frame{}, ErrReplaced
 			}
-			return Frame{}, false, ErrDetached
+			return Frame{}, ErrDetached
 		}
 		if c.head < len(c.queue) {
 			frame := c.queue[c.head]
-			c.queue[c.head] = Frame{}
-			c.head++
-			c.queuedBytes -= len(frame.Data)
-			if c.head == len(c.queue) {
-				c.queue = nil
-				c.head = 0
-			} else if c.head >= 64 && c.head*2 >= len(c.queue) {
-				copy(c.queue, c.queue[c.head:])
-				c.queue = c.queue[:len(c.queue)-c.head]
-				c.head = 0
-			}
-			if c.backpressured && c.pendingLocked() <= c.maxFrames/4 && c.queuedBytes <= c.maxBytes/4 {
-				c.backpressured = false
-			}
-			drained := c.draining && c.pendingLocked() == 0
-			if drained {
-				c.closeLocked()
-			} else {
-				c.signalLocked()
-			}
+			c.inFlight = frame.Sequence
 			c.mu.Unlock()
-			return frame, drained, nil
+			return frame, nil
 		}
 		changed := c.changed
 		c.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return Frame{}, false, ctx.Err()
+			return Frame{}, ctx.Err()
 		case <-changed:
 		}
 	}
+}
+
+func (c *channel) ack(sequence uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inFlight != sequence || c.head >= len(c.queue) || c.queue[c.head].Sequence != sequence {
+		return false
+	}
+	frame := c.queue[c.head]
+	c.queue[c.head] = Frame{}
+	c.head++
+	c.queuedBytes -= len(frame.Data)
+	if c.head == len(c.queue) {
+		c.queue = nil
+		c.head = 0
+	} else if c.head >= 64 && c.head*2 >= len(c.queue) {
+		copy(c.queue, c.queue[c.head:])
+		c.queue = c.queue[:len(c.queue)-c.head]
+		c.head = 0
+	}
+	c.inFlight = 0
+	if c.backpressured && c.pendingLocked() <= c.maxFrames/4 && c.queuedBytes <= c.maxBytes/4 {
+		c.backpressured = false
+	}
+	drained := c.draining && c.pendingLocked() == 0
+	if drained {
+		c.closeLocked()
+	} else {
+		c.signalLocked()
+	}
+	return drained
 }
 
 func (c *channel) bind() uint64 {
@@ -457,6 +473,7 @@ func (c *channel) closeLocked() {
 		c.queue = nil
 		c.head = 0
 		c.queuedBytes = 0
+		c.inFlight = 0
 		c.signalLocked()
 	}
 }
@@ -466,6 +483,7 @@ func (c *channel) discardPending() bool {
 	c.queue = nil
 	c.head = 0
 	c.queuedBytes = 0
+	c.inFlight = 0
 	c.backpressured = false
 	finalized := c.draining
 	if c.draining {

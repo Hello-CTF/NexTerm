@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -69,22 +70,35 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	subscriber, unsubscribe, err := s.events.subscribe()
+	since, present, resync := parseEventCursor(r)
+	subscriber, unsubscribe, err := s.events.subscribe(since, present, resync)
 	if err != nil {
 		_ = connection.CloseNow()
 		return
 	}
 	defer unsubscribe()
-	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, func(), error) {
 		select {
 		case data := <-subscriber.queue:
-			return websocket.MessageText, data, nil
+			return websocket.MessageText, data, nil, nil
 		case <-subscriber.done:
-			return 0, nil, ErrEventBrokerClosed
+			return 0, nil, nil, ErrEventBrokerClosed
 		case <-ctx.Done():
-			return 0, nil, ctx.Err()
+			return 0, nil, nil, ctx.Err()
 		}
 	})
+}
+
+func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
+	raw := r.URL.Query().Get("since")
+	if raw == "" {
+		return 0, false, false
+	}
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0, true, true
+	}
+	return value, true, false
 }
 
 func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
@@ -104,23 +118,24 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer receiver.Close()
-	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+	s.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, func(), error) {
 		frame, err := receiver.Next(ctx)
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
+		ack := func() { _ = receiver.Ack(frame.Sequence) }
 		switch frame.Kind {
 		case FrameBinary:
-			return websocket.MessageBinary, frame.Data, nil
+			return websocket.MessageBinary, frame.Data, ack, nil
 		case FrameJSON:
-			return websocket.MessageText, frame.Data, nil
+			return websocket.MessageText, frame.Data, ack, nil
 		default:
-			return 0, nil, errors.New("unknown channel frame kind")
+			return 0, nil, nil, errors.New("unknown channel frame kind")
 		}
 	})
 }
 
-func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, error)) {
+func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, next func(context.Context) (websocket.MessageType, []byte, func(), error)) {
 	ctx, cancel := context.WithCancel(ctx)
 	readDone := make(chan struct{})
 	go func() {
@@ -145,7 +160,7 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 	}()
 
 	for {
-		messageType, data, err := next(ctx)
+		messageType, data, ack, err := next(ctx)
 		if err != nil {
 			return
 		}
@@ -154,6 +169,9 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 		writeCancel()
 		if err != nil {
 			return
+		}
+		if ack != nil {
+			ack()
 		}
 	}
 }

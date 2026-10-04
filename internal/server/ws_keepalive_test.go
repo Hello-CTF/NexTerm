@@ -109,8 +109,8 @@ func TestPumpSocketWriteTimeoutClosesStuckPeer(t *testing.T) {
 		if err != nil {
 			return
 		}
-		server.pumpSocket(context.Background(), connection, func(context.Context) (websocket.MessageType, []byte, error) {
-			return websocket.MessageBinary, payload, nil
+		server.pumpSocket(context.Background(), connection, func(context.Context) (websocket.MessageType, []byte, func(), error) {
+			return websocket.MessageBinary, payload, nil, nil
 		})
 		close(returned)
 	}))

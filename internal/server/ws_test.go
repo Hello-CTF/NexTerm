@@ -110,7 +110,6 @@ func (r *replayReceiver) Next(ctx context.Context) (Frame, error) {
 		}
 		if len(r.channel.queue) > 0 {
 			frame := r.channel.queue[0]
-			r.channel.queue = r.channel.queue[1:]
 			r.channel.mu.Unlock()
 			return frame, nil
 		}
@@ -122,6 +121,15 @@ func (r *replayReceiver) Next(ctx context.Context) (Frame, error) {
 		case <-changed:
 		}
 	}
+}
+
+func (r *replayReceiver) Ack(sequence uint64) error {
+	r.channel.mu.Lock()
+	defer r.channel.mu.Unlock()
+	if len(r.channel.queue) > 0 && r.channel.queue[0].Sequence == sequence {
+		r.channel.queue = r.channel.queue[1:]
+	}
+	return nil
 }
 
 func (r *replayReceiver) Close() error {
@@ -282,9 +290,9 @@ func TestPumpSocketTeardownDoesNotWaitForPeerCloseFrame(t *testing.T) {
 		if err != nil {
 			return
 		}
-		server.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, error) {
+		server.pumpSocket(ctx, connection, func(ctx context.Context) (websocket.MessageType, []byte, func(), error) {
 			<-ctx.Done()
-			return 0, nil, ctx.Err()
+			return 0, nil, nil, ctx.Err()
 		})
 		close(returned)
 	}))

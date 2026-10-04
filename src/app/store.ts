@@ -179,6 +179,7 @@ interface UiState {
   updateTab: (id: string, patch: Partial<AppTab>) => void;
 
   setSessions: (s: SessionInfo[]) => void;
+  resyncSessions: () => Promise<void>;
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
   dismissToast: (id: number) => void;
@@ -592,6 +593,12 @@ export const useUi = create<UiState>((set, get) => ({
     })),
 
   setSessions: (s) => set({ sessions: s }),
+  resyncSessions: async () => {
+    try {
+      set({ sessions: await sessionApi.list() });
+    } catch {
+    }
+  },
   setAiBusy: (v) => set({ aiBusy: v }),
   setTakeover: (t) => set({ takeover: t }),
 

@@ -4,8 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
 import { listenEvent, EVENTS, EventVersionGate, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
+import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
 import { useUi } from "./app/store";
+import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
 import { setMountUnavailableReason } from "./app/capabilities";
 
@@ -38,6 +40,11 @@ void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
 
 void listenEvent<{ code: string; message: string }>(EVENTS.appError, (p) => {
   useUi.getState().pushToast("error", p.message);
+});
+
+onEventsResync(() => {
+  void useUi.getState().resyncSessions();
+  onRemoteChange(null);
 });
 
 window.addEventListener("contextmenu", (e) => {

@@ -79,9 +79,17 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 2
 	}
+	bufferSize, err := server.ParseEventBufferEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
 	broker := server.NewEventBroker()
 	if queueSize > 0 {
 		broker.QueueSize = queueSize
+	}
+	if bufferSize > 0 {
+		broker.BufferSize = bufferSize
 	}
 	if limit, err := platform.RaiseNoFileLimit(platform.DefaultNoFileLimit); err != nil {
 		logger.Warn("raise open file limit failed", "error", err)

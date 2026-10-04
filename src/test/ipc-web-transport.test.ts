@@ -212,3 +212,59 @@ describe("webTransport 重连时序", () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
 });
+
+describe("events 断线恢复游标", () => {
+  it("事件 id 推进游标，重连以 since 续传", async () => {
+    const { subscribeEvent } = await import("../ipc/webTransport");
+    const seen: unknown[] = [];
+    subscribeEvent("session://status", (payload) => seen.push(payload));
+    const first = FakeWebSocket.instances[0];
+    expect(first.url).toContain("/ws/events");
+    expect(first.url).not.toContain("since=");
+    first.serverOpen();
+    first.serverMessage(JSON.stringify({ id: 1, event: "session://status", payload: { a: 1 } }));
+    first.serverMessage(JSON.stringify({ id: 2, event: "session://status", payload: { a: 2 } }));
+    expect(seen).toEqual([{ a: 1 }, { a: 2 }]);
+
+    first.serverDrop();
+    vi.advanceTimersByTime(300);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.instances[1].url).toContain("/ws/events?since=2");
+  });
+
+  it("resync 标记更新游标并通知注册者，后续事件照常分发", async () => {
+    const { subscribeEvent, onEventsResync } = await import("../ipc/webTransport");
+    const seen: unknown[] = [];
+    const resynced = vi.fn();
+    subscribeEvent("session://status", (payload) => seen.push(payload));
+    onEventsResync(resynced);
+    const first = FakeWebSocket.instances[0];
+    first.serverOpen();
+    first.serverMessage(JSON.stringify({ resync: true, id: 7 }));
+    expect(resynced).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([]);
+
+    first.serverDrop();
+    vi.advanceTimersByTime(300);
+    expect(FakeWebSocket.instances[1].url).toContain("/ws/events?since=7");
+
+    FakeWebSocket.instances[1].serverOpen();
+    FakeWebSocket.instances[1].serverMessage(JSON.stringify({ id: 8, event: "session://status", payload: { b: 1 } }));
+    expect(seen).toEqual([{ b: 1 }]);
+  });
+
+  it("resync 订阅者抛错不影响后续事件分发", async () => {
+    const { subscribeEvent, onEventsResync } = await import("../ipc/webTransport");
+    const seen: unknown[] = [];
+    subscribeEvent("session://status", (payload) => seen.push(payload));
+    const off = onEventsResync(() => {
+      throw new Error("boom");
+    });
+    const first = FakeWebSocket.instances[0];
+    first.serverOpen();
+    first.serverMessage(JSON.stringify({ resync: true, id: 3 }));
+    first.serverMessage(JSON.stringify({ id: 4, event: "session://status", payload: { c: 1 } }));
+    expect(seen).toEqual([{ c: 1 }]);
+    off();
+  });
+});

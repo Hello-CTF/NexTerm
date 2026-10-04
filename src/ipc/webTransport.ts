@@ -174,17 +174,28 @@ function decodeFrame(data: unknown): ChannelMessage | undefined {
 interface EventsEntry {
   ws: WebSocket | null;
   retry: number;
+  hasConnected: boolean;
+  lastId: number;
   subs: Map<string, Set<(payload: unknown) => void>>;
+  resyncSubs: Set<() => void>;
 }
 
-const events: EventsEntry = { ws: null, retry: 0, subs: new Map() };
+const events: EventsEntry = { ws: null, retry: 0, hasConnected: false, lastId: 0, subs: new Map(), resyncSubs: new Set() };
 let eventsStarted = false;
+
+export function onEventsResync(cb: () => void): () => void {
+  events.resyncSubs.add(cb);
+  return () => {
+    events.resyncSubs.delete(cb);
+  };
+}
 
 function connectEvents() {
   if (events.ws) return;
   let ws: WebSocket;
   try {
-    ws = new WebSocket(wsUrl("/ws/events"));
+    const query = events.hasConnected ? `?since=${events.lastId}` : "";
+    ws = new WebSocket(wsUrl(`/ws/events${query}`));
   } catch {
     scheduleEventsReconnect();
     return;
@@ -193,13 +204,27 @@ function connectEvents() {
   trackSocket(ws);
   ws.onopen = () => {
     events.retry = 0;
+    events.hasConnected = true;
   };
   ws.onmessage = (ev) => {
     if (typeof ev.data !== "string") return;
-    let parsed: { event?: string; payload?: unknown };
+    let parsed: { id?: number; resync?: boolean; event?: string; payload?: unknown };
     try {
-      parsed = JSON.parse(ev.data) as { event?: string; payload?: unknown };
+      parsed = JSON.parse(ev.data) as { id?: number; resync?: boolean; event?: string; payload?: unknown };
     } catch {
+      return;
+    }
+    if (typeof parsed.id === "number") {
+      events.lastId = parsed.id;
+    }
+    if (parsed.resync === true) {
+      for (const fn of [...events.resyncSubs]) {
+        try {
+          fn();
+        } catch (e) {
+          console.error("[NexTerm] resync 处理器抛出异常", e);
+        }
+      }
       return;
     }
     if (!parsed.event) return;

@@ -13,15 +13,21 @@ import (
 
 var ErrEventBrokerClosed = errors.New("event broker is closed")
 
-const DefaultEventQueueSize = 64
+const (
+	DefaultEventQueueSize  = 64
+	DefaultEventBufferSize = 256
+)
 
 type EventBroker struct {
 	mu          sync.Mutex
 	nextID      uint64
+	nextEventID uint64
 	subscribers map[uint64]*eventSubscription
+	buffer      []bufferedEvent
 	closed      bool
 
 	QueueSize        int
+	BufferSize       int
 	OnSlowSubscriber func()
 }
 
@@ -32,32 +38,54 @@ type eventSubscription struct {
 	once  sync.Once
 }
 
+type bufferedEvent struct {
+	id   uint64
+	data []byte
+}
+
 func NewEventBroker() *EventBroker {
 	return &EventBroker{subscribers: make(map[uint64]*eventSubscription)}
 }
 
 func ParseEventQueueEnv(getenv func(string) string) (int, error) {
-	raw := getenv("NEXTERM_EVENT_QUEUE_SIZE")
+	return parsePositiveEnv(getenv, "NEXTERM_EVENT_QUEUE_SIZE")
+}
+
+func ParseEventBufferEnv(getenv func(string) string) (int, error) {
+	return parsePositiveEnv(getenv, "NEXTERM_EVENT_BUFFER_SIZE")
+}
+
+func parsePositiveEnv(getenv func(string) string, key string) (int, error) {
+	raw := getenv(key)
 	if raw == "" {
 		return 0, nil
 	}
 	size, err := strconv.Atoi(raw)
 	if err != nil || size <= 0 {
-		return 0, fmt.Errorf("NEXTERM_EVENT_QUEUE_SIZE must be a positive integer, got %q", raw)
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, raw)
 	}
 	return size, nil
 }
 
 func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return ErrEventBrokerClosed
 	}
+	b.nextEventID++
+	id := b.nextEventID
+	data, err := json.Marshal(struct {
+		ID      uint64    `json:"id"`
+		Event   ipc.Topic `json:"event"`
+		Payload any       `json:"payload"`
+	}{ID: id, Event: event.Event, Payload: event.Payload})
+	if err != nil {
+		b.nextEventID--
+		b.mu.Unlock()
+		return err
+	}
+	b.appendBufferLocked(id, data)
 	subscribers := make([]*eventSubscription, 0, len(b.subscribers))
 	for _, subscriber := range b.subscribers {
 		subscribers = append(subscribers, subscriber)
@@ -79,13 +107,24 @@ func (b *EventBroker) Emit(ctx context.Context, event ipc.Event) error {
 	return nil
 }
 
+func (b *EventBroker) appendBufferLocked(id uint64, data []byte) {
+	size := b.BufferSize
+	if size <= 0 {
+		size = DefaultEventBufferSize
+	}
+	b.buffer = append(b.buffer, bufferedEvent{id: id, data: data})
+	if len(b.buffer) > size {
+		b.buffer = append([]bufferedEvent(nil), b.buffer[len(b.buffer)-size:]...)
+	}
+}
+
 func (b *EventBroker) SubscriberCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.subscribers)
 }
 
-func (b *EventBroker) subscribe() (*eventSubscription, func(), error) {
+func (b *EventBroker) subscribe(since uint64, present, resync bool) (*eventSubscription, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -99,7 +138,36 @@ func (b *EventBroker) subscribe() (*eventSubscription, func(), error) {
 	}
 	subscriber := &eventSubscription{id: id, queue: make(chan []byte, size), done: make(chan struct{})}
 	b.subscribers[id] = subscriber
+	if resync {
+		subscriber.queue <- b.resyncMarkerLocked()
+		return subscriber, func() { b.drop(subscriber) }, nil
+	}
+	if present {
+		switch {
+		case since > b.nextEventID:
+			subscriber.queue <- b.resyncMarkerLocked()
+		case since < b.nextEventID:
+			missed := b.nextEventID - since
+			if missed > uint64(len(b.buffer)) || b.buffer[0].id > since+1 || missed > uint64(size) {
+				subscriber.queue <- b.resyncMarkerLocked()
+				break
+			}
+			for _, event := range b.buffer {
+				if event.id > since {
+					subscriber.queue <- event.data
+				}
+			}
+		}
+	}
 	return subscriber, func() { b.drop(subscriber) }, nil
+}
+
+func (b *EventBroker) resyncMarkerLocked() []byte {
+	data, _ := json.Marshal(struct {
+		Resync bool   `json:"resync"`
+		ID     uint64 `json:"id"`
+	}{Resync: true, ID: b.nextEventID})
+	return data
 }
 
 func (b *EventBroker) drop(subscriber *eventSubscription) bool {
