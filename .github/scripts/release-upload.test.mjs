@@ -50,15 +50,20 @@ function startStub(t, overrides = {}) {
   let nextAssetId = 9000;
   const behavior = async (req, respond, body) => {
     const url = new URL(req.url, "http://127.0.0.1");
-    const releaseDocument = () => ({
+    const releaseDocument = overrides.releaseDocument ?? (() => ({
       id: RELEASE_ID,
+      tag_name: "v9.9.9-stub",
+      name: "NexTerm v9.9.9-stub",
+      body: "original notes",
       draft: true,
       prerelease: false,
       upload_url: `${respond.base}/upload/${RELEASE_ID}/assets{?name,label}`,
-    });
+    }));
     if (req.method === "GET" && url.pathname === "/repos/stub/repo/releases/tags/v9.9.9-stub") {
-      if (overrides.existingRelease === false) return respond(404, { message: "Not Found" });
-      return respond(200, releaseDocument());
+      return respond(overrides.tagEndpointStatus ?? 404, { message: "Not Found" });
+    }
+    if (req.method === "GET" && url.pathname === "/repos/stub/repo/releases") {
+      return respond(200, overrides.listReleases?.(Number(url.searchParams.get("page") || "1"), state) ?? [releaseDocument()]);
     }
     if (req.method === "POST" && url.pathname === "/repos/stub/repo/releases") {
       state.releaseCreated = JSON.parse(body.toString("utf8"));
@@ -183,10 +188,12 @@ test("gates an unexpected package before any request", async (t) => {
 });
 
 test("creates the draft release and uploads all 11 assets", async (t) => {
-  const stub = await startStub(t, { existingRelease: false });
+  const stub = await startStub(t, { listReleases: () => [] });
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
   assert.equal(result.status, 0, result.stderr);
+  assert.ok(stub.state.requests.some((entry) => entry.url.startsWith("/repos/stub/repo/releases?per_page=100")));
+  assert.ok(!stub.state.requests.some((entry) => entry.url.includes("/releases/tags/")));
   assert.deepEqual(stub.state.releaseCreated, {
     tag_name: "v9.9.9-stub",
     name: "NexTerm v9.9.9-stub",
@@ -216,18 +223,71 @@ test("creates the draft release and uploads all 11 assets", async (t) => {
   assert.equal(uploadedLines.length, 11);
 });
 
-test("replaces same-name assets on the existing draft without creating", async (t) => {
+test("replaces same-name assets on the existing draft discovered through the list when the tags endpoint 404s", async (t) => {
   const existingAssets = EXPECTED_NAMES.map((name, index) => ({ id: 100 + index, name }));
   const stub = await startStub(t, { existingAssets });
   const directory = makeCandidate(t);
   const result = await runUploader(stub, directory);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(stub.state.releaseCreated, null);
+  const releaseMutations = stub.state.requests.filter((entry) => ["POST", "PATCH", "PUT"].includes(entry.method)
+    && entry.url.startsWith("/repos/stub/repo/releases"));
+  assert.deepEqual(releaseMutations, []);
+  assert.ok(!stub.state.requests.some((entry) => entry.url.includes("/releases/tags/")));
   assert.deepEqual([...stub.state.deletedAssetIds].sort((a, b) => a - b), existingAssets.map((asset) => asset.id));
   assert.equal(stub.state.assetAttempts.size, 11);
   const summary = summaryOf(result);
   assert.equal(summary.deleted_assets, 11);
   assert.equal(summary.draft, true);
+});
+
+test("finds the existing draft on a later releases page", async (t) => {
+  const filler = Array.from({ length: 100 }, (_, index) => ({ id: 5000 + index, tag_name: `v0.0.${index}`, draft: false }));
+  const stub = await startStub(t, {
+    listReleases: (page) => (page === 1 ? filler : [{
+      id: RELEASE_ID,
+      tag_name: "v9.9.9-stub",
+      name: "NexTerm v9.9.9-stub",
+      body: "original notes",
+      draft: true,
+      prerelease: false,
+      upload_url: `${stub.base}/upload/${RELEASE_ID}/assets{?name,label}`,
+    }]),
+  });
+  const directory = makeCandidate(t);
+  const result = await runUploader(stub, directory);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(stub.state.releaseCreated, null);
+  const pages = stub.state.requests.filter((entry) => entry.url.startsWith("/repos/stub/repo/releases?per_page=100"));
+  assert.equal(pages.length, 2);
+  assert.ok(pages[0].url.includes("page=1"));
+  assert.ok(pages[1].url.includes("page=2"));
+  assert.equal(stub.state.assetAttempts.size, 11);
+  const summary = summaryOf(result);
+  assert.equal(summary.release_id, RELEASE_ID);
+  assert.equal(summary.draft, true);
+});
+
+test("resolves a published release through the list without creating or drafting it", async (t) => {
+  const stub = await startStub(t, {
+    releaseDocument: () => ({
+      id: RELEASE_ID,
+      tag_name: "v9.9.9-stub",
+      name: "NexTerm v9.9.9-stub",
+      body: "original notes",
+      draft: false,
+      prerelease: false,
+      upload_url: `${stub.base}/upload/${RELEASE_ID}/assets{?name,label}`,
+    }),
+  });
+  const directory = makeCandidate(t);
+  const result = await runUploader(stub, directory);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(stub.state.releaseCreated, null);
+  assert.equal(stub.state.assetAttempts.size, 11);
+  const summary = summaryOf(result);
+  assert.equal(summary.draft, false);
+  assert.equal(summary.prerelease, false);
 });
 
 test("bounds in-flight uploads to the configured concurrency", async (t) => {

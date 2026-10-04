@@ -116,6 +116,19 @@ async function deleteAsset(assetId) {
   if (response.status !== 204 && response.status !== 404) throw new Error(`delete asset ${assetId}: HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
 }
 
+async function findReleaseByTag(tagName) {
+  const perPage = 100;
+  for (let page = 1; page <= 10; page += 1) {
+    const { response } = await sendWithRetry(`${apiBase}/repos/${repository}/releases?per_page=${perPage}&page=${page}`);
+    if (response.status !== 200) throw new Error(`list releases page ${page}: HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    const releases = await response.json();
+    const match = releases.find((item) => item.tag_name === tagName);
+    if (match) return match;
+    if (releases.length < perPage) return null;
+  }
+  throw new Error(`release ${tagName} not found in the first 1000 listed releases`);
+}
+
 async function runPool(items, limit, worker) {
   const results = new Array(items.length);
   let next = 0;
@@ -132,12 +145,10 @@ async function runPool(items, limit, worker) {
 
 const startedAt = performance.now();
 const resolveStarted = performance.now();
-const resolved = await sendWithRetry(`${apiBase}/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`);
-let release;
-if (resolved.response.status === 200) {
-  release = await resolved.response.json();
-  console.warn(`release-upload: resolved existing release ${release.id} for ${tag} (attempts=${resolved.attempts})`);
-} else if (resolved.response.status === 404) {
+let release = await findReleaseByTag(tag);
+if (release) {
+  console.warn(`release-upload: resolved existing release ${release.id} for ${tag} (draft=${release.draft}, prerelease=${release.prerelease})`);
+} else {
   const notesFile = path.resolve(ROOT, options.notesFile || path.join(options.directory || "candidate", "release-body.md"));
   if (!fs.existsSync(notesFile)) {
     console.error(`release-upload: notes file does not exist: ${notesFile}`);
@@ -160,9 +171,6 @@ if (resolved.response.status === 200) {
   }
   release = await created.response.json();
   console.warn(`release-upload: created draft release ${release.id} for ${tag} (attempts=${created.attempts})`);
-} else {
-  console.error(`release-upload: resolve release ${tag}: HTTP ${resolved.response.status}: ${(await resolved.response.text()).slice(0, 300)}`);
-  process.exit(1);
 }
 const resolveSeconds = (performance.now() - resolveStarted) / 1000;
 const uploadBase = release.upload_url.replace(/\{.*$/, "");

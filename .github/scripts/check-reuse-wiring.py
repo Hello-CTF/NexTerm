@@ -317,6 +317,9 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
           f"missing={missing_evidence}")
     for env_name in ("GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"):
         check(f"release-upload.mjs reads {env_name}", env_name in UPLOAD_TEXT)
+    check("release-upload resolves releases through the list API, not the draft-blind tags endpoint",
+          "releases/tags/" not in UPLOAD_TEXT and "releases?per_page=" in UPLOAD_TEXT,
+          "drafts 404 on the tags endpoint; the uploader must discover them via the paginated releases list")
 
     desktop_steps = release["jobs"]["desktop"]["steps"]
     cache_index = next((index for index, step in enumerate(desktop_steps) if step.get("id") == "wails-cache"), None)
