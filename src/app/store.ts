@@ -811,7 +811,7 @@ async function reclaimTerminals(
   if (failed.length) {
     pushToast(
       "error",
-      `${failed.length}/${live.length + cleanup.length} 个终端回收失败：${describeError((failed[0] as PromiseRejectedResult).reason)}`,
+      `${failed.length}/${live.length + cleanup.length} 个终端关闭失败：${describeError((failed[0] as PromiseRejectedResult).reason)}`,
     );
   }
   const detachedOk = results.filter((r, i) => r.status === "fulfilled" && i < detachable.length).length;
@@ -835,6 +835,14 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "winrm") return "结束 WinRM 非交互进程";
   if (block === "unknown") return "结束进程（类型未知）";
   return "转入后台运行";
+}
+
+export function sessionStatusText(status: SessionInfo["status"] | undefined): string {
+  if (status === "connected") return "已连接";
+  if (status === "reconnecting") return "重连中";
+  if (status === "connecting") return "连接中";
+  if (status === "failed") return "连接失败";
+  return "已断开";
 }
 
 export function closeTabHint(t: AppTab): string {
@@ -1096,9 +1104,9 @@ function hostKeyQuestion(detail: hostKeyPendingDetail | undefined): string {
       .map((known) => known.fingerprint)
       .filter((fingerprint): fingerprint is string => Boolean(fingerprint))
       .join("、");
-    return `主机密钥已变更 ${detail.host}:${detail.port}\n原指纹(SHA256): ${previous}\n新指纹(SHA256): ${detail.fingerprint}\n主机密钥类型: ${detail.keyType}\n信任新指纹并继续？如非预期变更，请取消并核实服务器。`;
+    return `主机密钥已变更 ${detail.host}:${detail.port}\n原指纹(SHA256)：${previous}\n新指纹(SHA256)：${detail.fingerprint}\n主机密钥类型：${detail.keyType}\n信任新指纹并继续？如非预期变更，请取消并核实服务器。`;
   }
-  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型: ${detail?.keyType}\n指纹(SHA256): ${detail?.fingerprint}\n信任并继续？`;
+  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型：${detail?.keyType}\n指纹(SHA256)：${detail?.fingerprint}\n信任并继续？`;
 }
 
 export async function connectAsset(asset: {

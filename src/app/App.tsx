@@ -21,6 +21,7 @@ import {
   closeTabHint,
   closeActionHint,
   countBlockedTerminals,
+  sessionStatusText,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
@@ -46,6 +47,7 @@ import { DEMO, TRANSPORT } from "../demo";
 import {
   isMac,
   isWailsDragRegionTarget,
+  modHint,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
 } from "./platform";
@@ -506,13 +508,17 @@ export default function App() {
       return;
     }
     if (s) {
-      const started = await sessionApi.reconnect(s.id).catch(() => false);
-      pushToast(
-        started ? "info" : "error",
-        started
-          ? "连接已断开，正在重连…连上之后再点一次「新建终端」"
-          : "这个会话不能重连，请从左侧资产树重新连接",
-      );
+      try {
+        const started = await sessionApi.reconnect(s.id);
+        pushToast(
+          started ? "info" : "error",
+          started
+            ? "连接已断开，正在重连…连上之后再点一次「新建终端」"
+            : "重连未能启动",
+        );
+      } catch (e) {
+        pushToast("error", `重连失败：${describeError(e)}`);
+      }
       return;
     }
     if (ws?.assetId) {
@@ -749,6 +755,7 @@ export default function App() {
   ];
 
   const railActive = leftMode;
+  const mod = modHint();
 
   const railItems: {
     key: string;
@@ -813,10 +820,10 @@ export default function App() {
               key={it.key}
               className={`nx-rail-btn ${it.unavailableReason ? "is-unavailable" : ""}`}
               title={
-                it.unavailableReason ? `${it.label}（暂不可用）` : it.label
+                it.unavailableReason ? `${it.label}暂不可用：${it.unavailableReason}` : it.label
               }
               aria-label={
-                it.unavailableReason ? `${it.label}（暂不可用）` : it.label
+                it.unavailableReason ? `${it.label}暂不可用：${it.unavailableReason}` : it.label
               }
               onClick={it.onClick}
             >
@@ -846,7 +853,7 @@ export default function App() {
           >
             {workspaces.length === 0 && (
               <span className="px-1 text-xs text-neutral-500" data-wails-drag-region style={wailsDragRegionStyle}>
-                还没有工作区 —— 双击左侧资产连接一台机器
+                还没有工作区 —— 双击左侧资产连接一台主机
               </span>
             )}
             <div className="nx-tabstrip-scroll">
@@ -895,7 +902,7 @@ export default function App() {
                     title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
                       w.panes.length > 1 ? " · 已分屏" : ""
                     }${
-                      status ? ` · ${status}` : ""
+                      status ? ` · ${sessionStatusText(status)}` : ""
                     }${w.sessionId ? ` · ${w.sessionId}` : ""}`}
                   >
                     <Icon size={13} />
@@ -928,12 +935,12 @@ export default function App() {
             <button
               className="nx-tab-new"
               style={wailsNoDragRegionStyle}
-              title="新建工作区：在左侧资产树里双击一台机器"
+              title="新建工作区：在左侧资产树里双击一台主机"
               aria-label="新建工作区"
               onClick={() => {
                 setLeftMode("assets");
                 setLeftOpen(true);
-                pushToast("info", "双击左侧资产，就会为这台机器开一个新的工作区");
+                pushToast("info", "双击左侧资产，就会为这台主机开一个新的工作区");
               }}
             >
               <IconPlus size={13} />
@@ -1019,16 +1026,16 @@ export default function App() {
             </button>
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title="命令面板 (Ctrl+Shift+P)"
-              aria-label="命令面板 (Ctrl+Shift+P)"
+              title={`命令面板 (${mod}+Shift+P)`}
+              aria-label={`命令面板 (${mod}+Shift+P)`}
               onClick={() => setPaletteOpen(true)}
             >
               <IconCommand size={15} />
             </button>
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title="全局搜索 (Ctrl+K)"
-              aria-label="全局搜索 (Ctrl+K)"
+              title={`全局搜索 (${mod}+K)`}
+              aria-label={`全局搜索 (${mod}+K)`}
               onClick={() => setPaletteOpen(true)}
             >
               <IconSearch size={15} />
@@ -1247,6 +1254,7 @@ function PaneGroup({
   const updateTab = useUi((s) => s.updateTab);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const mod = modHint();
 
   const renameTab = async (id: string, title: string) => {
     const next = await promptText("重命名标签：", title);
@@ -1301,7 +1309,7 @@ function PaneGroup({
       >
         <div className="nx-tabstrip-scroll">
         {pane.tabs.length === 0 && (
-          <span className="px-1 text-xs text-neutral-500">这一栏还没有标签</span>
+          <span className="px-1 text-xs text-neutral-500">这个面板还没有标签</span>
         )}
         <div role="tablist" aria-label="标签页" className="flex items-center gap-[3px]">
           {pane.tabs.map((t) => {
@@ -1361,7 +1369,7 @@ function PaneGroup({
         </div>
         <button
           className="nx-tab-new"
-          title="新建终端标签 (Ctrl+T)"
+          title={`新建终端标签 (${mod}+T)`}
           aria-label="新建终端标签"
           onClick={onNewTerminal}
         >
@@ -1374,9 +1382,9 @@ function PaneGroup({
           title={
             canSplit
               ? splitAllowed
-                ? "上下分屏 (Ctrl+\\)"
+                ? `上下分屏 (${mod}+\\)`
                 : "窗口高度不足，无法上下分屏"
-              : "取消分屏 (Ctrl+\\)"
+              : `取消分屏 (${mod}+\\)`
           }
           aria-label={canSplit ? "上下分屏" : "取消分屏"}
           onClick={onToggleSplit}
@@ -1385,7 +1393,7 @@ function PaneGroup({
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={leftOpen ? "收起左栏 (Ctrl+B)" : "展开左栏 (Ctrl+B)"}
+          title={leftOpen ? `收起左栏 (${mod}+B)` : `展开左栏 (${mod}+B)`}
           aria-label={leftOpen ? "收起左栏" : "展开左栏"}
           onClick={onToggleLeft}
         >
@@ -1607,11 +1615,12 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const { setSessions, sessions } = useUi();
+  const mod = modHint();
   const shortcuts: [string, string][] = [
-    ["Ctrl+T", "本地终端"],
-    ["Ctrl+Shift+P", "命令面板"],
-    ["Ctrl+B", "资产树"],
-    ["Ctrl+J", "AI 侧栏"],
+    [`${mod}+T`, "本地终端"],
+    [`${mod}+Shift+P`, "命令面板"],
+    [`${mod}+B`, "资产树"],
+    [`${mod}+J`, "AI 侧栏"],
   ];
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">

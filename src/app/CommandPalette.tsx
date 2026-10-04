@@ -87,7 +87,7 @@ export function CommandPalette({
         run: () => {
           const asset = assets.find((item) => item.kind === "mysql") ?? assets.find((item) => item.kind === "redis");
           if (!asset) {
-            pushToast("info", "还没有数据库资产");
+            pushToast("info", "还没有数据库资产，先在资产树里新建一个");
             return;
           }
           void dbApi
@@ -115,7 +115,7 @@ export function CommandPalette({
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace) {
-            pushToast("info", "先连接一台机器（双击左侧资产）");
+            pushToast("info", "先连接一台主机（双击左侧资产）");
             return;
           }
           if (workspace.panes.length > 1) void current.unsplitWorkspace(workspace.panes[1].id, workspace.id);

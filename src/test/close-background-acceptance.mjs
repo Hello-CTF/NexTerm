@@ -213,7 +213,7 @@ const paneTabCount = `document.querySelectorAll("${VISIBLE} [role='tablist'][ari
 const bgCount = `(() => {
   const panel = document.querySelector("${VISIBLE}");
   if (!panel) return -1;
-  if (panel.textContent.includes("读取中…")) return -1;
+  if (panel.textContent.includes("加载中…")) return -1;
   const empty = panel.querySelector(".nx-table-empty");
   if (empty && empty.textContent.includes("没有在后台运行的终端")) return 0;
   if (!panel.querySelector(".nx-table")) return -1;
