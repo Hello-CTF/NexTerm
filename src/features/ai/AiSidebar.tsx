@@ -774,7 +774,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={follow.scrollRef}
           role="log"
@@ -797,86 +797,67 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               onApprovePlan={approvePlan}
             />
           ))}
-        </div>
-        {follow.newOutput && (
-          <button
-            type="button"
-            className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700"
-            aria-label="回到最新输出"
-            onClick={follow.jumpToLatest}
-          >
-            ↓ 新输出
-          </button>
-        )}
-      </div>
-
-      {confirmCard && (
-        <div className="flex max-h-[45%] shrink flex-col border-t border-neutral-800/60 bg-neutral-950 p-2.5 min-h-[76px] [@media(max-height:480px)]:max-h-[32%]">
-          <div className="nx-alert flex min-h-0 flex-1 flex-col">
-            <div className="mb-1.5 flex shrink-0 items-center gap-1.5 font-semibold">
-              <IconAlert size={13} />
-              需要你确认
-              <span className="nx-spacer" />
-              <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
+          {confirmCard && (
+            <div className="nx-alert">
+              <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+                <IconAlert size={13} />
+                需要你确认
+                <span className="nx-spacer" />
+                <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
+              </div>
               <ConfirmBody card={confirmCard} />
-              <div className="text-[10.5px] leading-relaxed text-neutral-500">
+              <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
                 不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
               </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6"
+                  disabled={submittingCardId === confirmCard.id}
+                  onClick={() => void confirm("allow")}
+                >
+                  允许一次
+                </button>
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
+                  disabled={submittingCardId === confirmCard.id}
+                  onClick={() => void confirm("allow_session")}
+                >
+                  本会话允许此类
+                </button>
+                <button
+                  className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:min-h-6"
+                  disabled={submittingCardId === confirmCard.id}
+                  onClick={() => void confirm("deny")}
+                >
+                  拒绝
+                </button>
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
+                  title="打开设置的拦截规则，并把这条命令预填成一条新规则"
+                  onClick={() => {
+                    const ui = useUi.getState();
+                    ui.setAiRulePrefill(ruleFromRendered(confirmCard.rendered));
+                    ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+                  }}
+                >
+                  加为拦截规则
+                </button>
+              </div>
             </div>
-            <div className="mt-2 flex shrink-0 flex-wrap gap-1.5">
-              <button
-                className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6"
-                disabled={submittingCardId === confirmCard.id}
-                onClick={() => void confirm("allow")}
-              >
-                允许一次
-              </button>
-              <button
-                className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
-                disabled={submittingCardId === confirmCard.id}
-                onClick={() => void confirm("allow_session")}
-              >
-                本会话允许此类
-              </button>
-              <button
-                className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:min-h-6"
-                disabled={submittingCardId === confirmCard.id}
-                onClick={() => void confirm("deny")}
-              >
-                拒绝
-              </button>
-              <button
-                className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
-                title="打开设置的拦截规则，并把这条命令预填成一条新规则"
-                onClick={() => {
-                  const ui = useUi.getState();
-                  ui.setAiRulePrefill(ruleFromRendered(confirmCard.rendered));
-                  ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
-                }}
-              >
-                加为拦截规则
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {questionCard && (
-        <div className="flex max-h-[45%] shrink flex-col border-t border-neutral-800/60 bg-neutral-950 p-2.5 min-h-[82px] [@media(max-height:480px)]:max-h-[32%]">
-          <form
-            className="nx-alert flex min-h-0 flex-1 flex-col"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void answer();
-            }}
-          >
-            <div className="mb-1.5 flex shrink-0 items-center gap-1.5 font-semibold">
-              <IconAlert size={13} />
-              AI 需要你回答
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
+          {questionCard && (
+            <form
+              className="nx-alert"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void answer();
+              }}
+            >
+              <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+                <IconAlert size={13} />
+                AI 需要你回答
+              </div>
               <div className="mb-2 whitespace-pre-wrap text-[12px] leading-relaxed text-neutral-200">
                 {questionCard.question}
               </div>
@@ -895,65 +876,75 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                   ))}
                 </div>
               )}
-            </div>
-            <div className="mt-2 flex shrink-0 items-end gap-1.5">
-              <textarea
-                className="nx-textarea pointer-coarse:text-[16px] min-h-[36px] flex-1"
-                rows={2}
-                value={questionInput}
-                placeholder="输入回答…"
-                aria-label="回答 AI 的问题"
-                onChange={(event) => setQuestionInput(event.target.value)}
-              />
-              <button
-                type="submit"
-                className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6 shrink-0"
-                disabled={!questionInput.trim() || submittingCardId === questionCard.id}
-              >
-                回答
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+              <div className="flex items-end gap-1.5">
+                <textarea
+                  className="nx-textarea pointer-coarse:text-[16px] min-h-[36px] flex-1"
+                  rows={2}
+                  value={questionInput}
+                  placeholder="输入回答…"
+                  aria-label="回答 AI 的问题"
+                  onChange={(event) => setQuestionInput(event.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6 shrink-0"
+                  disabled={!questionInput.trim() || submittingCardId === questionCard.id}
+                >
+                  回答
+                </button>
+              </div>
+            </form>
+          )}
 
-      {conv.todos.length > 0 && (
-        <div className="flex min-h-0 max-h-[35%] shrink flex-col overflow-y-auto border-t border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2 [@media(max-height:480px)]:max-h-[28%]">
-          <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
-            <IconList size={11} />
-            任务清单
-            <span className="text-[var(--nx-fg-tertiary)]">
-              {conv.todos.filter((t) => t.status === "completed").length}/{conv.todos.length}
-            </span>
-          </div>
-          <div className="flex max-h-28 flex-col gap-0.5 overflow-y-auto">
-            {conv.todos.map((t, i) => (
-              <div key={i} className="flex items-start gap-1.5 text-[11px] leading-snug">
-                <span
-                  className={
-                    t.status === "completed"
-                      ? "text-green-400"
-                      : t.status === "in_progress"
-                        ? "text-blue-300"
-                        : "text-[var(--nx-fg-tertiary)]"
-                  }
-                >
-                  {t.status === "completed" ? "✓" : t.status === "in_progress" ? "▸" : "○"}
-                </span>
-                <span
-                  className={
-                    t.status === "completed"
-                      ? "text-neutral-500 line-through"
-                      : "text-neutral-300"
-                  }
-                >
-                  {t.content}
+          {conv.todos.length > 0 && (
+            <div className="rounded-lg border border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
+              <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
+                <IconList size={11} />
+                任务清单
+                <span className="text-[var(--nx-fg-tertiary)]">
+                  {conv.todos.filter((t) => t.status === "completed").length}/{conv.todos.length}
                 </span>
               </div>
-            ))}
-          </div>
+              <div className="flex max-h-28 flex-col gap-0.5 overflow-y-auto">
+                {conv.todos.map((t, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-[11px] leading-snug">
+                    <span
+                      className={
+                        t.status === "completed"
+                          ? "text-green-300"
+                          : t.status === "in_progress"
+                            ? "text-blue-300"
+                            : "text-[var(--nx-fg-tertiary)]"
+                      }
+                    >
+                      {t.status === "completed" ? "✓" : t.status === "in_progress" ? "▸" : "○"}
+                    </span>
+                    <span
+                      className={
+                        t.status === "completed"
+                          ? "text-neutral-500 line-through"
+                          : "text-neutral-300"
+                      }
+                    >
+                      {t.content}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+        {follow.newOutput && (
+          <button
+            type="button"
+            className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700"
+            aria-label="回到最新输出"
+            onClick={follow.jumpToLatest}
+          >
+            ↓ 新输出
+          </button>
+        )}
+      </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 p-2.5 [padding-bottom:calc(0.625rem+var(--nx-kb-inset,0px))]">
         {planMode && (
@@ -1342,7 +1333,7 @@ function PlanBubble({
     <div className="rounded-lg border border-blue-500/30 bg-blue-500/[0.07] px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconList size={12} className="shrink-0 text-blue-300" />
-        <span className="font-medium text-blue-300">方案已提交</span>
+        <span className="font-medium text-[var(--nx-fg-on-tint)]">方案已提交</span>
         <span className="text-neutral-500">还没动任何东西</span>
       </div>
       <div className="max-h-72 overflow-y-auto">

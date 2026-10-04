@@ -48,7 +48,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
     if (next) {
       const rect = chipRef.current?.getBoundingClientRect();
       if (rect) {
-        setDropdownWidth(Math.max(160, Math.min(248, window.innerWidth - rect.left - 8)));
+        setDropdownWidth(Math.min(248, Math.max(0, window.innerWidth - rect.left - 8)));
       }
       void refresh();
     }

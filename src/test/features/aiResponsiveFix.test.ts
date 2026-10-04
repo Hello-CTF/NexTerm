@@ -174,7 +174,7 @@ describe("M119 AI responsive fixes", () => {
     expect(bubble?.className).toContain("--nx-fg-on-tint");
   });
 
-  it("caps the confirmation card with a scroll region and fixed action row", async () => {
+  it("renders the confirmation card inside the log scroll flow with a readable body", async () => {
     setInputValue(composer(), "跑个命令");
     click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flush();
@@ -186,21 +186,21 @@ describe("M119 AI responsive fixes", () => {
     });
     await flush();
 
+    const log = view!.container.querySelector('div[role="log"]');
+    expect(log).not.toBeNull();
     const allow = [...view!.container.querySelectorAll("button")].find(
       (b) => b.textContent?.trim() === "允许一次",
     );
     expect(allow).not.toBeNull();
+    expect(log!.contains(allow!)).toBe(true);
     const alert = allow!.closest(".nx-alert");
     expect(alert).not.toBeNull();
-    const actionRow = allow!.parentElement!;
-    expect(actionRow.className).not.toContain("overflow-y-auto");
-    expect(actionRow.className).toContain("shrink-0");
-    const scrollRegion = alert!.querySelector(".overflow-y-auto");
-    expect(scrollRegion).not.toBeNull();
-    expect(scrollRegion!.contains(allow!)).toBe(false);
-    const card = alert!.parentElement!;
-    expect(card.className).toContain("max-h-[45%]");
-    expect(card.className).toContain("min-h-[76px]");
+    expect(alert!.parentElement).toBe(log);
+    const body = alert!.querySelector("pre.overflow-auto");
+    expect(body).not.toBeNull();
+    expect(body!.textContent).toContain("rm -rf");
+    const submit = [...alert!.querySelectorAll("button")];
+    expect(submit.length).toBeGreaterThanOrEqual(4);
   });
 
   it("makes the UsageRing details reachable by keyboard focus, not hover only", () => {
@@ -222,14 +222,27 @@ describe("M119 AI responsive fixes", () => {
     await flush();
     const chip = selector.container.querySelector("button.nx-chip") as HTMLButtonElement;
     expect(chip.className).toContain("min-w-0");
-    chip.getBoundingClientRect = () =>
-      ({ left: 300, right: 380, top: 0, bottom: 0, width: 80, height: 21, x: 300, y: 0, toJSON: () => ({}) }) as DOMRect;
-    Object.defineProperty(window, "innerWidth", { value: 320, configurable: true });
-    click(chip);
+    const openAt = (left: number, innerWidth: number) => {
+      chip.getBoundingClientRect = () =>
+        ({ left, right: left + 80, top: 0, bottom: 0, width: 80, height: 21, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+      Object.defineProperty(window, "innerWidth", { value: innerWidth, configurable: true });
+      click(chip);
+    };
+    openAt(300, 320);
     await flush();
     const dropdown = selector.container.querySelector(".nx-menu-title")?.parentElement as HTMLElement;
     expect(dropdown).not.toBeNull();
-    expect(dropdown.style.width).toBe("160px");
+    const width = parseFloat(dropdown.style.width);
+    expect(300 + width).toBeLessThanOrEqual(320);
+    expect(width).toBeLessThan(248);
+    click(chip);
+    await flush();
+    openAt(103, 320);
+    await flush();
+    const reopened = selector.container.querySelector(".nx-menu-title")?.parentElement as HTMLElement;
+    const width2 = parseFloat(reopened.style.width);
+    expect(103 + width2).toBeLessThanOrEqual(320);
+    expect(width2).toBe(209);
     selector.unmount();
     Object.defineProperty(window, "innerWidth", { value: 1024, configurable: true });
   });
