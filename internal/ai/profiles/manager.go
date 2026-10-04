@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -48,8 +49,16 @@ type protectorSource interface {
 	SecretProtector() store.SecretProtector
 }
 
+type unlockListenerSource interface {
+	AddUnlockListener(listener func())
+}
+
 type settingDeleter interface {
 	SettingDelete(ctx context.Context, key string) error
+}
+
+type spaceScrubber interface {
+	ScrubFreeSpace(ctx context.Context) error
 }
 
 func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
@@ -64,19 +73,39 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	manager := &Manager{settings: settings, protector: protector, state: loaded}
 	if needsSave {
-		if err := save(ctx, settings, protector, loaded); err != nil {
-			return nil, err
-		}
-		if fromLegacy {
-			if deleter, ok := settings.(settingDeleter); ok {
-				if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil {
+		saved, encrypted, saveErr := save(ctx, settings, protector, loaded)
+		if saveErr != nil {
+			if !isVaultLocked(saveErr) {
+				return nil, saveErr
+			}
+		} else {
+			manager.state = saved
+			if fromLegacy {
+				if deleter, ok := settings.(settingDeleter); ok {
+					if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil {
+						return nil, err
+					}
+				}
+			}
+			if encrypted || fromLegacy {
+				if err := scrubSettings(ctx, settings); err != nil {
 					return nil, err
 				}
 			}
 		}
 	}
-	return &Manager{settings: settings, protector: protector, state: loaded}, nil
+	if listener, ok := protector.(unlockListenerSource); ok {
+		listener.AddUnlockListener(manager.reloadOnUnlock)
+	}
+	return manager, nil
+}
+
+func (m *Manager) reloadOnUnlock() {
+	if err := m.Reload(context.Background()); err != nil {
+		slog.Warn("凭据库解锁后刷新 AI 模型档案失败", "error", err)
+	}
 }
 
 func (m *Manager) Overview() Overview {
@@ -100,7 +129,14 @@ func (m *Manager) ActiveConfig() (provider.Config, bool) {
 	if !ok {
 		return provider.Config{}, false
 	}
-	return profile.ProviderConfig(), true
+	config := profile.ProviderConfig()
+	key, err := m.resolveAPIKey(profile)
+	if err != nil {
+		config.APIKey = ""
+	} else {
+		config.APIKey = key
+	}
+	return config, true
 }
 
 func (m *Manager) ActiveClient(options ...provider.Option) (*provider.Client, error) {
@@ -110,10 +146,33 @@ func (m *Manager) ActiveClient(options ...provider.Option) (*provider.Client, er
 	if !ok {
 		return nil, ErrNoActiveProfile
 	}
-	if profile.APIKey == "" && profile.keyEnvelope != "" {
-		return nil, ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
+	config := profile.ProviderConfig()
+	key, err := m.resolveAPIKey(profile)
+	if err != nil {
+		return nil, err
 	}
-	return provider.NewClient(profile.ProviderConfig(), options...)
+	config.APIKey = key
+	return provider.NewClient(config, options...)
+}
+
+func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
+	switch {
+	case profile.APIKey == "":
+		return "", nil
+	case m.protector == nil:
+		return profile.APIKey, nil
+	case strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix):
+		plaintext, err := m.protector.DecryptSecret(context.Background(), profile.APIKey)
+		if err != nil {
+			return "", err
+		}
+		return plaintext, nil
+	default:
+		if _, err := m.protector.EncryptSecret(context.Background(), profile.APIKey); err != nil {
+			return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
+		}
+		return profile.APIKey, nil
+	}
 }
 
 func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
@@ -124,10 +183,9 @@ func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
 	if profile.ID == "" {
 		profile.ID = ids.New()
 	}
-	if profile.APIKey == MaskedAPIKey {
+	if profile.APIKey == MaskedAPIKey || (m.protector != nil && strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix)) {
 		if existing, ok := m.state.find(profile.ID); ok {
 			profile.APIKey = existing.APIKey
-			profile.keyEnvelope = existing.keyEnvelope
 		} else {
 			profile.APIKey = ""
 		}
@@ -144,10 +202,16 @@ func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
 		next.Profiles = append(next.Profiles, profile)
 	}
 	next.ensureActive()
-	if err := save(ctx, m.settings, m.protector, next); err != nil {
+	saved, encrypted, err := save(ctx, m.settings, m.protector, next)
+	if err != nil {
 		return m.state.overview(), err
 	}
-	m.state = next
+	m.state = saved
+	if encrypted {
+		if err := scrubSettings(ctx, m.settings); err != nil {
+			return m.state.overview(), err
+		}
+	}
 	return m.state.overview(), nil
 }
 
@@ -166,10 +230,11 @@ func (m *Manager) Activate(ctx context.Context, id string) (Overview, error) {
 	}
 	next := m.state.clone()
 	next.ActiveID = cloneString(&id)
-	if err := save(ctx, m.settings, m.protector, next); err != nil {
+	saved, _, err := save(ctx, m.settings, m.protector, next)
+	if err != nil {
 		return m.state.overview(), err
 	}
-	m.state = next
+	m.state = saved
 	return m.state.overview(), nil
 }
 
@@ -188,23 +253,40 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	next.Profiles = profiles
 	next.ensureActive()
-	if err := save(ctx, m.settings, m.protector, next); err != nil {
+	saved, _, err := save(ctx, m.settings, m.protector, next)
+	if err != nil {
 		return m.state.overview(), err
 	}
-	m.state = next
+	m.state = saved
 	return m.state.overview(), nil
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	loaded, needsSave, _, err := load(ctx, m.settings, m.protector)
+	loaded, needsSave, fromLegacy, err := load(ctx, m.settings, m.protector)
 	if err != nil {
 		return err
 	}
 	if needsSave {
-		if err := save(ctx, m.settings, m.protector, loaded); err != nil {
-			return err
+		saved, encrypted, saveErr := save(ctx, m.settings, m.protector, loaded)
+		if saveErr != nil {
+			if !isVaultLocked(saveErr) {
+				return saveErr
+			}
+		} else {
+			m.state = saved
+			if fromLegacy {
+				if deleter, ok := m.settings.(settingDeleter); ok {
+					if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil {
+						return err
+					}
+				}
+			}
+			if encrypted || fromLegacy {
+				return scrubSettings(ctx, m.settings)
+			}
+			return nil
 		}
 	}
 	m.state = loaded
@@ -227,9 +309,8 @@ func load(ctx context.Context, settings Settings, protector store.SecretProtecto
 		before, _ := json.Marshal(persisted)
 		persisted = persisted.normalized()
 		after, _ := json.Marshal(persisted)
-		needsSave := !bytes.Equal(before, after)
-		migrated := unlockProfileKeys(ctx, protector, &persisted)
-		return persisted, needsSave || migrated, false, nil
+		needsSave := !bytes.Equal(before, after) || profileKeysMigratable(ctx, protector, &persisted)
+		return persisted, needsSave, false, nil
 	}
 
 	legacyRaw, found, err := settings.SettingGet(ctx, LegacySettingKey)
@@ -252,54 +333,58 @@ func load(ctx context.Context, settings Settings, protector store.SecretProtecto
 	return loaded, true, true, nil
 }
 
-func unlockProfileKeys(ctx context.Context, protector store.SecretProtector, persisted *state) bool {
+func profileKeysMigratable(ctx context.Context, protector store.SecretProtector, persisted *state) bool {
 	if protector == nil {
 		return false
 	}
-	migrated := false
-	for index := range persisted.Profiles {
-		profile := &persisted.Profiles[index]
-		switch {
-		case profile.APIKey == "":
-		case strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix):
-			plaintext, err := protector.DecryptSecret(ctx, profile.APIKey)
-			if err != nil {
-				profile.keyEnvelope = profile.APIKey
-				profile.APIKey = ""
-				continue
-			}
-			profile.APIKey = plaintext
-		default:
-			if _, err := protector.EncryptSecret(ctx, profile.APIKey); err != nil {
-				continue
-			}
-			migrated = true
+	for _, profile := range persisted.Profiles {
+		if profile.APIKey == "" || strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix) {
+			continue
+		}
+		if _, err := protector.EncryptSecret(ctx, profile.APIKey); err == nil {
+			return true
 		}
 	}
-	return migrated
+	return false
 }
 
-func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state) error {
+func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state) (state, bool, error) {
 	value = value.normalized()
+	encrypted := false
 	if protector != nil {
 		for index := range value.Profiles {
 			profile := &value.Profiles[index]
-			if profile.APIKey == "" {
-				profile.APIKey = profile.keyEnvelope
+			if profile.APIKey == "" || strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix) {
 				continue
 			}
 			envelope, err := protector.EncryptSecret(ctx, profile.APIKey)
 			if err != nil {
-				return err
+				return value, encrypted, err
 			}
 			profile.APIKey = envelope
+			encrypted = true
 		}
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("encode AI profiles: %w", err)
+		return value, encrypted, fmt.Errorf("encode AI profiles: %w", err)
 	}
-	return settings.SettingSet(ctx, SettingKey, string(encoded))
+	if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
+		return value, encrypted, err
+	}
+	return value, encrypted, nil
+}
+
+func scrubSettings(ctx context.Context, settings Settings) error {
+	if scrubber, ok := settings.(spaceScrubber); ok {
+		return scrubber.ScrubFreeSpace(ctx)
+	}
+	return nil
+}
+
+func isVaultLocked(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeVaultLocked
 }
 
 func emptyState() state {
