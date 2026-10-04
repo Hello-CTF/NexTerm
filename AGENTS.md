@@ -20,14 +20,14 @@
 
 ## 质量命令（提交前须全绿，与 CI 一致）
 
-- Go：`gofmt -l ./cmd ./internal ./migrations` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`（并发改动加 `-race`；动了 production 标签代码再跑 `go test -mod=readonly -tags production ./...`）。
+- Go：`gofmt -l ./cmd ./internal ./migrations` 必须无输出；`go vet -mod=readonly ./...`；`go test -mod=readonly ./...`。
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
-- 已安装 task 时可用 `task check` 一次跑完上述门禁。
+- 已安装 task 时 `task check` 一次跑完上述常规项；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
 
 ## 平台 build tags
 
-- 平台分支一律用文件级 `//go:build` 配合文件名后缀：`*_unix.go`、`*_windows.go`、`*_darwin.go`（约束形如 `unix`、`windows`、`!windows`、`darwin || linux`）。
+- 平台分支一律用文件级 `//go:build`（在文件第 1 行）；常见约束为 `windows`、`unix`、`darwin || linux`、`!windows`，文件名多用 `*_unix.go`、`*_windows.go`、`*_darwin.go` 后缀，但按约束语义命名即可——如 `winsize_signed.go`（`aix || solaris`）、`protector_unsupported.go`（`!windows && !darwin`）及多处 `darwin || linux` 测试均无平台后缀。
 - 非平台标签：`production`（内嵌桌面资源，需先备好 `cmd/nexterm-desktop/dist`）、`smoke`（WebView 冒烟）、`race`（竞态测试开关）；改动后必须跑对应 `-tags` 测试。
 
 ## migrations（append-only）
