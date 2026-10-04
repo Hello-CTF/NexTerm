@@ -33,5 +33,5 @@
 ## migrations（append-only）
 
 - `migrations/NNNN_name.sql` 按版本号升序应用，经 `//go:embed` 打包进二进制。
-- 已发布的迁移文件禁止修改：`schema_migrations` 表校验 SHA-256，改动即启动失败。
-- 新 schema 变更一律追加序号更大的新文件。
+- 已发布迁移的 schema 语义与顺序不可改（同版本 Go 代码依赖其产物）；仅注释清理可改动已发布文件，checksum 随之改变。
+- 旧库兼容不做要求：`schema_migrations` 校验 SHA-256 不匹配即启动失败；新 schema 变更一律追加序号更大的新文件，新库迁移必须通过。
