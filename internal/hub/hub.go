@@ -368,17 +368,14 @@ func (c *channel) sendProducer(ctx context.Context, frame Frame, producer uint64
 			c.mu.Unlock()
 			return nil
 		}
-		var callback func(string, int)
-		queuedBytes := c.queuedBytes
 		if !c.backpressured {
 			c.backpressured = true
-			callback = c.onBackpressure
+			if c.onBackpressure != nil {
+				c.onBackpressure(c.id, c.queuedBytes)
+			}
 		}
 		changed := c.changed
 		c.mu.Unlock()
-		if callback != nil {
-			callback(c.id, queuedBytes)
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
