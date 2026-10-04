@@ -34,8 +34,6 @@ func shell(script string) Command {
 	return Command{Path: "/bin/sh", Args: []string{"-c", script}}
 }
 
-// gatedCommand prints before, blocks until gate exists, then prints after.
-// It keeps a task deterministically running without timing-sensitive sleeps.
 func gatedCommand(gate, before, after string) Command {
 	return shell(fmt.Sprintf("printf '%%s' %q; while [ ! -f %q ]; do sleep 0.05; done; printf '%%s' %q",
 		before, gate, after))
@@ -204,8 +202,6 @@ func TestDetachRetainsHeadAndTail(t *testing.T) {
 	if !res.Detached || res.Info.State != StateRunning {
 		t.Fatalf("expected detached running task: %+v", res)
 	}
-	// Poll for the deterministic pre-gate output instead of relying on the
-	// exact detach timing.
 	var detachOut Output
 	deadline := time.Now().Add(10 * time.Second)
 	for {

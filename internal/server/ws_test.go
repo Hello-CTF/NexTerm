@@ -263,14 +263,6 @@ func TestWebSocketEventsEnvelopeAndUnsubscribe(t *testing.T) {
 }
 
 func TestPumpSocketTeardownDoesNotWaitForPeerCloseFrame(t *testing.T) {
-	// Regression for the production-gate CI failure: pumpSocket's teardown
-	// must not perform a blocking close handshake. When the read loop has not
-	// touched the connection yet (parked on readGate here, a lost startup
-	// race in CI), a graceful connection.Close blocks on the wire — up to the
-	// library's 5s close-handshake timeout — waiting for a peer close frame,
-	// stalling socketTracker.closeAndWait past the Serve shutdown budget
-	// (TestServeBootstrapRealHTTPAndGracefulShutdown then fails with
-	// "graceful shutdown = context deadline exceeded").
 	server, err := New(testConfig(t, false))
 	if err != nil {
 		t.Fatal(err)
@@ -311,8 +303,6 @@ func TestPumpSocketTeardownDoesNotWaitForPeerCloseFrame(t *testing.T) {
 	}
 
 	cancel()
-	// Let the teardown path reach the connection close while the read loop is
-	// provably parked: the read mutex is untouched and the connection open.
 	time.Sleep(100 * time.Millisecond)
 	openGate()
 

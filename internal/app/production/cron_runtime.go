@@ -15,14 +15,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-// unattendedPermissions is the agent runner's Permission hook: cron-triggered
-// executions carry guard.WithUnattended(ctx) and run under the Unattended
-// decision mode, so NeedsConfirm and Forbidden rulings are denied explicitly
-// instead of being executed silently or parked on a confirmation no one will
-// answer. The user's guard configuration is preserved — only the Mode is
-// overridden, so custom danger rules keep upgrading matched calls to Danger
-// and are denied like any other non-Safe ruling; remembered approvals never
-// authorize unattended execution. Snapshot errors surface to the caller.
 func unattendedPermissions(manager *guard.Manager) func(context.Context) (guard.Config, error) {
 	return func(ctx context.Context) (guard.Config, error) {
 		config, err := manager.Snapshot(ctx)
@@ -36,19 +28,10 @@ func unattendedPermissions(manager *guard.Manager) func(context.Context) (guard.
 	}
 }
 
-// conversationLookup is the slice of the application store the cron surface
-// needs: a trigger's session ID is executed as the agent conversation ID, so
-// registration must target an existing conversation instead of creating a
-// job that fails on every occurrence.
 type conversationLookup interface {
 	ConvGet(ctx context.Context, id string) (store.ConversationRow, error)
 }
 
-// scopeForConversation resolves the execution scope a cron trigger runs
-// with: the scope the owning conversation was created under (both the agent
-// runner and ai_conversation_create persist {"scope": ...}). A conversation
-// without a stored scope yields the empty scope, which keeps session-bound
-// tools disabled rather than guessing a target.
 func scopeForConversation(lookup conversationLookup) func(cron.Trigger) tools.Scope {
 	return func(trigger cron.Trigger) tools.Scope {
 		row, err := lookup.ConvGet(context.Background(), trigger.SessionID)
@@ -65,11 +48,6 @@ func scopeForConversation(lookup conversationLookup) func(cron.Trigger) tools.Sc
 	}
 }
 
-// cronRuntime owns the composed cron scheduler: the durable SQLite store
-// over the application handle, the unattended agent executor driving the one
-// shared agent runner, and the scheduler whose lifecycle follows the
-// application. Store and runner are borrowed from the composition root,
-// never duplicated.
 type cronRuntime struct {
 	scheduler     *cron.Scheduler
 	conversations conversationLookup
@@ -79,8 +57,6 @@ type cronRuntime struct {
 	done   chan struct{}
 }
 
-// composeCronRuntime builds the production cron runtime with the default
-// scheduler options.
 func composeCronRuntime(ctx context.Context, services *ProductionServices) (*cronRuntime, error) {
 	return newCronRuntime(ctx, services, cron.Options{})
 }
@@ -106,10 +82,6 @@ func newCronRuntime(ctx context.Context, services *ProductionServices, options c
 	return &cronRuntime{scheduler: scheduler, conversations: services.Store}, nil
 }
 
-// cronModule exposes the cron RPC surface and ties the scheduler's bounded
-// lifecycle to the application. It is registered after the agent module so
-// shutdown stops the scheduler — canceling in-flight unattended runs through
-// the executor — before the agent runner closes.
 func cronModule(runtime *cronRuntime) Module {
 	return Module{
 		Name:             "cron",
@@ -118,8 +90,6 @@ func cronModule(runtime *cronRuntime) Module {
 	}
 }
 
-// Start runs the scheduler until the application context ends or a storage
-// operation fails; a terminal scheduler failure is logged, never swallowed.
 func (c *cronRuntime) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -139,10 +109,6 @@ func (c *cronRuntime) Start(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown stops the scheduler and waits — bounded by ctx — for in-flight
-// executions to finish: the executor cancels the agent run of every claimed
-// trigger, and the scheduler records the interruption durably before Run
-// returns. Shutdown never deletes job rows; other sessions' jobs stay intact.
 func (c *cronRuntime) Shutdown(ctx context.Context) error {
 	c.mu.Lock()
 	cancel, done := c.cancel, c.done
@@ -183,9 +149,6 @@ type cronSetEnabledRequest struct {
 	Enabled   bool   `json:"enabled"`
 }
 
-// registerCommands maps the cron RPC surface directly onto the scheduler:
-// unregister is the only deletion path, every operation is scoped by session
-// and job identity, and storage errors surface to the caller unwrapped.
 func (c *cronRuntime) registerCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
 		func() error {

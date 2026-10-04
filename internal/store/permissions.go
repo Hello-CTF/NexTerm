@@ -20,8 +20,6 @@ func prepareDatabaseFile(path string) error {
 	return os.Chmod(path, 0o600)
 }
 
-// hardenDatabaseFiles uses POSIX mode bits on Unix-like systems. Platforms
-// without owner/group/other mode bits keep their native access controls.
 func hardenDatabaseFiles(path string) error {
 	if !ownerOnlyPermissionsSupported() {
 		return nil

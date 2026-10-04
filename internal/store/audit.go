@@ -9,12 +9,8 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
 )
 
-// OutcomeAuditKind is the audit_log kind for terminal outcome ledger records.
 const OutcomeAuditKind = "outcome"
 
-// OutcomeAuditor adapts AuditInsert to the outcome ledger's Auditor: every
-// terminal outcome record is inserted into the same audit_log the audit query
-// reads, so audit_query compatibility is preserved by construction.
 func (s *Store) OutcomeAuditor() outcome.Auditor {
 	return outcomeAuditor{store: s}
 }

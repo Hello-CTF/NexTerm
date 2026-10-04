@@ -152,7 +152,6 @@ type AssetInput struct {
 	Sort        int64
 }
 
-// Optional distinguishes an unchanged nullable field from a field set to NULL.
 type Optional[T any] struct {
 	Set   bool
 	Value *T

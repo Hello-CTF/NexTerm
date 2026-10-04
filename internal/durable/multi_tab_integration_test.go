@@ -16,10 +16,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
-// Two durable tabs on one local connection share a tmux server. Discovery
-// must enumerate panes from every tmux session: limited to tmux's current
-// session, the second tab breaks at creation or the first attachment reads a
-// false EOF within one status interval and the killed tmux session leaks.
 func TestRealTmuxMultiTabSessions(t *testing.T) {
 	if os.Getenv("NEXTERM_TMUX_INTEGRATION") != "1" {
 		t.Skip("real tmux multi-tab skipped: set NEXTERM_TMUX_INTEGRATION=1 (requires tmux on PATH)")
@@ -86,8 +82,6 @@ done`, tag, tag, tag)}
 		t.Fatal(err)
 	}
 
-	// Both attachments must stay alive across several status intervals while
-	// both tmux sessions exist; a false EOF here is the wrongful exit.
 	tickErrors := make(chan error, 2)
 	var readers sync.WaitGroup
 	readTicks := func(tag string, session *Session, output *bytes.Buffer, want int) {
@@ -140,8 +134,6 @@ done`, tag, tag, tag)}
 		t.Fatalf("identity crossed: first=%q second=%q", firstLive.String(), secondLive.String())
 	}
 
-	// A foreign session on the same socket must stay invisible to discovery
-	// and unkillable through the backend.
 	if err := runRealTmux(ctx, binary, config.SocketPath, "new-session", "-d", "-s", foreignName, "/bin/sleep", "30"); err != nil {
 		t.Fatal(err)
 	}
@@ -159,8 +151,6 @@ done`, tag, tag, tag)}
 		t.Fatalf("foreign session was killed: %v", err)
 	}
 
-	// A daemon restart must rediscover both sessions under their own
-	// identities and reattach each to its own recording.
 	if err := first.Detach(); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +206,6 @@ done`, tag, tag, tag)}
 		t.Fatal(err)
 	}
 
-	// Cleanup must remove every tmux session: no durable session may leak.
 	if err := runRealTmux(ctx, binary, config.SocketPath, "kill-session", "-t", "="+foreignName); err != nil {
 		t.Fatal(err)
 	}

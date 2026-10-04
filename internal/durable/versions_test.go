@@ -24,7 +24,6 @@ func TestVersionsRoundTripAndMonotonicFloor(t *testing.T) {
 	if eventVersion, gridRevision, err := session.Versions(); err != nil || eventVersion != 3 || gridRevision != 2 {
 		t.Fatalf("persisted versions = %d/%d, %v; want 3/2, nil", eventVersion, gridRevision, err)
 	}
-	// The floor never rewinds, even when a racing attachment writes stale values.
 	if err := session.PersistVersions(1, 5); err != nil {
 		t.Fatal(err)
 	}

@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-// TestKillDuringStartup forces a kill to land after the task is registered
-// but before the process handle is published. The terminal state must stay
-// killed, the process must still be reaped, and a non-detached task must
-// leave no files behind.
 func TestKillDuringStartup(t *testing.T) {
 	requireShell(t)
 	starting := make(chan struct{})

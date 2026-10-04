@@ -18,9 +18,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-// spawnScriptRequest is the wire shape of the OpenAI chat completion requests
-// the production provider client emits for the parent agent and every
-// subagent run.
 type spawnScriptRequest struct {
 	Messages []struct {
 		Role    string          `json:"role"`
@@ -172,11 +169,6 @@ func spawnWriteSSE(writer http.ResponseWriter, payloads ...map[string]any) {
 	fmt.Fprint(writer, "data: [DONE]\n\n")
 }
 
-// TestComposedAIRuntimeSpawnsScopedSubagent drives the production composition
-// root end to end: composeAIRuntime wires the spawn tool into the agent
-// runner, the runner dispatches it through the real Eino tools node against a
-// scripted provider, and the child run stays inside the permission
-// intersection with no duplicate tool registration.
 func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 	ctx := t.Context()
 	database, err := store.OpenInMemory(ctx)

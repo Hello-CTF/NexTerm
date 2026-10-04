@@ -274,9 +274,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return attachedSessionTab(info), nil
 				}
 				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
-					// Missing local tmux must not mask Docker tabs: give the
-					// Docker fallback its chance before reporting that durable
-					// local recovery is unavailable.
 					if s.docker != nil {
 						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
 							return s.attachDocker(ctx, call, input.TabID)
@@ -453,9 +450,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 	}
 	if s.smokeAttach {
-		// Desktop smoke builds only: open a plain PTY tab that never touches the
-		// durable tmux layer, so the smoke cannot race the app's own durable tab
-		// on the shared local session. Production builds never register this.
 		registrations = append(registrations, func() error {
 			return ipc.Register(dispatcher, "terminal_attach_smoke", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {

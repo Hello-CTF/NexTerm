@@ -50,10 +50,8 @@ type Info struct {
 	Dead      bool
 	ExitCode  *int
 	Signal    string
-	// Cols/Rows are the live tmux window dimensions at discovery time. They
-	// change at runtime (resize-window) and are not part of the identity.
-	Cols uint32
-	Rows uint32
+	Cols      uint32
+	Rows      uint32
 }
 
 type Backend struct {

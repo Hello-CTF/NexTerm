@@ -79,8 +79,6 @@ func TestSpoolHeadTailAndGap(t *testing.T) {
 	}
 }
 
-// TestSpoolCrashRecovery covers reopening without a final Close: bytes
-// appended after the last index checkpoint must still be accounted for.
 func TestSpoolCrashRecovery(t *testing.T) {
 	dir := t.TempDir()
 	s, err := createSpool(dir, "s2", 4, 8)
@@ -90,7 +88,6 @@ func TestSpoolCrashRecovery(t *testing.T) {
 	if _, err := s.Write(sequence(20)); err != nil {
 		t.Fatal(err)
 	}
-	// No Close: simulates a crash before any compaction checkpoint.
 	reopened, err := openSpool(dir, "s2", 4, 8)
 	if err != nil {
 		t.Fatal(err)

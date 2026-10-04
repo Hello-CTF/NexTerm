@@ -105,11 +105,6 @@ func (s *Store) ConvDelete(ctx context.Context, id string) (returnErr error) {
 	return nil
 }
 
-// MsgInsert appends a message and assigns the conversation's next seq — the
-// per-conversation monotonic insertion order MsgList reads back. seq is
-// allocated inside the insert transaction (the DSN's immediate tx lock
-// serializes writers), so same-millisecond rows keep their true insertion
-// order instead of falling to the ULID's random tail.
 func (s *Store) MsgInsert(ctx context.Context, conversationID, role string, content any, tokensIn, tokensOut *int64) error {
 	contentJSON, err := marshalJSON(content)
 	if err != nil {

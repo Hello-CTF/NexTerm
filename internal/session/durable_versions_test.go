@@ -8,9 +8,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-// versionedEventLog plays the role of a connected client that keeps its
-// EventVersionGate high-water marks across a backend restart: every event a
-// manager emits is recorded, and recovery must resume strictly above it.
 type versionedEventLog struct {
 	mu       sync.Mutex
 	controls []ControlEvent
@@ -80,8 +77,6 @@ func TestDurableRecoveryResumesVersionsAboveClientHighWater(t *testing.T) {
 	if err := first.Resize(context.Background(), info.ID, "client-a", 100, 30); err != nil {
 		t.Fatal(err)
 	}
-	// The tmux window now really is 100x30; recovery must adopt that size
-	// instead of the fabricated 80x24 default.
 	provider.setGrid(info.ID, 100, 30)
 	if err := first.DetachChannel("a-1"); err != nil {
 		t.Fatal(err)
@@ -115,8 +110,6 @@ func TestDurableRecoveryResumesVersionsAboveClientHighWater(t *testing.T) {
 	if firstAfter.Version <= highWater {
 		t.Fatalf("first recovered event version = %d, want > high-water %d", firstAfter.Version, highWater)
 	}
-	// Unchanged revision + unchanged grid: a client that observed the last
-	// pre-restart snapshot must see a no-op, not a resize echo.
 	if firstAfter.GridRevision != lastBefore.GridRevision || firstAfter.Cols != lastBefore.Cols || firstAfter.Rows != lastBefore.Rows {
 		t.Fatalf("recovery event = %+v, want unchanged grid %+v", firstAfter, lastBefore)
 	}
@@ -156,8 +149,6 @@ func TestDurableRecoveryAfterInProcessReapKeepsVersions(t *testing.T) {
 	}
 	highWater := log.maxVersion(info.ID)
 
-	// Local sessions are not reconnectable: Disconnect reaps the session and
-	// drops the tab from the manager while the durable identity survives.
 	if err := manager.Disconnect(connected.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -201,9 +192,6 @@ func TestDurableRecoveryWithoutVersionStoreStartsFresh(t *testing.T) {
 	}
 }
 
-// opaqueDurableProvider hides the optional version-floor/grid interfaces from
-// the manager, emulating durable providers that predate (or opt out of)
-// cross-restart version persistence.
 type opaqueDurableProvider struct{ base.DurableProvider }
 
 type opaqueDurableAttachment struct{ base.DurableAttachment }

@@ -15,9 +15,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
-// Options configures a Manager. Dir is dedicated to task records and spool
-// files; unrecognized files are left alone. Non-positive retention values
-// select the defaults.
 type Options struct {
 	Dir         string
 	HeadBytes   int
@@ -27,9 +24,6 @@ type Options struct {
 	Starter     Starter
 }
 
-// Manager owns persistent execution tasks rooted at one directory. A single
-// Manager writes a directory at a time; Open reconciles whatever a previous
-// lifetime left behind.
 type Manager struct {
 	dir         string
 	headLimit   int64
@@ -43,35 +37,23 @@ type Manager struct {
 	closed bool
 }
 
-// task is the in-memory state of one execution. info.ID, info.Owner, and
-// info.Command are immutable after creation; everything else is guarded by
-// mu. Lock order throughout the package: Manager.mu, then task.mu, then
-// spool.mu.
 type task struct {
-	mu       sync.Mutex
-	info     Info
-	spool    *spool
-	proc     Process
-	done     chan struct{} // closed after reaping and the terminal transition
-	doneOnce sync.Once
-	finished bool
-	reaped   bool
-	detached bool
-	// persistErr records the last failed terminal metadata write; it blocks
-	// eviction and is retried by Kill and Close instead of being discarded.
+	mu         sync.Mutex
+	info       Info
+	spool      *spool
+	proc       Process
+	done       chan struct{}
+	doneOnce   sync.Once
+	finished   bool
+	reaped     bool
+	detached   bool
 	persistErr error
 }
 
-// complete closes done exactly once, on both the supervise and the
-// startup-failure paths, so Close can never wait on an abandoned task.
 func (t *task) complete() {
 	t.doneOnce.Do(func() { close(t.done) })
 }
 
-// Open creates or reopens a manager. Records still marked running belong to
-// processes whose fate is uncertain, so they transition to StateInterrupted
-// without re-executing anything; orphaned spool files from commands that
-// never detached are removed.
 func Open(opts Options) (*Manager, error) {
 	if opts.Dir == "" {
 		return nil, errors.New("tasks: options Dir is required")
@@ -123,16 +105,11 @@ func (m *Manager) load() error {
 		var info Info
 		if readErr != nil || json.Unmarshal(raw, &info) != nil ||
 			info.ID != base || !validTaskID(base) || !info.Owner.valid() || !validState(info.State) {
-			// A corrupt record cannot be trusted; drop it and let the
-			// orphan sweep below remove its spool.
 			os.Remove(path)
 			continue
 		}
 		sp, spoolErr := openSpool(m.dir, base, m.headLimit, m.tailLimit)
 		if spoolErr != nil {
-			// Recovery failures (for example an interrupted checkpoint
-			// repair) must surface, never delete the record. Transaction
-			// journals are retained so a later Open can retry.
 			return fmt.Errorf("tasks: recover spool for %s: %w", base, spoolErr)
 		}
 		done := make(chan struct{})
@@ -182,8 +159,6 @@ func validTaskID(id string) bool {
 	return true
 }
 
-// taskFileBase maps a record, spool, or atomic-write temp file name to its
-// task ID.
 func taskFileBase(name string) (string, bool) {
 	name = strings.TrimSuffix(name, ".tmp")
 	for _, suffix := range []string{".json", ".head", ".tail", ".idx", ".compact"} {
@@ -194,13 +169,6 @@ func taskFileBase(name string) (string, bool) {
 	return "", false
 }
 
-// Run starts a command for owner. syncTimeout selects the synchronous
-// window: negative waits for completion without ever detaching, zero detaches
-// immediately, and positive detaches once the window elapses. Commands that
-// complete within the window return their result directly and leave no task
-// record or spool files. A caller context cancellation after startup detaches
-// the task (or kills it when detaching was disabled); it never implicitly
-// kills a detached task.
 func (m *Manager) Run(ctx context.Context, owner Owner, cmd Command, syncTimeout time.Duration) (Result, error) {
 	if !owner.valid() {
 		return Result{}, ErrInvalidOwner
@@ -260,8 +228,6 @@ func (m *Manager) Run(ctx context.Context, owner Owner, cmd Command, syncTimeout
 	stopped := t.finished
 	t.mu.Unlock()
 	if stopped {
-		// Kill or Close won the race before the process handle was
-		// published; the terminal state is fixed, so just reap the process.
 		_ = proc.Kill()
 	}
 	go m.supervise(t, proc)
@@ -292,9 +258,6 @@ func (m *Manager) Run(ctx context.Context, owner Owner, cmd Command, syncTimeout
 	}
 }
 
-// supervise reaps the process and performs the natural terminal transition.
-// If Kill or Close already transitioned the task, only the persisted output
-// statistics are refreshed; the terminal state never changes again.
 func (m *Manager) supervise(t *task, proc Process) {
 	code, waitErr := proc.Wait()
 	spoolErr := t.spool.Close()
@@ -316,7 +279,6 @@ func (m *Manager) supervise(t *task, proc Process) {
 		}
 		m.finishLocked(t, state, &code, errText)
 	} else if t.detached {
-		// Refresh final stats; failures stay recorded on the task.
 		m.writeMetaLocked(t)
 	}
 	t.complete()
@@ -324,8 +286,6 @@ func (m *Manager) supervise(t *task, proc Process) {
 	m.enforceRetention()
 }
 
-// finishLocked is the only terminal transition. The first call wins; later
-// calls are no-ops, which gives every task exactly one terminal state.
 func (m *Manager) finishLocked(t *task, state State, exitCode *int, errText string) {
 	if t.finished {
 		return
@@ -337,13 +297,10 @@ func (m *Manager) finishLocked(t *task, state State, exitCode *int, errText stri
 	t.info.ExitCode = exitCode
 	t.info.Error = errText
 	if t.detached {
-		// writeMetaLocked records any failure on the task for retry.
 		m.writeMetaLocked(t)
 	}
 }
 
-// detachOrComplete persists the task when its synchronous window ended, or
-// falls through to synchronous completion when the process already exited.
 func (m *Manager) detachOrComplete(t *task) (Result, error) {
 	t.mu.Lock()
 	if t.finished {
@@ -372,8 +329,6 @@ func (m *Manager) detachOrComplete(t *task) (Result, error) {
 	return res, nil
 }
 
-// syncResult collects a completed result and, unless the task detached,
-// removes every trace of it from the map and the spool directory.
 func (m *Manager) syncResult(t *task) (Result, error) {
 	t.mu.Lock()
 	detached := t.detached
@@ -394,8 +349,6 @@ func (m *Manager) syncResult(t *task) (Result, error) {
 	return Result{Info: info, Output: out, Detached: detached}, nil
 }
 
-// requestStop transitions a live task to a terminal state and then signals
-// the process. Signaling an already-exited process is a harmless no-op.
 func (m *Manager) requestStop(t *task, state State) {
 	t.mu.Lock()
 	if t.finished {
@@ -417,7 +370,6 @@ func stopMessage(state State) string {
 	return ""
 }
 
-// Get returns the current snapshot of one owned task.
 func (m *Manager) Get(ctx context.Context, owner Owner, id string) (Info, error) {
 	t, err := m.lookup(ctx, ActionGet, owner, id)
 	if err != nil {
@@ -429,8 +381,6 @@ func (m *Manager) Get(ctx context.Context, owner Owner, id string) (Info, error)
 	return info, nil
 }
 
-// List returns the owner's tasks, including live synchronous-window tasks,
-// ordered by creation time then ID.
 func (m *Manager) List(ctx context.Context, owner Owner) ([]Info, error) {
 	if !owner.valid() {
 		return nil, ErrInvalidOwner
@@ -464,7 +414,6 @@ func (m *Manager) List(ctx context.Context, owner Owner) ([]Info, error) {
 	return infos, nil
 }
 
-// Output returns the retained head-plus-tail snapshot of an owned task.
 func (m *Manager) Output(ctx context.Context, owner Owner, id string) (Output, error) {
 	t, err := m.lookup(ctx, ActionOutput, owner, id)
 	if err != nil {
@@ -473,9 +422,6 @@ func (m *Manager) Output(ctx context.Context, owner Owner, id string) (Output, e
 	return t.spool.Snapshot()
 }
 
-// ReadOutput incrementally reads an owned task's stream at a logical offset.
-// Offsets inside the elided middle resume at the tail with Gap set, so a
-// reader always observes the pre-detach head followed by the latest tail.
 func (m *Manager) ReadOutput(ctx context.Context, owner Owner, id string, offset int64, max int) (Chunk, error) {
 	t, err := m.lookup(ctx, ActionOutput, owner, id)
 	if err != nil {
@@ -484,8 +430,6 @@ func (m *Manager) ReadOutput(ctx context.Context, owner Owner, id string, offset
 	return t.spool.Read(offset, max)
 }
 
-// Kill terminates an owned running task. It is idempotent: killing a task
-// that already reached a terminal state returns that state unchanged.
 func (m *Manager) Kill(ctx context.Context, owner Owner, id string) (Info, error) {
 	t, err := m.lookup(ctx, ActionKill, owner, id)
 	if err != nil {
@@ -494,7 +438,6 @@ func (m *Manager) Kill(ctx context.Context, owner Owner, id string) (Info, error
 	m.requestStop(t, StateKilled)
 	t.mu.Lock()
 	if t.detached && t.persistErr != nil {
-		// Retry so a transient failure cannot strand a stale record.
 		m.writeMetaLocked(t)
 	}
 	info := t.snapshotLocked()
@@ -506,8 +449,6 @@ func (m *Manager) Kill(ctx context.Context, owner Owner, id string) (Info, error
 	return info, nil
 }
 
-// Close stops every live task as StateInterrupted, waits for reaping, and
-// enforces retention. Detached records remain readable after reopening.
 func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Lock()
 	if m.closed {
@@ -554,8 +495,6 @@ func (m *Manager) Close(ctx context.Context) error {
 	return nil
 }
 
-// lookup resolves an owned task and authorizes the action. Tasks owned by a
-// different object are indistinguishable from missing tasks.
 func (m *Manager) lookup(ctx context.Context, action Action, owner Owner, id string) (*task, error) {
 	if !owner.valid() {
 		return nil, ErrInvalidOwner
@@ -612,11 +551,6 @@ func (m *Manager) now() time.Time {
 	return time.Now()
 }
 
-// enforceRetention bounds the retained list: the oldest terminal tasks beyond
-// MaxRetained lose their record and spool. Running, not-yet-reaped, or
-// unpersisted tasks are never evicted. Map removal and file deletion happen
-// under the same lock, so observers never see an evicted task's leftover
-// files after it disappears from the list.
 func (m *Manager) enforceRetention() {
 	m.mu.Lock()
 	var terminal []*task
@@ -652,9 +586,6 @@ func (t *task) snapshotLocked() Info {
 	return info
 }
 
-// writeMetaLocked persists the current snapshot and records the outcome on
-// the task: failures surface through Info.PersistError, block eviction, and
-// are retried by Kill and Close rather than being silently discarded.
 func (m *Manager) writeMetaLocked(t *task) error {
 	info := t.snapshotLocked()
 	t.info.OutputBytes = info.OutputBytes
@@ -671,9 +602,6 @@ func (m *Manager) writeMetaLocked(t *task) error {
 	return nil
 }
 
-// metaFileWriter is the durable record sink; tests replace it to inject
-// filesystem failures. The faultHook keeps installs and restores
-// synchronized with concurrent reads in writeMetaLocked.
 var metaFileWriter = faultHook[func(dir string, info Info) error]{fn: writeMetaFile}
 
 func writeMetaFile(dir string, info Info) error {

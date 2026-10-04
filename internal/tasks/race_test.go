@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// TestConcurrentOperations hammers the manager from many goroutines. Run
-// with -race; assertions stay deliberately loose where a kill race
-// legitimately changes the outcome.
 func TestConcurrentOperations(t *testing.T) {
 	requireShell(t)
 	m := testManager(t, func(o *Options) {

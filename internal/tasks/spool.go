@@ -10,10 +10,6 @@ import (
 	"sync"
 )
 
-// spool retains the head of an output stream plus its most recent tail under
-// fixed byte budgets. Logical offsets always refer to the full stream: the
-// head covers [0, headLen), the tail covers [tailStart, total), and any
-// middle between headLen and tailStart was elided by retention.
 type spool struct {
 	mu        sync.Mutex
 	dir       string
@@ -27,7 +23,6 @@ type spool struct {
 	tailStart int64
 	tailLen   int64
 	closed    bool
-	// crashHook is test-only fault injection called at compaction stages.
 	crashHook func(stage string)
 }
 
@@ -70,7 +65,6 @@ func readSpoolIndex(path string) *spoolIndex {
 	return &idx
 }
 
-// createSpool creates fresh spool files opened for writing.
 func createSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	s := &spool{dir: dir, base: base, headLimit: headLimit, tailLimit: tailLimit}
 	head, err := os.OpenFile(s.headPath(), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
@@ -93,17 +87,6 @@ func createSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	return s, nil
 }
 
-// openSpool loads spool statistics from disk without holding file handles.
-// Bytes appended after a completed index checkpoint are recovered from the
-// actual file sizes. A compaction journal means a crash landed inside
-// compaction: the journaled target state is restored exactly by adopting the
-// already-renamed tail or by replaying the prepared tail, so Total, Dropped,
-// and every logical offset stay correct in every crash window.
-//
-// Transaction artifacts are removed only after the repaired checkpoint is
-// durable. If replay or the checkpoint write fails, openSpool returns the
-// error, keeps the journal (and any prepared tail) for the next open, and
-// still reports the recovered statistics in memory.
 func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	s := &spool{dir: dir, base: base, headLimit: headLimit, tailLimit: tailLimit, closed: true}
 	var headSize, tailSize int64
@@ -124,11 +107,8 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	var repairErr error
 	if journal != nil && headSize == journal.HeadSize {
 		if tailSize == journal.TailSize {
-			// The tail rename already happened; adopt the journaled state.
 			adopted = true
 		} else if st, err := os.Stat(s.tailPath() + ".tmp"); err == nil && st.Size() == journal.TailSize {
-			// Crash before the rename: replay the prepared tail. A failed
-			// replay keeps the transaction for the next open.
 			if err := os.Rename(s.tailPath()+".tmp", s.tailPath()); err == nil {
 				adopted = true
 			} else {
@@ -142,9 +122,6 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 		s.tailLen = journal.TailSize
 		s.total = journal.Total
 		s.tailStart = journal.Total - journal.TailSize
-		// The journal must survive until the checkpoint repair commits;
-		// deleting it earlier would let a later open fall back to stale
-		// Total/Dropped and wrong logical offsets.
 		if err := s.writeIndexLocked(); err != nil {
 			return s, fmt.Errorf("tasks: repair checkpoint for %s: %w", base, err)
 		}
@@ -152,9 +129,6 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 		_ = os.Remove(s.tailPath() + ".tmp")
 		return s, nil
 	}
-	// No adoptable journal: recover the pre-compaction or append-only
-	// state, which is exact on its own. Transaction artifacts are dropped
-	// only when no repair is still pending.
 	if !keepTransaction {
 		_ = os.Remove(s.compactPath())
 		_ = os.Remove(s.tailPath() + ".tmp")
@@ -176,7 +150,6 @@ func openSpool(dir, base string, headLimit, tailLimit int64) (*spool, error) {
 	return s, repairErr
 }
 
-// Write appends stream bytes; it never blocks on readers.
 func (s *spool) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,11 +185,6 @@ func (s *spool) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// compactLocked rewrites the tail keeping only the newest tailLimit bytes.
-// The compaction is a small transaction: prepare the new tail, commit a
-// journal describing the target state, swap the tail, checkpoint the index,
-// then remove the journal. openSpool completes or resolves any interrupted
-// transaction, so no crash window can corrupt logical offsets.
 func (s *spool) compactLocked() error {
 	if s.tailLen <= s.tailLimit {
 		return nil
@@ -273,16 +241,12 @@ func (s *spool) crash(stage string) {
 	}
 }
 
-// spoolIndexWriter is the checkpoint sink; tests replace it to inject
-// checkpoint repair failures. The faultHook keeps installs and restores
-// synchronized with concurrent reads in writeIndexLocked.
 var spoolIndexWriter = faultHook[func(path string, value any) error]{fn: writeJSONAtomic}
 
 func (s *spool) writeIndexLocked() error {
 	return spoolIndexWriter.get()(s.indexPath(), spoolIndex{Total: s.total, HeadSize: s.headLen, TailSize: s.tailLen})
 }
 
-// Stats reports the total bytes ever written and the elided middle size.
 func (s *spool) Stats() (total, dropped int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,7 +261,6 @@ func (s *spool) droppedLocked() int64 {
 	return dropped
 }
 
-// Snapshot returns the retained head and tail.
 func (s *spool) Snapshot() (Output, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -312,7 +275,6 @@ func (s *spool) Snapshot() (Output, error) {
 	return Output{Head: head, Tail: tail, Total: s.total, Dropped: s.droppedLocked()}, nil
 }
 
-// Read returns up to max bytes starting at a logical stream offset.
 func (s *spool) Read(offset int64, max int) (Chunk, error) {
 	if offset < 0 {
 		return Chunk{}, ErrInvalidOffset
@@ -364,8 +326,6 @@ func (s *spool) Read(offset int64, max int) (Chunk, error) {
 	return chunk, nil
 }
 
-// readRegion reads from the head (region=true) or tail file at a file offset.
-// Closed spools reopen the file per read so retained tasks hold no handles.
 func (s *spool) readRegion(head bool, offset, n int64) ([]byte, error) {
 	if n <= 0 {
 		return nil, nil
@@ -393,8 +353,6 @@ func (s *spool) readRegion(head bool, offset, n int64) ([]byte, error) {
 	return buf[:read], nil
 }
 
-// Close performs the final compaction, checkpoints the index, and releases
-// file handles. It is idempotent.
 func (s *spool) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -422,7 +380,6 @@ func (s *spool) Close() error {
 	return firstErr
 }
 
-// removeSpoolFiles deletes every file variant belonging to one task spool.
 func removeSpoolFiles(dir, base string) {
 	for _, suffix := range []string{".head", ".tail", ".idx", ".compact", ".tail.tmp", ".idx.tmp", ".compact.tmp"} {
 		os.Remove(filepath.Join(dir, base+suffix))

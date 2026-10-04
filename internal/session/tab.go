@@ -95,11 +95,6 @@ func (t *Tab) exitEventLocked(exitCode *int) ExitEvent {
 	return ExitEvent{TabID: t.ID, ExitCode: exitCode, Version: t.eventVersion}
 }
 
-// persistVersionFloorLocked records the new version floor before the event
-// carrying it is emitted, so a restart recovering this durable identity
-// resumes strictly above anything a connected client may already have seen.
-// Best-effort: a failed write only lowers the next recovery's floor, it
-// never blocks the event itself.
 func (t *Tab) persistVersionFloorLocked() {
 	store, ok := t.durable.(durableVersionFloor)
 	if !ok {
@@ -163,8 +158,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable != nil && kind != KindLocal {
 		return TabInfo{}, ErrUnsupported
 	}
-	// Validate the encoding before opening any channel: a bad encoding must
-	// not leave a PTY or durable process behind.
 	if err := validateEncoding(encoding); err != nil {
 		return TabInfo{}, err
 	}
@@ -209,9 +202,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			return TabInfo{}, errors.Join(errors.New("durable provider returned a nil attachment"), cleanup())
 		}
 		if options.Durable.Recover {
-			// Adopt the durable window's real size: a fabricated default here
-			// would echo a spurious grid change into the shared tmux window on
-			// the reattaching client's first fit.
 			if grid, ok := durableAttachment.(durableGridSource); ok {
 				if actualCols, actualRows, ok := grid.DurableGrid(); ok && validSize(actualCols, actualRows) {
 					cols, rows = actualCols, actualRows
@@ -256,9 +246,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 	}
 	if options.Durable != nil && options.Durable.Recover {
-		// Resume the persisted version floor so per-tab event versions and
-		// grid revisions stay monotonic across the restart for every client
-		// that kept its high-water mark (shared event DTO gate).
 		if store, ok := durableAttachment.(durableVersionFloor); ok {
 			if eventVersion, gridRevision, err := store.DurableVersions(); err == nil {
 				tab.eventVersion = eventVersion

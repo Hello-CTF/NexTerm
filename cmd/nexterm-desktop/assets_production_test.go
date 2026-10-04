@@ -11,11 +11,6 @@ import (
 	"testing/fstest"
 )
 
-// The embedded handler must answer nested asset requests with the asset
-// itself, not the SPA index fallback. On Windows the lookup once received
-// native-separator paths, which embed.FS rejects, so every /assets/*.js
-// request silently returned index.html; WebView2 blocked the module scripts
-// and the desktop smoke timed out without a verdict (M68).
 func TestProductionEmbeddedServesNestedAssetsAsFiles(t *testing.T) {
 	files := fstest.MapFS{
 		"index.html":                    &fstest.MapFile{Data: []byte(`<!doctype html><html><head></head><body><div id="root"></div><script type="module" src="/assets/index-abc123.js"></script></body></html>`)},
@@ -55,8 +50,6 @@ func TestProductionEmbeddedServesNestedAssetsAsFiles(t *testing.T) {
 			t.Fatalf("%s ETag is missing", test.path)
 		}
 	}
-	// A single-segment asset serves as a file; an unknown path falls back to
-	// the SPA index.
 	icon := productionAssetRequest(t, handler, http.MethodGet, "/icon.png", "")
 	if icon.Code != http.StatusOK || !strings.Contains(icon.Header().Get("Content-Type"), "image/png") {
 		t.Fatalf("single-segment asset: status %d, Content-Type %q, body %q", icon.Code, icon.Header().Get("Content-Type"), icon.Body.String())

@@ -48,11 +48,6 @@ func requireCronError(t *testing.T, response ipc.Response, fragment string) {
 	}
 }
 
-// TestComposedCronRuntimeCommandsAndSessionIsolation drives the composed cron
-// RPC surface end to end: registration is bound to an existing conversation,
-// lookups and mutations are scoped to the owning session, listing never
-// deletes, unregister is the only deletion path, and storage failures surface
-// honestly instead of collapsing into an empty result.
 func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 	ctx := context.Background()
 	services, database, _, _ := composeOutcomeRuntime(t, "echo hi")
@@ -78,8 +73,6 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Registration requires an existing conversation: the trigger's session ID
-	// is executed as the conversation ID.
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_register",
 		`{"sessionId":"missing","prompt":"p","schedule":"0 0 1 1 *"}`), "会话")
 
@@ -91,13 +84,11 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 		t.Fatalf("registered job = %+v", job)
 	}
 
-	// Validation failures surface honestly.
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_register",
 		`{"sessionId":"`+conversationA.ID+`","prompt":"  ","schedule":"0 0 1 1 *"}`), "prompt")
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_register",
 		`{"sessionId":"`+conversationA.ID+`","prompt":"p","schedule":"not-a-schedule"}`), "schedule")
 
-	// Listing is read-only and session scoped; switching sessions never deletes.
 	var listed []cron.Job
 	requireCronData(t, dispatchCronTest(dispatcher, "cron_list", `{"sessionId":"`+conversationA.ID+`"}`), &listed)
 	if len(listed) != 1 || listed[0].ID != job.ID {
@@ -108,7 +99,6 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 		t.Fatalf("session B jobs = %+v", listed)
 	}
 
-	// Lookups and mutations from another session fail without touching the job.
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_get",
 		`{"sessionId":"`+conversationB.ID+`","jobId":"`+job.ID+`"}`), "not found")
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_set_enabled",
@@ -134,7 +124,6 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 		t.Fatalf("job after foreign-session attempts = %+v", listed)
 	}
 
-	// Unregister is the only deletion path.
 	response := dispatchCronTest(dispatcher, "cron_unregister", `{"sessionId":"`+conversationA.ID+`","jobId":"`+job.ID+`"}`)
 	if !response.OK {
 		t.Fatalf("unregister failed: %+v", response.Error)
@@ -144,17 +133,12 @@ func TestComposedCronRuntimeCommandsAndSessionIsolation(t *testing.T) {
 		t.Fatalf("jobs after unregister = %+v", listed)
 	}
 
-	// Storage failures surface honestly instead of returning an empty list.
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
 	requireCronError(t, dispatchCronTest(dispatcher, "cron_list", `{"sessionId":"`+conversationA.ID+`"}`), "cron storage failure")
 }
 
-// TestComposedCronRuntimeSurvivesRestart proves the production lifecycle
-// contract: jobs durable across a full close/reopen of the application store,
-// no execution replayed, and every session's jobs intact — switching sessions
-// only ever lists.
 func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
@@ -204,7 +188,6 @@ func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Session switching only lists: every session's jobs stay put.
 	for range 3 {
 		if jobs, err := first.cron.scheduler.List(ctx, conversationA.ID); err != nil || len(jobs) != 1 {
 			t.Fatalf("session A jobs = %v, %v", jobs, err)
@@ -255,11 +238,6 @@ func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 	}
 }
 
-// TestComposedCronUnattendedExecutionDeniesWithoutHITL drives the production
-// composition end to end: a due cron job executes through the real agent
-// runner with the unattended permission mode, and commands that would need a
-// human confirmation — or are forbidden outright — are denied at decision
-// time: never executed, never parked on a confirmation no one will answer.
 func TestComposedCronUnattendedExecutionDeniesWithoutHITL(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
@@ -282,7 +260,6 @@ func TestComposedCronUnattendedExecutionDeniesWithoutHITL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Make the job due immediately: the composed scheduler polls real time.
 			if _, err := database.DB().ExecContext(ctx,
 				`UPDATE cron_job SET next_run_at = ? WHERE id = ?`,
 				time.Now().Add(-time.Minute).UnixMilli(), job.ID); err != nil {
@@ -308,10 +285,6 @@ func TestComposedCronUnattendedExecutionDeniesWithoutHITL(t *testing.T) {
 	}
 }
 
-// TestComposedCronInteractiveControlKeepsHITL pins the authority boundary the
-// unattended mode guards: the same command interactively parks on a
-// confirmation instead of being denied at decision time — and still has not
-// executed anything.
 func TestComposedCronInteractiveControlKeepsHITL(t *testing.T) {
 	ctx := context.Background()
 	const command = "systemctl restart nginx"
@@ -334,12 +307,6 @@ func TestComposedCronInteractiveControlKeepsHITL(t *testing.T) {
 	}
 }
 
-// TestComposedCronUnattendedKeepsCustomDangerRules is the round-1 review
-// regression: the unattended permission snapshot must preserve the user's
-// custom danger rules. A built-in Safe command that matches a custom rule is
-// upgraded to Danger at classification time and denied under cron — zero
-// transport executions — while the interactive control still parks on a
-// confirmation.
 func TestComposedCronUnattendedKeepsCustomDangerRules(t *testing.T) {
 	ctx := context.Background()
 	const command = "echo hi"
@@ -348,7 +315,6 @@ func TestComposedCronUnattendedKeepsCustomDangerRules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Sanity: the custom rule upgrades the otherwise Safe command to Danger.
 	permission, err := services.Guard.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -371,7 +337,6 @@ func TestComposedCronUnattendedKeepsCustomDangerRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Make the job due immediately: the composed scheduler polls real time.
 	if _, err := database.DB().ExecContext(ctx,
 		`UPDATE cron_job SET next_run_at = ? WHERE id = ?`,
 		time.Now().Add(-time.Minute).UnixMilli(), job.ID); err != nil {
@@ -395,9 +360,6 @@ func TestComposedCronUnattendedKeepsCustomDangerRules(t *testing.T) {
 	}
 }
 
-// TestComposedCronInteractiveControlKeepsCustomDangerRules is the interactive
-// half of the regression: with the same custom danger rule, the matched
-// command parks on a confirmation instead of being denied at decision time.
 func TestComposedCronInteractiveControlKeepsCustomDangerRules(t *testing.T) {
 	ctx := context.Background()
 	const command = "echo hi"
@@ -423,10 +385,6 @@ func TestComposedCronInteractiveControlKeepsCustomDangerRules(t *testing.T) {
 	}
 }
 
-// TestCronRuntimeBoundedShutdown proves the lifecycle contract: shutdown
-// cancels in-flight executions through the executor, waits for the scheduler
-// to drain within the caller's bound, and the interruption is recorded
-// durably and honestly — never swallowed, never replayed.
 func TestCronRuntimeBoundedShutdown(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -474,7 +432,6 @@ func TestCronRuntimeBoundedShutdown(t *testing.T) {
 	if err := runtime.Shutdown(shutdownCtx); err != nil {
 		t.Fatalf("bounded shutdown: %v", err)
 	}
-	// Idempotent: a second shutdown has nothing left to stop.
 	if err := runtime.Shutdown(shutdownCtx); err != nil {
 		t.Fatalf("second shutdown: %v", err)
 	}
@@ -491,9 +448,6 @@ func TestCronRuntimeBoundedShutdown(t *testing.T) {
 	}
 }
 
-// TestProductionComposesCronModule verifies the production binary wiring: the
-// cron RPC commands are registered on the application dispatcher and the
-// scheduler component starts and shuts down with the application lifecycle.
 func TestProductionComposesCronModule(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("production composition test requires a unix platform")

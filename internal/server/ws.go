@@ -87,11 +87,6 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 	}()
 	defer func() {
 		cancel()
-		// CloseNow tears the connection down without the close handshake:
-		// Close would block (up to the library's 5s close-handshake timeout)
-		// waiting for a peer close frame whenever the read loop has not
-		// touched the connection yet, stalling the socket drain past the
-		// Serve shutdown budget.
 		_ = connection.CloseNow()
 		<-readDone
 	}()
