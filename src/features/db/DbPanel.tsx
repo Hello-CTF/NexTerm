@@ -19,6 +19,7 @@ import {
   IconSearch,
   IconSettings,
   IconTable,
+  IconXCircle,
 } from "../../ui/icons";
 
 export function DbPanel({ connId, kind }: { connId: string; kind: "mysql" | "redis" }) {
@@ -29,7 +30,11 @@ function MysqlView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
   const [schema, setSchema] = useState("");
   const [schemas, setSchemas] = useState<string[]>([]);
+  const [schemasStatus, setSchemasStatus] = useState<"loading" | "error" | "ready">("loading");
+  const [schemasError, setSchemasError] = useState<string | null>(null);
   const [tables, setTables] = useState<string[]>([]);
+  const [tablesStatus, setTablesStatus] = useState<"loading" | "error" | "ready">("loading");
+  const [tablesError, setTablesError] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
   const [browse, setBrowse] = useState<"tables" | "columns">("tables");
@@ -39,26 +44,41 @@ function MysqlView({ connId }: { connId: string }) {
 
   const SYSTEM_SCHEMAS = ["information_schema", "mysql", "performance_schema", "sys"];
 
-  const loadSchema = async (next: string) => {
+  const loadTables = async (next: string) => {
     setSchema(next);
+    setTablesStatus("loading");
+    setTablesError(null);
     try {
       setTables(await dbApi.tables(connId, next));
+      setTablesStatus("ready");
     } catch (e) {
-      pushToast("error", describeError(e));
+      setTablesStatus("error");
+      setTablesError(describeError(e));
+    }
+  };
+
+  const loadSchemas = async () => {
+    setSchemasStatus("loading");
+    setSchemasError(null);
+    try {
+      const list = await dbApi.schemas(connId);
+      setSchemas(list);
+      setSchemasStatus("ready");
+      const pick = list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "";
+      if (pick) {
+        await loadTables(pick);
+      } else {
+        setTables([]);
+        setTablesStatus("ready");
+      }
+    } catch (e) {
+      setSchemasStatus("error");
+      setSchemasError(describeError(e));
     }
   };
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const list = await dbApi.schemas(connId);
-        setSchemas(list);
-        const pick = list.find((s) => !SYSTEM_SCHEMAS.includes(s)) ?? list[0] ?? "";
-        if (pick) await loadSchema(pick);
-      } catch (e) {
-        pushToast("error", describeError(e));
-      }
-    })();
+    void loadSchemas();
   }, [connId]);
 
   useEffect(() => {
@@ -149,7 +169,8 @@ function MysqlView({ connId }: { connId: string }) {
         <select
           className="nx-select nx-input-sm w-[168px]"
           value={schema}
-          onChange={(e) => void loadSchema(e.target.value)}
+          aria-label="选择数据库"
+          onChange={(e) => void loadTables(e.target.value)}
         >
           {schemas.map((s) => (
             <option key={s} value={s}>
@@ -157,7 +178,7 @@ function MysqlView({ connId }: { connId: string }) {
             </option>
           ))}
         </select>
-        <span className="nx-count">{tables.length}</span>
+        <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint">张表</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（M3 规划中）" disabled>
@@ -211,20 +232,51 @@ function MysqlView({ connId }: { connId: string }) {
           </button>
         </div>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {tables.slice(0, 60).map((t) => (
-            <button
-              key={t}
-              className={`nx-chip shrink-0 font-mono ${
-                activeTable === t && browse === "columns" ? "nx-chip-accent" : ""
-              }`}
-              onClick={() => (browse === "tables" ? fillQuery(t) : void showColumns(t))}
-              title={browse === "tables" ? `填入 SELECT * FROM ${t}` : `查看 ${t} 的字段`}
-            >
-              {t}
-            </button>
-          ))}
-          {tables.length > 60 && <span className="nx-hint shrink-0">+{tables.length - 60}</span>}
-          {tables.length === 0 && <span className="nx-hint">这个库里没有表</span>}
+          {schemasStatus === "error" ? (
+            <>
+              <span className="nx-hint shrink-0 text-red-300">
+                数据库列表加载失败 · {schemasError}
+              </span>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                onClick={() => void loadSchemas()}
+              >
+                <IconRefresh size={11} />
+                重试
+              </button>
+            </>
+          ) : schemasStatus === "loading" || tablesStatus === "loading" ? (
+            <span className="nx-hint shrink-0">表列表加载中…</span>
+          ) : tablesStatus === "error" ? (
+            <>
+              <span className="nx-hint shrink-0 text-red-300">表列表加载失败 · {tablesError}</span>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                onClick={() => void loadTables(schema)}
+              >
+                <IconRefresh size={11} />
+                重试
+              </button>
+            </>
+          ) : tables.length === 0 ? (
+            <span className="nx-hint">这个库里没有表</span>
+          ) : (
+            <>
+              {tables.slice(0, 60).map((t) => (
+                <button
+                  key={t}
+                  className={`nx-chip shrink-0 font-mono ${
+                    activeTable === t && browse === "columns" ? "nx-chip-accent" : ""
+                  }`}
+                  onClick={() => (browse === "tables" ? fillQuery(t) : void showColumns(t))}
+                  title={browse === "tables" ? `填入 SELECT * FROM ${t}` : `查看 ${t} 的字段`}
+                >
+                  {t}
+                </button>
+              ))}
+              {tables.length > 60 && <span className="nx-hint shrink-0">+{tables.length - 60}</span>}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -299,18 +351,34 @@ function RedisView({ connId }: { connId: string }) {
   const [pattern, setPattern] = useState("*");
   const [keys, setKeys] = useState<string[]>([]);
   const [cursor, setCursor] = useState(0);
+  const [scanStatus, setScanStatus] = useState<"loading" | "error" | "ready">("loading");
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<import("../../ipc/types").RedisKeyViewDto | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
   const [cmdText, setCmdText] = useState("INFO memory");
   const [cmdOut, setCmdOut] = useState("");
 
   const doScan = async (c: number) => {
+    if (c === 0) {
+      setScanStatus("loading");
+      setScanError(null);
+    } else {
+      setPageError(null);
+    }
     try {
       const [next, ks] = await dbApi.redisScan(connId, c, pattern, 200);
       setCursor(next);
       setKeys((prev) => (c === 0 ? ks : [...prev, ...ks]));
+      setScanStatus("ready");
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (c === 0) {
+        setScanStatus("error");
+        setScanError(describeError(e));
+      } else {
+        setPageError(describeError(e));
+      }
     }
   };
 
@@ -320,10 +388,12 @@ function RedisView({ connId }: { connId: string }) {
 
   const inspect = async (key: string) => {
     setSelected(key);
+    setView(null);
+    setViewError(null);
     try {
       setView(await dbApi.redisInspect(connId, key));
     } catch (e) {
-      pushToast("error", describeError(e));
+      setViewError(describeError(e));
     }
   };
 
@@ -356,23 +426,54 @@ function RedisView({ connId }: { connId: string }) {
             onChange={(e) => setPattern(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void doScan(0)}
             placeholder="匹配模式，如 products:*"
+            aria-label="键匹配模式"
           />
           <button className="nx-btn nx-btn-sm" title="按 SCAN 分页拉取" onClick={() => void doScan(0)}>
             SCAN
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
-          {keys.map((k) => (
-            <div
-              key={k}
-              className={`nx-row font-mono text-[11.5px] ${selected === k ? "is-selected" : ""}`}
-              onClick={() => void inspect(k)}
-            >
-              <span className="min-w-0 flex-1 truncate">{k}</span>
+          {scanStatus === "loading" ? (
+            <div className="nx-hint p-3">键列表加载中…</div>
+          ) : scanStatus === "error" ? (
+            <div className="p-3">
+              <div className="nx-hint text-red-300">键列表加载失败 · {scanError}</div>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
+                onClick={() => void doScan(0)}
+              >
+                <IconRefresh size={11} />
+                重试
+              </button>
             </div>
-          ))}
-          {keys.length === 0 && <div className="nx-hint p-3">没有匹配的键</div>}
+          ) : keys.length === 0 ? (
+            <div className="nx-hint p-3">没有匹配的键</div>
+          ) : (
+            keys.map((k) => (
+              <div
+                key={k}
+                className={`nx-row font-mono text-[11.5px] ${selected === k ? "is-selected" : ""}`}
+                onClick={() => void inspect(k)}
+              >
+                <span className="min-w-0 flex-1 truncate">{k}</span>
+              </div>
+            ))
+          )}
         </div>
+        {pageError && (
+          <div className="flex shrink-0 items-center gap-1.5 border-t border-neutral-800/60 px-2.5 py-1.5">
+            <span className="nx-hint min-w-0 flex-1 truncate text-red-300">
+              下一页加载失败 · {pageError}
+            </span>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+              onClick={() => void doScan(cursor)}
+            >
+              <IconRefresh size={11} />
+              重试
+            </button>
+          </div>
+        )}
         {cursor > 0 && (
           <button
             className="shrink-0 border-t border-neutral-800/60 px-2.5 py-1.5 text-left text-[11.5px] text-blue-300 hover:bg-neutral-800/50"
@@ -402,6 +503,20 @@ function RedisView({ connId }: { connId: string }) {
               {JSON.stringify(view.value, null, 2)}
             </pre>
           </>
+        ) : viewError && selected ? (
+          <div className="nx-empty">
+            <span className="nx-empty-icon">
+              <IconXCircle size={18} />
+            </span>
+            <div className="text-[12.5px] text-red-300">键内容加载失败 · {viewError}</div>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              onClick={() => void inspect(selected)}
+            >
+              <IconRefresh size={12} />
+              重试
+            </button>
+          </div>
         ) : (
           <div className="nx-empty">
             <span className="nx-empty-icon">

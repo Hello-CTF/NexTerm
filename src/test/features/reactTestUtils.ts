@@ -37,6 +37,14 @@ export async function waitFor(assertion: () => void): Promise<void> {
   });
 }
 
+export async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    if (predicate()) return;
+    await flush();
+  }
+  if (!predicate()) throw new Error("flushUntil: condition not met");
+}
+
 export function click(element: Element): void {
   act(() => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true }));

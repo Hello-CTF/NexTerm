@@ -1,8 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { modelApi, type ModelProfile, type ModelProfilesView } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
   fallbackModelFromInput,
   fallbackModelLabel,
@@ -50,6 +51,7 @@ export function ModelManager({
   const pushToast = useUi((s) => s.pushToast);
 
   const [view, setView] = useState<ModelProfilesView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ModelProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -61,6 +63,7 @@ export function ModelManager({
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
   const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft));
   const isActive = !!draft && !!draft.id && view?.activeId === draft.id;
+  const fieldId = useId();
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -70,13 +73,14 @@ export function ModelManager({
     try {
       const v = await modelApi.overview();
       setView(v);
+      setLoadError(null);
       setDraft((prev) => {
         const target = selectModelProfileId(v, keepId ?? prev?.id);
         const found = v.profiles.find((p) => p.id === target);
         return found ? { ...found } : null;
       });
     } catch (e) {
-      pushToast("error", `读取模型档案失败：${describeError(e)}`);
+      setLoadError(describeError(e));
     }
   };
 
@@ -219,7 +223,22 @@ export function ModelManager({
             </button>
           </div>
           <div className="min-h-[220px] max-h-[420px] overflow-y-auto rounded-md border border-neutral-800/70 bg-neutral-950/40 p-1">
-            {view && view.profiles.length > 0 ? (
+            {!view ? (
+              loadError ? (
+                <div className="px-2 py-3 text-center">
+                  <div className="nx-hint text-red-300">档案列表加载失败 · {loadError}</div>
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
+                    onClick={() => void reload()}
+                  >
+                    <IconRefresh size={11} />
+                    重试
+                  </button>
+                </div>
+              ) : (
+                <div className="nx-hint px-2 py-3 text-center text-[11px]">模型档案加载中…</div>
+              )
+            ) : view.profiles.length > 0 ? (
               view.profiles.map((p) => (
                 <button
                   key={p.id}
@@ -267,8 +286,9 @@ export function ModelManager({
         <div className="min-w-0 flex-1">
           {draft ? (
             <div className="flex flex-col gap-2.5">
-              <Field label="展示名">
+              <Field label="展示名" htmlFor={`${fieldId}-name`}>
                 <input
+                  id={`${fieldId}-name`}
                   className="nx-input"
                   placeholder="例如 公司 DeepSeek"
                   value={draft.name}
@@ -276,8 +296,9 @@ export function ModelManager({
                 />
               </Field>
 
-              <Field label="Base URL">
+              <Field label="Base URL" htmlFor={`${fieldId}-base-url`}>
                 <input
+                  id={`${fieldId}-base-url`}
                   className="nx-input font-mono"
                   placeholder="https://api.deepseek.com/v1"
                   value={draft.baseUrl}
@@ -285,16 +306,18 @@ export function ModelManager({
                 />
               </Field>
 
-              <Field label="API Key">
+              <Field label="API Key" htmlFor={`${fieldId}-api-key`}>
                 <div className="nx-field">
                   <span className="nx-field-icon">
                     <IconKey size={12} />
                   </span>
                   <input
+                    id={`${fieldId}-api-key`}
                     className="nx-input pr-8 font-mono"
                     type={showKey ? "text" : "password"}
                     placeholder="sk-..."
                     value={draft.apiKey}
+                    autoComplete="off"
                     onChange={(e) => patch({ apiKey: e.target.value })}
                   />
                   <button
@@ -307,9 +330,10 @@ export function ModelManager({
                 </div>
               </Field>
 
-              <Field label="模型名">
+              <Field label="模型名" htmlFor={`${fieldId}-model`}>
                 <div className="relative flex gap-1">
                   <input
+                    id={`${fieldId}-model`}
                     className="nx-input min-w-0 flex-1 font-mono"
                     placeholder="deepseek-chat"
                     value={draft.model}
@@ -344,11 +368,11 @@ export function ModelManager({
                 </div>
               </Field>
 
-              <Field label="回退模型（可选）">
+              <Field label="回退模型（可选）" htmlFor={`${fieldId}-fallback`}>
                 <input
+                  id={`${fieldId}-fallback`}
                   className="nx-input font-mono"
                   placeholder="主模型失败时改用的模型名"
-                  aria-label="回退模型"
                   value={fallbackModelLabel(draft)}
                   onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
                 />
@@ -359,8 +383,9 @@ export function ModelManager({
 
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <Field label="温度 (0–2)">
+                  <Field label="温度 (0–2)" htmlFor={`${fieldId}-temperature`}>
                     <input
+                      id={`${fieldId}-temperature`}
                       className="nx-input font-mono"
                       type="number"
                       min={0}
@@ -372,8 +397,9 @@ export function ModelManager({
                   </Field>
                 </div>
                 <div className="flex-1">
-                  <Field label="上下文窗口 (tokens)">
+                  <Field label="上下文窗口 (tokens)" htmlFor={`${fieldId}-context`}>
                     <input
+                      id={`${fieldId}-context`}
                       className="nx-input font-mono"
                       type="number"
                       min={1000}
@@ -386,8 +412,9 @@ export function ModelManager({
                 </div>
               </div>
 
-              <Field label="代理（留空则跟随系统代理）">
+              <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
                 <input
+                  id={`${fieldId}-proxy`}
                   className="nx-input font-mono"
                   placeholder="http://127.0.0.1:7890"
                   value={draft.proxy ?? ""}
@@ -429,7 +456,7 @@ export function ModelManager({
           <>
             <span className="nx-hint mr-auto self-center text-[10.5px]">
               {isNew ? "新档案（尚未保存）" : isActive ? "当前激活" : `${draft.name}`}
-              {dirty && <span className="ml-1 text-amber-400">· 有未保存的修改</span>}
+              {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">· 有未保存的修改</span>}
             </span>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
@@ -467,6 +494,9 @@ export function ModelManager({
 
 export function ModelPanel({ onClose }: { onClose: () => void }) {
   const [dirty, setDirty] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const layer = useOverlayFocus(true, modalRef);
 
   const requestClose = async () => {
     if (
@@ -483,10 +513,28 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="nx-overlay z-[70]" onClick={() => void requestClose()}>
-      <div className="nx-modal max-w-[760px]" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="nx-modal max-w-[760px]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (!layer.isTopmost()) return;
+          if (e.key === "Escape" && !e.repeat && !isImeKeyEvent(e)) {
+            e.preventDefault();
+            void requestClose();
+            return;
+          }
+          trapOverlayTab(e, modalRef.current);
+        }}
+      >
         <div className="nx-modal-header">
           <IconKey size={14} className="text-neutral-400" />
-          <span className="text-[13px] font-semibold text-neutral-100">模型配置</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">模型配置</span>
           <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥存在本机 sqlite</span>
           <div className="nx-spacer" />
           <button className="nx-icon-btn nx-icon-btn-sm" title="关闭" onClick={() => void requestClose()}>
@@ -502,10 +550,18 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  children: ReactNode;
+}) {
   return (
     <div>
-      <label className="nx-label">{label}</label>
+      <label className="nx-label" htmlFor={htmlFor}>{label}</label>
       {children}
     </div>
   );

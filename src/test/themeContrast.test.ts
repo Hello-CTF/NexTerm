@@ -182,3 +182,49 @@ describe("selected-state hint rules", () => {
     expect(a11y).toContain("color: var(--nx-fg-on-tint)");
   });
 });
+
+function semanticForeground(theme: Map<string, string>, rootBlock: string): string {
+  const body = blockBody(rootBlock);
+  const m = /--nx-fg-warning:\s*([^;]+);/.exec(body);
+  if (!m) throw new Error(`missing --nx-fg-warning in ${rootBlock}`);
+  const value = m[1].trim();
+  const ref = /^var\((--[\w-]+)\)$/.exec(value);
+  if (ref) {
+    const resolved = theme.get(ref[1].replace(/^--/, ""));
+    if (!resolved) throw new Error(`unresolved ${ref[1]} in ${rootBlock}`);
+    return resolved;
+  }
+  if (/^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
+  throw new Error(`unsupported --nx-fg-warning value: ${value}`);
+}
+
+describe("semantic warning foreground", () => {
+  const themes: [string, Map<string, string>, string][] = [
+    ["dark", dark, ":root"],
+    ["light", light, ':root[data-nx-theme="light"]'],
+  ];
+
+  for (const [name, theme, block] of themes) {
+    const fg = semanticForeground(theme, block);
+    const canvas = theme.get("color-neutral-950");
+    const accent = theme.get("color-accent");
+    if (!canvas || !accent) throw new Error(`missing canvas/accent in ${name}`);
+    const selectedTint = mix(accent, canvas, 0.16);
+
+    it(`${name}: --nx-fg-warning resolves (${fg})`, () => {
+      expect(fg).toMatch(/^#[0-9a-f]{6}$/);
+    });
+    it(`${name}: warning on canvas >= 4.5:1`, () => {
+      expect(contrast(fg, canvas)).toBeGreaterThanOrEqual(4.5);
+    });
+    it(`${name}: warning on selected tint >= 4.5:1`, () => {
+      expect(contrast(fg, selectedTint)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+
+  it("keeps the two themes on distinct warning values", () => {
+    expect(semanticForeground(dark, ":root")).not.toBe(
+      semanticForeground(light, ':root[data-nx-theme="light"]'),
+    );
+  });
+});

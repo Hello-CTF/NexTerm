@@ -18,6 +18,8 @@ import {
   IconKey,
   IconLock,
   IconPlus,
+  IconRefresh,
+  IconXCircle,
 } from "../../ui/icons";
 
 const REVEAL_SECONDS = 15;
@@ -79,7 +81,25 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
         </div>
       )}
 
-      {selected ? (
+      {credentials.isLoading ? (
+        <div className="nx-empty">凭据加载中…</div>
+      ) : credentials.isError && !credentials.data ? (
+        <div className="nx-empty">
+          <div className="nx-empty-icon">
+            <IconXCircle size={18} />
+          </div>
+          <div className="text-[12.5px] text-red-300">
+            凭据列表加载失败 · {describeError(credentials.error)}
+          </div>
+          <button
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            onClick={() => void credentials.refetch()}
+          >
+            <IconRefresh size={12} />
+            重试
+          </button>
+        </div>
+      ) : selected ? (
         <CredentialDetail
           key={selected.id}
           cred={selected}
@@ -267,6 +287,7 @@ function CredentialDetail({
               value={locked ? cred.name : name}
               disabled={locked}
               spellCheck={false}
+              aria-label="凭据名称"
               onChange={(e) => setName(e.target.value)}
               title={locked ? "解锁后可改名" : "点击可改名"}
             />
@@ -283,7 +304,7 @@ function CredentialDetail({
                   被 <span className="text-neutral-300">{cred.usedBy.length}</span> 个资产使用
                 </span>
               ) : (
-                <span className="text-amber-500/90">未被引用 · 可安全删除</span>
+                <span className="text-[var(--nx-fg-warning)]">未被引用 · 可安全删除</span>
               )}
             </div>
           </div>
@@ -328,7 +349,7 @@ function CredentialDetail({
                 </button>
               </div>
               {revealed !== null && !isRef && (
-                <div className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-400/90">
+                <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[var(--nx-fg-warning)]">
                   <IconEye size={11} />
                   {left}s 后自动隐藏
                 </div>
@@ -412,7 +433,7 @@ function CredentialDetail({
                   </span>
                   {cred.hasPassphrase && newPassphrase.length === 0 && (
                     <button
-                      className="nx-btn nx-btn-ghost nx-btn-sm text-amber-400"
+                      className="nx-btn nx-btn-ghost nx-btn-sm text-[var(--nx-fg-warning)]"
                       onClick={() => void clearPassphrase()}
                     >
                       清除口令

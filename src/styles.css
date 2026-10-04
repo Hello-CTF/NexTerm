@@ -72,6 +72,7 @@
   --nx-fg-soft: var(--color-neutral-400);
   --nx-fg-tertiary: var(--color-neutral-500);
   --nx-fg-on-tint: var(--color-neutral-300);
+  --nx-fg-warning: var(--color-amber-300);
   --nx-bg-canvas: var(--color-neutral-950);
   --nx-bg-pane: var(--color-neutral-900);
   --nx-bg-raised: var(--color-neutral-800);
@@ -139,6 +140,7 @@
   --color-purple-500: #8b6ae0;
 
   --nx-focus-ring: #1d4ed8;
+  --nx-fg-warning: #7a5200;
   --nx-scrim: rgb(15 23 42 / 0.4);
   --nx-dock-shadow-left: 16px 0 40px rgb(15 23 42 / 0.18);
   --nx-dock-shadow-right: -16px 0 40px rgb(15 23 42 / 0.18);

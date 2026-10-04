@@ -111,17 +111,29 @@ export function SyncCard() {
   const [busy, setBusy] = useState<null | "test" | "push" | "pull">(null);
   const [report, setReport] = useState<{ dir: "push" | "pull"; data: ImportReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   const rows = useMemo(() => mergeRows(local, remote), [local, remote]);
 
-  const refreshLocal = useCallback(
-    () =>
-      syncApi
-        .digest()
-        .then(setLocal)
-        .catch(() => undefined),
-    [],
-  );
+  const refreshLocal = useCallback(() => {
+    setLocalError(null);
+    return syncApi
+      .digest()
+      .then(setLocal)
+      .catch((e: unknown) => setLocalError(describeError(e)));
+  }, []);
+
+  const loadLink = useCallback(() => {
+    setLinkError(null);
+    return syncApi
+      .linkGet()
+      .then((l) => {
+        setLink(l);
+        setDraft({ url: l.url, tokenKind: l.tokenKind || "box", token: "", insecure: l.insecure });
+      })
+      .catch((e: unknown) => setLinkError(describeError(e)));
+  }, []);
 
   useEffect(() => {
     if (DEMO) return;
@@ -133,14 +145,8 @@ export function SyncCard() {
         .catch(() => undefined);
       return;
     }
-    void syncApi
-      .linkGet()
-      .then((l) => {
-        setLink(l);
-        setDraft({ url: l.url, tokenKind: l.tokenKind || "box", token: "", insecure: l.insecure });
-      })
-      .catch(() => undefined);
-  }, [isServer, refreshLocal]);
+    void loadLink();
+  }, [isServer, refreshLocal, loadLink]);
 
   if (DEMO) return null;
 
@@ -170,7 +176,7 @@ export function SyncCard() {
       void syncApi
         .linkGet()
         .then(setLink)
-        .catch(() => undefined);
+        .catch((e: unknown) => setLinkError(describeError(e)));
     }
   };
 
@@ -259,9 +265,12 @@ export function SyncCard() {
           </p>
 
           <div className="flex flex-col gap-2">
-            <label className="flex items-center gap-2">
-              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">部署位置</span>
+            <div className="flex items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-token-kind">
+                部署位置
+              </label>
               <select
+                id="sync-token-kind"
                 className="nx-input w-[250px]"
                 value={draft.tokenKind}
                 onChange={(e) => setDraft((d) => ({ ...d, tokenKind: e.target.value }))}
@@ -274,21 +283,28 @@ export function SyncCard() {
                   ? "要连的是你微服上那个 NexTerm"
                   : "要连的是你自己服务器上跑的 NexTerm"}
               </span>
-            </label>
+            </div>
 
-            <label className="flex items-center gap-2">
-              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">服务端地址</span>
+            <div className="flex items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-url">
+                服务端地址
+              </label>
               <input
+                id="sync-url"
                 className="nx-input min-w-0 flex-1 font-mono"
                 placeholder={isBox ? "https://nexterm.<你的微服域名>" : "https://sync.example.com"}
                 value={draft.url}
+                autoComplete="url"
                 onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
               />
-            </label>
+            </div>
 
-            <label className="flex items-center gap-2">
-              <span className="w-[76px] shrink-0 text-[12px] text-neutral-400">访问令牌</span>
+            <div className="flex items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-token">
+                访问令牌
+              </label>
               <input
+                id="sync-token"
                 type={showToken ? "text" : "password"}
                 className="nx-input min-w-0 flex-1 font-mono"
                 autoComplete="off"
@@ -301,7 +317,7 @@ export function SyncCard() {
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setShowToken((v) => !v)}>
                 {showToken ? "隐藏" : "显示"}
               </button>
-            </label>
+            </div>
 
             <div className="nx-alert nx-alert-info flex items-start gap-2">
               <IconInfo size={14} className="mt-0.5 shrink-0" />
@@ -366,6 +382,36 @@ export function SyncCard() {
             <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
               <IconXCircle size={13} className="mt-0.5 shrink-0" />
               <span className="min-w-0 break-words">{error}</span>
+            </div>
+          )}
+
+          {localError && (
+            <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
+              <IconXCircle size={13} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">
+                本机资产摘要读取失败 · {localError}
+              </span>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                onClick={() => void refreshLocal()}
+              >
+                <IconRefresh size={12} />
+                重试
+              </button>
+            </div>
+          )}
+
+          {linkError && (
+            <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
+              <IconXCircle size={13} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">同步配置读取失败 · {linkError}</span>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                onClick={() => void loadLink()}
+              >
+                <IconRefresh size={12} />
+                重试
+              </button>
             </div>
           )}
 

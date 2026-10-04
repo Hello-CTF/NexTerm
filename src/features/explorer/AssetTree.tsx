@@ -678,6 +678,9 @@ export function AssetEditor({
     typeof initial?.options?.cwd === "string" ? (initial.options.cwd as string) : "",
   );
   const pushToast = useUi((s) => s.pushToast);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [probe, setProbe] = useState<{ status: "idle" | "pending" | "ok" | "fail"; error?: string }>({
     status: "idle",
@@ -793,6 +796,10 @@ export function AssetEditor({
   };
 
   const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
     try {
       if (kind === "group") {
         await assetApi.groupCreate(name);
@@ -892,7 +899,10 @@ export function AssetEditor({
       }
       onSaved();
     } catch (e) {
-      pushToast("error", describeError(e));
+      setSaveError(describeError(e));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -1273,14 +1283,20 @@ export function AssetEditor({
               )}
             </>
           )}
+          {saveError && (
+            <div className="mb-2 flex items-center gap-1.5 text-[12px] text-red-400">
+              <IconXCircle size={13} /> {saveError}
+            </div>
+          )}
         </div>
         <div className="nx-modal-footer">
-          <button className="nx-btn nx-btn-ghost" onClick={onClose}>
+          <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
             取消
           </button>
           <button
             className="nx-btn nx-btn-primary"
             disabled={
+              saving ||
               !name.trim() ||
               (keyAuth &&
                 keyOrigin === "vault" &&
@@ -1290,7 +1306,7 @@ export function AssetEditor({
             }
             onClick={() => void save()}
           >
-            保存
+            {saving ? "保存中…" : "保存"}
           </button>
         </div>
       </div>
