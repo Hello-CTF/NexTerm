@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -171,11 +172,39 @@ func TestUserCancelJournalsCanceledTerminal(t *testing.T) {
 }
 
 func TestCancellationClassification(t *testing.T) {
-	if !isCancellation(context.Canceled) || !isCancellation(context.DeadlineExceeded) || !isCancellation(&adk.CancelError{}) {
+	if !isCancellation(context.Canceled) || !isCancellation(context.DeadlineExceeded) || !isCancellation(&adk.CancelError{}) || !isCancellation(adk.ErrStreamCanceled) || !isCancellation(fmt.Errorf("stream: %w", adk.ErrStreamCanceled)) {
 		t.Fatal("cancellation shapes not classified as user cancel")
 	}
 	if isCancellation(errors.New("boom")) || isCancellation(nil) {
 		t.Fatal("non-cancellation misclassified")
+	}
+}
+
+func TestStreamCanceledErrorJournalsCanceledTerminal(t *testing.T) {
+	storage := restartStore(t)
+	bus := hub.New(hub.Options{})
+	t.Cleanup(func() { _ = bus.Close() })
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		<-ctx.Done()
+		return nil, adk.ErrStreamCanceled
+	}}
+	runner := durableRunner(t, storage, chat, tools.Dependencies{}, nil)
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", ChannelID: "channel", Scope: tools.Scope{SessionID: "session"}}, ResilientIPCStreamFactory(hub.StreamFactory{Hub: bus}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Cancel(response.JobID); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, storage, response.JobID, store.RunStatusCanceled)
+	events := runEventsOf(t, storage, response.JobID)
+	requireContiguousSeq(t, events)
+	last := events[len(events)-1]
+	if last.Type != "canceled" {
+		t.Fatalf("terminal journal event = %+v, want canceled", last)
+	}
+	if strings.Contains(last.PayloadJSON, "retryable") {
+		t.Fatalf("canceled event must not carry retryable: %s", last.PayloadJSON)
 	}
 }
 

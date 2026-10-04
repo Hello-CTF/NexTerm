@@ -244,6 +244,53 @@ describe("stream recovery: sequence cursor and reorder", () => {
     expect(doneState.attempts[0].outcome).toBe("done");
   });
 
+  it("a rejected filler still drains a buffered terminal and settles exactly once", () => {
+    const { s, runFrame } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "delta", text: "半", seq: 1 });
+    runFrame();
+    const buffered = s.pushEvent(1, { type: "done", answer: "答案", seq: 3 });
+    expect(buffered.terminal).toBeNull();
+    expect(s.getState().attempts[0].outcome).toBeNull();
+    const filler = s.pushEvent(1, { type: "steered", text: "补充", seq: 2 });
+    expect(filler.accepted).toBe(false);
+    expect(filler.terminal).toBe("done");
+    expect(s.getState().attempts[0].outcome).toBe("done");
+    expect(s.hasGap(1)).toBe(false);
+    const replayed = s.pushEvent(1, { type: "done", answer: "答案", seq: 3 });
+    expect(replayed.accepted).toBe(false);
+    expect(replayed.terminal).toBe("done");
+    const outcomes = s.getState().items.filter((i) => i.role === "outcome");
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ outcome: "done", text: "本轮已完成" });
+  });
+
+  it("rejected fillers drain buffered error and canceled terminals without duplicate outcomes", () => {
+    const errored = stream();
+    errored.s.beginRun(1);
+    errored.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
+    errored.s.pushEvent(1, { type: "error", message: "boom", retryable: true, seq: 3 });
+    const errorFiller = errored.s.pushEvent(1, { type: "steered", text: "补充", seq: 2 });
+    expect(errorFiller.accepted).toBe(false);
+    expect(errorFiller.terminal).toBe("error");
+    const errorState = errored.s.getState();
+    expect(errorState.attempts[0].outcome).toBe("error");
+    expect(errorState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "本轮出错中断" });
+    expect(errorState.items.filter((i) => i.role === "outcome")).toHaveLength(1);
+
+    const canceled = stream();
+    canceled.s.beginRun(1);
+    canceled.s.pushEvent(1, { type: "toolCall", id: "c1", name: "exec", display: "ls", seq: 1 });
+    canceled.s.pushEvent(1, { type: "canceled", message: "已停止本轮", seq: 3 });
+    const cancelFiller = canceled.s.pushEvent(1, { type: "steered", text: "补充", seq: 2 });
+    expect(cancelFiller.accepted).toBe(false);
+    expect(cancelFiller.terminal).toBe("canceled");
+    const cancelState = canceled.s.getState();
+    expect(cancelState.attempts[0].outcome).toBe("canceled");
+    expect(cancelState.items.find((i) => i.role === "tool")).toMatchObject({ summary: "已停止" });
+    expect(cancelState.items.filter((i) => i.role === "outcome")).toHaveLength(1);
+  });
+
   it("cancelRun settles open tools so no spinner survives the stop", () => {
     const { s } = stream();
     s.beginRun(1);
@@ -374,6 +421,96 @@ describe("AiSidebar stream recovery", () => {
     const secondCall = mocks.chat.mock.calls[1][0] as { message: string; conversationId: string };
     expect(secondCall.message).toBe("重启服务");
     expect(secondCall.conversationId).toBe("conv-1");
+  });
+
+  it("settles when a rejected filler drains the buffered terminal during replay", async () => {
+    await send("你好");
+    emit({ type: "delta", text: "半截", seq: 1 });
+    act(runFrames);
+    mocks.runEvents.mockResolvedValue([{ type: "steered", text: "补充", seq: 2 }]);
+
+    emit({ type: "done", answer: "答案", seq: 3 });
+    await flushReplay();
+
+    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1);
+    expect(useUi.getState().aiBusy).toBe(false);
+    const text = textOf(view!);
+    expect(text).toContain("本轮已完成");
+    expect(text.split("本轮已完成").length - 1).toBe(1);
+  });
+
+  it("settles when a rejected filler arrives live after a buffered terminal", async () => {
+    await send("你好");
+    emit({ type: "delta", text: "半截", seq: 1 });
+    act(runFrames);
+    mocks.runEvents.mockResolvedValue([]);
+
+    emit({ type: "done", answer: "答案", seq: 3 });
+    await flushReplay();
+    expect(useUi.getState().aiBusy).toBe(true);
+
+    emit({ type: "steered", text: "补充", seq: 2 });
+    await flush();
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(textOf(view!)).toContain("本轮已完成");
+    expect(textOf(view!).split("本轮已完成").length - 1).toBe(1);
+  });
+
+  it("keeps an honest syncing state on replay failure and succeeds on retry", async () => {
+    await send("你好");
+    emit({ type: "delta", text: "一", seq: 1 });
+    act(runFrames);
+    mocks.runEvents
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue([{ type: "delta", text: "二", seq: 2 }]);
+
+    emit({ type: "delta", text: "三", seq: 3 });
+    await flushReplay();
+    expect(textOf(view!)).toContain("正在补齐");
+    expect(textOf(view!)).not.toContain("输出无缺失");
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+    });
+    await flushReplay();
+
+    expect(textOf(view!)).toContain("已补齐");
+    act(runFrames);
+    expect(textOf(view!)).toContain("一二三");
+    expect(useUi.getState().aiBusy).toBe(true);
+  });
+
+  it("shows a retryable failure state after repeated replay failures and recovers via the manual action", async () => {
+    await send("你好");
+    emit({ type: "delta", text: "一", seq: 1 });
+    act(runFrames);
+    mocks.runEvents.mockRejectedValue(new Error("offline"));
+
+    emit({ type: "delta", text: "三", seq: 3 });
+    await flushReplay();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+    });
+    await flushReplay();
+
+    const failedText = textOf(view!);
+    expect(failedText).toContain("补齐失败");
+    expect(failedText).not.toContain("输出无缺失");
+    expect(mocks.runEvents).toHaveBeenCalledTimes(3);
+
+    mocks.runEvents.mockResolvedValue([{ type: "delta", text: "二", seq: 2 }]);
+    clickButton(view!.container, "重新补齐");
+    await flushReplay();
+    expect(textOf(view!)).toContain("已补齐");
+    act(runFrames);
+    expect(textOf(view!)).toContain("一二三");
   });
 
   it("replays an interrupted run's canceled terminal without error styling", async () => {

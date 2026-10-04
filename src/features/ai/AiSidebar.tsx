@@ -98,18 +98,19 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<{
     generation: number;
-    phase: "syncing" | "synced";
+    phase: "syncing" | "synced" | "failed";
     count: number;
   } | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
-  const catchupChains = useRef(new Map<number, Promise<number>>());
+  const catchupChains = useRef(new Map<number, Promise<{ applied: number; failed: boolean }>>());
   const runChannelRef = useRef<{
     channel: IpcChannel<unknown>;
     dispose: () => void;
     generation: number;
   } | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredChannelRef = useRef<{
     channel: IpcChannel<unknown>;
     offReopen: () => void;
@@ -136,9 +137,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   useEffect(
     () => () => {
       if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
+      if (resyncTimerRef.current !== null) clearTimeout(resyncTimerRef.current);
     },
     [],
   );
+  const clearResyncTimer = () => {
+    if (resyncTimerRef.current !== null) {
+      clearTimeout(resyncTimerRef.current);
+      resyncTimerRef.current = null;
+    }
+  };
   const markSyncing = (generation: number) => {
     if (syncTimerRef.current !== null) {
       clearTimeout(syncTimerRef.current);
@@ -152,6 +160,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     );
     if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => setSyncNotice(null), 2400);
+  };
+  const markSyncFailed = (generation: number) => {
+    setSyncNotice((prev) =>
+      prev && prev.generation === generation ? { generation, phase: "failed", count: 0 } : prev,
+    );
   };
   const activeGeneration = activeRunRef.current?.generation ?? null;
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
@@ -273,37 +286,65 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const live = runChannelRef.current;
     if (live && live.generation === generation) live.dispose();
     disposeRestoredChannel();
+    clearResyncTimer();
+    setSyncNotice((prev) => (prev && prev.generation === generation ? null : prev));
   };
 
-  const replayRunEvents = async (generation: number, jobId: string): Promise<number> => {
+  const replayRunEvents = async (
+    generation: number,
+    jobId: string,
+  ): Promise<{ applied: number; failed: boolean }> => {
     try {
       const events = await aiApi.runEvents(jobId, stream.lastSeq(generation));
       let applied = 0;
       for (const event of events) {
         const result = stream.pushEvent(generation, event as Record<string, unknown>);
         if (result.accepted) applied += 1;
-        if (result.terminal && result.accepted) {
+        if (result.terminal) {
           settleRestoredRun(generation);
         }
       }
       stream.flush();
-      return applied;
+      return { applied, failed: false };
     } catch {
-      return 0;
+      return { applied: 0, failed: true };
     }
   };
 
-  const catchUpRunEvents = (generation: number, jobId: string): Promise<number> => {
+  const catchUpRunEvents = (
+    generation: number,
+    jobId: string,
+  ): Promise<{ applied: number; failed: boolean }> => {
     const chains = catchupChains.current;
-    const prev = chains.get(generation) ?? Promise.resolve(0);
-    const next = prev.catch(() => 0).then(() => replayRunEvents(generation, jobId));
+    const prev = chains.get(generation) ?? Promise.resolve({ applied: 0, failed: false });
+    const next = prev
+      .catch(() => ({ applied: 0, failed: true }))
+      .then(() => replayRunEvents(generation, jobId));
     chains.set(generation, next);
     return next;
   };
 
-  const resyncRun = (generation: number, jobId: string) => {
+  const RESYNC_MAX_ATTEMPTS = 2;
+
+  const resyncRun = (generation: number, jobId: string, attempt = 0) => {
+    clearResyncTimer();
     markSyncing(generation);
-    void catchUpRunEvents(generation, jobId).then((count) => markSynced(generation, count));
+    void catchUpRunEvents(generation, jobId).then((result) => {
+      if (!result.failed) {
+        markSynced(generation, result.applied);
+        return;
+      }
+      const current = activeRunRef.current;
+      if (!isCurrentAiRun(current, generation) || current.settled) return;
+      if (attempt >= RESYNC_MAX_ATTEMPTS) {
+        markSyncFailed(generation);
+        return;
+      }
+      resyncTimerRef.current = setTimeout(
+        () => resyncRun(generation, jobId, attempt + 1),
+        1000 * (attempt + 1),
+      );
+    });
     void replayHitl(generation, jobId);
   };
 
@@ -381,21 +422,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (activeRunRef.current && !activeRunRef.current.settled) return;
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
-      const terminalEvent = type === "done" || type === "error" || type === "canceled";
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, generation) || current.settled) {
-        if (terminalEvent) disposeRestoredChannel();
+        if (type === "done" || type === "error" || type === "canceled") disposeRestoredChannel();
         return;
       }
       const result = stream.pushEvent(generation, ev);
       if (result.gap) resyncRun(generation, resumable.run.id);
-      if (!terminalEvent) return;
-      if (result.accepted) {
-        settleRestoredRun(generation);
-        if (type === "error") pushToast("error", `AI: ${ev.message as string}`);
-      } else {
-        disposeRestoredChannel();
-      }
+      if (!result.terminal) return;
+      settleRestoredRun(generation);
+      if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
     });
     const offReopen = onChannelReopen(channel, () => {
       const current = activeRunRef.current;
@@ -430,20 +466,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
-      const terminalEvent = type === "done" || type === "error" || type === "canceled";
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation) || current.settled) {
-        if (terminalEvent) dispose();
+        if (type === "done" || type === "error" || type === "canceled") dispose();
         return;
       }
       const result = stream.pushEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
-      if (!terminalEvent) return;
-      if (result.accepted) {
-        activeRunRef.current = settleAiRun(current);
-        if (!current.spawnPending) setAiBusy(false);
-        if (type === "error") pushToast("error", `AI: ${ev.message as string}`);
-      }
+      if (!result.terminal) return;
+      activeRunRef.current = settleAiRun(current);
+      if (!current.spawnPending) setAiBusy(false);
+      if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
       dispose();
     });
 
@@ -788,21 +821,18 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
-      const terminalEvent = type === "done" || type === "error" || type === "canceled";
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation) || current.settled) {
-        if (terminalEvent) disposeChannel(channel);
+        if (type === "done" || type === "error" || type === "canceled") disposeChannel(channel);
         return;
       }
       const result = stream.pushEvent(run.generation, ev);
-      if (!terminalEvent) return;
-      if (result.accepted) {
-        holder.settled = true;
-        activeRunRef.current = settleAiRun(current);
-        if (!current.spawnPending) setAiBusy(false);
-        clearTakeover();
-        if (type === "error") pushToast("error", `接管：${ev.message as string}`);
-      }
+      if (!result.terminal) return;
+      holder.settled = true;
+      activeRunRef.current = settleAiRun(current);
+      if (!current.spawnPending) setAiBusy(false);
+      clearTakeover();
+      if (type === "error" && result.accepted) pushToast("error", `接管：${ev.message as string}`);
       disposeChannel(channel);
     });
 
@@ -1221,6 +1251,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <>
                 <IconLoader size={10} className="animate-spin text-amber-300/80" />
                 <span className="truncate">连接已恢复，正在补齐输出…</span>
+              </>
+            ) : syncNotice.phase === "failed" ? (
+              <>
+                <IconAlert size={10} className="shrink-0 text-red-300" />
+                <span className="truncate">补齐失败，输出可能不完整</span>
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
+                  onClick={() => {
+                    const current = activeRunRef.current;
+                    if (current?.jobId) resyncRun(current.generation, current.jobId);
+                  }}
+                >
+                  重新补齐
+                </button>
               </>
             ) : (
               <span className="truncate text-[var(--nx-fg-tertiary)]">
