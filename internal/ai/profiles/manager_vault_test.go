@@ -478,18 +478,6 @@ func TestLegacyMigrationScrubsDatabaseFileBytes(t *testing.T) {
 	scanFileBytes(t, path, "lg-remnant-token-xyz")
 }
 
-type flakyDeleteStore struct {
-	*store.Store
-	failures int32
-}
-
-func (s *flakyDeleteStore) SettingDelete(ctx context.Context, key string) error {
-	if atomic.AddInt32(&s.failures, -1) >= 0 {
-		return errors.New("injected delete failure")
-	}
-	return s.Store.SettingDelete(ctx, key)
-}
-
 type flakyScrubStore struct {
 	*store.Store
 	failures int32
@@ -634,44 +622,217 @@ func TestScrubBusyCheckpointIsRetried(t *testing.T) {
 	scanFileBytes(t, path, "retry-busy-token-xyz")
 }
 
-func TestLegacyDeleteFailureIsRetried(t *testing.T) {
+func TestLegacyDeleteBusyIsRetried(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
-	base, err := store.Open(ctx, path)
+	database, err := store.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = base.Close() })
-	database := &flakyDeleteStore{Store: base, failures: 1}
+	t.Cleanup(func() { _ = database.Close() })
 	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"retry-delete-token-xyz","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
 	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
 		t.Fatal(err)
 	}
-	credentialVault := vault.Load(ctx, database.Store)
+	credentialVault := vault.Load(ctx, database)
 	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
 		t.Fatal(err)
 	}
+	requireFileTokenPresent(t, path+"-wal", "retry-delete-token-xyz")
+	release := holdReadTransaction(t, database, profiles.LegacySettingKey)
+	defer release()
 
 	if _, err := profiles.NewManager(ctx, database); err != nil {
-		t.Fatal(err)
+		t.Fatalf("busy migration transaction must not fail startup: %v", err)
 	}
 	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
-		t.Fatalf("first startup must tolerate the injected delete failure: found=%v err=%v", found, err)
+		t.Fatalf("rolled-back transaction must keep the legacy row: found=%v err=%v", found, err)
 	}
+	if _, found, err := database.SettingGet(ctx, profiles.SettingKey); err != nil || found {
+		t.Fatalf("rolled-back transaction must not write ai.models: found=%v err=%v", found, err)
+	}
+	requireScrubPending(t, database, false)
 
+	release()
 	if _, err := profiles.NewManager(ctx, database); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
-		t.Fatalf("second startup must retry the legacy delete: found=%v err=%v", found, err)
+		t.Fatalf("second startup must complete the legacy delete: found=%v err=%v", found, err)
 	}
-	requireScrubPending(t, database.Store, false)
+	requireScrubPending(t, database, false)
 	scanFileBytes(t, path, "retry-delete-token-xyz")
 	scanFileBytes(t, path+"-wal", "retry-delete-token-xyz")
-	if err := base.Close(); err != nil {
+	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
 	scanFileBytes(t, path, "retry-delete-token-xyz")
+}
+
+func TestBusyMarkerWriteCannotBeFollowedByUnscrubbedLegacyDelete(t *testing.T) {
+	ctx := context.Background()
+	path, database, _ := openFileVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "current", "sk-current")
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"leftover-token-xyz","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+		t.Fatal(err)
+	}
+	requireFileTokenPresent(t, path+"-wal", "leftover-token-xyz")
+	release := holdReadTransaction(t, database, profiles.LegacySettingKey)
+	defer release()
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatalf("busy marker transaction must not fail startup: %v", err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
+		t.Fatal("busy marker write must abort the legacy delete")
+	}
+	requireScrubPending(t, database, false)
+	requireFileTokenPresent(t, path+"-wal", "leftover-token-xyz")
+
+	release()
+	reloaded, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("retry must complete the legacy delete: found=%v err=%v", found, err)
+	}
+	requireScrubPending(t, database, false)
+	requireClientKey(t, reloaded, "sk-current")
+	scanFileBytes(t, path, "leftover-token-xyz")
+	scanFileBytes(t, path+"-wal", "leftover-token-xyz")
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "leftover-token-xyz")
+}
+
+func TestFinalizeKeepsPendingWhileKeyedLegacyRowLives(t *testing.T) {
+	ctx := context.Background()
+	_, database, _ := openFileVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "current", "sk-current")
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"leftover-token-xyz","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	release := holdReadTransaction(t, database, profiles.LegacySettingKey)
+	defer release()
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatalf("busy marker transaction must not fail startup: %v", err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
+		t.Fatal("keyed legacy row must survive the busy transaction")
+	}
+	requireScrubPending(t, database, true)
+
+	release()
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("Reload must retry the legacy delete: found=%v err=%v", found, err)
+	}
+	requireScrubPending(t, database, false)
+}
+
+func TestLegacyLeftoverDoesNotResurrectDeletedProfile(t *testing.T) {
+	ctx := context.Background()
+	path, database, _ := openFileVaultStore(t)
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"resurrect-token-xyz","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, profiles.SettingKey, `{"version":1,"profiles":[],"activeId":null}`); err != nil {
+		t.Fatal(err)
+	}
+	requireFileTokenPresent(t, path+"-wal", "resurrect-token-xyz")
+
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(manager.Overview().Profiles); got != 0 {
+		t.Fatalf("leftover legacy must not be imported into an existing ai.models: %d profiles", got)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("leftover legacy row must be deleted: found=%v err=%v", found, err)
+	}
+	requireScrubPending(t, database, false)
+
+	saveKeyedProfile(t, manager, "fresh", "sk-fresh")
+	if _, err := manager.Delete(ctx, manager.Overview().Profiles[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(manager.Overview().Profiles); got != 0 {
+		t.Fatalf("deleted profile resurrected on Reload: %d profiles", got)
+	}
+	scanFileBytes(t, path, "resurrect-token-xyz")
+	scanFileBytes(t, path+"-wal", "resurrect-token-xyz")
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "resurrect-token-xyz")
+}
+
+func TestReloadAdoptsExternalEncryptedSave(t *testing.T) {
+	ctx := context.Background()
+	_, database, _ := openFileVaultStore(t)
+	writer, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(reader.Overview().Profiles); got != 0 {
+		t.Fatalf("reader starts with %d profiles", got)
+	}
+	saveKeyedProfile(t, writer, "external", "sk-external")
+	if err := reader.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(reader.Overview().Profiles); got != 1 {
+		t.Fatalf("Reload did not adopt the external save: %d profiles", got)
+	}
+	requireClientKey(t, reader, "sk-external")
+}
+
+func TestReloadAdoptsExternalSaveWithoutVault(t *testing.T) {
+	ctx := context.Background()
+	database := openStore(t)
+	writer, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, writer, "external", "sk-plaintext")
+	if err := reader.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(reader.Overview().Profiles); got != 1 {
+		t.Fatalf("Reload did not adopt the external save: %d profiles", got)
+	}
+	requireClientKey(t, reader, "sk-plaintext")
 }
 
 func TestScrubFailureIsRetried(t *testing.T) {

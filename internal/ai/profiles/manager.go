@@ -58,10 +58,6 @@ type settingDeleter interface {
 	SettingDelete(ctx context.Context, key string) error
 }
 
-type manySetter interface {
-	SettingSetMany(ctx context.Context, values map[string]string) error
-}
-
 type spaceScrubber interface {
 	ScrubFreeSpace(ctx context.Context) error
 }
@@ -97,10 +93,11 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 }
 
 func (m *Manager) applyLoadResult(ctx context.Context, result loadResult) error {
-	remnantRisk := result.migratable || result.fromLegacy || result.legacyLeftover
+	deleteLegacy := result.fromLegacy || result.legacyLeftover
+	remnantRisk := result.migratable || deleteLegacy
 	savedOK := false
 	if result.needsSave {
-		saved, err := save(ctx, m.settings, m.protector, result.state, remnantRisk)
+		saved, err := save(ctx, m.settings, m.protector, result.state, remnantRisk, deleteLegacy)
 		if err != nil {
 			if !isVaultLocked(err) && !store.IsBusy(err) {
 				return err
@@ -110,18 +107,34 @@ func (m *Manager) applyLoadResult(ctx context.Context, result loadResult) error 
 			savedOK = true
 		}
 	} else if remnantRisk {
-		if err := setScrubPending(ctx, m.settings); err != nil && !store.IsBusy(err) {
+		if err := m.migrationMarkerAndLegacyDelete(ctx, deleteLegacy); err != nil && !store.IsBusy(err) {
 			return err
 		}
 	}
-	if (result.fromLegacy && savedOK) || result.legacyLeftover {
-		if deleter, ok := m.settings.(settingDeleter); ok {
-			if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil && !store.IsBusy(err) {
-				slog.Warn("删除旧版 AI 模型设置失败，将在下次启动重试", "error", err)
-			}
-		}
+	if !savedOK {
+		m.state = result.state
 	}
 	return m.finalizeScrub(ctx)
+}
+
+func (m *Manager) migrationMarkerAndLegacyDelete(ctx context.Context, deleteLegacy bool) error {
+	if tx, ok := m.settings.(migrationTx); ok {
+		values := map[string]string{ScrubPendingSetting: "1"}
+		var deletes []string
+		if deleteLegacy {
+			deletes = append(deletes, LegacySettingKey)
+		}
+		return tx.SettingSetManyDelete(ctx, values, deletes...)
+	}
+	if err := setScrubPending(ctx, m.settings); err != nil {
+		return err
+	}
+	if deleteLegacy {
+		if deleter, ok := m.settings.(settingDeleter); ok {
+			return deleter.SettingDelete(ctx, LegacySettingKey)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) reloadOnUnlock() {
@@ -224,8 +237,9 @@ func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
 		next.Profiles = append(next.Profiles, profile)
 	}
 	next.ensureActive()
-	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || legacyKeyedRowPresent(ctx, m.settings))
-	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk)
+	keyedLegacy := m.protector != nil && legacyKeyedRowPresent(ctx, m.settings)
+	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || keyedLegacy)
+	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk, keyedLegacy)
 	if err != nil {
 		return m.state.overview(), err
 	}
@@ -251,8 +265,9 @@ func (m *Manager) Activate(ctx context.Context, id string) (Overview, error) {
 	}
 	next := m.state.clone()
 	next.ActiveID = cloneString(&id)
-	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || legacyKeyedRowPresent(ctx, m.settings))
-	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk)
+	keyedLegacy := m.protector != nil && legacyKeyedRowPresent(ctx, m.settings)
+	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || keyedLegacy)
+	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk, keyedLegacy)
 	if err != nil {
 		return m.state.overview(), err
 	}
@@ -278,8 +293,9 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	next.Profiles = profiles
 	next.ensureActive()
-	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || legacyKeyedRowPresent(ctx, m.settings))
-	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk)
+	keyedLegacy := m.protector != nil && legacyKeyedRowPresent(ctx, m.settings)
+	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || keyedLegacy)
+	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk, keyedLegacy)
 	if err != nil {
 		return m.state.overview(), err
 	}
@@ -302,10 +318,10 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 func (m *Manager) finalizeScrub(ctx context.Context) error {
 	pending, err := scrubPending(ctx, m.settings)
-	if err != nil {
+	if err != nil || !pending {
 		return err
 	}
-	if !pending {
+	if legacyKeyedRowPresent(ctx, m.settings) {
 		return nil
 	}
 	if err := scrubSettings(ctx, m.settings); err != nil {
@@ -350,9 +366,6 @@ func load(ctx context.Context, settings Settings, protector store.SecretProtecto
 		before, _ := json.Marshal(persisted)
 		persisted = persisted.normalized()
 		after, _ := json.Marshal(persisted)
-		if len(persisted.Profiles) == 0 && legacyUsable {
-			return legacyMigrationResult(legacy), nil
-		}
 		migratable := profileKeysMigratable(ctx, protector, &persisted)
 		return loadResult{
 			state: persisted, needsSave: !bytes.Equal(before, after) || migratable,
@@ -403,7 +416,11 @@ func profileKeysMigratable(ctx context.Context, protector store.SecretProtector,
 	return false
 }
 
-func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state, remnantRisk bool) (state, error) {
+type migrationTx interface {
+	SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) error
+}
+
+func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state, remnantRisk, deleteLegacy bool) (state, error) {
 	value = value.normalized()
 	if protector != nil {
 		for index := range value.Profiles {
@@ -422,13 +439,32 @@ func save(ctx context.Context, settings Settings, protector store.SecretProtecto
 	if err != nil {
 		return value, fmt.Errorf("encode AI profiles: %w", err)
 	}
-	if remnantRisk && protector != nil {
-		if many, ok := settings.(manySetter); ok {
-			return value, many.SettingSetMany(ctx, map[string]string{SettingKey: string(encoded), ScrubPendingSetting: "1"})
+	if protector != nil && (remnantRisk || deleteLegacy) {
+		values := map[string]string{SettingKey: string(encoded)}
+		if remnantRisk {
+			values[ScrubPendingSetting] = "1"
 		}
-		if err := setScrubPending(ctx, settings); err != nil {
+		var deletes []string
+		if deleteLegacy {
+			deletes = append(deletes, LegacySettingKey)
+		}
+		if tx, ok := settings.(migrationTx); ok {
+			return value, tx.SettingSetManyDelete(ctx, values, deletes...)
+		}
+		if remnantRisk {
+			if err := setScrubPending(ctx, settings); err != nil {
+				return value, err
+			}
+		}
+		if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
 			return value, err
 		}
+		if deleteLegacy {
+			if deleter, ok := settings.(settingDeleter); ok {
+				return value, deleter.SettingDelete(ctx, LegacySettingKey)
+			}
+		}
+		return value, nil
 	}
 	if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
 		return value, err

@@ -57,6 +57,38 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 	return nil
 }
 
+func (s *Store) SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) (returnErr error) {
+	if len(values) == 0 && len(deleteKeys) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() {
+		if returnErr != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	now := ids.NowMS()
+	for key, value := range values {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			key, value, now); err != nil {
+			return dbError(err)
+		}
+	}
+	for _, key := range deleteKeys {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key); err != nil {
+			return dbError(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
 func (s *Store) SettingDelete(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key)
 	if err != nil {

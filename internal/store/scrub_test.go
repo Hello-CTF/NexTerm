@@ -125,3 +125,26 @@ func TestScrubFreeSpaceBusyWithHeldReader(t *testing.T) {
 		t.Fatalf("database file mode = %o, want 600", info.Mode().Perm())
 	}
 }
+
+func TestSettingSetManyDeleteAtomicApply(t *testing.T) {
+	ctx := context.Background()
+	database := testStore(t)
+	if err := database.SettingSet(ctx, "legacy.key", "legacy-value"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSetManyDelete(ctx, map[string]string{"current.key": "current-value", "pending.key": "1"}, "legacy.key", "missing.key"); err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := database.SettingGet(ctx, "current.key"); err != nil || !found || got != "current-value" {
+		t.Fatalf("current.key = %q found=%v err=%v", got, found, err)
+	}
+	if got, found, err := database.SettingGet(ctx, "pending.key"); err != nil || !found || got != "1" {
+		t.Fatalf("pending.key = %q found=%v err=%v", got, found, err)
+	}
+	if _, found, err := database.SettingGet(ctx, "legacy.key"); err != nil || found {
+		t.Fatalf("legacy.key survived: found=%v err=%v", found, err)
+	}
+	if err := database.SettingSetManyDelete(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+}
