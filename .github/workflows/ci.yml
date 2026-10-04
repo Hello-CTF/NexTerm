@@ -181,6 +181,21 @@ jobs:
             target/e2e-sync/*.log
           if-no-files-found: error
 
+  windows-supervisor:
+    name: Windows native supervisor helper tests
+    needs: quality
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Vet the supervisor package on Windows
+        run: go vet -mod=readonly ./internal/supervisor/
+      - name: Run native Windows supervisor helper tests
+        run: go test -mod=readonly -count=1 ./internal/supervisor/
+
   browser:
     name: Real Chromium responsive and WS acceptance
     needs: quality

@@ -4,6 +4,7 @@ package supervisor
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -839,4 +840,208 @@ func TestPipeStreamCloseNoInflight(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Close without in-flight requests hung on a pipe stream")
 	}
+}
+
+const (
+	windowsHelperAppDirEnv   = "NEXTERM_SUPERVISOR_WINDOWS_APP_DIR"
+	windowsHelperAppReadyEnv = "NEXTERM_SUPERVISOR_WINDOWS_APP_READY"
+	windowsSecondUserName    = "nxsuphelper"
+	windowsSecondUserPass    = "NxSup!2026test"
+)
+
+func TestWindowsHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Cleanup(func() { killHelperProcessesWindows(t, stateDir) })
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWindowsHelperAppProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), windowsHelperAppDirEnv+"="+stateDir, windowsHelperAppReadyEnv+"="+readyFile)
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		if _, err := os.Stat(readyFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+			t.Fatalf("app process never became ready: %s", output.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("app process exit: %v\n%s", err, output.String())
+	}
+	sessionID, err := os.ReadFile(readyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	restarted, err := ConnectHelper(ctx, HelperConfig{StateDir: stateDir, SpawnTimeout: 15 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Spawned() {
+		t.Fatal("app restart spawned a second helper instead of reattaching")
+	}
+	infos, err := restarted.Client().List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != string(sessionID) || infos[0].Dead {
+		t.Fatalf("sessions after app exit = %+v", infos)
+	}
+	attachment, err := NewRemoteProvider(restarted.Client()).Attach(ctx, string(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = attachment.Close() }()
+	replayed := readPipeUntil(t, attachment, "win-app-input")
+	if count := strings.Count(string(replayed), "win-app-boot"); count != 1 {
+		t.Fatalf("boot marker replayed %d times: %q", count, replayed)
+	}
+	if _, err := attachment.Write([]byte("Write-Host win-app-post\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	readPipeUntil(t, attachment, "win-app-post")
+	if err := attachment.Resize(ctx, 100, 30); err != nil {
+		t.Fatal(err)
+	}
+	infos, err = restarted.Client().List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].Cols != 100 || infos[0].Rows != 30 {
+		t.Fatalf("resized session grid = %+v, want 100x30", infos)
+	}
+	if err := attachment.Kill(ctx); err != nil {
+		t.Fatal(err)
+	}
+	infos, err = restarted.Client().List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 0 {
+		t.Fatalf("session survived kill: %+v", infos)
+	}
+}
+
+func TestWindowsHelperAppProcess(t *testing.T) {
+	stateDir := os.Getenv(windowsHelperAppDirEnv)
+	if stateDir == "" {
+		t.Skip("windows helper app process")
+	}
+	ctx := context.Background()
+	helper, err := ConnectHelper(ctx, HelperConfig{StateDir: stateDir, SpawnTimeout: 60 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := NewRemoteProvider(helper.Client()).Create(ctx, base.DurableCreateOptions{
+		ID:      ids.New(),
+		Command: []string{"powershell.exe", "-NoLogo", "-NoProfile", "-Command", "Write-Host win-app-boot; Start-Sleep -Seconds 300"},
+		Env:     []string{"TERM=xterm-256color"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readPipeUntil(t, attachment, "win-app-boot")
+	if _, err := attachment.Write([]byte("Write-Host win-app-input\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	readPipeUntil(t, attachment, "win-app-input")
+	if err := os.WriteFile(os.Getenv(windowsHelperAppReadyEnv), []byte(attachment.ID()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Exit(0)
+}
+
+func TestStateDirDeniesSecondUser(t *testing.T) {
+	if err := exec.Command("net", "session").Run(); err != nil {
+		t.Skip("elevation is required for the second-user denial test")
+	}
+	_ = exec.Command("net", "user", windowsSecondUserName, "/delete").Run()
+	if output, err := exec.Command("net", "user", windowsSecondUserName, windowsSecondUserPass, "/add").CombinedOutput(); err != nil {
+		t.Skipf("cannot create the second test user: %v (%s)", err, output)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("net", "user", windowsSecondUserName, "/delete").Run()
+	})
+	base := `C:\Windows\Temp`
+	stateDir := filepath.Join(base, "nxsup-state-"+ids.New())
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
+	if err := ensurePrivateDir(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(stateDir, "session.json")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(base, "nxsup-control-"+ids.New()+".txt")
+	if err := os.WriteFile(shared, []byte("public"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(shared) })
+	sid, err := currentUserSIDString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantDACL(t, shared, "D:(A;;GA;;;SY)(A;;GA;;;WD)(A;;GA;;;"+sid+")")
+	if code := runAsSecondUser(t, "Get-Content -LiteralPath '"+shared+"' | Out-Null"); code != 0 {
+		t.Fatalf("control read as the second user = exit %d, want 0", code)
+	}
+	if code := runAsSecondUser(t, "Get-Content -LiteralPath '"+secret+"' | Out-Null"); code == 0 {
+		t.Fatal("second user read the private state file")
+	}
+	if code := runAsSecondUser(t, "Set-Content -LiteralPath '"+filepath.Join(stateDir, "hack.txt")+"' -Value x"); code == 0 {
+		t.Fatal("second user wrote into the private state directory")
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "hack.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("second-user write artifact present: %v", err)
+	}
+}
+
+func grantDACL(t *testing.T, path, sddl string) {
+	t.Helper()
+	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runAsSecondUser(t *testing.T, command string) int {
+	t.Helper()
+	encoded := base64.StdEncoding.EncodeToString(utf16LE("$ErrorActionPreference='Stop'\r\n" + command + "\r\nexit 0\r\n"))
+	wrapper := fmt.Sprintf("$pw = ConvertTo-SecureString '%s' -AsPlainText -Force; $cred = New-Object System.Management.Automation.PSCredential('%s', $pw); $p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-EncodedCommand','%s' -Credential $cred -Wait -PassThru -NoNewWindow -LoadUserProfile:$false; exit $p.ExitCode", windowsSecondUserPass, windowsSecondUserName, encoded)
+	output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", wrapper).CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		t.Fatalf("run as the second user: %v (%s)", err, output)
+	}
+	return 0
+}
+
+func utf16LE(value string) []byte {
+	encoded := make([]byte, 0, len(value)*2)
+	for _, character := range value {
+		encoded = append(encoded, byte(character), byte(character>>8))
+	}
+	return encoded
 }
