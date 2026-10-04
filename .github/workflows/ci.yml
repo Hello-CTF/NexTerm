@@ -52,7 +52,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           wails3 version
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
       - name: Install manifest verifier dependency
         run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
       - name: Verify the selected toolchain and modules
@@ -181,6 +181,33 @@ jobs:
             target/e2e-sync/*.log
           if-no-files-found: error
 
+  ssh-windows:
+    name: Windows SSH native tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Run the full SSH transport package
+        run: go test -mod=readonly -count=1 ./internal/transport/ssh
+      - name: Run SSH ProxyCommand native cases verbosely
+        run: go test -mod=readonly -count=1 -v -run 'TestSSHProxyCommandConnect|TestSSHProxyCommandCompositionWithJump|TestProxyCommandWindowsCloseKillsChildTree|TestProxyCommandLineKeepsPayloadVerbatim' ./internal/transport/ssh
+      - name: Old cmd.exe-only kill fails the tree test, new job kill passes
+        shell: bash
+        run: |
+          file=internal/transport/ssh/proxycommand_shell_windows.go
+          cp "$file" "$file.bak"
+          sed -i 's/windows\.TerminateJobObject(p\.job, 1)/windows.TerminateProcess(p.process, 1)/' "$file"
+          if go test -mod=readonly -count=1 -run 'TestProxyCommandWindowsCloseKillsChildTree' ./internal/transport/ssh; then
+            mv "$file.bak" "$file"
+            echo "old cmd.exe-only kill unexpectedly passed the tree test"
+            exit 1
+          fi
+          mv "$file.bak" "$file"
+          go test -mod=readonly -count=1 -run 'TestProxyCommandWindowsCloseKillsChildTree' ./internal/transport/ssh
+
   browser:
     name: Real Chromium responsive and WS acceptance
     needs: quality
@@ -199,7 +226,7 @@ jobs:
           go-version: 1.26.8
           cache: true
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
       - name: Require a real browser
         run: google-chrome --version
       - name: Run real-browser acceptance
