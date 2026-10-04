@@ -87,6 +87,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     credView: raw.credView === "json" ? "json" : raw.credView === "text" ? "text" : undefined,
     path: optStr(raw.path),
     closable: boolOr(raw.closable, true),
+    exited: raw.exited === true ? true : undefined,
   };
 }
 
@@ -302,13 +303,41 @@ export function mergeDirtyEditorTabs(next: PersistedLayout, current: Workspace[]
   return mergeLocalTabs(next, current, isDirtyFileEditor, true);
 }
 
+export function mergeExitedTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
+  const exitedIds = new Set<string>();
+  for (const w of current) {
+    for (const p of w.panes) {
+      for (const t of p.tabs) {
+        if (t.kind === "terminal" && t.exited === true) exitedIds.add(t.id);
+      }
+    }
+  }
+  if (exitedIds.size === 0) return next.workspaces;
+  let changed = false;
+  const workspaces = next.workspaces.map((w) => ({
+    ...w,
+    panes: w.panes.map((p) => ({
+      ...p,
+      tabs: p.tabs.map((t) => {
+        if (t.kind === "terminal" && !t.exited && exitedIds.has(t.id)) {
+          changed = true;
+          return { ...t, exited: true };
+        }
+        return t;
+      }),
+    })),
+  }));
+  return changed ? workspaces : next.workspaces;
+}
+
 function applyToStore(l: PersistedLayout) {
   applyingRemote = true;
   clearSaveTimer();
   try {
     const current = useUi.getState().workspaces;
     const withDead = mergeDeadTabs(l, current);
-    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withDead }, current);
+    const withExited = mergeExitedTabs({ ...l, workspaces: withDead }, current);
+    const merged = mergeDirtyEditorTabs({ ...l, workspaces: withExited }, current);
     useUi.setState({
       leftOpen: l.leftOpen,
       leftMode: l.leftMode,
