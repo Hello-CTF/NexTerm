@@ -73,6 +73,7 @@ func (m *Manager) Reconnect(ctx context.Context, id string) error {
 		_ = oldTransport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, reconnectingEvent)
+	m.transcriptEnded(id)
 
 	runCtx, cancel := context.WithCancel(reconnectCtx)
 	stop := context.AfterFunc(ctx, cancel)
@@ -260,6 +261,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	for _, channel := range opened {
 		_ = channel.Close()
 	}
+	m.transcriptStarted(reconnectCtx, session)
 	for _, control := range controls {
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}

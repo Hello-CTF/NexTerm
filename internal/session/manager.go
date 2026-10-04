@@ -24,13 +24,14 @@ type Manager struct {
 	closed      bool
 	started     bool
 
-	connector Connector
-	terminals TerminalFactory
-	durable   base.DurableProvider
-	bus       *hub.Hub
-	ownsBus   bool
-	emitter   Emitter
-	newID     func() string
+	connector   Connector
+	terminals   TerminalFactory
+	durable     base.DurableProvider
+	bus         *hub.Hub
+	ownsBus     bool
+	emitter     Emitter
+	transcripts TranscriptSink
+	newID       func() string
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
@@ -59,6 +60,7 @@ func NewManager(config Config) *Manager {
 		terminals:        config.Terminals,
 		durable:          config.Durable,
 		emitter:          config.Emitter,
+		transcripts:      config.Transcripts,
 		newID:            config.NewID,
 		idleTimeout:      config.IdleTimeout,
 		sweepInterval:    config.SweepInterval,
@@ -247,6 +249,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	session.mu.Unlock()
 	m.mu.Unlock()
 	m.emit(ctx, TopicSessionStatus, connectedEvent)
+	m.transcriptStarted(ctx, session)
 	return session, nil
 }
 
@@ -369,6 +372,7 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 		_ = transport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
+	m.transcriptEnded(id)
 	return nil
 }
 
@@ -446,6 +450,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 		_ = transport.Close()
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
+	m.transcriptEnded(id)
 	return nil
 }
 

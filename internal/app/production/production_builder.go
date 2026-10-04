@@ -160,10 +160,14 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	dockerService := config.Docker
 	emitter := session.AdaptEmitter(config.Config.Events)
+	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
+		Database: database, Logger: config.Config.Logger,
+	})
 	sessionManager = session.NewManager(session.Config{
-		Connector: connector,
-		Terminals: config.Terminals,
-		Durable:   durableProvider,
+		Connector:   connector,
+		Terminals:   config.Terminals,
+		Durable:     durableProvider,
+		Transcripts: transcriptWriter,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
@@ -193,6 +197,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
 		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
+		Transcripts: transcriptWriter,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
 		services.closeAIRuntime()

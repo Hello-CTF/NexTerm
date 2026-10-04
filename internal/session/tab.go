@@ -863,6 +863,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	}
 	tab.mu.Unlock()
 	tab.terminal.Feed(data)
+	m.transcriptOutput(tab, data)
 	tab.mu.Lock()
 	subscribers := make([]subscriber, 0, len(tab.subscribers))
 	for _, subscriber := range tab.subscribers {
