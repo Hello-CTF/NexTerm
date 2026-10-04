@@ -10,9 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/docker"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
@@ -344,6 +347,150 @@ func TestProductionSupervisorKeepsNonLocalTransportsNonDurable(t *testing.T) {
 	if info := requireSupervisorInfo(t, production.Services.Supervisor, localTabID); info.Dead {
 		t.Fatalf("local durable session is dead: %+v", info)
 	}
+}
+
+func TestProductionSupervisorActiveDockerExecDetachReattach(t *testing.T) {
+	factory := &bridgeTestFactory{}
+	execSession := newFakeStreamExecSession()
+	dockerService := docker.NewService(docker.StaticBackends{
+		SDKBackend:     fakeExecDockerBackend{session: execSession},
+		CommandBackend: fakeExecDockerBackend{session: execSession},
+	})
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{
+			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
+		},
+		DataDir: t.TempDir(), Desktop: true,
+		Docker: dockerService,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if production.Services.Supervisor == nil {
+		t.Fatal("supervisor is not composed")
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected := connectLocalDurableTest(t, production)
+
+	channelID := "supervisor-docker-channel"
+	execResponse := dispatchDurableTest(t, production, "docker_exec_attach", `{"args":{"sessionId":"`+connected.ID+`","containerId":"container-1","cols":80,"rows":24}}`, channelID, "client-a")
+	var streamID string
+	requireStoreTestResponse(t, execResponse, &streamID)
+	if len(streamID) != 32 {
+		t.Fatalf("docker stream id = %q, want 32 hex characters", streamID)
+	}
+	if ids.Valid(streamID) {
+		t.Fatal("docker stream id unexpectedly satisfies supervisor ids.Valid")
+	}
+
+	execSession.emit("docker-first-output\n")
+	waitForProductionOutput(t, factory.at(channelID, 0), "docker-first-output")
+
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+streamID+`","mode":"detach"}`, channelID, "client-a"))
+	execSession.emit("docker-background-output\n")
+
+	reattachChannel := "supervisor-docker-reattach"
+	reattachResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+streamID+`","replayBytes":1024}`, reattachChannel, "client-a")
+	var attached attachedTabDTO
+	requireStoreTestResponse(t, reattachResponse, &attached)
+	if attached.TabID != streamID || attached.SessionID != connected.ID || attached.Exited {
+		t.Fatalf("reattached docker tab = %+v", attached)
+	}
+	waitForProductionOutput(t, factory.at(reattachChannel, 0), "docker-background-output")
+
+	writeDurableTestInput(t, production, streamID, "docker-takeover-input", "client-a")
+	if !execSession.received("docker-takeover-input\r") {
+		t.Fatal("terminal_write did not reach the docker exec session after reattach")
+	}
+	if _, found := supervisorInfoByID(production.Services.Supervisor, streamID); found {
+		t.Fatal("docker stream id entered the durable provider")
+	}
+
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+streamID+`","clientId":"client-a"}`, "", "client-a"))
+}
+
+type fakeStreamExecSession struct {
+	mu     sync.Mutex
+	buf    []byte
+	writes [][]byte
+	signal chan struct{}
+	done   chan struct{}
+	once   sync.Once
+}
+
+func newFakeStreamExecSession() *fakeStreamExecSession {
+	return &fakeStreamExecSession{signal: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+func (s *fakeStreamExecSession) Read(p []byte) (int, error) {
+	for {
+		s.mu.Lock()
+		if len(s.buf) > 0 {
+			count := copy(p, s.buf)
+			s.buf = s.buf[count:]
+			s.mu.Unlock()
+			return count, nil
+		}
+		s.mu.Unlock()
+		select {
+		case <-s.signal:
+		case <-s.done:
+			return 0, io.EOF
+		}
+	}
+}
+
+func (s *fakeStreamExecSession) emit(text string) {
+	s.mu.Lock()
+	s.buf = append(s.buf, text...)
+	s.mu.Unlock()
+	select {
+	case s.signal <- struct{}{}:
+	default:
+	}
+}
+
+func (s *fakeStreamExecSession) Write(data []byte) (int, error) {
+	s.mu.Lock()
+	s.writes = append(s.writes, append([]byte(nil), data...))
+	s.mu.Unlock()
+	return len(data), nil
+}
+
+func (s *fakeStreamExecSession) received(text string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Contains(string(bytes.Join(s.writes, nil)), text)
+}
+
+func (s *fakeStreamExecSession) Close() error {
+	s.once.Do(func() { close(s.done) })
+	return nil
+}
+
+func (s *fakeStreamExecSession) CloseWrite() error                        { return nil }
+func (s *fakeStreamExecSession) Resize(context.Context, uint, uint) error { return nil }
+func (s *fakeStreamExecSession) IsTTY() bool                              { return true }
+func (s *fakeStreamExecSession) Wait(ctx context.Context) (int, error) {
+	select {
+	case <-s.done:
+		return 0, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+type fakeExecDockerBackend struct {
+	fakeDockerBackend
+	session *fakeStreamExecSession
+}
+
+func (b fakeExecDockerBackend) OpenExec(context.Context, docker.ExecOptions) (docker.ExecSession, error) {
+	return b.session, nil
 }
 
 func newSupervisorTestProduction(t *testing.T, dataDir string, factory *bridgeTestFactory, events ipc.Emitter) *Production {

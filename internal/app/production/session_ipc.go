@@ -273,12 +273,12 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err == nil {
 					return attachedSessionTab(info), nil
 				}
-				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
-					if s.docker != nil {
-						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
-							return s.attachDocker(ctx, call, input.TabID)
-						}
+				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
+					if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
+						return s.attachDocker(ctx, call, input.TabID)
 					}
+				}
+				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
 					return attachedTabDTO{}, terminalIPCError(s.durableErr)
 				}
 				if errors.Is(err, session.ErrTabNotFound) && s.durableAvailable {
@@ -287,15 +287,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return recovered, nil
 					}
 					s.bridge.Unbridge(call.Channel.ID)
-					if !errors.Is(recoveryErr, durable.ErrNotFound) {
-						return attachedTabDTO{}, terminalIPCError(recoveryErr)
-					}
-					if s.docker != nil {
-						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
-							return s.attachDocker(ctx, call, input.TabID)
-						}
-						return attachedTabDTO{}, terminalIPCError(recoveryErr)
-					}
 					return attachedTabDTO{}, terminalIPCError(recoveryErr)
 				}
 				if !errors.Is(err, session.ErrTabNotFound) || s.docker == nil {
