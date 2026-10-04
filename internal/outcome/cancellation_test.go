@@ -116,11 +116,6 @@ func TestDefiniteResultWinsWhenEffectReturnsAfterCancellation(t *testing.T) {
 	}
 }
 
-// TestCancellationAfterLostClaimReturnsRunningRecord reproduces the
-// interleaving where caller A reserves a pending record, caller B acquires
-// that reservation and persists running, and A then observes cancellation.
-// A's terminal compare-and-swap must lose to B, and A must receive B's live
-// running record rather than its own unpersisted not_attempted proposal.
 func TestCancellationAfterLostClaimReturnsRunningRecord(t *testing.T) {
 	store := newMemoryStore()
 	auditor := &memoryAuditor{}
@@ -185,10 +180,6 @@ func TestCancellationAfterLostClaimReturnsRunningRecord(t *testing.T) {
 	}
 }
 
-// TestCancellationAfterLostClaimReturnsTerminalRecord covers the same
-// interleaving with B already finished before A's canceled finalization
-// reloads: A must receive the actual terminal outcome, not its own
-// unpersisted not_attempted proposal.
 func TestCancellationAfterLostClaimReturnsTerminalRecord(t *testing.T) {
 	store := newMemoryStore()
 	auditor := &memoryAuditor{}
@@ -250,10 +241,6 @@ func TestCancellationAfterLostClaimReturnsTerminalRecord(t *testing.T) {
 	}
 }
 
-// TestCancellationReloadFailureReturnsNoFabricatedRecord covers the lost-CAS
-// interleaving when the detached reload itself fails or times out: the
-// durable state is unknown, so the caller must receive no record at all
-// rather than the unpersisted not_attempted proposal.
 func TestCancellationReloadFailureReturnsNoFabricatedRecord(t *testing.T) {
 	getErr := errors.New("outcome store get failed")
 	tests := []struct {

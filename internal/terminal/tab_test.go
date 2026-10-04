@@ -102,8 +102,6 @@ func TestTailLinesDecodesCurrentEncoding(t *testing.T) {
 	t.Cleanup(tab.Close)
 	raw := encodeForTest(t, simplifiedchinese.GBK, "第一行\r\n第二行\r\n")
 	tab.Feed(raw)
-	// Tail includes the whole visible grid, so ask for enough lines to
-	// reach the content above the empty bottom rows.
 	tail := tab.TailLines(30)
 	joined := strings.Join(tail, "\n")
 	if !strings.Contains(joined, "第一行") || !strings.Contains(joined, "第二行") {
@@ -166,9 +164,7 @@ func TestRecordingLifecycle(t *testing.T) {
 	if !bytes.Equal(data, []byte("OLDabcdef")) {
 		t.Fatalf("file = %q", data)
 	}
-	// Direct Feed bypasses recording (it is the state-only path).
 	tab.Feed([]byte("zzz"))
-	// Restarting resets the counter and keeps appending.
 	if err := tab.StartRecording(path); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +228,6 @@ func TestDSRAndQueryResponses(t *testing.T) {
 	if got := expect("DSR"); !bytes.Equal(got, []byte("\x1b[1;4R")) {
 		t.Fatalf("DSR = %q", got)
 	}
-	// Split across chunks: the VT parser is incremental too.
 	tab.Feed([]byte("\x1b["))
 	tab.Feed([]byte("6n"))
 	if got := expect("split DSR"); !bytes.Equal(got, []byte("\x1b[1;4R")) {
@@ -249,7 +244,7 @@ func TestCloseIdempotentAndFeedAfterClose(t *testing.T) {
 	tab := NewTab("t", "s", 80, 24, UTF8)
 	tab.Feed([]byte("before"))
 	tab.Close()
-	tab.Close() // idempotent
+	tab.Close()
 	tab.Feed([]byte("after"))
 	if got := tab.Dump(0); !bytes.Equal(got, []byte("before")) {
 		t.Fatalf("dump = %q", got)
@@ -272,8 +267,6 @@ func TestScreenHistory(t *testing.T) {
 	if len(hist) != 3 {
 		t.Fatalf("history = %q", hist)
 	}
-	// The final CRLF scrolls once more: the grid shows 46..49 plus an
-	// empty cursor row, so history ends at 45.
 	want := []string{"line-43", "line-44", "line-45"}
 	for i := range want {
 		if hist[i] != want[i] {
@@ -292,7 +285,6 @@ func TestSnapshotLinesSemantics(t *testing.T) {
 	if len(snap.Lines) == 0 || snap.Lines[0] != "ab" {
 		t.Fatalf("lines should trim trailing spaces: %q", snap.Lines)
 	}
-	// A final newline does not produce an additional empty line.
 	for i, l := range snap.Lines {
 		if i > 0 && l != "" {
 			t.Fatalf("unexpected content at %d: %q", i, l)

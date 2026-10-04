@@ -144,9 +144,6 @@ type dispatcher struct {
 	files     *fakeFS
 }
 
-// newDispatcher wires a tool registry to a real migrated SQLite database:
-// the outcome ledger persists through the 0004 schema and its auditor writes
-// into the same audit_log the audit query reads.
 func newDispatcher(t *testing.T, auditor func(*store.Store) outcome.Auditor) *dispatcher {
 	t.Helper()
 	storage, sqliteStore := openMigratedStore(t)

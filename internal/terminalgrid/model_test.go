@@ -159,7 +159,7 @@ func TestHiddenCancelsWorkAndResumeFlushesLatest(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("hiding did not cancel the in-flight request")
 	}
-	inFlight.finish(nil) // A late success must not commit after the mode fence.
+	inFlight.finish(nil)
 	transport.assertNoCall(t)
 	snapshot := model.Snapshot()
 	if snapshot.CommittedGrid.Valid() || snapshot.LastGoodGrid != initial || snapshot.DesiredGrid != final {

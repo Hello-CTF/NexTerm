@@ -23,7 +23,7 @@ import (
 
 func TestOpenSSHInterop(t *testing.T) {
 	if os.Getenv("NEXTERM_SSH_INTEROP") != "1" {
-		t.Skip("opt-in OpenSSH/SFTP interoperability skipped: set NEXTERM_SSH_INTEROP=1 plus NEXTERM_SSH_TEST_HOST, USER, HOST_KEY, and PASSWORD or KEY as documented in doc.go")
+		t.Skip("opt-in OpenSSH/SFTP interoperability skipped: set NEXTERM_SSH_INTEROP=1 plus NEXTERM_SSH_TEST_HOST, USER, HOST_KEY, and PASSWORD or KEY")
 	}
 	host, portText, err := net.SplitHostPort(os.Getenv("NEXTERM_SSH_TEST_HOST"))
 	if err != nil {

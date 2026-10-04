@@ -92,9 +92,6 @@ func BenchmarkOutputVisibleFanout(b *testing.B) {
 	}
 }
 
-// buildAcceptanceWorkload reproduces the documented Rust benchmark:
-// 100 MiB of pseudo-random text lines with a periodic ESC[2J ESC[H
-// fullscreen refresh (htop-like), fed in 64 KiB chunks.
 func buildAcceptanceWorkload(t *testing.T, enc Encoding) (chunks [][]byte, total int) {
 	t.Helper()
 	rng := rand.New(rand.NewSource(7))
@@ -121,12 +118,6 @@ func buildAcceptanceWorkload(t *testing.T, enc Encoding) (chunks [][]byte, total
 	return chunks, total
 }
 
-// TestThroughputAcceptanceWorkload ports the Rust acceptance benchmark:
-// 100 MiB UTF-8 and GBK at 120x40, hidden tab, full
-// transcode + VT + raw-ring path. The pre-existing budget is >=10 MB/s;
-// Rust references are 43.4/39.0 MB/s (Windows) and 149.3/149.7
-// MB/s (acceptance baseline host). Ring retention and screen validity
-// are asserted exactly as in the Rust benchmark.
 func TestThroughputAcceptanceWorkload(t *testing.T) {
 	if testing.Short() || raceDetectorEnabled {
 		t.Skip("throughput test skipped in -short and -race")
@@ -136,7 +127,7 @@ func TestThroughputAcceptanceWorkload(t *testing.T) {
 			chunks, total := buildAcceptanceWorkload(t, enc)
 			tab := NewTab("bench", "s", 120, 40, enc)
 			t.Cleanup(tab.Close)
-			tab.SetVisible(false) // hidden-tab worst path, no frontend consumer
+			tab.SetVisible(false)
 			start := time.Now()
 			for i, chunk := range chunks {
 				if i%16 == 0 {
@@ -145,7 +136,7 @@ func TestThroughputAcceptanceWorkload(t *testing.T) {
 				tab.Feed(chunk)
 			}
 			elapsed := time.Since(start)
-			tab.Feed([]byte("final-marker")) // non-empty bottom row for line assertions
+			tab.Feed([]byte("final-marker"))
 			mbps := float64(total) / elapsed.Seconds() / 1024 / 1024
 			t.Logf("%s: %d MiB in %v => %.1f MiB/s (%.1f MB/s); Rust refs 43.4/39.0 and 149.3/149.7 MB/s",
 				enc, total/1024/1024, elapsed, mbps, float64(total)/elapsed.Seconds()/1e6)

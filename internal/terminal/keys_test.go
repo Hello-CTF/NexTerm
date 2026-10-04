@@ -51,9 +51,6 @@ func TestEncodeSendUnknownAndCase(t *testing.T) {
 }
 
 func TestEncodeSendAngleBracketQuirk(t *testing.T) {
-	// A '>' before the next '<' disables tag parsing for the remainder;
-	// everything goes out literally. This matches the historical
-	// implementation and is a feature of the syntax, not sanitization.
 	if got := EncodeSend("a>b<tab>", false); !bytes.Equal(got, []byte("a>b<tab>")) {
 		t.Fatalf("got %q", got)
 	}
@@ -62,7 +59,6 @@ func TestEncodeSendAngleBracketQuirk(t *testing.T) {
 	}
 }
 
-// TestKeyTableFull pins every entry of the key encoding table.
 func TestKeyTableFull(t *testing.T) {
 	want := map[string]string{
 		"enter": "\r", "return": "\r", "linefeed": "\n", "lf": "\n",

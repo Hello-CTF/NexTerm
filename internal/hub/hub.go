@@ -142,8 +142,6 @@ func (p *Producer) send(ctx context.Context, frame Frame) error {
 	return p.channel.sendProducer(ctx, frame, p.generation)
 }
 
-// CloseGracefully rejects new sends and closes the channel after its accepted
-// frames have been received. Close can still force-close it during the drain.
 func (p *Producer) CloseGracefully() error {
 	p.gracefulOnce.Do(func() {
 		p.hub.mu.Lock()
@@ -164,7 +162,6 @@ func (p *Producer) CloseGracefully() error {
 	return nil
 }
 
-// Close immediately drops queued frames and invalidates the current receiver.
 func (p *Producer) Close() error {
 	p.forceOnce.Do(func() {
 		p.hub.mu.Lock()
@@ -197,8 +194,6 @@ func (h *Hub) DiscardPending(channelID string) error {
 	return nil
 }
 
-// CloseChannel drops queued frames and invalidates the current receiver. A
-// later send may deliberately create a fresh pending channel with the same ID.
 func (h *Hub) CloseChannel(channelID string) error {
 	if channelID == "" {
 		return ErrInvalidChannel

@@ -49,14 +49,13 @@ func TestModeTrackerCursorAndApplicationModes(t *testing.T) {
 
 func TestModeTrackerIgnoresNonPrivateAndStrings(t *testing.T) {
 	m := NewModeTracker()
-	m.Feed([]byte("\x1b[25l"))                // not private: no effect
-	m.Feed([]byte("\x1b[>2004h"))             // different private marker
-	m.Feed([]byte("\x1b]0;title[?2004h\x07")) // OSC payload
-	m.Feed([]byte("\x1bP1;2z[?25l\x1b\\"))    // DCS payload
+	m.Feed([]byte("\x1b[25l"))
+	m.Feed([]byte("\x1b[>2004h"))
+	m.Feed([]byte("\x1b]0;title[?2004h\x07"))
+	m.Feed([]byte("\x1bP1;2z[?25l\x1b\\"))
 	if !m.CursorVisible() || m.BracketedPaste() {
 		t.Fatalf("false mode trigger: visible=%v paste=%v", m.CursorVisible(), m.BracketedPaste())
 	}
-	// The tracker still follows real sequences afterwards.
 	m.Feed([]byte("\x1b[?2004h"))
 	if !m.BracketedPaste() {
 		t.Fatal("real DECSET after strings should still work")
@@ -66,12 +65,12 @@ func TestModeTrackerIgnoresNonPrivateAndStrings(t *testing.T) {
 func TestModeTrackerRISAndAbort(t *testing.T) {
 	m := NewModeTracker()
 	m.Feed([]byte("\x1b[?25l\x1b[?2004h\x1b[?1h"))
-	m.Feed([]byte("\x1bc")) // RIS
+	m.Feed([]byte("\x1bc"))
 	if !m.CursorVisible() || m.BracketedPaste() || m.ApplicationCursor() {
 		t.Fatal("RIS should reset modes")
 	}
 	m.Feed([]byte("\x1b[?200"))
-	m.Feed([]byte{0x18}) // CAN aborts the sequence
+	m.Feed([]byte{0x18})
 	m.Feed([]byte("4h"))
 	if m.BracketedPaste() {
 		t.Fatal("aborted sequence must not set modes")

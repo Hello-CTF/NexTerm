@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// Ledger coordinates durable execution records and their audit finalization.
-// It contains no execution retry loop.
 type Ledger struct {
 	store        Store
 	auditor      Auditor
@@ -36,7 +34,6 @@ func New(options Options) (*Ledger, error) {
 	return &Ledger{store: options.Store, auditor: options.Auditor, auditTimeout: timeout, now: now}, nil
 }
 
-// Get returns the current record for an idempotence key.
 func (l *Ledger) Get(ctx context.Context, key string) (Record, error) {
 	if strings.TrimSpace(key) == "" {
 		return Record{}, fmt.Errorf("%w: idempotence key is required", ErrInvalidRequest)
@@ -48,26 +45,16 @@ func (l *Ledger) Get(ctx context.Context, key string) (Record, error) {
 	return cloneRecord(record), nil
 }
 
-// Reject records an authorization rejection without invoking an effect.
 func (l *Ledger) Reject(ctx context.Context, request Request, reason error) (Record, error) {
 	record, err := l.recordWithoutAttempt(ctx, request, OutcomeRejected, reason)
 	return record, errors.Join(reason, err)
 }
 
-// NotAttempted records that no external effect was invoked.
 func (l *Ledger) NotAttempted(ctx context.Context, request Request, reason error) (Record, error) {
 	record, err := l.recordWithoutAttempt(ctx, request, OutcomeNotAttempted, reason)
 	return record, errors.Join(reason, err)
 }
 
-// Execute reserves the request, persists the running transition, and invokes
-// effect once for that reservation. A duplicate terminal key returns its
-// existing record without invoking effect or appending another audit record.
-// A duplicate pending key may acquire the reservation through the same
-// compare-and-swap transition used by its original caller. When cancellation
-// finalization loses that compare-and-swap race, the current stored record is
-// returned instead of the unpersisted proposal; if the stored record cannot
-// be reloaded, no record is returned.
 func (l *Ledger) Execute(ctx context.Context, request Request, effect Effect) (Record, error) {
 	if effect == nil {
 		return Record{}, fmt.Errorf("%w: effect is required", ErrInvalidRequest)
@@ -206,11 +193,6 @@ func (l *Ledger) persistTerminalAndAudit(ctx context.Context, record Record, exp
 	return l.finalizeAudit(ctx, record)
 }
 
-// resolveTerminalConflict reloads the current record after a lost terminal
-// compare-and-swap so the caller receives the durable state instead of the
-// unpersisted proposal. A finished record is the actual outcome; a record
-// still in flight resolves to ErrInProgress. When the reload itself fails,
-// the durable state is unknown, so no record is returned at all.
 func (l *Ledger) resolveTerminalConflict(ctx context.Context, record Record, persistErr error) (Record, error) {
 	reloadCtx, cancel := l.detachedContext(ctx)
 	stored, err := l.store.Get(reloadCtx, record.IdempotenceKey)
@@ -258,9 +240,6 @@ func (l *Ledger) finalizeAudit(ctx context.Context, record Record) (Record, erro
 	return record, errors.Join(auditErr, statusErr)
 }
 
-// resolveClaimConflict reloads the current record after a lost running-state
-// compare-and-swap. When the reload itself fails, the durable state is
-// unknown, so no record is returned at all.
 func (l *Ledger) resolveClaimConflict(ctx context.Context, record Record, request Request, claimErr error) (Record, error) {
 	stored, err := l.store.Get(ctx, record.IdempotenceKey)
 	if err != nil {

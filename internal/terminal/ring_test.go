@@ -52,21 +52,21 @@ func TestRingDumpRespectsMax(t *testing.T) {
 
 func TestRingReplayFrom(t *testing.T) {
 	r := NewRing(8)
-	r.Push([]byte("0123456789")) // retained: 2..9, base=2, total=10
+	r.Push([]byte("0123456789"))
 
 	data, start := r.ReplayFrom(4, 0)
 	if start != 4 || !bytes.Equal(data, []byte("456789")) {
 		t.Fatalf("replay(4) start=%d data=%q", start, data)
 	}
-	data, start = r.ReplayFrom(0, 0) // clamped to base
+	data, start = r.ReplayFrom(0, 0)
 	if start != 2 || !bytes.Equal(data, []byte("23456789")) {
 		t.Fatalf("replay(0) start=%d data=%q", start, data)
 	}
-	data, start = r.ReplayFrom(6, 2) // max caps forward
+	data, start = r.ReplayFrom(6, 2)
 	if start != 6 || !bytes.Equal(data, []byte("67")) {
 		t.Fatalf("replay(6,2) start=%d data=%q", start, data)
 	}
-	data, start = r.ReplayFrom(99, 0) // beyond total: empty at total
+	data, start = r.ReplayFrom(99, 0)
 	if start != 10 || len(data) != 0 {
 		t.Fatalf("replay(99) start=%d data=%q", start, data)
 	}
@@ -85,9 +85,6 @@ func TestRingClearKeepsCounters(t *testing.T) {
 	}
 }
 
-// TestRingAgainstReferenceModel fuzzes (deterministically) against a
-// trivially correct slice-based model, exercising wraparound, growth and
-// oversized pushes.
 func TestRingAgainstReferenceModel(t *testing.T) {
 	for _, cap := range []int{1, 2, 3, 7, 8, 16, 64, 1000} {
 		t.Run(fmt.Sprintf("cap%d", cap), func(t *testing.T) {

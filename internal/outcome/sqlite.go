@@ -9,15 +9,10 @@ import (
 	"time"
 )
 
-// SQLiteStore is the durable Store backed by the application's SQLite
-// database. The schema is created by migration 0004 (outcome_record).
 type SQLiteStore struct {
 	db *sql.DB
 }
 
-// NewSQLiteStore wraps an open database handle, typically the application
-// store's DB. The caller owns the handle's lifecycle. The returned store is
-// safe for concurrent use.
 func NewSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
 	if db == nil {
 		return nil, errors.New("outcome: db is required")
@@ -28,9 +23,6 @@ func NewSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
 const outcomeColumns = `idempotence_key, authorization_id, kind, canonical_arguments, state, outcome,
 	exit_code, result_error, audit_state, audit_error, audit_completed_at, revision, created_at, started_at, finished_at`
 
-// Reserve inserts the record or reports the already-stored record for the
-// idempotence key. The insert is a single statement, so two concurrent
-// reservations of the same key cannot both succeed.
 func (s *SQLiteStore) Reserve(ctx context.Context, record Record) (Record, bool, error) {
 	result, err := s.db.ExecContext(ctx, `INSERT INTO outcome_record (`+outcomeColumns+`)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotence_key) DO NOTHING`,
@@ -55,9 +47,6 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotence_key) DO NOTHING`,
 	return stored, false, nil
 }
 
-// Update replaces the record only when the stored revision equals
-// expectedRevision. A lost race returns ErrRevisionConflict; a missing key
-// returns ErrNotFound.
 func (s *SQLiteStore) Update(ctx context.Context, record Record, expectedRevision uint64) error {
 	if record.Revision != expectedRevision+1 {
 		return ErrRevisionConflict
@@ -93,7 +82,6 @@ func (s *SQLiteStore) Update(ctx context.Context, record Record, expectedRevisio
 	}
 }
 
-// Get returns the current record for the idempotence key or ErrNotFound.
 func (s *SQLiteStore) Get(ctx context.Context, key string) (Record, error) {
 	record, err := scanOutcomeRecord(s.db.QueryRowContext(ctx, `SELECT `+outcomeColumns+` FROM outcome_record WHERE idempotence_key=?`, key))
 	if errors.Is(err, sql.ErrNoRows) {

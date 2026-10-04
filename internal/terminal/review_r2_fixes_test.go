@@ -15,8 +15,6 @@ func screenRow(t *testing.T, tab *Tab, row int) string {
 	return lines[row]
 }
 
-// The review's concrete example: a wide pair is overwritten on its left
-// half; the orphaned continuation must not shift later text left.
 func TestWideBaseOverwriteReviewExample(t *testing.T) {
 	tab := NewTab("t", "s", 20, 3, UTF8)
 	t.Cleanup(tab.Close)
@@ -33,8 +31,6 @@ func TestWideBaseOverwriteReviewExample(t *testing.T) {
 	}
 }
 
-// Overwriting the continuation of a wide pair blanks the base (no
-// phantom wide rune).
 func TestWideContinuationOverwrite(t *testing.T) {
 	tab := NewTab("t", "s", 20, 3, UTF8)
 	t.Cleanup(tab.Close)
@@ -75,8 +71,6 @@ func TestWidePairCellEditing(t *testing.T) {
 	}
 }
 
-// Even if an orphan slips past every mutation guard, String must emit a
-// blank for it instead of shifting later text.
 func TestRowStringOrphanContStaysAligned(t *testing.T) {
 	r := newRow(4)
 	r.cells[0].r = 'x'
@@ -87,8 +81,6 @@ func TestRowStringOrphanContStaysAligned(t *testing.T) {
 	}
 }
 
-// Huge SU/SD counts are clamped to the region height: bounded work, no
-// synthetic blank flooding of the history ring.
 func TestScrollHugeCountBounded(t *testing.T) {
 	tab := NewTab("t", "s", 20, 24, UTF8)
 	t.Cleanup(tab.Close)
@@ -105,7 +97,6 @@ func TestScrollHugeCountBounded(t *testing.T) {
 		t.Fatalf("history = %d lines", len(got))
 	}
 
-	// SD likewise: bounded, no history writes, content scrolled away.
 	tab.Feed([]byte("\x1b[1000000000T"))
 	if got := tab.ScrollbackLen(); got != 24 {
 		t.Fatalf("scrollback after SD = %d", got)
@@ -115,8 +106,6 @@ func TestScrollHugeCountBounded(t *testing.T) {
 	}
 }
 
-// Within a scroll region, huge counts only rotate the region; rows
-// outside and history stay untouched.
 func TestScrollHugeCountInsideRegion(t *testing.T) {
 	tab := NewTab("t", "s", 20, 8, UTF8)
 	t.Cleanup(tab.Close)
@@ -132,7 +121,6 @@ func TestScrollHugeCountInsideRegion(t *testing.T) {
 	tab.Feed([]byte("\x1b[r"))
 }
 
-// Per-cell combining storage is capped; raw replay stays lossless.
 func TestCombiningCapBoundedMemory(t *testing.T) {
 	tab := NewTab("t", "s", 20, 3, UTF8)
 	t.Cleanup(tab.Close)
@@ -151,14 +139,11 @@ func TestCombiningCapBoundedMemory(t *testing.T) {
 	if len(cell.comb) != maxCombiningRunes {
 		t.Fatalf("comb len = %d, want cap %d", len(cell.comb), maxCombiningRunes)
 	}
-	// More zero-width input still does not grow the cell. It also goes
-	// into the raw stream, so include it in the lossless expectation.
 	extra := []byte("́́́")
 	tab.Feed(extra)
 	if len(cell.comb) != maxCombiningRunes {
 		t.Fatalf("comb grew past cap: %d", len(cell.comb))
 	}
-	// Raw ring and replay are byte-exact despite the cell cap.
 	wantRaw := append(bytes.Clone(raw), extra...)
 	if got := tab.Dump(0); !bytes.Equal(got, wantRaw) {
 		t.Fatalf("raw dump mismatch: got %d bytes want %d", len(got), len(wantRaw))
@@ -167,7 +152,6 @@ func TestCombiningCapBoundedMemory(t *testing.T) {
 	if start != 0 || !bytes.Equal(replay, wantRaw) {
 		t.Fatal("replay not lossless")
 	}
-	// The screen shows the base plus exactly the capped marks.
 	want := "e" + strings.Repeat("́", maxCombiningRunes)
 	if got := screenRow(t, tab, 0); got != want {
 		t.Fatalf("row = %q, want %q", got, want)

@@ -1,15 +1,5 @@
 package terminal
 
-// ModeTracker follows DEC private modes on the decoded output stream:
-// application cursor keys (?1), cursor visibility (?25) and bracketed
-// paste (?2004). The VT library does not export these, so they are tracked
-// here with a small stream parser. Sequences split across chunks are
-// handled by the persistent state machine, not by tail buffers.
-//
-// OSC/DCS/SOS/PM/APC strings are skipped so mode-looking bytes inside
-// them never trigger false transitions. RIS (ESC c) resets the modes.
-//
-// ModeTracker is stateful and not safe for concurrent use.
 type ModeTracker struct {
 	state         byte
 	private       bool
@@ -25,18 +15,15 @@ const (
 	modeEsc
 	modeCSI
 	modeOSC
-	modeString    // DCS/SOS/PM/APC: ST-terminated
-	modeStringEsc // ESC seen inside OSC/string; maybe ST
+	modeString
+	modeStringEsc
 	modeOSCEsc
 )
 
-// NewModeTracker returns a tracker with power-on defaults: cursor visible,
-// application cursor and bracketed paste off.
 func NewModeTracker() *ModeTracker {
 	return &ModeTracker{state: modeGround, cursorVisible: true}
 }
 
-// Reset restores power-on defaults (RIS).
 func (m *ModeTracker) Reset() {
 	m.state = modeGround
 	m.params = m.params[:0]
@@ -46,16 +33,12 @@ func (m *ModeTracker) Reset() {
 	m.bracketed = false
 }
 
-// CursorVisible reports DECSET ?25 state.
 func (m *ModeTracker) CursorVisible() bool { return m.cursorVisible }
 
-// ApplicationCursor reports DECSET ?1 (DECCKM) state.
 func (m *ModeTracker) ApplicationCursor() bool { return m.appCursor }
 
-// BracketedPaste reports DECSET ?2004 state.
 func (m *ModeTracker) BracketedPaste() bool { return m.bracketed }
 
-// Feed consumes decoded terminal output.
 func (m *ModeTracker) Feed(p []byte) {
 	for _, b := range p {
 		m.advance(b)
@@ -78,41 +61,35 @@ func (m *ModeTracker) advance(b byte) {
 			m.state = modeOSC
 		case 'P', 'X', '^', '_':
 			m.state = modeString
-		case 'c': // RIS: full reset
+		case 'c':
 			m.Reset()
 		case 0x1b:
-			// Stay in escape state.
 		default:
-			// Two-byte escape (ESC 7, ESC 8, ESC M, charset
-			// selection with one final byte, ...). Charset
-			// designation ESC ( X has an extra byte; treating X
-			// as ground text does not affect mode tracking.
 			m.state = modeGround
 		}
 	case modeCSI:
 		switch {
 		case b == 0x1b:
 			m.state = modeEsc
-		case b == 0x18 || b == 0x1a: // CAN/SUB abort
+		case b == 0x18 || b == 0x1a:
 			m.state = modeGround
-		case b >= 0x30 && b <= 0x3f: // parameter bytes
+		case b >= 0x30 && b <= 0x3f:
 			if !m.intermediate && len(m.params) < 128 {
 				if b == '?' && len(m.params) == 0 {
 					m.private = true
 				}
 				m.params = append(m.params, b)
 			}
-		case b >= 0x20 && b <= 0x2f: // intermediate bytes
+		case b >= 0x20 && b <= 0x2f:
 			m.intermediate = true
-		case b >= 0x40 && b <= 0x7e: // final byte
+		case b >= 0x40 && b <= 0x7e:
 			m.dispatch(b)
 			m.state = modeGround
 		default:
-			// C0 controls inside CSI are executed and ignored here.
 		}
 	case modeOSC:
 		switch b {
-		case 0x07: // BEL terminates OSC
+		case 0x07:
 			m.state = modeGround
 		case 0x1b:
 			m.state = modeOSCEsc
@@ -121,10 +98,9 @@ func (m *ModeTracker) advance(b byte) {
 		}
 	case modeOSCEsc, modeStringEsc:
 		switch b {
-		case '\\': // ST
+		case '\\':
 			m.state = modeGround
 		case 0x1b:
-			// Stay: another ESC, still waiting for ST.
 		default:
 			m.state = modeGround
 		}
@@ -162,9 +138,6 @@ func (m *ModeTracker) dispatch(final byte) {
 	}
 }
 
-// parseParams splits semicolon-separated CSI parameters. Empty parameters
-// are skipped (they mean "default", which for these modes is 0 and does
-// not match any tracked mode).
 func parseParams(p []byte) []int {
 	var out []int
 	n, has := 0, false
@@ -179,7 +152,6 @@ func parseParams(p []byte) []int {
 			}
 			n, has = 0, false
 		default:
-			// Non-numeric parameter bytes (":", ...): stop.
 			return out
 		}
 	}

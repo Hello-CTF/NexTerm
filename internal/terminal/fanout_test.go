@@ -23,7 +23,6 @@ func TestFanoutTwoSubscribersSameOutput(t *testing.T) {
 	if !bytes.Equal(a.Bytes(), frame) || !bytes.Equal(b.Bytes(), frame) {
 		t.Fatalf("a=%q b=%q", a.Bytes(), b.Bytes())
 	}
-	// Ordered per client across frames.
 	f.Send(context.Background(), []byte("2"))
 	f.Send(context.Background(), []byte("3"))
 	if !bytes.Equal(a.Bytes(), append(append([]byte{}, frame...), []byte("23")...)) {
@@ -56,7 +55,6 @@ func TestFanoutFailingSinkDetached(t *testing.T) {
 	if !bytes.Equal(good.Bytes(), []byte("x")) {
 		t.Fatalf("good = %q", good.Bytes())
 	}
-	// All sinks failing -> false and empty set.
 	f.Detach("good")
 	f.Attach("bad2", &memSink{err: errors.New("gone")})
 	if f.Send(context.Background(), []byte("y")) {
@@ -100,8 +98,6 @@ func TestFanoutDetachAll(t *testing.T) {
 	}
 }
 
-// Interrupted clients are detached (replay on re-attach restores their
-// stream); they must never silently miss a frame and then continue.
 func TestFanoutCancellationDetachesInterrupted(t *testing.T) {
 	f := NewFanout()
 	blocking := SinkFunc(func(ctx context.Context, data []byte) error {
@@ -122,9 +118,6 @@ func TestFanoutCancellationDetachesInterrupted(t *testing.T) {
 		t.Fatalf("interrupted sink retained: count = %d", f.Count())
 	}
 
-	// With a healthy sink alongside the blocked one, every retained
-	// client has the complete sequence; detached ones receive nothing
-	// more until they re-attach.
 	g := NewFanout()
 	g.Attach("block", blocking)
 	good := &memSink{}

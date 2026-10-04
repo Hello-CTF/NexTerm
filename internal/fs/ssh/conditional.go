@@ -15,41 +15,15 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// The hooks let tests inject adversarial external mutations around the
-// final check, including after it and immediately before the commit. They
-// are nil in production.
 var (
 	conditionalPreVerifyHook func()
 	conditionalPreCommitHook func()
 )
 
-// conditionalLink is the atomic no-clobber commit primitive. Tests wrap it
-// to inject post-commit response loss and determinate server failures.
 var conditionalLink = func(client *sftp.Client, oldname, newname string) error {
 	return client.Link(oldname, newname)
 }
 
-// WriteFileVersion implements conditional.Writer over the SFTP protocol
-// only, without shell commands.
-//
-// A conditional create stages the content in an exclusively created
-// same-directory temporary file and publishes it through the
-// hardlink@openssh.com extension: an atomic operation that fails instead of
-// overwriting if the path appeared at any moment before the commit.
-// Existence is established with Lstat alone, so any occupied path — file,
-// directory, symlink, readable or not — is a version mismatch.
-//
-// An existing-file replacement cannot honour the contract: the protocol has
-// neither a compare-and-commit operation nor file locks that exclude
-// non-cooperating writers between the final snapshot and an unconditional
-// rename, so it fails with base.ErrUnsupported before any mutation.
-//
-// A failed commit is classified by protocol proof, never by inspecting the
-// pathname afterwards: a server status reply proves non-commit and yields a
-// determinate error (a version mismatch when the path is occupied), while
-// any other failure keeps *conditional.IndeterminateError, because the link
-// may already have committed and current-state reads, failed or not, cannot
-// rewrite that history. The operation is never retried.
 func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -103,15 +77,8 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 	}
 	if err := conditionalLink(f.client, temporary, remotePath); err != nil {
 		if !sftpFailureProvenByServer(err) {
-			// No protocol-level proof of non-commit exists, and no later
-			// path inspection can supply it: the link may have committed
-			// before the response was lost, whatever the target looks
-			// like now. Stay indeterminate and never retry.
 			return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, err)}
 		}
-		// The server's own status reply proves the link did not happen,
-		// so a determinate outcome is truthful; an occupied path is the
-		// conflicting version the caller must re-read.
 		if occupied, statErr := f.lstatOccupied(remotePath); statErr == nil && occupied {
 			return remoteAlreadyExists(expected)
 		}
@@ -122,11 +89,6 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 	return nil
 }
 
-// sftpFailureProvenByServer reports whether err is the server's own status
-// reply to the failed operation, which is the only protocol-level proof
-// that the commit did not happen. pkg/sftp normalises status replies to
-// *sftp.StatusError, os.ErrNotExist or os.ErrPermission; io.EOF is
-// deliberately not accepted because it also occurs on transport failure.
 func sftpFailureProvenByServer(err error) bool {
 	var status *sftp.StatusError
 	if errors.As(err, &status) {
@@ -135,8 +97,6 @@ func sftpFailureProvenByServer(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission)
 }
 
-// lstatOccupied reports whether anything exists at remotePath without
-// opening it, so unreadable files still count as occupied.
 func (f *FS) lstatOccupied(remotePath string) (bool, error) {
 	_, err := f.client.Lstat(remotePath)
 	if err == nil {
@@ -152,8 +112,6 @@ func remoteAlreadyExists(expected conditional.Expectation) error {
 	return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
 }
 
-// uploadTemporary stages new content in an exclusively created
-// same-directory temporary file.
 func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (temporary string, err error) {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {

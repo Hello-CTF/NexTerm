@@ -24,7 +24,6 @@ func TestOutputVisibleImmediateDelivery(t *testing.T) {
 	if !bytes.Equal(sink.Bytes(), raw) {
 		t.Fatalf("sink = %q", sink.Bytes())
 	}
-	// Raw bytes reach the sink untouched; the screen sees plain text.
 	if !bytes.Equal(tab.Dump(0), raw) {
 		t.Fatalf("ring = %q", tab.Dump(0))
 	}
@@ -57,7 +56,6 @@ func TestOutputHiddenBatching(t *testing.T) {
 	if !bytes.Equal(sink.Bytes(), []byte("ab")) {
 		t.Fatalf("batch = %q", sink.Bytes())
 	}
-	// The ring and screen saw the bytes immediately, without waiting.
 	if !bytes.Equal(tab.Dump(0), []byte("ab")) {
 		t.Fatalf("ring = %q", tab.Dump(0))
 	}
@@ -70,17 +68,12 @@ func TestOutputHiddenBatchMaxFlushesImmediately(t *testing.T) {
 	o.Attach("a", sink)
 	o.SetVisible(false)
 	ctx := context.Background()
-	// Seed a full batch directly: feeding a MiB through the VT would
-	// take longer than the 50ms timer and make this test a race between
-	// the two (both correct) flush triggers.
 	o.chunkMu.Lock()
 	o.pending = bytes.Repeat([]byte{'x'}, HiddenBatchMax)
 	o.chunkMu.Unlock()
 	if err := o.Chunk(ctx, []byte("y")); err != nil {
 		t.Fatal(err)
 	}
-	// Crossing the max flushed synchronously inside Chunk: exactly one
-	// frame with the seeded batch plus the new chunk, in order.
 	if len(sink.Frames()) != 1 || sink.Len() != HiddenBatchMax+1 {
 		t.Fatalf("frames=%d bytes=%d", len(sink.Frames()), sink.Len())
 	}
@@ -101,7 +94,6 @@ func TestOutputVisibleAgainFlushesPromptly(t *testing.T) {
 	}
 	o.SetVisible(true)
 	waitFor(t, "visibility flush", func() bool { return sink.Len() == 1 })
-	// After the flush, visible chunks go straight through.
 	if err := o.Chunk(context.Background(), []byte("y")); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +157,6 @@ func TestOutputThrottlePauseResumeAndCancel(t *testing.T) {
 		t.Fatalf("sink = %q", sink.Bytes())
 	}
 
-	// Cancellation unblocks a throttled Chunk with the ctx error.
 	o.Inflight().Add(InflightPause + 1000)
 	cctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -202,7 +193,6 @@ func TestOutputAttachReplayNoGapNoDuplicate(t *testing.T) {
 	if err := o.AttachReplay(ctx, "a", sink, replay); err != nil {
 		t.Fatal(err)
 	}
-	// Attach is atomic w.r.t. chunks: LatestSeq now equals the dump point.
 	seq := tab.LatestSeq()
 	<-producerDone
 	waitFor(t, "live frames drained", func() bool {
@@ -251,7 +241,6 @@ func TestOutputAttachFromSequence(t *testing.T) {
 	if !bytes.Equal(sink.Bytes(), []byte("456789X")) {
 		t.Fatalf("sink = %q", sink.Bytes())
 	}
-	// A position beyond the stream replays nothing; only live frames.
 	sinkC := &memSink{}
 	next, attached, err = o.AttachFrom(ctx, "c", sinkC, 999, 0)
 	if err != nil || next != 11 || !attached {
@@ -262,8 +251,6 @@ func TestOutputAttachFromSequence(t *testing.T) {
 	}
 }
 
-// A bounded replay must not attach live before the client caught up:
-// bytes between the replay end and the live head may never be skipped.
 func TestOutputAttachFromBoundedReplayCatchUp(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
@@ -298,8 +285,6 @@ func TestOutputAttachFromBoundedReplayCatchUp(t *testing.T) {
 	if err := o.Chunk(ctx, []byte("X")); err != nil {
 		t.Fatal(err)
 	}
-	// The full stream, including the previously skipped-middle bytes and
-	// the live frame, in order, without gaps or duplicates.
 	if !bytes.Equal(sink.Bytes(), []byte("0123456789X")) {
 		t.Fatalf("sink = %q", sink.Bytes())
 	}

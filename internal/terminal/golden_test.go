@@ -16,12 +16,6 @@ import (
 	"golang.org/x/text/encoding/traditionalchinese"
 )
 
-// Golden tests are Go-self-consistent: fixtures pin the observable
-// behavior of this implementation (screen, modes, history, raw bytes),
-// and a differential pass proves the result does not depend on how the
-// input stream is chunked. Raw-byte correctness is pinned by the dump
-// hash, which is independent of the VT layer.
-
 var updateGolden = flag.Bool("update", false, "regenerate golden fixtures")
 
 type goldenOp struct {
@@ -125,7 +119,7 @@ func goldenScenarios(t *testing.T) map[string]goldenScenario {
 		}},
 		"latin1-session": {cols: 80, rows: 24, enc: Latin1, ops: []goldenOp{
 			feedOp(latin1("café €99 hotel\r\n")),
-			feedOp(string([]byte{'a', 0x81, 'b', 0xFF, '\r', '\n'})), // undefined bytes pinned
+			feedOp(string([]byte{'a', 0x81, 'b', 0xFF, '\r', '\n'})),
 		}},
 		"modes-bracketed": {cols: 80, rows: 24, enc: UTF8, ops: []goldenOp{
 			feedOp("\x1b[?2004h"),
@@ -139,10 +133,10 @@ func goldenScenarios(t *testing.T) map[string]goldenScenario {
 			feedOp("a\tb\tc\r\n"),
 			feedOp("backspace-xy\b\bZ\r\n"),
 			feedOp("cr-overwrite\rNEW\r\n"),
-			feedOp("\x1b[2;5r"), // scroll region rows 2..5
+			feedOp("\x1b[2;5r"),
 			feedOp("\x1b[5;1Hregion-bottom\r\n"),
-			feedOp("\x1b[2L\x1b[1M\x1b[r"),    // IL/DL then reset region
-			feedOp("\x1b]0;title[?2004h\x07"), // OSC payload: no mode change
+			feedOp("\x1b[2L\x1b[1M\x1b[r"),
+			feedOp("\x1b]0;title[?2004h\x07"),
 			feedOp("osc-done\x1b[3D\x1b[P!\r\n"),
 			feedOp("end"),
 		}},
@@ -239,8 +233,6 @@ func TestGoldenScreens(t *testing.T) {
 				t.Errorf("golden mismatch for %s (review and rerun with -update if intentional)\ngot:\n%s", name, gotJSON)
 			}
 
-			// Differential: chunking must not change any observable
-			// result, including raw bytes and history.
 			for label, chunkFor := range map[string]func(int, []byte) [][]byte{
 				"1byte":  fixedChunks(1),
 				"3byte":  fixedChunks(3),
