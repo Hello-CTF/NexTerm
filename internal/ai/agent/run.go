@@ -235,17 +235,13 @@ func (r *Runner) initializeEino(current *job) error {
 		contextWindow = 32768
 	}
 	runtime := &einoRuntime{contextWindow: contextWindow}
-	compaction, err := newCompactionHandler(current.ctx, chatModel, contextWindow, func() {
+	compaction := newCompactionHandler(chatModel, contextWindow, func() {
 		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
 	})
+	messages := historyMessages(rows, current.id)
+	messages, err = compaction.compactHistory(current.ctx, messages)
 	if err != nil {
 		return err
-	}
-	messages := historyMessages(rows, current.id)
-	if _, fitted, err := compaction.BeforeModelRewriteState(current.ctx, &adk.ChatModelAgentState{Messages: messages}, nil); err != nil {
-		return err
-	} else {
-		messages = fitted.Messages
 	}
 	if r.config.Context != nil {
 		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
