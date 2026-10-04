@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -347,6 +348,51 @@ func TestProductionAssetProbeBatchValidation(t *testing.T) {
 	response = dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":`+string(payload)+`}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("oversized batch response = %+v", response)
+	}
+}
+
+func TestClampProbeTimeout(t *testing.T) {
+	tests := []struct {
+		timeoutMS int64
+		fallback  time.Duration
+		want      time.Duration
+	}{
+		{-5, 5 * time.Second, 5 * time.Second},
+		{0, 5 * time.Second, 5 * time.Second},
+		{1, 5 * time.Second, time.Millisecond},
+		{29999, 5 * time.Second, 29999 * time.Millisecond},
+		{30000, 5 * time.Second, 30 * time.Second},
+		{30001, 5 * time.Second, 30 * time.Second},
+		{10000000000000, 5 * time.Second, 30 * time.Second},
+		{math.MaxInt64, 10 * time.Second, 30 * time.Second},
+		{math.MinInt64, 10 * time.Second, 10 * time.Second},
+	}
+	for _, test := range tests {
+		if got := clampProbeTimeout(test.timeoutMS, test.fallback); got != test.want {
+			t.Fatalf("clampProbeTimeout(%d, %v) = %v, want %v", test.timeoutMS, test.fallback, got, test.want)
+		}
+	}
+}
+
+func TestProductionAssetProbeBatchTimeoutCap(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+	stalling := stallingProxyListener(t)
+	slowID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"proxy":"socks5://`+stalling.Addr().String()+`"}`)
+
+	started := time.Now()
+	response := dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":{"assetIds":["`+slowID+`"],"timeoutMs":9223372036854775807}}`)
+	elapsed := time.Since(started)
+	var batch assetProbeBatchDTO
+	requireStoreTestResponse(t, response, &batch)
+	if len(batch.Results) != 1 {
+		t.Fatalf("batch results = %+v", batch.Results)
+	}
+	result := batch.Results[0]
+	if result.Reachable || result.Kind != "timeout" {
+		t.Fatalf("capped probe result = %+v", result)
+	}
+	if elapsed < 30*time.Second || elapsed > 60*time.Second {
+		t.Fatalf("batch ended after %v, want the 30s cap", elapsed)
 	}
 }
 

@@ -142,20 +142,21 @@ func classifyDialError(host string, port int, err error) *ConnectError {
 	op := "dial"
 	proxy := ""
 	var proxyErr *proxyError
-	if errors.As(err, &proxyErr) {
+	proxied := errors.As(err, &proxyErr)
+	if proxied {
 		op = "proxy connect"
 		proxy = proxyErr.endpoint
 	}
 	kind, classified := classifyErrorKind(err)
 	if !classified {
-		if proxy != "" {
+		if proxied {
 			kind = ErrorKindProxy
 		} else {
 			kind = ErrorKindNetwork
 		}
 	}
 	connectErr := newConnectError(kind, op, host, port, proxy, err)
-	if proxy != "" && (kind == ErrorKindDNS || kind == ErrorKindRefused || kind == ErrorKindUnreachable || kind == ErrorKindTimeout || kind == ErrorKindNetwork) {
+	if proxied && (kind == ErrorKindDNS || kind == ErrorKindRefused || kind == ErrorKindUnreachable || kind == ErrorKindTimeout || kind == ErrorKindNetwork) {
 		connectErr.Hint = "Check that the proxy is reachable and allows connections to the target"
 	}
 	return connectErr

@@ -259,6 +259,39 @@ func TestConnectErrorClassificationCanceled(t *testing.T) {
 	requireConnectError(t, err, ErrorKindCanceled)
 }
 
+func TestConnectErrorClassificationProxyConfig(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+
+	cfg := testClientConfig(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	cfg.ProxyURL = "http://proxyuser:topsecret@%"
+	_, err := Connect(context.Background(), cfg)
+	connectErr := requireConnectError(t, err, ErrorKindProxy)
+	if connectErr.Op != "proxy connect" || connectErr.Proxy != "" {
+		t.Fatalf("parse-invalid proxy context = %+v", connectErr)
+	}
+	message := connectErr.Error()
+	if strings.Contains(message, "topsecret") || strings.Contains(message, "proxyuser") || strings.Contains(message, "%") {
+		t.Fatalf("parse-invalid proxy leaked the raw URL: %v", message)
+	}
+
+	cfg.ProxyURL = "socks5://"
+	_, err = Connect(context.Background(), cfg)
+	connectErr = requireConnectError(t, err, ErrorKindProxy)
+	if connectErr.Op != "proxy connect" || connectErr.Proxy != "" {
+		t.Fatalf("missing-host proxy context = %+v", connectErr)
+	}
+
+	cfg.ProxyURL = "socks5://proxyuser:topsecret@"
+	_, err = Connect(context.Background(), cfg)
+	connectErr = requireConnectError(t, err, ErrorKindProxy)
+	if connectErr.Proxy != "" {
+		t.Fatalf("missing-host proxy endpoint = %q", connectErr.Proxy)
+	}
+	if strings.Contains(connectErr.Error(), "topsecret") || strings.Contains(connectErr.Error(), "proxyuser") {
+		t.Fatalf("missing-host proxy leaked userinfo: %v", connectErr)
+	}
+}
+
 func TestConnectErrorClassificationConfig(t *testing.T) {
 	cfg := Config{Host: " ", Port: 22, User: "test", HostKeys: NewMemoryHostKeyStore()}
 	_, err := Connect(context.Background(), cfg)
