@@ -52,7 +52,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           wails3 version
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
       - name: Install manifest verifier dependency
         run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
       - name: Verify the selected toolchain and modules
@@ -214,7 +214,7 @@ jobs:
           go-version: 1.26.8
           cache: true
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
       - name: Require a real browser
         run: google-chrome --version
       - name: Run real-browser acceptance
