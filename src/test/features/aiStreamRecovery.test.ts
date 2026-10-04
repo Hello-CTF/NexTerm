@@ -513,6 +513,75 @@ describe("AiSidebar stream recovery", () => {
     expect(textOf(view!)).toContain("一二三");
   });
 
+  it("clears the syncing notice and pending retry when a live drain settles the run", async () => {
+    await send("你好");
+    emit({ type: "delta", text: "半", seq: 1 });
+    act(runFrames);
+    mocks.runEvents.mockRejectedValue(new Error("offline"));
+
+    emit({ type: "done", answer: "答案", seq: 3 });
+    await flushReplay();
+    expect(textOf(view!)).toContain("正在补齐");
+
+    emit({ type: "steered", text: "补充", seq: 2 });
+    await flush();
+
+    expect(useUi.getState().aiBusy).toBe(false);
+    const settledText = textOf(view!);
+    expect(settledText).toContain("本轮已完成");
+    expect(settledText).not.toContain("正在补齐");
+
+    const callsBefore = mocks.runEvents.mock.calls.length;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    expect(mocks.runEvents.mock.calls.length).toBe(callsBefore);
+    expect(textOf(view!)).not.toContain("正在补齐");
+  });
+
+  it("keeps a new run's pending retry when a stale run's late replay completes", async () => {
+    mocks.chat
+      .mockResolvedValueOnce({ jobId: "job-1", conversationId: "conv-1" })
+      .mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-1" });
+    let resolveRun1Replay: (value: { type: string; seq: number; answer?: string }[]) => void = () => {};
+    mocks.runEvents
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ type: string; seq: number; answer?: string }[]>((resolve) => {
+            resolveRun1Replay = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue([{ type: "delta", text: "二", seq: 2 }]);
+
+    await send("第一");
+    emit({ type: "delta", text: "一", seq: 1 }, 0);
+    act(runFrames);
+    emit({ type: "done", answer: "一", seq: 3 }, 0);
+    await flushReplay();
+    emit({ type: "steered", text: "补充", seq: 2 }, 0);
+    await flush();
+    expect(useUi.getState().aiBusy).toBe(false);
+
+    await send("第二");
+    emit({ type: "delta", text: "一", seq: 1 }, 1);
+    act(runFrames);
+    emit({ type: "delta", text: "三", seq: 3 }, 1);
+    await flushReplay();
+    expect(textOf(view!)).toContain("正在补齐");
+
+    resolveRun1Replay([{ type: "done", answer: "一", seq: 3 }]);
+    await flushReplay();
+    expect(textOf(view!)).toContain("正在补齐");
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    await flushReplay();
+    expect(mocks.runEvents).toHaveBeenCalledTimes(3);
+    expect(textOf(view!)).toContain("已补齐");
+  });
+
   it("replays an interrupted run's canceled terminal without error styling", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);

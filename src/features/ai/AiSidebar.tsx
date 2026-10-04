@@ -110,7 +110,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     generation: number;
   } | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resyncTimerRef = useRef<{ generation: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const restoredChannelRef = useRef<{
     channel: IpcChannel<unknown>;
     offReopen: () => void;
@@ -137,17 +137,24 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   useEffect(
     () => () => {
       if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
-      if (resyncTimerRef.current !== null) clearTimeout(resyncTimerRef.current);
+      if (resyncTimerRef.current !== null) clearTimeout(resyncTimerRef.current.timer);
     },
     [],
   );
-  const clearResyncTimer = () => {
-    if (resyncTimerRef.current !== null) {
-      clearTimeout(resyncTimerRef.current);
-      resyncTimerRef.current = null;
-    }
+  const clearResyncTimer = (generation?: number) => {
+    const pending = resyncTimerRef.current;
+    if (!pending) return;
+    if (generation !== undefined && pending.generation !== generation) return;
+    clearTimeout(pending.timer);
+    resyncTimerRef.current = null;
+  };
+  const clearResyncState = (generation: number) => {
+    clearResyncTimer(generation);
+    setSyncNotice((prev) => (prev && prev.generation === generation ? null : prev));
   };
   const markSyncing = (generation: number) => {
+    const current = activeRunRef.current;
+    if (!isCurrentAiRun(current, generation) || current.settled) return;
     if (syncTimerRef.current !== null) {
       clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
@@ -159,7 +166,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       prev && prev.generation === generation ? { generation, phase: "synced", count } : prev,
     );
     if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = setTimeout(() => setSyncNotice(null), 2400);
+    syncTimerRef.current = setTimeout(() => {
+      setSyncNotice((prev) => (prev && prev.generation === generation ? null : prev));
+    }, 2400);
   };
   const markSyncFailed = (generation: number) => {
     setSyncNotice((prev) =>
@@ -281,13 +290,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const current = activeRunRef.current;
     if (isCurrentAiRun(current, generation) && !current.settled) {
       activeRunRef.current = settleAiRun(current);
-      setAiBusy(false);
+      if (!current.spawnPending) setAiBusy(false);
     }
     const live = runChannelRef.current;
     if (live && live.generation === generation) live.dispose();
-    disposeRestoredChannel();
-    clearResyncTimer();
-    setSyncNotice((prev) => (prev && prev.generation === generation ? null : prev));
+    const restored = restoredChannelRef.current;
+    if (restored && restored.generation === generation) disposeRestoredChannel();
+    clearResyncState(generation);
   };
 
   const replayRunEvents = async (
@@ -327,7 +336,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const RESYNC_MAX_ATTEMPTS = 2;
 
   const resyncRun = (generation: number, jobId: string, attempt = 0) => {
-    clearResyncTimer();
+    clearResyncTimer(generation);
     markSyncing(generation);
     void catchUpRunEvents(generation, jobId).then((result) => {
       if (!result.failed) {
@@ -340,10 +349,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         markSyncFailed(generation);
         return;
       }
-      resyncTimerRef.current = setTimeout(
-        () => resyncRun(generation, jobId, attempt + 1),
-        1000 * (attempt + 1),
-      );
+      clearResyncTimer(generation);
+      resyncTimerRef.current = {
+        generation,
+        timer: setTimeout(() => resyncRun(generation, jobId, attempt + 1), 1000 * (attempt + 1)),
+      };
     });
     void replayHitl(generation, jobId);
   };
@@ -424,7 +434,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const type = ev.type as string;
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, generation) || current.settled) {
-        if (type === "done" || type === "error" || type === "canceled") disposeRestoredChannel();
+        if (type === "done" || type === "error" || type === "canceled") {
+          const restored = restoredChannelRef.current;
+          if (restored && restored.generation === generation) disposeRestoredChannel();
+          clearResyncState(generation);
+        }
         return;
       }
       const result = stream.pushEvent(generation, ev);
@@ -468,16 +482,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const type = ev.type as string;
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation) || current.settled) {
-        if (type === "done" || type === "error" || type === "canceled") dispose();
+        if (type === "done" || type === "error" || type === "canceled") {
+          clearResyncState(run.generation);
+          dispose();
+        }
         return;
       }
       const result = stream.pushEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
       if (!result.terminal) return;
-      activeRunRef.current = settleAiRun(current);
-      if (!current.spawnPending) setAiBusy(false);
+      settleRestoredRun(run.generation);
       if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
-      dispose();
     });
 
     const offHitlReopen = onChannelReopen(channel, () => {
@@ -527,6 +542,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (result.accepted && !current.settled) pushToast("error", describeError(e));
         activeRunRef.current = settleAiRun(finishAiRunSpawn(current));
         setAiBusy(false);
+        clearResyncState(run.generation);
       }
       dispose();
     }
@@ -668,7 +684,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       activeRunRef.current = cancellation.run;
       stream.cancelRun(run.generation, !cancellation.waitForTerminal);
       if (!cancellation.waitForTerminal) setAiBusy(false);
-      disposeRestoredChannel();
+      const restored = restoredChannelRef.current;
+      if (restored && restored.generation === run.generation) disposeRestoredChannel();
+      clearResyncState(run.generation);
       pushToast(
         "info",
         cancellation.waitForTerminal ? "已请求停止接管，等待终端退出" : "已停止本轮",
@@ -829,8 +847,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const result = stream.pushEvent(run.generation, ev);
       if (!result.terminal) return;
       holder.settled = true;
-      activeRunRef.current = settleAiRun(current);
-      if (!current.spawnPending) setAiBusy(false);
+      settleRestoredRun(run.generation);
       clearTakeover();
       if (type === "error" && result.accepted) pushToast("error", `接管：${ev.message as string}`);
       disposeChannel(channel);
