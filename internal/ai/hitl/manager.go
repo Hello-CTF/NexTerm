@@ -16,8 +16,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 )
 
-const defaultTTL = 5 * time.Minute
-
 type requestStatus uint8
 
 const (
@@ -48,16 +46,18 @@ type runState struct {
 	answers    map[string]string
 	events     []Event
 	terminal   *Event
+	finishedAt time.Time
 	cancelFn   adk.AgentCancelFunc
 	cleanupErr error
 }
 
 type Manager struct {
-	checkpoints adk.CheckPointStore
-	store       Store
-	ttl         time.Duration
-	now         func() time.Time
-	newNonce    func() (string, error)
+	checkpoints       adk.CheckPointStore
+	store             Store
+	ttl               time.Duration
+	terminalRetention time.Duration
+	now               func() time.Time
+	newNonce          func() (string, error)
 
 	mu     sync.RWMutex
 	runs   map[string]*runState
@@ -70,7 +70,10 @@ func NewManager(config Config) (*Manager, error) {
 		return nil, fmt.Errorf("%w: checkpoint store is required", ErrInvalidArgument)
 	}
 	if config.TTL <= 0 {
-		config.TTL = defaultTTL
+		config.TTL = DefaultTTL
+	}
+	if config.TerminalRetention <= 0 {
+		config.TerminalRetention = DefaultTerminalRetention
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -79,13 +82,14 @@ func NewManager(config Config) (*Manager, error) {
 		config.NewNonce = secureNonce
 	}
 	return &Manager{
-		checkpoints: config.Checkpoints,
-		store:       config.Store,
-		ttl:         config.TTL,
-		now:         config.Now,
-		newNonce:    config.NewNonce,
-		runs:        make(map[string]*runState),
-		nonces:      make(map[string]string),
+		checkpoints:       config.Checkpoints,
+		store:             config.Store,
+		ttl:               config.TTL,
+		terminalRetention: config.TerminalRetention,
+		now:               config.Now,
+		newNonce:          config.NewNonce,
+		runs:              make(map[string]*runState),
+		nonces:            make(map[string]string),
 	}, nil
 }
 
@@ -125,6 +129,7 @@ func (m *Manager) RegisterRun(ctx context.Context, runID, checkpointID string) (
 	}
 	m.runs[runID] = run
 	m.mu.Unlock()
+	m.sweepTerminal(m.now())
 	if err := m.persistLocked(run); err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
@@ -195,6 +200,7 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 		if pending.status == requestPending && (pending.interrupt.CheckpointHash != checkpointHash || pending.interrupt.TargetID == target.ID) {
 			pending.status = requestStale
 			pending.timer.Stop()
+			m.releaseNonces(pending.interrupt.Nonce)
 		}
 	}
 	nonce, err := m.uniqueNonce(run.id)
@@ -316,11 +322,14 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	if digest("checkpoint", checkpoint) != interrupt.CheckpointHash {
 		request.status = requestStale
 		request.timer.Stop()
+		nonce := request.interrupt.Nonce
 		run.mu.Unlock()
+		m.releaseNonces(nonce)
 		return Resume{}, nil, ErrCheckpointChanged
 	}
 	request.status = requestConsumed
 	request.timer.Stop()
+	m.releaseNonces(request.interrupt.Nonce)
 	run.answers[answer.ID] = request.interrupt.ID
 	run.status = RunStatusRunning
 	run.attempt++
@@ -442,7 +451,9 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 		TerminalExpired:   RunStatusExpired,
 	}[reason]
 	run.status = status
+	nonces := make([]string, 0, len(run.requests))
 	for _, request := range run.requests {
+		nonces = append(nonces, request.interrupt.Nonce)
 		if request.status != requestPending {
 			continue
 		}
@@ -453,12 +464,15 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 		}
 		request.timer.Stop()
 	}
+	run.finishedAt = m.now()
 	event := run.appendEventLocked(EventTerminal, reason, "", message)
 	run.terminal = &event
 	cancelFn := run.cancelFn
 	run.cancelFn = nil
 	persistErr := m.persistLocked(run)
 	run.mu.Unlock()
+	m.releaseNonces(nonces...)
+	m.sweepTerminal(m.now())
 	run.cancel()
 	if cancelExecution && cancelFn != nil {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
@@ -487,13 +501,81 @@ func (m *Manager) expire(runID, requestID string) {
 		return
 	}
 	request := run.requests[requestID]
-	if request == nil || request.status != requestPending || m.now().Before(request.interrupt.ExpiresAt) {
+	if request == nil || request.status != requestPending {
+		run.mu.Unlock()
+		return
+	}
+	if remaining := request.interrupt.ExpiresAt.Sub(m.now()); remaining > 0 {
+		request.timer = time.AfterFunc(remaining, func() { m.expire(run.id, requestID) })
 		run.mu.Unlock()
 		return
 	}
 	request.status = requestExpired
+	nonce := request.interrupt.Nonce
+	blocked := run.status == RunStatusInterrupted && !run.hasPendingLocked()
+	if !blocked {
+		_ = m.persistLocked(run)
+	}
 	run.mu.Unlock()
-	_, _ = m.finish(run, TerminalExpired, "", true)
+	m.releaseNonces(nonce)
+	if blocked {
+		_, _ = m.finish(run, TerminalExpired, "", true)
+	}
+}
+
+func (run *runState) hasPendingLocked() bool {
+	for _, request := range run.requests {
+		if request.status == requestPending {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) releaseNonces(nonces ...string) {
+	if len(nonces) == 0 {
+		return
+	}
+	m.mu.Lock()
+	for _, nonce := range nonces {
+		delete(m.nonces, nonce)
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) sweepTerminal(now time.Time) {
+	if m.terminalRetention <= 0 {
+		return
+	}
+	m.mu.RLock()
+	runs := make([]*runState, 0, len(m.runs))
+	for _, run := range m.runs {
+		runs = append(runs, run)
+	}
+	m.mu.RUnlock()
+	type victim struct {
+		id  string
+		run *runState
+	}
+	var victims []victim
+	for _, run := range runs {
+		run.mu.Lock()
+		stale := run.terminal != nil && !run.finishedAt.IsZero() && !now.Before(run.finishedAt.Add(m.terminalRetention))
+		run.mu.Unlock()
+		if stale {
+			victims = append(victims, victim{id: run.id, run: run})
+		}
+	}
+	if len(victims) == 0 {
+		return
+	}
+	m.mu.Lock()
+	for _, candidate := range victims {
+		if m.runs[candidate.id] == candidate.run {
+			delete(m.runs, candidate.id)
+		}
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) deleteCheckpoint(checkpointID string) error {

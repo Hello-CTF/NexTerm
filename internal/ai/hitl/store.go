@@ -116,43 +116,46 @@ func (m *Manager) Restore(blob RunBlob) error {
 	for _, restored := range record.Requests {
 		request := &requestState{interrupt: cloneInterrupt(restored.Interrupt), status: restored.Status}
 		run.requests[request.interrupt.ID] = request
-		if request.status == requestPending {
-			m.nonces[request.interrupt.Nonce] = run.id
-		}
 	}
 	m.runs[record.ID] = run
 	m.mu.Unlock()
+	m.sweepTerminal(m.now())
 	run.mu.Lock()
 	defer run.mu.Unlock()
+	now := m.now()
 	if run.terminal != nil {
+		run.finishedAt = now
 		return nil
 	}
-	now := m.now()
 	for _, request := range run.requests {
 		if request.status != requestPending {
 			continue
 		}
-		if now.Before(request.interrupt.ExpiresAt) {
-			remaining := request.interrupt.ExpiresAt.Sub(now)
-			request.timer = time.AfterFunc(remaining, func() { m.expire(run.id, request.interrupt.ID) })
+		remaining := request.interrupt.ExpiresAt.Sub(now)
+		if remaining <= 0 {
+			request.status = requestExpired
 			continue
 		}
-		request.status = requestExpired
+		m.mu.Lock()
+		m.nonces[request.interrupt.Nonce] = run.id
+		m.mu.Unlock()
+		request.timer = time.AfterFunc(remaining, func() { m.expire(run.id, request.interrupt.ID) })
 	}
-	if run.status == RunStatusInterrupted {
-		pending := false
-		for _, request := range run.requests {
-			if request.status == requestPending {
-				pending = true
-				break
-			}
-		}
-		if !pending {
-			run.status = RunStatusExpired
-			event := run.appendEventLocked(EventTerminal, TerminalExpired, "", "")
-			run.terminal = &event
-			run.cancel()
-		}
+	switch {
+	case run.hasPendingLocked():
+		run.status = RunStatusInterrupted
+	case run.status == RunStatusInterrupted:
+		run.status = RunStatusExpired
+		event := run.appendEventLocked(EventTerminal, TerminalExpired, "", "")
+		run.terminal = &event
+		run.finishedAt = now
+		run.cancel()
+	default:
+		run.status = RunStatusFailed
+		event := run.appendEventLocked(EventTerminal, TerminalFailed, "", "run interrupted by application restart")
+		run.terminal = &event
+		run.finishedAt = now
+		run.cancel()
 	}
 	return m.persistLocked(run)
 }
