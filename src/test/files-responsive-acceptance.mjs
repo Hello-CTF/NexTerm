@@ -615,7 +615,7 @@ async function filesResponsiveAcceptance(page) {
       assert.ok(nameWidth > 60, `FileBrowser 名称列必须 >60px@${label}: ${nameWidth}`);
       evidence[label] = { nameWidth, fileBrowser: await noPageOverflow(page, `FileBrowser@${label}`, spec.width) };
       await openDock(page, "磁盘挂载");
-      await page.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === "断开") || document.body.textContent.includes("本机当前没有映射盘")`);
+      await page.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === "断开") || document.body.textContent.includes("本机当前没有挂载点")`);
       evidence[label].mount = await noPageOverflow(page, `MountPanel@${label}`, spec.width);
       await screenshot(page, `matrix-${label}.png`);
     }

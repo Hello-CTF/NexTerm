@@ -142,7 +142,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           });
         }
       } catch (e) {
-        pushToast("error", `打开失败: ${describeError(e)}`);
+        pushToast("error", `打开失败：${describeError(e)}`);
         onClose?.();
       }
     })();
@@ -180,7 +180,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       }
       pushToast("success", `已保存 ${path}（远端已备份 .nexterm-bak）`);
     } catch (e) {
-      pushToast("error", `保存失败: ${describeError(e)}`);
+      pushToast("error", `保存失败：${describeError(e)}`);
     } finally {
       saveInFlightRef.current = false;
       setSaving(false);

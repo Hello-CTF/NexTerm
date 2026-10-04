@@ -112,4 +112,16 @@ describe("断开挂载确认（R42 审计结论：显式 info）", () => {
     clickButton(modal, "确定");
     await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("Z:", "s1"));
   });
+
+  it("a failed disconnect surfaces the real error with the standard prefix", async () => {
+    mocks.remove.mockRejectedValueOnce(new Error("device busy"));
+    mounted = mountPanelWithDialogHost();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("nas"));
+
+    clickButton(mounted!.container, "断开");
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-modal")).not.toBeNull());
+    clickButton(mounted!.container.querySelector(".nx-modal")!, "确定");
+    await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith("Z:", "s1"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", "断开失败：device busy");
+  });
 });

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, type ReactNode } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
@@ -10,12 +10,14 @@ import {
   flush,
   mount,
   setInputValue,
+  setSelectValue,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  update: vi.fn(),
   groupList: vi.fn(),
   groupUpdate: vi.fn(),
   groupDelete: vi.fn(),
@@ -53,7 +55,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     assetApi: {
       list: mocks.list,
       search: vi.fn(),
-      update: vi.fn(),
+      update: mocks.update,
       delete: mocks.assetDelete,
       groupList: mocks.groupList,
       groupUpdate: mocks.groupUpdate,
@@ -237,6 +239,7 @@ describe("asset group controls", () => {
     click(buttonByTitle(mounted!.container, "删除分组"));
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledTimes(1));
     await flush();
+    expect(mounted!.container.textContent).toContain("删除失败：");
     expect(mounted!.container.textContent).toContain("disk on fire");
     expect(mocks.ask).toHaveBeenCalledTimes(1);
 
@@ -245,6 +248,46 @@ describe("asset group controls", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     await flush();
     expect(mounted!.container.textContent).not.toContain("disk on fire");
+  });
+
+  it("moves an asset out of a group with a clear toast", async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: "a1",
+        groupId: "g1",
+        kind: "ssh",
+        name: "web-1",
+        host: "10.0.0.8",
+        port: 22,
+        username: "root",
+        authKind: "password",
+        keyPath: null,
+        credId: null,
+        options: {},
+        tags: "",
+        note: "",
+        sort: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        deletedAt: null,
+        builtin: false,
+      },
+    ]);
+    mocks.update.mockResolvedValue(undefined);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const tree = mounted!.container.querySelector("[role='tree']");
+    if (!tree) throw new Error("Tree not found");
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", {
+      value: { types: ["application/x-nexterm-asset"], getData: () => "a1" },
+    });
+    act(() => {
+      tree.dispatchEvent(drop);
+    });
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ id: "a1", groupId: null }));
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已移出分组");
   });
 });
 
@@ -276,7 +319,7 @@ describe("asset editor test connection", () => {
     expect(mocks.probe).toHaveBeenCalledWith("10.0.0.8", 22, 3000);
     expect(mocks.probe.mock.calls[0]).toHaveLength(3);
     await flush();
-    expect(mounted!.container.textContent).toContain("端口可连接");
+    expect(mounted!.container.textContent).toContain("端口可达");
   });
 
   it("does not double-submit while a probe is in flight", async () => {
@@ -293,7 +336,7 @@ describe("asset editor test connection", () => {
 
     pending.resolve({ open: true });
     await flush();
-    expect(mounted!.container.textContent).toContain("端口可连接");
+    expect(mounted!.container.textContent).toContain("端口可达");
   });
 
   it("discards a stale result when the target changes mid-flight", async () => {
@@ -308,7 +351,7 @@ describe("asset editor test connection", () => {
     await setHost("10.0.0.9");
     pending.resolve({ open: true });
     await flush();
-    expect(mounted!.container.textContent).not.toContain("端口可连接");
+    expect(mounted!.container.textContent).not.toContain("端口可达");
   });
 
   it("surfaces a closed port with the kernel error text", async () => {
@@ -319,7 +362,66 @@ describe("asset editor test connection", () => {
     clickButton(mounted!.container, "测试连接");
     await waitFor(() => expect(mocks.probe).toHaveBeenCalledTimes(1));
     await flush();
-    expect(mounted!.container.textContent).toContain("不可连接:connection refused");
+    expect(mounted!.container.textContent).toContain("端口不可达：connection refused");
+  });
+});
+
+describe("asset editor shared credential hint", () => {
+  const PASSWORD_CRED = {
+    id: "c1",
+    name: "生产密码",
+    kind: "password",
+    createdAt: 1,
+    updatedAt: 1,
+    usedBy: [{ id: "a9", name: "db-1", kind: "mysql" }],
+    source: "inline",
+    refPath: null,
+    hasPassphrase: false,
+  };
+  const KEY_CRED = {
+    id: "k1",
+    name: "部署密钥",
+    kind: "private_key",
+    createdAt: 1,
+    updatedAt: 1,
+    usedBy: [{ id: "a8", name: "web-1", kind: "ssh" }],
+    source: "inline",
+    refPath: null,
+    hasPassphrase: false,
+  };
+
+  function selectByOptionText(text: string): HTMLSelectElement {
+    const select = [...mounted!.container.querySelectorAll("select")].find((s) =>
+      [...s.options].some((o) => o.textContent?.includes(text)),
+    );
+    if (!select) throw new Error(`Select not found by option text: ${text}`);
+    return select;
+  }
+
+  it("密码路径：选已有凭据时提示共用后果", async () => {
+    mocks.listCredentials.mockResolvedValue([PASSWORD_CRED]);
+    await mountEditor();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("生产密码"));
+
+    setSelectValue(selectByOptionText("生产密码"), "c1");
+    await flush();
+    expect(mounted!.container.textContent).toContain("↳ 共用凭据 · 改一处，全部生效");
+  });
+
+  it("私钥路径：选已有私钥凭据时同一句提示", async () => {
+    mocks.listCredentials.mockResolvedValue([KEY_CRED]);
+    await mountEditor();
+
+    setSelectValue(selectByOptionText("私钥文件"), "key");
+    await flush();
+    clickButton(mounted!.container, "存入凭据库");
+    await flush();
+    setSelectValue(selectByOptionText("选已有私钥凭据"), "existing");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("部署密钥"));
+
+    setSelectValue(selectByOptionText("部署密钥"), "k1");
+    await flush();
+    expect(mounted!.container.textContent).toContain("↳ 共用凭据 · 改一处，全部生效");
   });
 });
 
@@ -346,6 +448,7 @@ describe("snippets panel", () => {
       .mockResolvedValueOnce(SNIPPETS.map((s) => ({ ...s })));
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("db locked"));
+    expect(mounted!.container.textContent).toContain("加载失败：");
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
     expect(mocks.snippetList).toHaveBeenCalledTimes(2);

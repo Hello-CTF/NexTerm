@@ -608,6 +608,28 @@ describe("FileTree 入口与状态搬迁", () => {
   });
 });
 
+describe("终端入口的会话断开提示", () => {
+  it("FileTree：会话已断开时「在新终端打开」给出明确错误", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+
+    openRowMenu(mounted!.container, "~/sub");
+    clickMenuItem(mounted!.container, "在新终端打开");
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith("error", "当前会话已断开，无法打开终端");
+  });
+
+  it("FileBrowser：会话已断开时「在新终端打开」给出明确错误", async () => {
+    mounted = mountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
+
+    openRowMenu(mounted!.container, "~/sub");
+    clickMenuItem(mounted!.container, "在新终端打开");
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith("error", "当前会话已断开，无法打开终端");
+  });
+});
+
 describe("操作不破坏既有状态", () => {
   it("传输进度条与无关 dirty 编辑器在操作后原样保留", async () => {
     let progressHandler: ((e: unknown) => void) | undefined;

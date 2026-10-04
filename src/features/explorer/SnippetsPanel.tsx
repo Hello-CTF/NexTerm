@@ -138,7 +138,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           {snippets.isError && (
             <div className="px-1 py-5 text-center">
               <div className="flex items-center justify-center gap-1.5 text-[12px] text-red-400">
-                <IconXCircle size={13} /> 加载失败:{describeError(snippets.error)}
+                <IconXCircle size={13} /> 加载失败：{describeError(snippets.error)}
               </div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-3" onClick={() => void snippets.refetch()}>
                 重试

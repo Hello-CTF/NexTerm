@@ -82,7 +82,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       setRemotePath("");
       refresh();
     } catch (e) {
-      pushToast("error", `挂载失败: ${describeError(e)}`);
+      pushToast("error", `挂载失败：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -95,7 +95,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       refresh();
       pushToast("success", "已断开");
     } catch (e) {
-      pushToast("error", `断开失败: ${describeError(e)}`);
+      pushToast("error", `断开失败：${describeError(e)}`);
     }
   };
 
@@ -148,7 +148,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={4} className="nx-table-empty">
-                  本机当前没有映射盘
+                  本机当前没有挂载点
                 </td>
               </tr>
             ) : (
@@ -178,7 +178,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
           <IconArrowLeft size={12} />
-          新建映射 · Windows 用 <span className="nx-code">\\host\share</span> →{' '}
+          新建挂载 · Windows 用 <span className="nx-code">\\host\share</span> →{' '}
           <span className="nx-code">Z:</span>；Linux 用{' '}
           <span className="nx-code">user@host:/path</span> →{' '}
           <span className="nx-code">/mnt/point</span>（需 sshfs）

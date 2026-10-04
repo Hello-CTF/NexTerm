@@ -9,7 +9,7 @@ export function useVaultUnlock(): (reason?: string) => Promise<boolean> {
   const { pushToast } = useUi();
 
   return async (reason?: string) => {
-    const pwd = await promptText(reason ?? "输入保护密码解锁凭据库：", "", { secret: true });
+    const pwd = await promptText(reason ?? "输入保护密码解锁凭据库", "", { secret: true });
     if (pwd === null) return false;
     try {
       await vaultApi.unlock(pwd);
