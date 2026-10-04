@@ -14,6 +14,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
+  transcriptHosts: vi.fn(),
   transcriptList: vi.fn(),
   transcriptRead: vi.fn(),
   transcriptSearch: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../ipc/commands", () => ({
   assetApi: { list: mocks.assetList },
   transcriptApi: {
+    hosts: mocks.transcriptHosts,
     list: mocks.transcriptList,
     read: mocks.transcriptRead,
     search: mocks.transcriptSearch,
@@ -40,7 +42,12 @@ vi.mock("../../app/store", () => ({
 }));
 
 import { TranscriptHistoryPanel } from "../../features/terminal/TranscriptHistoryPanel";
-import { chunkToText, formatTranscriptBytes, stripAnsi } from "../../features/terminal/transcriptText";
+import {
+  chunkToText,
+  createTranscriptDecoder,
+  formatTranscriptBytes,
+  stripAnsi,
+} from "../../features/terminal/transcriptText";
 
 const ASSET = {
   id: "01J0NEXTERMLOCALDEVICE0001",
@@ -100,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mocks.assetList.mockResolvedValue([ASSET]);
+  mocks.transcriptHosts.mockResolvedValue([]);
   mocks.transcriptList.mockResolvedValue([]);
   mocks.transcriptRead.mockResolvedValue(readResult([]));
   mocks.transcriptSearch.mockResolvedValue([]);
@@ -252,6 +260,61 @@ describe("TranscriptHistoryPanel", () => {
     await flush();
     expect(mocks.transcriptRemove).not.toHaveBeenCalled();
   });
+
+  it("lists soft-deleted hosts from transcript snapshots", async () => {
+    mocks.assetList.mockResolvedValue([]);
+    mocks.transcriptHosts.mockResolvedValue([
+      {
+        assetId: "01J0NEXTERMLOCALDEVICE0001",
+        assetName: "当前设备",
+        assetKind: "local",
+        assetDeleted: true,
+        transcripts: 2,
+        lastStartedAt: 1700000000000,
+      },
+    ]);
+    mocks.transcriptList.mockResolvedValue([summary({ assetDeleted: true })]);
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("主机已删除"));
+    const select = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]');
+    expect(select?.value).toBe(ASSET.id);
+    const options = [...(select?.options ?? [])].map((option) => option.textContent);
+    expect(options.some((text) => text?.includes("当前设备") && text?.includes("已删除"))).toBe(true);
+    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
+  });
+
+  it("decodes the reader as a continuous stream across chunks", async () => {
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    const nihao = new TextEncoder().encode("你好");
+    const chunk0 = new Uint8Array([...new TextEncoder().encode("say "), nihao[0]]);
+    const chunk1 = new Uint8Array([
+      ...[nihao[1], nihao[2]],
+      ...new TextEncoder().encode("好\r\nerr\u001b[3"),
+    ]);
+    const chunk2 = new TextEncoder().encode("1mor\u001b[0m done\r\n");
+    mocks.transcriptRead.mockResolvedValue(
+      readResult(
+        [
+          { seq: 0, dataBase64: btoa(String.fromCharCode(...chunk0)) },
+          { seq: 1, dataBase64: btoa(String.fromCharCode(...chunk1)) },
+          { seq: 2, dataBase64: btoa(String.fromCharCode(...chunk2)) },
+        ],
+        true,
+      ),
+    );
+    mounted = mount(createElement(TranscriptHistoryPanel));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flushUntil(() => {
+      const text = mounted!.container.querySelector("pre")?.textContent ?? "";
+      return text.includes("error done");
+    });
+    const text = mounted.container.querySelector("pre")?.textContent ?? "";
+    expect(text).toContain("say 你好");
+    expect(text).toContain("error done");
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("�");
+  });
 });
 
 describe("transcriptText", () => {
@@ -268,5 +331,36 @@ describe("transcriptText", () => {
     expect(formatTranscriptBytes(512)).toBe("512 B");
     expect(formatTranscriptBytes(2048)).toBe("2.0 KB");
     expect(formatTranscriptBytes(3 * 1024 * 1024)).toBe("3.0 MB");
+  });
+
+  it("streams utf-8 characters split across chunks", () => {
+    const decoder = createTranscriptDecoder();
+    const nihao = new TextEncoder().encode("你好");
+    const first = new Uint8Array([...new TextEncoder().encode("say "), nihao[0]]);
+    const second = new Uint8Array([nihao[1], nihao[2], ...new TextEncoder().encode("好")]);
+    let text = decoder.push(btoa(String.fromCharCode(...first)));
+    text += decoder.push(btoa(String.fromCharCode(...second)));
+    text += decoder.flush();
+    expect(text).toBe("say 你好");
+    expect(text).not.toContain("�");
+  });
+
+  it("strips ansi sequences split across chunks", () => {
+    const decoder = createTranscriptDecoder();
+    const first = new TextEncoder().encode("err\u001b[3");
+    const second = new TextEncoder().encode("1mor\u001b[0m done");
+    let text = decoder.push(btoa(String.fromCharCode(...first)));
+    text += decoder.push(btoa(String.fromCharCode(...second)));
+    text += decoder.flush();
+    expect(text).toBe("error done");
+  });
+
+  it("completes a trailing incomplete escape on flush", () => {
+    const decoder = createTranscriptDecoder();
+    const first = new TextEncoder().encode("plain\u001b]0;title");
+    let text = decoder.push(btoa(String.fromCharCode(...first)));
+    expect(text).toBe("plain");
+    text += decoder.flush();
+    expect(text).toBe("plain");
   });
 });

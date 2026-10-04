@@ -208,7 +208,17 @@ export interface TranscriptMatch {
   preview: string;
 }
 
+export interface TranscriptHost {
+  assetId: string;
+  assetName: string;
+  assetKind: string;
+  assetDeleted: boolean;
+  transcripts: number;
+  lastStartedAt: number;
+}
+
 export const transcriptApi = {
+  hosts: () => call<TranscriptHost[]>("transcript_hosts"),
   list: (assetId: string) =>
     call<TranscriptSummary[]>("transcript_list", { assetId }),
   read: (id: string, afterSeq = 0, maxBytes?: number) =>

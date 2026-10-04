@@ -461,6 +461,53 @@ async function transcriptHistoryAcceptance(page, server) {
     );
   });
 
+  await pass("deleted-asset-history-still-reachable", async () => {
+    const created = await rpc(server.port, "asset_create", {
+      args: { kind: "ssh", name: "e2e-deleted-host", host: "192.0.2.60", port: 22, username: "root", authKind: "password" },
+    });
+    const { DatabaseSync } = await import("node:sqlite");
+    const database = new DatabaseSync(path.join(dataDir, "data.db"));
+    const transcriptId = "01JTRANSCRIPTDELETED000000";
+    const now = Date.now();
+    const output = `${MARKER}\r\n`;
+    database.prepare(
+      "INSERT INTO transcript(id, session_id, asset_id, asset_name, asset_kind, started_at, ended_at, bytes, chunks, truncated) VALUES(?,?,?,?,?,?,?,?,?,0)",
+    ).run(transcriptId, "session-deleted", created.id, "e2e-deleted-host", "ssh", now - 60000, now, output.length, 1);
+    database.prepare(
+      "INSERT INTO transcript_chunk(transcript_id, seq, tab_id, ts, data) VALUES(?,?,?,?,?)",
+    ).run(transcriptId, 0, "tab-1", now - 60000, Buffer.from(output));
+    database.close();
+    await rpc(server.port, "asset_delete", { id: created.id });
+    await boot(page, `http://127.0.0.1:${server.port}`);
+    await openHistoryPanel(page);
+    await page.waitFor(
+      `(() => {
+        const select = document.querySelector(${JSON.stringify(`${PANEL} select[aria-label="选择主机"]`)});
+        return Boolean(select && [...select.options].some((option) =>
+          option.value === ${JSON.stringify(created.id)} && option.textContent?.includes("已删除")));
+      })()`,
+      15_000,
+    );
+    await page.evaluate(`(() => {
+      const select = document.querySelector(${JSON.stringify(`${PANEL} select[aria-label="选择主机"]`)});
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+      setter.call(select, ${JSON.stringify(created.id)});
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await page.waitFor(
+      `document.querySelector(${JSON.stringify(PANEL)})?.textContent?.includes("主机已删除")`,
+      20_000,
+    );
+    await page.evaluate(`(() => {
+      const rows = [...document.querySelectorAll(${JSON.stringify(`${PANEL} tbody tr`)})];
+      (rows.find((candidate) => candidate.textContent?.includes("已结束")) ?? rows[0])?.click();
+    })()`);
+    await page.waitFor(
+      `document.querySelector(${JSON.stringify(`${PANEL} pre`)})?.textContent?.includes(${JSON.stringify(MARKER)})`,
+      20_000,
+    );
+  });
+
   await pass("empty-state-for-host-without-history", async () => {
     const created = await rpc(server.port, "asset_create", {
       args: { kind: "ssh", name: "e2e-empty-host", host: "192.0.2.55", port: 22, username: "root", authKind: "password" },

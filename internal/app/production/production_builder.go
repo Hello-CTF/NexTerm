@@ -136,13 +136,23 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if durableErr != nil {
 			config.Config.Logger.Warn("desktop supervisor helper unavailable, local durable tabs are disabled", "error", durableErr)
 		} else {
-			durableProvider = supervisor.NewRemoteProvider(supervisorHelper.Client())
+			durableProvider = &catchUpProvider{
+				DurableProvider: supervisor.NewRemoteProvider(supervisorHelper.Client()),
+				recordingPath: func(id string) string {
+					return filepath.Join(supervisorStateDir, "sessions", id, "output.raw")
+				},
+			}
 		}
 	} else {
 		var supervisorErr error
 		supervisorInstance, supervisorErr = supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
 		if supervisorErr == nil {
-			durableProvider = supervisor.NewProvider(supervisorInstance)
+			durableProvider = &catchUpProvider{
+				DurableProvider: supervisor.NewProvider(supervisorInstance),
+				recordingPath: func(id string) string {
+					return filepath.Join(supervisorStateDir, "sessions", id, "output.raw")
+				},
+			}
 		} else {
 			config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
 			durableBackend, durableErr = durable.New(durable.Config{
@@ -154,7 +164,12 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					return nil, durableErr
 				}
 			} else {
-				durableProvider = session.NewDurableProvider(durableBackend)
+				durableProvider = &catchUpProvider{
+					DurableProvider: session.NewDurableProvider(durableBackend),
+					recordingPath: func(id string) string {
+						return filepath.Join(config.DataDir, "durable", "state", id, "output.raw")
+					},
+				}
 			}
 		}
 	}

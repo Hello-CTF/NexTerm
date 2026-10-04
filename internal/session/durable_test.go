@@ -42,6 +42,7 @@ type fakeDurableAttachment struct {
 	provider *fakeDurableProvider
 	tabID    string
 	identity int
+	catchUp  int64
 }
 
 func newFakeDurableProvider() *fakeDurableProvider {
@@ -84,6 +85,7 @@ func (p *fakeDurableProvider) Attach(_ context.Context, id string) (base.Durable
 	attachment := p.newAttachmentLocked(id, record)
 	if len(record.output) > 0 {
 		attachment.reads <- append([]byte(nil), record.output...)
+		attachment.catchUp = int64(len(record.output))
 	}
 	return attachment, nil
 }
@@ -150,6 +152,8 @@ func (a *fakeDurableAttachment) DurableGrid() (uint32, uint32, bool) {
 	}
 	return record.cols, record.rows, true
 }
+
+func (a *fakeDurableAttachment) DurableCatchUpBytes() int64 { return a.catchUp }
 
 func (p *fakeDurableProvider) setGrid(id string, cols, rows uint32) {
 	p.mu.Lock()

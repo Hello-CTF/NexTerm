@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 func discardTranscriptLogger() *slog.Logger {
@@ -83,9 +85,9 @@ func TestTranscriptWriterPersistsOrderedChunksAcrossRestart(t *testing.T) {
 	writer := startTestWriter(t, database, transcriptWriterConfig{})
 	writer.SessionStarted(ctx, transcriptIdentity("session-1"))
 	for index := 0; index < 50; index++ {
-		writer.SessionOutput("session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d\r\n", index)))
+		writer.SessionOutput(ctx, "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d\r\n", index)))
 	}
-	writer.SessionEnded("session-1")
+	writer.SessionEnded(ctx, "session-1")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
@@ -146,10 +148,10 @@ func TestTranscriptWriterHighThroughputOrdering(t *testing.T) {
 	start := time.Now()
 	writer.SessionStarted(ctx, transcriptIdentity("session-throughput"))
 	for index := 0; index < total; index++ {
-		writer.SessionOutput("session-throughput", "tab-1", payload)
+		writer.SessionOutput(ctx, "session-throughput", "tab-1", payload)
 	}
 	enqueueElapsed := time.Since(start)
-	writer.SessionEnded("session-throughput")
+	writer.SessionEnded(ctx, "session-throughput")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
@@ -200,7 +202,7 @@ func TestTranscriptWriterBackpressureBlocksUntilDrain(t *testing.T) {
 	go func() {
 		defer close(blocked)
 		for index := 0; index < 64; index++ {
-			writer.SessionOutput("session-backpressure", "tab-1", payload)
+			writer.SessionOutput(ctx, "session-backpressure", "tab-1", payload)
 		}
 	}()
 	select {
@@ -216,7 +218,7 @@ func TestTranscriptWriterBackpressureBlocksUntilDrain(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("enqueue did not resume after the writer started draining")
 	}
-	writer.SessionEnded("session-backpressure")
+	writer.SessionEnded(ctx, "session-backpressure")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
@@ -242,9 +244,9 @@ func TestTranscriptWriterTruncatesAtSessionCap(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-cap"))
 	payload := bytes.Repeat([]byte("z"), 1024)
 	for index := 0; index < 16; index++ {
-		writer.SessionOutput("session-cap", "tab-1", payload)
+		writer.SessionOutput(ctx, "session-cap", "tab-1", payload)
 	}
-	writer.SessionEnded("session-cap")
+	writer.SessionEnded(ctx, "session-cap")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
@@ -293,7 +295,7 @@ func TestTranscriptWriterCrashLeavesTranscriptOpen(t *testing.T) {
 	}
 	writer := startTestWriter(t, database, transcriptWriterConfig{})
 	writer.SessionStarted(ctx, transcriptIdentity("session-crash"))
-	writer.SessionOutput("session-crash", "tab-1", []byte("before-crash\r\n"))
+	writer.SessionOutput(ctx, "session-crash", "tab-1", []byte("before-crash\r\n"))
 	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 1)
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
@@ -345,11 +347,11 @@ func TestTranscriptWriterDuplicateEndIsIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	writer := startTestWriter(t, database, transcriptWriterConfig{})
-	writer.SessionEnded("unknown-session")
+	writer.SessionEnded(ctx, "unknown-session")
 	writer.SessionStarted(ctx, transcriptIdentity("session-dup"))
-	writer.SessionOutput("session-dup", "tab-1", []byte("data\r\n"))
-	writer.SessionEnded("session-dup")
-	writer.SessionEnded("session-dup")
+	writer.SessionOutput(ctx, "session-dup", "tab-1", []byte("data\r\n"))
+	writer.SessionEnded(ctx, "session-dup")
+	writer.SessionEnded(ctx, "session-dup")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
@@ -446,3 +448,357 @@ func TestTranscriptRetentionPolicyParsing(t *testing.T) {
 		t.Fatalf("configured policy = %+v err=%v", policy, err)
 	}
 }
+
+func TestTranscriptWriterReconnectPeriodsSharingBatch(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := newTranscriptWriter(transcriptWriterConfig{Database: database, Logger: discardTranscriptLogger()})
+	writer.SessionStarted(ctx, transcriptIdentity("session-shared"))
+	writer.SessionOutput(ctx, "session-shared", "tab-1", []byte("old-period-output\r\n"))
+	writer.SessionEnded(ctx, "session-shared")
+	writer.SessionStarted(ctx, transcriptIdentity("session-shared"))
+	writer.SessionOutput(ctx, "session-shared", "tab-1", []byte("new-period-output\r\n"))
+	writer.SessionEnded(ctx, "session-shared")
+	if err := writer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected two connection-period transcripts, got %+v", rows)
+	}
+	var oldRow, newRow store.TranscriptRow
+	for _, row := range rows {
+		if row.EndedAt == nil {
+			t.Fatalf("period must be ended: %+v", row)
+		}
+		chunks := readTranscriptAll(t, database, row.ID)
+		if len(chunks) != 1 {
+			t.Fatalf("period %s must have exactly its own chunk, got %+v", row.ID, chunks)
+		}
+		if chunks[0].Seq != 0 {
+			t.Fatalf("period %s chunk seq = %d, want 0", row.ID, chunks[0].Seq)
+		}
+		switch string(chunks[0].Data) {
+		case "old-period-output\r\n":
+			oldRow = row
+		case "new-period-output\r\n":
+			newRow = row
+		default:
+			t.Fatalf("unexpected chunk content %q", chunks[0].Data)
+		}
+	}
+	if oldRow.ID == "" || newRow.ID == "" || oldRow.ID == newRow.ID {
+		t.Fatalf("periods must be isolated: old=%+v new=%+v", oldRow, newRow)
+	}
+	if newRow.StartedAt < oldRow.StartedAt {
+		t.Fatalf("new period must start after the old one: old=%+v new=%+v", oldRow, newRow)
+	}
+}
+
+func TestTranscriptWriterBackpressureEndDoesNotOvertakeOutput(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := newTranscriptWriter(transcriptWriterConfig{
+		Database: database, Logger: discardTranscriptLogger(), QueueMaxBytes: 4096,
+	})
+	writer.SessionStarted(ctx, transcriptIdentity("session-order"))
+	payload := bytes.Repeat([]byte("y"), 1024)
+	for index := 0; index < 4; index++ {
+		writer.SessionOutput(ctx, "session-order", "tab-1", payload)
+	}
+	tailDone := make(chan struct{})
+	go func() {
+		defer close(tailDone)
+		writer.SessionOutput(ctx, "session-order", "tab-1", []byte("tail-output"))
+	}()
+	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-tailDone:
+		t.Fatal("tail output must wait while the queue is full")
+	default:
+	}
+	endDone := make(chan struct{})
+	go func() {
+		defer close(endDone)
+		writer.SessionEnded(ctx, "session-order")
+	}()
+	select {
+	case <-endDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("End must not wedge behind a blocked output")
+	}
+	select {
+	case <-tailDone:
+		t.Fatal("tail output must stay blocked until the writer drains")
+	default:
+	}
+	if err := writer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-tailDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("tail output did not drain")
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndedAt == nil {
+		t.Fatalf("expected one ended transcript, got %+v", rows)
+	}
+	chunks := readTranscriptAll(t, database, rows[0].ID)
+	if len(chunks) != 5 {
+		t.Fatalf("expected 5 chunks including the tail, got %d", len(chunks))
+	}
+	if !bytes.Contains(chunks[4].Data, []byte("tail-output")) {
+		t.Fatalf("tail output must be recorded before End applies: %+v", chunks[4])
+	}
+}
+
+func TestTranscriptWriterDBStallKeepsOrderAndDoesNotWedge(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := startTestWriter(t, database, transcriptWriterConfig{QueueMaxBytes: 4096})
+	writer.SessionStarted(ctx, transcriptIdentity("session-stall"))
+	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 0)
+
+	conn, err := database.DB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("z"), 1024)
+	for index := 0; index < 4; index++ {
+		writer.SessionOutput(ctx, "session-stall", "tab-1", payload)
+	}
+	time.Sleep(200 * time.Millisecond)
+	fillDone := make(chan struct{})
+	go func() {
+		defer close(fillDone)
+		for index := 0; index < 4; index++ {
+			writer.SessionOutput(ctx, "session-stall", "tab-1", payload)
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	blocked := make(chan struct{})
+	go func() {
+		defer close(blocked)
+		writer.SessionOutput(ctx, "session-stall", "tab-1", []byte("stalled-tail-output"))
+	}()
+	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-blocked:
+		t.Fatal("the tail output must block while the database is stalled and the queue is full")
+	default:
+	}
+	endDone := make(chan struct{})
+	go func() {
+		defer close(endDone)
+		writer.SessionEnded(ctx, "session-stall")
+	}()
+	select {
+	case <-endDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("End must not wedge during a database stall")
+	}
+	select {
+	case <-blocked:
+		t.Fatal("the tail output must stay blocked while the stall lasts")
+	default:
+	}
+	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-fillDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("fill outputs did not drain after the database stall ended")
+	}
+	select {
+	case <-blocked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the tail output did not drain after the database stall ended")
+	}
+	select {
+	case <-endDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("End did not drain after the database stall ended")
+	}
+	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndedAt == nil || rows[0].Chunks != 9 {
+		t.Fatalf("all 9 chunks must survive the stall in order: %+v", rows)
+	}
+	chunks := readTranscriptAll(t, database, rows[0].ID)
+	for index, chunk := range chunks {
+		if chunk.Seq != int64(index) {
+			t.Fatalf("chunk %d lost ordering across the stall: seq=%d", index, chunk.Seq)
+		}
+	}
+	if !bytes.Contains(chunks[8].Data, []byte("stalled-tail-output")) {
+		t.Fatalf("the tail output must be recorded before End: %+v", chunks[8])
+	}
+}
+
+func TestTranscriptWriterEnqueueHonorsCancelledContext(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := newTranscriptWriter(transcriptWriterConfig{
+		Database: database, Logger: discardTranscriptLogger(), QueueMaxBytes: 1024,
+	})
+	writer.SessionStarted(ctx, transcriptIdentity("session-cancel"))
+	payload := bytes.Repeat([]byte("c"), 1024)
+	for index := 0; index < 1; index++ {
+		writer.SessionOutput(ctx, "session-cancel", "tab-1", payload)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		writer.SessionOutput(cancelled, "session-cancel", "tab-1", payload)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("enqueue must return when the caller context is cancelled")
+	}
+	endDone := make(chan struct{})
+	go func() {
+		defer close(endDone)
+		writer.SessionEnded(cancelled, "session-cancel")
+	}()
+	select {
+	case <-endDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("End must not wedge behind a full queue")
+	}
+	if err := writer.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer shutdownCancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndedAt == nil || rows[0].Chunks != 1 {
+		t.Fatalf("the cancelled output must be dropped while the rest completes: %+v", rows)
+	}
+}
+
+func TestCatchUpProviderAttachBoundary(t *testing.T) {
+	ctx := context.Background()
+	inner := &fakeCatchUpInner{attachment: &fakeCatchUpAttachment{}}
+	recording := filepath.Join(t.TempDir(), "sessions", "tab-1")
+	if err := os.MkdirAll(recording, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	recordingFile := filepath.Join(recording, "output.raw")
+	if err := os.WriteFile(recordingFile, bytes.Repeat([]byte("r"), 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := &catchUpProvider{
+		DurableProvider: inner,
+		recordingPath:   func(id string) string { return filepath.Join(recording, "output.raw") },
+	}
+	attachment, err := provider.Attach(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, ok := attachment.(interface{ DurableCatchUpBytes() int64 })
+	if !ok {
+		t.Fatal("wrapped attachment must expose the catch-up boundary")
+	}
+	if boundary.DurableCatchUpBytes() != 4096 {
+		t.Fatalf("boundary = %d, want the recording size 4096", boundary.DurableCatchUpBytes())
+	}
+	if _, ok := attachment.(interface {
+		DurableGrid() (uint32, uint32, bool)
+	}); !ok {
+		t.Fatal("wrapper must forward the grid interface")
+	}
+	if _, ok := attachment.(interface {
+		DurableVersions() (uint64, uint64, error)
+	}); !ok {
+		t.Fatal("wrapper must forward the versions interface")
+	}
+	missing := &catchUpProvider{DurableProvider: inner}
+	attachment, err = missing.Attach(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.(interface{ DurableCatchUpBytes() int64 }).DurableCatchUpBytes() != 0 {
+		t.Fatal("missing recording must fall back to a zero boundary")
+	}
+}
+
+type fakeCatchUpInner struct {
+	attachment base.DurableAttachment
+}
+
+func (f *fakeCatchUpInner) Create(context.Context, base.DurableCreateOptions) (base.DurableAttachment, error) {
+	return f.attachment, nil
+}
+
+func (f *fakeCatchUpInner) Attach(context.Context, string) (base.DurableAttachment, error) {
+	return f.attachment, nil
+}
+
+type fakeCatchUpAttachment struct{}
+
+func (a *fakeCatchUpAttachment) Read([]byte) (int, error)                     { return 0, io.EOF }
+func (a *fakeCatchUpAttachment) Write(data []byte) (int, error)               { return len(data), nil }
+func (a *fakeCatchUpAttachment) Close() error                                 { return nil }
+func (a *fakeCatchUpAttachment) ID() string                                   { return "tab-1" }
+func (a *fakeCatchUpAttachment) Generation() uint64                           { return 0 }
+func (a *fakeCatchUpAttachment) Resize(context.Context, uint32, uint32) error { return nil }
+func (a *fakeCatchUpAttachment) Wait(context.Context) error                   { return nil }
+func (a *fakeCatchUpAttachment) Kill(context.Context) error                   { return nil }
+func (a *fakeCatchUpAttachment) Stderr() io.Reader                            { return nil }
+func (a *fakeCatchUpAttachment) CloseWrite() error                            { return nil }

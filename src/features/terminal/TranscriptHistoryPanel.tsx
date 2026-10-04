@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   assetApi,
   transcriptApi,
-  type Asset,
   type TranscriptChunk,
   type TranscriptMatch,
-  type TranscriptReadResult,
   type TranscriptSummary,
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
@@ -20,11 +18,12 @@ import {
   IconTrash,
 } from "../../ui/icons";
 import {
-  chunkToText,
+  createTranscriptDecoder,
   formatTranscriptBytes,
   formatTranscriptDuration,
   formatTranscriptTime,
   stripAnsi,
+  type TranscriptDecoder,
 } from "./transcriptText";
 
 const POLL_MS = 5000;
@@ -38,9 +37,16 @@ interface LoadedChunk {
   text: string;
 }
 
-function assetLabel(asset: Asset): string {
-  const host = asset.host ? ` (${asset.host})` : "";
-  return `${asset.name}${host}`;
+interface HostOption {
+  assetId: string;
+  name: string;
+  kind: string;
+  deleted: boolean;
+}
+
+function hostLabel(host: HostOption): string {
+  const suffix = host.deleted ? "（已删除）" : "";
+  return `${host.name}${suffix}`;
 }
 
 function badgeClass(summary: TranscriptSummary): string {
@@ -55,7 +61,12 @@ function badgeText(summary: TranscriptSummary): string {
   return "已结束";
 }
 
-function normalizeRead(result: TranscriptReadResult | null): TranscriptReadResult {
+function normalizeRead(result: {
+  chunks: TranscriptChunk[];
+  nextSeq: number;
+  done: boolean;
+  totalBytes: number;
+} | null): { chunks: TranscriptChunk[]; nextSeq: number; done: boolean; totalBytes: number } {
   if (!result || !Array.isArray(result.chunks)) {
     return { chunks: [], nextSeq: 0, done: true, totalBytes: 0 };
   }
@@ -64,8 +75,8 @@ function normalizeRead(result: TranscriptReadResult | null): TranscriptReadResul
 
 export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }) {
   const pushToast = useUi((s) => s.pushToast);
-  const [assets, setAssets] = useState<Asset[] | null>(null);
-  const [assetsError, setAssetsError] = useState<string | null>(null);
+  const [hosts, setHosts] = useState<HostOption[] | null>(null);
+  const [hostsError, setHostsError] = useState<string | null>(null);
   const [assetId, setAssetId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<TranscriptSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -81,26 +92,46 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const readerRef = useRef<HTMLDivElement | null>(null);
+  const decoderRef = useRef<TranscriptDecoder | null>(null);
 
-  const loadAssets = useCallback(async () => {
+  const loadHosts = useCallback(async () => {
     try {
-      const list = await assetApi.list();
-      setAssets(list.filter((asset) => TERMINAL_ASSET_KINDS.has(asset.kind)));
-      setAssetsError(null);
+      const [assets, transcriptHosts] = await Promise.all([
+        assetApi.list(),
+        transcriptApi.hosts(),
+      ]);
+      const merged: HostOption[] = [];
+      const seen = new Set<string>();
+      for (const asset of assets.filter((candidate) => TERMINAL_ASSET_KINDS.has(candidate.kind))) {
+        merged.push({ assetId: asset.id, name: asset.name, kind: asset.kind, deleted: false });
+        seen.add(asset.id);
+      }
+      for (const host of Array.isArray(transcriptHosts) ? transcriptHosts : []) {
+        if (seen.has(host.assetId)) continue;
+        merged.push({
+          assetId: host.assetId,
+          name: host.assetName || host.assetId,
+          kind: host.assetKind,
+          deleted: host.assetDeleted,
+        });
+        seen.add(host.assetId);
+      }
+      setHosts(merged);
+      setHostsError(null);
     } catch (error) {
-      setAssetsError(describeError(error));
+      setHostsError(describeError(error));
     }
   }, []);
 
   useEffect(() => {
-    void loadAssets();
-  }, [loadAssets]);
+    void loadHosts();
+  }, [loadHosts]);
 
   useEffect(() => {
-    if (assets === null || assetId !== null) return;
-    const first = assets[0];
-    if (first) setAssetId(first.id);
-  }, [assets, assetId]);
+    if (hosts === null || assetId !== null) return;
+    const first = hosts[0];
+    if (first) setAssetId(first.assetId);
+  }, [hosts, assetId]);
 
   const loadSessions = useCallback(async () => {
     if (!assetId) return;
@@ -125,21 +156,30 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     [sessions, selectedId],
   );
 
-  const appendChunks = useCallback((incoming: TranscriptChunk[]) => {
+  const decodeChunks = useCallback((incoming: TranscriptChunk[], reachedDone: boolean) => {
+    const decoder = decoderRef.current;
+    if (!decoder) return;
+    const sorted = [...incoming].sort((a, b) => a.seq - b.seq);
+    const decoded = sorted.map((chunk) => ({
+      seq: chunk.seq,
+      ts: chunk.ts,
+      tabId: chunk.tabId,
+      text: decoder.push(chunk.dataBase64),
+    }));
+    const rest = reachedDone ? decoder.flush() : "";
     setChunks((prev) => {
       const seen = new Set(prev.map((chunk) => chunk.seq));
       const merged = [...prev];
-      for (const chunk of incoming) {
+      for (const chunk of decoded) {
         if (seen.has(chunk.seq)) continue;
         seen.add(chunk.seq);
-        merged.push({
-          seq: chunk.seq,
-          ts: chunk.ts,
-          tabId: chunk.tabId,
-          text: stripAnsi(chunkToText(chunk.dataBase64)),
-        });
+        merged.push(chunk);
       }
       merged.sort((a, b) => a.seq - b.seq);
+      if (rest && merged.length > 0) {
+        const last = merged[merged.length - 1];
+        merged[merged.length - 1] = { ...last, text: last.text + rest };
+      }
       return merged;
     });
   }, []);
@@ -147,11 +187,11 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const loadReader = useCallback(
     async (id: string, afterSeq: number) => {
       const result = normalizeRead(await transcriptApi.read(id, afterSeq, PAGE_BYTES));
-      appendChunks(result.chunks);
+      decodeChunks(result.chunks, result.done);
       setNextSeq(result.nextSeq);
       setDone(result.done);
     },
-    [appendChunks],
+    [decodeChunks],
   );
 
   useEffect(() => {
@@ -163,9 +203,11 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       setMatches(null);
       setSearchError(null);
       setQuery("");
+      decoderRef.current = null;
       return;
     }
     let cancelled = false;
+    decoderRef.current = createTranscriptDecoder();
     setReaderLoading(true);
     setReaderError(null);
     setChunks([]);
@@ -177,7 +219,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       try {
         const result = normalizeRead(await transcriptApi.read(selectedId, 0, PAGE_BYTES));
         if (cancelled) return;
-        appendChunks(result.chunks);
+        decodeChunks(result.chunks, result.done);
         setNextSeq(result.nextSeq);
         setDone(result.done);
       } catch (error) {
@@ -189,7 +231,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     return () => {
       cancelled = true;
     };
-  }, [selectedId, appendChunks]);
+  }, [selectedId, decodeChunks]);
 
   const loadMore = async () => {
     if (!selectedId || loadingMore || done) return;
@@ -230,8 +272,8 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       let cursor = nextSeq;
       let reachedDone = done;
       while (cursor <= match.seq && !reachedDone) {
-        const result = await transcriptApi.read(selectedId, cursor, PAGE_BYTES);
-        appendChunks(result.chunks);
+        const result = normalizeRead(await transcriptApi.read(selectedId, cursor, PAGE_BYTES));
+        decodeChunks(result.chunks, result.done);
         cursor = result.nextSeq;
         setNextSeq(result.nextSeq);
         setDone(result.done);
@@ -262,7 +304,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     }
   };
 
-  const assetOptions = assets ?? [];
+  const hostOptions = hosts ?? [];
   const sessionList = sessions ?? [];
 
   return (
@@ -274,17 +316,17 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
           className="nx-select max-w-[280px]"
           aria-label="选择主机"
           value={assetId ?? ""}
-          disabled={assetOptions.length === 0}
+          disabled={hostOptions.length === 0}
           onChange={(event) => {
             setAssetId(event.target.value || null);
             setSelectedId(null);
             setSessions(null);
           }}
         >
-          {assetOptions.length === 0 && <option value="">无可用主机</option>}
-          {assetOptions.map((asset) => (
-            <option key={asset.id} value={asset.id}>
-              {assetLabel(asset)}
+          {hostOptions.length === 0 && <option value="">无可用主机</option>}
+          {hostOptions.map((host) => (
+            <option key={host.assetId} value={host.assetId}>
+              {hostLabel(host)}
             </option>
           ))}
         </select>
@@ -299,11 +341,11 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
         </button>
       </div>
 
-      {assetsError && (
+      {hostsError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          读取主机列表失败:{assetsError}
-          <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadAssets()}>
+          读取主机列表失败:{hostsError}
+          <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadHosts()}>
             重试
           </button>
         </div>
@@ -382,7 +424,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                     </td>
                   </tr>
                 )}
-                {!sessionsError && !assetId && assets !== null && (
+                {!sessionsError && !assetId && hosts !== null && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
                       还没有可查看的主机

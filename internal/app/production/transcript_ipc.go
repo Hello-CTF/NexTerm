@@ -62,8 +62,37 @@ type transcriptIDRequest struct {
 	ID string `json:"id"`
 }
 
+type transcriptHostDTO struct {
+	AssetID       string `json:"assetId"`
+	AssetName     string `json:"assetName"`
+	AssetKind     string `json:"assetKind"`
+	AssetDeleted  bool   `json:"assetDeleted"`
+	Transcripts   int64  `json:"transcripts"`
+	LastStartedAt int64  `json:"lastStartedAt"`
+}
+
 func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
+		func() error {
+			return ipc.Register(dispatcher, "transcript_hosts", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]transcriptHostDTO, error) {
+				rows, err := s.database.TranscriptHosts(ctx)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]transcriptHostDTO, 0, len(rows))
+				for _, row := range rows {
+					result = append(result, transcriptHostDTO{
+						AssetID:       row.AssetID,
+						AssetName:     row.AssetName,
+						AssetKind:     row.AssetKind,
+						AssetDeleted:  row.AssetDeleted,
+						Transcripts:   row.Transcripts,
+						LastStartedAt: row.LastStartedAt,
+					})
+				}
+				return result, nil
+			})
+		},
 		func() error {
 			return ipc.Register(dispatcher, "transcript_list", func(ctx context.Context, _ *ipc.Call, input transcriptListRequest) ([]transcriptSummaryDTO, error) {
 				if err := store.EnsureID(input.AssetID); err != nil {

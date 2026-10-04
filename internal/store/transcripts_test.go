@@ -256,3 +256,160 @@ func TestTranscriptDatabaseFilePermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptSearchAcrossChunkBoundaries(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendTranscriptChunks(t, db, id,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Data: []byte("hel")},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: []byte("lo world\r\n")},
+	)
+
+	matches, err := db.TranscriptSearch(ctx, id, []byte("hello"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 0 {
+		t.Fatalf("query spanning a chunk boundary must match once at seq 0: %+v", matches)
+	}
+	if !bytes.Contains(matches[0].Preview, []byte("hello world")) {
+		t.Fatalf("unexpected preview %q", matches[0].Preview)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("world"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 1 {
+		t.Fatalf("query inside the second chunk must match at seq 1: %+v", matches)
+	}
+}
+
+func TestTranscriptSearchAcrossChunkUTF8AndANSI(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	nihao := []byte("你好")
+	appendTranscriptChunks(t, db, id,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Data: append([]byte("say "), nihao[0])},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: append(append([]byte{nihao[1], nihao[2]}, []byte("好\r\nerr\x1b[3")...))},
+		TranscriptChunkRow{Seq: 2, TabID: "tab", TS: 1003, Data: []byte("1mor\x1b[0m done\r\n")},
+	)
+
+	matches, err := db.TranscriptSearch(ctx, id, []byte("你好"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 1 {
+		t.Fatalf("utf-8 rune split across chunks must match once it becomes visible: %+v", matches)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("error"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 1 {
+		t.Fatalf("ansi sequence split inside a word must still match the visible text: %+v", matches)
+	}
+	if !bytes.Contains(matches[0].Preview, []byte("error done")) {
+		t.Fatalf("unexpected preview %q", matches[0].Preview)
+	}
+	if bytes.Contains(matches[0].Preview, []byte{0x1b}) {
+		t.Fatalf("preview must be visible text without escape bytes: %q", matches[0].Preview)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("\x1b[31m"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("escape sequences must not be searchable as visible text: %+v", matches)
+	}
+}
+
+func TestTranscriptSearchBudgetsAndOrder(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	chunks := make([]TranscriptChunkRow, 0, 8)
+	for index := 0; index < 8; index++ {
+		chunks = append(chunks, TranscriptChunkRow{
+			Seq: int64(index), TabID: "tab", TS: 1000 + int64(index),
+			Data: []byte("needle "),
+		})
+	}
+	appendTranscriptChunks(t, db, id, chunks...)
+
+	matches, err := db.TranscriptSearch(ctx, id, []byte("needle"), 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 3 {
+		t.Fatalf("maxMatches must bound the result: %+v", matches)
+	}
+	for index, match := range matches {
+		if match.Seq != int64(index) {
+			t.Fatalf("matches must stay chronological: %+v", matches)
+		}
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("needle"), 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("scan budget must bound the scan: %+v", matches)
+	}
+	if _, err := db.TranscriptSearch(ctx, id, bytes.Repeat([]byte("q"), 300), 0, 0); err == nil {
+		t.Fatal("over-long queries must be rejected")
+	}
+}
+
+func TestTranscriptHostsIncludeDeletedAssets(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	live, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "live-host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "deleted-host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := startTranscript(t, db, deleted.ID, 1000)
+	if err := db.TranscriptEnd(ctx, gone, 2000, false); err != nil {
+		t.Fatal(err)
+	}
+	kept := startTranscript(t, db, live.ID, 3000)
+	if err := db.TranscriptEnd(ctx, kept, 4000, false); err != nil {
+		t.Fatal(err)
+	}
+	orphan := startTranscript(t, db, "01J0NEXTERMMISSINGHOST000001", 2000)
+	if err := db.TranscriptEnd(ctx, orphan, 2500, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AssetDelete(ctx, deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts, err := db.TranscriptHosts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 3 {
+		t.Fatalf("expected 3 transcript hosts, got %+v", hosts)
+	}
+	byID := make(map[string]TranscriptHostRow, len(hosts))
+	for _, host := range hosts {
+		byID[host.AssetID] = host
+	}
+	if host := byID[live.ID]; host.AssetDeleted || host.AssetName != "web-01" || host.Transcripts != 1 || host.AssetKind != "ssh" {
+		t.Fatalf("live host row wrong: %+v", host)
+	}
+	if host := byID[deleted.ID]; !host.AssetDeleted || host.Transcripts != 1 {
+		t.Fatalf("soft-deleted host must stay listed as deleted: %+v", host)
+	}
+	if host := byID["01J0NEXTERMMISSINGHOST000001"]; !host.AssetDeleted || host.AssetName != "web-01" {
+		t.Fatalf("hard-missing host must be listed from the snapshot: %+v", host)
+	}
+	if hosts[0].AssetID != live.ID {
+		t.Fatalf("hosts must be ordered by last activity: %+v", hosts)
+	}
+}

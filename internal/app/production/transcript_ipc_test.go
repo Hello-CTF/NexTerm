@@ -192,3 +192,36 @@ func TestTranscriptSummaryJSONShape(t *testing.T) {
 		t.Fatalf("endedAt must be present and null when unset: %s", payload)
 	}
 }
+
+func TestTranscriptHostsCommandIncludesDeletedAssets(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "web-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := transcriptDispatcher(t, database, session.NewManager(session.Config{}))
+	id := seedTranscript(t, database, asset.ID, 1000, "output\r\n")
+	if err := database.TranscriptEnd(ctx, id, 2000, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AssetDelete(ctx, asset.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := dispatchStoreTest(dispatcher, "transcript_hosts", `{}`)
+	var hosts []transcriptHostDTO
+	requireStoreTestResponse(t, response, &hosts)
+	if len(hosts) != 1 {
+		t.Fatalf("expected one host, got %+v", hosts)
+	}
+	host := hosts[0]
+	if host.AssetID != asset.ID || host.AssetName != "web-01" || host.AssetKind != "ssh" ||
+		!host.AssetDeleted || host.Transcripts != 1 || host.LastStartedAt != 1000 {
+		t.Fatalf("unexpected host DTO: %+v", host)
+	}
+}

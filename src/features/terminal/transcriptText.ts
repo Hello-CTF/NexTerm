@@ -19,6 +19,85 @@ export function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
 }
 
+export interface TranscriptDecoder {
+  push(dataBase64: string): string;
+  flush(): string;
+}
+
+export function createTranscriptDecoder(): TranscriptDecoder {
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let tail = "";
+  const strip = (text: string): string => {
+    let visible = "";
+    let index = 0;
+    while (index < text.length) {
+      const code = text.charCodeAt(index);
+      if (code === 0x1b) {
+        const result = scanEscape(text, index);
+        if (!result.complete) {
+          tail = text.slice(index);
+          return visible;
+        }
+        index = result.end;
+        continue;
+      }
+      if (code === 0x9b) {
+        const result = scanCsi(text, index + 1);
+        if (!result.complete) {
+          tail = text.slice(index);
+          return visible;
+        }
+        index = result.end;
+        continue;
+      }
+      visible += text[index];
+      index++;
+    }
+    return visible;
+  };
+  return {
+    push(dataBase64: string): string {
+      const bytes = decodeBase64(dataBase64);
+      const text = tail + decoder.decode(bytes, { stream: true });
+      tail = "";
+      return strip(text);
+    },
+    flush(): string {
+      const text = tail + decoder.decode();
+      tail = "";
+      return strip(text);
+    },
+  };
+}
+
+function scanCsi(text: string, start: number): { end: number; complete: boolean } {
+  for (let index = start; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code >= 0x40 && code <= 0x7e) return { end: index + 1, complete: true };
+    if (code < 0x20 || code > 0x3f) return { end: index, complete: true };
+  }
+  return { end: text.length, complete: false };
+}
+
+function scanEscape(text: string, start: number): { end: number; complete: boolean } {
+  if (start + 1 >= text.length) return { end: text.length, complete: false };
+  const kind = text[start + 1];
+  if (kind === "[") {
+    return scanCsi(text, start + 2);
+  }
+  if (kind === "]") {
+    for (let index = start + 2; index < text.length; index++) {
+      if (text.charCodeAt(index) === 0x07) return { end: index + 1, complete: true };
+      if (text.charCodeAt(index) === 0x1b && index + 1 < text.length && text[index + 1] === "\\") {
+        return { end: index + 2, complete: true };
+      }
+    }
+    return { end: text.length, complete: false };
+  }
+  if (kind >= "0" && kind <= "~") return { end: start + 2, complete: true };
+  return { end: start + 1, complete: true };
+}
+
 export function formatTranscriptBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;

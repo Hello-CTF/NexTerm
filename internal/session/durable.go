@@ -53,6 +53,10 @@ type durableGridSource interface {
 	DurableGrid() (cols, rows uint32, ok bool)
 }
 
+type durableCatchUpBoundary interface {
+	DurableCatchUpBytes() int64
+}
+
 func (a *tmuxDurableAttachment) DurableVersions() (eventVersion, gridRevision uint64, err error) {
 	return a.session.Versions()
 }

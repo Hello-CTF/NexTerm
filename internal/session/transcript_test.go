@@ -3,9 +3,12 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type transcriptRecorder struct {
@@ -27,13 +30,13 @@ func (r *transcriptRecorder) SessionStarted(_ context.Context, info TranscriptIn
 	r.started = append(r.started, info)
 }
 
-func (r *transcriptRecorder) SessionOutput(sessionID, tabID string, data []byte) {
+func (r *transcriptRecorder) SessionOutput(_ context.Context, sessionID, tabID string, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.outputs = append(r.outputs, recorderOutput{sessionID: sessionID, tabID: tabID, data: append([]byte(nil), data...)})
 }
 
-func (r *transcriptRecorder) SessionEnded(sessionID string) {
+func (r *transcriptRecorder) SessionEnded(_ context.Context, sessionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.ended = append(r.ended, sessionID)
@@ -236,5 +239,135 @@ func TestTranscriptNilSinkIsNoop(t *testing.T) {
 	})
 	if err := manager.Disconnect(connected.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type transcriptDurableProvider struct {
+	mu      sync.Mutex
+	replays map[string]transcriptReplay
+	live    map[string]*fakeChannel
+}
+
+type transcriptReplay struct {
+	reads    [][]byte
+	boundary int64
+}
+
+func newTranscriptDurableProvider() *transcriptDurableProvider {
+	return &transcriptDurableProvider{
+		replays: make(map[string]transcriptReplay),
+		live:    make(map[string]*fakeChannel),
+	}
+}
+
+func (p *transcriptDurableProvider) Create(_ context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
+	channel := newFakeChannel(1)
+	p.mu.Lock()
+	p.live[options.ID] = channel
+	p.mu.Unlock()
+	return &transcriptDurableAttachment{fakeChannel: channel}, nil
+}
+
+func (p *transcriptDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
+	p.mu.Lock()
+	replay := p.replays[id]
+	if _, ok := p.live[id]; !ok {
+		p.mu.Unlock()
+		return nil, errors.New("no such durable session")
+	}
+	channel := newFakeChannel(1)
+	p.live[id] = channel
+	p.mu.Unlock()
+	attachment := &transcriptDurableAttachment{fakeChannel: channel, boundary: replay.boundary}
+	for _, read := range replay.reads {
+		channel.reads <- append([]byte(nil), read...)
+	}
+	return attachment, nil
+}
+
+func (p *transcriptDurableProvider) channel(id string) *fakeChannel {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.live[id]
+}
+
+type transcriptDurableAttachment struct {
+	*fakeChannel
+	boundary int64
+}
+
+func (a *transcriptDurableAttachment) DurableCatchUpBytes() int64 { return a.boundary }
+func (a *transcriptDurableAttachment) Kill(context.Context) error { return nil }
+
+func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
+	provider := newTranscriptDurableProvider()
+	firstRecorder := &transcriptRecorder{}
+	first := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		Durable: provider, Transcripts: firstRecorder,
+	})
+	connected, err := first.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := first.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a",
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.channel(info.ID).emit([]byte("durable-replay-marker\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return bytes.Contains(firstRecorder.outputBytes(), []byte("durable-replay-marker")) })
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	provider.mu.Lock()
+	provider.replays[info.ID] = transcriptReplay{
+		reads: [][]byte{
+			[]byte("durable-replay-mar"),
+			append([]byte("ker\r\n"), []byte("live-after-boundary\r\n")...),
+		},
+		boundary: int64(len("durable-replay-marker\r\n")),
+	}
+	provider.mu.Unlock()
+
+	secondRecorder := &transcriptRecorder{}
+	second := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		Durable: provider, Transcripts: secondRecorder,
+	})
+	t.Cleanup(func() { _ = second.Close() })
+	recovered, err := second.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredInfo, err := second.OpenTab(context.Background(), OpenTabOptions{
+		TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredTab, err := second.Tab(recoveredInfo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		return bytes.Contains(recoveredTab.terminal.Dump(1<<20), []byte("durable-replay-marker"))
+	})
+	waitFor(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("live-after-boundary")) })
+	recorded := secondRecorder.outputBytes()
+	if bytes.Contains(recorded, []byte("durable-replay-marker")) {
+		t.Fatalf("recovery catch-up must not be transcribed again: %q", recorded)
+	}
+	if !bytes.Contains(recorded, []byte("live-after-boundary\r\n")) {
+		t.Fatalf("output after the catch-up boundary must be recorded: %q", recorded)
+	}
+	if bytes.Contains(recorded, []byte("ker\r\n")) {
+		t.Fatalf("replay tail inside a straddling read must be suppressed: %q", recorded)
 	}
 }

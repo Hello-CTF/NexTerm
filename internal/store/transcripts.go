@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
@@ -33,6 +35,15 @@ type TranscriptMatch struct {
 	Seq     int64
 	TS      int64
 	Preview []byte
+}
+
+type TranscriptHostRow struct {
+	AssetID       string
+	AssetName     string
+	AssetKind     string
+	AssetDeleted  bool
+	Transcripts   int64
+	LastStartedAt int64
 }
 
 type TranscriptRetentionPolicy struct {
@@ -152,6 +163,30 @@ ORDER BY started_at DESC, id DESC LIMIT ?`, assetID, limit)
 	return result, rows.Err()
 }
 
+func (s *Store) TranscriptHosts(ctx context.Context) ([]TranscriptHostRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.asset_id, MAX(t.asset_name), MAX(t.asset_kind),
+COUNT(*), MAX(t.started_at),
+CASE WHEN a.id IS NULL OR a.deleted_at IS NOT NULL THEN 1 ELSE 0 END
+FROM transcript t LEFT JOIN asset a ON a.id = t.asset_id
+GROUP BY t.asset_id ORDER BY MAX(t.started_at) DESC LIMIT 500`)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+	result := []TranscriptHostRow{}
+	for rows.Next() {
+		var row TranscriptHostRow
+		var deleted int
+		if err := rows.Scan(&row.AssetID, &row.AssetName, &row.AssetKind,
+			&row.Transcripts, &row.LastStartedAt, &deleted); err != nil {
+			return nil, dbError(err)
+		}
+		row.AssetDeleted = deleted != 0
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) TranscriptChunks(ctx context.Context, transcriptID string, afterSeq int64, maxBytes int) ([]TranscriptChunkRow, error) {
 	if maxBytes <= 0 || maxBytes > 8<<20 {
 		maxBytes = 1 << 20
@@ -182,6 +217,9 @@ func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, query
 	if len(query) == 0 {
 		return nil, badParam(fmt.Errorf("transcript search query is empty"))
 	}
+	if len(query) > 256 {
+		return nil, badParam(fmt.Errorf("transcript search query is too long"))
+	}
 	if maxMatches <= 0 || maxMatches > 500 {
 		maxMatches = 100
 	}
@@ -194,43 +232,219 @@ WHERE transcript_id=? ORDER BY seq LIMIT 8192`, transcriptID)
 		return nil, dbError(err)
 	}
 	defer rows.Close()
-	matches := []TranscriptMatch{}
+	matcher := newVisibleMatcher(query, maxMatches)
 	scanned := 0
-	for rows.Next() && len(matches) < maxMatches && scanned < maxScanBytes {
+	for rows.Next() && !matcher.full() && scanned < maxScanBytes {
 		var seq, ts int64
 		var data []byte
 		if err := rows.Scan(&seq, &ts, &data); err != nil {
 			return nil, dbError(err)
 		}
 		scanned += len(data)
-		for offset := 0; len(matches) < maxMatches; {
-			index := bytes.Index(data[offset:], query)
-			if index < 0 {
-				break
-			}
-			start := offset + index
-			matches = append(matches, TranscriptMatch{
-				Seq:     seq,
-				TS:      ts,
-				Preview: transcriptPreview(data, start, len(query)),
-			})
-			offset = start + len(query)
-		}
+		matcher.consume(seq, ts, data)
 	}
-	return matches, rows.Err()
+	return matcher.matches, rows.Err()
+}
+
+const (
+	visibleWindowBytes   = 16 << 10
+	visiblePreviewRadius = 80
+)
+
+type visibleSeqMark struct {
+	offset int
+	seq    int64
+	ts     int64
+}
+
+type visibleMatcher struct {
+	query      []byte
+	window     []byte
+	marks      []visibleSeqMark
+	pending    []byte
+	matches    []TranscriptMatch
+	maxMatches int
+	reportFrom int
+}
+
+func newVisibleMatcher(query []byte, maxMatches int) *visibleMatcher {
+	return &visibleMatcher{
+		query:      query,
+		maxMatches: maxMatches,
+	}
+}
+
+func (m *visibleMatcher) full() bool {
+	return len(m.matches) >= m.maxMatches
+}
+
+func (m *visibleMatcher) consume(seq, ts int64, data []byte) {
+	raw := m.pending
+	m.pending = nil
+	raw = append(raw, data...)
+	visible, tail := visibleBytes(raw)
+	m.pending = tail
+	if len(visible) == 0 {
+		return
+	}
+	m.marks = append(m.marks, visibleSeqMark{offset: len(m.window), seq: seq, ts: ts})
+	m.window = append(m.window, visible...)
+	m.searchNew()
+	m.trim()
+}
+
+func (m *visibleMatcher) searchNew() {
+	from := m.reportFrom
+	window := m.window
+	query := m.query
+	for from <= len(window)-len(query) && !m.full() {
+		index := bytes.Index(window[from:], query)
+		if index < 0 {
+			break
+		}
+		start := from + index
+		m.matches = append(m.matches, TranscriptMatch{
+			Seq:     m.seqAt(start),
+			TS:      m.tsAt(start),
+			Preview: transcriptPreview(window, start, len(query)),
+		})
+		from = start + len(query)
+	}
+	m.reportFrom = len(window) - len(query) + 1
+	if m.reportFrom < 0 {
+		m.reportFrom = 0
+	}
+}
+
+func (m *visibleMatcher) seqAt(offset int) int64 {
+	return m.markAt(offset).seq
+}
+
+func (m *visibleMatcher) tsAt(offset int) int64 {
+	return m.markAt(offset).ts
+}
+
+func (m *visibleMatcher) markAt(offset int) visibleSeqMark {
+	index := sort.Search(len(m.marks), func(i int) bool { return m.marks[i].offset > offset }) - 1
+	if index < 0 {
+		return visibleSeqMark{}
+	}
+	return m.marks[index]
+}
+
+func (m *visibleMatcher) trim() {
+	if len(m.window) <= visibleWindowBytes {
+		return
+	}
+	drop := len(m.window) - visibleWindowBytes
+	m.window = append([]byte(nil), m.window[drop:]...)
+	var carry visibleSeqMark
+	kept := make([]visibleSeqMark, 0, len(m.marks))
+	for _, mark := range m.marks {
+		if mark.offset < drop {
+			carry = mark
+			continue
+		}
+		kept = append(kept, visibleSeqMark{offset: mark.offset - drop, seq: mark.seq, ts: mark.ts})
+	}
+	if len(kept) == 0 || kept[0].offset > 0 {
+		kept = append([]visibleSeqMark{{offset: 0, seq: carry.seq, ts: carry.ts}}, kept...)
+	}
+	m.marks = kept
+	if m.reportFrom > drop {
+		m.reportFrom -= drop
+	} else {
+		m.reportFrom = 0
+	}
 }
 
 func transcriptPreview(data []byte, matchStart, matchLen int) []byte {
-	const previewRadius = 80
-	start := matchStart - previewRadius
+	start := matchStart - visiblePreviewRadius
 	if start < 0 {
 		start = 0
 	}
-	end := matchStart + matchLen + previewRadius
+	end := matchStart + matchLen + visiblePreviewRadius
 	if end > len(data) {
 		end = len(data)
 	}
 	return bytes.Clone(data[start:end])
+}
+
+func visibleBytes(raw []byte) (visible []byte, tail []byte) {
+	index := 0
+	for index < len(raw) {
+		current := raw[index]
+		switch {
+		case current == 0x1b:
+			consumed, complete := escapeSequence(raw[index:])
+			if !complete {
+				return visible, raw[index:]
+			}
+			index += consumed
+		case current == 0x9b:
+			consumed, complete := csiSequence(raw[index+1:])
+			if !complete {
+				return visible, raw[index:]
+			}
+			index += 1 + consumed
+		default:
+			r, size := utf8.DecodeRune(raw[index:])
+			if r == utf8.RuneError && size <= 1 {
+				if !utf8.FullRune(raw[index:]) {
+					return visible, raw[index:]
+				}
+				visible = append(visible, current)
+				index++
+				continue
+			}
+			visible = append(visible, raw[index:index+size]...)
+			index += size
+		}
+	}
+	return visible, nil
+}
+
+func escapeSequence(raw []byte) (consumed int, complete bool) {
+	if len(raw) < 2 {
+		return 0, false
+	}
+	switch raw[1] {
+	case '[':
+		consumed, complete := csiSequence(raw[2:])
+		return 2 + consumed, complete
+	case ']':
+		consumed, complete := oscSequence(raw[2:])
+		return 2 + consumed, complete
+	default:
+		if raw[1] >= 0x30 && raw[1] <= 0x7e {
+			return 2, true
+		}
+		return 1, true
+	}
+}
+
+func csiSequence(raw []byte) (consumed int, complete bool) {
+	for index, current := range raw {
+		if current >= 0x40 && current <= 0x7e {
+			return index + 1, true
+		}
+		if current < 0x20 || current > 0x3f {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func oscSequence(raw []byte) (consumed int, complete bool) {
+	for index := 0; index < len(raw); index++ {
+		if raw[index] == 0x07 {
+			return index + 1, true
+		}
+		if raw[index] == 0x1b && index+1 < len(raw) && raw[index+1] == '\\' {
+			return index + 2, true
+		}
+	}
+	return 0, false
 }
 
 func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
