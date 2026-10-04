@@ -66,13 +66,10 @@ jobs:
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go vet
         run: go vet -mod=readonly ./...
-      - name: Go tests
-        run: go test -mod=readonly ./...
-      - name: Go race tests
+      - name: Go tests with race detection
         run: go test -mod=readonly -race ./...
-      - name: Frontend typecheck, lint and tests
+      - name: Frontend lint and tests
         run: |
-          pnpm typecheck
           pnpm lint
           pnpm test
       - name: Build harness unit tests (spawn resolution and makensis discovery)

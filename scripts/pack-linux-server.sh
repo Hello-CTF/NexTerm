@@ -176,15 +176,16 @@ package_full() {
     web/index.html; do
     grep -q "^$name/$member$" <<<"$archive_members"
   done
-  node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$OUT/$name.tar.gz"
 }
 
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
 (cd "$ROOT" && package_full)
 
+report_args=(--kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT")
 if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
-  (cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT" --require-evidence)
+  report_args+=(--require-evidence)
 fi
+(cd "$ROOT" && node scripts/build.mjs report "${report_args[@]}")
 
 if command -v sha256sum >/dev/null 2>&1; then digest="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"; else digest="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"; fi
 printf 'Linux %s full server archive: %s  %s bytes  %s\n' "$ARCH" "$(basename "$ARTIFACT")" "$(stat -c %s "$ARTIFACT" 2>/dev/null || stat -f %z "$ARTIFACT")" "$digest"
