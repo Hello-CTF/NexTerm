@@ -267,7 +267,7 @@ describe("connectAsset 主机指纹确认", () => {
       "SHA256:newfp",
     );
     expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
-    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1", true);
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
     expect(useUi.getState().sessions.some((s) => s.id === "s1")).toBe(true);
   });
 
@@ -300,7 +300,7 @@ describe("connectAsset 主机指纹确认", () => {
       "ssh-ed25519",
       "SHA256:newfp",
     );
-    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1", true);
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
   });
 
   it("拒绝确认时不记录信任、不再重连", async () => {
@@ -337,6 +337,21 @@ describe("connectAsset 主机指纹确认", () => {
       "ssh-ed25519",
       "SHA256:newfp",
     );
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
+  });
+
+  it("指纹 detail 不完整时不写账本也不重连", async () => {
+    mocks.sessionConnect.mockRejectedValueOnce({
+      code: "host_key_pending",
+      message: "unknown SSH host key for 10.0.0.8:22",
+      detail: { host: "10.0.0.8", port: 22 },
+    });
+    mocks.ask.mockResolvedValue(true);
+
+    await connectAsset(asset);
+
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
   });
 });

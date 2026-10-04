@@ -1013,16 +1013,13 @@ export async function connectAsset(asset: {
         pushToast("info", "已取消连接");
         return;
       }
+      if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint) {
+        pushToast("error", err.message || describeError(e));
+        return;
+      }
       try {
-        if (detail?.host && detail?.port && detail?.keyType && detail?.fingerprint) {
-          await assetApi.knownHostAccept(
-            detail.host,
-            detail.port,
-            detail.keyType,
-            detail.fingerprint,
-          );
-        }
-        const info = await sessionApi.connect(asset.id, true);
+        await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
+        const info = await sessionApi.connect(asset.id);
         await openConnectedAssetSession(info, asset);
         return;
       } catch (e2) {

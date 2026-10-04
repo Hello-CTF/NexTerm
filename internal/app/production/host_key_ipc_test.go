@@ -163,6 +163,34 @@ func TestProductionSessionConnectAcceptHostKeyFlagTrustsUnknownKey(t *testing.T)
 	requireStoreTestResponse(t, reconnectResponse, &connected)
 }
 
+func TestProductionSessionConnectHostKeyRotationBetweenConfirmAndReconnect(t *testing.T) {
+	server := newHostKeyTestServer(t)
+	firstKey := *server.signer.Load()
+	production := newHostKeyTestProduction(t)
+	assetID := createHostKeyTestAsset(t, production, server.port())
+
+	response := dispatchHostKeyTest(t, production, "session_connect", `{"args":{"assetId":"`+assetID+`"}}`)
+	confirmed := requireHostKeyPending(t, response, false)
+	acceptHostKeyTest(t, production, confirmed)
+
+	rotated := server.rotateHostKey(t)
+	response = dispatchHostKeyTest(t, production, "session_connect", `{"args":{"assetId":"`+assetID+`"}}`)
+	repending := requireHostKeyPending(t, response, false)
+	if repending.Fingerprint != gossh.FingerprintSHA256(rotated) {
+		t.Fatalf("rotated key was not surfaced for confirmation: %+v", repending)
+	}
+	if listed := knownHostTestFingerprints(t, production); len(listed) != 1 || listed[0] != confirmed.Fingerprint {
+		t.Fatalf("rotated key overwrote the confirmed ledger: %+v", listed)
+	}
+
+	server.signer.Store(&firstKey)
+	connected := connectHostKeyTestAsset(t, production, assetID)
+	if connected.ID == "" {
+		t.Fatal("connect with the confirmed key failed after a rotation attempt")
+	}
+	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
+}
+
 type hostKeyKnownDetailDTO struct {
 	KeyType     string `json:"keyType"`
 	Fingerprint string `json:"fingerprint"`
