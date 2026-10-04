@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
 import { click, mount, type MountedView } from "./reactTestUtils";
 import { ShortcutsCard } from "../../features/settings/ShortcutsCard";
-import { getKeybinding, resetAllKeybindings } from "../../app/keybindings";
+import { getKeybinding, matchAppKeybinding, resetAllKeybindings } from "../../app/keybindings";
 import { getInputPrefs, setSelectionAutoCopy } from "../../app/preferences";
 
 const STORAGE_KEY = "nexterm.keybindings.v1";
@@ -168,6 +168,28 @@ describe("shortcuts editor", () => {
       'input[aria-label="选中自动复制"]',
     );
     expect(after?.checked).toBe(true);
+  });
+
+  it("captures switchTab digits as the full 1-9 range and they trigger tabs 1/2/9", () => {
+    click(editButton("switchTab"));
+    keyDown(captureInput() as HTMLInputElement, "2", { code: "Digit2", altKey: true });
+    expect(getKeybinding("switchTab")).toBe("Alt+1-9");
+    expect(kbdText("switchTab")).toBe("Alt+1…9");
+
+    const hit = (digit: string) =>
+      matchAppKeybinding(new KeyboardEvent("keydown", { key: digit, altKey: true }));
+    expect(hit("1")).toEqual({ action: "switchTab", digit: 1 });
+    expect(hit("2")).toEqual({ action: "switchTab", digit: 2 });
+    expect(hit("9")).toEqual({ action: "switchTab", digit: 9 });
+    expect(hit("3")).toEqual({ action: "switchTab", digit: 3 });
+  });
+
+  it("rejects non-digit capture for switchTab with an inline reason", () => {
+    click(editButton("switchTab"));
+    keyDown(captureInput() as HTMLInputElement, "q", { code: "KeyQ", altKey: true });
+    expect(getKeybinding("switchTab")).toBe("Mod+1-9");
+    expect(captureInput()).not.toBeNull();
+    expect(mounted?.container.textContent).toContain("只支持数字键");
   });
 
   it("mentions the fixed SQL run shortcut", () => {

@@ -2,7 +2,7 @@ import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   KEYBINDING_ACTIONS,
   bindingConflicts,
-  captureBinding,
+  captureBindingForAction,
   formatBinding,
   resetAllKeybindings,
   resetKeybinding,
@@ -24,15 +24,19 @@ export function ShortcutsCard() {
   const conflicts = bindingConflicts(bindings);
   const conflictPeers = new Map<string, string>();
   for (const conflict of conflicts) {
-    for (const action of conflict.actions) {
-      conflictPeers.set(
-        action.id,
-        conflict.actions
-          .filter((other) => other.id !== action.id)
-          .map((other) => other.label)
-          .join("、"),
-      );
-    }
+    const [first, second] = conflict.actions;
+    conflictPeers.set(
+      first.id,
+      [conflictPeers.get(first.id), `${second.label}（${formatBinding(conflict.bindings[1])}）`]
+        .filter(Boolean)
+        .join("、"),
+    );
+    conflictPeers.set(
+      second.id,
+      [conflictPeers.get(second.id), `${first.label}（${formatBinding(conflict.bindings[0])}）`]
+        .filter(Boolean)
+        .join("、"),
+    );
   }
 
   const startCapture = (id: KeybindingActionId) => {
@@ -58,7 +62,7 @@ export function ShortcutsCard() {
       finishCapture();
       return;
     }
-    const result: CaptureResult = captureBinding(event.nativeEvent);
+    const result: CaptureResult = captureBindingForAction(event.nativeEvent, id);
     if (result.kind === "modifier") return;
     if (result.kind === "invalid") {
       setCaptureError(result.reason);
@@ -94,7 +98,7 @@ export function ShortcutsCard() {
         <span className="nx-kbd shrink-0">{formatBinding(bindings[action.id])}</span>
         <span className="min-w-0 flex-1 truncate">{action.label}</span>
         {peers && (
-          <span className="nx-badge nx-badge-amber shrink-0" title={`与「${peers}」使用相同快捷键`}>
+          <span className="nx-badge nx-badge-amber shrink-0" title={`与${peers}的快捷键重叠`}>
             冲突
           </span>
         )}
@@ -147,7 +151,7 @@ export function ShortcutsCard() {
           {conflicts
             .map(
               (conflict) =>
-                `${conflict.actions.map((action) => action.label).join("、")} 都是 ${formatBinding(conflict.binding)}`,
+                `${conflict.actions[0].label}（${formatBinding(conflict.bindings[0])}）与 ${conflict.actions[1].label}（${formatBinding(conflict.bindings[1])}）重叠`,
             )
             .join("；")}
           。同时按下时排在前面的动作生效。

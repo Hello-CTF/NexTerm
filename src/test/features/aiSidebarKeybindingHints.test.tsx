@@ -143,12 +143,13 @@ describe("AiSidebar shortcut hints follow keybindings", () => {
   it("shows the default Ctrl+J hint on the collapse button", () => {
     const button = collapseButton();
     expect(button?.getAttribute("title")).toBe("收起 AI 侧栏 (Ctrl+J)");
-    expect(button?.getAttribute("aria-keyshortcuts")).toBe("Mod+j");
+    expect(button?.getAttribute("aria-keyshortcuts")).toBe("Control+J");
   });
 
   it("reflects a rebound toggleAiSidebar immediately and after remount", async () => {
     act(() => setKeybinding("toggleAiSidebar", "Alt+Shift+j"));
     expect(collapseButton()?.getAttribute("title")).toBe("收起 AI 侧栏 (Shift+Alt+J)");
+    expect(collapseButton()?.getAttribute("aria-keyshortcuts")).toBe("Shift+Alt+J");
 
     mounted?.unmount();
     await show();

@@ -4,7 +4,7 @@ import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
-import { formatBinding, useKeybindings } from "../../app/keybindings";
+import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ModelPanel } from "./ModelPanel";
@@ -826,7 +826,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         <button
           className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
           title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
-          aria-keyshortcuts={bindings.toggleAiSidebar ?? undefined}
+          aria-keyshortcuts={formatBindingAria(bindings.toggleAiSidebar) ?? undefined}
           onClick={() => setRightOpen(false)}
         >
           <IconChevronRight size={14} />

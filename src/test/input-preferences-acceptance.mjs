@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// 输入偏好真实浏览器验收（M162）：快捷键编辑（捕获 / 冲突 / 重置 / 持久化）、
-// Ctrl+1-9 标签跳转、选中自动复制（默认关闭 / 成功 / 权限失败如实提示）与窄屏布局。
-// 交互只通过 CDP Input.dispatchKeyEvent / Input.dispatchMouseEvent / Input.insertText；
-// 剪贴板经 Page.addScriptToEvaluateOnNewDocument 注入记录桩，断言读取 DOM 与桩数据。
-//
-// 运行：node src/test/input-preferences-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
-// 报告与截图写入 target/acceptance-input-preferences/。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";

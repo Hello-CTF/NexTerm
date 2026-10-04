@@ -107,6 +107,20 @@ function normalizeKey(raw: string): string | null {
   return null;
 }
 
+function logicalEventKey(event: KeyEventLike): string | null {
+  const code = event.code ?? "";
+  const codeLetter = /^Key([A-Z])$/.exec(code);
+  if (codeLetter) return codeLetter[1].toLowerCase();
+  const codeDigit = /^Digit([0-9])$/.exec(code);
+  if (codeDigit) return codeDigit[1];
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
+  if (event.key === " ") return "Space";
+  if (NAMED_KEYS.has(event.key)) return event.key;
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(event.key)) return event.key;
+  if (isSingleBindableChar(event.key)) return event.key.toLowerCase();
+  return null;
+}
+
 export function parseBinding(input: string): ParsedBinding | null {
   if (typeof input !== "string" || !input) return null;
   const parts = input.split("+");
@@ -171,6 +185,26 @@ export function formatBinding(binding: string | null): string {
   return parts.join("+");
 }
 
+function ariaKey(key: string): string {
+  if (key === "Escape") return "Escape";
+  if (/^[a-z]$/.test(key)) return key.toUpperCase();
+  return key;
+}
+
+export function formatBindingAria(binding: string | null): string | null {
+  if (!binding) return null;
+  const parsed = parseBinding(binding);
+  if (!parsed) return null;
+  const parts: string[] = [];
+  if (parsed.mod || parsed.primary) parts.push(isMac() ? "Meta" : "Control");
+  if (parsed.ctrl) parts.push("Control");
+  if (parsed.meta) parts.push("Meta");
+  if (parsed.shift) parts.push("Shift");
+  if (parsed.alt) parts.push("Alt");
+  parts.push(ariaKey(parsed.key));
+  return parts.join("+");
+}
+
 export function matchBinding(event: KeyEventLike, binding: string): boolean {
   const parsed = parseBinding(binding);
   if (!parsed) return false;
@@ -189,13 +223,10 @@ export function matchBinding(event: KeyEventLike, binding: string): boolean {
   } else if (event.ctrlKey || event.metaKey) {
     return false;
   }
-  const key = parsed.key;
-  if (key === "1-9") return /^[1-9]$/.test(event.key);
-  if (key === "Space") return event.key === " ";
-  if (isSingleBindableChar(key)) {
-    return event.key.length === 1 && event.key.toLowerCase() === key;
-  }
-  return event.key === key;
+  const logical = logicalEventKey(event);
+  if (logical === null) return false;
+  if (parsed.key === "1-9") return /^[1-9]$/.test(logical);
+  return logical === parsed.key;
 }
 
 export type CaptureResult =
@@ -205,15 +236,7 @@ export type CaptureResult =
 
 export function captureBinding(event: KeyEventLike): CaptureResult {
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return { kind: "modifier" };
-  let key: string | null = null;
-  const code = event.code ?? "";
-  const codeLetter = /^Key([A-Z])$/.exec(code);
-  const codeDigit = /^Digit([0-9])$/.exec(code);
-  if (codeLetter) key = codeLetter[1].toLowerCase();
-  else if (codeDigit) key = codeDigit[1];
-  else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) key = code;
-  else if (NAMED_KEYS.has(event.key)) key = event.key;
-  else if (isSingleBindableChar(event.key)) key = event.key.toLowerCase();
+  const key = logicalEventKey(event);
   if (key === null) return { kind: "invalid", reason: `无法识别按键 ${event.key}` };
   const mod = event.ctrlKey || event.metaKey;
   const named = NAMED_KEYS.has(key) || /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
@@ -225,6 +248,21 @@ export function captureBinding(event: KeyEventLike): CaptureResult {
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
   parts.push(key);
+  return { kind: "binding", binding: parts.join("+") };
+}
+
+export function captureBindingForAction(
+  event: KeyEventLike,
+  id: KeybindingActionId,
+): CaptureResult {
+  const result = captureBinding(event);
+  if (result.kind !== "binding" || id !== "switchTab") return result;
+  const parsed = parseBinding(result.binding);
+  if (!parsed || !/^[0-9]$/.test(parsed.key)) {
+    return { kind: "invalid", reason: "标签跳转只支持数字键（保持修饰键，1-9 通用）" };
+  }
+  const parts = result.binding.split("+");
+  parts[parts.length - 1] = "1-9";
   return { kind: "binding", binding: parts.join("+") };
 }
 
@@ -362,22 +400,65 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
 }
 
 export interface KeybindingConflict {
-  binding: string;
-  actions: KeybindingAction[];
+  actions: [KeybindingAction, KeybindingAction];
+  bindings: [string, string];
+}
+
+function modifiersOverlap(a: ParsedBinding, b: ParsedBinding, mac: boolean): boolean {
+  if (a.shift !== b.shift) return false;
+  if (a.alt !== b.alt) return false;
+  const kinds = (p: ParsedBinding): string => {
+    if (p.mod) return "mod";
+    if (p.primary) return "primary";
+    if (p.ctrl) return "ctrl";
+    if (p.meta) return "meta";
+    return "none";
+  };
+  const ka = kinds(a);
+  const kb = kinds(b);
+  if (ka === kb) return true;
+  const pair = new Set([ka, kb]);
+  if (pair.has("none")) return false;
+  if (pair.has("mod")) return true;
+  if (pair.has("primary") && pair.has("ctrl")) return !mac;
+  if (pair.has("primary") && pair.has("meta")) return mac;
+  if (pair.has("ctrl") && pair.has("meta")) return true;
+  return false;
+}
+
+function keysOverlap(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a === "1-9") return /^[1-9]$/.test(b);
+  if (b === "1-9") return /^[1-9]$/.test(a);
+  return false;
+}
+
+export function bindingsConflict(bindingA: string, bindingB: string, mac: boolean): boolean {
+  const a = parseBinding(bindingA);
+  const b = parseBinding(bindingB);
+  if (!a || !b) return false;
+  return modifiersOverlap(a, b, mac) && keysOverlap(a.key, b.key);
 }
 
 export function bindingConflicts(
   bindings: KeybindingSnapshot = snapshot,
+  mac = isMac(),
 ): KeybindingConflict[] {
-  const byBinding = new Map<string, KeybindingAction[]>();
-  for (const action of KEYBINDING_ACTIONS) {
-    const binding = bindings[action.id];
-    if (!binding) continue;
-    const list = byBinding.get(binding);
-    if (list) list.push(action);
-    else byBinding.set(binding, [action]);
+  const parsed = KEYBINDING_ACTIONS.map((action) => ({
+    action,
+    binding: bindings[action.id],
+  })).filter((entry): entry is { action: KeybindingAction; binding: string } =>
+    Boolean(entry.binding),
+  );
+  const conflicts: KeybindingConflict[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    for (let j = i + 1; j < parsed.length; j++) {
+      if (!bindingsConflict(parsed[i].binding, parsed[j].binding, mac)) continue;
+      conflicts.push({
+        actions: [parsed[i].action, parsed[j].action],
+        bindings: [parsed[i].binding, parsed[j].binding],
+      });
+    }
   }
-  return [...byBinding.entries()]
-    .filter(([, actions]) => actions.length > 1)
-    .map(([binding, actions]) => ({ binding, actions }));
+  return conflicts;
 }

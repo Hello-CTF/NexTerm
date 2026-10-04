@@ -21,6 +21,7 @@ vi.mock("../../ipc/commands", () => ({
 import { TakeoverBanner } from "../../app/TakeoverBanner";
 import { DialogHost } from "../../ui/DialogHost";
 import { useUi, type TakeoverState } from "../../app/store";
+import { resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 
 const takeover: TakeoverState = {
   tabId: "terminal-1",
@@ -62,8 +63,25 @@ describe("takeover accessibility and overlay priority", () => {
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
+    resetAllKeybindings();
     useUi.setState({ takeover: null, appDialog: null, toasts: [] });
     document.body.replaceChildren();
+  });
+
+  it("announces the reclaim key by default and omits it when unbound", async () => {
+    mounted = mount(createElement(TakeoverBanner));
+    const status = () => mounted?.container.querySelector('[role="status"]');
+    expect(status()?.textContent).toContain("按 Esc 可立即夺回控制权");
+    expect(status()?.textContent).not.toContain("未绑定");
+
+    act(() => setKeybinding("reclaimTakeover", null));
+    expect(status()?.textContent).not.toContain("未绑定");
+    expect(status()?.textContent).not.toContain("按 ");
+    expect(status()?.textContent).toContain("可立即夺回控制权");
+    const reclaimButton = [...(mounted.container.querySelectorAll("button") ?? [])].find(
+      (b) => b.getAttribute("aria-keyshortcuts") !== null,
+    );
+    expect(reclaimButton).toBeUndefined();
   });
 
   it("announces the static takeover state without making the timer live", async () => {

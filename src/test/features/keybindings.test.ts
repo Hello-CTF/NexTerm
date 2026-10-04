@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   KEYBINDING_ACTIONS,
   bindingConflicts,
+  bindingsConflict,
   captureBinding,
+  captureBindingForAction,
   formatBinding,
+  formatBindingAria,
   getKeybinding,
   loadKeybindings,
   matchAppKeybinding,
@@ -144,6 +147,57 @@ describe("captureBinding", () => {
     expect(captureBinding(keyEvent({ key: "Escape", code: "Escape" })))
       .toEqual({ kind: "binding", binding: "Escape" });
   });
+
+  it("round-trips capture into match for shifted digits and Alt letters", () => {
+    const shiftedDigit = keyEvent({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+    const digitCapture = captureBinding(shiftedDigit);
+    expect(digitCapture).toEqual({ kind: "binding", binding: "Mod+Shift+1" });
+    expect(matchBinding(shiftedDigit, "Mod+Shift+1")).toBe(true);
+
+    const altLetter = keyEvent({ key: "å", code: "KeyA", altKey: true });
+    const letterCapture = captureBinding(altLetter);
+    expect(letterCapture).toEqual({ kind: "binding", binding: "Alt+a" });
+    expect(matchBinding(altLetter, "Alt+a")).toBe(true);
+
+    const nonUsLayout = keyEvent({ key: "z", code: "KeyY", ctrlKey: true });
+    const layoutCapture = captureBinding(nonUsLayout);
+    expect(layoutCapture).toEqual({ kind: "binding", binding: "Mod+y" });
+    expect(matchBinding(nonUsLayout, "Mod+y")).toBe(true);
+    expect(matchBinding(nonUsLayout, "Mod+z")).toBe(false);
+  });
+});
+
+describe("captureBindingForAction", () => {
+  it("normalizes switchTab digits to the 1-9 range, keeping modifiers", () => {
+    expect(captureBindingForAction(keyEvent({ key: "2", code: "Digit2", altKey: true }), "switchTab"))
+      .toEqual({ kind: "binding", binding: "Alt+1-9" });
+    expect(captureBindingForAction(keyEvent({ key: "1", code: "Digit1", ctrlKey: true }), "switchTab"))
+      .toEqual({ kind: "binding", binding: "Mod+1-9" });
+    expect(captureBindingForAction(keyEvent({ key: "9", code: "Digit9", metaKey: true, shiftKey: true }), "switchTab"))
+      .toEqual({ kind: "binding", binding: "Mod+Shift+1-9" });
+  });
+
+  it("rejects non-digit keys for switchTab", () => {
+    const result = captureBindingForAction(keyEvent({ key: "q", code: "KeyQ", altKey: true }), "switchTab");
+    expect(result.kind).toBe("invalid");
+  });
+
+  it("leaves other actions untouched", () => {
+    expect(captureBindingForAction(keyEvent({ key: "o", code: "KeyO", ctrlKey: true }), "commandPalette"))
+      .toEqual({ kind: "binding", binding: "Mod+o" });
+  });
+});
+
+describe("formatBindingAria", () => {
+  it("maps modifiers to ARIA names on the current platform", () => {
+    expect(formatBindingAria("Mod+j")).toBe("Control+J");
+    expect(formatBindingAria("Primary+f")).toBe("Control+F");
+    expect(formatBindingAria("Ctrl+Shift+r")).toBe("Control+Shift+R");
+    expect(formatBindingAria("Alt+a")).toBe("Alt+A");
+    expect(formatBindingAria("Escape")).toBe("Escape");
+    expect(formatBindingAria(null)).toBeNull();
+    expect(formatBindingAria("not a binding")).toBeNull();
+  });
 });
 
 describe("persistence", () => {
@@ -194,14 +248,48 @@ describe("persistence", () => {
 describe("bindingConflicts", () => {
   it("defaults have no conflicts", () => {
     expect(bindingConflicts()).toEqual([]);
+    expect(bindingConflicts(undefined, true)).toEqual([]);
   });
 
   it("detects actions sharing one binding", () => {
     setKeybinding("globalSearch", "Mod+Shift+P");
     const conflicts = bindingConflicts();
     expect(conflicts).toHaveLength(1);
-    expect(conflicts[0].binding).toBe("Mod+Shift+p");
-    expect(conflicts[0].actions.map((a) => a.id).sort()).toEqual(["commandPalette", "globalSearch"]);
+    expect(conflicts[0].bindings).toEqual(["Mod+Shift+p", "Mod+Shift+p"]);
+    expect(conflicts[0].actions.map((a) => a.id)).toEqual(["commandPalette", "globalSearch"]);
+  });
+
+  it("detects Mod and Primary overlapping the same key on both platforms", () => {
+    setKeybinding("commandPalette", "Mod+f");
+    for (const mac of [false, true]) {
+      const conflicts = bindingConflicts(undefined, mac);
+      expect(conflicts, `mac=${mac}`).toHaveLength(1);
+      expect(conflicts[0].actions.map((a) => a.id)).toEqual(["commandPalette", "terminalSearch"]);
+    }
+  });
+
+  it("detects a single digit overlapping the switchTab 1-9 range", () => {
+    setKeybinding("newTerminal", "Mod+1");
+    const conflicts = bindingConflicts();
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].actions.map((a) => a.id)).toEqual(["newTerminal", "switchTab"]);
+  });
+
+  it("keeps distinct modifiers, shifted variants and unrelated keys conflict-free", () => {
+    expect(bindingsConflict("Mod+Shift+p", "Mod+p", false)).toBe(false);
+    expect(bindingsConflict("Mod+k", "Alt+k", false)).toBe(false);
+    expect(bindingsConflict("Mod+k", "Mod+j", false)).toBe(false);
+    expect(bindingsConflict("Escape", "Mod+Escape", false)).toBe(false);
+    expect(bindingsConflict("Mod+1", "Mod+2", false)).toBe(false);
+  });
+
+  it("resolves Primary against explicit Ctrl/Meta per platform", () => {
+    expect(bindingsConflict("Primary+f", "Ctrl+f", false)).toBe(true);
+    expect(bindingsConflict("Primary+f", "Ctrl+f", true)).toBe(false);
+    expect(bindingsConflict("Primary+f", "Meta+f", true)).toBe(true);
+    expect(bindingsConflict("Primary+f", "Meta+f", false)).toBe(false);
+    expect(bindingsConflict("Ctrl+f", "Meta+f", true)).toBe(true);
+    expect(bindingsConflict("Ctrl+f", "Meta+f", false)).toBe(true);
   });
 });
 
