@@ -307,7 +307,7 @@ func TestWindowsHelperSpawnReattachAndKill(t *testing.T) {
 	id := ids.New()
 	attachment, err := NewRemoteProvider(first.Client()).Create(ctx, base.DurableCreateOptions{
 		ID:      id,
-		Command: []string{"powershell.exe", "-NoLogo", "-NoProfile", "-Command", "Write-Host win-helper-marker; Start-Sleep -Seconds 60"},
+		Command: []string{"powershell.exe", "-NoLogo", "-NoProfile", "-NoExit", "-Command", "Write-Host win-helper-marker"},
 		Env:     []string{"TERM=xterm-256color"},
 	})
 	if err != nil {
@@ -509,7 +509,7 @@ func privateDACLTrustees(t *testing.T, path string) []aceInfo {
 		t.Fatal(err)
 	}
 	base := unsafe.Pointer(dacl)
-	offset := 0
+	offset := 8
 	aces := make([]aceInfo, 0, dacl.AceCount)
 	for index := 0; index < int(dacl.AceCount); index++ {
 		header := (*windows.ACE_HEADER)(unsafe.Add(base, offset))
@@ -970,7 +970,7 @@ func TestWindowsHelperAppProcess(t *testing.T) {
 	}
 	attachment, err := NewRemoteProvider(helper.Client()).Create(ctx, base.DurableCreateOptions{
 		ID:      ids.New(),
-		Command: []string{"powershell.exe", "-NoLogo", "-NoProfile", "-Command", "Write-Host win-app-boot; Start-Sleep -Seconds 300"},
+		Command: []string{"powershell.exe", "-NoLogo", "-NoProfile", "-NoExit", "-Command", "Write-Host win-app-boot"},
 		Env:     []string{"TERM=xterm-256color"},
 	})
 	if err != nil {
