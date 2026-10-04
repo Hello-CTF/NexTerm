@@ -552,7 +552,7 @@ describe("CronCard", () => {
     );
   });
 
-  it("编辑任务：预填当前值并如实说明重建语义，保存时先建后删", async () => {
+  it("编辑任务：预填当前值并披露重建语义，保存时先建停用替身、删旧后按原状态启用", async () => {
     const withProfile = job({
       id: "j-1",
       sessionId: "c-1",
@@ -563,7 +563,10 @@ describe("CronCard", () => {
       Promise.resolve(sessionId === "c-1" ? [withProfile] : [JOB_B]),
     );
     mocks.register.mockResolvedValue(
-      job({ id: "j-10", sessionId: "c-1", modelProfileId: "p-active" }),
+      job({ id: "j-10", sessionId: "c-1", modelProfileId: "p-active", enabled: false }),
+    );
+    mocks.setEnabled.mockResolvedValue(
+      job({ id: "j-10", sessionId: "c-1", modelProfileId: "p-active", enabled: true }),
     );
     mounted = mount(createElement(CronCard));
     await flush();
@@ -589,8 +592,10 @@ describe("CronCard", () => {
       timezone: "UTC",
       timeoutMs: 60_000,
       modelProfileId: "p-active",
+      disabled: true,
     });
     expect(mocks.unregister).toHaveBeenCalledWith("c-1", "j-1");
+    expect(mocks.setEnabled).toHaveBeenCalledWith("c-1", "j-10", true);
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
   });
 
@@ -612,11 +617,14 @@ describe("CronCard", () => {
       disabled: true,
     });
     expect(mocks.unregister).toHaveBeenCalledWith("c-2", "j-2");
+    expect(mocks.setEnabled).not.toHaveBeenCalled();
   });
 
-  it("编辑保存后旧任务注销失败时如实报错", async () => {
-    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1" }));
-    mocks.unregister.mockRejectedValue(new Error("只读数据库"));
+  it("旧任务注销失败（如保存期间开始执行）：回滚清理新任务，不留双任务", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.unregister
+      .mockRejectedValueOnce(new Error("任务正在执行，不能注销"))
+      .mockResolvedValueOnce(undefined);
     mounted = mount(createElement(CronCard));
     await flush();
 
@@ -624,10 +632,160 @@ describe("CronCard", () => {
     clickButton(mounted.container, "保存");
     await flush();
 
+    expect(mocks.register).toHaveBeenCalledTimes(1);
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mocks.unregister).toHaveBeenNthCalledWith(1, "c-1", "j-1");
+    expect(mocks.unregister).toHaveBeenNthCalledWith(2, "c-1", "j-10");
+    expect(mocks.setEnabled).not.toHaveBeenCalled();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("旧任务注销未成功");
+    expect(text).toContain("已清理重建的新任务");
+    expect(text).toContain("任务正在执行，不能注销");
+    expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).not.toBeNull();
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
+  it("回滚也失败：持久人工处理告警，涉及任务禁止编辑，冲突解决后告警消除", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.unregister.mockRejectedValue(new Error("存储故障"));
+    const both = [JOB_A, job({ id: "j-10", sessionId: "c-1", enabled: false })];
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? both : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("请手动注销其中一条");
+    expect(text).toContain("c-1/j-1");
+    expect(text).toContain("c-1/j-10");
+    expect(text).toContain("存储故障");
+    const editDisabledFor = (rowText: string) =>
+      [...mounted!.container.querySelectorAll("button")].find(
+        (b) =>
+          b.textContent?.trim() === "编辑" &&
+          b.parentElement?.parentElement?.textContent?.includes(rowText),
+      )?.disabled;
+    expect(editDisabledFor("磁盘巡检")).toBe(true);
+    expect(editDisabledFor("check disk")).toBe(true);
+
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).not.toContain("请手动注销其中一条");
+  });
+
+  it("替换后启用失败：新任务保持停用并如实提示", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.setEnabled.mockRejectedValue(new Error("存储故障"));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.setEnabled).toHaveBeenCalledWith("c-1", "j-10", true);
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("旧任务注销失败：只读数据库"),
+      expect.stringContaining("任务已重建但启用失败：存储故障"),
     );
+    expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).toBeNull();
+  });
+
+  it("编辑打开后停用再保存：保存不撤销刚做的停用", async () => {
+    mocks.setEnabled.mockResolvedValue(
+      job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", enabled: false }),
+    );
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickRowButton(mounted.container, "磁盘巡检", "停用");
+    await flush();
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.setEnabled).toHaveBeenCalledWith("c-1", "j-1", false);
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mocks.unregister).toHaveBeenCalledWith("c-1", "j-1");
+    expect(mocks.setEnabled).not.toHaveBeenCalledWith("c-1", "j-10", true);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
+  it("编辑打开后启用再保存：保存按最新状态启用新任务", async () => {
+    mocks.setEnabled
+      .mockResolvedValueOnce(job({ id: "j-2", sessionId: "c-2", enabled: true }))
+      .mockResolvedValueOnce(job({ id: "j-11", sessionId: "c-2", enabled: true }));
+    mocks.register.mockResolvedValue(job({ id: "j-11", sessionId: "c-2", enabled: false }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "backup db", "编辑");
+    clickRowButton(mounted.container, "backup db", "启用");
+    await flush();
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mocks.unregister).toHaveBeenCalledWith("c-2", "j-2");
+    expect(mocks.setEnabled).toHaveBeenCalledWith("c-2", "j-11", true);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
+  it("保存进行中锁定该行的启停、注销与编辑", async () => {
+    const slow = deferred<TestJob>();
+    mocks.register.mockReturnValue(slow.promise);
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    const rowButton = (label: string) =>
+      [...mounted!.container.querySelectorAll("button")].find(
+        (b) =>
+          b.textContent?.trim() === label &&
+          b.parentElement?.parentElement?.textContent?.includes("磁盘巡检"),
+      );
+    expect(rowButton("停用")?.disabled).toBe(true);
+    expect(rowButton("注销")?.disabled).toBe(true);
+    expect(rowButton("编辑")?.disabled).toBe(true);
+
+    slow.resolve(job({ id: "j-10", sessionId: "c-1" }));
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
+  it("编辑打开期间该行禁止注销与重复编辑，启停仍可用", async () => {
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    const rowButton = (label: string) =>
+      [...mounted!.container.querySelectorAll("button")].find(
+        (b) =>
+          b.textContent?.trim() === label &&
+          b.parentElement?.parentElement?.textContent?.includes("磁盘巡检"),
+      );
+    expect(rowButton("注销")?.disabled).toBe(true);
+    expect(rowButton("注销")?.getAttribute("title")).toBe("编辑中，请先保存或取消编辑");
+    expect(rowButton("编辑")?.disabled).toBe(true);
+    expect(rowButton("停用")?.disabled).toBe(false);
   });
 
   it("执行中的任务不能编辑", async () => {
@@ -731,7 +889,7 @@ describe("CronCard", () => {
       'select[aria-label="模型档案"]',
     )!;
     expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
-      "跟随当前激活档案（当前未设置）",
+      "跟随当前激活档案（读取失败，状态未知）",
     ]);
 
     setInputValue(
@@ -750,6 +908,54 @@ describe("CronCard", () => {
       schedule: "0 1 * * *",
       timezone: "UTC",
     });
+  });
+
+  it("编辑表单在档案读取失败时显示状态未知，而非误报已删除", async () => {
+    mocks.modelOverview.mockRejectedValue(new Error("档案服务不可用"));
+    const withProfile = job({
+      id: "j-1",
+      sessionId: "c-1",
+      name: "磁盘巡检",
+      modelProfileId: "p-other",
+    });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [withProfile] : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("模型档案读取失败：档案服务不可用");
+    expect(text).toContain("该任务保存的模型档案状态未知");
+    expect(text).not.toContain("可能已删除");
+    expect(text).not.toContain("已不存在");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect(select.value).toBe("p-other");
+    const labels = [...select.options].map((o) => o.textContent ?? "");
+    expect(labels[0]).toContain("跟随当前激活档案（读取失败，状态未知）");
+    expect(
+      labels.some((l) => l.includes("已存档案（读取失败，状态未知）") && l.includes("p-other")),
+    ).toBe(true);
+  });
+
+  it("档案加载中时默认项如实显示读取中，加载完成后更新", async () => {
+    const slow = deferred<typeof OVERVIEW>();
+    mocks.modelOverview.mockReturnValue(slow.promise);
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickButton(mounted.container, "注册定时任务");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect([...select.options][0]?.textContent).toContain("跟随当前激活档案（读取中…）");
+
+    slow.resolve(OVERVIEW);
+    await flush();
+    expect([...select.options][0]?.textContent).toContain("跟随当前激活档案「生产档案」");
   });
 
   it("提交前发现所选档案已删除时拒绝注册并如实提示", async () => {

@@ -63,6 +63,13 @@ export function CronCard() {
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
+  const [replaceConflict, setReplaceConflict] = useState<{
+    label: string;
+    oldKey: string;
+    newKey: string;
+    error: string;
+  } | null>(null);
+
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   const aliveRef = useRef(true);
@@ -141,6 +148,14 @@ export function CronCard() {
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    if (!replaceConflict || !jobs) return;
+    const present = (key: string) => jobs.some((j) => `${j.sessionId}/${j.id}` === key);
+    if (!present(replaceConflict.oldKey) || !present(replaceConflict.newKey)) {
+      setReplaceConflict(null);
+    }
+  }, [jobs, replaceConflict]);
+
   if (DEMO) return null;
 
   const titleOf = (sessionId: string) =>
@@ -148,6 +163,19 @@ export function CronCard() {
 
   const profileById = (id: string) => profilesView?.profiles.find((p) => p.id === id);
   const activeProfile = profilesView?.activeId ? profileById(profilesView.activeId) : undefined;
+  const profilesState = profilesError ? "error" : profilesView ? "ready" : "loading";
+  const followActiveLabel = () => {
+    if (profilesState === "error") return "跟随当前激活档案（读取失败，状态未知）";
+    if (profilesState === "loading") return "跟随当前激活档案（读取中…）";
+    return activeProfile
+      ? `跟随当前激活档案「${activeProfile.name}」`
+      : "跟随当前激活档案（当前未设置）";
+  };
+  const unresolvedProfileLabel = (id: string) => {
+    if (profilesState === "error") return `已存档案（读取失败，状态未知）· ${id}`;
+    if (profilesState === "loading") return `已存档案（读取中…）· ${id}`;
+    return `未知档案（可能已删除）· ${id}`;
+  };
 
   const openRegister = () => {
     setRegisterError(null);
@@ -210,7 +238,23 @@ export function CronCard() {
     setRegistering(true);
     setRegisterError(null);
     try {
-      await cronApi.register({
+      if (!editingJob) {
+        await cronApi.register({
+          sessionId: draft.sessionId,
+          ...(draft.name.trim() ? { name: draft.name.trim() } : {}),
+          prompt: draft.prompt.trim(),
+          schedule: draft.schedule.trim(),
+          timezone: draft.timezone.trim() || "UTC",
+          ...(timeoutSec !== null ? { timeoutMs: Math.round(timeoutSec * 1000) } : {}),
+          ...(modelProfileId ? { modelProfileId } : {}),
+        });
+        pushToast("success", "定时任务已注册");
+        setRegisterOpen(false);
+        setDraft(null);
+        await reload();
+        return;
+      }
+      const created = await cronApi.register({
         sessionId: draft.sessionId,
         ...(draft.name.trim() ? { name: draft.name.trim() } : {}),
         prompt: draft.prompt.trim(),
@@ -218,18 +262,43 @@ export function CronCard() {
         timezone: draft.timezone.trim() || "UTC",
         ...(timeoutSec !== null ? { timeoutMs: Math.round(timeoutSec * 1000) } : {}),
         ...(modelProfileId ? { modelProfileId } : {}),
-        ...(editingJob && !editingJob.enabled ? { disabled: true } : {}),
+        disabled: true,
       });
-      if (editingJob) {
+      try {
+        await cronApi.unregister(editingJob.sessionId, editingJob.id);
+      } catch (e) {
         try {
-          await cronApi.unregister(editingJob.sessionId, editingJob.id);
-          pushToast("success", "定时任务已更新");
-        } catch (e) {
-          pushToast("error", `新任务已创建，但旧任务注销失败：${describeError(e)}`);
+          await cronApi.unregister(created.sessionId, created.id);
+          setRegisterError(
+            `保存失败：旧任务注销未成功（${describeError(e)}）。已清理重建的新任务，旧任务保持原样，可重试保存。`,
+          );
+        } catch (rollbackError) {
+          setReplaceConflict({
+            label: draft.name.trim() || draft.prompt.trim().slice(0, 40),
+            oldKey: `${editingJob.sessionId}/${editingJob.id}`,
+            newKey: `${created.sessionId}/${created.id}`,
+            error: describeError(rollbackError),
+          });
+          setRegisterOpen(false);
+          setDraft(null);
+          setEditingJob(null);
+          await reload();
         }
-      } else {
-        pushToast("success", "定时任务已注册");
+        return;
       }
+      if (editingJob.enabled) {
+        try {
+          await cronApi.setEnabled(created.sessionId, created.id, true);
+        } catch (e) {
+          pushToast("error", `任务已重建但启用失败：${describeError(e)}；任务当前为停用状态`);
+          setRegisterOpen(false);
+          setDraft(null);
+          setEditingJob(null);
+          await reload();
+          return;
+        }
+      }
+      pushToast("success", "定时任务已更新");
       setRegisterOpen(false);
       setDraft(null);
       setEditingJob(null);
@@ -250,6 +319,9 @@ export function CronCard() {
       if (!aliveRef.current) return;
       setJobs((prev) =>
         prev?.map((j) => (j.sessionId === job.sessionId && j.id === job.id ? updated : j)) ?? prev,
+      );
+      setEditingJob((prev) =>
+        prev && prev.sessionId === updated.sessionId && prev.id === updated.id ? updated : prev,
       );
       pushToast("success", updated.enabled ? "任务已启用" : "任务已停用");
     } catch (e) {
@@ -351,14 +423,10 @@ export function CronCard() {
               value={draft.modelProfileId}
               onChange={(e) => setDraft({ ...draft, modelProfileId: e.target.value })}
             >
-              <option value="">
-                {activeProfile
-                  ? `跟随当前激活档案「${activeProfile.name}」`
-                  : "跟随当前激活档案（当前未设置）"}
-              </option>
+              <option value="">{followActiveLabel()}</option>
               {draft.modelProfileId && !profileById(draft.modelProfileId) && (
                 <option value={draft.modelProfileId}>
-                  未知档案（可能已删除）· {draft.modelProfileId}
+                  {unresolvedProfileLabel(draft.modelProfileId)}
                 </option>
               )}
               {(profilesView?.profiles ?? []).map((p) => (
@@ -373,11 +441,16 @@ export function CronCard() {
               模型档案读取失败：{profilesError}（档案列表可能不完整；「跟随当前激活档案」不受影响）
             </div>
           )}
-          {editingJob && editingJob.modelProfileId && !profileById(editingJob.modelProfileId) && (
-            <div className="nx-hint text-[11px] text-amber-300">
-              该任务保存的模型档案已不存在（可能已删除）；请选择其它档案，或改回「跟随当前激活档案」。
-            </div>
-          )}
+          {editingJob &&
+            editingJob.modelProfileId &&
+            !profileById(editingJob.modelProfileId) &&
+            profilesState !== "loading" && (
+              <div className="nx-hint text-[11px] text-amber-300">
+                {profilesState === "error"
+                  ? "该任务保存的模型档案状态未知（读取失败）；请刷新重试，或改选其它档案。"
+                  : "该任务保存的模型档案已不存在（可能已删除）；请选择其它档案，或改回「跟随当前激活档案」。"}
+              </div>
+            )}
           <div className="flex flex-wrap items-center gap-2">
             <input
               className="nx-input nx-input-sm w-[130px] font-mono"
@@ -485,6 +558,30 @@ export function CronCard() {
         )
       ) : (
         <div className="flex flex-col gap-1.5">
+          {replaceConflict && (
+            <div
+              className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]"
+              role="alert"
+            >
+              <IconXCircle size={13} className="mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="break-words">
+                  编辑「{replaceConflict.label}」未完成：旧任务保留，重建的新任务（已停用）也未能自动清理（
+                  {replaceConflict.error}）。两条任务不会同时执行，但请手动注销其中一条。
+                </div>
+                <div className="mt-1 break-words font-mono text-[11px]">
+                  旧 {replaceConflict.oldKey} · 新 {replaceConflict.newKey}
+                </div>
+                <button
+                  className="nx-btn nx-btn-outline nx-btn-sm mt-2"
+                  onClick={() => void reload()}
+                >
+                  <IconRefresh size={11} />
+                  刷新
+                </button>
+              </div>
+            </div>
+          )}
           {partialErrors.map((message) => (
             <div
               key={message}
@@ -521,6 +618,11 @@ export function CronCard() {
             const jobProfile = jobProfileId ? profileById(jobProfileId) : undefined;
             const profileUnknown = !!jobProfileId && !!profilesView && !jobProfile;
             const profileUnavailable = !!jobProfile && profileKeyUnavailable(jobProfile);
+            const editingThis =
+              !!editingJob && editingJob.sessionId === job.sessionId && editingJob.id === job.id;
+            const conflicted =
+              !!replaceConflict &&
+              (replaceConflict.oldKey === key || replaceConflict.newKey === key);
             return (
               <div key={key} className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
@@ -571,8 +673,21 @@ export function CronCard() {
                 <div className="flex shrink-0 flex-col gap-1">
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm"
-                    disabled={actionBusy !== null || !!job.run.id}
-                    title={job.run.id ? "执行中不能编辑" : "编辑定时任务"}
+                    disabled={
+                      actionBusy !== null ||
+                      !!job.run.id ||
+                      conflicted ||
+                      (editingThis && registerOpen)
+                    }
+                    title={
+                      job.run.id
+                        ? "执行中不能编辑"
+                        : conflicted
+                          ? "存在未完成的编辑冲突，请先手动处理"
+                          : editingThis && registerOpen
+                            ? "正在编辑"
+                            : "编辑定时任务"
+                    }
                     onClick={() => openEdit(job)}
                   >
                     <IconEdit size={11} />
@@ -580,7 +695,7 @@ export function CronCard() {
                   </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm"
-                    disabled={actionBusy !== null}
+                    disabled={actionBusy !== null || (editingThis && registering)}
                     onClick={() => void toggleEnabled(job)}
                   >
                     {busy ? (
@@ -592,8 +707,12 @@ export function CronCard() {
                   </button>
                   <button
                     className="nx-btn nx-btn-danger nx-btn-sm"
-                    disabled={actionBusy !== null}
-                    title={`注销定时任务 ${job.name?.trim() || job.id}`}
+                    disabled={actionBusy !== null || (editingThis && registerOpen)}
+                    title={
+                      editingThis && registerOpen
+                        ? "编辑中，请先保存或取消编辑"
+                        : `注销定时任务 ${job.name?.trim() || job.id}`
+                    }
                     onClick={() => void unregister(job)}
                   >
                     <IconTrash size={11} />
