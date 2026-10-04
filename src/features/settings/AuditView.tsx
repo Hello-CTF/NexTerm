@@ -168,7 +168,7 @@ export function AuditView() {
       </div>
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>所有会话命令、AI 动作、文件写操作都会落库，来源与退出码齐全，可导出（§5.10）</span>
+        <span>所有会话命令、AI 动作、文件写操作都会落库，逐条标注来源；有退出码的记录会一并展示。</span>
       </div>
     </div>
   );

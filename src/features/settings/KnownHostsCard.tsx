@@ -49,7 +49,7 @@ export function KnownHostsCard() {
 
   const revoke = async (host: KnownHostDto) => {
     const ok = await ask(
-      `撤销对 ${host.host}:${host.port} 的信任？\n指纹(${host.keyType}): ${host.fingerprint}\n\n撤销后下次连接这台机器会重新弹出指纹确认。`,
+      `撤销对 ${host.host}:${host.port} 的信任？\n指纹（${host.keyType}）：${host.fingerprint}\n\n撤销后下次连接这台机器会重新弹出指纹确认。`,
       { title: "撤销已知主机", kind: "warning" },
     );
     if (!ok) return;

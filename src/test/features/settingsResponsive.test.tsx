@@ -113,7 +113,7 @@ describe("SettingsView 响应式结构", () => {
   it("连通性成功用成功色、失败用危险色", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    clickButton(mounted.container, "连通性测试（两步）· 当前激活的模型");
+    clickButton(mounted.container, "连通性测试（两步）· 当前模型");
     await flush();
     const okAlert = [...mounted.container.querySelectorAll(".nx-alert")].find((el) =>
       el.textContent?.includes("测试结果"),
@@ -127,7 +127,7 @@ describe("SettingsView 响应式结构", () => {
       modelsError: "boom",
       chatError: "bang",
     });
-    clickButton(mounted.container, "连通性测试（两步）· 当前激活的模型");
+    clickButton(mounted.container, "连通性测试（两步）· 当前模型");
     await flush();
     const failAlert = [...mounted.container.querySelectorAll(".nx-alert")].find((el) =>
       el.textContent?.includes("测试结果"),

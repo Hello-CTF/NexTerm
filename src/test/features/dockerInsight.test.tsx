@@ -219,7 +219,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
-    expect(mockedText()).toContain("所有权与强制遮蔽以内核为准");
+    expect(mockedText()).toContain("此处为展示级脱敏，强制遮蔽策略以内核为准");
     expect(mockedText()).not.toContain("显示敏感值");
 
     const rowOf = (needle: string) =>

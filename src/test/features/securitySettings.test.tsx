@@ -215,6 +215,33 @@ describe("SyncCard（服务端一面）", () => {
     expect(text).not.toContain("完全控制权");
     expect(text).toContain("反向代理");
   });
+
+  it("重置令牌前先确认，取消时不轮换", async () => {
+    mocks.ask.mockResolvedValue(false);
+    mounted = mountSyncCard();
+    await flush();
+
+    clickButton(mounted.container, "重置令牌");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
+    expect(question).toContain("旧令牌会立即失效");
+    expect(mocks.rotateToken).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.any(String));
+  });
+
+  it("确认后轮换令牌，展示新令牌并提示旧令牌失效", async () => {
+    mocks.ask.mockResolvedValue(true);
+    mounted = mountSyncCard();
+    await flush();
+
+    clickButton(mounted.container, "重置令牌");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.rotateToken).toHaveBeenCalledTimes(1);
+    expect(mounted.container.textContent).toContain("sync-token-rotated");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已换新令牌，旧的立刻失效");
+  });
 });
 
 describe("connectAsset 主机指纹确认", () => {

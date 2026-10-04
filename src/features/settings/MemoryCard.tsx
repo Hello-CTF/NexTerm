@@ -262,7 +262,7 @@ export function MemoryCard() {
       </div>
       <p className="nx-hint mb-3.5">
         让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。默认关闭，逐项开启；
-        记忆按 owner scope 隔离，只注入开启了的运行。
+        记忆按 owner scope 隔离。
       </p>
 
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">

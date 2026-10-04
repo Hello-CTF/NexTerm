@@ -704,7 +704,7 @@ async function syncClientChecks(chrome, api) {
         rowRight: Math.round(rr.right),
         badgeClipped: br.right > rr.right + 1,
         rowOverflows: row.scrollWidth > row.clientWidth + 1,
-        credVisible: row.textContent.includes("带密码"),
+        credVisible: row.textContent.includes("带凭据"),
         hostTitle: hostSpan.getAttribute("title"),
         badgeText: badge.textContent,
       };

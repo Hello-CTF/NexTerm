@@ -33,6 +33,13 @@ function imageKey(i: ImageSummary): string {
   return `${i.id}|${i.repository}:${i.tag}`;
 }
 
+const CONTAINER_ACTION_LABELS: Record<string, string> = {
+  start: "启动",
+  stop: "停止",
+  restart: "重启",
+  remove: "删除",
+};
+
 function TableQueryBody({
   colSpan,
   pending,
@@ -174,10 +181,13 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     }
     try {
       await dockerApi.action(sessionId, c.id, action);
-      pushToast("success", `${c.name} · ${action} 已执行`);
+      pushToast("success", `已${CONTAINER_ACTION_LABELS[action] ?? action} ${c.name}`);
     } catch (e) {
       if (action === "remove" && snapshot) qc.setQueryData(["docker-ps", sessionId], snapshot);
-      pushToast("error", `${action} 失败: ${describeError(e)}`);
+      pushToast(
+        "error",
+        `${CONTAINER_ACTION_LABELS[action] ?? action} ${c.name} 失败：${describeError(e)}`,
+      );
     } finally {
       markPending(key, false);
       void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
@@ -199,7 +209,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       pushToast("success", `已删除 ${ref}`);
     } catch (e) {
       if (snapshot) qc.setQueryData(["docker-images", sessionId], snapshot);
-      pushToast("error", `删除 ${ref} 失败: ${describeError(e)}`);
+      pushToast("error", `删除 ${ref} 失败：${describeError(e)}`);
     } finally {
       markPending(key, false);
       void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
@@ -268,7 +278,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
       setAttached({ container: containerName, containerId, tabId: kernelTab, channel, sink });
     } catch (e) {
       disposeChannel(channel);
-      pushToast("error", `日志 attach 失败: ${describeError(e)}`);
+      pushToast("error", `读取日志失败：${describeError(e)}`);
     } finally {
       attachInFlight.current = false;
     }
@@ -384,7 +394,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           <IconRefresh size={13} />
           刷新
         </button>
-        <span className="nx-hint hidden min-[560px]:inline">5s 自动刷新</span>
+        <span className="nx-hint hidden min-[560px]:inline">容器 5s · 镜像 30s 自动刷新</span>
       </div>
 
       {tab === "containers" && <OverviewStrip sessionId={sessionId} visible={visible} />}
@@ -451,7 +461,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         }`}
                       >
                         <span className="nx-dot" />
-                        {c.state === "running" ? "running" : "exited"}
+                        {c.state === "running" ? "运行中" : c.state === "exited" ? "已停止" : c.state}
                       </span>
                       <span
                         className={`truncate text-[11px] ${
@@ -459,7 +469,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         }`}
                         title={c.status}
                       >
-                        {c.status.replace(/^Exited \((\d+)\).*$/, "exit $1 · 已停止")}
+                        {c.status}
                       </span>
                     </span>
                   </td>
@@ -550,7 +560,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 error={images.isError && !images.data ? images.error : null}
                 errorPrefix="镜像列表"
                 onRetry={() => void images.refetch()}
-                emptyText="本机没有镜像"
+                emptyText="这台主机上还没有镜像"
                 isEmpty={iRows.length === 0}
               >
                 {iRows.map((i) => {
@@ -652,14 +662,14 @@ function PullBar({ sessionId }: { sessionId: string }) {
     const name = image.trim();
     if (!name) return;
     setPulling(true);
-    pushToast("info", `拉取 ${name} 中（最长 10 分钟）…`);
+    pushToast("info", `正在拉取 ${name}（最长 10 分钟）…`);
     try {
       await dockerApi.imagePull(sessionId, name);
       pushToast("success", `${name} 拉取完成`);
       setImage("");
       void qc.invalidateQueries({ queryKey: ["docker-images", sessionId] });
     } catch (e) {
-      pushToast("error", `拉取失败: ${describeError(e)}`);
+      pushToast("error", `拉取失败：${describeError(e)}`);
     } finally {
       setPulling(false);
     }
