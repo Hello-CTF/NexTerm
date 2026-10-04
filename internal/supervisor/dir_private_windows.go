@@ -35,6 +35,45 @@ func ensurePrivateDir(path string) error {
 	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return fmt.Errorf("%w: %s is a reparse point", ErrInvalidInput, path)
 	}
+	return makeDirPrivate(path)
+}
+
+func makeDirPrivate(path string) error {
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("inspect directory owner: %w", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return fmt.Errorf("inspect directory owner: %w", err)
+	}
+	token, err := windows.OpenCurrentProcessToken()
+	if err != nil {
+		return fmt.Errorf("current process token: %w", err)
+	}
+	defer func() { _ = token.Close() }()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("current process token: %w", err)
+	}
+	if !windows.EqualSid(owner, user.User.Sid) {
+		return fmt.Errorf("%w: %s is owned by another user", ErrInvalidInput, path)
+	}
+	sid, err := currentUserSIDString()
+	if err != nil {
+		return fmt.Errorf("current user SID: %w", err)
+	}
+	privateDescriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;" + sid + ")")
+	if err != nil {
+		return fmt.Errorf("build private directory security descriptor: %w", err)
+	}
+	dacl, _, err := privateDescriptor.DACL()
+	if err != nil {
+		return fmt.Errorf("build private directory DACL: %w", err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("protect directory DACL: %w", err)
+	}
 	return nil
 }
 
