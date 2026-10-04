@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveMakensis } from "./lib/makensis.mjs";
+import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+
+const HELP_TEXT = `#!/usr/bin/env node
 /**
  * Go/Wails delivery entry point. Rust/Cargo/Tauri are deliberately not part of
  * this path. All artifact versions come from wails.json.
@@ -9,18 +19,9 @@
  *   node scripts/build.mjs bindings
  *   node scripts/build.mjs desktop --release --os=darwin --arch=arm64 --package
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
- *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \
+ *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
  *     --flavor=full --file=target/release-assets/NexTerm.tar.gz --require-evidence
- */
-
-import { spawnSync } from "node:child_process";
-import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { resolveMakensis } from "./lib/makensis.mjs";
-import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+ `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WAILS_VERSION = "v3.0.0-alpha.98";
@@ -60,11 +61,6 @@ function die(message) {
 }
 
 function run(command, args, { cwd = ROOT, env = process.env, allowFailure = false, quiet = false, timeout = 0 } = {}) {
-  // On Windows a bare `pnpm` resolves through PATH to a pnpm.cmd shim, which
-  // spawnSync refuses to launch without a shell since the CVE-2024-27980 fix
-  // (EINVAL on Node 22/24). resolveSpawnSpec deterministically upgrades such
-  // shims to the real JS entry under the current node, or to a strictly
-  // quoted cmd.exe fallback — never a shell-joined string.
   const spec = resolveSpawnSpec(command, args, { platform: process.platform, env, execPath: process.execPath });
   if (!quiet) log(`\n$ ${spec.command} ${spec.args.join(" ")}`);
   const result = spawnSync(spec.command, spec.args, {
@@ -448,9 +444,6 @@ function customGoBaseline(id) {
 }
 
 function sizeComparisons(id, bytes) {
-  // User decision 2026-10-03: historical Rust sizes are reference only, never a
-  // release gate. Measurements and deltas are recorded honestly; an unavailable
-  // reference is reported as such, never fabricated and never a failure.
   const rust = rustBaseline(id);
   if (rust.size_bytes) {
     rust.go_bytes = bytes;
@@ -516,10 +509,6 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`);
   log(`${id}: ${bytes} bytes; Rust=${comparisons.rust.status}; custom-Go=${comparisons.custom_go.status}; report=${destination}`);
-  // Assertion failures mean a broken build and stop the pipeline. Rust and
-  // custom-Go size comparisons are informational only (user decision 2026-10-03:
-  // historical Rust sizes are reference, not a release gate) and never fail a
-  // build; --require-evidence enforces the real file/content/static/cgo checks.
   if (assertionsFailed) die(`${id} has failed artifact assertions; see ${destination}`);
   if (requireEvidence) requireReportPassed(report);
   return report;
@@ -607,10 +596,6 @@ function packageWindows(binary, goarch) {
     `NEXTERM_WEBVIEW2=${bootstrapper}`,
     `NEXTERM_EXE_NAME=${path.basename(binary)}`,
   ];
-  // Resolve makensis deterministically instead of trusting PATH: the
-  // Chocolatey nsis.install package deploys to ProgramFiles(x86)\NSIS with
-  // no shim and no PATH entry of any kind, so a mid-job install leaves the
-  // running CI job unable to see makensis (release run 37149307116 ENOENT).
   const makensis = resolveMakensis({ env: process.env });
   log(`makensis: ${makensis.command} (${makensis.source})`);
   run(makensis.command, [...defines.map((define) => `-D${define}`), path.join(ROOT, ".github/packaging/windows/NexTerm.nsi")]);
@@ -635,9 +620,6 @@ function runDesktopSmoke(binary, goos, goarch) {
   const evidence = path.join(work, ".buildcheck/m27/webview-smoke-result.json");
   const destination = path.join(ROOT, "target/release-assets");
   const preserved = path.join(destination, `desktop-smoke-${goos}-${goarch}.json`);
-  // Failure evidence is a first-class artifact: CI uploads target/release-assets
-  // with if: always(), so a failed smoke must leave its record there instead of
-  // only in the ephemeral temp dir. The pass criteria below are unchanged.
   const preserveEvidence = () => {
     fs.mkdirSync(destination, { recursive: true });
     if (fs.existsSync(evidence)) {
@@ -731,7 +713,7 @@ switch (command) {
   }
   case "help":
   case "--help":
-    console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("*/", 1)[0]);
+    console.log(HELP_TEXT);
     break;
   default:
     die(`unknown command ${command}; use debug, release, frontend, bindings, desktop, server, report, or help`);

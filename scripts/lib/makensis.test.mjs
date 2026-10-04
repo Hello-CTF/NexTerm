@@ -1,20 +1,8 @@
-/**
- * Executable tests for the deterministic makensis discovery used by
- * scripts/build.mjs packageWindows. Run with: node --test scripts/lib/
- *
- * The resolver is a pure function over injected env/fs, so the Windows
- * scenarios run on any host. The fixtures reproduce release run 37149307116:
- * the windows-latest job had a PATH without makensis but the Chocolatey
- * nsis.install layout at ProgramFiles(x86)\NSIS, while the windows-11-arm
- * job resolved makensis straight from PATH (image preinstall).
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { resolveMakensis } from "./makensis.mjs";
 
-/** Case-insensitive existsSync stub mirroring Windows file semantics. */
 function fakeWindowsFs(existingPaths) {
   const existing = new Set(existingPaths.map((entry) => entry.toLowerCase()));
   return (candidate) => existing.has(String(candidate).toLowerCase());
@@ -39,8 +27,6 @@ test("a lowercase Path env key is honored like PATH", () => {
 });
 
 test("the windows-latest release scenario resolves the nsis.install default without a PATH hit", () => {
-  // Run 37149307116 windows/amd64: choco deployed nsis 3.11 to
-  // C:\Program Files (x86)\NSIS, the job PATH never learned about it.
   const resolved = resolveMakensis({
     env: {
       PATH: "C:\\Windows\\system32;C:\\Windows;C:\\Program Files\\nodejs",
@@ -57,8 +43,6 @@ test("the windows-latest release scenario resolves the nsis.install default with
 });
 
 test("the windows-11-arm release scenario keeps resolving from PATH", () => {
-  // Run 37149307116 windows/arm64 passed because the image preinstalls NSIS
-  // and PATH already carries its directory; that path must keep winning.
   const resolved = resolveMakensis({
     env: {
       PATH: "C:\\Program Files (x86)\\NSIS;C:\\Windows\\system32",

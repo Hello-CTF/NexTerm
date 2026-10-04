@@ -35,24 +35,15 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ---------------------------------------------------------------- 打码规则
-# 坐标是**源图**像素。每张图独立列出，避免「假设布局一致」这种错。
-# 打码方式：对区域做重高斯模糊 + 轻微压暗，看不出原文即可。
 REDACT: dict[str, list[tuple[int, int, int, int]]] = {
-    # 演示图里终端首行 "Last login: ... from 10.0.0.8"（内网 IP）。
-    # 该行实测占 y 197..209（下一行 "# 演示模式…" 从 211 起）⇒ 框只压这一行，
-    # 不越界切到下一条（切了会留下半截字，反而显眼）。
     "website/images/hero-ai-terminal.png": [(288, 194, 692, 210)],
     "website/images/ai-permission.png": [(288, 194, 692, 210)],
     "website/images/ai-file-changes.png": [(288, 194, 692, 210)],
     "website/images/split-pane-editor.png": [(288, 194, 692, 210)],
-    # 真实窗口截图：资产树里的私有盒子域名 / 资产名。
-    # 域名串实测右端止于 x≈283 ⇒ 右边界留到 300 整行吃掉；再往右是设置面板，不能碰。
     "lazycat/store/raw/terminal.png": [(56, 164, 300, 194)],
     "lazycat/store/raw/settings-ai.png": [(56, 166, 300, 196)],
 }
 
-# ---------------------------------------------------------------- 出图清单
 @dataclass
 class Shot:
     out: str
@@ -65,9 +56,6 @@ class Shot:
 SHOTS: list[Shot] = [
     Shot("01-workspace-overview.png", "website/images/hero-ai-terminal.png",
          "工作区总览", "终端、文件、容器、数据库、AI 助手，一个窗口收束"),
-    # 第 2 位放服务端运行态：懒猫专版**就是**服务端形态，这是它与桌面版最不同、也最该被看见的一点。
-    # 来源是一张示意图（`website/diagrams/04-server-runtime.svg` 渲染产物），
-    # 而不是真窗口截图 —— 因为「多设备 / 布局权威」这些语义在单机截图上根本拍不出来。
     Shot("02-server-runtime.png", "website/images/04-server-runtime.png",
          "服务端运行态", "终端、会话与工作区都在微服上，关掉网页不断、换设备接着用"),
     Shot("03-live-terminal.png", "lazycat/store/raw/terminal.png",
@@ -82,13 +70,6 @@ SHOTS: list[Shot] = [
          "多模型接入", "自带密钥（BYOK），DeepSeek / 智谱 / OpenAI 兼容端点随选"),
 ]
 
-# ⛔ 曾经有一张 `06-port-forward.png`（端口转发 / SSH 隧道），**已移除**。
-# 原因：懒猫微服上端口转发是被**刻意禁用**的（§22，平台裸 TCP 无鉴权），
-# 商店描述里写着「端口转发在此平台上不可用」，轮播图却宣传「SSH 隧道一键转发到本机」——
-# 两边自相矛盾，且会让用户以为填错端口。演示图本身没错，错在把它放进**懒猫专版**的货架。
-# 那张图仍保留在 `website/images/port-forward.png`（官网与商店图共用的资产目录）。
-
-# ---------------------------------------------------------------- 视觉常量
 BRAND = (0x2E, 0x6B, 0xE6)
 BG_TOP = (0x0B, 0x0E, 0x14)
 BG_BOTTOM = (0x15, 0x1A, 0x27)
@@ -168,7 +149,6 @@ def compose(shot: Shot, src: Image.Image, canvas_size: tuple[int, int],
     canvas = add_glow(canvas, canvas_size)
     d = ImageDraw.Draw(canvas)
 
-    # ---- 标题栏
     f_title = load_font(int(H * 0.028))
     f_sub = load_font(int(H * 0.0185))
     tx = margin
@@ -184,7 +164,6 @@ def compose(shot: Shot, src: Image.Image, canvas_size: tuple[int, int],
         sy = margin + (header_h - int(H * 0.0185)) // 2 + int(H * 0.006)
         d.text((sx, sy), shot.sub, font=f_sub, fill=SUB_COLOR)
 
-    # ---- 界面卡片
     box_w = W - margin * 2
     box_h = H - margin - header_h - gap - margin
     scale = min(box_w / src.width, box_h / src.height)

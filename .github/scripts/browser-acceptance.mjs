@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* Real-Chromium acceptance without Playwright/jsdom. Node 22+ provides WebSocket. */
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -376,10 +375,6 @@ async function wsAcceptance(page, server) {
       return true;
     })()`);
     await page.send("Network.enable");
-    // 先掐断已建立的 socket（harness 代劳网络分区对 TCP 做的事，见 wsAcceptance 里
-    // 登记 __nxSockets 的说明），再置 offline：传输层的重连尝试（首退 300ms）在窗口内
-    // 真实失败，网络恢复后自动用同一通道 id 重连 → onChannelReopen → 重新 attach →
-    // 服务端重放 scrollback。断言不变，且每一步都是真实产品行为。
     const dropped = await page.evaluate(`(() => {
       let n = 0;
       for (const ws of window.__nxSockets) {

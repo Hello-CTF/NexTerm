@@ -1,26 +1,3 @@
-# NexTerm 服务端 —— **sync-only 模式**：只做资产同步，给自己服务器上的那份用。
-#
-# 同一个 `nexterm-server` 二进制加 `--sync-only` 即进入此模式：只挂
-# `/sync/rpc`（对端凭令牌调用）与 `/healthz`，命令表只有三条
-# （sync_digest / sync_export / sync_import）—— 没有浏览器界面、没有 `/rpc`。
-# 所以**即使令牌泄漏，拿到的也只是「能读写这份资产库」**，拿不到终端、文件
-# 与容器。这是它和完整版的全部区别，也是公网部署唯一可接受的模式。
-#
-# ⛔ 令牌是明文放在请求头里的 ⇒ 想架在公网上就**必须**用 TLS 终止，
-#    否则令牌在路上裸奔。默认绑 127.0.0.1 留给反代，例如 caddy 一条就够：
-#
-#        sync.example.com {
-#            reverse_proxy 127.0.0.1:8080
-#        }
-#
-#    真要直接对外（不经反代），把那行改成 `--listen 0.0.0.0:8080` ——
-#    服务端会在启动时把风险打到 stderr，请确认自己接受。
-#
-# 令牌怎么拿（没有界面，只能命令行）：
-#     sudo -u nexterm /opt/nexterm/nexterm-server token --data-dir /var/lib/nexterm
-#   换令牌（旧令牌立即失效，正在同步的对端会连不上）：
-#     sudo -u nexterm /opt/nexterm/nexterm-server rotate-token --data-dir /var/lib/nexterm
-
 [Unit]
 Description=NexTerm 服务端（sync-only 资产同步对端）
 Documentation=https://github.com/ProbiusOfficial/NexTerm
@@ -32,11 +9,6 @@ Type=simple
 User=nexterm
 Group=nexterm
 
-# 凭据库根密钥（`NEXTERM_MASTER_KEY=...`），文件权限 0600。
-#
-# ⚠️ 这里比完整版更要紧：同步过来的密码要用它解开、再用它重封入库。
-#    没有密钥 ⇒ 密码类凭据同步不了（服务会起，但会一直报凭据库未初始化）。
-#    **换了密钥就等于换了库**：同步过来的密码解不开了，请备份它。
 EnvironmentFile=-/etc/nexterm/onlyserver.env
 
 ExecStart=/opt/nexterm/nexterm-server \

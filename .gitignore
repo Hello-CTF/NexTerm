@@ -1,54 +1,21 @@
 node_modules
 dist
 target
-
-# 历史遗留的备用构建目录，防止误提交
 target-alt
 
 *.log
 .DS_Store
 
-# pnpm 写 store 时的硬链接中间产物（0 字节、链接数 2），正常应自删；
-# 构建被打断时会滞留在项目根，不该进版本控制。同 inode 的兄弟在 ~/Library/pnpm/_tmp_*/。
 _tmp_*
 
-# 构建校验输出目录
 .buildcheck
 
-# 本地站点预览目录
 .sitetest
 
-# 本地工作笔记 / 会话记忆，不入库
 .workbuddy/
 
-# Python 字节码缓存：scripts/*.py 在本机跑过（商店截图、提审、manifest 校验）就会生成，
-# 里面是绝对路径与解释器版本，纯本地产物。
 __pycache__/
 
-# 懒猫微服（LazyCat）打包产物与中间目录。
-# 现行链路是 Go 构建（lazycat/image/build-server.sh，无 Rust、无本地容器）：
-#   node scripts/build.mjs frontend                     → dist/，拷入 lazycat/content/web/
-#   node scripts/build.mjs server --release --os=linux --arch=<amd64|arm64>
-#                                                       → target/go-build/（Go 工具链内建交叉
-#                                                         编译，CGO_ENABLED=0 静态 ELF）
-#   install 到 lazycat/image/nexterm-server 后，lzc-cli project build 出 LPK
-#   （镜像构建在盒子侧完成，lzc-build.yml 是 builder: remote，开发机不 docker pull）。
-# 产物与缓存都不该入库：
-#   lazycat/app.lpk             ← lzc-build.yml 的 pkgout: ./
-#   lazycat/content/            ← contentdir，里面是前端 dist 的拷贝（每次构建重生成）
-#   lazycat/image/nexterm-server← build-server.sh 从 target/go-build/ install 来的成品
-#                                 （linux/amd64 实测 42,115,234 B），
-#                                 随后被 Dockerfile `COPY` 进镜像，绝不能入库
-#   lazycat/.lzc-cli-*/         ← lzc-cli 自己的临时目录（打包中断时会滞留）；
-#                                 正常应被它删掉，但受限环境里那步会被拦
-#                                 实测见过的后缀：build* / cache / install* / lpk-lint* / publish*
-#                                 ⇒ 统一按前缀忽略，别逐个补（每加一个新子命令就漏一个）
-#   lazycat/store/raw/          ← 商店截图的「原始窗口截取」，必然带本机域名/主机名，
-#                                 仓库是公开的 ⇒ 不进版本库。只提交 scripts/store-shots.py
-#                                 合成后的 lazycat/store/*.png（已按 REDACT 表打过码）。
-# 历史条目：现行 Go 流程已不再产生，保留忽略只为防止老工作区里的残留被误提交 ——
-#   target-linux/               ← Rust 容器时代的 CARGO_TARGET_DIR 输出（约 1~2 GB）
-#   lazycat/image/lzc-build-image-context.tar ← local builder 时代的镜像构建上下文包
 *.lpk
 lazycat/store/raw/
 lazycat/store/_verify/
@@ -56,6 +23,5 @@ lazycat/content/
 target-linux/
 lazycat/image/nexterm-server
 lazycat/.lzc-cli-*
-# store-submit-review.py 组装出来的提审请求体（含截图 url 与包哈希，一次性）
 lazycat/.review-body.json
 lazycat/image/lzc-build-image-context.tar

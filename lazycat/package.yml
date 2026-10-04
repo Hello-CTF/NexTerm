@@ -1,8 +1,3 @@
-# NexTerm 的 LPK 静态包元数据（懒猫微服）。
-#
-# 自 LPK v2 起这些静态字段统一放这里，**不再**写到 lzc-manifest.yml 顶层。
-# 用 `lzc-cli project lint` 可以自检 —— 它连着商店的要求一起查。
-
 package: cloud.lazycat.app.nexterm
 version: 0.2.2-rc.1
 
@@ -12,23 +7,12 @@ author: Probius
 license: MIT
 homepage: https://github.com/ProbiusOfficial/NexTerm
 
-# 首版**不**声明 admin_only：
-# 它只影响「谁能看见这个应用」，而真正该由用户决定的是「要不要把它装在共享盒子上」。
-# 等商店文案定稿时再决定。
 admin_only: false
 
-# 手机上打开一个 xterm 终端没有意义（没有 Ctrl、没有右键菜单、软键盘抢屏），
-# 明确声明不支持，instead of 让用户装上一个用不了的应用。
 unsupported_platforms:
   - ios
   - android
 
-# 多语言元数据。
-#
-# 字段范围以官方 `spec/manifest.md` §十一 为准：`name` / `description` / `usage`。
-# （`spec/package.md` §三 只列了 name / description，两页不一致；`usage` 以前者为准 ——
-#  实测 lint 接受，见下。）
-# `usage` 的**顶层**写法在 `lzc-manifest.yml` 里也有（那份是兜底文本，两处都要有）。
 locales:
   zh-CN:
     name: NexTerm 运维终端
@@ -70,19 +54,10 @@ locales:
       no authentication, and the app cannot compensate for that. To expose a remote port, use the
       native forwarding feature of the microserver platform instead.
 
-# 权限声明。`required` 是「不给就跑不起来」，`optional` 是「不给就少一块功能」。
 permissions:
-  # 应用的**全部价值**就是去连你的其他服务器，不给网络它没有意义。
   required:
     - net.internet
     - net.lan
   optional:
-    # 磁盘挂载（sshfs）用。声明后平台会注入 /lzcinit/fusermount3 并加进 PATH，
-    # 官方明确说 rclone / sshfs 这类标准 FUSE 客户端开箱可用（要求 LZCOS 1.6.1+）。
-    #
-    # 放 optional 而不是 required：老盒子（< 1.6.1）没有这个能力，
-    # 放 required 会让整个应用装不上，而挂载只占功能的一小块。
-    # 不可用时由 `mount_capability` 明确报原因 + 前端置灰入口。
     - fuse.mount
-    # 长任务结束提醒（未接；声明着免得后补时要改商店元数据重新审核）。
     - user.notify

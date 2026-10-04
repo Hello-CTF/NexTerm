@@ -1,17 +1,3 @@
-# NexTerm 服务端（完整版）—— 浏览器版（给人用的那个：终端 / 文件 / Docker / 数据库 / AI）。
-#
-# ⛔ 默认只监听 127.0.0.1。这不是保守，是因为 **`/rpc` 与浏览器界面都没有自身鉴权**
-#    —— 懒猫微服上是平台那道登录门在挡，裸 Linux 上那道门**不存在**。
-#    要让别人也能用，二选一：
-#      ① 在它前面放一个**带鉴权**的反向代理（nginx basic auth / oauth2-proxy /
-#         caddy + forward_auth），保持 ExecStart 里的 127.0.0.1 不动；
-#      ② 把监听改成 0.0.0.0:8080 —— 但那样「谁连上谁就有完整控制权」，
-#         服务端启动时会把这条风险打到 stderr（journalctl 里能看到）。
-#    「放到公网上、只做资产同步」请改用 sync-only 模式（`--sync-only`，见
-#    nexterm-onlyserver.service），别开这个。
-#
-# 详见随包 README。
-
 [Unit]
 Description=NexTerm 服务端（浏览器版开发运维终端）
 Documentation=https://github.com/ProbiusOfficial/NexTerm
@@ -23,9 +9,6 @@ Type=simple
 User=nexterm
 Group=nexterm
 
-# 凭据库根密钥放这里（`NEXTERM_MASTER_KEY=...`），文件权限 0600。
-# **别直接写进本 unit**：unit 是 0644，同机任何用户都读得到。
-# 不提供密钥也能起来，但凭据库保持未初始化 —— 密码类资产的同步会失败。
 EnvironmentFile=-/etc/nexterm/nexterm.env
 
 ExecStart=/opt/nexterm/nexterm-server \
@@ -36,16 +19,9 @@ ExecStart=/opt/nexterm/nexterm-server \
 Restart=on-failure
 RestartSec=3
 
-# 一次会话就是一条真实登录：SSH 要用 ~/.ssh/known_hosts，Docker 面板要读
-# /var/run/docker.sock，磁盘挂载要过 sshfs/FUSE。⇒ 这个服务需要**很宽**的宿主访问权，
-# 所以这里刻意不加 ProtectHome / ProtectSystem / PrivateDevices 之类 —— 加了会
-# 「起得来、用不了」，而且报错点在用户点下连接之后，很难往 systemd 上联想。
 Environment=HOME=/var/lib/nexterm
 WorkingDirectory=/var/lib/nexterm
 StateDirectory=nexterm
-
-# 日志：服务端把固定 info 级的 slog 同时写到 stderr（journalctl 可见）与
-# /var/lib/nexterm/logs/nexterm.log，没有运行期日志级别环境变量。
 
 [Install]
 WantedBy=multi-user.target

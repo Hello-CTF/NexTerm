@@ -25,9 +25,6 @@ const config = defineConfig({
   },
 });
 
-// M62 教训：共享 include 曾只收集 .test.ts，M59–M62 的 .test.tsx 被静默跳过；
-// 被跳过的 TSX 文件无法自证，只能在配置加载期硬失败。两个字面模式有意与上方
-// include 各自书写 —— 守卫必须独立于被检查的值才有意义。
 const include = config.test?.include ?? [];
 if (!include.includes("src/test/**/*.test.ts") || !include.includes("src/test/**/*.test.tsx")) {
   throw new Error(

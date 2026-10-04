@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
-# scripts/build.mjs owns compilation/versioning; e2e-sync-local.py retains --sync-only acceptance.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +19,27 @@ while [ $# -gt 0 ]; do
     --arch) ARCH="$2"; shift 2 ;;
     --arch=*) ARCH="${1#*=}"; shift ;;
     --require-evidence) REQUIRE_EVIDENCE=1; shift ;;
-    -h|--help) sed -n '1,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)
+      cat <<'PACK_HELP_EOF'
+#!/usr/bin/env bash
+# Package one full CGO_ENABLED=0 Go server tar.gz with both runtime units.
+# scripts/build.mjs owns compilation/versioning; e2e-sync-local.py retains --sync-only acceptance.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="$ROOT/target/release-assets"
+BIN=""
+WEB="$ROOT/dist"
+ARCH="amd64"
+REQUIRE_EVIDENCE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) OUT="$2"; shift 2 ;;
+    --out=*) OUT="${1#*=}"; shift ;;
+PACK_HELP_EOF
+      exit 0
+      ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -80,7 +98,6 @@ fi
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}"
 
 tar_cz() {
-  # Fixed metadata and sorted names make identical inputs produce identical archives.
   tar ${TAR_OWNER[@]+"${TAR_OWNER[@]}"} --sort=name --mtime="@$SOURCE_DATE_EPOCH" -czf "$1" -C "$2" "$3"
 }
 
@@ -165,8 +182,6 @@ package_full() {
 ARTIFACT="$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz"
 (cd "$ROOT" && package_full)
 
-# Re-validate the candidate with the final evidence gate: real file/content/static
-# checks must pass; Rust and custom-Go size comparisons are informational only.
 if [ "$REQUIRE_EVIDENCE" -ne 0 ]; then
   (cd "$ROOT" && node scripts/build.mjs report --kind=server-archive --flavor=full --os=linux "--arch=$ARCH" "--file=$ARTIFACT" --require-evidence)
 fi
