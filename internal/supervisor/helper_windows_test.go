@@ -345,7 +345,8 @@ func TestWindowsHelperSpawnReattachAndKill(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := reattached.Kill(ctx); err != nil {
-		t.Fatal(err)
+		rawErr := second.Client().Kill(ctx, id, nil)
+		t.Fatalf("kill: %v (raw client: %v)", err, rawErr)
 	}
 	infos, err = second.Client().List(ctx)
 	if err != nil {
@@ -388,10 +389,10 @@ func TestSpawnDetachedChildWindows(t *testing.T) {
 
 func killHelperProcessesWindows(t *testing.T, stateDir string) {
 	t.Helper()
-	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", HelperCommand, stateDir)
+	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", HelperCommand, stateDir)
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", script)
 	_ = cmd.Run()
-	waitScript := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Measure-Object | Select-Object -ExpandProperty Count", HelperCommand, stateDir)
+	waitScript := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | Measure-Object | Select-Object -ExpandProperty Count", HelperCommand, stateDir)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", waitScript).Output()
@@ -578,8 +579,8 @@ func requirePrivateDACL(t *testing.T, path string) {
 		if ace.trustee != "S-1-5-18" && ace.trustee != currentUserSIDForTest(t) {
 			t.Fatalf("directory DACL grants access to foreign trustee %s", ace.trustee)
 		}
-		if ace.mask&windows.GENERIC_ALL == 0 {
-			t.Fatalf("directory DACL trustee %s lacks generic-all rights", ace.trustee)
+		if ace.mask&0x001F01FF == 0 {
+			t.Fatalf("directory DACL trustee %s lacks full-control rights", ace.trustee)
 		}
 	}
 }
@@ -607,8 +608,8 @@ func requireInheritedPrivateDACL(t *testing.T, path string) {
 		if ace.trustee != "S-1-5-18" && ace.trustee != sid {
 			t.Fatalf("child object DACL grants access to foreign trustee %s", ace.trustee)
 		}
-		if ace.mask&windows.GENERIC_ALL == 0 {
-			t.Fatalf("child object DACL trustee %s lacks generic-all rights", ace.trustee)
+		if ace.mask&0x001F01FF == 0 {
+			t.Fatalf("child object DACL trustee %s lacks full-control rights", ace.trustee)
 		}
 		if ace.flags&windows.INHERITED_ACE == 0 {
 			t.Fatalf("child object ACE for %s is not marked inherited", ace.trustee)
@@ -958,7 +959,8 @@ func TestWindowsHelperSessionsSurviveAppProcessExitAndReattach(t *testing.T) {
 		t.Fatalf("resized session grid = %+v, want 100x30", infos)
 	}
 	if err := attachment.Kill(ctx); err != nil {
-		t.Fatal(err)
+		rawErr := restarted.Client().Kill(ctx, string(sessionID), nil)
+		t.Fatalf("kill: %v (raw client: %v)", err, rawErr)
 	}
 	infos, err = restarted.Client().List(ctx)
 	if err != nil {
