@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +22,6 @@ func expandProxyCommand(command, host string, port int) string {
 }
 
 type proxyCommandConn struct {
-	cmd       *exec.Cmd
 	proc      *proxyCommandProcess
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
@@ -65,35 +63,18 @@ func dialProxyCommand(ctx context.Context, command, host string, port int) (net.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	shell := proxyCommandShell(expandProxyCommand(command, host, port))
-	cmd := exec.Command(shell[0], shell[1:]...)
-	configureProxyProc(cmd)
-	stdin, err := cmd.StdinPipe()
+	proc, stdin, stdout, err := startProxyCommand(proxyCommandShell(expandProxyCommand(command, host, port)))
 	if err != nil {
-		return nil, fmt.Errorf("proxy command stdin: %w", err)
+		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, fmt.Errorf("proxy command stdout: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		return nil, fmt.Errorf("start proxy command: %w", err)
-	}
-	proc, err := trackProxyCommand(cmd)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = stdin.Close()
-		_ = stdout.Close()
-		return nil, fmt.Errorf("track proxy command process: %w", err)
-	}
-	conn := &proxyCommandConn{cmd: cmd, proc: proc, stdin: stdin, stdout: stdout, waitDone: make(chan struct{})}
+	conn := &proxyCommandConn{proc: proc, stdin: stdin, stdout: stdout, waitDone: make(chan struct{})}
 	go func() {
-		_ = cmd.Wait()
+		_ = proc.wait()
 		close(conn.waitDone)
 	}()
 	return conn, nil
+}
+
+func proxyCommandStartError(err error) error {
+	return fmt.Errorf("start proxy command: %w", err)
 }
