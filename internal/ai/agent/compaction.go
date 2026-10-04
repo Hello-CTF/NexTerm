@@ -114,7 +114,7 @@ func (h *compactionHandler) summarizeAll(ctx context.Context, contextMsgs []*sch
 
 func (h *compactionHandler) mergeSummaries(ctx context.Context, texts []string) (string, error) {
 	combined := strings.Join(texts, "\n\n")
-	for depth := 0; len(combined) > h.summaryChunkBytes() && len(texts) > 1 && depth < 4; depth++ {
+	for depth := 0; len(combined) > h.summaryChunkBytes() && depth < 8; depth++ {
 		groups := packSummaryGroups(texts, h.summaryChunkBytes()-len(summaryMergeInstruction())-128)
 		merged := make([]string, 0, len(groups))
 		for _, group := range groups {
@@ -198,26 +198,28 @@ func splitSystemPrefix(messages []*schema.Message) ([]*schema.Message, []*schema
 }
 
 func chunkMessagesForSummary(messages []*schema.Message, limit int) [][]*schema.Message {
-	expanded := make([]*schema.Message, 0, len(messages))
-	for _, message := range messages {
-		if estimatedMessages([]*schema.Message{message}) > limit {
-			expanded = append(expanded, messagesForSummary(message, limit)...)
+	var units [][]*schema.Message
+	for _, unit := range summaryUnits(messages) {
+		if estimatedMessages(unit) > limit {
+			for _, segment := range summaryUnitSegments(unit, limit) {
+				units = append(units, []*schema.Message{segment})
+			}
 			continue
 		}
-		expanded = append(expanded, message)
+		units = append(units, unit)
 	}
 	var chunks [][]*schema.Message
 	current := []*schema.Message{}
 	currentBytes := 0
-	for _, message := range expanded {
-		size := estimatedMessages([]*schema.Message{message})
-		if currentBytes+size > limit && len(current) > 0 {
+	for _, unit := range units {
+		unitBytes := estimatedMessages(unit)
+		if currentBytes+unitBytes > limit && len(current) > 0 {
 			chunks = append(chunks, current)
 			current = []*schema.Message{}
 			currentBytes = 0
 		}
-		current = append(current, message)
-		currentBytes += size
+		current = append(current, unit...)
+		currentBytes += unitBytes
 	}
 	if len(current) > 0 {
 		chunks = append(chunks, current)
@@ -225,17 +227,39 @@ func chunkMessagesForSummary(messages []*schema.Message, limit int) [][]*schema.
 	return chunks
 }
 
-func messagesForSummary(message *schema.Message, limit int) []*schema.Message {
-	if estimatedMessages([]*schema.Message{message}) <= limit {
-		return []*schema.Message{message}
+func summaryUnits(messages []*schema.Message) [][]*schema.Message {
+	var units [][]*schema.Message
+	for index := 0; index < len(messages); index++ {
+		message := messages[index]
+		if message.Role == schema.Assistant && len(message.ToolCalls) > 0 {
+			unit := []*schema.Message{message}
+			for index+1 < len(messages) && messages[index+1].Role == schema.Tool {
+				index++
+				unit = append(unit, messages[index])
+			}
+			units = append(units, unit)
+			continue
+		}
+		if message.Role == schema.Tool {
+			units = append(units, []*schema.Message{schema.UserMessage(fmt.Sprintf("[工具结果] %s(%s)\n%s", message.ToolName, message.ToolCallID, message.Content))})
+			continue
+		}
+		units = append(units, []*schema.Message{message})
 	}
-	text := messageSummaryText(message)
-	role := message.Role
-	if role != schema.User && role != schema.Assistant {
-		role = schema.User
+	return units
+}
+
+func summaryUnitSegments(unit []*schema.Message, limit int) []*schema.Message {
+	var builder strings.Builder
+	for _, message := range unit {
+		builder.WriteString(messageSummaryText(message))
+	}
+	role := schema.User
+	if unit[0].Role == schema.Assistant {
+		role = schema.Assistant
 	}
 	pieceLimit := max(limit-len("[单条历史分段]")-16, 64)
-	pieces := splitTextForSummary(text, pieceLimit)
+	pieces := splitTextForSummary(builder.String(), pieceLimit)
 	segments := make([]*schema.Message, 0, len(pieces))
 	for index, piece := range pieces {
 		content := fmt.Sprintf("[单条历史分段 %d/%d]\n%s", index+1, len(pieces), piece)
@@ -250,6 +274,9 @@ func messagesForSummary(message *schema.Message, limit int) []*schema.Message {
 
 func messageSummaryText(message *schema.Message) string {
 	var builder strings.Builder
+	if message.Role == schema.Tool {
+		fmt.Fprintf(&builder, "[工具结果] %s(%s)\n", message.ToolName, message.ToolCallID)
+	}
 	if message.ReasoningContent != "" {
 		builder.WriteString("[推理]\n")
 		builder.WriteString(message.ReasoningContent)
@@ -304,22 +331,23 @@ func packSummaryGroups(texts []string, limit int) [][]string {
 	var groups [][]string
 	current := []string{}
 	currentBytes := 0
-	for _, text := range texts {
-		if len(text) > limit {
-			text, _ = prefixBytes(text, limit)
-			text += "…"
-		}
-		if currentBytes+len(text) > limit && len(current) > 0 {
+	flush := func() {
+		if len(current) > 0 {
 			groups = append(groups, current)
 			current = []string{}
 			currentBytes = 0
 		}
-		current = append(current, text)
-		currentBytes += len(text)
 	}
-	if len(current) > 0 {
-		groups = append(groups, current)
+	for _, text := range texts {
+		for _, piece := range splitTextForSummary(text, limit) {
+			if currentBytes+len(piece) > limit && len(current) > 0 {
+				flush()
+			}
+			current = append(current, piece)
+			currentBytes += len(piece)
+		}
 	}
+	flush()
 	return groups
 }
 

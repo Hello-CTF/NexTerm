@@ -54,16 +54,21 @@ func (m *compactionModel) snapshotInputs() [][]*schema.Message {
 	return append([][]*schema.Message(nil), m.inputs...)
 }
 
-func derivingSummaryGenerate(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
-	var facts []string
-	for _, message := range messages {
-		for _, canary := range compactionCanaries {
-			if strings.Contains(message.Content, canary) {
-				facts = append(facts, canary)
+func derivingSummaryGenerate(t *testing.T) func(context.Context, []*schema.Message) (*schema.Message, error) {
+	return func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
+		if err := validateSummaryToolPairing(messages); err != nil {
+			t.Errorf("invalid summary input: %v", err)
+		}
+		var facts []string
+		for _, message := range messages {
+			for _, canary := range compactionCanaries {
+				if strings.Contains(message.Content, canary) {
+					facts = append(facts, canary)
+				}
 			}
 		}
+		return schema.AssistantMessage("摘要："+strings.Join(facts, "；"), nil), nil
 	}
-	return schema.AssistantMessage("摘要："+strings.Join(facts, "；"), nil), nil
 }
 
 func compactionRunner(t *testing.T, chat model.BaseChatModel, window uint64) (*Runner, *store.Store) {
@@ -166,7 +171,7 @@ func requireCompactionRunCompleted(t *testing.T, stream *SliceStream, chat *comp
 }
 
 func TestDurableHistorySummarizedKeepingKeyFacts(t *testing.T) {
-	chat := &compactionModel{generate: derivingSummaryGenerate}
+	chat := &compactionModel{generate: derivingSummaryGenerate(t)}
 	runner, storage := compactionRunner(t, chat, 2000)
 	conversationID := seedLongHistory(t, storage)
 	stream := &SliceStream{}
@@ -255,7 +260,7 @@ func TestSummarizationCancellationIsNotSwallowed(t *testing.T) {
 }
 
 func TestDurableOversizedLatestExchangeSummarized(t *testing.T) {
-	chat := &compactionModel{generate: derivingSummaryGenerate}
+	chat := &compactionModel{generate: derivingSummaryGenerate(t)}
 	runner, storage := compactionRunner(t, chat, 2000)
 	conversationID := seedOversizedLatestExchange(t, storage)
 	stream := &SliceStream{}
@@ -319,7 +324,7 @@ func TestCompactionHandlerSkipsShortHistory(t *testing.T) {
 
 func TestSummarizeAllCoversHistoryInChunks(t *testing.T) {
 	t.Parallel()
-	chat := &compactionModel{generate: derivingSummaryGenerate}
+	chat := &compactionModel{generate: derivingSummaryGenerate(t)}
 	handler := newCompactionHandler(chat, 2000, nil)
 	var messages []*schema.Message
 	for i := 0; i < 24; i++ {
@@ -464,11 +469,11 @@ func TestDurableOversizedSingleMessageCanaryReachesSummary(t *testing.T) {
 	}
 }
 
-func TestMessagesForSummarySegmentsOversizedFields(t *testing.T) {
+func TestSummaryUnitsSegmentOversizedFields(t *testing.T) {
 	t.Parallel()
 	const limit = 2488
 	content := strings.Repeat("y", 3000) + "canary-cmd-9 systemctl status nginx" + strings.Repeat("y", 1000)
-	segments := messagesForSummary(schema.AssistantMessage(content, nil), limit)
+	segments := summaryUnitSegments([]*schema.Message{schema.AssistantMessage(content, nil)}, limit)
 	if len(segments) < 2 {
 		t.Fatalf("oversized content was not segmented: %d", len(segments))
 	}
@@ -487,7 +492,7 @@ func TestMessagesForSummarySegmentsOversizedFields(t *testing.T) {
 	}
 
 	call := namedToolCall("c1", "write_file", `{"path":"/tmp/a","content":"`+strings.Repeat("z", 2800)+`canary-arg-7 tail fact`+strings.Repeat("z", 200)+`"}`)
-	segments = messagesForSummary(schema.AssistantMessage("", []schema.ToolCall{call}), limit)
+	segments = summaryUnitSegments([]*schema.Message{schema.AssistantMessage("", []schema.ToolCall{call})}, limit)
 	var callText strings.Builder
 	for _, segment := range segments {
 		if estimatedMessages([]*schema.Message{segment}) > limit {
@@ -500,7 +505,107 @@ func TestMessagesForSummarySegmentsOversizedFields(t *testing.T) {
 	}
 
 	small := schema.UserMessage("短消息")
-	if got := messagesForSummary(small, limit); len(got) != 1 || got[0] != small {
+	chunks := chunkMessagesForSummary([]*schema.Message{small}, limit)
+	if len(chunks) != 1 || len(chunks[0]) != 1 || chunks[0][0] != small {
 		t.Fatal("small message must pass through unchanged")
+	}
+}
+
+func validateSummaryToolPairing(messages []*schema.Message) error {
+	calls := map[string]bool{}
+	for _, message := range messages {
+		if message.Role == schema.Assistant {
+			for _, call := range message.ToolCalls {
+				calls[call.ID] = true
+			}
+		}
+		if message.Role == schema.Tool && !calls[message.ToolCallID] {
+			return fmt.Errorf("tool message %s has no matching tool call", message.ToolCallID)
+		}
+	}
+	return nil
+}
+
+func TestMergeSummariesSegmentsLongSegment(t *testing.T) {
+	t.Parallel()
+	const canary = "canary-merge-tail-4 关键命令"
+	long := strings.Repeat("s", 2700) + canary + strings.Repeat("s", 60)
+	chat := &compactionModel{generate: func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
+		var facts []string
+		for _, message := range messages {
+			if strings.Contains(message.Content, canary) {
+				facts = append(facts, canary)
+			}
+		}
+		return schema.AssistantMessage("合并摘要："+strings.Join(facts, "；"), nil), nil
+	}}
+	handler := newCompactionHandler(chat, 2000, nil)
+	summary, err := handler.mergeSummaries(context.Background(), []string{long, strings.Repeat("t", 400)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, canary) {
+		t.Fatalf("merge lost the tail canary: %q", summary)
+	}
+	var seen strings.Builder
+	for _, input := range chat.snapshotGenerateInputs() {
+		if estimatedMessages(input) > 3000 {
+			t.Fatalf("merge input exceeds chunk budget: %d", estimatedMessages(input))
+		}
+		seen.WriteString(flattenMessages(input))
+	}
+	if !strings.Contains(seen.String(), canary) {
+		t.Fatal("tail canary never entered a merge input")
+	}
+}
+
+func TestSummarizeAllKeepsToolPairing(t *testing.T) {
+	t.Parallel()
+	chat := &compactionModel{generate: func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
+		if err := validateSummaryToolPairing(messages); err != nil {
+			t.Errorf("invalid summary input: %v", err)
+		}
+		var facts []string
+		for _, message := range messages {
+			for _, canary := range []string{"canary-arg-tail-5", "canary-tool-result-3", "canary-pair-result-8"} {
+				if strings.Contains(message.Content, canary) {
+					facts = append(facts, canary)
+				}
+			}
+		}
+		return schema.AssistantMessage("摘要："+strings.Join(facts, "；"), nil), nil
+	}}
+	handler := newCompactionHandler(chat, 2000, nil)
+	oversizedCall := namedToolCall("c1", "write_file", `{"path":"/tmp/a","content":"`+strings.Repeat("z", 2800)+`canary-arg-tail-5`+strings.Repeat("z", 100)+`"}`)
+	pairCall := namedToolCall("c2", "read_file", `{"path":"/tmp/b"}`)
+	messages := []*schema.Message{
+		schema.UserMessage("用户要求写文件 " + strings.Repeat("x", 200)),
+		schema.AssistantMessage("", []schema.ToolCall{oversizedCall}),
+		schema.ToolMessage("写入结果 canary-tool-result-3 成功 "+strings.Repeat("t", 100), "c1"),
+		schema.UserMessage("中间填充 " + strings.Repeat("m", 2200)),
+		schema.AssistantMessage("", []schema.ToolCall{pairCall}),
+		schema.ToolMessage("读取结果 canary-pair-result-8 成功", "c2"),
+		schema.UserMessage("收尾问题 " + strings.Repeat("y", 300)),
+		schema.AssistantMessage("收尾回复 "+strings.Repeat("w", 200), nil),
+	}
+	summary, err := handler.summarizeAll(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, canary := range []string{"canary-arg-tail-5", "canary-tool-result-3", "canary-pair-result-8"} {
+		if !strings.Contains(summary, canary) {
+			t.Fatalf("canary %q missing from derived summary: %s", canary, summary)
+		}
+	}
+	paired := false
+	for _, input := range chat.snapshotGenerateInputs() {
+		for index, message := range input {
+			if message.Role == schema.Tool && message.ToolCallID == "c2" && index > 0 && input[index-1].Role == schema.Assistant && len(input[index-1].ToolCalls) == 1 && input[index-1].ToolCalls[0].ID == "c2" {
+				paired = true
+			}
+		}
+	}
+	if !paired {
+		t.Fatal("small assistant/tool pair was split across chunks")
 	}
 }
