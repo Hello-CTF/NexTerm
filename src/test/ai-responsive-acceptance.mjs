@@ -589,6 +589,66 @@ async function acceptance(page) {
     });
   }
 
+  await pass("markdown-highlight-code-390", async () => {
+    await metrics(page, 390, 844, false);
+    await openAi(page);
+    await setTheme(page, "dark");
+    const mdCount = await page.evaluate(`document.querySelectorAll('div[role="log"] .nx-md').length`);
+    await typeComposer(page, "看看概况");
+    await sendViaEnter(page);
+    await page.waitFor(
+      `document.querySelectorAll('div[role="log"] .nx-md').length > ${mdCount} && Boolean(document.querySelector(".nx-send-btn-stop"))`,
+      30_000,
+    );
+    await pushAiEvent(page, {
+      type: "delta",
+      text: `\n\n| 指标 | 值 |\n| --- | --- |\n| load | 2.14 |\n| mem | 61% |\n\n${"long-".repeat(400)}\n`,
+    });
+    await page.waitFor(`Boolean(document.querySelector('div[role="log"] .nx-md-pre'))`, 30_000);
+    await page.waitFor(`document.querySelectorAll('div[role="log"] .nx-md-pre-body [class*="nx-tok-"]').length > 0`, 20_000);
+    await page.waitFor(`[...document.querySelectorAll('div[role="log"] .nx-md-p')].some((p) => p.textContent.includes("可回放"))`, 30_000);
+    await page.waitFor(`[...document.querySelectorAll('div[role="log"] .nx-md-table')].some((t) => t.textContent.includes("2.14"))`, 10_000);
+    const dark = await page.evaluate(`(() => {
+      ${CONTRAST_HELPERS}
+      const pre = [...document.querySelectorAll('div[role="log"] .nx-md-pre')].at(-1);
+      const body = pre.querySelector(".nx-md-pre-body");
+      const tokens = [...body.querySelectorAll('[class*="nx-tok-"]')];
+      return {
+        lang: pre.querySelector(".nx-md-pre-lang").textContent,
+        code: body.textContent,
+        tokenCount: tokens.length,
+        minContrast: Math.min(...tokens.map((t) => contrastOf(t))),
+        tableRows: [...document.querySelectorAll('div[role="log"] .nx-md-table')].at(-1).querySelectorAll("tbody tr").length,
+        overflowX: document.documentElement.scrollWidth - innerWidth,
+      };
+    })()`);
+    assert.equal(dark.lang, "bash");
+    assert.ok(dark.code.includes("$ uptime") && dark.code.includes("$ df -h"), `streamed code incomplete: ${dark.code}`);
+    assert.ok(dark.tokenCount > 0, "no highlight tokens after streaming");
+    assert.ok(dark.minContrast >= 4.5, `dark token contrast ${dark.minContrast.toFixed(2)} < 4.5`);
+    assert.equal(dark.tableRows, 2, `table rows ${dark.tableRows}`);
+    assert.ok(dark.overflowX <= 1, `page horizontal overflow ${dark.overflowX}px`);
+    await page.evaluate(`(() => {
+      window.__nxCopied = null;
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: (t) => { window.__nxCopied = t; return Promise.resolve(); } }, configurable: true });
+    })()`);
+    await page.evaluate(`(() => {
+      const pre = [...document.querySelectorAll('div[role="log"] .nx-md-pre')].at(-1);
+      pre.querySelector('button[title="复制这段"]').click();
+    })()`);
+    await page.waitFor(`typeof window.__nxCopied === "string" && window.__nxCopied.includes("$ uptime")`, 10_000);
+    await setTheme(page, "light");
+    await sleep(150);
+    const light = await page.evaluate(`(() => {
+      ${CONTRAST_HELPERS}
+      const tokens = [...document.querySelectorAll('div[role="log"] .nx-md-pre-body [class*="nx-tok-"]')];
+      return Math.min(...tokens.map((t) => contrastOf(t)));
+    })()`);
+    assert.ok(light >= 4.5, `light token contrast ${light.toFixed(2)} < 4.5`);
+    const shot = await screenshot(page, "markdown-highlight-390.png");
+    return { dark, light, shot };
+  });
+
   await pass("short-landscape-confirm-568x320", async () => {
     await metrics(page, 568, 320, false);
     await setTheme(page, "dark");

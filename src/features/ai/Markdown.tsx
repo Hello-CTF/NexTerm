@@ -1,7 +1,16 @@
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { StreamParser } from "@codemirror/language";
 import { IconCopy } from "../../ui/icons";
 import { useUi } from "../../app/store";
 import { safeWebUrl } from "./urlSafety";
+import {
+  highlightSpans,
+  loadParser,
+  normalizeFenceLang,
+  peekParser,
+  spanClasses,
+} from "./codeHighlight";
+import { ensureHighlightTheme } from "./highlightTheme";
 
 type Block =
   | { kind: "code"; lang: string; code: string }
@@ -201,8 +210,58 @@ function renderEmphasis(text: string, keyBase: string): ReactNode[] {
   return out;
 }
 
+function CodeBody({ lang, code }: { lang: string; code: string }) {
+  const canonical = normalizeFenceLang(lang);
+  const [loaded, setLoaded] = useState<{ lang: string; parser: StreamParser<unknown> } | null>(() => {
+    if (!canonical) return null;
+    const parser = peekParser(canonical);
+    return parser ? { lang: canonical, parser } : null;
+  });
+
+  useEffect(() => {
+    if (!canonical) {
+      setLoaded(null);
+      return;
+    }
+    const cached = peekParser(canonical);
+    if (cached) {
+      setLoaded({ lang: canonical, parser: cached });
+      return;
+    }
+    let alive = true;
+    void loadParser(canonical).then((parser) => {
+      if (alive) setLoaded(parser ? { lang: canonical, parser } : null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [canonical]);
+
+  const parser = loaded && loaded.lang === canonical ? loaded.parser : null;
+  const spans = useMemo(() => {
+    if (!canonical || !parser) return null;
+    return highlightSpans(canonical, code, parser);
+  }, [canonical, parser, code]);
+
+  if (!spans) return <code>{code}</code>;
+  return (
+    <code>
+      {spans.map((span, i) =>
+        span.style ? (
+          <span key={i} className={spanClasses(span.style)}>
+            {span.text}
+          </span>
+        ) : (
+          span.text
+        ),
+      )}
+    </code>
+  );
+}
+
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const pushToast = useUi((s) => s.pushToast);
+  ensureHighlightTheme();
   return (
     <div className="nx-md-pre">
       <div className="nx-md-pre-bar">
@@ -221,7 +280,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
         </button>
       </div>
       <pre className="nx-md-pre-body">
-        <code>{code}</code>
+        <CodeBody lang={lang} code={code} />
       </pre>
     </div>
   );
