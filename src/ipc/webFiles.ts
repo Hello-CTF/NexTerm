@@ -1,5 +1,5 @@
 
-import { WEB, httpUrl } from "./env";
+import { DEMO, WEB, httpUrl } from "./env";
 
 export interface StagedRef {
   id: string;
@@ -19,7 +19,7 @@ export function browserFilesAvailable(): boolean {
 }
 
 export function pickBrowserFile(accept?: string): Promise<File | null> {
-  if (!WEB || typeof document === "undefined") return Promise.resolve(null);
+  if ((!WEB && !DEMO) || typeof document === "undefined") return Promise.resolve(null);
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";

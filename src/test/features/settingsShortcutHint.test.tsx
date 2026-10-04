@@ -50,6 +50,7 @@ vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () =>
 vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null }));
 vi.mock("../../features/settings/CronCard", () => ({ CronCard: () => null }));
 vi.mock("../../features/settings/SyncCard", () => ({ SyncCard: () => null }));
+vi.mock("../../features/settings/SyncBundleCard", () => ({ SyncBundleCard: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 
 import { SettingsView } from "../../features/settings/SettingsView";

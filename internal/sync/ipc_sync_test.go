@@ -41,7 +41,7 @@ func TestCommandRegistrationPeerSurfaceAndLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCommands := []string{
-		CommandDigest, CommandExport, CommandImport, CommandLinkGet, CommandLinkSet, CommandOrigin,
+		CommandBundleRead, CommandBundleWrite, CommandDigest, CommandExport, CommandImport, CommandLinkGet, CommandLinkSet, CommandOrigin,
 		CommandPull, CommandPush, CommandRemoteDigest, CommandToken, CommandTokenRotate,
 	}
 	if got := dispatcher.Commands(); !reflect.DeepEqual(got, wantCommands) {
