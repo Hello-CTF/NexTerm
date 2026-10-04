@@ -372,6 +372,71 @@ func TestSSHAgentForwardingRequiresSocket(t *testing.T) {
 	}
 }
 
+func TestSSHAgentForwardingExecSessions(t *testing.T) {
+	_, private, signer := generateClientKey(t)
+	server := newTestSSHServer(t, nil)
+	server.agentKey = signer.PublicKey()
+	server.agentResult = make(chan error, 2)
+	socket := serveTestAgent(t, private)
+
+	cfg := testClientConfig(t, server, AuthConfig{Method: AuthPassword, Password: "secret", AgentSocket: socket})
+	cfg.ForwardAgent = true
+	client, err := Connect(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	result, err := client.Exec(context.Background(), "basic", base.ExecOptions{})
+	if err != nil || result.Stdout != "stdout" {
+		t.Fatalf("exec with forwarding = %+v, %v", result, err)
+	}
+	select {
+	case err := <-server.agentResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not observe the forwarded agent on the exec session")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	execConn, err := client.OpenExecConn(ctx, "basic", base.ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(execConn)
+	waitErr := execConn.Wait(ctx)
+	execConn.Close()
+	if err != nil || string(data) != "stdout" || waitErr != nil {
+		t.Fatalf("exec conn with forwarding = %q, %v; wait = %v", data, err, waitErr)
+	}
+	select {
+	case err := <-server.agentResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not observe the forwarded agent on the exec conn session")
+	}
+}
+
+func TestSSHAgentForwardingDefaultOffForExec(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	server.agentResult = make(chan error, 1)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	defer client.Close()
+	if _, err := client.Exec(context.Background(), "basic", base.ExecOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-server.agentResult:
+		t.Fatalf("agent forwarding was requested without forwardAgent: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func marshalClientKey(t *testing.T, private ed25519.PrivateKey) []byte {
 	t.Helper()
 	block, err := gossh.MarshalPrivateKey(private, "test")
@@ -409,12 +474,17 @@ func serveTestAgent(t *testing.T, private ed25519.PrivateKey) string {
 	if err := keyring.Add(agent.AddedKey{PrivateKey: private}); err != nil {
 		t.Fatal(err)
 	}
-	socket := filepath.Join(t.TempDir(), "agent.sock")
+	directory, err := os.MkdirTemp("", "nxagent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	socket := filepath.Join(directory, "a.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { listener.Close() })
+	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
 		for {
 			conn, err := listener.Accept()

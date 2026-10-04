@@ -153,6 +153,7 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 	default:
 		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset authentication method is required"))
 	}
+	config.Auth.AgentSocket = options.AgentSocket
 	if options.JumpAssetID != "" {
 		jump, err := c.jumpConfig(ctx, options.JumpAssetID, generation, chain)
 		if err != nil {
