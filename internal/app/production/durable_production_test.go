@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/durable"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
@@ -23,7 +24,7 @@ func TestProductionDurableRealTmuxRestartRecoveryAndIdentityKill(t *testing.T) {
 	requireRealTmux(t)
 	dataDir := durableTestDataDir(t)
 	factory := &bridgeTestFactory{}
-	production := newDurableTestProduction(t, dataDir, factory)
+	production := newTmuxDurableTestProduction(t, dataDir, factory)
 	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
@@ -50,7 +51,7 @@ func TestProductionDurableRealTmuxRestartRecoveryAndIdentityKill(t *testing.T) {
 	}
 
 	reopenedFactory := &bridgeTestFactory{}
-	reopened := newDurableTestProduction(t, dataDir, reopenedFactory)
+	reopened := newTmuxDurableTestProduction(t, dataDir, reopenedFactory)
 	connectedResponse = dispatchDurableTest(t, reopened, "session_connect_local", `null`, "", "")
 	requireStoreTestResponse(t, connectedResponse, &connected)
 	recoveredResponse := dispatchDurableTest(t, reopened, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":65536}`, channelID, "client-a")
@@ -83,7 +84,7 @@ func TestProductionDurableRealTmuxRestartRecoveryAndIdentityKill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	final := newDurableTestProduction(t, dataDir, &bridgeTestFactory{})
+	final := newTmuxDurableTestProduction(t, dataDir, &bridgeTestFactory{})
 	missingResponse := dispatchDurableTest(t, final, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":65536}`, channelID, "client-a")
 	if missingResponse.OK || missingResponse.Error == nil || missingResponse.Error.Code != ipc.CodeNotFound {
 		t.Fatalf("recover after identity kill = %+v, want not_found", missingResponse)
@@ -104,6 +105,7 @@ func TestProductionLocalAttachFallsBackToVolatileTabWithoutTmux(t *testing.T) {
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
 		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		SupervisorStateDir: blockedSupervisorStateDir(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +115,9 @@ func TestProductionLocalAttachFallsBackToVolatileTabWithoutTmux(t *testing.T) {
 	}
 	if production.Services.Durable != nil {
 		t.Fatal("durable backend is available despite missing tmux")
+	}
+	if production.Services.Supervisor != nil {
+		t.Fatal("supervisor is available despite the blocked state directory")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -182,12 +187,16 @@ func TestProductionDurableComposesUnderWorldAccessibleTemp(t *testing.T) {
 			Streams: ipc.StreamFactoryFuncs{Binary: (&bridgeTestFactory{}).open},
 		},
 		DataDir: dataDir, Desktop: true, DurableBinary: binary,
+		SupervisorStateDir: blockedSupervisorStateDir(t),
 	})
 	if err != nil {
 		t.Fatalf("NewProduction under world-accessible temp parent: %v", err)
 	}
 	if production.Services.Durable == nil || production.Services.DurableErr != nil {
 		t.Fatalf("durable backend = %v, composition error = %v", production.Services.Durable, production.Services.DurableErr)
+	}
+	if production.Services.Supervisor != nil {
+		t.Fatal("supervisor composed despite the blocked state directory")
 	}
 	info, err := os.Lstat(filepath.Dir(productionDurableSocketPath(dataDir)))
 	if err != nil {
@@ -210,7 +219,7 @@ func TestProductionDurableRealTmuxUnderWorldAccessibleTemp(t *testing.T) {
 	t.Setenv("TMPDIR", shared)
 	dataDir := durableTestDataDir(t)
 	factory := &bridgeTestFactory{}
-	production := newDurableTestProduction(t, dataDir, factory)
+	production := newTmuxDurableTestProduction(t, dataDir, factory)
 	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
@@ -249,7 +258,16 @@ func worldAccessibleTempDir(t *testing.T) string {
 	return shared
 }
 
-func newDurableTestProduction(t *testing.T, dataDir string, factory *bridgeTestFactory) *Production {
+func blockedSupervisorStateDir(t *testing.T) string {
+	t.Helper()
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(blocker, "supervisor")
+}
+
+func newTmuxDurableTestProduction(t *testing.T, dataDir string, factory *bridgeTestFactory) *Production {
 	t.Helper()
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
@@ -257,6 +275,7 @@ func newDurableTestProduction(t *testing.T, dataDir string, factory *bridgeTestF
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
 		DataDir: dataDir, Desktop: true,
+		SupervisorStateDir: blockedSupervisorStateDir(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +296,10 @@ func dispatchDurableTest(t *testing.T, production *Production, command, args, ch
 
 func writeDurableTestCommand(t *testing.T, production *Production, tabID, marker, clientID string) {
 	t.Helper()
+	barrier := filepath.Join(production.Services.dataDir, "durable-test-barrier-"+ids.New())
 	writeDurableTestInput(t, production, tabID, "stty -echo", clientID)
+	writeDurableTestInput(t, production, tabID, ": > "+barrier, clientID)
+	waitForProductionFile(t, barrier)
 	writeDurableTestInput(t, production, tabID, "printf '"+marker+"\\n'", clientID)
 	writeDurableTestInput(t, production, tabID, "stty echo", clientID)
 }

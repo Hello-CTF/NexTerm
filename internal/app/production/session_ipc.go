@@ -18,14 +18,14 @@ import (
 )
 
 type terminalCommandService struct {
-	database    *store.Store
-	sessions    *session.Manager
-	docker      *docker.Service
-	durable     *durable.Backend
-	durableErr  error
-	bridge      *terminalBridge
-	grid        *ipc.Dispatcher
-	smokeAttach bool
+	database         *store.Store
+	sessions         *session.Manager
+	docker           *docker.Service
+	durableAvailable bool
+	durableErr       error
+	bridge           *terminalBridge
+	grid             *ipc.Dispatcher
+	smokeAttach      bool
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -124,9 +124,9 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableBackend *durable.Backend, durableErr error, bridge *terminalBridge, smokeAttach bool) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableAvailable bool, durableErr error, bridge *terminalBridge, smokeAttach bool) *terminalCommandService {
 	return &terminalCommandService{
-		database: database, sessions: sessions, docker: dockerService, durable: durableBackend, durableErr: durableErr, bridge: bridge,
+		database: database, sessions: sessions, docker: dockerService, durableAvailable: durableAvailable, durableErr: durableErr, bridge: bridge,
 		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), smokeAttach: smokeAttach,
 	}
 }
@@ -273,29 +273,20 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err == nil {
 					return attachedSessionTab(info), nil
 				}
-				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
-					if s.docker != nil {
-						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
-							return s.attachDocker(ctx, call, input.TabID)
-						}
+				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
+					if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
+						return s.attachDocker(ctx, call, input.TabID)
 					}
+				}
+				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
 					return attachedTabDTO{}, terminalIPCError(s.durableErr)
 				}
-				if errors.Is(err, session.ErrTabNotFound) && s.durable != nil {
+				if errors.Is(err, session.ErrTabNotFound) && s.durableAvailable {
 					recovered, recoveryErr := s.recoverDurable(ctx, call, input.TabID)
 					if recoveryErr == nil {
 						return recovered, nil
 					}
 					s.bridge.Unbridge(call.Channel.ID)
-					if !errors.Is(recoveryErr, durable.ErrNotFound) {
-						return attachedTabDTO{}, terminalIPCError(recoveryErr)
-					}
-					if s.docker != nil {
-						if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
-							return s.attachDocker(ctx, call, input.TabID)
-						}
-						return attachedTabDTO{}, terminalIPCError(recoveryErr)
-					}
 					return attachedTabDTO{}, terminalIPCError(recoveryErr)
 				}
 				if !errors.Is(err, session.ErrTabNotFound) || s.docker == nil {
@@ -481,7 +472,7 @@ func (s *terminalCommandService) createDurableOptions(sessionID string) (*sessio
 	if connected.Asset().Kind != session.KindLocal {
 		return nil, nil
 	}
-	if s.durableErr != nil || s.durable == nil {
+	if s.durableErr != nil || !s.durableAvailable {
 		return nil, nil
 	}
 	return &session.DurableTabOptions{}, nil

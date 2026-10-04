@@ -151,6 +151,7 @@ func newRecoveryTestProduction(t *testing.T, dataDir string, factory *bridgeTest
 			Events:  events,
 		},
 		DataDir: dataDir, Desktop: true,
+		SupervisorStateDir: blockedSupervisorStateDir(t),
 	})
 	if err != nil {
 		t.Fatal(err)

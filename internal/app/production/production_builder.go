@@ -18,8 +18,10 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
@@ -35,6 +37,7 @@ type ProductionConfig struct {
 	TaskOptions             tasks.Options
 	Docker                  *docker.Service
 	DurableBinary           string
+	SupervisorStateDir      string
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
 	TakeoverUserClientID    string
@@ -67,6 +70,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	var taskManager *tasks.Manager
 	var sessionManager *session.Manager
+	var supervisorInstance *supervisor.Supervisor
 	var services ProductionServices
 	defer func() {
 		if returnErr == nil {
@@ -80,6 +84,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}
 		if sessionManager != nil {
 			_ = sessionManager.Close()
+		}
+		if supervisorInstance != nil {
+			_ = supervisorInstance.Close()
 		}
 		if services.Database != nil {
 			_ = services.Database.Close()
@@ -111,19 +118,38 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		connector = defaultConnector
 		hostKeys = defaultConnector.hostKeys
 	}
-	durableBackend, durableErr := durable.New(durable.Config{
-		Binary: config.DurableBinary, SocketPath: productionDurableSocketPath(config.DataDir),
-		StateDir: filepath.Join(config.DataDir, "durable", "state"),
-	})
-	if durableErr != nil && !errors.Is(durableErr, durable.ErrUnavailable) {
-		return nil, durableErr
+	supervisorStateDir := config.SupervisorStateDir
+	if supervisorStateDir == "" {
+		supervisorStateDir = filepath.Join(config.DataDir, "durable", "supervisor")
+	}
+	supervisorInstance, supervisorErr := supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
+	var (
+		durableBackend  *durable.Backend
+		durableProvider base.DurableProvider
+		durableErr      error
+	)
+	if supervisorErr == nil {
+		durableProvider = supervisor.NewProvider(supervisorInstance)
+	} else {
+		config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
+		durableBackend, durableErr = durable.New(durable.Config{
+			Binary: config.DurableBinary, SocketPath: productionDurableSocketPath(config.DataDir),
+			StateDir: filepath.Join(config.DataDir, "durable", "state"),
+		})
+		if durableErr != nil {
+			if !errors.Is(durableErr, durable.ErrUnavailable) {
+				return nil, durableErr
+			}
+		} else {
+			durableProvider = session.NewDurableProvider(durableBackend)
+		}
 	}
 	dockerService := config.Docker
 	emitter := session.AdaptEmitter(config.Config.Events)
 	sessionManager = session.NewManager(session.Config{
 		Connector: connector,
 		Terminals: config.Terminals,
-		Durable:   session.NewDurableProvider(durableBackend),
+		Durable:   durableProvider,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
@@ -151,7 +177,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
-		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, hostKeys: hostKeys, dataDir: config.DataDir,
+		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, hostKeys: hostKeys, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {

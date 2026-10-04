@@ -74,7 +74,8 @@ func TestProductionMissingTmuxDoesNotBlockNonLocalTerminal(t *testing.T) {
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
 		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
-		Connector: fakeSSHConnector{},
+		SupervisorStateDir: blockedSupervisorStateDir(t),
+		Connector:          fakeSSHConnector{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +198,8 @@ func TestProductionMissingTmuxKeepsDockerReattachFallback(t *testing.T) {
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
 		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
-		Docker: dockerService,
+		SupervisorStateDir: blockedSupervisorStateDir(t),
+		Docker:             dockerService,
 	})
 	if err != nil {
 		t.Fatal(err)

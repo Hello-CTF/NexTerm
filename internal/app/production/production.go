@@ -18,6 +18,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
@@ -48,6 +49,7 @@ type ProductionServices struct {
 	Docker           *docker.Service
 	Durable          *durable.Backend
 	DurableErr       error
+	Supervisor       *supervisor.Supervisor
 	Retention        *RetentionRunner
 	Guard            *guard.Manager
 	Agent            *agent.Runner
@@ -79,7 +81,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Durable, services.DurableErr, services.channelBridge, services.smokeAttach)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Supervisor != nil || services.Durable != nil, services.DurableErr, services.channelBridge, services.smokeAttach)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
@@ -145,6 +147,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Mount != nil {
 		modules = append(modules, Module{Name: "mount", RegisterCommands: services.Mount.RegisterCommands, Component: services.Mount})
+	}
+	if services.Supervisor != nil {
+		modules = append(modules, Module{Name: "durable-supervisor", Component: closeSupervisorComponent(services.Supervisor)})
 	}
 	if services.Sessions != nil {
 		modules = append(modules, Module{
