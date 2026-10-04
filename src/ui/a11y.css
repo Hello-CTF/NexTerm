@@ -26,7 +26,19 @@
 
 .nx-menu-item:focus-visible {
   background: color-mix(in srgb, var(--color-accent) 24%, transparent);
-  color: var(--color-neutral-100);
+  color: var(--nx-fg-strong);
+}
+
+.nx-command-item.is-active .nx-command-hint,
+.nx-menu-item:hover:not(:disabled) .nx-menu-hint,
+.nx-menu-item:hover:not(:disabled) .nx-menu-accel,
+.nx-menu-item:focus-visible .nx-menu-hint,
+.nx-menu-item:focus-visible .nx-menu-accel {
+  color: var(--nx-fg-on-tint);
+}
+
+.nx-menu-hint.text-green-400\/80 {
+  color: var(--nx-fg-on-tint);
 }
 
 .nx-prompt-hint {
@@ -102,6 +114,13 @@
   .nx-command-item.is-active,
   .nx-menu-item:focus-visible {
     background: #1e40af;
+    color: #fff;
+  }
+
+  .nx-command-item.is-active .nx-command-hint,
+  .nx-menu-item:focus-visible .nx-menu-hint,
+  .nx-menu-item:focus-visible .nx-menu-accel,
+  .nx-menu-hint.text-green-400\/80 {
     color: #fff;
   }
 

@@ -81,6 +81,38 @@ interface Pair {
   bg: string;
 }
 
+function tintBg(theme: Map<string, string>, alpha: number): string {
+  const get = (k: string) => {
+    const v = theme.get(k);
+    if (!v) throw new Error(`missing token ${k}`);
+    return v;
+  };
+  return mix(get("color-accent"), get("color-neutral-900"), alpha);
+}
+
+function statePairs(theme: Map<string, string>): Pair[] {
+  const get = (k: string) => {
+    const v = theme.get(k);
+    if (!v) throw new Error(`missing token ${k}`);
+    return v;
+  };
+  const activeBg = tintBg(theme, 0.18);
+  const focusBg = tintBg(theme, 0.24);
+  const selectedBg = tintBg(theme, 0.16);
+  const modelListBg = mix(get("color-neutral-950"), get("color-neutral-900"), 0.4);
+  const modelBg = mix(get("color-blue-500"), modelListBg, 0.15);
+  const onTint = get("color-neutral-300");
+  return [
+    { label: "command active hint on tint", fg: onTint, bg: activeBg },
+    { label: "command active label on tint", fg: get("color-neutral-100"), bg: activeBg },
+    { label: "menu hover hint on tint", fg: onTint, bg: activeBg },
+    { label: "menu focus hint on tint", fg: onTint, bg: focusBg },
+    { label: "menu focus label on tint", fg: get("color-neutral-100"), bg: focusBg },
+    { label: "row selected hint on tint", fg: onTint, bg: selectedBg },
+    { label: "model current hint on tint", fg: onTint, bg: modelBg },
+  ];
+}
+
 function textPairs(theme: Map<string, string>): Pair[] {
   const get = (k: string) => {
     const v = theme.get(k);
@@ -125,5 +157,26 @@ describe("text contrast", () => {
         expect(contrast(pair.fg, pair.bg)).toBeGreaterThanOrEqual(4.5);
       });
     }
+    for (const pair of statePairs(theme)) {
+      it(`${name}: ${pair.label} >= 4.5:1`, () => {
+        expect(contrast(pair.fg, pair.bg)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
   }
+});
+
+describe("selected-state hint rules", () => {
+  const a11y = readFileSync(new URL("../ui/a11y.css", import.meta.url), "utf8");
+
+  it("defines the on-tint semantic foreground", () => {
+    expect(css).toContain("--nx-fg-on-tint: var(--color-neutral-300)");
+  });
+
+  it("applies the on-tint foreground to active and selected hints", () => {
+    expect(a11y).toContain(".nx-command-item.is-active .nx-command-hint");
+    expect(a11y).toContain(".nx-menu-item:hover:not(:disabled) .nx-menu-hint");
+    expect(a11y).toContain(".nx-menu-item:focus-visible .nx-menu-hint");
+    expect(a11y).toContain(".nx-menu-hint.text-green-400\\/80");
+    expect(a11y).toContain("color: var(--nx-fg-on-tint)");
+  });
 });
