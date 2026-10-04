@@ -389,10 +389,21 @@ func TestSpawnDetachedChildWindows(t *testing.T) {
 
 func killHelperProcessesWindows(t *testing.T, stateDir string) {
 	t.Helper()
-	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate }", HelperCommand, stateDir)
-	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", script)
-	_ = cmd.Run()
-	waitScript := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | Measure-Object | Select-Object -ExpandProperty Count", HelperCommand, stateDir)
+	data, err := os.ReadFile(filepath.Join(stateDir, "helper.pid"))
+	if err != nil {
+		return
+	}
+	pid := strings.TrimSpace(string(data))
+	if pid == "" {
+		return
+	}
+	verifyScript := fmt.Sprintf("(Get-CimInstance Win32_Process -Filter \"ProcessId = %s\").CommandLine -like '*%s*'", pid, stateDir)
+	verified, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", verifyScript).Output()
+	if err != nil || !strings.Contains(strings.ToLower(string(verified)), "true") {
+		return
+	}
+	_ = exec.Command("taskkill", "/F", "/PID", pid).Run()
+	waitScript := fmt.Sprintf("Get-Process -Id %s -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count", pid)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", waitScript).Output()
