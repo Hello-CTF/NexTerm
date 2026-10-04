@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验 lazycat/lzc-manifest.yml 的 `application.injects`（文件选择器接入）仍与随包脚本一致。
+"""校验 lazycat/lzc-manifest.yml 的 `application.injects`（网关头 + 文件选择器接入）仍与随包脚本一致。
 
 为什么需要它 —— 这条链路上有三处**只能靠约定对齐、出错时完全静默**的地方：
 
@@ -35,6 +35,7 @@ BUILD_SH = ROOT / "lazycat" / "image" / "build-server.sh"
 
 BRIDGE_ID = "lazycat-file-bridge"
 CHOOSER_ID = "open-save-chooser"
+GATEWAY_ID = "gateway-auth"
 CONTENT_PREFIX = "file:///lzcapp/pkg/content/"
 
 DIRECTIVE = re.compile(r"^\s*#@build\s+(.*?)\s*$")
@@ -129,7 +130,8 @@ def main() -> int:
     chooser_uri = None
     for profile, want_subdomain in (("dev", "nexterm-dev"), ("release", "nexterm")):
         print(f"== profile={profile} ==")
-        app = yaml.load(trim(raw, profile), Loader=Loader)["application"]
+        document = yaml.load(trim(raw, profile), Loader=Loader)
+        app = document["application"]
 
         assert app["subdomain"] == want_subdomain, (
             f'subdomain 期望 {want_subdomain}，实际 {app["subdomain"]}（#@build 裁剪错了？）'
@@ -143,11 +145,31 @@ def main() -> int:
         print("    routes = 1 条短服务名路由")
 
         injects = app.get("injects")
-        assert isinstance(injects, list) and len(injects) == 2, (
-            f"injects 应当正好 2 条（request 桥接 + browser 选择器）：{injects!r}"
+        assert isinstance(injects, list) and len(injects) == 3, (
+            f"injects 应当正好 3 条（网关头 + request 桥接 + browser 选择器）：{injects!r}"
         )
         by_id = {i.get("id"): i for i in injects}
-        assert set(by_id) == {BRIDGE_ID, CHOOSER_ID}, f"inject id 不对：{sorted(by_id)}"
+        assert set(by_id) == {BRIDGE_ID, CHOOSER_ID, GATEWAY_ID}, f"inject id 不对：{sorted(by_id)}"
+
+        gateway = by_id[GATEWAY_ID]
+        assert gateway.get("on") == "request", f"{GATEWAY_ID}.on 应为 request"
+        assert gateway.get("when") == ["/*"], gateway.get("when")
+        gateway_scripts = gateway.get("do") or []
+        assert len(gateway_scripts) == 1, f"{GATEWAY_ID}.do 应当只有一条脚本：{gateway_scripts!r}"
+        gateway_src = gateway_scripts[0].get("src")
+        assert isinstance(gateway_src, str) and "ctx.headers.set" in gateway_src and "ctx.params.key" in gateway_src, (
+            "网关头脚本必须通过 ctx.params.key 设置 X-NexTerm-Gateway-Auth"
+        )
+        gateway_key = (gateway_scripts[0].get("params") or {}).get("key")
+        seed_match = re.fullmatch(r"\{\{\s*stable_secret\s+\"([^\"]+)\"\s*\}\}", str(gateway_key))
+        assert seed_match, f"{GATEWAY_ID}.params.key 必须是 stable_secret 模板：{gateway_key!r}"
+        environment = (document.get("services") or {}).get("nexterm-server", {}).get("environment") or []
+        expected_env = f'NEXTERM_GATEWAY_AUTH={{{{ stable_secret "{seed_match.group(1)}" }}}}'
+        assert expected_env in environment, (
+            f"services 环境变量必须使用同一 stable_secret seed（缺 {expected_env!r}）：{environment!r}"
+        )
+        print(f"    {GATEWAY_ID}: on=request, params.key 与 NEXTERM_GATEWAY_AUTH 同 seed")
+        check_js(gateway_src, GATEWAY_ID)
 
         bridge = by_id[BRIDGE_ID]
         assert bridge.get("on") == "request", f"{BRIDGE_ID}.on 应为 request"

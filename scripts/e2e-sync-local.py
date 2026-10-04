@@ -97,7 +97,7 @@ class Instance:
         self.process: subprocess.Popen | None = None
         self.log_handle = None
 
-    def start(self, sync_only: bool = False, host: str = "127.0.0.1") -> None:
+    def start(self, sync_only: bool = False, host: str = "127.0.0.1", env_extra: dict[str, str] | None = None) -> None:
         self.stop()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         environment = dict(os.environ)
@@ -108,6 +108,7 @@ class Instance:
                 "NEXTERM_MASTER_KEY": self.master_key,
             }
         )
+        environment.update(env_extra or {})
         arguments = [str(self.binary), "--listen", f"{host}:{self.port}", "--data-dir", str(self.data_dir)]
         if sync_only:
             arguments.append("--sync-only")
@@ -285,7 +286,7 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         check("sync-only does not serve a browser UI", status == 404, status)
 
         print("[7] Exposed listener requires the token everywhere except healthz", flush=True)
-        c.start(host="0.0.0.0")
+        c.start(host="0.0.0.0", env_extra={"NEXTERM_GATEWAY_AUTH": "e2e-gateway-secret"})
         token_c = c.cli_token()
         check("CLI provisions the exposed instance token", bool(token_c))
         status, _ = call(c.port, "sync_digest")
@@ -296,6 +297,12 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         check("exposed /rpc admits the valid token", status == 200 and envelope.get("ok") is True, envelope)
         status, _ = call(c.port, "sync_digest", extra_headers={"X-HC-User-ID": "forged"})
         check("exposed /rpc rejects a forged platform identity header", status == 401, status)
+        status, _ = call(c.port, "sync_digest", extra_headers={"X-NexTerm-Gateway-Auth": "wrong"})
+        check("exposed /rpc rejects a wrong gateway key", status == 401, status)
+        status, envelope = call(c.port, "sync_digest", extra_headers={"X-NexTerm-Gateway-Auth": "e2e-gateway-secret"})
+        check("exposed /rpc admits the gateway key", status == 200 and envelope.get("ok") is True, envelope)
+        status, envelope = call(c.port, "sync_digest", token="wrong", route="/sync/rpc", extra_headers={"X-NexTerm-Gateway-Auth": "e2e-gateway-secret"})
+        check("exposed /sync/rpc admits the gateway key", status == 200 and envelope.get("ok") is True, envelope)
         status, _ = call(c.port, "sync_digest", route="/sync/rpc")
         check("exposed /sync/rpc rejects a missing token", status == 401, status)
         status, envelope = call(c.port, "sync_digest", token=token_c, route="/sync/rpc")

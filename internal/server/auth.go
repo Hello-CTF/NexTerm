@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 )
 
 const wsAuthProtocol = "nexterm"
@@ -15,7 +16,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if s.trustPlatformUser && hasPlatformUser(r) {
+		if syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -39,7 +40,7 @@ func (s *Server) authorizeWebSocket(r *http.Request) (bool, error) {
 	if !s.authRequired {
 		return true, nil
 	}
-	if s.trustPlatformUser && hasPlatformUser(r) {
+	if syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
 		return true, nil
 	}
 	if token := r.Header.Get(TokenHeader); token != "" {

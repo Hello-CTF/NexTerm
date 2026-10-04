@@ -44,7 +44,7 @@ func callPeer(t *testing.T, server *httptest.Server, path, command, token string
 }
 
 func TestPeerHandlerAuthorizationAndRestrictedSurface(t *testing.T) {
-	first := newTestInstance(t, false, WithPlatform("lazycat"))
+	first := newTestInstance(t, false, WithGatewayAuthKey("gateway-secret"))
 	second := newTestInstance(t, false)
 	token, err := first.service.Token(context.Background())
 	if err != nil {
@@ -64,26 +64,30 @@ func TestPeerHandlerAuthorizationAndRestrictedSurface(t *testing.T) {
 	if status != http.StatusOK || !envelope.OK {
 		t.Fatalf("valid token status=%d envelope=%+v", status, envelope)
 	}
-	status, envelope = callPeer(t, server, "/sync/rpc", CommandDigest, "wrong", map[string]string{PlatformUserHeader: ""})
+	status, envelope = callPeer(t, server, "/sync/rpc", CommandDigest, "wrong", map[string]string{GatewayAuthHeader: "gateway-secret"})
 	if status != http.StatusOK || !envelope.OK {
-		t.Fatalf("platform gateway identity status=%d envelope=%+v", status, envelope)
+		t.Fatalf("gateway key status=%d envelope=%+v", status, envelope)
+	}
+	status, envelope = callPeer(t, server, "/sync/rpc", CommandDigest, "wrong", map[string]string{"X-HC-User-ID": "forged"})
+	if status != http.StatusUnauthorized || envelope.OK {
+		t.Fatalf("forged platform identity status=%d envelope=%+v", status, envelope)
 	}
 	untrusted := newTestInstance(t, false)
 	untrustedServer := httptest.NewServer(untrusted.service.PeerHandler())
 	t.Cleanup(untrustedServer.Close)
-	status, envelope = callPeer(t, untrustedServer, "/sync/rpc", CommandDigest, "wrong", map[string]string{PlatformUserHeader: "forged"})
+	status, envelope = callPeer(t, untrustedServer, "/sync/rpc", CommandDigest, "wrong", map[string]string{GatewayAuthHeader: "gateway-secret"})
 	if status != http.StatusUnauthorized || envelope.OK {
-		t.Fatalf("forged platform identity without platform trust status=%d envelope=%+v", status, envelope)
+		t.Fatalf("gateway header without configured key status=%d envelope=%+v", status, envelope)
 	}
 	handler := first.service.PeerHandler()
 	if valid, err := handler.VerifyToken(context.Background(), token); err != nil || !valid {
 		t.Fatalf("handler VerifyToken = %v, %v", valid, err)
 	}
-	if !handler.PlatformTrusted() {
-		t.Fatal("handler PlatformTrusted = false with platform configured")
+	if handler.GatewayAuthKey() != "gateway-secret" {
+		t.Fatalf("handler GatewayAuthKey = %q", handler.GatewayAuthKey())
 	}
-	if untrusted.service.PeerHandler().PlatformTrusted() {
-		t.Fatal("handler PlatformTrusted = true without platform")
+	if untrusted.service.PeerHandler().GatewayAuthKey() != "" {
+		t.Fatal("handler GatewayAuthKey set without configuration")
 	}
 	status, _ = callPeer(t, server, "/rpc", CommandDigest, token, nil)
 	if status != http.StatusNotFound {

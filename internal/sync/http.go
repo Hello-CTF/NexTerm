@@ -2,9 +2,10 @@ package sync
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
@@ -37,7 +38,7 @@ func (h *PeerRPCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		authorized := h.service.PlatformTrusted() && hasPlatformUser(r)
+		authorized := GatewayAuthorized(r, h.service.GatewayAuthKey())
 		if !authorized {
 			valid, err := h.service.VerifyToken(r.Context(), r.Header.Get(TokenHeader))
 			if err != nil {
@@ -58,15 +59,19 @@ func (h *PeerRPCHandler) VerifyToken(ctx context.Context, token string) (bool, e
 	return h.service.VerifyToken(ctx, token)
 }
 
-func (h *PeerRPCHandler) PlatformTrusted() bool { return h.service.PlatformTrusted() }
+func (h *PeerRPCHandler) GatewayAuthKey() string { return h.service.GatewayAuthKey() }
 
-func hasPlatformUser(r *http.Request) bool {
-	for name := range r.Header {
-		if strings.EqualFold(name, PlatformUserHeader) {
-			return true
-		}
+func GatewayAuthorized(r *http.Request, key string) bool {
+	if key == "" {
+		return false
 	}
-	return false
+	presented := r.Header.Get(GatewayAuthHeader)
+	if presented == "" {
+		return false
+	}
+	expectedDigest := sha256.Sum256([]byte(key))
+	presentedDigest := sha256.Sum256([]byte(presented))
+	return subtle.ConstantTimeCompare(expectedDigest[:], presentedDigest[:]) == 1
 }
 
 func writePeerError(w http.ResponseWriter, status int, err error) {

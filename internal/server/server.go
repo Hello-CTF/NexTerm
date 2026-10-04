@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
@@ -17,8 +16,8 @@ import (
 )
 
 const (
-	TokenHeader        = syncservice.TokenHeader
-	PlatformUserHeader = syncservice.PlatformUserHeader
+	TokenHeader       = syncservice.TokenHeader
+	GatewayAuthHeader = syncservice.GatewayAuthHeader
 )
 
 var syncOnlyCommands = [...]string{syncservice.CommandDigest, syncservice.CommandExport, syncservice.CommandImport}
@@ -34,46 +33,46 @@ func (f TokenVerifierFunc) VerifyToken(ctx context.Context, token string) (bool,
 }
 
 type Config struct {
-	Options           Options
-	Dispatcher        *ipc.Dispatcher
-	Environment       ipc.Environment
-	Tokens            TokenVerifier
-	SyncRPC           http.Handler
-	TrustPlatformUser bool
-	Events            *EventBroker
-	Channels          ChannelBinder
-	ChannelStats      ChannelStatsFunc
-	Blobs             *BlobStore
-	Static            http.Handler
-	Vault             Vault
-	VaultStatus       func(context.Context) (any, error)
-	Retention         *RetentionConfig
-	Version           string
-	MaxRPCBytes       int64
-	Logger            *slog.Logger
-	WebSocket         WebSocketConfig
+	Options        Options
+	Dispatcher     *ipc.Dispatcher
+	Environment    ipc.Environment
+	Tokens         TokenVerifier
+	SyncRPC        http.Handler
+	GatewayAuthKey string
+	Events         *EventBroker
+	Channels       ChannelBinder
+	ChannelStats   ChannelStatsFunc
+	Blobs          *BlobStore
+	Static         http.Handler
+	Vault          Vault
+	VaultStatus    func(context.Context) (any, error)
+	Retention      *RetentionConfig
+	Version        string
+	MaxRPCBytes    int64
+	Logger         *slog.Logger
+	WebSocket      WebSocketConfig
 }
 
 type Server struct {
-	options           Options
-	dispatcher        *ipc.Dispatcher
-	syncDispatcher    *ipc.Dispatcher
-	environment       ipc.Environment
-	tokens            TokenVerifier
-	trustPlatformUser bool
-	authRequired      bool
-	events            *EventBroker
-	channels          ChannelBinder
-	channelStats      ChannelStatsFunc
-	version           string
-	vaultStatus       func(context.Context) (any, error)
-	retention         *RetentionConfig
-	handler           http.Handler
-	logger            *slog.Logger
-	sockets           socketTracker
-	closeOnce         sync.Once
-	closeErr          error
-	webSocket         WebSocketConfig
+	options        Options
+	dispatcher     *ipc.Dispatcher
+	syncDispatcher *ipc.Dispatcher
+	environment    ipc.Environment
+	tokens         TokenVerifier
+	gatewayAuthKey string
+	authRequired   bool
+	events         *EventBroker
+	channels       ChannelBinder
+	channelStats   ChannelStatsFunc
+	version        string
+	vaultStatus    func(context.Context) (any, error)
+	retention      *RetentionConfig
+	handler        http.Handler
+	logger         *slog.Logger
+	sockets        socketTracker
+	closeOnce      sync.Once
+	closeErr       error
+	webSocket      WebSocketConfig
 
 	readGate func()
 }
@@ -104,9 +103,9 @@ func New(config Config) (*Server, error) {
 			config.Tokens = verifier
 		}
 	}
-	if !config.TrustPlatformUser && config.SyncRPC != nil {
-		if trusted, ok := config.SyncRPC.(interface{ PlatformTrusted() bool }); ok {
-			config.TrustPlatformUser = trusted.PlatformTrusted()
+	if config.GatewayAuthKey == "" && config.SyncRPC != nil {
+		if provider, ok := config.SyncRPC.(interface{ GatewayAuthKey() string }); ok {
+			config.GatewayAuthKey = provider.GatewayAuthKey()
 		}
 	}
 	authRequired := !config.Options.SyncOnly && !core.LoopbackListen(config.Options.Listen)
@@ -152,7 +151,7 @@ func New(config Config) (*Server, error) {
 
 	s := &Server{
 		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
-		tokens: config.Tokens, trustPlatformUser: config.TrustPlatformUser, authRequired: authRequired,
+		tokens: config.Tokens, gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
@@ -247,7 +246,7 @@ func (s *Server) routes(config Config) http.Handler {
 func (s *Server) authenticatedSync(next *ipc.RPCHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if !(s.trustPlatformUser && hasPlatformUser(r)) {
+		if !syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
 			valid, err := s.tokens.VerifyToken(r.Context(), r.Header.Get(TokenHeader))
 			if err != nil {
 				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
@@ -260,15 +259,6 @@ func (s *Server) authenticatedSync(next *ipc.RPCHandler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func hasPlatformUser(r *http.Request) bool {
-	for name := range r.Header {
-		if strings.EqualFold(name, PlatformUserHeader) {
-			return true
-		}
-	}
-	return false
 }
 
 func writeRPCError(w http.ResponseWriter, status int, err *ipc.Error) {

@@ -33,23 +33,23 @@ func WithMetadata(appVersion string, desktop bool) Option {
 	}
 }
 
-func WithPlatform(platform string) Option {
+func WithGatewayAuthKey(key string) Option {
 	return func(s *Service) {
-		s.platform = platform
+		s.gatewayAuthKey = key
 	}
 }
 
 type Service struct {
-	store      *store.Store
-	vault      *vault.Vault
-	appVersion string
-	desktop    bool
-	platform   string
+	store          *store.Store
+	vault          *vault.Vault
+	appVersion     string
+	desktop        bool
+	gatewayAuthKey string
 
 	settingsMu stdsync.Mutex
 }
 
-func (s *Service) PlatformTrusted() bool { return s.platform != "" }
+func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
 	s := &Service{store: db, vault: credentialVault}

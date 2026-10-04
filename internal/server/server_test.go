@@ -31,7 +31,7 @@ func TestRPCEnvelopesAndClientIdentity(t *testing.T) {
 	}
 }
 
-func TestSyncAdmissionTokenAndPlatform(t *testing.T) {
+func TestSyncAdmissionTokenAndGateway(t *testing.T) {
 	_, httpServer := newTestHTTP(t, testConfig(t, false))
 	url := httpServer.URL + "/sync/rpc"
 
@@ -47,17 +47,25 @@ func TestSyncAdmissionTokenAndPlatform(t *testing.T) {
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("valid token = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{PlatformUserHeader: "forged"})
+	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{"X-HC-User-ID": "forged"})
 	if status != http.StatusUnauthorized || body.OK {
-		t.Fatalf("forged platform identity without platform trust = %d %+v", status, body)
+		t.Fatalf("forged platform identity header = %d %+v", status, body)
 	}
 
-	trusted := testConfig(t, false)
-	trusted.TrustPlatformUser = true
-	_, trustedHTTP := newTestHTTP(t, trusted)
-	status, body = postRPC(t, trustedHTTP.Client(), trustedHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{PlatformUserHeader: "gateway-user"})
+	gateway := testConfig(t, false)
+	gateway.GatewayAuthKey = "gateway-secret"
+	_, gatewayHTTP := newTestHTTP(t, gateway)
+	status, body = postRPC(t, gatewayHTTP.Client(), gatewayHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "gateway-secret"})
 	if status != http.StatusOK || !body.OK {
-		t.Fatalf("platform admission = %d %+v", status, body)
+		t.Fatalf("gateway key admission = %d %+v", status, body)
+	}
+	status, body = postRPC(t, gatewayHTTP.Client(), gatewayHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "wrong"})
+	if status != http.StatusUnauthorized || body.OK {
+		t.Fatalf("wrong gateway key = %d %+v", status, body)
+	}
+	status, body = postRPC(t, gatewayHTTP.Client(), gatewayHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{"X-HC-User-ID": "forged", GatewayAuthHeader: "wrong"})
+	if status != http.StatusUnauthorized || body.OK {
+		t.Fatalf("forged platform header with wrong gateway key = %d %+v", status, body)
 	}
 }
 
