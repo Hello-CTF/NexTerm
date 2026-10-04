@@ -21,7 +21,7 @@ func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, er
 	target := endpointString(host, port)
 	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
 	if proxyURL == "" {
-		return dialer.DialContext(ctx, "tcp", target)
+		return dialTCP(ctx, dialer, target)
 	}
 	u, err := url.Parse(proxyURL)
 	if err != nil {
@@ -37,7 +37,7 @@ func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, er
 			password, _ := u.User.Password()
 			auth = &proxy.Auth{User: u.User.Username(), Password: password}
 		}
-		d, err := proxy.SOCKS5("tcp", u.Host, auth, dialer)
+		d, err := proxy.SOCKS5("tcp", u.Host, auth, noDelayDialer{dialer})
 		if err != nil {
 			return nil, fmt.Errorf("configure SOCKS5 proxy: %w", err)
 		}
@@ -51,7 +51,7 @@ func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, er
 		}
 		return conn, nil
 	case "http":
-		conn, err := dialer.DialContext(ctx, "tcp", u.Host)
+		conn, err := dialTCP(ctx, dialer, u.Host)
 		if err != nil {
 			return nil, fmt.Errorf("HTTP proxy connect: %w", err)
 		}
@@ -63,6 +63,36 @@ func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, er
 		return tunnel, nil
 	default:
 		return nil, fmt.Errorf("unsupported SSH proxy scheme %q (use socks5:// or http://)", u.Scheme)
+	}
+}
+
+func dialTCP(ctx context.Context, dialer *net.Dialer, target string) (net.Conn, error) {
+	conn, err := dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return nil, err
+	}
+	setNoDelay(conn)
+	return conn, nil
+}
+
+type noDelayDialer struct{ base *net.Dialer }
+
+func (d noDelayDialer) Dial(network, address string) (net.Conn, error) {
+	conn, err := d.base.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	setNoDelay(conn)
+	return conn, nil
+}
+
+func (d noDelayDialer) DialContext(ctx context.Context, _, address string) (net.Conn, error) {
+	return dialTCP(ctx, d.base, address)
+}
+
+func setNoDelay(conn net.Conn) {
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
 	}
 }
 

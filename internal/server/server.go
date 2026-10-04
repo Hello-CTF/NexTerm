@@ -50,6 +50,7 @@ type Config struct {
 	Version      string
 	MaxRPCBytes  int64
 	Logger       *slog.Logger
+	WebSocket    WebSocketConfig
 }
 
 type Server struct {
@@ -69,6 +70,7 @@ type Server struct {
 	sockets        socketTracker
 	closeOnce      sync.Once
 	closeErr       error
+	webSocket      WebSocketConfig
 
 	readGate func()
 }
@@ -109,6 +111,11 @@ func New(config Config) (*Server, error) {
 	if config.Events == nil {
 		config.Events = NewEventBroker()
 	}
+	if config.Events.OnSlowSubscriber == nil {
+		config.Events.OnSlowSubscriber = func() {
+			config.Logger.Warn("event subscriber dropped: client could not keep up")
+		}
+	}
 	if config.Version == "" {
 		config.Version = version.Version
 	}
@@ -130,7 +137,7 @@ func New(config Config) (*Server, error) {
 		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
 		tokens: config.Tokens, events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
-		retention: config.Retention, logger: config.Logger,
+		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events

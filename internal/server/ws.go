@@ -3,10 +3,60 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 )
+
+const (
+	DefaultWebSocketKeepAlive    = 25 * time.Second
+	DefaultWebSocketPingTimeout  = 10 * time.Second
+	DefaultWebSocketWriteTimeout = 10 * time.Second
+)
+
+type WebSocketConfig struct {
+	KeepAlive    time.Duration
+	PingTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
+func (c WebSocketConfig) withDefaults() WebSocketConfig {
+	if c.KeepAlive == 0 {
+		c.KeepAlive = DefaultWebSocketKeepAlive
+	}
+	if c.PingTimeout <= 0 {
+		c.PingTimeout = DefaultWebSocketPingTimeout
+	}
+	if c.WriteTimeout <= 0 {
+		c.WriteTimeout = DefaultWebSocketWriteTimeout
+	}
+	return c
+}
+
+func ParseWebSocketEnv(getenv func(string) string) (WebSocketConfig, error) {
+	var config WebSocketConfig
+	for _, entry := range []struct {
+		key    string
+		target *time.Duration
+	}{
+		{"NEXTERM_WS_KEEPALIVE", &config.KeepAlive},
+		{"NEXTERM_WS_PING_TIMEOUT", &config.PingTimeout},
+		{"NEXTERM_WS_WRITE_TIMEOUT", &config.WriteTimeout},
+	} {
+		raw := getenv(entry.key)
+		if raw == "" {
+			continue
+		}
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return WebSocketConfig{}, fmt.Errorf("%s must be a duration: %w", entry.key, err)
+		}
+		*entry.target = value
+	}
+	return config, nil
+}
 
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
@@ -85,6 +135,9 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 			}
 		}
 	}()
+	if s.webSocket.KeepAlive > 0 {
+		go s.keepAliveSocket(ctx, connection)
+	}
 	defer func() {
 		cancel()
 		_ = connection.CloseNow()
@@ -96,7 +149,29 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 		if err != nil {
 			return
 		}
-		if err := connection.Write(ctx, messageType, data); err != nil {
+		writeCtx, writeCancel := context.WithTimeout(ctx, s.webSocket.WriteTimeout)
+		err = connection.Write(writeCtx, messageType, data)
+		writeCancel()
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn) {
+	ticker := time.NewTicker(s.webSocket.KeepAlive)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, s.webSocket.PingTimeout)
+		err := connection.Ping(pingCtx)
+		cancel()
+		if err != nil {
+			_ = connection.CloseNow()
 			return
 		}
 	}

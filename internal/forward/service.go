@@ -441,6 +441,8 @@ func (f *forwarder) stopAndWait() {
 }
 
 func relay(left, right net.Conn) {
+	setNoDelay(left)
+	setNoDelay(right)
 	done := make(chan struct{}, 2)
 	copyStream := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
@@ -459,4 +461,10 @@ func relay(left, right net.Conn) {
 	go copyStream(right, left)
 	<-done
 	<-done
+}
+
+func setNoDelay(conn net.Conn) {
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetNoDelay(true)
+	}
 }
