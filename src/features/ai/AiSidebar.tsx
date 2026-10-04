@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
-import type { AiHitlEventDto, AiRunDto } from "../../ipc/types";
+import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -21,7 +21,7 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
-import { findResumableRun, replayableRuns } from "./runRestore";
+import { findResumableRun, pendingDeadline, replayableRuns } from "./runRestore";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -93,7 +93,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
-  const restoredChannelRef = useRef<{ channel: IpcChannel<unknown>; offReopen: () => void; jobId: string } | null>(null);
+  const restoredChannelRef = useRef<{
+    channel: IpcChannel<unknown>;
+    offReopen: () => void;
+    jobId: string;
+    generation: number;
+    expiryTimer: ReturnType<typeof setTimeout> | null;
+    expiryRetries: number;
+  } | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
     const run = createAiRun(++runSequenceRef.current, kind);
     activeRunRef.current = run;
@@ -104,9 +111,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const restored = restoredChannelRef.current;
     if (!restored) return;
     restoredChannelRef.current = null;
+    if (restored.expiryTimer !== null) clearTimeout(restored.expiryTimer);
     restored.offReopen();
     disposeChannel(restored.channel);
   };
+  useEffect(() => () => disposeRestoredChannel(), []);
   const activeGeneration = activeRunRef.current?.generation ?? null;
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
@@ -242,6 +251,41 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
+  const replayRestoredIfBound = (jobId: string) => {
+    const restored = restoredChannelRef.current;
+    if (!restored || restored.jobId !== jobId) return;
+    void replayRunEvents(restored.generation, jobId);
+  };
+
+  const armExpiryWatch = (jobId: string) => {
+    const restored = restoredChannelRef.current;
+    if (!restored || restored.jobId !== jobId || restored.expiryRetries <= 0) return;
+    restored.expiryRetries -= 1;
+    restored.expiryTimer = setTimeout(() => {
+      const current = restoredChannelRef.current;
+      if (!current || current.jobId !== jobId) return;
+      current.expiryTimer = null;
+      void replayRunEvents(current.generation, jobId).finally(() => {
+        const settled = activeRunRef.current?.settled ?? true;
+        if (!settled) armExpiryWatch(jobId);
+      });
+    }, 3000);
+  };
+
+  const scheduleExpiryWatch = (snapshot: AiHitlSnapshotDto) => {
+    const deadline = pendingDeadline(snapshot);
+    if (deadline === null) return null;
+    const delay = Math.min(Math.max(0, deadline - Date.now()) + 500, 2_000_000_000);
+    return setTimeout(() => {
+      const restored = restoredChannelRef.current;
+      if (!restored) return;
+      void replayRunEvents(restored.generation, restored.jobId).finally(() => {
+        const settled = activeRunRef.current?.settled ?? true;
+        if (!settled) armExpiryWatch(restored.jobId);
+      });
+    }, delay);
+  };
+
   const restoreConversationRuns = async (id: string) => {
     let runs: AiRunDto[];
     try {
@@ -276,7 +320,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
     });
     if (!resumable || conversationIdRef.current !== id) return;
-    const generation = generations.get(resumable.id);
+    const generation = generations.get(resumable.run.id);
     if (generation === undefined) return;
     if (activeRunRef.current && !activeRunRef.current.settled) return;
     const channel = createAiChannel((ev) => {
@@ -299,13 +343,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const offReopen = onChannelReopen(channel, () => {
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, generation) || current.settled) return;
-      void replayRunEvents(generation, resumable.id);
-      void replayHitl(generation, resumable.id);
+      void replayRunEvents(generation, resumable.run.id);
+      void replayHitl(generation, resumable.run.id);
     });
-    restoredChannelRef.current = { channel, offReopen, jobId: resumable.id };
-    activeRunRef.current = { generation, kind: "chat", jobId: resumable.id, spawnPending: false, settled: false };
+    restoredChannelRef.current = {
+      channel,
+      offReopen,
+      jobId: resumable.run.id,
+      generation,
+      expiryTimer: scheduleExpiryWatch(resumable.snapshot),
+      expiryRetries: 8,
+    };
+    activeRunRef.current = { generation, kind: "chat", jobId: resumable.run.id, spawnPending: false, settled: false };
     setAiBusy(true);
-    void replayHitl(generation, resumable.id);
+    void replayHitl(generation, resumable.run.id);
   };
 
   const send = async (override?: { message?: string; planMode?: boolean }) => {
@@ -442,6 +493,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
+      replayRestoredIfBound(id);
       return;
     } finally {
       setSubmittingCardId(null);
@@ -479,6 +531,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
+      replayRestoredIfBound(id);
       return;
     } finally {
       setSubmittingCardId(null);
@@ -510,6 +563,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       );
     } catch (e) {
       pushToast("error", `停止失败：${describeError(e)}`);
+      replayRestoredIfBound(id);
     }
   };
 

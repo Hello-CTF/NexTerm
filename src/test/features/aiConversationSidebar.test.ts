@@ -1050,4 +1050,107 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
     expect(textOf(view!)).toContain("本轮已完成");
   });
+
+  it("clears busy and disposes the restored channel when the bound run expired and the answer fails", async () => {
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.runs.mockResolvedValue([
+      {
+        id: "job-old", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
+        planMode: false, source: "chat", answer: "", turns: 0, tokensIn: 0, tokensOut: 0,
+        createdAt: 1000, updatedAt: 1000,
+      },
+    ]);
+    const questionJournal = [
+      { type: "questionRequired", seq: 1, id: "ask-1", question: { question: "继续吗？", options: ["继续"] }, confirmationNonce: "nonce-old", requestId: "req-old", attempt: 1 },
+    ];
+    mocks.runEvents
+      .mockResolvedValueOnce(questionJournal)
+      .mockResolvedValue([
+        ...questionJournal,
+        { type: "error", seq: 2, message: "AI 确认请求已过期，请重新发送", retryable: false },
+      ]);
+    const pendingSnapshot = () =>
+      hitlSnapshotOf("interrupted", [
+        hitlInterruptOf({ id: "req-old", runId: "job-old", checkpointId: "job-old", callId: "ask-1", tool: "ask_user", kind: "question", parameters: {}, nonce: "nonce-old", question: { id: "req-old", text: "继续吗？", options: ["继续"] }, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }),
+      ], { runId: "job-old", checkpointId: "job-old" });
+    mocks.hitlSnapshot
+      .mockResolvedValueOnce(pendingSnapshot())
+      .mockResolvedValueOnce(pendingSnapshot())
+      .mockResolvedValue(
+        hitlSnapshotOf("expired", [], {
+          runId: "job-old", checkpointId: "job-old",
+          terminal: { runId: "job-old", checkpointId: "job-old", kind: "terminal", reason: "expired", attempt: 1, seq: 2 },
+        }),
+      );
+    mocks.answer.mockRejectedValue(new Error("AI 任务不存在或已结束"));
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    await flushReplay();
+
+    expect(useUi.getState().aiBusy).toBe(true);
+    const restoredChannel = mocks.channels.at(-1);
+    expect(mocks.reopens.has(restoredChannel)).toBe(true);
+
+    clickButton(view!.container, "继续");
+    await flush();
+    await flushReplay();
+
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
+    expect(textOf(view!)).toContain("过期");
+    await send("继续新问题");
+    expect(mocks.chat).toHaveBeenCalled();
+  });
+
+  it("settles the bound restored run by itself when it expires while viewing", async () => {
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.runs.mockResolvedValue([
+      {
+        id: "job-old", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
+        planMode: false, source: "chat", answer: "", turns: 0, tokensIn: 0, tokensOut: 0,
+        createdAt: 1000, updatedAt: 1000,
+      },
+    ]);
+    const questionJournal = [
+      { type: "questionRequired", seq: 1, id: "ask-1", question: { question: "继续吗？", options: ["继续"] }, confirmationNonce: "nonce-old", requestId: "req-old", attempt: 1 },
+    ];
+    mocks.runEvents
+      .mockResolvedValueOnce(questionJournal)
+      .mockResolvedValue([
+        ...questionJournal,
+        { type: "error", seq: 2, message: "AI 确认请求已过期，请重新发送", retryable: false },
+      ]);
+    mocks.hitlSnapshot.mockResolvedValue(
+      hitlSnapshotOf("interrupted", [
+        hitlInterruptOf({
+          id: "req-old", runId: "job-old", checkpointId: "job-old", callId: "ask-1",
+          tool: "ask_user", kind: "question", parameters: {}, nonce: "nonce-old",
+          question: { id: "req-old", text: "继续吗？", options: ["继续"] },
+          expiresAt: new Date(Date.now() + 80).toISOString(),
+        }),
+      ], { runId: "job-old", checkpointId: "job-old" }),
+    );
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    await flushReplay();
+
+    expect(useUi.getState().aiBusy).toBe(true);
+    const restoredChannel = mocks.channels.at(-1);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+
+    expect(mocks.runEvents).toHaveBeenCalledTimes(2);
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
+    await send("过期之后");
+    expect(mocks.chat).toHaveBeenCalled();
+  });
 });

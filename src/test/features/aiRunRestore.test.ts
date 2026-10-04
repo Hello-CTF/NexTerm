@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findResumableRun,
+  pendingDeadline,
   replayableRuns,
   resumableCandidates,
   snapshotHasPending,
@@ -82,7 +83,8 @@ describe("findResumableRun", () => {
         old: { runId: "old", checkpointId: "old", status: "interrupted", attempt: 1, seq: 1, pending: [pending] },
       }),
     );
-    expect(found?.id).toBe("old");
+    expect(found?.run.id).toBe("old");
+    expect(found?.snapshot.runId).toBe("old");
   });
 
   it("skips runs whose snapshot is terminal or missing", async () => {
@@ -106,7 +108,7 @@ describe("findResumableRun", () => {
         pending: { runId: "pending", checkpointId: "pending", status: "interrupted", attempt: 1, seq: 1, pending: [pending] },
       }),
     );
-    expect(found?.id).toBe("pending");
+    expect(found?.run.id).toBe("pending");
   });
 
   it("returns null when no candidate is pending", async () => {
@@ -127,6 +129,37 @@ describe("findResumableRun", () => {
         pending: [{} as AiHitlSnapshotDto["pending"][number]],
       }),
     ).toBe(true);
+  });
+});
+
+describe("pendingDeadline", () => {
+  it("returns the earliest expiry and rejects garbage", () => {
+    expect(pendingDeadline({ runId: "x", checkpointId: "x", status: "interrupted", attempt: 1, seq: 1, pending: [] })).toBeNull();
+    const early = new Date("2026-10-03T10:01:00Z").toISOString();
+    const late = new Date("2026-10-03T10:05:00Z").toISOString();
+    expect(
+      pendingDeadline({
+        runId: "x",
+        checkpointId: "x",
+        status: "interrupted",
+        attempt: 1,
+        seq: 1,
+        pending: [
+          { expiresAt: late } as AiHitlSnapshotDto["pending"][number],
+          { expiresAt: early } as AiHitlSnapshotDto["pending"][number],
+        ],
+      }),
+    ).toBe(Date.parse(early));
+    expect(
+      pendingDeadline({
+        runId: "x",
+        checkpointId: "x",
+        status: "interrupted",
+        attempt: 1,
+        seq: 1,
+        pending: [{ expiresAt: "not-a-date" } as AiHitlSnapshotDto["pending"][number]],
+      }),
+    ).toBeNull();
   });
 });
 
