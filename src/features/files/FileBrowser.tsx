@@ -26,6 +26,7 @@ import { describeError } from "../../ui/errorText";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
+import { checkUploadOverwrite } from "./uploadConfirm";
 import { useFileOps } from "./useFileOps";
 import {
   IconAlert,
@@ -119,8 +120,13 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     const file = await pickLocalFile();
     if (!file) return;
     const remote = joinPath(dir, baseName(file));
-    pushToast("info", "开始上传…");
     try {
+      const check = await checkUploadOverwrite(sessionId, dir, remote, dir === path ? entries.data : undefined);
+      if (check === "cancelled") {
+        pushToast("info", `已取消上传，${remote} 保持原样`);
+        return;
+      }
+      pushToast("info", "开始上传…");
       const bytes = await fsApi.upload(sessionId, file, remote, false);
       refreshDir(dir);
       pushToast("success", `已上传 ${bytes} 字节 → ${remote}`);

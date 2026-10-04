@@ -4,15 +4,21 @@ import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { isImeKeyEvent } from "../../ui/DialogHost";
+import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { describeError } from "../../ui/errorText";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
+import { cloneAsset } from "./assetClone";
+import { useAssetVisibility } from "./assetVisibility";
 import {
   assetIcon,
   IconChevronDown,
   IconChevronRight,
   IconClose,
   IconCommand,
+  IconCopy,
   IconEdit,
+  IconEye,
+  IconEyeOff,
   IconFolder,
   IconKey,
   IconLoader,
@@ -59,6 +65,8 @@ export function AssetTree() {
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
   const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset } | null>(null);
+  const { hiddenIds, showHidden, setShowHidden, hide, unhide } = useAssetVisibility();
 
   const assets = useQuery({
     queryKey: ["assets"],
@@ -87,16 +95,39 @@ export function AssetTree() {
   });
 
   const filtered = query.trim() ? (results.data ?? []) : (assets.data ?? []);
+  const isHidden = (id: string) => hiddenIds.includes(id);
+  const visible = filtered.filter((a) => showHidden || !isHidden(a.id));
 
   const byGroup = useMemo(() => {
     const map = new Map<string | null, Asset[]>();
-    for (const a of filtered) {
+    for (const a of visible) {
       const list = map.get(a.groupId) ?? [];
       list.push(a);
       map.set(a.groupId, list);
     }
     return map;
-  }, [filtered]);
+  }, [visible]);
+
+  const onClone = async (a: Asset) => {
+    try {
+      const created = await cloneAsset(a);
+      if (!created) return;
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      pushToast("success", `已克隆为「${created.name}」`);
+    } catch (e) {
+      pushToast("error", `克隆失败：${describeError(e)}`);
+    }
+  };
+
+  const onHide = (a: Asset) => {
+    hide(a.id);
+    pushToast("info", `已隐藏「${a.name}」— 点右上角眼睛按钮可找回`);
+  };
+
+  const onUnhide = (a: Asset) => {
+    unhide(a.id);
+    pushToast("info", `已取消隐藏「${a.name}」`);
+  };
 
   const onDelete = async (a: Asset) => {
     const ok = await ask(`删除资产「${a.name}」？软删除，可恢复；关联凭据保留。`, {
@@ -104,6 +135,7 @@ export function AssetTree() {
     });
     if (!ok) return;
     await assetApi.delete(a.id);
+    unhide(a.id);
     void qc.invalidateQueries({ queryKey: ["assets"] });
     void qc.invalidateQueries({ queryKey: ["credentials"] });
     pushToast("info", "已删除");
@@ -153,6 +185,16 @@ export function AssetTree() {
       <div className="flex h-[34px] shrink-0 items-center gap-1 px-2.5">
         <span className="text-xs font-semibold tracking-wide text-neutral-200">资产</span>
         <div className="nx-spacer" />
+        {hiddenIds.length > 0 && (
+          <button
+            className={`nx-icon-btn nx-icon-btn-sm ${showHidden ? "is-active" : ""}`}
+            title={showHidden ? "隐藏已隐藏的资产" : `显示已隐藏的资产（${hiddenIds.length}）`}
+            aria-label={showHidden ? "隐藏已隐藏的资产" : "显示已隐藏的资产"}
+            onClick={() => setShowHidden(!showHidden)}
+          >
+            {showHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+          </button>
+        )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建资产"
@@ -206,8 +248,10 @@ export function AssetTree() {
             key={a.id}
             asset={a}
             level={1}
+            hidden={isHidden(a.id)}
             onDelete={() => void onDelete(a)}
             onEdit={() => setEditingAsset(a)}
+            onMore={(x, y) => setRowMenu({ x, y, asset: a })}
           />
         ))}
         {(groups.data ?? []).map((g: AssetGroup) => (
@@ -215,8 +259,10 @@ export function AssetTree() {
             key={g.id}
             group={g}
             assets={byGroup.get(g.id) ?? []}
+            hiddenIds={hiddenIds}
             onDelete={(a) => void onDelete(a)}
             onEdit={(a) => setEditingAsset(a)}
+            onMore={(a, x, y) => setRowMenu({ x, y, asset: a })}
             onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
             onCreateIn={() => {
               setPresetGroup(g.id);
@@ -230,9 +276,13 @@ export function AssetTree() {
             onDismissError={() => setGroupError(null)}
           />
         ))}
-        {filtered.length === 0 && (
+        {visible.length === 0 && (
           <div className="nx-hint px-2 py-8 text-center">
-            {query ? "没有匹配的资产" : "还没有资产 — 点右上角的 + 新建一个"}
+            {query
+              ? "没有匹配的资产"
+              : (assets.data?.length ?? 0) > 0
+                ? "资产都隐藏了 — 点右上角眼睛按钮显示"
+                : "还没有资产 — 点右上角的 + 新建一个"}
           </div>
         )}
       </div>
@@ -299,6 +349,41 @@ export function AssetTree() {
         />
       )}
       {snippetsOpen && <SnippetsPanel onClose={() => setSnippetsOpen(false)} />}
+      <ContextMenu
+        state={
+          rowMenu
+            ? {
+                x: rowMenu.x,
+                y: rowMenu.y,
+                title: rowMenu.asset.name,
+                items: [
+                  {
+                    kind: "item",
+                    label: "克隆",
+                    icon: <IconCopy size={13} />,
+                    hint: "共享凭据引用",
+                    onSelect: () => void onClone(rowMenu.asset),
+                  },
+                  isHidden(rowMenu.asset.id)
+                    ? {
+                        kind: "item",
+                        label: "取消隐藏",
+                        icon: <IconEye size={13} />,
+                        onSelect: () => onUnhide(rowMenu.asset),
+                      }
+                    : {
+                        kind: "item",
+                        label: "隐藏",
+                        icon: <IconEyeOff size={13} />,
+                        hint: "仅界面隐藏",
+                        onSelect: () => onHide(rowMenu.asset),
+                      },
+                ] satisfies MenuItem[],
+              }
+            : null
+        }
+        onClose={() => setRowMenu(null)}
+      />
     </div>
   );
 }
@@ -306,13 +391,17 @@ export function AssetTree() {
 function AssetRow({
   asset,
   level,
+  hidden,
   onDelete,
   onEdit,
+  onMore,
 }: {
   asset: Asset;
   level: number;
+  hidden?: boolean;
   onDelete: () => void;
   onEdit: () => void;
+  onMore: (x: number, y: number) => void;
 }) {
   const Icon = assetIcon(asset.kind);
   const label = asset.name;
@@ -321,6 +410,7 @@ function AssetRow({
     asset.name,
     target || (asset.builtin ? "本机" : ""),
     asset.builtin ? "内置资产 · 不可删除" : "",
+    hidden ? "已隐藏" : "",
     "双击连接 · 可拖入分组",
   ]
     .filter(Boolean)
@@ -330,13 +420,17 @@ function AssetRow({
       role="treeitem"
       aria-level={level}
       tabIndex={0}
-      className="nx-row group focus-within:[&_.nx-row-actions]:flex"
+      className={`nx-row group focus-within:[&_.nx-row-actions]:flex ${hidden ? "opacity-55" : ""}`}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
         e.dataTransfer.effectAllowed = "move";
       }}
       onDoubleClick={() => void connectAsset(asset)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMore(e.clientX, e.clientY);
+      }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
@@ -350,7 +444,11 @@ function AssetRow({
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>}
+      {hidden ? (
+        <span className="nx-badge">已隐藏</span>
+      ) : (
+        target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>
+      )}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       <span className="nx-row-actions [@media(pointer:coarse)]:flex">
         <button
@@ -388,6 +486,18 @@ function AssetRow({
             <IconClose size={12} />
           </button>
         )}
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="更多操作"
+          aria-label={`更多操作 ${asset.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            onMore(r.left, r.bottom);
+          }}
+        >
+          ⋯
+        </button>
       </span>
     </div>
   );
@@ -396,8 +506,10 @@ function AssetRow({
 function GroupNode({
   group,
   assets,
+  hiddenIds,
   onDelete,
   onEdit,
+  onMore,
   onMoveAsset,
   onCreateIn,
   busy,
@@ -409,8 +521,10 @@ function GroupNode({
 }: {
   group: AssetGroup;
   assets: Asset[];
+  hiddenIds: string[];
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
+  onMore: (a: Asset, x: number, y: number) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
   busy: boolean;
@@ -546,8 +660,10 @@ function GroupNode({
               key={a.id}
               asset={a}
               level={2}
+              hidden={hiddenIds.includes(a.id)}
               onDelete={() => onDelete(a)}
               onEdit={() => onEdit(a)}
+              onMore={(x, y) => onMore(a, x, y)}
             />
           ))}
           {assets.length === 0 && (
