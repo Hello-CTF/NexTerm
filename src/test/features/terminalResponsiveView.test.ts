@@ -10,10 +10,15 @@ const harness = vi.hoisted(() => ({
   terminals: [] as Array<{
     cols: number;
     rows: number;
+    modes: { bracketedPasteMode: boolean };
+    buffer: { active: { type: string; baseY: number; viewportY: number } };
+    scrollToBottom: ReturnType<typeof vi.fn>;
+    element: HTMLElement | null;
     resize: ReturnType<typeof vi.fn>;
   }>,
   observers: [] as Array<() => void>,
   frames: new Map<number, () => void>(),
+  channels: [] as Array<{ onBytes: (bytes: Uint8Array) => void }>,
   reopen: null as (() => void) | null,
   geometry: { widthPx: 360, heightPx: 400 },
   attach: vi.fn(),
@@ -22,6 +27,7 @@ const harness = vi.hoisted(() => ({
   openLineTab: vi.fn(),
   resize: vi.fn(),
   flush: vi.fn(),
+  write: vi.fn(),
   detach: vi.fn(),
   setVisible: vi.fn(),
 }));
@@ -32,6 +38,15 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options = { scrollback: 1000 };
     element: HTMLElement | null = null;
+    modes = {
+      bracketedPasteMode: false,
+    };
+    buffer = {
+      active: { type: "normal", baseY: 0, viewportY: 0 },
+    };
+    scrollToBottom = vi.fn(() => {
+      this.buffer.active.viewportY = this.buffer.active.baseY;
+    });
     resize = vi.fn((cols: number, rows: number) => {
       this.cols = cols;
       this.rows = rows;
@@ -42,9 +57,14 @@ vi.mock("@xterm/xterm", () => ({
     }
     open(element: HTMLElement) {
       this.element = element;
+      const viewport = document.createElement("div");
+      viewport.className = "xterm-viewport";
+      element.append(viewport);
     }
     loadAddon() {}
-    write() {}
+    write(_data: unknown, callback?: () => void) {
+      callback?.();
+    }
     writeln() {}
     clear() {}
     dispose() {}
@@ -104,14 +124,18 @@ vi.mock("../../ipc/commands", () => ({
     attachTab: harness.attachTab,
     detach: harness.detach,
     setVisible: harness.setVisible,
-    write: vi.fn().mockResolvedValue(undefined),
+    write: harness.write,
   },
   dockerApi: { execAttach: harness.execAttach },
   sessionApi: { openLineTab: harness.openLineTab },
 }));
 vi.mock("../../ipc/events", () => ({
   channelIdOf: () => "channel-1",
-  createBinaryChannel: () => ({}),
+  createBinaryChannel: (onBytes: (bytes: Uint8Array) => void) => {
+    const channel = { onBytes };
+    harness.channels.push(channel);
+    return channel;
+  },
   disposeChannel: vi.fn(),
   onChannelReopen: (_channel: unknown, callback: () => void) => {
     harness.reopen = callback;
@@ -120,7 +144,7 @@ vi.mock("../../ipc/events", () => ({
 }));
 vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
 
-import { XtermView, type XtermViewProps } from "../../features/terminal/XtermView";
+import { XtermView, type TerminalHandle, type XtermViewProps } from "../../features/terminal/XtermView";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -154,6 +178,7 @@ function props(overrides: Partial<XtermViewProps> = {}): XtermViewProps {
 beforeEach(() => {
   harness.terminals.length = 0;
   harness.observers.length = 0;
+  harness.channels.length = 0;
   harness.frames.clear();
   harness.reopen = null;
   harness.geometry = { widthPx: 360, heightPx: 400 };
@@ -171,6 +196,7 @@ beforeEach(() => {
   harness.openLineTab.mockReset().mockResolvedValue("tab-line");
   harness.resize.mockReset().mockResolvedValue(undefined);
   harness.flush.mockReset().mockResolvedValue(undefined);
+  harness.write.mockReset().mockResolvedValue(undefined);
   harness.detach.mockReset().mockResolvedValue(undefined);
   harness.setVisible.mockReset().mockResolvedValue(undefined);
   frameId = 0;
@@ -309,5 +335,110 @@ describe("XtermView production grid lifecycle", () => {
 
     expect(term.resize).not.toHaveBeenCalled();
     expect(harness.detach).toHaveBeenCalledWith("tab-existing", "channel-1");
+  });
+});
+
+describe("XtermView terminal interaction", () => {
+  async function showWithHandle(overrides: Partial<XtermViewProps> = {}) {
+    const handles: TerminalHandle[] = [];
+    await show(
+      props({
+        ...overrides,
+        onHandle: (h) => {
+          handles.push(h);
+        },
+      }),
+    );
+    const handle = handles[0];
+    if (!handle) throw new Error("terminal handle not registered");
+    return { handle, term: harness.terminals[0] };
+  }
+
+  function writtenText(): string[] {
+    return harness.write.mock.calls.map((call) =>
+      new TextDecoder().decode(call[1] as Uint8Array),
+    );
+  }
+
+  it("pastes raw bytes by default and bracketed markers only in bracketed-paste mode", async () => {
+    const { handle, term } = await showWithHandle();
+
+    handle.paste("echo one\necho two\n");
+    expect(writtenText()).toEqual(["echo one\necho two\n"]);
+
+    term.modes.bracketedPasteMode = true;
+    handle.paste("echo one\necho two\n");
+    expect(writtenText()).toEqual([
+      "echo one\necho two\n",
+      "\x1b[200~echo one\necho two\n\x1b[201~",
+    ]);
+  });
+
+  it("offers return-to-bottom with the lines below and hides it at the bottom", async () => {
+    const { term } = await showWithHandle();
+    expect(container?.querySelector("button")).toBeNull();
+    const viewportEl = term.element?.querySelector(".xterm-viewport");
+    if (!viewportEl) throw new Error("viewport element missing");
+
+    await act(async () => {
+      term.buffer.active.baseY = 50;
+      term.buffer.active.viewportY = 20;
+      viewportEl.dispatchEvent(new Event("scroll"));
+    });
+    const button = container?.querySelector("button");
+    expect(button?.textContent).toContain("回到底部");
+    expect(button?.textContent).toContain("30");
+
+    await act(async () => {
+      (button as HTMLButtonElement).click();
+    });
+    expect(term.scrollToBottom).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      term.buffer.active.viewportY = term.buffer.active.baseY;
+      viewportEl.dispatchEvent(new Event("scroll"));
+    });
+    expect(container?.querySelector("button")).toBeNull();
+  });
+
+  it("grows the lines-below count when output arrives while scrolled up", async () => {
+    const { term } = await showWithHandle();
+    const viewportEl = term.element?.querySelector(".xterm-viewport");
+    if (!viewportEl) throw new Error("viewport element missing");
+
+    await act(async () => {
+      term.buffer.active.baseY = 50;
+      term.buffer.active.viewportY = 44;
+      viewportEl.dispatchEvent(new Event("scroll"));
+    });
+    expect(container?.querySelector("button")?.textContent).toContain("6");
+
+    await act(async () => {
+      term.buffer.active.baseY = 58;
+      harness.channels[0]?.onBytes(new Uint8Array([104, 105]));
+    });
+    expect(container?.querySelector("button")?.textContent).toContain("14");
+  });
+
+  it("keeps the zero-resize contract for visual-viewport-only changes (IME)", async () => {
+    const viewport = new EventTarget();
+    if (!window.visualViewport) {
+      Object.defineProperty(window, "visualViewport", {
+        value: viewport,
+        configurable: true,
+      });
+    }
+    const target = window.visualViewport ?? viewport;
+    await show(props());
+    harness.resize.mockClear();
+    harness.flush.mockClear();
+
+    await act(async () => {
+      target.dispatchEvent(new Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(harness.resize).not.toHaveBeenCalled();
+    expect(harness.flush).not.toHaveBeenCalled();
   });
 });
