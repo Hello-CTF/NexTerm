@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-// M120 设置页响应式真实浏览器验收：真 nexterm-server（Go 构建、web transport）
-// 种子长数据（长主机名+指纹、真实 ULID 记忆、cron 任务、长拦截规则），
-// 矩阵 320/360/390/568×320 横屏/768/200% 等效（384、560）+ 粗指针 + 明暗双主题，
-// 逐项验证无页面级横向溢出、操作可达、截断值有完整值入口；审计视图走 demo
-// transport（内置带退出码的审计行）验证工具栏刷新可达与 ✓ 非颜色指示。
-// 报告与截图写入 target/settings-responsive/。
-//
-// 运行：node src/test/settings-responsive-acceptance.mjs
-// 需要本机 Go、Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -406,7 +397,7 @@ async function seedWorkspace(page) {
       useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
       await openTerminalTab(s);
       return "ok";
-    } catch (e) { return String(e).slice(0, 300); }
+    } catch (e) { return JSON.stringify(e).slice(0, 300); }
   })()`);
   assert.equal(out, "ok", `workspace seed failed: ${out}`);
 }
@@ -518,6 +509,42 @@ async function darkSettingsChecks(page) {
     return { evidence: state };
   });
 
+  await pass("A-memory-expand-token-no-overflow-320", async () => {
+    await setViewport(page, 320, 720);
+    await page.evaluate(`(() => {
+      const span = [...document.querySelectorAll("span[title]")].find((s) =>
+        /^[0-9A-HJKMNP-TV-Z]{26}$/.test(s.getAttribute("title") || ""),
+      );
+      if (!span) throw new Error("ULID span not found");
+      span.closest("button").click();
+    })()`);
+    await page.waitFor(`Boolean(document.querySelector("pre"))`);
+    const state = await page.evaluate(`(() => {
+      const pre = document.querySelector("pre");
+      const cs = getComputedStyle(pre);
+      return {
+        preScrollWidth: pre.scrollWidth,
+        preClientWidth: pre.clientWidth,
+        overflowWrap: cs.overflowWrap,
+        hasLongToken: pre.textContent.includes(${JSON.stringify(LONG_TOKEN)}),
+      };
+    })()`);
+    assert.equal(state.hasLongToken, true, `expanded pre must contain the seeded long token: ${JSON.stringify(state)}`);
+    assert.equal(state.overflowWrap, "break-word", `pre must break long tokens: ${JSON.stringify(state)}`);
+    assert.ok(state.preScrollWidth <= state.preClientWidth + 1, `expanded pre overflows: ${JSON.stringify(state)}`);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    assertNoOverflow(sample, "memory expand 320");
+    const shot = await screenshot(page, "A-memory-expand-320.png");
+    await page.evaluate(`(() => {
+      const span = [...document.querySelectorAll("span[title]")].find((s) =>
+        /^[0-9A-HJKMNP-TV-Z]{26}$/.test(s.getAttribute("title") || ""),
+      );
+      span.closest("button").click();
+    })()`);
+    await page.waitFor(`!document.querySelector("pre")`);
+    return { evidence: { state, shot } };
+  });
+
   await pass("A-knownhost-row-320", async () => {
     const state = await page.evaluate(READ_KNOWNHOST_ROW);
     assert.ok(state.found, "revoke button not found");
@@ -550,6 +577,154 @@ async function auditChecks(page) {
       return { evidence: { state: { flexWrap: state.flexWrap, reachable: state.reachable, exitCells: state.exitCells }, shot } };
     });
   }
+}
+
+async function syncClientChecks(chrome, api) {
+  const page = await newPage(chrome);
+  await page.send("Network.enable");
+  await page.send("Network.setCacheDisabled", { cacheDisabled: true });
+  const fabrications = {
+    sync_link_get: null,
+    sync_link_set: { url: "https://sync.example.com", tokenKind: "server", token: "saved-token", insecure: false, verifiedAt: 1, lastError: null },
+    sync_digest: {
+      origin: "local",
+      assets: [
+        { id: "a1", name: "web-01", kind: "ssh", host: LONG_HOST, updatedAt: 2, deletedAt: null, hasCred: true },
+      ],
+    },
+    sync_remote_digest: { origin: "remote", assets: [] },
+  };
+  await page.send("Fetch.enable", {
+    patterns: [{ urlPattern: "*/src/features/settings/SyncCard.tsx*", requestStage: "Response" }, { urlPattern: "*/rpc" }],
+  });
+  page.on("Fetch.requestPaused", async (params) => {
+    const passthrough = async () => {
+      try {
+        await page.send("Fetch.continueRequest", { requestId: params.requestId });
+      } catch {}
+    };
+    try {
+      if (params.request.url.includes("/src/features/settings/SyncCard.tsx")) {
+        if (params.responseStatusCode !== 200) {
+          await passthrough();
+          return;
+        }
+        const body = await page.send("Fetch.getResponseBody", { requestId: params.requestId });
+        const source = Buffer.from(body.body, body.base64Encoded ? "base64" : "utf8").toString("utf8");
+        const marker = "const isServer = WEB;";
+        if (!source.includes(marker)) {
+          harnessErrors.push("SyncCard interception missed isServer marker");
+          await passthrough();
+          return;
+        }
+        await page.send("Fetch.fulfillRequest", {
+          requestId: params.requestId,
+          responseCode: 200,
+          responseHeaders: params.responseHeaders,
+          body: Buffer.from(source.replace(marker, "const isServer = false;"), "utf8").toString("base64"),
+        });
+        return;
+      }
+      if (params.request.url.includes("/rpc") && params.request.method === "POST") {
+        let cmd = null;
+        try {
+          cmd = JSON.parse(params.request.postData || "{}").cmd;
+        } catch {}
+        if (cmd && Object.hasOwn(fabrications, cmd)) {
+          await page.send("Fetch.fulfillRequest", {
+            requestId: params.requestId,
+            responseCode: 200,
+            responseHeaders: [
+              { name: "content-type", value: "application/json" },
+              { name: "access-control-allow-origin", value: "*" },
+            ],
+            body: Buffer.from(JSON.stringify({ ok: true, data: fabrications[cmd] }), "utf8").toString("base64"),
+          });
+          return;
+        }
+        await passthrough();
+        return;
+      }
+      await passthrough();
+    } catch (error) {
+      harnessErrors.push(`sync interception: ${String(error?.stack || error)}`);
+      await passthrough();
+    }
+  });
+
+  const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `
+      try { localStorage.clear(); } catch {}
+      window.__NEXTERM_TRANSPORT__ = "web";
+      try { localStorage.setItem("nexterm.theme.v1", "dark"); } catch {}
+    `,
+  });
+  try {
+    await page.navigate(`${VITE}/?api=${api}`);
+    await page.waitFor("!!document.querySelector('.nx-app')");
+  } finally {
+    await page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+  }
+  await seedWorkspace(page);
+  await page.evaluate(`(async () => {
+    const { useUi } = await import('/src/app/store.ts');
+    useUi.getState().addTab({ id: 'settings-r120c', kind: 'settings', title: '设置', closable: true });
+    useUi.getState().setActiveTab('settings-r120c');
+    return true;
+  })()`);
+  await page.waitFor(`Boolean(document.querySelector("#sync-url"))`);
+  await page.evaluate(`(() => {
+    const set = (el, value) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    set(document.querySelector("#sync-url"), "https://sync.example.com");
+    set(document.querySelector("#sync-token"), "fresh-token");
+  })()`);
+  await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "保存并测试连接" && !b.disabled)`);
+  await page.evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存并测试连接").click()`);
+  await page.waitFor(`[...document.querySelectorAll("span[title]")].some((s) => s.getAttribute("title") === ${JSON.stringify(LONG_HOST)})`);
+  await sleep(300);
+
+  await pass("C-sync-client-cred-row-320", async () => {
+    await setViewport(page, 320, 720);
+    const state = await page.evaluate(`(() => {
+      const hostSpan = [...document.querySelectorAll("span[title]")].find((s) => s.getAttribute("title") === ${JSON.stringify(LONG_HOST)});
+      if (!hostSpan) return { found: false };
+      const row = hostSpan.closest("label");
+      const badge = row.querySelector(".nx-badge");
+      const rr = row.getBoundingClientRect();
+      const br = badge.getBoundingClientRect();
+      return {
+        found: true,
+        rowScrollWidth: row.scrollWidth,
+        rowClientWidth: row.clientWidth,
+        badgeRight: Math.round(br.right),
+        rowRight: Math.round(rr.right),
+        badgeClipped: br.right > rr.right + 1,
+        rowOverflows: row.scrollWidth > row.clientWidth + 1,
+        credVisible: row.textContent.includes("带密码"),
+        hostTitle: hostSpan.getAttribute("title"),
+        badgeText: badge.textContent,
+      };
+    })()`);
+    assert.ok(state.found, "sync compare row with long host not found");
+    assert.equal(state.rowOverflows, false, `compare row horizontally overflows: ${JSON.stringify(state)}`);
+    assert.equal(state.badgeClipped, false, `status badge clipped: ${JSON.stringify(state)}`);
+    assert.equal(state.credVisible, true, `cred marker must be visible: ${JSON.stringify(state)}`);
+    assert.equal(state.hostTitle, LONG_HOST);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    assertNoOverflow(sample, "sync client 320");
+    await page.evaluate(`(() => {
+      const hostSpan = [...document.querySelectorAll("span[title]")].find((s) => s.getAttribute("title") === ${JSON.stringify(LONG_HOST)});
+      hostSpan.closest("label").scrollIntoView({ block: "center" });
+    })()`);
+    await sleep(150);
+    const shot = await screenshot(page, "C-sync-client-cred-row-320.png");
+    return { evidence: { state, shot } };
+  });
+  page.close();
 }
 
 let vite;
@@ -601,6 +776,8 @@ try {
   await sleep(400);
   await auditChecks(pageB);
   pageB.close();
+
+  await syncClientChecks(chrome, server.api);
 } catch (error) {
   harnessErrors.push(String(error?.stack || error));
 } finally {
@@ -611,6 +788,11 @@ try {
 
 const checks = [...results.values()];
 const failed = checks.filter((check) => check.status !== "passed");
+const isAllowedPageError = (message) =>
+  message.includes("Cannot read properties of undefined (reading 'dimensions')") &&
+  message.includes("@xterm_xterm");
+const unexpectedPageErrors = pageErrors.filter((message) => !isAllowedPageError(message));
+for (const message of unexpectedPageErrors) harnessErrors.push(`unexpected page error: ${message}`);
 const report = {
   schema_version: 1,
   status: failed.length || harnessErrors.length ? "failed" : "passed",
@@ -624,7 +806,8 @@ const report = {
   },
   checks,
   harness_errors: harnessErrors,
-  page_errors: pageErrors,
+  page_errors_allowed: pageErrors.filter(isAllowedPageError),
+  page_errors_unexpected: unexpectedPageErrors,
 };
 fs.writeFileSync(path.join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
 console.warn(`settings responsive acceptance: ${checks.filter((check) => check.status === "passed").length}/${checks.length} checks passed; report=${path.join(OUT, "report.json")}`);

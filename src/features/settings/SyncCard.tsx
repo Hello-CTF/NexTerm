@@ -594,7 +594,7 @@ function CompareTable(props: {
             return (
               <label
                 key={r.id}
-                className="flex cursor-pointer items-center gap-2 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0 hover:bg-neutral-800/30"
+                className="flex cursor-pointer flex-wrap items-center gap-2 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0 hover:bg-neutral-800/30"
               >
                 <input
                   type="checkbox"
@@ -605,7 +605,7 @@ function CompareTable(props: {
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={r.name}>
                   {r.name}
                 </span>
-                <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-neutral-500" title={r.host ?? r.kind}>
+                <span className="min-w-0 shrink truncate font-mono text-[11px] text-neutral-500" title={r.host ?? r.kind}>
                   {r.host ?? r.kind}
                 </span>
                 {r.local?.hasCred || r.remote?.hasCred ? (

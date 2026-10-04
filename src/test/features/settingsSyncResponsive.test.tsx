@@ -48,7 +48,7 @@ const LOCAL_DIGEST = {
       host: LONG_HOST,
       updatedAt: 2,
       deletedAt: null,
-      hasCred: false,
+      hasCred: true,
     },
   ],
 };
@@ -94,7 +94,7 @@ describe("SyncCard 客户端变体窄屏结构", () => {
     expect(select.parentElement?.className).toContain("flex-wrap");
   });
 
-  it("对照表长主机截断且 title 带完整值", async () => {
+  it("对照表长主机截断且 title 带完整值，带凭据行窄屏可换行收缩", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     const urlInput = mounted.container.querySelector<HTMLInputElement>('input[id="sync-url"]')!;
@@ -116,7 +116,14 @@ describe("SyncCard 客户端变体窄屏结构", () => {
       (s) => s.textContent === LONG_HOST,
     );
     expect(hostSpan?.className).toContain("truncate");
+    expect(hostSpan?.className).toContain("shrink");
     expect(hostSpan?.getAttribute("title")).toBe(LONG_HOST);
+    const row = hostSpan!.closest("label")!;
+    expect(row.className).toContain("flex-wrap");
+    expect(row.textContent).toContain("带密码");
+    const badge = row.querySelector(".nx-badge");
+    expect(badge?.className).toContain("shrink-0");
+    expect(badge?.textContent).toBe("仅本机");
     const nameSpan = [...mounted.container.querySelectorAll("span")].find(
       (s) => s.textContent === "web-01",
     );
