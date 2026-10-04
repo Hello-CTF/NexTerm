@@ -407,3 +407,104 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
     expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签");
   });
 });
+
+describe("detach capability without session metadata", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ask.mockResolvedValue(true);
+  });
+
+  function seedAssetKind(panes: Pane[], assetKind?: string, sessions: SessionInfo[] = []) {
+    useUi.setState({
+      workspaces: [{ ...ws(panes), assetKind }],
+      activeWorkspaceId: "ws",
+      sessions,
+      toasts: [],
+    });
+  }
+
+  it("restored winrm workspace (assetKind only, sessions empty) closes via confirm+kill", async () => {
+    const tab = terminal();
+    seedAssetKind([{ id: "p", tabs: [tab], activeTabId: tab.id }], "winrm");
+
+    expect(closeActionHint(tab)).toBe("结束 WinRM 非交互进程");
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("WinRM 非交互");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).not.toContain("已转入后台");
+  });
+
+  it("workspace close with missing sessions treats assetKind winrm tabs as blocked", async () => {
+    const tabs = [terminal("t1", "s1"), terminal("w1", "s2")];
+    useUi.setState({
+      workspaces: [{ ...ws([{ id: "p", tabs, activeTabId: "t1" }]), assetKind: "winrm" }],
+      activeWorkspaceId: "ws",
+      sessions: [sessionInfo("ssh", "s1")],
+      toasts: [],
+    });
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("1 个");
+    expect(message).toContain("WinRM 非交互");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+
+    mocks.ask.mockResolvedValueOnce(true);
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("unsplit with missing sessions confirms the blocked winrm tab before any IPC", async () => {
+    const panes = [
+      { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
+      { id: "p2", tabs: [terminal("w1")], activeTabId: "w1" },
+    ];
+    useUi.setState({
+      workspaces: [{ ...ws(panes), assetKind: "winrm" }],
+      activeWorkspaceId: "ws",
+      sessions: [],
+      toasts: [],
+    });
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
+
+    mocks.ask.mockResolvedValueOnce(true);
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+  });
+
+  it("unknown terminal type never promises background — confirm+kill with an explicit hint", async () => {
+    const tab = terminal();
+    seedAssetKind([{ id: "p", tabs: [tab], activeTabId: tab.id }], undefined);
+
+    expect(closeActionHint(tab)).toBe("结束进程（类型未知）");
+    expect(closeTabHint(tab)).toBe("关闭标签（结束进程（类型未知））");
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("类型未知");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(toastText()).not.toContain("已转入后台");
+  });
+});

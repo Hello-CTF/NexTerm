@@ -36,6 +36,7 @@ function workspace(panes: { id: string; tabs: AppTab[] }[]): Workspace {
     id: "ws",
     kind: "session",
     title: "workspace",
+    assetKind: "ssh",
     panes: panes.map((p) => ({ ...p, activeTabId: p.tabs[0]?.id ?? null })),
     activePaneId: panes[0].id,
     splitRatio: 0.5,
@@ -151,6 +152,106 @@ describe("remote layout preserves exited terminal state", () => {
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "kill");
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
+  });
+
+  it("does not stamp exited onto a reconnected tab with a new backend tabId", async () => {
+    const exitedTab = { ...terminal("shared"), tabId: "kernel-old", exited: true };
+    seed([{ id: "pane", tabs: [exitedTab] }]);
+    const remoteDto: PersistedLayout = {
+      v: 1,
+      leftOpen: true,
+      leftMode: "assets",
+      rightOpen: true,
+      leftWidth: 248,
+      rightWidth: 352,
+      workspaces: [
+        workspace([{ id: "pane", tabs: [{ ...terminal("shared"), tabId: "kernel-new" }] }]),
+      ],
+      activeWorkspaceId: "ws",
+    };
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
+
+    onRemoteChange({ revision: 1 });
+    await flushAsync();
+
+    const after = useUi.getState().workspaces[0].panes[0].tabs[0];
+    expect(after.tabId).toBe("kernel-new");
+    expect(after.exited).not.toBe(true);
+
+    await requestCloseTab("shared");
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
+    expect(toastText()).toContain("已转入后台");
+  });
+
+  it("workspace close after a reconnect detaches the new process instead of cleanup kill", async () => {
+    const exitedTab = { ...terminal("shared"), tabId: "kernel-old", exited: true };
+    seed([
+      { id: "p1", tabs: [terminal("t1")] },
+      { id: "p2", tabs: [exitedTab] },
+    ]);
+    const remoteDto: PersistedLayout = {
+      v: 1,
+      leftOpen: true,
+      leftMode: "assets",
+      rightOpen: true,
+      leftWidth: 248,
+      rightWidth: 352,
+      workspaces: [
+        workspace([
+          { id: "p1", tabs: [terminal("t1")] },
+          { id: "p2", tabs: [{ ...terminal("shared"), tabId: "kernel-new" }] },
+        ]),
+      ],
+      activeWorkspaceId: "ws",
+    };
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
+
+    onRemoteChange({ revision: 1 });
+    await flushAsync();
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("unsplit after a reconnect detaches the new process instead of cleanup kill", async () => {
+    const exitedTab = { ...terminal("shared"), tabId: "kernel-old", exited: true };
+    seed([
+      { id: "p1", tabs: [terminal("keep")] },
+      { id: "p2", tabs: [exitedTab] },
+    ]);
+    const remoteDto: PersistedLayout = {
+      v: 1,
+      leftOpen: true,
+      leftMode: "assets",
+      rightOpen: true,
+      leftWidth: 248,
+      rightWidth: 352,
+      workspaces: [
+        workspace([
+          { id: "p1", tabs: [terminal("keep")] },
+          { id: "p2", tabs: [{ ...terminal("shared"), tabId: "kernel-new" }] },
+        ]),
+      ],
+      activeWorkspaceId: "ws",
+    };
+    mocks.layoutGet.mockResolvedValue({ revision: 1, updatedAt: 0, data: remoteDto });
+
+    onRemoteChange({ revision: 1 });
+    await flushAsync();
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-new", "detach");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-new", "kill");
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 });

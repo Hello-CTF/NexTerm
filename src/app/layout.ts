@@ -304,22 +304,27 @@ export function mergeDirtyEditorTabs(next: PersistedLayout, current: Workspace[]
 }
 
 export function mergeExitedTabs(next: PersistedLayout, current: Workspace[]): Workspace[] {
-  const exitedIds = new Set<string>();
+  const exitedById = new Map<string, string>();
   for (const w of current) {
     for (const p of w.panes) {
       for (const t of p.tabs) {
-        if (t.kind === "terminal" && t.exited === true) exitedIds.add(t.id);
+        if (t.kind === "terminal" && t.exited === true && t.tabId) exitedById.set(t.id, t.tabId);
       }
     }
   }
-  if (exitedIds.size === 0) return next.workspaces;
+  if (exitedById.size === 0) return next.workspaces;
   let changed = false;
   const workspaces = next.workspaces.map((w) => ({
     ...w,
     panes: w.panes.map((p) => ({
       ...p,
       tabs: p.tabs.map((t) => {
-        if (t.kind === "terminal" && !t.exited && exitedIds.has(t.id)) {
+        if (
+          t.kind === "terminal" &&
+          !t.exited &&
+          t.tabId &&
+          exitedById.get(t.id) === t.tabId
+        ) {
           changed = true;
           return { ...t, exited: true };
         }

@@ -360,7 +360,7 @@ export const useUi = create<UiState>((set, get) => ({
     if (!target) return;
     const tabs = target.panes.flatMap((p) => p.tabs);
     if (!(await confirmDirtyEditors(tabs, `关闭「${target.title}」`))) return;
-    if (!(await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`))) return;
+    if (!(await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`, target.assetKind))) return;
     const next = workspaces.filter((w) => w.id !== id);
     set({
       workspaces: next,
@@ -420,7 +420,7 @@ export const useUi = create<UiState>((set, get) => ({
     const keep = w.panes.filter((p) => p.id !== target.id);
     if (keep.length === 0) return;
     if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
-    if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏"))) return;
+    if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏", w.assetKind))) return;
     set((s2) => ({
       workspaces: s2.workspaces.map((x) =>
         x.id === id ? { ...x, panes: keep, activePaneId: keep[0].id } : x,
@@ -716,51 +716,76 @@ async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boole
   });
 }
 
-function findTab(id: string): AppTab | undefined {
+function findTab(id: string): { tab: AppTab; ws: Workspace } | null {
   for (const w of useUi.getState().workspaces) {
     for (const p of w.panes) {
       const t = p.tabs.find((x) => x.id === id);
-      if (t) return t;
+      if (t) return { tab: t, ws: w };
     }
   }
-  return undefined;
+  return null;
 }
 
 function isRunningTerminal(t: AppTab): boolean {
   return t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
 }
 
-function detachBlockOf(t: AppTab, sessions: SessionInfo[]): "exec" | "winrm" | null {
+function detachBlockOf(
+  t: AppTab,
+  sessions: SessionInfo[],
+  assetKind?: string,
+): "exec" | "winrm" | "unknown" | null {
   if (t.containerId) return "exec";
   const kind = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.kind : undefined;
-  return kind === "winrm" ? "winrm" : null;
+  if (kind === "winrm") return "winrm";
+  if (kind) return null;
+  if (assetKind === "winrm") return "winrm";
+  if (assetKind) return null;
+  return "unknown";
 }
 
-function detachBlockLabel(block: "exec" | "winrm"): string {
-  return block === "exec" ? "容器 exec" : "WinRM 非交互";
+function detachBlockLabel(block: "exec" | "winrm" | "unknown"): string {
+  if (block === "exec") return "容器 exec";
+  if (block === "winrm") return "WinRM 非交互";
+  return "类型未知";
 }
 
-export function countBlockedTerminals(tabs: AppTab[]): number {
+function assetKindForTab(t: AppTab): string | undefined {
+  for (const w of useUi.getState().workspaces) {
+    for (const p of w.panes) {
+      if (p.tabs.some((x) => x.id === t.id)) return w.assetKind;
+    }
+  }
+  return undefined;
+}
+
+export function countBlockedTerminals(tabs: AppTab[], assetKind?: string): number {
   const sessions = useUi.getState().sessions;
-  return tabs.filter((t) => isRunningTerminal(t) && detachBlockOf(t, sessions) !== null).length;
+  return tabs.filter((t) => isRunningTerminal(t) && detachBlockOf(t, sessions, assetKind) !== null)
+    .length;
 }
 
-async function reclaimTerminals(tabs: AppTab[], scope: string, title: string): Promise<boolean> {
+async function reclaimTerminals(
+  tabs: AppTab[],
+  scope: string,
+  title: string,
+  assetKind?: string,
+): Promise<boolean> {
   const st = useUi.getState();
   const live = tabs.filter(isRunningTerminal);
   const cleanup = tabs.filter(
     (t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited,
   );
   if (live.length === 0 && cleanup.length === 0) return true;
-  const blocked = live.filter((t) => detachBlockOf(t, st.sessions) !== null);
-  const detachable = live.filter((t) => detachBlockOf(t, st.sessions) === null);
+  const blocked = live.filter((t) => detachBlockOf(t, st.sessions, assetKind) !== null);
+  const detachable = live.filter((t) => detachBlockOf(t, st.sessions, assetKind) === null);
   if (blocked.length > 0) {
     const { ask } = await import("../ui/dialogs");
     const kinds = [
       ...new Set(
         blocked
-          .map((t) => detachBlockOf(t, st.sessions))
-          .filter((b): b is "exec" | "winrm" => b !== null),
+          .map((t) => detachBlockOf(t, st.sessions, assetKind))
+          .filter((b): b is "exec" | "winrm" | "unknown" => b !== null),
       ),
     ].map(detachBlockLabel).join("、");
     const ok = await ask(
@@ -798,9 +823,10 @@ async function reclaimTerminals(tabs: AppTab[], scope: string, title: string): P
 
 export function closeActionHint(t: AppTab): string | undefined {
   if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
-  const block = detachBlockOf(t, useUi.getState().sessions);
+  const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
   if (block === "exec") return "结束容器 exec 进程";
   if (block === "winrm") return "结束 WinRM 非交互进程";
+  if (block === "unknown") return "结束进程（类型未知）";
   return "转入后台运行";
 }
 
@@ -813,8 +839,9 @@ export function closeTabHint(t: AppTab): string {
 
 export async function requestCloseTab(id: string): Promise<void> {
   const st = useUi.getState();
-  const target = findTab(id);
-  if (!target) return;
+  const found = findTab(id);
+  if (!found) return;
+  const { tab: target, ws } = found;
   if (!(await confirmDirtyEditors([target], `关闭「${target.title}」`))) return;
   if (target.kind !== "terminal" || !target.tabId || target.dead) {
     await st.closeTab(id);
@@ -824,7 +851,7 @@ export async function requestCloseTab(id: string): Promise<void> {
     await st.closeTab(id, "kill");
     return;
   }
-  const block = detachBlockOf(target, st.sessions);
+  const block = detachBlockOf(target, st.sessions, ws.assetKind);
   if (block) {
     const { ask } = await import("../ui/dialogs");
     const ok = await ask(
@@ -842,8 +869,9 @@ export async function requestCloseTab(id: string): Promise<void> {
 
 export async function requestKillTab(id: string): Promise<void> {
   const st = useUi.getState();
-  const target = findTab(id);
-  if (!target) return;
+  const found = findTab(id);
+  if (!found) return;
+  const { tab: target } = found;
   if (target.kind !== "terminal" || !target.tabId || target.dead) {
     await st.closeTab(id);
     return;

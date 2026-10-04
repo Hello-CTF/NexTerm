@@ -533,7 +533,7 @@ export default function App() {
     (w: Workspace, x: number, y: number) => {
       const tabs = w.panes.flatMap((p) => p.tabs);
       const running = tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
-      const blocked = countBlockedTerminals(tabs);
+      const blocked = countBlockedTerminals(tabs, w.assetKind);
       const items: MenuItem[] = [
         {
           kind: "item",
@@ -908,7 +908,7 @@ export default function App() {
                         style={wailsNoDragRegionStyle}
                         aria-label={`关闭工作区 ${w.title}`}
                         title={`关闭工作区（${
-                          countBlockedTerminals(w.panes.flatMap((p) => p.tabs)) > 0
+                          countBlockedTerminals(w.panes.flatMap((p) => p.tabs), w.assetKind) > 0
                             ? "部分终端将结束进程"
                             : "运行中的终端转入后台"
                         }）`}
