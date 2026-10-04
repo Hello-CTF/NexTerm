@@ -50,7 +50,8 @@ type Tab struct {
 	destroying   bool
 	cancelPump   context.CancelFunc
 
-	catchUpRemaining int64
+	catchUpRemaining  int64
+	transcribedOffset int64
 
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -247,9 +248,14 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 	}
-	if options.Durable != nil && options.Durable.Recover {
-		if boundary, ok := durableAttachment.(durableCatchUpBoundary); ok {
-			tab.catchUpRemaining = boundary.DurableCatchUpBytes()
+	if options.Durable != nil {
+		if source, ok := m.durable.(durableTranscriptOffsetSource); ok {
+			if options.Durable.Recover {
+				tab.catchUpRemaining = source.DurableTranscriptCatchUpBytes(tabID)
+				tab.transcribedOffset = tab.catchUpRemaining
+			} else {
+				source.PersistDurableTranscriptOffset(tabID, 0)
+			}
 		}
 	}
 	if options.Durable != nil && options.Durable.Recover {

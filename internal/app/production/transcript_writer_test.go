@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -732,50 +731,42 @@ func TestTranscriptWriterEnqueueHonorsCancelledContext(t *testing.T) {
 	}
 }
 
-func TestCatchUpProviderAttachBoundary(t *testing.T) {
+func TestCatchUpProviderPersistsOffsets(t *testing.T) {
 	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
 	inner := &fakeCatchUpInner{attachment: &fakeCatchUpAttachment{}}
-	recording := filepath.Join(t.TempDir(), "sessions", "tab-1")
-	if err := os.MkdirAll(recording, 0o700); err != nil {
+	provider := &catchUpProvider{DurableProvider: inner, database: database}
+
+	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 0 {
+		t.Fatalf("unknown offset = %d, want 0", got)
+	}
+	if err := database.DurableTranscriptOffsetSet(ctx, "tab-1", 4096); err != nil {
 		t.Fatal(err)
 	}
-	recordingFile := filepath.Join(recording, "output.raw")
-	if err := os.WriteFile(recordingFile, bytes.Repeat([]byte("r"), 4096), 0o600); err != nil {
+	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 4096 {
+		t.Fatalf("persisted offset = %d, want 4096", got)
+	}
+	provider.PersistDurableTranscriptOffset("tab-1", 8192)
+	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 8192 {
+		t.Fatalf("updated offset = %d, want 8192", got)
+	}
+
+	if _, err := provider.Create(ctx, base.DurableCreateOptions{ID: "tab-1"}); err != nil {
 		t.Fatal(err)
 	}
-	provider := &catchUpProvider{
-		DurableProvider: inner,
-		recordingPath:   func(id string) string { return filepath.Join(recording, "output.raw") },
+	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 0 {
+		t.Fatalf("create must reset the offset, got %d", got)
 	}
-	attachment, err := provider.Attach(ctx, "tab-1")
-	if err != nil {
-		t.Fatal(err)
+
+	broken := &catchUpProvider{DurableProvider: inner}
+	if got := broken.DurableTranscriptCatchUpBytes("tab-1"); got != 0 {
+		t.Fatal("nil database must fall back to a zero boundary")
 	}
-	boundary, ok := attachment.(interface{ DurableCatchUpBytes() int64 })
-	if !ok {
-		t.Fatal("wrapped attachment must expose the catch-up boundary")
-	}
-	if boundary.DurableCatchUpBytes() != 4096 {
-		t.Fatalf("boundary = %d, want the recording size 4096", boundary.DurableCatchUpBytes())
-	}
-	if _, ok := attachment.(interface {
-		DurableGrid() (uint32, uint32, bool)
-	}); !ok {
-		t.Fatal("wrapper must forward the grid interface")
-	}
-	if _, ok := attachment.(interface {
-		DurableVersions() (uint64, uint64, error)
-	}); !ok {
-		t.Fatal("wrapper must forward the versions interface")
-	}
-	missing := &catchUpProvider{DurableProvider: inner}
-	attachment, err = missing.Attach(ctx, "tab-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if attachment.(interface{ DurableCatchUpBytes() int64 }).DurableCatchUpBytes() != 0 {
-		t.Fatal("missing recording must fall back to a zero boundary")
-	}
+	broken.PersistDurableTranscriptOffset("tab-1", 1)
 }
 
 type fakeCatchUpInner struct {

@@ -66,7 +66,17 @@ func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
 		tab.catchUpRemaining = 0
 		data = data[remaining:]
 	}
-	tab.mu.Unlock()
+	durable := tab.durable
+	if durable != nil {
+		tab.transcribedOffset += int64(len(data))
+		offset := tab.transcribedOffset
+		tab.mu.Unlock()
+		m.mu.Lock()
+		m.durableOffsets[tab.ID] = offset
+		m.mu.Unlock()
+	} else {
+		tab.mu.Unlock()
+	}
 	if len(data) == 0 {
 		return
 	}
@@ -77,5 +87,22 @@ func (m *Manager) transcriptEnded(sessionID string) {
 	if m.transcripts == nil {
 		return
 	}
+	m.persistDurableOffsets()
 	m.transcripts.SessionEnded(m.ctx, sessionID)
+}
+
+func (m *Manager) persistDurableOffsets() {
+	source, ok := m.durable.(durableTranscriptOffsetSource)
+	if !ok {
+		return
+	}
+	m.mu.Lock()
+	offsets := make(map[string]int64, len(m.durableOffsets))
+	for tabID, offset := range m.durableOffsets {
+		offsets[tabID] = offset
+	}
+	m.mu.Unlock()
+	for tabID, offset := range offsets {
+		source.PersistDurableTranscriptOffset(tabID, offset)
+	}
 }

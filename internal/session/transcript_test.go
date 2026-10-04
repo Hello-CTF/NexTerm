@@ -242,61 +242,77 @@ func TestTranscriptNilSinkIsNoop(t *testing.T) {
 	}
 }
 
-type transcriptDurableProvider struct {
-	mu      sync.Mutex
-	replays map[string]transcriptReplay
-	live    map[string]*fakeChannel
+type transcriptDurableRecord struct {
+	reads       [][]byte
+	transcribed int64
+	channel     *fakeChannel
 }
 
-type transcriptReplay struct {
-	reads    [][]byte
-	boundary int64
+type transcriptDurableProvider struct {
+	mu      sync.Mutex
+	records map[string]*transcriptDurableRecord
 }
 
 func newTranscriptDurableProvider() *transcriptDurableProvider {
-	return &transcriptDurableProvider{
-		replays: make(map[string]transcriptReplay),
-		live:    make(map[string]*fakeChannel),
-	}
+	return &transcriptDurableProvider{records: make(map[string]*transcriptDurableRecord)}
 }
 
 func (p *transcriptDurableProvider) Create(_ context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
 	channel := newFakeChannel(1)
 	p.mu.Lock()
-	p.live[options.ID] = channel
+	p.records[options.ID] = &transcriptDurableRecord{channel: channel}
 	p.mu.Unlock()
 	return &transcriptDurableAttachment{fakeChannel: channel}, nil
 }
 
 func (p *transcriptDurableProvider) Attach(_ context.Context, id string) (base.DurableAttachment, error) {
 	p.mu.Lock()
-	replay := p.replays[id]
-	if _, ok := p.live[id]; !ok {
+	record := p.records[id]
+	if record == nil {
 		p.mu.Unlock()
 		return nil, errors.New("no such durable session")
 	}
 	channel := newFakeChannel(1)
-	p.live[id] = channel
+	record.channel = channel
+	reads := record.reads
 	p.mu.Unlock()
-	attachment := &transcriptDurableAttachment{fakeChannel: channel, boundary: replay.boundary}
-	for _, read := range replay.reads {
+	attachment := &transcriptDurableAttachment{fakeChannel: channel}
+	for _, read := range reads {
 		channel.reads <- append([]byte(nil), read...)
 	}
 	return attachment, nil
 }
 
+func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if record := p.records[tabID]; record != nil {
+		return record.transcribed
+	}
+	return 0
+}
+
+func (p *transcriptDurableProvider) PersistDurableTranscriptOffset(tabID string, offset int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if record := p.records[tabID]; record != nil {
+		record.transcribed = offset
+	}
+}
+
 func (p *transcriptDurableProvider) channel(id string) *fakeChannel {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.live[id]
+	if record := p.records[id]; record != nil {
+		return record.channel
+	}
+	return nil
 }
 
 type transcriptDurableAttachment struct {
 	*fakeChannel
-	boundary int64
 }
 
-func (a *transcriptDurableAttachment) DurableCatchUpBytes() int64 { return a.boundary }
 func (a *transcriptDurableAttachment) Kill(context.Context) error { return nil }
 
 func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
@@ -326,12 +342,9 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	}
 
 	provider.mu.Lock()
-	provider.replays[info.ID] = transcriptReplay{
-		reads: [][]byte{
-			[]byte("durable-replay-mar"),
-			append([]byte("ker\r\n"), []byte("live-after-boundary\r\n")...),
-		},
-		boundary: int64(len("durable-replay-marker\r\n")),
+	provider.records[info.ID].reads = [][]byte{
+		[]byte("durable-replay-mar"),
+		append([]byte("ker\r\n"), []byte("live-after-boundary\r\n")...),
 	}
 	provider.mu.Unlock()
 

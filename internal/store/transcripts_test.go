@@ -292,7 +292,7 @@ func TestTranscriptSearchAcrossChunkUTF8AndANSI(t *testing.T) {
 	nihao := []byte("你好")
 	appendTranscriptChunks(t, db, id,
 		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Data: append([]byte("say "), nihao[0])},
-		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: append(append([]byte{nihao[1], nihao[2]}, []byte("好\r\nerr\x1b[3")...))},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: append([]byte{nihao[1], nihao[2]}, []byte("好\r\nerr\x1b[3")...)},
 		TranscriptChunkRow{Seq: 2, TabID: "tab", TS: 1003, Data: []byte("1mor\x1b[0m done\r\n")},
 	)
 
@@ -411,5 +411,71 @@ func TestTranscriptHostsIncludeDeletedAssets(t *testing.T) {
 	}
 	if hosts[0].AssetID != live.ID {
 		t.Fatalf("hosts must be ordered by last activity: %+v", hosts)
+	}
+}
+
+func TestTranscriptSearchCharsetEscapeInsideWord(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendTranscriptChunks(t, db, id,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Data: []byte("hel\x1b(B")},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: []byte("lo visible\r\n")},
+	)
+
+	matches, err := db.TranscriptSearch(ctx, id, []byte("hello"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 0 {
+		t.Fatalf("charset sequence inside a word must not break the visible match: %+v", matches)
+	}
+	if bytes.Contains(matches[0].Preview, []byte("(B")) {
+		t.Fatalf("charset sequence payload must not leak into previews: %q", matches[0].Preview)
+	}
+
+	single := startTranscript(t, db, "asset-1", 2000)
+	appendTranscriptChunks(t, db, single,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 2001, Data: []byte("plain\x1b(0text\x1b(B\r\n")},
+	)
+	matches, err = db.TranscriptSearch(ctx, single, []byte("plaintext"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("single-chunk charset sequences must be consumed whole: %+v", matches)
+	}
+	matches, err = db.TranscriptSearch(ctx, single, []byte("(0"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("charset designation must not be searchable: %+v", matches)
+	}
+}
+
+func TestDurableTranscriptOffsetRoundtrip(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	offset, err := db.DurableTranscriptOffsetGet(ctx, "tab-missing")
+	if err != nil || offset != 0 {
+		t.Fatalf("missing offset = %d err=%v", offset, err)
+	}
+	if err := db.DurableTranscriptOffsetSet(ctx, "tab-1", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DurableTranscriptOffsetSet(ctx, "tab-1", 8192); err != nil {
+		t.Fatal(err)
+	}
+	offset, err = db.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil || offset != 8192 {
+		t.Fatalf("offset = %d err=%v", offset, err)
+	}
+	if err := db.DurableTranscriptOffsetDelete(ctx, "tab-1"); err != nil {
+		t.Fatal(err)
+	}
+	offset, err = db.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil || offset != 0 {
+		t.Fatalf("offset after delete = %d err=%v", offset, err)
 	}
 }

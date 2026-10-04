@@ -416,10 +416,17 @@ func escapeSequence(raw []byte) (consumed int, complete bool) {
 		consumed, complete := oscSequence(raw[2:])
 		return 2 + consumed, complete
 	default:
-		if raw[1] >= 0x30 && raw[1] <= 0x7e {
-			return 2, true
+		index := 1
+		for index < len(raw) && raw[index] >= 0x20 && raw[index] <= 0x2f {
+			index++
 		}
-		return 1, true
+		if index >= len(raw) {
+			return 0, false
+		}
+		if raw[index] >= 0x30 && raw[index] <= 0x7e {
+			return index + 1, true
+		}
+		return index, true
 	}
 }
 
@@ -458,6 +465,37 @@ func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
 	}
 	if affected == 0 {
 		return notFound("transcript")
+	}
+	return nil
+}
+
+func (s *Store) DurableTranscriptOffsetGet(ctx context.Context, durableID string) (int64, error) {
+	var offset int64
+	err := s.db.QueryRowContext(ctx,
+		"SELECT offset FROM durable_transcript_offset WHERE durable_id=?", durableID).Scan(&offset)
+	if isNoRows(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, dbError(err)
+	}
+	return offset, nil
+}
+
+func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string, offset int64) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, offset, updated_at)
+VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET offset=excluded.offset, updated_at=excluded.updated_at`,
+		durableID, offset, ids.NowMS())
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+func (s *Store) DurableTranscriptOffsetDelete(ctx context.Context, durableID string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM durable_transcript_offset WHERE durable_id=?", durableID)
+	if err != nil {
+		return dbError(err)
 	}
 	return nil
 }

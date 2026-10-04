@@ -154,6 +154,9 @@ func productionModules(services ProductionServices) []Module {
 	if services.Supervisor != nil {
 		modules = append(modules, Module{Name: "durable-supervisor", Component: closeSupervisorComponent(services.Supervisor)})
 	}
+	if services.Transcripts != nil {
+		modules = append(modules, Module{Name: "transcript-writer", Component: services.Transcripts})
+	}
 	if services.Sessions != nil {
 		modules = append(modules, Module{
 			Name: "session",
@@ -165,9 +168,6 @@ func productionModules(services ProductionServices) []Module {
 			},
 			Component: services.Sessions,
 		})
-	}
-	if services.Transcripts != nil {
-		modules = append(modules, Module{Name: "transcript-writer", Component: services.Transcripts})
 	}
 	if services.channelBridge != nil {
 		modules = append(modules, Module{Name: "terminal-channel-bridge", Component: services.channelBridge})

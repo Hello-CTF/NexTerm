@@ -94,8 +94,17 @@ function scanEscape(text: string, start: number): { end: number; complete: boole
     }
     return { end: text.length, complete: false };
   }
-  if (kind >= "0" && kind <= "~") return { end: start + 2, complete: true };
-  return { end: start + 1, complete: true };
+  let index = start + 1;
+  while (index < text.length) {
+    const code = text.charCodeAt(index);
+    if (code >= 0x20 && code <= 0x2f) {
+      index++;
+      continue;
+    }
+    if (code >= 0x30 && code <= 0x7e) return { end: index + 1, complete: true };
+    return { end: index, complete: true };
+  }
+  return { end: text.length, complete: false };
 }
 
 export function formatTranscriptBytes(bytes: number): string {

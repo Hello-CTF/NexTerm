@@ -28,6 +28,7 @@ type fakeDurableProvider struct {
 type fakeDurableRecord struct {
 	identity    int
 	output      []byte
+	transcribed int64
 	killed      int
 	exitCode    *int
 	attachments []*fakeDurableAttachment
@@ -42,7 +43,6 @@ type fakeDurableAttachment struct {
 	provider *fakeDurableProvider
 	tabID    string
 	identity int
-	catchUp  int64
 }
 
 func newFakeDurableProvider() *fakeDurableProvider {
@@ -85,9 +85,26 @@ func (p *fakeDurableProvider) Attach(_ context.Context, id string) (base.Durable
 	attachment := p.newAttachmentLocked(id, record)
 	if len(record.output) > 0 {
 		attachment.reads <- append([]byte(nil), record.output...)
-		attachment.catchUp = int64(len(record.output))
 	}
 	return attachment, nil
+}
+
+func (p *fakeDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[tabID]
+	if record == nil {
+		return 0
+	}
+	return record.transcribed
+}
+
+func (p *fakeDurableProvider) PersistDurableTranscriptOffset(tabID string, offset int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if record := p.records[tabID]; record != nil {
+		record.transcribed = offset
+	}
 }
 
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
@@ -152,8 +169,6 @@ func (a *fakeDurableAttachment) DurableGrid() (uint32, uint32, bool) {
 	}
 	return record.cols, record.rows, true
 }
-
-func (a *fakeDurableAttachment) DurableCatchUpBytes() int64 { return a.catchUp }
 
 func (p *fakeDurableProvider) setGrid(id string, cols, rows uint32) {
 	p.mu.Lock()

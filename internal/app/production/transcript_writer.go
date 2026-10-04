@@ -196,10 +196,8 @@ func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
 	ticket := w.nextTicket
 	w.nextTicket++
 	if item.kind != transcriptItemChunk {
-		if !w.closed {
-			w.lifecycle[ticket] = item
-			w.advanceServingLocked()
-		}
+		w.lifecycle[ticket] = item
+		w.advanceServingLocked()
 		w.queueMu.Unlock()
 		w.signal()
 		return
@@ -219,15 +217,13 @@ func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
 		}
 		w.queueMu.Lock()
 	}
-	if w.closed {
-		w.queueMu.Unlock()
-		return
-	}
 	item.ticket = ticket
 	w.queue = append(w.queue, item)
 	w.queuedBytes += len(item.data)
-	w.serving++
-	w.advanceServingLocked()
+	if !w.closed {
+		w.serving++
+		w.advanceServingLocked()
+	}
 	w.queueMu.Unlock()
 	w.signal()
 }
@@ -268,7 +264,7 @@ func (w *transcriptWriter) run() {
 func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
 	for {
 		w.queueMu.Lock()
-		if w.closed && len(w.queue) == 0 && len(w.lifecycle) == 0 {
+		if w.closed && w.process >= w.nextTicket {
 			w.queueMu.Unlock()
 			return nil, false
 		}
@@ -302,10 +298,6 @@ func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
 					break
 				}
 				continue
-			}
-			if w.closed {
-				w.process = w.nextTicket
-				break
 			}
 			break
 		}

@@ -138,9 +138,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		} else {
 			durableProvider = &catchUpProvider{
 				DurableProvider: supervisor.NewRemoteProvider(supervisorHelper.Client()),
-				recordingPath: func(id string) string {
-					return filepath.Join(supervisorStateDir, "sessions", id, "output.raw")
-				},
+				database:        database,
 			}
 		}
 	} else {
@@ -149,9 +147,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if supervisorErr == nil {
 			durableProvider = &catchUpProvider{
 				DurableProvider: supervisor.NewProvider(supervisorInstance),
-				recordingPath: func(id string) string {
-					return filepath.Join(supervisorStateDir, "sessions", id, "output.raw")
-				},
+				database:        database,
 			}
 		} else {
 			config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
@@ -166,9 +162,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			} else {
 				durableProvider = &catchUpProvider{
 					DurableProvider: session.NewDurableProvider(durableBackend),
-					recordingPath: func(id string) string {
-						return filepath.Join(config.DataDir, "durable", "state", id, "output.raw")
-					},
+					database:        database,
 				}
 			}
 		}

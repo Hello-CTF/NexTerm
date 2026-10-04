@@ -283,7 +283,8 @@ DROP TABLE ai_checkpoint;
 DROP TABLE ai_hitl_run;
 DROP TABLE transcript_chunk;
 DROP TABLE transcript;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8)`)
+DROP TABLE durable_transcript_offset;
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +309,7 @@ DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8)`)
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 8)
+	requireTableCount(t, reopened, migrationsTable, 9)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

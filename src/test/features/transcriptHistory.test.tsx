@@ -355,6 +355,17 @@ describe("transcriptText", () => {
     expect(text).toBe("error done");
   });
 
+  it("consumes charset designation sequences whole", () => {
+    const decoder = createTranscriptDecoder();
+    const first = new TextEncoder().encode("hel\u001b(");
+    const second = new TextEncoder().encode("Blo visible");
+    let text = decoder.push(btoa(String.fromCharCode(...first)));
+    expect(text).toBe("hel");
+    text += decoder.push(btoa(String.fromCharCode(...second)));
+    text += decoder.flush();
+    expect(text).toBe("hello visible");
+  });
+
   it("completes a trailing incomplete escape on flush", () => {
     const decoder = createTranscriptDecoder();
     const first = new TextEncoder().encode("plain\u001b]0;title");
