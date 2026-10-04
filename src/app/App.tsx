@@ -231,17 +231,20 @@ function useKeyboardInset(): void {
   useEffect(() => {
     const root = document.documentElement;
     const vv = window.visualViewport ?? null;
-    const vk = (navigator as Navigator & { virtualKeyboard?: VirtualKeyboardLike })
-      .virtualKeyboard;
     let frame: number | null = null;
+    let vk: VirtualKeyboardLike | undefined;
 
     const readInset = (): number => {
       if (vk) {
-        return virtualKeyboardInset(
-          window.innerHeight,
-          vk.boundingRect.top,
-          vk.boundingRect.height,
-        );
+        try {
+          return virtualKeyboardInset(
+            window.innerHeight,
+            vk.boundingRect.top,
+            vk.boundingRect.height,
+          );
+        } catch {
+          disableVk();
+        }
       }
       if (!vv) return 0;
       return visualViewportInset(window.innerHeight, vv.height, vv.offsetTop);
@@ -251,8 +254,16 @@ function useKeyboardInset(): void {
       if (inset <= 0) return;
       const active = document.activeElement;
       if (!(active instanceof HTMLElement) || !isEditableTarget(active)) return;
-      const rect = active.getBoundingClientRect();
-      if (rect.bottom > window.innerHeight - inset) {
+      const visibleBottom = window.innerHeight - inset;
+      for (let node = active.parentElement; node; node = node.parentElement) {
+        const overflow = active.getBoundingClientRect().bottom - visibleBottom;
+        if (overflow <= 0) return;
+        const style = getComputedStyle(node);
+        if (/(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) {
+          node.scrollTop += overflow + 8;
+        }
+      }
+      if (active.getBoundingClientRect().bottom > visibleBottom) {
         active.scrollIntoView({ block: "nearest" });
       }
     };
@@ -268,9 +279,27 @@ function useKeyboardInset(): void {
       frame = requestAnimationFrame(publish);
     };
 
-    if (vk) {
-      vk.overlaysContent = true;
-      vk.addEventListener("geometrychanged", schedule);
+    function disableVk() {
+      if (!vk) return;
+      try {
+        vk.overlaysContent = false;
+      } catch {}
+      try {
+        vk.removeEventListener("geometrychanged", schedule);
+      } catch {}
+      vk = undefined;
+    }
+
+    try {
+      const candidate = (navigator as Navigator & { virtualKeyboard?: VirtualKeyboardLike })
+        .virtualKeyboard;
+      if (candidate) {
+        candidate.overlaysContent = true;
+        candidate.addEventListener("geometrychanged", schedule);
+        vk = candidate;
+      }
+    } catch {
+      vk = undefined;
     }
     vv?.addEventListener("resize", schedule);
     vv?.addEventListener("scroll", schedule);
@@ -279,10 +308,7 @@ function useKeyboardInset(): void {
     schedule();
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
-      if (vk) {
-        vk.overlaysContent = false;
-        vk.removeEventListener("geometrychanged", schedule);
-      }
+      disableVk();
       vv?.removeEventListener("resize", schedule);
       vv?.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
@@ -355,7 +381,12 @@ export default function App() {
   );
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
-  const terminalKeysVisible = viewport.terminalKeys && active?.kind === "terminal";
+  const terminalKeysVisible =
+    viewport.terminalKeys &&
+    (ws?.panes.some((p) => {
+      const current = p.tabs.find((t) => t.id === p.activeTabId) ?? p.tabs[p.tabs.length - 1];
+      return current?.kind === "terminal";
+    }) ?? false);
   const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
 
   const needSession = useCallback(() => {

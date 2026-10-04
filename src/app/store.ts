@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { dirtyFileEditors } from "../features/files/editorGuards";
+import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import {
   getResolvedTheme,
   getThemeMode,
@@ -392,6 +393,12 @@ export const useUi = create<UiState>((set, get) => ({
     if (!w) return;
     if (w.panes.length >= 2) {
       get().addTab(tab, w.panes[1].id);
+      return;
+    }
+    const height = typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerHeight;
+    if (!splitAllowedForHeight(height)) {
+      get().addTab(tab, w.activePaneId ?? w.panes[0]?.id);
+      get().pushToast("info", "窗口高度不足，已在当前栏打开");
       return;
     }
     const pane = makePane();

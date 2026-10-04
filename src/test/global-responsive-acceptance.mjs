@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-// M116 全局响应式真实 Chromium 验收：320/360/390/短横屏 568x320/768/200% 缩放等效(640x400)
-// × 明暗双主题 × 触摸仿真；含 visualViewport 收缩模拟软键盘（resizes-visual 行为），
-// 断言 root/App 尺寸稳定、底部区域避让、聚焦控件可达。
-//
-// 运行：node src/test/global-responsive-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
-// 报告与截图写入 target/acceptance-global-responsive/。
-// 证据边界：headless 无法真实弹出 OS 软键盘，IME 场景为 visualViewport/VirtualKeyboard
-// 合成事件等效模拟（与 M98/M104 相同方法），不声称真机验证。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -221,7 +212,7 @@ async function setViewport(page, { width, height, mobile = false, dsf = 2 }) {
   }
 }
 
-async function boot(page, { theme, viewport, vvPatch = false } = {}) {
+async function boot(page, { theme, viewport, vvPatch = false, extraInit = null } = {}) {
   const { identifier: seedId } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
     source:
       theme === undefined
@@ -230,9 +221,9 @@ async function boot(page, { theme, viewport, vvPatch = false } = {}) {
   });
   const unseed = () => page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: seedId });
   let unpatch = null;
-  if (vvPatch) {
+  if (vvPatch || extraInit) {
     const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: `(() => {
+      source: `${vvPatch ? `(() => {
         const fake = new EventTarget();
         Object.defineProperties(fake, {
           height: { get: () => window.__vvHeight ?? window.innerHeight },
@@ -244,7 +235,7 @@ async function boot(page, { theme, viewport, vvPatch = false } = {}) {
           scale: { get: () => 1 },
         });
         Object.defineProperty(window, "visualViewport", { configurable: true, get: () => fake });
-      })()`,
+      })();` : ""}${extraInit ?? ""}`,
     });
     unpatch = () => page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
   }
@@ -541,13 +532,23 @@ async function responsiveAcceptance(page) {
     const vp = matrix.find((v) => v.name === "390x844");
     await boot(page, { viewport: vp, vvPatch: true });
     const vk = await vkAvailable(page);
+    const xtermGeometry = `(() => {
+      const screen = document.querySelector(".xterm-screen");
+      const viewport = document.querySelector(".xterm-viewport");
+      if (!screen || !viewport) return null;
+      const s = screen.getBoundingClientRect();
+      const v = viewport.getBoundingClientRect();
+      return { w: Math.round(s.width), h: Math.round(s.height), vw: Math.round(v.width), vh: Math.round(v.height) };
+    })()`;
     const before = await page.evaluate(`(() => ({
       rootHeight: document.querySelector("#root").getBoundingClientRect().height,
       appHeight: document.querySelector(".nx-app").getBoundingClientRect().height,
       innerHeight: window.innerHeight,
       inset: getComputedStyle(document.documentElement).getPropertyValue("--nx-kb-inset").trim(),
+      xterm: ${xtermGeometry},
     }))()`);
     assert.equal(before.inset, "0px", JSON.stringify(before));
+    assert.ok(before.xterm, "xterm must be rendered");
     await showKeyboard(page, 500);
     await page.waitFor(`getComputedStyle(document.documentElement).getPropertyValue("--nx-kb-inset").trim() === "344px"`);
     const after = await page.evaluate(`(() => {
@@ -564,17 +565,21 @@ async function responsiveAcceptance(page) {
         statusTextBottom: Math.round(s.bottom),
         keysBottom: Math.round(k.bottom),
         visibleBottom: 500,
+        xterm: ${xtermGeometry},
       };
     })()`);
     assert.equal(after.rootHeight, before.rootHeight, `root height changed under keyboard: ${JSON.stringify({ before, after })}`);
     assert.equal(after.appHeight, before.appHeight, `app height changed under keyboard: ${JSON.stringify({ before, after })}`);
     assert.equal(after.innerHeight, before.innerHeight, `layout viewport resized (resizes-content?): ${JSON.stringify({ before, after })}`);
     assert.equal(after.inset, "344px");
+    assert.deepEqual(after.xterm, before.xterm, `xterm geometry changed under keyboard: ${JSON.stringify({ before, after })}`);
     assert.ok(after.statusTextBottom <= after.visibleBottom, `statusbar covered by keyboard: ${JSON.stringify(after)}`);
     assert.ok(after.keysBottom <= after.visibleBottom, `terminal keys covered by keyboard: ${JSON.stringify(after)}`);
     await screenshot(page, "ime-simulated-390.png");
     await hideKeyboard(page);
     await page.waitFor(`getComputedStyle(document.documentElement).getPropertyValue("--nx-kb-inset").trim() === "0px"`);
+    const restored = await page.evaluate(xtermGeometry);
+    assert.deepEqual(restored, before.xterm, `xterm geometry changed after keyboard hide: ${JSON.stringify({ before, restored })}`);
     return { evidence: { vkAvailable: vk, before, after } };
   });
 
@@ -600,6 +605,134 @@ async function responsiveAcceptance(page) {
     assert.ok(evidence.inputBottom <= evidence.visibleBottom, `focused input covered: ${JSON.stringify(evidence)}`);
     assert.ok(evidence.modalBottom <= evidence.visibleBottom, `modal under keyboard: ${JSON.stringify(evidence)}`);
     await hideKeyboard(page);
+    return { evidence };
+  });
+
+  await pass("ime-vk-setter-throws", async () => {
+    const vp = matrix.find((v) => v.name === "390x844");
+    const fault = `(() => {
+      const fake = new EventTarget();
+      Object.defineProperty(fake, "overlaysContent", {
+        configurable: true,
+        get: () => false,
+        set: () => { throw new DOMException("synthetic fault", "InvalidStateError"); },
+      });
+      Object.defineProperty(fake, "boundingRect", { configurable: true, get: () => ({ top: window.innerHeight, height: 0 }) });
+      Object.defineProperty(navigator, "virtualKeyboard", { configurable: true, get: () => fake });
+    })();`;
+    await boot(page, { viewport: vp, vvPatch: true, extraInit: fault });
+    await page.waitFor("Boolean(document.querySelector('.nx-app'))");
+    await simulateKeyboard(page, 500);
+    const evidence = await page.evaluate(`(() => ({
+      appAlive: Boolean(document.querySelector(".nx-app .nx-statusbar")),
+      rootChildren: document.querySelector("#root").childElementCount,
+      inset: getComputedStyle(document.documentElement).getPropertyValue("--nx-kb-inset").trim(),
+    }))()`);
+    assert.equal(evidence.appAlive, true, `app must survive a throwing VK setter: ${JSON.stringify(evidence)}`);
+    assert.ok(evidence.rootChildren > 0, `root must not be emptied: ${JSON.stringify(evidence)}`);
+    assert.equal(evidence.inset, "344px", `vv baseline must take over after setter fault: ${JSON.stringify(evidence)}`);
+    await restoreKeyboard(page);
+    return { evidence };
+  });
+
+  await pass("ime-vk-geometry-throws", async () => {
+    const vp = matrix.find((v) => v.name === "390x844");
+    const fault = `(() => {
+      const fake = new EventTarget();
+      let content = false;
+      Object.defineProperty(fake, "overlaysContent", { configurable: true, get: () => content, set: (v) => { content = v; } });
+      Object.defineProperty(fake, "boundingRect", { configurable: true, get: () => { throw new DOMException("synthetic fault", "InvalidStateError"); } });
+      Object.defineProperty(navigator, "virtualKeyboard", { configurable: true, get: () => fake });
+    })();`;
+    await boot(page, { viewport: vp, vvPatch: true, extraInit: fault });
+    await page.waitFor("Boolean(document.querySelector('.nx-app'))");
+    await simulateKeyboard(page, 500);
+    const evidence = await page.evaluate(`(() => ({
+      appAlive: Boolean(document.querySelector(".nx-app .nx-statusbar")),
+      rootChildren: document.querySelector("#root").childElementCount,
+      inset: getComputedStyle(document.documentElement).getPropertyValue("--nx-kb-inset").trim(),
+    }))()`);
+    assert.equal(evidence.appAlive, true, `app must survive a throwing VK geometry read: ${JSON.stringify(evidence)}`);
+    assert.ok(evidence.rootChildren > 0, `root must not be emptied: ${JSON.stringify(evidence)}`);
+    assert.equal(evidence.inset, "344px", `vv baseline must take over after geometry fault: ${JSON.stringify(evidence)}`);
+    await restoreKeyboard(page);
+    return { evidence };
+  });
+
+  await pass("file-split-guard-568x320", async () => {
+    await boot(page, { viewport: matrix.find((v) => v.name === "568x320-landscape") });
+    await page.evaluate(`document.querySelector('.nx-rail button[aria-label="文件树"]').click()`);
+    await page.waitFor("Boolean(document.querySelector('.nx-left-dock [role=\"treeitem\"]'))");
+    await page.evaluate(`(() => {
+      const row = [...document.querySelectorAll('.nx-left-dock [role="treeitem"]')].find((el) => el.textContent.includes(".bashrc"));
+      const rect = row.getBoundingClientRect();
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: rect.left + 10, clientY: rect.top + rect.height / 2 }));
+    })()`);
+    await page.waitFor("Boolean(document.querySelector('.nx-menu'))");
+    await page.evaluate(`(() => {
+      const item = [...document.querySelectorAll(".nx-menu-item")].find((b) => b.textContent.includes("在下方编辑"));
+      item.click();
+    })()`);
+    await page.waitFor("Boolean([...document.querySelectorAll('.nx-tab')].some((t) => t.textContent.includes('.bashrc')))");
+    const evidence = await page.evaluate(`(() => ({
+      paneCount: document.querySelectorAll(".nx-tabstrip.is-sub").length,
+      splitDisabled: document.querySelector('.nx-tabstrip.is-sub button[aria-label="上下分屏"]')?.disabled ?? null,
+      fileTabActive: document.querySelector(".nx-tab.is-active")?.textContent.includes(".bashrc") ?? false,
+      toasts: [...document.querySelectorAll(".nx-toasts button")].map((b) => b.textContent),
+    }))()`);
+    assert.equal(evidence.paneCount, 1, `lower-pane creation must be blocked at 320px height: ${JSON.stringify(evidence)}`);
+    assert.equal(evidence.splitDisabled, true, JSON.stringify(evidence));
+    assert.equal(evidence.fileTabActive, true, `file must open in the current pane: ${JSON.stringify(evidence)}`);
+    assert.ok(
+      evidence.toasts.some((t) => t?.includes("已在当前栏打开")),
+      `fallback must be explained: ${JSON.stringify(evidence)}`,
+    );
+    await screenshot(page, "file-split-guard-568x320.png");
+    return { evidence };
+  });
+
+  await pass("toast-mixed-split-terminal-390", async () => {
+    const vp = matrix.find((v) => v.name === "390x844");
+    await boot(page, { viewport: vp });
+    await page.evaluate(`document.querySelector('.nx-tabstrip.is-sub button[aria-label="上下分屏"]').click()`);
+    await page.waitFor("document.querySelectorAll('.nx-tabstrip.is-sub').length === 2");
+    await page.evaluate(`(() => {
+      const upperTab = document.querySelectorAll('.nx-tabstrip.is-sub [role="tab"]')[0];
+      upperTab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      upperTab.click();
+    })()`);
+    await page.evaluate(`document.querySelector('.nx-rail button[aria-label="设置"]').click()`);
+    await page.waitFor("Boolean([...document.querySelectorAll('.nx-tab.is-active')].some((t) => t.textContent.includes('设置')))");
+    const layout = await page.evaluate(`(() => {
+      const settingsActive = [...document.querySelectorAll('.nx-tabstrip.is-sub')].map((strip) =>
+        strip.querySelector('.nx-tab.is-active')?.textContent ?? "",
+      );
+      return { settingsActive };
+    })()`);
+    assert.ok(layout.settingsActive.some((t) => t.includes("设置")), JSON.stringify(layout));
+    await page.evaluate(`document.querySelector(".nx-tabstrip.is-top .nx-tab-new").click()`);
+    await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
+    await page.evaluate(`document.querySelector(".nx-dock-backdrop").click()`);
+    const evidence = await page.evaluate(`(() => {
+      const toast = document.querySelector(".nx-toasts button");
+      const keysList = [...document.querySelectorAll(".nx-terminal-keys")].filter((k) => k.getBoundingClientRect().height > 0);
+      const lower = keysList.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top)[0];
+      const ctrlKey = [...lower.querySelectorAll(".nx-terminal-key")].find((k) => k.textContent.trim() === "Ctrl");
+      const t = toast.getBoundingClientRect();
+      const k = lower.getBoundingClientRect();
+      const c = ctrlKey.getBoundingClientRect();
+      const hit = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);
+      return {
+        appFlag: document.querySelector(".nx-app")?.dataset.nxKeys ?? null,
+        toastBottom: Math.round(t.bottom),
+        keysTop: Math.round(k.top),
+        hitIsKey: hit === ctrlKey || ctrlKey.contains(hit),
+      };
+    })()`);
+    assert.equal(evidence.appFlag, "true", `keys avoidance must consider non-active terminal pane: ${JSON.stringify(evidence)}`);
+    assert.ok(evidence.toastBottom <= evidence.keysTop, `toast covers lower pane keys: ${JSON.stringify(evidence)}`);
+    assert.equal(evidence.hitIsKey, true, `lower pane keys unclickable under toast: ${JSON.stringify(evidence)}`);
+    await screenshot(page, "toast-mixed-split-390.png");
     return { evidence };
   });
 
