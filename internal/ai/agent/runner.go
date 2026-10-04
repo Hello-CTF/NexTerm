@@ -130,6 +130,11 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	args.ConversationID = conversationID
+	if args.ModelProfileID == "" && r.config.Profiles != nil {
+		if profile, ok := r.config.Profiles.ActiveProfile(); ok {
+			args.ModelProfileID = profile.ID
+		}
+	}
 	jobID := r.config.NewID()
 	if strings.TrimSpace(jobID) == "" {
 		return StartResponse{}, errors.New("AI job ID 为空")

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
@@ -474,5 +475,122 @@ func TestSubagentDefaultProfilePinnedAcrossActiveSwitch(t *testing.T) {
 	row := findSubagentRow(t, storage)
 	if row.ProfileID != "profile-a" {
 		t.Fatalf("subagent profile = %q, want spawn-time profile-a", row.ProfileID)
+	}
+}
+
+func TestStartPinsActiveProfileForFactoryAndPersistence(t *testing.T) {
+	ctx := context.Background()
+	storage, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	manager, err := profiles.NewManager(ctx, storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	overviewA, err := manager.Save(ctx, profiles.Profile{Name: "A", BaseURL: "https://a.example/v1", APIKey: "ka", Model: "ma"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overviewB, err := manager.Save(ctx, profiles.Profile{Name: "B", BaseURL: "https://b.example/v1", APIKey: "kb", Model: "mb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileA := overviewA.Profiles[0].ID
+	profileB := overviewB.Profiles[len(overviewB.Profiles)-1].ID
+	entered := make(chan string, 4)
+	release := make(chan struct{})
+	runner := NewRunner(Config{
+		Profiles: manager,
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) {
+			t.Fatal("default factory must not be used when profiles are configured")
+			return nil, 0, nil
+		},
+		ModelForProfile: func(_ context.Context, profileID string) (model.BaseChatModel, uint64, error) {
+			entered <- profileID
+			<-release
+			return sequenceModel(schema.AssistantMessage("done", nil)), 32768, nil
+		},
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: storage,
+		Checkpoints: NewStoreCheckpoints(storage),
+	})
+	t.Cleanup(func() { _ = runner.Close() })
+	stream := &SliceStream{}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	if _, err := manager.Activate(ctx, profileB); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	waitClosed(t, stream)
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ProfileID != profileA {
+		t.Fatalf("run profile = %q, want spawn-time active %q", row.ProfileID, profileA)
+	}
+	for {
+		select {
+		case id := <-entered:
+			if id != profileA {
+				t.Fatalf("model factory resolved switched profile %q, want %q", id, profileA)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestHITLResumeKeepsSaturatedLatency(t *testing.T) {
+	storage := restartStore(t)
+	deps := tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}
+	confirmCall := toolCallMessage(namedToolCall("call", "docker_control", `{"container_id":"web","action":"start"}`))
+	confirmCall.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 10, CompletionTokens: 1}}
+	newRunner := func(chat model.BaseChatModel) *Runner {
+		runner := NewRunner(Config{
+			Model:           func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+			Tools:           tools.NewRegistry(deps), Store: storage, Runs: storage,
+			Checkpoints: NewStoreCheckpoints(storage),
+		})
+		t.Cleanup(func() { _ = runner.Close() })
+		return runner
+	}
+	first := newRunner(sequenceModel(confirmCall, schema.AssistantMessage("done", nil)))
+	stream := &SliceStream{}
+	response, err := first.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{SessionID: "session"}, ModelProfileID: "profile-42"}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmation := waitEvent(t, stream, "confirmRequired")
+	if _, err := storage.RunAppendEvent(context.Background(), response.JobID, "usage", func(seq uint64) ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"type":"usage","seq":%d,"promptTokens":5,"completionTokens":1,"latencyMs":%d}`, seq, int64(math.MaxInt64))), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := newRunner(sequenceModel(assistantWithUsage("done", 50, 5)))
+	if err := restarted.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, storage, response.JobID, store.RunStatusInterrupted)
+	resumed := &SliceStream{}
+	if err := restarted.ConfirmStream(context.Background(), Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}, StaticStream(resumed)); err != nil {
+		t.Fatal(err)
+	}
+	if done, failed := terminalCounts(waitClosed(t, resumed)); done != 1 || failed != 0 {
+		t.Fatalf("resumed run did not complete")
+	}
+	row := waitRunStatus(t, storage, response.JobID, store.RunStatusCompleted)
+	if row.LatencyMS != math.MaxInt64 {
+		t.Fatalf("resumed latency = %d, want saturated %d", row.LatencyMS, int64(math.MaxInt64))
+	}
+	if row.TokensIn <= 10 {
+		t.Fatalf("resumed tokens = %d, want merged pre+post", row.TokensIn)
 	}
 }

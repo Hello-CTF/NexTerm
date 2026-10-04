@@ -92,7 +92,7 @@ func (u *Usage) Accumulate(other Usage) {
 	u.CachedTokens = saturatingAdd(u.CachedTokens, other.CachedTokens)
 	u.CacheCreationTokens = saturatingAdd(u.CacheCreationTokens, other.CacheCreationTokens)
 	if other.LatencyMS > 0 {
-		u.LatencyMS += other.LatencyMS
+		u.LatencyMS = SaturatingInt64(saturatingAdd(uint64(u.LatencyMS), uint64(other.LatencyMS)))
 	}
 	if other.ContextWindow != 0 {
 		u.ContextWindow = other.ContextWindow

@@ -50,3 +50,16 @@ func TestSaturatingAdd(t *testing.T) {
 		t.Fatalf("SaturatingAdd(1,2) = %d", got)
 	}
 }
+
+func TestAccumulateLatencySaturates(t *testing.T) {
+	var total Usage
+	total.Accumulate(Usage{LatencyMS: math.MaxInt64})
+	total.Accumulate(Usage{LatencyMS: 5})
+	if total.LatencyMS != math.MaxInt64 {
+		t.Fatalf("saturated latency = %d, want %d", total.LatencyMS, int64(math.MaxInt64))
+	}
+	total.Accumulate(Usage{LatencyMS: 7})
+	if total.LatencyMS != math.MaxInt64 {
+		t.Fatalf("latency wrapped to %d", total.LatencyMS)
+	}
+}
