@@ -8,7 +8,8 @@ import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
-import { takePendingCommand, useUi } from "../../app/store";
+import { takePendingCommand, sessionStatusText, useUi } from "../../app/store";
+import { modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -104,16 +105,7 @@ export function TerminalPane({
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
-  const statusText =
-    sessionStatus === "connected"
-      ? "已连接"
-      : sessionStatus === "reconnecting"
-        ? "重连中"
-        : sessionStatus === "connecting"
-          ? "连接中"
-          : sessionStatus === "failed"
-            ? "连接失败"
-            : "已断开";
+  const statusText = sessionStatusText(sessionStatus);
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
   const blocksSupported = !effectiveWinrm;
@@ -318,7 +310,7 @@ export function TerminalPane({
     try {
       await terminalApi.switchEncoding(kernelTabId, v);
       setEncoding(v);
-      pushToast("info", `编码已切换为 ${v}（重连后生效更佳）`);
+      pushToast("info", `编码已切换为 ${v}（对之后的输出生效，已显示的内容不变）`);
     } catch (e) {
       pushToast("error", `编码切换失败：${describeError(e)}`);
     }
@@ -343,7 +335,7 @@ export function TerminalPane({
       const started = await sessionApi.reconnect(sessionId);
       pushToast(
         started ? "info" : "error",
-        started ? "正在重连…结果会显示在终端状态上" : "这个会话不能重连：本机会话没有重连语义",
+        started ? "正在重连…结果会显示在终端状态上" : "重连未能启动",
       );
     } catch (e) {
       pushToast("error", `重连失败：${describeError(e)}`);
@@ -483,7 +475,7 @@ export function TerminalPane({
         kind: "item",
         label: isSplit ? "取消分屏" : "上下分屏",
         icon: isSplit ? <IconMergeH size={13} /> : <IconSplitH size={13} />,
-        accel: "Ctrl+\\",
+        accel: `${modHint()}+\\`,
         disabled: !isSplit && !splitAllowedForHeight(window.innerHeight),
         hint:
           !isSplit && !splitAllowedForHeight(window.innerHeight)
@@ -703,7 +695,7 @@ export function TerminalPane({
               ) : (
                 <>
                   <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                    观看可以一起看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，
+                    多个设备可以同时观看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，
                     终端尺寸也会按你的窗口重排。
                   </span>
                   {control.subscribers > 1 && (

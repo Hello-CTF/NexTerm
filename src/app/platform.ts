@@ -8,6 +8,10 @@ export function isMac(): boolean {
   return macPlatform;
 }
 
+export function modHint(): string {
+  return macPlatform ? "⌘" : "Ctrl";
+}
+
 export function setMacPlatform(fromBackend: boolean): void {
   macPlatform = fromBackend;
 }

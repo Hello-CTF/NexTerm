@@ -26,7 +26,7 @@ void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
     ),
   );
   if (p.status === "failed" && p.error) {
-    pushToast("error", `会话失败: ${p.error}`);
+    pushToast("error", `会话失败：${p.error}`);
   }
 });
 

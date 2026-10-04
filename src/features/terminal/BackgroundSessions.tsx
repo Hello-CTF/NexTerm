@@ -25,9 +25,9 @@ function persistenceFootnote(): string {
 }
 
 function runningCopy(count: number): string {
-  if (TRANSPORT === "web") return `${count} 个任务在服务端运行 · 5s 自动刷新`;
-  if (TRANSPORT === "desktop") return `${count} 个任务在本机运行 · 5s 自动刷新`;
-  return `${count} 个模拟任务在内存中 · 5s 自动刷新`;
+  if (TRANSPORT === "web") return `${count} 个终端在服务端运行 · 5 秒自动刷新`;
+  if (TRANSPORT === "desktop") return `${count} 个终端在本机运行 · 5 秒自动刷新`;
+  return `${count} 个模拟终端在内存中 · 5 秒自动刷新`;
 }
 
 function ago(ms: number): string {
@@ -129,7 +129,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
         <span className="nx-hint">
-          {items === null ? "读取中…" : runningCopy(count)}
+          {items === null ? "加载中…" : runningCopy(count)}
         </span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>

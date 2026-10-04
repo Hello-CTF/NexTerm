@@ -108,7 +108,11 @@ export function CommandBlockPanel({
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-mono text-[11.5px] text-neutral-200" title={b.command}>
                       {b.command}
-                      {!b.reliable && <span className="ml-1 text-amber-300/80">?</span>}
+                      {!b.reliable && (
+                        <span className="ml-1 text-amber-300/80" title="命令含控制字符，识别出的文本可能不准确">
+                          ?
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 font-mono text-[10px] text-neutral-600">
                       {clockOf(b.startedAt)} · {durationOf(b)}
