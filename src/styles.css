@@ -920,21 +920,23 @@
     font-weight: 500;
   }
 
-  .nx-ws-dot {
-    width: 6px;
-    height: 6px;
+  .nx-ws-status {
+    display: inline-flex;
+    width: 12px;
+    height: 12px;
     flex: 0 0 auto;
-    border-radius: 999px;
-    background: var(--color-neutral-600);
+    align-items: center;
+    justify-content: center;
+    color: var(--color-neutral-600);
   }
-  .nx-ws-dot.is-ok {
-    background: var(--color-green-500);
+  .nx-ws-status.is-ok {
+    color: var(--color-green-500);
   }
-  .nx-ws-dot.is-warn {
-    background: var(--color-amber-500);
+  .nx-ws-status.is-warn {
+    color: var(--color-amber-500);
   }
-  .nx-ws-dot.is-bad {
-    background: var(--color-red-500);
+  .nx-ws-status.is-bad {
+    color: var(--color-red-500);
   }
 
   .nx-tab {
@@ -1794,6 +1796,7 @@
 
 :root {
   --nx-kb-inset: 0px;
+  --nx-keys-h: 46px;
 }
 
 .nx-statusbar {
@@ -1893,12 +1896,18 @@
   width: min(380px, calc(100vw - 32px));
   z-index: 60;
   bottom: calc(36px + var(--nx-kb-inset, 0px));
+  max-height: calc(100dvh - 120px - var(--nx-kb-inset, 0px));
+  overflow: hidden;
 }
 
 .nx-app[data-nx-keys="true"] .nx-toasts {
   bottom: calc(
-    25px + 46px + 8px + var(--nx-kb-inset, 0px) + env(safe-area-inset-bottom, 0px)
+    25px + var(--nx-keys-h, 46px) + 8px + var(--nx-kb-inset, 0px) + env(safe-area-inset-bottom, 0px)
   );
+}
+
+.nx-app[data-nx-ai="true"] .nx-toasts {
+  right: calc(var(--nx-right-w, 352px) + 16px);
 }
 
 .nx-terminal-keys {
@@ -2006,6 +2015,15 @@
   .nx-statusbar-side {
     gap: 8px;
   }
+
+  .nx-app[data-nx-ai="true"] .nx-toasts {
+    right: auto;
+    left: 8px;
+    top: calc(70px + 8px);
+    bottom: auto;
+    width: min(380px, calc(100vw - 16px));
+    max-height: calc(100dvh - 160px - var(--nx-kb-inset, 0px));
+  }
 }
 
 @media (max-width: 560px) {
@@ -2078,14 +2096,36 @@
 }
 
 @media (pointer: coarse) {
+  :root {
+    --nx-keys-h: 53px;
+  }
+
   .nx-rail-btn {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
+  }
+
+  .nx-rail-btn.is-active::before {
+    left: -2px;
+  }
+
+  .nx-terminal-keys {
+    min-height: 52px;
   }
 
   .nx-terminal-key {
-    min-width: 40px;
-    height: 34px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .nx-row-actions {
+    gap: 8px;
+  }
+
+  .nx-row-actions .nx-icon-btn-sm {
+    width: 44px;
+    height: 44px;
+    margin: -8px;
   }
 
   .nx-split-handle {

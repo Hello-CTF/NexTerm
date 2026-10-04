@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -109,6 +110,7 @@ import {
   IconInfo,
   IconKey,
   IconLayers,
+  IconLoader,
   IconLock,
   IconNetwork,
   IconPlus,
@@ -853,6 +855,8 @@ export default function App() {
     <div
       className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
       data-nx-keys={terminalKeysVisible ? "true" : undefined}
+      data-nx-ai={rightDockOpen ? "true" : undefined}
+      style={{ "--nx-right-w": `${rightWidth}px` } as CSSProperties}
       onDoubleClick={onDragRegionDoubleClick}
     >
       <TakeoverBanner />
@@ -927,7 +931,7 @@ export default function App() {
                 const Icon = workspaceIcon(w);
                 const isActive = w.id === ws?.id;
                 const status = sessions.find((s) => s.id === w.sessionId)?.status;
-                const dot =
+                const tone =
                   status === undefined
                     ? null
                     : status === "connected"
@@ -967,7 +971,23 @@ export default function App() {
                   >
                     <Icon size={13} />
                     <span className="truncate">{w.title}</span>
-                    {dot && <span className={`nx-ws-dot ${dot}`} />}
+                    {tone && status && (
+                      <span
+                        className={`nx-ws-status ${tone}`}
+                        role="img"
+                        aria-label={sessionStatusText(status)}
+                      >
+                        {status === "connected" ? (
+                          <IconCheckCircle size={11} />
+                        ) : status === "failed" ? (
+                          <IconXCircle size={11} />
+                        ) : status === "disconnected" ? (
+                          <IconInfo size={11} />
+                        ) : (
+                          <IconLoader size={11} className="animate-spin" />
+                        )}
+                      </span>
+                    )}
                     {w.closable && (
                       <button
                         type="button"
