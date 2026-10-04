@@ -43,7 +43,7 @@ func TestLegacyMigrationPersistsStableActiveProfile(t *testing.T) {
 	if !ids.Valid(profile.ID) || *overview.ActiveID != profile.ID {
 		t.Fatalf("migration did not allocate a stable active ID: %+v", overview)
 	}
-	if profile.Name != "legacy-model" || profile.BaseURL != "https://example.test/v1" || profile.APIKey != "secret" || profile.FallbackModel != "legacy-fallback" {
+	if profile.Name != "legacy-model" || profile.BaseURL != "https://example.test/v1" || profile.APIKey != profiles.MaskedAPIKey || profile.FallbackModel != "legacy-fallback" {
 		t.Fatalf("migration did not sanitize profile: %+v", profile)
 	}
 	if profile.Temperature != provider.DefaultTemperature || !profile.Stream || profile.ContextWindow != 1000 {
@@ -122,7 +122,7 @@ func TestProfileLifecycleAndActiveRuntimeSnapshots(t *testing.T) {
 		t.Fatalf("first profile was not activated: %+v", overview)
 	}
 	first = overview.Profiles[0]
-	if first.Name != "first" || first.APIKey != "key" {
+	if first.Name != "first" || first.APIKey != profiles.MaskedAPIKey {
 		t.Fatalf("profile was not normalized: %+v", first)
 	}
 	firstClient, err := manager.ActiveClient()

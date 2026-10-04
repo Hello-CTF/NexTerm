@@ -21,6 +21,19 @@ type Profile struct {
 	Stream        bool    `json:"stream"`
 }
 
+const MaskedAPIKey = "••••••••••••"
+
+func MaskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	return MaskedAPIKey
+}
+
+func (p Profile) hasKeyMaterial() bool {
+	return p.APIKey != ""
+}
+
 func DefaultProfile() Profile {
 	return Profile{
 		Temperature:   provider.DefaultTemperature,

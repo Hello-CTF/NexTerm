@@ -60,6 +60,7 @@ type Vault struct {
 	salt       []byte
 	lastUsedAt int64
 	autoLockMS uint64
+	listeners  []func()
 }
 
 func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
@@ -102,6 +103,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		}
 		v.mu.Unlock()
 	}
+	db.SetSecretProtector(v)
 	return v
 }
 
@@ -123,9 +125,35 @@ func (v *Vault) Status() Status {
 	}
 }
 
-func (v *Vault) InitMaster(ctx context.Context, password string) error {
+func (v *Vault) AddUnlockListener(listener func()) {
+	if listener == nil {
+		return
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.listeners = append(v.listeners, listener)
+}
+
+func (v *Vault) fireUnlocked() {
+	v.mu.Lock()
+	listeners := append([]func(){}, v.listeners...)
+	v.mu.Unlock()
+	for _, listener := range listeners {
+		listener()
+	}
+}
+
+func (v *Vault) InitMaster(ctx context.Context, password string) error {
+	v.mu.Lock()
+	err := v.initMasterLocked(ctx, password)
+	v.mu.Unlock()
+	if err == nil {
+		v.fireUnlocked()
+	}
+	return err
+}
+
+func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 	if v.mode != ModeNotInit {
 		return ipc.NewError(ipc.CodeVaultAlreadyInit, "凭据库已初始化，不能重复初始化")
 	}
@@ -172,7 +200,15 @@ func (v *Vault) InitMaster(ctx context.Context, password string) error {
 
 func (v *Vault) InitDPAPI(ctx context.Context) error {
 	v.mu.Lock()
-	defer v.mu.Unlock()
+	err := v.initDPAPILocked(ctx)
+	v.mu.Unlock()
+	if err == nil {
+		v.fireUnlocked()
+	}
+	return err
+}
+
+func (v *Vault) initDPAPILocked(ctx context.Context) error {
 	if v.mode != ModeNotInit {
 		return ipc.NewError(ipc.CodeVaultAlreadyInit, "凭据库已初始化，不能重复初始化")
 	}
@@ -239,7 +275,15 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 
 func (v *Vault) UnlockMaster(ctx context.Context, password string) error {
 	v.mu.Lock()
-	defer v.mu.Unlock()
+	err := v.unlockMasterLocked(ctx, password)
+	v.mu.Unlock()
+	if err == nil {
+		v.fireUnlocked()
+	}
+	return err
+}
+
+func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 	if v.mode != ModeMaster {
 		return ipc.NewError(ipc.CodeUnsupported, "不支持的操作: 凭据库不是主密码模式")
 	}

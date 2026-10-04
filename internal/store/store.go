@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -22,6 +23,9 @@ type Store struct {
 	db        *sql.DB
 	logger    *slog.Logger
 	retention retentionState
+
+	protectorMu sync.RWMutex
+	protector   SecretProtector
 }
 
 type OpenOptions struct {
