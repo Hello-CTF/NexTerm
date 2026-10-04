@@ -162,6 +162,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setSyncNotice({ generation, phase: "syncing", count: 0 });
   };
   const markSynced = (generation: number, count: number) => {
+    const current = activeRunRef.current;
+    if (!isCurrentAiRun(current, generation) || current.settled) return;
     setSyncNotice((prev) =>
       prev && prev.generation === generation ? { generation, phase: "synced", count } : prev,
     );
@@ -171,6 +173,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }, 2400);
   };
   const markSyncFailed = (generation: number) => {
+    const current = activeRunRef.current;
+    if (!isCurrentAiRun(current, generation) || current.settled) return;
     setSyncNotice((prev) =>
       prev && prev.generation === generation ? { generation, phase: "failed", count: 0 } : prev,
     );

@@ -582,6 +582,45 @@ describe("AiSidebar stream recovery", () => {
     expect(textOf(view!)).toContain("已补齐");
   });
 
+  it("dismisses the new run's synced banner on schedule when a stale run's late replay succeeds", async () => {
+    mocks.chat
+      .mockResolvedValueOnce({ jobId: "job-1", conversationId: "conv-1" })
+      .mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-1" });
+    let resolveRun1Replay: (value: { type: string; seq: number; answer?: string }[]) => void = () => {};
+    mocks.runEvents
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ type: string; seq: number; answer?: string }[]>((resolve) => {
+            resolveRun1Replay = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([{ type: "delta", text: "二", seq: 2 }]);
+
+    await send("第一");
+    emit({ type: "delta", text: "一", seq: 1 }, 0);
+    act(runFrames);
+    emit({ type: "done", answer: "一", seq: 3 }, 0);
+    await flushReplay();
+    emit({ type: "steered", text: "补充", seq: 2 }, 0);
+    await flush();
+    expect(useUi.getState().aiBusy).toBe(false);
+
+    await send("第二");
+    emit({ type: "delta", text: "一", seq: 1 }, 1);
+    act(runFrames);
+    emit({ type: "delta", text: "三", seq: 3 }, 1);
+    await flushReplay();
+    expect(textOf(view!)).toContain("已补齐断线期间的 1 条事件");
+
+    resolveRun1Replay([{ type: "done", answer: "一", seq: 3 }]);
+    await flushReplay();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2600));
+    });
+    expect(textOf(view!)).not.toContain("已补齐");
+  });
+
   it("replays an interrupted run's canceled terminal without error styling", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
