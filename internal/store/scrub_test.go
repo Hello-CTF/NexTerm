@@ -294,3 +294,89 @@ func TestAISettingSteadyWritesDoNotVacuum(t *testing.T) {
 	}
 	requireAIPending(t, database, false)
 }
+
+func TestReservedAIProtocolKeysRejectAllBypasses(t *testing.T) {
+	ctx := context.Background()
+	envelope := `{"version":1,"profiles":[{"id":"p1","apiKey":"` + SecretEnvelopePrefix + `abc","model":"m"}],"activeId":"p1"}`
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, database *Store) error
+	}{
+		{"SettingSet generation", func(t *testing.T, database *Store) error {
+			return database.SettingSet(ctx, AIGenerationSettingKey, "1")
+		}},
+		{"SettingSet pending", func(t *testing.T, database *Store) error {
+			return database.SettingSet(ctx, AIScrubPendingSettingKey, "1")
+		}},
+		{"SettingSet migration prefix", func(t *testing.T, database *Store) error {
+			return database.SettingSet(ctx, "ai.migration.other", "x")
+		}},
+		{"SettingSetMany mixed generation", func(t *testing.T, database *Store) error {
+			return database.SettingSetMany(ctx, map[string]string{AIProfilesSettingKey: envelope, AIGenerationSettingKey: "1"})
+		}},
+		{"SettingSetMany pending", func(t *testing.T, database *Store) error {
+			return database.SettingSetMany(ctx, map[string]string{AIScrubPendingSettingKey: "1"})
+		}},
+		{"SettingSetManyDelete pending", func(t *testing.T, database *Store) error {
+			return database.SettingSetManyDelete(ctx, map[string]string{AIProfilesSettingKey: envelope}, AIScrubPendingSettingKey)
+		}},
+		{"SettingSetManyDelete generation", func(t *testing.T, database *Store) error {
+			return database.SettingSetManyDelete(ctx, nil, AIGenerationSettingKey)
+		}},
+		{"SettingDelete pending", func(t *testing.T, database *Store) error {
+			return database.SettingDelete(ctx, AIScrubPendingSettingKey)
+		}},
+		{"SettingDelete generation", func(t *testing.T, database *Store) error {
+			return database.SettingDelete(ctx, AIGenerationSettingKey)
+		}},
+		{"SettingTx delete pending", func(t *testing.T, database *Store) error {
+			return database.SettingTx(ctx, func(tx SettingTx) error {
+				return tx.SettingDelete(ctx, AIScrubPendingSettingKey)
+			})
+		}},
+		{"SettingTx delete generation", func(t *testing.T, database *Store) error {
+			return database.SettingTx(ctx, func(tx SettingTx) error {
+				return tx.SettingDelete(ctx, AIGenerationSettingKey)
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database := testStore(t)
+			database.SetSecretProtector(stubProtector{})
+			if err := tc.write(t, database); !errors.Is(err, ErrReservedSettingKey) {
+				t.Fatalf("expected ErrReservedSettingKey, got %v", err)
+			}
+			if _, found, err := database.SettingGet(ctx, AIProfilesSettingKey); err != nil || found {
+				t.Fatalf("rolled-back batch must not write ai.models: found=%v err=%v", found, err)
+			}
+			if _, found, err := database.SettingGet(ctx, AIScrubPendingSettingKey); err != nil || found {
+				t.Fatalf("pending must not be forged: found=%v err=%v", found, err)
+			}
+			requireAIGeneration(t, database, 0)
+		})
+	}
+}
+
+func TestAISettingsFinalizeScrubGuardsAndClears(t *testing.T) {
+	ctx := context.Background()
+	database := testStore(t)
+	database.SetSecretProtector(stubProtector{})
+	if cleared, err := database.AISettingsFinalizeScrub(ctx, 0); err != nil || cleared {
+		t.Fatalf("finalize without pending: cleared=%v err=%v", cleared, err)
+	}
+	if err := database.AISettingsMarkPending(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cleared, err := database.AISettingsFinalizeScrub(ctx, 0); err != nil || cleared {
+		t.Fatalf("stale generation must keep pending: cleared=%v err=%v", cleared, err)
+	}
+	generation, err := database.AISettingsGeneration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := database.AISettingsFinalizeScrub(ctx, generation)
+	if err != nil || !cleared {
+		t.Fatalf("matching generation must clear pending: cleared=%v err=%v", cleared, err)
+	}
+	requireAIPending(t, database, false)
+}

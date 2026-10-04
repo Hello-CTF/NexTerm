@@ -23,6 +23,9 @@ func (s *Store) SettingGet(ctx context.Context, key string) (string, bool, error
 }
 
 func (s *Store) SettingSet(ctx context.Context, key, value string) error {
+	if reservedSettingKey(key) {
+		return reservedSettingKeyError(key)
+	}
 	if sensitiveAISettingKey(key) {
 		return s.applyAISettingWrites(ctx, map[string]string{key: value}, nil)
 	}
@@ -36,6 +39,9 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 }
 
 func (s *Store) applyAISettingWrites(ctx context.Context, values map[string]string, deleteKeys []string) (returnErr error) {
+	if err := reservedKeyInWrites(values, deleteKeys); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return dbError(err)
@@ -76,15 +82,7 @@ func (s *Store) applyAISettingWrites(ctx context.Context, values map[string]stri
 			}
 		}
 	}
-	generationRaw, _, err := txSettingGet(ctx, tx, AIGenerationSettingKey)
-	if err != nil {
-		return err
-	}
-	generation := aiGenerationFromRaw(generationRaw) + 1
 	now := ids.NowMS()
-	if err := txSettingUpsert(ctx, tx, AIGenerationSettingKey, strconv.FormatInt(generation, 10), now); err != nil {
-		return err
-	}
 	for key, value := range values {
 		if err := txSettingUpsert(ctx, tx, key, value, now); err != nil {
 			return err
@@ -94,6 +92,14 @@ func (s *Store) applyAISettingWrites(ctx context.Context, values map[string]stri
 		if _, err := tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key); err != nil {
 			return dbError(err)
 		}
+	}
+	generationRaw, _, err := txSettingGet(ctx, tx, AIGenerationSettingKey)
+	if err != nil {
+		return err
+	}
+	generation := aiGenerationFromRaw(generationRaw) + 1
+	if err := txSettingUpsert(ctx, tx, AIGenerationSettingKey, strconv.FormatInt(generation, 10), now); err != nil {
+		return err
 	}
 	if sensitive {
 		if err := txSettingUpsert(ctx, tx, AIScrubPendingSettingKey, "1", now); err != nil {
@@ -131,6 +137,9 @@ func (s *Store) SettingSetMany(ctx context.Context, values map[string]string) (r
 	if len(values) == 0 {
 		return nil
 	}
+	if err := reservedKeyInWrites(values, nil); err != nil {
+		return err
+	}
 	for key := range values {
 		if sensitiveAISettingKey(key) {
 			return s.applyAISettingWrites(ctx, values, nil)
@@ -162,6 +171,9 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 func (s *Store) SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) (returnErr error) {
 	if len(values) == 0 && len(deleteKeys) == 0 {
 		return nil
+	}
+	if err := reservedKeyInWrites(values, deleteKeys); err != nil {
+		return err
 	}
 	for key := range values {
 		if sensitiveAISettingKey(key) {
@@ -202,6 +214,9 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 }
 
 func (s *Store) SettingDelete(ctx context.Context, key string) error {
+	if reservedSettingKey(key) {
+		return reservedSettingKeyError(key)
+	}
 	if sensitiveAISettingKey(key) {
 		return s.applyAISettingWrites(ctx, nil, []string{key})
 	}
@@ -254,6 +269,9 @@ func (t *txSetting) SettingGet(ctx context.Context, key string) (string, bool, e
 }
 
 func (t *txSetting) SettingDelete(ctx context.Context, key string) error {
+	if reservedSettingKey(key) {
+		return reservedSettingKeyError(key)
+	}
 	if t.aiMarking && sensitiveAISettingKey(key) {
 		current, found, err := txSettingGet(ctx, t.tx, key)
 		if err != nil {

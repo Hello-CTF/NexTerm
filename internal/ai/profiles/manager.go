@@ -62,8 +62,8 @@ type migrationTx interface {
 	SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) error
 }
 
-type settingTxRunner interface {
-	SettingTx(ctx context.Context, fn func(store.SettingTx) error) error
+type aiScrubFinalizer interface {
+	AISettingsFinalizeScrub(ctx context.Context, expectedGeneration int64) (bool, error)
 }
 
 type spaceScrubber interface {
@@ -303,8 +303,6 @@ func (m *Manager) deleteLegacyWithSave(ctx context.Context) bool {
 	return m.protector != nil && aiLegacySensitiveRowPresent(ctx, m.settings)
 }
 
-var errScrubNotClean = errors.New("AI 模型档案物理清理前置条件未满足")
-
 func (m *Manager) finalizeScrub(ctx context.Context) error {
 	pending, err := scrubPending(ctx, m.settings)
 	if err != nil || !pending {
@@ -323,45 +321,11 @@ func (m *Manager) finalizeScrub(ctx context.Context) error {
 		}
 		return nil
 	}
-	runner, ok := m.settings.(settingTxRunner)
-	if !ok {
-		return clearScrubPending(ctx, m.settings)
+	if finalizer, ok := m.settings.(aiScrubFinalizer); ok {
+		_, err := finalizer.AISettingsFinalizeScrub(ctx, generation)
+		return err
 	}
-	err = runner.SettingTx(ctx, func(tx store.SettingTx) error {
-		raw, found, err := tx.SettingGet(ctx, ScrubPendingSetting)
-		if err != nil {
-			return err
-		}
-		if !found || raw == "" {
-			return nil
-		}
-		generationRaw, _, err := tx.SettingGet(ctx, store.AIGenerationSettingKey)
-		if err != nil {
-			return err
-		}
-		if aiGenerationFromRaw(generationRaw) != generation {
-			return errScrubNotClean
-		}
-		legacyRaw, legacyFound, err := tx.SettingGet(ctx, LegacySettingKey)
-		if err != nil {
-			return err
-		}
-		if legacyFound && store.AISettingValueSensitive(LegacySettingKey, legacyRaw) {
-			return errScrubNotClean
-		}
-		modelsRaw, modelsFound, err := tx.SettingGet(ctx, SettingKey)
-		if err != nil {
-			return err
-		}
-		if modelsFound && store.AISettingValueSensitive(SettingKey, modelsRaw) {
-			return errScrubNotClean
-		}
-		return tx.SettingDelete(ctx, ScrubPendingSetting)
-	})
-	if errors.Is(err, errScrubNotClean) {
-		return nil
-	}
-	return err
+	return clearScrubPending(ctx, m.settings)
 }
 
 func load(ctx context.Context, settings Settings, protector store.SecretProtector) (loadResult, error) {

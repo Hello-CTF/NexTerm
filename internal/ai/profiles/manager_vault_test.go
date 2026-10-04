@@ -724,7 +724,7 @@ func TestFinalizeKeepsPendingWhileKeyedLegacyRowLives(t *testing.T) {
 	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := database.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	release := holdReadTransaction(t, database, profiles.LegacySettingKey)
@@ -937,7 +937,7 @@ func TestScrubMarkerWithoutWritesRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveKeyedProfile(t, manager, "steady", "sk-steady")
-	if err := database.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := database.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err := profiles.NewManager(ctx, database)
@@ -1063,7 +1063,7 @@ func TestMalformedRowCrashReopenRecovers(t *testing.T) {
 	if err := database.SettingSet(ctx, profiles.SettingKey, malformed); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := database.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
@@ -1105,7 +1105,7 @@ func TestConcurrentLegacyWriteKeepsPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveKeyedProfile(t, manager, "steady", "sk-steady")
-	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := base.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	database.beforeScrub = func() {
@@ -1142,7 +1142,7 @@ func TestConcurrentPlaintextWriteKeepsPendingAndSelfHeals(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveKeyedProfile(t, manager, "steady", "sk-steady")
-	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := base.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	database.beforeScrub = func() {
@@ -1229,7 +1229,7 @@ func TestPostScrubPlaintextThenCleanKeepsPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveKeyedProfile(t, manager, "steady", "sk-steady")
-	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := base.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	clean, _, err := base.SettingGet(ctx, profiles.SettingKey)
@@ -1276,7 +1276,7 @@ func TestPostScrubLegacyWriteThenDeleteKeepsPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveKeyedProfile(t, manager, "steady", "sk-steady")
-	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+	if err := base.AISettingsMarkPending(ctx); err != nil {
 		t.Fatal(err)
 	}
 	database.afterScrub = func() {
@@ -1307,4 +1307,125 @@ func TestPostScrubLegacyWriteThenDeleteKeepsPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	scanFileBytes(t, path, "r5-legacy-token-xyz")
+}
+
+func TestAfterScrubMixedBatchCannotForgeGeneration(t *testing.T) {
+	ctx := context.Background()
+	path, base, _ := openFileVaultStore(t)
+	database := &hookScrubStore{Store: base}
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := base.AISettingsMarkPending(ctx); err != nil {
+		t.Fatal(err)
+	}
+	clean, _, err := base.SettingGet(ctx, profiles.SettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batchErr error
+	database.afterScrub = func() {
+		plaintext := `{"version":1,"profiles":[{"id":"rogue","name":"rogue","baseUrl":"https://rogue.test/v1","apiKey":"r6-batch-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"rogue"}`
+		if err := base.SettingSet(ctx, profiles.SettingKey, plaintext); err != nil {
+			t.Error(err)
+		}
+		batchErr = base.SettingSetMany(ctx, map[string]string{
+			profiles.SettingKey:          clean,
+			store.AIGenerationSettingKey: "1",
+		})
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(batchErr, store.ErrReservedSettingKey) {
+		t.Fatalf("mixed batch must be rejected with ErrReservedSettingKey, got %v", batchErr)
+	}
+	requireScrubPending(t, base, true)
+	stored := storedSetting(t, base, profiles.SettingKey)
+	if !strings.Contains(stored, "r6-batch-token-xyz") {
+		t.Fatalf("rejected batch must roll back to the plaintext write: %s", stored)
+	}
+	generation, err := base.AISettingsGeneration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generation < 2 {
+		t.Fatalf("generation must not be rolled back: %d", generation)
+	}
+	requireFileTokenPresent(t, path+"-wal", "r6-batch-token-xyz")
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, false)
+	stored = storedSetting(t, base, profiles.SettingKey)
+	if strings.Contains(stored, "r6-batch-token-xyz") || !strings.Contains(stored, store.SecretEnvelopePrefix) {
+		t.Fatalf("retry did not migrate the plaintext: %s", stored)
+	}
+	scanFileBytes(t, path, "r6-batch-token-xyz")
+	scanFileBytes(t, path+"-wal", "r6-batch-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "r6-batch-token-xyz")
+}
+
+func TestAfterScrubMixedBatchCrashReopenSelfHeals(t *testing.T) {
+	ctx := context.Background()
+	path, base, _ := openFileVaultStore(t)
+	database := &hookScrubStore{Store: base}
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := base.AISettingsMarkPending(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var batchErr error
+	database.afterScrub = func() {
+		plaintext := `{"version":1,"profiles":[{"id":"rogue","name":"rogue","baseUrl":"https://rogue.test/v1","apiKey":"r6-crash-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"rogue"}`
+		if err := base.SettingSet(ctx, profiles.SettingKey, plaintext); err != nil {
+			t.Error(err)
+		}
+		batchErr = base.SettingSetManyDelete(ctx, map[string]string{profiles.SettingKey: plaintext}, store.AIScrubPendingSettingKey)
+	}
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(batchErr, store.ErrReservedSettingKey) {
+		t.Fatalf("pending delete batch must be rejected, got %v", batchErr)
+	}
+	requireScrubPending(t, base, true)
+	requireFileTokenPresent(t, path+"-wal", "r6-crash-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	credentialVault := vault.Load(ctx, reopened)
+	if err := credentialVault.UnlockMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := profiles.NewManager(ctx, reopened); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, reopened, false)
+	stored := storedSetting(t, reopened, profiles.SettingKey)
+	if strings.Contains(stored, "r6-crash-token-xyz") || !strings.Contains(stored, store.SecretEnvelopePrefix) {
+		t.Fatalf("crash-reopen did not migrate: %s", stored)
+	}
+	scanFileBytes(t, path, "r6-crash-token-xyz")
+	scanFileBytes(t, path+"-wal", "r6-crash-token-xyz")
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "r6-crash-token-xyz")
 }
