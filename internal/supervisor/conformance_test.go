@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
@@ -103,8 +104,8 @@ done`
 				t.Fatalf("Wait = %v, want exit code 3", err)
 			}
 
-			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("Attach unknown = %v, want ErrNotFound", err)
+			if _, err := provider.Attach(ctx, ids.New()); !errors.Is(err, durable.ErrNotFound) {
+				t.Fatalf("Attach unknown = %v, want durable.ErrNotFound", err)
 			}
 			reattached, err := provider.Attach(ctx, id)
 			if err != nil {

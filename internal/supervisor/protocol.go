@@ -38,6 +38,8 @@ const (
 	frameDetach
 	frameOutput
 	frameExit
+	frameFatal
+	frameKillSession
 )
 
 type helloMsg struct {
@@ -54,6 +56,12 @@ type createMsg struct {
 }
 
 type attachMsg struct {
+	ID                string `json:"id"`
+	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
+	ExpectIncarnation string `json:"expect_incarnation,omitempty"`
+}
+
+type killSessionMsg struct {
 	ID                string `json:"id"`
 	ExpectCreatedAt   int64  `json:"expect_created_at_unix_nano,omitempty"`
 	ExpectIncarnation string `json:"expect_incarnation,omitempty"`

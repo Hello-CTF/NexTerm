@@ -17,6 +17,7 @@ type Server struct {
 	socketPath string
 	listener   net.Listener
 	socketFile os.FileInfo
+	unlock     func()
 
 	mu     sync.Mutex
 	conns  map[*serverConn]struct{}
@@ -39,12 +40,18 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 	if err := ensurePrivateDir(filepath.Dir(absolute)); err != nil {
 		return nil, fmt.Errorf("supervisor socket directory: %w", err)
 	}
+	unlock, err := lockSocket(absolute)
+	if err != nil {
+		return nil, err
+	}
 	listener, err := listenSocket(absolute)
 	if err != nil {
+		unlock()
 		return nil, err
 	}
 	socketFile, err := os.Lstat(absolute)
 	if err != nil {
+		unlock()
 		_ = listener.Close()
 		_ = os.Remove(absolute)
 		return nil, fmt.Errorf("inspect supervisor socket: %w", err)
@@ -54,6 +61,7 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 		socketPath: absolute,
 		listener:   listener,
 		socketFile: socketFile,
+		unlock:     unlock,
 		conns:      make(map[*serverConn]struct{}),
 	}
 	server.wg.Add(1)
@@ -95,6 +103,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if info, err := os.Lstat(s.socketPath); err == nil && os.SameFile(s.socketFile, info) {
 		_ = os.Remove(s.socketPath)
 	}
+	s.unlock()
 	if errors.Is(listenErr, net.ErrClosed) {
 		listenErr = nil
 	}
@@ -202,6 +211,8 @@ func (c *serverConn) serve() {
 			c.handleGetVersions()
 		case frameSetVersions:
 			c.handleSetVersions(payload)
+		case frameKillSession:
+			c.handleKillSession(payload)
 		case frameDetach:
 			_ = c.reply(frameOK, struct{}{})
 			return
@@ -283,12 +294,34 @@ func (c *serverConn) handleInput(payload []byte) {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "input frame without attach"})
 		return
 	}
-	count, err := c.attachment.Write(payload)
+	count, err := c.attachment.tryWrite(payload)
 	if err != nil {
 		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
 		return
 	}
 	_ = c.reply(frameInputAck, inputAckMsg{Written: count})
+}
+
+func (c *serverConn) handleKillSession(payload []byte) {
+	if c.attachment != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "kill session frame on attached connection"})
+		return
+	}
+	var msg killSessionMsg
+	if err := unmarshalFrame(payload, &msg); err != nil {
+		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: err.Error()})
+		return
+	}
+	var expected *Identity
+	if msg.ExpectIncarnation != "" || msg.ExpectCreatedAt != 0 {
+		identity := Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
+		expected = &identity
+	}
+	if err := c.server.supervisor.kill(context.Background(), msg.ID, expected); err != nil {
+		c.replyError(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+		return
+	}
+	_ = c.reply(frameOK, struct{}{})
 }
 
 func (c *serverConn) handleResize(payload []byte) {
@@ -367,7 +400,7 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 				_ = c.reply(frameExit, exitMsg{Code: info.ExitCode, Signal: info.Signal})
 			case errors.Is(err, ErrClosed):
 			default:
-				_ = c.reply(frameError, errorMsg{Code: errorCode(err), Message: err.Error()})
+				_ = c.reply(frameFatal, errorMsg{Code: errorCode(err), Message: err.Error()})
 			}
 			return
 		}

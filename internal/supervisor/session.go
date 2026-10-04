@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -28,13 +29,23 @@ type Session struct {
 	exitErr     error
 	killed      bool
 	recErr      error
+	inputErr    error
 	attachments map[*Attachment]struct{}
+
+	inputQueue    chan []byte
+	inputDone     chan struct{}
+	inputDoneOnce sync.Once
 
 	deadCh     chan struct{}
 	finishOnce sync.Once
 
 	versionsMu sync.Mutex
 }
+
+const (
+	inputQueueSlots  = 16
+	maxInputChunkLen = 256 * 1024
+)
 
 func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySession *pty.Session, recording *os.File) *Session {
 	now := time.Now()
@@ -56,6 +67,8 @@ func newSession(supervisor *Supervisor, options CreateOptions, id string, ptySes
 		pty:         ptySession,
 		recording:   recording,
 		attachments: make(map[*Attachment]struct{}),
+		inputQueue:  make(chan []byte, inputQueueSlots),
+		inputDone:   make(chan struct{}),
 		deadCh:      make(chan struct{}),
 	}
 }
@@ -70,9 +83,12 @@ func newRecoveredSession(supervisor *Supervisor, entry registryEntry) *Session {
 		entry:       entry,
 		identity:    Identity{CreatedAt: entry.CreatedAt, Incarnation: entry.Incarnation},
 		attachments: make(map[*Attachment]struct{}),
+		inputQueue:  make(chan []byte, inputQueueSlots),
+		inputDone:   make(chan struct{}),
 		deadCh:      make(chan struct{}),
 		dead:        true,
 	}
+	close(session.inputDone)
 	if entry.ExitCode != nil || entry.Signal != "" {
 		code := 0
 		if entry.ExitCode != nil {
@@ -117,17 +133,106 @@ func (s *Session) infoLocked() Info {
 }
 
 func (s *Session) Write(p []byte) (int, error) {
+	return s.writeInput(p, true)
+}
+
+func (s *Session) tryWrite(p []byte) (int, error) {
+	return s.writeInput(p, false)
+}
+
+func (s *Session) writeInput(p []byte, wait bool) (int, error) {
 	s.mu.RLock()
 	dead := s.dead
 	s.mu.RUnlock()
 	if dead {
 		return 0, fmt.Errorf("%w: %s", ErrExited, s.entry.ID)
 	}
-	count, err := s.pty.Write(p)
-	if err != nil {
-		return count, err
+	written := 0
+	for len(p) > 0 {
+		chunk := p
+		if len(chunk) > maxInputChunkLen {
+			chunk = chunk[:maxInputChunkLen]
+		}
+		if err := s.enqueueInput(bytes.Clone(chunk), wait); err != nil {
+			return written, err
+		}
+		written += len(chunk)
+		p = p[len(chunk):]
 	}
-	return count, nil
+	return written, nil
+}
+
+func (s *Session) enqueueInput(chunk []byte, wait bool) error {
+	select {
+	case <-s.inputDone:
+		return s.inputClosedError()
+	default:
+	}
+	if !wait {
+		select {
+		case s.inputQueue <- chunk:
+			return nil
+		case <-s.inputDone:
+			return s.inputClosedError()
+		default:
+			return fmt.Errorf("%w: input backlog is full", ErrUnavailable)
+		}
+	}
+	select {
+	case s.inputQueue <- chunk:
+		return nil
+	case <-s.inputDone:
+		return s.inputClosedError()
+	}
+}
+
+func (s *Session) inputClosedError() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.dead {
+		return fmt.Errorf("%w: %s", ErrExited, s.entry.ID)
+	}
+	if s.inputErr != nil {
+		return fmt.Errorf("%w: session input failed: %v", ErrUnavailable, s.inputErr)
+	}
+	return fmt.Errorf("%w: session input is closed", ErrUnavailable)
+}
+
+func (s *Session) inputPump() {
+	defer s.supervisor.sessionDone()
+	for {
+		select {
+		case chunk := <-s.inputQueue:
+			if err := s.writePTY(chunk); err != nil {
+				s.mu.Lock()
+				if s.inputErr == nil {
+					s.inputErr = err
+				}
+				s.mu.Unlock()
+				s.stopInput()
+				return
+			}
+		case <-s.inputDone:
+			return
+		}
+	}
+}
+
+func (s *Session) writePTY(chunk []byte) error {
+	for len(chunk) > 0 {
+		count, err := s.pty.Write(chunk)
+		if err != nil {
+			return err
+		}
+		chunk = chunk[count:]
+	}
+	return nil
+}
+
+func (s *Session) stopInput() {
+	s.inputDoneOnce.Do(func() {
+		close(s.inputDone)
+	})
 }
 
 func (s *Session) Resize(ctx context.Context, cols, rows uint32) error {
@@ -260,6 +365,7 @@ func (s *Session) finish(waitErr error) {
 			closeErr = nil
 		}
 		close(s.deadCh)
+		s.stopInput()
 		s.notifyAll()
 		s.supervisor.recordFinishError(errors.Join(persistErr, closeErr))
 	})

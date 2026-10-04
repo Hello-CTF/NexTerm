@@ -108,6 +108,27 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 	return stream, nil
 }
 
+func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
+	conn, err := c.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	msg := killSessionMsg{ID: id}
+	if expect != nil {
+		msg.ExpectCreatedAt = expect.CreatedAt.UnixNano()
+		msg.ExpectIncarnation = expect.Incarnation
+	}
+	kind, _, err := conn.request(ctx, frameKillSession, msg)
+	if err != nil {
+		return err
+	}
+	if kind != frameOK {
+		return protocolMismatch(kind)
+	}
+	return nil
+}
+
 func (c *Client) dial(ctx context.Context) (*clientConn, error) {
 	netConn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socketPath)
 	if err != nil {
@@ -243,11 +264,11 @@ func (s *Stream) Read(p []byte) (int, error) {
 		dead := s.dead
 		readErr := s.readErr
 		s.mu.Unlock()
-		if dead {
-			return 0, io.EOF
-		}
 		if readErr != nil {
 			return 0, readErr
+		}
+		if dead {
+			return 0, io.EOF
 		}
 		select {
 		case <-s.newData:
@@ -441,6 +462,12 @@ func (s *Stream) readLoop() {
 	for {
 		kind, payload, err := readFrame(s.conn.conn)
 		if err != nil {
+			s.mu.Lock()
+			dead := s.dead
+			s.mu.Unlock()
+			if dead {
+				return
+			}
 			s.fail(fmt.Errorf("%w: supervisor stream ended: %v", base.ErrDisconnected, err))
 			return
 		}
@@ -484,6 +511,14 @@ func (s *Stream) readLoop() {
 			default:
 				close(s.exitCh)
 			}
+		case frameFatal:
+			var msg errorMsg
+			if err := unmarshalFrame(payload, &msg); err != nil {
+				s.fail(err)
+				return
+			}
+			s.fail(codedError(msg.Code, msg.Message))
+			return
 		case frameError:
 			var msg errorMsg
 			if err := unmarshalFrame(payload, &msg); err != nil {

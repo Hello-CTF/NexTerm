@@ -91,6 +91,16 @@ func (a *Attachment) Write(p []byte) (int, error) {
 	return a.session.Write(p)
 }
 
+func (a *Attachment) tryWrite(p []byte) (int, error) {
+	if a.closed() {
+		return 0, ErrClosed
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return a.session.tryWrite(p)
+}
+
 func (a *Attachment) Resize(ctx context.Context, cols, rows uint32) error {
 	if a.closed() {
 		return ErrClosed

@@ -2,10 +2,38 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"io"
+	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
+
+func translateError(err error) error {
+	if err == nil || errors.Is(err, io.EOF) {
+		return err
+	}
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return durable.ErrNotFound
+	case errors.Is(err, ErrAlreadyExists):
+		return durable.ErrAlreadyExists
+	case errors.Is(err, ErrInvalidInput):
+		return durable.ErrInvalidInput
+	case errors.Is(err, ErrIdentity):
+		return durable.ErrIdentity
+	case errors.Is(err, ErrExited):
+		return durable.ErrExited
+	case errors.Is(err, ErrClosed):
+		return durable.ErrClosed
+	case errors.Is(err, ErrUnavailable), errors.Is(err, ErrProtocol), errors.Is(err, ErrUnsupported):
+		return durable.ErrUnavailable
+	default:
+		return err
+	}
+}
 
 type Provider struct {
 	supervisor *Supervisor
@@ -28,12 +56,13 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 		Rows:    options.Rows,
 	})
 	if session == nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 	attachment, err := session.attach()
 	if err != nil {
-		_ = p.supervisor.Kill(context.Background(), session.ID())
-		return nil, err
+		identity := session.Identity()
+		_ = p.supervisor.kill(context.Background(), session.ID(), &identity)
+		return nil, translateError(err)
 	}
 	return &channelAttachment{Attachment: attachment}, nil
 }
@@ -41,7 +70,7 @@ func (p *Provider) Create(ctx context.Context, options base.DurableCreateOptions
 func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
 	attachment, err := p.supervisor.Attach(ctx, id)
 	if attachment == nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 	return &channelAttachment{Attachment: attachment}, nil
 }
@@ -53,12 +82,40 @@ type channelAttachment struct {
 func (a *channelAttachment) Stderr() io.Reader  { return nil }
 func (a *channelAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *channelAttachment) Generation() uint64 { return 0 }
+
+func (a *channelAttachment) Read(p []byte) (int, error) {
+	count, err := a.Attachment.Read(p)
+	return count, translateError(err)
+}
+
+func (a *channelAttachment) Write(p []byte) (int, error) {
+	count, err := a.Attachment.Write(p)
+	return count, translateError(err)
+}
+
+func (a *channelAttachment) Resize(ctx context.Context, cols, rows uint32) error {
+	return translateError(a.Attachment.Resize(ctx, cols, rows))
+}
+
+func (a *channelAttachment) Wait(ctx context.Context) error {
+	return translateError(a.Attachment.Wait(ctx))
+}
+
+func (a *channelAttachment) Kill(ctx context.Context) error {
+	return translateError(a.Attachment.Kill(ctx))
+}
+
+func (a *channelAttachment) Close() error {
+	return translateError(a.Attachment.Close())
+}
+
 func (a *channelAttachment) DurableVersions() (eventVersion, gridRevision uint64, err error) {
-	return a.Versions()
+	event, grid, err := a.Versions()
+	return event, grid, translateError(err)
 }
 
 func (a *channelAttachment) PersistDurableVersions(eventVersion, gridRevision uint64) error {
-	return a.PersistVersions(eventVersion, gridRevision)
+	return translateError(a.PersistVersions(eventVersion, gridRevision))
 }
 
 func (a *channelAttachment) DurableGrid() (cols, rows uint32, ok bool) {
@@ -80,7 +137,14 @@ func NewRemoteProvider(client *Client) *RemoteProvider {
 	return &RemoteProvider{client: client}
 }
 
+var remoteProviderAttach = func(ctx context.Context, client *Client, id string) (*Stream, error) {
+	return client.Attach(ctx, id, nil)
+}
+
 func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
+	if options.ID == "" {
+		options.ID = ids.New()
+	}
 	info, err := p.client.Create(ctx, CreateOptions{
 		ID:      options.ID,
 		Command: options.Command,
@@ -90,19 +154,27 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		Rows:    options.Rows,
 	})
 	if err != nil {
-		return nil, err
+		p.compensateCreate(options.ID, nil)
+		return nil, translateError(err)
 	}
-	stream, err := p.client.Attach(ctx, info.ID, nil)
+	stream, err := remoteProviderAttach(ctx, p.client, info.ID)
 	if err != nil {
-		return nil, err
+		p.compensateCreate(info.ID, &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation})
+		return nil, translateError(err)
 	}
 	return &streamAttachment{Stream: stream}, nil
+}
+
+func (p *RemoteProvider) compensateCreate(id string, expected *Identity) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = p.client.Kill(cleanupCtx, id, expected)
 }
 
 func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAttachment, error) {
 	stream, err := p.client.Attach(ctx, id, nil)
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 	return &streamAttachment{Stream: stream}, nil
 }
@@ -116,12 +188,39 @@ func (a *streamAttachment) CloseWrite() error  { return base.ErrUnsupported }
 func (a *streamAttachment) Generation() uint64 { return 0 }
 func (a *streamAttachment) ID() string         { return a.Info().ID }
 
+func (a *streamAttachment) Read(p []byte) (int, error) {
+	count, err := a.Stream.Read(p)
+	return count, translateError(err)
+}
+
+func (a *streamAttachment) Write(p []byte) (int, error) {
+	count, err := a.Stream.Write(p)
+	return count, translateError(err)
+}
+
+func (a *streamAttachment) Resize(ctx context.Context, cols, rows uint32) error {
+	return translateError(a.Stream.Resize(ctx, cols, rows))
+}
+
+func (a *streamAttachment) Wait(ctx context.Context) error {
+	return translateError(a.Stream.Wait(ctx))
+}
+
+func (a *streamAttachment) Kill(ctx context.Context) error {
+	return translateError(a.Stream.Kill(ctx))
+}
+
+func (a *streamAttachment) Close() error {
+	return translateError(a.Stream.Close())
+}
+
 func (a *streamAttachment) DurableVersions() (eventVersion, gridRevision uint64, err error) {
-	return a.Versions()
+	event, grid, err := a.Versions()
+	return event, grid, translateError(err)
 }
 
 func (a *streamAttachment) PersistDurableVersions(eventVersion, gridRevision uint64) error {
-	return a.PersistVersions(eventVersion, gridRevision)
+	return translateError(a.PersistVersions(eventVersion, gridRevision))
 }
 
 func (a *streamAttachment) DurableGrid() (cols, rows uint32, ok bool) {

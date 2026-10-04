@@ -13,6 +13,8 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/pty"
 )
 
+var ptyStart = pty.Start
+
 type Supervisor struct {
 	stateDir       string
 	commandTimeout time.Duration
@@ -26,7 +28,9 @@ type Supervisor struct {
 	closing    bool
 	finishErrs []error
 
-	pumps sync.WaitGroup
+	killMu  sync.Mutex
+	creates sync.WaitGroup
+	pumps   sync.WaitGroup
 }
 
 func New(config Config) (*Supervisor, error) {
@@ -90,7 +94,9 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, id)
 	}
 	delete(s.killed, id)
+	s.creates.Add(1)
 	s.mu.Unlock()
+	defer s.creates.Done()
 
 	dir := sessionDir(s.stateDir, id)
 	if err := os.Mkdir(dir, 0o700); err != nil {
@@ -109,7 +115,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	if err != nil {
 		return abort(fmt.Errorf("create supervisor recording: %w", err))
 	}
-	ptySession, err := pty.Start(s.ctx, pty.Config{
+	ptySession, err := ptyStart(s.ctx, pty.Config{
 		Path: options.Command[0],
 		Args: options.Command[1:],
 		Dir:  options.Dir,
@@ -133,12 +139,13 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 		s.mu.Unlock()
 		session.closePTY()
 		_ = recording.Close()
-		return nil, ErrClosed
+		return abort(ErrClosed)
 	}
 	s.sessions[id] = session
-	s.pumps.Add(1)
+	s.pumps.Add(2)
 	s.mu.Unlock()
 	go session.pump()
+	go session.inputPump()
 	return session, nil
 }
 
@@ -186,6 +193,8 @@ func (s *Supervisor) Kill(ctx context.Context, id string) error {
 }
 
 func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) error {
+	s.killMu.Lock()
+	defer s.killMu.Unlock()
 	s.mu.Lock()
 	session, exists := s.sessions[id]
 	_, killed := s.killed[id]
@@ -194,7 +203,20 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 		if killed {
 			return nil
 		}
-		return fmt.Errorf("%w: %s", ErrNotFound, id)
+		present, err := s.artifactsPresent(id)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("%w: %s", ErrNotFound, id)
+		}
+		if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
+			return fmt.Errorf("clean up leftover supervisor artifacts for %s: %w", id, err)
+		}
+		s.mu.Lock()
+		s.killed[id] = struct{}{}
+		s.mu.Unlock()
+		return nil
 	}
 	if expected != nil && !sameIdentity(*expected, session.Identity()) {
 		return fmt.Errorf("%w: %s", ErrIdentity, id)
@@ -202,14 +224,25 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 	if err := session.killAndWait(ctx, s.commandTimeout); err != nil {
 		return err
 	}
+	if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
+		return fmt.Errorf("supervisor session killed but artifacts remain: %w", err)
+	}
 	s.mu.Lock()
 	delete(s.sessions, id)
 	s.killed[id] = struct{}{}
 	s.mu.Unlock()
-	if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
-		return fmt.Errorf("supervisor session killed but artifacts remain: %w", err)
-	}
 	return nil
+}
+
+func (s *Supervisor) artifactsPresent(id string) (bool, error) {
+	for _, path := range []string{sessionDir(s.stateDir, id), tombstonePath(s.stateDir, id)} {
+		if _, err := os.Lstat(path); err == nil {
+			return true, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect supervisor artifacts for %s: %w", id, err)
+		}
+	}
+	return false, nil
 }
 
 func (s *Supervisor) Close() error {
@@ -220,6 +253,10 @@ func (s *Supervisor) Close() error {
 		return errors.Join(errs...)
 	}
 	s.closing = true
+	s.mu.Unlock()
+
+	s.creates.Wait()
+	s.mu.Lock()
 	sessions := make([]*Session, 0, len(s.sessions))
 	for _, session := range s.sessions {
 		sessions = append(sessions, session)
