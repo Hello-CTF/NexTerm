@@ -1,22 +1,36 @@
 export const WORKSPACE_OVERLAY_MAX = 820;
 export const WORKSPACE_COMPACT_MAX = 560;
+export const WORKSPACE_SPLIT_MIN_HEIGHT = 480;
 
 export interface WorkspaceViewport {
   width: number;
+  height: number;
   overlaySidebars: boolean;
   compact: boolean;
   coarsePointer: boolean;
   terminalKeys: boolean;
+  splitAllowed: boolean;
 }
 
-export function workspaceViewport(width: number, coarsePointer: boolean): WorkspaceViewport {
+export function splitAllowedForHeight(height: number): boolean {
+  if (!Number.isFinite(height)) return true;
+  return height >= WORKSPACE_SPLIT_MIN_HEIGHT;
+}
+
+export function workspaceViewport(
+  width: number,
+  coarsePointer: boolean,
+  height: number = Number.POSITIVE_INFINITY,
+): WorkspaceViewport {
   const safeWidth = Number.isFinite(width) ? Math.max(0, width) : 0;
   return {
     width: safeWidth,
+    height,
     overlaySidebars: safeWidth <= WORKSPACE_OVERLAY_MAX,
     compact: safeWidth <= WORKSPACE_COMPACT_MAX,
     coarsePointer,
     terminalKeys: coarsePointer || safeWidth <= WORKSPACE_COMPACT_MAX,
+    splitAllowed: splitAllowedForHeight(height),
   };
 }
 

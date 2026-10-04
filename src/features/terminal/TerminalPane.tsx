@@ -3,6 +3,7 @@ import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { resolveWinrmMode } from "./terminalPolicy";
+import { splitAllowedForHeight } from "./workspaceLayout";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
@@ -481,11 +482,16 @@ export function TerminalPane({
         label: isSplit ? "取消分屏" : "上下分屏",
         icon: isSplit ? <IconMergeH size={13} /> : <IconSplitH size={13} />,
         accel: "Ctrl+\\",
+        disabled: !isSplit && !splitAllowedForHeight(window.innerHeight),
+        hint:
+          !isSplit && !splitAllowedForHeight(window.innerHeight)
+            ? "窗口高度不足"
+            : undefined,
         onSelect: () => {
           if (!ws) return;
           const cur = useUi.getState();
           if (isSplit) void cur.unsplitWorkspace(ws.panes[1].id, ws.id);
-          else cur.splitWorkspace(ws.id);
+          else if (splitAllowedForHeight(window.innerHeight)) cur.splitWorkspace(ws.id);
         },
       },
     ];

@@ -303,6 +303,8 @@ export function XtermView(props: XtermViewProps) {
     let measureFrame: number | null = null;
     let finalFrame = false;
     let windowResizeTimer: number | null = null;
+    let layoutWidth = window.innerWidth;
+    let layoutHeight = window.innerHeight;
     const scheduleMeasure = (final = false) => {
       finalFrame = finalFrame || final;
       if (measureFrame !== null) return;
@@ -315,6 +317,9 @@ export function XtermView(props: XtermViewProps) {
     };
     const onFinalResize = () => scheduleMeasure(true);
     const onWindowResize = () => {
+      if (window.innerWidth === layoutWidth && window.innerHeight === layoutHeight) return;
+      layoutWidth = window.innerWidth;
+      layoutHeight = window.innerHeight;
       scheduleMeasure();
       if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
       windowResizeTimer = window.setTimeout(() => {

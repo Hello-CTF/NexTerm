@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSplitRatio,
+  splitAllowedForHeight,
   splitRatioAt,
   splitRatioForKey,
   workspaceViewport,
+  WORKSPACE_SPLIT_MIN_HEIGHT,
 } from "../../features/terminal/workspaceLayout";
 
 describe("responsive workspace layout", () => {
@@ -22,6 +24,28 @@ describe("responsive workspace layout", () => {
   it("enables terminal keys for coarse pointers at any width", () => {
     expect(workspaceViewport(1440, true).terminalKeys).toBe(true);
     expect(workspaceViewport(1440, true).overlaySidebars).toBe(false);
+  });
+
+  it("allows split by default and reports the viewport height", () => {
+    const layout = workspaceViewport(390, true);
+    expect(layout.splitAllowed).toBe(true);
+    expect(layout.height).toBe(Number.POSITIVE_INFINITY);
+    expect(workspaceViewport(390, true, 844).height).toBe(844);
+    expect(workspaceViewport(390, true, 844).splitAllowed).toBe(true);
+    expect(workspaceViewport(390, true, 844).terminalKeys).toBe(true);
+  });
+
+  it("blocks new splits at insufficient viewport heights", () => {
+    expect(WORKSPACE_SPLIT_MIN_HEIGHT).toBe(480);
+    expect(splitAllowedForHeight(320)).toBe(false);
+    expect(splitAllowedForHeight(400)).toBe(false);
+    expect(splitAllowedForHeight(479)).toBe(false);
+    expect(splitAllowedForHeight(480)).toBe(true);
+    expect(splitAllowedForHeight(844)).toBe(true);
+    expect(splitAllowedForHeight(Number.NaN)).toBe(true);
+    expect(splitAllowedForHeight(Number.POSITIVE_INFINITY)).toBe(true);
+    expect(workspaceViewport(568, false, 320).splitAllowed).toBe(false);
+    expect(workspaceViewport(1280, false, 320).splitAllowed).toBe(false);
   });
 
   it("keeps split ratios usable for arbitrary positive container heights", () => {

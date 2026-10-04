@@ -4,6 +4,7 @@ import { isMac } from "./platform";
 import { assetApi, dbApi, sessionApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
+import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import {
   IconDatabase,
   IconFolderOpen,
@@ -118,7 +119,8 @@ export function CommandPalette({
             return;
           }
           if (workspace.panes.length > 1) void current.unsplitWorkspace(workspace.panes[1].id, workspace.id);
-          else current.splitWorkspace(workspace.id);
+          else if (splitAllowedForHeight(window.innerHeight)) current.splitWorkspace(workspace.id);
+          else pushToast("info", "窗口高度不足，无法上下分屏");
         },
       },
       {
