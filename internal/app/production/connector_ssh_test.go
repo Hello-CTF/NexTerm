@@ -1,6 +1,7 @@
 package production
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -8,17 +9,23 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type sshConnectorServer struct {
-	listener net.Listener
-	config   *gossh.ServerConfig
+	listener     net.Listener
+	config       *gossh.ServerConfig
+	agentKey     gossh.PublicKey
+	agentResult  chan error
+	execCommands chan string
 }
 
 func newSSHConnectorServer(t *testing.T, customize func(*gossh.ServerConfig)) *sshConnectorServer {
@@ -72,43 +79,110 @@ func (s *sshConnectorServer) handle(conn net.Conn) {
 	defer serverConn.Close()
 	go gossh.DiscardRequests(requests)
 	for newChannel := range channels {
-		if newChannel.ChannelType() != "direct-tcpip" {
-			_ = newChannel.Reject(gossh.UnknownChannelType, "connector test server")
-			continue
-		}
-		var payload struct {
-			Raddr string
-			Rport uint32
-			Laddr string
-			Lport uint32
-		}
-		if err := gossh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
-			_ = newChannel.Reject(gossh.Prohibited, "invalid direct-tcpip payload")
-			continue
-		}
-		target, err := net.Dial("tcp", net.JoinHostPort(payload.Raddr, strconv.Itoa(int(payload.Rport))))
-		if err != nil {
-			_ = newChannel.Reject(gossh.ConnectionFailed, err.Error())
-			continue
-		}
-		channel, channelRequests, err := newChannel.Accept()
-		if err != nil {
-			_ = target.Close()
-			continue
-		}
-		go gossh.DiscardRequests(channelRequests)
-		go func() {
-			_, _ = io.Copy(channel, target)
-			_ = channel.CloseWrite()
-		}()
-		go func() {
-			_, _ = io.Copy(target, channel)
-			if tcp, ok := target.(*net.TCPConn); ok {
-				_ = tcp.CloseWrite()
+		switch newChannel.ChannelType() {
+		case "direct-tcpip":
+			s.handleDirectTCPIP(newChannel)
+		case "session":
+			channel, channelRequests, err := newChannel.Accept()
+			if err == nil {
+				go s.handleSession(serverConn, channel, channelRequests)
 			}
-			_ = channel.Close()
-			_ = target.Close()
-		}()
+		default:
+			_ = newChannel.Reject(gossh.UnknownChannelType, "connector test server")
+		}
+	}
+}
+
+func (s *sshConnectorServer) handleDirectTCPIP(newChannel gossh.NewChannel) {
+	var payload struct {
+		Raddr string
+		Rport uint32
+		Laddr string
+		Lport uint32
+	}
+	if err := gossh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
+		_ = newChannel.Reject(gossh.Prohibited, "invalid direct-tcpip payload")
+		return
+	}
+	target, err := net.Dial("tcp", net.JoinHostPort(payload.Raddr, strconv.Itoa(int(payload.Rport))))
+	if err != nil {
+		_ = newChannel.Reject(gossh.ConnectionFailed, err.Error())
+		return
+	}
+	channel, channelRequests, err := newChannel.Accept()
+	if err != nil {
+		_ = target.Close()
+		return
+	}
+	go gossh.DiscardRequests(channelRequests)
+	go func() {
+		_, _ = io.Copy(channel, target)
+		_ = channel.CloseWrite()
+	}()
+	go func() {
+		_, _ = io.Copy(target, channel)
+		if tcp, ok := target.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+		_ = channel.Close()
+		_ = target.Close()
+	}()
+}
+
+func (s *sshConnectorServer) handleSession(conn *gossh.ServerConn, channel gossh.Channel, requests <-chan *gossh.Request) {
+	defer channel.Close()
+	for request := range requests {
+		switch request.Type {
+		case "exec":
+			var payload struct{ Command string }
+			if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+				request.Reply(false, nil)
+				continue
+			}
+			request.Reply(true, nil)
+			if s.execCommands != nil {
+				select {
+				case s.execCommands <- payload.Command:
+				default:
+				}
+			}
+			_, _ = channel.SendRequest("exit-status", false, gossh.Marshal(struct{ Status uint32 }{0}))
+			return
+		case "auth-agent-req@openssh.com":
+			request.Reply(true, nil)
+			go s.checkForwardedAgent(conn)
+		default:
+			if request.WantReply {
+				request.Reply(false, nil)
+			}
+		}
+	}
+}
+
+func (s *sshConnectorServer) checkForwardedAgent(conn *gossh.ServerConn) {
+	channel, requests, err := conn.OpenChannel("auth-agent@openssh.com", nil)
+	if err != nil {
+		s.reportAgentResult(fmt.Errorf("open auth-agent channel: %w", err))
+		return
+	}
+	defer channel.Close()
+	go gossh.DiscardRequests(requests)
+	signers, err := agent.NewClient(channel).Signers()
+	if err != nil {
+		s.reportAgentResult(fmt.Errorf("list forwarded agent signers: %w", err))
+		return
+	}
+	if len(signers) != 1 || !bytes.Equal(signers[0].PublicKey().Marshal(), s.agentKey.Marshal()) {
+		s.reportAgentResult(fmt.Errorf("forwarded agent signers = %d, want the single forwarded test key", len(signers)))
+		return
+	}
+	s.reportAgentResult(nil)
+}
+
+func (s *sshConnectorServer) reportAgentResult(err error) {
+	select {
+	case s.agentResult <- err:
+	default:
 	}
 }
 
@@ -371,6 +445,88 @@ func TestProductionSSHAgentForwardingOption(t *testing.T) {
 	if !strings.Contains(response.Error.Message, "agent socket") {
 		t.Fatalf("missing-socket error is unclear: %+v", response.Error)
 	}
+}
+
+func TestProductionSSHAgentForwardingInitialCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SSH agent integration uses SSH_AUTH_SOCK over a Unix socket; Windows runs the compile-only coverage")
+	}
+	server := newSSHConnectorServer(t, nil)
+	private, signer := generateConnectorTestKey(t)
+	server.agentKey = signer.PublicKey()
+	server.agentResult = make(chan error, 1)
+	server.execCommands = make(chan string, 1)
+	socket := serveConnectorTestAgent(t, private)
+
+	production := newHostKeyTestProduction(t)
+	initConnectorTestVault(t, production)
+	credID := createConnectorTestCredential(t, production, "forward-exec-password", "secret")
+	assetID := createConnectorTestAsset(t, production, "forward-exec", "127.0.0.1", server.port(), "password", credID,
+		`{"forwardAgent":true,"agentSocket":`+strconv.Quote(socket)+`,"initialCommand":"probe-agent","autoAcceptUnknownHost":true}`)
+	connected := connectHostKeyTestAsset(t, production, assetID)
+
+	select {
+	case command := <-server.execCommands:
+		if command != "probe-agent" {
+			t.Fatalf("initial command = %q, want probe-agent", command)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial command did not run over the forwarded-agent asset")
+	}
+	select {
+	case err := <-server.agentResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not observe the forwarded agent on the InitialCommand exec session")
+	}
+	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "session_disconnect", `{"sessionId":"`+connected.ID+`"}`))
+}
+
+func generateConnectorTestKey(t *testing.T) (ed25519.PrivateKey, gossh.Signer) {
+	t.Helper()
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := gossh.NewSignerFromKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return private, signer
+}
+
+func serveConnectorTestAgent(t *testing.T, private ed25519.PrivateKey) string {
+	t.Helper()
+	keyring := agent.NewKeyring()
+	if err := keyring.Add(agent.AddedKey{PrivateKey: private}); err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp("", "nxagent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	socket := filepath.Join(directory, "a.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				agent.ServeAgent(keyring, conn)
+				_ = conn.Close()
+			}()
+		}
+	}()
+	return socket
 }
 
 func initConnectorTestVault(t *testing.T, production *Production) {

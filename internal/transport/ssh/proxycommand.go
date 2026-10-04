@@ -24,6 +24,7 @@ func expandProxyCommand(command, host string, port int) string {
 
 type proxyCommandConn struct {
 	cmd       *exec.Cmd
+	proc      *proxyCommandProcess
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
 	waitDone  chan struct{}
@@ -44,11 +45,13 @@ func (c *proxyCommandConn) Close() error {
 		_ = c.stdin.Close()
 		select {
 		case <-c.waitDone:
+			_ = c.proc.kill()
 		case <-time.After(proxyCommandCloseTimeout):
-			_ = killProxyCommand(c.cmd)
+			_ = c.proc.kill()
 			<-c.waitDone
 		}
 		_ = c.stdout.Close()
+		_ = c.proc.close()
 	})
 	return nil
 }
@@ -79,7 +82,15 @@ func dialProxyCommand(ctx context.Context, command, host string, port int) (net.
 		_ = stdout.Close()
 		return nil, fmt.Errorf("start proxy command: %w", err)
 	}
-	conn := &proxyCommandConn{cmd: cmd, stdin: stdin, stdout: stdout, waitDone: make(chan struct{})}
+	proc, err := trackProxyCommand(cmd)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		return nil, fmt.Errorf("track proxy command process: %w", err)
+	}
+	conn := &proxyCommandConn{cmd: cmd, proc: proc, stdin: stdin, stdout: stdout, waitDone: make(chan struct{})}
 	go func() {
 		_ = cmd.Wait()
 		close(conn.waitDone)

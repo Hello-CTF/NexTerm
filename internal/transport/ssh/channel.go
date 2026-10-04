@@ -100,6 +100,14 @@ func (c *Client) OpenExec(ctx context.Context, command string, options base.Exec
 	output := base.NewOutputRouter(opCtx)
 	session.Stdout = output.Writer(false)
 	session.Stderr = output.Writer(true)
+	if c.forwardAgent {
+		if err := agent.RequestAgentForwarding(session); err != nil {
+			if opCtx.Err() != nil {
+				return nil, opCtx.Err()
+			}
+			return nil, fmt.Errorf("request SSH agent forwarding: %w", err)
+		}
+	}
 	if err := session.Start(command); err != nil {
 		if opCtx.Err() != nil {
 			return nil, opCtx.Err()
