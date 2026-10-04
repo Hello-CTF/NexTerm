@@ -20,7 +20,7 @@
 服务端每个架构只发布**一个 full 包**，里面有 Go 静态二进制、前端、`nexterm-server.service` 与
 `nexterm-onlyserver.service` 两种 unit，以及对应的 env 示例。只做资产同步时，安装后一种
 unit，让同一二进制以 `--sync-only` 运行；它不是独立的 onlyServer 下载包。两个 unit 不要同时启用。
-部署步骤见 [README 的「部署服务端」](https://github.com/ProbiusOfficial/NexTerm#部署服务端)。
+部署步骤见 [README 的「服务端与懒猫微服」](https://github.com/ProbiusOfficial/NexTerm#服务端与懒猫微服)。
 
 > ⛔ 完整版服务端**自身没有登录鉴权**，不建议直接暴露公网；公网请使用包内可选的 `--sync-only` restricted 运行时并终止 TLS。
 
