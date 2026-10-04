@@ -16,13 +16,14 @@ import (
 )
 
 type Manager struct {
-	mu          sync.Mutex
-	sessions    map[string]*Session
-	byAsset     map[string]string
-	tabs        map[string]*Tab
-	channelTabs map[string]string
-	closed      bool
-	started     bool
+	mu               sync.Mutex
+	sessions         map[string]*Session
+	byAsset          map[string]string
+	tabs             map[string]*Tab
+	channelTabs      map[string]string
+	throttleVersions map[string]uint64
+	closed           bool
+	started          bool
 
 	connector   Connector
 	terminals   TerminalFactory
@@ -56,6 +57,7 @@ func NewManager(config Config) *Manager {
 		byAsset:          make(map[string]string),
 		tabs:             make(map[string]*Tab),
 		channelTabs:      make(map[string]string),
+		throttleVersions: make(map[string]uint64),
 		connector:        config.Connector,
 		terminals:        config.Terminals,
 		durable:          config.Durable,
@@ -96,6 +98,7 @@ func NewManager(config Config) *Manager {
 		manager.bus = hub.New(hub.Options{
 			OnChannelClose: func(channelID string) { _ = manager.DetachChannel(channelID) },
 			OnBackpressure: manager.onBackpressure,
+			OnDrain:        manager.onDrain,
 		})
 		manager.ownsBus = true
 	} else {
@@ -439,6 +442,7 @@ func (m *Manager) reap(id string, expectedIdle ...time.Time) error {
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
 		delete(m.tabs, tab.ID)
+		delete(m.throttleVersions, tab.ID)
 	}
 	session.tabs = make(map[string]*Tab)
 	delete(m.sessions, id)
@@ -544,12 +548,24 @@ func (m *Manager) startGoroutine(run func()) bool {
 }
 
 func (m *Manager) onBackpressure(channelID string, queuedBytes int) {
+	m.emitThrottle(channelID, queuedBytes, false)
+}
+
+func (m *Manager) onDrain(channelID string, queuedBytes int) {
+	m.emitThrottle(channelID, queuedBytes, true)
+}
+
+func (m *Manager) emitThrottle(channelID string, queuedBytes int, recovered bool) {
 	m.mu.Lock()
 	tabID := m.channelTabs[channelID]
-	m.mu.Unlock()
-	if tabID != "" {
-		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, InflightBytes: queuedBytes})
+	if tabID == "" {
+		m.mu.Unlock()
+		return
 	}
+	m.throttleVersions[tabID]++
+	version := m.throttleVersions[tabID]
+	m.mu.Unlock()
+	m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tabID, InflightBytes: queuedBytes, Recovered: recovered, Version: version})
 }
 
 func (m *Manager) emit(ctx context.Context, topic string, payload any) {

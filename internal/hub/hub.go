@@ -36,6 +36,7 @@ type Options struct {
 	QueueBytes     int
 	OnChannelClose func(channelID string)
 	OnBackpressure func(channelID string, queuedBytes int)
+	OnDrain        func(channelID string, queuedBytes int)
 }
 
 type Hub struct {
@@ -261,7 +262,7 @@ func (h *Hub) channel(channelID string) (*channel, error) {
 	if ch := h.channels[channelID]; ch != nil {
 		return ch, nil
 	}
-	ch := newChannel(channelID, h.options.QueueFrames, h.options.QueueBytes, h.options.OnBackpressure)
+	ch := newChannel(channelID, h.options.QueueFrames, h.options.QueueBytes, h.options.OnBackpressure, h.options.OnDrain)
 	h.channels[channelID] = ch
 	return ch, nil
 }
@@ -336,10 +337,11 @@ type channel struct {
 	maxFrames      int
 	maxBytes       int
 	onBackpressure func(string, int)
+	onDrain        func(string, int)
 }
 
-func newChannel(id string, maxFrames, maxBytes int, onBackpressure func(string, int)) *channel {
-	return &channel{changed: make(chan struct{}), id: id, maxFrames: maxFrames, maxBytes: maxBytes, onBackpressure: onBackpressure}
+func newChannel(id string, maxFrames, maxBytes int, onBackpressure func(string, int), onDrain func(string, int)) *channel {
+	return &channel{changed: make(chan struct{}), id: id, maxFrames: maxFrames, maxBytes: maxBytes, onBackpressure: onBackpressure, onDrain: onDrain}
 }
 
 func (c *channel) send(ctx context.Context, frame Frame) error {
@@ -418,8 +420,8 @@ func (c *channel) next(ctx context.Context, generation uint64) (Frame, error) {
 
 func (c *channel) ack(sequence uint64) bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.inFlight != sequence || c.head >= len(c.queue) || c.queue[c.head].Sequence != sequence {
+		c.mu.Unlock()
 		return false
 	}
 	frame := c.queue[c.head]
@@ -435,14 +437,22 @@ func (c *channel) ack(sequence uint64) bool {
 		c.head = 0
 	}
 	c.inFlight = 0
+	drainCallback := c.onDrain
+	queuedBytes := c.queuedBytes
 	if c.backpressured && c.pendingLocked() <= c.maxFrames/4 && c.queuedBytes <= c.maxBytes/4 {
 		c.backpressured = false
+	} else {
+		drainCallback = nil
 	}
 	drained := c.draining && c.pendingLocked() == 0
 	if drained {
 		c.closeLocked()
 	} else {
 		c.signalLocked()
+	}
+	c.mu.Unlock()
+	if drainCallback != nil {
+		drainCallback(c.id, queuedBytes)
 	}
 	return drained
 }

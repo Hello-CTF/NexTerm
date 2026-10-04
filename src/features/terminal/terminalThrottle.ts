@@ -1,11 +1,13 @@
 import type { TerminalThrottledEvent } from "../../ipc/events";
 
-export const THROTTLE_ACTIVE_MS = 2000;
 export const THROTTLE_RECOVERED_MS = 4000;
 
+export type ThrottlePhase = "active" | "recovered";
+
 export interface ThrottleState {
-  lastEventAt: number;
+  phase: ThrottlePhase;
   inflightBytes: number;
+  at: number;
 }
 
 export interface ThrottleView {
@@ -15,16 +17,19 @@ export interface ThrottleView {
 }
 
 export function throttleStateFrom(event: TerminalThrottledEvent, now: number): ThrottleState {
-  return { lastEventAt: now, inflightBytes: event.inflightBytes };
+  return {
+    phase: event.recovered === true ? "recovered" : "active",
+    inflightBytes: event.inflightBytes,
+    at: now,
+  };
 }
 
 export function throttleView(state: ThrottleState | null, now: number): ThrottleView | null {
   if (!state) return null;
-  const since = now - state.lastEventAt;
-  if (since <= THROTTLE_ACTIVE_MS) {
+  if (state.phase === "active") {
     return { active: true, recovered: false, inflightBytes: state.inflightBytes };
   }
-  if (since <= THROTTLE_ACTIVE_MS + THROTTLE_RECOVERED_MS) {
+  if (now - state.at <= THROTTLE_RECOVERED_MS) {
     return { active: false, recovered: true, inflightBytes: 0 };
   }
   return null;

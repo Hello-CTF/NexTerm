@@ -536,3 +536,42 @@ func TestCronSchedulerFailureEmitsAppErrorEvent(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 }
+
+func TestCronJobFailureDoesNotEmitAppErrorEvent(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	recorder := &ipcEventRecorder{}
+	services := &ProductionServices{Store: database, Agent: agent.NewRunner(agent.Config{}), Events: recorder}
+	runtime, err := newCronRuntime(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = runtime.Shutdown(shutdownCtx)
+	})
+	job, err := runtime.scheduler.Register(ctx, cron.Registration{SessionID: "session", Prompt: "fail", Schedule: "* * * * *"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB().ExecContext(ctx,
+		`UPDATE cron_job SET next_run_at = ? WHERE id = ?`,
+		time.Now().Add(-time.Minute).UnixMilli(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	finished := waitCronJobFinished(t, runtime.scheduler, "session", job.ID)
+	if finished.LastError == "" || !strings.Contains(finished.LastError, "AI 会话存储未配置") {
+		t.Fatalf("job failure not recorded: %+v", finished)
+	}
+	if _, ok := recorder.appError(); ok {
+		t.Fatal("ordinary job failure must not emit app://error")
+	}
+}

@@ -800,6 +800,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session.mu.Lock()
 		delete(m.tabs, id)
 		delete(session.tabs, id)
+		delete(m.throttleVersions, id)
 		if len(session.tabs) == 0 {
 			session.idleSince = time.Now()
 		}

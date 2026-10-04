@@ -3,10 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { flush, mount, type MountedView } from "./reactTestUtils";
-import {
-  THROTTLE_ACTIVE_MS,
-  THROTTLE_RECOVERED_MS,
-} from "../../features/terminal/terminalThrottle";
+import { THROTTLE_RECOVERED_MS } from "../../features/terminal/terminalThrottle";
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
@@ -34,20 +31,25 @@ vi.mock("../../ipc/commands", () => ({
   },
 }));
 
-vi.mock("../../ipc/events", () => ({
-  listenEvent: vi.fn((topic: string, handler: (payload: unknown) => void) => {
-    harness.handlers.set(topic, handler);
-    return Promise.resolve(() => {});
-  }),
-  EVENTS: { terminalControl: "terminal://control", terminalThrottled: "terminal://throttled" },
-  EventVersionGate: class {
-    accept() {
-      return true;
-    }
-  },
-}));
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return {
+    ...actual,
+    listenEvent: vi.fn((topic: string, handler: (payload: unknown) => void) => {
+      harness.handlers.set(topic, handler);
+      return Promise.resolve(() => {});
+    }),
+    EVENTS: { terminalControl: "terminal://control", terminalThrottled: "terminal://throttled" },
+  };
+});
 
-vi.mock("../../ipc/env", () => ({ clientId: () => "me" }));
+vi.mock("../../ipc/env", () => ({
+  clientId: () => "me",
+  TRANSPORT: "desktop",
+  DEMO: false,
+  WEB: false,
+  DESKTOP: true,
+}));
 
 vi.mock("../../ui/dialogs", () => ({
   describeTarget: () => "",
@@ -153,7 +155,7 @@ afterEach(() => {
 });
 
 describe("terminal://throttled badge", () => {
-  it("shows active on backpressure, recovered after drain, then clears", async () => {
+  it("shows active on entry, stays active without recovery, recovered only on drain event", async () => {
     vi.useFakeTimers();
     await act(async () => {
       await flush();
@@ -162,12 +164,18 @@ describe("terminal://throttled badge", () => {
     expect(throttled).toBeDefined();
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", inflightBytes: 8192 });
+      throttled?.({ tabId: "kernel-1", inflightBytes: 8192, version: 1 });
     });
     expect(badge("输出积压")).not.toBeNull();
 
     await act(async () => {
-      vi.advanceTimersByTime(THROTTLE_ACTIVE_MS + 100);
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(badge("输出积压")).not.toBeNull();
+    expect(badge("输出已恢复")).toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", inflightBytes: 128, recovered: true, version: 2 });
     });
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).not.toBeNull();
@@ -175,6 +183,31 @@ describe("terminal://throttled badge", () => {
     await act(async () => {
       vi.advanceTimersByTime(THROTTLE_RECOVERED_MS + 100);
     });
+    expect(badge("输出已恢复")).toBeNull();
+  });
+
+  it("re-arms active on a new episode and ignores stale replayed events", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      await flush();
+    });
+    const throttled = harness.handlers.get("terminal://throttled");
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", inflightBytes: 128, recovered: true, version: 2 });
+    });
+    expect(badge("输出已恢复")).not.toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", inflightBytes: 16384, version: 3 });
+    });
+    expect(badge("输出已恢复")).toBeNull();
+    expect(badge("输出积压")).not.toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", inflightBytes: 128, recovered: true, version: 2 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
     expect(badge("输出已恢复")).toBeNull();
   });
 
@@ -186,7 +219,7 @@ describe("terminal://throttled badge", () => {
     const throttled = harness.handlers.get("terminal://throttled");
 
     act(() => {
-      throttled?.({ tabId: "someone-else", inflightBytes: 8192 });
+      throttled?.({ tabId: "someone-else", inflightBytes: 8192, version: 1 });
     });
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).toBeNull();

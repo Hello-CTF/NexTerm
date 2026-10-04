@@ -68,6 +68,8 @@ export interface FsProgressEvent {
 export interface TerminalThrottledEvent {
   tabId: string;
   inflightBytes: number;
+  recovered?: boolean;
+  version?: number;
 }
 
 export interface AppErrorEvent {

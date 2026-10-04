@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  THROTTLE_ACTIVE_MS,
   THROTTLE_RECOVERED_MS,
   throttleStateFrom,
   throttleView,
@@ -11,43 +10,49 @@ describe("terminal throttle tracker", () => {
     expect(throttleView(null, 1000)).toBeNull();
   });
 
-  it("shows active with inflight bytes inside the quiet window", () => {
-    const state = throttleStateFrom({ tabId: "t1", inflightBytes: 4096 }, 1000);
+  it("shows active on entry and stays active without a recovery event", () => {
+    const state = throttleStateFrom({ tabId: "t1", inflightBytes: 4096, version: 1 }, 1000);
     expect(throttleView(state, 1000)).toEqual({
       active: true,
       recovered: false,
       inflightBytes: 4096,
     });
-    expect(throttleView(state, 1000 + THROTTLE_ACTIVE_MS)).toEqual({
+    expect(throttleView(state, 1000 + 60_000)).toEqual({
       active: true,
       recovered: false,
       inflightBytes: 4096,
     });
   });
 
-  it("shows recovered after the quiet window and expires after the display window", () => {
-    const state = throttleStateFrom({ tabId: "t1", inflightBytes: 4096 }, 1000);
-    expect(throttleView(state, 1000 + THROTTLE_ACTIVE_MS + 1)).toEqual({
+  it("shows recovered only after a real drain event, then expires", () => {
+    const recovered = throttleStateFrom(
+      { tabId: "t1", inflightBytes: 128, recovered: true, version: 2 },
+      2000,
+    );
+    expect(throttleView(recovered, 2000)).toEqual({
       active: false,
       recovered: true,
       inflightBytes: 0,
     });
-    expect(
-      throttleView(state, 1000 + THROTTLE_ACTIVE_MS + THROTTLE_RECOVERED_MS),
-    ).toEqual({ active: false, recovered: true, inflightBytes: 0 });
-    expect(
-      throttleView(state, 1000 + THROTTLE_ACTIVE_MS + THROTTLE_RECOVERED_MS + 1),
-    ).toBeNull();
+    expect(throttleView(recovered, 2000 + THROTTLE_RECOVERED_MS)).toEqual({
+      active: false,
+      recovered: true,
+      inflightBytes: 0,
+    });
+    expect(throttleView(recovered, 2000 + THROTTLE_RECOVERED_MS + 1)).toBeNull();
   });
 
-  it("re-arms the active window when a new episode arrives", () => {
-    const first = throttleStateFrom({ tabId: "t1", inflightBytes: 1024 }, 1000);
-    const second = throttleStateFrom({ tabId: "t1", inflightBytes: 2048 }, 1000 + THROTTLE_ACTIVE_MS);
-    expect(throttleView(second, 1000 + THROTTLE_ACTIVE_MS)).toEqual({
+  it("re-arms active when a new episode arrives after recovery", () => {
+    const recovered = throttleStateFrom(
+      { tabId: "t1", inflightBytes: 128, recovered: true, version: 2 },
+      2000,
+    );
+    const reentry = throttleStateFrom({ tabId: "t1", inflightBytes: 8192, version: 3 }, 2500);
+    expect(throttleView(recovered, 2500)?.recovered).toBe(true);
+    expect(throttleView(reentry, 2500)).toEqual({
       active: true,
       recovered: false,
-      inflightBytes: 2048,
+      inflightBytes: 8192,
     });
-    expect(first.lastEventAt).toBeLessThan(second.lastEventAt);
   });
 });

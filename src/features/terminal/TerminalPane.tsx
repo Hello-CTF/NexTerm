@@ -13,7 +13,6 @@ import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybin
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import {
-  THROTTLE_ACTIVE_MS,
   THROTTLE_RECOVERED_MS,
   throttleStateFrom,
   throttleView,
@@ -271,11 +270,15 @@ export function TerminalPane({
     };
   }, []);
 
+  const throttleVersions = useRef(new EventVersionGate());
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     void listenEvent<TerminalThrottledEvent>(EVENTS.terminalThrottled, (p) => {
       if (p.tabId !== kernelTabIdRef.current) return;
+      if (typeof p.version === "number" && p.version > 0 && !throttleVersions.current.accept(p.tabId, p.version)) {
+        return;
+      }
       setThrottle(throttleStateFrom(p, Date.now()));
     }).then((off) => {
       if (cancelled) off();
@@ -288,17 +291,12 @@ export function TerminalPane({
   }, []);
 
   useEffect(() => {
-    if (!throttle) return;
-    const activeTimer = window.setTimeout(
-      () => setThrottleTick((n) => n + 1),
-      THROTTLE_ACTIVE_MS + 50,
-    );
+    if (throttle?.phase !== "recovered") return;
     const clearTimer = window.setTimeout(
       () => setThrottleTick((n) => n + 1),
-      THROTTLE_ACTIVE_MS + THROTTLE_RECOVERED_MS + 50,
+      THROTTLE_RECOVERED_MS + 50,
     );
     return () => {
-      window.clearTimeout(activeTimer);
       window.clearTimeout(clearTimer);
     };
   }, [throttle]);
