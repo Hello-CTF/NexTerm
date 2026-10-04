@@ -683,6 +683,159 @@ describe("CronCard", () => {
     expect(mounted.container.textContent).not.toContain("请手动注销其中一条");
   });
 
+  it("回滚失败告警不被刷新前的旧任务列表提前清除，权威刷新确认后才消除", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.unregister.mockRejectedValue(new Error("存储故障"));
+    const postConflict = deferred<TestJob[]>();
+    mocks.list
+      .mockImplementationOnce((sessionId: string) =>
+        Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
+      )
+      .mockImplementationOnce((sessionId: string) =>
+        Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
+      )
+      .mockImplementation((sessionId: string) =>
+        sessionId === "c-1" ? postConflict.promise : Promise.resolve([JOB_B]),
+      );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mounted.container.textContent).toContain("请手动注销其中一条");
+    expect(mounted.container.textContent).toContain("c-1/j-10");
+
+    postConflict.resolve([JOB_A, job({ id: "j-10", sessionId: "c-1", enabled: false })]);
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("请手动注销其中一条");
+    expect(text).toContain("check disk");
+    const editDisabledFor = (rowText: string) =>
+      [...mounted!.container.querySelectorAll("button")].find(
+        (b) =>
+          b.textContent?.trim() === "编辑" &&
+          b.parentElement?.parentElement?.textContent?.includes(rowText),
+      )?.disabled;
+    expect(editDisabledFor("磁盘巡检")).toBe(true);
+    expect(editDisabledFor("check disk")).toBe(true);
+
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).not.toContain("请手动注销其中一条");
+  });
+
+  it("冲突相关会话读取失败不算已解决，告警保留", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.unregister.mockRejectedValue(new Error("存储故障"));
+    const both = [JOB_A, job({ id: "j-10", sessionId: "c-1", enabled: false })];
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? both : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+    expect(mounted.container.textContent).toContain("请手动注销其中一条");
+
+    mocks.list.mockImplementation((sessionId: string) =>
+      sessionId === "c-1"
+        ? Promise.reject(new Error("磁盘炸了"))
+        : Promise.resolve([JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("部分会话的任务读取失败");
+    expect(text).toContain("请手动注销其中一条");
+
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? both : [JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).toContain("请手动注销其中一条");
+
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).not.toContain("请手动注销其中一条");
+  });
+
+  it("行内启停 pending 时禁止保存；完成后按最新停用状态提交", async () => {
+    const slowToggle = deferred<TestJob>();
+    mocks.setEnabled.mockReturnValue(slowToggle.promise);
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickRowButton(mounted.container, "磁盘巡检", "停用");
+    await flush();
+
+    const save = [...mounted.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "保存",
+    );
+    expect(save?.disabled).toBe(true);
+    expect(save?.getAttribute("title")).toBe("该行启停保存中，完成后再保存");
+    if (save) click(save);
+    await flush();
+    expect(mocks.register).not.toHaveBeenCalled();
+
+    slowToggle.resolve(job({ id: "j-1", sessionId: "c-1", name: "磁盘巡检", enabled: false }));
+    await flush();
+    const saveAfter = [...mounted.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "保存",
+    );
+    expect(saveAfter?.disabled).toBe(false);
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mocks.unregister).toHaveBeenCalledWith("c-1", "j-1");
+    expect(mocks.setEnabled).not.toHaveBeenCalledWith("c-1", "j-10", true);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
+  it("行内启用 pending 时禁止保存；完成后按最新启用状态提交", async () => {
+    const slowToggle = deferred<TestJob>();
+    mocks.setEnabled.mockReturnValue(slowToggle.promise);
+    mocks.register.mockResolvedValue(job({ id: "j-11", sessionId: "c-2", enabled: false }));
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "backup db", "编辑");
+    clickRowButton(mounted.container, "backup db", "启用");
+    await flush();
+
+    const save = [...mounted.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "保存",
+    );
+    expect(save?.disabled).toBe(true);
+
+    slowToggle.resolve(job({ id: "j-2", sessionId: "c-2", enabled: true }));
+    await flush();
+    clickButton(mounted.container, "保存");
+    await flush();
+
+    expect(mocks.register).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mocks.unregister).toHaveBeenCalledWith("c-2", "j-2");
+    expect(mocks.setEnabled).toHaveBeenCalledWith("c-2", "j-11", true);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已更新");
+  });
+
   it("替换后启用失败：新任务保持停用并如实提示", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
     mocks.setEnabled.mockRejectedValue(new Error("存储故障"));

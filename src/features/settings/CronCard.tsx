@@ -67,8 +67,13 @@ export function CronCard() {
     label: string;
     oldKey: string;
     newKey: string;
+    sessions: string[];
+    gen: number;
     error: string;
   } | null>(null);
+
+  const [jobsGen, setJobsGen] = useState(0);
+  const [failedSessionIds, setFailedSessionIds] = useState<string[]>([]);
 
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
@@ -125,6 +130,8 @@ export function CronCard() {
       const failed = results.filter((r) => !r.ok);
       const merged = results.flatMap((r) => (r.ok ? r.jobs : []));
       setJobs(merged);
+      setJobsGen(gen);
+      setFailedSessionIds(failed.map((f) => f.id));
       if (failed.length > 0) {
         const detail = failed.map((f) => `「${f.title}」：${f.message}`).join("；");
         if (failed.length === results.length) {
@@ -150,11 +157,13 @@ export function CronCard() {
 
   useEffect(() => {
     if (!replaceConflict || !jobs) return;
+    if (jobsGen <= replaceConflict.gen) return;
+    if (replaceConflict.sessions.some((s) => failedSessionIds.includes(s))) return;
     const present = (key: string) => jobs.some((j) => `${j.sessionId}/${j.id}` === key);
     if (!present(replaceConflict.oldKey) || !present(replaceConflict.newKey)) {
       setReplaceConflict(null);
     }
-  }, [jobs, replaceConflict]);
+  }, [jobs, jobsGen, failedSessionIds, replaceConflict]);
 
   if (DEMO) return null;
 
@@ -163,6 +172,8 @@ export function CronCard() {
 
   const profileById = (id: string) => profilesView?.profiles.find((p) => p.id === id);
   const activeProfile = profilesView?.activeId ? profileById(profilesView.activeId) : undefined;
+  const editActionPending =
+    !!editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`;
   const profilesState = profilesError ? "error" : profilesView ? "ready" : "loading";
   const followActiveLabel = () => {
     if (profilesState === "error") return "跟随当前激活档案（读取失败，状态未知）";
@@ -209,6 +220,7 @@ export function CronCard() {
 
   const submitRegister = async () => {
     if (!draft || registering) return;
+    if (editingJob && actionBusy === `${editingJob.sessionId}/${editingJob.id}`) return;
     if (!draft.sessionId) {
       setRegisterError("先选择一个 AI 会话");
       return;
@@ -277,6 +289,8 @@ export function CronCard() {
             label: draft.name.trim() || draft.prompt.trim().slice(0, 40),
             oldKey: `${editingJob.sessionId}/${editingJob.id}`,
             newKey: `${created.sessionId}/${created.id}`,
+            sessions: [...new Set([editingJob.sessionId, created.sessionId])],
+            gen: loadGenRef.current,
             error: describeError(rollbackError),
           });
           setRegisterOpen(false);
@@ -478,7 +492,8 @@ export function CronCard() {
             <div className="nx-spacer" />
             <button
               className="nx-btn nx-btn-primary nx-btn-sm"
-              disabled={registering}
+              disabled={registering || editActionPending}
+              title={editActionPending ? "该行启停保存中，完成后再保存" : undefined}
               onClick={() => void submitRegister()}
             >
               {registering
