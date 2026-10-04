@@ -6,6 +6,10 @@ import {
   type TerminalViewport,
 } from "./terminalGrid";
 
+interface BufferLinesLike {
+  onTrim?: (listener: (amount: number) => void) => { dispose: () => void };
+}
+
 interface SelectionModelLike {
   selectionStart?: [number, number];
   selectionEnd?: [number, number];
@@ -28,6 +32,9 @@ interface XtermInternals {
     };
   };
   _selectionService?: SelectionServiceLike;
+  _bufferService?: {
+    buffers?: { active?: { lines?: BufferLinesLike } };
+  };
 }
 
 export interface TerminalGeometry {
@@ -80,10 +87,15 @@ export function resizeTerminalToGridPreservingSelection(term: Terminal, grid: Te
   }
   const pos = term.getSelectionPosition();
   const text = pos ? term.getSelection() : "";
-  const lengthBefore = term.buffer.active.length;
+  const lines = internalsOf(term)?._bufferService?.buffers?.active?.lines;
+  let trimmed = 0;
+  const trimListener =
+    lines?.onTrim?.((amount) => {
+      trimmed += amount;
+    }) ?? null;
   resizeTerminalToGrid(term, grid);
+  trimListener?.dispose();
   if (!pos || !text || term.hasSelection()) return;
-  const trimmed = Math.max(0, lengthBefore - ((term.options.scrollback ?? 1000) + term.rows));
   if (pos.start.y < trimmed) return;
   restoreSelectionRange(
     term,
