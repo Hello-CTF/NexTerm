@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement, StrictMode } from "react";
+import { act, createElement, StrictMode, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
   flush,
@@ -12,13 +13,14 @@ import {
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  snippetList: vi.fn(),
   addTab: vi.fn(),
   setSessions: vi.fn(),
   toast: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  assetApi: { list: mocks.list },
+  assetApi: { list: mocks.list, snippetList: mocks.snippetList },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
@@ -28,6 +30,11 @@ vi.mock("../../ipc/commands", () => ({
 import { CommandPalette } from "../../app/CommandPalette";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useUi } from "../../app/store";
+
+function mountPalette(node: ReactNode): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(createElement(QueryClientProvider, { client }, node));
+}
 
 function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
@@ -79,6 +86,7 @@ describe("menu and command palette accessibility", () => {
     document.body.style.overflow = "";
     uninstallLayoutRects = installLayoutRects();
     mocks.list.mockResolvedValue([]);
+    mocks.snippetList.mockResolvedValue([]);
     useUi.setState({
       sessions: [],
       addTab: mocks.addTab,
@@ -100,7 +108,7 @@ describe("menu and command palette accessibility", () => {
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();
     const onClose = vi.fn();
-    mounted = mount(createElement(CommandPalette, { onClose }));
+    mounted = mountPalette(createElement(CommandPalette, { onClose }));
     await flush();
 
     const input = mounted.container.querySelector<HTMLInputElement>('[role="combobox"]');
@@ -149,7 +157,7 @@ describe("menu and command palette accessibility", () => {
   it("traps Tab and Shift+Tab on the combobox so focus matches the active option", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();
-    mounted = mount(createElement(CommandPalette, { onClose: vi.fn() }));
+    mounted = mountPalette(createElement(CommandPalette, { onClose: vi.fn() }));
     await flush();
 
     const input = mounted.container.querySelector<HTMLInputElement>('[role="combobox"]');
@@ -182,7 +190,7 @@ describe("menu and command palette accessibility", () => {
 
   it("surfaces deferred asset loading errors through an inline alert", async () => {
     mocks.list.mockRejectedValue(new Error("offline"));
-    mounted = mount(createElement(CommandPalette, { onClose: vi.fn() }));
+    mounted = mountPalette(createElement(CommandPalette, { onClose: vi.fn() }));
 
     await flush();
     expect(mocks.list).toHaveBeenCalledOnce();
@@ -283,7 +291,7 @@ describe("menu and command palette accessibility", () => {
   it("restores the palette invoker after StrictMode effect replay", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();
-    mounted = mount(
+    mounted = mountPalette(
       createElement(
         StrictMode,
         null,

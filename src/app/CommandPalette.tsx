@@ -1,12 +1,21 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
 import { isMac } from "./platform";
-import { assetApi, dbApi, sessionApi } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
+import { insertSnippet, type Snippet } from "../features/explorer/snippetInsert";
+import { cloneAsset } from "../features/explorer/assetClone";
+import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import {
+  IconCommand,
+  IconCopy,
   IconDatabase,
+  IconEdit,
+  IconEye,
+  IconEyeOff,
   IconFolderOpen,
   IconHistory,
   IconMonitor,
@@ -26,18 +35,28 @@ interface Action {
   run: () => void;
 }
 
+function snippetHint(body: string): string {
+  const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return first.length > 36 ? `${first.slice(0, 36)}…` : first;
+}
+
 export function CommandPalette({
   onClose,
   onOpenFiles,
+  onEditAsset,
 }: {
   onClose: () => void;
   onOpenFiles?: () => void;
+  onEditAsset?: (asset: Asset) => void;
 }) {
+  const qc = useQueryClient();
   const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode } = useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
-  const [assets, setAssets] = useState<{ id: string; name: string; kind: string; host: string | null }[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [assetError, setAssetError] = useState("");
+  const { hiddenIds, showHidden } = useAssetVisibility();
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(false);
@@ -57,10 +76,39 @@ export function CommandPalette({
         if (mounted) setAssetError(`资产列表加载失败：${describeError(error)}`);
       },
     );
+    void assetApi.snippetList().then(
+      (result) => {
+        if (mounted) setSnippets(result);
+      },
+      (error) => {
+        if (mounted) setAssetError(`片段列表加载失败：${describeError(error)}`);
+      },
+    );
     return () => {
       mounted = false;
     };
   }, []);
+
+  const runClone = async (asset: Asset) => {
+    try {
+      const created = await cloneAsset(asset);
+      if (!created) return;
+      await qc.invalidateQueries({ queryKey: ["assets"] });
+      pushToast("success", `已克隆为「${created.name}」`);
+    } catch (e) {
+      pushToast("error", `克隆失败：${describeError(e)}`);
+    }
+  };
+
+  const hideAsset = (asset: Asset) => {
+    useAssetVisibility.getState().hide(asset.id);
+    pushToast("info", `已隐藏「${asset.name}」— 资产树眼睛按钮可找回`);
+  };
+
+  const unhideAsset = (asset: Asset) => {
+    useAssetVisibility.getState().unhide(asset.id);
+    pushToast("info", `已取消隐藏「${asset.name}」`);
+  };
 
   const actions = useMemo<Action[]>(() => {
     const list: Action[] = [
@@ -190,7 +238,9 @@ export function CommandPalette({
         },
       },
     ];
-    for (const asset of assets) {
+    const isHidden = (id: string) => hiddenIds.includes(id);
+    for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {
+      const hidden = isHidden(asset.id);
       list.push({
         id: `conn-${asset.id}`,
         label: `连接 ${asset.name}`,
@@ -198,9 +248,53 @@ export function CommandPalette({
         icon: assetIcon(asset.kind),
         run: () => void connectAsset(asset),
       });
+      list.push({
+        id: `edit-${asset.id}`,
+        label: `编辑资产 ${asset.name}`,
+        hint: "主机 / 端口 / 凭据",
+        icon: IconEdit,
+        run: () => onEditAsset?.(asset),
+      });
+      list.push({
+        id: `clone-${asset.id}`,
+        label: `克隆资产 ${asset.name}`,
+        hint: "共享凭据引用",
+        icon: IconCopy,
+        run: () => void runClone(asset),
+      });
+      list.push({
+        id: `${hidden ? "unhide" : "hide"}-${asset.id}`,
+        label: `${hidden ? "取消隐藏" : "隐藏"}资产 ${asset.name}`,
+        hint: hidden ? "恢复显示" : "仅界面隐藏",
+        icon: hidden ? IconEye : IconEyeOff,
+        run: () => (hidden ? unhideAsset(asset) : hideAsset(asset)),
+      });
+    }
+    for (const s of snippets) {
+      list.push({
+        id: `snippet-${s.id}`,
+        label: `插入片段 ${s.name}`,
+        hint: snippetHint(s.body),
+        icon: IconCommand,
+        run: () => void insertSnippet(s),
+      });
     }
     return list;
-  }, [assets, sessions, setSessions, addTab, pushToast, onOpenFiles, modHint, themeMode, setThemeMode]);
+  }, [
+    assets,
+    snippets,
+    hiddenIds,
+    showHidden,
+    sessions,
+    setSessions,
+    addTab,
+    pushToast,
+    onOpenFiles,
+    onEditAsset,
+    modHint,
+    themeMode,
+    setThemeMode,
+  ]);
 
   const filtered = actions.filter((action) =>
     `${action.label} ${action.hint ?? ""}`.toLowerCase().includes(query.toLowerCase()),

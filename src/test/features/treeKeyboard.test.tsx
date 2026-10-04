@@ -287,6 +287,7 @@ describe("AssetTree keyboard navigation", () => {
       "连接 web-1",
       "编辑 web-1",
       "删除 web-1",
+      "更多操作 web-1",
     ]);
     const headerButtons = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-icon-btn")];
     expect(headerButtons.every((b) => b.getAttribute("aria-label"))).toBe(true);

@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
@@ -73,6 +74,11 @@ function tabByText(list: HTMLElement, text: string): HTMLElement {
 
 let mounted: MountedView | undefined;
 
+function mountApp(): MountedView {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return mount(createElement(QueryClientProvider, { client }, createElement(App)));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -134,7 +140,7 @@ afterEach(() => {
 
 describe("workspace tab strip keyboard support", () => {
   it("exposes tablist/tab roles with aria-selected and roving tabindex", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const list = tablist(mounted.container, "工作区");
@@ -150,7 +156,7 @@ describe("workspace tab strip keyboard support", () => {
   });
 
   it("switches workspaces with ArrowRight/ArrowLeft/Home/End and moves focus", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const list = tablist(mounted.container, "工作区");
@@ -175,7 +181,7 @@ describe("workspace tab strip keyboard support", () => {
   });
 
   it("closes a workspace from a real, labeled button", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const list = tablist(mounted.container, "工作区");
@@ -189,7 +195,7 @@ describe("workspace tab strip keyboard support", () => {
 
 describe("pane tab strip keyboard support", () => {
   it("switches tabs with arrows and closes with a real, labeled button", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const list = tablist(mounted.container, "标签页");
@@ -211,7 +217,7 @@ describe("pane tab strip keyboard support", () => {
   });
 
   it("opens the tab context menu with Shift+F10 and closes it with Escape", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const list = tablist(mounted.container, "标签页");
@@ -230,7 +236,7 @@ describe("pane tab strip keyboard support", () => {
   });
 
   it("never swallows Enter pressed on the tab's own close button", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const list = tablist(mounted.container, "标签页");
@@ -250,7 +256,7 @@ describe("pane tab strip keyboard support", () => {
 
 describe("rail and toast accessibility", () => {
   it("labels every rail button and marks the active panel", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-rail button")];
@@ -263,7 +269,7 @@ describe("rail and toast accessibility", () => {
   });
 
   it("renders the success toast with semantic tokens instead of raw colors", async () => {
-    mounted = mount(createElement(App));
+    mounted = mountApp();
     await flush();
 
     act(() => {

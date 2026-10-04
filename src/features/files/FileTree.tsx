@@ -32,6 +32,7 @@ import {
   parentOf,
 } from "./pathUtils";
 import { useFileOps } from "./useFileOps";
+import { checkUploadOverwrite } from "./uploadConfirm";
 import {
   IconArchive,
   IconArrowUp,
@@ -232,8 +233,13 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     const file = await pickLocalFile();
     if (!file) return;
     const remote = joinPath(targetDir(), baseName(file));
-    pushToast("info", "开始上传…");
     try {
+      const check = await checkUploadOverwrite(sessionId, targetDir(), remote);
+      if (check === "cancelled") {
+        pushToast("info", `已取消上传，${remote} 保持原样`);
+        return;
+      }
+      pushToast("info", "开始上传…");
       await fsApi.upload(sessionId, file, remote, false);
       refresh();
       pushToast("success", `已上传到 ${remote}`);

@@ -7,6 +7,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useUi,
   useActiveWorkspace,
@@ -41,7 +42,7 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import { layoutBootstrapped, startLayoutSync } from "./layout";
-import { assetApi, dbApi, sessionApi, vaultApi } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, vaultApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
 import {
@@ -57,7 +58,7 @@ import {
   toggleMaximiseWindow,
 } from "../ipc/wails";
 import { mountUnavailableReason } from "./capabilities";
-import { AssetTree } from "../features/explorer/AssetTree";
+import { AssetTree, AssetEditor } from "../features/explorer/AssetTree";
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
 import { FileBrowser } from "../features/files/FileBrowser";
@@ -362,6 +363,8 @@ export default function App() {
   const activeTabId = pane?.activeTabId ?? null;
 
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
+  const queryClient = useQueryClient();
   const [vaultStatus, setVaultStatus] = useState<string>("…");
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
   const viewport = useWorkspaceViewport();
@@ -1212,7 +1215,23 @@ export default function App() {
       </div>
 
       {paletteOpen && (
-        <CommandPalette onClose={() => setPaletteOpen(false)} onOpenFiles={openFiles} />
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          onOpenFiles={openFiles}
+          onEditAsset={(asset) => setPaletteEditingAsset(asset)}
+        />
+      )}
+      {paletteEditingAsset && (
+        <AssetEditor
+          kind="asset"
+          initial={paletteEditingAsset}
+          onClose={() => setPaletteEditingAsset(null)}
+          onSaved={() => {
+            setPaletteEditingAsset(null);
+            void queryClient.invalidateQueries({ queryKey: ["assets"] });
+            void queryClient.invalidateQueries({ queryKey: ["credentials"] });
+          }}
+        />
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <PromptModal />
