@@ -154,7 +154,6 @@ def main() -> int:
         assert bridge.get("when") == ["/__lazycat_file_bridge/*"], bridge.get("when")
         bridge_src = (bridge.get("do") or [{}])[0].get("src")
         assert isinstance(bridge_src, str) and "ctx.proxy.to" in bridge_src, "桥接脚本不完整"
-        # `bridgePrefix` 与 browser 侧 `params.fileBridgeRoot` 必须同一个字面量。
         m = re.search(r'bridgePrefix\s*=\s*"([^"]+)"', bridge_src)
         assert m, "桥接脚本里找不到 bridgePrefix"
         bridge_prefix = m.group(1)
@@ -178,10 +177,8 @@ def main() -> int:
         print(f"    {CHOOSER_ID}: on=browser, fileBridgeRoot 与 bridgePrefix 一致")
         chooser_uri = uri
 
-    # ── 包内路径：manifest 引的路径 == build-server.sh 拷贝的落点 == 仓库里的源文件 ──
     print("== 包内路径一致性 ==")
     rel = chooser_uri[len(CONTENT_PREFIX):]
-    # manifest 用 content 视角的目录名（`lazycat-injects/`），仓库里叫 `injects/`。
     repo_rel = rel.replace("lazycat-injects/", "injects/", 1)
     sh = BUILD_SH.read_text(encoding="utf-8")
     assert re.search(

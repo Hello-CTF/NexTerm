@@ -1,23 +1,14 @@
-// 程序化生成 1024x1024 PNG —— 注意：这是**旧版像素 "N" 占位图**的生成器，
-// 不是当前线上图标的来源。现行应用图标是霓虹猫娘栅格画（带辉光/渐变），
-// 无法用代码复现；其 1024 母版维护在 `public/brand/nexterm-icon-1024.png`，
-// 安装包图标 `public/brand/icon.icns` / `public/brand/icon.ico` 由它导出。
-// 不带参数运行会用像素 "N" **覆盖**现有母版，仅在确定要换这套占位图时才跑。
-// 用法：node scripts/gen_icon.js <output.png>
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
 
 const W = 1024;
 const H = 1024;
 
-// 背景：深蓝渐变 + 白色 "N" 字形（简单像素化路径）
 function pixel(x, y) {
-  // 渐变背景 #1e2a4a → #0d1117
   const t = y / H;
   let r = Math.round(0x1e + (0x0d - 0x1e) * t);
   let g = Math.round(0x2a + (0x11 - 0x2a) * t);
   let b = Math.round(0x4a + (0x17 - 0x4a) * t);
-  // 圆角矩形遮罩
   const m = 64;
   const inCorner =
     (x < m && y < m && (x - m) ** 2 + (y - m) ** 2 > m * m) ||
@@ -25,18 +16,15 @@ function pixel(x, y) {
     (x < m && y > H - m && (x - m) ** 2 + (y - (H - m)) ** 2 > m * m) ||
     (x > W - m && y > H - m && (x - (W - m)) ** 2 + (y - (H - m)) ** 2 > m * m);
   if (inCorner) return [0, 0, 0, 0];
-  // "N"：两条竖线 + 对角线（居中）
   const cx = x - W / 2;
   const cy = y - H / 2;
-  const half = 300; // 半宽
+  const half = 300;
   const stroke = 96;
   const inLeft = cx >= -half && cx <= -half + stroke && Math.abs(cy) <= half;
   const inRight = cx >= half - stroke && cx <= half && Math.abs(cy) <= half;
-  // 对角线：从左下到右上
   const diagX = -half + ((cy + half) / (2 * half)) * (2 * half - stroke);
   const inDiag = Math.abs(cx - diagX) <= stroke / 2 + 20 && Math.abs(cy) <= half;
   if (inLeft || inRight || inDiag) {
-    // 白色带一点蓝调
     return [0xf0, 0xf4, 0xff, 255];
   }
   return [r, g, b, 255];
@@ -45,7 +33,7 @@ function pixel(x, y) {
 const raw = Buffer.alloc(H * (1 + W * 4));
 let off = 0;
 for (let y = 0; y < H; y++) {
-  raw[off++] = 0; // filter: none
+  raw[off++] = 0;
   for (let x = 0; x < W; x++) {
     const [r, g, b, a] = pixel(x, y);
     raw[off++] = r;
@@ -65,7 +53,6 @@ function chunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crc]);
 }
 
-// PNG CRC32
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -84,8 +71,8 @@ function crc32(buf) {
 const ihdr = Buffer.alloc(13);
 ihdr.writeUInt32BE(W, 0);
 ihdr.writeUInt32BE(H, 4);
-ihdr[8] = 8; // bit depth
-ihdr[9] = 6; // RGBA
+ihdr[8] = 8;
+ihdr[9] = 6;
 const png = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   chunk("IHDR", ihdr),

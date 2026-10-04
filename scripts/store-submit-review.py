@@ -39,9 +39,6 @@ PKG = "cloud.lazycat.app.nexterm"
 API = "https://appstore.api.lazycat.cloud/api/v3/developer"
 TOKEN_FILE = os.path.expanduser("~/.config/lazycat/box-config.json")
 
-# ------------------------------------------------------------------ 商店文案
-# `brief` 必填（控制台表单上有红星）。`keywords` 用英文逗号分隔。
-# `source` 的 label 是「项目移植来源 URL 地址」—— 本项目为原创，留空。
 LANGUAGES = [
     {
         "language": "zh",
@@ -102,8 +99,6 @@ Configuration and credentials live in /lzcapp/var and survive app upgrades.""",
 ]
 
 DEFAULT_CHANGELOG = {
-    # 商店上一版是 0.1.3（review.id 19682，2026-09-30），所以这次是 0.2.0 的更新说明，
-    # **不是**「首个版本」——写错会让审核看到一份与版本号不符的 changelog。
     "zh": "v0.2.0：新增服务端形态——把 NexTerm 部署到一台常开的机器，浏览器打开就是完整工作台。终端进程、会话与工作区布局都留在服务端，关掉网页不会中断，换台设备接着用；同一时刻只有一台设备能操作，其余设备观看。同时新增桌面与服务端之间的资产同步（含凭据）。懒猫版不提供端口转发，请改用微服平台自带的转发功能。",
     "en": "v0.2.0: adds the server form — deploy NexTerm on an always-on machine and open it in a browser as a complete workspace. Terminal processes, sessions and workspace layout stay on the server, so closing the page does not interrupt them and another device picks up where you left off; only one device types at a time while the others watch. Also adds asset sync between desktop and server, credentials included. The LazyCat build does not provide port forwarding — use the platform's own forwarding instead.",
 }
@@ -172,7 +167,6 @@ def build_body(up: dict, shots: list[str], changelog: dict) -> dict:
         "image_size": up.get("imageSize") or 0,
         "changelogs": changelog,
     }
-    # 刻意不带 submit_channel：本端点会回 400（见模块 docstring 第 3 条）。
     return {"infos": infos, "version": version}
 
 

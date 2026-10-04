@@ -1,23 +1,3 @@
-# NexTerm 运行结构（懒猫微服 LPK v2）。
-#
-# 静态元数据（name / description / locales / permissions）在 package.yml，不在这里。
-#
-# # 为什么服务端必须写成 services 而不是 application.image
-#
-# `application.image` 指定的是 **`app` 容器**的镜像，而 `app` 容器的主进程永远是
-# 平台注入的 `lzcinit`（`/lzcinit/<appid> -listen :80 -grpc_listen :81`）：
-# 平台会**覆盖掉镜像的 ENTRYPOINT**，`docker inspect` 里 `Entrypoint=None`、
-# `Cmd=["/lzcinit/<appid>", ...]`。也就是说镜像自己的 entrypoint 在 `app` 容器里
-# **从来不会被执行** —— 实测的表现是：容器 Up、路由已注册，但 8080 无人监听，
-# 健康检查一直 `connection refused`，应用状态卡在 `Status_Error`。
-#
-# 正确写法（与官方已上架应用一致，例如 homebox）：
-#   工作负载放 `services.<name>`（容器跑镜像自己的 entrypoint），
-#   路由指到 `http://<service>.<package>.lzcapp:<port>/`。
-#
-# `application.environment` / `workdir` / `health_check` 描述的都是 **`app` 容器**，
-# 换到 services 之后这些字段要跟着搬家（见下）。
-
 usage: |
   首次进入请到「凭据」面板确认凭据库状态。
 
@@ -35,12 +15,6 @@ usage: |
   需要把远端端口开放给外部时，请改用微服平台自带的转发功能。
 
 application:
-  # 子域名：dev 与 release **必须分开**。
-  # 两个包 ID 不同（`...nexterm` 与 `...nexterm.dev`）但 `subdomain` 只有一份，
-  # 若同名，先装的那个会占住域名、后装的打不开或互相顶掉。
-  #
-  # `#@build` 是官方的打包期文本裁剪指令（`spec/build.md` §四），
-  # 按「本次用的是哪份构建配置」取舍文本：`project deploy` 读 dev 配置、`project release` 读主配置。
   #@build if profile=dev
   subdomain: nexterm-dev
   #@build else
@@ -48,88 +22,17 @@ application:
   #@build end
 
   routes:
-    # ⛔ 转发目标**直接写 compose 里的服务名**（短名）。这就是官方写法：
-    #   `getting-started/http-route-backend` 的示例是 `/inspect/=http://whoami:80/`，
-    #   其中 `whoami` 就是 `services` 下的 key。同一个 compose 网络里这个短名天然可解析。
-    #
-    # 曾经写成 `<service>.<package>.lzcapp` 这种全限定名（抄某个已上架应用的 manifest）。
-    # 那样**把包 ID 焊死进了这个文件**，而 dev 与 release 的包 ID 不同
-    # （dev 是 `cloud.lazycat.app.nexterm.dev`）⇒ 同一个文件必然只对其中一个正确。
-    # 实测踩到：release 包里的路由带着 `.dev`，装到别人盒子上会指向不存在的主机。
-    #
-    # 短名同时解决两个问题：dev / release 通用，且不必知道最终包 ID。
-    #
-    # `/=` 命中全部路径：/rpc、/ws/events、/ws/channel/{id}、/files/blob、/healthz 与静态资源都从这里进。
     - /=http://nexterm-server:8080/
 
-  # 独立鉴权：把**同步入口**从平台登录门里放出来。
-  #
-  # 背景（实测）：微服公网入口对任何请求一律 307 → `/sys/login`，**不认第三方头**
-  # （拿 `X-NexTerm-Sync-Token` 去请求，响应与不带逐字节相同）。所以桌面端想用
-  # 「服务端生成的同步令牌」连盒子，光有令牌是不够的 —— 请求**根本到不了容器**。
-  # 官方给的口子就是 `public_path`：`/advanced-public-api` 明写
-  # 「有部分应用有自身的独立鉴权机制，比如通过 url 中携带 token，则可以将此类
-  #   服务地址的强制鉴权关闭」。
-  #
-  # 为什么可以只放这一条：
-  #   · 放行的**只有** `/sync/rpc` 一条路径，页面、`/rpc`、`/healthz`、静态资源
-  #     与 `/ws/*` 全部照旧要过平台账密 —— 人类用浏览器打开这个应用，体验不变。
-  #   · `/sync/rpc` 自己**有独立鉴权**：服务端校验 `X-NexTerm-Sync-Token`
-  #     请求头（`internal/sync`，`crypto/subtle` 常量时间比较），不匹配即 401。
-  #     平台网关注入 `X-HC-User-ID` 头时视为平台已鉴权，直接放行。
-  #     所以「放行」放的是平台的账密，不是应用的门。
-  #   · 令牌 = 本实例的完全控制权，所以**绝不能**写成 `public_path: [/]`
-  #     （Gitea 那种把整个应用公开的写法在我们是危险的）。官方注意事项原文：
-  #     「请不要对外暴露敏感 API」。
-  #
-  # ✅ **实测生效（2026-10-01，含升级）** —— 这是桌面端能连上的前提：
-  #
-  #   POST /sync/rpc 不带任何平台凭证
-  #     · 配置前：307 → /sys/login（登录门）
-  #     · 配置后：401 + `{"error":{"message":"缺少同步令牌"}}`（请求到了容器）
-  #   换成真令牌后：200 + 业务数据。整条链只靠应用自己的令牌。
-  #
-  # ⚠️ 已知边界（每次动这里都要复核）：
-  #   1. 官方明写「`public_path` 仅是关闭微服的 http 账号密码鉴权，访问时**依旧
-  #      需要登录微服客户端建立虚拟网络**」⇒ 换一台没登懒猫客户端的机器仍然连不上。
-  #      桌面端与浏览器版都跑在同一台机器上，这条对我们无害。
-  #   2. 曾有一条错误结论说「升级不生效」（手工往包里插 `public_path` 后仍 307）。
-  #      真因是那次用 `debug.bridge install` 装的包 —— **那条路不更新平台侧的应用
-  #      配置**。走正常 `lzc-cli project deploy` 的升级是生效的（上面那组响应就是
-  #      升级后测的）。⇒ 升级与全新安装都能用。
   public_path:
     - /sync/rpc
 
-  # 平台注入：文件选择器接入。
-  #
-  # 《社区激励规则》§8 warning 原文（developer.lazycat.cloud/store-rule.md）：
-  #   如果应用有上传/下载功能，需要接入懒猫网盘的自动拦截文件选择器，未接入无法在懒猫商店上架。
-  # NexTerm 有上传/下载（浏览器原生文件入口 + 服务端 `/files/blob` 暂存），必然命中。
-  #
-  # ⚠️ 两条 inject **缺一不可**，官方专门警告过「不要只复制 browser inject」：
-  #
-  #   · open-save-chooser：把浏览器**原生文件入口**换成带「网盘文件 / 本地文件」
-  #     两个页签的统一窗口。它拦的是 `showOpenFilePicker()` / `<input type="file">` 的
-  #     `click()` / `showSaveFilePicker()` / 带 `download` 的 blob: 锚点 ——
-  #     所以前端必须真的走原生 API（见 `src/ipc/webFiles.ts` 的文件头），
-  #     **自绘一个选择窗口是拦不到的**。
-  #
-  #   · lazycat-file-bridge：同源桥接。选择器返回的 `webdavUrl` 在
-  #     `file.<微服域名>` 下，与应用不同源，浏览器的跨域规则会挡下来；
-  #     缺少它时**自己的目录**靠 diskRoot 还能转，但**他人的共享目录**
-  #     会因拿不到选择器返回的 `owner` 而落到错误的文件根。
-  #
-  # 脚本本体随包提供（`file://` 指包内容，平台读包内文件后注入，没有网络取远端 URL）：
-  # `lazycat/injects/lzc-file-chooser-inject.js`，由 `image/build-server.sh` 拷进内容目录。
-  # 来源、版本与 sha256 记在 `lazycat/injects/README.md`。
   injects:
     - id: lazycat-file-bridge
       on: request
       when:
         - /__lazycat_file_bridge/*
       do:
-        # 只接受 GET / HEAD / PUT，且目标域名**只能**由当前应用域名推导 ——
-        # 这就是把它做成固定前缀 + 固定换域名、而不是通用反代的理由。
         - src: |
             const bridgePrefix = "/__lazycat_file_bridge";
             const requestHost = String(ctx.request.host || "")
@@ -172,67 +75,17 @@ application:
         - /*
       do:
         - src: file:///lzcapp/pkg/content/lazycat-injects/lzc-file-chooser-inject.js
-          # 这三个值都与脚本默认值相同，写出来是为了让「桥接路径」这条耦合可见：
-          # `fileBridgeRoot` **必须**与上面 request inject 里的 `bridgePrefix` 字面一致，
-          # 否则选择他人共享目录时请求会打偏（官方文档的常见错误第一条就是这个）。
-          # 其余参数（`locale` / `text` / `hooks`）保持默认即可。
           params:
-            # 懒猫网盘在当前站点下的文件根路径（脚本默认值）。
             diskRoot: /_lzc/files/home
             fileBridgeRoot: /__lazycat_file_bridge
-            # 判不出类型时的兜底 MIME（脚本默认值）。
             fallbackMime: application/octet-stream
-
-  # ⛔ 刻意**不声明** `ingress`（四层 TCP/UDP 转发）—— 这是决策，不是漏了。
-  #
-  # 平台原生支持把容器端口暴露到公网（`application.ingress`），但它的访问形式是**裸 TCP**，
-  # 且官方原文写明「微服系统仅能提供底层虚拟网络的保护，从原理上无法提供鉴权流程」——
-  # 也就是说平台上没有任何一层能替这个应用做鉴权，端口一旦声明就等于把完整控制权挂出去。
-  # 所以本应用在懒猫上**关闭**端口转发功能（界面禁用 + 内核拒绝，见 `NEXTERM_PLATFORM`）。
-  #
-  # ⚠️ 给后来的人：**别顺手加 `ingress`**。平台的 L4 规则集是「只增不减」的 ——
-  # 声明过的 `publish_port` 只能改指、无法收回（删声明、`lpk install`、`project deploy`
-  # 全都撤不掉，已逐条实测）。完整机制与收尾手法见 skill `lzc-l4-ingress`。
-  #
-  # 「想从外部连内网服务」在这台微服上请走微服自己的转发功能，或改用 SSH 隧道。
-
-  # 刻意**不设** health_check：
-  # `test_url` 只在 application 字段下生效、且探测的仍是 `app` 容器内部；
-  # 而文档明确写着替换 health_check 会丢掉「系统默认注入的自动依赖检测」。
-  # 保持默认，服务本身的存活由上面这条路由的自动健康检测覆盖。
-
-  # 刻意**不设** run_as：它要求 lzcos v1.6.0+，而本应用真正需要的新版本能力
-  # （fuse.mount 注入 fusermount3）已经是 optional 的。默认 root 在容器内足够，
-  # 且少一条版本门槛 = 少一类「装不上」。
 
 services:
   nexterm-server:
-    # 镜像由 lzc-build.yml 的 images.nexterm-server 构建，这里按 alias 引用。
-    # 镜像自带 `WORKDIR /lzcapp/var` 与 `ENTRYPOINT ["/usr/local/bin/nexterm-server"]`，
-    # 所以这里不写 command/entrypoint。
     image: embed:nexterm-server
-
-    # 端口与进程内默认值一致，写出来是为了**在容器里一眼能看见**，
-    # 改端口时不必去翻 Go 源码。
-    #
-    # 刻意**不设日志级别环境变量**：服务端日志是固定 info 级的 slog
-    # （stderr + 数据目录 logs/nexterm.log），没有运行期级别开关。
     environment:
-      # 凭据库根密钥。`stable_secret` 在「同一微服 + 同一应用」内稳定，
-      # 且**不需要用户交互** —— 这是浏览器版能直接拿到解锁态凭据库的唯一干净做法。
-      # 换应用 ID 或换微服都会变成另一个值（等于重新初始化凭据库）。
       - NEXTERM_MASTER_KEY={{ stable_secret "vault_master" }}
-      # /lzcapp/var 是 LPK 规范里**唯一保证跨升级保留**的路径
-      # （实测挂载为按应用隔离的 btrfs 子卷 /appvar/<package>）。
       - NEXTERM_DATA_DIR=/lzcapp/var/nexterm
-      # contentdir 的内容对所有容器以只读方式挂在 /lzcapp/pkg/content。
       - NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web
       - NEXTERM_LISTEN=0.0.0.0:8080
-      # ⚠️ 平台标识：应用据此把「端口转发」判为**不可用**（界面禁用 + 内核拒绝）。
-      #
-      # 为什么要在 manifest 里显式写、而不是让应用去猜（比如探 `/lzcapp` 在不在）：
-      # 「这个平台允不允许把端口暴露出去」是**部署决策**，不是环境巧合。
-      # 写在这里，改平台时改一行，且一眼能看出这份部署的立场。
-      #
-      # 取值目前只有 `lazycat` 有意义；不设 = 非懒猫（自建服务端），转发可用。
       - NEXTERM_PLATFORM=lazycat

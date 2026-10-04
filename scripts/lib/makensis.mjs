@@ -1,50 +1,12 @@
-/**
- * Deterministic makensis discovery for the Windows desktop package step.
- *
- * Release run 37149307116: `choco install nsis --version=3.11` succeeded on
- * both Windows runner families, but the windows-latest job failed with
- * `makensis: spawnSync makensis ENOENT`. The nsis.install package runs the
- * official NSIS setup, which deploys makensis.exe to
- * `C:\Program Files (x86)\NSIS`, creates no `C:\ProgramData\chocolatey\bin`
- * shim, and writes no PATH entry of any kind (the v3.11 installer script
- * contains no Environment writes) — so a mid-job install leaves the running
- * job's PATH without any NSIS directory. The windows-11-arm job passed by
- * image luck: the runner image build adds `C:\Program Files (x86)\NSIS\` to
- * the machine PATH itself (runner-images Install-NSIS.ps1,
- * Add-MachinePathItem) and preinstalls NSIS 3.10, so the directory was
- * already on PATH before the job began.
- *
- * Resolution order (first hit wins; every root comes from the environment,
- * so nothing here is tied to one runner family's accidental layout):
- *   1. makensis.exe on PATH — ordinary installs whose PATH is fresh, and
- *      images that preinstall NSIS.
- *   2. %ProgramFiles(x86)%\NSIS\makensis.exe — the NSIS setup default on
- *      every Windows family, x64 and ARM64 alike (makensis is a 32-bit x86
- *      binary). This is where Chocolatey nsis.install deploys it.
- *   3. %ProgramFiles%\NSIS\makensis.exe — the native-program-files variant.
- *   4. %ChocolateyInstall%\bin\makensis.exe — the shim directory, should a
- *      package or an admin ever create a makensis shim there.
- *
- * Every input is injectable so the Windows branches run as unit tests on
- * POSIX hosts, mirroring scripts/lib/spawn-spec.mjs.
- */
-
 import fs from "node:fs";
 import path from "node:path";
 
-// Chocolatey's documented default; used only when ChocolateyInstall is unset.
 const DEFAULT_CHOCOLATEY_INSTALL = "C:\\ProgramData\\chocolatey";
 
 function windowsPathValue(env) {
   return env.PATH ?? env.Path ?? env.path ?? "";
 }
 
-/**
- * Resolve the makensis executable for a Windows environment.
- * Returns { command, source }; throws an Error listing every probed
- * location when nothing is found, so a broken CI image fails with the
- * searched paths instead of a bare ENOENT.
- */
 export function resolveMakensis(options = {}) {
   const { env = process.env, existsSync = fs.existsSync } = options;
   const pathImpl = options.pathImpl ?? path.win32;

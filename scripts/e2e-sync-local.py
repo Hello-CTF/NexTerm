@@ -300,7 +300,6 @@ def main() -> int:
     (work / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Go sync acceptance: {len(PASSED)}/{total} passed; logs and report: {work}")
     if succeeded and not arguments.keep:
-        # Keep report.json/logs as CI evidence; only synthetic database directories are removed.
         for name in ("a", "b"):
             shutil.rmtree(work / name, ignore_errors=True)
     return 0 if succeeded else 1

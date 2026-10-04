@@ -1,12 +1,3 @@
-/**
- * Executable tests for the deterministic spawn-spec resolver used by
- * scripts/build.mjs. Run with: node --test scripts/lib/
- *
- * The Windows branches are pure functions over injected platform/env/fs, so
- * they run on any host; two tests additionally execute the resolved specs
- * through the real spawnSync to prove the mechanism end to end.
- */
-
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -22,7 +13,6 @@ import {
 
 const NODE = process.execPath;
 
-/** Case-insensitive existsSync stub mirroring Windows file semantics. */
 function fakeWindowsFs(existingPaths) {
   const existing = new Set(existingPaths.map((entry) => entry.toLowerCase()));
   return (candidate) => existing.has(String(candidate).toLowerCase());
@@ -66,8 +56,6 @@ test("win32 pnpm prefers npm_execpath when the harness runs under a pnpm script"
 });
 
 test("win32 npm_execpath pointing at npm-cli.js is ignored and PATH shim resolution wins", () => {
-  // `npm run build:app` sets npm_execpath to npm's own CLI; executing it as
-  // "pnpm" would silently run npx semantics instead of pnpm exec.
   const binDir = "C:\\Users\\runneradmin\\setup-pnpm\\node_modules\\.bin";
   const sibling = "C:\\Users\\runneradmin\\setup-pnpm\\node_modules\\pnpm\\bin\\pnpm.cjs";
   const npmCli = "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js";
@@ -112,10 +100,10 @@ test("win32 a foreign npm_execpath with no PATH shim passes through instead of e
 test("win32 npm_execpath guard rejects lookalike entries outside pnpm-owned directories", () => {
   const binDir = "C:\\tools";
   for (const lookalike of [
-    "C:\\tools\\pnpm.js", // right basename, wrong location
-    "C:\\tools\\pnpm\\bin\\pnpx.cjs", // pnpx is not the pnpm CLI
-    "C:\\tools\\notpnpm\\bin\\pnpm.cjs", // wrong package directory name
-    "C:\\tools\\pnpm\\scripts\\pnpm.cjs", // not the bin directory
+    "C:\\tools\\pnpm.js",
+    "C:\\tools\\pnpm\\bin\\pnpx.cjs",
+    "C:\\tools\\notpnpm\\bin\\pnpm.cjs",
+    "C:\\tools\\pnpm\\scripts\\pnpm.cjs",
   ]) {
     const spec = resolveSpawnSpec("pnpm", ["--version"], {
       platform: "win32",
@@ -144,7 +132,6 @@ test("win32 resolves the pnpm/action-setup shim to its sibling JS entry without 
     platform: "win32",
     env: { PATH: `${binDir};C:\\Windows\\system32` },
     execPath: "C:\\Program Files\\nodejs\\node.exe",
-    // Shim exists on disk as pnpm.CMD; Windows file lookup is case-insensitive.
     existsSync: fakeWindowsFs([`${binDir}\\pnpm.CMD`, entry]),
   });
   assert.deepEqual(spec, {
@@ -239,8 +226,6 @@ test("win32 shim without a sibling JS entry falls back to a verbatim quoted cmd.
   });
   assert.equal(spec.command, "C:\\Windows\\system32\\cmd.exe");
   assert.deepEqual(spec.args.slice(0, 3), ["/d", "/s", "/c"]);
-  // cmd.exe /s strips exactly the outer quote pair, leaving the deterministically
-  // quoted command line: "<shim>" exec tsc -p tsconfig.json --noEmit
   assert.equal(
     spec.args[3],
     '""C:\\Program Files\\nodejs\\pnpm.cmd" exec tsc -p tsconfig.json --noEmit"',
@@ -304,8 +289,6 @@ test("the resolved node+JS-entry spec executes for real and forwards arguments v
     env: { PATH: binDir },
     execPath: NODE,
     existsSync: fs.existsSync,
-    // POSIX join keeps the fixture paths spawnable on this host; the resolver
-    // uses path.win32 by default on a real Windows machine.
     pathImpl: path.posix,
   });
   assert.equal(spec.command, NODE);

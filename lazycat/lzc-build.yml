@@ -1,49 +1,15 @@
-# LPK 构建配置（懒猫微服）。
-#
-# 路径一律相对**本文件所在目录**（lazycat/），所以 `pkgout: ./` 的结果是
-# `lazycat/app.lpk`，不会掉到仓库根上去。
-
-# 打包前执行：产出 Linux 服务端二进制 + 前端 dist。
-#
-# 二进制由共享交付入口 `node scripts/build.mjs server --release --os=linux
-# --arch=<amd64|arm64>` 产出：Go 工具链内建交叉编译，CGO_ENABLED=0 静态 ELF，
-# **不需要容器、qemu 或交叉 gcc**。
-# 完整取舍见 `image/build-server.sh` 文件头。
 buildscript: bash ./image/build-server.sh
 
 manifest: ./lzc-manifest.yml
 
-# 打进 LPK 的内容，运行时只读挂在 /lzcapp/pkg/content。
-# 前端就放在这里 → 服务端 NEXTERM_WEB_ROOT 指向它。
 contentdir: ./content
 
-# 服务端镜像。构建器会沿父镜像链找 upstream-match；本项目的基线
-# `debian:bookworm-slim` **必须先推到官方 registry**，否则整个基础层会被全量内嵌进 LPK。
-#   lzc-cli appstore copy-image debian:bookworm-slim
 images:
   nexterm-server:
     context: ./image
     dockerfile: ./image/Dockerfile
-
-    # `remote` = 丢给**盒子侧**构建（官方默认）；`local` = 用本机 docker daemon。
-    #
-    # 必须用 `remote`，因为 `upstream-match` 只能在这一侧成立：
-    #
-    # - `Dockerfile` 的 `FROM` 指向 `registry.lazycat.cloud/...`（官方源）。
-    # - 那个源**只有微服自己有凭证**：本机拿社区账号做 HTTP Basic 一律 401
-    #   （手机号 / username / 商店 token 三种组合都试过；registry 的挑战就是
-    #   `www-authenticate: Basic realm="Registry Realm"`）。官方文档也写着
-    #   「registry.lazycat.cloud 仅供微服内部使用」。
-    # - `lzc-cli` 的 local builder 要靠 `docker image inspect <FROM 的字面引用>`
-    #   读它的 `RepoDigests` 去匹配前缀（`lpk_build_images_local.js` 的
-    #   `deriveLocalUpstreamFromDockerfile`）⇒ 本机拉不到该镜像，**匹配必然失败**，
-    #   结果是整个基线层被全量内嵌（实测 LPK 42.90 MiB，其中基线占 26.93 MiB）。
-    #
-    # ⚠️ 曾经为了绕开「盒子侧无 DNS」而改成 `local` —— 那个判断在改 `FROM` 之前是对的，
-    # 现在不成立了：盒子侧要连的是它**自己的**官方源，不再需要访问 Docker Hub。
     builder: remote
 
-# 产物落点：lazycat/app.lpk（`.gitignore` 已收 *.lpk）。
 pkgout: ./
 
 icon: ./lzc-icon.png

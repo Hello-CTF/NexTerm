@@ -27,10 +27,6 @@ const reportIDs = new Map([
     [`NexTerm-server_${version}_linux_${arch}.tar.gz`, `server-archive-full-linux-${arch}`],
   ]),
 ]);
-// Pass/fail comes from the artifact's own evidence: file integrity (sha256/size
-// vs report), target identity (id/version) and real content/static/cgo
-// assertions. Rust and custom-Go size comparisons are informational only
-// (user decision 2026-10-03) and never gate release.
 function gatesPassed(report) {
   return report.status === "passed"
     && Array.isArray(report.assertions)

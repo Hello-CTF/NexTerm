@@ -1,20 +1,3 @@
-# 开发态覆盖（形如 `lzc-cli project deploy -f ./lzc-build.dev.yml`）。
-
-# 只做一件事：换包 ID，避免开发态部署**覆盖 release 安装包**。
-# 同一个包 ID 反复 deploy，用户那边看到的就是「装一半变开发版」。
 package_override:
   package: cloud.lazycat.app.nexterm.dev
   name: NexTerm（开发版）
-
-# ⚠️ `contentdir` **刻意不写**。
-#
-# 官方模板的 dev 文件里写的是「留空」，注释也很明确：不写这一行 ≠ 不打包内容，
-# 而是继承 release 配置 —— 所以「以为留空了、其实把本地半成品打进去了」是真的会踩。
-#
-# 这里反过来：我们**就是要继承** `./content`。
-# 原因：官方 dev 流程靠 `injects`（request 分流）把前端交给本机 vite 提供，
-# 那条路需要真机联调才能确认，
-# 目前还没接。开发版若不带前端，打开就是 404 + 只有 RPC 能用，比带旧前端更难判断问题。
-#
-# 一旦接上 inject 分流，就在这里写 `contentdir:`（空值）并同步改 manifest 的
-# NEXTERM_WEB_ROOT —— 两处必须一起改。
