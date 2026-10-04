@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 )
 
-func helperEndpoint(stateDir string) string {
+func helperEndpoint(stateDir string) (string, error) {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s", os.Geteuid(), stateDir)))
-	return filepath.Join(os.TempDir(), fmt.Sprintf("nexterm-supervisor-%x", sum[:4]), fmt.Sprintf("supervisor-v%d.sock", ProtocolVersion))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("nexterm-sup-%x", sum[:8]), fmt.Sprintf("supervisor-v%d.sock", ProtocolVersion)), nil
 }
 
 func endpointPath(path string) string {

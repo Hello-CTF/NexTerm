@@ -20,7 +20,7 @@ import (
 func TestIPCKillDuringBlockedInput(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -74,7 +74,7 @@ func TestIPCKillDuringBlockedInput(t *testing.T) {
 func TestIPCRecordingErrorTerminatesStream(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -140,7 +140,7 @@ func TestIPCRecordingErrorUsesFatalFrame(t *testing.T) {
 	ctx := context.Background()
 
 	id := ids.New()
-	if _, err := NewClient(server.SocketPath()).Create(ctx, CreateOptions{
+	if _, err := testClient(t, server).Create(ctx, CreateOptions{
 		ID:      id,
 		Command: []string{"/bin/sh", "-c", `while true; do printf 'tick\n'; sleep 0.05; done`},
 		Env:     []string{"TERM=xterm-256color", "LC_ALL=C"},
@@ -149,7 +149,7 @@ func TestIPCRecordingErrorUsesFatalFrame(t *testing.T) {
 	}
 
 	conn := dialServer(t, server.SocketPath())
-	handshakeConn(t, conn)
+	handshakeConn(t, conn, supervisor.StateDir())
 	payload, err := marshalFrame(frameAttach, attachMsg{ID: id})
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +235,7 @@ func TestIPCConcurrentStaleSocketRecovery(t *testing.T) {
 	if _, err := os.Lstat(socketPath); err != nil {
 		t.Fatalf("live socket must not be deleted by losing starters: %v", err)
 	}
-	if _, err := NewClient(socketPath).List(ctx); err != nil {
+	if _, err := testClient(t, winner).List(ctx); err != nil {
 		t.Fatalf("winner must serve: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func TestProviderErrorTranslation(t *testing.T) {
 
 	providers := map[string]base.DurableProvider{
 		"embedded": NewProvider(supervisor),
-		"remote":   NewRemoteProvider(NewClient(server.SocketPath())),
+		"remote":   NewRemoteProvider(testClient(t, server)),
 	}
 	for name, provider := range providers {
 		t.Run(name, func(t *testing.T) {
@@ -299,7 +299,7 @@ func TestProviderErrorTranslation(t *testing.T) {
 func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	provider := NewRemoteProvider(NewClient(server.SocketPath()))
+	provider := NewRemoteProvider(testClient(t, server))
 
 	realAttach := remoteProviderAttach
 	t.Cleanup(func() { remoteProviderAttach = realAttach })
@@ -353,7 +353,7 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 func TestClientKillSessionControl(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()

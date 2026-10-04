@@ -25,6 +25,11 @@ func testSupervisor(t *testing.T) *Supervisor {
 	return supervisor
 }
 
+func testClient(t *testing.T, server *Server) *Client {
+	t.Helper()
+	return NewClient(server.SocketPath(), server.supervisor.StateDir())
+}
+
 func testScriptSession(t *testing.T, supervisor *Supervisor, script string) *Session {
 	t.Helper()
 	return testScriptSessionID(t, supervisor, ids.New(), script)

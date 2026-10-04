@@ -51,7 +51,7 @@ func TestProductionDesktopHelperSurvivesAppRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := supervisor.NewClient(endpoint)
+	client := supervisor.NewClient(endpoint, stateDir)
 	infos, err := client.List(context.Background())
 	if err != nil {
 		t.Fatalf("helper did not survive the app exit: %v", err)
@@ -109,7 +109,7 @@ func TestProductionDesktopHelperRestartReapsExitedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := supervisor.NewClient(endpoint)
+	client := supervisor.NewClient(endpoint, stateDir)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		infos, err := client.List(context.Background())

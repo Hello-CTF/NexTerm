@@ -63,7 +63,7 @@ func TestKillRejectsInvalidID(t *testing.T) {
 func TestIPCKillRejectsInvalidID(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 	victim := seedVictimDir(t, supervisor)
 
@@ -81,7 +81,7 @@ func TestIPCKillRejectsInvalidID(t *testing.T) {
 func TestRemoteProviderCreateDoesNotCompensateDefiniteFailures(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 	ctx := context.Background()
 
@@ -131,7 +131,7 @@ func TestRemoteProviderCreateDoesNotCompensateDefiniteFailures(t *testing.T) {
 func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
 	realCreate := remoteProviderCreate
@@ -211,7 +211,7 @@ func TestRemoteProviderCreateCompensatesOnlyOwnedSessions(t *testing.T) {
 func TestRemoteProviderCreateRejectsReplacedIncarnation(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
 	realAttach := remoteProviderAttach

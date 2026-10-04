@@ -11,5 +11,6 @@ var (
 	ErrClosed        = errors.New("supervisor session attachment closed")
 	ErrInvalidInput  = errors.New("invalid supervisor session input")
 	ErrProtocol      = errors.New("supervisor protocol violation")
+	ErrStateMismatch = errors.New("supervisor state mismatch")
 	ErrUnsupported   = errors.New("supervisor capability unsupported")
 )
