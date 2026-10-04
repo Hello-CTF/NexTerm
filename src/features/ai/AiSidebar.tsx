@@ -45,6 +45,7 @@ import {
   IconMonitor,
   IconPlay,
   IconPlus,
+  IconRefresh,
   IconShield,
   IconTrash,
   IconXCircle,
@@ -118,6 +119,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [atOpen, setAtOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<{ id: string; title: string; updatedAt: number }[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<"loading" | "error" | "ready">("ready");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const takeover = useUi((s) => s.takeover);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const follow = useConversationFollow(conv.items);
@@ -400,13 +403,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   };
 
   const loadConversations = async () => {
+    setHistoryStatus("loading");
+    setHistoryError(null);
     try {
       const list = await aiApi.conversationList();
       setConversations(
         list.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt })),
       );
+      setHistoryStatus("ready");
     } catch (e) {
-      pushToast("error", `读取历史会话失败：${describeError(e)}`);
+      setHistoryStatus("error");
+      setHistoryError(describeError(e));
     }
   };
 
@@ -644,7 +651,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
       {historyOpen && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-1.5">
-          {conversations.length === 0 ? (
+          {historyStatus === "loading" ? (
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">历史会话加载中…</div>
+          ) : historyStatus === "error" ? (
+            <div className="px-2 py-3 text-center">
+              <div className="nx-hint text-red-300">历史会话加载失败 · {historyError}</div>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
+                onClick={() => void loadConversations()}
+              >
+                <IconRefresh size={11} />
+                重试
+              </button>
+            </div>
+          ) : conversations.length === 0 ? (
             <div className="nx-hint px-2 py-3 text-center text-[11.5px]">还没有历史会话</div>
           ) : (
             conversations.map((c) => (
@@ -1006,6 +1026,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 ? "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
                 : "未连接会话（仍可全局提问）"
           }
+          aria-label="消息输入"
           value={input}
           rows={3}
           onChange={(e) => onInputChange(e.target.value)}
@@ -1214,7 +1235,7 @@ function ChatBubble({
       <div
         role="status"
         className={`flex items-center justify-center gap-1.5 py-0.5 text-[10.5px] ${
-          item.outcome === "canceled" ? "text-amber-300/70" : "text-neutral-600"
+          item.outcome === "canceled" ? "text-[var(--nx-fg-warning)]" : "text-neutral-600"
         }`}
       >
         {item.text}
@@ -1242,7 +1263,7 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   return (
     <div
       className={`flex items-center gap-1.5 text-[10.5px] ${
-        pending ? "text-amber-300/80" : "text-neutral-600"
+        pending ? "text-[var(--nx-fg-warning)]" : "text-neutral-600"
       }`}
       title={text}
     >
@@ -1352,7 +1373,7 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
         <DiffLines before={pv.before} after={pv.after} />
       </div>
       {card.reason ? (
-        <div className="mb-1.5 text-[10.5px] leading-relaxed text-amber-300/90">
+        <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
           {card.reason}
         </div>
       ) : null}

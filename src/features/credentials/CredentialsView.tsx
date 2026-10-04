@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { assetApi, vaultApi, type Asset, type Credential } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { kindMeta, formatTime } from "./meta";
+import { describeError } from "../../ui/errorText";
 import { IconCode, IconCopy, IconFile, IconRefresh } from "../../ui/icons";
 
 type ViewMode = "text" | "json";
@@ -24,6 +25,9 @@ export function CredentialsView({
 
   const list = assets.data ?? [];
   const credentials = creds.data ?? [];
+  const loading = assets.isLoading || creds.isLoading;
+  const failedError =
+    assets.isError && !assets.data ? assets.error : creds.isError && !creds.data ? creds.error : null;
 
   const text = useMemo(() => buildText(list, credentials), [list, credentials]);
   const json = useMemo(() => buildJson(list, credentials), [list, credentials]);
@@ -67,7 +71,9 @@ export function CredentialsView({
         </div>
         <div className="nx-spacer" />
         <span className="nx-hint hidden sm:inline">
-          {credentials.length} 条凭据 · {list.filter((a) => SSH_KINDS.has(a.kind)).length} 台可 SSH 主机
+          {loading
+            ? "加载中…"
+            : `${credentials.length} 条凭据 · ${list.filter((a) => SSH_KINDS.has(a.kind)).length} 台可 SSH 主机`}
         </span>
         <button className="nx-btn nx-btn-sm" title="重新读取" onClick={refresh}>
           <IconRefresh size={12} />
@@ -79,13 +85,25 @@ export function CredentialsView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto bg-neutral-950/40">
-        <pre className="nx-mono w-full whitespace-pre px-5 py-4 text-[12px] leading-[1.7]">
-          {view === "text" ? (
-            <ConfigLines text={text} />
-          ) : (
-            json.split("\n").map((line, i) => <JsonLine key={i} line={line} />)
-          )}
-        </pre>
+        {loading ? (
+          <div className="nx-hint p-5">凭据视图加载中…</div>
+        ) : failedError ? (
+          <div className="p-5">
+            <div className="nx-hint text-red-300">加载失败 · {describeError(failedError)}</div>
+            <button className="nx-btn nx-btn-ghost nx-btn-sm mt-2" onClick={refresh}>
+              <IconRefresh size={12} />
+              重试
+            </button>
+          </div>
+        ) : (
+          <pre className="nx-mono w-full whitespace-pre px-5 py-4 text-[12px] leading-[1.7]">
+            {view === "text" ? (
+              <ConfigLines text={text} />
+            ) : (
+              json.split("\n").map((line, i) => <JsonLine key={i} line={line} />)
+            )}
+          </pre>
+        )}
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-1.5 text-[11px] text-neutral-600">

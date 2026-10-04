@@ -6,7 +6,8 @@ import { openCredentialsTab, openCredentialsViewTab, useCredentialsTabId } from 
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
-import { IconCode, IconLock, IconPlus, IconSearch } from "../../ui/icons";
+import { describeError } from "../../ui/errorText";
+import { IconCode, IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
 
 export function CredentialsSidebar() {
   const { leftOpen, leftWidth } = useUi();
@@ -94,6 +95,7 @@ export function CredentialsSidebar() {
           <input
             className="nx-input nx-input-sm"
             placeholder="搜索凭据"
+            aria-label="搜索凭据"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -123,6 +125,21 @@ export function CredentialsSidebar() {
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {credentials.isLoading ? (
           <div className="nx-hint px-2 py-6 text-center">加载中…</div>
+        ) : credentials.isError && !credentials.data ? (
+          <div className="px-2 py-6 text-center">
+            <div className="nx-hint">
+              凭据列表加载失败
+              <br />
+              {describeError(credentials.error)}
+            </div>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm mt-2"
+              onClick={() => void credentials.refetch()}
+            >
+              <IconRefresh size={12} />
+              重试
+            </button>
+          </div>
         ) : list.length === 0 ? (
           <div className="nx-hint px-2 py-8 text-center">
             {all.length === 0 ? (
@@ -159,7 +176,7 @@ export function CredentialsSidebar() {
                     {c.usedBy.length > 0 ? (
                       `被 ${c.usedBy.length} 个资产使用`
                     ) : (
-                      <span className="text-amber-500/90">未使用</span>
+                      <span className="text-[var(--nx-fg-warning)]">未使用</span>
                     )}
                   </span>
                 </span>
@@ -173,7 +190,7 @@ export function CredentialsSidebar() {
         {all.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
             <span>{all.length} 条凭据</span>
-            {unused > 0 && <span className="text-amber-500/80">{unused} 条未被使用</span>}
+            {unused > 0 && <span className="text-[var(--nx-fg-warning)]">{unused} 条未被使用</span>}
             <div className="nx-spacer" />
             <span className="truncate">{protectionOn ? (locked ? "已锁定" : "已解锁") : "未启用密码保护"}</span>
           </div>

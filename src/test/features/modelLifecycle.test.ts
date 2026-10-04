@@ -142,8 +142,12 @@ describe("ModelManager fallback editing", () => {
   });
 
   function fallbackInput(): HTMLInputElement {
-    const input = view2!.container.querySelector('input[aria-label="回退模型"]');
-    if (!input) throw new Error("fallback input not found");
+    const label = [...view2!.container.querySelectorAll("label")].find((l) =>
+      l.textContent?.trim().startsWith("回退模型"),
+    );
+    const id = label?.htmlFor;
+    const input = id ? view2!.container.querySelector(`input[id="${id}"]`) : null;
+    if (!input) throw new Error("fallback input not found via its associated label");
     return input as HTMLInputElement;
   }
 

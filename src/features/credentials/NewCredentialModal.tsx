@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { assetApi, vaultApi, type CredentialSource } from "../../ipc/commands";
 import { pickKeyFile } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
+import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { KIND_META, NEW_KIND_ORDER } from "./meta";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "./keyStaging";
 
@@ -26,6 +27,16 @@ export function NewCredentialModal({
   const [pastedKey, setPastedKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const modalRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
+  const nameId = useId();
+  const valueId = useId();
+  const passphraseId = useId();
+  const layer = useOverlayFocus(true, modalRef, {
+    initialFocus: () => nameInputRef.current,
+  });
 
   const isKey = kind === "private_key";
   const inlinePicker = useInlineKeyPicker();
@@ -102,13 +113,31 @@ export function NewCredentialModal({
 
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal max-w-[440px]" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="nx-modal max-w-[440px]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (!layer.isTopmost()) return;
+          if (e.key === "Escape" && !e.repeat && !isImeKeyEvent(e)) {
+            e.preventDefault();
+            onClose();
+            return;
+          }
+          trapOverlayTab(e, modalRef.current);
+        }}
+      >
         <div className="nx-modal-header">
-          <span className="text-[13px] font-semibold text-neutral-100">新建凭据</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">新建凭据</span>
         </div>
         <div className="nx-modal-body">
           <div className="nx-form-row">
-            <label className="nx-label">类型</label>
+            <span className="nx-label">类型</span>
             <div className="grid grid-cols-3 gap-1.5">
               {NEW_KIND_ORDER.map((k) => {
                 const meta = KIND_META[k];
@@ -137,12 +166,13 @@ export function NewCredentialModal({
           </div>
 
           <div className="nx-form-row">
-            <label className="nx-label">名称</label>
+            <label className="nx-label" htmlFor={nameId}>名称</label>
             <input
+              id={nameId}
+              ref={nameInputRef}
               className="nx-input"
               value={name}
               placeholder="例如：db-prod"
-              autoFocus
               onChange={(e) => setName(e.target.value)}
             />
             <span className="nx-hint mt-1.5 block">名称只给你自己看，建议写成「用途-环境」。</span>
@@ -151,7 +181,7 @@ export function NewCredentialModal({
           {isKey ? (
             <>
               <div className="nx-form-row">
-                <label className="nx-label">私钥来源</label>
+                <span className="nx-label">私钥来源</span>
                 <div className="nx-segment mb-2">
                   <button
                     type="button"
@@ -177,6 +207,8 @@ export function NewCredentialModal({
                         value={keyFilePath}
                         onChange={(e) => setKeyFilePath(e.target.value)}
                         placeholder="C:\Users\you\.ssh\id_rsa"
+                        aria-label="私钥文件路径"
+                        autoComplete="off"
                       />
                       <button
                         type="button"
@@ -215,6 +247,8 @@ export function NewCredentialModal({
                           value={keyFilePath}
                           onChange={(e) => changeInlinePath(e.target.value)}
                           placeholder="选择私钥文件"
+                          aria-label="私钥文件路径"
+                          autoComplete="off"
                         />
                         <button
                           type="button"
@@ -234,6 +268,8 @@ export function NewCredentialModal({
                         placeholder={
                           "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"
                         }
+                        aria-label="私钥内容"
+                        autoComplete="off"
                       />
                     )}
                     <div className="nx-hint mt-1.5">
@@ -244,8 +280,9 @@ export function NewCredentialModal({
               </div>
 
               <div className="nx-form-row">
-                <label className="nx-label">私钥口令</label>
+                <label className="nx-label" htmlFor={passphraseId}>私钥口令</label>
                 <input
+                  id={passphraseId}
                   type="password"
                   className="nx-input font-mono"
                   value={passphrase}
@@ -260,8 +297,9 @@ export function NewCredentialModal({
             </>
           ) : (
             <div className="nx-form-row">
-              <label className="nx-label">值</label>
+              <label className="nx-label" htmlFor={valueId}>值</label>
               <input
+                id={valueId}
                 type="password"
                 className="nx-input"
                 value={value}

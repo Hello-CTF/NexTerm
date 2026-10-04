@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { forwardApi } from "../../ipc/commands";
@@ -32,6 +32,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const [targetHost, setTargetHost] = useState("127.0.0.1");
   const [targetPort, setTargetPort] = useState("3306");
   const [busy, setBusy] = useState(false);
+  const listenPortId = useId();
 
   const env = useQuery({
     queryKey: ["forwardEnv"],
@@ -150,6 +151,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const list = forwards.data ?? [];
   const localCount = list.filter((f) => f.kind !== "socks").length;
   const socksCount = list.length - localCount;
+  const forwardsFailed = forwards.isError && !forwards.data;
 
   return (
     <div className="nx-pane">
@@ -157,7 +159,9 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
         <IconNetwork size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">端口转发</span>
         <span className="nx-hint">
-          {localCount} 条转发 · {socksCount} 条 SOCKS5 · 5s 自动刷新
+          {forwards.data
+            ? `${localCount} 条转发 · ${socksCount} 条 SOCKS5 · 5s 自动刷新`
+            : "转发列表加载中"}
         </span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
@@ -178,7 +182,33 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
             </tr>
           </thead>
           <tbody>
-            {list.map((f) => {
+            {forwards.isPending ? (
+              <tr>
+                <td colSpan={5} className="nx-table-empty">
+                  转发列表加载中…
+                </td>
+              </tr>
+            ) : forwardsFailed ? (
+              <tr>
+                <td colSpan={5} className="nx-table-empty">
+                  <span className="text-red-300">转发列表加载失败 · {describeError(forwards.error)}</span>
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
+                    onClick={() => void forwards.refetch()}
+                  >
+                    <IconRefresh size={12} />
+                    重试
+                  </button>
+                </td>
+              </tr>
+            ) : list.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="nx-table-empty">
+                  还没有任何转发
+                </td>
+              </tr>
+            ) : (
+              list.map((f) => {
               const isSocks = f.kind === "socks";
               const label = `${listenHost}:${f.listenPort}`;
               return (
@@ -226,17 +256,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                   </td>
                 </tr>
               );
-            })}
-            {list.length === 0 && (
-              <tr>
-                <td colSpan={5} className="nx-table-empty">
-                  还没有任何转发
-                </td>
-              </tr>
+              })
             )}
           </tbody>
         </table>
       </div>
+
 
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         {unavailable ? (
@@ -273,14 +298,17 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-[11.5px] text-neutral-400">
+              <label className="text-[11.5px] text-neutral-400" htmlFor={listenPortId}>
                 {exposed ? "监听端口" : "本地端口"}
               </label>
               <input
+                id={listenPortId}
                 className="nx-input nx-input-sm w-[92px] font-mono"
                 value={listenPort}
                 onChange={(e) => setListenPort(e.target.value)}
                 placeholder={DEFAULT_PORT[kind]}
+                autoComplete="off"
+                inputMode="numeric"
               />
               {kind === "local" && (
                 <>
@@ -290,6 +318,8 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                     value={targetHost}
                     onChange={(e) => setTargetHost(e.target.value)}
                     placeholder="目标主机（相对远端解析，如 172.17.0.5 / db.internal）"
+                    aria-label="目标主机"
+                    autoComplete="off"
                   />
                   <span className="text-neutral-600">:</span>
                   <input
@@ -297,6 +327,9 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                     value={targetPort}
                     onChange={(e) => setTargetPort(e.target.value)}
                     placeholder="3306"
+                    aria-label="目标端口"
+                    autoComplete="off"
+                    inputMode="numeric"
                     onKeyDown={(e) => e.key === "Enter" && void create()}
                   />
                 </>

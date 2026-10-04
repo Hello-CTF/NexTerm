@@ -99,6 +99,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   };
 
   const list = mounts.data ?? [];
+  const mountsFailed = mounts.isError && !mounts.data;
 
   return (
     <div className="nx-pane">
@@ -124,7 +125,33 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             </tr>
           </thead>
           <tbody>
-            {list.map((m) => (
+            {mounts.isPending ? (
+              <tr>
+                <td colSpan={4} className="nx-table-empty">
+                  挂载列表加载中…
+                </td>
+              </tr>
+            ) : mountsFailed ? (
+              <tr>
+                <td colSpan={4} className="nx-table-empty">
+                  <span className="text-red-300">挂载列表加载失败 · {describeError(mounts.error)}</span>
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
+                    onClick={() => void mounts.refetch()}
+                  >
+                    <IconRefresh size={12} />
+                    重试
+                  </button>
+                </td>
+              </tr>
+            ) : list.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="nx-table-empty">
+                  本机当前没有映射盘
+                </td>
+              </tr>
+            ) : (
+              list.map((m) => (
               <tr key={`${m.localPoint}-${m.remote}`}>
                 <td className="nx-mono font-semibold text-neutral-100">{m.localPoint}</td>
                 <td className="nx-mono">{m.remote}</td>
@@ -141,13 +168,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
                   </button>
                 </td>
               </tr>
-            ))}
-            {list.length === 0 && (
-              <tr>
-                <td colSpan={4} className="nx-table-empty">
-                  本机当前没有映射盘
-                </td>
-              </tr>
+              ))
             )}
           </tbody>
         </table>
@@ -167,6 +188,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             value={localPoint}
             onChange={(e) => setLocalPoint(e.target.value)}
             placeholder="Z:"
+            aria-label="本地挂载点"
+            autoComplete="off"
           />
           <span className="text-neutral-600">→</span>
           <input
@@ -174,6 +197,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             value={remotePath}
             onChange={(e) => setRemotePath(e.target.value)}
             placeholder="\\10.0.0.8\share  或  user@host:/data"
+            aria-label="远端路径"
+            autoComplete="off"
             onKeyDown={(e) => e.key === "Enter" && void create()}
           />
           <input
@@ -181,6 +206,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="用户名（可选）"
+            aria-label="挂载用户名（可选）"
+            autoComplete="off"
           />
           <input
             type="password"
@@ -188,6 +215,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="密码（可选）"
+            aria-label="挂载密码（可选）"
+            autoComplete="off"
           />
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"

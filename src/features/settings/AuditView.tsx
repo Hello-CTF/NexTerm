@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { assetApi } from "../../ipc/commands";
+import { describeError } from "../../ui/errorText";
 import { IconHistory, IconRefresh } from "../../ui/icons";
 
 interface AuditEntry {
@@ -24,6 +25,7 @@ export function AuditView() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [source, setSource] = useState<"" | "user" | "ai">("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -42,6 +44,9 @@ export function AuditView() {
           durationMs: r.durationMs,
         })),
       );
+      setError(null);
+    } catch (e) {
+      setError(describeError(e));
     } finally {
       setLoading(false);
     }
@@ -59,8 +64,13 @@ export function AuditView() {
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">审计日志</span>
         <span className="nx-hint">
-          共 {entries.length} 条 · AI 发起 {aiCount} 条
+          {error && entries.length === 0
+            ? "审计记录加载失败"
+            : `共 ${entries.length} 条 · AI 发起 ${aiCount} 条`}
         </span>
+        {error && entries.length > 0 && (
+          <span className="nx-hint text-red-300">刷新失败 · {error}</span>
+        )}
         <div className="nx-spacer" />
         <div className="nx-segment">
           {FILTERS.map((f) => (
@@ -122,13 +132,33 @@ export function AuditView() {
                 </td>
               </tr>
             ))}
-            {!loading && entries.length === 0 && (
+            {entries.length === 0 && loading ? (
+              <tr>
+                <td colSpan={6} className="nx-table-empty">
+                  审计记录加载中…
+                </td>
+              </tr>
+            ) : entries.length === 0 && error ? (
+              <tr>
+                <td colSpan={6} className="nx-table-empty">
+                  <span className="text-red-300">审计记录加载失败 · {error}</span>
+                  <button
+                    className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
+                    onClick={() => void load()}
+                    disabled={loading}
+                  >
+                    <IconRefresh size={12} />
+                    重试
+                  </button>
+                </td>
+              </tr>
+            ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
                   暂无记录 —— 连接主机、执行命令或让 AI 动手之后，这里会逐条记下来。
                 </td>
               </tr>
-            )}
+            ) : null}
           </tbody>
         </table>
       </div>

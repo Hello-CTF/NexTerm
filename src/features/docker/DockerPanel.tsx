@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from "../../ipc/commands";
@@ -30,6 +30,61 @@ interface LogAttach {
 
 function imageKey(i: ImageSummary): string {
   return `${i.id}|${i.repository}:${i.tag}`;
+}
+
+function TableQueryBody({
+  colSpan,
+  pending,
+  error,
+  errorPrefix,
+  onRetry,
+  emptyText,
+  isEmpty,
+  children,
+}: {
+  colSpan: number;
+  pending: boolean;
+  error: unknown;
+  errorPrefix: string;
+  onRetry: () => void;
+  emptyText: string;
+  isEmpty: boolean;
+  children: ReactNode;
+}) {
+  if (pending) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="nx-table-empty">
+          加载中…
+        </td>
+      </tr>
+    );
+  }
+  if (error) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="nx-table-empty">
+          <span className="text-red-300">
+            {errorPrefix}加载失败 · {describeError(error)}
+          </span>
+          <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
+            <IconRefresh size={12} />
+            重试
+          </button>
+        </td>
+      </tr>
+    );
+  }
+  if (isEmpty) {
+    return (
+      <tr>
+        <td colSpan={colSpan} className="nx-table-empty">
+          {emptyText}
+        </td>
+      </tr>
+    );
+  }
+  return <>{children}</>;
 }
 
 function imageRef(i: ImageSummary): string {
@@ -283,7 +338,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           >
             <IconBox size={12} />
             容器
-            <span className="nx-count">{cRows.length}</span>
+            <span className="nx-count">{containers.data ? cRows.length : "—"}</span>
           </button>
           <button
             className={`nx-segment-item ${tab === "images" ? "is-active" : ""}`}
@@ -291,11 +346,11 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           >
             <IconList size={12} />
             镜像
-            <span className="nx-count">{iRows.length}</span>
+            <span className="nx-count">{images.data ? iRows.length : "—"}</span>
           </button>
         </div>
         <span className="nx-hint">
-          {running} 运行中 / 共 {cRows.length}
+          {containers.data ? `${running} 运行中 / 共 ${cRows.length}` : "容器状态加载中"}
         </span>
         <div className="nx-spacer" />
         {picked.size > 0 && (
@@ -360,7 +415,16 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               </tr>
             </thead>
             <tbody>
-              {cRows.map((c) => (
+              <TableQueryBody
+                colSpan={6}
+                pending={containers.isPending}
+                error={containers.isError && !containers.data ? containers.error : null}
+                errorPrefix="容器列表"
+                onRetry={() => void containers.refetch()}
+                emptyText="这台主机上还没有容器"
+                isEmpty={cRows.length === 0}
+              >
+                {cRows.map((c) => (
                 <tr key={c.id} className={pending.has(c.id) ? "opacity-50" : undefined}>
                   <td>
                     <input
@@ -450,14 +514,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     </span>
                   </td>
                 </tr>
-              ))}
-              {cRows.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="nx-table-empty">
-                    这台主机上还没有容器
-                  </td>
-                </tr>
-              )}
+                ))}
+              </TableQueryBody>
             </tbody>
           </table>
         ) : (
@@ -485,7 +543,16 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               </tr>
             </thead>
             <tbody>
-              {iRows.map((i) => {
+              <TableQueryBody
+                colSpan={5}
+                pending={images.isPending}
+                error={images.isError && !images.data ? images.error : null}
+                errorPrefix="镜像列表"
+                onRetry={() => void images.refetch()}
+                emptyText="本机没有镜像"
+                isEmpty={iRows.length === 0}
+              >
+                {iRows.map((i) => {
                 const key = imageKey(i);
                 return (
                   <tr key={key} className={pending.has(key) ? "opacity-50" : undefined}>
@@ -517,14 +584,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     </td>
                   </tr>
                 );
-              })}
-              {iRows.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="nx-table-empty">
-                    本机没有镜像
-                  </td>
-                </tr>
-              )}
+                })}
+              </TableQueryBody>
             </tbody>
           </table>
         )}
@@ -612,6 +673,7 @@ function PullBar({ sessionId }: { sessionId: string }) {
         <input
           className="nx-input nx-input-sm font-mono"
           placeholder="拉取镜像，如 nginx:alpine"
+          aria-label="拉取镜像名称"
           value={image}
           onChange={(e) => setImage(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void pull()}
