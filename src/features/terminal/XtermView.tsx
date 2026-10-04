@@ -12,7 +12,7 @@ import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
-import { measureTerminalGeometry, resizeTerminalToGrid } from "./terminalGeometry";
+import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { wrapBracketedPaste } from "./terminalPaste";
@@ -140,15 +140,7 @@ export function XtermView(props: XtermViewProps) {
 
     let kernelTabId = "";
     let disposed = false;
-    const applyGrid = (grid: TerminalGrid) => {
-      const pos = grid.cols === term.cols ? term.getSelectionPosition() : undefined;
-      const text = pos ? term.getSelection() : "";
-      resizeTerminalToGrid(term, grid);
-      if (pos && text && !term.hasSelection()) {
-        const length = (pos.end.y - pos.start.y) * term.cols + (pos.end.x - pos.start.x);
-        term.select(pos.start.x, pos.start.y, length);
-      }
-    };
+    const applyGrid = (grid: TerminalGrid) => resizeTerminalToGridPreservingSelection(term, grid);
     const coordinator = new TerminalGridCoordinator(
       productionGridRuntime,
       applyGrid,

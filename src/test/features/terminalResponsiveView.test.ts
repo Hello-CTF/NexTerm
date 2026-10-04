@@ -16,10 +16,6 @@ const harness = vi.hoisted(() => ({
     element: HTMLElement | null;
     resize: ReturnType<typeof vi.fn>;
     fireScroll: () => void;
-    getSelection: ReturnType<typeof vi.fn>;
-    getSelectionPosition: ReturnType<typeof vi.fn>;
-    hasSelection: ReturnType<typeof vi.fn>;
-    select: ReturnType<typeof vi.fn>;
   }>,
   observers: [] as Array<() => void>,
   frames: new Map<number, () => void>(),
@@ -56,10 +52,6 @@ vi.mock("@xterm/xterm", () => ({
       this.cols = cols;
       this.rows = rows;
     });
-    getSelection = vi.fn(() => "");
-    getSelectionPosition = vi.fn(() => undefined);
-    hasSelection = vi.fn(() => false);
-    select = vi.fn();
     private scrollCallback: (() => void) | null = null;
     fireScroll() {
       this.scrollCallback?.();
@@ -82,6 +74,9 @@ vi.mock("@xterm/xterm", () => ({
     clear() {}
     dispose() {}
     focus() {}
+    getSelection() {
+      return "";
+    }
     onData() {
       return { dispose: vi.fn() };
     }
@@ -124,6 +119,10 @@ vi.mock("../../features/terminal/terminalGeometry", () => ({
     };
   },
   resizeTerminalToGrid: (
+    term: { resize: (cols: number, rows: number) => void },
+    grid: { cols: number; rows: number },
+  ) => term.resize(grid.cols, grid.rows),
+  resizeTerminalToGridPreservingSelection: (
     term: { resize: (cols: number, rows: number) => void },
     grid: { cols: number; rows: number },
   ) => term.resize(grid.cols, grid.rows),
@@ -279,42 +278,6 @@ describe("XtermView production grid lifecycle", () => {
 
     expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 56, rows: 20 });
     expect(harness.flush).toHaveBeenCalledWith("tab-new");
-  });
-
-  it("restores the selection across rows-only resizes", async () => {
-    await show(props());
-    const term = harness.terminals[0];
-    term.getSelectionPosition.mockReturnValue({
-      start: { x: 2, y: 5 },
-      end: { x: 7, y: 5 },
-    });
-    term.getSelection.mockReturnValue("deploy");
-    term.hasSelection.mockReturnValue(false);
-    harness.geometry = { widthPx: 360, heightPx: 380 };
-
-    window.dispatchEvent(new Event(RESIZE_END_EVENT));
-    await flushWork();
-
-    expect(term.resize).toHaveBeenCalledWith(36, 19);
-    expect(term.select).toHaveBeenCalledWith(2, 5, 5);
-  });
-
-  it("leaves the selection to the terminal when a resize changes columns", async () => {
-    await show(props());
-    const term = harness.terminals[0];
-    term.getSelectionPosition.mockReturnValue({
-      start: { x: 2, y: 5 },
-      end: { x: 7, y: 5 },
-    });
-    term.getSelection.mockReturnValue("deploy");
-    term.hasSelection.mockReturnValue(false);
-    harness.geometry = { widthPx: 560, heightPx: 380 };
-
-    window.dispatchEvent(new Event(RESIZE_END_EVENT));
-    await flushWork();
-
-    expect(term.resize).toHaveBeenCalledWith(56, 19);
-    expect(term.select).not.toHaveBeenCalled();
   });
 
   it("applies authoritative observer grids without submitting local resize", async () => {

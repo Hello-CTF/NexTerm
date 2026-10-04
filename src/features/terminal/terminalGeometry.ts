@@ -6,6 +6,18 @@ import {
   type TerminalViewport,
 } from "./terminalGrid";
 
+interface SelectionModelLike {
+  selectionStart?: [number, number];
+  selectionEnd?: [number, number];
+  selectionStartLength?: number;
+}
+
+interface SelectionServiceLike {
+  _model?: SelectionModelLike;
+  refresh?: () => void;
+  _fireEventIfSelectionChanged?: () => void;
+}
+
 interface XtermInternals {
   _renderService?: {
     clear?: () => void;
@@ -15,6 +27,7 @@ interface XtermInternals {
       };
     };
   };
+  _selectionService?: SelectionServiceLike;
 }
 
 export interface TerminalGeometry {
@@ -58,4 +71,43 @@ export function resizeTerminalToGrid(term: Terminal, grid: TerminalGrid): void {
   if (term.cols === grid.cols && term.rows === grid.rows) return;
   internalsOf(term)?._renderService?.clear?.();
   term.resize(grid.cols, grid.rows);
+}
+
+export function resizeTerminalToGridPreservingSelection(term: Terminal, grid: TerminalGrid): void {
+  if (term.cols !== grid.cols) {
+    resizeTerminalToGrid(term, grid);
+    return;
+  }
+  const pos = term.getSelectionPosition();
+  const text = pos ? term.getSelection() : "";
+  const lengthBefore = term.buffer.active.length;
+  resizeTerminalToGrid(term, grid);
+  if (!pos || !text || term.hasSelection()) return;
+  const trimmed = Math.max(0, lengthBefore - ((term.options.scrollback ?? 1000) + term.rows));
+  if (pos.start.y < trimmed) return;
+  restoreSelectionRange(
+    term,
+    { x: pos.start.x, y: pos.start.y - trimmed },
+    { x: pos.end.x, y: pos.end.y - trimmed },
+    text,
+  );
+  if (term.getSelection() !== text) term.clearSelection();
+}
+
+function restoreSelectionRange(
+  term: Terminal,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  text: string,
+): void {
+  term.select(start.x, start.y, (end.y - start.y) * term.cols + (end.x - start.x));
+  if (term.getSelection() === text) return;
+  const service = internalsOf(term)?._selectionService;
+  const model = service?._model;
+  if (!model) return;
+  model.selectionStart = [start.x, start.y];
+  model.selectionEnd = [end.x, end.y];
+  model.selectionStartLength = 0;
+  service.refresh?.();
+  service._fireEventIfSelectionChanged?.();
 }
