@@ -62,6 +62,9 @@ type Vault struct {
 	lastUsedAt int64
 	autoLockMS uint64
 	listeners  []func()
+
+	autoLockMu        sync.Mutex
+	autoLockStoreHook func()
 }
 
 func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
@@ -84,7 +87,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		slog.Warn("凭据库模式无法识别，本次按未初始化处理")
 	}
 	if raw := readSetting(ctx, db, settingAutolock, "自动锁时长"); raw != "" {
-		if milliseconds, err := strconv.ParseUint(raw, 10, 64); err == nil && milliseconds <= maxAutoLockMS {
+		if milliseconds, err := strconv.ParseUint(raw, 10, 64); err == nil && milliseconds <= maxAutoLockMS && milliseconds%60_000 == 0 {
 			v.autoLockMS = milliseconds
 		}
 	}
@@ -339,8 +342,13 @@ func (v *Vault) SetAutoLock(ctx context.Context, minutes uint64) error {
 		return ipc.BadParam(errString("自动锁时长需在 0（禁用）至 1440 分钟之间"))
 	}
 	milliseconds := minutes * 60_000
+	v.autoLockMu.Lock()
+	defer v.autoLockMu.Unlock()
 	if err := v.store.SettingSet(ctx, settingAutolock, strconv.FormatUint(milliseconds, 10)); err != nil {
 		return err
+	}
+	if v.autoLockStoreHook != nil {
+		v.autoLockStoreHook()
 	}
 	v.mu.Lock()
 	v.autoLockMS = milliseconds

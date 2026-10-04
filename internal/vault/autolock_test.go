@@ -2,8 +2,11 @@ package vault
 
 import (
 	"context"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
@@ -84,6 +87,78 @@ func TestLoadIgnoresOutOfRangeAutoLock(t *testing.T) {
 	}
 	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 30 {
 		t.Fatalf("corrupt stored autolock = %d, want default 30", got)
+	}
+}
+
+func TestLoadRequiresWholeMinutes(t *testing.T) {
+	ctx := context.Background()
+	for _, raw := range []string{"1", "59999", "60001", "120001"} {
+		db := testStore(t)
+		if err := db.SettingSet(ctx, settingAutolock, raw); err != nil {
+			t.Fatal(err)
+		}
+		if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 30 {
+			t.Fatalf("stored autolock %q = %d minutes, want default 30", raw, got)
+		}
+	}
+	db := testStore(t)
+	if err := db.SettingSet(ctx, settingAutolock, "60000"); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 1 {
+		t.Fatalf("stored autolock 60000ms = %d minutes, want 1", got)
+	}
+	if err := db.SettingSet(ctx, settingAutolock, "0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadTestVault(db, &fakeProtector{}).Status().AutoLockMinutes; got != 0 {
+		t.Fatalf("stored autolock 0ms = %d minutes, want 0", got)
+	}
+}
+
+func TestSetAutoLockSerializesPersistenceAndLiveValue(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	v := loadTestVault(db, &fakeProtector{})
+	firstWritten := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var first int32
+	v.autoLockStoreHook = func() {
+		if atomic.CompareAndSwapInt32(&first, 0, 1) {
+			close(firstWritten)
+			<-releaseFirst
+		}
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		if err := v.SetAutoLock(ctx, 5); err != nil {
+			t.Error(err)
+		}
+	}()
+	<-firstWritten
+	secondDone := make(chan struct{})
+	go func() {
+		defer close(secondDone)
+		if err := v.SetAutoLock(ctx, 10); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-secondDone:
+		t.Fatal("second SetAutoLock completed while the first was between the persisted write and the live update")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	<-firstDone
+	<-secondDone
+	stored, _, err := db.SettingGet(ctx, settingAutolock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := v.Status().AutoLockMinutes
+	if stored != strconv.FormatUint(live*60_000, 10) {
+		t.Fatalf("stored %q != live %d minutes", stored, live)
 	}
 }
 

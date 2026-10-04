@@ -43,6 +43,21 @@ func TestVaultSetAutoLockCommand(t *testing.T) {
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("negative autolock = %+v, want bad_param", response)
 	}
+	for name, args := range map[string]string{
+		"null minutes": `{"minutes":null}`,
+		"empty object": `{}`,
+		"null args":    `null`,
+	} {
+		response = dispatchStoreTest(dispatcher, "vault_set_autolock", args)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("%s = %+v, want bad_param", name, response)
+		}
+		response = dispatchStoreTest(dispatcher, "vault_status", `null`)
+		requireStoreTestResponse(t, response, &status)
+		if status.AutoLockMinutes != 5 {
+			t.Fatalf("%s changed the setting to %d, want 5", name, status.AutoLockMinutes)
+		}
+	}
 
 	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_set_autolock", `{"minutes":0}`))
 	if got := vault.Load(ctx, database).Status().AutoLockMinutes; got != 0 {
