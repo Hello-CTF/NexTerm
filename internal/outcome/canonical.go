@@ -9,9 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// CanonicalizeArguments normalizes JSON whitespace and object key order while
-// preserving number literals. Duplicate object keys are rejected because they
-// make the authorized arguments ambiguous.
 func CanonicalizeArguments(raw json.RawMessage) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, errors.New("arguments are empty")

@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// TestConcurrentTabAndOutput hammers every public path concurrently; run
-// with -race to prove the locking, and without it to prove there are no
-// deadlocks.
 func TestConcurrentTabAndOutput(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
@@ -129,7 +126,6 @@ func TestConcurrentTabAndOutput(t *testing.T) {
 		close(done)
 	}()
 
-	// Let the workers overlap, then stop the reader; everyone must finish.
 	time.Sleep(50 * time.Millisecond)
 	close(stop)
 	select {
@@ -143,8 +139,6 @@ func TestConcurrentTabAndOutput(t *testing.T) {
 	}
 }
 
-// TestConcurrentCloseFeeds races Feed against Close: no deadlock, no
-// panic, no writes after close.
 func TestConcurrentCloseFeeds(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		tab := NewTab("t", "s", 80, 24, UTF8, WithResponseHandler(func([]byte) {}))
@@ -173,8 +167,6 @@ func TestConcurrentCloseFeeds(t *testing.T) {
 	}
 }
 
-// TestConcurrentFanoutSendDetach races Send with Attach/Detach to prove
-// ordered delivery and safe detachment.
 func TestConcurrentFanoutSendDetach(t *testing.T) {
 	f := NewFanout()
 	ctx := context.Background()

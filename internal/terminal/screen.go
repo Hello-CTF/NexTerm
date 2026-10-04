@@ -8,24 +8,8 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// ScrollbackLines is the screen history capacity (lines scrolled off the
-// visible grid).
 const ScrollbackLines = 100_000
 
-// The VT screen is implemented in-package on top of the mature
-// charmbracelet/x/ansi parser. Rationale: the full x/vt emulator measured
-// ~3 MiB/s on the 120x40 acceptance workload (scrollback eviction and
-// per-cell/style work), below the >=10 MB/s budget, and it flushed
-// grapheme clusters at every Write boundary, making screen state depend
-// on transport packetization. This core instead processes runes
-// incrementally (vt100-style cells: zero-width runes attach to the
-// previous cell), so arbitrary Feed/chunk boundaries always yield the
-// same screen, cursor and history. Rows are rotated by pointer on
-// scroll, cells carry no styling (the grid serves text reads; styling
-// still reaches clients via the raw stream), and history is an O(1)
-// ring.
-
-// lineHistory is an O(1) ring of scrolled-off screen lines (plain text).
 type lineHistory struct {
 	lines []string
 	head  int
@@ -54,7 +38,6 @@ func (h *lineHistory) len() int { return h.size }
 
 func (h *lineHistory) clear() { h.head, h.size = 0, 0 }
 
-// last returns the newest n lines, oldest first.
 func (h *lineHistory) last(n int) []string {
 	if n <= 0 || h.size == 0 {
 		return nil
@@ -72,9 +55,9 @@ func (h *lineHistory) last(n int) []string {
 
 type cell struct {
 	r    rune
-	comb []rune // zero-width runes attached to the base rune
-	wide bool   // left half of a double-width rune
-	cont bool   // right half of a double-width rune (not rendered)
+	comb []rune
+	wide bool
+	cont bool
 }
 
 type row struct{ cells []cell }
@@ -101,8 +84,6 @@ func (r *row) resize(cols int) {
 	r.normalizeWide()
 }
 
-// normalizeWide blanks wide/continuation cells whose pair was broken by
-// truncation or editing.
 func (r *row) normalizeWide() {
 	for i := range r.cells {
 		if r.cells[i].wide && (i+1 >= len(r.cells) || !r.cells[i+1].cont) {
@@ -134,10 +115,8 @@ func (r *row) String() string {
 		c := &r.cells[i]
 		if c.cont {
 			if i > 0 && r.cells[i-1].wide {
-				continue // right half of a valid wide pair
+				continue
 			}
-			// Orphaned continuation: emit its blank cell so later
-			// text never shifts left.
 			b.WriteByte(' ')
 			continue
 		}
@@ -190,27 +169,24 @@ func (g *grid) resize(cols, rows int, history *lineHistory, keepHistory bool, cu
 	}
 }
 
-// screen is the VT state machine. Not safe for concurrent use; Tab
-// serializes access. Terminal query replies are accumulated in responses
-// and collected synchronously by Tab after each Feed.
 type screen struct {
 	parser *ansi.Parser
 	cols   int
 	rows   int
 	grid   *grid
-	main   *grid // saved main grid while on the alternate screen
+	main   *grid
 	alt    bool
 
 	cur          cursorState
 	saved        cursorState
-	savedMain    cursorState // cursor saved when entering the alt screen
+	savedMain    cursorState
 	scrollTop    int
 	scrollBot    int
 	autoWrap     bool
 	origin       bool
 	insert       bool
 	g0dec, g1dec bool
-	glG1         bool // false: GL=G0, true: GL=G1
+	glG1         bool
 
 	history   *lineHistory
 	responses []byte
@@ -231,8 +207,6 @@ func newScreen(cols, rows, history int) *screen {
 		Execute:   s.execute,
 		HandleCsi: s.csi,
 		HandleEsc: s.esc,
-		// OSC/DCS/SOS/PM/APC carry no grid content; the parser
-		// consumes them without grid effects.
 	})
 	return s
 }
@@ -243,7 +217,6 @@ func (s *screen) write(p []byte) {
 	}
 }
 
-// takeResponses drains terminal query replies generated during writes.
 func (s *screen) takeResponses() []byte {
 	if len(s.responses) == 0 {
 		return nil
@@ -303,8 +276,6 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// ───────── rune printing ─────────
-
 func (s *screen) print(r rune) {
 	if s.glG1 && s.g1dec || !s.glG1 && s.g0dec {
 		if mapped, ok := decGraphics[r]; ok {
@@ -326,14 +297,8 @@ func (s *screen) print(r rune) {
 	s.put(r, w)
 }
 
-// maxCombiningRunes caps the zero-width runes attached to one cell:
-// further zero-width runes are dropped from the CELL only. Raw bytes in
-// the ring and replay are never affected, and ordinary combining sequences
-// and emoji chains fit comfortably.
 const maxCombiningRunes = 8
 
-// putCombining attaches a zero-width rune to the most recent cell, like
-// vt100: the cursor does not move, and the rune survives any chunking.
 func (s *screen) putCombining(r rune) {
 	targetR, targetC := s.cur.r, s.cur.c
 	if !s.cur.wrapPending && targetC > 0 {
@@ -341,7 +306,7 @@ func (s *screen) putCombining(r rune) {
 	}
 	row := s.grid.rows[targetR]
 	if row.cells[targetC].cont && targetC > 0 {
-		targetC-- // attach to the wide base, not its continuation
+		targetC--
 	}
 	c := &row.cells[targetC]
 	if len(c.comb) >= maxCombiningRunes {
@@ -350,9 +315,6 @@ func (s *screen) putCombining(r rune) {
 	c.comb = append(c.comb, r)
 }
 
-// clearPairAt blanks the partner of a double-width pair whose other half
-// is being overwritten, so no orphaned wide base or continuation survives
-// the edit and shifts later text.
 func (r *row) clearPairAt(c int) {
 	if c < 0 || c >= len(r.cells) {
 		return
@@ -374,8 +336,6 @@ func (s *screen) put(r rune, width int) {
 		s.wrap()
 	}
 	if width == 2 && s.cur.c == s.cols-1 {
-		// No room for a wide rune in the last column: blank the
-		// cell and wrap (or overwrite when autowrap is off).
 		if s.autoWrap {
 			row := s.grid.rows[s.cur.r]
 			row.clearPairAt(s.cur.c)
@@ -411,7 +371,6 @@ func (s *screen) put(r rune, width int) {
 	}
 }
 
-// wrap moves to the next line at column zero (pending autowrap).
 func (s *screen) wrap() {
 	s.cur.wrapPending = false
 	s.cur.c = 0
@@ -427,10 +386,6 @@ func (s *screen) lineFeed() {
 	}
 }
 
-// scrollUp scrolls the region up n lines. Lines leaving the top of a
-// full-screen region on the main screen enter the history ring.
-// Stream-controlled counts are capped at the region height: further
-// rotations would only spin blank rows and flood history with blanks.
 func (s *screen) scrollUp(n int) {
 	n = min(n, s.scrollBot-s.scrollTop+1)
 	fullRegion := s.scrollTop == 0 && s.scrollBot == s.rows-1
@@ -445,8 +400,6 @@ func (s *screen) scrollUp(n int) {
 	}
 }
 
-// scrollDown scrolls the region down n lines, capped at the region
-// height like scrollUp.
 func (s *screen) scrollDown(n int) {
 	n = min(n, s.scrollBot-s.scrollTop+1)
 	for i := 0; i < n; i++ {
@@ -456,8 +409,6 @@ func (s *screen) scrollDown(n int) {
 		off.reset()
 	}
 }
-
-// ───────── C0 controls ─────────
 
 func (s *screen) execute(b byte) {
 	switch b {
@@ -475,14 +426,12 @@ func (s *screen) execute(b byte) {
 	case '\t':
 		s.cur.c = min((s.cur.c/8+1)*8, s.cols-1)
 		s.cur.wrapPending = false
-	case 0x0e: // SO: GL = G1
+	case 0x0e:
 		s.glG1 = true
-	case 0x0f: // SI: GL = G0
+	case 0x0f:
 		s.glG1 = false
 	}
 }
-
-// ───────── CSI ─────────
 
 func param(params ansi.Params, i, def int) int {
 	n, _, ok := params.Param(i, def)
@@ -492,7 +441,6 @@ func param(params ansi.Params, i, def int) int {
 	return n
 }
 
-// count reads a repetition-count parameter: missing and zero both mean 1.
 func count(params ansi.Params, i int) int {
 	if n := param(params, i, 1); n > 0 {
 		return n
@@ -502,23 +450,23 @@ func count(params ansi.Params, i int) int {
 
 func (s *screen) csi(cmd ansi.Cmd, params ansi.Params) {
 	switch cmd {
-	case 'A': // CUU
+	case 'A':
 		s.moveCursor(s.cur.r-count(params, 0), s.cur.c)
-	case 'B': // CUD
+	case 'B':
 		s.moveCursor(s.cur.r+count(params, 0), s.cur.c)
-	case 'C': // CUF
+	case 'C':
 		s.moveCursor(s.cur.r, s.cur.c+count(params, 0))
-	case 'D': // CUB
+	case 'D':
 		s.moveCursor(s.cur.r, s.cur.c-count(params, 0))
-	case 'E': // CNL
+	case 'E':
 		s.moveCursor(s.cur.r+count(params, 0), 0)
-	case 'F': // CPL
+	case 'F':
 		s.moveCursor(s.cur.r-count(params, 0), 0)
-	case 'G', '`': // CHA
+	case 'G', '`':
 		s.moveCursor(s.cur.r, count(params, 0)-1)
-	case 'H', 'f': // CUP / HVP
+	case 'H', 'f':
 		s.absoluteCursor(count(params, 0)-1, count(params, 1)-1)
-	case 'd': // VPA
+	case 'd':
 		s.absoluteCursor(count(params, 0)-1, s.cur.c)
 	case 'J':
 		s.eraseDisplay(param(params, 0, 0))
@@ -556,7 +504,6 @@ func (s *screen) csi(cmd ansi.Cmd, params ansi.Params) {
 	case 'n':
 		s.deviceStatus(param(params, 0, 0))
 	case 'c':
-		// Primary device attributes (vt220 with CPR and 256 colors).
 		s.responses = append(s.responses, "\x1b[?62;1;6;22c"...)
 	case ansi.Cmd(ansi.Command('?', 0, 'h')):
 		s.decMode(params, true)
@@ -574,15 +521,12 @@ func (s *screen) clampCursor() {
 	s.cur.c = clamp(s.cur.c, 0, s.cols-1)
 }
 
-// moveCursor handles relative cursor movement (no origin offset).
 func (s *screen) moveCursor(r, c int) {
 	s.cur.r, s.cur.c = r, c
 	s.clampCursor()
 	s.cur.wrapPending = false
 }
 
-// absoluteCursor handles CUP/HVP/VPA-style addressing: origin mode
-// addresses rows relative to the scroll region top.
 func (s *screen) absoluteCursor(r, c int) {
 	if s.origin {
 		r += s.scrollTop
@@ -606,7 +550,7 @@ func (s *screen) eraseDisplay(mode int) {
 		for _, r := range s.grid.rows {
 			r.reset()
 		}
-	case 3: // ED 3: erase scrollback, visible grid untouched.
+	case 3:
 		s.history.clear()
 	}
 }
@@ -755,8 +699,6 @@ func (s *screen) setAltScreen(on, saveCursor bool) {
 	}
 }
 
-// ───────── ESC ─────────
-
 func (s *screen) esc(cmd ansi.Cmd) {
 	switch cmd {
 	case '7':
@@ -764,18 +706,18 @@ func (s *screen) esc(cmd ansi.Cmd) {
 	case '8':
 		s.cur = s.saved
 		s.clampCursor()
-	case 'D': // IND
+	case 'D':
 		s.lineFeed()
-	case 'M': // RI
+	case 'M':
 		if s.cur.r == s.scrollTop {
 			s.scrollDown(1)
 		} else if s.cur.r > 0 {
 			s.cur.r--
 		}
-	case 'E': // NEL
+	case 'E':
 		s.cur.c = 0
 		s.lineFeed()
-	case 'c': // RIS
+	case 'c':
 		s.ris()
 	case ansi.Cmd(ansi.Command(0, '(', '0')):
 		s.g0dec = true
@@ -803,11 +745,8 @@ func (s *screen) ris() {
 	s.insert = false
 	s.g0dec, s.g1dec = false, false
 	s.glG1 = false
-	// Scrollback history is preserved, as in xterm.
 }
 
-// decGraphics is the DEC special graphics set (line drawing and a few
-// symbols), used when G0/G1 designates it and selected via SO/SI.
 var decGraphics = map[rune]rune{
 	'`': '◆', 'a': '▒', 'b': '␉', 'c': '␌', 'd': '␍',
 	'e': '␊', 'f': '°', 'g': '±', 'h': '␤', 'i': '␋',

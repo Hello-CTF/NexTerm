@@ -18,8 +18,6 @@ func blockingSink() SinkFunc {
 	}
 }
 
-// Cancellation with a pending hidden batch and a contract-compliant
-// blocking sink must not deadlock Consume (nor Output.Close).
 func TestConsumeCancellationWithPendingDoesNotDeadlock(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
@@ -42,8 +40,6 @@ func TestConsumeCancellationWithPendingDoesNotDeadlock(t *testing.T) {
 		t.Fatal("Consume deadlocked on cancellation with pending batch")
 	}
 
-	// Close cancels the autonomous flusher's context, so a blocked flush
-	// cannot deadlock shutdown either.
 	closeDone := make(chan struct{})
 	go func() {
 		o.Close()
@@ -56,7 +52,6 @@ func TestConsumeCancellationWithPendingDoesNotDeadlock(t *testing.T) {
 	}
 }
 
-// Normal EOF still flushes the pending batch (healthy sink).
 func TestConsumeNormalEOFDeliversPending(t *testing.T) {
 	tab := newTestTab(t)
 	o := newTestOutput(t, tab)
@@ -74,7 +69,6 @@ func TestConsumeNormalEOFDeliversPending(t *testing.T) {
 	}
 }
 
-// One subtraction crossing the limit must wake every waiter.
 func TestWaitBelowWakesAllWaiters(t *testing.T) {
 	i := NewInflight()
 	i.Add(100)
@@ -91,7 +85,7 @@ func TestWaitBelowWakesAllWaiters(t *testing.T) {
 		}()
 	}
 	time.Sleep(20 * time.Millisecond)
-	i.SubSaturating(60) // 40 <= 50: a single crossing
+	i.SubSaturating(60)
 	wg.Wait()
 	close(errs)
 	for err := range errs {
@@ -101,7 +95,6 @@ func TestWaitBelowWakesAllWaiters(t *testing.T) {
 	}
 }
 
-// Concurrent Resize calls must leave grid, getters and handler agreeing.
 func TestConcurrentResizeConsistency(t *testing.T) {
 	tab := newTestTab(t)
 	var mu sync.Mutex
@@ -142,7 +135,6 @@ func TestConcurrentResizeConsistency(t *testing.T) {
 	}
 }
 
-// ESC[3J erases the history ring but leaves the visible grid alone.
 func TestEraseScrollbackED3(t *testing.T) {
 	tab := NewTab("t", "s", 40, 5, UTF8)
 	t.Cleanup(tab.Close)
@@ -170,9 +162,6 @@ func TestEraseScrollbackED3(t *testing.T) {
 	if len(hist) == 0 {
 		t.Fatal("history should accumulate again after ED3")
 	}
-	// Lines 0..25 were already history at ED3 time and must be gone;
-	// lines 26..29 were VISIBLE then, so scrolling them off later
-	// legitimately re-adds them to history.
 	for _, line := range hist {
 		var idx int
 		if _, err := fmt.Sscanf(line, "line-%d", &idx); err != nil {
@@ -184,8 +173,6 @@ func TestEraseScrollbackED3(t *testing.T) {
 	}
 }
 
-// Split grapheme clusters preserve VT state across arbitrary Feed
-// boundaries: combining marks, ZWJ emoji and flags.
 func TestSplitGraphemeClustersPreserveState(t *testing.T) {
 	input := "é combining 👨‍👩‍👧 family 🇨🇳 flag 🚀\r\nnext"
 	run := func(chunks [][]byte) Snapshot {
@@ -211,7 +198,6 @@ func TestSplitGraphemeClustersPreserveState(t *testing.T) {
 	if chunked.Text != whole.Text || chunked.CursorRow != whole.CursorRow || chunked.CursorCol != whole.CursorCol {
 		t.Fatalf("chunked state diverged\nwhole:  %+v\nchunked: %+v", whole, chunked)
 	}
-	// And across a mid-cluster two-feed split with history involved.
 	tabA := NewTab("a", "s", 30, 2, UTF8)
 	t.Cleanup(tabA.Close)
 	tabB := NewTab("b", "s", 30, 2, UTF8)

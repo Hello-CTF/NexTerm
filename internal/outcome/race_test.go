@@ -163,9 +163,6 @@ func TestConcurrentPendingClaimUsesCompareAndSwap(t *testing.T) {
 	}
 }
 
-// firstClaimGateStore parks the first running-state update so a second
-// claimant can pass the pending check, win the claim, and leave the parked
-// caller to lose the compare-and-swap.
 type firstClaimGateStore struct {
 	*memoryStore
 	arrived chan struct{}
@@ -181,10 +178,6 @@ func (s *firstClaimGateStore) Update(ctx context.Context, record Record, expecte
 	return s.memoryStore.Update(ctx, record, expectedRevision)
 }
 
-// TestClaimConflictReloadFailureReturnsNoFabricatedRecord covers a lost
-// running-state compare-and-swap whose reload fails: the durable state is
-// unknown, so the losing caller must receive no record rather than the
-// unpersisted running proposal.
 func TestClaimConflictReloadFailureReturnsNoFabricatedRecord(t *testing.T) {
 	base := newMemoryStore()
 	store := &firstClaimGateStore{

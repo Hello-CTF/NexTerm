@@ -19,8 +19,6 @@ func encodeForTest(t *testing.T, enc encoding.Encoding, s string) []byte {
 	return out
 }
 
-// feedAll feeds src through tr with the given chunk size and collects the
-// decoded output.
 func feedAll(tr *Transcoder, src []byte, chunk int) []byte {
 	var out []byte
 	for len(src) > 0 {
@@ -53,8 +51,6 @@ func TestTranscoderAllEncodingsEverySplit(t *testing.T) {
 			if tc.src != nil {
 				raw = encodeForTest(t, tc.src, tc.text)
 			}
-			// Whole slice, every fixed chunk size, and every single
-			// split position must all reproduce the original text.
 			for chunk := 1; chunk <= len(raw)+1; chunk++ {
 				tr := NewTranscoder(tc.enc)
 				out := feedAll(tr, raw, chunk)

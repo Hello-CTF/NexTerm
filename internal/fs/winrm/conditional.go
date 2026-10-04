@@ -19,41 +19,15 @@ const (
 )
 
 type conditionalOutcome struct {
-	Status  string `json:"s"`
-	Reason  string `json:"r"`
-	Exists  bool   `json:"e"`
-	Size    int64  `json:"l"`
-	SHA256  string `json:"h"`
-	Message string `json:"m"`
-	// Committed must be an explicit JSON boolean: a missing or null flag
-	// decodes as nil and can never masquerade as proof of non-commit.
-	Committed *bool `json:"c"`
+	Status    string `json:"s"`
+	Reason    string `json:"r"`
+	Exists    bool   `json:"e"`
+	Size      int64  `json:"l"`
+	SHA256    string `json:"h"`
+	Message   string `json:"m"`
+	Committed *bool  `json:"c"`
 }
 
-// WriteFileVersion implements conditional.Writer.
-//
-// A conditional create runs as a single remote script that stages the
-// content beside the target and commits through File.Move, an atomic
-// operation that refuses to overwrite a path that appeared at any moment
-// before the commit, so there is no check-then-create window. Paths reach
-// the script only as single-quoted literals produced by quoteLiteral.
-//
-// An existing-file replacement cannot honour the contract: File.Replace is
-// not conditioned on the verified identity or content, and holding delete
-// sharing open for it reopens a rename/delete/recreate race after any
-// recheck, so replacement fails with base.ErrUnsupported before anything is
-// dispatched.
-//
-// Outcomes are classified by what the remote side actually proves. The
-// script catches its own failures and reports whether the commit completed:
-// only a structured error with a literal c=false is a determinate pre-commit
-// failure with nothing committed. Everything else that is not a structured
-// committed or mismatch outcome — a structured error with c=true or a
-// missing, null or mistyped c flag, a non-zero exit, a transport error, a
-// cancellation after dispatch, a missing exit status, or garbled output —
-// keeps *conditional.IndeterminateError, because the commit may already be
-// live and the outcome cannot be proven otherwise. The call is never
-// retried automatically.
 func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []byte, backup bool, expected conditional.Expectation) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -78,8 +52,6 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 	}
 	output := strings.TrimSpace(result.Stdout)
 	if *result.ExitCode != 0 {
-		// Without a structured outcome the failing stage is unknown: the
-		// commit may have completed before the script died.
 		message := strings.TrimSpace(result.Stderr)
 		if message == "" {
 			message = fmt.Sprintf("WinRM conditional write exited with status %d", *result.ExitCode)
@@ -101,15 +73,11 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 		}
 	case "error":
 		if outcome.Committed == nil {
-			// A missing or null flag says nothing about the commit stage,
-			// so it cannot prove a pre-commit failure.
 			return indeterminateCommit(expected, data, fmt.Errorf("WinRM conditional write error outcome lacks an explicit committed flag: %s", outcome.Message))
 		}
 		if *outcome.Committed {
 			return indeterminateCommit(expected, data, fmt.Errorf("WinRM conditional write failed after the commit: %s", outcome.Message))
 		}
-		// Only a literal c=false is the script's own proof that the
-		// commit never completed.
 		return fmt.Errorf("WinRM conditional write: %s", outcome.Message)
 	default:
 		return indeterminateCommit(expected, data, fmt.Errorf("unexpected WinRM conditional write response %q", output))
@@ -120,10 +88,6 @@ func indeterminateCommit(expected conditional.Expectation, data []byte, cause er
 	return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: cause}
 }
 
-// conditionalCreateScript stages and commits in one try/catch so every
-// script failure still produces a structured outcome recording whether the
-// atomic Move had already completed. Only a serialization or engine failure
-// can bypass that outcome, and those cases stay indeterminate on the client.
 func conditionalCreateScript(path string, data []byte) string {
 	return "$ErrorActionPreference='Stop'; $__nextermCommitted=$false; " +
 		"try { " +

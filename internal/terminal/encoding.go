@@ -11,9 +11,6 @@ import (
 	"golang.org/x/text/encoding/unicode"
 )
 
-// Encoding names the remote byte encoding of a terminal stream. The ring
-// always stores the original bytes; the encoding only affects how they are
-// decoded for the screen and for text consumers.
 type Encoding int
 
 const (
@@ -21,13 +18,9 @@ const (
 	GBK
 	GB18030
 	Big5
-	// Latin1 follows the historical application behaviour: bytes are
-	// decoded as Windows-1252 (0x80-0x9F map to printable characters),
-	// not strict ISO-8859-1.
 	Latin1
 )
 
-// String returns the canonical lowercase name used in DTOs.
 func (e Encoding) String() string {
 	switch e {
 	case UTF8:
@@ -45,8 +38,6 @@ func (e Encoding) String() string {
 	}
 }
 
-// ParseEncoding accepts the canonical names plus common aliases,
-// case-insensitively.
 func ParseEncoding(s string) (Encoding, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "utf-8", "utf8":
@@ -64,10 +55,8 @@ func ParseEncoding(s string) (Encoding, error) {
 	}
 }
 
-// MarshalText implements encoding.TextMarshaler.
 func (e Encoding) MarshalText() ([]byte, error) { return []byte(e.String()), nil }
 
-// UnmarshalText implements encoding.TextUnmarshaler.
 func (e *Encoding) UnmarshalText(text []byte) error {
 	parsed, err := ParseEncoding(string(text))
 	if err != nil {
@@ -88,8 +77,6 @@ func (e Encoding) decoder() *encoding.Decoder {
 	case Latin1:
 		return charmap.Windows1252.NewDecoder()
 	default:
-		// unicode.UTF8 keeps BOMs and replaces ill-formed input with
-		// U+FFFD following the WHATWG maximal-subpart rules.
 		return unicode.UTF8.NewDecoder()
 	}
 }

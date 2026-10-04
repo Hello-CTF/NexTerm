@@ -6,7 +6,6 @@ import (
 	"sync"
 )
 
-// Model coordinates one terminal tab's grid intent and transport state.
 type Model struct {
 	mu sync.Mutex
 
@@ -43,8 +42,6 @@ type request struct {
 	cancel     context.CancelFunc
 }
 
-// New creates an idle model. A hidden initial model has observer role until
-// Claim is called; no initial transport size is invented.
 func New(config Config) (*Model, error) {
 	if !validMode(config.Mode) {
 		return nil, fmt.Errorf("terminalgrid: invalid mode %d", config.Mode)
@@ -70,7 +67,6 @@ func New(config Config) (*Model, error) {
 	}, nil
 }
 
-// Snapshot returns a consistent copy of all public state.
 func (m *Model) Snapshot() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -93,10 +89,6 @@ func (m *Model) snapshotLocked() Snapshot {
 	}
 }
 
-// SetViewport records the pixel viewport and schedules a newly computed grid.
-// Zero-sized measurements in any mode and sub-cell measurements while hidden
-// preserve the last valid desired grid. No transport request is derived from
-// such a measurement.
 func (m *Model) SetViewport(viewport Viewport, metrics CellMetrics) (uint64, error) {
 	grid, ok, err := GridForViewport(viewport, metrics)
 	if err != nil {
@@ -121,9 +113,6 @@ func hasWholeCell(viewport Viewport, metrics CellMetrics) bool {
 	return float64(viewport.WidthPx) >= metrics.WidthPx && float64(viewport.HeightPx) >= metrics.HeightPx
 }
 
-// SetDesired records and, in controller mode, schedules a validated grid.
-// Repeating the current grid retains its revision; Flush can force a final
-// transport synchronization without changing the desired value.
 func (m *Model) SetDesired(grid Grid) (uint64, error) {
 	if err := validateGrid(grid); err != nil {
 		return 0, err
@@ -154,9 +143,6 @@ func (m *Model) setDesiredLocked(grid Grid) error {
 	return nil
 }
 
-// SetMode changes transport and observer semantics. Entering controller mode
-// from hidden or observer mode forces synchronization of the latest valid
-// desired grid. Entering hidden or observer mode cancels controller work.
 func (m *Model) SetMode(mode Mode) error {
 	if !validMode(mode) {
 		return fmt.Errorf("terminalgrid: invalid mode %d", mode)
@@ -192,9 +178,6 @@ func (m *Model) SetMode(mode Mode) error {
 	return nil
 }
 
-// Claim acquires controller role and forces the latest desired grid to be
-// flushed. Claim while hidden changes role but remains transport-silent until
-// controller mode is entered.
 func (m *Model) Claim() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -216,10 +199,6 @@ func (m *Model) Claim() error {
 	return nil
 }
 
-// Reattach replaces the transport and establishes a new completion generation.
-// Committed state becomes unknown, last known-good state is retained, and a
-// visible controller forces the latest desired grid onto the new attachment.
-// A nil resize function represents a disconnected transport.
 func (m *Model) Reattach(resize ResizeFunc) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -239,9 +218,6 @@ func (m *Model) Reattach(resize ResizeFunc) error {
 	return nil
 }
 
-// Observe installs an authoritative remote grid for an observer. Revisions
-// below the high-water mark are stale. An equal revision is accepted only for
-// an identical replay while reattachment leaves the committed grid unknown.
 func (m *Model) Observe(revision uint64, grid Grid) (bool, error) {
 	if revision == 0 {
 		return false, fmt.Errorf("terminalgrid: observer revision must be positive")
@@ -268,8 +244,6 @@ func (m *Model) Observe(revision uint64, grid Grid) (bool, error) {
 	return true, nil
 }
 
-// Wait waits for revision or a newer superseding intent to complete. It does
-// not schedule a duplicate transport request.
 func (m *Model) Wait(ctx context.Context, revision uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -308,9 +282,6 @@ func (m *Model) Wait(ctx context.Context, revision uint64) error {
 	}
 }
 
-// Flush waits for the latest desired intent and returns its transport error.
-// When idle, it forces one final request even if the grid equals the committed
-// value. Superseded intents are satisfied by the newest completed intent.
 func (m *Model) Flush(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -381,8 +352,6 @@ func (m *Model) flushEligibleLocked() error {
 	return nil
 }
 
-// Close cancels transport work and rejects future operations. It is idempotent
-// and does not wait for a transport that ignores cancellation.
 func (m *Model) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -403,8 +372,6 @@ func (m *Model) nextRevisionLocked() (uint64, error) {
 	return m.revision + 1, nil
 }
 
-// fenceLocked invalidates delayed completions and cancels the active request.
-// An interrupted request leaves the active grid unknown rather than guessed.
 func (m *Model) fenceLocked() {
 	m.generation++
 	m.pending = nil
@@ -466,9 +433,6 @@ func (m *Model) startLocked(req *request) {
 	go m.run(ctx, req)
 }
 
-// Current reports whether ctx identifies the active resize request. A
-// ResizeFunc can revalidate it under an external lifecycle lock before
-// committing associated terminal state.
 func (m *Model) Current(ctx context.Context) bool {
 	req, _ := ctx.Value(resizeContextKey{}).(*request)
 	if req == nil {

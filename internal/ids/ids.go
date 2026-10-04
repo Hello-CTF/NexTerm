@@ -7,7 +7,6 @@ import (
 
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// New returns a 26-character ULID with a millisecond timestamp and 80 random bits.
 func New() string {
 	var raw [16]byte
 	now := uint64(time.Now().UnixMilli())

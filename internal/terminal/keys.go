@@ -2,8 +2,6 @@ package terminal
 
 import "strings"
 
-// keySequences maps semantic key names to the bytes sent to the peer.
-// Inputs not in this table are sent as-is.
 var keySequences = map[string][]byte{
 	"enter":      {'\r'},
 	"return":     {'\r'},
@@ -73,25 +71,10 @@ var keySequences = map[string][]byte{
 	"f12":        {0x1b, '[', '2', '4', '~'},
 }
 
-// EncodeKey translates a semantic key name (case-insensitive, surrounding
-// whitespace ignored) into its byte sequence. It returns nil for unknown
-// names.
 func EncodeKey(name string) []byte {
 	return keySequences[strings.ToLower(strings.TrimSpace(name))]
 }
 
-// EncodeSend combines literal text with <key> references and an optional
-// trailing carriage return:
-//
-//	EncodeSend("y", true)          -> "y\r"
-//	EncodeSend("<ctrl+c>", false)  -> "\x03"
-//	EncodeSend("ls<enter>", false) -> "ls\r"
-//
-// Unknown tags are sent literally, angle brackets included.
-//
-// The <...> syntax is only a key-name shorthand for AI send_keys style
-// input. It is NOT an escaping or security boundary: no input is sanitized
-// here, and callers must not treat tag handling as a safety check.
 func EncodeSend(text string, enter bool) []byte {
 	out := make([]byte, 0, len(text)+1)
 	rest := text
@@ -102,8 +85,6 @@ func EncodeSend(text string, enter bool) []byte {
 			break
 		}
 		if start >= end {
-			// A '>' before the next '<' disables tag parsing for
-			// the remainder; everything is sent literally.
 			break
 		}
 		out = append(out, rest[:start]...)

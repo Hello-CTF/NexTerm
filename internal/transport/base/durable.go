@@ -16,8 +16,6 @@ type DurableProvider interface {
 	Attach(context.Context, string) (DurableAttachment, error)
 }
 
-// DurableAttachment closes only the local attachment. Kill is the sole
-// destructive operation and must reject a replaced durable identity.
 type DurableAttachment interface {
 	Channel
 	Kill(context.Context) error

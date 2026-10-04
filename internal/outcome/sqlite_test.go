@@ -11,9 +11,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-// openMigratedStore opens a real in-memory SQLite database with every
-// migration applied, including 0004_outcome, and wraps it as an outcome
-// store.
 func openMigratedStore(t *testing.T) (*store.Store, *outcome.SQLiteStore) {
 	t.Helper()
 	storage, err := store.OpenInMemory(context.Background())

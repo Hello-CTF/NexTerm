@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// fakeClock is a manually advanced clock for idle/last-output tests.
 type fakeClock struct{ ms atomic.Int64 }
 
 func newFakeClock() *fakeClock {
@@ -22,7 +21,6 @@ func (c *fakeClock) now() time.Time { return time.UnixMilli(c.ms.Load()) }
 
 func (c *fakeClock) advance(d time.Duration) { c.ms.Add(d.Milliseconds()) }
 
-// memSink records frames in order.
 type memSink struct {
 	mu     sync.Mutex
 	frames [][]byte
@@ -67,7 +65,6 @@ func (m *memSink) Len() int {
 	return n
 }
 
-// waitFor polls cond until it holds or the deadline passes.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
