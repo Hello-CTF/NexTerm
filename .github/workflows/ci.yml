@@ -90,6 +90,8 @@ jobs:
           python3 -m unittest discover -s tests/parity -v
           python3 scripts/verify-manifest-injects.py
       - name: Workflow reuse wiring checks
+        env:
+          SOURCE_DATE_EPOCH: "1"
         run: python3 .github/scripts/check-reuse-wiring.py
       - name: Upload the verified frontend dist and manifest
         uses: actions/upload-artifact@v7
