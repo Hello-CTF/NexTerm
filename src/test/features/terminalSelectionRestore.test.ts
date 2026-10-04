@@ -113,7 +113,7 @@ describe("resizeTerminalToGridPreservingSelection", () => {
     term.dispose();
   });
 
-  it("leaves the selection cleared instead of selecting different text when its lines were trimmed", async () => {
+  it("clamps a length-based selection onto the new first line when its line is trimmed, matching SelectionModel", async () => {
     const term = openedTerminal({ scrollback: 100, cols: 80, rows: 10 });
     await writeLines(term, 120);
     term.select(0, 0, 8);
@@ -121,7 +121,8 @@ describe("resizeTerminalToGridPreservingSelection", () => {
 
     resizeTerminalToGridPreservingSelection(term, { cols: 80, rows: 5 });
 
-    expect(term.hasSelection()).toBe(false);
+    expect(term.getSelection()).toBe("line-016");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 8, y: 0 } });
     term.dispose();
   });
 
@@ -195,7 +196,7 @@ describe("resizeTerminalToGridPreservingSelection", () => {
     term.dispose();
   });
 
-  it("clears an alternate-buffer selection whose line was trimmed away", async () => {
+  it("clamps an alternate-buffer selection onto the new first line when its line is trimmed", async () => {
     const term = openedTerminal({ scrollback: 100, cols: 80, rows: 6 });
     await writeAltScreen(term, 6);
     const y = findLine(term, "line-002");
@@ -204,7 +205,8 @@ describe("resizeTerminalToGridPreservingSelection", () => {
 
     resizeTerminalToGridPreservingSelection(term, { cols: 80, rows: 3 });
 
-    expect(term.hasSelection()).toBe(false);
+    expect(term.getSelection()).toBe("line-004");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 8, y: 0 } });
     term.dispose();
   });
 
@@ -231,6 +233,56 @@ describe("resizeTerminalToGridPreservingSelection", () => {
 
     expect(term.getSelection()).toBe("line-004\n");
     expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 0, y: 1 } });
+    term.dispose();
+  });
+
+  it("keeps the surviving text when trimmed rows include soft-wrapped lines", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    const data = `${Array.from({ length: 50 }, (_, i) => `wrap-${String(i).padStart(3, "0")}-${String(i).padStart(2, "0")}${"x".repeat(30)}`).join("\r\n")}\r\n`;
+    await new Promise<void>((resolve) => term.write(data, resolve));
+    setRangeSelection(term, [0, 1], [0, 6]);
+
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 5 });
+
+    expect(term.getSelection()).toBe("xxxxxxxxxxxxxxxxxxxxx\nwrap-046-46xxxxxxxxx");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 0, y: 3 } });
+    term.dispose();
+  });
+
+  it("keeps a partial trim whose surviving first row starts with wide characters", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    const data = `${Array.from({ length: 50 }, (_, i) => `界界${String(i).padStart(3, "0")}abcdef`).join("\r\n")}\r\n`;
+    await new Promise<void>((resolve) => term.write(data, resolve));
+    setRangeSelection(term, [2, 1], [5, 6]);
+
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 5 });
+
+    expect(term.getSelection()).toBe("界036abcdef\n界界037abcdef\n界界038abcdef\n界界0");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 2, y: 0 }, end: { x: 5, y: 3 } });
+    term.dispose();
+  });
+
+  it("normalizes a reversed same-row range produced by clamping instead of clearing it", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    await writeLines(term, 50);
+    setRangeSelection(term, [8, 2], [5, 4]);
+    expect(term.getSelection()).not.toBe("");
+
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 4 });
+
+    expect(term.getSelection()).toBe("037");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 5, y: 0 }, end: { x: 8, y: 0 } });
+    term.dispose();
+  });
+
+  it("leaves a degenerate same-row clamp empty", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    await writeLines(term, 50);
+    setRangeSelection(term, [8, 2], [8, 4]);
+
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 4 });
+
+    expect(term.hasSelection()).toBe(false);
     term.dispose();
   });
 });
