@@ -124,6 +124,16 @@ export function ModelManager({
     try {
       const saved = await modelApi.save(draft);
       useUi.getState().bumpModelProfilesRevision();
+      setView((prev) => {
+        if (!prev) return prev;
+        const exists = prev.profiles.some((p) => p.id === saved.id);
+        return {
+          ...prev,
+          profiles: exists
+            ? prev.profiles.map((p) => (p.id === saved.id ? saved : p))
+            : [...prev.profiles, saved],
+        };
+      });
       pushToast("info", `已保存模型档案「${saved.name}」`);
       await reload(saved.id);
     } catch (e) {

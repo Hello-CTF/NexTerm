@@ -254,7 +254,10 @@ export async function mockInvoke(cmd, args) {
   window.__nxCallCounts[cmd] = (window.__nxCallCounts[cmd] || 0) + 1;
   const fail = window.__NEXTERM_FAIL__ || [];
   if (fail.includes(cmd)) throw new Error("验收注入失败: " + cmd);
-  if ((window.__NEXTERM_EMPTY__ || []).includes(cmd)) return [];
+  if ((window.__NEXTERM_EMPTY__ || []).includes(cmd)) {
+    if (cmd === "ai_model_profiles") return { profiles: [], activeId: null };
+    return [];
+  }
   const slow = window.__NEXTERM_SLOW__ || 0;
   if (slow) await new Promise((resolve) => setTimeout(resolve, slow));
   return __nxOrigMockInvoke(cmd, args);
@@ -298,12 +301,12 @@ async function enableMockInterception(page) {
   });
 }
 
-async function boot(page, { fail = [], theme = null } = {}) {
+async function boot(page, { fail = [], empty = [], theme = null } = {}) {
   const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
     source: `
       try { localStorage.clear(); } catch {}
       window.__NEXTERM_FAIL__ = ${JSON.stringify(fail)};
-      window.__NEXTERM_EMPTY__ = [];
+      window.__NEXTERM_EMPTY__ = ${JSON.stringify(empty)};
       window.__NEXTERM_SLOW__ = 0;
       try { localStorage.setItem("nexterm.theme.v1", ${JSON.stringify(theme)}); } catch {}
     `,
@@ -460,6 +463,22 @@ async function openAssetTree(page) {
     btn.click();
   })()`);
   await page.waitFor(`Boolean(document.querySelector('button[title="新建资产"]'))`);
+}
+
+async function openModelPanel(page) {
+  const selectorReady = `Boolean(document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]'))`;
+  if (!(await page.evaluate(selectorReady))) {
+    await page.evaluate(`document.querySelector('button[aria-label="AI 助手"]').click()`);
+  }
+  await page.waitFor(selectorReady);
+  await page.evaluate(`document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]').click()`);
+  await page.waitFor(
+    `[...document.querySelectorAll('button')].some((b) => b.textContent?.includes('管理模型'))`,
+  );
+  await page.evaluate(
+    `[...document.querySelectorAll('button')].find((b) => b.textContent?.includes('管理模型')).click()`,
+  );
+  await page.waitFor(`Boolean(document.querySelector('.nx-modal'))`);
 }
 
 async function statesFormsAcceptance(page) {
@@ -694,19 +713,7 @@ async function statesFormsAcceptance(page) {
 
   await pass("model-reload-failure-after-success", async () => {
     await boot(page);
-    const selectorReady = `Boolean(document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]'))`;
-    if (!(await page.evaluate(selectorReady))) {
-      await page.evaluate(`document.querySelector('button[aria-label="AI 助手"]').click()`);
-    }
-    await page.waitFor(selectorReady);
-    await page.evaluate(`document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]').click()`);
-    await page.waitFor(
-      `[...document.querySelectorAll('button')].some((b) => b.textContent?.includes('管理模型'))`,
-    );
-    await page.evaluate(
-      `[...document.querySelectorAll('button')].find((b) => b.textContent?.includes('管理模型')).click()`,
-    );
-    await page.waitFor(`Boolean(document.querySelector('.nx-modal'))`);
+    await openModelPanel(page);
     await page.waitFor(
       `[...document.querySelectorAll('.nx-modal button')].some((b) => b.textContent?.trim() === "保存")`,
     );
@@ -734,6 +741,52 @@ async function statesFormsAcceptance(page) {
     );
     await page.waitFor(`!document.body.textContent.includes("档案列表刷新失败")`);
     const recovered = await page.evaluate(`document.body.textContent.includes("DeepSeek 主力")`);
+    assert.equal(recovered, true);
+    return { evidence: { state } };
+  });
+
+  await pass("model-save-confirmed-not-empty", async () => {
+    await boot(page, { empty: ["ai_model_profiles"] });
+    await openModelPanel(page);
+    await page.waitFor(`document.body.textContent.includes("还没有模型档案")`);
+    const confirmedEmpty = await page.evaluate(
+      `document.body.textContent.includes("还没有模型档案")`,
+    );
+    assert.equal(confirmedEmpty, true, "初始空视图应先显示真空态");
+
+    await setSwitches(page, { empty: [], fail: ["ai_model_profiles"] });
+    await page.evaluate(
+      `[...document.querySelectorAll('.nx-modal button')].find((b) => b.title === "新增档案").click()`,
+    );
+    await page.waitFor(
+      `[...document.querySelectorAll('.nx-modal label')].some((l) => l.textContent?.trim() === "展示名")`,
+    );
+    await page.evaluate(`(() => {
+      const label = [...document.querySelectorAll('.nx-modal label')].find((l) => l.textContent?.trim() === "展示名");
+      document.querySelector('.nx-modal input[id="' + label.htmlFor + '"]').focus();
+    })()`);
+    await page.send("Input.insertText", { text: "边界档案" });
+    await page.evaluate(
+      `[...document.querySelectorAll('.nx-modal button')].find((b) => b.textContent?.trim() === "保存").click()`,
+    );
+    await page.waitFor(`document.body.textContent.includes("档案列表刷新失败")`);
+    const state = await page.evaluate(`(() => ({
+      listHasSaved: [...document.querySelectorAll('.nx-modal .nx-menu-item')].some((b) => b.textContent?.includes("边界档案")),
+      falseEmpty: document.body.textContent.includes("还没有模型档案"),
+      hasRetry: [...document.querySelectorAll('.nx-modal button')].some((b) => b.textContent?.trim() === "重试"),
+    }))()`);
+    assert.equal(state.listHasSaved, true, "保存已确认成功后列表必须显示新档案");
+    assert.equal(state.falseEmpty, false, "保存已确认成功后不得出现空态");
+    assert.equal(state.hasRetry, true, "刷新失败必须提供重试");
+
+    await setSwitches(page, { fail: [] });
+    await page.evaluate(
+      `[...document.querySelectorAll('.nx-modal button')].find((b) => b.textContent?.trim() === "重试").click()`,
+    );
+    await page.waitFor(`!document.body.textContent.includes("档案列表刷新失败")`);
+    const recovered = await page.evaluate(
+      `[...document.querySelectorAll('.nx-modal .nx-menu-item')].some((b) => b.textContent?.includes("边界档案"))`,
+    );
     assert.equal(recovered, true);
     return { evidence: { state } };
   });

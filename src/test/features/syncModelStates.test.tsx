@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
-import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -150,7 +150,9 @@ describe("SyncCard 状态", () => {
     mounted = withClient(createElement(SyncCard));
     await waitForTestButtonEnabled();
     clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() => text().includes("已连接"));
+    await flushUntil(() =>
+      mocks.toast.mock.calls.some((c) => String(c[1]).includes("已连接（对端标识")),
+    );
     expect(text()).not.toContain("资产对照");
     expect(text()).not.toContain("两边都还没有可同步的资产");
     expect(text()).toContain("本机资产摘要读取失败");
@@ -164,7 +166,9 @@ describe("SyncCard 状态", () => {
     mounted = withClient(createElement(SyncCard));
     await waitForTestButtonEnabled();
     clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() => text().includes("已连接"));
+    await flushUntil(() =>
+      mocks.toast.mock.calls.some((c) => String(c[1]).includes("已连接（对端标识")),
+    );
     expect(text()).not.toContain("资产对照");
     expect(text()).not.toContain("仅对端");
     expect(text()).not.toContain("推送到对端");
@@ -254,6 +258,55 @@ describe("ModelManager 状态", () => {
     await flushUntil(() => !text().includes("档案列表刷新失败"));
     expect(text()).toContain("DeepSeek");
     expect(mocks.overview).toHaveBeenCalledTimes(3);
+  });
+
+  it("初始为空 → 保存成功 → reload 失败：列表显示新档案，不出现「还没有模型档案」", async () => {
+    mocks.overview.mockResolvedValueOnce({ profiles: [], activeId: null });
+    mounted = mount(createElement(ModelManager));
+    await flushUntil(() => text().includes("还没有模型档案"));
+
+    mocks.overview.mockRejectedValueOnce(new Error("磁盘不可读"));
+    mocks.save.mockImplementation(async (p: { id: string; name: string }) => ({
+      ...p,
+      id: "new-id",
+    }));
+    click(mounted!.container.querySelector('button[title="新增档案"]')!);
+    await flush();
+    const nameLabel = [...mounted!.container.querySelectorAll("label")].find(
+      (l) => l.textContent?.trim() === "展示名",
+    );
+    const nameInput = mounted!.container.querySelector<HTMLInputElement>(
+      `input[id="${nameLabel!.htmlFor}"]`,
+    );
+    setInputValue(nameInput!, "新档案");
+    clickButton(mounted!.container, "保存");
+    await flushUntil(() => text().includes("档案列表刷新失败 · 磁盘不可读"));
+    const listHasNew = [...mounted!.container.querySelectorAll(".nx-menu-item")].some((b) =>
+      b.textContent?.includes("新档案"),
+    );
+    expect(listHasNew, "保存成功后列表必须包含新档案，而非空态").toBe(true);
+    expect(text()).not.toContain("还没有模型档案");
+
+    mocks.overview.mockResolvedValueOnce({
+      profiles: [
+        {
+          id: "new-id",
+          name: "新档案",
+          baseUrl: "",
+          apiKey: "",
+          model: "",
+          temperature: 0.3,
+          contextWindow: 32768,
+          proxy: null,
+          stream: true,
+          fallbackModel: null,
+        },
+      ],
+      activeId: null,
+    });
+    clickButton(mounted!.container, "重试");
+    await flushUntil(() => !text().includes("档案列表刷新失败"));
+    expect(text()).toContain("新档案");
   });
 });
 
