@@ -17,7 +17,7 @@ import (
 func TestRemoteProviderCreateLostResponseNeverKillsReplacement(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	provider := NewRemoteProvider(client)
 
 	realCreate := remoteProviderCreate
@@ -194,7 +194,7 @@ func TestInFlightReplacementCreateSurvivesIdentityKill(t *testing.T) {
 func TestReconcileCreateCleansLeftoverAttemptArtifacts(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()

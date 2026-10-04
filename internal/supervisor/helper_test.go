@@ -262,7 +262,10 @@ func TestHelperRespawnsAfterHelperCrashWithoutSurvivalClaim(t *testing.T) {
 
 func TestConnectHelperProtocolMismatchFailsWithoutSpawnOrKill(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
-	endpoint := helperEndpoint(stateDir)
+	endpoint, err := helperEndpoint(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(endpoint), 0o700); err != nil {
 		t.Fatal(err)
 	}

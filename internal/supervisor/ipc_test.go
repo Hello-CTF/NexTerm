@@ -41,7 +41,7 @@ func testServer(t *testing.T, supervisor *Supervisor) *Server {
 func TestIPCEndToEnd(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	script := `printf 'ready\n'
@@ -135,7 +135,7 @@ done`
 func TestIPCReattachReplayWithoutDuplication(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	script := `i=0; while [ "$i" -lt 20 ]; do printf 'tick:%02d\n' "$i"; i=$((i+1)); sleep 0.03; done`
@@ -182,7 +182,7 @@ func TestIPCReattachReplayWithoutDuplication(t *testing.T) {
 func TestIPCOutputContinuesAfterClientDisconnect(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -220,7 +220,7 @@ func TestIPCOutputContinuesAfterClientDisconnect(t *testing.T) {
 func TestIPCIdentityOverWire(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -258,7 +258,7 @@ func TestIPCIdentityOverWire(t *testing.T) {
 func TestIPCKillOverWire(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -365,7 +365,7 @@ func TestIPCMalformedRequests(t *testing.T) {
 
 	t.Run("unknown frame type", func(t *testing.T) {
 		conn := dial(t)
-		handshakeConn(t, conn)
+		handshakeConn(t, conn, supervisor.StateDir())
 		if err := writeFrame(conn, frameType(200), []byte("{}")); err != nil {
 			t.Fatal(err)
 		}
@@ -377,7 +377,7 @@ func TestIPCMalformedRequests(t *testing.T) {
 
 	t.Run("malformed json", func(t *testing.T) {
 		conn := dial(t)
-		handshakeConn(t, conn)
+		handshakeConn(t, conn, supervisor.StateDir())
 		if err := writeFrame(conn, frameCreate, []byte("{not-json")); err != nil {
 			t.Fatal(err)
 		}
@@ -387,7 +387,7 @@ func TestIPCMalformedRequests(t *testing.T) {
 		}
 	})
 
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	if _, err := client.List(ctx); err != nil {
 		t.Fatalf("server must survive malformed requests: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestIPCMalformedRequests(t *testing.T) {
 func TestIPCShutdownClosesConnections(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	client := NewClient(server.SocketPath())
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -474,7 +474,7 @@ func TestIPCStaleSocketRecovery(t *testing.T) {
 		defer shutdownCancel()
 		_ = restarted.Shutdown(shutdownCtx)
 	}()
-	if _, err := NewClient(socketPath).List(ctx); err != nil {
+	if _, err := testClient(t, restarted).List(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -514,9 +514,13 @@ func TestPeerUIDMatchesCurrentUser(t *testing.T) {
 	}
 }
 
-func handshakeConn(t *testing.T, conn net.Conn) {
+func handshakeConn(t *testing.T, conn net.Conn, stateDir string) {
 	t.Helper()
-	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion})
+	digest, err := stateDigestFor(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalFrame(frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
 	if err != nil {
 		t.Fatal(err)
 	}

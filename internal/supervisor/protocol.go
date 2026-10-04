@@ -8,7 +8,7 @@ import (
 	"io"
 )
 
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 const (
 	maxFramePayload = 256 * 1024
@@ -43,7 +43,8 @@ const (
 )
 
 type helloMsg struct {
-	Version int `json:"version"`
+	Version     int    `json:"version"`
+	StateDigest string `json:"state_digest,omitempty"`
 }
 
 type createMsg struct {
@@ -104,6 +105,7 @@ const (
 	codeClosed          = "closed"
 	codeProtocol        = "protocol"
 	codeVersionMismatch = "version_mismatch"
+	codeStateMismatch   = "state_mismatch"
 )
 
 func errorCode(err error) string {
@@ -124,6 +126,8 @@ func errorCode(err error) string {
 		return codeClosed
 	case errors.Is(err, ErrProtocol):
 		return codeProtocol
+	case errors.Is(err, ErrStateMismatch):
+		return codeStateMismatch
 	case errors.Is(err, ErrUnsupported):
 		return codeProtocol
 	default:
@@ -165,6 +169,8 @@ func errorSentinel(code string) error {
 		return ErrClosed
 	case codeProtocol, codeVersionMismatch:
 		return ErrProtocol
+	case codeStateMismatch:
+		return ErrStateMismatch
 	default:
 		return fmt.Errorf("%w: remote error %q", ErrUnavailable, code)
 	}

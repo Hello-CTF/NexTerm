@@ -50,7 +50,7 @@ func HelperEndpoint(stateDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: helper state directory: %v", ErrInvalidInput, err)
 	}
-	return helperEndpoint(absolute), nil
+	return helperEndpoint(absolute)
 }
 
 func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
@@ -64,14 +64,20 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 	if err := ensurePrivateDir(stateDir); err != nil {
 		return nil, fmt.Errorf("supervisor helper state directory: %w", err)
 	}
-	endpoint := helperEndpoint(stateDir)
-	client := NewClient(endpoint)
+	endpoint, err := helperEndpoint(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve supervisor helper endpoint: %w", err)
+	}
+	client := NewClient(endpoint, stateDir)
 	err = probeHelper(ctx, client)
 	if err == nil {
 		return &Helper{endpoint: endpoint, client: client}, nil
 	}
 	if errors.Is(err, ErrProtocol) {
 		return nil, fmt.Errorf("%w: the supervisor helper at %s speaks an incompatible protocol; refusing to replace it: %v", ErrProtocol, endpoint, err)
+	}
+	if errors.Is(err, ErrStateMismatch) {
+		return nil, fmt.Errorf("%w: the endpoint %s is already served by a helper owning a different state directory; refusing to connect or replace it: %v", ErrStateMismatch, endpoint, err)
 	}
 	if ctx.Err() != nil {
 		return nil, context.Cause(ctx)
@@ -99,6 +105,9 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 		}
 		if errors.Is(err, ErrProtocol) {
 			return nil, fmt.Errorf("%w: the spawned supervisor helper at %s speaks an incompatible protocol: %v", ErrProtocol, endpoint, err)
+		}
+		if errors.Is(err, ErrStateMismatch) {
+			return nil, fmt.Errorf("%w: the endpoint %s is owned by a helper for a different state directory: %v", ErrStateMismatch, endpoint, err)
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("%w: supervisor helper did not become ready within %s (log: %s): %v", ErrUnavailable, spawnTimeout, logPath, err)
@@ -138,7 +147,12 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 	if err != nil {
 		return err
 	}
-	server, err := NewServer(supervisor, helperEndpoint(stateDir))
+	endpoint, err := helperEndpoint(stateDir)
+	if err != nil {
+		_ = supervisor.Close()
+		return fmt.Errorf("resolve supervisor helper endpoint: %w", err)
+	}
+	server, err := NewServer(supervisor, endpoint)
 	if err != nil {
 		_ = supervisor.Close()
 		return err

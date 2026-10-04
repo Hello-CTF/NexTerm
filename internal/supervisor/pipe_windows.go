@@ -19,12 +19,16 @@ import (
 
 const pipeBufferSize = 64 * 1024
 
-func pipeEndpointName(stateDir string) string {
-	sum := sha256.Sum256([]byte(stateDir))
-	return fmt.Sprintf(`\\.\pipe\nexterm-supervisor-v%d-%x`, ProtocolVersion, sum[:4])
+func pipeEndpointName(stateDir string) (string, error) {
+	identity, err := currentUserIdentity()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(identity + "\x00" + stateDir))
+	return fmt.Sprintf(`\\.\pipe\nexterm-supervisor-v%d-%s-%x`, ProtocolVersion, identity, sum[:8]), nil
 }
 
-func currentUserPipeSDDL() (string, error) {
+func currentUserSIDString() (string, error) {
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {
 		return "", err
@@ -34,7 +38,15 @@ func currentUserPipeSDDL() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "D:P(A;;GA;;;SY)(A;;GA;;;" + user.User.Sid.String() + ")", nil
+	return user.User.Sid.String(), nil
+}
+
+func currentUserPipeSDDL() (string, error) {
+	sid, err := currentUserSIDString()
+	if err != nil {
+		return "", err
+	}
+	return "D:P(A;;GA;;;SY)(A;;GA;;;" + sid + ")", nil
 }
 
 type pipeAddr struct{ name string }
@@ -44,10 +56,13 @@ func (a pipeAddr) Network() string { return "pipe" }
 func (a pipeAddr) String() string { return a.name }
 
 type pipeListener struct {
-	name      string
-	sa        windows.SecurityAttributes
-	closed    chan struct{}
-	closeOnce sync.Once
+	name       string
+	sa         windows.SecurityAttributes
+	mu         sync.Mutex
+	pending    windows.Handle
+	hasPending bool
+	closed     chan struct{}
+	closeOnce  sync.Once
 }
 
 func listenPipe(path string) (net.Listener, error) {
@@ -59,56 +74,92 @@ func listenPipe(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("supervisor pipe security descriptor: %w", err)
 	}
-	listener := &pipeListener{
-		name: path,
-		sa: windows.SecurityAttributes{
-			Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
-			SecurityDescriptor: securityDescriptor,
-		},
-		closed: make(chan struct{}),
+	sa := windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: securityDescriptor,
 	}
-	probeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	conn, err := dialPipe(probeCtx, path)
-	if err == nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("%w: supervisor pipe %s is already serving", ErrAlreadyExists, path)
+	listener := &pipeListener{name: path, sa: sa, closed: make(chan struct{})}
+	handle, err := listener.createInstance(true)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return nil, fmt.Errorf("%w: supervisor pipe %s is already serving", ErrAlreadyExists, path)
+		}
+		return nil, err
 	}
-	if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
-		return nil, fmt.Errorf("%w: supervisor pipe %s is already serving: %v", ErrAlreadyExists, path, err)
-	}
+	listener.pending = handle
+	listener.hasPending = true
 	return listener, nil
 }
 
-func (l *pipeListener) Accept() (net.Conn, error) {
+func (l *pipeListener) createInstance(first bool) (windows.Handle, error) {
 	name, err := windows.UTF16PtrFromString(l.name)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
+	flags := uint32(windows.PIPE_ACCESS_DUPLEX)
+	if first {
+		flags |= windows.FILE_FLAG_FIRST_PIPE_INSTANCE
+	}
+	handle, err := windows.CreateNamedPipe(name, flags, windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS, windows.PIPE_UNLIMITED_INSTANCES, pipeBufferSize, pipeBufferSize, 0, &l.sa)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+			return 0, fmt.Errorf("%w: pipe name %s is invalid", ErrInvalidInput, l.name)
+		}
+		return 0, err
+	}
+	return handle, nil
+}
+
+func (l *pipeListener) isClosed() bool {
 	select {
 	case <-l.closed:
-		return nil, net.ErrClosed
+		return true
 	default:
+		return false
 	}
-	handle, err := windows.CreateNamedPipe(name, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS, windows.PIPE_UNLIMITED_INSTANCES, pipeBufferSize, pipeBufferSize, 0, &l.sa)
-	if err != nil {
-		return nil, err
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if l.isClosed() {
+		l.mu.Unlock()
+		return nil, net.ErrClosed
 	}
-	err = windows.ConnectNamedPipe(handle, nil)
+	handle := l.pending
+	hasPending := l.hasPending
+	l.pending = 0
+	l.hasPending = false
+	l.mu.Unlock()
+	if !hasPending {
+		var err error
+		handle, err = l.createInstance(false)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if l.isClosed() {
+		_ = windows.CloseHandle(handle)
+		return nil, net.ErrClosed
+	}
+	err := windows.ConnectNamedPipe(handle, nil)
 	if err == nil || err == windows.ERROR_PIPE_CONNECTED {
-		select {
-		case <-l.closed:
+		if l.isClosed() {
 			_ = windows.CloseHandle(handle)
 			return nil, net.ErrClosed
-		default:
 		}
+		l.mu.Lock()
+		if !l.isClosed() {
+			if next, err := l.createInstance(false); err == nil {
+				l.pending = next
+				l.hasPending = true
+			}
+		}
+		l.mu.Unlock()
 		return &pipeConn{handle: handle, name: l.name, server: true}, nil
 	}
 	_ = windows.CloseHandle(handle)
-	select {
-	case <-l.closed:
+	if l.isClosed() {
 		return nil, net.ErrClosed
-	default:
 	}
 	return nil, err
 }
@@ -116,6 +167,14 @@ func (l *pipeListener) Accept() (net.Conn, error) {
 func (l *pipeListener) Close() error {
 	l.closeOnce.Do(func() {
 		close(l.closed)
+		l.mu.Lock()
+		pending := l.pending
+		l.pending = 0
+		l.hasPending = false
+		l.mu.Unlock()
+		if pending != 0 {
+			_ = windows.CloseHandle(pending)
+		}
 		name, err := windows.UTF16PtrFromString(l.name)
 		if err != nil {
 			return
@@ -124,6 +183,9 @@ func (l *pipeListener) Close() error {
 			handle, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, 0, 0)
 			if err == nil {
 				_ = windows.CloseHandle(handle)
+				return
+			}
+			if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 				return
 			}
 			time.Sleep(25 * time.Millisecond)

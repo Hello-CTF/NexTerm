@@ -75,26 +75,6 @@ func tombstonePath(stateDir, id string) string {
 	return filepath.Join(sessionsRoot(stateDir), id+".delete")
 }
 
-func ensurePrivateDir(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return err
-		}
-		info, err = os.Lstat(path)
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: %s is not a real directory", ErrInvalidInput, path)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: %s must not be accessible by group or other users", ErrInvalidInput, path)
-	}
-	return nil
-}
-
 func loadRegistry(stateDir string) (map[string]registryEntry, error) {
 	root := sessionsRoot(stateDir)
 	entries := make(map[string]registryEntry)
@@ -203,7 +183,7 @@ func openRecording(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: open supervisor recording: %v", ErrUnavailable, err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if err := privateRegularFile(info); err != nil {
 		return nil, fmt.Errorf("%w: supervisor recording is not a private regular file", ErrUnavailable)
 	}
 	file, err := os.Open(path)

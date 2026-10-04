@@ -73,7 +73,10 @@ func TestMain(m *testing.M) {
 }
 
 func TestPipeListenDialRoundtrip(t *testing.T) {
-	name := pipeEndpointName(t.TempDir())
+	name, err := pipeEndpointName(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	listener, err := listenSocket(name)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +100,7 @@ func TestPipeListenDialRoundtrip(t *testing.T) {
 			server <- result{err: err}
 			return
 		}
-		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":1}`)); err != nil {
+		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
 			server <- result{err: err}
 			return
 		}
@@ -110,7 +113,7 @@ func TestPipeListenDialRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
-	if err := writeFrame(conn, frameHello, []byte(`{"version":1}`)); err != nil {
+	if err := writeFrame(conn, frameHello, []byte(`{"version":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	kind, _, err := readFrame(conn)
@@ -130,7 +133,10 @@ func TestPipeListenDialRoundtrip(t *testing.T) {
 }
 
 func TestPipeListenerCloseUnblocksAccept(t *testing.T) {
-	name := pipeEndpointName(t.TempDir())
+	name, err := pipeEndpointName(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	listener, err := listenSocket(name)
 	if err != nil {
 		t.Fatal(err)
@@ -184,13 +190,26 @@ func TestPipeCurrentUserSecurity(t *testing.T) {
 }
 
 func TestHelperEndpointPipeIsVersionedAndScoped(t *testing.T) {
-	first := helperEndpoint(t.TempDir())
-	second := helperEndpoint(filepath.Join(t.TempDir(), "state"))
+	first, err := helperEndpoint(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := helperEndpoint(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasPrefix(first, pipePrefix) {
 		t.Fatalf("endpoint %q is not a named pipe", first)
 	}
 	if !strings.Contains(first, fmt.Sprintf("nexterm-supervisor-v%d-", ProtocolVersion)) {
 		t.Fatalf("endpoint %q is not versioned", first)
+	}
+	sid, err := currentUserSIDString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(first, sid) {
+		t.Fatalf("endpoint %q does not include the current user SID %s", first, sid)
 	}
 	if first == second {
 		t.Fatalf("endpoint %q is not scoped to its state directory", first)
@@ -225,7 +244,10 @@ func TestConnectHelperProtocolMismatchPipeFailsWithoutSpawn(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	name := pipeEndpointName(stateDir)
+	name, err := pipeEndpointName(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	listener, err := listenPipe(name)
 	if err != nil {
 		t.Fatal(err)
@@ -368,4 +390,91 @@ func killHelperProcessesWindows(t *testing.T, stateDir string) {
 	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", HelperCommand, stateDir)
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", script)
 	_ = cmd.Run()
+}
+
+func TestEnsurePrivateDirWindows(t *testing.T) {
+	normal := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(normal, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDir(normal); err != nil {
+		t.Fatalf("normal Windows directory rejected: %v", err)
+	}
+	file := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDir(file); err == nil {
+		t.Fatal("plain file accepted as a private directory")
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	junction := filepath.Join(t.TempDir(), "junction")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", junction, target)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("cannot create a junction: %v (%s)", err, output)
+	}
+	if err := ensurePrivateDir(junction); err == nil {
+		t.Fatal("junction accepted as a private directory")
+	}
+}
+
+func TestOpenRecordingWindows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "output.raw")
+	if err := os.WriteFile(path, []byte("recording"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openRecording(path)
+	if err != nil {
+		t.Fatalf("normal Windows recording rejected: %v", err)
+	}
+	_ = file.Close()
+}
+
+func TestListenPipeLifecycle(t *testing.T) {
+	name, err := pipeEndpointName(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenPipe(name)
+	if err != nil {
+		t.Fatalf("listenPipe startup: %v", err)
+	}
+	if _, err := listenPipe(name); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("second listenPipe = %v, want ErrAlreadyExists", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := dialSocket(ctx, name)
+	if err != nil {
+		t.Fatalf("dial before Accept: %v", err)
+	}
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		serverConn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- serverConn
+	}()
+	serverConn := <-accepted
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 4)
+	if _, err := io.ReadFull(serverConn, buffer); err != nil || string(buffer) != "ping" {
+		t.Fatalf("pipe read = %q, %v", buffer, err)
+	}
+	_ = conn.Close()
+	_ = serverConn.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := listenPipe(name)
+	if err != nil {
+		t.Fatalf("listenPipe restart after Close: %v", err)
+	}
+	_ = restarted.Close()
 }

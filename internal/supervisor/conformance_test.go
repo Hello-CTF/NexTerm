@@ -20,7 +20,7 @@ func TestProviderConformance(t *testing.T) {
 
 	providers := map[string]base.DurableProvider{
 		"embedded": NewProvider(supervisor),
-		"remote":   NewRemoteProvider(NewClient(server.SocketPath())),
+		"remote":   NewRemoteProvider(testClient(t, server)),
 	}
 
 	script := `printf 'ready\n'
@@ -128,8 +128,7 @@ done`
 func TestRemoteProviderSurvivesServerRestartOfStream(t *testing.T) {
 	supervisor := testSupervisor(t)
 	server := testServer(t, supervisor)
-	socketPath := server.SocketPath()
-	client := NewClient(socketPath)
+	client := testClient(t, server)
 	ctx := context.Background()
 
 	id := ids.New()

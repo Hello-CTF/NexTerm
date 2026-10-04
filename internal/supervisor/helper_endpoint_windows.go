@@ -9,7 +9,7 @@ import (
 
 const pipePrefix = `\\.\pipe\`
 
-func helperEndpoint(stateDir string) string {
+func helperEndpoint(stateDir string) (string, error) {
 	return pipeEndpointName(stateDir)
 }
 
