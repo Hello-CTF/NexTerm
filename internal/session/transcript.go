@@ -11,13 +11,13 @@ type TranscriptInfo struct {
 
 type TranscriptSink interface {
 	SessionStarted(ctx context.Context, info TranscriptInfo)
-	SessionOutput(ctx context.Context, sessionID, tabID string, data []byte)
+	SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte)
 	SessionEnded(ctx context.Context, sessionID string)
 }
 
 type TranscriptSinkFuncs struct {
 	StartedFunc func(ctx context.Context, info TranscriptInfo)
-	OutputFunc  func(ctx context.Context, sessionID, tabID string, data []byte)
+	OutputFunc  func(ctx context.Context, durableID, sessionID, tabID string, data []byte)
 	EndedFunc   func(ctx context.Context, sessionID string)
 }
 
@@ -27,9 +27,9 @@ func (f TranscriptSinkFuncs) SessionStarted(ctx context.Context, info Transcript
 	}
 }
 
-func (f TranscriptSinkFuncs) SessionOutput(ctx context.Context, sessionID, tabID string, data []byte) {
+func (f TranscriptSinkFuncs) SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte) {
 	if f.OutputFunc != nil {
-		f.OutputFunc(ctx, sessionID, tabID, data)
+		f.OutputFunc(ctx, durableID, sessionID, tabID, data)
 	}
 }
 
@@ -66,43 +66,20 @@ func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
 		tab.catchUpRemaining = 0
 		data = data[remaining:]
 	}
-	durable := tab.durable
-	if durable != nil {
-		tab.transcribedOffset += int64(len(data))
-		offset := tab.transcribedOffset
-		tab.mu.Unlock()
-		m.mu.Lock()
-		m.durableOffsets[tab.ID] = offset
-		m.mu.Unlock()
-	} else {
-		tab.mu.Unlock()
+	durableID := ""
+	if tab.durable != nil {
+		durableID = tab.ID
 	}
+	tab.mu.Unlock()
 	if len(data) == 0 {
 		return
 	}
-	m.transcripts.SessionOutput(ctx, tab.SessionID, tab.ID, data)
+	m.transcripts.SessionOutput(ctx, durableID, tab.SessionID, tab.ID, data)
 }
 
 func (m *Manager) transcriptEnded(sessionID string) {
 	if m.transcripts == nil {
 		return
 	}
-	m.persistDurableOffsets()
 	m.transcripts.SessionEnded(m.ctx, sessionID)
-}
-
-func (m *Manager) persistDurableOffsets() {
-	source, ok := m.durable.(durableTranscriptOffsetSource)
-	if !ok {
-		return
-	}
-	m.mu.Lock()
-	offsets := make(map[string]int64, len(m.durableOffsets))
-	for tabID, offset := range m.durableOffsets {
-		offsets[tabID] = offset
-	}
-	m.mu.Unlock()
-	for tabID, offset := range offsets {
-		source.PersistDurableTranscriptOffset(tabID, offset)
-	}
 }

@@ -84,7 +84,7 @@ func TestTranscriptWriterPersistsOrderedChunksAcrossRestart(t *testing.T) {
 	writer := startTestWriter(t, database, transcriptWriterConfig{})
 	writer.SessionStarted(ctx, transcriptIdentity("session-1"))
 	for index := 0; index < 50; index++ {
-		writer.SessionOutput(ctx, "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d\r\n", index)))
+		writer.SessionOutput(ctx, "", "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d\r\n", index)))
 	}
 	writer.SessionEnded(ctx, "session-1")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -147,7 +147,7 @@ func TestTranscriptWriterHighThroughputOrdering(t *testing.T) {
 	start := time.Now()
 	writer.SessionStarted(ctx, transcriptIdentity("session-throughput"))
 	for index := 0; index < total; index++ {
-		writer.SessionOutput(ctx, "session-throughput", "tab-1", payload)
+		writer.SessionOutput(ctx, "", "session-throughput", "tab-1", payload)
 	}
 	enqueueElapsed := time.Since(start)
 	writer.SessionEnded(ctx, "session-throughput")
@@ -201,7 +201,7 @@ func TestTranscriptWriterBackpressureBlocksUntilDrain(t *testing.T) {
 	go func() {
 		defer close(blocked)
 		for index := 0; index < 64; index++ {
-			writer.SessionOutput(ctx, "session-backpressure", "tab-1", payload)
+			writer.SessionOutput(ctx, "", "session-backpressure", "tab-1", payload)
 		}
 	}()
 	select {
@@ -243,7 +243,7 @@ func TestTranscriptWriterTruncatesAtSessionCap(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-cap"))
 	payload := bytes.Repeat([]byte("z"), 1024)
 	for index := 0; index < 16; index++ {
-		writer.SessionOutput(ctx, "session-cap", "tab-1", payload)
+		writer.SessionOutput(ctx, "", "session-cap", "tab-1", payload)
 	}
 	writer.SessionEnded(ctx, "session-cap")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -294,7 +294,7 @@ func TestTranscriptWriterCrashLeavesTranscriptOpen(t *testing.T) {
 	}
 	writer := startTestWriter(t, database, transcriptWriterConfig{})
 	writer.SessionStarted(ctx, transcriptIdentity("session-crash"))
-	writer.SessionOutput(ctx, "session-crash", "tab-1", []byte("before-crash\r\n"))
+	writer.SessionOutput(ctx, "", "session-crash", "tab-1", []byte("before-crash\r\n"))
 	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 1)
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
@@ -348,7 +348,7 @@ func TestTranscriptWriterDuplicateEndIsIdempotent(t *testing.T) {
 	writer := startTestWriter(t, database, transcriptWriterConfig{})
 	writer.SessionEnded(ctx, "unknown-session")
 	writer.SessionStarted(ctx, transcriptIdentity("session-dup"))
-	writer.SessionOutput(ctx, "session-dup", "tab-1", []byte("data\r\n"))
+	writer.SessionOutput(ctx, "", "session-dup", "tab-1", []byte("data\r\n"))
 	writer.SessionEnded(ctx, "session-dup")
 	writer.SessionEnded(ctx, "session-dup")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -457,10 +457,10 @@ func TestTranscriptWriterReconnectPeriodsSharingBatch(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	writer := newTranscriptWriter(transcriptWriterConfig{Database: database, Logger: discardTranscriptLogger()})
 	writer.SessionStarted(ctx, transcriptIdentity("session-shared"))
-	writer.SessionOutput(ctx, "session-shared", "tab-1", []byte("old-period-output\r\n"))
+	writer.SessionOutput(ctx, "", "session-shared", "tab-1", []byte("old-period-output\r\n"))
 	writer.SessionEnded(ctx, "session-shared")
 	writer.SessionStarted(ctx, transcriptIdentity("session-shared"))
-	writer.SessionOutput(ctx, "session-shared", "tab-1", []byte("new-period-output\r\n"))
+	writer.SessionOutput(ctx, "", "session-shared", "tab-1", []byte("new-period-output\r\n"))
 	writer.SessionEnded(ctx, "session-shared")
 	if err := writer.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -519,12 +519,12 @@ func TestTranscriptWriterBackpressureEndDoesNotOvertakeOutput(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-order"))
 	payload := bytes.Repeat([]byte("y"), 1024)
 	for index := 0; index < 4; index++ {
-		writer.SessionOutput(ctx, "session-order", "tab-1", payload)
+		writer.SessionOutput(ctx, "", "session-order", "tab-1", payload)
 	}
 	tailDone := make(chan struct{})
 	go func() {
 		defer close(tailDone)
-		writer.SessionOutput(ctx, "session-order", "tab-1", []byte("tail-output"))
+		writer.SessionOutput(ctx, "", "session-order", "tab-1", []byte("tail-output"))
 	}()
 	time.Sleep(150 * time.Millisecond)
 	select {
@@ -596,21 +596,21 @@ func TestTranscriptWriterDBStallKeepsOrderAndDoesNotWedge(t *testing.T) {
 	}
 	payload := bytes.Repeat([]byte("z"), 1024)
 	for index := 0; index < 4; index++ {
-		writer.SessionOutput(ctx, "session-stall", "tab-1", payload)
+		writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
 	}
 	time.Sleep(200 * time.Millisecond)
 	fillDone := make(chan struct{})
 	go func() {
 		defer close(fillDone)
 		for index := 0; index < 4; index++ {
-			writer.SessionOutput(ctx, "session-stall", "tab-1", payload)
+			writer.SessionOutput(ctx, "", "session-stall", "tab-1", payload)
 		}
 	}()
 	time.Sleep(200 * time.Millisecond)
 	blocked := make(chan struct{})
 	go func() {
 		defer close(blocked)
-		writer.SessionOutput(ctx, "session-stall", "tab-1", []byte("stalled-tail-output"))
+		writer.SessionOutput(ctx, "", "session-stall", "tab-1", []byte("stalled-tail-output"))
 	}()
 	time.Sleep(150 * time.Millisecond)
 	select {
@@ -690,14 +690,14 @@ func TestTranscriptWriterEnqueueHonorsCancelledContext(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-cancel"))
 	payload := bytes.Repeat([]byte("c"), 1024)
 	for index := 0; index < 1; index++ {
-		writer.SessionOutput(ctx, "session-cancel", "tab-1", payload)
+		writer.SessionOutput(ctx, "", "session-cancel", "tab-1", payload)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		writer.SessionOutput(cancelled, "session-cancel", "tab-1", payload)
+		writer.SessionOutput(cancelled, "", "session-cancel", "tab-1", payload)
 	}()
 	select {
 	case <-done:
@@ -793,3 +793,66 @@ func (a *fakeCatchUpAttachment) Wait(context.Context) error                   { 
 func (a *fakeCatchUpAttachment) Kill(context.Context) error                   { return nil }
 func (a *fakeCatchUpAttachment) Stderr() io.Reader                            { return nil }
 func (a *fakeCatchUpAttachment) CloseWrite() error                            { return nil }
+
+func TestTranscriptWriterCrashBeforeFlushDoesNotSuppressUnflushed(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := startTestWriter(t, database, transcriptWriterConfig{})
+	writer.SessionStarted(ctx, transcriptIdentity("session-unflushed"))
+	writer.SessionOutput(ctx, "tab-1", "session-unflushed", "tab-1", []byte("flushed-prefix\r\n"))
+	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 1)
+	offset, err := database.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != int64(len("flushed-prefix\r\n")) {
+		t.Fatalf("offset = %d, want the flushed byte count", offset)
+	}
+
+	locker, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockConn, err := locker.DB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockConn.ExecContext(ctx, "BEGIN EXCLUSIVE"); err != nil {
+		t.Fatal(err)
+	}
+	writer.SessionOutput(ctx, "tab-1", "session-unflushed", "tab-1", []byte("unflushed-tail\r\n"))
+	time.Sleep(200 * time.Millisecond)
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockConn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lockConn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := locker.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	offset, err = reopened.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != int64(len("flushed-prefix\r\n")) {
+		t.Fatalf("crash must not advance the offset past flushed output, got %d", offset)
+	}
+	chunks := readTranscriptAll(t, reopened, mustTranscriptID(t, reopened))
+	if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("flushed-prefix")) {
+		t.Fatalf("only flushed output may be persisted: %+v", chunks)
+	}
+}

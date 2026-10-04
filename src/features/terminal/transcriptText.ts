@@ -50,6 +50,15 @@ export function createTranscriptDecoder(): TranscriptDecoder {
         index = result.end;
         continue;
       }
+      if (code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
+        const result = scanControlString(text, index + 1);
+        if (!result.complete) {
+          tail = text.slice(index);
+          return visible;
+        }
+        index = result.end;
+        continue;
+      }
       visible += text[index];
       index++;
     }
@@ -94,6 +103,9 @@ function scanEscape(text: string, start: number): { end: number; complete: boole
     }
     return { end: text.length, complete: false };
   }
+  if (kind === "P" || kind === "X" || kind === "^" || kind === "_") {
+    return scanControlString(text, start + 2);
+  }
   let index = start + 1;
   while (index < text.length) {
     const code = text.charCodeAt(index);
@@ -103,6 +115,16 @@ function scanEscape(text: string, start: number): { end: number; complete: boole
     }
     if (code >= 0x30 && code <= 0x7e) return { end: index + 1, complete: true };
     return { end: index, complete: true };
+  }
+  return { end: text.length, complete: false };
+}
+
+function scanControlString(text: string, start: number): { end: number; complete: boolean } {
+  for (let index = start; index < text.length; index++) {
+    if (text.charCodeAt(index) === 0x1b && index + 1 < text.length && text[index + 1] === "\\") {
+      return { end: index + 2, complete: true };
+    }
+    if (text.charCodeAt(index) === 0x9c) return { end: index + 1, complete: true };
   }
   return { end: text.length, complete: false };
 }

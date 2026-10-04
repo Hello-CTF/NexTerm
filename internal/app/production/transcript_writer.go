@@ -52,6 +52,7 @@ type transcriptItem struct {
 	ticket    uint64
 	sessionID string
 	tabID     string
+	durableID string
 	ts        int64
 	data      []byte
 	info      session.TranscriptInfo
@@ -59,6 +60,7 @@ type transcriptItem struct {
 
 type transcriptPeriod struct {
 	transcriptID string
+	durableID    string
 	nextSeq      int64
 	bytes        int64
 	truncated    bool
@@ -174,12 +176,12 @@ func (w *transcriptWriter) SessionStarted(ctx context.Context, info session.Tran
 	w.enqueue(ctx, transcriptItem{kind: transcriptItemStart, sessionID: info.SessionID, ts: time.Now().UnixMilli(), info: info})
 }
 
-func (w *transcriptWriter) SessionOutput(ctx context.Context, sessionID, tabID string, data []byte) {
+func (w *transcriptWriter) SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte) {
 	if len(data) == 0 {
 		return
 	}
 	w.enqueue(ctx, transcriptItem{
-		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID,
+		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
 		ts: time.Now().UnixMilli(), data: bytes.Clone(data),
 	})
 }
@@ -242,6 +244,15 @@ func (w *transcriptWriter) advanceServingLocked() {
 	}
 }
 
+func (w *transcriptWriter) queueIndexOfTicketLocked(ticket uint64) int {
+	for index, item := range w.queue {
+		if item.ticket == ticket {
+			return index
+		}
+	}
+	return -1
+}
+
 func (w *transcriptWriter) signal() {
 	select {
 	case w.signalCh <- struct{}{}:
@@ -283,15 +294,13 @@ func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
 				w.process++
 				continue
 			}
-			if len(w.queue) > 0 && (w.queue[0].ticket == ticket || w.closed) {
-				item := w.queue[0]
-				w.queue = w.queue[1:]
+			if index := w.queueIndexOfTicketLocked(ticket); index >= 0 {
+				item := w.queue[index]
+				w.queue = append(w.queue[:index], w.queue[index+1:]...)
 				w.queuedBytes -= len(item.data)
 				close(w.spaceCh)
 				w.spaceCh = make(chan struct{})
-				if item.ticket >= w.process {
-					w.process = item.ticket + 1
-				}
+				w.process++
 				batch = append(batch, item)
 				batchBytes += len(item.data)
 				if batchBytes >= transcriptBatchMaxBytes {
@@ -336,6 +345,9 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 			if period == nil || period.truncated {
 				continue
 			}
+			if period.durableID == "" {
+				period.durableID = item.durableID
+			}
 			if period.bytes+int64(len(item.data)) > w.maxSessionBytes {
 				period.pending = append(period.pending, store.TranscriptChunkRow{
 					Seq: period.nextSeq, TabID: item.tabID, TS: item.ts,
@@ -362,7 +374,7 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 	}
 	for _, period := range sessions {
 		if len(period.pending) > 0 {
-			if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending); err != nil {
+			if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableID); err != nil {
 				w.logger.Error("transcript chunk flush failed", "transcriptId", period.transcriptID, "error", err)
 			}
 			period.pending = nil
@@ -372,7 +384,7 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 
 func (w *transcriptWriter) flushPeriod(period *transcriptPeriod, endedAt int64) {
 	if len(period.pending) > 0 {
-		if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending); err != nil {
+		if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableID); err != nil {
 			w.logger.Error("transcript chunk flush failed", "transcriptId", period.transcriptID, "error", err)
 		}
 		period.pending = nil

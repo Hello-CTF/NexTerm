@@ -366,6 +366,29 @@ describe("transcriptText", () => {
     expect(text).toBe("hello visible");
   });
 
+  it("strips DCS and APC control strings including split payloads", () => {
+    const decoder = createTranscriptDecoder();
+    const first = new TextEncoder().encode("hel\u001bP1;2|not-visible-payload");
+    const second = new TextEncoder().encode("\u001b\\lo apc\u001b_secret\u001b\\done");
+    let text = decoder.push(btoa(String.fromCharCode(...first)));
+    expect(text).toBe("hel");
+    text += decoder.push(btoa(String.fromCharCode(...second)));
+    text += decoder.flush();
+    expect(text).toBe("hello apcdone");
+    expect(text).not.toContain("not-visible-payload");
+    expect(text).not.toContain("secret");
+  });
+
+  it("strips SOS PM and C1 control strings", () => {
+    const decoder = createTranscriptDecoder();
+    const input = new TextEncoder().encode(
+      "sos\u001bXsecret-sos\u001b\\done pm\u001b^secret-pm\u001b\\done c1\u0090secret-c1\u009cdone",
+    );
+    let text = decoder.push(btoa(String.fromCharCode(...input)));
+    text += decoder.flush();
+    expect(text).toBe("sosdone pmdone c1done");
+  });
+
   it("completes a trailing incomplete escape on flush", () => {
     const decoder = createTranscriptDecoder();
     const first = new TextEncoder().encode("plain\u001b]0;title");

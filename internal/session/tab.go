@@ -50,8 +50,7 @@ type Tab struct {
 	destroying   bool
 	cancelPump   context.CancelFunc
 
-	catchUpRemaining  int64
-	transcribedOffset int64
+	catchUpRemaining int64
 
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -252,7 +251,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if source, ok := m.durable.(durableTranscriptOffsetSource); ok {
 			if options.Durable.Recover {
 				tab.catchUpRemaining = source.DurableTranscriptCatchUpBytes(tabID)
-				tab.transcribedOffset = tab.catchUpRemaining
 			} else {
 				source.PersistDurableTranscriptOffset(tabID, 0)
 			}

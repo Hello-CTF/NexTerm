@@ -479,3 +479,67 @@ func TestDurableTranscriptOffsetRoundtrip(t *testing.T) {
 		t.Fatalf("offset after delete = %d err=%v", offset, err)
 	}
 }
+
+func TestTranscriptSearchControlStrings(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendTranscriptChunks(t, db, id,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Data: []byte("hel\x1bP1;2|not-visible-payload\x1b\\lo visible\r\n")},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: []byte("apc\x1b_secret-apc\x1b\\done\r\n")},
+		TranscriptChunkRow{Seq: 2, TabID: "tab", TS: 1003, Data: []byte("sos\x1bXsecret-sos\x1b\\done\r\n")},
+		TranscriptChunkRow{Seq: 3, TabID: "tab", TS: 1004, Data: []byte("pm\x1b^secret-pm\x1b\\done\r\n")},
+		TranscriptChunkRow{Seq: 4, TabID: "tab", TS: 1005, Data: []byte("c1\x90secret-c1\x9cdone\r\n")},
+	)
+
+	for query, wantSeq := range map[string]int64{
+		"hello visible": 0,
+		"apcdone":       1,
+		"sosdone":       2,
+		"pmdone":        3,
+		"c1done":        4,
+	} {
+		matches, err := db.TranscriptSearch(ctx, id, []byte(query), 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 1 || matches[0].Seq != wantSeq {
+			t.Fatalf("query %q: matches=%+v, want one at seq %d", query, matches, wantSeq)
+		}
+	}
+	for _, query := range []string{
+		"not-visible-payload", "secret-apc", "secret-sos", "secret-pm", "secret-c1", "1;2",
+	} {
+		matches, err := db.TranscriptSearch(ctx, id, []byte(query), 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("control-string payload %q must not be searchable: %+v", query, matches)
+		}
+	}
+}
+
+func TestTranscriptSearchControlStringAcrossChunks(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	appendTranscriptChunks(t, db, id,
+		TranscriptChunkRow{Seq: 0, TabID: "tab", TS: 1001, Data: []byte("hel\x1bP1;2|pay")},
+		TranscriptChunkRow{Seq: 1, TabID: "tab", TS: 1002, Data: []byte("load\x1b\\lo visible\r\n")},
+	)
+	matches, err := db.TranscriptSearch(ctx, id, []byte("hello"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Seq != 0 {
+		t.Fatalf("DCS split across chunks must still match the visible word: %+v", matches)
+	}
+	matches, err = db.TranscriptSearch(ctx, id, []byte("payload"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("split DCS payload must not be searchable: %+v", matches)
+	}
+}

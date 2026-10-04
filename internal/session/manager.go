@@ -36,8 +36,6 @@ type Manager struct {
 	hookMu        sync.RWMutex
 	userInputHook func(string)
 
-	durableOffsets map[string]int64
-
 	idleTimeout      time.Duration
 	sweepInterval    time.Duration
 	reconnectMax     int
@@ -58,7 +56,6 @@ func NewManager(config Config) *Manager {
 		byAsset:          make(map[string]string),
 		tabs:             make(map[string]*Tab),
 		channelTabs:      make(map[string]string),
-		durableOffsets:   make(map[string]int64),
 		connector:        config.Connector,
 		terminals:        config.Terminals,
 		durable:          config.Durable,
@@ -103,6 +100,13 @@ func NewManager(config Config) *Manager {
 		manager.ownsBus = true
 	} else {
 		manager.bus = config.Hub
+	}
+	if binder, ok := config.Transcripts.(interface {
+		BindTranscriptOffsetSource(durableTranscriptOffsetSource)
+	}); ok {
+		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
+			binder.BindTranscriptOffsetSource(source)
+		}
 	}
 	return manager
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ type transcriptRecorder struct {
 	started []TranscriptInfo
 	outputs []recorderOutput
 	ended   []string
+	offsets durableTranscriptOffsetSource
 }
 
 type recorderOutput struct {
@@ -24,16 +26,25 @@ type recorderOutput struct {
 	data      []byte
 }
 
+func (r *transcriptRecorder) BindTranscriptOffsetSource(source durableTranscriptOffsetSource) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.offsets = source
+}
+
 func (r *transcriptRecorder) SessionStarted(_ context.Context, info TranscriptInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.started = append(r.started, info)
 }
 
-func (r *transcriptRecorder) SessionOutput(_ context.Context, sessionID, tabID string, data []byte) {
+func (r *transcriptRecorder) SessionOutput(_ context.Context, durableID, sessionID, tabID string, data []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.outputs = append(r.outputs, recorderOutput{sessionID: sessionID, tabID: tabID, data: append([]byte(nil), data...)})
+	if durableID != "" && r.offsets != nil {
+		r.offsets.PersistDurableTranscriptOffset(durableID, r.offsets.DurableTranscriptCatchUpBytes(durableID)+int64(len(data)))
+	}
 }
 
 func (r *transcriptRecorder) SessionEnded(_ context.Context, sessionID string) {
@@ -382,5 +393,69 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	}
 	if bytes.Contains(recorded, []byte("ker\r\n")) {
 		t.Fatalf("replay tail inside a straddling read must be suppressed: %q", recorded)
+	}
+}
+
+func TestTranscriptDurableRecoveryRepeatedNoDuplication(t *testing.T) {
+	provider := newTranscriptDurableProvider()
+	firstRecorder := &transcriptRecorder{}
+	first := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		Durable: provider, Transcripts: firstRecorder,
+	})
+	connected, err := first.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := first.OpenTab(context.Background(), OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a",
+		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.channel(info.ID).emit([]byte("epoch-00\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return bytes.Contains(firstRecorder.outputBytes(), []byte("epoch-00")) })
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	accumulated := []byte("epoch-00\r\n")
+	for epoch := 1; epoch <= 10; epoch++ {
+		marker := []byte(fmt.Sprintf("epoch-%02d\r\n", epoch))
+		provider.mu.Lock()
+		provider.records[info.ID].reads = [][]byte{append([]byte(nil), accumulated...)}
+		provider.mu.Unlock()
+
+		recorder := &transcriptRecorder{}
+		manager := NewManager(Config{
+			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+			Durable: provider, Transcripts: recorder,
+		})
+		recovered, err := manager.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
+			TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
+			Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := provider.channel(info.ID).emit(marker); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool { return bytes.Contains(recorder.outputBytes(), marker) })
+		for previous := 0; previous < epoch; previous++ {
+			if bytes.Contains(recorder.outputBytes(), []byte(fmt.Sprintf("epoch-%02d", previous))) {
+				t.Fatalf("epoch %d: recorder contains replayed epoch-%02d: %q", epoch, previous, recorder.outputBytes())
+			}
+		}
+		if err := manager.Close(); err != nil {
+			t.Fatal(err)
+		}
+		accumulated = append(accumulated, marker...)
 	}
 }

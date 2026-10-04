@@ -79,9 +79,13 @@ VALUES(?,?,?,?,?,?,NULL,0,0,0)`,
 	return nil
 }
 
-func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []TranscriptChunkRow) error {
+func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []TranscriptChunkRow, durableID ...string) error {
 	if len(chunks) == 0 {
 		return nil
+	}
+	durable := ""
+	if len(durableID) > 0 {
+		durable = durableID[0]
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -101,6 +105,14 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 	if _, err := tx.ExecContext(ctx, `UPDATE transcript SET bytes=bytes+?, chunks=chunks+? WHERE id=?`,
 		totalBytes, totalChunks, transcriptID); err != nil {
 		return dbError(err)
+	}
+	if durable != "" {
+		now := ids.NowMS()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, offset, updated_at)
+VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET offset=offset+?, updated_at=?`,
+			durable, totalBytes, now, totalBytes, now); err != nil {
+			return dbError(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return dbError(err)
@@ -387,6 +399,12 @@ func visibleBytes(raw []byte) (visible []byte, tail []byte) {
 				return visible, raw[index:]
 			}
 			index += 1 + consumed
+		case current == 0x90 || current == 0x98 || current == 0x9e || current == 0x9f:
+			consumed, complete := controlString(raw[index+1:])
+			if !complete {
+				return visible, raw[index:]
+			}
+			index += 1 + consumed
 		default:
 			r, size := utf8.DecodeRune(raw[index:])
 			if r == utf8.RuneError && size <= 1 {
@@ -415,6 +433,9 @@ func escapeSequence(raw []byte) (consumed int, complete bool) {
 	case ']':
 		consumed, complete := oscSequence(raw[2:])
 		return 2 + consumed, complete
+	case 'P', 'X', '^', '_':
+		consumed, complete := controlString(raw[2:])
+		return 2 + consumed, complete
 	default:
 		index := 1
 		for index < len(raw) && raw[index] >= 0x20 && raw[index] <= 0x2f {
@@ -428,6 +449,18 @@ func escapeSequence(raw []byte) (consumed int, complete bool) {
 		}
 		return index, true
 	}
+}
+
+func controlString(raw []byte) (consumed int, complete bool) {
+	for index := 0; index < len(raw); index++ {
+		if raw[index] == 0x1b && index+1 < len(raw) && raw[index+1] == '\\' {
+			return index + 2, true
+		}
+		if raw[index] == 0x9c {
+			return index + 1, true
+		}
+	}
+	return 0, false
 }
 
 func csiSequence(raw []byte) (consumed int, complete bool) {
