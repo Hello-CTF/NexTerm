@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => {
   return {
     knownHostList: vi.fn(),
     knownHostRemove: vi.fn(),
+    knownHostAccept: vi.fn(),
+    sessionConnect: vi.fn(),
     syncDigest: vi.fn(),
     syncToken: vi.fn(),
     rotateToken: vi.fn(),
@@ -22,6 +24,7 @@ vi.mock("../../ipc/commands", () => ({
   assetApi: {
     knownHostList: mocks.knownHostList,
     knownHostRemove: mocks.knownHostRemove,
+    knownHostAccept: mocks.knownHostAccept,
   },
   syncApi: {
     digest: mocks.syncDigest,
@@ -29,7 +32,7 @@ vi.mock("../../ipc/commands", () => ({
     rotateToken: mocks.rotateToken,
   },
   dbApi: {},
-  sessionApi: {},
+  sessionApi: { connect: mocks.sessionConnect },
   terminalApi: {},
   vaultApi: {},
 }));
@@ -37,7 +40,7 @@ vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { KnownHostsCard } from "../../features/settings/KnownHostsCard";
 import { SyncCard } from "../../features/settings/SyncCard";
-import { useUi } from "../../app/store";
+import { connectAsset, useUi } from "../../app/store";
 
 const KH1: KnownHostDto = {
   id: "kh1",
@@ -211,5 +214,144 @@ describe("SyncCard（服务端一面）", () => {
     expect(text).toContain("/sync/rpc");
     expect(text).not.toContain("完全控制权");
     expect(text).toContain("反向代理");
+  });
+});
+
+describe("connectAsset 主机指纹确认", () => {
+  const asset = { id: "asset-1", name: "测试机", kind: "ssh" };
+  const pendingDetail = {
+    host: "10.0.0.8",
+    port: 22,
+    keyType: "ssh-ed25519",
+    fingerprint: "SHA256:newfp",
+    changed: false,
+  };
+  const sessionInfo = {
+    id: "s1",
+    assetId: "asset-1",
+    name: "测试机",
+    kind: "ssh",
+    status: "connected",
+    tabs: [],
+    createdAt: 0,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useUi.setState({ pushToast: mocks.toast });
+  });
+
+  it("首次连接时弹出指纹确认，显式接受后记录信任并重连", async () => {
+    mocks.sessionConnect
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "unknown SSH host key for 10.0.0.8:22",
+        detail: pendingDetail,
+      })
+      .mockResolvedValueOnce(sessionInfo);
+    mocks.ask.mockResolvedValue(true);
+    mocks.knownHostAccept.mockResolvedValue(undefined);
+
+    await connectAsset(asset);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [question, options] = mocks.ask.mock.calls[0] as [string, Record<string, unknown>];
+    expect(question).toContain("首次连接 10.0.0.8:22");
+    expect(question).toContain("ssh-ed25519");
+    expect(question).toContain("SHA256:newfp");
+    expect(options).toMatchObject({ title: "确认主机指纹", kind: "warning" });
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "10.0.0.8",
+      22,
+      "ssh-ed25519",
+      "SHA256:newfp",
+    );
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(2);
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
+    expect(useUi.getState().sessions.some((s) => s.id === "s1")).toBe(true);
+  });
+
+  it("密钥变更时弹出变更警告并展示原指纹与新指纹", async () => {
+    const changedDetail = {
+      ...pendingDetail,
+      changed: true,
+      known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:oldfp" }],
+    };
+    mocks.sessionConnect
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "SSH host key for 10.0.0.8:22 changed",
+        detail: changedDetail,
+      })
+      .mockResolvedValueOnce(sessionInfo);
+    mocks.ask.mockResolvedValue(true);
+    mocks.knownHostAccept.mockResolvedValue(undefined);
+
+    await connectAsset(asset);
+
+    const [question, options] = mocks.ask.mock.calls[0] as [string, Record<string, unknown>];
+    expect(question).toContain("主机密钥已变更 10.0.0.8:22");
+    expect(question).toContain("SHA256:oldfp");
+    expect(question).toContain("SHA256:newfp");
+    expect(options).toMatchObject({ title: "主机密钥变更警告", kind: "warning" });
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "10.0.0.8",
+      22,
+      "ssh-ed25519",
+      "SHA256:newfp",
+    );
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("asset-1");
+  });
+
+  it("拒绝确认时不记录信任、不再重连", async () => {
+    mocks.sessionConnect.mockRejectedValueOnce({
+      code: "host_key_pending",
+      message: "unknown SSH host key for 10.0.0.8:22",
+      detail: pendingDetail,
+    });
+    mocks.ask.mockResolvedValue(false);
+
+    await connectAsset(asset);
+
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已取消连接");
+  });
+
+  it("记录信任后重连失败时上报错误", async () => {
+    mocks.sessionConnect
+      .mockRejectedValueOnce({
+        code: "host_key_pending",
+        message: "unknown SSH host key for 10.0.0.8:22",
+        detail: pendingDetail,
+      })
+      .mockRejectedValueOnce({ code: "ssh", message: "SSH handshake: broken" });
+    mocks.ask.mockResolvedValue(true);
+    mocks.knownHostAccept.mockResolvedValue(undefined);
+
+    await connectAsset(asset);
+
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "10.0.0.8",
+      22,
+      "ssh-ed25519",
+      "SHA256:newfp",
+    );
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
+  });
+
+  it("指纹 detail 不完整时不写账本也不重连", async () => {
+    mocks.sessionConnect.mockRejectedValueOnce({
+      code: "host_key_pending",
+      message: "unknown SSH host key for 10.0.0.8:22",
+      detail: { host: "10.0.0.8", port: 22 },
+    });
+    mocks.ask.mockResolvedValue(true);
+
+    await connectAsset(asset);
+
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.any(String));
   });
 });

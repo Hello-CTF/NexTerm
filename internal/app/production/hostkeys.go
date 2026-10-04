@@ -38,6 +38,20 @@ func (s *productionHostKeyStore) HostKeys(ctx context.Context, host string, port
 	return s.files.HostKeys(ctx, host, port)
 }
 
+func (s *productionHostKeyStore) ApprovedHostKeys(ctx context.Context, host string, port int) ([]ssh.HostKey, error) {
+	rows, err := s.database.KnownHostList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var approved []ssh.HostKey
+	for _, row := range rows {
+		if row.Host == host && int(row.Port) == port {
+			approved = append(approved, ssh.HostKey{Host: row.Host, Port: int(row.Port), KeyType: row.KeyType, Fingerprint: row.Fingerprint})
+		}
+	}
+	return approved, nil
+}
+
 func (s *productionHostKeyStore) PutHostKey(ctx context.Context, key ssh.HostKey, replace bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,3 +132,4 @@ func writeProductionHostKeyFile(path string, file productionHostKeyFile) error {
 }
 
 var _ ssh.HostKeyStore = (*productionHostKeyStore)(nil)
+var _ ssh.HostKeyApprovalStore = (*productionHostKeyStore)(nil)

@@ -8,6 +8,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
 )
 
 func AdaptEmitter(emitter ipc.Emitter) Emitter {
@@ -27,6 +28,10 @@ func IPCError(err error) *ipc.Error {
 	if errors.As(err, &appErr) {
 		return appErr
 	}
+	var hostKeyErr *ssh.HostKeyError
+	if errors.As(err, &hostKeyErr) {
+		return hostKeyIPCError(hostKeyErr)
+	}
 	switch {
 	case errors.Is(err, ErrNotController):
 		return ipc.WrapError(ipc.CodeNotController, ErrNotController.Error(), err)
@@ -43,4 +48,32 @@ func IPCError(err error) *ipc.Error {
 	default:
 		return ipc.NormalizeError(err)
 	}
+}
+
+type hostKeyKnownDetail struct {
+	KeyType     string `json:"keyType"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+type hostKeyDetail struct {
+	Host        string               `json:"host"`
+	Port        int                  `json:"port"`
+	KeyType     string               `json:"keyType"`
+	Fingerprint string               `json:"fingerprint"`
+	Changed     bool                 `json:"changed"`
+	Known       []hostKeyKnownDetail `json:"known,omitempty"`
+}
+
+func hostKeyIPCError(err *ssh.HostKeyError) *ipc.Error {
+	detail := hostKeyDetail{
+		Host:        err.Presented.Host,
+		Port:        err.Presented.Port,
+		KeyType:     err.Presented.KeyType,
+		Fingerprint: err.Presented.Fingerprint,
+		Changed:     !err.Pending,
+	}
+	for _, known := range err.Known {
+		detail.Known = append(detail.Known, hostKeyKnownDetail{KeyType: known.KeyType, Fingerprint: known.Fingerprint})
+	}
+	return ipc.WrapError(ipc.CodeHostKeyPending, err.Error(), err).WithDetail(detail)
 }

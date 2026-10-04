@@ -114,8 +114,16 @@ func TestProductionMissingTmuxDoesNotBlockNonLocalTerminal(t *testing.T) {
 	var local sessionInfoDTO
 	requireStoreTestResponse(t, localResponse, &local)
 	localAttach := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+local.ID+`","cols":80,"rows":24}`, "local-channel", "client-a")
-	if localAttach.OK || localAttach.Error == nil || localAttach.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("local attach with missing tmux = %+v, want unsupported", localAttach)
+	var localTabID string
+	requireStoreTestResponse(t, localAttach, &localTabID)
+	if localTabID == "" {
+		t.Fatal("local attach with missing tmux returned no volatile tab")
+	}
+	if streams := factory.streams["local-channel"]; len(streams) != 1 {
+		t.Fatalf("volatile fallback did not bridge the local channel: %+v", streams)
+	}
+	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 2 {
+		t.Fatalf("volatile fallback tabs = %+v", tabs)
 	}
 }
 

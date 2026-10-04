@@ -96,7 +96,7 @@ func TestProductionDurableRealTmuxRestartRecoveryAndIdentityKill(t *testing.T) {
 	}
 }
 
-func TestProductionDurableMissingTmuxIsUnavailableWithoutFallback(t *testing.T) {
+func TestProductionLocalAttachFallsBackToVolatileTabWithoutTmux(t *testing.T) {
 	factory := &bridgeTestFactory{}
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
@@ -111,6 +111,9 @@ func TestProductionDurableMissingTmuxIsUnavailableWithoutFallback(t *testing.T) 
 	if !errors.Is(production.Services.DurableErr, durable.ErrUnavailable) {
 		t.Fatalf("durable constructor error = %v", production.Services.DurableErr)
 	}
+	if production.Services.Durable != nil {
+		t.Fatal("durable backend is available despite missing tmux")
+	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -118,15 +121,24 @@ func TestProductionDurableMissingTmuxIsUnavailableWithoutFallback(t *testing.T) 
 	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
-	response := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "missing-tmux-channel", "client-a")
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("missing tmux response = %+v, want unsupported", response)
+	channelID := "missing-tmux-channel"
+	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
+	var tabID string
+	requireStoreTestResponse(t, attachResponse, &tabID)
+	if tabID == "" {
+		t.Fatal("volatile fallback attach returned an empty tab id")
 	}
-	if len(factory.streams) != 0 {
-		t.Fatal("volatile fallback opened a terminal stream")
+	stream := factory.at(channelID, 0)
+	waitForProductionOutput(t, stream, "$ ")
+	writeDurableTestCommand(t, production, tabID, "volatile-fallback-marker", "client-a")
+	waitForProductionOutput(t, stream, "volatile-fallback-marker")
+	tabs := production.Services.Sessions.ListTabs()
+	if len(tabs) != 1 || tabs[0].ID != tabID {
+		t.Fatalf("volatile fallback tabs = %+v", tabs)
 	}
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 0 {
-		t.Fatalf("volatile fallback created tabs: %+v", tabs)
+		t.Fatalf("volatile fallback tab survived close: %+v", tabs)
 	}
 }
 

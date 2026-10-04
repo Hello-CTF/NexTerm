@@ -481,10 +481,7 @@ func (s *terminalCommandService) createDurableOptions(sessionID string) (*sessio
 	if connected.Asset().Kind != session.KindLocal {
 		return nil, nil
 	}
-	if s.durableErr != nil {
-		return nil, s.durableErr
-	}
-	if s.durable == nil {
+	if s.durableErr != nil || s.durable == nil {
 		return nil, nil
 	}
 	return &session.DurableTabOptions{}, nil
