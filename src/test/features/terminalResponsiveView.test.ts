@@ -15,6 +15,7 @@ const harness = vi.hoisted(() => ({
     scrollToBottom: ReturnType<typeof vi.fn>;
     element: HTMLElement | null;
     resize: ReturnType<typeof vi.fn>;
+    fireScroll: () => void;
   }>,
   observers: [] as Array<() => void>,
   frames: new Map<number, () => void>(),
@@ -51,6 +52,10 @@ vi.mock("@xterm/xterm", () => ({
       this.cols = cols;
       this.rows = rows;
     });
+    private scrollCallback: (() => void) | null = null;
+    fireScroll() {
+      this.scrollCallback?.();
+    }
 
     constructor() {
       harness.terminals.push(this);
@@ -75,10 +80,13 @@ vi.mock("@xterm/xterm", () => ({
     onData() {
       return { dispose: vi.fn() };
     }
+    onScroll(callback: () => void) {
+      this.scrollCallback = callback;
+      return { dispose: vi.fn() };
+    }
   },
 }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
-vi.mock("@xterm/addon-canvas", () => ({ CanvasAddon: class {} }));
 vi.mock("@xterm/addon-search", () => ({
   SearchAddon: class {
     findNext() {}
@@ -111,6 +119,10 @@ vi.mock("../../features/terminal/terminalGeometry", () => ({
     };
   },
   resizeTerminalToGrid: (
+    term: { resize: (cols: number, rows: number) => void },
+    grid: { cols: number; rows: number },
+  ) => term.resize(grid.cols, grid.rows),
+  resizeTerminalToGridPreservingSelection: (
     term: { resize: (cols: number, rows: number) => void },
     grid: { cols: number; rows: number },
   ) => term.resize(grid.cols, grid.rows),
@@ -377,13 +389,11 @@ describe("XtermView terminal interaction", () => {
   it("offers return-to-bottom with the lines below and hides it at the bottom", async () => {
     const { term } = await showWithHandle();
     expect(container?.querySelector("button")).toBeNull();
-    const viewportEl = term.element?.querySelector(".xterm-viewport");
-    if (!viewportEl) throw new Error("viewport element missing");
 
     await act(async () => {
       term.buffer.active.baseY = 50;
       term.buffer.active.viewportY = 20;
-      viewportEl.dispatchEvent(new Event("scroll"));
+      term.fireScroll();
     });
     const button = container?.querySelector("button");
     expect(button?.textContent).toContain("回到底部");
@@ -396,20 +406,18 @@ describe("XtermView terminal interaction", () => {
 
     await act(async () => {
       term.buffer.active.viewportY = term.buffer.active.baseY;
-      viewportEl.dispatchEvent(new Event("scroll"));
+      term.fireScroll();
     });
     expect(container?.querySelector("button")).toBeNull();
   });
 
   it("grows the lines-below count when output arrives while scrolled up", async () => {
     const { term } = await showWithHandle();
-    const viewportEl = term.element?.querySelector(".xterm-viewport");
-    if (!viewportEl) throw new Error("viewport element missing");
 
     await act(async () => {
       term.buffer.active.baseY = 50;
       term.buffer.active.viewportY = 44;
-      viewportEl.dispatchEvent(new Event("scroll"));
+      term.fireScroll();
     });
     expect(container?.querySelector("button")?.textContent).toContain("6");
 
