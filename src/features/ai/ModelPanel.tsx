@@ -459,7 +459,7 @@ export function ModelManager({
               </label>
 
               <div className="nx-hint mt-0.5">
-                API Key 以明文存进本机 sqlite，不会上传到任何服务器。
+                API Key 加密后存进本机 sqlite，不会上传到任何服务器。
               </div>
             </div>
           ) : (

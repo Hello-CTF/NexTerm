@@ -162,7 +162,8 @@ describe("M134 AI copy", () => {
     expect(label?.textContent).toBe("当前");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
-    expect(text).toContain("API Key 以明文存进本机 sqlite，不会上传到任何服务器。");
+    expect(text).toContain("API Key 加密后存进本机 sqlite，不会上传到任何服务器。");
+    expect(text).not.toContain("明文存进本机 sqlite");
     expect(text).not.toContain("同一约定");
     manager.unmount();
   });
