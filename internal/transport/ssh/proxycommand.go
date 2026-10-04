@@ -63,7 +63,7 @@ func dialProxyCommand(ctx context.Context, command, host string, port int) (net.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	proc, stdin, stdout, err := startProxyCommand(proxyCommandShell(expandProxyCommand(command, host, port)))
+	proc, stdin, stdout, err := startProxyCommand(expandProxyCommand(command, host, port))
 	if err != nil {
 		return nil, err
 	}
@@ -77,4 +77,8 @@ func dialProxyCommand(ctx context.Context, command, host string, port int) (net.
 
 func proxyCommandStartError(err error) error {
 	return fmt.Errorf("start proxy command: %w", err)
+}
+
+func proxyCommandLine(executable, command string) string {
+	return "\"" + executable + "\" /C " + command
 }

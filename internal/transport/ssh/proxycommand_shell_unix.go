@@ -9,16 +9,8 @@ import (
 	"syscall"
 )
 
-func proxyCommandShell(command string) []string {
-	return []string{"sh", "-c", command}
-}
-
-type proxyCommandProcess struct {
-	cmd *exec.Cmd
-}
-
-func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
-	cmd := exec.Command(shell[0], shell[1:]...)
+func startProxyCommand(command string) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
+	cmd := exec.Command("sh", "-c", command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -35,6 +27,10 @@ func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io
 		return nil, nil, nil, proxyCommandStartError(err)
 	}
 	return &proxyCommandProcess{cmd: cmd}, stdin, stdout, nil
+}
+
+type proxyCommandProcess struct {
+	cmd *exec.Cmd
 }
 
 func (p *proxyCommandProcess) kill() error {

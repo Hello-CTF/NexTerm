@@ -6,26 +6,27 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
-
-func proxyCommandShell(command string) []string {
-	return []string{"cmd", "/C", command}
-}
 
 type proxyCommandProcess struct {
 	process windows.Handle
 	job     windows.Handle
 }
 
-func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
-	application, err := windows.UTF16PtrFromString(shell[0])
+func startProxyCommand(command string) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
+	executable, err := proxyCommandExecutable()
 	if err != nil {
 		return nil, nil, nil, proxyCommandStartError(err)
 	}
-	commandLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(shell))
+	application, err := windows.UTF16PtrFromString(executable)
+	if err != nil {
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	commandLine, err := windows.UTF16PtrFromString(proxyCommandLine(executable, command))
 	if err != nil {
 		return nil, nil, nil, proxyCommandStartError(err)
 	}
@@ -47,7 +48,6 @@ func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io
 		_ = stdoutWrite.Close()
 		return nil, nil, nil, proxyCommandStartError(err)
 	}
-	childHandles := []*os.File{stdinRead, stdoutWrite, devNull}
 	cleanupPipes := func() {
 		_ = stdinRead.Close()
 		_ = stdinWrite.Close()
@@ -55,7 +55,7 @@ func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io
 		_ = stdoutWrite.Close()
 		_ = devNull.Close()
 	}
-	for _, file := range childHandles {
+	for _, file := range []*os.File{stdinRead, stdoutWrite, devNull} {
 		handle := windows.Handle(file.Fd())
 		if err := windows.SetHandleInformation(handle, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
 			cleanupPipes()
@@ -90,7 +90,6 @@ func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io
 		_ = proc.kill()
 		_ = proc.close()
 		_ = windows.CloseHandle(processInfo.Thread)
-		_ = windows.CloseHandle(processInfo.Process)
 		_ = stdinWrite.Close()
 		_ = stdoutRead.Close()
 		return nil, nil, nil, proxyCommandStartError(err)
@@ -98,12 +97,22 @@ func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io
 	if err := windows.CloseHandle(processInfo.Thread); err != nil {
 		_ = proc.kill()
 		_ = proc.close()
-		_ = windows.CloseHandle(processInfo.Process)
 		_ = stdinWrite.Close()
 		_ = stdoutRead.Close()
 		return nil, nil, nil, proxyCommandStartError(err)
 	}
 	return proc, stdinWrite, stdoutRead, nil
+}
+
+func proxyCommandExecutable() (string, error) {
+	executable, err := exec.LookPath("cmd")
+	if err == nil {
+		return executable, nil
+	}
+	if comspec := os.Getenv("ComSpec"); comspec != "" {
+		return comspec, nil
+	}
+	return "", err
 }
 
 func proxyCommandJob(process windows.Handle) (*proxyCommandProcess, error) {
