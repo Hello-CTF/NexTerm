@@ -8,9 +8,10 @@ import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
-import { takePendingCommand, sessionStatusText, useUi } from "../../app/store";
+import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
 import { isMac, modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
+import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -113,6 +114,35 @@ export function TerminalPane({
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
   const blocksSupported = !effectiveWinrm;
   const mod = modHint();
+  const sessionNameRef = useRef(sessionName);
+  sessionNameRef.current = sessionName;
+  const osc52Handler = useRef(
+    createOsc52Handler({
+      enabled: () => useUi.getState().terminalOsc52,
+      writeText: (text) => navigator.clipboard.writeText(text),
+      onDenied: () =>
+        pushToast(
+          "info",
+          `「${sessionNameRef.current}」尝试写入剪贴板（OSC 52），已拒绝：此功能默认关闭，可在「设置 → 终端」中开启。`,
+        ),
+      onError: (e) =>
+        pushToast(
+          "error",
+          `「${sessionNameRef.current}」写入剪贴板失败：${describeError(e)}。剪贴板权限可能被浏览器或系统拒绝。`,
+        ),
+    }),
+  ).current;
+  const osc9Notifier = useRef(
+    createOsc9Notifier({
+      notify: (body) => pushToast("info", `「${sessionNameRef.current}」通知：${body}`),
+    }),
+  ).current;
+  const handleOscTitle = useCallback(
+    (t: string) => {
+      applyRemoteTabTitle(storeTabId, t);
+    },
+    [storeTabId],
+  );
 
   useEffect(() => {
     if (!blocksSupported || userClosedBlocks.current) return;
@@ -696,6 +726,9 @@ export function TerminalPane({
                 void refreshControl(id);
               }}
               onBlocks={blocksSupported ? setBlocks : undefined}
+              onTitle={handleOscTitle}
+              onNotification={osc9Notifier}
+              onClipboard={osc52Handler}
               onHandle={(h) => {
                 handleRef.current = h;
               }}

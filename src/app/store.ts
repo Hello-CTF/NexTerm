@@ -44,6 +44,7 @@ export interface AppTab {
   closable: boolean;
   dead?: boolean;
   exited?: boolean;
+  renamedByUser?: boolean;
 }
 
 export type WorkspaceKind = "session" | "db" | "tools";
@@ -163,6 +164,9 @@ interface UiState {
   setLeftWidth: (w: number) => void;
   setRightWidth: (w: number) => void;
 
+  terminalOsc52: boolean;
+  setTerminalOsc52: (v: boolean) => void;
+
   ensureWorkspace: (spec: WorkspaceSpec) => string;
   setActiveWorkspace: (id: string) => void;
   closeWorkspace: (id: string) => Promise<void>;
@@ -195,6 +199,29 @@ const RIGHT_MAX = 760;
 const LEFT_DEFAULT = 248;
 const RIGHT_DEFAULT = 352;
 const LAYOUT_KEY = "nexterm.layout.v1";
+const TERMINAL_PREFS_KEY = "nexterm.terminal.v1";
+
+interface TerminalPrefs {
+  osc52: boolean;
+}
+
+function loadTerminalPrefs(): TerminalPrefs {
+  try {
+    const raw = localStorage.getItem(TERMINAL_PREFS_KEY);
+    if (!raw) return { osc52: false };
+    const o = JSON.parse(raw) as { osc52?: unknown };
+    return { osc52: o.osc52 === true };
+  } catch {
+    return { osc52: false };
+  }
+}
+
+function saveTerminalPrefs(p: TerminalPrefs): void {
+  try {
+    localStorage.setItem(TERMINAL_PREFS_KEY, JSON.stringify(p));
+  } catch {
+  }
+}
 
 function clampWidth(w: number, min: number, max: number): number {
   if (!Number.isFinite(w)) return min;
@@ -254,6 +281,7 @@ function workspaceFieldPatch(
 }
 
 const initialLayout = loadLayout();
+const initialTerminalPrefs = loadTerminalPrefs();
 
 export const useUi = create<UiState>((set, get) => ({
   leftOpen: true,
@@ -312,6 +340,12 @@ export const useUi = create<UiState>((set, get) => ({
     const next = clampWidth(w, RIGHT_MIN, RIGHT_MAX);
     set({ rightWidth: next });
     saveLayout({ leftWidth: get().leftWidth, rightWidth: next });
+  },
+
+  terminalOsc52: initialTerminalPrefs.osc52,
+  setTerminalOsc52: (v) => {
+    set({ terminalOsc52: v });
+    saveTerminalPrefs({ osc52: v });
   },
 
   ensureWorkspace: (spec) => {
@@ -731,6 +765,26 @@ function findTab(id: string): { tab: AppTab; ws: Workspace } | null {
     }
   }
   return null;
+}
+
+export function sanitizeRemoteTabTitle(raw: string): string {
+  const cleaned = raw
+    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return cleaned;
+}
+
+export function applyRemoteTabTitle(id: string, rawTitle: string): boolean {
+  const found = findTab(id);
+  if (!found) return false;
+  if (found.tab.renamedByUser) return false;
+  const title = sanitizeRemoteTabTitle(rawTitle);
+  if (!title || title === found.tab.title) return false;
+  useUi.getState().updateTab(id, { title });
+  return true;
 }
 
 function isRunningTerminal(t: AppTab): boolean {

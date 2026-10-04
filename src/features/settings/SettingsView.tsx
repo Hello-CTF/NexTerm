@@ -28,12 +28,15 @@ import {
   IconSettings,
   IconShield,
   IconSparkles,
+  IconTerminal,
   IconXCircle,
   IconZap,
 } from "../../ui/icons";
 
 export function SettingsView() {
   const { pushToast } = useUi();
+  const terminalOsc52 = useUi((s) => s.terminalOsc52);
+  const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -171,6 +174,32 @@ export function SettingsView() {
         )}
 
         <AppearanceCard />
+
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconTerminal size={15} className="text-neutral-400" />
+            <span className="nx-card-title">终端</span>
+            <span className={`nx-badge ${terminalOsc52 ? "nx-badge-amber" : ""}`}>
+              {terminalOsc52 ? "OSC 52 已开启" : "OSC 52 已关闭"}
+            </span>
+          </div>
+          <label className="flex cursor-pointer items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] text-neutral-200">允许远程主机写入剪贴板（OSC 52）</div>
+              <p className="nx-hint mt-0.5">
+                {terminalOsc52
+                  ? "开启后，远程主机可以通过转义序列直接改写你的系统剪贴板。只在可信的主机与网络环境下保持开启。"
+                  : "默认关闭。远程主机发来的 OSC 52 剪贴板写入会被拒绝，并在终端里明确提示，不会静默写入。"}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={terminalOsc52}
+              onChange={(e) => setTerminalOsc52(e.target.checked)}
+            />
+          </label>
+        </section>
 
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-2">

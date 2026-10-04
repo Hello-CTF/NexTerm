@@ -1278,7 +1278,7 @@ function PaneGroup({
   const renameTab = async (id: string, title: string) => {
     const next = await promptText("重命名标签：", title);
     if (next === null || !next.trim()) return;
-    updateTab(id, { title: next.trim() });
+    updateTab(id, { title: next.trim(), renamedByUser: true });
   };
 
   const openTabMenu = (t: (typeof pane.tabs)[number], x: number, y: number) => {
