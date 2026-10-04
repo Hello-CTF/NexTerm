@@ -15,9 +15,10 @@ const (
 type AuthMethod string
 
 const (
-	AuthPassword AuthMethod = "password"
-	AuthKey      AuthMethod = "key"
-	AuthAgent    AuthMethod = "agent"
+	AuthPassword            AuthMethod = "password"
+	AuthKey                 AuthMethod = "key"
+	AuthAgent               AuthMethod = "agent"
+	AuthKeyboardInteractive AuthMethod = "keyboard-interactive"
 )
 
 type AuthConfig struct {
@@ -27,6 +28,8 @@ type AuthConfig struct {
 	KeyPEM      []byte
 	Passphrase  string
 	AgentSocket string
+	CertPath    string
+	CertPEM     []byte
 }
 
 type Config struct {
@@ -38,11 +41,16 @@ type Config struct {
 	AutoAcceptUnknown bool
 	HostKeyApproval   *HostKeyApproval
 	ProxyURL          string
+	ProxyCommand      string
+	Jump              *Config
+	ForwardAgent      bool
 	ConnectTimeout    time.Duration
 	KeepAliveInterval time.Duration
 	KeepAliveMax      int
 	ClientVersion     string
 }
+
+const maxJumpDepth = 16
 
 func (c Config) validate() (Config, error) {
 	host, port, err := normalizeEndpoint(c.Host, c.Port)
@@ -56,6 +64,9 @@ func (c Config) validate() (Config, error) {
 	}
 	if c.HostKeys == nil {
 		return Config{}, fmt.Errorf("SSH host key store is required")
+	}
+	if c.ProxyCommand != "" && c.ProxyURL != "" {
+		return Config{}, fmt.Errorf("SSH proxy command and proxy URL are mutually exclusive")
 	}
 	if c.ConnectTimeout == 0 {
 		c.ConnectTimeout = DefaultConnectTimeout
@@ -76,6 +87,13 @@ func (c Config) validate() (Config, error) {
 		c.ClientVersion = "SSH-2.0-NexTerm"
 	} else if !strings.HasPrefix(c.ClientVersion, "SSH-2.0-") {
 		return Config{}, fmt.Errorf("SSH client version must start with SSH-2.0-")
+	}
+	if c.Jump != nil {
+		jump, err := c.Jump.validate()
+		if err != nil {
+			return Config{}, fmt.Errorf("SSH jump host: %w", err)
+		}
+		c.Jump = &jump
 	}
 	return c, nil
 }

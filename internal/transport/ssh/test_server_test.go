@@ -13,6 +13,7 @@ import (
 
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type testSSHServer struct {
@@ -27,9 +28,17 @@ type testSSHServer struct {
 	keepalives  atomic.Uint32
 	stallSFTP   atomic.Bool
 	sftpStarted chan struct{}
+	active      atomic.Int32
+	agentResult chan error
+	agentKey    gossh.PublicKey
 }
 
 func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServer {
+	t.Helper()
+	return newTestSSHServerConfig(t, authorizedKey, nil)
+}
+
+func newTestSSHServerConfig(t *testing.T, authorizedKey gossh.PublicKey, customize func(*gossh.ServerConfig)) *testSSHServer {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -52,6 +61,9 @@ func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServe
 			}
 			return nil, fmt.Errorf("unauthorized test key")
 		},
+	}
+	if customize != nil {
+		customize(config)
 	}
 	config.AddHostKey(signer)
 	server := &testSSHServer{
@@ -81,9 +93,11 @@ func (s *testSSHServer) accept() {
 }
 
 func (s *testSSHServer) handleConn(conn net.Conn) {
-	serverConn, channels, requests, err := gossh.NewServerConn(conn, s.config)
+	s.active.Add(1)
+	tracked := &trackedConn{Conn: conn, onClose: func() { s.active.Add(-1) }}
+	serverConn, channels, requests, err := gossh.NewServerConn(tracked, s.config)
 	if err != nil {
-		conn.Close()
+		tracked.Close()
 		return
 	}
 	defer serverConn.Close()
@@ -102,7 +116,7 @@ func (s *testSSHServer) handleConn(conn net.Conn) {
 		case "session":
 			channel, channelRequests, err := newChannel.Accept()
 			if err == nil {
-				go s.handleSession(channel, channelRequests)
+				go s.handleSession(serverConn, channel, channelRequests)
 			}
 		case "direct-tcpip":
 			s.handleDirectTCPIP(newChannel)
@@ -114,7 +128,19 @@ func (s *testSSHServer) handleConn(conn net.Conn) {
 	}
 }
 
-func (s *testSSHServer) handleSession(channel gossh.Channel, requests <-chan *gossh.Request) {
+type trackedConn struct {
+	net.Conn
+	onClose func()
+	once    sync.Once
+}
+
+func (c *trackedConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.onClose)
+	return err
+}
+
+func (s *testSSHServer) handleSession(conn *gossh.ServerConn, channel gossh.Channel, requests <-chan *gossh.Request) {
 	defer channel.Close()
 	var shellDone chan struct{}
 	for request := range requests {
@@ -140,6 +166,9 @@ func (s *testSSHServer) handleSession(channel gossh.Channel, requests <-chan *go
 			if request.WantReply {
 				request.Reply(true, nil)
 			}
+		case "auth-agent-req@openssh.com":
+			request.Reply(true, nil)
+			go s.checkForwardedAgent(conn)
 		case "shell":
 			request.Reply(true, nil)
 			shellDone = make(chan struct{})
@@ -338,4 +367,31 @@ func (s *testSSHServer) proxyChannel(newChannel gossh.NewChannel, target net.Con
 		channel.Close()
 		target.Close()
 	}()
+}
+
+func (s *testSSHServer) checkForwardedAgent(conn *gossh.ServerConn) {
+	channel, requests, err := conn.OpenChannel("auth-agent@openssh.com", nil)
+	if err != nil {
+		s.reportAgentResult(fmt.Errorf("open auth-agent channel: %w", err))
+		return
+	}
+	defer channel.Close()
+	go gossh.DiscardRequests(requests)
+	signers, err := agent.NewClient(channel).Signers()
+	if err != nil {
+		s.reportAgentResult(fmt.Errorf("list forwarded agent signers: %w", err))
+		return
+	}
+	if len(signers) != 1 || !bytes.Equal(signers[0].PublicKey().Marshal(), s.agentKey.Marshal()) {
+		s.reportAgentResult(fmt.Errorf("forwarded agent signers = %d, want the single forwarded test key", len(signers)))
+		return
+	}
+	s.reportAgentResult(nil)
+}
+
+func (s *testSSHServer) reportAgentResult(err error) {
+	select {
+	case s.agentResult <- err:
+	default:
+	}
 }
