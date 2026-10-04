@@ -12,7 +12,6 @@ const config = defineConfig({
   envPrefix: ["VITE_"],
   build: {
     target: "chrome105",
-    minify: "esbuild",
     sourcemap: false,
     chunkSizeWarningLimit: 2000,
   },
