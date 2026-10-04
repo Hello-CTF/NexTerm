@@ -328,7 +328,7 @@ function StatsView({
           <table className="nx-table nx-table-fixed min-w-[620px]">
             <thead>
               <tr>
-                <th style={{ width: 160 }} className="left-0 shadow-[inset_-1px_0_0_var(--nx-border)]">
+                <th style={{ width: 160 }} className="left-0 z-[2] shadow-[inset_-1px_0_0_var(--nx-border)]">
                   容器
                 </th>
                 <th>CPU %</th>

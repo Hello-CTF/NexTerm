@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// M118 运维面板小屏响应式真实浏览器验收：Redis 详情非零、MySQL 结果区非零、
-// 运行/容器/转发操作可达、ContainerInsight 页签与统计表、触控目标 ≥24px、明暗双主题。
-// 视口：320×568 / 360×640 / 390×844 / 568×320 矮横屏 / 768×1024 / 640×480（≈200% 缩放）。
-// 演示数据经 vite dev 的 demo 模式提供，不改动任何产品代码。报告与截图写入
-// target/acceptance-operations-responsive/。
-//
-// 运行：node src/test/operations-responsive-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -257,13 +249,17 @@ function __nxRect(el) {
   return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
 }
 function __nxHit(el) {
-  if (!el) return false;
+  if (!el) return { ok: false, reason: "missing" };
   const r = el.getBoundingClientRect();
-  if (r.width <= 0 || r.height <= 0) return false;
-  const cx = Math.min(Math.max(r.left + r.width / 2, 1), window.innerWidth - 1);
-  const cy = Math.min(Math.max(r.top + r.height / 2, 1), window.innerHeight - 1);
+  if (r.width <= 0 || r.height <= 0) return { ok: false, reason: "zero-size" };
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  if (cx < 0 || cy < 0 || cx >= window.innerWidth || cy >= window.innerHeight) {
+    return { ok: false, reason: "center-outside-viewport(" + cx + "," + cy + ")" };
+  }
   const hit = document.elementFromPoint(cx, cy);
-  return hit === el || el.contains(hit) || Boolean(hit && hit.contains(el));
+  const ok = hit === el || Boolean(hit && el.contains(hit));
+  return { ok, hit: hit ? hit.tagName + "|" + String(hit.className).slice(0, 60) : null };
 }
 function __nxHitWhat(el) {
   if (!el) return null;
@@ -334,7 +330,7 @@ async function checkRedis(page, vp, label) {
   assert.ok(m.detail.width > 0, `${label}: redis detail width must be nonzero, got ${JSON.stringify(m.detail)}`);
   assert.ok(m.detail.height > 0, `${label}: redis detail height must be nonzero, got ${JSON.stringify(m.detail)}`);
   assert.ok(m.detail.right <= m.innerWidth + 1, `${label}: redis detail overflows viewport: ${JSON.stringify(m.detail)}`);
-  assert.ok(m.cmdHit, `${label}: redis command input not hittable: ${JSON.stringify(m)}`);
+  assert.equal(m.cmdHit.ok, true, `${label}: redis command input not strictly hittable: ${JSON.stringify(m)}`);
   await screenshot(page, `redis-${label}.png`);
   return { evidence: m };
 }
@@ -355,7 +351,7 @@ async function checkMysql(page, vp, label) {
   assert.equal(runVisible.found, true, `${label}: MySQL run button not found`);
   assert.ok(runVisible.btn.right <= runVisible.innerWidth + 1, `${label}: run button offscreen: ${JSON.stringify(runVisible)}`);
   assert.ok(runVisible.btn.right <= runVisible.toolbar.right + 1, `${label}: run button escapes toolbar: ${JSON.stringify(runVisible)}`);
-  assert.equal(runVisible.hit, true, `${label}: run button not hittable: ${JSON.stringify(runVisible)}`);
+  assert.equal(runVisible.hit.ok, true, `${label}: run button not strictly hittable: ${JSON.stringify(runVisible)}`);
   await page.evaluate(`(() => {
     const pane = [...document.querySelectorAll(".nx-pane")].find((p) => p.getClientRects().length > 0 && p.textContent.includes("MySQL"));
     const btn = [...pane.querySelectorAll(".nx-toolbar button")].find((b) => b.textContent?.includes("运行"));
@@ -394,16 +390,21 @@ async function checkDocker(page, vp, label) {
       innerWidth: window.innerWidth,
       td: __nxRect(td),
       wrapper: __nxRect(wrapper),
-      buttonCount: buttons.length,
-      allButtonsHit: buttons.every((b) => __nxHit(b)),
+      buttons: buttons.map((b) => ({ title: b.title, rect: __nxRect(b), hit: __nxHit(b) })),
       sticky: getComputedStyle(td).position,
     };
   })()`);
   assert.equal(m.sticky, "sticky", `${label}: container action cell must be sticky: ${JSON.stringify(m)}`);
   assert.ok(m.td.width > 0 && m.td.right <= m.wrapper.right + 1, `${label}: action cell not pinned into view: ${JSON.stringify(m)}`);
   assert.ok(m.td.right <= m.innerWidth + 1, `${label}: action cell offscreen: ${JSON.stringify(m)}`);
-  assert.ok(m.buttonCount >= 6, `${label}: all six row actions must render: ${JSON.stringify(m)}`);
-  assert.equal(m.allButtonsHit, true, `${label}: every row action must be hittable without scrolling: ${JSON.stringify(m)}`);
+  assert.ok(m.buttons.length >= 6, `${label}: all six row actions must render: ${JSON.stringify(m.buttons)}`);
+  for (const b of m.buttons) {
+    assert.ok(
+      b.rect.left >= -1 && b.rect.right <= m.innerWidth + 1,
+      `${label}: row action ${b.title} outside viewport: ${JSON.stringify(b)}`,
+    );
+    assert.equal(b.hit.ok, true, `${label}: row action ${b.title} not strictly hittable: ${JSON.stringify(b)}`);
+  }
   await screenshot(page, `docker-${label}.png`);
 
   await page.evaluate(`(() => {
@@ -422,12 +423,17 @@ async function checkDocker(page, vp, label) {
     return {
       innerWidth: window.innerWidth,
       seg: __nxRect(seg),
-      labels: items.map((b) => b.textContent?.trim()),
-      allHit: items.every((b) => __nxHit(b)),
+      items: items.map((b) => ({ label: b.textContent?.trim(), rect: __nxRect(b), hit: __nxHit(b) })),
     };
   })()`);
   assert.ok(tabs.seg.right <= tabs.innerWidth + 1, `${label}: insight tabs offscreen: ${JSON.stringify(tabs)}`);
-  assert.equal(tabs.allHit, true, `${label}: insight tabs not hittable: ${JSON.stringify(tabs)}`);
+  for (const item of tabs.items) {
+    assert.ok(
+      item.rect.left >= -1 && item.rect.right <= tabs.innerWidth + 1,
+      `${label}: insight tab ${item.label} outside viewport: ${JSON.stringify(item)}`,
+    );
+    assert.equal(item.hit.ok, true, `${label}: insight tab ${item.label} not strictly hittable: ${JSON.stringify(item)}`);
+  }
 
   await page.evaluate(`(() => {
     ${RECT_HELPER}
@@ -443,15 +449,20 @@ async function checkDocker(page, vp, label) {
     const pane = __nxActivePane();
     const table = pane.querySelector("table");
     const wrapper = table.closest(".overflow-auto");
+    const firstTh = table.querySelector("thead th:first-child");
     const firstTd = table.querySelector("tbody td:first-child");
     const before = { scrollWidth: wrapper.scrollWidth, clientWidth: wrapper.clientWidth };
-    wrapper.scrollLeft = 120;
+    wrapper.scrollLeft = wrapper.scrollWidth;
     const pinned = __nxRect(firstTd);
     const wrapRect = __nxRect(wrapper);
+    const thText = firstTh.textContent?.trim() ?? null;
+    const thHit = __nxHit(firstTh);
     wrapper.scrollLeft = 0;
-    return { before, pinned, wrapRect, nameSticky: getComputedStyle(firstTd).position, cols: table.querySelectorAll("thead th").length };
+    return { before, pinned, wrapRect, thText, thHit, nameSticky: getComputedStyle(firstTd).position, cols: table.querySelectorAll("thead th").length };
   })()`);
   assert.equal(stats.cols, 7, `${label}: stats table must keep all 7 diagnostic columns: ${JSON.stringify(stats)}`);
+  assert.equal(stats.thText, "容器", `${label}: stats pinned header text must stay 容器: ${JSON.stringify(stats)}`);
+  assert.equal(stats.thHit.ok, true, `${label}: stats pinned header not strictly hittable after horizontal scroll: ${JSON.stringify(stats)}`);
   if (stats.before.clientWidth >= 620) {
     assert.ok(
       stats.before.scrollWidth <= stats.before.clientWidth + 1,
@@ -492,7 +503,7 @@ async function checkForward(page, vp, label) {
   assert.equal(m.sticky, "sticky", `${label}: forward action cell must be sticky: ${JSON.stringify(m)}`);
   assert.ok(m.td.right <= m.wrapper.right + 1, `${label}: forward stop action not pinned into view: ${JSON.stringify(m)}`);
   assert.ok(m.btn.right <= m.innerWidth + 1, `${label}: forward stop button offscreen: ${JSON.stringify(m)}`);
-  assert.equal(m.hit, true, `${label}: forward stop button not hittable: ${JSON.stringify(m)}`);
+  assert.equal(m.hit.ok, true, `${label}: forward stop button not strictly hittable: ${JSON.stringify(m)}`);
   await screenshot(page, `forward-${label}.png`);
   return { evidence: m };
 }

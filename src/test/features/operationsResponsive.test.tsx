@@ -309,6 +309,7 @@ describe("小屏响应式结构契约", () => {
     expect(table?.className).toContain("min-w-[620px]");
     const firstTh = table?.querySelector("thead th:first-child");
     expect(firstTh?.className).toContain("left-0");
+    expect(firstTh?.className).toContain("z-[2]");
     const firstTd = table?.querySelector("tbody td:first-child");
     expect(firstTd?.className).toContain("sticky");
     expect(firstTd?.className).toContain("left-0");
