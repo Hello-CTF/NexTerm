@@ -8,6 +8,7 @@ import {
   IconDatabase,
   IconFolderOpen,
   IconHistory,
+  IconMonitor,
   IconNetwork,
   IconSearch,
   IconSettings,
@@ -31,7 +32,7 @@ export function CommandPalette({
   onClose: () => void;
   onOpenFiles?: () => void;
 }) {
-  const { sessions, setSessions, addTab, pushToast } = useUi();
+  const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode } = useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [assets, setAssets] = useState<{ id: string; name: string; kind: string; host: string | null }[]>([]);
@@ -147,6 +148,19 @@ export function CommandPalette({
         icon: IconSettings,
         run: () => addTab({ id: "settings", kind: "settings", title: "设置", closable: true }),
       },
+      ...(
+        [
+          ["system", "主题：跟随系统"],
+          ["light", "主题：浅色"],
+          ["dark", "主题：深色"],
+        ] as const
+      ).map(([value, label]) => ({
+        id: `theme-${value}`,
+        label,
+        hint: themeMode === value ? "当前" : undefined,
+        icon: IconMonitor,
+        run: () => setThemeMode(value),
+      })),
       {
         id: "audit",
         label: "查看审计日志",
@@ -165,7 +179,7 @@ export function CommandPalette({
       });
     }
     return list;
-  }, [assets, sessions, setSessions, addTab, pushToast, onOpenFiles, modHint]);
+  }, [assets, sessions, setSessions, addTab, pushToast, onOpenFiles, modHint, themeMode, setThemeMode]);
 
   const filtered = actions.filter((action) =>
     `${action.label} ${action.hint ?? ""}`.toLowerCase().includes(query.toLowerCase()),

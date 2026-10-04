@@ -20,18 +20,31 @@
 .nx-overlay :focus-visible,
 .nx-menu :focus-visible,
 .nx-menu:focus-visible {
-  outline: 2px solid #93c5fd;
+  outline: 2px solid var(--nx-focus-ring);
   outline-offset: 2px;
 }
 
 .nx-menu-item:focus-visible {
   background: color-mix(in srgb, var(--color-accent) 24%, transparent);
-  color: var(--color-neutral-100);
+  color: var(--nx-fg-strong);
+}
+
+.nx-command-item.is-active .nx-command-hint,
+.nx-menu-item:hover:not(:disabled) .nx-menu-hint,
+.nx-menu-item:hover:not(:disabled) .nx-menu-accel,
+.nx-menu-item:focus-visible .nx-menu-hint,
+.nx-menu-item:focus-visible .nx-menu-accel,
+.nx-row.is-selected .text-neutral-500 {
+  color: var(--nx-fg-on-tint);
+}
+
+.nx-menu-hint.text-green-400\/80 {
+  color: var(--nx-fg-on-tint);
 }
 
 .nx-prompt-hint {
   margin-top: 6px;
-  color: #a3a3a3;
+  color: var(--nx-fg-tertiary);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -39,14 +52,14 @@
 .nx-command-hint,
 .nx-command-help,
 .nx-command-empty {
-  color: #a3a3a3;
+  color: var(--nx-fg-tertiary);
 }
 
 .nx-command-error {
   padding: 8px 16px;
   border-top: 1px solid var(--color-red-500);
   background: var(--color-red-950);
-  color: #fecaca;
+  color: var(--color-red-300);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -57,13 +70,13 @@
 .nx-menu-accel,
 .nx-menu-icon,
 .nx-menu-arrow {
-  color: #a3a3a3;
+  color: var(--nx-fg-tertiary);
 }
 
 .nx-modal .nx-input::placeholder,
 .nx-modal .nx-textarea::placeholder,
 .nx-command-input::placeholder {
-  color: #a3a3a3;
+  color: var(--nx-fg-tertiary);
   opacity: 1;
 }
 
@@ -93,9 +106,22 @@
     background: #09090b;
   }
 
+  :root[data-nx-theme="light"] .nx-modal,
+  :root[data-nx-theme="light"] .nx-menu {
+    border-color: #17191e;
+    background: #ffffff;
+  }
+
   .nx-command-item.is-active,
   .nx-menu-item:focus-visible {
     background: #1e40af;
+    color: #fff;
+  }
+
+  .nx-command-item.is-active .nx-command-hint,
+  .nx-menu-item:focus-visible .nx-menu-hint,
+  .nx-menu-item:focus-visible .nx-menu-accel,
+  .nx-menu-hint.text-green-400\/80 {
     color: #fff;
   }
 
