@@ -452,7 +452,7 @@ def run_evidence_checks(release):
         wails_dir = home / "go/bin"
         wails_dir.mkdir(parents=True)
         wails = wails_dir / "wails3"
-        wails.write_text("#!/usr/bin/env bash\necho wails3 v3.0.0-alpha.98\n")
+        wails.write_text("#!/usr/bin/env bash\necho wails3 v3.0.0-beta.27\n")
         wails.chmod(0o755)
         (base / "ghpath").write_text("")
         env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "GITHUB_PATH": str(base / "ghpath")}
@@ -464,7 +464,7 @@ def run_evidence_checks(release):
         visible = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=base, env=env,
                                  capture_output=True, text=True, check=False)
         check("install step passes when the restored wails bin dir is already on PATH",
-              visible.returncode == 0 and "wails3 v3.0.0-alpha.98" in visible.stdout,
+              visible.returncode == 0 and "wails3 v3.0.0-beta.27" in visible.stdout,
               f"rc={visible.returncode} stderr={visible.stderr!r}")
 
     build_text = (ROOT / "scripts/build.mjs").read_text()

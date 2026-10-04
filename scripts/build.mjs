@@ -35,7 +35,7 @@ const HELP_TEXT = `#!/usr/bin/env node
  `;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const WAILS_VERSION = "v3.0.0-alpha.98";
+const WAILS_VERSION = "v3.0.0-beta.27";
 const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
 const options = {};

@@ -44,11 +44,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/go/bin
-          key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+          key: wails3-v3.0.0-beta.27-${{ runner.os }}-${{ runner.arch }}-go1.26.8
       - name: Install the pinned Wails CLI
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
-            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
+            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.27
           fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           wails3 version
