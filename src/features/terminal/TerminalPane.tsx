@@ -350,7 +350,7 @@ export function TerminalPane({
     if (!kernelTabId) return;
     try {
       const text = await navigator.clipboard.readText();
-      if (text) await sendData(text);
+      if (text) handleRef.current?.paste(text);
     } catch (e) {
       pushToast("error", `读取剪贴板失败：${describeError(e)}`);
     }
@@ -393,11 +393,7 @@ export function TerminalPane({
     if (!kernelTabId) return;
     const selected = handleRef.current?.getSelection() ?? "";
     if (!selected) return;
-    try {
-      await sendData(selected);
-    } catch (e) {
-      pushToast("error", `写入终端失败：${describeError(e)}`);
-    }
+    handleRef.current?.paste(selected);
   };
 
   const inputCommand = async () => {

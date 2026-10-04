@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  TERMINAL_RESIZE_TRAILING_MS,
   TerminalGridCoordinator,
   gridForViewport,
   type TerminalGrid,
@@ -24,6 +25,14 @@ async function microtasks(): Promise<void> {
   await Promise.resolve();
 }
 
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("terminal grid measurement", () => {
   it.each([
     { width: 360, cols: 36 },
@@ -46,7 +55,7 @@ describe("terminal grid measurement", () => {
 });
 
 describe("terminal grid runtime lifecycle", () => {
-  it("serializes intermediate intents and publishes only the latest pending grid", async () => {
+  it("publishes only the latest grid after a measurement burst settles", async () => {
     const calls: TerminalGrid[] = [];
     const completions: Array<() => void> = [];
     const runtime: TerminalGridRuntimeAdapter = {
@@ -66,14 +75,47 @@ describe("terminal grid runtime lifecycle", () => {
     coordinator.update({ widthPx: 700, heightPx: 320 }, cells);
     coordinator.update({ widthPx: 1000, heightPx: 400 }, cells);
 
-    expect(calls).toEqual([{ cols: 60, rows: 15 }]);
-    expect(coordinator.snapshot().pending).toBe(true);
+    expect(calls).toEqual([]);
+    expect(coordinator.snapshot().debouncing).toBe(true);
+
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
+    expect(calls).toEqual([{ cols: 100, rows: 20 }]);
+    expect(coordinator.snapshot().pending).toBe(false);
+
     completions[0]();
     await microtasks();
-    expect(calls).toEqual([
-      { cols: 60, rows: 15 },
-      { cols: 100, rows: 20 },
-    ]);
+    expect(calls).toEqual([{ cols: 100, rows: 20 }]);
+    expect(coordinator.snapshot().committed).toEqual({ cols: 100, rows: 20 });
+  });
+
+  it("holds new intents for the next trailing window while a resize is in flight", async () => {
+    const calls: TerminalGrid[] = [];
+    const completions: Array<() => void> = [];
+    const runtime: TerminalGridRuntimeAdapter = {
+      resize: (_tabId, grid) => {
+        calls.push(grid);
+        const pending = deferred();
+        completions.push(pending.resolve);
+        return pending.promise;
+      },
+    };
+    const coordinator = new TerminalGridCoordinator(runtime, () => undefined, {
+      visible: true,
+      canResize: true,
+    });
+    coordinator.attach("tab", null, false);
+    coordinator.update({ widthPx: 600, heightPx: 300 }, cells);
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
+    expect(calls).toEqual([{ cols: 60, rows: 15 }]);
+
+    coordinator.update({ widthPx: 700, heightPx: 320 }, cells);
+    coordinator.update({ widthPx: 1000, heightPx: 400 }, cells);
+    completions[0]();
+    await microtasks();
+    expect(calls).toEqual([{ cols: 60, rows: 15 }]);
+
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
+    expect(calls).toEqual([{ cols: 60, rows: 15 }, { cols: 100, rows: 20 }]);
     completions[1]();
     await microtasks();
     expect(coordinator.snapshot().committed).toEqual({ cols: 100, rows: 20 });
@@ -107,6 +149,7 @@ describe("terminal grid runtime lifecycle", () => {
     });
     coordinator.attach("tab", null, false);
     coordinator.update({ widthPx: 800, heightPx: 400 }, cells);
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
     await microtasks();
     expect(resize).toHaveBeenCalledTimes(1);
 
@@ -140,6 +183,7 @@ describe("terminal grid runtime lifecycle", () => {
     });
     coordinator.attach("old", null, false);
     coordinator.update({ widthPx: 800, heightPx: 400 }, cells);
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
     coordinator.attach("new", null, true);
     completions.get("old")?.();
     await microtasks();
@@ -181,7 +225,7 @@ describe("terminal grid runtime lifecycle", () => {
     expect(resize).toHaveBeenCalledWith("replacement", { cols: 90, rows: 20 });
   });
 
-  it("denies observer grids for the controller so its own resize echo never applies", () => {
+  it("denies observer grids for the controller so its own resize echo never applies", async () => {
     const resize = vi.fn().mockResolvedValue(undefined);
     const local: TerminalGrid[] = [];
     const coordinator = new TerminalGridCoordinator(
@@ -191,6 +235,7 @@ describe("terminal grid runtime lifecycle", () => {
     );
     coordinator.attach("tab", null, false);
     coordinator.update({ widthPx: 800, heightPx: 400 }, cells);
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
 
     expect(coordinator.observe(3, { cols: 100, rows: 30 })).toBe(false);
     expect(coordinator.observe(1, { cols: 50, rows: 10 })).toBe(false);
@@ -200,7 +245,7 @@ describe("terminal grid runtime lifecycle", () => {
     expect(coordinator.snapshot().observedRevision).toBe(0);
   });
 
-  it("does not commit a disconnected resize and finishes the final intent on reattach", async () => {
+  it("coalesces a trailing intent into the final flush and resynchronizes after a disconnect", async () => {
     const first = deferred();
     const second = deferred();
     const resize = vi.fn()
@@ -217,14 +262,17 @@ describe("terminal grid runtime lifecycle", () => {
 
     first.reject({ code: "disconnected" });
     await microtasks();
+    expect(resize).toHaveBeenCalledTimes(1);
+    expect(resize).toHaveBeenCalledWith("tab", { cols: 90, rows: 20 });
+    expect(flush).not.toHaveBeenCalled();
     expect(coordinator.snapshot().committed).toEqual({ cols: 80, rows: 20 });
     expect(coordinator.desiredGrid()).toEqual({ cols: 90, rows: 20 });
-    expect(flush).not.toHaveBeenCalled();
 
+    coordinator.attach("tab", { cols: 80, rows: 20 }, true);
     second.resolve();
     await microtasks();
     expect(resize).toHaveBeenCalledTimes(2);
-    expect(flush).toHaveBeenCalledWith("tab");
+    expect(resize).toHaveBeenLastCalledWith("tab", { cols: 90, rows: 20 });
     expect(coordinator.snapshot().committed).toEqual({ cols: 90, rows: 20 });
   });
 
@@ -237,6 +285,8 @@ describe("terminal grid runtime lifecycle", () => {
     });
     coordinator.attach("tab", null, false);
     coordinator.update({ widthPx: 800, heightPx: 400 }, cells);
+    vi.advanceTimersByTime(TERMINAL_RESIZE_TRAILING_MS);
+    expect(resize).toHaveBeenCalledTimes(1);
     coordinator.close();
     coordinator.flush();
     pending.resolve();

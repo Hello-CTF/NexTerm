@@ -1,4 +1,6 @@
 export const TERMINAL_GRID_MAX = 1024;
+export const TERMINAL_RESIZE_TRAILING_MS = 120;
+export const TERMINAL_RESIZE_MAX_WAIT_MS = 600;
 
 export interface TerminalGrid {
   cols: number;
@@ -28,6 +30,7 @@ export interface TerminalGridSnapshot {
   canResize: boolean;
   inFlight: boolean;
   pending: boolean;
+  debouncing: boolean;
   generation: number;
   observedRevision: number;
   closed: boolean;
@@ -101,15 +104,19 @@ export class TerminalGridCoordinator {
   private inFlight: GridRequest | null = null;
   private pending: GridRequest | null = null;
   private forceOnNextMeasurement = false;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private deferredAt: number | null = null;
   private closed = false;
+  private readonly now: () => number;
 
   constructor(
     private readonly runtime: TerminalGridRuntimeAdapter,
     private readonly applyLocal: (grid: TerminalGrid) => void,
-    options: { visible: boolean; canResize: boolean },
+    options: { visible: boolean; canResize: boolean; now?: () => number },
   ) {
     this.visible = options.visible;
     this.canResize = options.canResize;
+    this.now = options.now ?? Date.now;
   }
 
   desiredGrid(): TerminalGrid | null {
@@ -125,6 +132,7 @@ export class TerminalGridCoordinator {
       canResize: this.canResize,
       inFlight: this.inFlight !== null,
       pending: this.pending !== null,
+      debouncing: this.debounceTimer !== null,
       generation: this.generation,
       observedRevision: this.observedRevision,
       closed: this.closed,
@@ -141,7 +149,10 @@ export class TerminalGridCoordinator {
     this.forceOnNextMeasurement = false;
     if (this.canResize) {
       this.applyLocal(grid);
-      if (changed || force || !sameGrid(this.committed, grid)) this.schedule(force, false);
+      if (changed || force || !sameGrid(this.committed, grid)) {
+        if (force) this.schedule(force, false);
+        else this.scheduleDebounced();
+      }
     }
     return grid;
   }
@@ -150,6 +161,7 @@ export class TerminalGridCoordinator {
     if (this.closed || this.visible === visible) return;
     this.visible = visible;
     this.pending = null;
+    this.clearDebounce();
     if (visible) this.forceOnNextMeasurement = true;
   }
 
@@ -157,6 +169,7 @@ export class TerminalGridCoordinator {
     if (this.closed || this.canResize === canResize) return;
     this.canResize = canResize;
     this.pending = null;
+    this.clearDebounce();
     if (canResize && this.visible && this.desired) {
       this.applyLocal(this.desired);
       this.schedule(true, false);
@@ -169,6 +182,7 @@ export class TerminalGridCoordinator {
     this.tabId = tabId;
     this.committed = initialGrid;
     this.pending = null;
+    this.clearDebounce();
     if (synchronize && this.visible && this.canResize && this.desired) {
       this.schedule(true, false);
     }
@@ -201,10 +215,12 @@ export class TerminalGridCoordinator {
     this.generation += 1;
     this.tabId = "";
     this.pending = null;
+    this.clearDebounce();
     this.committed = null;
   }
 
   private schedule(force: boolean, final: boolean): void {
+    this.clearDebounce();
     if (this.closed || !this.visible || !this.canResize || !this.tabId || !this.desired) return;
     const pending = this.pending;
     this.pending = {
@@ -217,8 +233,43 @@ export class TerminalGridCoordinator {
     this.pump();
   }
 
+  private scheduleDebounced(): void {
+    if (this.closed || !this.visible || !this.canResize || !this.tabId || !this.desired) return;
+    const pending = this.pending;
+    this.pending = {
+      tabId: this.tabId,
+      grid: this.desired,
+      generation: this.generation,
+      force: pending?.force === true,
+      final: pending?.final === true,
+    };
+    const now = this.now();
+    if (this.deferredAt === null) this.deferredAt = now;
+    const wait = Math.max(
+      0,
+      Math.min(
+        TERMINAL_RESIZE_TRAILING_MS,
+        TERMINAL_RESIZE_MAX_WAIT_MS - (now - this.deferredAt),
+      ),
+    );
+    if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      this.deferredAt = null;
+      this.pump();
+    }, wait);
+  }
+
+  private clearDebounce(): void {
+    if (this.debounceTimer !== null) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    this.deferredAt = null;
+  }
+
   private pump(): void {
-    if (this.inFlight || !this.pending || this.closed) return;
+    if (this.inFlight || !this.pending || this.closed || this.debounceTimer !== null) return;
     const request = this.pending;
     this.pending = null;
     if (

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { CanvasAddon } from "@xterm/addon-canvas";
@@ -10,11 +10,13 @@ import { channelIdOf, createBinaryChannel, disposeChannel, onChannelReopen } fro
 import { clientId } from "../../ipc/env";
 import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
+import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import { measureTerminalGeometry, resizeTerminalToGrid } from "./terminalGeometry";
 import { TerminalGridCoordinator } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
+import { wrapBracketedPaste } from "./terminalPaste";
 
 const THEME = {
   background: "#101217",
@@ -53,6 +55,7 @@ export interface TerminalHandle {
   getSelection: () => string;
   focus: () => void;
   fit: () => void;
+  paste: (text: string) => void;
   dimensions: () => { cols: number; rows: number };
 }
 
@@ -87,6 +90,7 @@ export function XtermView(props: XtermViewProps) {
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
+  const [linesBelow, setLinesBelow] = useState(0);
   const onBlocksRef = useRef(props.onBlocks);
   const onHandleRef = useRef(props.onHandle);
   const onAttachInfoRef = useRef(props.onAttachInfo);
@@ -147,6 +151,25 @@ export function XtermView(props: XtermViewProps) {
     fitIfSized();
 
     const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list));
+    const sendInput = (data: string, blockText = data) => {
+      blocks.feedInput(blockText);
+      if (!kernelTabId) return;
+      const onData = onDataRef.current;
+      if (onData) {
+        onData(data);
+      } else {
+        void terminalApi
+          .write(kernelTabId, new TextEncoder().encode(data))
+          .catch(() => undefined);
+      }
+    };
+    const updateLinesBelow = () => {
+      const buffer = term.buffer.active;
+      const below = Math.max(0, buffer.baseY - buffer.viewportY);
+      setLinesBelow((prev) => (prev === below ? prev : below));
+    };
+    const viewportEl = term.element?.querySelector(".xterm-viewport");
+    viewportEl?.addEventListener("scroll", updateLinesBelow, { passive: true });
     onHandleRef.current?.({
       copyBlock: (index) => blocks.getBlockText(index),
       scrollToBlock: (index) => blocks.scrollTo(index),
@@ -156,11 +179,13 @@ export function XtermView(props: XtermViewProps) {
       getSelection: () => term.getSelection(),
       focus: () => term.focus(),
       fit: () => fitIfSized(true),
+      paste: (text) =>
+        sendInput(wrapBracketedPaste(text, term.modes.bracketedPasteMode), text),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
     const channel = createBinaryChannel((bytes) => {
-      term.write(bytes);
+      term.write(bytes, updateLinesBelow);
     });
     const applyRemoteDimensions = (cols: number, rows: number) => {
       resizeTerminalToGrid(term, { cols, rows });
@@ -283,18 +308,7 @@ export function XtermView(props: XtermViewProps) {
       void doAttach();
     }, 0);
 
-    const dataDisposable = term.onData((data) => {
-      blocks.feedInput(data);
-      if (!kernelTabId) return;
-      const onData = onDataRef.current;
-      if (onData) {
-        onData(data);
-      } else {
-        void terminalApi
-          .write(kernelTabId, new TextEncoder().encode(data))
-          .catch(() => undefined);
-      }
-    });
+    const dataDisposable = term.onData((data) => sendInput(data));
     props.registerSearch?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
@@ -347,6 +361,7 @@ export function XtermView(props: XtermViewProps) {
       window.visualViewport?.removeEventListener("resize", onWindowResize);
       ro.disconnect();
       dataDisposable.dispose();
+      viewportEl?.removeEventListener("scroll", updateLinesBelow);
       blocks.dispose();
       if (kernelTabId) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
@@ -377,5 +392,19 @@ export function XtermView(props: XtermViewProps) {
     if (remote) gridRef.current?.observe(remote.revision, remote);
   }, [props.remoteGrid]);
 
-  return <div ref={hostRef} className="h-full w-full min-h-0" />;
+  return (
+    <div className="relative h-full w-full min-h-0">
+      <div ref={hostRef} className="h-full w-full min-h-0" />
+      {linesBelow > 0 && (
+        <button
+          type="button"
+          className="nx-btn nx-btn-sm absolute bottom-1.5 right-3 z-10 border border-neutral-700/80 bg-neutral-800/95 text-neutral-100 shadow-lg"
+          onClick={() => termRef.current?.scrollToBottom()}
+        >
+          <IconArrowDown size={12} />
+          回到底部 · {linesBelow} 行
+        </button>
+      )}
+    </div>
+  );
 }
