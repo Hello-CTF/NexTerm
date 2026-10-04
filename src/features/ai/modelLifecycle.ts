@@ -1,15 +1,10 @@
 import type { ModelProfile, ModelProfilesView } from "../../ipc/commands";
 
-export type ModelProfileTimeouts = ModelProfile & {
-  requestTimeoutSeconds?: number | null;
-  idleTimeoutSeconds?: number | null;
-};
-
-export function requestTimeoutLabel(profile: ModelProfileTimeouts): string {
+export function requestTimeoutLabel(profile: ModelProfile): string {
   return profile.requestTimeoutSeconds?.toString() ?? "";
 }
 
-export function idleTimeoutLabel(profile: ModelProfileTimeouts): string {
+export function idleTimeoutLabel(profile: ModelProfile): string {
   return profile.idleTimeoutSeconds?.toString() ?? "";
 }
 
@@ -71,8 +66,6 @@ export function profileKeyUnavailable(profile: ModelProfile): boolean {
 }
 
 export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
-  const left = a as ModelProfileTimeouts;
-  const right = b as ModelProfileTimeouts;
   return (
     a.name === b.name &&
     a.baseUrl === b.baseUrl &&
@@ -83,7 +76,7 @@ export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
     (a.proxy ?? "") === (b.proxy ?? "") &&
     a.stream === b.stream &&
     fallbackModelLabel(a) === fallbackModelLabel(b) &&
-    (left.requestTimeoutSeconds ?? null) === (right.requestTimeoutSeconds ?? null) &&
-    (left.idleTimeoutSeconds ?? null) === (right.idleTimeoutSeconds ?? null)
+    (a.requestTimeoutSeconds ?? null) === (b.requestTimeoutSeconds ?? null) &&
+    (a.idleTimeoutSeconds ?? null) === (b.idleTimeoutSeconds ?? null)
   );
 }

@@ -1498,7 +1498,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "ai_model_refresh":
       await new Promise((r) => window.setTimeout(r, 600));
-      return ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"];
+      return { models: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"], malformed: 0 };
 
     case "ai_model_preset": {
       const name = str(a.preset);

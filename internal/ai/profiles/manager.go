@@ -149,17 +149,6 @@ func (m *Manager) ActiveProfile() (Profile, bool) {
 	return cloneProfile(profile), true
 }
 
-func (m *Manager) Profile(id string) (Profile, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, profile := range m.state.Profiles {
-		if profile.ID == id {
-			return cloneProfile(profile), true
-		}
-	}
-	return Profile{}, false
-}
-
 func (m *Manager) ActiveConfig() (provider.Config, bool) {
 	profile, ok := m.ActiveProfile()
 	if !ok {

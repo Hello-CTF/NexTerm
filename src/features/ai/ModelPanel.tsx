@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView } from "../../ipc/commands";
+import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView, type ProviderTestResult } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -15,10 +15,9 @@ import {
   sameModelProfile,
   selectModelProfileId,
   timeoutSecondsFromInput,
-  type ModelProfileTimeouts,
 } from "./modelLifecycle";
 import { formatTokens } from "./UsageRing";
-import { fetchProfileModels, testProfileConnection, type ProviderTestResult } from "./profileConnect";
+import { fetchProfileModels, testProfileConnection } from "./profileConnect";
 import {
   IconCheck,
   IconClose,
@@ -33,7 +32,7 @@ import {
   IconTrash,
 } from "../../ui/icons";
 
-function blankProfile(): ModelProfileTimeouts {
+function blankProfile(): ModelProfile {
   return {
     id: "",
     name: "",
@@ -59,7 +58,7 @@ export function ModelManager({
 
   const [view, setView] = useState<ModelProfilesView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ModelProfileTimeouts | null>(null);
+  const [draft, setDraft] = useState<ModelProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -101,7 +100,7 @@ export function ModelManager({
       .catch(() => undefined);
   }, []);
 
-  const patch = (p: Partial<ModelProfileTimeouts>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
+  const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
   const paramsAtDefaults = !!draft && modelParamsAtDefaults(draft);
 
@@ -202,7 +201,7 @@ export function ModelManager({
     if (!draft) return;
     setBusy(true);
     try {
-      const list = await fetchProfileModels(draft);
+      const list = await modelApi.refresh(draft);
       setModels(list.models);
       setModelsOpen(true);
       if (list.malformed > 0) {
@@ -222,7 +221,7 @@ export function ModelManager({
     setTesting(true);
     setTestResult(null);
     try {
-      setTestResult(await testProfileConnection(draft.id));
+      setTestResult(await modelApi.test(draft.id));
     } catch (e) {
       pushToast("error", `连接测试失败：${describeError(e)}`);
     } finally {

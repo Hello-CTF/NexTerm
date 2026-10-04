@@ -12,7 +12,6 @@ import {
   sameModelProfile,
   selectModelProfileId,
   timeoutSecondsFromInput,
-  type ModelProfileTimeouts,
 } from "../../features/ai/modelLifecycle";
 import { click, clickButton, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
@@ -24,8 +23,7 @@ const mocks = vi.hoisted(() => ({
   presets: vi.fn(),
   preset: vi.fn(),
   refresh: vi.fn(),
-  testConnection: vi.fn(),
-  fetchModels: vi.fn(),
+  test: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
 }));
@@ -39,15 +37,12 @@ vi.mock("../../ipc/commands", () => ({
     presets: mocks.presets,
     preset: mocks.preset,
     refresh: mocks.refresh,
+    test: mocks.test,
   },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
   terminalApi: {},
-}));
-vi.mock("../../features/ai/profileConnect", () => ({
-  testProfileConnection: mocks.testConnection,
-  fetchProfileModels: mocks.fetchModels,
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
@@ -215,7 +210,7 @@ describe("profile timeout semantics", () => {
   });
 
   it("treats absent and null timeouts as the same unset value", () => {
-    const timed = (overrides: Partial<ModelProfileTimeouts>): ModelProfileTimeouts => ({
+    const timed = (overrides: Partial<ModelProfile>): ModelProfile => ({
       ...profile("a"),
       ...overrides,
     });
@@ -242,8 +237,8 @@ describe("ModelManager timeouts and connectivity testing", () => {
     mocks.presets.mockResolvedValue([]);
     mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
     mocks.ask.mockResolvedValue(true);
-    mocks.testConnection.mockResolvedValue({ modelsOk: true, chatOk: true });
-    mocks.fetchModels.mockResolvedValue({ models: ["m1"], malformed: 0 });
+    mocks.test.mockResolvedValue({ modelsOk: true, chatOk: true });
+    mocks.refresh.mockResolvedValue({ models: ["m1"], malformed: 0 });
     useUi.setState({ pushToast: mocks.toast });
     view3 = mount(createElement(ModelManager));
     await flush();
@@ -291,13 +286,13 @@ describe("ModelManager timeouts and connectivity testing", () => {
   it("tests the selected saved profile and renders the result", async () => {
     click(testButton());
     await flush();
-    expect(mocks.testConnection).toHaveBeenCalledOnce();
-    expect(mocks.testConnection).toHaveBeenCalledWith("p1");
+    expect(mocks.test).toHaveBeenCalledOnce();
+    expect(mocks.test).toHaveBeenCalledWith("p1");
     expect(view3!.container.textContent).toContain("连接正常");
   });
 
   it("renders honest failure details from the test result", async () => {
-    mocks.testConnection.mockResolvedValue({
+    mocks.test.mockResolvedValue({
       modelsOk: false,
       modelsError: "HTTP 401: bad key",
       chatOk: true,
@@ -317,10 +312,10 @@ describe("ModelManager timeouts and connectivity testing", () => {
   });
 
   it("surfaces malformed model entries from the refresh probe", async () => {
-    mocks.fetchModels.mockResolvedValue({ models: ["m1"], malformed: 2 });
+    mocks.refresh.mockResolvedValue({ models: ["m1"], malformed: 2 });
     clickButton(view3!.container, "刷新模型列表");
     await flush();
-    expect(mocks.fetchModels).toHaveBeenCalledOnce();
+    expect(mocks.refresh).toHaveBeenCalledOnce();
     expect(mocks.toast).toHaveBeenCalledWith(
       "info",
       "端点返回的模型列表里有 2 个格式异常的条目，已跳过",

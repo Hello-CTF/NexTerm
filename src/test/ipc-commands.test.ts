@@ -120,6 +120,42 @@ describe("desktop 命令 envelope", () => {
     });
   });
 
+  it("模型档案刷新与连通测试走统一契约", async () => {
+    runtime.Call.ByName.mockImplementation(async (_name, request) => {
+      const cmd = (request as { cmd?: string }).cmd;
+      if (cmd === "ai_model_refresh") {
+        return { ok: true, data: { models: ["m1"], malformed: 2 } };
+      }
+      return { ok: true, data: { modelsOk: true, modelsError: null, chatOk: true, chatError: null } };
+    });
+    const { aiApi, modelApi } = await import("../ipc/commands");
+    const profile = {
+      id: "p1",
+      name: "p1",
+      baseUrl: "https://example.test",
+      apiKey: "k",
+      model: "m",
+      temperature: 0.3,
+      contextWindow: 32768,
+      proxy: null,
+      stream: true,
+      requestTimeoutSeconds: 30,
+      idleTimeoutSeconds: 0,
+    };
+
+    await expect(modelApi.refresh(profile)).resolves.toEqual({ models: ["m1"], malformed: 2 });
+    expect(requestAt(0)).toEqual({ cmd: "ai_model_refresh", args: { profile } });
+    await expect(modelApi.test("p1")).resolves.toEqual({
+      modelsOk: true,
+      modelsError: null,
+      chatOk: true,
+      chatError: null,
+    });
+    expect(requestAt(1)).toEqual({ cmd: "ai_test_provider", args: { id: "p1" } });
+    await aiApi.testProvider();
+    expect(requestAt(2)).toEqual({ cmd: "ai_test_provider", args: null });
+  });
+
   it("保留 nullable 返回和 facade 自身归一化", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
     const { terminalApi, modelApi, mountApi } = await import("../ipc/commands");
