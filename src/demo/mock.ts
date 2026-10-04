@@ -1549,7 +1549,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "ai_test_provider":
       await new Promise((r) => window.setTimeout(r, 900));
-      return { modelsOk: true, chatOk: true };
+      return { modelsOk: true, modelsError: null, chatOk: true, chatError: null };
 
     case "ai_conversation_list":
       return conversations.map((c) => ({ ...c }));

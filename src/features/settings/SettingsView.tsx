@@ -43,8 +43,8 @@ export function SettingsView() {
   const [testResult, setTestResult] = useState<{
     modelsOk: boolean;
     chatOk: boolean;
-    modelsError?: string;
-    chatError?: string;
+    modelsError?: string | null;
+    chatError?: string | null;
     fatal?: string;
   } | null>(null);
 

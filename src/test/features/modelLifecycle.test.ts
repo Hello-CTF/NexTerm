@@ -237,7 +237,7 @@ describe("ModelManager timeouts and connectivity testing", () => {
     mocks.presets.mockResolvedValue([]);
     mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
     mocks.ask.mockResolvedValue(true);
-    mocks.test.mockResolvedValue({ modelsOk: true, chatOk: true });
+    mocks.test.mockResolvedValue({ modelsOk: true, modelsError: null, chatOk: true, chatError: null });
     mocks.refresh.mockResolvedValue({ models: ["m1"], malformed: 0 });
     useUi.setState({ pushToast: mocks.toast });
     view3 = mount(createElement(ModelManager));
@@ -296,6 +296,7 @@ describe("ModelManager timeouts and connectivity testing", () => {
       modelsOk: false,
       modelsError: "HTTP 401: bad key",
       chatOk: true,
+      chatError: null,
     });
     click(testButton());
     await flush();

@@ -85,7 +85,7 @@ requestTimeoutSeconds?: number | null, idleTimeoutSeconds?: number | null, };
 
 export type ModelListDto = { models: Array<string>, malformed: number, };
 
-export type ProviderTestResult = { modelsOk: boolean, modelsError?: string, chatOk: boolean, chatError?: string, };
+export type ProviderTestResult = { modelsOk: boolean, modelsError: string | null, chatOk: boolean, chatError: string | null, };
 
 export type ModelProfilesView = { profiles: Array<ModelProfile>, activeId: string | null, };
 

@@ -156,6 +156,21 @@ describe("desktop 命令 envelope", () => {
     expect(requestAt(2)).toEqual({ cmd: "ai_test_provider", args: null });
   });
 
+  it("连通测试错误字符串原样透传", async () => {
+    runtime.Call.ByName.mockResolvedValue({
+      ok: true,
+      data: { modelsOk: false, modelsError: "HTTP 401: bad key", chatOk: false, chatError: "HTTP 401: bad key" },
+    });
+    const { modelApi } = await import("../ipc/commands");
+
+    await expect(modelApi.test("p1")).resolves.toEqual({
+      modelsOk: false,
+      modelsError: "HTTP 401: bad key",
+      chatOk: false,
+      chatError: "HTTP 401: bad key",
+    });
+  });
+
   it("保留 nullable 返回和 facade 自身归一化", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
     const { terminalApi, modelApi, mountApi } = await import("../ipc/commands");
