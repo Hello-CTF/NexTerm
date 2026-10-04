@@ -30,7 +30,7 @@
 | Windows 10/11 ARM64 | 下载 `NexTerm_x.y.z_arm64-setup.exe`，运行安装器。 |
 | macOS（Apple Silicon，arm64） | 下载 `NexTerm_x.y.z_aarch64.dmg`，打开后将 NexTerm 拖入「应用程序」。 |
 | macOS（Intel） | 下载 `NexTerm_x.y.z_x86_64.dmg`，同样拖入「应用程序」。 |
-| Linux 桌面（amd64 / arm64） | 下载 `NexTerm-desktop_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-desktop_x.y.z_linux_arm64.tar.gz`，解压后运行（自包含二进制，非 AppImage/deb）。 |
+| Linux 桌面（amd64 / arm64） | 下载 `NexTerm-desktop_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-desktop_x.y.z_linux_arm64.tar.gz`，解压后运行（自包含二进制，非 AppImage/deb；需系统已安装 GTK4 与 WebKitGTK 6.0 运行库）。 |
 | LinuxServer | 下载 `NexTerm-server_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-server_x.y.z_linux_arm64.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
