@@ -234,7 +234,19 @@ func (r *Runner) initializeEino(current *job) error {
 	if contextWindow == 0 {
 		contextWindow = 32768
 	}
+	runtime := &einoRuntime{contextWindow: contextWindow}
+	compaction, err := newCompactionHandler(current.ctx, chatModel, contextWindow, func() {
+		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
+	})
+	if err != nil {
+		return err
+	}
 	messages := historyMessages(rows, current.id)
+	if _, fitted, err := compaction.BeforeModelRewriteState(current.ctx, &adk.ChatModelAgentState{Messages: messages}, nil); err != nil {
+		return err
+	} else {
+		messages = fitted.Messages
+	}
 	if r.config.Context != nil {
 		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
 		if bundle.Volatile != "" {
@@ -260,7 +272,7 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	einoTools = append(einoTools, memoryTools...)
-	runtime := &einoRuntime{input: messages, contextWindow: contextWindow}
+	runtime.input = messages
 	instruction := systemPrompt()
 	returnDirectly := map[string]bool{}
 	if current.args.PlanMode {
@@ -278,14 +290,10 @@ func (r *Runner) initializeEino(current *job) error {
 				pending = append(pending, Event{Type: "steered", Text: steered.Content})
 			}
 			pending = append(pending, statusEvent("thinking", runtime.currentTurn()))
-			messages, compacted, err := fitMessageBudget(state.Messages, runtime.contextWindow)
-			if compacted {
-				pending = append(pending, statusEvent("compacting", runtime.currentTurn()))
-			}
 			current.queueEmits(pending...)
-			state.Messages = messages
-			return err
+			return nil
 		}}},
+		Handlers: []adk.ChatModelAgentMiddleware{compaction},
 	})
 	if err != nil {
 		return err
@@ -635,6 +643,7 @@ func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Mess
 	if window == 0 {
 		return messages, false, nil
 	}
+	messages = append([]*schema.Message(nil), messages...)
 	limit := int(window * 3)
 	compacted := false
 	for estimatedMessages(messages) > limit {

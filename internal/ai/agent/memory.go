@@ -60,22 +60,30 @@ func (r *Runner) memoryTools(ctx context.Context, planMode bool) ([]tool.BaseToo
 	makers := []func() (tool.InvokableTool, error){
 		func() (tool.InvokableTool, error) {
 			return utils.InferTool(memorySaveTool, "把一条长期运维记忆写入语义记忆库（按主题归档，写入前会做密钥检查）。", func(ctx context.Context, input memorySaveArgs) (tools.Output, error) {
-				return memorySaveOutput(ctx, store, scope, input), nil
+				return tools.Guarded(ctx, memorySaveTool, func() (tools.Output, error) {
+					return memorySaveOutput(ctx, store, scope, input), nil
+				})
 			})
 		},
 		func() (tool.InvokableTool, error) {
 			return utils.InferTool(memoryListTool, "列出长期语义记忆的目录（主题、ID、版本），可按主题过滤；条数与字节有限额，超出部分会省略并标注。", func(ctx context.Context, input memoryListArgs) (tools.Output, error) {
-				return memoryListOutput(ctx, store, scope, input), nil
+				return tools.Guarded(ctx, memoryListTool, func() (tools.Output, error) {
+					return memoryListOutput(ctx, store, scope, input), nil
+				})
 			})
 		},
 		func() (tool.InvokableTool, error) {
 			return utils.InferTool(memoryRecallTool, "按 ID 读取长期语义记忆的完整内容。", func(ctx context.Context, input memoryRecallArgs) (tools.Output, error) {
-				return memoryRecallOutput(ctx, store, scope, input), nil
+				return tools.Guarded(ctx, memoryRecallTool, func() (tools.Output, error) {
+					return memoryRecallOutput(ctx, store, scope, input), nil
+				})
 			})
 		},
 		func() (tool.InvokableTool, error) {
 			return utils.InferTool(memoryForgetTool, "按 ID 与版本删除一条长期语义记忆（版本不一致会拒绝）。", func(ctx context.Context, input memoryForgetArgs) (tools.Output, error) {
-				return memoryForgetOutput(ctx, store, scope, input), nil
+				return tools.Guarded(ctx, memoryForgetTool, func() (tools.Output, error) {
+					return memoryForgetOutput(ctx, store, scope, input), nil
+				})
 			})
 		},
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
@@ -417,12 +418,29 @@ type spawnOutputTool struct {
 	tool.InvokableTool
 }
 
-func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (string, error) {
-	output, err := s.InvokableTool.InvokableRun(ctx, arguments, opts...)
+func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (output string, err error) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			output = ""
+			err = ctxErr
+			return
+		}
+		encoded, marshalErr := json.Marshal(Fail(fmt.Errorf("工具 %s 执行崩溃: %v", subagent.SpawnToolName, recovered)))
+		if marshalErr != nil {
+			err = marshalErr
+			return
+		}
+		output = string(encoded)
+	}()
+	result, err := s.InvokableTool.InvokableRun(ctx, arguments, opts...)
 	if err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(OK(output))
+	encoded, err := json.Marshal(OK(result))
 	if err != nil {
 		return "", err
 	}
@@ -478,6 +496,12 @@ func (e *Execution) subagentAllowedTools() []string {
 }
 
 func (e *Execution) run(ctx context.Context, name string, input any) (Output, error) {
+	return Guarded(ctx, name, func() (Output, error) {
+		return e.runInner(ctx, name, input)
+	})
+}
+
+func (e *Execution) runInner(ctx context.Context, name string, input any) (Output, error) {
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return Output{}, err
