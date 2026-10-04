@@ -65,11 +65,11 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 		}
 		provider, ok := transport.(base.FileTransport)
 		if !ok {
-			return nil, "", base.ErrUnsupported
+			return nil, transport.Kind(), base.ErrUnsupported
 		}
 		remote, err := provider.FileSystem(ctx)
 		if err != nil {
-			return nil, "", err
+			return nil, transport.Kind(), err
 		}
 		return remote, transport.Kind(), nil
 	}
@@ -78,7 +78,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_list", func(ctx context.Context, _ *ipc.Call, input fsRequest) ([]fsEntryDTO, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return nil, terminalIPCError(err)
+					return nil, fsIPCError(kind, err)
 				}
 				entries, err := filesystem.List(ctx, input.Path)
 				result := make([]fsEntryDTO, len(entries))
@@ -92,7 +92,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_read", func(ctx context.Context, _ *ipc.Call, input fsRequest) (fsReadDTO, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return fsReadDTO{}, terminalIPCError(err)
+					return fsReadDTO{}, fsIPCError(kind, err)
 				}
 				data, err := filesystem.ReadFile(ctx, input.Path, input.MaxBytes)
 				return fsReadDTO{Path: input.Path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, fsIPCError(kind, err)
@@ -102,7 +102,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.RegisterNested(dispatcher, "fs_write", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return nil, terminalIPCError(err)
+					return nil, fsIPCError(kind, err)
 				}
 				data, err := base64.StdEncoding.DecodeString(input.ContentBase64)
 				if err != nil {
@@ -151,7 +151,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_checksum", func(ctx context.Context, _ *ipc.Call, input fsRequest) (string, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return "", terminalIPCError(err)
+					return "", fsIPCError(kind, err)
 				}
 				value, err := filesystem.Checksum(ctx, input.Path, input.Algo)
 				return value, fsIPCError(kind, err)
@@ -161,7 +161,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_upload", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return 0, terminalIPCError(err)
+					return 0, fsIPCError(kind, err)
 				}
 				value, err := fslocal.Upload(ctx, input.LocalPath, filesystem, input.RemotePath, productionTransferOptions(ctx, call, input.Resume))
 				return value, fsIPCError(kind, err)
@@ -171,7 +171,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return 0, terminalIPCError(err)
+					return 0, fsIPCError(kind, err)
 				}
 				value, err := fslocal.Download(ctx, filesystem, input.RemotePath, input.LocalPath, productionTransferOptions(ctx, call, false))
 				return value, fsIPCError(kind, err)
@@ -181,7 +181,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_pack_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return 0, terminalIPCError(err)
+					return 0, fsIPCError(kind, err)
 				}
 				provider, ok := filesystem.(sshPackDownloader)
 				if !ok {
@@ -203,7 +203,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 			return ipc.Register(dispatcher, "fs_extract", func(ctx context.Context, _ *ipc.Call, input fsRequest) (string, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
-					return "", terminalIPCError(err)
+					return "", fsIPCError(kind, err)
 				}
 				provider, ok := filesystem.(sshExtractor)
 				if !ok {

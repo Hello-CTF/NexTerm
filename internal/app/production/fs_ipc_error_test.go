@@ -52,8 +52,9 @@ func (f fakeProviderFileSystem) OpenWrite(context.Context, string, bool) (base.R
 }
 
 type fakeProviderTransport struct {
-	kind string
-	fs   base.FileSystem
+	kind  string
+	fs    base.FileSystem
+	fsErr error
 }
 
 func (t fakeProviderTransport) Kind() string       { return t.kind }
@@ -67,6 +68,9 @@ func (t fakeProviderTransport) Exec(context.Context, string, base.ExecOptions) (
 	return base.ExecResult{}, nil
 }
 func (t fakeProviderTransport) FileSystem(context.Context) (base.FileSystem, error) {
+	if t.fsErr != nil {
+		return nil, t.fsErr
+	}
 	return t.fs, nil
 }
 
@@ -149,5 +153,60 @@ func TestFSWriteRejectsInvalidBase64(t *testing.T) {
 	}
 	if !strings.HasPrefix(response.Error.Message, "参数错误: 文件内容不是有效的 Base64: ") {
 		t.Fatalf("fs_write message = %q", response.Error.Message)
+	}
+}
+
+func TestFSIPCErrorClassifiesAcquireFailures(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		kind      string
+		assetKind string
+		fsErr     error
+		want      ipc.Code
+	}{
+		{name: "sftp", kind: "ssh", assetKind: session.KindSSH, fsErr: errors.New("request SFTP subsystem: ssh: rejected"), want: ipc.CodeSFTP},
+		{name: "winrm", kind: "winrm", assetKind: session.KindWinRM, fsErr: errors.New("WinRM file operation: access denied"), want: ipc.CodeWinRM},
+		{name: "classified", kind: "ssh", assetKind: session.KindSSH, fsErr: base.ErrUnsupported, want: ipc.CodeUnsupported},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return fakeProviderTransport{kind: testCase.kind, fsErr: testCase.fsErr}, nil
+			})
+			manager := session.NewManager(session.Config{Connector: connector})
+			dispatcher := ipc.NewDispatcher()
+			if err := registerFSCommands(dispatcher, manager); err != nil {
+				t.Fatal(err)
+			}
+			connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-acquire-" + testCase.name, Kind: testCase.assetKind})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := dispatcher.Dispatch(t.Context(), ipc.Request{
+				Command: "fs_list", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":"/tmp"}`),
+			}, ipc.Environment{})
+			if response.OK || response.Error == nil || response.Error.Code != testCase.want {
+				t.Fatalf("fs_list = %+v, want %s", response, testCase.want)
+			}
+			if testCase.fsErr != base.ErrUnsupported && !strings.Contains(response.Error.Message, testCase.fsErr.Error()) {
+				t.Fatalf("underlying detail lost: %q", response.Error.Message)
+			}
+		})
+	}
+}
+
+func TestFSIPCErrorAcquirePassesThroughSessionLookup(t *testing.T) {
+	manager := session.NewManager(session.Config{Connector: session.ConnectorFunc(
+		func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return fakeProviderTransport{kind: "ssh", fs: fakeProviderFileSystem{}}, nil
+		})})
+	dispatcher := ipc.NewDispatcher()
+	if err := registerFSCommands(dispatcher, manager); err != nil {
+		t.Fatal(err)
+	}
+	response := dispatcher.Dispatch(t.Context(), ipc.Request{
+		Command: "fs_list", Args: json.RawMessage(`{"sessionId":"missing","path":"/tmp"}`),
+	}, ipc.Environment{})
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("fs_list = %+v, want not_found", response)
 	}
 }
