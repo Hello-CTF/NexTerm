@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
@@ -14,7 +13,7 @@ import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import { measureTerminalGeometry, resizeTerminalToGrid } from "./terminalGeometry";
-import { TerminalGridCoordinator } from "./terminalGrid";
+import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { wrapBracketedPaste } from "./terminalPaste";
 
@@ -23,6 +22,9 @@ const THEME = {
   foreground: "#c6cbd6",
   cursorAccent: "#101217",
   selectionBackground: "#2c3e5d",
+  scrollbarSliderBackground: "#31363f",
+  scrollbarSliderHoverBackground: "#3e444f",
+  scrollbarSliderActiveBackground: "#4d5563",
   black: "#101217",
   brightBlack: "#5c6472",
   red: "#e87b7b",
@@ -120,7 +122,7 @@ export function XtermView(props: XtermViewProps) {
     const term = new Terminal({
       scrollback: 100_000,
       allowProposedApi: true,
-      overviewRulerWidth: 14,
+      overviewRuler: { width: 14 },
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       fontSize: 13,
       cursorBlink: true,
@@ -134,17 +136,22 @@ export function XtermView(props: XtermViewProps) {
     try {
       term.loadAddon(new WebglAddon());
     } catch {
-      try {
-        term.loadAddon(new CanvasAddon());
-      } catch {
-      }
     }
 
     let kernelTabId = "";
     let disposed = false;
+    const applyGrid = (grid: TerminalGrid) => {
+      const pos = grid.cols === term.cols ? term.getSelectionPosition() : undefined;
+      const text = pos ? term.getSelection() : "";
+      resizeTerminalToGrid(term, grid);
+      if (pos && text && !term.hasSelection()) {
+        const length = (pos.end.y - pos.start.y) * term.cols + (pos.end.x - pos.start.x);
+        term.select(pos.start.x, pos.start.y, length);
+      }
+    };
     const coordinator = new TerminalGridCoordinator(
       productionGridRuntime,
-      (grid) => resizeTerminalToGrid(term, grid),
+      applyGrid,
       { visible: props.visible !== false, canResize: props.canResize !== false },
     );
     gridRef.current = coordinator;
@@ -168,8 +175,7 @@ export function XtermView(props: XtermViewProps) {
       const below = Math.max(0, buffer.baseY - buffer.viewportY);
       setLinesBelow((prev) => (prev === below ? prev : below));
     };
-    const viewportEl = term.element?.querySelector(".xterm-viewport");
-    viewportEl?.addEventListener("scroll", updateLinesBelow, { passive: true });
+    const scrollDisposable = term.onScroll(updateLinesBelow);
     onHandleRef.current?.({
       copyBlock: (index) => blocks.getBlockText(index),
       scrollToBlock: (index) => blocks.scrollTo(index),
@@ -188,7 +194,7 @@ export function XtermView(props: XtermViewProps) {
       term.write(bytes, updateLinesBelow);
     });
     const applyRemoteDimensions = (cols: number, rows: number) => {
-      resizeTerminalToGrid(term, { cols, rows });
+      applyGrid({ cols, rows });
     };
     let attaching = false;
     const doAttach = async () => {
@@ -361,7 +367,7 @@ export function XtermView(props: XtermViewProps) {
       window.visualViewport?.removeEventListener("resize", onWindowResize);
       ro.disconnect();
       dataDisposable.dispose();
-      viewportEl?.removeEventListener("scroll", updateLinesBelow);
+      scrollDisposable.dispose();
       blocks.dispose();
       if (kernelTabId) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);

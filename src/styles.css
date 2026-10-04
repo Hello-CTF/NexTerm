@@ -1671,10 +1671,6 @@
 .xterm .xterm-viewport {
   background-color: transparent !important;
 }
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--color-neutral-700);
-  background-clip: padding-box;
-}
 
 .cm-editor {
   height: 100%;

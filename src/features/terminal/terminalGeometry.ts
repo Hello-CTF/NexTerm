@@ -7,7 +7,6 @@ import {
 } from "./terminalGrid";
 
 interface XtermInternals {
-  viewport?: { scrollBarWidth?: number };
   _renderService?: {
     clear?: () => void;
     dimensions?: {
@@ -45,7 +44,7 @@ export function measureTerminalGeometry(
   const style = window.getComputedStyle(element);
   const horizontalPadding = cssPixels(style.paddingLeft) + cssPixels(style.paddingRight);
   const verticalPadding = cssPixels(style.paddingTop) + cssPixels(style.paddingBottom);
-  const scrollbar = term.options.scrollback === 0 ? 0 : (internals?.viewport?.scrollBarWidth ?? 0);
+  const scrollbar = term.options.scrollback === 0 ? 0 : (term.options.overviewRuler?.width ?? 14);
   const viewport = {
     widthPx: Math.max(0, Math.floor(host.clientWidth - horizontalPadding - scrollbar)),
     heightPx: Math.max(0, Math.floor(host.clientHeight - verticalPadding)),
