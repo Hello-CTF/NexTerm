@@ -13,11 +13,11 @@
 
 用法::
 
-    python3 scripts/store-shots.py                    # 输出到 docs/store/（1920x1080 / 16:9）
+    python3 scripts/store-shots.py                    # 输出到 lazycat/store/（1920x1080 / 16:9）
     python3 scripts/store-shots.py --size 1600x900    # 换画布尺寸（**保持 16:9 才合规**）
     python3 scripts/store-shots.py --verify           # 另出打码核对图
 
-原始窗口截图放 docs/store/raw/（**该目录已 gitignore**，因为里面必然带
+原始窗口截图放 lazycat/store/raw/（**该目录已 gitignore**，因为里面必然带
 本机域名；合成后的产物是打过码的，才进版本库）。
 缺失 raw 的条目会被跳过并给出提示，不会中断整批。
 
@@ -42,14 +42,14 @@ REDACT: dict[str, list[tuple[int, int, int, int]]] = {
     # 演示图里终端首行 "Last login: ... from 10.0.0.8"（内网 IP）。
     # 该行实测占 y 197..209（下一行 "# 演示模式…" 从 211 起）⇒ 框只压这一行，
     # 不越界切到下一条（切了会留下半截字，反而显眼）。
-    "docs/images/hero-ai-terminal.png": [(288, 194, 692, 210)],
-    "docs/images/ai-permission.png": [(288, 194, 692, 210)],
-    "docs/images/ai-file-changes.png": [(288, 194, 692, 210)],
-    "docs/images/split-pane-editor.png": [(288, 194, 692, 210)],
+    "website/images/hero-ai-terminal.png": [(288, 194, 692, 210)],
+    "website/images/ai-permission.png": [(288, 194, 692, 210)],
+    "website/images/ai-file-changes.png": [(288, 194, 692, 210)],
+    "website/images/split-pane-editor.png": [(288, 194, 692, 210)],
     # 真实窗口截图：资产树里的私有盒子域名 / 资产名。
     # 域名串实测右端止于 x≈283 ⇒ 右边界留到 300 整行吃掉；再往右是设置面板，不能碰。
-    "docs/store/raw/terminal.png": [(56, 164, 300, 194)],
-    "docs/store/raw/settings-ai.png": [(56, 166, 300, 196)],
+    "lazycat/store/raw/terminal.png": [(56, 164, 300, 194)],
+    "lazycat/store/raw/settings-ai.png": [(56, 166, 300, 196)],
 }
 
 # ---------------------------------------------------------------- 出图清单
@@ -63,22 +63,22 @@ class Shot:
 
 
 SHOTS: list[Shot] = [
-    Shot("01-workspace-overview.png", "docs/images/hero-ai-terminal.png",
+    Shot("01-workspace-overview.png", "website/images/hero-ai-terminal.png",
          "工作区总览", "终端、文件、容器、数据库、AI 助手，一个窗口收束"),
     # 第 2 位放服务端运行态：懒猫专版**就是**服务端形态，这是它与桌面版最不同、也最该被看见的一点。
-    # 来源是一张示意图（`docs/diagrams/04-server-runtime.svg` 渲染产物），
+    # 来源是一张示意图（`website/diagrams/04-server-runtime.svg` 渲染产物），
     # 而不是真窗口截图 —— 因为「多设备 / 布局权威」这些语义在单机截图上根本拍不出来。
-    Shot("02-server-runtime.png", "docs/images/04-server-runtime.png",
+    Shot("02-server-runtime.png", "website/images/04-server-runtime.png",
          "服务端运行态", "终端、会话与工作区都在微服上，关掉网页不断、换设备接着用"),
-    Shot("03-live-terminal.png", "docs/store/raw/terminal.png",
+    Shot("03-live-terminal.png", "lazycat/store/raw/terminal.png",
          "真实终端会话", "本机与远程统一入口，连接状态实时可见"),
-    Shot("04-ai-guardrail.png", "docs/images/ai-permission.png",
+    Shot("04-ai-guardrail.png", "website/images/ai-permission.png",
          "AI 权限护栏", "命令按风险分级，危险操作先确认再执行"),
-    Shot("05-ai-file-diff.png", "docs/images/ai-file-changes.png",
+    Shot("05-ai-file-diff.png", "website/images/ai-file-changes.png",
          "AI 改文件留痕", "写入前给出前后对照，改动可逐行核对"),
-    Shot("06-split-workspace.png", "docs/images/split-pane-editor.png",
+    Shot("06-split-workspace.png", "website/images/split-pane-editor.png",
          "分屏工作区", "终端与文件编辑器同屏，边看边改"),
-    Shot("07-ai-models.png", "docs/store/raw/settings-ai.png",
+    Shot("07-ai-models.png", "lazycat/store/raw/settings-ai.png",
          "多模型接入", "自带密钥（BYOK），DeepSeek / 智谱 / OpenAI 兼容端点随选"),
 ]
 
@@ -86,7 +86,7 @@ SHOTS: list[Shot] = [
 # 原因：懒猫微服上端口转发是被**刻意禁用**的（§22，平台裸 TCP 无鉴权），
 # 商店描述里写着「端口转发在此平台上不可用」，轮播图却宣传「SSH 隧道一键转发到本机」——
 # 两边自相矛盾，且会让用户以为填错端口。演示图本身没错，错在把它放进**懒猫专版**的货架。
-# 那张图仍在 `docs/images/port-forward.png`，README 的桌面/服务端章节照常用它。
+# 那张图仍保留在 `website/images/port-forward.png`（官网与商店图共用的资产目录）。
 
 # ---------------------------------------------------------------- 视觉常量
 BRAND = (0x2E, 0x6B, 0xE6)
@@ -211,7 +211,7 @@ def main() -> int:
     ap.add_argument("--size", default="1920x1080",
                     help="画布尺寸。**默认 1920x1080** —— 商店表单硬要求宽高比 16:9、"
                          "单边 1080–7680 像素、每张 ≤15 MB；1920x1200 那种 16:10 会被拒")
-    ap.add_argument("--out", default="docs/store", help="输出目录（相对仓库根）")
+    ap.add_argument("--out", default="lazycat/store", help="输出目录（相对仓库根）")
     ap.add_argument("--verify", action="store_true", help="额外输出打码核对图")
     args = ap.parse_args()
 

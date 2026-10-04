@@ -8,7 +8,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DATA = ROOT / "testdata/parity"
-DOCS = ROOT / "docs/acceptance-rwig/baseline"
+BASELINE = ROOT / "testdata/parity/baseline"
 
 
 def load(path: pathlib.Path):
@@ -98,7 +98,7 @@ class RustTreeIndependenceTest(unittest.TestCase):
 class BaselineReportTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.data = load(DOCS / "baseline.json")
+        cls.data = load(BASELINE / "baseline.json")
 
     def test_all_commands_and_artifacts_are_recorded(self):
         self.assertEqual(self.data["summary"]["commands_failed"], 0)
@@ -147,7 +147,7 @@ class SizeGateTest(unittest.TestCase):
 
 class GoCoverageTest(unittest.TestCase):
     def test_coverage_and_selfcheck_never_claim_pending_features(self):
-        coverage = load(DOCS / "go-coverage.json")
+        coverage = load(BASELINE / "go-coverage.json")
         summary = coverage["summary"]
         self.assertEqual(summary["commands_total"], 139)
         self.assertEqual(summary["events_total"], 10)
@@ -165,7 +165,7 @@ class GoCoverageTest(unittest.TestCase):
             self.assertIn(feature["status"], {"verified", "implemented-unverified", "not-implemented"})
             if feature["status"] != "verified":
                 self.assertTrue(feature["evidence"])
-        report = load(DOCS / "go-selfcheck.json")
+        report = load(BASELINE / "go-selfcheck.json")
         self.assertFalse(report["summary"]["skips_are_passes"])
         self.assertFalse(report["summary"]["feature_complete"])
         self.assertFalse(report["summary"]["installer_package_gates_passed"])

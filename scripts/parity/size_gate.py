@@ -8,7 +8,7 @@ import pathlib
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-BASELINE = ROOT / "docs/acceptance-rwig/baseline/baseline.json"
+BASELINE = ROOT / "testdata/parity/baseline/baseline.json"
 
 
 def load_measure():

@@ -4,7 +4,7 @@
   "go_source": {
     "root": "/Users/huangzheng/Temp/NexTerm/.tower/worktrees/wt-12",
     "commit": "4e3d491d89b55ebbcc10beb45a930def7129e6ad",
-    "report": "docs/acceptance-rwig/baseline/go-selfcheck.json"
+    "report": "testdata/parity/baseline/go-selfcheck.json"
   },
   "rules": {
     "verified_requires_passing_feature_evidence": true,
@@ -32,7 +32,7 @@
         "systemApi.platform"
       ],
       "sync_only_feature": false,
-      "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_platform"
+      "evidence": "testdata/parity/baseline/logs/go-server-smoke.log#app_platform"
     },
     {
       "id": "layout_get",
@@ -1301,7 +1301,7 @@
         "assetApi.appInfo"
       ],
       "sync_only_feature": false,
-      "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_info"
+      "evidence": "testdata/parity/baseline/logs/go-server-smoke.log#app_info"
     },
     {
       "id": "sync_digest",

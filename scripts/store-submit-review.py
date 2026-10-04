@@ -6,7 +6,7 @@
 改简介 / 截图后重新提审）必须自己发，把 `infos` 一起交上去 —— 应用资料
 **没有独立保存接口**，只在提审时随请求落库。
 
-完整链路与实测坑见 `docs/LAZYCAT-PORT.md` §15.8。三个最容易写错的点：
+三个最容易写错的点：
 
 1. `infos[].language` 是**短码** `zh` / `en`，不是 manifest `locales` 里的 `zh-CN` / `en-US`
    （判据：`GET /developer/app/<id>` 的 `info_data` 键名）。
@@ -206,7 +206,7 @@ def show_status() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lpk", default=None, help="正式包路径（默认取 lazycat/ 下最新的非 dev 包）")
-    ap.add_argument("--shots", default="docs/store", help="截图目录（默认 docs/store）")
+    ap.add_argument("--shots", default="lazycat/store", help="截图目录（默认 lazycat/store）")
     ap.add_argument("--dry-run", action="store_true", help="只组装并打印，不联网")
     ap.add_argument("--status", action="store_true", help="只查审核队列状态")
     args = ap.parse_args()

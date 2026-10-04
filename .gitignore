@@ -18,9 +18,6 @@ _tmp_*
 # 本地站点预览目录
 .sitetest
 
-# 本地设计稿，不入库
-docs/PLAN-*
-
 # 本地工作笔记 / 会话记忆，不入库
 .workbuddy/
 
@@ -40,21 +37,21 @@ __pycache__/
 #   lazycat/app.lpk             ← lzc-build.yml 的 pkgout: ./
 #   lazycat/content/            ← contentdir，里面是前端 dist 的拷贝（每次构建重生成）
 #   lazycat/image/nexterm-server← build-server.sh 从 target/go-build/ install 来的成品
-#                                 （linux/amd64 实测 42,115,234 B，见 docs/acceptance-lazycat-forward/README.md），
+#                                 （linux/amd64 实测 42,115,234 B），
 #                                 随后被 Dockerfile `COPY` 进镜像，绝不能入库
 #   lazycat/.lzc-cli-*/         ← lzc-cli 自己的临时目录（打包中断时会滞留）；
-#                                 正常应被它删掉，但受限环境里那步会被拦（见 docs/LAZYCAT-PORT.md §12.8.6）
+#                                 正常应被它删掉，但受限环境里那步会被拦
 #                                 实测见过的后缀：build* / cache / install* / lpk-lint* / publish*
 #                                 ⇒ 统一按前缀忽略，别逐个补（每加一个新子命令就漏一个）
-#   docs/store/raw/             ← 商店截图的「原始窗口截取」，必然带本机域名/主机名，
+#   lazycat/store/raw/          ← 商店截图的「原始窗口截取」，必然带本机域名/主机名，
 #                                 仓库是公开的 ⇒ 不进版本库。只提交 scripts/store-shots.py
-#                                 合成后的 docs/store/*.png（已按 REDACT 表打过码）。
+#                                 合成后的 lazycat/store/*.png（已按 REDACT 表打过码）。
 # 历史条目：现行 Go 流程已不再产生，保留忽略只为防止老工作区里的残留被误提交 ——
 #   target-linux/               ← Rust 容器时代的 CARGO_TARGET_DIR 输出（约 1~2 GB）
 #   lazycat/image/lzc-build-image-context.tar ← local builder 时代的镜像构建上下文包
 *.lpk
-docs/store/raw/
-docs/store/_verify/
+lazycat/store/raw/
+lazycat/store/_verify/
 lazycat/content/
 target-linux/
 lazycat/image/nexterm-server

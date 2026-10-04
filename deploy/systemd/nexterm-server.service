@@ -10,7 +10,7 @@
 #    「放到公网上、只做资产同步」请改用 sync-only 模式（`--sync-only`，见
 #    nexterm-onlyserver.service），别开这个。
 #
-# 详见随包 README；完整背景见仓库 docs/LAZYCAT-PORT.md。
+# 详见随包 README。
 
 [Unit]
 Description=NexTerm 服务端（浏览器版开发运维终端）

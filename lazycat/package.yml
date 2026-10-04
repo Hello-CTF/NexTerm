@@ -14,7 +14,7 @@ homepage: https://github.com/ProbiusOfficial/NexTerm
 
 # 首版**不**声明 admin_only：
 # 它只影响「谁能看见这个应用」，而真正该由用户决定的是「要不要把它装在共享盒子上」。
-# 等商店文案定稿时再决定（见 docs/LAZYCAT-PORT.md §12.5）。
+# 等商店文案定稿时再决定。
 admin_only: false
 
 # 手机上打开一个 xterm 终端没有意义（没有 Ctrl、没有右键菜单、软键盘抢屏），
