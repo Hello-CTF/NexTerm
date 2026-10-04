@@ -27,7 +27,9 @@ export function mount(node: ReactNode): MountedView {
 
 export async function flush(): Promise<void> {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
   });
 }
 
