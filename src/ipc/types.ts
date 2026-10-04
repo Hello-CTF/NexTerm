@@ -21,6 +21,12 @@ export type AiHitlQuestionDto = { id: string, text: string, options?: Array<stri
 export type AiHitlSnapshotDto = { runId: string, checkpointId: string, 
 status: string, attempt: number, seq: number, pending: Array<AiHitlInterruptDto>, terminal?: AiHitlEventDto, };
 
+export type AiRunDto = { id: string, conversationId: string, status: string, attempt: number, seq: number, 
+planMode: boolean, source: string, answer: string, turns: number, tokensIn: number, tokensOut: number, error?: string, 
+createdAt: number, updatedAt: number, finishedAt?: number, };
+
+export type AiRunEventDto = Record<string, unknown>;
+
 export type AppErrorDto = { code: string, message: string, detail: JsonValue | null, };
 
 export type AssetDto = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, options: JsonValue, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, 

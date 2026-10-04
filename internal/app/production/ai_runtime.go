@@ -68,10 +68,15 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 		Tools:       registry,
 		Context:     builder,
 		Store:       services.Store,
+		Runs:        services.Store,
+		Checkpoints: agent.NewStoreCheckpoints(services.Store),
 		Subagents:   &tools.SubagentConfig{Model: subagent.NewProfileModelFactory(services.Profiles)},
 		Memory:      memoryStore,
 		MemoryScope: productionMemoryScope,
 	})
+	if err := runner.RecoverRuns(ctx); err != nil {
+		return err
+	}
 
 	takeoverDeps := takeover.Dependencies{
 		Model:      aiModelFactory(services.Profiles),

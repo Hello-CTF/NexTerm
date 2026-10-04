@@ -541,6 +541,7 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 		if err != nil {
 			return err
 		}
+		r.updateRunStatus(current, store.RunStatusInterrupted)
 		args := withNonce(json.RawMessage(interaction.Args), request.Nonce)
 		switch kind {
 		case hitl.KindConfirm:

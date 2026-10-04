@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
-import { createAiChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
-import type { AiHitlEventDto } from "../../ipc/types";
+import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
+import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -21,6 +21,7 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
+import { findResumableRun, pendingDeadline, replayableRuns } from "./runRestore";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -92,12 +93,29 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
+  const restoredChannelRef = useRef<{
+    channel: IpcChannel<unknown>;
+    offReopen: () => void;
+    jobId: string;
+    generation: number;
+    expiryTimer: ReturnType<typeof setTimeout> | null;
+    expiryRetries: number;
+  } | null>(null);
   const beginRun = (kind: "chat" | "takeover" = "chat"): AiRunSlot => {
     const run = createAiRun(++runSequenceRef.current, kind);
     activeRunRef.current = run;
     stream.beginRun(run.generation, kind);
     return run;
   };
+  const disposeRestoredChannel = () => {
+    const restored = restoredChannelRef.current;
+    if (!restored) return;
+    restoredChannelRef.current = null;
+    if (restored.expiryTimer !== null) clearTimeout(restored.expiryTimer);
+    restored.offReopen();
+    disposeChannel(restored.channel);
+  };
+  useEffect(() => () => disposeRestoredChannel(), []);
   const activeGeneration = activeRunRef.current?.generation ?? null;
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
@@ -207,6 +225,138 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     } catch {
       if (events.length > 0) stream.applyHitlReplay(generation, plan, events, null);
     }
+  };
+
+  const settleRestoredRun = (generation: number) => {
+    const current = activeRunRef.current;
+    if (isCurrentAiRun(current, generation) && !current.settled) {
+      activeRunRef.current = settleAiRun(current);
+      setAiBusy(false);
+    }
+    disposeRestoredChannel();
+  };
+
+  const replayRunEvents = async (generation: number, jobId: string) => {
+    try {
+      const events = await aiApi.runEvents(jobId, 0);
+      for (const event of events) {
+        const result = stream.pushEvent(generation, event as Record<string, unknown>);
+        if (result.terminal && result.accepted) {
+          settleRestoredRun(generation);
+        }
+      }
+      stream.flush();
+    } catch {
+      return;
+    }
+  };
+
+  const replayRestoredIfBound = (jobId: string) => {
+    const restored = restoredChannelRef.current;
+    if (!restored || restored.jobId !== jobId) return;
+    void replayRunEvents(restored.generation, jobId);
+  };
+
+  const armExpiryWatch = (jobId: string) => {
+    const restored = restoredChannelRef.current;
+    if (!restored || restored.jobId !== jobId || restored.expiryRetries <= 0) return;
+    restored.expiryRetries -= 1;
+    restored.expiryTimer = setTimeout(() => {
+      const current = restoredChannelRef.current;
+      if (!current || current.jobId !== jobId) return;
+      current.expiryTimer = null;
+      void replayRunEvents(current.generation, jobId).finally(() => {
+        const settled = activeRunRef.current?.settled ?? true;
+        if (!settled) armExpiryWatch(jobId);
+      });
+    }, 3000);
+  };
+
+  const scheduleExpiryWatch = (snapshot: AiHitlSnapshotDto) => {
+    const deadline = pendingDeadline(snapshot);
+    if (deadline === null) return null;
+    const delay = Math.min(Math.max(0, deadline - Date.now()) + 500, 2_000_000_000);
+    return setTimeout(() => {
+      const restored = restoredChannelRef.current;
+      if (!restored) return;
+      void replayRunEvents(restored.generation, restored.jobId).finally(() => {
+        const settled = activeRunRef.current?.settled ?? true;
+        if (!settled) armExpiryWatch(restored.jobId);
+      });
+    }, delay);
+  };
+
+  const restoreConversationRuns = async (id: string) => {
+    let runs: AiRunDto[];
+    try {
+      runs = await aiApi.runs(id);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(runs) || runs.length === 0 || conversationIdRef.current !== id) return;
+    const replay = replayableRuns(runs);
+    const generations = new Map<string, number>();
+    for (const run of replay) {
+      const generation = ++runSequenceRef.current;
+      generations.set(run.id, generation);
+      stream.beginRun(generation, "chat");
+      stream.bindJob(generation, run.id);
+      try {
+        const events = await aiApi.runEvents(run.id, 0);
+        if (conversationIdRef.current !== id) return;
+        for (const event of events) {
+          stream.pushEvent(generation, event as Record<string, unknown>);
+        }
+        stream.flush();
+      } catch {
+        continue;
+      }
+    }
+    const resumable = await findResumableRun(runs, async (jobId) => {
+      try {
+        return await aiApi.hitlSnapshot(jobId);
+      } catch {
+        return null;
+      }
+    });
+    if (!resumable || conversationIdRef.current !== id) return;
+    const generation = generations.get(resumable.run.id);
+    if (generation === undefined) return;
+    if (activeRunRef.current && !activeRunRef.current.settled) return;
+    const channel = createAiChannel((ev) => {
+      const type = ev.type as string;
+      const terminalEvent = type === "done" || type === "error";
+      const current = activeRunRef.current;
+      if (!isCurrentAiRun(current, generation) || current.settled) {
+        if (terminalEvent) disposeRestoredChannel();
+        return;
+      }
+      const result = stream.pushEvent(generation, ev);
+      if (!terminalEvent) return;
+      if (result.accepted) {
+        settleRestoredRun(generation);
+        if (type === "error") pushToast("error", `AI: ${ev.message as string}`);
+      } else {
+        disposeRestoredChannel();
+      }
+    });
+    const offReopen = onChannelReopen(channel, () => {
+      const current = activeRunRef.current;
+      if (!isCurrentAiRun(current, generation) || current.settled) return;
+      void replayRunEvents(generation, resumable.run.id);
+      void replayHitl(generation, resumable.run.id);
+    });
+    restoredChannelRef.current = {
+      channel,
+      offReopen,
+      jobId: resumable.run.id,
+      generation,
+      expiryTimer: scheduleExpiryWatch(resumable.snapshot),
+      expiryRetries: 8,
+    };
+    activeRunRef.current = { generation, kind: "chat", jobId: resumable.run.id, spawnPending: false, settled: false };
+    setAiBusy(true);
+    void replayHitl(generation, resumable.run.id);
   };
 
   const send = async (override?: { message?: string; planMode?: boolean }) => {
@@ -331,14 +481,19 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (submittingCardId) return;
     setSubmittingCardId(card.id);
     try {
-      await aiApi.confirm(
-        confirmationInput({ jobId: id, callId: card.callId, nonce: card.nonce }, decision),
-      );
+      const input = confirmationInput({ jobId: id, callId: card.callId, nonce: card.nonce }, decision);
+      const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
+      if (channel) {
+        await aiApi.confirm(input, channel);
+      } else {
+        await aiApi.confirm(input);
+      }
     } catch (e) {
       pushToast("error", `确认失败：${describeError(e)}`);
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
+      replayRestoredIfBound(id);
       return;
     } finally {
       setSubmittingCardId(null);
@@ -364,12 +519,19 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (submittingCardId) return;
     setSubmittingCardId(card.id);
     try {
-      await aiApi.answer(answerInput({ jobId: id, callId: card.callId, nonce: card.nonce }, text));
+      const input = answerInput({ jobId: id, callId: card.callId, nonce: card.nonce }, text);
+      const channel = card.jobId === restoredChannelRef.current?.jobId ? restoredChannelRef.current.channel : undefined;
+      if (channel) {
+        await aiApi.answer(input, channel);
+      } else {
+        await aiApi.answer(input);
+      }
     } catch (e) {
       pushToast("error", `回答失败：${describeError(e)}`);
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
+      replayRestoredIfBound(id);
       return;
     } finally {
       setSubmittingCardId(null);
@@ -394,12 +556,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       activeRunRef.current = cancellation.run;
       stream.cancelRun(run.generation, !cancellation.waitForTerminal);
       if (!cancellation.waitForTerminal) setAiBusy(false);
+      disposeRestoredChannel();
       pushToast(
         "info",
         cancellation.waitForTerminal ? "已请求停止接管，等待终端退出" : "已停止本轮",
       );
     } catch (e) {
       pushToast("error", `停止失败：${describeError(e)}`);
+      replayRestoredIfBound(id);
     }
   };
 
@@ -441,6 +605,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       stream.reset(historyToItems(stream.getState(), msgs));
       updateConversationId(id);
       setHistoryOpen(false);
+      void restoreConversationRuns(id);
     } catch (e) {
       pushToast("error", `打开会话失败：${describeError(e)}`);
     }

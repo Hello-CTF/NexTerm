@@ -277,7 +277,11 @@ DROP INDEX idx_audit_retention;
 DROP INDEX idx_terminal_recording_retention;
 DROP INDEX idx_ai_msg_conv_seq;
 ALTER TABLE ai_message DROP COLUMN seq;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6)`)
+DROP TABLE ai_run_event;
+DROP TABLE ai_run;
+DROP TABLE ai_checkpoint;
+DROP TABLE ai_hitl_run;
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +306,7 @@ DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6)`)
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 6)
+	requireTableCount(t, reopened, migrationsTable, 7)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

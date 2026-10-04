@@ -76,6 +76,7 @@ type Config struct {
 	Tools           *tools.Registry
 	Context         *aicontext.Builder
 	Store           ConversationStore
+	Runs            RunStore
 	Permission      func(context.Context) (guard.Config, error)
 	FallbackCancel  func(string) error
 	FallbackConfirm func(Confirmation) error
@@ -101,6 +102,7 @@ type ChatArgs struct {
 	Selection      string      `json:"selection,omitempty"`
 	Images         []string    `json:"images,omitempty"`
 	PlanMode       bool        `json:"planMode,omitempty"`
+	Source         string      `json:"-"`
 }
 
 type StartResponse struct {

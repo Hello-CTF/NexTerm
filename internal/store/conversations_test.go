@@ -191,7 +191,7 @@ func applyLegacyMigrations(t *testing.T, raw *sql.DB) {
 	}
 	names := []string{}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") && !strings.HasPrefix(entry.Name(), "0006_") {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") && entry.Name() < "0006_" {
 			names = append(names, entry.Name())
 		}
 	}
