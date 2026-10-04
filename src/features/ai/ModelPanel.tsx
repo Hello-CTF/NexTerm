@@ -42,7 +42,7 @@ function blankProfile(): ModelProfile {
 export function ModelManager({
   onRequestClose,
   onDirtyChange,
-  listWidthClassName = "w-[30%] min-w-[150px] max-w-[210px] shrink-0",
+  listWidthClassName = "w-full min-w-0 min-[560px]:w-[30%] min-[560px]:min-w-[150px] min-[560px]:max-w-[210px] min-[560px]:shrink-0",
 }: {
   onRequestClose?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -219,20 +219,20 @@ export function ModelManager({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex gap-4">
+      <div className="flex flex-col gap-4 min-[560px]:flex-row">
         <div className={`flex flex-col ${listWidthClassName}`}>
           <div className="mb-1.5 flex items-center gap-1">
             <span className="text-[11px] font-medium text-neutral-300">模型档案</span>
             <div className="nx-spacer" />
             <button
-              className="nx-icon-btn nx-icon-btn-sm"
+              className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
               title="新增档案"
               onClick={() => void newProfile()}
             >
               <IconPlus size={13} />
             </button>
           </div>
-          <div className="min-h-[220px] max-h-[420px] overflow-y-auto rounded-md border border-neutral-800/70 bg-neutral-950/40 p-1">
+          <div className="max-h-56 min-h-0 overflow-y-auto rounded-md border border-neutral-800/70 bg-neutral-950/40 p-1 min-[560px]:min-h-[220px] min-[560px]:max-h-[420px]">
             {!view ? (
               loadError ? (
                 <div className="px-2 py-3 text-center">
@@ -296,7 +296,7 @@ export function ModelManager({
                 {presets.map((p) => (
                   <button
                     key={p}
-                    className="nx-chip"
+                    className="nx-chip pointer-coarse:min-h-6"
                     title={`用 ${p} 的默认地址与模型填充表单`}
                     onClick={() => void applyPreset(p)}
                   >
@@ -347,7 +347,7 @@ export function ModelManager({
                     onChange={(e) => patch({ apiKey: e.target.value })}
                   />
                   <button
-                    className="nx-icon-btn nx-icon-btn-sm absolute top-1/2 right-1 -translate-y-1/2"
+                    className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 absolute top-1/2 right-1 -translate-y-1/2"
                     title={showKey ? "隐藏密钥" : "显示密钥"}
                     onClick={() => setShowKey((v) => !v)}
                   >
@@ -375,7 +375,7 @@ export function ModelManager({
                     刷新模型列表
                   </button>
                   {modelsOpen && models.length > 0 && (
-                    <div className="absolute top-full right-0 z-10 mt-1 max-h-52 w-[280px] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg">
+                    <div className="absolute top-full right-0 z-10 mt-1 max-h-52 w-[min(280px,calc(100vw-64px))] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg">
                       <div className="nx-menu-title">点一个填入模型名</div>
                       {models.map((m) => (
                         <button
@@ -407,7 +407,7 @@ export function ModelManager({
                 </div>
               </Field>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 min-[400px]:flex-row">
                 <div className="flex-1">
                   <Field label="温度 (0–2)" htmlFor={`${fieldId}-temperature`}>
                     <input
@@ -464,7 +464,7 @@ export function ModelManager({
             </div>
           ) : (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center">
-              <IconKey size={20} className="text-neutral-600" />
+              <IconKey size={20} className="text-[var(--nx-fg-tertiary)]" />
               <div className="nx-hint max-w-[280px]">
                 左侧选一份档案来编辑，或点 + 新增一份。也可以先用预设快速填充。
               </div>
@@ -477,7 +477,7 @@ export function ModelManager({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 border-t border-neutral-800/60 pt-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-3">
         {draft ? (
           <>
             <span className="nx-hint mr-auto self-center text-[10.5px]">
@@ -563,7 +563,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">模型配置</span>
           <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥存在本机 sqlite</span>
           <div className="nx-spacer" />
-          <button className="nx-icon-btn nx-icon-btn-sm" title="关闭" onClick={() => void requestClose()}>
+          <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="关闭" onClick={() => void requestClose()}>
             <IconClose size={13} />
           </button>
         </div>

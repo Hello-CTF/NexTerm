@@ -64,7 +64,8 @@ export function UsageRing({ usage, size = 18, className = "" }: UsageRingProps) 
     <span
       role="img"
       aria-label={label}
-      className={`group relative inline-flex shrink-0 items-center ${className}`}
+      tabIndex={0}
+      className={`group relative inline-flex shrink-0 items-center pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${className}`}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
         <circle
@@ -104,7 +105,7 @@ export function UsageRing({ usage, size = 18, className = "" }: UsageRingProps) 
         )}
       </svg>
 
-      <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden w-max group-hover:block">
+      <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden w-max group-hover:block group-focus-within:block">
         <span className="block rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-[11px] leading-relaxed text-neutral-300 shadow-xl">
           {hasData ? (
             <>

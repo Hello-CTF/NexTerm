@@ -74,6 +74,15 @@ export function useConversationFollow(revision: unknown): ConversationFollow {
   }, [el]);
 
   useEffect(() => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (followRef.current) scrollToBottom(el);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [el]);
+
+  useEffect(() => {
     if (!el) return;
     if (followRef.current) {
       scrollToBottom(el);
