@@ -1,14 +1,21 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
 import { isMac } from "./platform";
 import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
+import { DEMO } from "../demo";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { insertSnippet, type Snippet } from "../features/explorer/snippetInsert";
 import { cloneAsset } from "../features/explorer/assetClone";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
+import {
+  probeAssetReachability,
+  useAssetReachability,
+  type ReachabilityEntry,
+} from "../features/explorer/assetReachability";
+import { ReachabilityDot } from "../features/explorer/ReachabilityDot";
 import {
   IconCommand,
   IconCopy,
@@ -20,10 +27,12 @@ import {
   IconHistory,
   IconMonitor,
   IconNetwork,
+  IconPlug,
   IconSearch,
   IconSettings,
   IconSplitH,
   IconTerminal,
+  IconZap,
   assetIcon,
 } from "../ui/icons";
 
@@ -32,6 +41,7 @@ interface Action {
   label: string;
   hint?: string;
   icon: typeof IconTerminal;
+  dot?: ReachabilityEntry;
   run: () => void;
 }
 
@@ -44,19 +54,24 @@ export function CommandPalette({
   onClose,
   onOpenFiles,
   onEditAsset,
+  onQuickConnect,
 }: {
   onClose: () => void;
   onOpenFiles?: () => void;
   onEditAsset?: (asset: Asset) => void;
+  onQuickConnect?: () => void;
 }) {
   const qc = useQueryClient();
-  const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode } = useUi();
+  const { sessions, setSessions, addTab, pushToast, themeMode, setThemeMode, connectingAssetIds } =
+    useUi();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [assetError, setAssetError] = useState("");
   const { hiddenIds, showHidden } = useAssetVisibility();
+  const reachEntries = useAssetReachability((s) => s.entries);
+  const probedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(false);
@@ -89,6 +104,40 @@ export function CommandPalette({
     };
   }, []);
 
+  useEffect(() => {
+    if (probedRef.current || assets.length === 0) return;
+    probedRef.current = true;
+    const ids = assets
+      .filter((a) => Boolean(a.host) && (showHidden || !hiddenIds.includes(a.id)))
+      .slice(0, 16)
+      .map((a) => a.id);
+    if (ids.length > 0) void useAssetReachability.getState().probe(ids);
+  }, [assets, hiddenIds, showHidden]);
+
+  const runProbeOne = useCallback(
+    async (asset: Asset) => {
+      if (DEMO) {
+        pushToast("info", "演示模式不发起真实探测");
+        return;
+      }
+      if (!asset.host) {
+        pushToast("info", `「${asset.name}」是本机资产，无需探测`);
+        return;
+      }
+      const entry = await probeAssetReachability(asset.id);
+      if (!entry || entry.state === "checking") {
+        pushToast("error", `「${asset.name}」探测失败，请稍后重试`);
+        return;
+      }
+      if (entry.state === "reachable") {
+        pushToast("success", `「${asset.name}」可达 · ${entry.durationMs ?? 0}ms`);
+      } else {
+        pushToast("error", `「${asset.name}」不可达：${entry.error ?? "未知原因"}`);
+      }
+    },
+    [pushToast],
+  );
+
   const runClone = async (asset: Asset) => {
     try {
       const created = await cloneAsset(asset);
@@ -112,6 +161,13 @@ export function CommandPalette({
 
   const actions = useMemo<Action[]>(() => {
     const list: Action[] = [
+      {
+        id: "quick-connect",
+        label: "快速连接…",
+        hint: `${modHint}+Shift+K · 最近使用优先`,
+        icon: IconZap,
+        run: () => onQuickConnect?.(),
+      },
       {
         id: "local-terminal",
         label: "打开本地终端",
@@ -241,13 +297,24 @@ export function CommandPalette({
     const isHidden = (id: string) => hiddenIds.includes(id);
     for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {
       const hidden = isHidden(asset.id);
+      const connecting = connectingAssetIds.includes(asset.id);
       list.push({
         id: `conn-${asset.id}`,
         label: `连接 ${asset.name}`,
-        hint: [asset.host, asset.kind].filter(Boolean).join(" · "),
+        hint: connecting ? "连接中…" : [asset.host, asset.kind].filter(Boolean).join(" · "),
         icon: assetIcon(asset.kind),
+        dot: reachEntries[asset.id],
         run: () => void connectAsset(asset),
       });
+      if (asset.host) {
+        list.push({
+          id: `probe-${asset.id}`,
+          label: `探测 ${asset.name}`,
+          hint: "端口可达性",
+          icon: IconPlug,
+          run: () => void runProbeOne(asset),
+        });
+      }
       list.push({
         id: `edit-${asset.id}`,
         label: `编辑资产 ${asset.name}`,
@@ -291,9 +358,13 @@ export function CommandPalette({
     pushToast,
     onOpenFiles,
     onEditAsset,
+    onQuickConnect,
     modHint,
     themeMode,
     setThemeMode,
+    reachEntries,
+    connectingAssetIds,
+    runProbeOne,
   ]);
 
   const filtered = actions.filter((action) =>
@@ -403,6 +474,7 @@ export function CommandPalette({
             >
               <action.icon size={15} className="shrink-0 text-neutral-400" />
               <span className="min-w-0 flex-1 truncate">{action.label}</span>
+              <ReachabilityDot entry={action.dot} />
               {action.hint && <span className="nx-command-hint shrink-0 text-[11px]">{action.hint}</span>}
             </button>
           ))}

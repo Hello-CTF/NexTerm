@@ -14,13 +14,14 @@ import {
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   snippetList: vi.fn(),
+  probeBatch: vi.fn(),
   addTab: vi.fn(),
   setSessions: vi.fn(),
   toast: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  assetApi: { list: mocks.list, snippetList: mocks.snippetList },
+  assetApi: { list: mocks.list, snippetList: mocks.snippetList, probeBatch: mocks.probeBatch },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
@@ -87,6 +88,7 @@ describe("menu and command palette accessibility", () => {
     uninstallLayoutRects = installLayoutRects();
     mocks.list.mockResolvedValue([]);
     mocks.snippetList.mockResolvedValue([]);
+    mocks.probeBatch.mockResolvedValue({ results: [] });
     useUi.setState({
       sessions: [],
       addTab: mocks.addTab,
