@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -143,6 +144,10 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 		return err
 	}
 	defer unlock()
+	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		return fmt.Errorf("write supervisor helper pid: %w", err)
+	}
+	defer func() { _ = os.Remove(filepath.Join(stateDir, "helper.pid")) }()
 	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: config.CommandTimeout})
 	if err != nil {
 		return err
