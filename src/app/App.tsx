@@ -70,7 +70,7 @@ import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { PromptModal } from "../ui/PromptModal";
-import { DialogHost } from "../ui/DialogHost";
+import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
 import { registerPromptHandler, registerDialogHandlers, promptText } from "../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
@@ -171,14 +171,20 @@ let bootLocalTried = false;
 
 function readWorkspaceViewport(): WorkspaceViewport {
   const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-  return workspaceViewport(window.innerWidth, coarse);
+  return workspaceViewport(window.innerWidth, coarse, window.innerHeight);
+}
+
+function sameViewport(a: WorkspaceViewport, b: WorkspaceViewport): boolean {
+  return a.width === b.width && a.height === b.height && a.coarsePointer === b.coarsePointer;
 }
 
 function useWorkspaceViewport(): WorkspaceViewport {
   const [viewport, setViewport] = useState(readWorkspaceViewport);
 
   useEffect(() => {
-    const frames = createFrameCoalescer<WorkspaceViewport>(setViewport);
+    const frames = createFrameCoalescer<WorkspaceViewport>((next) =>
+      setViewport((prev) => (sameViewport(prev, next) ? prev : next)),
+    );
     const update = () => frames.schedule(readWorkspaceViewport());
     const coarseQuery = window.matchMedia?.("(pointer: coarse)");
     window.addEventListener("resize", update);
@@ -194,6 +200,96 @@ function useWorkspaceViewport(): WorkspaceViewport {
   }, []);
 
   return viewport;
+}
+
+export function visualViewportInset(
+  innerHeight: number,
+  vvHeight: number,
+  vvOffsetTop: number,
+): number {
+  if (!Number.isFinite(innerHeight) || !Number.isFinite(vvHeight)) return 0;
+  const offset = Number.isFinite(vvOffsetTop) ? vvOffsetTop : 0;
+  return Math.max(0, innerHeight - vvHeight - offset);
+}
+
+export function virtualKeyboardInset(
+  innerHeight: number,
+  keyboardTop: number,
+  keyboardHeight: number,
+): number {
+  if (!Number.isFinite(innerHeight) || !Number.isFinite(keyboardTop)) return 0;
+  if (!Number.isFinite(keyboardHeight) || keyboardHeight <= 0) return 0;
+  return Math.max(0, Math.min(innerHeight, innerHeight - keyboardTop));
+}
+
+interface VirtualKeyboardLike extends EventTarget {
+  overlaysContent: boolean;
+  readonly boundingRect: DOMRect;
+}
+
+function useKeyboardInset(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    const vv = window.visualViewport ?? null;
+    const vk = (navigator as Navigator & { virtualKeyboard?: VirtualKeyboardLike })
+      .virtualKeyboard;
+    let frame: number | null = null;
+
+    const readInset = (): number => {
+      if (vk) {
+        return virtualKeyboardInset(
+          window.innerHeight,
+          vk.boundingRect.top,
+          vk.boundingRect.height,
+        );
+      }
+      if (!vv) return 0;
+      return visualViewportInset(window.innerHeight, vv.height, vv.offsetTop);
+    };
+
+    const keepFocusedControlVisible = (inset: number) => {
+      if (inset <= 0) return;
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !isEditableTarget(active)) return;
+      const rect = active.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - inset) {
+        active.scrollIntoView({ block: "nearest" });
+      }
+    };
+
+    const publish = () => {
+      frame = null;
+      const inset = readInset();
+      root.style.setProperty("--nx-kb-inset", `${Math.round(inset)}px`);
+      keepFocusedControlVisible(inset);
+    };
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(publish);
+    };
+
+    if (vk) {
+      vk.overlaysContent = true;
+      vk.addEventListener("geometrychanged", schedule);
+    }
+    vv?.addEventListener("resize", schedule);
+    vv?.addEventListener("scroll", schedule);
+    window.addEventListener("resize", schedule);
+    document.addEventListener("focusin", schedule, true);
+    schedule();
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (vk) {
+        vk.overlaysContent = false;
+        vk.removeEventListener("geometrychanged", schedule);
+      }
+      vv?.removeEventListener("resize", schedule);
+      vv?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      document.removeEventListener("focusin", schedule, true);
+      root.style.removeProperty("--nx-kb-inset");
+    };
+  }, []);
 }
 
 export function dialogLevelForKind(kind?: string): "info" | "warning" {
@@ -234,6 +330,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<string>("…");
   const viewport = useWorkspaceViewport();
+  useKeyboardInset();
   const [overlayDock, setOverlayDock] = useState<"left" | "right" | null>(null);
   const leftDockOpen = viewport.overlaySidebars
     ? overlayDock === "left" && leftOpen
@@ -258,6 +355,7 @@ export default function App() {
   );
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
+  const terminalKeysVisible = viewport.terminalKeys && active?.kind === "terminal";
   const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
 
   const needSession = useCallback(() => {
@@ -418,7 +516,7 @@ export default function App() {
         const target = cur.workspaces.find((w) => w.id === id);
         if (!target) return;
         if (target.panes.length > 1) void cur.unsplitWorkspace(target.panes[1].id, target.id);
-        else cur.splitWorkspace(target.id);
+        else if (viewport.splitAllowed) cur.splitWorkspace(target.id);
       } else if (mod && e.key.toLowerCase() === "w" && activeTabId) {
         e.preventDefault();
         void requestCloseTab(activeTabId);
@@ -433,6 +531,7 @@ export default function App() {
     setLeftOpen,
     setRightOpen,
     openLocalTerminal,
+    viewport.splitAllowed,
   ]);
 
   useEffect(() => {
@@ -617,6 +716,7 @@ export default function App() {
   return (
     <div
       className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
+      data-nx-keys={terminalKeysVisible ? "true" : undefined}
       onDoubleClick={onDragRegionDoubleClick}
     >
       <TakeoverBanner />
@@ -680,6 +780,7 @@ export default function App() {
                 还没有工作区 —— 双击左侧资产连接一台机器
               </span>
             )}
+            <div className="nx-tabstrip-scroll">
             <div
               role="tablist"
               aria-label="工作区"
@@ -745,6 +846,7 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
             </div>
             <button
               className="nx-tab-new"
@@ -905,9 +1007,10 @@ export default function App() {
                     visible={wsActive}
                     split={split}
                     canSplit={!split}
+                    splitAllowed={viewport.splitAllowed}
                     onToggleSplit={() => {
                       if (split) void unsplitWorkspace(w.panes[1].id, w.id);
-                      else splitWorkspace(w.id);
+                      else if (viewport.splitAllowed) splitWorkspace(w.id);
                     }}
                     onActivate={() => setActivePane(p.id, w.id)}
                     onNewTerminal={openNewTerminal}
@@ -993,7 +1096,7 @@ export default function App() {
 
       </div>
 
-      <div className="nx-toasts pointer-events-none fixed right-4 bottom-9 z-[95] flex flex-col gap-2">
+      <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
         {toasts.map((t) => {
           const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
           const tone =
@@ -1040,6 +1143,7 @@ interface PaneGroupProps {
   visible: boolean;
   split: boolean;
   canSplit: boolean;
+  splitAllowed: boolean;
   onToggleSplit: () => void;
   onActivate: () => void;
   onNewTerminal: () => void;
@@ -1054,6 +1158,7 @@ function PaneGroup({
   visible,
   split,
   canSplit,
+  splitAllowed,
   onToggleSplit,
   onActivate,
   onNewTerminal,
@@ -1104,6 +1209,7 @@ function PaneGroup({
           active ? "is-active-pane" : ""
         }`}
       >
+        <div className="nx-tabstrip-scroll">
         {pane.tabs.length === 0 && (
           <span className="px-1 text-xs text-neutral-500">这一栏还没有标签</span>
         )}
@@ -1162,6 +1268,7 @@ function PaneGroup({
             );
           })}
         </div>
+        </div>
         <button
           className="nx-tab-new"
           title="新建终端标签 (Ctrl+T)"
@@ -1173,7 +1280,14 @@ function PaneGroup({
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={canSplit ? "上下分屏 (Ctrl+\\)" : "取消分屏 (Ctrl+\\)"}
+          disabled={canSplit && !splitAllowed}
+          title={
+            canSplit
+              ? splitAllowed
+                ? "上下分屏 (Ctrl+\\)"
+                : "窗口高度不足，无法上下分屏"
+              : "取消分屏 (Ctrl+\\)"
+          }
           aria-label={canSplit ? "上下分屏" : "取消分屏"}
           onClick={onToggleSplit}
         >
