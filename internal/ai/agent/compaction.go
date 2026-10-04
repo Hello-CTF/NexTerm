@@ -198,20 +198,19 @@ func splitSystemPrefix(messages []*schema.Message) ([]*schema.Message, []*schema
 }
 
 func chunkMessagesForSummary(messages []*schema.Message, limit int) [][]*schema.Message {
+	expanded := make([]*schema.Message, 0, len(messages))
+	for _, message := range messages {
+		if estimatedMessages([]*schema.Message{message}) > limit {
+			expanded = append(expanded, messagesForSummary(message, limit)...)
+			continue
+		}
+		expanded = append(expanded, message)
+	}
 	var chunks [][]*schema.Message
 	current := []*schema.Message{}
 	currentBytes := 0
-	for _, message := range messages {
+	for _, message := range expanded {
 		size := estimatedMessages([]*schema.Message{message})
-		if size > limit {
-			if len(current) > 0 {
-				chunks = append(chunks, current)
-				current = []*schema.Message{}
-				currentBytes = 0
-			}
-			chunks = append(chunks, []*schema.Message{messageForSummary(message, limit)})
-			continue
-		}
 		if currentBytes+size > limit && len(current) > 0 {
 			chunks = append(chunks, current)
 			current = []*schema.Message{}
@@ -226,33 +225,79 @@ func chunkMessagesForSummary(messages []*schema.Message, limit int) [][]*schema.
 	return chunks
 }
 
-func messageForSummary(message *schema.Message, limit int) *schema.Message {
+func messagesForSummary(message *schema.Message, limit int) []*schema.Message {
 	if estimatedMessages([]*schema.Message{message}) <= limit {
-		return message
+		return []*schema.Message{message}
 	}
-	copied := *message
-	text, cut := prefixBytes(message.Content, limit)
-	if cut {
-		text += "\n[单条历史过长已截断]"
+	text := messageSummaryText(message)
+	role := message.Role
+	if role != schema.User && role != schema.Assistant {
+		role = schema.User
 	}
-	copied.Content = text
-	copied.ReasoningContent = ""
-	copied.UserInputMultiContent = nil
-	copied.AssistantGenMultiContent = nil
-	if len(message.ToolCalls) > 0 {
-		calls := make([]schema.ToolCall, len(message.ToolCalls))
-		for index, call := range message.ToolCalls {
-			copiedCall := call
-			arguments, argsCut := prefixBytes(call.Function.Arguments, 256)
-			if argsCut {
-				arguments += "…"
-			}
-			copiedCall.Function.Arguments = arguments
-			calls[index] = copiedCall
+	pieceLimit := max(limit-len("[单条历史分段]")-16, 64)
+	pieces := splitTextForSummary(text, pieceLimit)
+	segments := make([]*schema.Message, 0, len(pieces))
+	for index, piece := range pieces {
+		content := fmt.Sprintf("[单条历史分段 %d/%d]\n%s", index+1, len(pieces), piece)
+		if role == schema.Assistant {
+			segments = append(segments, schema.AssistantMessage(content, nil))
+			continue
 		}
-		copied.ToolCalls = calls
+		segments = append(segments, schema.UserMessage(content))
 	}
-	return &copied
+	return segments
+}
+
+func messageSummaryText(message *schema.Message) string {
+	var builder strings.Builder
+	if message.ReasoningContent != "" {
+		builder.WriteString("[推理]\n")
+		builder.WriteString(message.ReasoningContent)
+		builder.WriteString("\n")
+	}
+	for _, call := range message.ToolCalls {
+		fmt.Fprintf(&builder, "[工具调用] %s(%s): %s\n", call.Function.Name, call.ID, call.Function.Arguments)
+	}
+	for _, part := range message.UserInputMultiContent {
+		if part.Type == schema.ChatMessagePartTypeText {
+			builder.WriteString(part.Text)
+			builder.WriteString("\n")
+			continue
+		}
+		builder.WriteString("[非文本内容]\n")
+	}
+	for _, part := range message.AssistantGenMultiContent {
+		switch part.Type {
+		case schema.ChatMessagePartTypeText:
+			builder.WriteString(part.Text)
+			builder.WriteString("\n")
+		case schema.ChatMessagePartTypeReasoning:
+			if part.Reasoning != nil {
+				builder.WriteString(part.Reasoning.Text)
+				builder.WriteString("\n")
+			}
+		default:
+			builder.WriteString("[非文本内容]\n")
+		}
+	}
+	if message.Content != "" {
+		builder.WriteString(message.Content)
+		builder.WriteString("\n")
+	}
+	return builder.String()
+}
+
+func splitTextForSummary(text string, limit int) []string {
+	var pieces []string
+	for len(text) > limit {
+		piece, _ := prefixBytes(text, limit)
+		pieces = append(pieces, piece)
+		text = text[len(piece):]
+	}
+	if len(text) > 0 {
+		pieces = append(pieces, text)
+	}
+	return pieces
 }
 
 func packSummaryGroups(texts []string, limit int) [][]string {

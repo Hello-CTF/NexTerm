@@ -403,3 +403,104 @@ func TestFitHistoryBudgetNeverFailsOnOversizedHistory(t *testing.T) {
 		t.Fatalf("single oversized history message not truncated: %d", estimatedMessages(fitted))
 	}
 }
+
+func seedOversizedSingleMessage(t *testing.T, storage *store.Store) string {
+	t.Helper()
+	row, err := storage.ConvCreate(context.Background(), "单条超长历史", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := storage.MsgInsert(ctx, row.ID, "user", map[string]any{"role": "user", "content": "早期问题 " + strings.Repeat("x", 100)}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	oversized := strings.Repeat("y", 3000) + "canary-cmd-9 systemctl status nginx" + strings.Repeat("y", 1000)
+	if err := storage.MsgInsert(ctx, row.ID, "assistant", map[string]any{"role": "assistant", "content": oversized}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.MsgInsert(ctx, row.ID, "user", map[string]any{"role": "user", "content": "最近的问题：nginx 502 如何修复"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.MsgInsert(ctx, row.ID, "assistant", map[string]any{"role": "assistant", "content": "最近的回复：正在排查"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	return row.ID
+}
+
+func TestDurableOversizedSingleMessageCanaryReachesSummary(t *testing.T) {
+	const canary = "canary-cmd-9 systemctl status nginx"
+	chat := &compactionModel{generate: func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
+		var facts []string
+		for _, message := range messages {
+			if strings.Contains(message.Content, canary) {
+				facts = append(facts, canary)
+			}
+		}
+		return schema.AssistantMessage("摘要："+strings.Join(facts, "；"), nil), nil
+	}}
+	runner, storage := compactionRunner(t, chat, 2000)
+	conversationID := seedOversizedSingleMessage(t, storage)
+	stream := &SliceStream{}
+	if _, err := runner.Start(context.Background(), ChatArgs{ConversationID: conversationID, Message: "继续", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream)); err != nil {
+		t.Fatal(err)
+	}
+	context, _ := requireCompactionRunCompleted(t, stream, chat)
+	generateInputs := chat.snapshotGenerateInputs()
+	if len(generateInputs) < 2 {
+		t.Fatalf("oversized message was not segmented: %d Generate calls", len(generateInputs))
+	}
+	var summarizerSeen strings.Builder
+	for _, input := range generateInputs {
+		if estimatedMessages(input) > 2000*3 {
+			t.Fatalf("summary input exceeds model budget: %d bytes", estimatedMessages(input))
+		}
+		summarizerSeen.WriteString(flattenMessages(input))
+	}
+	if !strings.Contains(summarizerSeen.String(), canary) {
+		t.Fatalf("offset canary never reached the summarizer:\n%s", summarizerSeen.String())
+	}
+	if !strings.Contains(context, canary) {
+		t.Fatalf("offset canary missing from final model context:\n%s", context)
+	}
+}
+
+func TestMessagesForSummarySegmentsOversizedFields(t *testing.T) {
+	t.Parallel()
+	const limit = 2488
+	content := strings.Repeat("y", 3000) + "canary-cmd-9 systemctl status nginx" + strings.Repeat("y", 1000)
+	segments := messagesForSummary(schema.AssistantMessage(content, nil), limit)
+	if len(segments) < 2 {
+		t.Fatalf("oversized content was not segmented: %d", len(segments))
+	}
+	var joined strings.Builder
+	for _, segment := range segments {
+		if estimatedMessages([]*schema.Message{segment}) > limit {
+			t.Fatalf("segment exceeds chunk limit: %d", estimatedMessages([]*schema.Message{segment}))
+		}
+		joined.WriteString(segment.Content)
+	}
+	if !strings.Contains(joined.String(), "canary-cmd-9 systemctl status nginx") {
+		t.Fatal("segmentation lost the offset canary")
+	}
+	if got, want := strings.Count(joined.String(), "y"), strings.Count(content, "y"); got != want {
+		t.Fatalf("segmentation dropped content beyond the first chunk: %d of %d", got, want)
+	}
+
+	call := namedToolCall("c1", "write_file", `{"path":"/tmp/a","content":"`+strings.Repeat("z", 2800)+`canary-arg-7 tail fact`+strings.Repeat("z", 200)+`"}`)
+	segments = messagesForSummary(schema.AssistantMessage("", []schema.ToolCall{call}), limit)
+	var callText strings.Builder
+	for _, segment := range segments {
+		if estimatedMessages([]*schema.Message{segment}) > limit {
+			t.Fatalf("tool-call segment exceeds chunk limit: %d", estimatedMessages([]*schema.Message{segment}))
+		}
+		callText.WriteString(segment.Content)
+	}
+	if !strings.Contains(callText.String(), "canary-arg-7 tail fact") {
+		t.Fatal("tool call arguments were truncated instead of segmented")
+	}
+
+	small := schema.UserMessage("短消息")
+	if got := messagesForSummary(small, limit); len(got) != 1 || got[0] != small {
+		t.Fatal("small message must pass through unchanged")
+	}
+}
