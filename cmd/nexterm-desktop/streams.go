@@ -56,7 +56,7 @@ func (f *desktopStreamFactory) open(ctx context.Context, channel ipc.ChannelRef)
 		return nil, err
 	}
 	if channel.ID == "" {
-		return nil, ipc.BadParam(errors.New("channel id is empty"))
+		return nil, ipc.BadParam(errors.New("通道 ID 不能为空"))
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

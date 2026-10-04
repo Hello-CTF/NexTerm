@@ -498,3 +498,41 @@ func waitCronJobFinished(t *testing.T, scheduler *cron.Scheduler, sessionID, job
 		time.Sleep(25 * time.Millisecond)
 	}
 }
+
+func TestCronSchedulerFailureEmitsAppErrorEvent(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &ipcEventRecorder{}
+	services := &ProductionServices{Store: database, Agent: agent.NewRunner(agent.Config{}), Events: recorder}
+	runtime, err := newCronRuntime(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = runtime.Shutdown(shutdownCtx)
+	})
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if payload, ok := recorder.appError(); ok {
+			if payload.Code != "cron" || !strings.Contains(payload.Message, "sql: database is closed") {
+				t.Fatalf("app error payload = %+v", payload)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cron scheduler failure did not emit app://error")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}

@@ -55,6 +55,7 @@ type ProductionServices struct {
 	Guard            *guard.Manager
 	Agent            *agent.Runner
 	Takeover         *takeover.Manager
+	Events           ipc.Emitter
 	channelBridge    *terminalBridge
 	terminalCommands *terminalCommandService
 	hostKeys         *productionHostKeyStore

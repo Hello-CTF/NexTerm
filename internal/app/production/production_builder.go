@@ -208,6 +208,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		smokeAttach: config.DesktopSmoke,
 		Transcripts: transcriptWriter,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
+		Events:      config.Config.Events,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
 		services.closeAIRuntime()

@@ -137,6 +137,11 @@ func TestDesktopStreamRejectsUnavailableInvalidAndCanceledCalls(t *testing.T) {
 	factory.SetWindow(window)
 	if _, err := factory.OpenBinary(context.Background(), ipc.ChannelRef{}); err == nil {
 		t.Fatal("expected empty channel rejection")
+	} else {
+		var appErr *ipc.Error
+		if !errors.As(err, &appErr) || appErr.Code != ipc.CodeBadParam || appErr.Message != "参数错误: 通道 ID 不能为空" {
+			t.Fatalf("empty channel error = %+v", err)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

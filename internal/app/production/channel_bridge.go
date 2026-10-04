@@ -52,7 +52,7 @@ func (b *terminalBridge) Bridge(channelID string) error {
 		return nil
 	}
 	if channelID == "" {
-		return ipc.BadParam(errors.New("channel id is empty"))
+		return ipc.BadParam(errors.New("通道 ID 不能为空"))
 	}
 	b.mu.Lock()
 	if b.ctx == nil {

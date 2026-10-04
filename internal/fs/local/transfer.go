@@ -18,6 +18,7 @@ type Progress struct {
 	Transferred int64  `json:"transferred"`
 	Total       int64  `json:"total"`
 	Done        bool   `json:"done"`
+	Error       string `json:"error,omitempty"`
 }
 
 type TransferOptions struct {
@@ -35,7 +36,13 @@ type currentSizer interface {
 	CurrentSize() (int64, error)
 }
 
-func Upload(ctx context.Context, localPath string, destination base.FileSystem, remotePath string, options TransferOptions) (int64, error) {
+func Upload(ctx context.Context, localPath string, destination base.FileSystem, remotePath string, options TransferOptions) (transferred int64, err error) {
+	var total int64
+	defer func() {
+		if err != nil && ctx.Err() == nil {
+			reportTransferFailure(options, transferred, total, err)
+		}
+	}()
 	if mapped, ok := destination.(localPathMapper); ok {
 		if err := rejectSameFile(localPath, mapped.LocalPath(remotePath)); err != nil {
 			return 0, err
@@ -53,7 +60,7 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	if !info.Mode().IsRegular() {
 		return 0, fmt.Errorf("upload source %s is not a regular file", localPath)
 	}
-	total := info.Size()
+	total = info.Size()
 	var offset int64
 	targetExists := false
 	if options.Resume {
@@ -91,7 +98,13 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	return finishTransfer(ctx, source, target, offset, total, options)
 }
 
-func Download(ctx context.Context, source base.FileSystem, remotePath, localPath string, options TransferOptions) (int64, error) {
+func Download(ctx context.Context, source base.FileSystem, remotePath, localPath string, options TransferOptions) (transferred int64, err error) {
+	var total int64
+	defer func() {
+		if err != nil && ctx.Err() == nil {
+			reportTransferFailure(options, transferred, total, err)
+		}
+	}()
 	destination := New()
 	targetPath := destination.LocalPath(localPath)
 	if mapped, ok := source.(localPathMapper); ok {
@@ -104,10 +117,11 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 		return 0, err
 	}
 	defer remote.Close()
-	total := remote.Size()
-	if total < 0 {
+	size := remote.Size()
+	if size < 0 {
 		return 0, fmt.Errorf("download source %s has a negative size", remotePath)
 	}
+	total = size
 	var offset int64
 	targetExists := false
 	if options.Resume {
@@ -243,6 +257,12 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 func reportTransferProgress(options TransferOptions, transferred, total int64, done bool) {
 	if options.Progress != nil {
 		options.Progress(Progress{TaskID: options.TaskID, Transferred: transferred, Total: total, Done: done})
+	}
+}
+
+func reportTransferFailure(options TransferOptions, transferred, total int64, err error) {
+	if options.Progress != nil && err != nil {
+		options.Progress(Progress{TaskID: options.TaskID, Transferred: transferred, Total: total, Done: true, Error: err.Error()})
 	}
 }
 

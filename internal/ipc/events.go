@@ -22,6 +22,15 @@ const (
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")
 
+type LayoutChangedEvent struct {
+	Revision int64 `json:"revision"`
+}
+
+type AppErrorEvent struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type Event struct {
 	Event   Topic `json:"event"`
 	Payload any   `json:"payload"`

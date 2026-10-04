@@ -6,12 +6,19 @@ import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
-import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
+import {
+  THROTTLE_ACTIVE_MS,
+  THROTTLE_RECOVERED_MS,
+  throttleStateFrom,
+  throttleView,
+  type ThrottleState,
+} from "./terminalThrottle";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -83,6 +90,8 @@ export function TerminalPane({
     rows: number;
     revision: number;
   } | null>(null);
+  const [throttle, setThrottle] = useState<ThrottleState | null>(null);
+  const [, setThrottleTick] = useState(0);
   const [claiming, setClaiming] = useState(false);
   const [attachDead, setAttachDead] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -261,6 +270,40 @@ export function TerminalPane({
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void listenEvent<TerminalThrottledEvent>(EVENTS.terminalThrottled, (p) => {
+      if (p.tabId !== kernelTabIdRef.current) return;
+      setThrottle(throttleStateFrom(p, Date.now()));
+    }).then((off) => {
+      if (cancelled) off();
+      else unlisten = off;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!throttle) return;
+    const activeTimer = window.setTimeout(
+      () => setThrottleTick((n) => n + 1),
+      THROTTLE_ACTIVE_MS + 50,
+    );
+    const clearTimer = window.setTimeout(
+      () => setThrottleTick((n) => n + 1),
+      THROTTLE_ACTIVE_MS + THROTTLE_RECOVERED_MS + 50,
+    );
+    return () => {
+      window.clearTimeout(activeTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [throttle]);
+
+  const throttleNow = throttleView(throttle, Date.now());
 
   useEffect(() => {
     const pane = paneRef.current;
@@ -584,6 +627,15 @@ export function TerminalPane({
         </span>
         {effectiveWinrm && <span className="nx-badge nx-badge-amber">非交互模式</span>}
         {containerId && <span className="nx-badge nx-badge-purple">容器内 exec</span>}
+        {throttleNow?.active && (
+          <span
+            className="nx-badge nx-badge-amber"
+            title={`终端输出积压（${throttleNow.inflightBytes} 字节待发送），画面可能有延迟`}
+          >
+            输出积压
+          </span>
+        )}
+        {throttleNow?.recovered && <span className="nx-badge nx-badge-green">输出已恢复</span>}
         <div className="nx-spacer" />
 
         <button
@@ -721,6 +773,7 @@ export function TerminalPane({
               onAttach={(id) => {
                 setKernelTabId(id);
                 setAttachDead(false);
+                setThrottle(null);
                 useUi.getState().updateTab(storeTabId, { tabId: id, exited: false });
                 if (isStoreTabDead(storeTabId)) {
                   useUi.getState().updateTab(storeTabId, { dead: false });

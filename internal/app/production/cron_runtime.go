@@ -75,6 +75,7 @@ func composeCronScheduler(ctx context.Context, services *ProductionServices, opt
 	if options.OnError == nil {
 		options.OnError = func(err error) {
 			slog.Warn("cron scheduler asynchronous failure", "error", err)
+			_ = ipc.Emit(context.Background(), services.Events, ipc.TopicAppError, ipc.AppErrorEvent{Code: "cron", Message: err.Error()})
 		}
 	}
 	scheduler, err := cron.NewScheduler(cronStore, executor, options)

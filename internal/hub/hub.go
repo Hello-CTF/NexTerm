@@ -14,7 +14,7 @@ var (
 	ErrDetached       = errors.New("hub channel detached")
 	ErrReplaced       = errors.New("hub channel receiver replaced")
 	ErrHubClosed      = errors.New("hub closed")
-	ErrInvalidChannel = errors.New("hub channel id is empty")
+	ErrInvalidChannel = errors.New("通道 ID 不能为空")
 	ErrInvalidJSON    = errors.New("hub JSON frame is invalid")
 )
 
