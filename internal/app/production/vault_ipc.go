@@ -112,7 +112,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 					case "inline":
 						plaintext = vault.InlinePrivateKey(input.Secret, input.Passphrase).Encode()
 					default:
-						return nil, ipc.BadParam(fmt.Errorf("unknown credential source %q", source))
+						return nil, ipc.BadParam(fmt.Errorf("未知的凭据来源 %q", source))
 					}
 				}
 				id, err := putProductionCredential(ctx, credentialVault, database, input.ID, input.Name, input.Kind, plaintext)
@@ -205,7 +205,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						case "inline":
 							payload = vault.InlinePrivateKey(*input.Secret, payload.Passphrase)
 						default:
-							return nil, ipc.BadParam(fmt.Errorf("unknown credential source %q", source))
+							return nil, ipc.BadParam(fmt.Errorf("未知的凭据来源 %q", source))
 						}
 					} else if input.Source != nil {
 						current := "inline"
@@ -213,7 +213,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 							current = "file"
 						}
 						if *input.Source != current {
-							return nil, ipc.BadParam(fmt.Errorf("credential source cannot change without new secret"))
+							return nil, ipc.BadParam(fmt.Errorf("更改凭据来源需要提供新的密钥内容"))
 						}
 					}
 					if input.Passphrase != nil {

@@ -3,6 +3,8 @@ package production
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io/fs"
 
 	fslocal "github.com/ProbiusOfficial/NexTerm/internal/fs/local"
@@ -56,21 +58,25 @@ type sshExtractor interface {
 }
 
 func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) error {
-	filesystem := func(ctx context.Context, sessionID string) (base.FileSystem, error) {
+	filesystem := func(ctx context.Context, sessionID string) (base.FileSystem, string, error) {
 		transport, err := sessions.Transport(ctx, sessionID)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		provider, ok := transport.(base.FileTransport)
 		if !ok {
-			return nil, base.ErrUnsupported
+			return nil, "", base.ErrUnsupported
 		}
-		return provider.FileSystem(ctx)
+		remote, err := provider.FileSystem(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		return remote, transport.Kind(), nil
 	}
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "fs_list", func(ctx context.Context, _ *ipc.Call, input fsRequest) ([]fsEntryDTO, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
@@ -79,101 +85,101 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 				for index, entry := range entries {
 					result[index] = productionFSEntry(entry)
 				}
-				return result, terminalIPCError(err)
+				return result, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_read", func(ctx context.Context, _ *ipc.Call, input fsRequest) (fsReadDTO, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return fsReadDTO{}, terminalIPCError(err)
 				}
 				data, err := filesystem.ReadFile(ctx, input.Path, input.MaxBytes)
-				return fsReadDTO{Path: input.Path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, terminalIPCError(err)
+				return fsReadDTO{Path: input.Path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, "fs_write", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return nil, terminalIPCError(err)
 				}
 				data, err := base64.StdEncoding.DecodeString(input.ContentBase64)
 				if err != nil {
-					return nil, ipc.BadParam(err)
+					return nil, ipc.BadParam(fmt.Errorf("文件内容不是有效的 Base64: %w", err))
 				}
-				return nil, terminalIPCError(filesystem.WriteFile(ctx, input.Path, data, input.Backup))
+				return nil, fsIPCError(kind, filesystem.WriteFile(ctx, input.Path, data, input.Backup))
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_mkdir", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {
 					err = filesystem.Mkdir(ctx, input.Path)
 				}
-				return nil, terminalIPCError(err)
+				return nil, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_rename", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {
 					err = filesystem.Rename(ctx, input.From, input.To)
 				}
-				return nil, terminalIPCError(err)
+				return nil, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_delete", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {
 					err = filesystem.Delete(ctx, input.Path, input.IsDir)
 				}
-				return nil, terminalIPCError(err)
+				return nil, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_chmod", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {
 					err = filesystem.Chmod(ctx, input.Path, fs.FileMode(input.Mode))
 				}
-				return nil, terminalIPCError(err)
+				return nil, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_checksum", func(ctx context.Context, _ *ipc.Call, input fsRequest) (string, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return "", terminalIPCError(err)
 				}
 				value, err := filesystem.Checksum(ctx, input.Path, input.Algo)
-				return value, terminalIPCError(err)
+				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_upload", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return 0, terminalIPCError(err)
 				}
 				value, err := fslocal.Upload(ctx, input.LocalPath, filesystem, input.RemotePath, productionTransferOptions(ctx, call, input.Resume))
-				return value, terminalIPCError(err)
+				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return 0, terminalIPCError(err)
 				}
 				value, err := fslocal.Download(ctx, filesystem, input.RemotePath, input.LocalPath, productionTransferOptions(ctx, call, false))
-				return value, terminalIPCError(err)
+				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_pack_download", func(ctx context.Context, call *ipc.Call, input fsRequest) (int64, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return 0, terminalIPCError(err)
 				}
@@ -190,12 +196,12 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 				if err != nil && ctx.Err() == nil {
 					_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: last.Transferred, Total: last.Total, Done: true, Error: err.Error()})
 				}
-				return value, terminalIPCError(err)
+				return value, fsIPCError(kind, err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_extract", func(ctx context.Context, _ *ipc.Call, input fsRequest) (string, error) {
-				filesystem, err := filesystem(ctx, input.SessionID)
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return "", terminalIPCError(err)
 				}
@@ -204,7 +210,7 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 					return "", terminalIPCError(base.ErrUnsupported)
 				}
 				value, err := provider.Extract(ctx, input.Path)
-				return value, terminalIPCError(err)
+				return value, fsIPCError(kind, err)
 			})
 		},
 	}
@@ -214,6 +220,24 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 		}
 	}
 	return nil
+}
+
+func fsIPCError(transportKind string, err error) error {
+	if err == nil {
+		return nil
+	}
+	classified := terminalIPCError(err)
+	var appErr *ipc.Error
+	if !errors.As(classified, &appErr) || appErr.Code != ipc.CodeInternal {
+		return classified
+	}
+	switch transportKind {
+	case "ssh":
+		return ipc.WrapError(ipc.CodeSFTP, err.Error(), err)
+	case "winrm":
+		return ipc.WrapError(ipc.CodeWinRM, err.Error(), err)
+	}
+	return classified
 }
 
 func productionTransferOptions(ctx context.Context, call *ipc.Call, resume bool) fslocal.TransferOptions {

@@ -253,10 +253,10 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 		func() error {
 			return ipc.Register(dispatcher, "asset_save_key_file", func(_ context.Context, _ *ipc.Call, input keyFileContentRequest) (map[string]string, error) {
 				if dataDir == "" {
-					return nil, ipc.NewError(ipc.CodeUnsupported, "key storage is unavailable")
+					return nil, ipc.NewError(ipc.CodeUnsupported, "密钥存储不可用")
 				}
 				if len(input.Content) > 64<<10 {
-					return nil, ipc.BadParam(fmt.Errorf("private key exceeds 64 KiB"))
+					return nil, ipc.BadParam(fmt.Errorf("私钥内容超过 64 KiB 上限"))
 				}
 				directory := filepath.Join(dataDir, "keys")
 				if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -281,7 +281,7 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 					return "", err
 				}
 				if len(data) > 64<<10 {
-					return "", ipc.BadParam(fmt.Errorf("private key exceeds 64 KiB"))
+					return "", ipc.BadParam(fmt.Errorf("私钥内容超过 64 KiB 上限"))
 				}
 				return string(data), nil
 			})
@@ -418,14 +418,14 @@ func productionJSONText(raw json.RawMessage, fallback string) string {
 func validatedSnippetName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", ipc.BadParam(fmt.Errorf("snippet name must not be empty"))
+		return "", ipc.BadParam(fmt.Errorf("片段名称不能为空"))
 	}
 	return trimmed, nil
 }
 
 func validateSnippetBody(body string) error {
 	if strings.TrimSpace(body) == "" {
-		return ipc.BadParam(fmt.Errorf("snippet body must not be empty"))
+		return ipc.BadParam(fmt.Errorf("片段内容不能为空"))
 	}
 	return nil
 }

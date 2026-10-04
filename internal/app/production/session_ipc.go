@@ -542,7 +542,7 @@ func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Cal
 			Rows     uint   `json:"rows"`
 		}
 		if err := json.Unmarshal(call.Args, &input); err != nil {
-			return nil, ipc.BadParam(err)
+			return nil, ipc.BadParam(fmt.Errorf("终端调整大小参数无效: %w", err))
 		}
 		client := gridRequestClient(call.ClientID, input.ClientID)
 		return nil, terminalIPCError(s.resizeDocker(ctx, input.TabID, client, input.Cols, input.Rows))
@@ -553,7 +553,7 @@ func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Cal
 func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Asset, error) {
 	options, err := productionAssetOptionMap(row)
 	if err != nil {
-		return session.Asset{}, ipc.BadParam(err)
+		return session.Asset{}, ipc.BadParam(fmt.Errorf("资产选项不是有效的 JSON: %w", err))
 	}
 	if acceptHostKey {
 		options["autoAcceptUnknownHost"] = true
@@ -591,7 +591,7 @@ func productionBytes(values []int) ([]byte, error) {
 	result := make([]byte, len(values))
 	for index, value := range values {
 		if value < 0 || value > 255 {
-			return nil, ipc.BadParam(fmt.Errorf("terminal byte at index %d is outside 0..255", index))
+			return nil, ipc.BadParam(fmt.Errorf("序数 %d 的终端字节超出 0..255 范围", index))
 		}
 		result[index] = byte(value)
 	}

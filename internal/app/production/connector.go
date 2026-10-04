@@ -69,7 +69,7 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 			return nil, ipc.BadParam(err)
 		}
 		if err := json.Unmarshal(raw, &options); err != nil {
-			return nil, ipc.BadParam(fmt.Errorf("invalid session asset options: %w", err))
+			return nil, ipc.BadParam(fmt.Errorf("会话资产选项无效: %w", err))
 		}
 	}
 	var transport base.Transport
@@ -272,7 +272,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 
 func (c *productionConnector) connectWinRM(ctx context.Context, options productionAssetOptions) (base.Transport, error) {
 	if options.Host == "" {
-		return nil, ipc.BadParam(fmt.Errorf("WinRM asset host is required"))
+		return nil, ipc.BadParam(fmt.Errorf("WinRM 资产缺少主机地址"))
 	}
 	if options.Port == 0 {
 		options.Port = 5985
@@ -284,13 +284,17 @@ func (c *productionConnector) connectWinRM(ctx context.Context, options producti
 	if err != nil {
 		return nil, err
 	}
-	return winrm.New(winrm.Config{
+	transport, err := winrm.New(winrm.Config{
 		Host: options.Host, Port: options.Port, User: options.Username, Password: secret,
 		Domain: options.Domain, Auth: winrm.AuthMethod(options.Auth), UseTLS: options.TLS,
 		AcceptInvalidCerts: options.AcceptInvalidCerts, TLSServerName: options.TLSServerName,
 		CACert: []byte(options.CACert), ProxyURL: options.Proxy,
 		RequestTimeout: time.Duration(options.RequestTimeoutMS) * time.Millisecond,
 	})
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeWinRM, err.Error(), err)
+	}
+	return transport, nil
 }
 
 func (c *productionConnector) secret(ctx context.Context, id string) (string, store.CredentialRow, error) {

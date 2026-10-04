@@ -81,6 +81,24 @@ describe("describeError", () => {
     expect(describeError({ code: "some_future_code", message: "checksum mismatch" })).toBe(
       "some_future_code: checksum mismatch",
     );
+    expect(describeError({ code: "ai_provider", message: "provider unreachable" })).toBe(
+      "ai_provider: provider unreachable",
+    );
+  });
+
+  it("provider 与迁移 code 映射为中文标签", () => {
+    expect(describeError({ code: "winrm", message: "WinRM host is empty" })).toBe(
+      "WinRM 错误：WinRM host is empty",
+    );
+    expect(describeError({ code: "sftp", message: "SFTP list /tmp: permission denied" })).toBe(
+      "SFTP 错误：SFTP list /tmp: permission denied",
+    );
+    expect(describeError({ code: "ssh", message: "SSH dial host:22: refused" })).toBe(
+      "SSH 错误：SSH dial host:22: refused",
+    );
+    expect(describeError({ code: "db_migrate", message: "数据库迁移错误: checksum mismatch" })).toBe(
+      "数据库迁移错误: checksum mismatch",
+    );
   });
 
   it("非 AppError 输入保持原有行为", () => {
