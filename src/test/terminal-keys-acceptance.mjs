@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-// 手机终端特殊键真实浏览器验收（M115）：窄屏 + 触摸仿真，所有交互只通过
-// CDP Input.dispatchTouchEvent / Input.insertText 完成 —— 不调用 element.click()。
-// 字节级断言依赖页面内探针：demo 模式的 terminal_write 会把写入字节交给
-// TextDecoder.decode，探针在应用脚本之前包装该方法并记录每次解码结果，
-// 因此断言的是真正写入终端的字节，而不是按钮是否存在。
-//
-// 运行：node src/test/terminal-keys-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
-// 报告与截图写入 target/acceptance-terminal-keys/。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -200,8 +191,6 @@ function startVite() {
   return waitHttp(VITE, process).then(() => process);
 }
 
-// 在应用脚本运行之前包装 TextDecoder.prototype.decode：demo 后端 terminal_write
-// 对每个写入字节串调用一次 decode，探针据此记录真正写入终端的字节。
 const PROBE_SOURCE = `(() => {
   window.__nxWrites = [];
   const original = TextDecoder.prototype.decode;
@@ -231,6 +220,13 @@ async function tapAt(page, x, y) {
   await sleep(80);
 }
 
+async function pressEscape(page) {
+  const base = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 };
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  await sleep(60);
+}
+
 async function tapSelector(page, selector) {
   const rect = await page.evaluate(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)});
@@ -253,8 +249,6 @@ async function writesCount(page) {
   return list.length;
 }
 
-// 写入是异步落地的（React onClick → sendData → terminal_write → 探针），
-// 断言前必须等它们出现，而不是靠固定 sleep。
 async function waitWrites(page, predicate, timeout = 6000) {
   const deadline = Date.now() + timeout;
   let last = [];
@@ -266,7 +260,6 @@ async function waitWrites(page, predicate, timeout = 6000) {
   throw new Error(`writes condition timed out; last=${JSON.stringify(last)}`);
 }
 
-// 等写入计数稳定（没有新写入持续 quiet 毫秒），用于消除在途写入对偏移量的污染。
 async function settleWrites(page, quiet = 300, timeout = 6000) {
   const deadline = Date.now() + timeout;
   let last = -1;
@@ -289,10 +282,7 @@ async function boot(page) {
   await page.waitFor(
     "Boolean(document.querySelector('.xterm') && document.querySelector('.nx-terminal-keys'))",
   );
-  // 等 demo 会话 attach、按键条进入最终布局。
   await page.waitFor("document.querySelectorAll('.nx-terminal-keys > button').length >= 4");
-  // 终端 attach 完成前 sendData 会被静默丢弃：循环点 Esc（shell 对裸 ESC 无副作用），
-  // 直到探针观察到真实写入，证明 触摸→按键条→terminal_write 全链路已就绪。
   let ready = false;
   for (let i = 0; i < 20 && !ready; i++) {
     await tapSelector(page, keyButton("Escape"));
@@ -302,7 +292,6 @@ async function boot(page) {
     );
   }
   if (!ready) throw new Error("terminal never accepted input: no terminal_write observed after tapping Esc");
-  // 就绪循环可能在途一次额外 Esc 写入：等计数稳定后再开始断言。
   await settleWrites(page);
 }
 
@@ -410,6 +399,63 @@ async function terminalKeysAcceptance(page) {
     return { evidence: { finalWrites: list.slice(-6) } };
   });
 
+  await pass("config-focus-retained-and-escape-closes", async () => {
+    await boot(page);
+    await tapSelector(page, keyButton("配置终端按键"));
+    await page.waitFor("Boolean(document.querySelector('[role=\"dialog\"]'))");
+
+    const initial = await page.evaluate(`(() => {
+      const active = document.activeElement;
+      const dialog = document.querySelector('[role="dialog"]');
+      return {
+        inDialog: Boolean(active && dialog && dialog.contains(active)),
+        label: active?.textContent?.trim() ?? null,
+      };
+    })()`);
+    assert.equal(initial.inDialog, true, `focus must start inside the dialog: ${JSON.stringify(initial)}`);
+    assert.equal(initial.label, "完成");
+
+    await tapSelector(page, 'input[aria-label="在按键条中显示「向上翻页」"]');
+    const afterToggle = await page.evaluate(`(() => {
+      const active = document.activeElement;
+      const dialog = document.querySelector('[role="dialog"]');
+      return {
+        inDialog: Boolean(active && dialog && dialog.contains(active)),
+        ariaLabel: active?.getAttribute?.("aria-label") ?? null,
+      };
+    })()`);
+    assert.equal(afterToggle.inDialog, true, `focus must stay in the dialog after toggle: ${JSON.stringify(afterToggle)}`);
+    assert.equal(afterToggle.ariaLabel, '在按键条中显示「向上翻页」');
+
+    await pressEscape(page);
+    await page.waitFor("!document.querySelector('[role=\"dialog\"]')");
+    const afterEscape = await page.evaluate(`document.activeElement?.getAttribute?.("aria-label") ?? null`);
+    assert.equal(afterEscape, "配置终端按键", "focus must return to the config button after Escape");
+
+    await tapSelector(page, keyButton("配置终端按键"));
+    await page.waitFor("Boolean(document.querySelector('[role=\"dialog\"]'))");
+    await tapSelector(page, 'button[aria-label="下移 Escape"]');
+    const afterMove = await page.evaluate(`(() => {
+      const active = document.activeElement;
+      const dialog = document.querySelector('[role="dialog"]');
+      return {
+        inDialog: Boolean(active && dialog && dialog.contains(active)),
+        ariaLabel: active?.getAttribute?.("aria-label") ?? null,
+      };
+    })()`);
+    assert.equal(afterMove.inDialog, true, `focus must stay in the dialog after reorder: ${JSON.stringify(afterMove)}`);
+    assert.equal(afterMove.ariaLabel, "下移 Escape");
+    await pressEscape(page);
+    await page.waitFor("!document.querySelector('[role=\"dialog\"]')");
+
+    await tapSelector(page, keyButton("配置终端按键"));
+    await page.waitFor("Boolean(document.querySelector('[role=\"dialog\"]'))");
+    await tapSelector(page, '[role="dialog"] button.nx-btn-ghost');
+    await tapSelector(page, '[role="dialog"] button.nx-btn-primary');
+    await page.waitFor("!document.querySelector('[role=\"dialog\"]')");
+    return { evidence: { initial, afterToggle, afterEscape, afterMove } };
+  });
+
   await pass("config-enable-reorder-persist-reset", async () => {
     await boot(page);
     await tapSelector(page, keyButton("配置终端按键"));
@@ -427,8 +473,23 @@ async function terminalKeysAcceptance(page) {
     assert.ok(noEditor.checkboxes >= 15, `all catalog keys must be configurable: ${JSON.stringify(noEditor)}`);
     assert.equal(noEditor.label, "终端按键配置");
 
-    // 停用 PgUp 并把 Esc 下移一位。
     await tapSelector(page, 'input[aria-label="在按键条中显示「向上翻页」"]');
+    await tapSelector(page, 'input[aria-label="在按键条中显示「Ctrl+U（删除整行）」"]');
+    const inertCheck = await page.evaluate(`(() => {
+      const newKey = document.querySelector('.nx-terminal-keys button[aria-label="Ctrl+U（删除整行）"]');
+      const toolbar = document.querySelector('.nx-toolbar');
+      return {
+        newKeyExists: Boolean(newKey),
+        newKeyInert: Boolean(newKey && newKey.closest("[inert]")),
+        toolbarInert: Boolean(toolbar && toolbar.closest("[inert]")),
+        dialogOpen: Boolean(document.querySelector('[role="dialog"]')),
+      };
+    })()`);
+    assert.equal(inertCheck.newKeyExists, true, "enabled key must appear in the bar");
+    assert.equal(inertCheck.dialogOpen, true);
+    assert.equal(inertCheck.newKeyInert, true, `dynamically added background key must be inert: ${JSON.stringify(inertCheck)}`);
+    assert.equal(inertCheck.toolbarInert, true, "toolbar must be inert while the dialog is open");
+
     await tapSelector(page, 'button[aria-label="下移 Escape"]');
     await tapSelector(page, '[role="dialog"] button.nx-btn-primary');
     await page.waitFor("!document.querySelector('[role=\"dialog\"]')");
@@ -438,26 +499,22 @@ async function terminalKeysAcceptance(page) {
       stored: localStorage.getItem(${JSON.stringify(STORAGE_KEY)}),
     }))()`);
     assert.ok(!afterEdit.labels.includes("PgUp"), "disabled key must leave the bar");
+    assert.ok(afterEdit.labels.includes("^U"), "enabled key must show in the bar");
     assert.deepEqual(afterEdit.labels.slice(2, 5), ["Tab", "Esc", "↑"], "reorder must apply to the bar");
     const stored = JSON.parse(afterEdit.stored);
     assert.deepEqual(stored.slice(0, 3), ["tab", "escape", "up"]);
     assert.ok(!stored.includes("pageup"));
+    assert.ok(stored.includes("ctrl-u"));
 
-    // 重新加载：配置必须仍在（localStorage 持久化，无服务器同步）。
     await boot(page);
     const afterReload = await page.evaluate(`[...document.querySelectorAll('.nx-terminal-keys > button')].map((b) => b.textContent?.trim())`);
     assert.ok(!afterReload.includes("PgUp"), "disabled key must stay disabled after reload");
+    assert.ok(afterReload.includes("^U"), "enabled key must stay enabled after reload");
     assert.deepEqual(afterReload.slice(2, 5), ["Tab", "Esc", "↑"], "order must persist after reload");
 
-    // 重置默认：恢复并清除存储。
     await tapSelector(page, keyButton("配置终端按键"));
     await page.waitFor("Boolean(document.querySelector('[role=\"dialog\"]'))");
-    await page.evaluate(`(() => {
-      const dialog = document.querySelector('[role="dialog"]');
-      const btn = [...dialog.querySelectorAll('button')].find((b) => b.textContent?.trim() === '重置默认');
-      const r = btn.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    })()`).then((rect) => tapAt(page, rect.x, rect.y));
+    await tapSelector(page, '[role="dialog"] button.nx-btn-ghost');
     await tapSelector(page, '[role="dialog"] button.nx-btn-primary');
     await page.waitFor("!document.querySelector('[role=\"dialog\"]')");
     const afterReset = await page.evaluate(`(() => ({
@@ -471,7 +528,7 @@ async function terminalKeysAcceptance(page) {
     await boot(page);
     const finalLabels = await page.evaluate(`[...document.querySelectorAll('.nx-terminal-keys > button')].map((b) => b.textContent?.trim())`);
     assert.ok(finalLabels.includes("PgUp"), "defaults must survive reload after reset");
-    return { evidence: { afterEdit: afterEdit.labels, afterReload, afterReset: afterReset.labels } };
+    return { evidence: { afterEdit: afterEdit.labels, afterReload, afterReset: afterReset.labels, inertCheck } };
   });
 
   await pass("keyboard-focus-and-ime-path-intact", async () => {

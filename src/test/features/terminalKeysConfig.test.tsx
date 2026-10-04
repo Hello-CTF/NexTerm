@@ -42,7 +42,7 @@ function barLabels(): string[] {
 }
 
 function buttonByAria(label: string): HTMLButtonElement {
-  const button = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
+  const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
     (candidate) => candidate.getAttribute("aria-label") === label,
   );
   if (!button) throw new Error(`button not found by aria-label: ${label}`);
@@ -50,7 +50,7 @@ function buttonByAria(label: string): HTMLButtonElement {
 }
 
 function dialog(): HTMLElement | null {
-  return mounted!.container.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+  return document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
 }
 
 function openConfig() {
@@ -260,20 +260,59 @@ describe("TerminalKeysBar configuration", () => {
     expect(barLabels()).toHaveLength(2 + 1);
   });
 
+  it("keeps focus on the toggled checkbox after it moves between sections", () => {
+    renderBar();
+    openConfig();
+    toggleCheckbox(dialog()!, '在按键条中显示「向上翻页」');
+    const active = document.activeElement;
+    expect(active?.getAttribute("aria-label")).toBe('在按键条中显示「向上翻页」');
+    expect(dialog()!.contains(active)).toBe(true);
+
+    toggleCheckbox(dialog()!, '在按键条中显示「向上翻页」');
+    expect(document.activeElement?.getAttribute("aria-label")).toBe('在按键条中显示「向上翻页」');
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
+  });
+
+  it("keeps focus on the reorder button, falling back to the checkbox at the boundary", () => {
+    renderBar();
+    openConfig();
+    click(buttonByAria("下移 Escape"));
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("下移 Escape");
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
+
+    click(buttonByAria("下移 Ctrl+L（清屏）"));
+    expect(document.activeElement?.getAttribute("aria-label")).toBe('在按键条中显示「Ctrl+L（清屏）」');
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
+  });
+
   it("closes the dialog with Escape and with the done button", async () => {
     renderBar();
     openConfig();
     expect(dialog()).not.toBeNull();
     act(() => {
-      dialog()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await flush();
     expect(dialog()).toBeNull();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("配置终端按键");
 
     openConfig();
     click([...dialog()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "完成")!);
     expect(dialog()).toBeNull();
     expect(buttonByAria("配置终端按键").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("Escape still closes after a toggle moved focus across sections", async () => {
+    renderBar();
+    openConfig();
+    toggleCheckbox(dialog()!, '在按键条中显示「向上翻页」');
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("配置终端按键");
   });
 
   it("modifier state is cleared when the config dialog opens", () => {
