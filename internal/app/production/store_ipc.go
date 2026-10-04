@@ -412,9 +412,6 @@ func productionJSONText(raw json.RawMessage, fallback string) string {
 	return string(raw)
 }
 
-// validatedSnippetName mirrors the frontend snippet editor contract: the UI
-// trims the name and rejects it when blank. The backend stays authoritative so
-// direct IPC callers get the same normalization and rejection.
 func validatedSnippetName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -423,9 +420,6 @@ func validatedSnippetName(name string) (string, error) {
 	return trimmed, nil
 }
 
-// validateSnippetBody mirrors the frontend snippet editor contract: trimming is
-// only the blankness check. Leading/trailing spaces, Tab and CR/LF in the body
-// are meaningful bytes and must be persisted exactly as received.
 func validateSnippetBody(body string) error {
 	if strings.TrimSpace(body) == "" {
 		return ipc.BadParam(fmt.Errorf("snippet body must not be empty"))

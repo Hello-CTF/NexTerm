@@ -22,9 +22,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-// memoryScriptServer answers every request with plain content and records the
-// parsed requests so tests can assert exactly what the composed runtime sent
-// to the provider: message payloads and the advertised tool list.
 type memoryScriptServer struct {
 	mu       sync.Mutex
 	requests []spawnScriptRequest
@@ -62,9 +59,6 @@ func (s *memoryScriptServer) toolNames(index int) []string {
 	return names
 }
 
-// composeMemoryRuntime stands up the production composition root with a real
-// platform data dir so the semantic memory store is composed for real, backed
-// by a scripted provider and one connected fake-transport session.
 func composeMemoryRuntime(t *testing.T) (*ProductionServices, *store.Store, *memoryScriptServer, string, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -120,10 +114,6 @@ func composedMemoryDispatch(t *testing.T, services *ProductionServices, command,
 	return dispatcher.Dispatch(context.Background(), ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
 }
 
-// TestComposedMemoryStoreLivesAtPlatformDataPath proves the production
-// composition: the store is created inside the platform data dir with owner-only
-// permissions, the memory IPC surface is registered, and closing the runtime
-// closes the database cleanly (a reopen succeeds).
 func TestComposedMemoryStoreLivesAtPlatformDataPath(t *testing.T) {
 	services, _, _, _, dataDir := composeMemoryRuntime(t)
 	path := filepath.Join(dataDir, "memory.db")
@@ -160,11 +150,6 @@ func TestComposedMemoryStoreLivesAtPlatformDataPath(t *testing.T) {
 	}
 }
 
-// TestComposedMemoryInjectionIsOptIn drives the composed agent runtime end to
-// end through the provider wire: with default settings no memory content and
-// no memory tools reach the provider; once the user opts in, the memory
-// content arrives as a system message and the tools join the advertised set —
-// while the persisted conversation record stays clean either way.
 func TestComposedMemoryInjectionIsOptIn(t *testing.T) {
 	ctx := context.Background()
 	services, database, script, sessionID, dataDir := composeMemoryRuntime(t)

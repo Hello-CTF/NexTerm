@@ -65,10 +65,6 @@ func runDesktopSmoke(wailsApp *application.App, window *application.WebviewWindo
 	})
 	delivered := make(chan struct{})
 	go func() {
-		// On loaded CI runners the webview can need several seconds to commit the
-		// app page; a single fixed-delay injection may land in about:blank and die
-		// with the navigation. Re-inject until the first result arrives — the
-		// script's re-entry guard makes overlapping injections no-ops.
 		time.Sleep(1500 * time.Millisecond)
 		for {
 			select {
@@ -84,10 +80,6 @@ func runDesktopSmoke(wailsApp *application.App, window *application.WebviewWindo
 			}
 		}
 	}()
-	// The verdict must not travel through wailsApp.Run: on darwin Quit terminates
-	// via [NSApp terminate:], which exits the process with code 0 without
-	// unwinding Go, so a returned exit status would carry no signal. Exit
-	// explicitly once the evidence is on disk.
 	go func() {
 		select {
 		case result := <-results:

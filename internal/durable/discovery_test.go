@@ -12,10 +12,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
-// multiSessionTmux emulates the tmux server behavior discovery depends on:
-// list-panes -a reports panes from every session, while list-panes -s
-// without -t reports only the server's single current session. Discovery
-// limited to one session therefore silently loses every other durable tab.
 type multiSessionTmux struct {
 	backend  *Backend
 	sessions [][]record

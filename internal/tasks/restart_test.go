@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// TestRestartMarksRunningInterrupted simulates a crash by abandoning the
-// first manager without Close, then reopening the same directory. The task
-// must become interrupted, its output must survive, and nothing may re-run.
 func TestRestartMarksRunningInterrupted(t *testing.T) {
 	requireShell(t)
 	dir := t.TempDir()
@@ -86,14 +83,11 @@ func TestRestartMarksRunningInterrupted(t *testing.T) {
 		t.Fatalf("task was re-executed after restart: %q", raw)
 	}
 
-	// Shut the abandoned manager down last: it still owns the live process.
 	if err := m1.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// TestRestartKeepsTerminalStates ensures reconciliation does not rewrite
-// records that already reached a terminal state.
 func TestRestartKeepsTerminalStates(t *testing.T) {
 	requireShell(t)
 	dir := t.TempDir()

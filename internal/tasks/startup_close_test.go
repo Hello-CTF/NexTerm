@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// TestCloseDuringStartupFailure forces Close to start waiting on a task whose
-// Start then fails. The startup-failure path must complete the task exactly
-// once so Close returns instead of waiting forever.
 func TestCloseDuringStartupFailure(t *testing.T) {
 	requireShell(t)
 	errStart := errors.New("injected start failure")
@@ -41,8 +38,6 @@ func TestCloseDuringStartupFailure(t *testing.T) {
 	go func() {
 		closeDone <- m.Close(context.Background())
 	}()
-	// Wait until Close has transitioned the task, which means it is about
-	// to wait on done; only then let Start fail.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		m.mu.RLock()

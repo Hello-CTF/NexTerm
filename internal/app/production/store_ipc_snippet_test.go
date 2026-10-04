@@ -34,8 +34,6 @@ func TestSnippetIPCValidationAndOriginalBytes(t *testing.T) {
 		}
 	}
 
-	// Blank or whitespace-only names and bodies are rejected on create and must
-	// not write anything.
 	for _, args := range []string{
 		`{"name":"","body":"echo hi"}`,
 		`{"name":"  \t","body":"echo hi"}`,
@@ -48,8 +46,6 @@ func TestSnippetIPCValidationAndOriginalBytes(t *testing.T) {
 		t.Fatalf("rejected creates wrote rows: %+v", rows)
 	}
 
-	// Valid create: the name is trimmed like the frontend does, while the body
-	// persists byte-for-byte — leading/trailing spaces, Tab and CR/LF included.
 	response := dispatchStoreTest(dispatcher, "snippet_create", `{"name":"  看日志  ","body":"  tail -f /var/log/app.log \t\r\n"}`)
 	var created map[string]string
 	requireStoreTestResponse(t, response, &created)
@@ -61,7 +57,6 @@ func TestSnippetIPCValidationAndOriginalBytes(t *testing.T) {
 		t.Fatalf("created snippet = %+v", rows)
 	}
 
-	// Invalid updates are rejected and the stored row stays byte-identical.
 	for _, args := range []string{
 		`{"id":"` + created["id"] + `","name":"","body":"echo hi"}`,
 		`{"id":"` + created["id"] + `","name":" \r\n ","body":"echo hi"}`,
@@ -74,7 +69,6 @@ func TestSnippetIPCValidationAndOriginalBytes(t *testing.T) {
 		t.Fatalf("rejected updates changed row: %+v", rows)
 	}
 
-	// Valid update round-trips the raw body bytes unchanged; the name trims.
 	response = dispatchStoreTest(dispatcher, "snippet_update", `{"id":"`+created["id"]+`","name":" 带CRLF ","body":"echo done\r\n"}`)
 	if !response.OK {
 		t.Fatalf("valid update failed: %+v", response.Error)

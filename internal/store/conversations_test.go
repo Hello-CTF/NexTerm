@@ -17,10 +17,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/migrations"
 )
 
-// Message rows must read back in true insertion order even when many inserts
-// land in the same millisecond: created_at has only millisecond resolution
-// and the ULID tail is random, so ordering by (created_at, id) let
-// same-millisecond rows shuffle (~50% inversion under hot repetition).
 func TestMsgListPreservesInsertionOrder(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
@@ -55,8 +51,6 @@ func TestMsgListPreservesInsertionOrder(t *testing.T) {
 	}
 }
 
-// Concurrent inserters serialize on the immediate transaction lock: every
-// row gets a unique seq, and each writer's own rows keep their FIFO order.
 func TestMsgInsertConcurrentAssignsUniqueSeq(t *testing.T) {
 	ctx := context.Background()
 	db, _ := fileStore(t)
@@ -133,9 +127,6 @@ func TestMsgInsertConcurrentAssignsUniqueSeq(t *testing.T) {
 	}
 }
 
-// A database created before the seq migration keeps its exact read order:
-// legacy rows are backfilled in the old (created_at, id) order, and new
-// inserts continue the sequence after them.
 func TestMigrationBackfillsMessageSeq(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	raw, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
@@ -155,8 +146,6 @@ func TestMigrationBackfillsMessageSeq(t *testing.T) {
 VALUES('conv', 'legacy', '{}', 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
-	// Same created_at, ids deliberately out of insertion order: the old read
-	// order was (created_at, id), so the backfill must rank A < B < C.
 	for _, id := range []string{"C", "A", "B"} {
 		if _, err := raw.Exec(`INSERT INTO ai_message(id, conversation_id, role, content_json, tokens_in, tokens_out, created_at)
 VALUES(?, 'conv', 'user', '{"role":"user","content":"`+id+`"}', NULL, NULL, 1000)`, id); err != nil {
@@ -194,9 +183,6 @@ VALUES(?, 'conv', 'user', '{"role":"user","content":"`+id+`"}', NULL, NULL, 1000
 	}
 }
 
-// applyLegacyMigrations applies every migration except 0006 (the seq
-// migration) and registers each in schema_migrations, producing a database
-// exactly as a pre-seq build left it.
 func applyLegacyMigrations(t *testing.T, raw *sql.DB) {
 	t.Helper()
 	entries, err := fs.ReadDir(migrations.Files, ".")

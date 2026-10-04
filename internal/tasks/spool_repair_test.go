@@ -11,7 +11,6 @@ import (
 
 var errIndexFault = errors.New("injected index repair failure")
 
-// faultIndexWrites fails every checkpoint write until restored.
 func faultIndexWrites(t *testing.T) (restore func()) {
 	t.Helper()
 	restore = spoolIndexWriter.swap(func(path string, value any) error { return errIndexFault })
@@ -19,9 +18,6 @@ func faultIndexWrites(t *testing.T) (restore func()) {
 	return restore
 }
 
-// runRepairFaultOpens performs failCount failing opens, asserting each time
-// that the journal survives and the recovered statistics stay exact. It then
-// verifies the eventual successful retry and second-open idempotence.
 func runRepairFaultOpens(t *testing.T, dir, base string, failCount int, wantTotal, wantDropped int64, wantHead, wantTail []byte) {
 	t.Helper()
 	restore := faultIndexWrites(t)
@@ -54,11 +50,6 @@ func runRepairFaultOpens(t *testing.T, dir, base string, failCount int, wantTota
 	assertSpoolState(t, again, wantTotal, wantDropped, wantHead, wantTail)
 }
 
-// TestFaultIndexWritesConcurrentSwap is the spool-side counterpart of
-// TestFaultMetaWritesConcurrentSwap: spoolIndexWriter was the same kind of
-// unsynchronized package-level fault hook. It swaps the hook while
-// concurrent checkpoint writes are in flight; with the unsynchronized
-// global this trips -race.
 func TestFaultIndexWritesConcurrentSwap(t *testing.T) {
 	dir := t.TempDir()
 	s, err := createSpool(dir, "swap", 4, 8)
@@ -82,10 +73,6 @@ func TestFaultIndexWritesConcurrentSwap(t *testing.T) {
 	<-done
 }
 
-// TestSpoolRepairFailureRepeatedOpens covers fail-once and persistent repair
-// failures for both replayed-tail (journal stage) and already-renamed-tail
-// (rename stage) adoption, at 40 bytes with a zero index and at 64 bytes
-// with a prior checkpoint.
 func TestSpoolRepairFailureRepeatedOpens(t *testing.T) {
 	for _, stage := range []string{"journal", "rename"} {
 		for _, failCount := range []int{1, 3} {
@@ -114,9 +101,6 @@ func TestSpoolRepairFailureRepeatedOpens(t *testing.T) {
 	}
 }
 
-// TestOpenSurfacesRepairFailure ensures a failed checkpoint repair aborts
-// Open with an error instead of deleting the task record, and that a later
-// Open recovers the exact durable state.
 func TestOpenSurfacesRepairFailure(t *testing.T) {
 	dir := t.TempDir()
 	s, err := createSpool(dir, "r5", 4, 8)

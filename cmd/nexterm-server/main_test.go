@@ -22,8 +22,6 @@ import (
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 )
 
-// syncBuffer guards the process output buffer: os/exec copy goroutines write
-// to it while the test goroutine reads diagnostics from it.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer

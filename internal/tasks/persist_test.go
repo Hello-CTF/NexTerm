@@ -13,8 +13,6 @@ import (
 
 var errMetaFault = errors.New("injected meta write failure")
 
-// faultMetaWrites fails durable record writes, optionally only for matching
-// records. The returned restore function re-enables writes mid-test.
 func faultMetaWrites(t *testing.T, match func(info Info) bool) (restore func()) {
 	t.Helper()
 	restore = metaFileWriter.swap(func(dir string, info Info) error {
@@ -126,11 +124,6 @@ func TestCloseSurfacesPersistenceFault(t *testing.T) {
 	restore()
 }
 
-// TestFaultMetaWritesConcurrentSwap is a regression for the release CI data
-// race: faultMetaWrites installed and restored the package-level
-// metaFileWriter without synchronizing against the reads in
-// writeMetaLocked. It swaps the hook while concurrent meta writes are in
-// flight; with the unsynchronized global this trips -race.
 func TestFaultMetaWritesConcurrentSwap(t *testing.T) {
 	requireShell(t)
 	m := testManager(t, nil)
@@ -202,8 +195,6 @@ func TestRetentionSkipsUnpersisted(t *testing.T) {
 	}
 	openGate(t, gateB)
 	waitTerminal(t, m, ownerA, resB.Info.ID)
-	// A is terminal but unpersisted: retention must not evict it, and the
-	// newer eligible task alone does not exceed MaxRetained.
 	if _, err := m.Get(ctx, ownerA, resA.Info.ID); err != nil {
 		t.Fatalf("unpersisted task was evicted: %v", err)
 	}

@@ -17,9 +17,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 )
 
-// controlEventLog captures terminal://control events the way a connected
-// client would: across a backend restart it keeps every version it has seen,
-// so recovered tabs must resume strictly above the recorded high-water mark.
 type controlEventLog struct {
 	mu     sync.Mutex
 	events []session.ControlEvent
@@ -91,8 +88,6 @@ func TestProductionDurableRecoveryResumesVersionsAndGridWithoutEcho(t *testing.T
 		t.Fatal(err)
 	}
 
-	// The restart must have persisted the per-tab version floor next to the
-	// durable artifacts; recovery seeds from it.
 	floorEvent, floorGrid := readDurableVersionsFloor(t, filepath.Join(dataDir, "durable", "state", tabID, "versions"))
 	if floorEvent < highWater || floorGrid != lastBefore.GridRevision {
 		t.Fatalf("persisted floor = %d/%d, want event >= %d and grid %d", floorEvent, floorGrid, highWater, lastBefore.GridRevision)
@@ -106,8 +101,6 @@ func TestProductionDurableRecoveryResumesVersionsAndGridWithoutEcho(t *testing.T
 	recoveredResponse := dispatchDurableTest(t, second, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":65536}`, channelID, "client-a")
 	var recovered attachedTabDTO
 	requireStoreTestResponse(t, recoveredResponse, &recovered)
-	// The recovered tab adopts the real tmux window instead of the fabricated
-	// 80x24 default, so reattaching clients do not echo a spurious resize.
 	if recovered.Cols != 100 || recovered.Rows != 30 {
 		t.Fatalf("recovered tab grid = %dx%d, want the real 100x30 window", recovered.Cols, recovered.Rows)
 	}
@@ -120,8 +113,6 @@ func TestProductionDurableRecoveryResumesVersionsAndGridWithoutEcho(t *testing.T
 	if firstAfter.Version <= highWater {
 		t.Fatalf("first recovered event version = %d, want > high-water %d", firstAfter.Version, highWater)
 	}
-	// Unchanged revision + unchanged grid: clients that observed the last
-	// pre-restart snapshot see a no-op, never a rollback or a resize echo.
 	if firstAfter.GridRevision != lastBefore.GridRevision || firstAfter.Cols != lastBefore.Cols || firstAfter.Rows != lastBefore.Rows {
 		t.Fatalf("recovery event = %+v, want unchanged grid %+v", firstAfter, lastBefore)
 	}

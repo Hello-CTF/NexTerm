@@ -4,12 +4,6 @@ import (
 	"testing"
 )
 
-// desktopAssetPath results feed embed.FS lookups, which are keyed by
-// slash-separated paths on every OS. Native separators (filepath.FromSlash
-// yields backslashes on Windows) make every nested asset lookup fail and
-// silently fall back to index.html; the WebView2 module scripts are then
-// blocked by the HTML MIME type and the desktop smoke times out without a
-// verdict (M68).
 func TestDesktopAssetPathReturnsIOFSRelativePath(t *testing.T) {
 	for _, test := range []struct {
 		escaped string

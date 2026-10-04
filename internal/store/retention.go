@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// RetentionPolicy limits stored audit rows and ended recording metadata. A zero
-// age or count disables that limit. Recording limits never include active rows.
 type RetentionPolicy struct {
 	AuditMaxAge       time.Duration
 	AuditMaxCount     int64
@@ -22,7 +20,6 @@ type RetentionResult struct {
 	RecordingsDeleted int64 `json:"recordingsDeleted"`
 }
 
-// RetentionStatus is a concurrency-safe snapshot for health and diagnostics.
 type RetentionStatus struct {
 	LastAttemptAt time.Time `json:"lastAttemptAt"`
 	LastSuccessAt time.Time `json:"lastSuccessAt"`
@@ -54,9 +51,6 @@ func (p RetentionPolicy) validate() error {
 	return nil
 }
 
-// EnforceRetention applies both limits in one recoverable transaction. It only
-// deletes database rows; recording paths are external files and are not opened,
-// truncated, or removed.
 func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (result RetentionResult, returnErr error) {
 	defer func() { s.recordRetentionResult(returnErr) }()
 	if err := policy.validate(); err != nil {

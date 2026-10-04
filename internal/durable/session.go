@@ -198,19 +198,12 @@ func (s *Session) Detach() error {
 
 func (s *Session) Close() error { return s.Detach() }
 
-// Versions returns the persisted per-tab event/grid version floor recorded
-// by previous attachments of this durable identity. A missing floor (fresh
-// identity, or a session created before floors existed) reads as zeroes.
 func (s *Session) Versions() (eventVersion, gridRevision uint64, err error) {
 	s.versionsMu.Lock()
 	defer s.versionsMu.Unlock()
 	return s.readVersions()
 }
 
-// PersistVersions records the given per-tab event/grid versions as the new
-// floor. The floor never rewinds: concurrent attachments of the same
-// identity may race, and recovery only needs a monotonic lower bound so
-// reconnected clients never see versions they already observed.
 func (s *Session) PersistVersions(eventVersion, gridRevision uint64) error {
 	s.versionsMu.Lock()
 	defer s.versionsMu.Unlock()

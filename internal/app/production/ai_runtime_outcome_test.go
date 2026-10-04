@@ -21,8 +21,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-// outcomeFakeTransport is the session transport the composed AI runtime
-// resolves for exec_commands: it records every command it runs.
 type outcomeFakeTransport struct {
 	mu       sync.Mutex
 	commands []string
@@ -46,10 +44,6 @@ func (f *outcomeFakeTransport) calls() []string {
 	return append([]string(nil), f.commands...)
 }
 
-// effectCalls returns how many times the given command ran through the
-// transport. The environment-context builder also runs host-discovery
-// commands on this transport, so tests count their own command instead of
-// asserting on the full call list.
 func (f *outcomeFakeTransport) effectCalls(command string) int {
 	count := 0
 	for _, call := range f.calls() {
@@ -60,9 +54,6 @@ func (f *outcomeFakeTransport) effectCalls(command string) int {
 	return count
 }
 
-// outcomeScriptServer scripts the provider: the first request answers with one
-// exec_commands tool call, every later request (which carries the tool result)
-// answers with the final content.
 type outcomeScriptServer struct {
 	mu       sync.Mutex
 	requests int
@@ -97,10 +88,6 @@ func (s *outcomeScriptServer) ServeHTTP(writer http.ResponseWriter, request *htt
 	spawnWriteContent(writer, "done")
 }
 
-// composeOutcomeRuntime stands up the production composition root against a
-// real in-memory store, a scripted provider and one connected fake-transport
-// session, and returns the composed services plus the session id to scope
-// agent runs with.
 func composeOutcomeRuntime(t *testing.T, command string) (*ProductionServices, *store.Store, *outcomeFakeTransport, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -206,10 +193,6 @@ func composedOutcomeRecord(t *testing.T, database *store.Store, key string) outc
 	return record
 }
 
-// TestComposedAIRuntimeRecordsOutcomeOnce drives the production composition
-// root end to end: the composed ledger records the guard-authorized
-// side effect exactly once in outcome_record and once in the audit log, bound
-// to the actual guard decision.
 func TestComposedAIRuntimeRecordsOutcomeOnce(t *testing.T) {
 	ctx := context.Background()
 	services, database, transport, sessionID := composeOutcomeRuntime(t, "echo hi")
@@ -288,10 +271,6 @@ func TestComposedAIRuntimeRecordsOutcomeOnce(t *testing.T) {
 	}
 }
 
-// TestComposedAIRuntimeOutcomeBindsAskDecisionOnResume proves the HITL path:
-// a command the guard asks about executes only after the user confirms, and
-// the ledger records it under the authorization id of the guard decision that
-// produced the prompt, carried through the checkpoint resume.
 func TestComposedAIRuntimeOutcomeBindsAskDecisionOnResume(t *testing.T) {
 	ctx := context.Background()
 	const command = "systemctl restart nginx"

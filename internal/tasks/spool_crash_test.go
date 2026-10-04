@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// crashAt arms fault injection and runs one Write that must panic at the
-// requested compaction stage, leaving the on-disk state mid-transaction.
 func crashAt(t *testing.T, s *spool, stage string, p []byte) {
 	t.Helper()
 	s.crashHook = func(got string) {
@@ -31,8 +29,6 @@ func crashAt(t *testing.T, s *spool, stage string, p []byte) {
 	}
 }
 
-// assertSpoolState verifies retained content, Total/Dropped, and the logical
-// offsets of incremental reads, including the Gap jump over the elided middle.
 func assertSpoolState(t *testing.T, s *spool, wantTotal, wantDropped int64, wantHead, wantTail []byte) {
 	t.Helper()
 	out, err := s.Snapshot()
@@ -70,9 +66,6 @@ func assertSpoolState(t *testing.T, s *spool, wantTotal, wantDropped int64, want
 	}
 }
 
-// TestSpoolCrashBeforeJournal crashes after the prepared tail is written but
-// before the journal commits. Recovery must restore the exact pre-compaction
-// state: nothing was elided yet.
 func TestSpoolCrashBeforeJournal(t *testing.T) {
 	dir := t.TempDir()
 	s, err := createSpool(dir, "c1", 4, 8)
@@ -90,10 +83,6 @@ func TestSpoolCrashBeforeJournal(t *testing.T) {
 	}
 }
 
-// TestSpoolCrashCompactionWindows covers the review's 4/8-limit 40-byte case
-// with a zero starting index: after the journal commits, after the tail
-// rename, and after the index commit. Every window must reopen with exact
-// Total=40, Dropped=28, and identical logical offsets.
 func TestSpoolCrashCompactionWindows(t *testing.T) {
 	for _, stage := range []string{"journal", "rename", "index"} {
 		t.Run(stage, func(t *testing.T) {
@@ -114,7 +103,6 @@ func TestSpoolCrashCompactionWindows(t *testing.T) {
 			if _, err := os.Stat(reopened.tailPath() + ".tmp"); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("prepared tail not cleaned: %v", err)
 			}
-			// Repair must be idempotent: a second open sees the same state.
 			again, err := openSpool(dir, "c2", 4, 8)
 			if err != nil {
 				t.Fatal(err)
@@ -124,10 +112,6 @@ func TestSpoolCrashCompactionWindows(t *testing.T) {
 	}
 }
 
-// TestSpoolCrashWithPriorCheckpoint repeats the crash windows with a prior
-// non-zero checkpoint: a first completed compaction at 40 bytes, then a
-// second compaction at 64 bytes. The stale index previously produced false
-// totals whenever the new tail matched the checkpointed size again.
 func TestSpoolCrashWithPriorCheckpoint(t *testing.T) {
 	for _, stage := range []string{"journal", "rename", "index"} {
 		t.Run(stage, func(t *testing.T) {

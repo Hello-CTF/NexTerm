@@ -144,10 +144,6 @@ func (b *Backend) records(ctx context.Context) ([]record, error) {
 	if _, err := os.Stat(b.socketPath); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	// -a enumerates panes from every session on the server. Without it tmux
-	// lists only its internally selected current session, so a second durable
-	// session on the same socket becomes invisible to discovery and is
-	// mistaken for an exited one.
 	stdout, err := b.run(ctx, "list-panes", "-a", "-F", discoveryFormat)
 	if err != nil {
 		if noServerError(err) {
@@ -257,9 +253,6 @@ func parseFlag(value string) (bool, error) {
 	}
 }
 
-// parseDimension accepts any positive window dimension; consumers apply
-// their own size limits before using it (an externally resized tmux window
-// beyond the supported maximum must not make discovery fail closed).
 func parseDimension(value string) (uint32, error) {
 	dimension, err := strconv.ParseUint(value, 10, 32)
 	if err != nil || dimension == 0 {

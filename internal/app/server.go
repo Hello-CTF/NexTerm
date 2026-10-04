@@ -18,8 +18,6 @@ type ServeConfig struct {
 	SyncRPC        http.Handler
 	SyncDispatcher *ipc.Dispatcher
 	Static         http.Handler
-	// Transport, when non-nil, serves the real HTTP/WS transport
-	// (internal/server) instead of the built-in mux below.
 	Transport      http.Handler
 	CloseTransport func(context.Context) error
 }

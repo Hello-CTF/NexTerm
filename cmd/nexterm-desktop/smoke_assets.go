@@ -10,9 +10,6 @@ import (
 	"sync/atomic"
 )
 
-// desktopSmokeEvidenceWritten makes the evidence file single-shot: the first
-// posted result is the verdict, so the file on disk and the Go-side exit code
-// can never diverge when a racing re-injection posts a duplicate.
 var desktopSmokeEvidenceWritten atomic.Bool
 
 func desktopSmokeAssetHandler(handler http.Handler) http.Handler {
