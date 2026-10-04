@@ -6,6 +6,8 @@ target-alt
 *.log
 .DS_Store
 
+.tmp/
+
 _tmp_*
 
 .buildcheck
