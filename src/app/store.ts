@@ -3,6 +3,7 @@ import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } 
 import { describeError } from "../ui/errorText";
 import { dirtyFileEditors } from "../features/files/editorGuards";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
+import { useConnectHistory } from "../features/explorer/connectHistory";
 import {
   getResolvedTheme,
   getThemeMode,
@@ -187,6 +188,8 @@ interface UiState {
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
   dismissToast: (id: number) => void;
+
+  connectingAssetIds: string[];
 }
 
 let toastSeq = 1;
@@ -635,6 +638,8 @@ export const useUi = create<UiState>((set, get) => ({
   },
   setAiBusy: (v) => set({ aiBusy: v }),
   setTakeover: (t) => set({ takeover: t }),
+
+  connectingAssetIds: [],
 
   pushToast: (kind, text) => {
     const id = toastSeq++;
@@ -1163,17 +1168,51 @@ function hostKeyQuestion(detail: hostKeyPendingDetail | undefined): string {
   return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型：${detail?.keyType}\n指纹(SHA256)：${detail?.fingerprint}\n信任并继续？`;
 }
 
-export async function connectAsset(asset: {
+export interface ConnectAssetInput {
   id: string;
   name: string;
   kind: string;
   credId?: string | null;
-}): Promise<void> {
+}
+
+export type ConnectOutcome =
+  | { ok: true }
+  | { ok: false; error?: string; canceled?: boolean };
+
+const inflightConnects = new Map<string, Promise<ConnectOutcome>>();
+
+function setAssetConnecting(assetId: string, connecting: boolean): void {
+  useUi.setState((s) => ({
+    connectingAssetIds: connecting
+      ? s.connectingAssetIds.includes(assetId)
+        ? s.connectingAssetIds
+        : [...s.connectingAssetIds, assetId]
+      : s.connectingAssetIds.filter((id) => id !== assetId),
+  }));
+}
+
+export function isAssetConnecting(assetId: string): boolean {
+  return useUi.getState().connectingAssetIds.includes(assetId);
+}
+
+export async function connectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome> {
+  const inflight = inflightConnects.get(asset.id);
+  if (inflight) return inflight;
+  const promise = runConnectAsset(asset).finally(() => {
+    inflightConnects.delete(asset.id);
+    setAssetConnecting(asset.id, false);
+  });
+  inflightConnects.set(asset.id, promise);
+  setAssetConnecting(asset.id, true);
+  return promise;
+}
+
+async function runConnectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome> {
   const { pushToast } = useUi.getState();
 
   if (asset.kind === "mysql" || asset.kind === "redis") {
     try {
-      if (!(await ensureVaultReadyFor(asset))) return;
+      if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
       const { connId } = await dbApi.connect(asset.id);
       const kind = asset.kind === "redis" ? "redis" : "mysql";
       const title = `${asset.name} · ${kind === "mysql" ? "SQL" : "Redis"}`;
@@ -1187,16 +1226,20 @@ export async function connectAsset(asset: {
         dbKind: kind,
         closable: true,
       });
+      useConnectHistory.getState().record(asset.id);
+      return { ok: true };
     } catch (e) {
       pushToast("error", describeError(e));
+      return { ok: false, error: describeError(e) };
     }
-    return;
   }
 
   try {
-    if (!(await ensureVaultReadyFor(asset))) return;
+    if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
     const info = await sessionApi.connect(asset.id);
     await openConnectedAssetSession(info, asset);
+    useConnectHistory.getState().record(asset.id);
+    return { ok: true };
   } catch (e) {
     const err = e as { code?: string; message: string; detail?: Record<string, unknown> };
     if (err.code === "host_key_pending") {
@@ -1208,22 +1251,24 @@ export async function connectAsset(asset: {
       });
       if (!ok) {
         pushToast("info", "已取消连接");
-        return;
+        return { ok: false, canceled: true };
       }
       if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint) {
         pushToast("error", err.message || describeError(e));
-        return;
+        return { ok: false, error: err.message || describeError(e) };
       }
       try {
         await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
         const info = await sessionApi.connect(asset.id);
         await openConnectedAssetSession(info, asset);
-        return;
+        useConnectHistory.getState().record(asset.id);
+        return { ok: true };
       } catch (e2) {
         pushToast("error", describeError(e2));
-        return;
+        return { ok: false, error: describeError(e2) };
       }
     }
     pushToast("error", err.message || describeError(e));
+    return { ok: false, error: err.message || describeError(e) };
   }
 }

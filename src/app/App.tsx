@@ -76,6 +76,7 @@ import { CredentialsSidebar } from "../features/credentials/CredentialsSidebar";
 import { CredentialsView } from "../features/credentials/CredentialsView";
 import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
+import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
@@ -364,6 +365,7 @@ export default function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
+  const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const queryClient = useQueryClient();
   const [vaultStatus, setVaultStatus] = useState<string>("…");
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
@@ -575,7 +577,10 @@ export default function App() {
       if (mod && e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         setPaletteOpen(true);
-      } else if (mod && e.key.toLowerCase() === "k") {
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setQuickConnectOpen(true);
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen(true);
       } else if (mod && e.key.toLowerCase() === "b") {
@@ -1219,8 +1224,10 @@ export default function App() {
           onClose={() => setPaletteOpen(false)}
           onOpenFiles={openFiles}
           onEditAsset={(asset) => setPaletteEditingAsset(asset)}
+          onQuickConnect={() => setQuickConnectOpen(true)}
         />
       )}
+      {quickConnectOpen && <QuickConnect onClose={() => setQuickConnectOpen(false)} />}
       {paletteEditingAsset && (
         <AssetEditor
           kind="asset"
@@ -1637,6 +1644,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
   const mod = modHint();
   const shortcuts: [string, string][] = [
     [`${mod}+T`, "本地终端"],
+    [`${mod}+Shift+K`, "快速连接"],
     [`${mod}+Shift+P`, "命令面板"],
     [`${mod}+B`, "资产树"],
     [`${mod}+J`, "AI 侧栏"],

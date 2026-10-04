@@ -404,6 +404,7 @@ function AssetRow({
   onMore: (x: number, y: number) => void;
 }) {
   const Icon = assetIcon(asset.kind);
+  const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
   const tip = [
@@ -451,17 +452,27 @@ function AssetRow({
       )}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       <span className="nx-row-actions [@media(pointer:coarse)]:flex">
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="连接"
-          aria-label={`连接 ${asset.name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            void connectAsset(asset);
-          }}
-        >
-          <IconPlay size={12} />
-        </button>
+        {connecting ? (
+          <span
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="连接中…"
+            aria-label={`${asset.name} 连接中`}
+          >
+            <IconLoader size={12} className="animate-spin" />
+          </span>
+        ) : (
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title="连接"
+            aria-label={`连接 ${asset.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void connectAsset(asset);
+            }}
+          >
+            <IconPlay size={12} />
+          </button>
+        )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="编辑"

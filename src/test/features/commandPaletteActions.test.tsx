@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   snippetList: vi.fn(),
   create: vi.fn(),
+  probeBatch: vi.fn(),
   write: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       list: mocks.list,
       snippetList: mocks.snippetList,
       create: mocks.create,
+      probeBatch: mocks.probeBatch,
     },
     sessionApi: {},
     dbApi: {},
@@ -148,6 +150,7 @@ beforeEach(() => {
   mocks.create.mockImplementation((args: Partial<Asset> & { kind: string; name: string }) =>
     Promise.resolve(assetOf({ id: "a-new", ...args })),
   );
+  mocks.probeBatch.mockResolvedValue({ results: [] });
   setTerminalWorkspace(null);
   useUi.setState({
     sessions: [],
