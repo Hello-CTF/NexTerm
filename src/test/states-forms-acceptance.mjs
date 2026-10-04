@@ -466,12 +466,12 @@ async function openAssetTree(page) {
 }
 
 async function openModelPanel(page) {
-  const selectorReady = `Boolean(document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]'))`;
+  const selectorReady = `Boolean(document.querySelector('button[title="模型配置（可保存多份模型档案）"]'))`;
   if (!(await page.evaluate(selectorReady))) {
     await page.evaluate(`document.querySelector('button[aria-label="AI 助手"]').click()`);
   }
   await page.waitFor(selectorReady);
-  await page.evaluate(`document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]').click()`);
+  await page.evaluate(`document.querySelector('button[title="模型配置（可保存多份模型档案）"]').click()`);
   await page.waitFor(
     `[...document.querySelectorAll('button')].some((b) => b.textContent?.includes('管理模型'))`,
   );

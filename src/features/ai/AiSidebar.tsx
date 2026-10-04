@@ -972,7 +972,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </div>
               <ConfirmBody card={confirmCard} />
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
+                不想每次都弹这个？把它加为拦截规则，或在权限设置里调整档位。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
