@@ -68,6 +68,7 @@ type loadResult struct {
 	fromLegacy     bool
 	legacyLeftover bool
 	migratable     bool
+	corrupted      bool
 }
 
 func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
@@ -94,7 +95,7 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 
 func (m *Manager) applyLoadResult(ctx context.Context, result loadResult) error {
 	deleteLegacy := result.fromLegacy || result.legacyLeftover
-	remnantRisk := result.migratable || deleteLegacy
+	remnantRisk := result.migratable || deleteLegacy || result.corrupted
 	savedOK := false
 	if result.needsSave {
 		saved, err := save(ctx, m.settings, m.protector, result.state, remnantRisk, deleteLegacy)
@@ -316,6 +317,12 @@ func (m *Manager) Reload(ctx context.Context) error {
 	return m.applyLoadResult(ctx, result)
 }
 
+var errScrubNotClean = errors.New("AI 模型档案物理清理前置条件未满足")
+
+type settingTxRunner interface {
+	SettingTx(ctx context.Context, fn func(store.SettingTx) error) error
+}
+
 func (m *Manager) finalizeScrub(ctx context.Context) error {
 	pending, err := scrubPending(ctx, m.settings)
 	if err != nil || !pending {
@@ -330,7 +337,59 @@ func (m *Manager) finalizeScrub(ctx context.Context) error {
 		}
 		return nil
 	}
-	return clearScrubPending(ctx, m.settings)
+	runner, ok := m.settings.(settingTxRunner)
+	if !ok {
+		return clearScrubPending(ctx, m.settings)
+	}
+	err = runner.SettingTx(ctx, func(tx store.SettingTx) error {
+		raw, found, err := tx.SettingGet(ctx, ScrubPendingSetting)
+		if err != nil {
+			return err
+		}
+		if !found || raw == "" {
+			return nil
+		}
+		legacyRaw, legacyFound, err := tx.SettingGet(ctx, LegacySettingKey)
+		if err != nil {
+			return err
+		}
+		if legacyFound && legacyRawKeyed(legacyRaw) {
+			return errScrubNotClean
+		}
+		modelsRaw, modelsFound, err := tx.SettingGet(ctx, SettingKey)
+		if err != nil {
+			return err
+		}
+		if modelsFound && rawStateHasPlaintextKeys(modelsRaw) {
+			return errScrubNotClean
+		}
+		return tx.SettingDelete(ctx, ScrubPendingSetting)
+	})
+	if errors.Is(err, errScrubNotClean) {
+		return nil
+	}
+	return err
+}
+
+func legacyRawKeyed(raw string) bool {
+	var legacy provider.Config
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		return false
+	}
+	return legacy.APIKey != ""
+}
+
+func rawStateHasPlaintextKeys(raw string) bool {
+	var persisted state
+	if err := json.Unmarshal([]byte(raw), &persisted); err != nil {
+		return true
+	}
+	for _, profile := range persisted.Profiles {
+		if profile.APIKey != "" && !strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) stateHasPlaintextKeys() bool {
@@ -358,7 +417,11 @@ func load(ctx context.Context, settings Settings, protector store.SecretProtecto
 	if found {
 		var persisted state
 		if err := json.Unmarshal([]byte(raw), &persisted); err != nil {
-			return loadResult{state: state{Version: StoreVersion, Profiles: []Profile{}}}, nil
+			slog.Warn("AI 模型档案数据损坏，已隔离并替换为空状态", "error", err)
+			return loadResult{
+				state: state{Version: StoreVersion, Profiles: []Profile{}}, needsSave: true, corrupted: true,
+				legacyLeftover: legacyValid && legacy.APIKey != "",
+			}, nil
 		}
 		if persisted.Version < 0 || persisted.Version > StoreVersion {
 			return loadResult{}, fmt.Errorf("unsupported AI profile store version %d", persisted.Version)

@@ -948,3 +948,225 @@ func TestScrubMarkerWithoutWritesRecovers(t *testing.T) {
 	requireClientKey(t, reloaded, "sk-steady")
 	scanFileBytes(t, path, "sk-steady")
 }
+
+type hookScrubStore struct {
+	*store.Store
+	beforeScrub func()
+}
+
+func (s *hookScrubStore) ScrubFreeSpace(ctx context.Context) error {
+	if s.beforeScrub != nil {
+		hook := s.beforeScrub
+		s.beforeScrub = nil
+		hook()
+	}
+	return s.Store.ScrubFreeSpace(ctx)
+}
+
+func TestMalformedRowWithKeyIsReplacedAndScrubbed(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	malformed := `{"version":1,"profiles":[{"id":"p1","name":"broken","baseUrl":"https://a.test/v1","apiKey":"malformed-token-xyz","model":"m"`
+	if err := database.SettingSet(ctx, profiles.SettingKey, malformed); err != nil {
+		t.Fatal(err)
+	}
+	requireFileTokenPresent(t, path+"-wal", "malformed-token-xyz")
+	credentialVault := vault.Load(ctx, database)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(manager.Overview().Profiles); got != 0 {
+		t.Fatalf("malformed row must not surface profiles: %d", got)
+	}
+	stored := storedSetting(t, database, profiles.SettingKey)
+	if strings.Contains(stored, "malformed-token-xyz") {
+		t.Fatalf("malformed row was not replaced: %s", stored)
+	}
+	requireScrubPending(t, database, false)
+	scanFileBytes(t, path, "malformed-token-xyz")
+	scanFileBytes(t, path+"-wal", "malformed-token-xyz")
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "malformed-token-xyz")
+}
+
+func TestMalformedRowDoesNotBlockKeyedLegacyCleanup(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	malformed := `{"version":1,"profiles":[{"id":"p1","apiKey":"malformed-token-xyz"`
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"malformed-legacy-token-xyz","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+	if err := database.SettingSet(ctx, profiles.SettingKey, malformed); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+		t.Fatal(err)
+	}
+	requireFileTokenPresent(t, path+"-wal", "malformed-legacy-token-xyz")
+	credentialVault := vault.Load(ctx, database)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(manager.Overview().Profiles); got != 0 {
+		t.Fatalf("corrupted tombstone must not import legacy: %d profiles", got)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("keyed legacy row survived corrupted-row cleanup: found=%v err=%v", found, err)
+	}
+	requireScrubPending(t, database, false)
+	scanFileBytes(t, path, "malformed-token-xyz")
+	scanFileBytes(t, path, "malformed-legacy-token-xyz")
+	scanFileBytes(t, path+"-wal", "malformed-token-xyz")
+	scanFileBytes(t, path+"-wal", "malformed-legacy-token-xyz")
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "malformed-token-xyz")
+	scanFileBytes(t, path, "malformed-legacy-token-xyz")
+}
+
+func TestMalformedRowCrashReopenRecovers(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed := `{"version":1,"profiles":[{"id":"p1","apiKey":"crash-token-xyz"`
+	if err := database.SettingSet(ctx, profiles.SettingKey, malformed); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	requireFileTokenPresent(t, path, "crash-token-xyz")
+
+	reopened, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	credentialVault := vault.Load(ctx, reopened)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := profiles.NewManager(ctx, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(manager.Overview().Profiles); got != 0 {
+		t.Fatalf("crash-reopened malformed row surfaced profiles: %d", got)
+	}
+	requireScrubPending(t, reopened, false)
+	scanFileBytes(t, path, "crash-token-xyz")
+	scanFileBytes(t, path+"-wal", "crash-token-xyz")
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "crash-token-xyz")
+}
+
+func TestConcurrentLegacyWriteKeepsPending(t *testing.T) {
+	ctx := context.Background()
+	_, base, _ := openFileVaultStore(t)
+	database := &hookScrubStore{Store: base}
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	database.beforeScrub = func() {
+		legacy := `{"baseUrl":"https://rogue.test/v1","apiKey":"rogue-legacy-token-xyz","model":"rogue","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+		if err := base.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, true)
+	if _, found, err := base.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
+		t.Fatalf("concurrently written legacy row must be visible: found=%v err=%v", found, err)
+	}
+	requireClientKey(t, manager, "sk-steady")
+
+	if err := base.SettingDelete(ctx, profiles.LegacySettingKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, false)
+}
+
+func TestConcurrentPlaintextWriteKeepsPendingAndSelfHeals(t *testing.T) {
+	ctx := context.Background()
+	path, base, _ := openFileVaultStore(t)
+	database := &hookScrubStore{Store: base}
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	database.beforeScrub = func() {
+		plaintext := `{"version":1,"profiles":[{"id":"rogue","name":"rogue","baseUrl":"https://rogue.test/v1","apiKey":"rogue-plaintext-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"rogue"}`
+		if err := base.SettingSet(ctx, profiles.SettingKey, plaintext); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, true)
+	stored := storedSetting(t, base, profiles.SettingKey)
+	if !strings.Contains(stored, "rogue-plaintext-token-xyz") {
+		t.Fatalf("concurrently written plaintext row must be visible: %s", stored)
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, false)
+	stored = storedSetting(t, base, profiles.SettingKey)
+	if strings.Contains(stored, "rogue-plaintext-token-xyz") || !strings.Contains(stored, store.SecretEnvelopePrefix) {
+		t.Fatalf("retry did not migrate the concurrent plaintext: %s", stored)
+	}
+	requireClientKey(t, manager, "rogue-plaintext-token-xyz")
+	scanFileBytes(t, path, "rogue-plaintext-token-xyz")
+	scanFileBytes(t, path+"-wal", "rogue-plaintext-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "rogue-plaintext-token-xyz")
+}

@@ -148,3 +148,34 @@ func TestSettingSetManyDeleteAtomicApply(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSettingTxCommitAndRollback(t *testing.T) {
+	ctx := context.Background()
+	database := testStore(t)
+	if err := database.SettingSet(ctx, "tx.key", "before"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingTx(ctx, func(tx SettingTx) error {
+		if err := tx.SettingDelete(ctx, "tx.key"); err != nil {
+			t.Fatal(err)
+		}
+		if _, found, err := tx.SettingGet(ctx, "tx.key"); err != nil || found {
+			t.Fatalf("tx must see its own delete: found=%v err=%v", found, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.SettingGet(ctx, "tx.key"); err != nil || found {
+		t.Fatalf("commit did not apply: found=%v err=%v", found, err)
+	}
+	injected := errors.New("injected tx failure")
+	if err := database.SettingTx(ctx, func(tx SettingTx) error {
+		if err := tx.SettingDelete(ctx, "tx.key"); err != nil {
+			t.Fatal(err)
+		}
+		return injected
+	}); !errors.Is(err, injected) {
+		t.Fatalf("expected injected error, got %v", err)
+	}
+}

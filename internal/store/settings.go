@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -92,6 +93,53 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 func (s *Store) SettingDelete(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key)
 	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+type SettingTx interface {
+	SettingGet(ctx context.Context, key string) (string, bool, error)
+	SettingDelete(ctx context.Context, key string) error
+}
+
+func (s *Store) SettingTx(ctx context.Context, fn func(SettingTx) error) (returnErr error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() {
+		if returnErr != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := fn(&txSetting{tx}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+type txSetting struct {
+	tx *sql.Tx
+}
+
+func (t *txSetting) SettingGet(ctx context.Context, key string) (string, bool, error) {
+	var value string
+	err := t.tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", key).Scan(&value)
+	if isNoRows(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, dbError(err)
+	}
+	return value, true, nil
+}
+
+func (t *txSetting) SettingDelete(ctx context.Context, key string) error {
+	if _, err := t.tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", key); err != nil {
 		return dbError(err)
 	}
 	return nil
