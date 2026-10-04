@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Official same-form Rust release references for informational size comparison only (user decision 2026-10-03: historical Rust sizes are reference, never a release gate). Every entry was verified by downloading the public GitHub release asset and matching the GitHub API SHA-256 digest (M26 survey; independently re-downloaded and re-hashed for this file). Entries here take priority over the same-host pinned baseline.json and the documented historical anchors.",
+  "purpose": "Official same-form Rust release references for informational size comparison only (user decision 2026-10-03: historical Rust sizes are reference, never a release gate). Every entry was verified by downloading the public GitHub release asset and matching the GitHub API SHA-256 digest (M26 survey; independently re-downloaded and re-hashed for this file). Entries here are the only Rust size references; artifact IDs without an entry are reported as unavailable (see genuinely_unavailable), never fabricated.",
   "release": {
     "tag": "v0.2.1",
     "commit": "59889b28ab905809d148a642cadcaf46e12e7b08",
@@ -18,7 +18,7 @@
       "file": "NexTerm_0.2.1_aarch64.dmg",
       "size_bytes": 14973100,
       "sha256": "7c1f1ffee95930a33a924f05ebaeb36640decc3b63003728c1764bc9dea579df",
-      "form": "DMG for the Rust macOS desktop arm64; the same-host baseline.json DMG (14987015 B) is a different build of the same name and both are citable, the release asset is publicly verifiable"
+      "form": "DMG for the Rust macOS desktop arm64; the release asset is publicly verifiable by SHA-256"
     },
     "server-archive-full-linux-amd64": {
       "file": "NexTerm-0.2.1-linux-amd64.tar.gz",
@@ -32,7 +32,7 @@
       "inner_path": "NexTerm-0.2.1-linux-amd64/nexterm-server",
       "size_bytes": 17360408,
       "sha256": "070d3b8289fdd186a96016444ab3fe9c4e35b126bcfd2242f9bfd166c7d67f12",
-      "form": "stripped ELF x86-64 (dynamic libc/libm/libgcc_s) inside the official full server archive; supersedes the smaller pre-release dev cross-build anchor in historical-metrics.json"
+      "form": "stripped ELF x86-64 (dynamic libc/libm/libgcc_s) inside the official full server archive"
     },
     "desktop-darwin-arm64": {
       "file": "NexTerm_aarch64.app.tar.gz",
