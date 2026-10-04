@@ -37,7 +37,7 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
 
   return (
     <div className="nx-pane">
-      <div className="nx-toolbar">
+      <div className="nx-toolbar flex-wrap">
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={onClose}>
           <IconArrowLeft size={13} />
           返回
@@ -116,7 +116,7 @@ function InsightError({
 
 function RedactHint() {
   return (
-    <span className="nx-hint inline-flex items-center gap-1">
+    <span className="nx-hint inline-flex min-w-0 items-center gap-1">
       <IconShield size={11} />
       敏感值已遮蔽 · 展示级脱敏，所有权与强制遮蔽以内核为准
     </span>
@@ -138,7 +138,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <RedactHint />
         <div className="nx-spacer" />
         {q.isFetching && <span className="nx-hint">刷新中…</span>}
@@ -306,7 +306,7 @@ function StatsView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <span className="nx-hint">
           3s 轮询 · 切走即停 · 共 {rows.length} 个运行中容器
         </span>
@@ -325,16 +325,18 @@ function StatsView({
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
-          <table className="nx-table nx-table-fixed">
+          <table className="nx-table nx-table-fixed min-w-[620px]">
             <thead>
               <tr>
-                <th style={{ width: 220 }}>容器</th>
-                <th style={{ width: 96 }}>CPU %</th>
-                <th style={{ width: 150 }}>内存用量</th>
-                <th style={{ width: 96 }}>内存 %</th>
-                <th style={{ width: 170 }}>网络 IO</th>
-                <th style={{ width: 170 }}>块 IO</th>
-                <th style={{ width: 70 }}>PIDs</th>
+                <th style={{ width: 160 }} className="left-0 z-[2] shadow-[inset_-1px_0_0_var(--nx-border)]">
+                  容器
+                </th>
+                <th>CPU %</th>
+                <th>内存用量</th>
+                <th>内存 %</th>
+                <th>网络 IO</th>
+                <th>块 IO</th>
+                <th>PIDs</th>
               </tr>
             </thead>
             <tbody>
@@ -342,7 +344,10 @@ function StatsView({
                 const isCurrent = r.id === containerId;
                 return (
                   <tr key={r.id} className={isCurrent ? "font-medium text-neutral-100" : undefined}>
-                    <td className="truncate" title={r.name}>
+                    <td
+                      className="truncate sticky left-0 bg-[var(--nx-bg-pane)] shadow-[inset_-1px_0_0_var(--nx-border)]"
+                      title={r.name}
+                    >
                       {isCurrent && <IconBox size={12} className="mr-1.5 inline align-[-2px] text-green-400" />}
                       {r.name || r.id}
                       {isCurrent && <span className="nx-badge nx-badge-green ml-1.5">当前</span>}

@@ -4,6 +4,7 @@ import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { sql as sqlLang } from "@codemirror/lang-sql";
 import { promptText } from "../../ui/dialogs";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { nxHighlight } from "../../ui/editorTheme";
 import { DEMO } from "../../demo";
 import { dbApi, type QueryResult } from "../../ipc/commands";
@@ -180,14 +181,14 @@ function MysqlView({ connId }: { connId: string }) {
           ))}
         </select>
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
-        <span className="nx-hint">张表</span>
+        <span className="nx-hint hidden min-[560px]:inline">张表</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（M3 规划中）" disabled>
           <IconHistory size={13} />
           历史
         </button>
         <button
-          className="nx-btn nx-btn-primary nx-btn-sm"
+          className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
           onClick={() => void run()}
           title="执行整段 SQL，或只执行选中部分"
@@ -200,8 +201,9 @@ function MysqlView({ connId }: { connId: string }) {
 
       <div
         ref={hostRef}
-        className="h-[188px] shrink-0 overflow-auto border-b border-neutral-800/60 bg-term"
+        className="h-[188px] max-h-[45%] shrink overflow-auto border-b border-neutral-800/60 bg-term"
         onKeyDown={(e) => {
+          if (isImeKeyEvent(e)) return;
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             void run();
@@ -209,7 +211,7 @@ function MysqlView({ connId }: { connId: string }) {
         }}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-[48px] flex-1 overflow-auto">
         {result ? <ResultTable result={result} /> : <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行</div>}
       </div>
 
@@ -420,19 +422,22 @@ function RedisView({ connId }: { connId: string }) {
   };
 
   return (
-    <div className="nx-pane flex-row">
-      <div className="flex w-[272px] shrink-0 flex-col border-r border-neutral-800/60">
+    <div className="nx-pane flex-col min-[560px]:flex-row">
+      <div className="flex w-full min-h-0 max-h-[45%] flex-col border-b border-neutral-800/60 min-[560px]:w-[272px] min-[560px]:max-h-none min-[560px]:shrink-0 min-[560px]:border-b-0 min-[560px]:border-r">
         <div className="flex h-[38px] shrink-0 items-center gap-1.5 px-2.5">
           <IconSearch size={13} className="shrink-0 text-neutral-500" />
           <input
             className="nx-input nx-input-sm font-mono"
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void doScan(0)}
+            onKeyDown={(e) => {
+              if (isImeKeyEvent(e)) return;
+              if (e.key === "Enter") void doScan(0);
+            }}
             placeholder="匹配模式，如 products:*"
             aria-label="键匹配模式"
           />
-          <button className="nx-btn nx-btn-sm" title="按 SCAN 分页拉取" onClick={() => void doScan(0)}>
+          <button className="nx-btn nx-btn-sm px-3" title="按 SCAN 分页拉取" onClick={() => void doScan(0)}>
             SCAN
           </button>
         </div>
@@ -458,7 +463,7 @@ function RedisView({ connId }: { connId: string }) {
             keys.map((k) => (
               <div
                 key={k}
-                className={`nx-row font-mono text-[11.5px] ${selected === k ? "is-selected" : ""}`}
+                className={`nx-row min-h-[32px] font-mono text-[11.5px] ${selected === k ? "is-selected" : ""}`}
                 onClick={() => void inspect(k)}
               >
                 <span className="min-w-0 flex-1 truncate">{k}</span>
@@ -495,7 +500,7 @@ function RedisView({ connId }: { connId: string }) {
           <>
             <div className="nx-toolbar">
               <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
-              <span className="nx-toolbar-title truncate font-mono">{String(view.key)}</span>
+              <span className="nx-toolbar-title min-w-0 flex-1 truncate font-mono">{String(view.key)}</span>
               <span className="nx-hint">
                 TTL {String(view.ttl) === "-1" ? "持久化" : `${String(view.ttl)}s`}
               </span>
@@ -548,7 +553,10 @@ function RedisView({ connId }: { connId: string }) {
               className="nx-input nx-input-sm font-mono"
               value={cmdText}
               onChange={(e) => setCmdText(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void runCmd()}
+              onKeyDown={(e) => {
+                if (isImeKeyEvent(e)) return;
+                if (e.key === "Enter") void runCmd();
+              }}
             />
             <button className="nx-btn nx-btn-sm" onClick={() => void runCmd()}>
               执行

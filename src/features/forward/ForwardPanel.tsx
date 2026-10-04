@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { forwardApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
@@ -178,7 +179,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
               <th style={{ width: 130 }}>监听地址</th>
               <th>目标</th>
               <th style={{ width: 150 }}>所属会话</th>
-              <th style={{ width: 96 }} />
+              <th style={{ width: 96 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
             </tr>
           </thead>
           <tbody>
@@ -245,9 +246,9 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                   <td className="truncate text-neutral-400" title={f.sessionId}>
                     {sessionName(f.sessionId)}
                   </td>
-                  <td className="nx-right">
+                  <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
                     <button
-                      className="nx-btn nx-btn-danger nx-btn-xs"
+                      className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-6"
                       onClick={() => void remove(f.id, label)}
                     >
                       <IconTrash size={11} />
@@ -263,7 +264,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       </div>
 
 
-      <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
+      <div className="max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         {unavailable ? (
           <div className="nx-alert nx-alert-info flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
@@ -330,7 +331,10 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                     aria-label="目标端口"
                     autoComplete="off"
                     inputMode="numeric"
-                    onKeyDown={(e) => e.key === "Enter" && void create()}
+                    onKeyDown={(e) => {
+                      if (isImeKeyEvent(e)) return;
+                      if (e.key === "Enter") void create();
+                    }}
                   />
                 </>
               )}

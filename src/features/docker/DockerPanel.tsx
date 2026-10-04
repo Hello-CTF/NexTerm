@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
@@ -349,7 +350,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             <span className="nx-count">{images.data ? iRows.length : "—"}</span>
           </button>
         </div>
-        <span className="nx-hint">
+        <span className="nx-hint hidden min-[560px]:inline">
           {containers.data ? `${running} 运行中 / 共 ${cRows.length}` : "容器状态加载中"}
         </span>
         <div className="nx-spacer" />
@@ -383,7 +384,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
           <IconRefresh size={13} />
           刷新
         </button>
-        <span className="nx-hint">5s 自动刷新</span>
+        <span className="nx-hint hidden min-[560px]:inline">5s 自动刷新</span>
       </div>
 
       {tab === "containers" && <OverviewStrip sessionId={sessionId} visible={visible} />}
@@ -395,7 +396,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               <tr>
                 <th style={{ width: 36 }}>
                   <input
-                    className="nx-check"
+                    className="nx-check pointer-coarse:size-6 pointer-coarse:-m-[5px]"
                     type="checkbox"
                     aria-label="全选容器"
                     checked={allPicked}
@@ -411,7 +412,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 <th style={{ width: 198 }}>状态</th>
                 <th>镜像</th>
                 <th style={{ width: 148 }}>端口</th>
-                <th style={{ width: 130 }} />
+                <th style={{ width: 168 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
               </tr>
             </thead>
             <tbody>
@@ -428,7 +429,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 <tr key={c.id} className={pending.has(c.id) ? "opacity-50" : undefined}>
                   <td>
                     <input
-                      className="nx-check"
+                      className="nx-check pointer-coarse:size-6 pointer-coarse:-m-[5px]"
                       type="checkbox"
                       aria-label={`选择 ${c.name}`}
                       checked={picked.has(c.id)}
@@ -468,19 +469,19 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   <td className="nx-mono truncate text-[10.5px]" title={c.ports || "—"}>
                     {c.ports || "—"}
                   </td>
-                  <td className="nx-right">
-                    <span className="inline-flex items-center gap-0.5">
-                      <button className="nx-icon-btn nx-icon-btn-sm" title="详情 / 统计 / 文件" onClick={() => setInsight(c)}>
+                  <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
+                    <span className="inline-flex flex-wrap items-center justify-end gap-0.5">
+                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="详情 / 统计 / 文件" onClick={() => setInsight(c)}>
                         <IconMonitor size={13} />
                       </button>
-                      <button className="nx-icon-btn nx-icon-btn-sm" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
+                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="查看日志" onClick={() => void openLogs(c.id, c.name)}>
                         <IconList size={13} />
                       </button>
-                      <button className="nx-icon-btn nx-icon-btn-sm" title="进入容器终端" onClick={() => openExec(c)}>
+                      <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7" title="进入容器终端" onClick={() => openExec(c)}>
                         <IconTerminal size={13} />
                       </button>
                       <button
-                        className="nx-icon-btn nx-icon-btn-sm"
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
                         title="重启"
                         onClick={() => void act(c, "restart")}
                       >
@@ -488,7 +489,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                       </button>
                       {c.state === "running" ? (
                         <button
-                          className="nx-icon-btn nx-icon-btn-sm"
+                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
                           title="停止"
                           onClick={() => void act(c, "stop")}
                         >
@@ -496,7 +497,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         </button>
                       ) : (
                         <button
-                          className="nx-icon-btn nx-icon-btn-sm"
+                          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7"
                           title="启动"
                           onClick={() => void act(c, "start")}
                         >
@@ -504,7 +505,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         </button>
                       )}
                       <button
-                        className="nx-icon-btn nx-icon-btn-sm is-danger"
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7 is-danger"
                         title="删除"
                         disabled={pending.has(c.id)}
                         onClick={() => void act(c, "remove")}
@@ -524,7 +525,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               <tr>
                 <th style={{ width: 36 }}>
                   <input
-                    className="nx-check"
+                    className="nx-check pointer-coarse:size-6 pointer-coarse:-m-[5px]"
                     type="checkbox"
                     aria-label="全选镜像"
                     checked={allPicked}
@@ -539,7 +540,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 <th>仓库 / 标签</th>
                 <th style={{ width: 110 }}>大小</th>
                 <th style={{ width: 160 }}>创建时间</th>
-                <th style={{ width: 80 }} />
+                <th style={{ width: 80 }} className="right-0 shadow-[inset_1px_0_0_var(--nx-border)]" />
               </tr>
             </thead>
             <tbody>
@@ -558,7 +559,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   <tr key={key} className={pending.has(key) ? "opacity-50" : undefined}>
                     <td>
                       <input
-                        className="nx-check"
+                        className="nx-check pointer-coarse:size-6 pointer-coarse:-m-[5px]"
                         type="checkbox"
                         aria-label={`选择 ${i.repository}:${i.tag}`}
                         checked={picked.has(key)}
@@ -572,9 +573,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     </td>
                     <td>{i.size}</td>
                     <td className="text-neutral-500">{i.createdSince}</td>
-                    <td className="nx-right">
+                    <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
                       <button
-                        className="nx-icon-btn nx-icon-btn-sm is-danger"
+                        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-7 pointer-coarse:w-7 is-danger"
                         title="删除镜像"
                         disabled={pending.has(key)}
                         onClick={() => void removeImage(i)}
@@ -676,7 +677,10 @@ function PullBar({ sessionId }: { sessionId: string }) {
           aria-label="拉取镜像名称"
           value={image}
           onChange={(e) => setImage(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void pull()}
+          onKeyDown={(e) => {
+            if (isImeKeyEvent(e)) return;
+            if (e.key === "Enter") void pull();
+          }}
         />
       </div>
       <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={!image.trim() || pulling} onClick={() => void pull()}>
