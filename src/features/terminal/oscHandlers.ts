@@ -28,6 +28,13 @@ export function createOsc52Handler(deps: Osc52HandlerDeps): (payload: string) =>
   const errorThrottleMs = deps.errorThrottleMs ?? 4000;
   let lastDenied = Number.NEGATIVE_INFINITY;
   let lastError = Number.NEGATIVE_INFINITY;
+  const reportError = (e: unknown) => {
+    const t = now();
+    if (t - lastError >= errorThrottleMs) {
+      lastError = t;
+      deps.onError(e);
+    }
+  };
   return (payload: string) => {
     const text = decodeOsc52Payload(payload);
     if (text === null) return;
@@ -39,13 +46,11 @@ export function createOsc52Handler(deps: Osc52HandlerDeps): (payload: string) =>
       }
       return;
     }
-    deps.writeText(text).catch((e: unknown) => {
-      const t = now();
-      if (t - lastError >= errorThrottleMs) {
-        lastError = t;
-        deps.onError(e);
-      }
-    });
+    try {
+      deps.writeText(text).catch(reportError);
+    } catch (e) {
+      reportError(e);
+    }
   };
 }
 

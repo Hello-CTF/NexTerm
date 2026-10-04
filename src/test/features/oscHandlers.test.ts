@@ -4,6 +4,7 @@ import {
   createOsc52Handler,
   decodeOsc52Payload,
 } from "../../features/terminal/oscHandlers";
+import { createOscStreamFilter } from "../../features/terminal/oscStream";
 
 function b64(text: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
@@ -118,6 +119,61 @@ describe("createOsc52Handler", () => {
     expect(d.writeText).not.toHaveBeenCalled();
     expect(d.onDenied).not.toHaveBeenCalled();
     expect(d.onError).not.toHaveBeenCalled();
+  });
+
+  it("routes a synchronous writeText throw into onError instead of propagating", () => {
+    const onDenied = vi.fn();
+    const onError = vi.fn();
+    const syncBoom = () => {
+      throw new TypeError("Cannot read properties of undefined (reading 'writeText')");
+    };
+    const handler = createOsc52Handler({
+      enabled: () => true,
+      writeText: syncBoom,
+      onDenied,
+      onError,
+    });
+    expect(() => handler("c;aGVsbG8=")).not.toThrow();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(TypeError);
+    expect(onDenied).not.toHaveBeenCalled();
+  });
+
+  it("throttles synchronous writeText throws like rejections", () => {
+    let clock = 0;
+    const onError = vi.fn();
+    const handler = createOsc52Handler({
+      enabled: () => true,
+      writeText: () => {
+        throw new Error("clipboard unavailable");
+      },
+      onDenied: vi.fn(),
+      onError,
+      now: () => clock,
+    });
+    handler("c;YQ==");
+    handler("c;Yg==");
+    expect(onError).toHaveBeenCalledTimes(1);
+    clock = 4000;
+    handler("c;Yw==");
+    expect(onError).toHaveBeenCalledTimes(2);
+  });
+
+  it("a missing navigator.clipboard never aborts the terminal chunk", () => {
+    const onError = vi.fn();
+    const handler = createOsc52Handler({
+      enabled: () => true,
+      writeText: (text) => navigator.clipboard.writeText(text),
+      onDenied: vi.fn(),
+      onError,
+    });
+    const filter = createOscStreamFilter((e) => {
+      if (e.kind === "clipboard") handler(e.payload);
+    });
+    const out = filter.push(new TextEncoder().encode("A\x1b]52;c;aGVsbG8=\x07B"));
+    expect(new TextDecoder().decode(out)).toBe("AB");
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(TypeError);
   });
 });
 

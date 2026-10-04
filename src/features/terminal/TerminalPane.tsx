@@ -119,7 +119,7 @@ export function TerminalPane({
   const osc52Handler = useRef(
     createOsc52Handler({
       enabled: () => useUi.getState().terminalOsc52,
-      writeText: (text) => navigator.clipboard.writeText(text),
+      writeText: async (text) => navigator.clipboard.writeText(text),
       onDenied: () =>
         pushToast(
           "info",
