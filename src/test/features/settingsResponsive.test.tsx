@@ -110,6 +110,14 @@ describe("SettingsView 响应式结构", () => {
     expect(button?.className).toContain("shrink");
   });
 
+  it("AI 模型卡密钥存储文案与加密落地一致", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("密钥加密后存在本机 sqlite，不会上传");
+    expect(text).not.toContain("明文存在本机 sqlite");
+  });
+
   it("连通性成功用成功色、失败用危险色", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
