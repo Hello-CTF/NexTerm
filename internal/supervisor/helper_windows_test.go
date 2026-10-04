@@ -521,6 +521,28 @@ func privateDACLTrustees(t *testing.T, path string) []aceInfo {
 	return aces
 }
 
+func currentPrincipalSIDs(t *testing.T) map[string]bool {
+	t.Helper()
+	token, err := windows.OpenCurrentProcessToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = token.Close() }()
+	user, err := token.GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sids := map[string]bool{user.User.Sid.String(): true}
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range groups.AllGroups() {
+		sids[group.Sid.String()] = true
+	}
+	return sids
+}
+
 func requirePrivateDACL(t *testing.T, path string) {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
@@ -538,21 +560,26 @@ func requirePrivateDACL(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := currentUserSIDString()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if owner.String() != sid {
-		t.Fatalf("directory owner = %s, want the current user %s", owner.String(), sid)
+	if !currentPrincipalSIDs(t)[owner.String()] {
+		t.Fatalf("directory owner = %s, want the current user or one of its groups", owner.String())
 	}
 	for _, ace := range privateDACLTrustees(t, path) {
-		if ace.trustee != "S-1-5-18" && ace.trustee != sid {
+		if ace.trustee != "S-1-5-18" && ace.trustee != currentUserSIDForTest(t) {
 			t.Fatalf("directory DACL grants access to foreign trustee %s", ace.trustee)
 		}
 		if ace.mask&windows.GENERIC_ALL == 0 {
 			t.Fatalf("directory DACL trustee %s lacks generic-all rights", ace.trustee)
 		}
 	}
+}
+
+func currentUserSIDForTest(t *testing.T) string {
+	t.Helper()
+	sid, err := currentUserSIDString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sid
 }
 
 func requireInheritedPrivateDACL(t *testing.T, path string) {
