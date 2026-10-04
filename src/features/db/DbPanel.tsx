@@ -94,7 +94,7 @@ function MysqlView({ connId }: { connId: string }) {
           basicSetup,
           sqlLang(),
           nxHighlight,
-          placeholder("在这里写 SQL，然后点右上角「执行」"),
+          placeholder("在这里写 SQL，然后点右上角「运行」"),
         ],
       }),
       parent: hostRef.current,
@@ -183,7 +183,7 @@ function MysqlView({ connId }: { connId: string }) {
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">张表</span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（M3 规划中）" disabled>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（规划中）" disabled>
           <IconHistory size={13} />
           历史
         </button>
@@ -191,10 +191,10 @@ function MysqlView({ connId }: { connId: string }) {
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
           onClick={() => void run()}
-          title="执行整段 SQL，或只执行选中部分"
+          title="运行整段 SQL，或只运行选中部分"
         >
           {running ? <IconRefresh size={13} className="animate-spin" /> : <IconPlay size={12} />}
-          {running ? "执行中…" : "运行"}
+          {running ? "运行中…" : "运行"}
           <span className="nx-kbd border-white/30 text-white/75">Ctrl ↵</span>
         </button>
       </div>
@@ -298,7 +298,7 @@ function ResultTable({ result }: { result: QueryResult }) {
   if (!result.columns.length) {
     return (
       <div className="p-3 text-xs text-neutral-400">
-        <span className="nx-badge nx-badge-green mr-2">执行成功</span>
+        <span className="nx-badge nx-badge-green mr-2">运行成功</span>
         {result.rowsAffected} 行受影响 · 耗时 {result.durationMs}ms
       </div>
     );
@@ -546,7 +546,7 @@ function RedisView({ connId }: { connId: string }) {
 
         <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
           <div className="mb-1.5 text-[11px] text-neutral-500">
-            命令台 · 写命令会弹确认（§6.5 安全护栏）
+            命令台 · 命令会直接执行，没有确认步骤
           </div>
           <div className="flex items-center gap-1.5">
             <input

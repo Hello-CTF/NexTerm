@@ -45,7 +45,7 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
         <span className="nx-toolbar-title">{container.name}</span>
         <span className={`nx-badge ${container.state === "running" ? "nx-badge-green" : "nx-badge-red"}`}>
           <span className="nx-dot" />
-          {container.state}
+          {container.state === "running" ? "运行中" : container.state === "exited" ? "已停止" : container.state}
         </span>
         <div className="nx-spacer" />
         <div className="nx-segment">
@@ -118,7 +118,7 @@ function RedactHint() {
   return (
     <span className="nx-hint inline-flex min-w-0 items-center gap-1">
       <IconShield size={11} />
-      敏感值已遮蔽 · 展示级脱敏，所有权与强制遮蔽以内核为准
+      敏感值已遮蔽 · 此处为展示级脱敏，强制遮蔽策略以内核为准
     </span>
   );
 }
@@ -321,7 +321,7 @@ function StatsView({
 
       {rows.length === 0 ? (
         <div className="nx-empty">
-          {containerRunning ? "暂时没有统计行返回" : "当前容器已停止，只有运行中的容器才有统计"}
+          {containerRunning ? "还没有统计输出（每 3 秒刷新）" : "当前容器已停止，只有运行中的容器才有统计"}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">

@@ -4,6 +4,7 @@ import { syncApi } from "../../ipc/commands";
 import type { DigestEntry, ImportReport, SyncDigest, SyncLink } from "../../ipc/types";
 import { useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
+import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
@@ -498,14 +499,21 @@ function ServerTokenBody({
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
           onClick={() => {
-            void syncApi
-              .rotateToken()
-              .then((t) => {
+            void (async () => {
+              const ok = await ask(
+                "重置同步令牌？\n\n旧令牌会立即失效，已保存旧令牌的桌面端需要改填新令牌。",
+                { title: "重置同步令牌", kind: "warning" },
+              );
+              if (!ok) return;
+              try {
+                const t = await syncApi.rotateToken();
                 onRotate(t);
                 setRevealed(true);
                 pushToast("success", "已换新令牌，旧的立刻失效");
-              })
-              .catch((e) => pushToast("error", describeError(e)));
+              } catch (e) {
+                pushToast("error", describeError(e));
+              }
+            })();
           }}
         >
           重置令牌
@@ -610,7 +618,7 @@ function CompareTable(props: {
                 </span>
                 {r.local?.hasCred || r.remote?.hasCred ? (
                   <span className="nx-hint shrink-0" title="带凭据（密码/私钥）">
-                    带密码
+                    带凭据
                   </span>
                 ) : null}
                 <span className={`nx-badge shrink-0 ${st.tone}`} title={st.hint}>
@@ -662,7 +670,7 @@ function CompareTable(props: {
 
       <p className="nx-hint mt-2 text-[11px]">
         方向由按钮决定，勾选框只表示「参与这次同步」。两边都改过的条目默认不会被覆盖 ——
-        要覆盖较新的一份，勾上「强制覆盖」。
+        要覆盖较新的一份，勾上「强制覆盖较新的一份」。
       </p>
     </div>
   );
@@ -679,7 +687,7 @@ function ReportBody({ dir, data }: { dir: "push" | "pull"; data: ImportReport })
       <div className="font-mono text-[11px]">
         资产 新建 {data.assetsCreated} / 更新 {data.assetsUpdated}； 凭据 新建 {data.credsCreated} / 更新{" "}
         {data.credsUpdated}； 分组 新建 {data.groupsCreated} / 更新 {data.groupsUpdated}；
-        跳过（对面更新） {data.skippedNewer}； 被拒 {data.refused}
+        跳过（对端较新） {data.skippedNewer}； 被拒 {data.refused}
       </div>
       {data.warnings.length > 0 && (
         <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">

@@ -107,7 +107,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           "success",
           exposed
             ? `转发已就绪 → ${listenHost}:${port}（对外可访问）`
-            : `本地转发已就绪 → ${listenHost}:${port}`,
+            : `转发已就绪 → ${listenHost}:${port}（仅本机可访问）`,
         );
       }
       refresh();
@@ -219,12 +219,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                       {isSocks ? (
                         <>
                           <IconGlobe size={11} />
-                          SOCKS5 动态
+                          SOCKS5 动态转发
                         </>
                       ) : (
                         <>
                           <IconPlug size={11} />
-                          {exposed ? "静态转发" : "本地静态"}
+                          静态转发
                         </>
                       )}
                     </span>

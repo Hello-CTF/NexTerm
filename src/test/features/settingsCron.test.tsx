@@ -422,4 +422,18 @@ describe("CronCard", () => {
     await flush();
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
+
+  it("任务卡片文案：全角冒号、待执行时间点、持久化说明", async () => {
+    const noNext = job({ id: "j-3", sessionId: "c-1", nextRunAt: "" });
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [noNext] : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("上次错误：permission denied by unattended guard");
+    expect(text).toContain("没有待执行的时间点");
+    expect(text).toContain("任务持久保存在本机，重启后继续生效。");
+    expect(text).not.toContain("对账");
+  });
 });

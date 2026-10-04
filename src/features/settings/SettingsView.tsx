@@ -139,8 +139,8 @@ export function SettingsView() {
     ? testResult.fatal
       ? `调用失败：${testResult.fatal}`
       : [
-          `模型列表：${testResult.modelsOk ? "可用" : `失败 — ${testResult.modelsError ?? "未知错误"}`}`,
-          `实际对话：${testResult.chatOk ? "可用" : `失败 — ${testResult.chatError ?? "未知错误"}`}`,
+          `模型列表：${testResult.modelsOk ? "可用" : `失败 — ${testResult.modelsError ?? "原因未查明"}`}`,
+          `实际对话：${testResult.chatOk ? "可用" : `失败 — ${testResult.chatError ?? "原因未查明"}`}`,
         ].join("\n")
     : "";
 
@@ -164,7 +164,7 @@ export function SettingsView() {
             <div>
               <b>当前是演示模式。</b>
               资产、容器、数据库、终端、AI 回复全部来自前端内置的假数据，不会连接任何真实服务器，
-              输入的内容也不会外发。想接真实后端请在 Tauri 里启动（URL 加 <span className="nx-code">?demo=0</span> 可关闭）。
+              输入的内容也不会外发。想接真实后端请启动桌面端或 nexterm-server（URL 加 <span className="nx-code">?demo=0</span> 可关闭）。
             </div>
           </section>
         )}
@@ -175,7 +175,7 @@ export function SettingsView() {
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
             <span className="nx-card-title">AI 模型</span>
-            <span className="nx-badge">OpenAI 兼容协议 · BYOK</span>
+            <span className="nx-badge">OpenAI 兼容协议 · 自带密钥</span>
           </div>
           <p className="nx-hint mb-3.5">
             可存多份模型档案（不同厂商 / 不同 Key），选中一份「设为当前」供 AI 使用。
@@ -196,10 +196,10 @@ export function SettingsView() {
                 ) : (
                   <IconZap size={13} className="shrink-0" />
                 )}
-                {testing ? "测试中…" : "连通性测试（两步）· 当前激活的模型"}
+                {testing ? "测试中…" : "连通性测试（两步）· 当前模型"}
               </button>
               <span className="nx-hint">
-                只能测当前激活的模型：后端测的是运行时生效的那份 provider，不能临时塞一份没保存的草稿；
+                只能测当前模型：后端测的是运行时生效的那份 provider，不能临时塞一份没保存的草稿；
                 要验证草稿的连接参数，请用上方的「刷新模型列表」。
               </span>
             </div>

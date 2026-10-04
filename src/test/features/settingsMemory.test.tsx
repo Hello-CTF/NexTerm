@@ -411,4 +411,13 @@ describe("MemoryCard", () => {
     await flush();
     expect(mounted.container.textContent).toContain("m-1");
   });
+
+  it("卡片说明只陈述 scope 隔离，注入细节由开关区说明", async () => {
+    mounted = mount(createElement(MemoryCard));
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("记忆按 owner scope 隔离。");
+    expect(text).not.toContain("开启了的运行");
+    expect(text).toContain("开启后每次 AI 运行会把选中的记忆作为一条临时系统消息注入模型输入");
+  });
 });

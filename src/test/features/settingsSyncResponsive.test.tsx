@@ -120,7 +120,7 @@ describe("SyncCard 客户端变体窄屏结构", () => {
     expect(hostSpan?.getAttribute("title")).toBe(LONG_HOST);
     const row = hostSpan!.closest("label")!;
     expect(row.className).toContain("flex-wrap");
-    expect(row.textContent).toContain("带密码");
+    expect(row.textContent).toContain("带凭据");
     const badge = row.querySelector(".nx-badge");
     expect(badge?.className).toContain("shrink-0");
     expect(badge?.textContent).toBe("仅本机");

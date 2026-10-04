@@ -227,7 +227,7 @@ export function CronCard() {
       </div>
       <p className="nx-hint mb-3.5">
         到点以某个 AI 会话为上下文发起无人值守执行。需要人工确认或被禁止的操作会被明确拒绝，
-        原因记在该任务的「上次错误」里；任务持久保存在本机，重启后照常对账。
+        原因记在该任务的「上次错误」里；任务持久保存在本机，重启后继续生效。
       </p>
 
       {registerOpen && draft ? (
@@ -416,7 +416,7 @@ export function CronCard() {
                     · 超时 {Math.round(cronTimeoutMs(job) / 1000)}s
                   </div>
                   <div className="nx-hint text-[11px]">
-                    {nextRun ? `下次执行 ${nextRun}` : "没有待执行的点"}
+                    {nextRun ? `下次执行 ${nextRun}` : "没有待执行的时间点"}
                     {lastRun ? ` · 上次执行 ${lastRun}` : ""}
                   </div>
                   {job.lastError && (
@@ -424,7 +424,7 @@ export function CronCard() {
                       className="mt-0.5 break-words font-mono text-[11px] text-red-300"
                       title={job.lastError}
                     >
-                      上次错误:{job.lastError}
+                      上次错误：{job.lastError}
                     </div>
                   )}
                 </div>
