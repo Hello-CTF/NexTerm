@@ -400,6 +400,7 @@ export const useUi = create<UiState>((set, get) => ({
     const tabs = target.panes.flatMap((p) => p.tabs);
     if (!(await confirmDirtyEditors(tabs, `关闭「${target.title}」`))) return;
     if (!(await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`, target.assetKind))) return;
+    if (!(await disconnectDbTabs(tabs))) return;
     const next = workspaces.filter((w) => w.id !== id);
     set({
       workspaces: next,
@@ -460,6 +461,7 @@ export const useUi = create<UiState>((set, get) => ({
     if (keep.length === 0) return;
     if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
     if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏", w.assetKind))) return;
+    if (!(await disconnectDbTabs(target.tabs))) return;
     set((s2) => ({
       workspaces: s2.workspaces.map((x) =>
         x.id === id ? { ...x, panes: keep, activePaneId: keep[0].id } : x,
@@ -587,6 +589,13 @@ export const useUi = create<UiState>((set, get) => ({
         await terminalApi.closeTab(target.tabId, mode);
       } catch (e) {
         get().pushToast("error", `终端操作失败：${describeError(e)}`);
+        return false;
+      }
+    } else if (target.kind === "db" && target.connId) {
+      try {
+        await dbApi.disconnect(target.connId);
+      } catch (e) {
+        get().pushToast("error", `数据库断开失败：${describeError(e)}`);
         return false;
       }
     }
@@ -886,6 +895,23 @@ async function reclaimTerminals(
     pushToast("info", `${blockedOk} 个不支持后台的终端已结束`);
   }
   return true;
+}
+
+async function disconnectDbTabs(tabs: AppTab[]): Promise<boolean> {
+  const connIds = [
+    ...new Set(
+      tabs.filter((t) => t.kind === "db" && t.connId).map((t) => t.connId as string),
+    ),
+  ];
+  if (connIds.length === 0) return true;
+  const results = await Promise.allSettled(connIds.map((connId) => dbApi.disconnect(connId)));
+  const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed.length === 0) return true;
+  useUi.getState().pushToast(
+    "error",
+    `${failed.length}/${connIds.length} 个数据库断开失败：${describeError(failed[0].reason)}`,
+  );
+  return false;
 }
 
 export function closeActionHint(t: AppTab): string | undefined {

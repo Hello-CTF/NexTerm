@@ -3,6 +3,7 @@ const ERROR_CODE_LABELS: Record<string, string> = {
   bad_param: "参数错误",
   io: "IO 错误",
   db: "数据库错误",
+  db_migrate: "数据库迁移错误",
   crypto: "加密错误",
   decrypt: "凭据解密失败",
   bad_master_password: "主密码错误",

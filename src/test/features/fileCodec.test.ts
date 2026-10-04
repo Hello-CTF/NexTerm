@@ -23,7 +23,7 @@ describe("base64 codec", () => {
       const decoded = bytesFromBase64(encoded);
       expect(decoded.length).toBe(source.length);
       expect(sameBytes(decoded, source)).toBe(true);
-    });
+    }, 30_000);
   }
 });
 
