@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-// M158 quick-connect 真实浏览器验收：WEB transport + CDP Fetch 拦截 /rpc  mock
-// 后端（不触碰 src/demo），全部交互只通过 Input.dispatchKeyEvent /
-// Input.insertText 完成，断言只读取 DOM/ARIA 属性。
-//
-// 运行：node src/test/quick-connect-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
-// 报告与截图写入 target/acceptance-quick-connect/。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -211,6 +204,7 @@ function startVite() {
 const KEYS = {
   Enter: { key: "Enter", code: "Enter", vk: 13 },
   Escape: { key: "Escape", code: "Escape", vk: 27 },
+  Tab: { key: "Tab", code: "Tab", vk: 9 },
 };
 
 async function press(page, name) {
@@ -479,6 +473,16 @@ async function quickConnectAcceptance(page) {
     await page.waitFor(
       `[...document.querySelectorAll('[role="alert"]')].some((el) => el.textContent.includes("connection refused"))`,
     );
+
+    await press(page, "Tab");
+    const focusedRetry = await page.evaluate(`document.activeElement?.textContent ?? ""`);
+    assert.ok(focusedRetry.includes("重试"), `Tab should focus the retry button, got: ${focusedRetry}`);
+    await press(page, "Enter");
+    await waitForConnectCalls(page, "a-bad", 3);
+    await page.waitFor(
+      `[...document.querySelectorAll('[role="alert"]')].some((el) => el.textContent.includes("connection refused"))`,
+    );
+
     await screenshot(page, "overlay-connect-error.png");
     await press(page, "Escape");
     await page.waitFor(`!${QUICK_COMBOBOX}`);

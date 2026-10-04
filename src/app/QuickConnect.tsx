@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { connectAsset, useUi } from "./store";
 import { assetApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
-import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
+import { isEditableTarget, isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import { orderQuickConnectAssets, useConnectHistory } from "../features/explorer/connectHistory";
 import { useAssetReachability } from "../features/explorer/assetReachability";
@@ -81,9 +81,21 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
+  const refocusInput = () => {
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      active !== inputRef.current &&
+      modalRef.current?.contains(active)
+    ) {
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  };
+
   const connect = async (asset: Asset) => {
     if (useUi.getState().connectingAssetIds.includes(asset.id)) return;
     setConnectError(null);
+    refocusInput();
     const outcome = await connectAsset(asset);
     if (closedRef.current) return;
     if (outcome.ok) {
@@ -121,8 +133,10 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
       event.preventDefault();
       moveCursor(filtered.length - 1);
     } else if (event.key === "Enter" && !event.repeat && filtered[activeIndex]) {
-      event.preventDefault();
-      void connect(filtered[activeIndex]);
+      if (isEditableTarget(event.target)) {
+        event.preventDefault();
+        void connect(filtered[activeIndex]);
+      }
     }
   };
 
@@ -223,7 +237,10 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className="nx-link shrink-0"
-              onClick={() => void useAssetReachability.getState().probe(probeTargets)}
+              onClick={() => {
+                refocusInput();
+                void useAssetReachability.getState().probe(probeTargets);
+              }}
             >
               重试
             </button>
@@ -237,7 +254,10 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               className="nx-link shrink-0"
-              onClick={() => void assetsQuery.refetch()}
+              onClick={() => {
+                refocusInput();
+                void assetsQuery.refetch();
+              }}
             >
               重试
             </button>

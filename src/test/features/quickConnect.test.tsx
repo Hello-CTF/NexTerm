@@ -65,6 +65,7 @@ function assetOf(extra: Partial<Asset> & { id: string; name: string }): Asset {
 }
 
 const WEB = assetOf({ id: "a-web", name: "web-01" });
+const WEB2 = assetOf({ id: "a-web2", name: "web-02", host: "10.0.0.18" });
 const DB = assetOf({ id: "a-db", name: "db-01", kind: "mysql", host: "10.0.0.9", port: 3306 });
 const LOCAL = assetOf({
   id: "a-local",
@@ -370,6 +371,77 @@ describe("QuickConnect 可达性指示", () => {
     const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "重试");
     click(retry as HTMLButtonElement);
     await waitFor(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("QuickConnect Retry 按钮键盘激活不被 Enter 快捷键劫持", () => {
+  it("连接错误后聚焦重试按 Enter 保留原生行为，不连当前活动项", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB }, { ...WEB2 }, { ...LOCAL }]);
+    mocks.sessionConnect.mockRejectedValueOnce({ code: "io", message: "connection refused" });
+    const view = await mountSettled({ onClose: vi.fn() });
+    const input = searchInput(view.container);
+    setInputValue(input, "web-01");
+    await flush();
+    pressKey(input, "Enter");
+    const alert = await waitForAlert(view.container);
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnect).toHaveBeenLastCalledWith("a-web");
+
+    setInputValue(input, "web-02");
+    await flush();
+    const activeId = input.getAttribute("aria-activedescendant");
+    const activeRow = document.getElementById(activeId ?? "");
+    expect(activeRow?.textContent).toContain("web-02");
+
+    const retry = [...alert.querySelectorAll("button")].find(
+      (b) => b.textContent === "重试",
+    ) as HTMLButtonElement;
+    retry.focus();
+    const event = pressKey(retry, "Enter");
+    expect(event.defaultPrevented).toBe(false);
+    await flush();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionConnect).not.toHaveBeenCalledWith("a-web2");
+  });
+
+  it("探测错误后聚焦重试按 Enter 保留原生行为，不触发连接", async () => {
+    mocks.probeBatch.mockRejectedValueOnce({ code: "io", message: "probe down" });
+    const view = await mountSettled({ onClose: vi.fn() });
+    const alert = await waitForAlert(view.container);
+    expect(alert.textContent).toContain("probe down");
+    expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
+
+    const retry = [...alert.querySelectorAll("button")].find(
+      (b) => b.textContent === "重试",
+    ) as HTMLButtonElement;
+    retry.focus();
+    const event = pressKey(retry, "Enter");
+    expect(event.defaultPrevented).toBe(false);
+    await flush();
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    expect(mocks.probeBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("重试后焦点回到搜索框，Escape 仍可关闭", async () => {
+    mocks.sessionConnect.mockRejectedValue({ code: "io", message: "down" });
+    const onClose = vi.fn();
+    const view = await mountSettled({ onClose });
+    const input = searchInput(view.container);
+    setInputValue(input, "web-01");
+    await flush();
+    pressKey(input, "Enter");
+    const alert = await waitForAlert(view.container);
+
+    const retry = [...alert.querySelectorAll("button")].find(
+      (b) => b.textContent === "重试",
+    ) as HTMLButtonElement;
+    retry.focus();
+    click(retry);
+    await waitFor(() => expect(mocks.sessionConnect).toHaveBeenCalledTimes(2));
+    expect(document.activeElement).toBe(input);
+
+    pressKey(input, "Escape");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
