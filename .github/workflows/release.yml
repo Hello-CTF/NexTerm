@@ -24,34 +24,12 @@ jobs:
       artifact-run-id: ${{ steps.resolve.outputs.artifact-run-id }}
       reused: ${{ steps.resolve.outputs.reused }}
     steps:
+      - uses: actions/checkout@v4
       - name: Find a completed green CI run with reusable artifacts
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          required=(frontend-dist native-desktop-windows-amd64 native-desktop-windows-arm64 native-desktop-darwin-arm64 native-desktop-darwin-amd64 native-desktop-linux-amd64 native-desktop-linux-arm64 native-server-linux-amd64 native-server-linux-arm64)
-          run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=50" --jq '[.workflow_runs[] | select(.name == "CI" and .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success")] | sort_by(.created_at) | last | .id // empty')"
-          if [ -n "$run_id" ]; then
-            artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" --jq '[.artifacts[].name]')"
-            missing=()
-            for name in "${required[@]}"; do
-              jq -e --arg name "$name" 'index($name) != null' <<<"$artifacts" >/dev/null || missing+=("$name")
-            done
-            if [ "${#missing[@]}" -gt 0 ]; then
-              echo "green CI run ${run_id} is missing reusable artifacts: ${missing[*]}"
-              run_id=""
-            fi
-          fi
-          if [ -n "$run_id" ]; then
-            echo "reusing green CI run ${run_id} for ${GITHUB_SHA}"
-            echo "artifact-run-id=${run_id}" >> "$GITHUB_OUTPUT"
-            echo "reused=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "no reusable green CI run for ${GITHUB_SHA}; running the full CI"
-            echo "artifact-run-id=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
-            echo "reused=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: bash .github/scripts/resolve-ci-reuse.sh >> "$GITHUB_OUTPUT"
 
   ci:
     needs: ci-source
@@ -60,6 +38,7 @@ jobs:
 
   precondition:
     needs: [ci-source, ci]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +89,7 @@ jobs:
           key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
       - name: Install the pinned Wails CLI
         if: matrix.os == 'windows'
+        shell: bash
         run: |
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
             go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
@@ -130,9 +110,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
-          path: target/go-build
+          path: reused-native
           run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage the reused production binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}"
+          mkdir -p target/go-build
+          cp "reused-native/go-build/${binary}" "reused-native/go-build/${binary}.manifest.json" target/go-build/
+          if [ "${{ matrix.os }}" != "windows" ]; then
+            chmod +x "target/go-build/${binary}"
+          fi
       - name: Package the verified production binary and enforce final artifact evidence
         run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidate and raw/final reports
@@ -177,13 +167,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: native-linux-${{ matrix.arch }}-server
-          path: target/go-build
+          path: reused-native
           run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify the reused production server binary against its manifest
+      - name: Stage the reused production server binary
+        shell: bash
         run: |
-          chmod +x "target/go-build/nexterm-server-linux-${{ matrix.arch }}"
-          node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
+          set -euo pipefail
+          binary="nexterm-server-linux-${{ matrix.arch }}"
+          mkdir -p target/go-build
+          cp "reused-native/go-build/${binary}" "reused-native/go-build/${binary}.manifest.json" target/go-build/
+          chmod +x "target/go-build/${binary}"
+      - name: Verify the reused production server binary against its manifest
+        run: node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
       - name: Restore the verified frontend for packaging
         run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
       - name: Re-assert the reused binary evidence
