@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	SettingKey       = "ai.models"
-	LegacySettingKey = "ai.provider"
-	StoreVersion     = 1
+	SettingKey          = "ai.models"
+	LegacySettingKey    = "ai.provider"
+	ScrubPendingSetting = "ai.migration.scrub_pending"
+	StoreVersion        = 1
 )
 
 var (
@@ -57,8 +58,20 @@ type settingDeleter interface {
 	SettingDelete(ctx context.Context, key string) error
 }
 
+type manySetter interface {
+	SettingSetMany(ctx context.Context, values map[string]string) error
+}
+
 type spaceScrubber interface {
 	ScrubFreeSpace(ctx context.Context) error
+}
+
+type loadResult struct {
+	state          state
+	needsSave      bool
+	fromLegacy     bool
+	legacyLeftover bool
+	migratable     bool
 }
 
 func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
@@ -69,37 +82,46 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 	if source, ok := settings.(protectorSource); ok {
 		protector = source.SecretProtector()
 	}
-	loaded, needsSave, fromLegacy, err := load(ctx, settings, protector)
+	result, err := load(ctx, settings, protector)
 	if err != nil {
 		return nil, err
 	}
-	manager := &Manager{settings: settings, protector: protector, state: loaded}
-	if needsSave {
-		saved, encrypted, saveErr := save(ctx, settings, protector, loaded)
-		if saveErr != nil {
-			if !isVaultLocked(saveErr) {
-				return nil, saveErr
-			}
-		} else {
-			manager.state = saved
-			if fromLegacy {
-				if deleter, ok := settings.(settingDeleter); ok {
-					if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil {
-						return nil, err
-					}
-				}
-			}
-			if encrypted || fromLegacy {
-				if err := scrubSettings(ctx, settings); err != nil {
-					return nil, err
-				}
-			}
-		}
+	manager := &Manager{settings: settings, protector: protector, state: result.state}
+	if err := manager.applyLoadResult(ctx, result); err != nil {
+		return nil, err
 	}
 	if listener, ok := protector.(unlockListenerSource); ok {
 		listener.AddUnlockListener(manager.reloadOnUnlock)
 	}
 	return manager, nil
+}
+
+func (m *Manager) applyLoadResult(ctx context.Context, result loadResult) error {
+	remnantRisk := result.migratable || result.fromLegacy || result.legacyLeftover
+	savedOK := false
+	if result.needsSave {
+		saved, err := save(ctx, m.settings, m.protector, result.state, remnantRisk)
+		if err != nil {
+			if !isVaultLocked(err) && !store.IsBusy(err) {
+				return err
+			}
+		} else {
+			m.state = saved
+			savedOK = true
+		}
+	} else if remnantRisk {
+		if err := setScrubPending(ctx, m.settings); err != nil && !store.IsBusy(err) {
+			return err
+		}
+	}
+	if (result.fromLegacy && savedOK) || result.legacyLeftover {
+		if deleter, ok := m.settings.(settingDeleter); ok {
+			if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil && !store.IsBusy(err) {
+				slog.Warn("删除旧版 AI 模型设置失败，将在下次启动重试", "error", err)
+			}
+		}
+	}
+	return m.finalizeScrub(ctx)
 }
 
 func (m *Manager) reloadOnUnlock() {
@@ -202,15 +224,14 @@ func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
 		next.Profiles = append(next.Profiles, profile)
 	}
 	next.ensureActive()
-	saved, encrypted, err := save(ctx, m.settings, m.protector, next)
+	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || legacyKeyedRowPresent(ctx, m.settings))
+	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk)
 	if err != nil {
 		return m.state.overview(), err
 	}
 	m.state = saved
-	if encrypted {
-		if err := scrubSettings(ctx, m.settings); err != nil {
-			return m.state.overview(), err
-		}
+	if err := m.finalizeScrub(ctx); err != nil {
+		return m.state.overview(), err
 	}
 	return m.state.overview(), nil
 }
@@ -230,11 +251,15 @@ func (m *Manager) Activate(ctx context.Context, id string) (Overview, error) {
 	}
 	next := m.state.clone()
 	next.ActiveID = cloneString(&id)
-	saved, _, err := save(ctx, m.settings, m.protector, next)
+	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || legacyKeyedRowPresent(ctx, m.settings))
+	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk)
 	if err != nil {
 		return m.state.overview(), err
 	}
 	m.state = saved
+	if err := m.finalizeScrub(ctx); err != nil {
+		return m.state.overview(), err
+	}
 	return m.state.overview(), nil
 }
 
@@ -253,84 +278,114 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	next.Profiles = profiles
 	next.ensureActive()
-	saved, _, err := save(ctx, m.settings, m.protector, next)
+	remnantRisk := m.protector != nil && (m.stateHasPlaintextKeys() || legacyKeyedRowPresent(ctx, m.settings))
+	saved, err := save(ctx, m.settings, m.protector, next, remnantRisk)
 	if err != nil {
 		return m.state.overview(), err
 	}
 	m.state = saved
+	if err := m.finalizeScrub(ctx); err != nil {
+		return m.state.overview(), err
+	}
 	return m.state.overview(), nil
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	loaded, needsSave, fromLegacy, err := load(ctx, m.settings, m.protector)
+	result, err := load(ctx, m.settings, m.protector)
 	if err != nil {
 		return err
 	}
-	if needsSave {
-		saved, encrypted, saveErr := save(ctx, m.settings, m.protector, loaded)
-		if saveErr != nil {
-			if !isVaultLocked(saveErr) {
-				return saveErr
-			}
-		} else {
-			m.state = saved
-			if fromLegacy {
-				if deleter, ok := m.settings.(settingDeleter); ok {
-					if err := deleter.SettingDelete(ctx, LegacySettingKey); err != nil {
-						return err
-					}
-				}
-			}
-			if encrypted || fromLegacy {
-				return scrubSettings(ctx, m.settings)
-			}
-			return nil
-		}
-	}
-	m.state = loaded
-	return nil
+	return m.applyLoadResult(ctx, result)
 }
 
-func load(ctx context.Context, settings Settings, protector store.SecretProtector) (state, bool, bool, error) {
+func (m *Manager) finalizeScrub(ctx context.Context) error {
+	pending, err := scrubPending(ctx, m.settings)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
+	if err := scrubSettings(ctx, m.settings); err != nil {
+		if !errors.Is(err, store.ErrScrubBusy) && !store.IsBusy(err) {
+			slog.Warn("AI 模型档案物理清理失败，将在后续启动、解锁或写入时重试", "error", err)
+		}
+		return nil
+	}
+	return clearScrubPending(ctx, m.settings)
+}
+
+func (m *Manager) stateHasPlaintextKeys() bool {
+	for _, profile := range m.state.Profiles {
+		if profile.APIKey != "" && !strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func load(ctx context.Context, settings Settings, protector store.SecretProtector) (loadResult, error) {
+	legacyRaw, legacyFound, err := settings.SettingGet(ctx, LegacySettingKey)
+	if err != nil {
+		return loadResult{}, err
+	}
+	var legacy provider.Config
+	legacyValid := legacyFound && json.Unmarshal([]byte(legacyRaw), &legacy) == nil
+	legacyUsable := legacyValid && (legacy.BaseURL != "" || legacy.Model != "" || legacy.APIKey != "")
+
 	raw, found, err := settings.SettingGet(ctx, SettingKey)
 	if err != nil {
-		return state{}, false, false, err
+		return loadResult{}, err
 	}
 	if found {
 		var persisted state
 		if err := json.Unmarshal([]byte(raw), &persisted); err != nil {
-			return state{Version: StoreVersion, Profiles: []Profile{}}, false, false, nil
+			return loadResult{state: state{Version: StoreVersion, Profiles: []Profile{}}}, nil
 		}
 		if persisted.Version < 0 || persisted.Version > StoreVersion {
-			return state{}, false, false, fmt.Errorf("unsupported AI profile store version %d", persisted.Version)
+			return loadResult{}, fmt.Errorf("unsupported AI profile store version %d", persisted.Version)
 		}
 		before, _ := json.Marshal(persisted)
 		persisted = persisted.normalized()
 		after, _ := json.Marshal(persisted)
-		needsSave := !bytes.Equal(before, after) || profileKeysMigratable(ctx, protector, &persisted)
-		return persisted, needsSave, false, nil
+		if len(persisted.Profiles) == 0 && legacyUsable {
+			return legacyMigrationResult(legacy), nil
+		}
+		migratable := profileKeysMigratable(ctx, protector, &persisted)
+		return loadResult{
+			state: persisted, needsSave: !bytes.Equal(before, after) || migratable,
+			legacyLeftover: legacyValid && legacy.APIKey != "", migratable: migratable,
+		}, nil
 	}
 
-	legacyRaw, found, err := settings.SettingGet(ctx, LegacySettingKey)
-	if err != nil || !found {
-		return emptyState(), false, false, err
+	if !legacyUsable {
+		return loadResult{state: emptyState()}, nil
 	}
-	var legacy provider.Config
-	if err := json.Unmarshal([]byte(legacyRaw), &legacy); err != nil {
-		return emptyState(), false, false, nil
-	}
-	if legacy.BaseURL == "" && legacy.Model == "" && legacy.APIKey == "" {
-		return emptyState(), false, false, nil
-	}
+	return legacyMigrationResult(legacy), nil
+}
+
+func legacyMigrationResult(legacy provider.Config) loadResult {
 	profile := Profile{
 		ID: ids.New(), BaseURL: legacy.BaseURL, APIKey: legacy.APIKey, Model: legacy.Model,
 		FallbackModel: legacy.FallbackModel, Temperature: legacy.Temperature, ContextWindow: legacy.ContextWindow,
 		Proxy: legacy.Proxy, Stream: legacy.Stream,
 	}.Normalized()
 	loaded := state{Version: StoreVersion, Profiles: []Profile{profile}, ActiveID: cloneString(&profile.ID)}
-	return loaded, true, true, nil
+	return loadResult{state: loaded, needsSave: true, fromLegacy: true}
+}
+
+func legacyKeyedRowPresent(ctx context.Context, settings Settings) bool {
+	raw, found, err := settings.SettingGet(ctx, LegacySettingKey)
+	if err != nil || !found {
+		return false
+	}
+	var legacy provider.Config
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		return false
+	}
+	return legacy.APIKey != ""
 }
 
 func profileKeysMigratable(ctx context.Context, protector store.SecretProtector, persisted *state) bool {
@@ -348,9 +403,8 @@ func profileKeysMigratable(ctx context.Context, protector store.SecretProtector,
 	return false
 }
 
-func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state) (state, bool, error) {
+func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state, remnantRisk bool) (state, error) {
 	value = value.normalized()
-	encrypted := false
 	if protector != nil {
 		for index := range value.Profiles {
 			profile := &value.Profiles[index]
@@ -359,20 +413,46 @@ func save(ctx context.Context, settings Settings, protector store.SecretProtecto
 			}
 			envelope, err := protector.EncryptSecret(ctx, profile.APIKey)
 			if err != nil {
-				return value, encrypted, err
+				return value, err
 			}
 			profile.APIKey = envelope
-			encrypted = true
 		}
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return value, encrypted, fmt.Errorf("encode AI profiles: %w", err)
+		return value, fmt.Errorf("encode AI profiles: %w", err)
+	}
+	if remnantRisk && protector != nil {
+		if many, ok := settings.(manySetter); ok {
+			return value, many.SettingSetMany(ctx, map[string]string{SettingKey: string(encoded), ScrubPendingSetting: "1"})
+		}
+		if err := setScrubPending(ctx, settings); err != nil {
+			return value, err
+		}
 	}
 	if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
-		return value, encrypted, err
+		return value, err
 	}
-	return value, encrypted, nil
+	return value, nil
+}
+
+func scrubPending(ctx context.Context, settings Settings) (bool, error) {
+	raw, found, err := settings.SettingGet(ctx, ScrubPendingSetting)
+	if err != nil || !found {
+		return false, err
+	}
+	return raw != "", nil
+}
+
+func setScrubPending(ctx context.Context, settings Settings) error {
+	return settings.SettingSet(ctx, ScrubPendingSetting, "1")
+}
+
+func clearScrubPending(ctx context.Context, settings Settings) error {
+	if deleter, ok := settings.(settingDeleter); ok {
+		return deleter.SettingDelete(ctx, ScrubPendingSetting)
+	}
+	return settings.SettingSet(ctx, ScrubPendingSetting, "")
 }
 
 func scrubSettings(ctx context.Context, settings Settings) error {

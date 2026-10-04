@@ -76,3 +76,52 @@ func TestScrubFreeSpaceOnMemoryStore(t *testing.T) {
 		t.Fatalf("scrub damaged live data: %q found=%v err=%v", got, found, err)
 	}
 }
+
+func TestScrubFreeSpaceBusyWithHeldReader(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.SettingSet(ctx, "scrub.key", "busy-token-abc"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := database.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", "scrub.key").Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, "scrub.key", "replacement"); !IsBusy(err) {
+		t.Fatalf("write with held reader must report busy, got %v", err)
+	}
+	if err := database.ScrubFreeSpace(ctx); !errors.Is(err, ErrScrubBusy) {
+		t.Fatalf("expected ErrScrubBusy, got %v", err)
+	}
+	requireFileTokenPresent(t, path+"-wal", "busy-token-abc")
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SettingSet(ctx, "scrub.key", "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ScrubFreeSpace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, found, err := database.SettingGet(ctx, "scrub.key"); err != nil || !found || got != "replacement" {
+		t.Fatalf("scrub damaged live data: %q found=%v err=%v", got, found, err)
+	}
+	requireFileTokenAbsent(t, path, "busy-token-abc")
+	requireFileTokenAbsent(t, path+"-wal", "busy-token-abc")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("database file mode = %o, want 600", info.Mode().Perm())
+	}
+}

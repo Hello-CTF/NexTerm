@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -475,4 +476,314 @@ func TestLegacyMigrationScrubsDatabaseFileBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	scanFileBytes(t, path, "lg-remnant-token-xyz")
+}
+
+type flakyDeleteStore struct {
+	*store.Store
+	failures int32
+}
+
+func (s *flakyDeleteStore) SettingDelete(ctx context.Context, key string) error {
+	if atomic.AddInt32(&s.failures, -1) >= 0 {
+		return errors.New("injected delete failure")
+	}
+	return s.Store.SettingDelete(ctx, key)
+}
+
+type flakyScrubStore struct {
+	*store.Store
+	failures int32
+}
+
+func (s *flakyScrubStore) ScrubFreeSpace(ctx context.Context) error {
+	if atomic.AddInt32(&s.failures, -1) >= 0 {
+		return errors.New("injected scrub failure")
+	}
+	return s.Store.ScrubFreeSpace(ctx)
+}
+
+type flakyBusyScrubStore struct {
+	*store.Store
+	failures int32
+}
+
+func (s *flakyBusyScrubStore) ScrubFreeSpace(ctx context.Context) error {
+	if atomic.AddInt32(&s.failures, -1) >= 0 {
+		return store.ErrScrubBusy
+	}
+	return s.Store.ScrubFreeSpace(ctx)
+}
+
+func openFileVaultStore(t *testing.T) (string, *store.Store, *vault.Vault) {
+	t.Helper()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	database, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	credentialVault := vault.Load(ctx, database)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	return path, database, credentialVault
+}
+
+func holdReadTransaction(t *testing.T, database *store.Store, key string) func() {
+	t.Helper()
+	tx, err := database.DB().BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := tx.QueryRowContext(context.Background(), "SELECT value FROM setting WHERE key = ?", key).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return func() { _ = tx.Rollback() }
+}
+
+func requireScrubPending(t *testing.T, database *store.Store, want bool) {
+	t.Helper()
+	raw, found, err := database.SettingGet(context.Background(), profiles.ScrubPendingSetting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want && (!found || raw == "") {
+		t.Fatal("scrub pending marker must be set")
+	}
+	if !want && found && raw != "" {
+		t.Fatal("scrub pending marker must be cleared")
+	}
+}
+
+func TestMigrationScrubBusyWithHeldReader(t *testing.T) {
+	ctx := context.Background()
+	path, database, _ := openFileVaultStore(t)
+	raw := `{"version":1,"profiles":[{"id":"p1","name":"legacy","baseUrl":"https://a.test/v1","apiKey":"busy-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"p1"}`
+	if err := database.SettingSet(ctx, profiles.SettingKey, raw); err != nil {
+		t.Fatal(err)
+	}
+	requireFileTokenPresent(t, path+"-wal", "busy-token-xyz")
+	release := holdReadTransaction(t, database, profiles.SettingKey)
+	defer release()
+
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatalf("busy database must not fail startup: %v", err)
+	}
+	requireClientKey(t, manager, "busy-token-xyz")
+	stored := storedSetting(t, database, profiles.SettingKey)
+	if !strings.Contains(stored, "busy-token-xyz") {
+		t.Fatalf("blocked migration write must leave the plaintext row untouched, got %s", stored)
+	}
+	requireScrubPending(t, database, false)
+	requireFileTokenPresent(t, path+"-wal", "busy-token-xyz")
+
+	release()
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stored = storedSetting(t, database, profiles.SettingKey)
+	if strings.Contains(stored, "busy-token-xyz") || !strings.Contains(stored, store.SecretEnvelopePrefix) {
+		t.Fatalf("retry after reader release did not migrate: %s", stored)
+	}
+	requireScrubPending(t, database, false)
+	requireClientKey(t, manager, "busy-token-xyz")
+	scanFileBytes(t, path, "busy-token-xyz")
+	scanFileBytes(t, path+"-wal", "busy-token-xyz")
+}
+
+func TestScrubBusyCheckpointIsRetried(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	base, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = base.Close() })
+	database := &flakyBusyScrubStore{Store: base, failures: 1}
+	raw := `{"version":1,"profiles":[{"id":"p1","name":"legacy","baseUrl":"https://a.test/v1","apiKey":"retry-busy-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"p1"}`
+	if err := database.SettingSet(ctx, profiles.SettingKey, raw); err != nil {
+		t.Fatal(err)
+	}
+	credentialVault := vault.Load(ctx, database.Store)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	stored := storedSetting(t, database.Store, profiles.SettingKey)
+	if strings.Contains(stored, "retry-busy-token-xyz") || !strings.Contains(stored, store.SecretEnvelopePrefix) {
+		t.Fatalf("migration write did not land: %s", stored)
+	}
+	requireScrubPending(t, database.Store, true)
+	requireFileTokenPresent(t, path+"-wal", "retry-busy-token-xyz")
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database.Store, false)
+	scanFileBytes(t, path, "retry-busy-token-xyz")
+	scanFileBytes(t, path+"-wal", "retry-busy-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "retry-busy-token-xyz")
+}
+
+func TestLegacyDeleteFailureIsRetried(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	base, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = base.Close() })
+	database := &flakyDeleteStore{Store: base, failures: 1}
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"retry-delete-token-xyz","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+		t.Fatal(err)
+	}
+	credentialVault := vault.Load(ctx, database.Store)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
+		t.Fatalf("first startup must tolerate the injected delete failure: found=%v err=%v", found, err)
+	}
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("second startup must retry the legacy delete: found=%v err=%v", found, err)
+	}
+	requireScrubPending(t, database.Store, false)
+	scanFileBytes(t, path, "retry-delete-token-xyz")
+	scanFileBytes(t, path+"-wal", "retry-delete-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "retry-delete-token-xyz")
+}
+
+func TestScrubFailureIsRetried(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "data.db")
+	base, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = base.Close() })
+	database := &flakyScrubStore{Store: base, failures: 1}
+	raw := `{"version":1,"profiles":[{"id":"p1","name":"legacy","baseUrl":"https://a.test/v1","apiKey":"retry-scrub-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"p1"}`
+	if err := database.SettingSet(ctx, profiles.SettingKey, raw); err != nil {
+		t.Fatal(err)
+	}
+	credentialVault := vault.Load(ctx, database.Store)
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database.Store, true)
+	requireFileTokenPresent(t, path+"-wal", "retry-scrub-token-xyz")
+
+	if _, err := profiles.NewManager(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database.Store, false)
+	scanFileBytes(t, path, "retry-scrub-token-xyz")
+	scanFileBytes(t, path+"-wal", "retry-scrub-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "retry-scrub-token-xyz")
+}
+
+func TestLockedKeyRemovalScrubsDatabaseBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove func(t *testing.T, manager *profiles.Manager, database *store.Store)
+	}{
+		{
+			name: "clear key",
+			remove: func(t *testing.T, manager *profiles.Manager, database *store.Store) {
+				profile := manager.Overview().Profiles[0]
+				profile.APIKey = ""
+				if _, err := manager.Save(context.Background(), profile); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "delete profile",
+			remove: func(t *testing.T, manager *profiles.Manager, database *store.Store) {
+				if _, err := manager.Delete(context.Background(), manager.Overview().Profiles[0].ID); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "data.db")
+			database, err := store.Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := `{"version":1,"profiles":[{"id":"p1","name":"legacy","baseUrl":"https://a.test/v1","apiKey":"locked-removal-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"p1"}`
+			if err := database.SettingSet(ctx, profiles.SettingKey, raw); err != nil {
+				t.Fatal(err)
+			}
+			credentialVault := vault.Load(ctx, database)
+			if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+				t.Fatal(err)
+			}
+			credentialVault.Lock()
+			manager, err := profiles.NewManager(ctx, database)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requireLockedClient(t, manager)
+
+			tc.remove(t, manager, database)
+			requireScrubPending(t, database, false)
+			scanFileBytes(t, path, "locked-removal-token-xyz")
+			scanFileBytes(t, path+"-wal", "locked-removal-token-xyz")
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+			scanFileBytes(t, path, "locked-removal-token-xyz")
+		})
+	}
+}
+
+func TestScrubMarkerWithoutWritesRecovers(t *testing.T) {
+	ctx := context.Background()
+	path, database, _ := openFileVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := database.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database, false)
+	requireClientKey(t, reloaded, "sk-steady")
+	scanFileBytes(t, path, "sk-steady")
 }
