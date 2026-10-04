@@ -5,11 +5,6 @@ import (
 	"strings"
 )
 
-// execWrapper describes a command that wraps another command's execution.
-// Options are consumed with getopt semantics (attached or separate values,
-// short clusters); the first remaining positional is the wrapped command.
-// The registry only unwraps to the real command: an option the table cannot
-// resolve makes the whole command Unknowable instead of being guessed away.
 type execWrapper struct {
 	valueShorts  string
 	valueLongs   []string
@@ -19,9 +14,7 @@ type execWrapper struct {
 	pidOption    bool
 	stdinCommand bool
 	stdinArgs    bool
-	// shellScript marks wrappers that run the wrapped command through
-	// "sh -c" by default (procps watch); their nested argv is re-joined
-	// and classified as shell text unless exec mode is requested.
+
 	shellScript bool
 }
 
@@ -55,7 +48,6 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-// wrapperScan is the parsed leading-option state shared by every wrapper.
 type wrapperScan struct {
 	forName      string
 	pidMode      bool
@@ -79,9 +71,7 @@ func (s *wrapperScan) recordValue(key, value string) {
 	case "replace", "I":
 		s.replace = value
 	case "J":
-		// BSD -J: documented as line replacement, but real implementations
-		// word-split the line and only replace standalone placeholders.
-		// Both interpretations are classified.
+
 		s.replace = value
 		s.replaceSplit = true
 	case "file", "f", "arg-file", "a":
@@ -104,7 +94,7 @@ func (s *wrapperScan) recordFlag(key string) {
 	switch key {
 	case "l":
 		if s.forName == "xargs" {
-			// GNU -l is -L with a default of 1.
+
 			if s.linesLimit == "" {
 				s.linesLimit = "1"
 			}
@@ -118,7 +108,7 @@ func (s *wrapperScan) recordFlag(key string) {
 			s.removeOnly = true
 		}
 	case "i":
-		// GNU -i is --replace with the default placeholder.
+
 		if s.forName == "xargs" && s.replace == "" {
 			s.replace = "{}"
 		}
@@ -137,9 +127,6 @@ type wrapperParse struct {
 	reason string
 }
 
-// parseWrapper consumes a wrapper's leading options with getopt semantics
-// and returns the wrapped command argv. Anything it cannot resolve (unknown
-// option, missing value) is reported through reason so callers fail closed.
 func parseWrapper(name string, wrapper execWrapper, args []string) wrapperParse {
 	index := 0
 	scan := wrapperScan{forName: name}
@@ -220,8 +207,7 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 	}
 	scan := parsed.scan
 	if wrapper.stdinCommand {
-		// at -f executes the file's content, which cannot be verified; it
-		// takes precedence over anything read from standard input.
+
 		if scan.fileInput != "" {
 			return Dangerous(name + " 执行文件中的命令，内容无法验证")
 		}
@@ -235,8 +221,7 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 			if !stdin.ok {
 				return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
 			}
-			// Installing a scheduled job always confirms at minimum; the
-			// payload itself is classified with the full model.
+
 			return Worst(Confirm(KindService, name+" 安装计划任务"), c.classifyText(stdin.text))
 		}
 		return Dangerous(name + " 执行标准输入中的命令")
@@ -246,12 +231,11 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 	}
 	if len(parsed.nested) == 0 {
 		if wrapper.stdinArgs {
-			// xargs with no command runs its built-in echo: reading stdin
-			// and printing it is the narrow read-only default.
+
 			return Allow()
 		}
 		if name == "exec" {
-			// exec with only redirections rearranges file descriptors.
+
 			return Allow()
 		}
 		return Indeterminate(name + " 缺少要执行的命令")
@@ -260,21 +244,12 @@ func (c *classifier) classifyWrapper(name string, wrapper execWrapper, args []st
 		return c.classifyXargs(parsed.nested, scan, stdin)
 	}
 	if wrapper.shellScript && !scan.execMode {
-		// procps watch runs the wrapped command through "sh -c" by default:
-		// the nested argv is one shell command line, not an exec argv.
+
 		return c.classifyText(strings.Join(parsed.nested, " "))
 	}
 	return c.child().classifyArgv(parsed.nested, stdin)
 }
 
-// classifyXargs models xargs semantics. With -I/-J/--replace, every
-// occurrence of the replacement string in the initial arguments is
-// substituted with one processed input line per invocation. Without it, the
-// whole input stream is parsed into words (default quoting rules, or literal
-// items under -0/-d) and the words are appended to the command: one single
-// invocation by default, batches of -n words, or logical-line groups under
-// -L/-l. Anything that cannot be modeled exactly (-s, unparseable input)
-// fails closed to Danger.
 func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipeInput) Ruling {
 	if scan.fileInput != "" {
 		return Dangerous("xargs 从文件构建命令")
@@ -311,8 +286,7 @@ func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipe
 		if scan.noRunIfEmpty {
 			return Allow()
 		}
-		// With input but no words, xargs still runs the command once with
-		// no appended arguments.
+
 		return c.child().classifyArgv(nested, pipeInput{})
 	}
 	batch := len(words)
@@ -337,10 +311,6 @@ func (c *classifier) classifyXargs(nested []string, scan wrapperScan, stdin pipe
 	return result
 }
 
-// classifyXargsLineBatches models -L/-l: input is read as logical lines
-// (trailing blanks continue onto the next line, blank lines do not count),
-// and each group of at most N logical lines builds one invocation whose
-// parsed words are appended to the command.
 func (c *classifier) classifyXargsLineBatches(nested []string, scan wrapperScan, stdin pipeInput) Ruling {
 	limit, err := strconv.Atoi(scan.linesLimit)
 	if err != nil || limit <= 0 {
@@ -371,8 +341,6 @@ func (c *classifier) classifyXargsLineBatches(nested []string, scan wrapperScan,
 	return result
 }
 
-// xargsLogicalLines groups an input stream into logical lines: a line with
-// trailing blanks continues onto the next line, and blank lines are dropped.
 func xargsLogicalLines(input string) []string {
 	physical := strings.Split(input, "\n")
 	var logical []string
@@ -393,8 +361,6 @@ func xargsLogicalLines(input string) []string {
 	return logical
 }
 
-// classifyXargsReplace handles -I/-J/--replace insert mode: one invocation
-// per nonblank input line.
 func (c *classifier) classifyXargsReplace(nested []string, scan wrapperScan, input string) Ruling {
 	result := Allow()
 	classified := 0
@@ -411,9 +377,6 @@ func (c *classifier) classifyXargsReplace(nested []string, scan wrapperScan, inp
 	return result
 }
 
-// xargsInputWords parses the input stream into words for the non-replace
-// modes: -0 and -d take items literally, the default mode applies xargs
-// quoting rules.
 func xargsInputWords(scan wrapperScan, input string) ([]string, bool) {
 	switch {
 	case scan.hasDelimiter:
@@ -436,12 +399,6 @@ func xargsInputWords(scan wrapperScan, input string) ([]string, bool) {
 	}
 }
 
-// xargsWords splits an xargs input stream into words with the default
-// quoting rules: blanks separate words, single and double quotes group
-// without becoming part of the word, and backslash escapes the next
-// character (including a newline). It reports false when the input cannot be
-// parsed exactly (unterminated quote or trailing backslash); real xargs then
-// fails without running any command.
 func xargsWords(input string) ([]string, bool) {
 	var words []string
 	var current strings.Builder
@@ -495,9 +452,6 @@ func xargsWords(input string) ([]string, bool) {
 	return words, true
 }
 
-// xargsProcessedLine applies xargs quote and backslash processing to one
-// input line while keeping blanks: -I replaces the placeholder with the
-// whole processed line as one argument.
 func xargsProcessedLine(line string) (string, bool) {
 	var out strings.Builder
 	var quote byte
@@ -537,11 +491,6 @@ func xargsProcessedLine(line string) (string, bool) {
 	return out.String(), true
 }
 
-// classifyXargsLine classifies one input line under replacement semantics.
-// GNU -I replaces every placeholder occurrence with the whole processed line
-// as one argument; BSD -J replaces only standalone placeholder tokens with
-// the line's words. Because implementations disagree, both interpretations
-// are classified and the worse ruling wins.
 func (c *classifier) classifyXargsLine(nested []string, scan wrapperScan, line string) Ruling {
 	processed, ok := xargsProcessedLine(line)
 	if !ok {

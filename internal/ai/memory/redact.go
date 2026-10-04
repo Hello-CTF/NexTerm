@@ -9,11 +9,7 @@ var redactionRules = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`),
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b`),
 	regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^\s/:@]+:)[^\s/@]+@`),
-	// Matches credential assignments ("key: value" / "key=value") whose key
-	// carries a credential keyword as a full underscore-delimited segment,
-	// optionally followed by credential-noun segments (AWS_SECRET_ACCESS_KEY),
-	// with optional JSON quotes around the key. Prose, plurals, and
-	// configuration counters (max_tokens, token_limit) stay untouched.
+
 	regexp.MustCompile(`(?i)(?:[a-z0-9]+_)*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|client[_-]?secret|password|passwd|secret|token|authorization)(?:_(?:access|key|keys))*["']?\s*[:=]\s*(\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)`),
 }
 

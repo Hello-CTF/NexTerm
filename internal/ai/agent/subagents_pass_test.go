@@ -12,11 +12,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// TestSubagentsConfigPassesThroughToExecution pins the agent-side carrier:
-// Config.Subagents must reach the tools.Execution built in initializeEino so
-// the spawn tool is advertised to the model, and must stay absent when unset.
-// The runner only carries the config; composing it is the production owner's
-// job and the spawn tool's runtime behavior belongs to the subagent wiring.
 func TestSubagentsConfigPassesThroughToExecution(t *testing.T) {
 	advertised := func(t *testing.T, subagents *tools.SubagentConfig) map[string]bool {
 		t.Helper()

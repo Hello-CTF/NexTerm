@@ -29,8 +29,7 @@ func TestR5GNULongOptionAbbreviationsFailClosed(t *testing.T) {
 			}
 		})
 	}
-	// Options the tables cannot resolve fail closed to Unknowable: Silent
-	// must ask rather than pre-approve the command.
+
 	unknowable := []string{
 		`env --unknown-long-option ls`,
 		`sort --i /etc/passwd`,
@@ -50,7 +49,7 @@ func TestR5GNULongOptionAbbreviationsFailClosed(t *testing.T) {
 			}
 		})
 	}
-	// Executing an external program whose content cannot be verified.
+
 	for _, command := range []string{`sort --compress-program=/tmp/evil /etc/passwd`} {
 		t.Run(command, func(t *testing.T) {
 			ruling := ClassifyCommand(command, nil)
@@ -146,9 +145,6 @@ func TestR5CurlWriteOptionsAreNeverSafe(t *testing.T) {
 	}
 }
 
-// TestR5DockerBulkDeletionWithInnerGlobalOptions pins dynamic deletion
-// targets: command substitutions are Unknowable, so Silent asks instead of
-// pre-approving bulk deletion.
 func TestR5DockerBulkDeletionWithInnerGlobalOptions(t *testing.T) {
 	t.Parallel()
 	ask := []string{

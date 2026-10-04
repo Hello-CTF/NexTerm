@@ -275,15 +275,10 @@ func (s *Store) Settings(ctx context.Context, scope Scope) (Settings, error) {
 	return settings, nil
 }
 
-// SetInjectionEnabled flips the prompt-injection opt-in with compare-and-swap
-// semantics on the settings version.
 func (s *Store) SetInjectionEnabled(ctx context.Context, scope Scope, enabled bool, expectedVersion uint64) (Settings, error) {
 	return s.UpdateSettings(ctx, scope, SettingsInput{InjectionEnabled: &enabled}, expectedVersion)
 }
 
-// UpdateSettings applies the given flag flips atomically: the expected version
-// must match the stored one, otherwise a VersionConflictError is returned and
-// nothing changes.
 func (s *Store) UpdateSettings(ctx context.Context, scope Scope, input SettingsInput, expectedVersion uint64) (Settings, error) {
 	scope, err := normalizeScope(scope)
 	if err != nil {

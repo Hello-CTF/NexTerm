@@ -324,10 +324,6 @@ func TestHITLWiringReplayCommandsDispatch(t *testing.T) {
 	_ = waitClosed(t, stream)
 }
 
-// confirmEmitStream synchronously confirms a confirmRequired event from
-// inside Send, so the acceptance lands after hitl.Manager.Interrupt but
-// before the consume loop reaches parkOrHandoff: the tightest
-// confirm-before-parked boundary, without relying on scheduling luck.
 type confirmEmitStream struct {
 	*SliceStream
 	confirm func(Event) error
@@ -342,11 +338,6 @@ func (s *confirmEmitStream) Send(ctx context.Context, event Event) error {
 	return s.SliceStream.Send(ctx, event)
 }
 
-// TestHITLWiringConfirmBeforeParkedResumesExactlyOnce pins the handoff
-// boundary found in review: a resume accepted while the interrupted loop is
-// still winding down must be drained by exactly one consume loop and reach a
-// single terminal state — never stranded with a consumed request and no
-// loop driving the resumed stream.
 func TestHITLWiringConfirmBeforeParkedResumesExactlyOnce(t *testing.T) {
 	const jobID = "hitl-confirm-before-parked"
 	var actions atomic.Int64
@@ -391,13 +382,6 @@ func TestHITLWiringConfirmBeforeParkedResumesExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce forces the
-// interleaving from the r1 review: the consume loop is paused inside the
-// park transition (scheduling point, pendingMu held) while a Confirm is in
-// flight. The atomic transition must exclude the acceptance until running=false
-// is set, so the resumed stream is still drained by exactly one consume loop.
-// On the pre-fix two-section shape the Confirm completes inside the window
-// and the resume is stranded; the blocked-acceptance assertion catches it.
 func TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce(t *testing.T) {
 	var actions atomic.Int64
 	parkEntered := make(chan struct{})
@@ -450,11 +434,6 @@ func TestHITLWiringConfirmInsideParkTransitionResumesExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestHITLWiringCloseContextCancelsResumedExecution pins the shutdown path:
-// a job confirmed and resumed, then blocked inside the model, must still be
-// canceled through the manager — the resumed execution runs on the manager's
-// run context, so CloseContext must return bounded with a single terminal
-// event instead of waiting for the provider forever.
 func TestHITLWiringCloseContextCancelsResumedExecution(t *testing.T) {
 	blocked := make(chan struct{})
 	var blockOnce sync.Once

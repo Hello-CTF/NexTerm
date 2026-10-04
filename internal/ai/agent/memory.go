@@ -12,11 +12,6 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-// Model-facing memory tools. They exist only while the user has opted in
-// through the memory settings (ToolsEnabled); the runner composes them per
-// execution, so enabling or disabling takes effect on the next run. The tools
-// operate on the one configured owner scope, never on caller-supplied scopes,
-// and plan-mode executions and subagent children never receive them.
 const (
 	memorySaveTool   = "memory_save"
 	memoryListTool   = "memory_list"
@@ -24,14 +19,8 @@ const (
 	memoryForgetTool = "memory_forget"
 )
 
-// memoryRecallMaxBytes bounds the concatenated recall output so one tool call
-// cannot flood the conversation budget.
 const memoryRecallMaxBytes = 16 << 10
 
-// memoryListMaxEntries and memoryListMaxBytes bound the directory listing the
-// same way: the model-facing tool message itself must stay small, because the
-// 64 KiB cap in the runner only trims the UI event, long after the model
-// context is spent.
 const (
 	memoryListMaxEntries = 64
 	memoryListMaxBytes   = 8 << 10
@@ -55,9 +44,6 @@ type memoryForgetArgs struct {
 	ExpectedVersion uint64 `json:"expectedVersion" jsonschema:"required"`
 }
 
-// memoryTools returns the opt-in model-facing memory tools for one execution.
-// A nil store, plan mode or a disabled settings flag yields no tools; the
-// settings read error fails the run like any other initialization error.
 func (r *Runner) memoryTools(ctx context.Context, planMode bool) ([]tool.BaseTool, error) {
 	if r.config.Memory == nil || planMode {
 		return nil, nil
@@ -121,10 +107,7 @@ func memoryListOutput(ctx context.Context, store *memory.Store, scope memory.Sco
 	if err != nil {
 		return tools.Fail(err)
 	}
-	// Index is ordered by (topic, id), so the listing and what the budget
-	// keeps are deterministic: entries are admitted in order until the entry
-	// cap or the byte cap binds; the rest is reported as Omitted, never
-	// silently dropped and never partially written.
+
 	var builder strings.Builder
 	bytes := 0
 	count := 0
@@ -175,10 +158,7 @@ func memoryRecallOutput(ctx context.Context, store *memory.Store, scope memory.S
 			}
 			return tools.Fail(err)
 		}
-		// The privacy boundary from the injection path holds here too: the
-		// persisted content is re-redacted on the way to the model, so a
-		// secret that landed in the database by a direct write or an older
-		// rule set never reaches the provider.
+
 		content, redacted := memory.RedactText(entry.Content)
 		marker := ""
 		if entry.Redacted || redacted {

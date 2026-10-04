@@ -13,11 +13,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// TestR35CancelFinishRaceIsIdempotent deterministically reproduces the
-// cancel-versus-finish race: the job-context cancel inside Runner.Cancel
-// makes the run's own completion reach the HITL manager first, so the
-// manager cancel then reports ErrRunFinished. Cancel must confirm the
-// terminal state and succeed idempotently instead of surfacing the race.
 func TestR35CancelFinishRaceIsIdempotent(t *testing.T) {
 	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 		<-ctx.Done()
@@ -80,9 +75,6 @@ func (s *failingDeleteCheckpoints) Delete(context.Context, string) error {
 	return s.err
 }
 
-// TestR35CancelSurfacesStorageErrors verifies that a checkpoint cleanup
-// failure during cancel reaches the caller instead of being concealed as
-// idempotent success.
 func TestR35CancelSurfacesStorageErrors(t *testing.T) {
 	storage, err := store.OpenInMemory(context.Background())
 	if err != nil {

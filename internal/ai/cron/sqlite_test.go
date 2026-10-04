@@ -22,8 +22,6 @@ func sqliteTestDSN(path string) string {
 	return u.String()
 }
 
-// openSQLiteStore opens a real file-backed SQLite database and applies the
-// production 0005_cron.sql migration, exactly as internal/store would.
 func openSQLiteStore(t *testing.T, path string) *SQLiteStore {
 	t.Helper()
 	db, err := sql.Open("sqlite", sqliteTestDSN(path))

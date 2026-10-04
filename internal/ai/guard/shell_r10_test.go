@@ -2,14 +2,6 @@ package guard
 
 import "testing"
 
-// R10: regression coverage for the second independent adversarial review.
-// The three systemic classes are pinned per finding: option parsing
-// alignment, real execution semantics, and AST traversal of every expression
-// node — each with the dangerous form, the preserved benign form and the
-// decision-layer consequence.
-
-// R10 P1-1: printf option scanning ends at --; the format is the next
-// argument even when it starts with a dash.
 func TestR10PrintfOptionEnd(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -56,8 +48,6 @@ func TestR10PrintfOptionEnd(t *testing.T) {
 	}
 }
 
-// R10 P1-2: GNU -l is -L with a default of 1: every logical line builds one
-// invocation, so a dangerous later line is classified, not just the first.
 func TestR10XargsLineBatches(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -126,9 +116,6 @@ func TestR10XargsLineBatches(t *testing.T) {
 	}
 }
 
-// R10 P1-3: GNU tar resolves unique long-option abbreviations; executing
-// options reach the command classification under any unique spelling, and
-// unresolvable options never fall through to the read-only listing path.
 func TestR10TarLongOptionAbbreviations(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -182,8 +169,6 @@ func TestR10TarLongOptionAbbreviations(t *testing.T) {
 	}
 }
 
-// R10 P1-4: procps watch runs the wrapped command through "sh -c" by
-// default; -x/--exec keeps the direct argv semantics.
 func TestR10WatchShellSemantics(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -209,8 +194,7 @@ func TestR10WatchShellSemantics(t *testing.T) {
 		})
 	}
 	confirm := []string{
-		// watch re-joins argv through sh -c (quotes are lost): the inner
-		// script is just "rm" with positional parameters — bounded.
+
 		`watch -n1 sh -c 'rm -rf /home/user'`,
 	}
 	for _, command := range confirm {
@@ -243,8 +227,6 @@ func TestR10WatchShellSemantics(t *testing.T) {
 	}
 }
 
-// R10 P1-5: kubectl exec consumes options before and after the pod name
-// (pflag interspersed); docker exec gets the same alignment.
 func TestR10ExecOptionAlignment(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -309,8 +291,6 @@ func TestR10ExecOptionAlignment(t *testing.T) {
 	}
 }
 
-// R10 P1-6: every executable ssh_config keyword is classified, including
-// KnownHostsCommand and XAuthLocation; Include fails closed.
 func TestR10SSHConfigExecutableKeywords(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -366,8 +346,6 @@ func TestR10SSHConfigExecutableKeywords(t *testing.T) {
 	}
 }
 
-// R10 P2-1: C-style for headers walk Init/Cond/Post with the arithmetic
-// walker before the Unknowable floor.
 func TestR10CStyleLoopTraversal(t *testing.T) {
 	t.Parallel()
 	forbidden := []string{
@@ -414,8 +392,6 @@ func TestR10CStyleLoopTraversal(t *testing.T) {
 	}
 }
 
-// R10 P2-2: ClassifyTool requires a concrete JSON object; null and scalar
-// arguments fail closed for every known tool.
 func TestR10ToolArgumentFailClosed(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"read_file", "write_file", "exec_commands", "send_keys", "db_query", "docker_exec", "redis_command", "ask_user"} {
@@ -429,7 +405,7 @@ func TestR10ToolArgumentFailClosed(t *testing.T) {
 			}
 		}
 	}
-	// Absent arguments stay valid for tools that need no payload.
+
 	if ruling := ClassifyTool("read_file", nil, Config{}); ruling.Risk != Safe {
 		t.Fatalf("read_file without args = %v, want Safe", ruling)
 	}
@@ -438,8 +414,6 @@ func TestR10ToolArgumentFailClosed(t *testing.T) {
 	}
 }
 
-// R10 preserved boundaries: the alignment fixes must not move the benign
-// rulings, including the wrapper registry's read-only forms.
 func TestR10PreservedBoundaries(t *testing.T) {
 	t.Parallel()
 	safe := []string{
@@ -479,9 +453,6 @@ func TestR10PreservedBoundaries(t *testing.T) {
 	}
 }
 
-// R10 sibling sweep: build tools execute their build file's recipes through
-// a shell — the same execution class as watch and at -f. An implicit build
-// file is unverifiable content; an explicit -f file is the script-file case.
 func TestR10BuildToolExecution(t *testing.T) {
 	t.Parallel()
 	danger := []string{
@@ -549,8 +520,6 @@ func TestR10BuildToolExecution(t *testing.T) {
 	}
 }
 
-// R10 sibling sweep: git's "--" ends global-option scanning like every other
-// option parser in the classifier.
 func TestR10GitDoubleDash(t *testing.T) {
 	t.Parallel()
 	for _, command := range []string{`git -- status`, `git -- log --oneline`} {

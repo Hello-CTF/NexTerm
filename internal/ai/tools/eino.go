@@ -215,9 +215,6 @@ type Execution struct {
 	Subagents  *SubagentConfig
 }
 
-// SubagentConfig carries the long-lived dependencies needed to compose
-// bounded subagent runs inside one execution. Nil disables the spawn tool.
-// Model is required when set; production wires subagent.NewProfileModelFactory.
 type SubagentConfig struct {
 	Model        subagent.ModelFactory
 	AllowedTools []string
@@ -244,11 +241,7 @@ type InteractionState struct {
 	TerminalInput  string
 	TerminalCursor int
 	Info           Interaction
-	// AuthorizationID is the tools.GuardAuthorizationID of the guard decision
-	// that produced the confirmation interrupt. The resumed execution binds it
-	// to the call so the outcome ledger records the effect under the decision
-	// that actually gated it; an empty value (for example a checkpoint written
-	// before this binding existed) leaves the call unbound with prior behavior.
+
 	AuthorizationID string
 }
 
@@ -398,10 +391,6 @@ func (e *Execution) enabled(name string) bool {
 	}
 }
 
-// subagentSpawnTool composes the per-execution subagent manager from the
-// configured model factory and the scoped tool registry adapter, then binds
-// the spawn tool to the caller-configured child scope. The model input can
-// only append a persona for style; the scope itself grants no permissions.
 func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	if e.Subagents == nil || e.Subagents.Model == nil {
 		return nil, errors.New("subagent model factory is not configured")
@@ -424,10 +413,6 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	return spawnOutputTool{InvokableTool: spawn}, nil
 }
 
-// spawnOutputTool adapts the subagent spawn tool to the domain result
-// contract: the agent runner parses every tool message as tools.Output JSON,
-// so the child's plain-text output is wrapped on success while errors keep
-// propagating unchanged (cancellation included).
 type spawnOutputTool struct {
 	tool.InvokableTool
 }
@@ -444,10 +429,6 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 	return string(encoded), nil
 }
 
-// scopedSubagentTools is the scoped tool registry adapter: the child receives
-// the same registry, session scope, permission snapshot and approval memory as
-// the parent execution, so its available tools are exactly the parent's
-// enabled set and the permission intersection is preserved by construction.
 func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.Manager) ([]tool.BaseTool, error) {
 	child := &Execution{JobID: e.JobID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode}
 	available, err := child.Tools()
@@ -475,11 +456,6 @@ func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.M
 	return scoped, nil
 }
 
-// subagentAllowedTools intersects the configured child scope with the tools
-// this execution actually enables: a subagent never receives a tool the
-// parent cannot use under the current session scope, plan mode and permission
-// snapshot. ask_user and exit_plan_mode never propagate because bounded
-// isolated runs cannot interact with the user or submit the parent's plan.
 func (e *Execution) subagentAllowedTools() []string {
 	configured := e.Subagents.AllowedTools
 	if len(configured) == 0 {

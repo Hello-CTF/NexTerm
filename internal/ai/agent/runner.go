@@ -146,9 +146,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		forceCancel()
 		return StartResponse{}, errors.New("AI 事件流为空")
 	}
-	// Persist the user's message — bound to this job — before the job
-	// becomes steerable: a Steer accepted right after Start returns must
-	// never outrank the question it supplements in the conversation record.
+
 	if err := r.store.MsgInsert(ctx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
 		r.releaseJobID(jobID)
 		cancel()
@@ -200,10 +198,6 @@ func decodedImageSize(image string) (int, error) {
 	return len(decoded), err
 }
 
-// cancelTestHook is a test-only scheduling point inside Cancel, invoked
-// after the job context and any in-flight execution are canceled but
-// before the HITL manager cancel. It must not call back into the runner.
-// Nil in production.
 var cancelTestHook func()
 
 func (r *Runner) Cancel(jobID string) error {
@@ -234,13 +228,6 @@ func (r *Runner) Cancel(jobID string) error {
 	return err
 }
 
-// Steer queues a user message for delivery at the job's next model-call
-// boundary. The message is persisted immediately — it is part of the
-// conversation record whether or not the run lives long enough to act on
-// it — and is injected between complete tool-call units only, so tool-pair
-// integrity is never broken. Steering grants no privileges: the text
-// reaches the model as an ordinary user message and the permission
-// snapshot taken at run start is untouched.
 func (r *Runner) Steer(jobID, message string) error {
 	if strings.TrimSpace(message) == "" {
 		return errors.New("AI 补充指令不能为空")
@@ -254,20 +241,13 @@ func (r *Runner) Steer(jobID, message string) error {
 	if err := current.steer.Push(schema.UserMessage(message)); err != nil {
 		return fmt.Errorf("%w: %w", ErrSteerQueueFull, err)
 	}
-	// The row carries this job's ID: initializeEino skips this job's steered
-	// rows when assembling the initial history (the queue delivers them at
-	// the boundary instead), while later runs read them as ordinary history.
+
 	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": message, "steered": true, "jobId": current.id}, nil, nil); err != nil {
 		return err
 	}
 	return nil
 }
 
-// cancelRun cancels the HITL run. Cancel races the run's own completion:
-// when the run reaches a terminal state first the manager reports
-// ErrRunFinished, and the cancel is already satisfied, so it succeeds
-// idempotently — but only once that terminal state is confirmed, and never
-// for any other error, which must reach the caller.
 func (r *Runner) cancelRun(jobID string) error {
 	_, err := r.hitl.Cancel(jobID)
 	if err == nil || errors.Is(err, hitl.ErrRunNotFound) {
@@ -363,10 +343,6 @@ func (r *Runner) pendingInterrupt(jobID, callID, nonce string, kind hitl.Kind) (
 	return hitl.Interrupt{}, fmt.Errorf("%w: 没有待处理的确认请求匹配该调用", ErrConfirmationStale)
 }
 
-// resumeWithAnswer hands a validated answer to the HITL manager and makes
-// sure exactly one consume loop drives the resumed event stream: the parked
-// loop picks it up when one is still winding down, otherwise a fresh loop
-// starts here.
 func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
 	current.pendingMu.Lock()
 	if current.ctx.Err() != nil || current.eino == nil || current.eino.runner == nil {
@@ -403,14 +379,10 @@ func mapResumeError(err error) error {
 	}
 }
 
-// HITLSnapshot exposes the reconnect surface for one run: pending interrupt
-// requests with their stable request IDs plus the terminal event, if any.
 func (r *Runner) HITLSnapshot(jobID string) (hitl.Snapshot, error) {
 	return r.hitl.Snapshot(jobID)
 }
 
-// HITLEvents replays the per-run HITL event log strictly after the given
-// sequence so a reconnected client can resume mid-stream without guessing.
 func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 	return r.hitl.Events(jobID, after)
 }
@@ -424,11 +396,6 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 	})
 }
 
-// reportSteerLeftover emits steerDropped for steering messages that were
-// accepted but never reached a model-call boundary — the run finished or
-// was canceled first. Emitted before the terminal event so the client can
-// mark exactly which user messages the model never saw. Best-effort: a
-// closed stream must not block completion.
 func (r *Runner) reportSteerLeftover(current *job) {
 	leftover := current.steer.Drain()
 	if len(leftover) == 0 {
@@ -438,8 +405,7 @@ func (r *Runner) reportSteerLeftover(current *job) {
 	if parent == nil {
 		parent = context.WithoutCancel(current.ctx)
 	}
-	// Same 5s bound as the terminal event: a wedged stream must not stall
-	// completion forever.
+
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	for _, message := range leftover {
@@ -492,11 +458,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		if cancelFn != nil && running {
 			_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 		}
-		// After a HITL resume the active execution runs on the manager's run
-		// context with a manager-held cancel function, so neither cancellation
-		// above reaches it; cancel every run through the manager before
-		// waiting, mirroring Runner.Cancel. Close is best-effort: a run that
-		// already finished or fails cleanup must not block the others.
+
 		_, _ = r.hitl.Cancel(current.id)
 		if !running {
 			r.complete(current, "", 0, usage.Usage{}, context.Canceled)
@@ -507,8 +469,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		r.wg.Wait()
 		close(done)
 	}()
-	// The runner owns the memory store handed to it by the composition and
-	// closes it exactly once, after every job has drained.
+
 	select {
 	case <-done:
 		err := r.hitl.Close()

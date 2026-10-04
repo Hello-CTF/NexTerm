@@ -180,9 +180,7 @@ func uniqueIDs(values []string) ([]string, error) {
 }
 
 func (s *Store) selectEntries(ctx context.Context, scope Scope, selection Selection) ([]Entry, error) {
-	// No SQL LIMIT on purpose: the byte budget may skip an oversized entry
-	// while a later, smaller one still fits, so a row cap would change both
-	// the selection and the Omitted count.
+
 	query := `SELECT id, topic, content, version, redacted, created_at, updated_at
 		FROM memory_entry WHERE tenant = ? AND subject = ?`
 	args := []any{scope.Tenant, scope.Subject}

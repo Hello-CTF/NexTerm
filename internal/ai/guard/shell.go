@@ -9,8 +9,6 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// Analysis budgets. Commands beyond any budget cannot be proven bounded and
-// rate Unknowable.
 const (
 	maxClassifyDepth = 8
 	maxCommandBytes  = 64 << 10
@@ -26,8 +24,6 @@ const (
 	stdinFile
 )
 
-// pipeInput describes where a command's standard input comes from and, for
-// pipes and here-documents, whether the exact bytes are provably known.
 type pipeInput struct {
 	kind stdinKind
 	text string
@@ -69,15 +65,10 @@ func classifyCommandText(command string, rules []string, depth int, nodes *int) 
 	return Worst(result, c.classifyStmts(file.Stmts, pipeInput{}))
 }
 
-// classifyText re-parses and classifies a nested command string (shell -c
-// payloads, ssh remote commands, xargs lines, env split strings) one level
-// deeper, sharing the node budget of the outer classification.
 func (c *classifier) classifyText(text string) Ruling {
 	return classifyCommandText(text, c.rules, c.depth+1, c.nodes)
 }
 
-// child returns the classifier for one unwrap level deeper (sudo, su, env,
-// execution wrappers), sharing the node budget.
 func (c *classifier) child() *classifier {
 	return &classifier{rules: c.rules, depth: c.depth + 1, nodes: c.nodes}
 }
@@ -105,8 +96,7 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	if stmt == nil {
 		return Allow()
 	}
-	// Redirects apply to the whole statement and decide where stdin comes
-	// from: a redirect on the statement overrides the pipe feeding it.
+
 	redirResult, stdin := c.classifyRedirects(stmt.Redirs)
 	if stdin != nil {
 		pipeIn = *stdin
@@ -114,7 +104,7 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	result := redirResult
 	switch cmd := stmt.Cmd.(type) {
 	case nil:
-		// Redirect-only statement; the redirects carry the whole risk.
+
 	case *syntax.CallExpr:
 		result = Worst(result, c.classifyCallExpr(cmd, pipeIn))
 	case *syntax.BinaryCmd:
@@ -132,12 +122,10 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	case *syntax.CaseClause:
 		result = Worst(result, c.classifyCaseClause(cmd, pipeIn))
 	case *syntax.FuncDecl:
-		// Defining a function makes every later invocation of it opaque to
-		// the guard; the body is not executed by the declaration itself.
+
 		result = Worst(result, Indeterminate("函数定义会使后续调用无法审查"))
 	case *syntax.ArithmCmd:
-		// The arithmetic itself cannot be proven, and substitutions inside
-		// it execute: classify them before failing closed.
+
 		ruling := Allow()
 		c.classifyArithmExpr(cmd.X, &ruling)
 		result = Worst(result, ruling, Indeterminate("算术命令无法证明有界"))
@@ -148,9 +136,7 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 		}
 		result = Worst(result, ruling, Indeterminate("算术命令无法证明有界"))
 	case *syntax.TestClause:
-		// [[ ... ]] only evaluates conditions, but its words still undergo
-		// expansion: substitutions inside them execute and dynamic words
-		// cannot be proven.
+
 		result = Worst(result, c.classifyTestExpr(cmd.X))
 	case *syntax.DeclClause:
 		for _, assign := range cmd.Args {
@@ -159,7 +145,7 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	case *syntax.TimeClause:
 		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeIn))
 	case *syntax.CoprocClause:
-		// A coproc feeds the command from an undetermined pipe.
+
 		result = Worst(result, c.classifyStmt(cmd.Stmt, pipeInput{kind: stdinPipe}))
 	default:
 		result = Worst(result, Indeterminate("命令结构无法识别"))
@@ -167,9 +153,6 @@ func (c *classifier) classifyStmt(stmt *syntax.Stmt, pipeIn pipeInput) Ruling {
 	return result
 }
 
-// classifyTestExpr walks every word of a [[ ... ]] expression: test operands
-// undergo expansion, so substitutions inside them execute and dynamic words
-// cannot be proven.
 func (c *classifier) classifyTestExpr(expr syntax.TestExpr) Ruling {
 	result := Allow()
 	if expr == nil {
@@ -208,8 +191,7 @@ func (c *classifier) classifyForClause(clause *syntax.ForClause, pipeIn pipeInpu
 			}
 		}
 	case *syntax.CStyleLoop:
-		// The C-style header cannot be proven, and substitutions inside
-		// Init/Cond/Post execute: classify them before failing closed.
+
 		ruling := Allow()
 		c.classifyArithmExpr(loop.Init, &ruling)
 		c.classifyArithmExpr(loop.Cond, &ruling)
@@ -228,7 +210,7 @@ func (c *classifier) classifyCaseClause(clause *syntax.CaseClause, pipeIn pipeIn
 		result = Worst(result, Indeterminate("case 取值包含动态替换"), ruling)
 	}
 	for _, item := range clause.Items {
-		// Case patterns undergo expansion just like any other word.
+
 		for _, pattern := range item.Patterns {
 			ruling := Allow()
 			if _, ok := c.literalWord(pattern, &ruling); !ok {
@@ -258,10 +240,6 @@ func (c *classifier) classifyBinaryCmd(cmd *syntax.BinaryCmd, pipeIn pipeInput) 
 	return Indeterminate("无法识别的命令连接符")
 }
 
-// pipeProducer computes the exact bytes a pipe segment writes into the pipe,
-// but only when they are provably determinable: echo without backslashes
-// (dash interprets escapes by default, -e/-E make bash do the same), a fully
-// modeled printf, or cat copying a literal here-document/here-string.
 func (c *classifier) pipeProducer(stmt *syntax.Stmt) (string, bool) {
 	if stmt == nil {
 		return "", false
@@ -300,17 +278,14 @@ func (c *classifier) pipeProducer(stmt *syntax.Stmt) (string, bool) {
 	case "printf":
 		return printfProducer(argv[1:])
 	case "cat":
-		// cat is a determinable producer only without file operands: with
-		// operands it copies the files and ignores its standard input, and
-		// "-" is the only operand that names stdin. cat has no value options.
+
 		for _, arg := range argv[1:] {
 			if arg == "-" || strings.HasPrefix(arg, "-") {
 				continue
 			}
 			return "", false
 		}
-		// Redirects apply left to right: only the last stdin-setting
-		// redirect decides whether stdin is a literal here-document.
+
 		var hdoc *syntax.Redirect
 		for _, r := range stmt.Redirs {
 			switch r.Op {
@@ -337,25 +312,18 @@ func (c *classifier) pipeProducer(stmt *syntax.Stmt) (string, bool) {
 	return "", false
 }
 
-// printfProducer models the bytes printf emits for a statically known format
-// string and arguments: option handling (-- and -v var), escape sequences and
-// format reuse until the arguments run out (printf '%s' a b prints "ab").
-// Only the modeled escapes and verbs are accepted; anything else (%b,
-// hex/octal escapes, * width, unknown verbs) makes the output
-// shell-dependent and fails closed.
 func printfProducer(args []string) (string, bool) {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
 		if args[0] == "--" {
-			// -- ends option scanning; the next argument is the format even
-			// when it starts with a dash.
+
 			args = args[1:]
 			break
 		}
 		if args[0] == "-v" {
-			// -v var format... assigns to a variable; stdout stays empty.
+
 			return "", true
 		}
-		// Unknown option: printf rejects it and prints nothing.
+
 		return "", true
 	}
 	if len(args) == 0 {
@@ -435,8 +403,7 @@ func printfProducer(args []string) (string, bool) {
 				return "", false
 			}
 		}
-		// bash reuses the format only while arguments remain; a pass that
-		// consumes none ends the output (printf 'x' a b prints "x").
+
 		if consumed == 0 || argIndex >= len(rest) {
 			break
 		}
@@ -456,8 +423,6 @@ func echoOption(arg string) bool {
 	return true
 }
 
-// classifyRedirects checks every redirect attached to a statement and returns
-// the stdin source the redirects impose, if any.
 func (c *classifier) classifyRedirects(redirs []*syntax.Redirect) (Ruling, *pipeInput) {
 	result := Allow()
 	var stdin *pipeInput
@@ -477,7 +442,7 @@ func (c *classifier) classifyRedirects(redirs []*syntax.Redirect) (Ruling, *pipe
 			stdin = in
 		}
 	}
-	// A single write to /dev/null discards output and changes nothing.
+
 	if writes > 0 && !(writes == 1 && lastWriteTarget == "/dev/null") {
 		result = Worst(result, Confirm(KindWriteFS, "包含文件重定向"))
 	}
@@ -522,7 +487,7 @@ func (c *classifier) classifyRedirect(r *syntax.Redirect) (Ruling, bool, string,
 		if word == "-" || isNumeric(word) {
 			return result, false, "", nil
 		}
-		// >&word with a non-fd word redirects stdout and stderr onto it.
+
 		if isNetworkDevice(word) {
 			return Worst(result, Dangerous("重定向到网络设备")), false, "", nil
 		}
@@ -556,8 +521,6 @@ func (c *classifier) classifyHeredoc(r *syntax.Redirect) (Ruling, bool, string, 
 	return result, false, "", &pipeInput{kind: stdinHeredoc, text: text, ok: ok}
 }
 
-// redirectTarget proves a redirect target is a literal path: no expansions
-// and no glob metacharacters, since the shell would expand them at runtime.
 func (c *classifier) redirectTarget(r *syntax.Redirect) (string, Ruling) {
 	if r.N != nil && r.N.Value != "" && !isNumeric(r.N.Value) {
 		return "", Indeterminate("非常规文件描述符重定向无法证明有界")
@@ -592,9 +555,6 @@ func isNumeric(value string) bool {
 	return err == nil
 }
 
-// literalArgv extracts the argv of a simple command. Every word must be
-// provably literal (see literalWord); dynamic words make the command
-// Unknowable while substitutions inside them are still classified.
 func (c *classifier) literalArgv(words []*syntax.Word) ([]string, bool, Ruling) {
 	result := Allow()
 	argv := make([]string, 0, len(words))
@@ -612,12 +572,6 @@ func (c *classifier) literalArgv(words []*syntax.Word) ([]string, bool, Ruling) 
 	return argv, provable, result
 }
 
-// literalWord extracts the text of a word. Every part must be provably
-// literal: only plain or quoted literal parts, with no parameter expansions,
-// command substitutions, arithmetic, process substitutions or extended globs.
-// Dynamic parts make the word unprovable; command and process substitutions
-// and any expansions nested inside parameter or arithmetic expansions are
-// still classified for their own effects.
 func (c *classifier) literalWord(word *syntax.Word, result *Ruling) (string, bool) {
 	if word == nil {
 		return "", true
@@ -642,7 +596,7 @@ func (c *classifier) literalPart(part syntax.WordPart, result *Ruling) (string, 
 		return p.Value, true
 	case *syntax.SglQuoted:
 		if p.Dollar {
-			// $'...' interprets escapes we do not decode.
+
 			return "", false
 		}
 		return p.Value, true
@@ -664,14 +618,11 @@ func (c *classifier) literalPart(part syntax.WordPart, result *Ruling) (string, 
 		c.classifyArithmExpr(p.X, result)
 		return "", false
 	default:
-		// ExtGlob and any future part: dynamic.
+
 		return "", false
 	}
 }
 
-// classifyParamExp walks every word and arithmetic expression nested inside a
-// parameter expansion (${x:-$(cmd)}, ${a:x:y}, ${a/x/y}, ${a[$(cmd)]}): the
-// expansion itself is always dynamic, but substitutions inside it execute.
 func (c *classifier) classifyParamExp(exp *syntax.ParamExp, result *Ruling) {
 	if exp == nil {
 		return
@@ -690,8 +641,6 @@ func (c *classifier) classifyParamExp(exp *syntax.ParamExp, result *Ruling) {
 	}
 }
 
-// classifyArithmExpr walks an arithmetic expression tree so command
-// substitutions hidden inside it ($(( $(cmd) ))) are classified.
 func (c *classifier) classifyArithmExpr(expr syntax.ArithmExpr, result *Ruling) {
 	switch e := expr.(type) {
 	case *syntax.BinaryArithm:
@@ -715,9 +664,6 @@ func (c *classifier) classifySubstStmts(stmts []*syntax.Stmt) Ruling {
 	return result
 }
 
-// dangerousEnvAssignments are variable names whose value is executed or
-// loaded as code by the runtime; assigning them is a code-injection
-// capability regardless of how bounded the rest of the command looks.
 var dangerousEnvAssignments = map[string]bool{
 	"LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "LD_AUDIT": true,
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true,
@@ -735,8 +681,7 @@ func (c *classifier) classifyAssign(assign *syntax.Assign) Ruling {
 		return Allow()
 	}
 	if assign.Array != nil || assign.Index != nil {
-		// Array and subscript assignments cannot be proven, but
-		// substitutions inside the subscripts and elements still execute.
+
 		ruling := Allow()
 		c.classifyArithmExpr(assign.Index, &ruling)
 		if assign.Array != nil {
@@ -759,8 +704,6 @@ func (c *classifier) classifyAssign(assign *syntax.Assign) Ruling {
 	return result
 }
 
-// classifyCallExpr classifies one simple command: leading assignments, then
-// the argv after every word is proven literal, then the unwrap chain.
 func (c *classifier) classifyCallExpr(cmd *syntax.CallExpr, stdin pipeInput) Ruling {
 	result := Allow()
 	for _, assign := range cmd.Assigns {
@@ -774,17 +717,13 @@ func (c *classifier) classifyCallExpr(cmd *syntax.CallExpr, stdin pipeInput) Rul
 	if !provable || result.Risk == Forbidden {
 		return result
 	}
-	// A glob in command position would execute whatever matches at runtime;
-	// "[" itself is the POSIX test builtin, not a bracket expression.
+
 	if argv[0] != "[" && strings.ContainsAny(argv[0], "*?[") {
 		return Worst(result, Indeterminate("命令名包含通配符"))
 	}
 	return Worst(result, c.classifyArgv(argv, stdin))
 }
 
-// classifyArgv unwraps privilege escalation and execution wrappers down to
-// the command that ultimately runs. Options the wrapper tables cannot
-// resolve make the command Unknowable; nothing is guessed.
 func (c *classifier) classifyArgv(argv []string, stdin pipeInput) Ruling {
 	if c.depth > maxClassifyDepth {
 		return Indeterminate("命令嵌套过深，无法安全分析")
@@ -808,7 +747,6 @@ func (c *classifier) classifyArgv(argv []string, stdin pipeInput) Ruling {
 	return c.classifySimple(argv, stdin)
 }
 
-// sudoFlagShorts lists the sudo/doas short options that take no value.
 const sudoFlagShorts = "ABbeEHiKklnPsvV"
 
 func (c *classifier) classifySudo(name string, args []string, stdin pipeInput) Ruling {
@@ -939,8 +877,7 @@ func (c *classifier) classifySu(args []string, stdin pipeInput) Ruling {
 			}
 			continue
 		}
-		// The first non-option is the target user; anything after it is
-		// passed to the shell as positional parameters.
+
 	}
 	if code != "" {
 		return Worst(result, c.classifyText(code))
@@ -1022,7 +959,7 @@ func (c *classifier) classifyEnv(args []string, stdin pipeInput) Ruling {
 	}
 	rest := args[index:]
 	if len(rest) == 0 {
-		// env with no command prints the environment.
+
 		return Allow()
 	}
 	return c.child().classifyArgv(rest, stdin)
@@ -1071,8 +1008,6 @@ func isShellInterpreter(name string) bool {
 	}
 }
 
-// interpreterCodeLetters lists the short options through which non-shell
-// interpreters accept inline source (-c/-e/-E/-r/-p, attached or separate).
 const interpreterCodeLetters = "ceErp"
 
 func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
@@ -1132,7 +1067,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 	case "redis-cli", "valkey-cli":
 		result := classifyRedis(args)
 		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
-			// redis-cli executes commands read from standard input.
+
 			if !stdin.ok {
 				return Worst(result, Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容"))
 			}
@@ -1168,8 +1103,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 				return Dangerous("网络工具执行命令")
 			}
 			if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsAny(arg[1:], "ec") {
-				// -e/-c execute a command; attached forms (-e/bin/sh) and
-				// clusters are execution capability just the same.
+
 				return Dangerous("网络工具执行命令")
 			}
 			if strings.HasPrefix(lower, "exec:") || strings.HasPrefix(lower, "system:") || strings.HasPrefix(lower, "shell") {
@@ -1194,8 +1128,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		if len(args) == 0 {
 			return Allow()
 		}
-		// Aliases rewrite how the shell parses every later command, so
-		// future rulings can no longer be proven against the visible text.
+
 		return Dangerous("别名定义会使后续命令无法审查")
 	case "unalias":
 		return Dangerous("别名删除会改变命令解析")
@@ -1218,9 +1151,6 @@ var safeFirstToken = func() map[string]bool {
 	return result
 }()
 
-// classifyInterpreter rates shells and language runtimes. Inline code options
-// take precedence over stdin; then stdin-driven execution; then a script
-// file argument; a bare interpreter is an open execution session.
 func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeInput) Ruling {
 	shell := isShellInterpreter(name)
 	var codes []string
@@ -1233,10 +1163,7 @@ func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeI
 					codes = append(codes, args[i+1])
 				}
 			case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.IndexByte(arg[1:], 'c') >= 0:
-				// Clustered -c. getopt-style shells (dash) treat the rest
-				// of the cluster as the attached script, while bash/zsh
-				// treat them as more flags and take the next argument.
-				// Classify both interpretations and keep the worse ruling.
+
 				position := strings.IndexByte(arg[1:], 'c')
 				if remainder := arg[position+2:]; remainder != "" {
 					codes = append(codes, remainder)
@@ -1323,8 +1250,7 @@ func (c *classifier) classifyDatabaseClient(name string, args []string, stdin pi
 		return Dangerous("数据库客户端执行重定向 SQL 文件")
 	}
 	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
-		// The client executes SQL read from standard input; only exactly
-		// determinable input is classified.
+
 		if !stdin.ok {
 			return Dangerous("管道输入无法完整确定，执行器可能运行未审查的内容")
 		}
@@ -1376,10 +1302,6 @@ func (c *classifier) classifyDatabaseClient(name string, args []string, stdin pi
 	return result
 }
 
-// classifyDatabaseMetaCommand rates client-level escapes that execute files
-// or shell commands. MySQL splits -e input at statement boundaries, so
-// every statement is checked for source/\. and system; psql takes a single
-// command per -c, so only its leading escape executes.
 func classifyDatabaseMetaCommand(name, payload string, c *classifier) Ruling {
 	if name == "psql" {
 		trimmed := strings.TrimSpace(payload)
@@ -1502,9 +1424,6 @@ func isBlockDevice(value string) bool {
 	return false
 }
 
-// writesCriticalTarget reports whether a file-producing command writes to a
-// critical system path. It shares the canonicalized target model with
-// redirection and sudo-edit protection.
 func writesCriticalTarget(name string, args []string) bool {
 	valueFlags := map[string]bool{
 		"-t": true, "--target-directory": true, "-s": true, "--size": true, "-n": true,
@@ -1609,9 +1528,6 @@ func classifyCrontab(args []string) Ruling {
 	return Dangerous("crontab 从标准输入安装计划任务")
 }
 
-// sshValueShorts lists ssh short options that consume a value (attached or as
-// the next argument); sshFlagShorts lists the boolean ones. Anything outside
-// both tables makes the command line impossible to align, so it fails closed.
 const sshValueShorts = "BbcDeEFIiJLlmOoPpQRSWw"
 const sshFlagShorts = "46ACfGgKkMNnqstTVvXxYy"
 
@@ -1625,7 +1541,7 @@ func (c *classifier) classifySSH(args []string) Ruling {
 			break
 		}
 		if strings.HasPrefix(arg, "--") {
-			// ssh has no long options.
+
 			return Worst(result, Indeterminate("ssh 包含无法识别的长选项"))
 		}
 		index++
@@ -1664,15 +1580,10 @@ func (c *classifier) classifySSH(args []string) Ruling {
 	if index >= len(args) {
 		return result
 	}
-	// ssh flattens the remote command into a single string for the remote
-	// shell, so classification re-parses the joined text.
+
 	return Worst(result, c.classifyText(strings.Join(args[index:], " ")))
 }
 
-// classifySSHConfigValue inspects -o values whose keywords run a command:
-// ProxyCommand and LocalCommand execute locally through a shell, and
-// RemoteCommand executes on the remote host. ssh_config accepts "Key=Value"
-// and "Key Value" forms, so the value splits at the first '=' or blank.
 func (c *classifier) classifySSHConfigValue(value string) Ruling {
 	value = strings.TrimSpace(value)
 	separator := strings.IndexAny(value, "= \t")
@@ -1689,18 +1600,12 @@ func (c *classifier) classifySSHConfigValue(value string) Ruling {
 		}
 		return Worst(Dangerous("ssh 选项执行本地或远端命令"), c.classifyText(command))
 	case "include":
-		// Included files can set executing keywords such as ProxyCommand,
-		// so their content cannot be verified.
+
 		return Dangerous("ssh Include 引入配置文件，内容无法验证")
 	}
 	return Allow()
 }
 
-// makeValueShorts and makeFlagShorts align GNU make's leading options so the
-// build-file decision is never made on a misaligned argument. The Makefile
-// is executed through /bin/sh: an implicit Makefile (no -f) is unverifiable
-// content like `at -f`, while an explicit -f file is the script-file case
-// from the interpreter precedent (bash script.sh).
 const makeValueShorts = "CjloW"
 const makeFlagShorts = "eiknqswBdprR"
 
@@ -1722,7 +1627,7 @@ func classifyMake(args []string) Ruling {
 				}
 				file = value
 			case "eval":
-				// --eval evaluates Makefile syntax inline; $(shell) executes.
+
 				return Dangerous("make --eval 内联执行代码")
 			case "directory", "include-dir", "jobs", "load-average", "old-file", "assume-old", "what-if", "assume-new":
 				if !attached {
@@ -1765,7 +1670,7 @@ func classifyMake(args []string) Ruling {
 			}
 			continue
 		}
-		// Target names and variable assignments still execute the Makefile.
+
 	}
 	if file != "" {
 		if sawTouch {
@@ -1776,8 +1681,6 @@ func classifyMake(args []string) Ruling {
 	return Dangerous("make 执行 Makefile 配方，内容无法验证")
 }
 
-// classifyNinja rates ninja: build rules are executed from the (implicit or
-// explicit) build file, with the same script-file split as make.
 func classifyNinja(args []string) Ruling {
 	file := ""
 	for index := 0; index < len(args); index++ {
@@ -1807,7 +1710,7 @@ func classifyNinja(args []string) Ruling {
 			}
 			continue
 		}
-		// Target names still execute the build file.
+
 	}
 	if file != "" {
 		return Confirm(KindUnknown, "执行 ninja 构建规则")
@@ -1815,11 +1718,6 @@ func classifyNinja(args []string) Ruling {
 	return Dangerous("ninja 执行 build.ninja 规则，内容无法验证")
 }
 
-// classifyRemoteTransfer rates scp/sftp/rsync. Besides moving data, all
-// three can execute programs: -o passes ssh_config values (ProxyCommand and
-// friends run locally), scp -S replaces the transport program, sftp -b
-// executes a batch file, sftp -D runs a local server program, and rsync
-// -e/--rsh and --rsync-path run a shell or program on either side.
 func (c *classifier) classifyRemoteTransfer(name string, args []string) Ruling {
 	result := Confirm(KindUnknown, "远程传输或执行需要确认")
 	external := func(kind, value string) Ruling {
@@ -1951,8 +1849,6 @@ var dockerValueGlobals = []string{"host", "config", "context", "log-level", "tls
 
 var dockerFlagGlobals = []string{"version", "help"}
 
-// dockerGlobalEnd consumes docker's leading global options, reporting false
-// when an option is not in the known tables.
 func dockerGlobalEnd(args []string) (int, bool) {
 	index := 0
 	for index < len(args) && strings.HasPrefix(args[index], "-") {
@@ -2037,11 +1933,6 @@ func (c *classifier) classifyDocker(args []string, stdin pipeInput) Ruling {
 	}
 }
 
-// dockerExecCommandIndex locates the container command argv in a docker exec
-// invocation. docker's CLI parses flags interspersed with positionals, so
-// flags may appear before or after the container name; the command starts at
-// the first non-flag argument (or right after "--"). The second return value
-// reports false when an option is outside the known tables.
 func dockerExecCommandIndex(args []string) (int, bool) {
 	index := 0
 	sawContainer := false
@@ -2094,15 +1985,10 @@ func dockerExecCommandIndex(args []string) (int, bool) {
 	return index, true
 }
 
-// kubectl inherited (global) options. kubectl uses pflag: only exact
-// spellings resolve, so anything outside these tables fails closed instead of
-// being guessed, which would misalign the subcommand dispatch.
 var kubectlValueGlobals = []string{"as", "as-group", "as-uid", "cache-dir", "certificate-authority", "client-certificate", "client-key", "cluster", "context", "kubeconfig", "namespace", "password", "profile", "profile-output", "request-timeout", "server", "tls-server-name", "token", "user", "username", "log-backtrace-at", "log-dir", "log-file", "log-file-max-size", "log-flush-frequency", "vmodule", "v"}
 
 var kubectlFlagGlobals = []string{"disable-compression", "insecure-skip-tls-verify", "match-server-version", "warnings-as-errors", "add-dir-header", "alsologtostderr", "logtostderr", "one-output", "skip-headers", "skip-log-headers"}
 
-// kubectlGlobalEnd consumes kubectl's leading inherited options, reporting
-// false when an option is not in the known tables.
 func kubectlGlobalEnd(args []string) (int, bool) {
 	index := 0
 	for index < len(args) && strings.HasPrefix(args[index], "-") {
@@ -2142,8 +2028,6 @@ func kubectlGlobalEnd(args []string) (int, bool) {
 	return index, true
 }
 
-// kubectlExecLongOption resolves an exec-level long option by its exact
-// pflag spelling.
 func kubectlExecLongOption(name string) (gnuLongOption, bool) {
 	for _, option := range kubectlExecLongOptions {
 		if option.name == name {
@@ -2153,8 +2037,6 @@ func kubectlExecLongOption(name string) (gnuLongOption, bool) {
 	return gnuLongOption{}, false
 }
 
-// kubectlExecOptions consumes kubectl exec options up to the next positional
-// argument or "--", whichever comes first.
 func kubectlExecOptions(args []string, index int) (int, bool) {
 	for index < len(args) && strings.HasPrefix(args[index], "-") && args[index] != "-" {
 		arg := args[index]
@@ -2211,9 +2093,7 @@ func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
 			}
 			return Confirm(KindService, "kubectl 配置变更")
 		case "exec":
-			// pflag interspersed semantics: exec options may appear before
-			// or after the pod name; the container command starts at the
-			// first non-option after the pod, or right after "--".
+
 			index := 1
 			next, ok := kubectlExecOptions(args, index)
 			if !ok {
@@ -2228,7 +2108,7 @@ func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
 			if index >= len(args) {
 				return Confirm(KindService, "Kubernetes 资源或工作负载变更")
 			}
-			index++ // pod
+			index++
 			if !doubleDash {
 				next, ok = kubectlExecOptions(args, index)
 				if !ok {
@@ -2240,9 +2120,7 @@ func (c *classifier) classifyKubectl(args []string, stdin pipeInput) Ruling {
 				}
 			}
 			if index < len(args) {
-				// kubectl exec passes the command argv to the container
-				// process intact; classify the token slice, not a re-joined
-				// string, so quoted scripts keep their boundaries.
+
 				return Worst(Confirm(KindService, "Kubernetes 资源或工作负载变更"), c.child().classifyArgv(args[index:], stdin))
 			}
 			return Confirm(KindService, "Kubernetes 资源或工作负载变更")
@@ -2291,13 +2169,11 @@ func (c *classifier) classifyGit(args []string) Ruling {
 		if strings.HasPrefix(arg, "--") {
 			name, value, attached := strings.Cut(arg[2:], "=")
 			if name == "exec-path" {
-				// Subcommands are executed from this directory, so it
-				// redirects execution regardless of the subcommand.
+
 				return Dangerous("git --exec-path 重定向子命令执行")
 			}
 			if name == "config-env" {
-				// The config value comes from an environment variable, so
-				// executable keys cannot be verified statically.
+
 				if !attached {
 					index++
 					if index < len(args) {
@@ -2385,14 +2261,8 @@ func (c *classifier) classifyGit(args []string) Ruling {
 
 var gitValueGlobals = []string{"git-dir", "work-tree", "config-env", "namespace"}
 
-// gitFlagGlobals mixes bare long-option names (matched after the leading
-// "--" is stripped) with the short flags -p/-P (matched against the whole
-// argument).
 var gitFlagGlobals = []string{"-p", "-P", "paginate", "no-pager", "bare", "version", "help", "no-replace-objects", "literal-pathspecs", "glob-pathspecs", "noglob-pathspecs", "icase-pathspecs", "no-optional-locks"}
 
-// classifyGitClean parses clean options with getopt semantics: -e/--exclude
-// consumes a value (so `git clean -fe -n` is NOT a dry run), and only a free
-// -n/--dry-run makes the read-only dry run.
 func classifyGitClean(args []string) Ruling {
 	dryRun := false
 	for index := 0; index < len(args); index++ {
@@ -2436,10 +2306,6 @@ func classifyGitClean(args []string) Ruling {
 	return Dangerous("git clean 删除未跟踪文件")
 }
 
-// gitConfigInjection rates git -c values that configure an executable hook
-// (pager, editor, ssh command, proxy, fsmonitor, external diff, filters,
-// shell aliases) or import configuration indirectly (include.*): the value
-// runs a command, so it is classified like one.
 func (c *classifier) gitConfigInjection(value string) (Ruling, bool) {
 	key, command, found := strings.Cut(value, "=")
 	lower := strings.ToLower(key)
@@ -2598,11 +2464,10 @@ func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 		case 'o', 'O', 'D', 'c':
 			return value != "-", false
 		case 'F', 'T':
-			// Uploads are HTTP writes even when the body is stdin ("-").
+
 			return true, false
 		case 'd':
-			// Data from stdin ("-") is still a POST body; only GET mode
-			// keeps the read-only contract.
+
 			return !getMode, false
 		case 'K', 'J':
 			return true, false
@@ -2615,15 +2480,8 @@ func curlShortOptionRisk(arg string, getMode bool) (bool, bool) {
 	return false, false
 }
 
-// tarValueShorts lists tar short options that consume a value (attached or as
-// the next argument); they align short-option clusters so -I is never
-// mistaken for a flag or for another option's value.
 const tarValueShorts = "fbCVFXTKNgI"
 
-// tarLongOptions is GNU tar's documented long-option table for
-// unique-abbreviation resolution; anything that does not resolve exactly or
-// as a unique prefix fails closed instead of falling through to the
-// read-only listing path.
 var tarLongOptions = []gnuLongOption{
 	{name: "to-command", takesValue: true},
 	{name: "use-compress-program", takesValue: true},
@@ -2736,16 +2594,10 @@ var tarLongOptions = []gnuLongOption{
 	{name: "help"},
 }
 
-// tarExecutingOptions are the long options whose value runs an external
-// program; they are classified as commands via classifyTarAction.
 var tarExecutingOptions = map[string]bool{
 	"to-command": true, "use-compress-program": true, "checkpoint-action": true, "info-script": true,
 }
 
-// classifyTar rates archive inspection and extraction. External-command
-// options (-I/-F, --to-command/--use-compress-program/
-// --checkpoint-action=exec/--info-script, including unique long-option
-// abbreviations) execute a shell command, which is classified itself.
 func (c *classifier) classifyTar(args []string) Ruling {
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -2769,9 +2621,7 @@ func (c *classifier) classifyTar(args []string) Ruling {
 			index++
 		}
 	}
-	// GNU tar runs -I (an alias of --use-compress-program) and -F
-	// (--info-script, which implies --checkpoint) as external programs; the
-	// value is the rest of the cluster or the next argument.
+
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		if len(arg) < 2 || arg[0] != '-' || arg[1] == '-' {
@@ -2791,7 +2641,7 @@ func (c *classifier) classifyTar(args []string) Ruling {
 				return Worst(Confirm(KindUnknown, "tar 包含外部命令执行"), c.classifyTarAction(value))
 			}
 			if strings.IndexByte(tarValueShorts, letter) >= 0 {
-				// A value-taking letter owns the rest of the cluster.
+
 				letters = ""
 				continue
 			}

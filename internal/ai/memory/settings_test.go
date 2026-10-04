@@ -46,7 +46,7 @@ func TestUpdateSettingsFlagsAndCAS(t *testing.T) {
 	if !settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 2 {
 		t.Fatalf("after tools flip = %+v", settings)
 	}
-	// SetInjectionEnabled keeps working as the single-flag delegate.
+
 	disabled := false
 	settings, err = store.SetInjectionEnabled(ctx, testScope, disabled, 2)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestUpdateSettingsFlagsAndCAS(t *testing.T) {
 	if settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 3 {
 		t.Fatalf("after delegate flip = %+v", settings)
 	}
-	// Settings are scoped: another scope still reads the defaults.
+
 	other := Scope{Tenant: testScope.Tenant, Subject: "subject-b"}
 	if settings, err := store.Settings(ctx, other); err != nil || settings.Version != 0 || settings.ToolsEnabled {
 		t.Fatalf("other scope settings = %+v err=%v", settings, err)
@@ -101,8 +101,6 @@ func TestUpdateSettingsConcurrentCASHasSingleWinner(t *testing.T) {
 	}
 }
 
-// TestMigrationV1ToV2 proves an existing v1 database gains tools_enabled
-// defaulting to off while the stored injection flag and version survive.
 func TestMigrationV1ToV2(t *testing.T) {
 	ctx := context.Background()
 	path := t.TempDir() + "/memory-v1.db"

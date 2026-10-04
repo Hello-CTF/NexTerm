@@ -21,8 +21,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 	var fields map[string]json.RawMessage
 	if len(args) != 0 {
 		if err := json.Unmarshal(args, &fields); err != nil || fields == nil {
-			// A JSON null decodes into a nil map without an error; anything
-			// that is not a concrete JSON object fails closed.
+
 			return Indeterminate("工具参数不是有效 JSON 对象")
 		}
 	}

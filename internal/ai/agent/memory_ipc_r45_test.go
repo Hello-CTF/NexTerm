@@ -11,8 +11,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-// memoryIPCHarness registers the runner's commands — including the memory
-// surface — on a real dispatcher backed by a real memory store.
 func memoryIPCHarness(t *testing.T) (*ipc.Dispatcher, *memory.Store) {
 	t.Helper()
 	storage, err := store.OpenInMemory(context.Background())
@@ -95,8 +93,7 @@ func TestMemoryIPCScopeAuthorizedCRUD(t *testing.T) {
 	if !got.OK {
 		t.Fatalf("get = %+v", got.Error)
 	}
-	// The same entry is invisible to another scope: the store authorizes the
-	// owner on every row, and the IPC surfaces that as forbidden.
+
 	foreign := memoryDispatch(t, dispatcher, memoryCommandGet, `{"scope":{"tenant":"tenant-a","subject":"subject-b"},"id":"`+entry.ID+`"}`)
 	if foreign.OK || foreign.Error == nil || foreign.Error.Code != ipc.CodeForbidden {
 		t.Fatalf("cross-scope get = %+v", foreign)

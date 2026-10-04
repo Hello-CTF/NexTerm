@@ -13,9 +13,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
-// outcomeFixture opens a real migrated in-memory database and composes the
-// production-shaped ledger on top of it: SQLiteStore over the application
-// handle plus the store's audit-log auditor.
 func outcomeFixture(t *testing.T) (*store.Store, *outcome.Ledger, *outcome.SQLiteStore) {
 	t.Helper()
 	storage, err := store.OpenInMemory(context.Background())
@@ -77,10 +74,6 @@ func recordedOutcome(t *testing.T, sqliteStore *outcome.SQLiteStore, key string)
 	return record
 }
 
-// TestOutcomeDispatcherRecordsBoundSideEffectOnce drives the dispatcher's
-// allow path end to end: the guard decision authorizes the call, the call is
-// bound to that exact decision, and the ledger records the effect exactly
-// once with a terminal audit row.
 func TestOutcomeDispatcherRecordsBoundSideEffectOnce(t *testing.T) {
 	storage, ledger, sqliteStore := outcomeFixture(t)
 	transport := &fakeTransport{result: base.ExecResult{Stdout: "hi"}}
@@ -112,8 +105,6 @@ func TestOutcomeDispatcherRecordsBoundSideEffectOnce(t *testing.T) {
 		t.Fatalf("record audit = %+v", record.Audit)
 	}
 
-	// The binding is the hash of the actual guard decision for this call, not
-	// a placeholder: recompute it from the same classification inputs.
 	ruling := guard.ClassifyTool(call.Name, call.Args, execution.Permission)
 	decision := guard.Decide(execution.Permission, ruling, guard.NewMemory())
 	if decision.Action != guard.ActionAllow {
@@ -140,9 +131,6 @@ func TestOutcomeDispatcherRecordsBoundSideEffectOnce(t *testing.T) {
 	}
 }
 
-// TestOutcomeDispatcherReplayDoesNotDuplicate proves a redispatch of the same
-// job/call identity replays the durable record: the effect does not run a
-// second time and no second audit row is appended.
 func TestOutcomeDispatcherReplayDoesNotDuplicate(t *testing.T) {
 	storage, ledger, sqliteStore := outcomeFixture(t)
 	transport := &fakeTransport{result: base.ExecResult{Stdout: "hi"}}
@@ -174,10 +162,6 @@ func TestOutcomeDispatcherReplayDoesNotDuplicate(t *testing.T) {
 	}
 }
 
-// TestOutcomeDispatcherUnknownStaysHonest covers the ambiguous-effect contract:
-// a transport failure maps to outcome=unknown, the caller keeps the branch's
-// own output, and a redispatch replays the unknown record instead of retrying
-// the effect or claiming a definite failure.
 func TestOutcomeDispatcherUnknownStaysHonest(t *testing.T) {
 	storage, ledger, sqliteStore := outcomeFixture(t)
 	transport := &fakeTransport{execErr: errors.New("connection reset")}
@@ -217,10 +201,6 @@ func TestOutcomeDispatcherUnknownStaysHonest(t *testing.T) {
 	}
 }
 
-// TestOutcomeDispatcherUnboundCallKeepsPriorBehavior proves the cooperative
-// contract: without a guard-decision binding the ledger is never consulted,
-// and a bound call against a registry without a ledger executes exactly as it
-// did before the ledger existed.
 func TestOutcomeDispatcherUnboundCallKeepsPriorBehavior(t *testing.T) {
 	t.Run("ledger present but call unbound", func(t *testing.T) {
 		storage, ledger, sqliteStore := outcomeFixture(t)
@@ -268,10 +248,6 @@ func TestOutcomeDispatcherUnboundCallKeepsPriorBehavior(t *testing.T) {
 	})
 }
 
-// TestOutcomeDispatcherRejectsConflictingAuthorization proves the binding is
-// load-bearing: a redispatch of the same call identity under a different
-// guard decision is rejected as an idempotence conflict before the effect,
-// never silently reusing the earlier authorization.
 func TestOutcomeDispatcherRejectsConflictingAuthorization(t *testing.T) {
 	storage, ledger, sqliteStore := outcomeFixture(t)
 	transport := &fakeTransport{result: base.ExecResult{Stdout: "hi"}}

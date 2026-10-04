@@ -140,7 +140,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			)`,
 		}
 	case 1:
-		// v1 → v2: the opt-in switch for the model-facing memory tools.
+
 		statements = []string{
 			`ALTER TABLE memory_settings
 				ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 0 CHECK(tools_enabled IN (0, 1))`,

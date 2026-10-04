@@ -19,7 +19,6 @@ var (
 	ErrLeaseLost        = errors.New("cron job lease lost")
 )
 
-// StorageError identifies the durable operation that failed.
 type StorageError struct {
 	Op    string
 	JobID string
@@ -44,10 +43,6 @@ func storageError(op, jobID string, err error) error {
 	return &StorageError{Op: op, JobID: jobID, Err: err}
 }
 
-// Store persists jobs. Create must enforce maxPerSession atomically with the
-// insert, including when several schedulers share the store. CompareAndSwap
-// must update only when expectedRevision matches and return the stored job with
-// its new revision. Delete must apply the same revision check.
 type Store interface {
 	List(ctx context.Context) ([]Job, error)
 	Create(ctx context.Context, job Job, maxPerSession int) (Job, error)
@@ -55,7 +50,6 @@ type Store interface {
 	Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error
 }
 
-// Registration is the caller-controlled portion of a job.
 type Registration struct {
 	ID        string        `json:"id,omitempty"`
 	SessionID string        `json:"sessionId"`
@@ -67,14 +61,11 @@ type Registration struct {
 	Timeout   time.Duration `json:"timeout,omitempty"`
 }
 
-// Lease is the durable ownership record. ExpiresAt is valid only when Owner is
-// non-empty.
 type Lease struct {
 	Owner     string    `json:"owner,omitempty"`
 	ExpiresAt time.Time `json:"expiresAt,omitzero"`
 }
 
-// RunState describes the one claimed execution of a job.
 type RunState struct {
 	ID           string    `json:"id"`
 	ScheduledFor time.Time `json:"scheduledFor"`
@@ -83,8 +74,6 @@ type RunState struct {
 	Coalesced    bool      `json:"coalesced,omitempty"`
 }
 
-// Job is the durable schedule and execution state. Runtime fields are managed
-// by Scheduler and must not be accepted from RPC callers directly.
 type Job struct {
 	ID                  string        `json:"id"`
 	SessionID           string        `json:"sessionId"`
@@ -109,12 +98,8 @@ type Job struct {
 	Run                 RunState      `json:"run"`
 }
 
-// Running reports whether a durable execution claim exists.
 func (j Job) Running() bool { return j.Run.ID != "" }
 
-// Trigger is the immutable input to one execution. ScheduledFor is the oldest
-// pending occurrence; Coalesced reports that at least one later occurrence was
-// also due when the run was claimed.
 type Trigger struct {
 	RunID        string    `json:"runId"`
 	JobID        string    `json:"jobId"`
@@ -125,13 +110,10 @@ type Trigger struct {
 	Coalesced    bool      `json:"coalesced"`
 }
 
-// Executor performs the AI work represented by a trigger. Implementations must
-// return after their context is canceled.
 type Executor interface {
 	Execute(ctx context.Context, trigger Trigger) error
 }
 
-// ExecutorFunc adapts a function to Executor.
 type ExecutorFunc func(context.Context, Trigger) error
 
 func (f ExecutorFunc) Execute(ctx context.Context, trigger Trigger) error {
@@ -149,8 +131,6 @@ const (
 	DefaultCircuitCooldown   = 5 * time.Minute
 )
 
-// Options configures a Scheduler. Non-positive durations and counts select
-// their defaults.
 type Options struct {
 	MaxJobsPerSession int
 	ExecutionTimeout  time.Duration

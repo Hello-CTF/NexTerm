@@ -11,11 +11,6 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// SQLiteStore is the durable Store backed by the application SQLite database.
-// The schema comes from migrations/0005_cron.sql; the constructor fails when
-// the migration has not been applied. The db handle must be opened with
-// _txlock=immediate (as internal/store does) so the per-session bound check
-// and the insert inside Create are one serialized write.
 type SQLiteStore struct {
 	db *sql.DB
 }
@@ -54,8 +49,6 @@ func (s *SQLiteStore) List(ctx context.Context) ([]Job, error) {
 	return jobs, rows.Err()
 }
 
-// Create enforces the per-session bound in the same serialized write as the
-// insert, so concurrent schedulers sharing the database cannot overshoot it.
 func (s *SQLiteStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -90,8 +83,6 @@ func (s *SQLiteStore) Create(ctx context.Context, job Job, maxPerSession int) (J
 	return job, nil
 }
 
-// CompareAndSwap replaces the stored row only when the expected revision and
-// the owning session still match, and returns the job with its new revision.
 func (s *SQLiteStore) CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -111,7 +102,7 @@ func (s *SQLiteStore) CompareAndSwap(ctx context.Context, job Job, expectedRevis
 		return Job{}, ErrConflict
 	}
 	job.Revision = revision + 1
-	// jobValues leads with the id; the UPDATE addresses the row in its WHERE.
+
 	values := append(jobValues(job)[1:], job.ID, expectedRevision, job.SessionID)
 	result, err := tx.ExecContext(ctx, `UPDATE cron_job SET `+jobAssignments+` WHERE id = ? AND revision = ? AND session_id = ?`, values...)
 	if err != nil {
@@ -128,8 +119,6 @@ func (s *SQLiteStore) CompareAndSwap(ctx context.Context, job Job, expectedRevis
 	return job, nil
 }
 
-// Delete removes a job only within its owning session and only when the
-// expected revision still matches.
 func (s *SQLiteStore) Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -12,7 +12,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
 
-// Scheduler registers durable jobs and executes their claimed occurrences.
 type Scheduler struct {
 	store    Store
 	executor Executor
@@ -76,8 +75,6 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	}, nil
 }
 
-// Register durably creates a job. The per-session bound is enforced by Store
-// in the same atomic operation as the insert.
 func (s *Scheduler) Register(ctx context.Context, registration Registration) (Job, error) {
 	registration.SessionID = strings.TrimSpace(registration.SessionID)
 	if registration.SessionID == "" {
@@ -126,7 +123,6 @@ func (s *Scheduler) Register(ctx context.Context, registration Registration) (Jo
 	return stored, nil
 }
 
-// List returns a session's durable jobs without changing scheduler state.
 func (s *Scheduler) List(ctx context.Context, sessionID string) ([]Job, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -145,7 +141,6 @@ func (s *Scheduler) List(ctx context.Context, sessionID string) ([]Job, error) {
 	return result, nil
 }
 
-// Get returns one job only within its owning session.
 func (s *Scheduler) Get(ctx context.Context, sessionID, jobID string) (Job, error) {
 	job, err := s.lookup(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if err != nil {
@@ -154,8 +149,6 @@ func (s *Scheduler) Get(ctx context.Context, sessionID, jobID string) (Job, erro
 	return job, nil
 }
 
-// SetEnabled changes an idle job. Re-enabling starts its calendar after now;
-// disabled occurrences are not replayed.
 func (s *Scheduler) SetEnabled(ctx context.Context, sessionID, jobID string, enabled bool) (Job, error) {
 	job, err := s.lookup(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if err != nil {
@@ -188,8 +181,6 @@ func (s *Scheduler) SetEnabled(ctx context.Context, sessionID, jobID string, ena
 	return stored, nil
 }
 
-// Unregister explicitly deletes an idle job. Session listing and job lookups
-// never call Unregister.
 func (s *Scheduler) Unregister(ctx context.Context, sessionID, jobID string) error {
 	job, err := s.lookup(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if err != nil {
@@ -231,8 +222,6 @@ func (s *Scheduler) load(ctx context.Context) ([]Job, error) {
 	return jobs, nil
 }
 
-// Run polls all sessions until the context ends or a storage operation fails.
-// Asynchronous storage failures are joined into its return value.
 func (s *Scheduler) Run(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
