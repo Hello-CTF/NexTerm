@@ -30,4 +30,11 @@ describe("App-level semantic tokens", () => {
   it("styles the success toast from theme tokens", () => {
     expect(app).toContain("bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))]");
   });
+
+  it("references the runtime shadow token instead of the statically expanded utility", () => {
+    // shadow-pop 工具类会把 @theme 暗色值静态展开进生成 CSS，运行时亮主题覆盖不生效；
+    // 必须保留 var() 引用的任意值形式（生成 --tw-shadow: var(--shadow-pop)）。
+    expect(app).toContain("shadow-[var(--shadow-pop)]");
+    expect(app).not.toMatch(/["' ]shadow-pop["' ]/);
+  });
 });

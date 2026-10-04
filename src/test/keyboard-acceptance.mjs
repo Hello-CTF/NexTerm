@@ -294,6 +294,55 @@ async function keyboardAcceptance(page) {
     return { evidence };
   });
 
+  await pass("toast-shadow-follows-theme", async () => {
+    // 回归 R2：shadow-pop 工具类把暗色值静态展开进生成 CSS，亮主题不生效。
+    // 这里用真实浏览器分别按暗/亮主题加载，断言 toast 计算出的 box-shadow
+    // 不仅两主题不同，而且各自与本主题运行时的 --shadow-pop token 颜色一致。
+    const readShadow = `(() => {
+      const btn = document.querySelector('.nx-toasts button');
+      if (!btn) return null;
+      const root = getComputedStyle(document.documentElement);
+      return {
+        theme: document.documentElement.dataset.nxTheme ?? "dark",
+        token: root.getPropertyValue("--shadow-pop").trim(),
+        boxShadow: getComputedStyle(btn).boxShadow,
+      };
+    })()`;
+    const loadWithTheme = async (theme) => {
+      const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `try { localStorage.setItem("nexterm.theme.v1", ${JSON.stringify(theme)}); } catch {}`,
+      });
+      try {
+        await page.navigate(`${VITE}/?demo=1`);
+        // toast 3.5s 自动消失：出现后立即读取。
+        await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
+        return await page.evaluate(readShadow);
+      } finally {
+        await page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+      }
+    };
+    // Tailwind box-shadow 复合值含 inset/ring 占位层（rgba(0,0,0,0) 0px 0px 0px 0px），
+    // 比较前过滤全透占位层，只比真实阴影颜色。
+    const colorsOf = (s) =>
+      (String(s).match(/rgba?\([^)]*\)/g) ?? [])
+        .map((c) => {
+          const n = c.match(/[\d.]+/g).map(Number);
+          return `rgba(${n[0]},${n[1]},${n[2]},${n.length > 3 ? n[3] : 1})`;
+        })
+        .filter((c) => c !== "rgba(0,0,0,0)");
+
+    const dark = await loadWithTheme("dark");
+    const light = await loadWithTheme("light");
+    assert.ok(dark && light, "toast should render in both themes");
+    assert.equal(dark.theme, "dark");
+    assert.equal(light.theme, "light");
+    assert.ok(dark.boxShadow && dark.boxShadow !== "none");
+    assert.notEqual(dark.boxShadow, light.boxShadow, "toast box-shadow must differ between themes");
+    assert.deepEqual(colorsOf(dark.boxShadow), colorsOf(dark.token), `dark toast must consume the dark token: ${JSON.stringify(dark)}`);
+    assert.deepEqual(colorsOf(light.boxShadow), colorsOf(light.token), `light toast must consume the light token: ${JSON.stringify(light)}`);
+    return { evidence: { dark, light } };
+  });
+
   await pass("workspace-tab-arrow-switch", async () => {
     await boot(page);
     const isWsTab = `(el) => el?.getAttribute?.('role') === 'tab' && el.closest('[role="tablist"]')?.getAttribute('aria-label') === '工作区'`;

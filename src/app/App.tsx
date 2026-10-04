@@ -1005,7 +1005,7 @@ export default function App() {
           return (
             <button
               key={t.id}
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-pop backdrop-blur ${tone}`}
+              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
               onClick={() => dismissToast(t.id)}
             >
               <Icon
