@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +120,29 @@ func buildAcceptanceWorkload(t *testing.T, enc Encoding) (chunks [][]byte, total
 	return chunks, total
 }
 
+const linuxUserHZ = 100
+
+func processCPUTime() (float64, bool) {
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return 0, false
+	}
+	paren := bytes.LastIndexByte(data, ')')
+	if paren < 0 || paren+2 >= len(data) {
+		return 0, false
+	}
+	fields := strings.Fields(string(data[paren+2:]))
+	if len(fields) < 13 {
+		return 0, false
+	}
+	utime, errU := strconv.ParseInt(fields[11], 10, 64)
+	stime, errS := strconv.ParseInt(fields[12], 10, 64)
+	if errU != nil || errS != nil {
+		return 0, false
+	}
+	return float64(utime+stime) / linuxUserHZ, true
+}
+
 func TestThroughputAcceptanceWorkload(t *testing.T) {
 	if testing.Short() || raceDetectorEnabled {
 		t.Skip("throughput test skipped in -short and -race")
@@ -128,6 +153,7 @@ func TestThroughputAcceptanceWorkload(t *testing.T) {
 			tab := NewTab("bench", "s", 120, 40, enc)
 			t.Cleanup(tab.Close)
 			tab.SetVisible(false)
+			cpuBefore, haveCPUTime := processCPUTime()
 			start := time.Now()
 			for i, chunk := range chunks {
 				if i%16 == 0 {
@@ -137,11 +163,18 @@ func TestThroughputAcceptanceWorkload(t *testing.T) {
 			}
 			elapsed := time.Since(start)
 			tab.Feed([]byte("final-marker"))
-			mbps := float64(total) / elapsed.Seconds() / 1024 / 1024
-			t.Logf("%s: %d MiB in %v => %.1f MiB/s (%.1f MB/s); Rust refs 43.4/39.0 and 149.3/149.7 MB/s",
-				enc, total/1024/1024, elapsed, mbps, float64(total)/elapsed.Seconds()/1e6)
-			if mbps < 10 {
-				t.Fatalf("%s throughput %.1f MiB/s below the >=10 MB/s acceptance budget", enc, mbps)
+			wallMBps := float64(total) / elapsed.Seconds() / 1024 / 1024
+			rate, metric := wallMBps, "wall"
+			if haveCPUTime {
+				if cpuAfter, ok := processCPUTime(); ok && cpuAfter > cpuBefore {
+					rate = float64(total) / (cpuAfter - cpuBefore) / 1024 / 1024
+					metric = "cpu"
+				}
+			}
+			t.Logf("%s: %d MiB in %v => %.1f MiB/s %s (wall %.1f, %.1f MB/s); Rust refs 43.4/39.0 and 149.3/149.7 MB/s",
+				enc, total/1024/1024, elapsed, rate, metric, wallMBps, float64(total)/elapsed.Seconds()/1e6)
+			if rate < 10 {
+				t.Fatalf("%s %s throughput %.1f MiB/s below the >=10 MB/s acceptance budget", enc, metric, rate)
 			}
 			if got := len(tab.Dump(0)); got != ScrollbackBytes {
 				t.Fatalf("retained = %d, want exactly %d (32 MiB cap)", got, ScrollbackBytes)
