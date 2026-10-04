@@ -87,7 +87,13 @@ export function TakeoverBanner() {
         {mm}:{ss}
       </span>
       <span className="shrink-0 text-red-300/70">
-        按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">{reclaimLabel}</span> 随时夺回
+        {bindings.reclaimTakeover ? (
+          <>
+            按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">{reclaimLabel}</span> 随时夺回
+          </>
+        ) : (
+          "可随时夺回"
+        )}
       </span>
       <button
         type="button"

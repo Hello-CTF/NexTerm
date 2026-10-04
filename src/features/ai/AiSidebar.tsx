@@ -4,6 +4,7 @@ import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
+import { formatBinding, useKeybindings } from "../../app/keybindings";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ModelPanel } from "./ModelPanel";
@@ -81,6 +82,9 @@ const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
 
 export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
   const { rightOpen, setRightOpen, aiBusy, setAiBusy, pushToast, rightWidth, workspaces } = useUi();
+  const bindings = useKeybindings();
+  const aiSidebarKeyLabel = formatBinding(bindings.toggleAiSidebar);
+  const reclaimKeyLabel = formatBinding(bindings.reclaimTakeover);
   const streamRef = useRef<ConversationStream | null>(null);
   if (!streamRef.current) streamRef.current = createConversationStream();
   const stream = streamRef.current;
@@ -761,7 +765,12 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         startedAt: Date.now(),
       };
       useUi.getState().setTakeover(banner);
-      pushToast("info", "接管已启动 —— 顶部横幅可随时夺回，Esc 亦可");
+      pushToast(
+        "info",
+        bindings.reclaimTakeover
+          ? `接管已启动 —— 顶部横幅可随时夺回，${reclaimKeyLabel} 亦可`
+          : "接管已启动 —— 顶部横幅可随时夺回",
+      );
     } catch (e) {
       if (ownershipToken) {
         await aiApi.takeoverExit(tabId, ownershipToken, "接管启动失败").catch(() => undefined);
@@ -791,7 +800,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
         <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
         {takeover && (
-          <span className="nx-badge nx-badge-red" title="终端接管进行中 —— 按 Esc 随时夺回">
+          <span
+            className="nx-badge nx-badge-red"
+            title={
+              bindings.reclaimTakeover
+                ? `终端接管进行中 —— 按 ${reclaimKeyLabel} 随时夺回`
+                : "终端接管进行中"
+            }
+          >
             <span className="nx-dot nx-dot-pulse" />
             接管中
           </span>
@@ -809,7 +825,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
-          title="收起 AI 侧栏 (Ctrl+J)"
+          title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
+          aria-keyshortcuts={bindings.toggleAiSidebar ?? undefined}
           onClick={() => setRightOpen(false)}
         >
           <IconChevronRight size={14} />
@@ -1225,7 +1242,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 text-red-400 hover:text-red-300"
             title={
               tabId
-                ? "终端接管（实验性功能）：AI 直接接手当前终端，随时按 Esc 夺回"
+                ? bindings.reclaimTakeover
+                  ? `终端接管（实验性功能）：AI 直接接手当前终端，随时按 ${reclaimKeyLabel} 夺回`
+                  : "终端接管（实验性功能）：AI 直接接手当前终端"
                 : "终端接管需要先打开一个终端标签"
             }
             disabled={!tabId || aiBusy}
