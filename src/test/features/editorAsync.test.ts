@@ -216,3 +216,40 @@ describe("FileEditor in-flight save safeguards", () => {
     await resolveInAct(write, undefined);
   });
 });
+
+describe("FileEditor 读写失败提示", () => {
+  let mounted: MountedView | undefined;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    editors.views = [];
+    document.body.replaceChildren();
+    mocks.read.mockResolvedValue(originalDoc());
+    mocks.ask.mockResolvedValue(true);
+    useUi.setState({ pushToast: mocks.toast });
+  });
+  afterEach(() => {
+    mounted?.unmount();
+    mounted = undefined;
+  });
+
+  it("打开失败用全角冒号前缀并关闭编辑器", async () => {
+    mocks.read.mockRejectedValueOnce(new Error("permission denied"));
+    const onClose = vi.fn();
+    mounted = mount(createElement(FileEditor, { sessionId: "s", path: "/a.txt", onClose }));
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("error", "打开失败：permission denied"),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("保存失败用全角冒号前缀", async () => {
+    mocks.write.mockRejectedValueOnce(new Error("disk full"));
+    mounted = await mountEditor();
+    editDocument("changed");
+    await flush();
+    const save = mounted.container.querySelector<HTMLButtonElement>('button[title^="保存（远端"]');
+    if (!save) throw new Error("Save button not found");
+    click(save);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", "保存失败：disk full"));
+  });
+});

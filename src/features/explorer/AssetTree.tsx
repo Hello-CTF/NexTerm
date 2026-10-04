@@ -113,7 +113,7 @@ export function AssetTree() {
     try {
       await assetApi.update({ id: assetId, groupId });
       void qc.invalidateQueries({ queryKey: ["assets"] });
-      pushToast("info", groupId ? "已移入分组" : "已移到未分组");
+      pushToast("info", groupId ? "已移入分组" : "已移出分组");
     } catch (e) {
       pushToast("error", `移动失败：${describeError(e)}`);
     }
@@ -529,7 +529,7 @@ function GroupNode({
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
           <IconXCircle size={12} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate" title={error}>
-            删除失败:{error}
+            删除失败：{error}
           </span>
           <button className="nx-link shrink-0" onClick={onRetry}>
             重试
@@ -1039,11 +1039,11 @@ export function AssetEditor({
                   测试连接
                 </button>
                 {probe.status === "ok" && (
-                  <span className="text-[11.5px] text-emerald-400">端口可连接</span>
+                  <span className="text-[11.5px] text-emerald-400">端口可达</span>
                 )}
                 {probe.status === "fail" && (
                   <span className="min-w-0 truncate text-[11.5px] text-red-400" title={probe.error}>
-                    不可连接:{probe.error}
+                    端口不可达：{probe.error}
                   </span>
                 )}
                 <span className="nx-hint ml-auto">只探测端口，不带凭据</span>
@@ -1204,7 +1204,7 @@ export function AssetEditor({
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 共用这条凭据 · 改一处所有使用者生效</div>
+                            <div className="nx-hint mt-1.5">↳ 共用凭据 · 改一处，全部生效</div>
                           )}
                         </>
                       )}
@@ -1278,7 +1278,7 @@ export function AssetEditor({
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 共用凭据 · 修改一处全部生效</div>
+                    <div className="nx-hint mt-1">↳ 共用凭据 · 改一处，全部生效</div>
                   ) : null}
                 </div>
               )}

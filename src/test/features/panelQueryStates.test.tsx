@@ -195,7 +195,7 @@ describe("MountPanel 查询状态", () => {
     mocks.mountList.mockRejectedValue(new Error("挂载服务异常"));
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("挂载列表加载失败 · 挂载服务异常"));
-    expect(text()).not.toContain("本机当前没有映射盘");
+    expect(text()).not.toContain("本机当前没有挂载点");
   });
 
   it("retry recovers into the true empty state", async () => {
@@ -203,7 +203,8 @@ describe("MountPanel 查询状态", () => {
     mounted = withClient(createElement(MountPanel, { sessionId: "s1" }));
     await flushUntil(() => text().includes("挂载列表加载失败"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("本机当前没有映射盘"));
+    await flushUntil(() => text().includes("本机当前没有挂载点"));
+    expect(text()).toContain("新建挂载");
   });
 });
 

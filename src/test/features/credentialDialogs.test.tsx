@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   revealCredential: vi.fn(),
   updateCredential: vi.fn(),
   deleteCredential: vi.fn(),
+  unlock: vi.fn(),
   ask: vi.fn(),
   realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   promptText: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       revealCredential: mocks.revealCredential,
       updateCredential: mocks.updateCredential,
       deleteCredential: mocks.deleteCredential,
+      unlock: mocks.unlock,
     },
     assetApi: {},
     sessionApi: {},
@@ -172,5 +174,33 @@ describe("凭据 destructive 确认（R42, real DialogHost）", () => {
     await waitFor(() => expect(mocks.deleteCredential).toHaveBeenCalledWith("c1"));
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("引用已置空"));
+  });
+});
+
+describe("解锁与空引用文案", () => {
+  it("解锁提示标题无尾冒号，解锁成功有 toast", async () => {
+    mocks.status.mockResolvedValue({ initialized: true, unlocked: false, mode: "master" });
+    mocks.unlock.mockResolvedValue(undefined);
+    mocks.promptText.mockResolvedValue("hunter2");
+    mounted = mountPanel();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("凭据库已锁定"));
+
+    clickButton(mounted!.container, "解锁");
+    await waitFor(() =>
+      expect(mocks.promptText).toHaveBeenCalledWith("输入保护密码解锁凭据库", "", {
+        secret: true,
+      }),
+    );
+    await waitFor(() => expect(mocks.unlock).toHaveBeenCalledWith("hunter2"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已解锁");
+  });
+
+  it("未被引用的凭据：空态只说事实，不堆冗余指引", async () => {
+    mocks.listCredentials.mockResolvedValue([{ ...CRED, usedBy: [] }]);
+    mounted = mountPanel();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));
+
+    expect(mounted!.container.textContent).toContain("没有资产在用它。");
+    expect(mounted!.container.textContent).not.toContain("改完值可以在这里确认");
   });
 });

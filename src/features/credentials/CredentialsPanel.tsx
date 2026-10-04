@@ -465,7 +465,7 @@ function CredentialDetail({
             </div>
           ) : (
             <div className="nx-hint">
-              没有资产在用它。改完值可以在这里确认有没有漏掉的引用。
+              没有资产在用它。
             </div>
           )}
         </Section>

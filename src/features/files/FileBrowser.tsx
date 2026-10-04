@@ -209,7 +209,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const openTerminalAt = (dir: string) => {
     const session = useUi.getState().sessions.find((s) => s.id === sessionId);
     if (!session) {
-      pushToast("error", "当前会话已不在，无法打开终端");
+      pushToast("error", "当前会话已断开，无法打开终端");
       return;
     }
     void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
