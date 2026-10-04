@@ -3,7 +3,7 @@ import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../i
 import { describeError } from "../ui/errorText";
 import { connectWithHostKeyConfirm } from "./hostKeys";
 import { dirtyFileEditors } from "../features/files/editorGuards";
-import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
+import { splitAllowedForHeight, workspaceViewport } from "../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../features/explorer/connectHistory";
 import {
   getResolvedTheme,
@@ -145,6 +145,8 @@ interface UiState {
   setTakeover: (t: TakeoverState | null) => void;
   modelProfilesRevision: number;
   bumpModelProfilesRevision: () => void;
+  connectFocusRevision: number;
+  bumpConnectFocusRevision: () => void;
   toasts: ToastItem[];
   textPrompt: TextPromptState | null;
   openTextPrompt: (s: TextPromptState) => void;
@@ -308,6 +310,9 @@ export const useUi = create<UiState>((set, get) => ({
   modelProfilesRevision: 0,
   bumpModelProfilesRevision: () =>
     set((state) => ({ modelProfilesRevision: state.modelProfilesRevision + 1 })),
+  connectFocusRevision: 0,
+  bumpConnectFocusRevision: () =>
+    set((state) => ({ connectFocusRevision: state.connectFocusRevision + 1 })),
   toasts: [],
   textPrompt: null,
   openTextPrompt: (s) => set({ textPrompt: s }),
@@ -1147,12 +1152,24 @@ async function ensureVaultReadyFor(asset: { name: string; credId?: string | null
   }
 }
 
+function sidebarsOverlayWorkspace(): boolean {
+  if (typeof window === "undefined") return false;
+  return workspaceViewport(window.innerWidth, false).overlaySidebars;
+}
+
 async function openConnectedAssetSession(
   info: SessionInfo,
   asset: { id: string; name: string; kind: string },
 ): Promise<void> {
-  const { setSessions, sessions, addTab, ensureWorkspace, setLeftMode, setLeftOpen } =
-    useUi.getState();
+  const {
+    setSessions,
+    sessions,
+    addTab,
+    ensureWorkspace,
+    setLeftMode,
+    setLeftOpen,
+    bumpConnectFocusRevision,
+  } = useUi.getState();
   setSessions([...sessions.filter((s) => s.id !== info.id), info]);
   ensureWorkspace({
     kind: "session",
@@ -1161,8 +1178,11 @@ async function openConnectedAssetSession(
     assetId: asset.id,
     assetKind: asset.kind,
   });
-  setLeftMode("files");
-  setLeftOpen(true);
+  if (!sidebarsOverlayWorkspace()) {
+    setLeftMode("files");
+    setLeftOpen(true);
+  }
+  bumpConnectFocusRevision();
   if (asset.kind === "docker") {
     addTab({
       id: nextTabId(`docker-${info.id}`),

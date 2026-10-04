@@ -409,6 +409,7 @@ export default function App() {
     toasts,
     dismissToast,
     pushToast,
+    connectFocusRevision,
   } = useUi();
 
   const ws = useActiveWorkspace();
@@ -447,6 +448,11 @@ export default function App() {
     },
     [setRightOpenStore, viewport.overlaySidebars],
   );
+
+  useEffect(() => {
+    if (!viewport.overlaySidebars) return;
+    setOverlayDock(null);
+  }, [connectFocusRevision, viewport.overlaySidebars]);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   const terminalKeysVisible =

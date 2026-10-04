@@ -1,6 +1,6 @@
 import { useUi } from "../../app/store";
 import type { ThemeMode } from "../../app/theme";
-import { IconMonitor } from "../../ui/icons";
+import { IconMonitor, IconRefresh } from "../../ui/icons";
 
 const OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: "system", label: "跟随系统" },
@@ -42,6 +42,20 @@ export function AppearanceCard() {
             {option.label}
           </button>
         ))}
+      </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-sm"
+          title="恢复默认主题（跟随系统）；不影响布局、凭据与模型档案"
+          aria-label="恢复默认主题"
+          disabled={themeMode === "system"}
+          onClick={() => setThemeMode("system")}
+        >
+          <IconRefresh size={11} />
+          恢复默认
+        </button>
+        <span className="nx-hint min-w-0 text-[10.5px]">只重置主题偏好，布局、凭据与模型档案不受影响。</span>
       </div>
     </section>
   );

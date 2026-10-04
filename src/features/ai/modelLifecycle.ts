@@ -20,6 +20,28 @@ export function fallbackModelLabel(profile: ModelProfile): string {
   return profile.fallbackModel ?? "";
 }
 
+export const MODEL_PARAM_DEFAULTS = {
+  temperature: 0.3,
+  contextWindow: 32768,
+  proxy: null,
+  stream: true,
+  fallbackModel: null,
+} as const;
+
+export function resetModelParams(profile: ModelProfile): ModelProfile {
+  return { ...profile, ...MODEL_PARAM_DEFAULTS };
+}
+
+export function modelParamsAtDefaults(profile: ModelProfile): boolean {
+  return (
+    profile.temperature === MODEL_PARAM_DEFAULTS.temperature &&
+    profile.contextWindow === MODEL_PARAM_DEFAULTS.contextWindow &&
+    (profile.proxy ?? null) === MODEL_PARAM_DEFAULTS.proxy &&
+    profile.stream === MODEL_PARAM_DEFAULTS.stream &&
+    fallbackModelLabel(profile) === (MODEL_PARAM_DEFAULTS.fallbackModel ?? "")
+  );
+}
+
 export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
   return (
     a.name === b.name &&

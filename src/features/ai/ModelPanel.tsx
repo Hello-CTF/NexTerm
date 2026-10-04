@@ -7,6 +7,9 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import {
   fallbackModelFromInput,
   fallbackModelLabel,
+  MODEL_PARAM_DEFAULTS,
+  modelParamsAtDefaults,
+  resetModelParams,
   sameModelProfile,
   selectModelProfileId,
 } from "./modelLifecycle";
@@ -32,11 +35,7 @@ function blankProfile(): ModelProfile {
     baseUrl: "",
     apiKey: "",
     model: "",
-    temperature: 0.3,
-    contextWindow: 32768,
-    proxy: null,
-    stream: true,
-    fallbackModel: null,
+    ...MODEL_PARAM_DEFAULTS,
   };
 }
 
@@ -94,6 +93,10 @@ export function ModelManager({
   }, []);
 
   const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
+
+  const paramsAtDefaults = !!draft && modelParamsAtDefaults(draft);
+
+  const resetParams = () => setDraft((prev) => (prev ? resetModelParams(prev) : prev));
 
   const guardDiscard = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
@@ -485,6 +488,15 @@ export function ModelManager({
               {isNew ? "新档案（尚未保存）" : isActive ? "当前" : `${draft.name}`}
               {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">· 有未保存的修改</span>}
             </span>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              title="仅把温度、上下文窗口、代理、流式输出与回退模型恢复默认；名称、地址、密钥与模型名保持不变，点「保存」后才写入档案"
+              disabled={busy || paramsAtDefaults}
+              onClick={resetParams}
+            >
+              <IconRefresh size={12} />
+              恢复默认参数
+            </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
               title={isNew ? "保存后才能设为当前" : isActive ? "已经是当前档案" : "切换到这个档案"}
