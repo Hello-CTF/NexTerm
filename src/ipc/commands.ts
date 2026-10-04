@@ -85,6 +85,10 @@ export const sessionApi = {
     call<{ open: boolean; error?: string }>("session_probe", {
       args: { host, port, timeoutMs },
     }),
+  probeHostKey: (assetId: string, timeoutMs?: number) =>
+    call<import("./types").SshHostKeyProbeDto>("session_probe_host_key", {
+      args: { assetId, timeoutMs },
+    }),
   openLineTab: (sessionId: string, cols: number, rows: number, channel: unknown) =>
     call<string>("session_open_line_tab", {
       sessionId,
@@ -246,6 +250,10 @@ export const assetApi = {
   snippetDelete: (id: string) => call<void>("snippet_delete", { id }),
   auditQuery: (args: Record<string, unknown> = {}) =>
     call<import("./types").AuditEntryDto[]>("audit_query", { args }),
+  probeBatch: (assetIds: string[], timeoutMs?: number, maxConcurrent?: number) =>
+    call<import("./types").AssetProbeBatchDto>("asset_probe_batch", {
+      args: { assetIds, timeoutMs, maxConcurrent },
+    }),
   knownHostList: () => call<import("./types").KnownHostDto[]>("known_host_list"),
   knownHostAccept: (host: string, port: number, keyType: string, fingerprint: string) =>
     call<void>("known_host_accept", { host, port, keyType, fingerprint }),

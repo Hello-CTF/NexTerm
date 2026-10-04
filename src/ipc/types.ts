@@ -67,6 +67,12 @@ warnings: Array<string>, };
 
 export type KnownHostDto = { id: string, host: string, port: number, keyType: string, fingerprint: string, addedAt: number, };
 
+export type SshHostKeyProbeDto = { host: string, port: number, keyType: string, fingerprint: string, state: "known" | "changed" | "pending", known?: Array<{ keyType: string, fingerprint: string }>, };
+
+export type AssetProbeResultDto = { assetId: string, reachable: boolean, kind?: string, error?: string, durationMs: number, };
+
+export type AssetProbeBatchDto = { results: Array<AssetProbeResultDto>, };
+
 export type MessageDto = { id: string, conversationId: string, role: string, content: JsonValue, tokensIn: number | null, tokensOut: number | null, createdAt: number, };
 
 export type ModelProfile = { 

@@ -20,7 +20,11 @@ const maxProxyResponseBytes = 64 << 10
 func dialSSH(ctx context.Context, cfg Config, host string, port int) (net.Conn, error) {
 	target := endpointString(host, port)
 	if cfg.ProxyCommand != "" {
-		return dialProxyCommand(ctx, cfg.ProxyCommand, host, port)
+		conn, err := dialProxyCommand(ctx, cfg.ProxyCommand, host, port)
+		if err != nil {
+			return nil, &proxyError{endpoint: "proxy-command", err: err}
+		}
+		return conn, nil
 	}
 	proxyURL := cfg.ProxyURL
 	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
@@ -29,10 +33,10 @@ func dialSSH(ctx context.Context, cfg Config, host string, port int) (net.Conn, 
 	}
 	u, err := url.Parse(proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse explicit SSH proxy: %w", err)
+		return nil, &proxyError{err: fmt.Errorf("parse SSH proxy URL: invalid URL")}
 	}
 	if u.Host == "" || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return nil, fmt.Errorf("invalid explicit SSH proxy URL")
+		return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("invalid SSH proxy URL")}
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "socks5", "socks5h":
@@ -43,30 +47,30 @@ func dialSSH(ctx context.Context, cfg Config, host string, port int) (net.Conn, 
 		}
 		d, err := proxy.SOCKS5("tcp", u.Host, auth, noDelayDialer{dialer})
 		if err != nil {
-			return nil, fmt.Errorf("configure SOCKS5 proxy: %w", err)
+			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("configure SOCKS5 proxy: %w", err)}
 		}
 		contextDialer, ok := d.(proxy.ContextDialer)
 		if !ok {
-			return nil, fmt.Errorf("configure SOCKS5 proxy: context-aware dialing unsupported")
+			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("configure SOCKS5 proxy: context-aware dialing unsupported")}
 		}
 		conn, err := contextDialer.DialContext(ctx, "tcp", target)
 		if err != nil {
-			return nil, fmt.Errorf("SOCKS5 proxy connect: %w", err)
+			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("SOCKS5 connect: %w", err)}
 		}
 		return conn, nil
 	case "http":
 		conn, err := dialTCP(ctx, dialer, u.Host)
 		if err != nil {
-			return nil, fmt.Errorf("HTTP proxy connect: %w", err)
+			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("connect: %w", err)}
 		}
 		tunnel, err := httpConnect(ctx, conn, u, target)
 		if err != nil {
 			conn.Close()
-			return nil, err
+			return nil, &proxyError{endpoint: proxyEndpoint(u), err: err}
 		}
 		return tunnel, nil
 	default:
-		return nil, fmt.Errorf("unsupported SSH proxy scheme %q (use socks5:// or http://)", u.Scheme)
+		return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("unsupported SSH proxy scheme %q (use socks5:// or http://)", u.Scheme)}
 	}
 }
 

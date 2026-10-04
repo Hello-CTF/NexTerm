@@ -58,6 +58,24 @@ describe("desktop 命令 envelope", () => {
     });
   });
 
+  it("SSH 诊断命令使用 nested args 合同", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: null });
+    const { sessionApi, assetApi } = await import("../ipc/commands");
+
+    await sessionApi.probeHostKey("asset-1", 5000);
+    expect(requestAt(0)).toEqual({
+      cmd: "session_probe_host_key",
+      args: { args: { assetId: "asset-1", timeoutMs: 5000 } },
+    });
+    await assetApi.probeBatch(["asset-1", "asset-2"], 3000, 4);
+    expect(requestAt(1)).toEqual({
+      cmd: "asset_probe_batch",
+      args: {
+        args: { assetIds: ["asset-1", "asset-2"], timeoutMs: 3000, maxConcurrent: 4 },
+      },
+    });
+  });
+
   it("takeover 保持扁平正文和顶层 channel", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: { jobId: "job-1", token: "token-1" } });
     const { aiApi } = await import("../ipc/commands");
