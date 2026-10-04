@@ -21,6 +21,7 @@ import {
   useUi,
 } from "../../app/store";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
@@ -226,9 +227,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
   };
 
-  const openRowMenu = (ev: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
-    ev.preventDefault();
-    ev.stopPropagation();
+  const openRowMenuAt = (entry: FileEntryDto, x: number, y: number) => {
     setSelected(entry.path);
     const isDir = entry.kind === "dir";
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? path);
@@ -346,11 +345,16 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         onSelect: () => void removePath(entry.path, isDir),
       },
     );
-    setMenu({ x: ev.clientX, y: ev.clientY, title: entry.path, items });
+    setMenu({ x, y, title: entry.path, items });
   };
 
-  const openBlankMenu = (ev: ReactMouseEvent<HTMLDivElement>) => {
+  const openRowMenu = (ev: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
     ev.preventDefault();
+    ev.stopPropagation();
+    openRowMenuAt(entry, ev.clientX, ev.clientY);
+  };
+
+  const openBlankMenuAt = (x: number, y: number) => {
     const items: MenuItem[] = [
       { kind: "group", label: "当前目录" },
       {
@@ -390,7 +394,12 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         onSelect: () => openTerminalAt(path),
       },
     ];
-    setMenu({ x: ev.clientX, y: ev.clientY, title: path, items });
+    setMenu({ x, y, title: path, items });
+  };
+
+  const openBlankMenu = (ev: ReactMouseEvent<HTMLDivElement>) => {
+    ev.preventDefault();
+    openBlankMenuAt(ev.clientX, ev.clientY);
   };
 
   const selectedEntry = list.find((e) => e.path === selected);
@@ -406,7 +415,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         >
           <IconArrowUp size={14} />
         </button>
-        <div className="nx-field max-w-none">
+        <div className="nx-field max-w-none min-w-0 flex-1">
           <span className="nx-field-icon">
             <IconFolderOpen size={13} />
           </span>
@@ -416,7 +425,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
             spellCheck={false}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !isImeKeyEvent(e)) {
                 e.preventDefault();
                 const next = normalizeTypedPath(draft);
                 if (next && next !== path) goto(next);
@@ -434,9 +443,9 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         <button className="nx-icon-btn" onClick={refresh} title="刷新">
           <IconRefresh size={14} />
         </button>
-        <span className="nx-divider-v" />
+        <span className="nx-divider-v max-[560px]:hidden" />
         <button
-          className="nx-btn nx-btn-sm"
+          className="nx-btn nx-btn-sm max-[560px]:hidden"
           onClick={() => void uploadTo(path)}
           title="上传本地文件到当前目录"
         >
@@ -444,7 +453,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           上传
         </button>
         <button
-          className="nx-btn nx-btn-sm"
+          className="nx-btn nx-btn-sm max-[560px]:hidden"
           disabled={!selected}
           onClick={() => selected && void downloadToLocal(selected)}
           title="下载选中的文件"
@@ -452,17 +461,32 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
           <IconDownload size={13} />
           下载
         </button>
-        <button className="nx-btn nx-btn-sm" onClick={() => void mkDirIn(path)} title="新建文件夹">
+        <button
+          className="nx-btn nx-btn-sm max-[560px]:hidden"
+          onClick={() => void mkDirIn(path)}
+          title="新建文件夹"
+        >
           <IconFolder size={13} />
           新建
         </button>
         <button
-          className="nx-btn nx-btn-danger nx-btn-sm"
+          className="nx-btn nx-btn-danger nx-btn-sm max-[560px]:hidden"
           disabled={!selected}
           onClick={() => selected && void removePath(selected, selectedEntry?.kind === "dir")}
         >
           <IconTrash size={13} />
           删除
+        </button>
+        <button
+          className="nx-icon-btn"
+          title="更多操作（打包下载 / 上传 / 新建文件夹 / 刷新）"
+          aria-label="更多操作"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            openBlankMenuAt(r.left, r.bottom);
+          }}
+        >
+          ⋯
         </button>
       </div>
 
@@ -480,8 +504,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5 text-[11px] text-neutral-500">
         <span className="w-[18px]" />
         <span className="flex-1">名称</span>
-        <span className="w-24 text-right">大小</span>
-        <span className="w-40 text-right">修改时间</span>
+        <span className="w-24 text-right max-[560px]:hidden">大小</span>
+        <span className="w-40 text-right max-[560px]:hidden">修改时间</span>
       </div>
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto" onContextMenu={openBlankMenu}>
@@ -524,11 +548,25 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                   <span className={`min-w-0 flex-1 truncate font-mono text-[12px] ${isSel ? "text-neutral-100" : ""}`}>
                     {e.name}
                   </span>
-                  <span className="w-24 shrink-0 text-right text-[11px] text-neutral-500">
+                  <span className="w-24 shrink-0 text-right text-[11px] text-neutral-500 max-[560px]:hidden">
                     {isDir ? "—" : formatSize(e.size)}
                   </span>
-                  <span className="w-40 shrink-0 text-right text-[11px] text-neutral-500">
+                  <span className="w-40 shrink-0 text-right text-[11px] text-neutral-500 max-[560px]:hidden">
                     {e.mtime ? new Date(e.mtime).toLocaleString() : "—"}
+                  </span>
+                  <span className="nx-row-actions [@media(pointer:coarse)]:flex">
+                    <button
+                      className="nx-icon-btn nx-icon-btn-sm"
+                      title={`更多操作 ${e.name}`}
+                      aria-label={`更多操作 ${e.name}`}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        const r = ev.currentTarget.getBoundingClientRect();
+                        openRowMenuAt(e, r.left, r.bottom);
+                      }}
+                    >
+                      ⋯
+                    </button>
                   </span>
                 </div>
               );

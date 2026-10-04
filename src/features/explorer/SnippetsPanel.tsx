@@ -117,8 +117,8 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal max-w-[420px]" onClick={(e) => e.stopPropagation()}>
-        <div className="nx-modal-header">
+      <div className="nx-modal flex max-w-[420px] flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-header shrink-0">
           <span className="text-[13px] font-semibold text-neutral-100">命令片段</span>
           <div className="nx-spacer" />
           <button
@@ -129,7 +129,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             <IconPlus size={14} />
           </button>
         </div>
-        <div className="nx-modal-body">
+        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           {snippets.isPending && (
             <div className="flex items-center gap-2 px-1 py-6 text-[12px] text-neutral-500">
               <IconLoader size={13} className="animate-spin" /> 正在加载片段…
@@ -154,7 +154,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             <div key={s.id} className="nx-row group mb-0.5">
               <IconCommand size={13} className="shrink-0 text-neutral-500" />
               <span className="min-w-0 flex-1 truncate text-[12.5px]">{s.name}</span>
-              <span className="nx-row-actions">
+              <span className="nx-row-actions [@media(pointer:coarse)]:flex">
                 <button
                   className="nx-icon-btn nx-icon-btn-sm"
                   title="插入到当前终端"
@@ -196,7 +196,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <div className="nx-modal-footer">
+        <div className="nx-modal-footer shrink-0">
           <span className="nx-hint mr-auto">插入 = 写入终端输入行；回车/换行或控制字符会先确认</span>
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             关闭
@@ -258,13 +258,13 @@ function SnippetEditor({
 
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal max-w-[420px]" onClick={(e) => e.stopPropagation()}>
-        <div className="nx-modal-header">
+      <div className="nx-modal flex max-w-[420px] flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-header shrink-0">
           <span className="text-[13px] font-semibold text-neutral-100">
             {initial ? "编辑片段" : "新建片段"}
           </span>
         </div>
-        <div className="nx-modal-body">
+        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
             <label className="nx-label">名称</label>
             <input
@@ -293,7 +293,7 @@ function SnippetEditor({
             </div>
           )}
         </div>
-        <div className="nx-modal-footer">
+        <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
             取消
           </button>

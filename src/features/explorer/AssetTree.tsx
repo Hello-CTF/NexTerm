@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
 import {
@@ -351,7 +352,7 @@ function AssetRow({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
-      <span className="nx-row-actions">
+      <span className="nx-row-actions [@media(pointer:coarse)]:flex">
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="连接"
@@ -485,7 +486,7 @@ function GroupNode({
           <span className="min-w-0 flex-1 truncate text-xs font-medium">{group.name}</span>
         </button>
         <span className="nx-count">{assets.length}</span>
-        <span className="nx-row-actions">
+        <span className="nx-row-actions [@media(pointer:coarse)]:flex">
           <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="在分组内新建资产"
@@ -598,11 +599,11 @@ function GroupRenameDialog({
 
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal max-w-[340px]" onClick={(e) => e.stopPropagation()}>
-        <div className="nx-modal-header">
+      <div className="nx-modal flex max-w-[340px] flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-header shrink-0">
           <span className="text-[13px] font-semibold text-neutral-100">重命名分组</span>
         </div>
-        <div className="nx-modal-body">
+        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
             <label className="nx-label">名称</label>
             <input
@@ -611,7 +612,7 @@ function GroupRenameDialog({
               autoFocus
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void save();
+                if (e.key === "Enter" && !isImeKeyEvent(e)) void save();
               }}
             />
           </div>
@@ -621,7 +622,7 @@ function GroupRenameDialog({
             </div>
           )}
         </div>
-        <div className="nx-modal-footer">
+        <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
             取消
           </button>
@@ -908,13 +909,13 @@ export function AssetEditor({
 
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal max-w-[380px]" onClick={(e) => e.stopPropagation()}>
-        <div className="nx-modal-header">
+      <div className="nx-modal flex max-w-[380px] flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="nx-modal-header shrink-0">
           <span className="text-[13px] font-semibold text-neutral-100">
             {kind === "group" ? "新建分组" : initial ? "编辑资产" : "新建资产"}
           </span>
         </div>
-        <div className="nx-modal-body">
+        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           {kind === "asset" && (
             <div className="nx-form-row">
               <label className="nx-label">类型</label>
@@ -1289,7 +1290,7 @@ export function AssetEditor({
             </div>
           )}
         </div>
-        <div className="nx-modal-footer">
+        <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
             取消
           </button>

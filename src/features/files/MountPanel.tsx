@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { mountApi } from "../../ipc/commands";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
@@ -120,7 +121,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             <tr>
               <th style={{ width: 90 }}>本地盘符</th>
               <th>远端路径</th>
-              <th style={{ width: 120 }}>挂载时间</th>
+              <th style={{ width: 120 }} className="max-[560px]:hidden">挂载时间</th>
               <th style={{ width: 90 }} />
             </tr>
           </thead>
@@ -155,7 +156,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
               <tr key={`${m.localPoint}-${m.remote}`}>
                 <td className="nx-mono font-semibold text-neutral-100">{m.localPoint}</td>
                 <td className="nx-mono">{m.remote}</td>
-                <td className="text-neutral-500">
+                <td className="text-neutral-500 max-[560px]:hidden">
                   {m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}
                 </td>
                 <td className="nx-right">
@@ -175,7 +176,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
-        <div className="mb-2.5 flex items-center gap-2 text-[11px] text-neutral-500">
+        <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
           <IconArrowLeft size={12} />
           新建映射 · Windows 用 <span className="nx-code">\\host\share</span> →{' '}
           <span className="nx-code">Z:</span>；Linux 用{' '}
@@ -193,13 +194,13 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
           />
           <span className="text-neutral-600">→</span>
           <input
-            className="nx-input nx-input-sm min-w-[220px] flex-1 font-mono"
+            className="nx-input nx-input-sm min-w-[220px] flex-1 font-mono max-[560px]:min-w-[140px]"
             value={remotePath}
             onChange={(e) => setRemotePath(e.target.value)}
             placeholder="\\10.0.0.8\share  或  user@host:/data"
             aria-label="远端路径"
             autoComplete="off"
-            onKeyDown={(e) => e.key === "Enter" && void create()}
+            onKeyDown={(e) => e.key === "Enter" && !isImeKeyEvent(e) && void create()}
           />
           <input
             className="nx-input nx-input-sm w-[150px]"

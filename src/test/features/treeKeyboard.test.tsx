@@ -383,6 +383,6 @@ describe("FileTree keyboard navigation", () => {
     const labels = [...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map(
       (b) => b.getAttribute("aria-label"),
     );
-    expect(labels).toEqual(["下载 notes.txt", "删除 notes.txt"]);
+    expect(labels).toEqual(["下载 notes.txt", "删除 notes.txt", "更多操作 notes.txt"]);
   });
 });
