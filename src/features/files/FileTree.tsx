@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, terminalApi } from "../../ipc/commands";
@@ -59,6 +59,18 @@ function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
     if (ad !== bd) return ad - bd;
     return a.name.localeCompare(b.name, "en", { numeric: true });
   });
+}
+
+function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const tree = event.currentTarget.closest("[role='tree']");
+  if (!tree) return;
+  const rows = [...tree.querySelectorAll<HTMLElement>("[role='treeitem']")];
+  const index = rows.indexOf(event.currentTarget);
+  const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+  if (index < 0 || next < 0 || next >= rows.length) return;
+  event.preventDefault();
+  rows[next]?.focus();
 }
 
 export function FileTree({ sessionId }: { sessionId: string }) {
@@ -450,18 +462,19 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
           文件
         </span>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="新建文件" onClick={() => void newFile()}>
+        <button className="nx-icon-btn nx-icon-btn-sm" title="新建文件" aria-label="新建文件" onClick={() => void newFile()}>
           <IconFilePlus size={14} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="新建文件夹" onClick={() => void newDir()}>
+        <button className="nx-icon-btn nx-icon-btn-sm" title="新建文件夹" aria-label="新建文件夹" onClick={() => void newDir()}>
           <IconFolderPlus size={14} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="刷新" onClick={refresh}>
+        <button className="nx-icon-btn nx-icon-btn-sm" title="刷新" aria-label="刷新文件列表" onClick={refresh}>
           <IconRefresh size={14} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="折叠全部"
+          aria-label="折叠全部目录"
           onClick={() => {
             setExpanded([]);
             setSelected(null);
@@ -473,6 +486,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="上传到当前目录"
+          aria-label="上传到当前目录"
           onClick={() => void upload()}
         >
           <IconUpload size={14} />
@@ -480,6 +494,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="下载选中项"
+          aria-label="下载选中项"
           disabled={!selected || selectedEntry?.kind === "dir"}
           onClick={() => selected && void download(selected)}
         >
@@ -488,6 +503,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <button
           className="nx-icon-btn nx-icon-btn-sm is-danger"
           title="删除选中项"
+          aria-label="删除选中项"
           disabled={!selected}
           onClick={() => selected && void remove(selected)}
         >
@@ -499,6 +515,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <button
           className="nx-tree-caret"
           title={up ? `上级：${up}` : "已经在根目录"}
+          aria-label={up ? `上级目录 ${up}` : "已经在根目录"}
           disabled={!up}
           onClick={() => up && setRoot(up)}
         >
@@ -538,6 +555,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                 )}
                 <button
                   className={`nx-path-crumb ${i === crumbs.length - 1 ? "is-current" : ""}`}
+                  aria-current={i === crumbs.length - 1 ? "location" : undefined}
                   onClick={() => setRoot(c.path)}
                   title={c.path}
                 >
@@ -550,6 +568,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <button
           className="nx-tree-caret"
           title={editing ? "取消编辑（Esc）" : "输入路径跳转"}
+          aria-label={editing ? "取消编辑路径" : "输入路径跳转"}
           onClick={() => (editing ? setEditing(false) : beginEdit())}
         >
           {editing ? <IconClose size={11} /> : <IconEdit size={11} />}
@@ -561,6 +580,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               ? "回到家目录 (~)"
               : "该后端不支持 ~ 展开（本地 / SFTP 后端都不认）"
           }
+          aria-label={homeSupported ? "回到家目录 (~)" : "该后端不支持 ~ 展开"}
           disabled={!homeSupported || root === HOME}
           onClick={() => {
             if (homeSupported) setRoot(HOME);
@@ -570,7 +590,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
+      <div role="tree" aria-label="文件" className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
         {rows.map(({ entry, depth, error, dir }) => {
           if (error) {
             return (
@@ -600,13 +620,44 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           return (
             <div
               key={entry.path}
-              className={`nx-row group ${isSel ? "is-selected" : ""}`}
+              role="treeitem"
+              aria-level={depth + 1}
+              aria-expanded={isDir ? open : undefined}
+              aria-selected={isSel}
+              tabIndex={0}
+              className={`nx-row group focus-within:[&_.nx-row-actions]:flex ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
               onClick={() => {
                 setSelected(entry.path);
                 if (isDir) toggle(entry.path);
               }}
               onDoubleClick={() => (isDir ? enterDir(entry.path) : openFile(entry))}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (isDir) enterDir(entry.path);
+                  else openFile(entry);
+                  return;
+                }
+                if (e.key === " ") {
+                  e.preventDefault();
+                  setSelected(entry.path);
+                  if (isDir) toggle(entry.path);
+                  return;
+                }
+                if (e.key === "ArrowRight" && isDir && !open) {
+                  e.preventDefault();
+                  toggle(entry.path);
+                  return;
+                }
+                if (e.key === "ArrowLeft" && isDir && open) {
+                  e.preventDefault();
+                  toggle(entry.path);
+                  return;
+                }
+                treeRowKeyDown(e);
+              }}
               onContextMenu={(e) => openRowMenu(e, entry, dir)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
             >
@@ -618,6 +669,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                     toggle(entry.path);
                   }}
                   title={open ? "收起" : "展开"}
+                  aria-label={`${open ? "收起" : "展开"} ${entry.name}`}
+                  aria-expanded={open}
                 >
                   {open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
                 </button>
@@ -631,6 +684,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                   <button
                     className="nx-icon-btn nx-icon-btn-sm"
                     title="下载"
+                    aria-label={`下载 ${entry.name}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       void download(entry.path);
@@ -642,6 +696,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                 <button
                   className="nx-icon-btn nx-icon-btn-sm is-danger"
                   title="删除"
+                  aria-label={`删除 ${entry.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     void remove(entry.path);

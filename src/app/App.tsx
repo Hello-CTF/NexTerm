@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -136,6 +137,34 @@ function workspaceIcon(w: Workspace) {
 function tabIcon(t: AppTab) {
   if (t.kind === "files" && t.path) return fileVisual(t.path, "file").Icon;
   return TAB_ICON[t.kind] ?? IconTerminal;
+}
+
+function handleTablistKeyDown(
+  event: ReactKeyboardEvent<HTMLElement>,
+  ids: string[],
+  currentId: string,
+  activate: (id: string) => void,
+): void {
+  if (event.target !== event.currentTarget) return;
+  const index = ids.indexOf(currentId);
+  if (index < 0) return;
+  let next = -1;
+  if (event.key === "ArrowRight") next = (index + 1) % ids.length;
+  else if (event.key === "ArrowLeft") next = (index - 1 + ids.length) % ids.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = ids.length - 1;
+  else if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    activate(currentId);
+    return;
+  } else return;
+  event.preventDefault();
+  const nextId = ids[next];
+  activate(nextId);
+  const tab = event.currentTarget
+    .closest("[role='tablist']")
+    ?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(nextId)}"]`);
+  tab?.focus();
 }
 
 let bootLocalTried = false;
@@ -602,6 +631,8 @@ export default function App() {
               key={it.key}
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
               title={it.label}
+              aria-label={it.label}
+              aria-current={railActive === it.key ? "true" : undefined}
               onClick={it.onClick}
             >
               <it.icon size={17} />
@@ -613,6 +644,9 @@ export default function App() {
               key={it.key}
               className={`nx-rail-btn ${it.unavailableReason ? "is-unavailable" : ""}`}
               title={
+                it.unavailableReason ? `${it.label}（暂不可用）` : it.label
+              }
+              aria-label={
                 it.unavailableReason ? `${it.label}（暂不可用）` : it.label
               }
               onClick={it.onClick}
@@ -628,6 +662,7 @@ export default function App() {
               key={it.key}
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
               title={it.label}
+              aria-label={it.label}
               onClick={it.onClick}
             >
               <it.icon size={17} />
@@ -645,52 +680,77 @@ export default function App() {
                 还没有工作区 —— 双击左侧资产连接一台机器
               </span>
             )}
-            {workspaces.map((w) => {
-              const Icon = workspaceIcon(w);
-              const isActive = w.id === ws?.id;
-              const status = sessions.find((s) => s.id === w.sessionId)?.status;
-              const dot =
-                status === undefined
-                  ? null
-                  : status === "connected"
-                    ? "is-ok"
-                    : status === "failed"
-                      ? "is-bad"
-                      : "is-warn";
-              return (
-                <button
-                  key={w.id}
-                  className={`nx-ws ${isActive ? "is-active" : ""}`}
-                  style={wailsNoDragRegionStyle}
-                  onClick={() => setActiveWorkspace(w.id)}
-                  title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
-                    w.panes.length > 1 ? " · 已分屏" : ""
-                  }${
-                    status ? ` · ${status}` : ""
-                  }${w.sessionId ? ` · ${w.sessionId}` : ""}`}
-                >
-                  <Icon size={13} />
-                  <span className="truncate">{w.title}</span>
-                  {dot && <span className={`nx-ws-dot ${dot}`} />}
-                  {w.closable && (
-                    <span
-                      className="nx-tab-close"
-                      title="关闭工作区（会关掉里面的终端）"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void closeWorkspace(w.id);
-                      }}
-                    >
-                      <IconClose size={10} />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+            <div
+              role="tablist"
+              aria-label="工作区"
+              className="flex items-center gap-[3px]"
+              style={wailsNoDragRegionStyle}
+            >
+              {workspaces.map((w) => {
+                const Icon = workspaceIcon(w);
+                const isActive = w.id === ws?.id;
+                const status = sessions.find((s) => s.id === w.sessionId)?.status;
+                const dot =
+                  status === undefined
+                    ? null
+                    : status === "connected"
+                      ? "is-ok"
+                      : status === "failed"
+                        ? "is-bad"
+                        : "is-warn";
+                return (
+                  <div
+                    key={w.id}
+                    role="tab"
+                    data-tab-id={w.id}
+                    id={`nx-ws-tab-${w.id}`}
+                    aria-selected={isActive}
+                    aria-controls={`nx-ws-panel-${w.id}`}
+                    tabIndex={isActive ? 0 : -1}
+                    className={`nx-ws ${isActive ? "is-active" : ""}`}
+                    style={wailsNoDragRegionStyle}
+                    onClick={() => setActiveWorkspace(w.id)}
+                    onKeyDown={(e) =>
+                      handleTablistKeyDown(
+                        e,
+                        workspaces.map((x) => x.id),
+                        w.id,
+                        setActiveWorkspace,
+                      )
+                    }
+                    title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
+                      w.panes.length > 1 ? " · 已分屏" : ""
+                    }${
+                      status ? ` · ${status}` : ""
+                    }${w.sessionId ? ` · ${w.sessionId}` : ""}`}
+                  >
+                    <Icon size={13} />
+                    <span className="truncate">{w.title}</span>
+                    {dot && <span className={`nx-ws-dot ${dot}`} />}
+                    {w.closable && (
+                      <button
+                        type="button"
+                        className="nx-tab-close"
+                        style={wailsNoDragRegionStyle}
+                        aria-label={`关闭工作区 ${w.title}`}
+                        title="关闭工作区（会关掉里面的终端）"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void closeWorkspace(w.id);
+                        }}
+                      >
+                        <IconClose size={10} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             <button
               className="nx-tab-new"
               style={wailsNoDragRegionStyle}
               title="新建工作区：在左侧资产树里双击一台机器"
+              aria-label="新建工作区"
               onClick={() => {
                 setLeftMode("assets");
                 setLeftOpen(true);
@@ -705,6 +765,7 @@ export default function App() {
                 <button
                   className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最小化"
+                  aria-label="最小化窗口"
                   onClick={() => void minimiseWindow()}
                 >
                   <IconMinus size={13} />
@@ -712,6 +773,7 @@ export default function App() {
                 <button
                   className="nx-icon-btn" style={wailsNoDragRegionStyle}
                   title="最大化 / 还原（双击空白处也可）"
+                  aria-label="最大化或还原窗口"
                   onClick={() => void toggleMaximiseWindow()}
                 >
                   <IconMaximize size={12} />
@@ -720,6 +782,7 @@ export default function App() {
                   className="nx-icon-btn is-danger"
                   style={wailsNoDragRegionStyle}
                   title="关闭"
+                  aria-label="关闭窗口"
                   onClick={() => void closeWindow()}
                 >
                   <IconClose size={14} />
@@ -756,6 +819,7 @@ export default function App() {
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
               title="刷新会话列表与凭据库状态"
+              aria-label="刷新会话列表与凭据库状态"
               onClick={() => {
                 void sessionApi.list().then(setSessions).catch(() => undefined);
                 void vaultApi
@@ -777,11 +841,17 @@ export default function App() {
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
               title="命令面板 (Ctrl+Shift+P)"
+              aria-label="命令面板 (Ctrl+Shift+P)"
               onClick={() => setPaletteOpen(true)}
             >
               <IconCommand size={15} />
             </button>
-            <button className="nx-icon-btn" style={wailsNoDragRegionStyle} title="全局搜索 (Ctrl+K)" onClick={() => setPaletteOpen(true)}>
+            <button
+              className="nx-icon-btn" style={wailsNoDragRegionStyle}
+              title="全局搜索 (Ctrl+K)"
+              aria-label="全局搜索 (Ctrl+K)"
+              onClick={() => setPaletteOpen(true)}
+            >
               <IconSearch size={15} />
             </button>
           </header>
@@ -830,6 +900,7 @@ export default function App() {
                   <PaneGroup
                     key={p.id}
                     pane={p}
+                    idPrefix={`${w.id}-${p.id}`}
                     active={wsActive && p.id === w.activePaneId}
                     visible={wsActive}
                     split={split}
@@ -845,7 +916,13 @@ export default function App() {
                   />
                 ));
                 return (
-                  <div key={w.id} className={wsActive ? "h-full min-h-0" : "hidden"}>
+                  <div
+                    key={w.id}
+                    role="tabpanel"
+                    id={`nx-ws-panel-${w.id}`}
+                    aria-labelledby={`nx-ws-tab-${w.id}`}
+                    className={wsActive ? "h-full min-h-0" : "hidden"}
+                  >
                     <SplitStack
                       ratio={w.splitRatio}
                       onRatio={(r) => setSplitRatio(r, w.id)}
@@ -923,12 +1000,12 @@ export default function App() {
             t.kind === "error"
               ? "border-red-500/40 bg-red-950/90 text-red-100"
               : t.kind === "success"
-                ? "border-green-500/40 bg-[#12241b]/95 text-green-100"
+                ? "border-green-500/40 bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))] text-green-300"
                 : "border-neutral-700 bg-neutral-800/95 text-neutral-100";
           return (
             <button
               key={t.id}
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[0_18px_48px_-16px_rgba(0,0,0,0.75)] backdrop-blur ${tone}`}
+              className={`pointer-events-auto flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-left text-xs leading-relaxed shadow-[var(--shadow-pop)] backdrop-blur ${tone}`}
               onClick={() => dismissToast(t.id)}
             >
               <Icon
@@ -958,6 +1035,7 @@ export default function App() {
 
 interface PaneGroupProps {
   pane: Pane;
+  idPrefix: string;
   active: boolean;
   visible: boolean;
   split: boolean;
@@ -971,6 +1049,7 @@ interface PaneGroupProps {
 
 function PaneGroup({
   pane,
+  idPrefix,
   active,
   visible,
   split,
@@ -992,8 +1071,7 @@ function PaneGroup({
     updateTab(id, { title: next.trim() });
   };
 
-  const tabMenu = (e: React.MouseEvent, t: (typeof pane.tabs)[number]) => {
-    e.preventDefault();
+  const openTabMenu = (t: (typeof pane.tabs)[number], x: number, y: number) => {
     const items: MenuItem[] = [];
     if (t.kind === "terminal") {
       items.push({
@@ -1011,7 +1089,7 @@ function PaneGroup({
       disabled: !t.closable,
       onSelect: () => void requestCloseTab(t.id),
     });
-    setMenu({ x: e.clientX, y: e.clientY, title: t.title, items });
+    setMenu({ x, y, title: t.title, items });
   };
 
   return (
@@ -1029,41 +1107,74 @@ function PaneGroup({
         {pane.tabs.length === 0 && (
           <span className="px-1 text-xs text-neutral-500">这一栏还没有标签</span>
         )}
-        {pane.tabs.map((t) => {
-          const Icon = tabIcon(t);
-          const isActive = t.id === activeTabId;
-          return (
-            <button
-              key={t.id}
-              className={`nx-tab ${isActive ? "is-active" : ""}`}
-              onClick={() => setActiveTab(t.id)}
-              onContextMenu={(e) => tabMenu(e, t)}
-              title={t.title}
-            >
-              <Icon size={13} />
-              <span className="truncate">{t.title}</span>
-              {t.closable && (
-                <span
-                  className="nx-tab-close"
-                  title="关闭标签"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void requestCloseTab(t.id);
-                  }}
-                >
-                  <IconClose size={10} />
-                </span>
-              )}
-            </button>
-          );
-        })}
-        <button className="nx-tab-new" title="新建终端标签 (Ctrl+T)" onClick={onNewTerminal}>
+        <div role="tablist" aria-label="标签页" className="flex items-center gap-[3px]">
+          {pane.tabs.map((t) => {
+            const Icon = tabIcon(t);
+            const isActive = t.id === activeTabId;
+            return (
+              <div
+                key={t.id}
+                role="tab"
+                data-tab-id={t.id}
+                id={`nx-tab-${idPrefix}-${t.id}`}
+                aria-selected={isActive}
+                aria-controls={`nx-tab-panel-${idPrefix}-${t.id}`}
+                tabIndex={isActive ? 0 : -1}
+                className={`nx-tab ${isActive ? "is-active" : ""}`}
+                onClick={() => setActiveTab(t.id)}
+                onKeyDown={(e) => {
+                  if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+                    e.preventDefault();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    openTabMenu(t, rect.left, rect.bottom);
+                    return;
+                  }
+                  handleTablistKeyDown(
+                    e,
+                    pane.tabs.map((x) => x.id),
+                    t.id,
+                    setActiveTab,
+                  );
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openTabMenu(t, e.clientX, e.clientY);
+                }}
+                title={t.title}
+              >
+                <Icon size={13} />
+                <span className="truncate">{t.title}</span>
+                {t.closable && (
+                  <button
+                    type="button"
+                    className="nx-tab-close"
+                    aria-label={`关闭标签 ${t.title}`}
+                    title="关闭标签"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void requestCloseTab(t.id);
+                    }}
+                  >
+                    <IconClose size={10} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <button
+          className="nx-tab-new"
+          title="新建终端标签 (Ctrl+T)"
+          aria-label="新建终端标签"
+          onClick={onNewTerminal}
+        >
           <IconPlus size={13} />
         </button>
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={canSplit ? "上下分屏 (Ctrl+\\)" : "取消分屏 (Ctrl+\\)"}
+          aria-label={canSplit ? "上下分屏" : "取消分屏"}
           onClick={onToggleSplit}
         >
           {canSplit ? <IconSplitH size={14} /> : <IconMergeH size={14} />}
@@ -1071,6 +1182,7 @@ function PaneGroup({
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={leftOpen ? "收起左栏 (Ctrl+B)" : "展开左栏 (Ctrl+B)"}
+          aria-label={leftOpen ? "收起左栏" : "展开左栏"}
           onClick={onToggleLeft}
         >
           <IconChevronLeft size={15} className={leftOpen ? "" : "rotate-180"} />
@@ -1082,7 +1194,13 @@ function PaneGroup({
           <WorkspaceEmpty onNew={onNewTerminal} />
         ) : (
           pane.tabs.map((t) => (
-            <div key={t.id} className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}>
+            <div
+              key={t.id}
+              role="tabpanel"
+              id={`nx-tab-panel-${idPrefix}-${t.id}`}
+              aria-labelledby={`nx-tab-${idPrefix}-${t.id}`}
+              className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}
+            >
               <PaneForTab
                 tab={t}
                 active={t.id === activeTabId && visible}
