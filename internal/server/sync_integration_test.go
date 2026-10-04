@@ -36,7 +36,7 @@ func newRealSyncConfig(t *testing.T, syncOnly bool) (Config, *realSyncFixture) {
 		t.Fatal(err)
 	}
 	t.Cleanup(credentialVault.Lock)
-	service := syncservice.New(db, credentialVault, syncservice.WithMetadata("server-test", false))
+	service := syncservice.New(db, credentialVault, syncservice.WithMetadata("server-test", false), syncservice.WithPlatform("lazycat"))
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

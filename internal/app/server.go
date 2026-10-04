@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -51,9 +52,6 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(a.health(r.Context(), config))
 	})
-	if !config.SyncOnly {
-		mux.Handle("/rpc", ipc.NewRPCHandler(a.Dispatcher, a.Environment("")))
-	}
 	if config.SyncRPC != nil {
 		mux.Handle("/sync/rpc", config.SyncRPC)
 	}
@@ -63,13 +61,16 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 
 	handler := config.Transport
 	if handler == nil {
+		if !config.SyncOnly {
+			return fmt.Errorf("full server mode requires the server transport stack")
+		}
 		handler = mux
 	} else if config.CloseTransport != nil {
 		defer func() {
 			returnErr = errors.Join(returnErr, config.CloseTransport(context.Background()))
 		}()
 	}
-	if !loopbackListen(config.Listen) {
+	if !LoopbackListen(config.Listen) {
 		a.logger.Warn("HTTP server is listening on a non-loopback address", "listen", config.Listen)
 	}
 	server := &http.Server{
@@ -139,7 +140,7 @@ func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 	}
 }
 
-func loopbackListen(address string) bool {
+func LoopbackListen(address string) bool {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return false

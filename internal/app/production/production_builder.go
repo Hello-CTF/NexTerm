@@ -189,7 +189,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if dockerService == nil {
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
-	syncService := syncservice.New(database, credentialVault, syncservice.WithMetadata(config.Config.Version, config.Desktop))
+	syncService := syncservice.New(database, credentialVault, syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithPlatform(config.ForwardPlatform))
 	retention, err := NewRetentionRunner(RetentionConfig{
 		Store: database, Policy: StoreRetentionPolicy(database), Interval: config.RetentionInterval,
 		AttemptTimeout: config.RetentionAttemptTimeout, Logger: config.Config.Logger,

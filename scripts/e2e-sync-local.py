@@ -41,7 +41,7 @@ def check(name: str, ok: bool, detail: object = "") -> None:
         print(f"  FAIL {name}: {detail}", flush=True)
 
 
-def call(port: int, command: str, args: object = None, token: str | None = None, route: str = "/rpc") -> tuple[int, dict]:
+def call(port: int, command: str, args: object = None, token: str | None = None, route: str = "/rpc", extra_headers: dict[str, str] | None = None) -> tuple[int, dict]:
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}{route}",
         data=json.dumps({"cmd": command, "args": args}).encode(),
@@ -50,6 +50,8 @@ def call(port: int, command: str, args: object = None, token: str | None = None,
     )
     if token is not None:
         request.add_header(TOKEN_HEADER, token)
+    for name, value in (extra_headers or {}).items():
+        request.add_header(name, value)
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             return response.status, json.loads(response.read())
@@ -68,6 +70,17 @@ def data(port: int, command: str, args: object = None, token: str | None = None,
     return envelope.get("data")
 
 
+def raw_status(port: int, path: str, method: str = "GET", body: bytes | None = None, token: str | None = None) -> int:
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=body, method=method)
+    if token is not None:
+        request.add_header(TOKEN_HEADER, token)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
+
+
 def free_port() -> int:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -84,18 +97,18 @@ class Instance:
         self.process: subprocess.Popen | None = None
         self.log_handle = None
 
-    def start(self, sync_only: bool = False) -> None:
+    def start(self, sync_only: bool = False, host: str = "127.0.0.1") -> None:
         self.stop()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         environment = dict(os.environ)
         environment.update(
             {
                 "NEXTERM_DATA_DIR": str(self.data_dir),
-                "NEXTERM_LISTEN": f"127.0.0.1:{self.port}",
+                "NEXTERM_LISTEN": f"{host}:{self.port}",
                 "NEXTERM_MASTER_KEY": self.master_key,
             }
         )
-        arguments = [str(self.binary), "--listen", f"127.0.0.1:{self.port}", "--data-dir", str(self.data_dir)]
+        arguments = [str(self.binary), "--listen", f"{host}:{self.port}", "--data-dir", str(self.data_dir)]
         if sync_only:
             arguments.append("--sync-only")
         self.log_handle = self.log_path.open("ab")
@@ -111,6 +124,13 @@ class Instance:
             except Exception:
                 time.sleep(0.1)
         raise AssertionError(f"server readiness timed out; log={self.log_path}")
+
+    def cli_token(self, rotate: bool = False) -> str:
+        arguments = [str(self.binary), "rotate-token" if rotate else "token", "--data-dir", str(self.data_dir)]
+        result = subprocess.run(arguments, cwd=ROOT, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise AssertionError(f"token command failed: {result.stderr.strip()}; log={self.log_path}")
+        return result.stdout.strip()
 
     def health(self) -> dict:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/healthz", timeout=5) as response:
@@ -187,6 +207,7 @@ def synthetic_bundle() -> dict:
 def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
     a = Instance(binary, work, "a", "go-e2e-master-a")
     b = Instance(binary, work, "b", "go-e2e-master-b-with-a-different-key")
+    c = Instance(binary, work, "c", "go-e2e-master-c")
     try:
         print("[1] Start independent full Go servers", flush=True)
         a.start()
@@ -201,6 +222,7 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         token_a = str(data(a.port, "sync_token"))
         token_b = str(data(b.port, "sync_token"))
         check("tokens are present and instance-specific", bool(token_a) and bool(token_b) and token_a != token_b)
+        check("CLI token command matches the RPC token", a.cli_token() == token_a, "cli token differs from /rpc sync_token")
         status, _ = call(b.port, "sync_digest", route="/sync/rpc")
         check("missing peer token returns 401", status == 401, status)
         status, _ = call(b.port, "sync_digest", token="wrong", route="/sync/rpc")
@@ -261,9 +283,39 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         else:
             status = 200
         check("sync-only does not serve a browser UI", status == 404, status)
+
+        print("[7] Exposed listener requires the token everywhere except healthz", flush=True)
+        c.start(host="0.0.0.0")
+        token_c = c.cli_token()
+        check("CLI provisions the exposed instance token", bool(token_c))
+        status, _ = call(c.port, "sync_digest")
+        check("exposed /rpc rejects a missing token", status == 401, status)
+        status, _ = call(c.port, "sync_digest", token="wrong")
+        check("exposed /rpc rejects a wrong token", status == 401, status)
+        status, envelope = call(c.port, "sync_digest", token=token_c)
+        check("exposed /rpc admits the valid token", status == 200 and envelope.get("ok") is True, envelope)
+        status, _ = call(c.port, "sync_digest", extra_headers={"X-HC-User-ID": "forged"})
+        check("exposed /rpc rejects a forged platform identity header", status == 401, status)
+        status, _ = call(c.port, "sync_digest", route="/sync/rpc")
+        check("exposed /sync/rpc rejects a missing token", status == 401, status)
+        status, envelope = call(c.port, "sync_digest", token=token_c, route="/sync/rpc")
+        check("exposed /sync/rpc admits the valid token", status == 200 and envelope.get("ok") is True, envelope)
+        status = raw_status(c.port, "/files/blob?name=e2e.txt", method="POST", body=b"payload")
+        check("exposed /files/blob rejects a missing token", status == 401, status)
+        status = raw_status(c.port, "/files/blob?name=e2e.txt", method="POST", body=b"payload", token=token_c)
+        check("exposed /files/blob admits the valid token", status == 200, status)
+        status = raw_status(c.port, "/healthz")
+        check("exposed /healthz stays public", status == 200, status)
+        rotated_c = c.cli_token(rotate=True)
+        check("CLI rotate-token returns a fresh token", bool(rotated_c) and rotated_c != token_c)
+        status, _ = call(c.port, "sync_digest", token=token_c)
+        check("rotated-out token is rejected", status == 401, status)
+        status, envelope = call(c.port, "sync_digest", token=rotated_c)
+        check("rotated token is admitted", status == 200 and envelope.get("ok") is True, envelope)
     finally:
         a.stop()
         b.stop()
+        c.stop()
 
 
 def main() -> int:

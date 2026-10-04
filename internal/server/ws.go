@@ -60,7 +60,13 @@ func ParseWebSocketEnv(getenv func(string) string) (WebSocketConfig, error) {
 }
 
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
+	if !s.admitWebSocket(w, r) {
+		return
+	}
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: s.options.AllowedOrigins,
+		Subprotocols:   []string{wsAuthProtocol},
+	})
 	if err != nil {
 		return
 	}
@@ -102,7 +108,13 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 }
 
 func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
+	if !s.admitWebSocket(w, r) {
+		return
+	}
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: s.options.AllowedOrigins,
+		Subprotocols:   []string{wsAuthProtocol},
+	})
 	if err != nil {
 		return
 	}

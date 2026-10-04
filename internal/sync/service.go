@@ -33,14 +33,23 @@ func WithMetadata(appVersion string, desktop bool) Option {
 	}
 }
 
+func WithPlatform(platform string) Option {
+	return func(s *Service) {
+		s.platform = platform
+	}
+}
+
 type Service struct {
 	store      *store.Store
 	vault      *vault.Vault
 	appVersion string
 	desktop    bool
+	platform   string
 
 	settingsMu stdsync.Mutex
 }
+
+func (s *Service) PlatformTrusted() bool { return s.platform != "" }
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
 	s := &Service{store: db, vault: credentialVault}

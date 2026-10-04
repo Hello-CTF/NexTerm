@@ -1,6 +1,7 @@
 import { DEMO, WEB } from "../demo";
 import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
+import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
 
 export interface AppError {
@@ -33,7 +34,7 @@ export async function call<T>(cmd: string, args?: Record<string, unknown>): Prom
 
 async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
-  const res = await fetch(httpUrl("/rpc"), {
+  const res = await authedFetch(httpUrl("/rpc"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

@@ -47,7 +47,15 @@ func TestSyncAdmissionTokenAndPlatform(t *testing.T) {
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("valid token = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{PlatformUserHeader: ""})
+	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{PlatformUserHeader: "forged"})
+	if status != http.StatusUnauthorized || body.OK {
+		t.Fatalf("forged platform identity without platform trust = %d %+v", status, body)
+	}
+
+	trusted := testConfig(t, false)
+	trusted.TrustPlatformUser = true
+	_, trustedHTTP := newTestHTTP(t, trusted)
+	status, body = postRPC(t, trustedHTTP.Client(), trustedHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{PlatformUserHeader: "gateway-user"})
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("platform admission = %d %+v", status, body)
 	}

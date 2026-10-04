@@ -1,5 +1,6 @@
 
 import { clientId, wsUrl } from "./env";
+import { wsAuthProtocols } from "./serverAuth";
 
 type ChannelMessage = unknown;
 
@@ -123,7 +124,7 @@ function connect(entry: ChannelEntry) {
   if (entry.disposed) return;
   let ws: WebSocket;
   try {
-    ws = new WebSocket(wsUrl(`/ws/channel/${encodeURIComponent(entry.ch.id)}`));
+    ws = new WebSocket(wsUrl(`/ws/channel/${encodeURIComponent(entry.ch.id)}`), wsAuthProtocols());
   } catch {
     scheduleReconnect(entry);
     return;
@@ -195,7 +196,7 @@ function connectEvents() {
   let ws: WebSocket;
   try {
     const query = events.hasConnected ? `?since=${events.lastId}` : "";
-    ws = new WebSocket(wsUrl(`/ws/events${query}`));
+    ws = new WebSocket(wsUrl(`/ws/events${query}`), wsAuthProtocols());
   } catch {
     scheduleEventsReconnect();
     return;

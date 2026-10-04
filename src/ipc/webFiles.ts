@@ -1,5 +1,6 @@
 
 import { DEMO, WEB, httpUrl } from "./env";
+import { authedFetch } from "./serverAuth";
 
 export interface StagedRef {
   id: string;
@@ -67,7 +68,7 @@ export async function stageFile(
 ): Promise<StagedRef> {
   const q = new URLSearchParams({ name: file.name || "upload.bin" });
   if (opts.persist) q.set("persist", "1");
-  const res = await fetch(httpUrl(`/files/blob?${q.toString()}`), {
+  const res = await authedFetch(httpUrl(`/files/blob?${q.toString()}`), {
     method: "POST",
     body: file,
   });
@@ -78,7 +79,7 @@ export async function stageFile(
 
 async function reserveTarget(name: string): Promise<StagedRef> {
   const q = new URLSearchParams({ name });
-  const res = await fetch(httpUrl(`/files/blob/reserve?${q.toString()}`), { method: "POST" });
+  const res = await authedFetch(httpUrl(`/files/blob/reserve?${q.toString()}`), { method: "POST" });
   const ref = await readStagedRef(res, "预留落点");
   stagedIds.set(ref.path, ref.id);
   return ref;
@@ -130,7 +131,7 @@ export async function deliverStaged(
   saveHandles.delete(path);
   let cleanup = false;
   try {
-    const res = await fetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`));
+    const res = await authedFetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`));
     if (!res.ok) throw new Error(`回读暂存内容失败（HTTP ${res.status}）`);
     const blob = await res.blob();
     if (handle) {
@@ -150,7 +151,7 @@ export async function deliverStaged(
 }
 
 async function deleteBlob(id: string): Promise<void> {
-  await fetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`), { method: "DELETE" }).catch(
+  await authedFetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`), { method: "DELETE" }).catch(
     () => undefined,
   );
 }

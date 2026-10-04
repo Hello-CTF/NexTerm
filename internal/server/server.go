@@ -34,43 +34,46 @@ func (f TokenVerifierFunc) VerifyToken(ctx context.Context, token string) (bool,
 }
 
 type Config struct {
-	Options      Options
-	Dispatcher   *ipc.Dispatcher
-	Environment  ipc.Environment
-	Tokens       TokenVerifier
-	SyncRPC      http.Handler
-	Events       *EventBroker
-	Channels     ChannelBinder
-	ChannelStats ChannelStatsFunc
-	Blobs        *BlobStore
-	Static       http.Handler
-	Vault        Vault
-	VaultStatus  func(context.Context) (any, error)
-	Retention    *RetentionConfig
-	Version      string
-	MaxRPCBytes  int64
-	Logger       *slog.Logger
-	WebSocket    WebSocketConfig
+	Options           Options
+	Dispatcher        *ipc.Dispatcher
+	Environment       ipc.Environment
+	Tokens            TokenVerifier
+	SyncRPC           http.Handler
+	TrustPlatformUser bool
+	Events            *EventBroker
+	Channels          ChannelBinder
+	ChannelStats      ChannelStatsFunc
+	Blobs             *BlobStore
+	Static            http.Handler
+	Vault             Vault
+	VaultStatus       func(context.Context) (any, error)
+	Retention         *RetentionConfig
+	Version           string
+	MaxRPCBytes       int64
+	Logger            *slog.Logger
+	WebSocket         WebSocketConfig
 }
 
 type Server struct {
-	options        Options
-	dispatcher     *ipc.Dispatcher
-	syncDispatcher *ipc.Dispatcher
-	environment    ipc.Environment
-	tokens         TokenVerifier
-	events         *EventBroker
-	channels       ChannelBinder
-	channelStats   ChannelStatsFunc
-	version        string
-	vaultStatus    func(context.Context) (any, error)
-	retention      *RetentionConfig
-	handler        http.Handler
-	logger         *slog.Logger
-	sockets        socketTracker
-	closeOnce      sync.Once
-	closeErr       error
-	webSocket      WebSocketConfig
+	options           Options
+	dispatcher        *ipc.Dispatcher
+	syncDispatcher    *ipc.Dispatcher
+	environment       ipc.Environment
+	tokens            TokenVerifier
+	trustPlatformUser bool
+	authRequired      bool
+	events            *EventBroker
+	channels          ChannelBinder
+	channelStats      ChannelStatsFunc
+	version           string
+	vaultStatus       func(context.Context) (any, error)
+	retention         *RetentionConfig
+	handler           http.Handler
+	logger            *slog.Logger
+	sockets           socketTracker
+	closeOnce         sync.Once
+	closeErr          error
+	webSocket         WebSocketConfig
 
 	readGate func()
 }
@@ -95,6 +98,20 @@ func New(config Config) (*Server, error) {
 	}
 	if config.SyncRPC == nil && config.Tokens == nil {
 		return nil, fmt.Errorf("sync RPC handler or token verifier is required")
+	}
+	if config.Tokens == nil && config.SyncRPC != nil {
+		if verifier, ok := config.SyncRPC.(TokenVerifier); ok {
+			config.Tokens = verifier
+		}
+	}
+	if !config.TrustPlatformUser && config.SyncRPC != nil {
+		if trusted, ok := config.SyncRPC.(interface{ PlatformTrusted() bool }); ok {
+			config.TrustPlatformUser = trusted.PlatformTrusted()
+		}
+	}
+	authRequired := !config.Options.SyncOnly && !core.LoopbackListen(config.Options.Listen)
+	if authRequired && config.Tokens == nil {
+		return nil, fmt.Errorf("token verifier is required when listening on a non-loopback address")
 	}
 	if err := core.ValidateListenAddress(config.Options.Listen); config.Options.Listen != "" && err != nil {
 		return nil, err
@@ -135,7 +152,8 @@ func New(config Config) (*Server, error) {
 
 	s := &Server{
 		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
-		tokens: config.Tokens, events: config.Events, channels: config.Channels,
+		tokens: config.Tokens, trustPlatformUser: config.TrustPlatformUser, authRequired: authRequired,
+		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
 	}
@@ -202,7 +220,7 @@ func (s *Server) routes(config Config) http.Handler {
 
 	rpcHandler := ipc.NewRPCHandler(s.dispatcher, s.environment)
 	rpcHandler.MaxBytes = config.MaxRPCBytes
-	mux.Handle("POST /rpc", rpcHandler)
+	mux.Handle("POST /rpc", s.requireAuth(rpcHandler))
 	mux.HandleFunc("GET /ws/events", s.serveEvents)
 	mux.HandleFunc("GET /ws/channel/{id}", s.serveChannel)
 
@@ -211,10 +229,10 @@ func (s *Server) routes(config Config) http.Handler {
 		blobs = NewBlobStore(s.options.DataDir, s.logger)
 	}
 	if blobs != nil {
-		mux.HandleFunc("POST /files/blob", blobs.Stage)
-		mux.HandleFunc("GET /files/blob", blobs.Download)
-		mux.HandleFunc("DELETE /files/blob", blobs.Delete)
-		mux.HandleFunc("POST /files/blob/reserve", blobs.Reserve)
+		mux.Handle("POST /files/blob", s.requireAuth(http.HandlerFunc(blobs.Stage)))
+		mux.Handle("GET /files/blob", s.requireAuth(http.HandlerFunc(blobs.Download)))
+		mux.Handle("DELETE /files/blob", s.requireAuth(http.HandlerFunc(blobs.Delete)))
+		mux.Handle("POST /files/blob/reserve", s.requireAuth(http.HandlerFunc(blobs.Reserve)))
 	}
 	staticHandler := config.Static
 	if staticHandler == nil && s.options.WebRoot != "" {
@@ -229,7 +247,7 @@ func (s *Server) routes(config Config) http.Handler {
 func (s *Server) authenticatedSync(next *ipc.RPCHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if !hasPlatformUser(r) {
+		if !(s.trustPlatformUser && hasPlatformUser(r)) {
 			valid, err := s.tokens.VerifyToken(r.Context(), r.Header.Get(TokenHeader))
 			if err != nil {
 				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
