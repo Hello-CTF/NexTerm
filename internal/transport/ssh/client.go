@@ -4,32 +4,44 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 var nextGeneration atomic.Uint64
 
 type Client struct {
-	ssh        *gossh.Client
-	generation uint64
-	done       chan struct{}
-	stateOnce  sync.Once
-	closeOnce  sync.Once
-	closeErr   error
-	sftpMu     sync.Mutex
-	sftp       *sftpState
+	ssh          *gossh.Client
+	generation   uint64
+	done         chan struct{}
+	stateOnce    sync.Once
+	closeOnce    sync.Once
+	closeErr     error
+	sftpMu       sync.Mutex
+	sftp         *sftpState
+	closers      []io.Closer
+	forwardAgent bool
 }
 
 func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	cfg, err := cfg.validate()
 	if err != nil {
 		return nil, err
+	}
+	return connect(ctx, cfg, 0)
+}
+
+func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
+	if depth > maxJumpDepth {
+		return nil, fmt.Errorf("SSH jump chain exceeds %d hops", maxJumpDepth)
 	}
 	connectCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
@@ -53,12 +65,27 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 			return verifyHostKey(connectCtx, cfg.HostKeys, cfg.Host, cfg.Port, cfg.AutoAcceptUnknown, cfg.HostKeyApproval, key)
 		},
 	}
-	netConn, err := dialSSH(connectCtx, cfg.ProxyURL, cfg.Host, cfg.Port)
-	if err != nil {
-		return nil, err
+	target := endpointString(cfg.Host, cfg.Port)
+	var netConn net.Conn
+	var jumpClient *Client
+	if cfg.Jump != nil {
+		jumpClient, err = connect(ctx, *cfg.Jump, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		netConn, err = jumpClient.ssh.DialContext(connectCtx, "tcp", target)
+		if err != nil {
+			jumpClient.Close()
+			return nil, fmt.Errorf("SSH dial %s through jump host: %w", target, err)
+		}
+	} else {
+		netConn, err = dialSSH(connectCtx, cfg, cfg.Host, cfg.Port)
+		if err != nil {
+			return nil, err
+		}
 	}
 	stop := context.AfterFunc(connectCtx, func() { netConn.Close() })
-	conn, channels, requests, err := gossh.NewClientConn(netConn, endpointString(cfg.Host, cfg.Port), sshConfig)
+	conn, channels, requests, err := gossh.NewClientConn(netConn, target, sshConfig)
 	stopped := stop()
 	if err == nil && !stopped && connectCtx.Err() != nil {
 		conn.Close()
@@ -66,6 +93,9 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	if err != nil {
 		netConn.Close()
+		if jumpClient != nil {
+			jumpClient.Close()
+		}
 		if connectCtx.Err() != nil {
 			return nil, connectCtx.Err()
 		}
@@ -73,18 +103,44 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 		if errors.As(err, &keyErr) {
 			return nil, keyErr
 		}
-		return nil, fmt.Errorf("SSH handshake: %w", err)
+		return nil, fmt.Errorf("SSH handshake with %s: %w", target, err)
 	}
 	client := &Client{
-		ssh:        gossh.NewClient(conn, channels, requests),
-		generation: nextGeneration.Add(1),
-		done:       make(chan struct{}),
+		ssh:          gossh.NewClient(conn, channels, requests),
+		generation:   nextGeneration.Add(1),
+		done:         make(chan struct{}),
+		forwardAgent: cfg.ForwardAgent,
+	}
+	if jumpClient != nil {
+		client.closers = append(client.closers, jumpClient)
+	}
+	if cfg.ForwardAgent {
+		if err := client.enableAgentForwarding(cfg.Auth.AgentSocket); err != nil {
+			conn.Close()
+			if jumpClient != nil {
+				jumpClient.Close()
+			}
+			return nil, err
+		}
 	}
 	go client.watch(conn)
 	if cfg.KeepAliveInterval > 0 && cfg.KeepAliveMax > 0 {
 		go client.keepalive(cfg.KeepAliveInterval, cfg.KeepAliveMax)
 	}
 	return client, nil
+}
+
+func (c *Client) enableAgentForwarding(socket string) error {
+	if socket == "" {
+		socket = os.Getenv("SSH_AUTH_SOCK")
+	}
+	if socket == "" {
+		return fmt.Errorf("SSH agent forwarding is enabled but no agent socket is configured and SSH_AUTH_SOCK is empty")
+	}
+	if err := agent.ForwardToRemote(c.ssh, socket); err != nil {
+		return fmt.Errorf("forward SSH agent: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) Kind() string {
@@ -109,6 +165,9 @@ func (c *Client) Close() error {
 		c.stateOnce.Do(func() { close(c.done) })
 		c.closeErr = c.ssh.Close()
 		c.closeSFTP()
+		for index := len(c.closers) - 1; index >= 0; index-- {
+			c.closers[index].Close()
+		}
 		if errors.Is(c.closeErr, net.ErrClosed) || errors.Is(c.closeErr, context.Canceled) {
 			c.closeErr = nil
 		}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 var nextChannelID atomic.Uint64
@@ -160,6 +161,14 @@ func (c *Client) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Cha
 			return nil, opCtx.Err()
 		}
 		return nil, fmt.Errorf("request SSH PTY: %w", err)
+	}
+	if c.forwardAgent {
+		if err := agent.RequestAgentForwarding(session); err != nil {
+			if opCtx.Err() != nil {
+				return nil, opCtx.Err()
+			}
+			return nil, fmt.Errorf("request SSH agent forwarding: %w", err)
+		}
 	}
 	if err := session.Shell(); err != nil {
 		if opCtx.Err() != nil {

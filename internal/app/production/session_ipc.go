@@ -545,27 +545,9 @@ func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Cal
 }
 
 func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Asset, error) {
-	options := make(map[string]any)
-	if err := json.Unmarshal([]byte(store.ParseJSONOr(row.OptionsJSON)), &options); err != nil {
+	options, err := productionAssetOptionMap(row)
+	if err != nil {
 		return session.Asset{}, ipc.BadParam(err)
-	}
-	if row.Host != nil {
-		options["host"] = *row.Host
-	}
-	if row.Port != nil {
-		options["port"] = *row.Port
-	}
-	if row.Username != nil {
-		options["username"] = *row.Username
-	}
-	if row.AuthKind != nil {
-		options["authKind"] = *row.AuthKind
-	}
-	if row.KeyPath != nil {
-		options["keyPath"] = *row.KeyPath
-	}
-	if row.CredID != nil {
-		options["credId"] = *row.CredID
 	}
 	if acceptHostKey {
 		options["autoAcceptUnknownHost"] = true

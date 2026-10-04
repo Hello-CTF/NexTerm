@@ -56,7 +56,7 @@ func TestDialSSHDirectSetsNoDelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := dialSSH(context.Background(), "", "127.0.0.1", port)
+	conn, err := dialSSH(context.Background(), Config{}, "127.0.0.1", port)
 	if err != nil {
 		t.Fatal(err)
 	}
