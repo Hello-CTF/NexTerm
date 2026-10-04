@@ -244,7 +244,6 @@ describe("pane tab strip keyboard support", () => {
     if (!close) throw new Error("close button not found");
     act(() => close.focus());
 
-    // 标签的 keydown 不得 preventDefault，否则浏览器无法为按钮合成原生 click。
     const event = keyDown(close, "Enter");
     expect(event.defaultPrevented).toBe(false);
     expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe("t1");

@@ -3,9 +3,6 @@ import { describe, expect, it } from "vitest";
 
 const app = readFileSync(new URL("../app/App.tsx", import.meta.url), "utf8");
 
-// 不能用 \b 单词边界：Tailwind 任意值里颜色前一个字符常是 `_`
-// （如 shadow-[…_rgba(0,0,0,0.75)]），下划线与 r 都是单词字符，
-// 二者之间没有边界，/\brgba?\(/ 会漏报。
 const RAW_HEX = /#[0-9a-fA-F]{3,8}/;
 const RAW_RGB = /rgba?\(/;
 
@@ -32,8 +29,6 @@ describe("App-level semantic tokens", () => {
   });
 
   it("references the runtime shadow token instead of the statically expanded utility", () => {
-    // shadow-pop 工具类会把 @theme 暗色值静态展开进生成 CSS，运行时亮主题覆盖不生效；
-    // 必须保留 var() 引用的任意值形式（生成 --tw-shadow: var(--shadow-pop)）。
     expect(app).toContain("shadow-[var(--shadow-pop)]");
     expect(app).not.toMatch(/["' ]shadow-pop["' ]/);
   });
