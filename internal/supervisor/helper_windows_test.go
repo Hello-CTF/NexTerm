@@ -579,7 +579,7 @@ func requirePrivateDACL(t *testing.T, path string) {
 		if ace.trustee != "S-1-5-18" && ace.trustee != currentUserSIDForTest(t) {
 			t.Fatalf("directory DACL grants access to foreign trustee %s", ace.trustee)
 		}
-		if ace.mask&0x001F01FF == 0 {
+		if ace.mask&(windows.GENERIC_ALL|0x001F01FF) == 0 {
 			t.Fatalf("directory DACL trustee %s lacks full-control rights", ace.trustee)
 		}
 	}
@@ -608,7 +608,7 @@ func requireInheritedPrivateDACL(t *testing.T, path string) {
 		if ace.trustee != "S-1-5-18" && ace.trustee != sid {
 			t.Fatalf("child object DACL grants access to foreign trustee %s", ace.trustee)
 		}
-		if ace.mask&0x001F01FF == 0 {
+		if ace.mask&(windows.GENERIC_ALL|0x001F01FF) == 0 {
 			t.Fatalf("child object DACL trustee %s lacks full-control rights", ace.trustee)
 		}
 		if ace.flags&windows.INHERITED_ACE == 0 {

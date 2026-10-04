@@ -239,6 +239,7 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 	if err := session.killAndWait(ctx, s.commandTimeout); err != nil {
 		return err
 	}
+	session.detachAttachments()
 	if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
 		return fmt.Errorf("supervisor session killed but artifacts remain: %w", err)
 	}
@@ -291,6 +292,7 @@ func (s *Supervisor) killByAttempt(ctx context.Context, id, attempt string) erro
 	if err := session.killAndWait(ctx, s.commandTimeout); err != nil {
 		return err
 	}
+	session.detachAttachments()
 	if err := removeRegistryArtifacts(sessionsRoot(s.stateDir), id); err != nil {
 		return fmt.Errorf("supervisor session killed but artifacts remain: %w", err)
 	}
