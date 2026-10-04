@@ -111,6 +111,7 @@ export function SyncCard() {
   const [busy, setBusy] = useState<null | "test" | "push" | "pull">(null);
   const [report, setReport] = useState<{ dir: "push" | "pull"; data: ImportReport } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorRetry, setErrorRetry] = useState<null | "remote">(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
 
@@ -156,6 +157,7 @@ export function SyncCard() {
   const saveAndTest = async () => {
     setBusy("test");
     setError(null);
+    setErrorRetry(null);
     try {
       const saved = await syncApi.linkSet({
         url: draft.url,
@@ -175,7 +177,10 @@ export function SyncCard() {
       setBusy(null);
       void syncApi
         .linkGet()
-        .then(setLink)
+        .then((l) => {
+          setLink(l);
+          setLinkError(null);
+        })
         .catch((e: unknown) => setLinkError(describeError(e)));
     }
   };
@@ -183,11 +188,12 @@ export function SyncCard() {
   const reloadRemote = async () => {
     setBusy("test");
     setError(null);
+    setErrorRetry(null);
     try {
       setRemote(await syncApi.remoteDigest());
     } catch (e) {
       setError(describeError(e));
-      setRemote(null);
+      setErrorRetry("remote");
     } finally {
       setBusy(null);
     }
@@ -201,6 +207,7 @@ export function SyncCard() {
     }
     setBusy(dir);
     setError(null);
+    setErrorRetry(null);
     setReport(null);
     try {
       const data =
@@ -381,7 +388,16 @@ export function SyncCard() {
           {error && (
             <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
               <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <span className="min-w-0 break-words">{error}</span>
+              <span className="min-w-0 flex-1 break-words">{error}</span>
+              {errorRetry === "remote" && (
+                <button
+                  className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+                  onClick={() => void reloadRemote()}
+                >
+                  <IconRefresh size={12} />
+                  重试
+                </button>
+              )}
             </div>
           )}
 
@@ -415,7 +431,11 @@ export function SyncCard() {
             </div>
           )}
 
-          {remote && <CompareTable
+          {remote && !local && !localError && (
+            <div className="nx-hint mt-3 text-[12px]">本机资产摘要加载中…</div>
+          )}
+
+          {remote && local && <CompareTable
             rows={rows}
             selected={selected}
             onToggle={toggle}
@@ -426,7 +446,7 @@ export function SyncCard() {
             onForce={setForce}
             busy={busy}
             onTransfer={transfer}
-            localOrigin={local?.origin ?? ""}
+            localOrigin={local.origin}
             remoteOrigin={remote.origin}
           />}
 

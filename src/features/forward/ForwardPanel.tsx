@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { forwardApi } from "../../ipc/commands";
@@ -32,6 +32,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const [targetHost, setTargetHost] = useState("127.0.0.1");
   const [targetPort, setTargetPort] = useState("3306");
   const [busy, setBusy] = useState(false);
+  const listenPortId = useId();
 
   const env = useQuery({
     queryKey: ["forwardEnv"],
@@ -297,11 +298,11 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-[11.5px] text-neutral-400" htmlFor="forward-listen-port">
+              <label className="text-[11.5px] text-neutral-400" htmlFor={listenPortId}>
                 {exposed ? "监听端口" : "本地端口"}
               </label>
               <input
-                id="forward-listen-port"
+                id={listenPortId}
                 className="nx-input nx-input-sm w-[92px] font-mono"
                 value={listenPort}
                 onChange={(e) => setListenPort(e.target.value)}

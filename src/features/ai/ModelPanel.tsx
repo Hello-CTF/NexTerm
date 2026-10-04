@@ -238,29 +238,45 @@ export function ModelManager({
               ) : (
                 <div className="nx-hint px-2 py-3 text-center text-[11px]">模型档案加载中…</div>
               )
-            ) : view.profiles.length > 0 ? (
-              view.profiles.map((p) => (
-                <button
-                  key={p.id}
-                  className={`nx-menu-item w-full ${draft?.id === p.id ? "bg-blue-500/15" : ""}`}
-                  title={p.model || p.baseUrl}
-                  onClick={() => void selectProfile(p.id)}
-                >
-                  <span className="nx-menu-icon">
-                    {view.activeId === p.id ? (
-                      <IconCheck size={12} className="text-green-300" />
-                    ) : (
-                      <span className="nx-dot" />
-                    )}
-                  </span>
-                  <span className="nx-menu-label">{p.name}</span>
-                  {view.activeId === p.id && (
-                    <span className="nx-menu-hint text-green-400/80">当前</span>
-                  )}
-                </button>
-              ))
             ) : (
-              <div className="nx-hint px-2 py-3 text-center text-[11px]">还没有模型档案</div>
+              <>
+                {loadError && (
+                  <div className="mb-1 border-b border-neutral-800/60 px-2 pb-2 pt-1 text-center">
+                    <div className="nx-hint text-red-300">档案列表刷新失败 · {loadError}</div>
+                    <button
+                      className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
+                      onClick={() => void reload()}
+                    >
+                      <IconRefresh size={11} />
+                      重试
+                    </button>
+                  </div>
+                )}
+                {view.profiles.length > 0 ? (
+                  view.profiles.map((p) => (
+                    <button
+                      key={p.id}
+                      className={`nx-menu-item w-full ${draft?.id === p.id ? "bg-blue-500/15" : ""}`}
+                      title={p.model || p.baseUrl}
+                      onClick={() => void selectProfile(p.id)}
+                    >
+                      <span className="nx-menu-icon">
+                        {view.activeId === p.id ? (
+                          <IconCheck size={12} className="text-green-300" />
+                        ) : (
+                          <span className="nx-dot" />
+                        )}
+                      </span>
+                      <span className="nx-menu-label">{p.name}</span>
+                      {view.activeId === p.id && (
+                        <span className="nx-menu-hint text-green-400/80">当前</span>
+                      )}
+                    </button>
+                  ))
+                ) : (
+                  <div className="nx-hint px-2 py-3 text-center text-[11px]">还没有模型档案</div>
+                )}
+              </>
             )}
           </div>
           {presets.length > 0 && (

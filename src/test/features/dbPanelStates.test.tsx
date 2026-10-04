@@ -120,6 +120,58 @@ describe("DbPanel Redis 状态", () => {
     expect(text()).not.toContain("从左侧选一个键查看内容");
     mocks.redisInspect.mockResolvedValue({ key: "k1", keyType: "string", ttl: -1, value: "v" });
     clickButton(mounted!.container, "重试");
+    await flushUntil(
+      () =>
+        !text().includes("键内容加载失败") &&
+        (mounted!.container.querySelector(".nx-pre")?.textContent ?? "").includes('"v"'),
+    );
+  });
+
+  it("键详情加载中显示 pending 而不是「从左侧选一个键」", async () => {
+    mocks.redisScan.mockResolvedValue([0, ["k1"]]);
+    let resolveInspect!: (v: unknown) => void;
+    mocks.redisInspect.mockImplementation(
+      () => new Promise((resolve) => (resolveInspect = resolve)),
+    );
+    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("k1"));
+    const row = [...mounted!.container.querySelectorAll(".nx-row")].find((r) =>
+      r.textContent?.includes("k1"),
+    );
+    expect(row).toBeTruthy();
+    click(row!);
+    await flushUntil(() => text().includes("键内容加载中…"));
+    expect(text()).not.toContain("从左侧选一个键查看内容");
+    resolveInspect({ key: "k1", keyType: "string", ttl: -1, value: "v" });
+    await flushUntil(() =>
+      (mounted!.container.querySelector(".nx-pre")?.textContent ?? "").includes('"v"'),
+    );
+  });
+
+  it("空页但 cursor 未归零时提示继续下一页，而不是「没有匹配的键」", async () => {
+    mocks.redisScan.mockResolvedValueOnce([5, []]).mockResolvedValueOnce([0, ["k1"]]);
+    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
+    await flushUntil(() => text().includes("本页没有匹配的键"));
+    const exactEmpty = [...mounted!.container.querySelectorAll(".nx-hint")].some(
+      (d) => d.textContent?.trim() === "没有匹配的键",
+    );
+    expect(exactEmpty).toBe(false);
+    clickButton(mounted!.container, "下一页（cursor=5）");
+    await flushUntil(() => text().includes("k1"));
+    expect(text()).not.toContain("本页没有匹配");
+  });
+
+  it("下一页失败后重新 SCAN 会清除分页错误", async () => {
+    mocks.redisScan
+      .mockResolvedValueOnce([5, ["k1"]])
+      .mockRejectedValueOnce(new Error("连接重置"))
+      .mockResolvedValueOnce([0, ["k2"]]);
+    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
+    await flushUntil(() => text().includes("k1"));
+    clickButton(mounted!.container, "下一页（cursor=5）");
+    await flushUntil(() => text().includes("下一页加载失败 · 连接重置"));
+    clickButton(mounted!.container, "SCAN");
+    await flushUntil(() => !text().includes("下一页加载失败") && text().includes("k2"));
+    expect(text()).toContain("k2");
   });
 });

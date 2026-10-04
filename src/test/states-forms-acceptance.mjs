@@ -692,6 +692,75 @@ async function statesFormsAcceptance(page) {
     return { evidence: { inFlight, calls } };
   });
 
+  await pass("model-reload-failure-after-success", async () => {
+    await boot(page);
+    const selectorReady = `Boolean(document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]'))`;
+    if (!(await page.evaluate(selectorReady))) {
+      await page.evaluate(`document.querySelector('button[aria-label="AI 助手"]').click()`);
+    }
+    await page.waitFor(selectorReady);
+    await page.evaluate(`document.querySelector('button[title="模型配置（BYOK：可保存多份档案）"]').click()`);
+    await page.waitFor(
+      `[...document.querySelectorAll('button')].some((b) => b.textContent?.includes('管理模型'))`,
+    );
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find((b) => b.textContent?.includes('管理模型')).click()`,
+    );
+    await page.waitFor(`Boolean(document.querySelector('.nx-modal'))`);
+    await page.waitFor(
+      `[...document.querySelectorAll('.nx-modal button')].some((b) => b.textContent?.trim() === "保存")`,
+    );
+    await page.waitFor(`document.body.textContent.includes("DeepSeek 主力")`);
+
+    await setSwitches(page, { fail: ["ai_model_profiles"] });
+    await page.evaluate(
+      `[...document.querySelectorAll('.nx-modal button')].find((b) => b.textContent?.trim() === "保存").click()`,
+    );
+    await page.waitFor(`document.body.textContent.includes("档案列表刷新失败")`);
+    const state = await page.evaluate(`(() => ({
+      retained: document.body.textContent.includes("DeepSeek 主力"),
+      hasRetry: [...document.querySelectorAll('.nx-modal button')].some((b) => b.textContent?.trim() === "重试"),
+      falseEmpty: document.body.textContent.includes("还没有模型档案"),
+      errorText: document.body.textContent.match(/档案列表刷新失败 · [^重]*/)?.[0] ?? null,
+    }))()`);
+    assert.equal(state.retained, true, "旧档案列表必须保留");
+    assert.equal(state.hasRetry, true, "刷新失败必须提供重试");
+    assert.equal(state.falseEmpty, false, "刷新失败不得回到假空态");
+    assert.ok(state.errorText?.includes("验收注入失败"), `真实错误文本: ${JSON.stringify(state)}`);
+
+    await setSwitches(page, { fail: [] });
+    await page.evaluate(
+      `[...document.querySelectorAll('.nx-modal button')].find((b) => b.textContent?.trim() === "重试").click()`,
+    );
+    await page.waitFor(`!document.body.textContent.includes("档案列表刷新失败")`);
+    const recovered = await page.evaluate(`document.body.textContent.includes("DeepSeek 主力")`);
+    assert.equal(recovered, true);
+    return { evidence: { state } };
+  });
+
+  await pass("redis-inspect-pending", async () => {
+    await boot(page);
+    await openAssetTree(page);
+    await page.evaluate(`document.querySelector('button[aria-label="连接 redis-cache"]').click()`);
+    await page.waitFor(`document.body.textContent.includes("products:all")`);
+    await setSwitches(page, { slow: 700 });
+    await page.evaluate(`(() => {
+      const row = [...document.querySelectorAll('.nx-row')].find((r) => r.textContent?.includes('products:all'));
+      if (!row) throw new Error("redis key row not found");
+      row.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("键内容加载中…")`);
+    const pendingState = await page.evaluate(
+      `!document.body.textContent.includes("从左侧选一个键查看内容")`,
+    );
+    assert.equal(pendingState, true, "pending 期间不得显示「从左侧选一个键」");
+    await page.waitFor(`!document.body.textContent.includes("键内容加载中…")`, 15_000);
+    const loaded = await page.evaluate(`document.body.textContent.includes("TTL")`);
+    assert.equal(loaded, true, "详情加载完成后应显示键信息");
+    await setSwitches(page, { slow: 0 });
+    return { evidence: { pendingState } };
+  });
+
   await screenshot(page, "states-forms-final.png");
 }
 

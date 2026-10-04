@@ -160,6 +160,34 @@ describe("ForwardPanel 查询状态", () => {
     expect(input).not.toBeNull();
     expect(input!.autocomplete).toBe("off");
   });
+
+  it("两个实例同挂时 label 各自关联到本实例的输入框", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(
+          "div",
+          null,
+          createElement("div", { id: "fp-1" }, createElement(ForwardPanel, { sessionId: "s1" })),
+          createElement("div", { id: "fp-2" }, createElement(ForwardPanel, { sessionId: "s2" })),
+        ),
+      ),
+    );
+    await flush();
+    const htmlForOf = (panelId: string) => {
+      const panel = mounted!.container.querySelector(`#${panelId}`)!;
+      const label = [...panel.querySelectorAll("label")].find((l) =>
+        l.textContent?.includes("本地端口"),
+      );
+      expect(label, `${panelId} 缺少本地端口 label`).toBeTruthy();
+      const input = panel.querySelector<HTMLInputElement>(`input[id="${label!.htmlFor}"]`);
+      expect(input, `${panelId} 的 label 必须解析到本实例内的输入框`).not.toBeNull();
+      return label!.htmlFor;
+    };
+    expect(htmlForOf("fp-1")).not.toBe(htmlForOf("fp-2"));
+  });
 });
 
 describe("MountPanel 查询状态", () => {

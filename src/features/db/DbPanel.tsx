@@ -14,6 +14,7 @@ import {
   IconHistory,
   IconLayers,
   IconList,
+  IconLoader,
   IconPlay,
   IconRefresh,
   IconSearch,
@@ -356,16 +357,16 @@ function RedisView({ connId }: { connId: string }) {
   const [pageError, setPageError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<import("../../ipc/types").RedisKeyViewDto | null>(null);
+  const [viewPending, setViewPending] = useState(false);
   const [viewError, setViewError] = useState<string | null>(null);
   const [cmdText, setCmdText] = useState("INFO memory");
   const [cmdOut, setCmdOut] = useState("");
 
   const doScan = async (c: number) => {
+    setPageError(null);
     if (c === 0) {
       setScanStatus("loading");
       setScanError(null);
-    } else {
-      setPageError(null);
     }
     try {
       const [next, ks] = await dbApi.redisScan(connId, c, pattern, 200);
@@ -390,10 +391,13 @@ function RedisView({ connId }: { connId: string }) {
     setSelected(key);
     setView(null);
     setViewError(null);
+    setViewPending(true);
     try {
       setView(await dbApi.redisInspect(connId, key));
     } catch (e) {
       setViewError(describeError(e));
+    } finally {
+      setViewPending(false);
     }
   };
 
@@ -446,8 +450,10 @@ function RedisView({ connId }: { connId: string }) {
                 重试
               </button>
             </div>
-          ) : keys.length === 0 ? (
+          ) : keys.length === 0 && cursor === 0 ? (
             <div className="nx-hint p-3">没有匹配的键</div>
+          ) : keys.length === 0 ? (
+            <div className="nx-hint p-3">本页没有匹配的键，继续下一页…</div>
           ) : (
             keys.map((k) => (
               <div
@@ -516,6 +522,13 @@ function RedisView({ connId }: { connId: string }) {
               <IconRefresh size={12} />
               重试
             </button>
+          </div>
+        ) : viewPending && selected ? (
+          <div className="nx-empty">
+            <span className="nx-empty-icon">
+              <IconLoader size={18} className="animate-spin" />
+            </span>
+            键内容加载中…
           </div>
         ) : (
           <div className="nx-empty">
