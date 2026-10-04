@@ -164,12 +164,7 @@ func (c *serverConn) serve() {
 			c.replyError(frameError, errorMsg{Code: codeInternal, Message: "internal supervisor error"})
 		}
 	}()
-	unixConn, ok := c.conn.(*net.UnixConn)
-	if !ok {
-		return
-	}
-	uid, err := peerUID(unixConn)
-	if err != nil || uid != os.Geteuid() {
+	if err := authorizePeer(c.conn); err != nil {
 		c.reply(frameError, errorMsg{Code: codeProtocol, Message: "peer is not authorized"})
 		return
 	}

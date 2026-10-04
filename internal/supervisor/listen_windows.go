@@ -5,12 +5,12 @@ package supervisor
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 func listenSocket(path string) (net.Listener, error) {
-	return nil, fmt.Errorf("%w: local IPC transport on %s", ErrUnsupported, path)
-}
-
-func peerUID(_ *net.UnixConn) (int, error) {
-	return 0, ErrUnsupported
+	if !strings.HasPrefix(path, pipePrefix) {
+		return nil, fmt.Errorf("%w: local IPC transport on %s", ErrUnsupported, path)
+	}
+	return listenPipe(path)
 }

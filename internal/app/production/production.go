@@ -50,6 +50,7 @@ type ProductionServices struct {
 	Durable          *durable.Backend
 	DurableErr       error
 	Supervisor       *supervisor.Supervisor
+	SupervisorHelper *supervisor.Helper
 	Retention        *RetentionRunner
 	Guard            *guard.Manager
 	Agent            *agent.Runner
@@ -81,7 +82,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Supervisor != nil || services.Durable != nil, services.DurableErr, services.channelBridge, services.smokeAttach)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Supervisor != nil || services.SupervisorHelper != nil || services.Durable != nil, services.DurableErr, services.channelBridge, services.smokeAttach)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
