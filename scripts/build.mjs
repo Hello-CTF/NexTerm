@@ -605,7 +605,7 @@ function writeArtifactReport({ id, kind, goos, goarch, file, cgo = "0", stripped
       wails_cli: WAILS_VERSION,
       node: process.version,
       pnpm: output("pnpm", ["--version"], { allowFailure: true })?.trim() || "unknown",
-      toolchain_pin: "CI pins Go 1.26.8, Node 22 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
+      toolchain_pin: "CI pins Go 1.26.8, Node 24 and pnpm 11; local Node/pnpm drift must not change committed lockfile artifacts",
       module_mode: "-mod=readonly",
       reproducible_flags: ["-trimpath", "-buildvcs=false", "-ldflags=-s -w + version/commit"],
       runtime_metadata: "Go pclntab and build info are preserved for stack symbolization; no UPX and no manual symbol-table or pclntab stripping",

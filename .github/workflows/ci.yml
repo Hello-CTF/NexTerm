@@ -22,15 +22,15 @@ jobs:
     name: Go/Wails quality gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
           cache: true
@@ -40,7 +40,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Restore the pinned Wails CLI
         id: wails-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin
           key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
@@ -91,7 +91,7 @@ jobs:
       - name: Workflow reuse wiring checks
         run: python3 .github/scripts/check-reuse-wiring.py
       - name: Upload the verified frontend dist and manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: |
@@ -140,17 +140,17 @@ jobs:
             kind: server
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-      - uses: actions/setup-go@v5
+          node-version: 24
+      - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
           cache: true
       - name: Download the verified frontend dist
         if: matrix.kind == 'desktop'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: verified-dist
@@ -169,7 +169,7 @@ jobs:
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }} --no-build
       - name: Upload native runtime, production binary and artifact evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.kind }}
           path: |
@@ -186,15 +186,15 @@ jobs:
     needs: quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
           cache: true
@@ -206,7 +206,7 @@ jobs:
         run: node .github/scripts/browser-acceptance.mjs
       - name: Upload browser evidence and explicit real-target gaps
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: real-browser-acceptance
           path: target/acceptance-browser/
