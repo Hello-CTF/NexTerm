@@ -16,6 +16,9 @@ import {
   openCredentialsSidebar,
   openCredentialsViewTab,
   requestCloseTab,
+  requestKillTab,
+  requestKillWorkspaceTerminals,
+  closeTabHint,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
@@ -99,6 +102,7 @@ import {
   IconServer,
   IconSettings,
   IconSparkles,
+  IconStop,
   IconTerminal,
   IconXCircle,
   Logo,
@@ -355,6 +359,7 @@ export default function App() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<string>("…");
+  const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
   const viewport = useWorkspaceViewport();
   useKeyboardInset();
   const [overlayDock, setOverlayDock] = useState<"left" | "right" | null>(null);
@@ -521,6 +526,34 @@ export default function App() {
     }
     void openLocalTerminal();
   }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
+
+  const openWsMenu = useCallback(
+    (w: Workspace, x: number, y: number) => {
+      const running = w.panes
+        .flatMap((p) => p.tabs)
+        .filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
+      const items: MenuItem[] = [
+        {
+          kind: "item",
+          label: "关闭工作区",
+          icon: <IconClose size={12} />,
+          hint: "运行中的终端转入后台",
+          onSelect: () => void closeWorkspace(w.id),
+        },
+        {
+          kind: "item",
+          label: "结束全部终端进程…",
+          icon: <IconStop size={12} />,
+          hint: running > 0 ? `${running} 个正在运行` : "没有运行中的终端",
+          danger: true,
+          disabled: running === 0,
+          onSelect: () => void requestKillWorkspaceTerminals(w.id),
+        },
+      ];
+      setWsMenu({ x, y, title: w.title, items });
+    },
+    [closeWorkspace],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -842,6 +875,10 @@ export default function App() {
                     className={`nx-ws ${isActive ? "is-active" : ""}`}
                     style={wailsNoDragRegionStyle}
                     onClick={() => setActiveWorkspace(w.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      openWsMenu(w, e.clientX, e.clientY);
+                    }}
                     onKeyDown={(e) =>
                       handleTablistKeyDown(
                         e,
@@ -865,7 +902,7 @@ export default function App() {
                         className="nx-tab-close"
                         style={wailsNoDragRegionStyle}
                         aria-label={`关闭工作区 ${w.title}`}
-                        title="关闭工作区（会关掉里面的终端）"
+                        title="关闭工作区（运行中的终端转入后台）"
                         onClick={(e) => {
                           e.stopPropagation();
                           void closeWorkspace(w.id);
@@ -1161,6 +1198,7 @@ export default function App() {
       {paletteOpen && (
         <CommandPalette onClose={() => setPaletteOpen(false)} onOpenFiles={openFiles} />
       )}
+      <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <PromptModal />
       <DialogHost />
     </div>
@@ -1217,14 +1255,26 @@ function PaneGroup({
         onSelect: () => void renameTab(t.id, t.title),
       });
     }
+    const running = t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
     items.push({
       kind: "item",
       label: "关闭标签",
       icon: <IconClose size={12} />,
-      danger: true,
+      hint: running ? (t.containerId ? "结束容器 exec 进程" : "转入后台运行") : undefined,
       disabled: !t.closable,
       onSelect: () => void requestCloseTab(t.id),
     });
+    if (running) {
+      items.push({ kind: "separator" });
+      items.push({
+        kind: "item",
+        label: "结束进程…",
+        icon: <IconStop size={12} />,
+        hint: "终止进程，无法恢复",
+        danger: true,
+        onSelect: () => void requestKillTab(t.id),
+      });
+    }
     setMenu({ x, y, title: t.title, items });
   };
 
@@ -1286,7 +1336,7 @@ function PaneGroup({
                     type="button"
                     className="nx-tab-close"
                     aria-label={`关闭标签 ${t.title}`}
-                    title="关闭标签"
+                    title={closeTabHint(t)}
                     onClick={(e) => {
                       e.stopPropagation();
                       void requestCloseTab(t.id);

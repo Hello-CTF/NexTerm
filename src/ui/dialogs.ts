@@ -95,13 +95,6 @@ const nativeMessage: MessageFn = NATIVE_BROWSER_DIALOG
     }
   : messageWails;
 
-const nativeChoose: ChooseFn = async (message, options) => {
-  for (const c of options.choices) {
-    const text = `${message}\n\n${c.label}${c.hint ? `\n（${c.hint}）` : ""}`;
-    if (window.confirm(text)) return c.key;
-  }
-  return null;
-};
 export const ask: AskFn = (message, options) => {
   if (!handlers) return nativeAsk(message, options);
   const current = handlers;
@@ -121,7 +114,7 @@ export const messageBox: MessageFn = (message) => {
 };
 
 export function askChoice(message: string, options: ChoiceOptions): Promise<string | null> {
-  if (!handlers) return nativeChoose(message, options);
+  if (!handlers) return Promise.resolve(null);
   const current = handlers;
   return deferDialog(() => current.choose(message, options));
 }

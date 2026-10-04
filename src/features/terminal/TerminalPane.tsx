@@ -9,6 +9,7 @@ import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, useUi } from "../../app/store";
+import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -101,6 +102,7 @@ export function TerminalPane({
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
+  const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
   const statusText =
     sessionStatus === "connected"
@@ -204,6 +206,11 @@ export function TerminalPane({
 
   const controlVersions = useRef(new EventVersionGate());
   useEffect(() => {
+    if (controlSupported && control?.exited) {
+      useUi.getState().updateTab(storeTabId, { exited: true });
+    }
+  }, [controlSupported, control?.exited, storeTabId]);
+  useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, (p) => {
@@ -253,7 +260,7 @@ export function TerminalPane({
       const s = await sessionApi.connect(assetId);
       const list = useUi.getState().sessions;
       useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
-      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: undefined, dead: false });
+      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: undefined, dead: false, exited: false });
       resumeRef.current = undefined;
       setControl(null);
       setRemoteGrid(null);
@@ -328,12 +335,7 @@ export function TerminalPane({
   };
 
   const disconnectSession = async () => {
-    try {
-      await sessionApi.disconnect(sessionId);
-      pushToast("info", "已断开连接");
-    } catch (e) {
-      pushToast("error", `断开失败：${describeError(e)}`);
-    }
+    await disconnectSessionWithConfirm(sessionId, sessionName);
   };
 
   const reconnectSession = async () => {
@@ -662,7 +664,7 @@ export function TerminalPane({
               onAttach={(id) => {
                 setKernelTabId(id);
                 setAttachDead(false);
-                useUi.getState().updateTab(storeTabId, { tabId: id });
+                useUi.getState().updateTab(storeTabId, { tabId: id, exited: false });
                 if (isStoreTabDead(storeTabId)) {
                   useUi.getState().updateTab(storeTabId, { dead: false });
                 }
