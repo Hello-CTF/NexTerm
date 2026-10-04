@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// M117 files/explorer/credentials 小屏真实浏览器验收：320/360/390/568×320 横屏、
-// 触屏 tap、明暗双主题。证明：FileBrowser 名称列与工具栏可达、FileTree/FileBrowser
-// 触屏 ⋯ 菜单走同一业务菜单动作、FileEditor 保存首屏可达、MountPanel 零页面级
-// 横向溢出且断开/挂载可达、凭据 overlay dock 选中即收、凭据头部不裁切、
-// 新建凭据弹窗 footer 常驻。报告与截图写入 target/acceptance-files-responsive/。
-//
-// 运行：node src/test/files-responsive-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -307,12 +299,16 @@ async function tapButtonText(page, text, rootSelector = null) {
   await tap(page, (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
 }
 
-async function noPageOverflow(page, label) {
+async function noPageOverflow(page, label, requestedWidth) {
   const m = await page.evaluate(`(() => ({
     inner: window.innerWidth,
     doc: document.documentElement.scrollWidth,
     body: document.body.scrollWidth,
   }))()`);
+  assert.ok(
+    m.inner <= requestedWidth,
+    `${label}: layout viewport expanded inner=${m.inner} > requested=${requestedWidth}`,
+  );
   assert.ok(
     m.doc <= m.inner && m.body <= m.inner,
     `${label}: page-level horizontal overflow doc=${m.doc} body=${m.body} > inner=${m.inner}`,
@@ -349,10 +345,11 @@ async function filesResponsiveAcceptance(page) {
     await page.waitFor(`[...document.querySelectorAll('.nx-pane .font-mono')].some((el) => el.textContent?.includes('projects'))`);
 
     const columns = await page.evaluate(`(() => {
-      const rows = [...document.querySelectorAll('.nx-pane .cursor-pointer')];
+      const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+      const rows = [...panel.querySelectorAll('.cursor-pointer')];
       const first = rows.find((r) => r.textContent?.includes('projects')) ?? rows[0];
       const name = first?.querySelector('.truncate.font-mono');
-      const headerCells = [...document.querySelectorAll('.nx-pane .border-b span')].map((s) => ({
+      const headerCells = [...panel.querySelectorAll('.border-b span')].map((s) => ({
         text: s.textContent?.trim(),
         width: s.getBoundingClientRect().width,
       }));
@@ -367,17 +364,18 @@ async function filesResponsiveAcceptance(page) {
     assert.equal(sizeHeader?.width, 0, "大小 column must be hidden ≤560px");
     assert.equal(mtimeHeader?.width, 0, "修改时间 column must be hidden ≤560px");
 
-    const more = await rectOf(page, '.nx-toolbar button[aria-label="更多操作"]');
+    const more = await rectOf(page, '[role="tabpanel"]:not(.hidden) .nx-toolbar button[aria-label="更多操作"]');
     assert.ok(more && more.left >= 0 && more.right <= 320, `toolbar ⋯ must be on-screen: ${JSON.stringify(more)}`);
     const uploadVisible = await page.evaluate(`(() => {
-      const btn = [...document.querySelectorAll('.nx-toolbar button')].find((b) => b.textContent?.trim() === "上传");
+      const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+      const btn = [...panel.querySelectorAll('.nx-toolbar button')].find((b) => b.textContent?.trim() === "上传");
       return btn ? btn.getBoundingClientRect().width > 0 : false;
     })()`);
     assert.equal(uploadVisible, false, "低频文字按钮 ≤560px 应收起（功能在 ⋯ 菜单内）");
 
-    await noPageOverflow(page, "FileBrowser@320");
+    await noPageOverflow(page, "FileBrowser@320", 320);
 
-    const rowMoreSelector = '.nx-pane .cursor-pointer button[aria-label^="更多操作 "]';
+    const rowMoreSelector = '[role="tabpanel"]:not(.hidden) .cursor-pointer button[aria-label^="更多操作 "]';
     await tapSelector(page, rowMoreSelector);
     await page.waitFor(`Boolean(document.querySelector('[role="menu"]'))`);
     const menuInfo = await page.evaluate(`(() => ({
@@ -434,7 +432,7 @@ async function filesResponsiveAcceptance(page) {
       document.querySelector('.nx-modal').dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     })()`);
     await page.waitFor(`!document.querySelector('.nx-modal')`);
-    await noPageOverflow(page, "FileTree dock@320");
+    await noPageOverflow(page, "FileTree dock@320", 320);
     await screenshot(page, "filetree-320-crumbs.png");
     return { evidence: { crumb, menuItems: items } };
   });
@@ -442,9 +440,10 @@ async function filesResponsiveAcceptance(page) {
   await pass("fileeditor-320-save-reachable-and-saves", async () => {
     await boot(page, { width: 320, height: 568, touch: true, theme: "dark" });
     await openFileBrowserTab(page);
-    await page.waitFor(`[...document.querySelectorAll('.nx-pane .font-mono')].some((el) => el.textContent?.includes('console.log'))`);
+    await page.waitFor(`[...document.querySelectorAll('[role="tabpanel"]:not(.hidden) .font-mono')].some((el) => el.textContent?.includes('console.log'))`);
     await page.evaluate(`(() => {
-      const row = [...document.querySelectorAll('.nx-pane .cursor-pointer')].find((r) => r.textContent?.includes("console.log"));
+      const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+      const row = [...panel.querySelectorAll('.cursor-pointer')].find((r) => r.textContent?.includes("console.log"));
       row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     })()`);
     await page.waitFor(`Boolean(document.querySelector('.cm-content'))`, 15_000);
@@ -452,13 +451,13 @@ async function filesResponsiveAcceptance(page) {
     await page.send("Input.insertText", { text: "# touch edit\n" });
     await page.waitFor(`[...document.querySelectorAll('.nx-badge')].some((b) => b.textContent?.includes("未保存"))`);
 
-    const save = await rectOf(page, ".nx-toolbar button.nx-btn-primary");
-    assert.ok(save && save.left >= 0 && save.right <= 320, `保存按钮必须首屏可见: ${JSON.stringify(save)}`);
-    await tapSelector(page, ".nx-toolbar button.nx-btn-primary");
+    const save = await rectOf(page, '[role="tabpanel"]:not(.hidden) .nx-toolbar button.nx-btn-primary');
+    assert.ok(save && save.width > 0 && save.left >= 0 && save.right <= 320, `保存按钮必须首屏可见: ${JSON.stringify(save)}`);
+    await tapSelector(page, '[role="tabpanel"]:not(.hidden) .nx-toolbar button.nx-btn-primary');
     await page.waitFor(`document.body.textContent.includes("已保存")`, 10_000);
     const stillDirty = await page.evaluate(`[...document.querySelectorAll('.nx-badge')].some((b) => b.textContent?.includes("未保存"))`);
     assert.equal(stillDirty, false, "保存后未保存徽标必须消失");
-    await noPageOverflow(page, "FileEditor@320");
+    await noPageOverflow(page, "FileEditor@320", 320);
     await screenshot(page, "fileeditor-320-save.png");
     return { evidence: { save } };
   });
@@ -467,63 +466,99 @@ async function filesResponsiveAcceptance(page) {
     await boot(page, { width: 320, height: 568, touch: true, theme: "dark" });
     await openDock(page, "磁盘挂载");
     await page.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === "断开")`);
-    await noPageOverflow(page, "MountPanel@320");
+    await noPageOverflow(page, "MountPanel@320", 320);
 
     const disconnect = await page.evaluate(`(() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === "断开");
+      const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+      const btn = [...panel.querySelectorAll('button')].find((b) => b.textContent?.trim() === "断开");
       const r = btn.getBoundingClientRect();
-      return { left: r.left, right: r.right };
+      return { left: r.left, right: r.right, width: r.width };
     })()`);
-    assert.ok(disconnect.right <= 320, `断开按钮必须屏内可达: ${JSON.stringify(disconnect)}`);
+    assert.ok(disconnect.width > 0 && disconnect.left >= 0 && disconnect.right <= 320, `断开按钮必须屏内可达: ${JSON.stringify(disconnect)}`);
 
     await dismissToasts(page);
-    await tapSelector(page, 'input[aria-label="远端路径"]');
+    await tapSelector(page, '[role="tabpanel"]:not(.hidden) input[aria-label="远端路径"]');
     await page.send("Input.insertText", { text: "user@host:/data" });
     const createBtn = await page.evaluate(`(() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === "挂载");
+      const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+      const btn = [...panel.querySelectorAll('button')].find((b) => b.textContent?.trim() === "挂载");
       const r = btn.getBoundingClientRect();
-      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width };
     })()`);
-    assert.ok(createBtn.right <= 320 && createBtn.bottom <= 568, `挂载按钮必须可达: ${JSON.stringify(createBtn)}`);
+    assert.ok(createBtn.width > 0 && createBtn.right <= 320 && createBtn.bottom <= 568, `挂载按钮必须可达: ${JSON.stringify(createBtn)}`);
     await dismissToasts(page);
-    await tapSelector(page, ".nx-pane .nx-btn-primary");
+    await tapSelector(page, '[role="tabpanel"]:not(.hidden) .nx-btn-primary');
     await page.waitFor(`document.body.textContent.includes("已挂载")`, 10_000);
     await screenshot(page, "mount-320.png");
     return { evidence: { disconnect, createBtn } };
   });
 
-  await pass("credentials-320-overlay-closes-and-headers-fit", async () => {
-    await boot(page, { width: 320, height: 568, touch: true, theme: "dark" });
-    await openDock(page, "凭据");
-    await page.waitFor(`Boolean(document.querySelector('.nx-dock-backdrop'))`);
-    await page.waitFor(`[...document.querySelectorAll('.nx-row')].some((r) => r.textContent?.includes("db-prod"))`);
-    await tapSelector(page, ".nx-row");
-    await page.waitFor(`!document.querySelector('.nx-dock-backdrop')`);
-    await page.waitFor(`document.body.textContent.includes("凭据名称") || document.body.textContent.includes("新建凭据")`);
+  await pass("credentials-overlay-close-and-headers-fit-320-360-390", async () => {
+    const evidence = {};
+    for (const spec of [
+      { width: 320, height: 568, theme: "dark" },
+      { width: 360, height: 740, theme: "light" },
+      { width: 390, height: 844, theme: "dark" },
+    ]) {
+      const label = `${spec.width}-${spec.theme}`;
+      await boot(page, { width: spec.width, height: spec.height, touch: true, theme: spec.theme });
+      await openDock(page, "凭据");
+      await page.waitFor(`Boolean(document.querySelector('.nx-dock-backdrop'))`);
+      await page.waitFor(`[...document.querySelectorAll('.nx-row')].some((r) => r.textContent?.includes("db-prod"))`);
+      await tapSelector(page, ".nx-row");
+      await page.waitFor(`!document.querySelector('.nx-dock-backdrop')`);
+      await page.waitFor(`document.body.textContent.includes("凭据名称") || document.body.textContent.includes("新建凭据")`);
 
-    const panelHeader = await page.evaluate(`(() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === "新建凭据");
-      const r = btn.getBoundingClientRect();
-      return { right: r.right, width: r.width };
-    })()`);
-    assert.ok(panelHeader.right <= 320, `新建凭据按钮不得被裁: ${JSON.stringify(panelHeader)}`);
-    await noPageOverflow(page, "CredentialsPanel@320");
+      const panelHeader = await page.evaluate(`(() => {
+        const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+        const btn = [...panel.querySelectorAll('button')].find((b) => b.textContent?.trim() === "新建凭据");
+        if (!btn) return null;
+        const r = btn.getBoundingClientRect();
+        return { left: r.left, right: r.right, width: r.width };
+      })()`);
+      assert.ok(
+        panelHeader && panelHeader.width > 0 && panelHeader.left >= 0 && panelHeader.right <= spec.width,
+        `新建凭据按钮必须屏内可达@${label}: ${JSON.stringify(panelHeader)}`,
+      );
+      evidence[label] = { panelHeader, panel: await noPageOverflow(page, `CredentialsPanel@${label}`, spec.width) };
 
-    await openDock(page, "凭据");
-    await page.waitFor(`Boolean(document.querySelector('.nx-dock-backdrop'))`);
-    await dismissToasts(page);
-    await tapSelector(page, ".nx-segment .nx-segment-item");
-    await page.waitFor(`!document.querySelector('.nx-dock-backdrop')`);
-    await page.waitFor(`document.body.textContent.includes("凭据视图")`);
-    const copy = await page.evaluate(`(() => {
-      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === "复制");
-      const r = btn.getBoundingClientRect();
-      return { right: r.right };
-    })()`);
-    assert.ok(copy.right <= 320, `凭据视图复制按钮不得被裁: ${JSON.stringify(copy)}`);
-    await noPageOverflow(page, "CredentialsView@320");
-    await screenshot(page, "credentials-320-view.png");
-    return { evidence: { panelHeader, copy } };
+      await openDock(page, "凭据");
+      await page.waitFor(`Boolean(document.querySelector('.nx-dock-backdrop'))`);
+      await dismissToasts(page);
+      await tapSelector(page, ".nx-segment .nx-segment-item");
+      await page.waitFor(`!document.querySelector('.nx-dock-backdrop')`);
+      const viewPanelSelector = '[role="tabpanel"]:not(.hidden)[id$="tab-credentials-view"]';
+      await page.waitFor(`Boolean(document.querySelector('${viewPanelSelector}'))`);
+      const viewHeader = await page.evaluate(`(() => {
+        const panel = document.querySelector('${viewPanelSelector}');
+        if (!panel) return null;
+        const read = (el) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { left: r.left, right: r.right, width: r.width };
+        };
+        return {
+          copy: read([...panel.querySelectorAll('button')].find((b) => b.textContent?.trim() === "复制")),
+          refresh: read(panel.querySelector('button[title="重新读取"]')),
+          textSeg: read([...panel.querySelectorAll('.nx-segment-item')].find((b) => b.textContent?.trim() === "文本")),
+          jsonSeg: read([...panel.querySelectorAll('.nx-segment-item')].find((b) => b.textContent?.trim() === "JSON")),
+        };
+      })()`);
+      for (const [name, rect] of Object.entries(viewHeader ?? {})) {
+        assert.ok(
+          rect && rect.width > 0 && rect.left >= 0 && rect.right <= spec.width,
+          `凭据视图 ${name} 必须屏内可达@${label}: ${JSON.stringify(viewHeader)}`,
+        );
+      }
+      evidence[label].viewHeader = viewHeader;
+      evidence[label].view = await noPageOverflow(page, `CredentialsView@${label}`, spec.width);
+
+      await dismissToasts(page);
+      await tapButtonText(page, "复制", viewPanelSelector);
+      await page.waitFor(`document.body.textContent.includes("已复制") || document.body.textContent.includes("复制失败")`, 10_000);
+      await screenshot(page, `credentials-${label}-view.png`);
+    }
+    return { evidence };
   });
 
   await pass("new-credential-320-footer-visible-and-creates", async () => {
@@ -571,16 +606,17 @@ async function filesResponsiveAcceptance(page) {
       const label = `${spec.width}x${spec.height}-${spec.theme}`;
       await boot(page, { width: spec.width, height: spec.height, touch: true, theme: spec.theme });
       await openFileBrowserTab(page);
-      await page.waitFor(`[...document.querySelectorAll('.nx-pane .font-mono')].some((el) => el.textContent?.includes('projects'))`);
-      evidence[label] = { fileBrowser: await noPageOverflow(page, `FileBrowser@${label}`) };
-      await openDock(page, "磁盘挂载");
-      await page.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === "断开") || document.body.textContent.includes("本机当前没有映射盘")`);
-      evidence[label].mount = await noPageOverflow(page, `MountPanel@${label}`);
+      await page.waitFor(`[...document.querySelectorAll('[role="tabpanel"]:not(.hidden) .font-mono')].some((el) => el.textContent?.includes('projects'))`);
       const nameWidth = await page.evaluate(`(() => {
-        const el = [...document.querySelectorAll('.nx-pane .font-mono')].find((n) => n.textContent?.includes('projects'));
+        const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+        const el = [...panel.querySelectorAll('.font-mono')].find((n) => n.textContent?.includes('projects'));
         return el?.getBoundingClientRect().width ?? 0;
       })()`);
-      evidence[label].note = `nameWidth(sample)=${nameWidth}`;
+      assert.ok(nameWidth > 60, `FileBrowser 名称列必须 >60px@${label}: ${nameWidth}`);
+      evidence[label] = { nameWidth, fileBrowser: await noPageOverflow(page, `FileBrowser@${label}`, spec.width) };
+      await openDock(page, "磁盘挂载");
+      await page.waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === "断开") || document.body.textContent.includes("本机当前没有映射盘")`);
+      evidence[label].mount = await noPageOverflow(page, `MountPanel@${label}`, spec.width);
       await screenshot(page, `matrix-${label}.png`);
     }
     return { evidence };

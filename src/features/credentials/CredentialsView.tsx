@@ -49,7 +49,7 @@ export function CredentialsView({
 
   return (
     <div className="flex h-full flex-col bg-neutral-900">
-      <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3">
+      <div className="flex min-h-[38px] shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-neutral-800/60 px-3 py-1">
         <IconCode size={14} className="shrink-0 text-neutral-400" />
         <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">凭据视图</span>
         <span className="nx-badge hidden min-[400px]:inline-flex">只读</span>

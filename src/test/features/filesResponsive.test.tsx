@@ -482,7 +482,7 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
     expect(create?.className ?? "").toContain("shrink-0");
   });
 
-  it("CredentialsView 头部标题不换行、只读徽标窄屏隐藏", async () => {
+  it("CredentialsView 头部标题不换行、只读徽标窄屏隐藏、容器可换行", async () => {
     mounted = mountWithClient(createElement(CredentialsView, { view: "text", onChange: () => undefined }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("凭据视图"));
 
@@ -495,6 +495,9 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
       (b) => b.textContent?.trim() === "只读",
     );
     expect(badge?.className ?? "").toContain("min-[400px]:inline-flex");
+    const header = title?.closest("div.flex");
+    expect(header?.className ?? "").toContain("flex-wrap");
+    expect(header?.className ?? "").toContain("min-h-[38px]");
   });
 
   it("NewCredentialModal 类型图标窄屏隐藏、footer 常驻", async () => {
