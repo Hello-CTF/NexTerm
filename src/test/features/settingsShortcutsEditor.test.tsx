@@ -184,6 +184,16 @@ describe("shortcuts editor", () => {
     expect(hit("3")).toEqual({ action: "switchTab", digit: 3 });
   });
 
+  it("round-trips a shifted-digit capture into a switchTab hit", () => {
+    click(editButton("switchTab"));
+    keyDown(captureInput() as HTMLInputElement, "!", { code: "Digit1", ctrlKey: true, shiftKey: true });
+    expect(getKeybinding("switchTab")).toBe("Mod+Shift+1-9");
+    const hit = matchAppKeybinding(
+      new KeyboardEvent("keydown", { key: "!", code: "Digit1", ctrlKey: true, shiftKey: true }),
+    );
+    expect(hit).toEqual({ action: "switchTab", digit: 1 });
+  });
+
   it("rejects non-digit capture for switchTab with an inline reason", () => {
     click(editButton("switchTab"));
     keyDown(captureInput() as HTMLInputElement, "q", { code: "KeyQ", altKey: true });

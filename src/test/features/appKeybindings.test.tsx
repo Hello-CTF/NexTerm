@@ -155,8 +155,37 @@ describe("Ctrl+1-9 tab navigation", () => {
     await flush();
     keyDown(window, "2", { altKey: true });
     expect(activePaneTabId()).toBe("t2");
+    keyDown(window, "1", { altKey: true });
+    expect(activePaneTabId()).toBe("t1");
+    const beyond = keyDown(window, "9", { altKey: true });
+    expect(beyond.defaultPrevented).toBe(false);
+    expect(activePaneTabId()).toBe("t1");
     const legacy = keyDown(window, "1", { ctrlKey: true });
     expect(legacy.defaultPrevented).toBe(false);
+    expect(activePaneTabId()).toBe("t1");
+  });
+
+  it("switches tabs for shifted-digit key forms end to end", async () => {
+    setKeybinding("switchTab", "Mod+Shift+1-9");
+    mounted = mountApp();
+    await flush();
+    keyDown(window, "!", { code: "Digit1", ctrlKey: true, shiftKey: true });
+    expect(activePaneTabId()).toBe("t1");
+    keyDown(window, "@", { code: "Digit2", ctrlKey: true, shiftKey: true });
+    expect(activePaneTabId()).toBe("t2");
+    const beyond = keyDown(window, "(", { code: "Digit9", ctrlKey: true, shiftKey: true });
+    expect(beyond.defaultPrevented).toBe(false);
+    expect(activePaneTabId()).toBe("t2");
+  });
+
+  it("switches tabs for non-US layout digit forms with the default binding", async () => {
+    mounted = mountApp();
+    await flush();
+    keyDown(window, "&", { code: "Digit1", ctrlKey: true });
+    expect(activePaneTabId()).toBe("t1");
+    keyDown(window, "é", { code: "Digit2", ctrlKey: true });
+    expect(activePaneTabId()).toBe("t2");
+    keyDown(window, "à", { code: "Digit9", ctrlKey: true });
     expect(activePaneTabId()).toBe("t2");
   });
 });

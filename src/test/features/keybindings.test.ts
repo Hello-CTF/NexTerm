@@ -308,6 +308,21 @@ describe("matchAppKeybinding", () => {
     setKeybinding("switchTab", null);
     expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true }))).toBeNull();
   });
+
+  it("extracts digits through the shared logical key for shifted and non-US forms", () => {
+    setKeybinding("switchTab", "Mod+Shift+1-9");
+    expect(matchAppKeybinding(keyEvent({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true })))
+      .toEqual({ action: "switchTab", digit: 1 });
+    expect(matchAppKeybinding(keyEvent({ key: "@", code: "Digit2", ctrlKey: true, shiftKey: true })))
+      .toEqual({ action: "switchTab", digit: 2 });
+    resetAllKeybindings();
+    expect(matchAppKeybinding(keyEvent({ key: "&", code: "Digit1", ctrlKey: true })))
+      .toEqual({ action: "switchTab", digit: 1 });
+    expect(matchAppKeybinding(keyEvent({ key: "é", code: "Digit2", ctrlKey: true })))
+      .toEqual({ action: "switchTab", digit: 2 });
+    expect(matchAppKeybinding(keyEvent({ key: "9", code: "Digit9", ctrlKey: true })))
+      .toEqual({ action: "switchTab", digit: 9 });
+  });
 });
 
 describe("catalog sanity", () => {

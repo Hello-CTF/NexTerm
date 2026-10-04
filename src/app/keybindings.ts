@@ -391,8 +391,11 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
     if (binding === null || !matchBinding(event, binding)) continue;
     const parsed = parseBinding(binding);
     let digit: number | null = null;
-    if (parsed && (parsed.key === "1-9" || /^[1-9]$/.test(parsed.key)) && /^[1-9]$/.test(event.key)) {
-      digit = Number(event.key);
+    if (parsed && (parsed.key === "1-9" || /^[1-9]$/.test(parsed.key))) {
+      const logical = logicalEventKey(event);
+      if (logical !== null && /^[1-9]$/.test(logical) && (parsed.key === "1-9" || logical === parsed.key)) {
+        digit = Number(logical);
+      }
     }
     return { action: id, digit };
   }
