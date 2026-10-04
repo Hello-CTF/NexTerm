@@ -60,7 +60,7 @@ export function AuditView() {
 
   return (
     <div className="nx-pane">
-      <div className="nx-toolbar">
+      <div className="nx-toolbar flex-wrap">
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">审计日志</span>
         <span className="nx-hint">
@@ -122,9 +122,13 @@ export function AuditView() {
                   {e.exitCode === null ? (
                     <span className="text-neutral-600">—</span>
                   ) : e.exitCode === 0 ? (
-                    <span className="text-green-300">0</span>
+                    <span className="text-green-300" title="成功">
+                      ✓ 0
+                    </span>
                   ) : (
-                    <span className="text-red-300">{e.exitCode}</span>
+                    <span className="text-red-300" title="失败">
+                      ✗ {e.exitCode}
+                    </span>
                   )}
                 </td>
                 <td className="nx-right nx-mono">

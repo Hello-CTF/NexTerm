@@ -272,13 +272,13 @@ export function SyncCard() {
           </p>
 
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="sync-token-kind">
                 部署位置
               </label>
               <select
                 id="sync-token-kind"
-                className="nx-input w-[250px]"
+                className="nx-input min-w-0 min-[560px]:w-[250px]"
                 value={draft.tokenKind}
                 onChange={(e) => setDraft((d) => ({ ...d, tokenKind: e.target.value }))}
               >
@@ -605,7 +605,7 @@ function CompareTable(props: {
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={r.name}>
                   {r.name}
                 </span>
-                <span className="shrink-0 font-mono text-[11px] text-neutral-500">
+                <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-neutral-500" title={r.host ?? r.kind}>
                   {r.host ?? r.kind}
                 </span>
                 {r.local?.hasCred || r.remote?.hasCred ? (

@@ -398,7 +398,7 @@ export function CronCard() {
               <div key={key} className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[12.5px] text-neutral-200">
+                    <span className="min-w-0 break-words text-[12.5px] text-neutral-200">
                       {job.name?.trim() || job.prompt.slice(0, 40)}
                     </span>
                     <span className={`nx-badge ${status.cls}`}>{status.label}</span>
