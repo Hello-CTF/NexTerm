@@ -446,27 +446,38 @@ func TestListenPipeLifecycle(t *testing.T) {
 	if _, err := listenPipe(name); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("second listenPipe = %v, want ErrAlreadyExists", err)
 	}
+	type acceptResult struct {
+		conn net.Conn
+		err  error
+	}
+	accepted := make(chan acceptResult, 1)
+	go func() {
+		conn, err := listener.Accept()
+		accepted <- acceptResult{conn: conn, err: err}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	conn, err := dialSocket(ctx, name)
 	if err != nil {
-		t.Fatalf("dial before Accept: %v", err)
+		t.Fatalf("dial with pending Accept: %v", err)
 	}
-	accepted := make(chan net.Conn, 1)
-	go func() {
-		serverConn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		accepted <- serverConn
-	}()
-	serverConn := <-accepted
+	result := <-accepted
+	if result.err != nil {
+		t.Fatalf("Accept: %v", result.err)
+	}
+	serverConn := result.conn
 	if _, err := conn.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
 	buffer := make([]byte, 4)
 	if _, err := io.ReadFull(serverConn, buffer); err != nil || string(buffer) != "ping" {
 		t.Fatalf("pipe read = %q, %v", buffer, err)
+	}
+	if _, err := serverConn.Write([]byte("pong")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(conn, buffer); err != nil || string(buffer) != "pong" {
+		t.Fatalf("duplex pipe read = %q, %v", buffer, err)
 	}
 	_ = conn.Close()
 	_ = serverConn.Close()
@@ -478,6 +489,35 @@ func TestListenPipeLifecycle(t *testing.T) {
 		t.Fatalf("listenPipe restart after Close: %v", err)
 	}
 	_ = restarted.Close()
+}
+
+type aceInfo struct {
+	trustee string
+	mask    uint32
+	flags   uint8
+}
+
+func privateDACLTrustees(t *testing.T, path string) []aceInfo {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := unsafe.Pointer(dacl)
+	offset := 0
+	aces := make([]aceInfo, 0, dacl.AceCount)
+	for index := 0; index < int(dacl.AceCount); index++ {
+		header := (*windows.ACE_HEADER)(unsafe.Add(base, offset))
+		ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Add(base, offset))
+		trustee := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
+		aces = append(aces, aceInfo{trustee: trustee, mask: uint32(ace.Mask), flags: header.AceFlags})
+		offset += int(header.AceSize)
+	}
+	return aces
 }
 
 func requirePrivateDACL(t *testing.T, path string) {
@@ -504,20 +544,36 @@ func requirePrivateDACL(t *testing.T, path string) {
 	if owner.String() != sid {
 		t.Fatalf("directory owner = %s, want the current user %s", owner.String(), sid)
 	}
-	dacl, _, err := descriptor.DACL()
+	for _, ace := range privateDACLTrustees(t, path) {
+		if ace.trustee != "S-1-5-18" && ace.trustee != sid {
+			t.Fatalf("directory DACL grants access to foreign trustee %s", ace.trustee)
+		}
+		if ace.mask&windows.GENERIC_ALL == 0 {
+			t.Fatalf("directory DACL trustee %s lacks generic-all rights", ace.trustee)
+		}
+	}
+}
+
+func requireInheritedPrivateDACL(t *testing.T, path string) {
+	t.Helper()
+	sid, err := currentUserSIDString()
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := unsafe.Pointer(dacl)
-	offset := 0
-	for index := 0; index < int(dacl.AceCount); index++ {
-		header := (*windows.ACE_HEADER)(unsafe.Add(base, offset))
-		ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Add(base, offset))
-		trustee := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
-		if trustee != "S-1-5-18" && trustee != sid {
-			t.Fatalf("directory DACL grants access to foreign trustee %s", trustee)
+	aces := privateDACLTrustees(t, path)
+	if len(aces) == 0 {
+		t.Fatal("child object inherited no ACEs")
+	}
+	for _, ace := range aces {
+		if ace.trustee != "S-1-5-18" && ace.trustee != sid {
+			t.Fatalf("child object DACL grants access to foreign trustee %s", ace.trustee)
 		}
-		offset += int(header.AceSize)
+		if ace.mask&windows.GENERIC_ALL == 0 {
+			t.Fatalf("child object DACL trustee %s lacks generic-all rights", ace.trustee)
+		}
+		if ace.flags&windows.INHERITED_ACE == 0 {
+			t.Fatalf("child object ACE for %s is not marked inherited", ace.trustee)
+		}
 	}
 }
 
@@ -534,7 +590,12 @@ func TestEnsurePrivateDirSetsProtectedDACL(t *testing.T) {
 	if err := os.MkdirAll(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	requirePrivateDACL(t, child)
+	requireInheritedPrivateDACL(t, child)
+	file := filepath.Join(stateDir, "session.json")
+	if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requireInheritedPrivateDACL(t, file)
 }
 
 func TestEnsurePrivateDirPermissiveParentWindows(t *testing.T) {
@@ -605,6 +666,10 @@ func TestPipeFullDuplexConcurrentIO(t *testing.T) {
 		}
 	}()
 	const rounds = 50
+	var expected strings.Builder
+	for index := 0; index < rounds; index++ {
+		fmt.Fprintf(&expected, "ping-%02d", index)
+	}
 	received := make(chan []byte, rounds*2)
 	readerDone := make(chan struct{})
 	go func() {
@@ -625,14 +690,17 @@ func TestPipeFullDuplexConcurrentIO(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	seen := 0
-	for seen < rounds {
+	var echoed strings.Builder
+	for echoed.Len() < expected.Len() {
 		select {
-		case <-received:
-			seen++
+		case chunk := <-received:
+			echoed.Write(chunk)
 		case <-time.After(30 * time.Second):
-			t.Fatalf("only %d of %d full-duplex echoes arrived", seen, rounds)
+			t.Fatalf("only %d of %d full-duplex echo bytes arrived", echoed.Len(), expected.Len())
 		}
+	}
+	if echoed.String() != expected.String() {
+		t.Fatalf("echo stream = %q, want %q", echoed.String(), expected.String())
 	}
 	closed := make(chan struct{})
 	go func() {
