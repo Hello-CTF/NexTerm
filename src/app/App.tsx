@@ -243,6 +243,17 @@ export function virtualKeyboardInset(
   return Math.max(0, Math.min(innerHeight, innerHeight - keyboardTop));
 }
 
+export function aiToastPlacement(
+  width: number,
+  overlaySidebars: boolean,
+  rightDockOpen: boolean,
+  rightWidth: number,
+): "dock" | "left" | "overlay" | null {
+  if (!rightDockOpen) return null;
+  if (overlaySidebars) return "overlay";
+  return width - rightWidth - 32 >= 200 ? "dock" : "left";
+}
+
 interface VirtualKeyboardLike extends EventTarget {
   overlaysContent: boolean;
   readonly boundingRect: DOMRect;
@@ -851,11 +862,18 @@ export default function App() {
     { key: "settings", label: "设置", icon: IconSettings, onClick: openSettings },
   ];
 
+  const aiToast = aiToastPlacement(
+    viewport.width,
+    viewport.overlaySidebars,
+    rightDockOpen,
+    rightWidth,
+  );
+
   return (
     <div
       className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
       data-nx-keys={terminalKeysVisible ? "true" : undefined}
-      data-nx-ai={rightDockOpen ? "true" : undefined}
+      data-nx-ai={aiToast ?? undefined}
       style={{ "--nx-right-w": `${rightWidth}px` } as CSSProperties}
       onDoubleClick={onDragRegionDoubleClick}
     >

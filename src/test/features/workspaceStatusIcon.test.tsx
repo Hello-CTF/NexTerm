@@ -46,7 +46,7 @@ vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../../app/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
-import App from "../../app/App";
+import App, { aiToastPlacement } from "../../app/App";
 import { useUi } from "../../app/store";
 
 function session(status: SessionInfo["status"]): SessionInfo {
@@ -178,7 +178,7 @@ describe("toast avoidance wiring", () => {
     await flush();
 
     const root = document.querySelector<HTMLElement>(".nx-app");
-    expect(root?.getAttribute("data-nx-ai")).toBe("true");
+    expect(root?.getAttribute("data-nx-ai")).toBe("dock");
     expect(root?.style.getPropertyValue("--nx-right-w")).toBe("352px");
   });
 
@@ -190,5 +190,27 @@ describe("toast avoidance wiring", () => {
 
     const root = document.querySelector<HTMLElement>(".nx-app");
     expect(root?.getAttribute("data-nx-ai")).toBeNull();
+  });
+});
+
+describe("aiToastPlacement", () => {
+  it("is null while the AI dock is closed", () => {
+    expect(aiToastPlacement(1280, false, false, 352)).toBeNull();
+  });
+
+  it("uses overlay placement whenever sidebars overlay", () => {
+    expect(aiToastPlacement(390, true, true, 352)).toBe("overlay");
+    expect(aiToastPlacement(560, true, true, 352)).toBe("overlay");
+  });
+
+  it("docks beside the sidebar while at least 200px remain", () => {
+    expect(aiToastPlacement(1280, false, true, 352)).toBe("dock");
+    expect(aiToastPlacement(1100, false, true, 760)).toBe("dock");
+    expect(aiToastPlacement(900, false, true, 668)).toBe("dock");
+  });
+
+  it("falls back to the left edge when the sidebar eats the viewport", () => {
+    expect(aiToastPlacement(900, false, true, 760)).toBe("left");
+    expect(aiToastPlacement(821, false, true, 760)).toBe("left");
   });
 });

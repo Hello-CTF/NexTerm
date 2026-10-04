@@ -1898,6 +1898,7 @@
   bottom: calc(36px + var(--nx-kb-inset, 0px));
   max-height: calc(100dvh - 120px - var(--nx-kb-inset, 0px));
   overflow: hidden;
+  justify-content: flex-end;
 }
 
 .nx-app[data-nx-keys="true"] .nx-toasts {
@@ -1906,8 +1907,18 @@
   );
 }
 
-.nx-app[data-nx-ai="true"] .nx-toasts {
+.nx-app[data-nx-ai="dock"] .nx-toasts {
   right: calc(var(--nx-right-w, 352px) + 16px);
+  width: min(380px, calc(100vw - var(--nx-right-w, 352px) - 32px));
+}
+
+.nx-app[data-nx-ai="left"] .nx-toasts {
+  right: auto;
+  left: 8px;
+  top: calc(70px + 8px);
+  bottom: auto;
+  width: min(380px, calc(100vw - 16px));
+  max-height: calc(100dvh - 160px - var(--nx-kb-inset, 0px));
 }
 
 .nx-terminal-keys {
@@ -2016,7 +2027,7 @@
     gap: 8px;
   }
 
-  .nx-app[data-nx-ai="true"] .nx-toasts {
+  .nx-app[data-nx-ai] .nx-toasts {
     right: auto;
     left: 8px;
     top: calc(70px + 8px);
@@ -2125,7 +2136,6 @@
   .nx-row-actions .nx-icon-btn-sm {
     width: 44px;
     height: 44px;
-    margin: -8px;
   }
 
   .nx-split-handle {

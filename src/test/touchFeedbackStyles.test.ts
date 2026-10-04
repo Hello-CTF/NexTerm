@@ -44,12 +44,12 @@ describe("coarse pointer hit areas", () => {
     expect(bar).toMatch(/min-height:\s*52px/);
   });
 
-  it("row action buttons reach 44x44 without growing their layout footprint", () => {
+  it("row action buttons are real non-overlapping 44x44 hit areas", () => {
     expect(rule(coarse, ".nx-row-actions")).toMatch(/gap:\s*8px/);
     const btn = rule(coarse, ".nx-row-actions .nx-icon-btn-sm");
     expect(btn).toMatch(/width:\s*44px/);
     expect(btn).toMatch(/height:\s*44px/);
-    expect(btn).toMatch(/margin:\s*-8px/);
+    expect(btn).not.toMatch(/margin:/);
   });
 
   it("desktop keeps the compact 34px rail", () => {
@@ -67,23 +67,31 @@ describe("toast placement rules", () => {
     expect(rule(coarse, ":root")).toMatch(/--nx-keys-h:\s*53px/);
   });
 
-  it("toasts shift left of the docked AI sidebar", () => {
-    const body = rule(css, '.nx-app[data-nx-ai="true"] .nx-toasts');
+  it("toasts shift left of the docked AI sidebar within the remaining space", () => {
+    const body = rule(css, '.nx-app[data-nx-ai="dock"] .nx-toasts');
     expect(body).toMatch(/right:\s*calc\(var\(--nx-right-w/);
+    expect(body).toMatch(/width:\s*min\(380px, calc\(100vw - var\(--nx-right-w/);
+  });
+
+  it("falls back to the left edge when the docked sidebar leaves too little room", () => {
+    const body = rule(css, '.nx-app[data-nx-ai="left"] .nx-toasts');
+    expect(body).toMatch(/left:\s*8px/);
+    expect(body).toMatch(/right:\s*auto/);
   });
 
   it("on narrow screens toasts move to the top-left so the AI input stays reachable", () => {
-    const body = rule(narrow, '.nx-app[data-nx-ai="true"] .nx-toasts');
+    const body = rule(narrow, ".nx-app[data-nx-ai] .nx-toasts");
     expect(body).toMatch(/left:\s*8px/);
     expect(body).toMatch(/right:\s*auto/);
     expect(body).toMatch(/bottom:\s*auto/);
     expect(body).toMatch(/top:\s*calc\(70px \+ 8px\)/);
   });
 
-  it("toast stack is constrained in height", () => {
+  it("toast stack is constrained in height and keeps the newest toasts", () => {
     const body = rule(css, ".nx-toasts");
     expect(body).toMatch(/max-height:/);
     expect(body).toMatch(/overflow:\s*hidden/);
+    expect(body).toMatch(/justify-content:\s*flex-end/);
   });
 });
 

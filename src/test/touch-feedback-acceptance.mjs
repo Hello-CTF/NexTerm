@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// 运行：node src/test/touch-feedback-acceptance.mjs
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -197,6 +196,13 @@ async function screenshot(page, name) {
   return name;
 }
 
+async function tapAt(page, x, y) {
+  await page.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, radiusX: 4, radiusY: 4, force: 1 }] });
+  await sleep(40);
+  await page.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await sleep(150);
+}
+
 async function setViewport(page, { width, height, coarse }) {
   await page.send("Emulation.setDeviceMetricsOverride", {
     width,
@@ -216,9 +222,14 @@ async function setViewport(page, { width, height, coarse }) {
   await sleep(350);
 }
 
-async function boot(page, { theme, width, height, coarse }) {
+async function boot(page, { theme, width, height, coarse, layout = null }) {
   const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `try { localStorage.setItem("nexterm.theme.v1", ${JSON.stringify(theme)}); } catch {}`,
+    source:
+      `try { localStorage.setItem("nexterm.theme.v1", ${JSON.stringify(theme)}); ` +
+      (layout
+        ? `localStorage.setItem("nexterm.layout.v1", ${JSON.stringify(JSON.stringify(layout))}); `
+        : `localStorage.removeItem("nexterm.layout.v1"); `) +
+      `} catch {}`,
   });
   try {
     await setViewport(page, { width, height, coarse });
@@ -301,6 +312,127 @@ async function touchAcceptance(page) {
       return { evidence };
     });
 
+    await pass(`hit-attribution-elementfrompoint-${theme}`, async () => {
+      const evidence = await page.evaluate(`(() => {
+        const hasConnect = (r) => [...r.querySelectorAll('.nx-row-actions button')].some((b) => (b.getAttribute('aria-label') ?? '').startsWith('连接 '));
+        const assetRows = [...document.querySelectorAll('.nx-row')].filter(hasConnect);
+        let rowA = null;
+        let rowB = null;
+        for (const r of assetRows) {
+          const next = r.nextElementSibling;
+          if (next && next.classList.contains('nx-row') && hasConnect(next)) {
+            rowA = r;
+            rowB = next;
+            break;
+          }
+        }
+        if (!rowA || !rowB) return { rows: assetRows.length, adjacent: false };
+        const owner = (x, y) => {
+          const el = document.elementFromPoint(x, y);
+          const btn = el ? el.closest('button') : null;
+          return btn ? btn.getAttribute('aria-label') : null;
+        };
+        const btnsA = [...rowA.querySelectorAll('.nx-row-actions button')];
+        const btnsB = [...rowB.querySelectorAll('.nx-row-actions button')];
+        const r0 = btnsA[0].getBoundingClientRect();
+        const r1 = btnsA[1].getBoundingClientRect();
+        const r2 = btnsB[0].getBoundingClientRect();
+        return {
+          rows: assetRows.length,
+          adjacent: true,
+          l0: btnsA[0].getAttribute('aria-label'),
+          l1: btnsA[1].getAttribute('aria-label'),
+          l2: btnsB[0].getAttribute('aria-label'),
+          own0: owner(r0.left + r0.width / 2, r0.top + r0.height / 2),
+          own1: owner(r1.left + r1.width / 2, r1.top + r1.height / 2),
+          own2: owner(r2.left + r2.width / 2, r2.top + r2.height / 2),
+          gapOwner: owner((r0.right + r1.left) / 2, r0.top + r0.height / 2),
+          edgeRightOut: owner(r0.right + 1, r0.top + r0.height / 2),
+          edgeLeftIn: owner(r0.left + 1, r0.top + r0.height / 2),
+          edgeRightIn: owner(r0.right - 1, r0.top + r0.height / 2),
+          edgeNextIn: owner(r1.left + 1, r1.top + r1.height / 2),
+          rowGapOwner: owner(r0.left + r0.width / 2, (r0.bottom + r2.top) / 2),
+          bottomIn: owner(r0.left + r0.width / 2, r0.bottom - 1),
+          topIn: owner(r2.left + r2.width / 2, r2.top + 1),
+        };
+      })()`);
+      assert.ok(evidence.rows >= 2 && evidence.adjacent, `need two adjacent asset rows: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.own0, evidence.l0, `button center owned by ${evidence.own0}`);
+      assert.equal(evidence.own1, evidence.l1, `button center owned by ${evidence.own1}`);
+      assert.equal(evidence.own2, evidence.l2, `button center owned by ${evidence.own2}`);
+      assert.equal(evidence.gapOwner, null, `gap between horizontal neighbors owned by ${evidence.gapOwner}`);
+      assert.equal(evidence.edgeRightOut, null, `1px outside the button owned by ${evidence.edgeRightOut}`);
+      assert.equal(evidence.edgeLeftIn, evidence.l0);
+      assert.equal(evidence.edgeRightIn, evidence.l0);
+      assert.equal(evidence.edgeNextIn, evidence.l1);
+      assert.equal(evidence.rowGapOwner, null, `gap between rows owned by ${evidence.rowGapOwner}`);
+      assert.equal(evidence.bottomIn, evidence.l0);
+      assert.equal(evidence.topIn, evidence.l2);
+      return { evidence };
+    });
+
+    await pass(`hit-attribution-touch-${theme}`, async () => {
+      const before = await page.evaluate(`(() => {
+        const hasConnect = (r) => [...r.querySelectorAll('.nx-row-actions button')].some((b) => (b.getAttribute('aria-label') ?? '').startsWith('连接 '));
+        const assetRows = [...document.querySelectorAll('.nx-row')].filter(hasConnect);
+        let rowA = null;
+        let rowB = null;
+        for (const r of assetRows) {
+          const next = r.nextElementSibling;
+          if (next && next.classList.contains('nx-row') && hasConnect(next)) {
+            rowA = r;
+            rowB = next;
+            break;
+          }
+        }
+        const picks = [rowA, rowB].filter(Boolean).map((r) => {
+          const btns = [...r.querySelectorAll('.nx-row-actions button')];
+          const edit = btns.find((b) => (b.getAttribute('aria-label') ?? '').startsWith('编辑 '));
+          const connect = btns.find((b) => (b.getAttribute('aria-label') ?? '').startsWith('连接 '));
+          const er = edit.getBoundingClientRect();
+          const cr = connect.getBoundingClientRect();
+          const label = edit.getAttribute('aria-label');
+          return {
+            name: label.slice('编辑 '.length),
+            edit: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
+            connect: { x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 },
+          };
+        });
+        return {
+          count: picks.length,
+          picks,
+          tabs: document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length,
+        };
+      })()`);
+      assert.equal(before.count, 2, `need two asset rows: ${JSON.stringify(before)}`);
+
+      const modalName = () => page.evaluate(`document.querySelector('.nx-modal input')?.value ?? null`);
+      const closeModal = async () => {
+        await page.evaluate(`[...document.querySelectorAll('.nx-modal-footer button')].find((b) => b.textContent.includes('取消'))?.click()`);
+        await page.waitFor("!document.querySelector('.nx-modal')");
+      };
+
+      await tapAt(page, before.picks[0].edit.x, before.picks[0].edit.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-modal'))");
+      assert.equal(await modalName(), before.picks[0].name, "tap on row A edit must open row A's editor");
+      let cross = await page.evaluate(`({ menu: Boolean(document.querySelector('.nx-menu')), tabs: document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length })`);
+      assert.equal(cross.menu, false, "edit tap must not open the more menu");
+      assert.equal(cross.tabs, before.tabs, "edit tap must not connect");
+      await closeModal();
+
+      await tapAt(page, before.picks[1].edit.x, before.picks[1].edit.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-modal'))");
+      assert.equal(await modalName(), before.picks[1].name, "tap on row B edit must open row B's editor");
+      await closeModal();
+
+      await tapAt(page, before.picks[0].connect.x, before.picks[0].connect.y);
+      await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length > ${before.tabs}`);
+      cross = await page.evaluate(`({ modal: Boolean(document.querySelector('.nx-modal')), menu: Boolean(document.querySelector('.nx-menu')) })`);
+      assert.equal(cross.modal, false, "connect tap must not open the editor");
+      assert.equal(cross.menu, false, "connect tap must not open the more menu");
+      return { evidence: { taps: 3, tabsBefore: before.tabs } };
+    });
+
     await pass(`toast-avoids-keys-and-statusbar-${theme}`, async () => {
       await page.evaluate(`document.querySelector('.nx-tab-new').click()`);
       await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
@@ -348,6 +480,50 @@ async function touchAcceptance(page) {
       return { evidence };
     });
 
+    await pass(`toast-flood-${theme}`, async () => {
+      await page.evaluate(`(async () => {
+        const { useUi } = await import('/src/app/store.ts');
+        for (let i = 1; i <= 16; i += 1) {
+          useUi.getState().pushToast('error', '错误 ' + i + '：' + '磁盘写入失败，请检查连接与权限后重试。'.repeat(8));
+        }
+      })()`);
+      await page.waitFor("document.querySelectorAll('.nx-toasts button').length >= 16");
+      const evidence = await page.evaluate(`(() => {
+        const container = document.querySelector('.nx-toasts');
+        const cr = container.getBoundingClientRect();
+        const toasts = [...container.querySelectorAll('button')];
+        const newest = toasts[toasts.length - 1];
+        const nr = newest.getBoundingClientRect();
+        const oldest = toasts[0].getBoundingClientRect();
+        const cx = nr.left + nr.width / 2;
+        const cy = nr.top + nr.height / 2;
+        return {
+          count: toasts.length,
+          containerHeight: cr.height,
+          maxHeight: parseFloat(getComputedStyle(container).maxHeight),
+          newestText: newest.textContent.slice(0, 10),
+          newestTop: nr.top,
+          newestBottom: nr.bottom,
+          newestCenter: { x: cx, y: cy },
+          newestHittable: newest.contains(document.elementFromPoint(cx, cy)),
+          oldestClipped: oldest.top < cr.top - 0.5,
+          containerBottom: cr.bottom,
+          innerHeight,
+        };
+      })()`);
+      assert.ok(evidence.count >= 16, `expected 16 toasts: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.containerHeight <= evidence.maxHeight + 0.5, `toast container exceeds max-height: ${JSON.stringify(evidence)}`);
+      assert.match(evidence.newestText, /错误 16/, `newest toast is not the last pushed: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.newestTop >= 0 && evidence.newestBottom <= evidence.innerHeight, `newest toast off-screen: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.newestHittable, true, `newest toast not hittable at its center: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.oldestClipped, true, `oldest toast should be clipped to keep the newest: ${JSON.stringify(evidence)}`);
+      await tapAt(page, evidence.newestCenter.x, evidence.newestCenter.y);
+      await page.waitFor("![...document.querySelectorAll('.nx-toasts button')].some((b) => b.textContent.includes('错误 16'))");
+      const remaining = await page.evaluate(`document.querySelectorAll('.nx-toasts button').length`);
+      assert.equal(remaining, evidence.count - 1, "tapping the newest toast must dismiss exactly it");
+      return { evidence: { ...evidence, remaining } };
+    });
+
     await pass(`hit-rail-fine-compact-${theme}`, async () => {
       await boot(page, { theme, width: 1280, height: 800, coarse: false });
       const evidence = await page.evaluate(`(() => {
@@ -385,6 +561,56 @@ async function touchAcceptance(page) {
       assert.ok(evidence.toastRight <= evidence.dockLeft + 0.5, `toast not left of docked AI sidebar: ${JSON.stringify(evidence)}`);
       assert.equal(evidence.overlapInput, false, `toast overlaps AI input on wide screen: ${JSON.stringify(evidence)}`);
       await screenshot(page, `toast-ai-wide-${theme}.png`);
+      return { evidence };
+    });
+
+    await pass(`toast-ai-dock-shrunk-${theme}`, async () => {
+      await boot(page, { theme, width: 1100, height: 800, coarse: false, layout: { leftWidth: 248, rightWidth: 760 } });
+      await page.evaluate(`document.querySelector('.nx-tab-new').click()`);
+      await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
+      await ensureAiDock(page);
+      const evidence = await page.evaluate(`(() => {
+        const t = document.querySelector('.nx-toasts').getBoundingClientRect();
+        const dock = document.querySelector('.nx-right-dock').getBoundingClientRect();
+        const placement = document.querySelector('.nx-app').getAttribute('data-nx-ai');
+        return { placement, toastLeft: t.left, toastRight: t.right, toastWidth: t.width, dockLeft: dock.left, innerWidth };
+      })()`);
+      assert.equal(evidence.placement, "dock", `760px dock at 1100px must keep dock placement: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastLeft >= 0, `toast pushed off-screen: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastRight <= evidence.dockLeft + 0.5, `toast overlaps the dock: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastWidth <= 380, `toast wider than the cap: ${JSON.stringify(evidence)}`);
+      return { evidence };
+    });
+
+    await pass(`toast-ai-dock-fallback-${theme}`, async () => {
+      await boot(page, { theme, width: 900, height: 800, coarse: false, layout: { leftWidth: 248, rightWidth: 760 } });
+      await page.evaluate(`document.querySelector('.nx-tab-new').click()`);
+      await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
+      await ensureAiDock(page);
+      const evidence = await page.evaluate(`(() => {
+        const t = document.querySelector('.nx-toasts').getBoundingClientRect();
+        const input = document.querySelector('.nx-right-dock textarea').getBoundingClientRect();
+        const header = document.querySelector('header').getBoundingClientRect();
+        const placement = document.querySelector('.nx-app').getAttribute('data-nx-ai');
+        const cx = t.left + t.width / 2;
+        const cy = t.top + 12;
+        const hit = (a, b) => !(a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5);
+        return {
+          placement,
+          toastLeft: t.left,
+          toastRight: t.right,
+          toastTop: t.top,
+          headerBottom: header.bottom,
+          overlapInput: hit(t, input),
+          hittable: Boolean(document.elementFromPoint(cx, cy)?.closest('.nx-toasts button')),
+          innerWidth,
+        };
+      })()`);
+      assert.equal(evidence.placement, "left", `760px dock at 900px must fall back to reachable placement: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastLeft >= 0 && evidence.toastRight <= evidence.innerWidth + 0.5, `toast off-screen: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastTop >= evidence.headerBottom - 0.5, `fallback toast must sit below the header: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.overlapInput, false, `fallback toast must not cover the AI input: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.hittable, true, `fallback toast must be hittable: ${JSON.stringify(evidence)}`);
       return { evidence };
     });
 
