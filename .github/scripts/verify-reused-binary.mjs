@@ -27,4 +27,4 @@ const problems = binaryManifestProblems({
   expect: { id, goos, goarch, tags: ["production"], cgo, stripped: true, version, commit },
 });
 if (problems.length) die(`reused binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
-console.log(`${id}: verified reused production binary sha256:${manifest.artifact.sha256}`);
+console.warn(`${id}: verified reused production binary sha256:${manifest.artifact.sha256}`);
