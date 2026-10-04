@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -284,5 +285,137 @@ func TestThrottleDiscardPendingPairsRecovery(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("blocked producer still blocked after discard")
+	}
+}
+
+func TestThrottleFailedAttachPairsRecovery(t *testing.T) {
+	emitter, events := throttleCollector()
+	connector := newFakeConnector()
+	terminals := newFakeTerminalFactory()
+	manager := NewManager(Config{Connector: connector, Terminals: terminals, Emitter: emitter})
+	t.Cleanup(func() { _ = manager.Close() })
+	session, err := manager.Connect(context.Background(), Asset{ID: "throttle-attach", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openTestTab(t, manager, session, "client-a", "a-1")
+	channel := connector.transport(0).channel(0)
+
+	aReceiver := bindTestReceiver(t, manager, "a-1")
+	drainerStop := make(chan struct{})
+	t.Cleanup(func() { close(drainerStop) })
+	go func() {
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			frame, err := aReceiver.Next(ctx)
+			cancel()
+			if err != nil {
+				select {
+				case <-drainerStop:
+					return
+				default:
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					continue
+				}
+				return
+			}
+			if err := aReceiver.Ack(frame.Sequence); err != nil {
+				return
+			}
+		}
+	}()
+
+	payload := bytes.Repeat([]byte("x"), 64<<10)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 320; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := channel.emit(payload); err != nil {
+				return
+			}
+		}
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	for len(terminals.terminal(tab.ID).bytes()) < 20<<20 {
+		if time.Now().After(deadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatal("terminal did not accumulate the replay payload")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(stop)
+	wg.Wait()
+
+	attachCtx, cancelAttach := context.WithCancel(context.Background())
+	attachDone := make(chan error, 1)
+	go func() {
+		_, err := manager.AttachTab(attachCtx, tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1", ReplayBytes: 20 << 20})
+		attachDone <- err
+	}()
+	entry := waitThrottleEvent(t, events)
+	if entry.Recovered || entry.TabID != tab.ID || entry.ChannelID != "b-1" || entry.InflightBytes <= 0 {
+		t.Fatalf("attach entry = %+v", entry)
+	}
+	cancelAttach()
+	if err := <-attachDone; err == nil {
+		t.Fatal("canceled attach succeeded")
+	}
+	recovery := waitThrottleEvent(t, events)
+	if !recovery.Recovered || recovery.TabID != tab.ID || recovery.ChannelID != "b-1" || recovery.Version <= entry.Version {
+		t.Fatalf("attach recovery = %+v", recovery)
+	}
+	assertNoThrottleEvent(t, events, 200*time.Millisecond)
+
+	if _, err := manager.AttachTab(context.Background(), tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-2", ReplayBytes: 1024}); err != nil {
+		t.Fatal(err)
+	}
+	frame := bytes.Repeat([]byte("y"), 1024)
+	fillCtx, stopFill := context.WithCancel(context.Background())
+	t.Cleanup(stopFill)
+	sends := make(chan error, 600)
+	go func() {
+		for i := 0; i < 600; i++ {
+			sends <- manager.bus.SendBinary(fillCtx, "b-2", frame)
+		}
+	}()
+	reentry := waitThrottleEvent(t, events)
+	if reentry.Recovered || reentry.ChannelID != "b-2" || reentry.Version <= recovery.Version {
+		t.Fatalf("re-entry = %+v", reentry)
+	}
+	stopFill()
+	for len(sends) > 0 {
+		<-sends
+	}
+	bReceiver := bindTestReceiver(t, manager, "b-2")
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		frame, err := bReceiver.Next(ctx)
+		cancel()
+		if err != nil {
+			break
+		}
+		if err := bReceiver.Ack(frame.Sequence); err != nil {
+			t.Fatal(err)
+		}
+	}
+	finalRecovery := waitThrottleEvent(t, events)
+	if !finalRecovery.Recovered || finalRecovery.TabID != tab.ID || finalRecovery.ChannelID != "b-2" || finalRecovery.Version <= reentry.Version {
+		t.Fatalf("final recovery = %+v", finalRecovery)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for manager.bus.Stats().QueuedFrames != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("queued frames = %+v", manager.bus.Stats())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

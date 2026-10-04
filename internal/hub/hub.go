@@ -481,6 +481,12 @@ func (c *channel) closeLocked() {
 		c.head = 0
 		c.queuedBytes = 0
 		c.inFlight = 0
+		if c.backpressured {
+			c.backpressured = false
+			if c.onDrain != nil {
+				c.onDrain(c.id, 0)
+			}
+		}
 		c.signalLocked()
 	}
 }
