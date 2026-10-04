@@ -202,6 +202,11 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				return profiles.PresetProfile(input.Preset)
 			})
 		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_usage_summary", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]store.RunUsageSummaryRow, error) {
+				return database.RunUsageSummary(ctx)
+			})
+		},
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {

@@ -221,9 +221,10 @@ type Execution struct {
 type SubagentEventSink func(context.Context, string, int, subagent.Event)
 
 type SubagentConfig struct {
-	Model        subagent.ModelFactory
-	AllowedTools []string
-	Limits       subagent.Config
+	Model           subagent.ModelFactory
+	ModelForProfile subagent.ProfileModelFactory
+	AllowedTools    []string
+	Limits          subagent.Config
 }
 
 type Interaction struct {
@@ -402,6 +403,7 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	}
 	limits := e.Subagents.Limits
 	limits.NewModel = e.Subagents.Model
+	limits.NewModelForProfile = e.Subagents.ModelForProfile
 	var manager *subagent.Manager
 	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
 		return e.scopedSubagentTools(ctx, manager)

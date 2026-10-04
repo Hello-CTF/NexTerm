@@ -51,14 +51,15 @@ type Store interface {
 }
 
 type Registration struct {
-	ID        string        `json:"id,omitempty"`
-	SessionID string        `json:"sessionId"`
-	Name      string        `json:"name,omitempty"`
-	Prompt    string        `json:"prompt"`
-	Schedule  string        `json:"schedule"`
-	Timezone  string        `json:"timezone,omitempty"`
-	Disabled  bool          `json:"disabled,omitempty"`
-	Timeout   time.Duration `json:"timeout,omitempty"`
+	ID             string        `json:"id,omitempty"`
+	SessionID      string        `json:"sessionId"`
+	Name           string        `json:"name,omitempty"`
+	Prompt         string        `json:"prompt"`
+	Schedule       string        `json:"schedule"`
+	Timezone       string        `json:"timezone,omitempty"`
+	Disabled       bool          `json:"disabled,omitempty"`
+	Timeout        time.Duration `json:"timeout,omitempty"`
+	ModelProfileID string        `json:"modelProfileId,omitempty"`
 }
 
 type Lease struct {
@@ -83,6 +84,7 @@ type Job struct {
 	Timezone            string        `json:"timezone"`
 	Enabled             bool          `json:"enabled"`
 	Timeout             time.Duration `json:"timeout"`
+	ModelProfileID      string        `json:"modelProfileId,omitempty"`
 	CreatedAt           time.Time     `json:"createdAt"`
 	UpdatedAt           time.Time     `json:"updatedAt"`
 	Revision            uint64        `json:"revision"`
@@ -101,13 +103,14 @@ type Job struct {
 func (j Job) Running() bool { return j.Run.ID != "" }
 
 type Trigger struct {
-	RunID        string    `json:"runId"`
-	JobID        string    `json:"jobId"`
-	SessionID    string    `json:"sessionId"`
-	Name         string    `json:"name,omitempty"`
-	Prompt       string    `json:"prompt"`
-	ScheduledFor time.Time `json:"scheduledFor"`
-	Coalesced    bool      `json:"coalesced"`
+	RunID          string    `json:"runId"`
+	JobID          string    `json:"jobId"`
+	SessionID      string    `json:"sessionId"`
+	Name           string    `json:"name,omitempty"`
+	Prompt         string    `json:"prompt"`
+	ScheduledFor   time.Time `json:"scheduledFor"`
+	Coalesced      bool      `json:"coalesced"`
+	ModelProfileID string    `json:"modelProfileId,omitempty"`
 }
 
 type Executor interface {

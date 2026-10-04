@@ -36,6 +36,20 @@ func openSQLiteStore(t *testing.T, path string) *SQLiteStore {
 		_ = db.Close()
 		t.Fatalf("apply 0005_cron.sql: %v", err)
 	}
+	contents, err = migrations.Files.ReadFile("0008_cron_model_profile.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var column string
+	if err := db.QueryRowContext(context.Background(), `SELECT name FROM pragma_table_info('cron_job') WHERE name = 'model_profile_id'`).Scan(&column); errors.Is(err, sql.ErrNoRows) {
+		if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
+			_ = db.Close()
+			t.Fatalf("apply 0008_cron_model_profile.sql: %v", err)
+		}
+	} else if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
 	store, err := NewSQLiteStore(context.Background(), db)
 	if err != nil {
 		_ = db.Close()
@@ -57,7 +71,7 @@ func fullTestJob(id, sessionID string, now time.Time) Job {
 		CreatedAt: now, UpdatedAt: now, Revision: 1, NextRunAt: now.Add(5 * time.Minute),
 		RetryAt: now.Add(time.Minute), CircuitOpenUntil: now.Add(2 * time.Minute),
 		ConsecutiveFailures: 3, LastRunAt: now.Add(-time.Hour), LastScheduledFor: now.Add(-time.Hour),
-		LastCoalesced: true, LastError: "previous failure",
+		LastCoalesced: true, LastError: "previous failure", ModelProfileID: "profile-1",
 		Lease: Lease{Owner: "owner-1", ExpiresAt: now.Add(20 * time.Second)},
 		Run:   RunState{ID: "run-1", ScheduledFor: now.Add(-time.Minute), StartedAt: now, Deadline: now.Add(time.Minute), Coalesced: true},
 	}
@@ -110,6 +124,7 @@ func jobsEqual(a, b Job) bool {
 		a.NextRunAt.Equal(b.NextRunAt) && a.RetryAt.Equal(b.RetryAt) && a.CircuitOpenUntil.Equal(b.CircuitOpenUntil) &&
 		a.ConsecutiveFailures == b.ConsecutiveFailures && a.LastRunAt.Equal(b.LastRunAt) &&
 		a.LastScheduledFor.Equal(b.LastScheduledFor) && a.LastCoalesced == b.LastCoalesced && a.LastError == b.LastError &&
+		a.ModelProfileID == b.ModelProfileID &&
 		a.Lease == b.Lease && a.Run == b.Run
 }
 

@@ -13,11 +13,13 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
@@ -228,7 +230,7 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	permission = permission.Normalized()
-	chatModel, contextWindow, err := r.config.Model(current.ctx)
+	chatModel, contextWindow, err := r.modelFor(current)
 	if err != nil {
 		return err
 	}
@@ -305,6 +307,16 @@ func (r *Runner) initializeEino(current *job) error {
 	return nil
 }
 
+func (r *Runner) modelFor(current *job) (model.BaseChatModel, uint64, error) {
+	if current.args.ModelProfileID != "" {
+		if r.config.ModelForProfile == nil {
+			return nil, 0, errors.New("按档案选择 AI 模型未配置")
+		}
+		return r.config.ModelForProfile(current.ctx, current.args.ModelProfileID)
+	}
+	return r.config.Model(current.ctx)
+}
+
 func userMessage(args ChatArgs) *schema.Message {
 	if len(args.Images) == 0 {
 		return schema.UserMessage(args.Message)
@@ -374,7 +386,9 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 			continue
 		}
 		variant := event.Output.MessageOutput
+		started := time.Time{}
 		if variant.Role == schema.Assistant {
+			started = time.Now()
 
 			if err := r.flushPendingEvents(current, false); err != nil {
 				return runtime.failure(err)
@@ -396,7 +410,11 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 					return runtime.failure(err)
 				}
 			}
-			if err := r.emitUsage(current, message); err != nil {
+			latency := time.Duration(0)
+			if !started.IsZero() {
+				latency = time.Since(started)
+			}
+			if err := r.emitUsage(current, message, latency); err != nil {
 				return runtime.failure(err)
 			}
 			if err := r.emitToolCalls(current, message.ToolCalls); err != nil {
@@ -466,7 +484,7 @@ func emitAssistantText(current *job, message *schema.Message) error {
 	return nil
 }
 
-func (r *Runner) emitUsage(current *job, message *schema.Message) error {
+func (r *Runner) emitUsage(current *job, message *schema.Message, latency time.Duration) error {
 	runtime := current.eino
 	if message.ResponseMeta == nil || message.ResponseMeta.Usage == nil {
 		return nil
@@ -479,11 +497,24 @@ func (r *Runner) emitUsage(current *job, message *schema.Message) error {
 		window = uint64(configured)
 	}
 	currentUsage := usage.Usage{PromptTokens: uint64(value.PromptTokens), CompletionTokens: uint64(value.CompletionTokens), CachedTokens: uint64(value.PromptTokenDetails.CachedTokens), ContextWindow: window}
+	if raw, ok := message.Extra[provider.MessageExtraCacheCreation]; ok {
+		switch typed := raw.(type) {
+		case uint64:
+			currentUsage.CacheCreationTokens = typed
+		case float64:
+			currentUsage.CacheCreationTokens = uint64(max(typed, 0))
+		case int:
+			currentUsage.CacheCreationTokens = uint64(max(typed, 0))
+		}
+	}
+	if latency > 0 {
+		currentUsage.LatencyMS = latency.Milliseconds()
+	}
 	runtime.addUsage(currentUsage)
 	modelName, _ := message.Extra["model"].(string)
 	runID, _ := message.Extra["run_id"].(string)
 	callID, _ := message.Extra["call_id"].(string)
-	return current.emit(current.ctx, Event{Type: "usage", Model: modelName, RunID: runID, CallID: callID, PromptTokens: currentUsage.PromptTokens, CompletionTokens: currentUsage.CompletionTokens, CachedTokens: currentUsage.CachedTokens, ContextWindow: window})
+	return current.emit(current.ctx, Event{Type: "usage", Model: modelName, RunID: runID, CallID: callID, PromptTokens: currentUsage.PromptTokens, CompletionTokens: currentUsage.CompletionTokens, CachedTokens: currentUsage.CachedTokens, CacheCreationTokens: currentUsage.CacheCreationTokens, LatencyMS: currentUsage.LatencyMS, ContextWindow: window})
 }
 
 func (r *Runner) emitToolCalls(current *job, calls []schema.ToolCall) error {

@@ -171,7 +171,7 @@ func canonicalizePayload(raw []byte, state *attemptState) []byte {
 		state.setServingModel(strings.TrimSpace(servingModel))
 	}
 	if rawUsage := object["usage"]; len(rawUsage) != 0 && string(rawUsage) != "null" {
-		object["usage"] = canonicalizeUsage(rawUsage)
+		object["usage"] = canonicalizeUsage(rawUsage, state)
 	}
 	canonicalizeMessageTextParts(object)
 	encoded, err := json.Marshal(object)
@@ -222,8 +222,11 @@ func canonicalizeMessageTextParts(object map[string]json.RawMessage) {
 	}
 }
 
-func canonicalizeUsage(raw json.RawMessage) json.RawMessage {
+func canonicalizeUsage(raw json.RawMessage, state *attemptState) json.RawMessage {
 	parsed := usage.Parse(raw)
+	if parsed.CacheCreationTokens != 0 && state != nil {
+		state.setCacheCreation(parsed.CacheCreationTokens)
+	}
 	if !parsed.HasData() {
 		return raw
 	}
@@ -233,7 +236,7 @@ func canonicalizeUsage(raw json.RawMessage) json.RawMessage {
 	}
 	object["prompt_tokens"], _ = json.Marshal(parsed.PromptTokens)
 	object["completion_tokens"], _ = json.Marshal(parsed.CompletionTokens)
-	if parsed.CachedTokens != 0 {
+	if parsed.CachedTokens != 0 || parsed.CacheCreationTokens != 0 {
 		var details map[string]json.RawMessage
 		if rawDetails := object["prompt_tokens_details"]; len(rawDetails) != 0 {
 			_ = json.Unmarshal(rawDetails, &details)
@@ -241,7 +244,12 @@ func canonicalizeUsage(raw json.RawMessage) json.RawMessage {
 		if details == nil {
 			details = make(map[string]json.RawMessage)
 		}
-		details["cached_tokens"], _ = json.Marshal(parsed.CachedTokens)
+		if parsed.CachedTokens != 0 {
+			details["cached_tokens"], _ = json.Marshal(parsed.CachedTokens)
+		}
+		if parsed.CacheCreationTokens != 0 {
+			details["cache_creation_tokens"], _ = json.Marshal(parsed.CacheCreationTokens)
+		}
 		object["prompt_tokens_details"], _ = json.Marshal(details)
 	}
 	encoded, err := json.Marshal(object)

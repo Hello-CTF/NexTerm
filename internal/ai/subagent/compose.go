@@ -24,3 +24,17 @@ func NewProfileModelFactory(manager *profiles.Manager) ModelFactory {
 		return chatModel, err
 	}
 }
+
+func NewProfileModelFactoryByID(manager *profiles.Manager) ProfileModelFactory {
+	return func(ctx context.Context, profileID string) (model.BaseChatModel, error) {
+		if manager == nil {
+			return nil, errors.New("subagent profile manager is nil")
+		}
+		client, err := manager.ClientFor(profileID)
+		if err != nil {
+			return nil, err
+		}
+		chatModel, _, err := client.BaseChatModel(ctx)
+		return chatModel, err
+	}
+}

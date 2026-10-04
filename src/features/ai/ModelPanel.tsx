@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { modelApi, type ModelProfile, type ModelProfilesView } from "../../ipc/commands";
+import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -10,6 +10,7 @@ import {
   sameModelProfile,
   selectModelProfileId,
 } from "./modelLifecycle";
+import { formatTokens } from "./UsageRing";
 import {
   IconCheck,
   IconClose,
@@ -518,6 +519,97 @@ export function ModelManager({
   );
 }
 
+function sceneLabel(source: string): string {
+  switch (source) {
+    case "cron":
+      return "定时任务";
+    case "subagent":
+      return "子代理";
+    default:
+      return "交互聊天";
+  }
+}
+
+function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+export function UsageSummarySection() {
+  const [rows, setRows] = useState<AiUsageSummaryRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let canceled = false;
+    void modelApi
+      .usageSummary()
+      .then((list) => {
+        if (!canceled) setRows(list);
+      })
+      .catch((e) => {
+        if (!canceled) setError(describeError(e));
+      });
+    void modelApi
+      .overview()
+      .then((view) => {
+        if (canceled) return;
+        const map: Record<string, string> = {};
+        for (const p of view.profiles) map[p.id] = p.name;
+        setNames(map);
+      })
+      .catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  return (
+    <div className="border-t border-neutral-800/60 pt-3">
+      <div className="mb-1.5 text-[11px] font-medium text-neutral-300">用量汇总（按场景 / 档案）</div>
+      {error ? (
+        <div className="nx-hint text-red-300">用量加载失败 · {error}</div>
+      ) : !rows ? (
+        <div className="nx-hint text-[11px]">用量加载中…</div>
+      ) : rows.length === 0 ? (
+        <div className="nx-hint text-[11px]">还没有已完成的 AI 运行</div>
+      ) : (
+        <div className="max-h-40 overflow-y-auto rounded-md border border-neutral-800/70">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="border-b border-neutral-800/70 text-neutral-500">
+                <th className="px-2 py-1 text-left font-medium">场景</th>
+                <th className="px-2 py-1 text-left font-medium">档案</th>
+                <th className="px-2 py-1 text-right font-medium">运行</th>
+                <th className="px-2 py-1 text-right font-medium">输入</th>
+                <th className="px-2 py-1 text-right font-medium">输出</th>
+                <th className="px-2 py-1 text-right font-medium">缓存写入</th>
+                <th className="px-2 py-1 text-right font-medium">平均延迟</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${row.source}/${row.profileId}`} className="border-b border-neutral-800/40 last:border-b-0">
+                  <td className="px-2 py-1 text-neutral-300">{sceneLabel(row.source)}</td>
+                  <td className="max-w-[140px] truncate px-2 py-1 text-neutral-300" title={row.profileId}>
+                    {row.profileId ? (names[row.profileId] ?? row.profileId) : "未记录"}
+                  </td>
+                  <td className="px-2 py-1 text-right font-mono text-neutral-400">{row.runs}</td>
+                  <td className="px-2 py-1 text-right font-mono text-neutral-400">{formatTokens(row.tokensIn)}</td>
+                  <td className="px-2 py-1 text-right font-mono text-neutral-400">{formatTokens(row.tokensOut)}</td>
+                  <td className="px-2 py-1 text-right font-mono text-neutral-400">{formatTokens(row.cacheCreationTokens)}</td>
+                  <td className="px-2 py-1 text-right font-mono text-neutral-400">{formatLatency(row.averageLatencyMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ModelPanel({ onClose }: { onClose: () => void }) {
   const [dirty, setDirty] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -570,6 +662,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
 
         <div className="nx-modal-body">
           <ModelManager onDirtyChange={setDirty} onRequestClose={() => void requestClose()} />
+          <UsageSummarySection />
         </div>
       </div>
     </div>

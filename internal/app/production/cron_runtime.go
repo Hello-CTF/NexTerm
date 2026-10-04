@@ -10,6 +10,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/cron"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -51,10 +52,15 @@ func scopeForConversation(lookup conversationLookup) func(cron.Trigger) tools.Sc
 type cronRuntime struct {
 	scheduler     *cron.Scheduler
 	conversations conversationLookup
+	profiles      profileLookup
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+type profileLookup interface {
+	Profile(id string) (profiles.Profile, bool)
 }
 
 func composeCronRuntime(ctx context.Context, services *ProductionServices) (*cronRuntime, error) {
@@ -79,7 +85,7 @@ func newCronRuntime(ctx context.Context, services *ProductionServices, options c
 	if err != nil {
 		return nil, err
 	}
-	return &cronRuntime{scheduler: scheduler, conversations: services.Store}, nil
+	return &cronRuntime{scheduler: scheduler, conversations: services.Store, profiles: services.Profiles}, nil
 }
 
 func cronModule(runtime *cronRuntime) Module {
@@ -129,13 +135,14 @@ func (c *cronRuntime) Shutdown(ctx context.Context) error {
 }
 
 type cronRegisterRequest struct {
-	SessionID string `json:"sessionId"`
-	Name      string `json:"name,omitempty"`
-	Prompt    string `json:"prompt"`
-	Schedule  string `json:"schedule"`
-	Timezone  string `json:"timezone,omitempty"`
-	Disabled  bool   `json:"disabled,omitempty"`
-	TimeoutMS int64  `json:"timeoutMs,omitempty"`
+	SessionID      string `json:"sessionId"`
+	Name           string `json:"name,omitempty"`
+	Prompt         string `json:"prompt"`
+	Schedule       string `json:"schedule"`
+	Timezone       string `json:"timezone,omitempty"`
+	Disabled       bool   `json:"disabled,omitempty"`
+	TimeoutMS      int64  `json:"timeoutMs,omitempty"`
+	ModelProfileID string `json:"modelProfileId,omitempty"`
 }
 
 type cronJobRequest struct {
@@ -158,14 +165,20 @@ func (c *cronRuntime) registerCommands(dispatcher *ipc.Dispatcher) error {
 						return cron.Job{}, err
 					}
 				}
+				if input.ModelProfileID != "" && c.profiles != nil {
+					if _, ok := c.profiles.Profile(input.ModelProfileID); !ok {
+						return cron.Job{}, profiles.ErrProfileNotFound
+					}
+				}
 				return c.scheduler.Register(ctx, cron.Registration{
-					SessionID: input.SessionID,
-					Name:      input.Name,
-					Prompt:    input.Prompt,
-					Schedule:  input.Schedule,
-					Timezone:  input.Timezone,
-					Disabled:  input.Disabled,
-					Timeout:   time.Duration(input.TimeoutMS) * time.Millisecond,
+					SessionID:      input.SessionID,
+					Name:           input.Name,
+					Prompt:         input.Prompt,
+					Schedule:       input.Schedule,
+					Timezone:       input.Timezone,
+					Disabled:       input.Disabled,
+					Timeout:        time.Duration(input.TimeoutMS) * time.Millisecond,
+					ModelProfileID: input.ModelProfileID,
 				})
 			})
 		},

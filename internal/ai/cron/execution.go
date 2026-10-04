@@ -23,7 +23,7 @@ func (s *Scheduler) execute(ctx context.Context, job Job) {
 	trigger := Trigger{
 		RunID: job.Run.ID, JobID: job.ID, SessionID: job.SessionID,
 		Name: job.Name, Prompt: job.Prompt, ScheduledFor: job.Run.ScheduledFor,
-		Coalesced: job.Run.Coalesced,
+		Coalesced: job.Run.Coalesced, ModelProfileID: job.ModelProfileID,
 	}
 	go func() {
 		results <- s.callExecutor(runContext, trigger)

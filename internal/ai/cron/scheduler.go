@@ -114,7 +114,8 @@ func (s *Scheduler) Register(ctx context.Context, registration Registration) (Jo
 		Name: strings.TrimSpace(registration.Name), Prompt: strings.TrimSpace(registration.Prompt),
 		Schedule: strings.TrimSpace(registration.Schedule), Timezone: registration.Timezone,
 		Enabled: !registration.Disabled, Timeout: registration.Timeout,
-		CreatedAt: now, UpdatedAt: now, NextRunAt: next,
+		ModelProfileID: strings.TrimSpace(registration.ModelProfileID),
+		CreatedAt:      now, UpdatedAt: now, NextRunAt: next,
 	}
 	stored, err := s.store.Create(ctx, job, s.options.MaxJobsPerSession)
 	if err != nil {

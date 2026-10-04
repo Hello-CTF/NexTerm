@@ -62,15 +62,19 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 	}
 
 	runner := agent.NewRunner(agent.Config{
-		Profiles:    services.Profiles,
-		Permissions: guardManager,
-		Permission:  unattendedPermissions(guardManager),
-		Tools:       registry,
-		Context:     builder,
-		Store:       services.Store,
-		Runs:        services.Store,
-		Checkpoints: agent.NewStoreCheckpoints(services.Store),
-		Subagents:   &tools.SubagentConfig{Model: subagent.NewProfileModelFactory(services.Profiles)},
+		Profiles:        services.Profiles,
+		ModelForProfile: aiProfileModelFactory(services.Profiles),
+		Permissions:     guardManager,
+		Permission:      unattendedPermissions(guardManager),
+		Tools:           registry,
+		Context:         builder,
+		Store:           services.Store,
+		Runs:            services.Store,
+		Checkpoints:     agent.NewStoreCheckpoints(services.Store),
+		Subagents: &tools.SubagentConfig{
+			Model:           subagent.NewProfileModelFactory(services.Profiles),
+			ModelForProfile: subagent.NewProfileModelFactoryByID(services.Profiles),
+		},
 		Memory:      memoryStore,
 		MemoryScope: productionMemoryScope,
 	})
@@ -106,6 +110,16 @@ func aiModelFactory(manager *profiles.Manager) agent.ModelFactory {
 			return nil, 0, errors.New("未配置活动 AI 模型")
 		}
 		client, err := manager.ActiveClient()
+		if err != nil {
+			return nil, 0, err
+		}
+		return client.BaseChatModel(ctx)
+	}
+}
+
+func aiProfileModelFactory(manager *profiles.Manager) agent.ProfileModelFactory {
+	return func(ctx context.Context, profileID string) (model.BaseChatModel, uint64, error) {
+		client, err := manager.ClientFor(profileID)
 		if err != nil {
 			return nil, 0, err
 		}

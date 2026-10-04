@@ -161,7 +161,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	if r.runs != nil {
-		if err := r.runs.RunInsert(ctx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source}); err != nil {
+		if err := r.runs.RunInsert(ctx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source, ProfileID: r.profileIDFor(args)}); err != nil {
 			r.releaseJobID(jobID)
 			cancel()
 			forceCancel()
@@ -448,6 +448,18 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 	})
 }
 
+func (r *Runner) profileIDFor(args ChatArgs) string {
+	if args.ModelProfileID != "" {
+		return args.ModelProfileID
+	}
+	if r.config.Profiles != nil {
+		if profile, ok := r.config.Profiles.ActiveProfile(); ok {
+			return profile.ID
+		}
+	}
+	return ""
+}
+
 func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) {
 	if r.runs == nil {
 		return
@@ -473,7 +485,7 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
 	defer cancel()
-	_ = r.runs.RunFinish(ctx, current.id, status, answer, message, turns, int64(total.PromptTokens), int64(total.CompletionTokens))
+	_ = r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns, int64(total.PromptTokens), int64(total.CompletionTokens), int64(total.CacheCreationTokens), total.LatencyMS)
 }
 
 func (r *Runner) updateRunStatus(current *job, status string) {

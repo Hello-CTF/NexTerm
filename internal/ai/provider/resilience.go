@@ -193,6 +193,7 @@ type attemptState struct {
 	callID         string
 	requestedModel string
 	servingModel   atomic.Value
+	cacheCreation  atomic.Uint64
 }
 
 func (s *attemptState) setServingModel(model string) {
@@ -204,6 +205,16 @@ func (s *attemptState) setServingModel(model string) {
 func (s *attemptState) actualModel() string {
 	model, _ := s.servingModel.Load().(string)
 	return model
+}
+
+func (s *attemptState) setCacheCreation(tokens uint64) {
+	if tokens > 0 {
+		s.cacheCreation.Store(tokens)
+	}
+}
+
+func (s *attemptState) cacheCreationTokens() uint64 {
+	return s.cacheCreation.Load()
 }
 
 type attemptStateKey struct{}

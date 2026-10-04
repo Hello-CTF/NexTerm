@@ -24,8 +24,9 @@ const (
 )
 
 var (
-	ErrNoActiveProfile = errors.New("no active AI model profile")
-	ErrProfileNotFound = errors.New("AI model profile not found")
+	ErrNoActiveProfile       = errors.New("no active AI model profile")
+	ErrProfileNotFound       = errors.New("AI model profile not found")
+	ErrProfileKeyUnavailable = errors.New("AI model profile has no usable API key")
 )
 
 type Settings interface {
@@ -197,6 +198,38 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 		}
 		return profile.APIKey, nil
 	}
+}
+
+func (m *Manager) Profile(id string) (Profile, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	profile, ok := m.state.find(id)
+	if !ok {
+		return Profile{}, false
+	}
+	return cloneProfile(profile), true
+}
+
+func (m *Manager) ClientFor(id string, options ...provider.Option) (*provider.Client, error) {
+	if id == "" {
+		return m.ActiveClient(options...)
+	}
+	m.mu.RLock()
+	profile, ok := m.state.find(id)
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrProfileNotFound, id)
+	}
+	if profile.APIKey == MaskedAPIKey {
+		return nil, fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
+	}
+	config := profile.ProviderConfig()
+	key, err := m.resolveAPIKey(profile)
+	if err != nil {
+		return nil, err
+	}
+	config.APIKey = key
+	return provider.NewClient(config, options...)
 }
 
 func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {

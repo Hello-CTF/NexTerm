@@ -7,53 +7,55 @@ import (
 )
 
 type Event struct {
-	Type             string
-	Seq              uint64
-	Phase            string
-	Detail           *string
-	Turn             int
-	Text             string
-	Tool             string
-	Chars            int
-	ID               string
-	Name             string
-	Args             json.RawMessage
-	Nonce            string
-	Display          string
-	OK               bool
-	Summary          string
-	Truncated        bool
-	ExitCode         int
-	Risk             string
-	Rendered         string
-	Reason           string
-	Preview          *tools.Preview
-	Question         *tools.Question
-	RequestID        string
-	Attempt          uint64
-	TabID            string
-	Path             string
-	Before           string
-	After            string
-	PromptTokens     uint64
-	CompletionTokens uint64
-	CachedTokens     uint64
-	ContextWindow    uint64
-	Model            string
-	RunID            string
-	CallID           string
-	Items            []tools.TodoItem
-	Plan             string
-	Answer           string
-	Turns            int
-	TokensIn         uint64
-	TokensOut        uint64
-	Message          string
-	Retryable        bool
-	ParentCallID     string
-	SubagentID       string
-	Depth            int
-	Status           string
+	Type                string
+	Seq                 uint64
+	Phase               string
+	Detail              *string
+	Turn                int
+	Text                string
+	Tool                string
+	Chars               int
+	ID                  string
+	Name                string
+	Args                json.RawMessage
+	Nonce               string
+	Display             string
+	OK                  bool
+	Summary             string
+	Truncated           bool
+	ExitCode            int
+	Risk                string
+	Rendered            string
+	Reason              string
+	Preview             *tools.Preview
+	Question            *tools.Question
+	RequestID           string
+	Attempt             uint64
+	TabID               string
+	Path                string
+	Before              string
+	After               string
+	PromptTokens        uint64
+	CompletionTokens    uint64
+	CachedTokens        uint64
+	CacheCreationTokens uint64
+	LatencyMS           int64
+	ContextWindow       uint64
+	Model               string
+	RunID               string
+	CallID              string
+	Items               []tools.TodoItem
+	Plan                string
+	Answer              string
+	Turns               int
+	TokensIn            uint64
+	TokensOut           uint64
+	Message             string
+	Retryable           bool
+	ParentCallID        string
+	SubagentID          string
+	Depth               int
+	Status              string
 }
 
 func (e Event) MarshalJSON() ([]byte, error) {
@@ -88,6 +90,12 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "usage":
 		payload["promptTokens"], payload["completionTokens"] = e.PromptTokens, e.CompletionTokens
 		payload["cachedTokens"], payload["contextWindow"] = e.CachedTokens, e.ContextWindow
+		if e.CacheCreationTokens != 0 {
+			payload["cacheCreationTokens"] = e.CacheCreationTokens
+		}
+		if e.LatencyMS != 0 {
+			payload["latencyMs"] = e.LatencyMS
+		}
 		if e.Model != "" {
 			payload["model"] = e.Model
 		}

@@ -64,6 +64,7 @@ type ProductionServices struct {
 	aiRelease        func()
 	cron             *cronRuntime
 	Transcripts      *transcriptWriter
+	aiRetention      *aiRetentionComponent
 }
 
 type Production struct {
@@ -186,6 +187,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.cron != nil {
 		modules = append(modules, cronModule(services.cron))
+	}
+	if services.aiRetention != nil {
+		modules = append(modules, Module{Name: "ai-retention", Component: services.aiRetention})
 	}
 	if services.Takeover != nil {
 		modules = append(modules, takeover.Module(services.Takeover))

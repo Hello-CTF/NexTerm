@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -88,6 +89,9 @@ func (m *Manager) Spawn(ctx context.Context, request Request) (Handle, error) {
 	}
 	if strings.TrimSpace(request.Task) == "" {
 		return Handle{}, errors.New("subagent task cannot be empty")
+	}
+	if request.ModelProfileID != "" && m.config.NewModelForProfile == nil {
+		return Handle{}, errors.New("subagent model profile selection is not configured")
 	}
 	if request.Timeout < 0 || request.Timeout > m.config.MaxRunTime {
 		return Handle{}, fmt.Errorf("subagent timeout must be between 0 and %s", m.config.MaxRunTime)
@@ -299,7 +303,7 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 }
 
 func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, error) {
-	chatModel, err := m.config.NewModel(current.ctx)
+	chatModel, err := m.modelFor(current, request)
 	if err != nil {
 		return "", err
 	}
@@ -396,6 +400,13 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		return "", firstErr
 	}
 	return output, nil
+}
+
+func (m *Manager) modelFor(current *task, request Request) (model.BaseChatModel, error) {
+	if request.ModelProfileID != "" {
+		return m.config.NewModelForProfile(current.ctx, request.ModelProfileID)
+	}
+	return m.config.NewModel(current.ctx)
 }
 
 func (t *task) emit(event Event) {

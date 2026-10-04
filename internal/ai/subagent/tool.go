@@ -11,8 +11,9 @@ import (
 const SpawnToolName = "spawn_subagent"
 
 type SpawnInput struct {
-	Task    string `json:"task" jsonschema:"required"`
-	Persona string `json:"persona,omitempty"`
+	Task           string `json:"task" jsonschema:"required"`
+	Persona        string `json:"persona,omitempty"`
+	ModelProfileID string `json:"modelProfileId,omitempty"`
 }
 
 func NewSpawnTool(manager *Manager, scope Scope, factories ...ObserverFactory) (tool.InvokableTool, error) {
@@ -23,8 +24,8 @@ func NewSpawnTool(manager *Manager, scope Scope, factories ...ObserverFactory) (
 	if err != nil {
 		return nil, err
 	}
-	return utils.InferTool(SpawnToolName, "运行一个有界隔离子任务：只能使用调用方配置的工具范围；嵌套 spawn 会被拒绝，也不能请求用户交互。", func(ctx context.Context, input SpawnInput) (string, error) {
-		request := Request{Task: input.Task, Persona: input.Persona, Scope: &normalized}
+	return utils.InferTool(SpawnToolName, "运行一个有界隔离子任务：只能使用调用方配置的工具范围；嵌套 spawn 会被拒绝，也不能请求用户交互。可选 modelProfileId 指定已保存的模型档案，缺省用当前活动档案。", func(ctx context.Context, input SpawnInput) (string, error) {
+		request := Request{Task: input.Task, Persona: input.Persona, Scope: &normalized, ModelProfileID: input.ModelProfileID}
 		if len(factories) > 0 && factories[0] != nil {
 			request.Observer = factories[0](ctx)
 		}

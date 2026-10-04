@@ -27,6 +27,8 @@ var (
 
 type ModelFactory func(context.Context) (model.BaseChatModel, error)
 
+type ProfileModelFactory func(context.Context, string) (model.BaseChatModel, error)
+
 type ToolFactory func(context.Context, Scope) ([]tool.BaseTool, error)
 
 type EventKind string
@@ -58,6 +60,7 @@ type ObserverFactory func(context.Context) Observer
 
 type Config struct {
 	NewModel           ModelFactory
+	NewModelForProfile ProfileModelFactory
 	NewTools           ToolFactory
 	Instruction        string
 	MaxIterations      int
@@ -75,12 +78,13 @@ type Scope struct {
 }
 
 type Request struct {
-	ID       string
-	Task     string
-	Persona  string
-	Scope    *Scope
-	Timeout  time.Duration
-	Observer Observer
+	ID             string
+	Task           string
+	Persona        string
+	Scope          *Scope
+	Timeout        time.Duration
+	Observer       Observer
+	ModelProfileID string
 }
 
 type Handle struct {
