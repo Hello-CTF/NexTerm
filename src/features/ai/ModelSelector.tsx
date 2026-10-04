@@ -75,7 +75,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
       <button
         ref={chipRef}
         className="nx-chip pointer-coarse:min-h-6 max-w-[180px] min-w-0"
-        title="模型配置（BYOK：可保存多份档案）"
+        title="模型配置（可保存多份模型档案）"
         onClick={toggle}
       >
         {busy ? (

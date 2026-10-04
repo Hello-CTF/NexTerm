@@ -537,7 +537,7 @@ export function applyAiEvent(
             role: "tool",
             callId: "",
             name: "read_screen",
-            display: "读屏",
+            display: "读取屏幕",
             summary: textOf(ev).slice(-200),
             text: textOf(ev).slice(-4000),
             ok: true,

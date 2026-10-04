@@ -459,7 +459,7 @@ export function ModelManager({
               </label>
 
               <div className="nx-hint mt-0.5">
-                API Key 以明文存进本机 sqlite（与 AI 权限配置同一约定），不会上传到任何服务器。
+                API Key 以明文存进本机 sqlite，不会上传到任何服务器。
               </div>
             </div>
           ) : (
@@ -481,7 +481,7 @@ export function ModelManager({
         {draft ? (
           <>
             <span className="nx-hint mr-auto self-center text-[10.5px]">
-              {isNew ? "新档案（尚未保存）" : isActive ? "当前激活" : `${draft.name}`}
+              {isNew ? "新档案（尚未保存）" : isActive ? "当前" : `${draft.name}`}
               {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">· 有未保存的修改</span>}
             </span>
             <button
