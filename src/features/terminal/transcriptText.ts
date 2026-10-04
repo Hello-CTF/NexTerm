@@ -25,108 +25,155 @@ export interface TranscriptDecoder {
 }
 
 export function createTranscriptDecoder(): TranscriptDecoder {
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  let tail = "";
-  const strip = (text: string): string => {
-    let visible = "";
-    let index = 0;
-    while (index < text.length) {
-      const code = text.charCodeAt(index);
-      if (code === 0x1b) {
-        const result = scanEscape(text, index);
-        if (!result.complete) {
-          tail = text.slice(index);
-          return visible;
-        }
-        index = result.end;
-        continue;
-      }
-      if (code === 0x9b) {
-        const result = scanCsi(text, index + 1);
-        if (!result.complete) {
-          tail = text.slice(index);
-          return visible;
-        }
-        index = result.end;
-        continue;
-      }
-      if (code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
-        const result = scanControlString(text, index + 1);
-        if (!result.complete) {
-          tail = text.slice(index);
-          return visible;
-        }
-        index = result.end;
-        continue;
-      }
-      visible += text[index];
-      index++;
-    }
+  let tail: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  const advance = (bytes: Uint8Array): string => {
+    const raw = new Uint8Array(tail.length + bytes.length);
+    raw.set(tail, 0);
+    raw.set(bytes, tail.length);
+    const [visible, rest] = visibleBytes(raw);
+    tail = rest;
     return visible;
   };
   return {
     push(dataBase64: string): string {
-      const bytes = decodeBase64(dataBase64);
-      const text = tail + decoder.decode(bytes, { stream: true });
-      tail = "";
-      return strip(text);
+      return advance(decodeBase64(dataBase64));
     },
     flush(): string {
-      const text = tail + decoder.decode();
-      tail = "";
-      return strip(text);
+      const raw = tail;
+      tail = new Uint8Array(0);
+      const [visible] = visibleBytes(raw);
+      return visible;
     },
   };
 }
 
-function scanCsi(text: string, start: number): { end: number; complete: boolean } {
-  for (let index = start; index < text.length; index++) {
-    const code = text.charCodeAt(index);
-    if (code >= 0x40 && code <= 0x7e) return { end: index + 1, complete: true };
-    if (code < 0x20 || code > 0x3f) return { end: index, complete: true };
-  }
-  return { end: text.length, complete: false };
-}
-
-function scanEscape(text: string, start: number): { end: number; complete: boolean } {
-  if (start + 1 >= text.length) return { end: text.length, complete: false };
-  const kind = text[start + 1];
-  if (kind === "[") {
-    return scanCsi(text, start + 2);
-  }
-  if (kind === "]") {
-    for (let index = start + 2; index < text.length; index++) {
-      if (text.charCodeAt(index) === 0x07) return { end: index + 1, complete: true };
-      if (text.charCodeAt(index) === 0x1b && index + 1 < text.length && text[index + 1] === "\\") {
-        return { end: index + 2, complete: true };
-      }
+function visibleBytes(raw: Uint8Array): [string, Uint8Array<ArrayBufferLike>] {
+  let visible = "";
+  let index = 0;
+  while (index < raw.length) {
+    const current = raw[index];
+    if (current === 0x1b) {
+      const result = escapeSequence(raw, index);
+      if (!result.complete) return [visible, raw.slice(index)];
+      index = result.end;
+      continue;
     }
-    return { end: text.length, complete: false };
-  }
-  if (kind === "P" || kind === "X" || kind === "^" || kind === "_") {
-    return scanControlString(text, start + 2);
-  }
-  let index = start + 1;
-  while (index < text.length) {
-    const code = text.charCodeAt(index);
-    if (code >= 0x20 && code <= 0x2f) {
+    if (current === 0x9b) {
+      const result = csiSequence(raw, index + 1);
+      if (!result.complete) return [visible, raw.slice(index)];
+      index = result.end;
+      continue;
+    }
+    if (current === 0x90 || current === 0x98 || current === 0x9e || current === 0x9f) {
+      const result = controlString(raw, index + 1);
+      if (!result.complete) return [visible, raw.slice(index)];
+      index = result.end;
+      continue;
+    }
+    const decoded = decodeRune(raw, index);
+    if (decoded.size === 0) {
+      return [visible, raw.slice(index)];
+    }
+    if (decoded.rune === 0xfffd && decoded.size === 1) {
+      visible += String.fromCharCode(current);
       index++;
       continue;
     }
-    if (code >= 0x30 && code <= 0x7e) return { end: index + 1, complete: true };
-    return { end: index, complete: true };
+    if (decoded.rune >= 0x80 && decoded.rune <= 0x9f) {
+      if (decoded.rune === 0x9b) {
+        const result = csiSequence(raw, index + decoded.size);
+        if (!result.complete) return [visible, raw.slice(index)];
+        index = result.end;
+        continue;
+      }
+      if (decoded.rune === 0x90 || decoded.rune === 0x98 || decoded.rune === 0x9e || decoded.rune === 0x9f) {
+        const result = controlString(raw, index + decoded.size);
+        if (!result.complete) return [visible, raw.slice(index)];
+        index = result.end;
+        continue;
+      }
+      index += decoded.size;
+      continue;
+    }
+    visible += String.fromCodePoint(decoded.rune);
+    index += decoded.size;
   }
-  return { end: text.length, complete: false };
+  return [visible, new Uint8Array(0)];
 }
 
-function scanControlString(text: string, start: number): { end: number; complete: boolean } {
-  for (let index = start; index < text.length; index++) {
-    if (text.charCodeAt(index) === 0x1b && index + 1 < text.length && text[index + 1] === "\\") {
+function escapeSequence(raw: Uint8Array, start: number): { end: number; complete: boolean } {
+  if (start + 1 >= raw.length) return { end: raw.length, complete: false };
+  const kind = raw[start + 1];
+  if (kind === 0x5b) return csiSequence(raw, start + 2);
+  if (kind === 0x5d) return oscSequence(raw, start + 2);
+  if (kind === 0x50 || kind === 0x58 || kind === 0x5e || kind === 0x5f) return controlString(raw, start + 2);
+  let index = start + 1;
+  while (index < raw.length && raw[index] >= 0x20 && raw[index] <= 0x2f) index++;
+  if (index >= raw.length) return { end: raw.length, complete: false };
+  if (raw[index] >= 0x30 && raw[index] <= 0x7e) return { end: index + 1, complete: true };
+  return { end: index, complete: true };
+}
+
+function csiSequence(raw: Uint8Array, start: number): { end: number; complete: boolean } {
+  for (let index = start; index < raw.length; index++) {
+    const current = raw[index];
+    if (current >= 0x40 && current <= 0x7e) return { end: index + 1, complete: true };
+    if (current < 0x20 || current > 0x3f) return { end: index, complete: true };
+  }
+  return { end: raw.length, complete: false };
+}
+
+function oscSequence(raw: Uint8Array, start: number): { end: number; complete: boolean } {
+  for (let index = start; index < raw.length; index++) {
+    if (raw[index] === 0x07) return { end: index + 1, complete: true };
+    if (raw[index] === 0x1b && index + 1 < raw.length && raw[index + 1] === 0x5c) {
       return { end: index + 2, complete: true };
     }
-    if (text.charCodeAt(index) === 0x9c) return { end: index + 1, complete: true };
   }
-  return { end: text.length, complete: false };
+  return { end: raw.length, complete: false };
+}
+
+function controlString(raw: Uint8Array, start: number): { end: number; complete: boolean } {
+  for (let index = start; index < raw.length; index++) {
+    if (raw[index] === 0x1b && index + 1 < raw.length && raw[index + 1] === 0x5c) {
+      return { end: index + 2, complete: true };
+    }
+    if (raw[index] === 0x9c) return { end: index + 1, complete: true };
+  }
+  return { end: raw.length, complete: false };
+}
+
+function decodeRune(raw: Uint8Array, index: number): { rune: number; size: number } {
+  const b0 = raw[index];
+  if (b0 < 0x80) return { rune: b0, size: 1 };
+  if (b0 >= 0xc2 && b0 <= 0xdf) {
+    if (index + 1 >= raw.length) return { rune: 0, size: 0 };
+    const b1 = raw[index + 1];
+    if ((b1 & 0xc0) !== 0x80) return { rune: 0xfffd, size: 1 };
+    return { rune: ((b0 & 0x1f) << 6) | (b1 & 0x3f), size: 2 };
+  }
+  if (b0 >= 0xe0 && b0 <= 0xef) {
+    if (index + 2 >= raw.length) return { rune: 0, size: 0 };
+    const b1 = raw[index + 1];
+    const b2 = raw[index + 2];
+    if ((b1 & 0xc0) !== 0x80 || (b2 & 0xc0) !== 0x80) return { rune: 0xfffd, size: 1 };
+    const rune = ((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f);
+    if (rune < 0x800 || (rune >= 0xd800 && rune <= 0xdfff)) return { rune: 0xfffd, size: 1 };
+    return { rune, size: 3 };
+  }
+  if (b0 >= 0xf0 && b0 <= 0xf4) {
+    if (index + 3 >= raw.length) return { rune: 0, size: 0 };
+    const b1 = raw[index + 1];
+    const b2 = raw[index + 2];
+    const b3 = raw[index + 3];
+    if ((b1 & 0xc0) !== 0x80 || (b2 & 0xc0) !== 0x80 || (b3 & 0xc0) !== 0x80) {
+      return { rune: 0xfffd, size: 1 };
+    }
+    const rune = ((b0 & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+    if (rune < 0x10000 || rune > 0x10ffff) return { rune: 0xfffd, size: 1 };
+    return { rune, size: 4 };
+  }
+  return { rune: 0xfffd, size: 1 };
 }
 
 export function formatTranscriptBytes(bytes: number): string {

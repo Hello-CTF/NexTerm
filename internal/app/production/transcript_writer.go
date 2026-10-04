@@ -60,7 +60,7 @@ type transcriptItem struct {
 
 type transcriptPeriod struct {
 	transcriptID string
-	durableID    string
+	durableBytes map[string]int64
 	nextSeq      int64
 	bytes        int64
 	truncated    bool
@@ -345,9 +345,6 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 			if period == nil || period.truncated {
 				continue
 			}
-			if period.durableID == "" {
-				period.durableID = item.durableID
-			}
 			if period.bytes+int64(len(item.data)) > w.maxSessionBytes {
 				period.pending = append(period.pending, store.TranscriptChunkRow{
 					Seq: period.nextSeq, TabID: item.tabID, TS: item.ts,
@@ -357,6 +354,12 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 				period.bytes += int64(len(transcriptTruncationMarker))
 				period.truncated = true
 				continue
+			}
+			if item.durableID != "" {
+				if period.durableBytes == nil {
+					period.durableBytes = make(map[string]int64)
+				}
+				period.durableBytes[item.durableID] += int64(len(item.data))
 			}
 			period.pending = append(period.pending, store.TranscriptChunkRow{
 				Seq: period.nextSeq, TabID: item.tabID, TS: item.ts, Data: item.data,
@@ -374,20 +377,22 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, bat
 	}
 	for _, period := range sessions {
 		if len(period.pending) > 0 {
-			if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableID); err != nil {
+			if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableBytes); err != nil {
 				w.logger.Error("transcript chunk flush failed", "transcriptId", period.transcriptID, "error", err)
 			}
 			period.pending = nil
+			period.durableBytes = nil
 		}
 	}
 }
 
 func (w *transcriptWriter) flushPeriod(period *transcriptPeriod, endedAt int64) {
 	if len(period.pending) > 0 {
-		if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableID); err != nil {
+		if err := w.database.TranscriptAppendChunks(context.Background(), period.transcriptID, period.pending, period.durableBytes); err != nil {
 			w.logger.Error("transcript chunk flush failed", "transcriptId", period.transcriptID, "error", err)
 		}
 		period.pending = nil
+		period.durableBytes = nil
 	}
 	if err := w.database.TranscriptEnd(context.Background(), period.transcriptID, endedAt, period.truncated); err != nil {
 		w.logger.Error("transcript end failed", "transcriptId", period.transcriptID, "error", err)

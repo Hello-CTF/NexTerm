@@ -543,3 +543,58 @@ func TestTranscriptSearchControlStringAcrossChunks(t *testing.T) {
 		t.Fatalf("split DCS payload must not be searchable: %+v", matches)
 	}
 }
+
+func TestVisibleBytesC1GoldenParity(t *testing.T) {
+	for name, raw := range map[string][]byte{
+		"raw C1 DCS":    append(append(append([]byte("hel"), 0x90), []byte("secret-c1")...), append([]byte{0x9c}, []byte("lo visible")...)...),
+		"utf8 C1 DCS":   []byte("hel\xc2\x90secret-c1\xc2\x9clo visible"),
+		"raw C1 APC":    append(append(append([]byte("hel"), 0x9f), []byte("secret-c1")...), append([]byte{0x9c}, []byte("lo visible")...)...),
+		"utf8 C1 APC":   []byte("hel\xc2\x9fsecret-c1\xc2\x9clo visible"),
+		"raw C1 SOS":    append(append(append([]byte("hel"), 0x98), []byte("secret-c1")...), append([]byte{0x9c}, []byte("lo visible")...)...),
+		"utf8 C1 SOS":   []byte("hel\xc2\x98secret-c1\xc2\x9clo visible"),
+		"raw C1 PM":     append(append(append([]byte("hel"), 0x9e), []byte("secret-c1")...), append([]byte{0x9c}, []byte("lo visible")...)...),
+		"utf8 C1 PM":    []byte("hel\xc2\x9esecret-c1\xc2\x9clo visible"),
+		"seven bit DCS": []byte("hel\x1bPsecret-c1\x1b\\lo visible"),
+		"seven bit APC": []byte("hel\x1b_secret-c1\x1b\\lo visible"),
+		"seven bit SOS": []byte("hel\x1bXsecret-c1\x1b\\lo visible"),
+		"seven bit PM":  []byte("hel\x1b^secret-c1\x1b\\lo visible"),
+		"charset ESC(B": []byte("hel\x1b(Blo visible"),
+	} {
+		visible, tail := visibleBytes(raw)
+		if string(visible) != "hello visible" || len(tail) != 0 {
+			t.Fatalf("%s: visible=%q tail=%q, want %q", name, visible, tail, "hello visible")
+		}
+		matcher := newVisibleMatcher([]byte("hello"), 10)
+		matcher.consume(0, 1, raw)
+		if len(matcher.matches) != 1 {
+			t.Fatalf("%s: word across control string must match, matches=%d", name, len(matcher.matches))
+		}
+		payload := newVisibleMatcher([]byte("secret-c1"), 10)
+		payload.consume(0, 1, raw)
+		if len(payload.matches) != 0 {
+			t.Fatalf("%s: payload leaked into searchable text: %+v", name, payload.matches)
+		}
+	}
+}
+
+func TestVisibleBytesC1GoldenParityAcrossChunks(t *testing.T) {
+	for name, chunks := range map[string][][]byte{
+		"raw C1 split":  {[]byte("hel\x90pay"), []byte("load\x9clo visible")},
+		"utf8 C1 split": {[]byte("hel\xc2\x90pay"), []byte("load\xc2\x9clo visible")},
+	} {
+		matcher := newVisibleMatcher([]byte("hello"), 10)
+		for index, chunk := range chunks {
+			matcher.consume(int64(index), int64(index+1), chunk)
+		}
+		if len(matcher.matches) != 1 {
+			t.Fatalf("%s: split control string must still match: %+v", name, matcher.matches)
+		}
+		payload := newVisibleMatcher([]byte("payload"), 10)
+		for index, chunk := range chunks {
+			payload.consume(int64(index), int64(index+1), chunk)
+		}
+		if len(payload.matches) != 0 {
+			t.Fatalf("%s: split payload leaked: %+v", name, payload.matches)
+		}
+	}
+}

@@ -389,6 +389,44 @@ describe("transcriptText", () => {
     expect(text).toBe("sosdone pmdone c1done");
   });
 
+  it("strips raw single-byte C1 like the Go matcher", () => {
+    const decoder = createTranscriptDecoder();
+    const raw = new Uint8Array([
+      ...new TextEncoder().encode("hel"),
+      0x90,
+      ...new TextEncoder().encode("secret-c1"),
+      0x9c,
+      ...new TextEncoder().encode("lo visible"),
+    ]);
+    let text = decoder.push(btoa(String.fromCharCode(...raw)));
+    text += decoder.flush();
+    expect(text).toBe("hello visible");
+    expect(text).not.toContain("secret-c1");
+    expect(text).not.toContain("\ufffd");
+  });
+
+  it("keeps raw C1 and UTF-8 C1 golden parity across chunk splits", () => {
+    const rawC1 = new Uint8Array([
+      ...new TextEncoder().encode("hel"),
+      0x90,
+      ...new TextEncoder().encode("pay"),
+    ]);
+    const utf8C1 = new Uint8Array([
+      ...new TextEncoder().encode("hel"),
+      0xc2,
+      0x90,
+      ...new TextEncoder().encode("pay"),
+    ]);
+    for (const input of [rawC1, utf8C1]) {
+      const decoder = createTranscriptDecoder();
+      let text = decoder.push(btoa(String.fromCharCode(...input)));
+      expect(text).toBe("hel");
+      text += decoder.push(btoa(String.fromCharCode(...new TextEncoder().encode("load\u001b\\lo"))));
+      text += decoder.flush();
+      expect(text).toBe("hello");
+    }
+  });
+
   it("completes a trailing incomplete escape on flush", () => {
     const decoder = createTranscriptDecoder();
     const first = new TextEncoder().encode("plain\u001b]0;title");

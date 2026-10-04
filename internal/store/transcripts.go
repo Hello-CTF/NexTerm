@@ -79,13 +79,9 @@ VALUES(?,?,?,?,?,?,NULL,0,0,0)`,
 	return nil
 }
 
-func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []TranscriptChunkRow, durableID ...string) error {
+func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []TranscriptChunkRow, durableBytes ...map[string]int64) error {
 	if len(chunks) == 0 {
 		return nil
-	}
-	durable := ""
-	if len(durableID) > 0 {
-		durable = durableID[0]
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -106,12 +102,17 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 		totalBytes, totalChunks, transcriptID); err != nil {
 		return dbError(err)
 	}
-	if durable != "" {
+	if len(durableBytes) > 0 {
 		now := ids.NowMS()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, offset, updated_at)
+		for durableID, count := range durableBytes[0] {
+			if count <= 0 {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, offset, updated_at)
 VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET offset=offset+?, updated_at=?`,
-			durable, totalBytes, now, totalBytes, now); err != nil {
-			return dbError(err)
+				durableID, count, now, count, now); err != nil {
+				return dbError(err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -413,6 +414,25 @@ func visibleBytes(raw []byte) (visible []byte, tail []byte) {
 				}
 				visible = append(visible, current)
 				index++
+				continue
+			}
+			if r >= 0x80 && r <= 0x9f {
+				switch r {
+				case 0x9b:
+					consumed, complete := csiSequence(raw[index+size:])
+					if !complete {
+						return visible, raw[index:]
+					}
+					index += size + consumed
+				case 0x90, 0x98, 0x9e, 0x9f:
+					consumed, complete := controlString(raw[index+size:])
+					if !complete {
+						return visible, raw[index:]
+					}
+					index += size + consumed
+				default:
+					index += size
+				}
 				continue
 			}
 			visible = append(visible, raw[index:index+size]...)
