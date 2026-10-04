@@ -28,6 +28,7 @@ type fakeDurableProvider struct {
 type fakeDurableRecord struct {
 	identity    int
 	output      []byte
+	transcribed int64
 	killed      int
 	exitCode    *int
 	attachments []*fakeDurableAttachment
@@ -86,6 +87,24 @@ func (p *fakeDurableProvider) Attach(_ context.Context, id string) (base.Durable
 		attachment.reads <- append([]byte(nil), record.output...)
 	}
 	return attachment, nil
+}
+
+func (p *fakeDurableProvider) DurableTranscriptCatchUpBytes(tabID string) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	record := p.records[tabID]
+	if record == nil {
+		return 0
+	}
+	return record.transcribed
+}
+
+func (p *fakeDurableProvider) PersistDurableTranscriptOffset(tabID string, offset int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if record := p.records[tabID]; record != nil {
+		record.transcribed = offset
+	}
 }
 
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {

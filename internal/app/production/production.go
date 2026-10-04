@@ -63,6 +63,7 @@ type ProductionServices struct {
 	smokeAttach      bool
 	aiRelease        func()
 	cron             *cronRuntime
+	Transcripts      *transcriptWriter
 }
 
 type Production struct {
@@ -153,11 +154,19 @@ func productionModules(services ProductionServices) []Module {
 	if services.Supervisor != nil {
 		modules = append(modules, Module{Name: "durable-supervisor", Component: closeSupervisorComponent(services.Supervisor)})
 	}
+	if services.Transcripts != nil {
+		modules = append(modules, Module{Name: "transcript-writer", Component: services.Transcripts})
+	}
 	if services.Sessions != nil {
 		modules = append(modules, Module{
-			Name:             "session",
-			RegisterCommands: services.terminalCommands.registerSession,
-			Component:        services.Sessions,
+			Name: "session",
+			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				if err := services.terminalCommands.registerSession(dispatcher); err != nil {
+					return err
+				}
+				return services.terminalCommands.registerTranscripts(dispatcher)
+			},
+			Component: services.Sessions,
 		})
 	}
 	if services.channelBridge != nil {

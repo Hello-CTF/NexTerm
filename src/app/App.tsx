@@ -61,6 +61,7 @@ import { mountUnavailableReason } from "./capabilities";
 import { AssetTree, AssetEditor } from "../features/explorer/AssetTree";
 import { TerminalPane } from "../features/terminal/TerminalPane";
 import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
+import { TranscriptHistoryPanel } from "../features/terminal/TranscriptHistoryPanel";
 import { FileBrowser } from "../features/files/FileBrowser";
 import { FileTree } from "../features/files/FileTree";
 import { fileVisual } from "../features/files/fileTypes";
@@ -88,6 +89,7 @@ import {
   IconBox,
   IconCheckCircle,
   IconChevronLeft,
+  IconClock,
   IconClose,
   IconCode,
   IconEdit,
@@ -129,6 +131,7 @@ const TAB_ICON = {
   settings: IconSettings,
   audit: IconHistory,
   background: IconActivity,
+  history: IconClock,
 } as const;
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
@@ -505,6 +508,12 @@ export default function App() {
       .addTab({ id: "background", kind: "background", title: "后台会话", closable: true });
   }, []);
 
+  const openHistory = useCallback(() => {
+    useUi
+      .getState()
+      .addTab({ id: "history", kind: "history", title: "终端历史", closable: true });
+  }, []);
+
   const openNewTerminal = useCallback(async () => {
     const sid = ws?.sessionId;
     const s = sid ? sessions.find((x) => x.id === sid) : undefined;
@@ -778,6 +787,12 @@ export default function App() {
       label: "后台会话",
       icon: IconActivity,
       onClick: openBackground,
+    },
+    {
+      key: "history",
+      label: "终端历史",
+      icon: IconClock,
+      onClick: openHistory,
     },
     { key: "docker", label: "容器", icon: IconBox, onClick: openDocker },
     { key: "db", label: "数据库", icon: IconDatabase, onClick: () => void openDatabase() },
@@ -1607,6 +1622,8 @@ function PaneForTab({
       return <AuditView />;
     case "background":
       return <BackgroundSessions visible={active} />;
+    case "history":
+      return <TranscriptHistoryPanel visible={active} />;
     case "credentials":
       return <CredentialsPanel credId={tab.credId} />;
     case "credentialsText":

@@ -53,6 +53,11 @@ type durableGridSource interface {
 	DurableGrid() (cols, rows uint32, ok bool)
 }
 
+type durableTranscriptOffsetSource interface {
+	DurableTranscriptCatchUpBytes(tabID string) int64
+	PersistDurableTranscriptOffset(tabID string, offset int64)
+}
+
 func (a *tmuxDurableAttachment) DurableVersions() (eventVersion, gridRevision uint64, err error) {
 	return a.session.Versions()
 }

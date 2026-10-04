@@ -25,7 +25,8 @@ export type PaneKind =
   | "credentialsText"
   | "settings"
   | "audit"
-  | "background";
+  | "background"
+  | "history";
 
 export type LeftMode = "assets" | "files" | "credentials";
 

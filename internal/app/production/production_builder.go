@@ -136,13 +136,19 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if durableErr != nil {
 			config.Config.Logger.Warn("desktop supervisor helper unavailable, local durable tabs are disabled", "error", durableErr)
 		} else {
-			durableProvider = supervisor.NewRemoteProvider(supervisorHelper.Client())
+			durableProvider = &catchUpProvider{
+				DurableProvider: supervisor.NewRemoteProvider(supervisorHelper.Client()),
+				database:        database,
+			}
 		}
 	} else {
 		var supervisorErr error
 		supervisorInstance, supervisorErr = supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
 		if supervisorErr == nil {
-			durableProvider = supervisor.NewProvider(supervisorInstance)
+			durableProvider = &catchUpProvider{
+				DurableProvider: supervisor.NewProvider(supervisorInstance),
+				database:        database,
+			}
 		} else {
 			config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
 			durableBackend, durableErr = durable.New(durable.Config{
@@ -154,16 +160,23 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					return nil, durableErr
 				}
 			} else {
-				durableProvider = session.NewDurableProvider(durableBackend)
+				durableProvider = &catchUpProvider{
+					DurableProvider: session.NewDurableProvider(durableBackend),
+					database:        database,
+				}
 			}
 		}
 	}
 	dockerService := config.Docker
 	emitter := session.AdaptEmitter(config.Config.Events)
+	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
+		Database: database, Logger: config.Config.Logger,
+	})
 	sessionManager = session.NewManager(session.Config{
-		Connector: connector,
-		Terminals: config.Terminals,
-		Durable:   durableProvider,
+		Connector:   connector,
+		Terminals:   config.Terminals,
+		Durable:     durableProvider,
+		Transcripts: transcriptWriter,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
@@ -193,6 +206,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
 		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
+		Transcripts: transcriptWriter,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
 		services.closeAIRuntime()

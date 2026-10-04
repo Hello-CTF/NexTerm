@@ -173,6 +173,61 @@ export const terminalApi = {
     call<void>("terminal_close_tab", { tabId, mode, clientId: clientId() }),
 };
 
+export interface TranscriptSummary {
+  id: string;
+  sessionId: string;
+  assetId: string;
+  assetName: string;
+  assetKind: string;
+  assetDeleted: boolean;
+  startedAt: number;
+  endedAt: number | null;
+  bytes: number;
+  chunks: number;
+  truncated: boolean;
+  active: boolean;
+}
+
+export interface TranscriptChunk {
+  seq: number;
+  tabId: string;
+  ts: number;
+  dataBase64: string;
+}
+
+export interface TranscriptReadResult {
+  chunks: TranscriptChunk[];
+  nextSeq: number;
+  done: boolean;
+  totalBytes: number;
+}
+
+export interface TranscriptMatch {
+  seq: number;
+  ts: number;
+  preview: string;
+}
+
+export interface TranscriptHost {
+  assetId: string;
+  assetName: string;
+  assetKind: string;
+  assetDeleted: boolean;
+  transcripts: number;
+  lastStartedAt: number;
+}
+
+export const transcriptApi = {
+  hosts: () => call<TranscriptHost[]>("transcript_hosts"),
+  list: (assetId: string) =>
+    call<TranscriptSummary[]>("transcript_list", { assetId }),
+  read: (id: string, afterSeq = 0, maxBytes?: number) =>
+    call<TranscriptReadResult>("transcript_read", { id, afterSeq, maxBytes }),
+  search: (id: string, query: string) =>
+    call<TranscriptMatch[]>("transcript_search", { id, query }),
+  remove: (id: string) => call<void>("transcript_delete", { id }),
+};
+
 export interface LayoutDto {
   revision: number;
   updatedAt: number;

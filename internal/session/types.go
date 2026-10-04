@@ -114,6 +114,7 @@ type Config struct {
 	Durable          base.DurableProvider
 	Hub              *hub.Hub
 	Emitter          Emitter
+	Transcripts      TranscriptSink
 	NewID            func() string
 	IdleTimeout      time.Duration
 	SweepInterval    time.Duration
