@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// 关闭/后台交互真实浏览器验收（M129）：关闭运行中终端 = 无确认转后台并可接管；
-// 结束进程/断开连接/容器 exec 关闭 = 独立 danger 入口 + 二次确认；容器 exec 不提供假后台。
-// 运行：node src/test/close-background-acceptance.mjs
-// 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
-// 报告与截图写入 target/acceptance-close-background/。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -270,6 +265,13 @@ async function pressCtrl(page, letter, vk) {
   await sleep(60);
 }
 
+async function pressCtrlBackslash(page) {
+  const base = { key: "\\", code: "Backslash", windowsVirtualKeyCode: 220, modifiers: 2 };
+  await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  await sleep(60);
+}
+
 async function screenshot(page, name) {
   const shot = await page.send("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(OUT, name), Buffer.from(shot.data, "base64"));
@@ -281,7 +283,6 @@ async function boot(page) {
   await page.waitFor(
     "Boolean(document.querySelector('[role=\"tablist\"][aria-label=\"工作区\"] [role=\"tab\"]') && document.querySelector('.xterm'))",
   );
-  // 等 demo attach 完成（tabId 写入 store），否则关闭会落到“尚未 attach”的直接关闭分支。
   await sleep(600);
 }
 
@@ -301,6 +302,14 @@ async function clickTakeover(page) {
     if (!btn) return false;
     btn.click();
     return true;
+  })()`);
+}
+
+async function activateBackgroundTab(page) {
+  return page.evaluate(`(() => {
+    const tab = [...document.querySelectorAll("${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab']")].find((t) => t.textContent.includes("后台会话"));
+    if (tab) tab.click();
+    return Boolean(tab);
   })()`);
 }
 
@@ -444,6 +453,108 @@ async function closeBackgroundAcceptance(page) {
     await page.waitFor(`${bgCount} === 0`);
   });
 
+  await pass("workspace-close-exec-confirms", async () => {
+    await boot(page);
+    await killSeedBackgroundTab(page);
+    await clickSelector(page, '.nx-rail button[aria-label="容器"]');
+    await page.waitFor(`Boolean(document.querySelector('button[title="进入容器终端"]'))`);
+    await clickSelector(page, 'button[title="进入容器终端"]');
+    await page.waitFor(`${paneTabCount} === 4`);
+    await sleep(600);
+    await clickSelector(page, 'button[aria-label^="关闭工作区"]');
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    const message = await page.evaluate(dialogText);
+    assert.ok(message.includes("1 个") && message.includes("容器 exec"), `workspace exec confirm must carry count and consequence: ${message}`);
+    await page.evaluate(clickDialogButton("取消"));
+    await page.waitFor(`!document.querySelector('[role="alertdialog"]')`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length`), 1, "cancel must keep the workspace");
+    assert.equal(await page.evaluate(paneTabCount), 4, "cancel must keep every tab");
+    await activateBackgroundTab(page);
+    await page.waitFor(`${bgCount} === 0`);
+
+    await clickSelector(page, 'button[aria-label^="关闭工作区"]');
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    await page.evaluate(clickDialogButton("确定"));
+    await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length === 0`);
+    await openBackgroundPanel(page);
+    await page.waitFor(`${bgCount} === 1`);
+    return { evidence: { message } };
+  });
+
+  await pass("unsplit-exec-confirms", async () => {
+    await boot(page);
+    await killSeedBackgroundTab(page);
+    await pressCtrlBackslash(page);
+    await page.waitFor(`document.querySelectorAll("${VISIBLE} .nx-tabstrip.is-sub").length === 2`);
+    await sleep(600);
+    await clickSelector(page, '.nx-rail button[aria-label="容器"]');
+    await page.waitFor(`Boolean(document.querySelector('button[title="进入容器终端"]'))`);
+    await clickSelector(page, 'button[title="进入容器终端"]');
+    await page.waitFor(`document.querySelectorAll("${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab']").length === 5`);
+    await sleep(600);
+    await pressCtrlBackslash(page);
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    const message = await page.evaluate(dialogText);
+    assert.ok(message.includes("容器 exec"), `unsplit exec confirm must name the consequence: ${message}`);
+    await page.evaluate(clickDialogButton("取消"));
+    await page.waitFor(`!document.querySelector('[role="alertdialog"]')`);
+    assert.equal(await page.evaluate(`document.querySelectorAll("${VISIBLE} .nx-tabstrip.is-sub").length`), 2, "cancel must keep the split");
+    await activateBackgroundTab(page);
+    await page.waitFor(`${bgCount} === 0`);
+
+    await pressCtrlBackslash(page);
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    await page.evaluate(clickDialogButton("确定"));
+    await page.waitFor(`document.querySelectorAll("${VISIBLE} .nx-tabstrip.is-sub").length === 1`);
+    await page.waitFor(`${bgCount} === 1`);
+    return { evidence: { message } };
+  });
+
+  await pass("disconnect-counts-detached", async () => {
+    await boot(page);
+    await killSeedBackgroundTab(page);
+    await activateTerminalTab(page);
+    await clickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab'] button[aria-label^="关闭标签"]`);
+    await page.waitFor(`${paneTabCount} === 1`);
+    await page.waitFor(`${bgCount} === 1`);
+    await clickSelector(page, `${VISIBLE} button[aria-label="新建终端标签"]`);
+    await page.waitFor(`${paneTabCount} === 2`);
+    await sleep(600);
+    await rightClickSelector(page, `${VISIBLE} .nx-terminal-body .relative`);
+    await page.evaluate(clickByText("断开连接"));
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    const message = await page.evaluate(dialogText);
+    assert.ok(message.includes("2 个正在运行的终端"), `disconnect count must include the detached background terminal: ${message}`);
+    await page.evaluate(clickDialogButton("取消"));
+    await page.waitFor(`!document.querySelector('[role="alertdialog"]')`);
+    return { evidence: { message } };
+  });
+
+  await pass("winrm-close-confirms", async () => {
+    await boot(page);
+    await killSeedBackgroundTab(page);
+    await pressCtrl(page, "k", 75);
+    await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
+    await page.send("Input.insertText", { text: "win-2019" });
+    await page.waitFor(`[...document.querySelectorAll('[role="option"]')].some((el) => el.textContent.includes("win-2019"))`);
+    await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+    await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length === 2`);
+    await sleep(800);
+    await clickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab'] button[aria-label^="关闭标签"]`);
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    const message = await page.evaluate(dialogText);
+    assert.ok(message.includes("WinRM 非交互") && message.includes("不支持转入后台"), `winrm close must confirm instead of faking background: ${message}`);
+    await page.evaluate(clickDialogButton("取消"));
+    await page.waitFor(`!document.querySelector('[role="alertdialog"]')`);
+    assert.equal(await page.evaluate(paneTabCount), 1, "cancel must keep the winrm tab");
+    await clickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab'] button[aria-label^="关闭标签"]`);
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    await page.evaluate(clickDialogButton("确定"));
+    await page.waitFor(`${paneTabCount} === 0`);
+    return { evidence: { message } };
+  });
+
   await screenshot(page, "close-background-final.png");
 }
 
@@ -464,9 +575,10 @@ try {
 
 const checks = [...results.values()];
 const failed = checks.filter((check) => check.status !== "passed");
+const unexpectedPageErrors = pageErrors.filter((e) => !e.includes("syncScrollArea"));
 const report = {
   schema_version: 1,
-  status: failed.length || harnessErrors.length ? "failed" : "passed",
+  status: failed.length || harnessErrors.length || unexpectedPageErrors.length ? "failed" : "passed",
   browser: chrome?.version || { status: "unavailable" },
   execution: {
     real_browser: true,
@@ -477,7 +589,11 @@ const report = {
   checks,
   harness_errors: harnessErrors,
   page_errors: pageErrors.slice(-20),
+  unexpected_page_errors: unexpectedPageErrors,
 };
 fs.writeFileSync(path.join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
 console.warn(`close/background acceptance: ${checks.filter((check) => check.status === "passed").length}/${checks.length} checks passed; report=${path.join(OUT, "report.json")}`);
-if (failed.length || harnessErrors.length) process.exit(1);
+if (unexpectedPageErrors.length) {
+  console.warn(`unexpected page errors: ${unexpectedPageErrors.length}; first=${unexpectedPageErrors[0]}`);
+}
+if (failed.length || harnessErrors.length || unexpectedPageErrors.length) process.exit(1);

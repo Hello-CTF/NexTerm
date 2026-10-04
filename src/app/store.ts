@@ -360,7 +360,7 @@ export const useUi = create<UiState>((set, get) => ({
     if (!target) return;
     const tabs = target.panes.flatMap((p) => p.tabs);
     if (!(await confirmDirtyEditors(tabs, `关闭「${target.title}」`))) return;
-    await reclaimTerminals(tabs);
+    if (!(await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`))) return;
     const next = workspaces.filter((w) => w.id !== id);
     set({
       workspaces: next,
@@ -420,7 +420,7 @@ export const useUi = create<UiState>((set, get) => ({
     const keep = w.panes.filter((p) => p.id !== target.id);
     if (keep.length === 0) return;
     if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
-    await reclaimTerminals(target.tabs);
+    if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏"))) return;
     set((s2) => ({
       workspaces: s2.workspaces.map((x) =>
         x.id === id ? { ...x, panes: keep, activePaneId: keep[0].id } : x,
@@ -730,14 +730,45 @@ function isRunningTerminal(t: AppTab): boolean {
   return t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
 }
 
-async function reclaimTerminals(tabs: AppTab[]): Promise<void> {
+function detachBlockOf(t: AppTab, sessions: SessionInfo[]): "exec" | "winrm" | null {
+  if (t.containerId) return "exec";
+  const kind = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.kind : undefined;
+  return kind === "winrm" ? "winrm" : null;
+}
+
+function detachBlockLabel(block: "exec" | "winrm"): string {
+  return block === "exec" ? "容器 exec" : "WinRM 非交互";
+}
+
+export function countBlockedTerminals(tabs: AppTab[]): number {
+  const sessions = useUi.getState().sessions;
+  return tabs.filter((t) => isRunningTerminal(t) && detachBlockOf(t, sessions) !== null).length;
+}
+
+async function reclaimTerminals(tabs: AppTab[], scope: string, title: string): Promise<boolean> {
+  const st = useUi.getState();
   const live = tabs.filter(isRunningTerminal);
-  if (live.length === 0) return;
-  const detachable = live.filter((t) => !t.containerId);
-  const execOnly = live.filter((t) => Boolean(t.containerId));
+  if (live.length === 0) return true;
+  const blocked = live.filter((t) => detachBlockOf(t, st.sessions) !== null);
+  const detachable = live.filter((t) => detachBlockOf(t, st.sessions) === null);
+  if (blocked.length > 0) {
+    const { ask } = await import("../ui/dialogs");
+    const kinds = [
+      ...new Set(
+        blocked
+          .map((t) => detachBlockOf(t, st.sessions))
+          .filter((b): b is "exec" | "winrm" => b !== null),
+      ),
+    ].map(detachBlockLabel).join("、");
+    const ok = await ask(
+      `${scope}里有 ${blocked.length} 个${kinds}终端，不支持转入后台。\n关闭会结束这些进程，无法恢复。仍要继续？`,
+      { title, kind: "warning" },
+    );
+    if (!ok) return false;
+  }
   const results = await Promise.allSettled([
     ...detachable.map((t) => terminalApi.closeTab(t.tabId as string, "detach")),
-    ...execOnly.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+    ...blocked.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
   ]);
   const failed = results.filter((r) => r.status === "rejected");
   const { pushToast } = useUi.getState();
@@ -748,19 +779,22 @@ async function reclaimTerminals(tabs: AppTab[]): Promise<void> {
     );
   }
   const detachedOk = results.filter((r, i) => r.status === "fulfilled" && i < detachable.length).length;
-  const execOk = results.filter((r, i) => r.status === "fulfilled" && i >= detachable.length).length;
+  const blockedOk = results.filter((r, i) => r.status === "fulfilled" && i >= detachable.length).length;
   if (detachedOk) {
     pushToast("info", `${detachedOk} 个终端已转入后台，可在「后台会话」接管`);
   }
-  if (execOk) {
-    pushToast("info", `${execOk} 个容器 exec 终端已结束（不支持转入后台）`);
+  if (blockedOk) {
+    pushToast("info", `${blockedOk} 个不支持后台的终端已结束`);
   }
+  return true;
 }
 
 export function closeTabHint(t: AppTab): string {
   if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签";
   if (t.exited) return "关闭标签（进程已结束）";
-  if (t.containerId) return "关闭标签（结束容器 exec 进程）";
+  const block = detachBlockOf(t, useUi.getState().sessions);
+  if (block === "exec") return "关闭标签（结束容器 exec 进程）";
+  if (block === "winrm") return "关闭标签（结束 WinRM 非交互进程）";
   return "关闭标签（转入后台运行）";
 }
 
@@ -777,10 +811,11 @@ export async function requestCloseTab(id: string): Promise<void> {
     await st.closeTab(id, "kill");
     return;
   }
-  if (target.containerId) {
+  const block = detachBlockOf(target, st.sessions);
+  if (block) {
     const { ask } = await import("../ui/dialogs");
     const ok = await ask(
-      `「${target.title}」是容器 exec 终端，不支持转入后台。\n关闭会结束容器里的这个进程，仍要关闭？`,
+      `「${target.title}」是${detachBlockLabel(block)}终端，不支持转入后台。\n关闭会结束这个进程，仍要关闭？`,
       { title: `关闭「${target.title}」`, kind: "warning" },
     );
     if (!ok) return;

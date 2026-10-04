@@ -19,6 +19,7 @@ import {
   requestKillTab,
   requestKillWorkspaceTerminals,
   closeTabHint,
+  countBlockedTerminals,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
   type AppTab,
@@ -529,15 +530,18 @@ export default function App() {
 
   const openWsMenu = useCallback(
     (w: Workspace, x: number, y: number) => {
-      const running = w.panes
-        .flatMap((p) => p.tabs)
-        .filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
+      const tabs = w.panes.flatMap((p) => p.tabs);
+      const running = tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && !t.exited).length;
+      const blocked = countBlockedTerminals(tabs);
       const items: MenuItem[] = [
         {
           kind: "item",
           label: "关闭工作区",
           icon: <IconClose size={12} />,
-          hint: "运行中的终端转入后台",
+          hint:
+            blocked > 0
+              ? `${running} 个运行中 · ${blocked} 个将结束进程`
+              : "运行中的终端转入后台",
           onSelect: () => void closeWorkspace(w.id),
         },
         {
@@ -902,7 +906,11 @@ export default function App() {
                         className="nx-tab-close"
                         style={wailsNoDragRegionStyle}
                         aria-label={`关闭工作区 ${w.title}`}
-                        title="关闭工作区（运行中的终端转入后台）"
+                        title={`关闭工作区（${
+                          countBlockedTerminals(w.panes.flatMap((p) => p.tabs)) > 0
+                            ? "部分终端将结束进程"
+                            : "运行中的终端转入后台"
+                        }）`}
                         onClick={(e) => {
                           e.stopPropagation();
                           void closeWorkspace(w.id);

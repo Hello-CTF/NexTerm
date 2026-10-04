@@ -1,9 +1,9 @@
-import { sessionApi } from "../../ipc/commands";
+import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 
-export function runningTerminalCount(sessionId: string): number {
+function localRunningTabs(sessionId: string): string[] {
   return useUi
     .getState()
     .workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs))
@@ -14,14 +14,28 @@ export function runningTerminalCount(sessionId: string): number {
         t.tabId &&
         !t.dead &&
         !t.exited,
-    ).length;
+    )
+    .map((t) => t.tabId as string);
+}
+
+export async function runningTerminalCount(sessionId: string): Promise<number> {
+  const local = localRunningTabs(sessionId);
+  let listed: LiveTabInfo[];
+  try {
+    listed = await terminalApi.listLive();
+  } catch {
+    return local.length;
+  }
+  const live = listed.filter((t) => t.sessionId === sessionId && !t.exited);
+  const listedIds = new Set(live.map((t) => t.tabId));
+  return live.length + local.filter((tabId) => !listedIds.has(tabId)).length;
 }
 
 export async function disconnectSessionWithConfirm(
   sessionId: string,
   sessionName: string,
 ): Promise<void> {
-  const n = runningTerminalCount(sessionId);
+  const n = await runningTerminalCount(sessionId);
   const ok = await ask(
     n > 0
       ? `断开「${sessionName}」？\n\n连接断开后，${n} 个正在运行的终端进程会被结束，无法恢复。`

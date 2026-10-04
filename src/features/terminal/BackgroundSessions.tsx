@@ -24,6 +24,12 @@ function persistenceFootnote(): string {
   return "演示模式：这里的后台终端都是内存里的模拟数据，刷新页面就会消失。「接管」不会新开 shell。";
 }
 
+function runningCopy(count: number): string {
+  if (TRANSPORT === "web") return `${count} 个任务在服务端运行 · 5s 自动刷新`;
+  if (TRANSPORT === "desktop") return `${count} 个任务在本机运行 · 5s 自动刷新`;
+  return `${count} 个模拟任务在内存中 · 5s 自动刷新`;
+}
+
 function ago(ms: number): string {
   if (!Number.isFinite(ms) || ms < 1000) return "刚刚";
   const s = Math.floor(ms / 1000);
@@ -123,7 +129,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
         <span className="nx-hint">
-          {items === null ? "读取中…" : `${count} 个任务在服务端运行 · 5s 自动刷新`}
+          {items === null ? "读取中…" : runningCopy(count)}
         </span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
@@ -207,7 +213,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                 <td colSpan={5} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭运行中的终端标签时，进程会自动留在这里，随时可以接管。
+                    关闭运行中的 SSH / 本地终端标签时，进程会自动留在这里，随时可以接管。
                   </div>
                 </td>
               </tr>

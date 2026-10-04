@@ -17,17 +17,30 @@ vi.mock("../../ipc/commands", () => ({
 
 import type { AppTab, Pane, Workspace } from "../../app/store";
 import {
+  closeTabHint,
   requestCloseTab,
   requestKillTab,
   requestKillWorkspaceTerminals,
   useUi,
 } from "../../app/store";
+import type { SessionInfo } from "../../ipc/commands";
 
-function terminal(id = "terminal"): AppTab {
-  return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true };
+function terminal(id = "terminal", sessionId = "s"): AppTab {
+  return { id, kind: "terminal", title: id, sessionId, tabId: `kernel-${id}`, closable: true };
 }
 function execTerminal(id = "exec"): AppTab {
   return { ...terminal(id), containerId: "container-1" };
+}
+function sessionInfo(kind: string, id = "s"): SessionInfo {
+  return {
+    id,
+    assetId: "a",
+    name: "session",
+    kind,
+    status: "connected",
+    tabs: [],
+    createdAt: 0,
+  };
 }
 function ws(panes: Pane[]): Workspace {
   return {
@@ -40,10 +53,11 @@ function ws(panes: Pane[]): Workspace {
     closable: true,
   };
 }
-function seed(panes: Pane[]) {
+function seed(panes: Pane[], sessionKind = "ssh") {
   useUi.setState({
     workspaces: [ws(panes)],
     activeWorkspaceId: "ws",
+    sessions: [sessionInfo(sessionKind)],
     toasts: [],
   });
 }
@@ -144,15 +158,53 @@ describe("close = detach (M111)", () => {
     expect(toastText()).toContain("2 个终端已转入后台");
   });
 
-  it("kills docker exec tabs during workspace close instead of detaching", async () => {
+  it("confirms before killing docker exec tabs on workspace close, cancel keeps everything with zero IPC", async () => {
     const tabs = [terminal("t1"), execTerminal("e1")];
     seed([{ id: "p", tabs, activeTabId: "t1" }]);
+    mocks.ask.mockResolvedValueOnce(false);
 
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("1 个");
+    expect(message).toContain("容器 exec");
+    expect(message).toContain("无法恢复");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual(tabs);
+
+    mocks.ask.mockResolvedValueOnce(true);
     await useUi.getState().closeWorkspace("ws");
 
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
-    expect(toastText()).toContain("容器 exec 终端已结束");
+    expect(useUi.getState().workspaces).toEqual([]);
+    expect(toastText()).toContain("1 个不支持后台的终端已结束");
+  });
+
+  it("confirms before killing docker exec tabs on unsplit, cancel keeps the split with zero IPC", async () => {
+    const panes = [
+      { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
+      { id: "p2", tabs: [terminal("gone"), execTerminal("e1")], activeTabId: "gone" },
+    ];
+    seed(panes);
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("容器 exec");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(2);
+
+    mocks.ask.mockResolvedValueOnce(true);
+    await useUi.getState().unsplitWorkspace("p2", "ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-gone", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
+    expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
   });
 
   it("detaches the pane's running terminals on unsplit", async () => {
@@ -229,5 +281,75 @@ describe("kill danger actions", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(toastText()).toContain("没有正在运行的终端");
+  });
+});
+
+describe("winrm ephemeral line tabs share the no-detach path", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ask.mockResolvedValue(true);
+  });
+
+  it("close asks once and kills on confirm, never showing a background toast", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "winrm");
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("WinRM 非交互");
+    expect(message).toContain("不支持转入后台");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).not.toContain("已转入后台");
+  });
+
+  it("close cancel keeps the tab with zero IPC", async () => {
+    const tab = terminal();
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "winrm");
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([tab]);
+  });
+
+  it("workspace close counts winrm tabs in the blocked confirmation", async () => {
+    const tabs = [terminal("t1", "s1"), terminal("w1", "s2")];
+    useUi.setState({
+      workspaces: [ws([{ id: "p", tabs, activeTabId: "t1" }])],
+      activeWorkspaceId: "ws",
+      sessions: [sessionInfo("ssh", "s1"), sessionInfo("winrm", "s2")],
+      toasts: [],
+    });
+    mocks.ask.mockResolvedValueOnce(false);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    const [message] = mocks.ask.mock.calls[0];
+    expect(message).toContain("1 个");
+    expect(message).toContain("WinRM 非交互");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+
+    mocks.ask.mockResolvedValueOnce(true);
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-w1", "kill");
+    expect(useUi.getState().workspaces).toEqual([]);
+  });
+
+  it("closeTabHint reflects detach capability per tab kind", () => {
+    seed([{ id: "p", tabs: [], activeTabId: null }], "winrm");
+    expect(closeTabHint(terminal())).toBe("关闭标签（结束 WinRM 非交互进程）");
+    expect(closeTabHint(execTerminal())).toBe("关闭标签（结束容器 exec 进程）");
+    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签（进程已结束）");
+    seed([{ id: "p", tabs: [], activeTabId: null }], "ssh");
+    expect(closeTabHint(terminal())).toBe("关闭标签（转入后台运行）");
+    expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签");
   });
 });
