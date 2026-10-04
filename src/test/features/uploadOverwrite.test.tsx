@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
@@ -225,6 +225,55 @@ describe("上传覆盖确认（FileBrowser）", () => {
 
     expect(mocks.upload).not.toHaveBeenCalled();
     await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
+  });
+
+  it("当前目录列表未加载时回退 fresh stat：冲突仍拦截，取消不上传", async () => {
+    const never = new Promise<FileEntryDto[]>(() => {});
+    mocks.list
+      .mockImplementationOnce(() => never)
+      .mockResolvedValueOnce([entry("a.txt", "file"), entry("nginx-access.log", "file")]);
+    remountBrowser();
+    await flush();
+
+    mocks.ask.mockResolvedValueOnce(false);
+    const callsBefore = mocks.list.mock.calls.length;
+    click(buttonByTitle(mounted!.container, "上传"));
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+
+    expect(mocks.list.mock.calls.length).toBe(callsBefore + 1);
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining("~/nginx-access.log"),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("当前目录列表未加载且 fresh stat 失败时中止上传", async () => {
+    const never = new Promise<FileEntryDto[]>(() => {});
+    mocks.list
+      .mockImplementationOnce(() => never)
+      .mockRejectedValueOnce(new Error("stat offline"));
+    remountBrowser();
+    await flush();
+
+    click(buttonByTitle(mounted!.container, "上传"));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("stat offline")));
+
+    expect(mocks.upload).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.discardStaged).toHaveBeenCalledWith(LOCAL_FILE));
+  });
+
+  it("当前目录列表已加载时不重复 stat", async () => {
+    mockHomeEntries([["a.txt", "file"], ["nginx-access.log", "file"]]);
+    remountBrowser();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/nginx-access.log")).toBeTruthy());
+
+    mocks.ask.mockResolvedValueOnce(false);
+    const callsBefore = mocks.list.mock.calls.length;
+    click(buttonByTitle(mounted!.container, "上传"));
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    expect(mocks.list.mock.calls.length).toBe(callsBefore);
+    expect(mocks.upload).not.toHaveBeenCalled();
   });
 });
 

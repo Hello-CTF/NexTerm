@@ -121,7 +121,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     if (!file) return;
     const remote = joinPath(dir, baseName(file));
     try {
-      const check = await checkUploadOverwrite(sessionId, dir, remote, dir === path ? list : undefined);
+      const check = await checkUploadOverwrite(sessionId, dir, remote, dir === path ? entries.data : undefined);
       if (check === "cancelled") {
         pushToast("info", `已取消上传，${remote} 保持原样`);
         return;

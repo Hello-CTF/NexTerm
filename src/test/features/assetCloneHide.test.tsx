@@ -160,6 +160,7 @@ beforeEach(() => {
   mocks.listCredentials.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
+  mocks.assetDelete.mockResolvedValue(undefined);
   mocks.create.mockImplementation((args: Partial<Asset> & { kind: string; name: string }) =>
     Promise.resolve(assetOf({ id: "a-new", ...args })),
   );
@@ -280,5 +281,32 @@ describe("资产隐藏 / 取消隐藏", () => {
 
     useAssetVisibility.getState().setShowHidden(true);
     await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
+  });
+
+  it("删除已隐藏资产后清理可见性记录，眼睛计数不再残留", async () => {
+    useAssetVisibility.getState().hide("a1");
+    useAssetVisibility.getState().setShowHidden(true);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(rowByText(mounted!.container, "web-1")).toBeTruthy());
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some((b) =>
+        (b.getAttribute("aria-label") ?? "").includes("已隐藏的资产"),
+      ),
+    ).toBe(true);
+
+    const del = [...mounted!.container.querySelectorAll("button")].find(
+      (b) => b.getAttribute("aria-label") === "删除 web-1",
+    );
+    if (!del) throw new Error("Delete button not found: web-1");
+    click(del);
+    await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
+
+    expect(useAssetVisibility.getState().hiddenIds).not.toContain("a1");
+    expect(JSON.parse(localStorage.getItem("nexterm.hiddenAssets.v1") ?? "[]")).not.toContain("a1");
+    expect(
+      [...mounted!.container.querySelectorAll("button")].some((b) =>
+        (b.getAttribute("aria-label") ?? "").includes("已隐藏的资产"),
+      ),
+    ).toBe(false);
   });
 });

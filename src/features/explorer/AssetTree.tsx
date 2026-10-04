@@ -135,6 +135,7 @@ export function AssetTree() {
     });
     if (!ok) return;
     await assetApi.delete(a.id);
+    unhide(a.id);
     void qc.invalidateQueries({ queryKey: ["assets"] });
     void qc.invalidateQueries({ queryKey: ["credentials"] });
     pushToast("info", "已删除");
