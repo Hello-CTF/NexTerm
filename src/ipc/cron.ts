@@ -48,7 +48,7 @@ export function cronTimeoutMs(job: CronJob): number {
 }
 
 export const cronApi = {
-  register: (args: CronRegistration) => call<CronJob>("cron_register", { args }),
+  register: (args: CronRegistration) => call<CronJob>("cron_register", { ...args }),
   list: (sessionId: string) => call<CronJob[]>("cron_list", { sessionId }),
   get: (sessionId: string, jobId: string) =>
     call<CronJob>("cron_get", { sessionId, jobId }),

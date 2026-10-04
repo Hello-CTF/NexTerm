@@ -1,16 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ts from "typescript";
 import commandsSource from "../ipc/commands.ts?raw";
+import cronSource from "../ipc/cron.ts?raw";
 import appSource from "../app/App.tsx?raw";
 
 function propertyName(node: ts.PropertyName | undefined): string | undefined {
   return node && (ts.isIdentifier(node) || ts.isStringLiteral(node)) ? node.text : undefined;
 }
 
-function commandCalls() {
+function commandCalls(fileName: string, fileSource: string) {
   const source = ts.createSourceFile(
-    "commands.ts",
-    commandsSource,
+    fileName,
+    fileSource,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
@@ -47,7 +48,7 @@ function commandCalls() {
 
 describe("IPC facade 静态契约", () => {
   it("保留 144 个方法和 143 个唯一命令", () => {
-    const names = commandCalls().map((call) => call.command);
+    const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
     expect(names).toHaveLength(144);
     expect(new Set(names)).toHaveProperty("size", 143);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
@@ -56,7 +57,7 @@ describe("IPC facade 静态契约", () => {
   });
 
   it("保留全部 20 个嵌套 args 命令", () => {
-    const nested = commandCalls()
+    const nested = commandCalls("commands.ts", commandsSource)
       .filter((call) => call.nested)
       .map((call) => call.command);
     expect(nested).toEqual([
@@ -81,6 +82,18 @@ describe("IPC facade 静态契约", () => {
       "sync_push",
       "sync_pull",
     ]);
+  });
+
+  it("cron 的 5 个命令全部使用扁平 args（拒绝 cron_register 双包装回归）", () => {
+    const calls = commandCalls("cron.ts", cronSource);
+    expect(calls.map((call) => call.command)).toEqual([
+      "cron_register",
+      "cron_list",
+      "cron_get",
+      "cron_set_enabled",
+      "cron_unregister",
+    ]);
+    expect(calls.filter((call) => call.nested)).toEqual([]);
   });
 
   it("拖动区域内的每个按钮都有 no-drag，双击只匹配目标自身", () => {
@@ -147,5 +160,96 @@ describe("IPC facade 静态契约", () => {
 
     expect(buttons).toBe(8);
     expect(missingNoDrag).toEqual([]);
+  });
+});
+
+function installWebEnv() {
+  const storage = new Map<string, string>();
+  vi.stubGlobal("window", {
+    __NEXTERM_TRANSPORT__: "web",
+    location: { search: "", protocol: "http:", host: "127.0.0.1:9" },
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+    },
+  });
+}
+
+function captureRpc() {
+  const calls: { url: unknown; cmd?: unknown; args?: unknown }[] = [];
+  vi.stubGlobal("fetch", async (...fetchArgs: unknown[]) => {
+    const init = fetchArgs[1] as { body?: string } | undefined;
+    const body = JSON.parse(String(init?.body)) as { cmd?: unknown; args?: unknown };
+    calls.push({ url: fetchArgs[0], ...body });
+    return { text: async () => JSON.stringify({ ok: true, data: null }) };
+  });
+  return calls;
+}
+
+function dispatchCronRegister(
+  wireArgs: unknown,
+): { ok: true; sessionId: string } | { ok: false; code: string } {
+  const raw = (wireArgs ?? {}) as Record<string, unknown>;
+  const pick = (tag: string) => {
+    const key = Object.keys(raw).find(
+      (candidate) => candidate.toLowerCase() === tag.toLowerCase(),
+    );
+    return key === undefined ? undefined : raw[key];
+  };
+  const sessionId = pick("sessionId");
+  if (typeof sessionId !== "string" || sessionId === "") return { ok: false, code: "not_found" };
+  return { ok: true, sessionId };
+}
+
+describe("cron IPC 线上契约", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    installWebEnv();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("cron_register 线上 args 扁平，旧双包装在 dispatcher 解码下必败", async () => {
+    const calls = captureRpc();
+    const { cronApi } = await import("../ipc/cron");
+    const registration = {
+      sessionId: "c-1",
+      name: "nightly",
+      prompt: "do the thing",
+      schedule: "0 0 1 1 *",
+      timezone: "UTC",
+      timeoutMs: 60_000,
+    };
+
+    await cronApi.register(registration);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("/rpc");
+    expect(calls[0]?.cmd).toBe("cron_register");
+    expect(calls[0]?.args).toEqual(registration);
+    expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
+    expect(dispatchCronRegister(calls[0]?.args)).toEqual({ ok: true, sessionId: "c-1" });
+    expect(dispatchCronRegister({ args: registration })).toEqual({
+      ok: false,
+      code: "not_found",
+    });
+  });
+
+  it("cron_list/get/set_enabled/unregister 线上 args 保持扁平", async () => {
+    const calls = captureRpc();
+    const { cronApi } = await import("../ipc/cron");
+
+    await cronApi.list("c-1");
+    await cronApi.get("c-1", "j-1");
+    await cronApi.setEnabled("c-1", "j-1", false);
+    await cronApi.unregister("c-1", "j-1");
+
+    expect(calls).toEqual([
+      { url: "/rpc", cmd: "cron_list", args: { sessionId: "c-1" } },
+      { url: "/rpc", cmd: "cron_get", args: { sessionId: "c-1", jobId: "j-1" } },
+      { url: "/rpc", cmd: "cron_set_enabled", args: { sessionId: "c-1", jobId: "j-1", enabled: false } },
+      { url: "/rpc", cmd: "cron_unregister", args: { sessionId: "c-1", jobId: "j-1" } },
+    ]);
   });
 });
