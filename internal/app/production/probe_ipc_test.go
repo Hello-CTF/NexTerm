@@ -3,6 +3,9 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"math"
 	"net"
 	"strconv"
@@ -11,6 +14,8 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -348,6 +353,89 @@ func TestProductionAssetProbeBatchValidation(t *testing.T) {
 	response = dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":`+string(payload)+`}`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("oversized batch response = %+v", response)
+	}
+}
+
+func TestProductionAssetProbeBatchJumpConfigFailures(t *testing.T) {
+	production := newHostKeyTestProduction(t)
+
+	missingJumpID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"jumpAssetId":"missing-jump"}`)
+	cycleAID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password"`)
+	cycleBID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"jumpAssetId":"`+cycleAID+`"}`)
+	setConnectorTestAssetOptions(t, production, cycleAID, `{"jumpAssetId":"`+cycleBID+`"}`)
+
+	payload, err := json.Marshal(map[string]any{"assetIds": []string{missingJumpID, cycleAID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":`+string(payload)+`}`)
+	var batch assetProbeBatchDTO
+	requireStoreTestResponse(t, response, &batch)
+	if len(batch.Results) != 2 {
+		t.Fatalf("batch results = %+v", batch.Results)
+	}
+	if result := batch.Results[0]; result.Kind != "config" || !strings.Contains(result.Error, "does not exist") {
+		t.Fatalf("missing jump result = %+v", result)
+	}
+	if result := batch.Results[1]; result.Kind != "config" || !strings.Contains(result.Error, "cycle") {
+		t.Fatalf("jump cycle result = %+v", result)
+	}
+
+	response = dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+missingJumpID+`"}}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("missing jump probe response = %+v", response)
+	}
+}
+
+func newProbeCustomConnectorProduction(t *testing.T) *Production {
+	t.Helper()
+	production, err := NewProduction(t.Context(), ProductionConfig{
+		Config: Config{
+			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Streams: ipc.StreamFactoryFuncs{},
+		},
+		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+			return nil, fmt.Errorf("stub connector")
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	return production
+}
+
+func TestProductionSSHDiagnosticsCustomConnectorUnsupported(t *testing.T) {
+	production := newProbeCustomConnectorProduction(t)
+
+	jumpID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password"`)
+	targetID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":22,"username":"test","authKind":"password","options":{"jumpAssetId":"`+jumpID+`"}`)
+	directID := createProbeTestAsset(t, production, `"host":"127.0.0.1","port":`+itoa(closedProbePort(t))+`,"username":"test","authKind":"password"`)
+
+	response := dispatchHostKeyTest(t, production, "session_probe_host_key", `{"args":{"assetId":"`+targetID+`"}}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("custom connector probe response = %+v", response)
+	}
+
+	payload, err := json.Marshal(map[string]any{"assetIds": []string{targetID, directID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = dispatchHostKeyTest(t, production, "asset_probe_batch", `{"args":`+string(payload)+`}`)
+	var batch assetProbeBatchDTO
+	requireStoreTestResponse(t, response, &batch)
+	if len(batch.Results) != 2 {
+		t.Fatalf("batch results = %+v", batch.Results)
+	}
+	if result := batch.Results[0]; result.Kind != "unsupported" || result.Reachable {
+		t.Fatalf("custom connector jump batch result = %+v", result)
+	}
+	if result := batch.Results[1]; result.Kind != "refused" || result.Reachable {
+		t.Fatalf("custom connector direct batch result = %+v", result)
 	}
 }
 

@@ -267,15 +267,33 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 		result.Error = connectErr.Error()
 		return result
 	}
-	result.Kind = "network"
+	result.Kind = probeFailureKind(err)
 	result.Error = err.Error()
 	return result
+}
+
+func probeFailureKind(err error) string {
+	var appErr *ipc.Error
+	if !errors.As(err, &appErr) {
+		return "internal"
+	}
+	switch appErr.Code {
+	case ipc.CodeBadParam:
+		return "config"
+	case ipc.CodeUnsupported:
+		return "unsupported"
+	case ipc.CodeNotFound:
+		return "not_found"
+	case ipc.CodeVaultLocked, ipc.CodeVaultNotInit, ipc.CodeBadMasterPass, ipc.CodeDecrypt:
+		return "vault"
+	}
+	return "internal"
 }
 
 func (s *terminalCommandService) probeSSHReachability(ctx context.Context, target assetProbeTarget, timeout time.Duration) error {
 	if target.options.JumpAssetID != "" {
 		if s.sshConnector == nil {
-			return fmt.Errorf("SSH jump chain diagnostics are unavailable")
+			return ipc.NewError(ipc.CodeUnsupported, "SSH jump chain diagnostics are unavailable")
 		}
 		config, err := s.sshConnector.sshConfig(ctx, target.options, 0, []string{target.assetID})
 		if err != nil {

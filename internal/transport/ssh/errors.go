@@ -239,6 +239,40 @@ func contextErrorKind(err error) ErrorKind {
 	return ErrorKindTimeout
 }
 
+type hopConfigError struct {
+	host string
+	port int
+	err  error
+}
+
+func (e *hopConfigError) Error() string {
+	return e.err.Error()
+}
+
+func (e *hopConfigError) Unwrap() error {
+	return e.err
+}
+
+func wrapJumpConfigError(jump *Config, err error) error {
+	var hopErr *hopConfigError
+	if errors.As(err, &hopErr) {
+		return err
+	}
+	host, port := jump.Host, jump.Port
+	if port == 0 {
+		port = 22
+	}
+	return &hopConfigError{host: host, port: port, err: err}
+}
+
+func configErrorEndpoint(cfg Config, err error) (string, int) {
+	var hopErr *hopConfigError
+	if errors.As(err, &hopErr) {
+		return hopErr.host, hopErr.port
+	}
+	return cfg.Host, cfg.Port
+}
+
 type proxyError struct {
 	endpoint string
 	err      error

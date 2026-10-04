@@ -300,3 +300,32 @@ func TestConnectErrorClassificationConfig(t *testing.T) {
 		t.Fatalf("config op = %q", connectErr.Op)
 	}
 }
+
+func TestConnectErrorJumpConfigFailureNamesTheFailingHop(t *testing.T) {
+	store := NewMemoryHostKeyStore()
+
+	jumpCfg := Config{Host: "jump.example", Port: 70000, User: "test", HostKeys: store}
+	cfg := Config{Host: "target.example", Port: 22, User: "test", HostKeys: store, Jump: &jumpCfg}
+	_, err := Connect(context.Background(), cfg)
+	connectErr := requireConnectError(t, err, ErrorKindConfig)
+	if connectErr.Host != "jump.example" || connectErr.Port != 70000 {
+		t.Fatalf("jump port config failure endpoint = %+v", connectErr)
+	}
+
+	jumpCfg = Config{Host: "jump.example", Port: 0, User: " ", HostKeys: store}
+	cfg.Jump = &jumpCfg
+	_, err = Connect(context.Background(), cfg)
+	connectErr = requireConnectError(t, err, ErrorKindConfig)
+	if connectErr.Host != "jump.example" || connectErr.Port != 22 {
+		t.Fatalf("jump user config failure endpoint = %+v", connectErr)
+	}
+
+	innerCfg := Config{Host: "inner-jump.example", Port: 70000, User: "test", HostKeys: store}
+	jumpCfg = Config{Host: "jump.example", Port: 22, User: "test", HostKeys: store, Jump: &innerCfg}
+	cfg.Jump = &jumpCfg
+	_, err = Connect(context.Background(), cfg)
+	connectErr = requireConnectError(t, err, ErrorKindConfig)
+	if connectErr.Host != "inner-jump.example" || connectErr.Port != 70000 {
+		t.Fatalf("nested jump config failure endpoint = %+v", connectErr)
+	}
+}

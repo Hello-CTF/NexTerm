@@ -34,7 +34,8 @@ type Client struct {
 func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	validated, err := cfg.validate()
 	if err != nil {
-		return nil, newConnectError(ErrorKindConfig, "configuration", cfg.Host, cfg.Port, "", err)
+		host, port := configErrorEndpoint(cfg, err)
+		return nil, newConnectError(ErrorKindConfig, "configuration", host, port, "", err)
 	}
 	return connect(ctx, validated, 0)
 }

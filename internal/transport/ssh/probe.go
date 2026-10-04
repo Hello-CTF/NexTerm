@@ -32,7 +32,8 @@ var errHostKeyProbeDone = errors.New("SSH host key probe complete")
 func ProbeHostKey(ctx context.Context, cfg Config) (*HostKeyProbeResult, error) {
 	validated, err := cfg.validate()
 	if err != nil {
-		return nil, newConnectError(ErrorKindConfig, "configuration", cfg.Host, cfg.Port, "", err)
+		host, port := configErrorEndpoint(cfg, err)
+		return nil, newConnectError(ErrorKindConfig, "configuration", host, port, "", err)
 	}
 	cfg = validated
 	probeCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
@@ -105,7 +106,8 @@ func ProbeReachability(ctx context.Context, cfg Config, timeout time.Duration) e
 	if cfg.Jump != nil {
 		jump, err := cfg.Jump.validate()
 		if err != nil {
-			return newConnectError(ErrorKindConfig, "configuration", cfg.Jump.Host, cfg.Jump.Port, "", err)
+			host, port := configErrorEndpoint(*cfg.Jump, err)
+			return newConnectError(ErrorKindConfig, "configuration", host, port, "", err)
 		}
 		cfg.Jump = &jump
 	}

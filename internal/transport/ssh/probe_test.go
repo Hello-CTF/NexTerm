@@ -191,6 +191,25 @@ func TestProbeThroughJumpClassifiedFailures(t *testing.T) {
 	}
 }
 
+func TestProbeHostKeyJumpConfigFailureNamesTheFailingHop(t *testing.T) {
+	store := NewMemoryHostKeyStore()
+	jumpCfg := Config{Host: "jump.example", Port: 70000, User: "test", HostKeys: store}
+	cfg := Config{Host: "target.example", Port: 22, User: "test", HostKeys: store, Jump: &jumpCfg, ConnectTimeout: time.Second}
+	_, err := ProbeHostKey(context.Background(), cfg)
+	connectErr := requireConnectError(t, err, ErrorKindConfig)
+	if connectErr.Host != "jump.example" || connectErr.Port != 70000 {
+		t.Fatalf("probe jump config failure endpoint = %+v", connectErr)
+	}
+
+	jumpCfg = Config{Host: "jump.example", Port: 0, User: " ", HostKeys: store}
+	cfg.Jump = &jumpCfg
+	_, err = ProbeHostKey(context.Background(), cfg)
+	connectErr = requireConnectError(t, err, ErrorKindConfig)
+	if connectErr.Host != "jump.example" || connectErr.Port != 22 {
+		t.Fatalf("probe jump user config failure endpoint = %+v", connectErr)
+	}
+}
+
 func TestProbeReachability(t *testing.T) {
 	server := newTestSSHServer(t, nil)
 	host, port := splitAddress(t, server.listener.Addr().String())
