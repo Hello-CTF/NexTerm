@@ -1,11 +1,3 @@
-// 凭据详情页（主区）。配合 CredentialsSidebar：**左栏负责"找"与"切"，这里负责"看"与"改"**。
-//
-// 几个刻意的选择：
-// · 头部就一件事 —— 大图标 + 名称 + 「这是干什么用的」，其余全部下沉到卡片；
-// · 私钥多两张卡片：「来源」（引用本地文件 / 已入库）与「口令」——
-//   口令是私钥的一个属性，跟私钥同一条凭据，所以显示也在私钥的详情里；
-// · 值默认打码，明文 15 秒自动打回（复制不走打码，复制的是真值）；
-// · 锁定态列表照旧可达，值一律不可见，解锁入口在顶部与左栏。
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { vaultApi, type Credential, type CredentialSource, type RevealedCredential } from "../../ipc/commands";
@@ -28,7 +20,6 @@ import {
   IconPlus,
 } from "../../ui/icons";
 
-/** 明文回显的自动打回时间（交互评审拍板：15 秒）。 */
 const REVEAL_SECONDS = 15;
 
 export function CredentialsPanel({ credId }: { credId?: string }) {
@@ -47,7 +38,6 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
 
   return (
     <div className="flex h-full flex-col bg-neutral-900">
-      {/* 工具条 */}
       <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3">
         <IconKey size={14} className="text-neutral-400" />
         <span className="text-[13px] font-semibold text-neutral-100">凭据</span>
@@ -78,7 +68,6 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
         </button>
       </div>
 
-      {/* 锁定横幅 */}
       {locked && (
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-300/90">
           <IconLock size={13} />
@@ -92,7 +81,6 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
 
       {selected ? (
         <CredentialDetail
-          // 切凭据时重挂：名称草稿、明文倒数这些局部状态应当跟着换人清空
           key={selected.id}
           cred={selected}
           locked={locked}
@@ -116,8 +104,6 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
   );
 }
 
-/* ── 详情 ─────────────────────────────────────────────────────────────── */
-
 function CredentialDetail({
   cred,
   locked,
@@ -132,7 +118,6 @@ function CredentialDetail({
   const { pushToast } = useUi();
   const meta = kindMeta(cred.kind);
   const isKey = cred.kind === "private_key";
-  /** 引用型私钥：库里只有路径，没有正文 —— 「显示」拿不到内容。 */
   const isRef = isKey && cred.source === "file";
 
   const [name, setName] = useState(cred.name);
@@ -156,7 +141,6 @@ function CredentialDetail({
     setLeft(0);
   };
 
-  /** 显示明文：拉取真值，15 秒倒数后自动打回。口令与值一次拿回。 */
   const reveal = async () => {
     if (revealed !== null) {
       maskNow();
@@ -206,8 +190,6 @@ function CredentialDetail({
       if (name.trim() && name.trim() !== cred.name) patch.name = name.trim();
       if (newSecret) {
         patch.secret = newSecret;
-        // 私钥要带上来源：引用型改的是路径，内容型改的是正文。
-        // 不带的话后端会用"原载荷"推断，这里显式给更稳。
         if (isKey) patch.source = isRef ? "file" : "inline";
       }
       if (newPassphrase) patch.passphrase = newPassphrase;
@@ -273,7 +255,6 @@ function CredentialDetail({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[640px] px-6 py-6">
-        {/* 头部：图标 + 可改的名称 + 一句话说明 */}
         <div className="mb-6 flex items-start gap-3.5">
           <span
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${meta.bg} ${meta.tone}`}
@@ -308,7 +289,6 @@ function CredentialDetail({
           </div>
         </div>
 
-        {/* 值 */}
         <Section title={isKey ? (isRef ? "引用的私钥文件" : "私钥内容") : meta.label}>
           {locked ? (
             <div className="flex items-center gap-2.5">
@@ -321,7 +301,6 @@ function CredentialDetail({
             <>
               <div className="flex items-start gap-2">
                 {isRef ? (
-                  // 引用型没有正文可显示，展示的就是那条路径本身
                   <code className="min-w-0 flex-1 break-all rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12px] text-neutral-300">
                     {cred.refPath || "（路径为空）"}
                   </code>
@@ -389,7 +368,6 @@ function CredentialDetail({
           )}
         </Section>
 
-        {/* 私钥口令：跟私钥同一条凭据，所以显示在私钥详情里 */}
         {isKey && (
           <Section title="私钥口令">
             {locked ? (
@@ -446,7 +424,6 @@ function CredentialDetail({
           </Section>
         )}
 
-        {/* 使用它的资产 */}
         <Section title="使用它的资产" count={cred.usedBy.length}>
           {cred.usedBy.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
@@ -472,13 +449,11 @@ function CredentialDetail({
           )}
         </Section>
 
-        {/* 时间 */}
         <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-neutral-600">
           <span>创建于 {formatTime(cred.createdAt)}</span>
           <span>最后修改 {formatTime(cred.updatedAt)}</span>
         </div>
 
-        {/* 操作 */}
         <div className="flex items-center gap-2 border-t border-neutral-800/60 pt-4">
           <button
             className="nx-btn nx-btn-primary"
@@ -509,7 +484,6 @@ function CredentialDetail({
   );
 }
 
-/** 详情卡片：小标题 + 内容（凭据页的几种信息各成一张）。 */
 function Section({
   title,
   count,
@@ -530,7 +504,6 @@ function Section({
   );
 }
 
-/** 没选中凭据时的空态：左栏被收起时给一条回列表的路。 */
 function EmptyDetail({ hasAny, onNew }: { hasAny: boolean; onNew: () => void }) {
   return (
     <div className="nx-empty">

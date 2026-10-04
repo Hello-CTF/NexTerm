@@ -53,7 +53,6 @@ describe("AI interaction wire mapping", () => {
   });
 
   it("keeps the HITL identity off the confirmation and answer wire payloads", () => {
-    // requestId/hitlAttempt 是本地对账身份；ai_confirm / ai_answer 的线格式不变。
     expect(
       confirmationInput({ jobId: "job", callId: "call", nonce: "n", requestId: "req", hitlAttempt: 2 }, "deny"),
     ).toEqual({ jobId: "job", callId: "call", nonce: "n", decision: "deny" });

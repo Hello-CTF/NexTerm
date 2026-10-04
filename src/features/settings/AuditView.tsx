@@ -1,4 +1,3 @@
-// 审计日志视图（M2-T8 回放界面）：用户与 AI 的所有关键动作。
 import { useEffect, useState } from "react";
 import { assetApi } from "../../ipc/commands";
 import { IconHistory, IconRefresh } from "../../ui/icons";

@@ -1,34 +1,3 @@
-// 资产同步：桌面 ↔ 服务端（微服上那个 / 自建服务器上那个）。
-//
-// # 为什么落在设置页而不是新开一个视图
-//
-// `App.tsx` 的视图是 switch 分支 + 标签栏，新增一档要动布局与导航；而同步是
-// 「配一次、偶尔用」的功能，塞进设置页够用，又不牵动主界面。
-//
-// # 两种运行模式在界面上是两份东西，刻意不合并
-//
-// - **桌面**是发起方：配对端地址与服务端生成的令牌，然后勾资产、选方向推 / 拉；
-// - **服务端**（微服上的应用 / 自建的那台）是被同步的那一端：只把自己的令牌
-//   交出去（复制到桌面去填）。
-//
-// 硬合成一张卡片会两头都不像 —— 一边要填密码框，另一边要显示一串可复制的码。
-//
-// # 认证只有一个东西：服务端生成的令牌
-//
-// 不管服务端装在哪，凭据都是**它自己生成的那串令牌**，桌面版抄过来填上就能连。
-// 「部署位置」那个下拉只影响「去哪儿抄」的提示，不影响发什么。
-//
-// 令牌的作用域是**受限同步接口 /sync/rpc**（读摘要、推拉资产），不是完整版 /rpc ——
-// 界面文案必须如实写这一点，别夸大成「完全控制权」（M58 审计抓到的旧文案就是这么错的）。
-//
-// ⚠️ 用户界面里**不要写「盒子」**。这个词是本项目内部的简称（懒猫微服那台硬件），
-// 用户看不懂 —— 界面上一律写「懒猫微服」「对端」。
-//
-// # 方向是显式的，「冲突」由人判断
-//
-// 每行一个勾选框，方向由**按钮**决定：勾中的资产按「推送到对端」或「从对端拉取」
-// 走。没有自动合并：SSH 私钥这类载荷根本不可合并（不是文本），所以冲突（两边都
-// 改过）只在行上标出来，让人自己选 —— 这正是「同步哪些资产可选」的自然延伸。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { syncApi } from "../../ipc/commands";
@@ -47,7 +16,6 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-/** 一行 = 一个资产在两边的状态。 */
 type RowState = "local-only" | "remote-only" | "both" | "same";
 
 interface Row {
@@ -59,7 +27,6 @@ interface Row {
   remote?: DigestEntry;
   state: RowState;
   localNewer: boolean;
-  /** 任一侧有墓碑（软删除）—— 这类行要显眼标出来。 */
   deleted: boolean;
 }
 
@@ -98,7 +65,6 @@ function mergeRows(local: SyncDigest | null, remote: SyncDigest | null): Row[] {
     cur.state = cur.local?.updatedAt === e.updatedAt ? "same" : "both";
   }
   return [...map.values()].sort((a, b) => {
-    // 有差异的排前面：一致的行没什么可操作的，沉底不碍事
     const rank = (r: Row) => (r.state === "same" ? 1 : 0);
     return rank(a) - rank(b) || a.name.localeCompare(b.name);
   });
@@ -129,11 +95,9 @@ function stateLabel(r: Row): { text: string; tone: string; hint: string } {
 export function SyncCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
-  /** 服务端版（微服上那个 / 自建那台）= 被同步的那一端。 */
   const isServer = WEB;
 
   const [link, setLink] = useState<SyncLink | null>(null);
-  // 「部署位置」只是提示用的：两个位置发的是同一把钥匙（服务端生成的令牌）。
   const [draft, setDraft] = useState({ url: "", tokenKind: "box", token: "", insecure: false });
   const [showToken, setShowToken] = useState(false);
   const [ownToken, setOwnToken] = useState<string | null>(null);
@@ -141,8 +105,6 @@ export function SyncCard() {
   const [local, setLocal] = useState<SyncDigest | null>(null);
   const [remote, setRemote] = useState<SyncDigest | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // 默认**带上**凭据：不勾的话私钥/密码连包都不进，对端拿到的资产是死的 ——
-  // 「同步成功但连不上」是最难排查的一类反馈。用户仍可主动取消勾选。
   const [withCreds, setWithCreds] = useState(true);
   const [force, setForce] = useState(false);
 
@@ -175,7 +137,6 @@ export function SyncCard() {
       .linkGet()
       .then((l) => {
         setLink(l);
-        // 后端已经把历史取值归一（旧版三种钥匙 → 现在两个位置），这里照抄即可
         setDraft({ url: l.url, tokenKind: l.tokenKind || "box", token: "", insecure: l.insecure });
       })
       .catch(() => undefined);
@@ -184,10 +145,8 @@ export function SyncCard() {
   if (DEMO) return null;
 
   const isBox = draft.tokenKind === "box";
-  /** 令牌是**手抄**过来的，所以「保存并测试」在没有令牌时点了也没用。 */
   const hasToken = !!draft.token.trim() || !!link?.token;
 
-  /** 保存连接配置（令牌留空 = 不改动已存的），然后立刻验一次。 */
   const saveAndTest = async () => {
     setBusy("test");
     setError(null);
@@ -195,7 +154,6 @@ export function SyncCard() {
       const saved = await syncApi.linkSet({
         url: draft.url,
         tokenKind: draft.tokenKind,
-        // 留空表示「不改令牌」——所以只在非空时才传这个字段
         ...(draft.token.trim() ? { token: draft.token.trim() } : {}),
         insecure: draft.insecure,
       });
@@ -245,7 +203,6 @@ export function SyncCard() {
           : await syncApi.pull(ids, withCreds, force);
       setReport({ dir, data });
       setSelected(new Set());
-      // 本地库被写过了：资产树 / 凭据页都要跟着刷新
       void qc.invalidateQueries();
       await refreshLocal();
       if (remote) await reloadRemote();
@@ -434,7 +391,6 @@ export function SyncCard() {
   );
 }
 
-/** 服务端版（微服上的应用 / 自建那台）：把自己的令牌交出去。 */
 function ServerTokenBody({
   token,
   onRotate,
@@ -512,7 +468,6 @@ function ServerTokenBody({
   );
 }
 
-/** 本机 / 对端 资产对照表 + 方向按钮。 */
 function CompareTable(props: {
   rows: Row[];
   selected: Set<string>;
@@ -647,7 +602,6 @@ function CompareTable(props: {
   );
 }
 
-/** 一次同步的结果。**警告必须显示**，否则用户会以为全都同步过去了。 */
 function ReportBody({ dir, data }: { dir: "push" | "pull"; data: ImportReport }) {
   const touched =
     data.assetsCreated + data.assetsUpdated + data.groupsCreated + data.credsCreated + data.credsUpdated;

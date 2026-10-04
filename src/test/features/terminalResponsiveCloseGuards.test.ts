@@ -1,5 +1,3 @@
-// 终端关闭护栏：含「结束进程」这种不可撤销选项的 askChoice 必须以 warning 级别
-// 弹出（A11Y 共享对话框约定：alertdialog 语义 + 警示图标），不能退化成普通信息确认。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -36,7 +34,6 @@ function ws(panes: Pane[]): Workspace {
 describe("terminal close guards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // 默认「取消」：任何回收都不发生，断言只聚焦弹框参数。
     mocks.askChoice.mockResolvedValue(null);
   });
 
@@ -53,7 +50,6 @@ describe("terminal close guards", () => {
     const [, options] = mocks.askChoice.mock.calls[0];
     expect(options.level).toBe("warning");
     expect(options.choices.some((c: { danger?: boolean }) => c.danger)).toBe(true);
-    // 取消 = 终端原样保留。
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([tab]);
   });

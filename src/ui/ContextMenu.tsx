@@ -1,4 +1,3 @@
-// 全局自绘右键菜单：指针、触摸与键盘共用同一套动作。
 import {
   useEffect,
   useId,

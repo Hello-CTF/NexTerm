@@ -15,9 +15,6 @@ const mocks = vi.hoisted(() => ({
   realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
   toast: vi.fn(),
 }));
-// R42 真实浮层验收：工厂在既有覆盖之上 spread 真实模块 —— 组件照旧走 mocks.ask，
-// 钉板测试把 mocks.ask 委托回真实 ask()，经真实 registerDialogHandlers +
-// 真实映射（App 的 dialogLevelForKind）+ 真实 store/DialogHost 渲染验收级别。
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
@@ -158,7 +155,6 @@ describe("停止转发确认（R42, real DialogHost）", () => {
     mocks.list.mockResolvedValue([]);
     mocks.remove.mockResolvedValue(undefined);
     useUi.setState({ pushToast: mocks.toast, sessions: [], appDialog: null });
-    // 真实浮层：mocks.ask 委托回真实 ask()，按 App 的注册形态接管共享弹框
     mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
       mocks.realAsk!(message, options),
     );

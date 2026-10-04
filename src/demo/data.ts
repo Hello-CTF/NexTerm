@@ -1,8 +1,3 @@
-// 演示模式的假数据仓库。
-//
-// 目标是"所有面板都有真实感的内容可看可点"：资产、容器、数据库、文件树、
-// 审计记录……都与《产品开发文档》里的示例场景（web-01 上排查 nginx 与容器）对齐。
-// 数据是可变的内存对象，所以新建资产 / 删除容器 / 建文件夹等操作能真的生效。
 
 export interface DemoAsset {
   id: string;
@@ -22,7 +17,6 @@ export interface DemoAsset {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
-  /** 内置资产（「当前设备」）：不可删除、类型锁定。内核里是 asset.builtin 列。 */
   builtin?: boolean;
 }
 
@@ -88,7 +82,6 @@ export function uid(prefix: string) {
   return `${prefix}-${seq.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/* ── 分组 / 资产 ───────────────────────────────────────────────────────── */
 
 export const groups: DemoGroup[] = [
   { id: "g-company", parentId: null, name: "公司", sort: 1, createdAt: NOW - 90 * DAY, updatedAt: NOW - 90 * DAY },
@@ -130,7 +123,6 @@ function asset(
 }
 
 export const assets: DemoAsset[] = [
-  // 与真机一致：内置的「当前设备」排在最前，不可删除（内核里也是这个 shape）
   asset("a-local", null, "local", "当前设备", null, null, null, {
     authKind: "none",
     builtin: true,
@@ -148,14 +140,12 @@ export const assets: DemoAsset[] = [
   asset("a-redis", "g-test", "redis", "redis-cache", "127.0.0.1", 6379, null, {
     authKind: "none",
   }),
-  // build-01 专门演示「私钥凭据」这条路径：keyPath 留空、私钥正文在凭据库里
   asset("a-build", "g-tools", "ssh", "build-01", "10.0.0.40", 22, "ci", {
     authKind: "key",
     credId: "cred-key",
   }),
 ];
 
-/* ── 容器 / 镜像 ───────────────────────────────────────────────────────── */
 
 export const containers: DemoContainer[] = [
   {
@@ -215,9 +205,6 @@ export const containers: DemoContainer[] = [
 ];
 
 export const images: DemoImage[] = [
-  // 同一个 image ID 挂两个 repository —— 这是 `docker images` 的真实形状
-  // （本地 tag + 镜像站 tag 指向同一层）。用来守住「镜像列表的 key 必须唯一」：
-  // 以前拿 id 当 key，这里必然重复，React 的协调会与真实 DOM 失同步 → 残影/重复行。
   { id: "sha256:7dcddc01f13b", repository: "mysql", tag: "8.0", size: "1.09GB", createdSince: "4 months ago" },
   { id: "sha256:7dcddc01f13b", repository: "docker.m.daocloud.io/library/mysql", tag: "8.0", size: "1.09GB", createdSince: "4 months ago" },
   { id: "sha256:1a2b3c4d", repository: "nexterm/api", tag: "2.4.1", size: "212MB", createdSince: "3 days ago" },
@@ -229,7 +216,6 @@ export const images: DemoImage[] = [
   { id: "sha256:7a8b9c0d", repository: "<none>", tag: "<none>", size: "182MB", createdSince: "2 months ago" },
 ];
 
-/** 容器资源占用（演示用固定值，避免每次刷新数字乱跳）。 */
 export const containerStats: Record<string, { cpu: string; mem: string }> = {
   "api-server": { cpu: "30.4%", mem: "1.4GB" },
   "kingbase-pg": { cpu: "0.2%", mem: "293.5MB" },
@@ -239,7 +225,6 @@ export const containerStats: Record<string, { cpu: string; mem: string }> = {
   "nginx-gateway": { cpu: "0.3%", mem: "18.7MB" },
 };
 
-/* ── 文件树 ────────────────────────────────────────────────────────────── */
 
 function dir(name: string, parent: string, owner = "root", mtime = NOW - 5 * DAY): DemoFileEntry {
   const path = parent === "/" ? `/${name}` : `${parent}/${name}`;
@@ -281,12 +266,6 @@ export const fsTree: Record<string, DemoFileEntry[]> = {
     dir("usr", "/"),
     dir("var", "/"),
   ],
-  /*
-   * 家目录：这个产品的主战场是"连上一台机器，然后一直在这台机器上干活"，
-   * 所以左栏文件树默认落在 `~`（见 FileTree 的 HOME 常量），内容也照着
-   * 一台用了两三年的开发机的样子铺：两个工作目录 + 一堆 dotfile +
-   * 常年忘了删的 tar 包 + 正在冒日志的服务。
-   */
   "/home": [dir("deploy", "/home", "deploy", NOW - 120 * DAY)],
   "/home/deploy": [
     dir("projects", "/home/deploy", "deploy", NOW - 12 * DAY),
@@ -393,9 +372,7 @@ export const fsTree: Record<string, DemoFileEntry[]> = {
 };
 
 export const fsFileContent: Record<string, string> = {
-  /* ── 家目录：左栏双击就能打开的那几个文件 ───────────────────────────── */
 
-  // 一个正在往控制台喷堆栈的常驻服务（对齐参考稿的 console.log）
   "/home/deploy/console.log": `[2026-09-26 17:52:04] serving on http://127.0.0.1:8099
 [2026-09-26 18:41:19] GET /tools 200 12ms
 [2026-09-26 18:55:40] reload TOOLS registry (18 entries)
@@ -858,7 +835,6 @@ ${new Date(NOW - 3 * MIN).toISOString()} WARN  upstream 502 for /api/orders
 `,
 };
 
-/* ── 数据库 ────────────────────────────────────────────────────────────── */
 
 export const mysqlSchemas = ["information_schema", "mysql", "performance_schema", "shop", "sys"];
 
@@ -922,7 +898,6 @@ export const mysqlIndexes: Record<
   ],
 };
 
-/** 按 SQL 关键字给一个像样的结果；演示用，不解析真实语义。 */
 export function fakeQuery(sql: string): {
   columns: string[];
   rows: unknown[][];
@@ -1029,7 +1004,6 @@ export const redisValues: Record<string, { keyType: string; ttl: number; value: 
   },
 };
 
-/* ── 挂载 / 转发 / 审计 / AI ───────────────────────────────────────────── */
 
 export const mounts: { id: string; localPoint: string; remote: string; sessionId: string | null; createdAt: number | null }[] = [
   { id: "m1", localPoint: "Z:", remote: "\\\\10.0.0.8\\share", sessionId: "s-nat", createdAt: NOW - 3 * DAY },
@@ -1040,7 +1014,6 @@ export const forwards: {
   id: string;
   sessionId: string;
   listenPort: number;
-  /** SOCKS5 动态转发没有固定目标 → null。 */
   targetHost: string | null;
   targetPort: number | null;
   kind: string;
@@ -1056,7 +1029,6 @@ export const forwards: {
     createdAt: NOW - HOUR,
   },
   {
-    // 演示模式给一条 SOCKS5 的现成数据，面板一进去就能看到两种形态的区别
     id: "f2",
     sessionId: "s-web01",
     listenPort: 1080,
@@ -1094,12 +1066,6 @@ export const providerConfig = {
   stream: true,
 };
 
-/**
- * 演示模式的多模型档案（BYOK）。
- *
- * 用可变对象承载：演示模式下切换激活 / 增删档案都要立刻在界面上体现出来，
- * 跟真机走 sqlite 的行为对齐。
- */
 export const modelState: {
   profiles: {
     id: string;
@@ -1152,7 +1118,6 @@ export const modelState: {
   activeId: "m-deepseek",
 };
 
-/** 演示模式的权限配置：在权限面板里改完立即生效，用来试三档的差别。 */
 export const permissionConfig: {
   mode: "read_only" | "read_write" | "silent";
   dangerRules: string[];
@@ -1184,13 +1149,6 @@ export const conversations: {
   },
 ];
 
-/**
- * 演示：会话的历史消息。
- *
- * 形状与内核 `MessageDto` **严格一致** —— 尤其 `content` 是**结构**不是字符串
- * （库里存的是 JSON 文本，内核解成结构后才给前端；这里直接给结构，
- * 免得演示模式和真机的行为对不上，白验一场）。
- */
 export const conversationMessages: Record<
   string,
   {

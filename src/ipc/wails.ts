@@ -14,7 +14,6 @@ interface WailsResponse {
 
 let runtimePromise: Promise<WailsRuntime> | null = null;
 
-// 静态引入会在 Web/demo 注册全局鼠标监听并请求 /wails/*，所以只按 desktop 调用加载。
 function runtime(): Promise<WailsRuntime> {
   runtimePromise ??= import("@wailsio/runtime");
   return runtimePromise;
@@ -32,7 +31,6 @@ function request(cmd: string, args?: Record<string, unknown>) {
 }
 
 export async function callDesktop<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  // 后端在命令里才首次拿到 channel id；监听必须先于命令生效，才能接住 early frames。
   await Promise.all([...channels.values()].map((channel) => channel.ready));
   const { Call } = await runtime();
   const response = (await Call.ByName(SERVICE_CALL, request(cmd, args))) as WailsResponse | null;

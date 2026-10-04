@@ -1,14 +1,5 @@
-// `docker_stats` 输出的容错解析。
-//
-// 这个 RPC 的返回是「按行拼接的字符串」，而线上有三种合法形态：
-//  - Go SDK 路径（internal/docker/format.go）：每行一个 JSON 对象，字段是
-//    docker `{{json .}}` 的列名（ID/Name/CPUPerc/MemUsage/…）；
-//  - CLI 回退路径（`docker stats --no-stream --format '{{json .}}'`）：同样是 JSON 行；
-//  - 演示模式（src/demo/mock.ts）：`id12|name|cpu|mem` 管道分隔。
-// 逐行先试 JSON、再退回管道切分，两种都能渲染；都认不出的行丢弃而不是炸掉整表。
 
 export interface DockerStatsRow {
-  /** 12 位短 id（与 docker_ps 的 ContainerSummary.id 同形，用于归属比对与高亮）。 */
   id: string;
   name: string;
   cpuPerc: string;

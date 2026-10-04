@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "../demo/mock";
 
-// 演示实现走 window.setTimeout 模拟 IPC 延迟；node 环境下把全局定时器暴露成 window。
 beforeEach(() => {
   vi.stubGlobal("window", globalThis);
 });
@@ -63,7 +62,6 @@ describe("demo memory_* commands", () => {
     await expectAppError(demoInvoke("memory_index", { scope: empty }), "forbidden");
     await expectAppError(demoInvoke("memory_settings_get", { scope: empty }), "forbidden");
     await expectAppError(demoInvoke("memory_settings_set", { scope: empty, expectedVersion: 0, toolsEnabled: true }), "forbidden");
-    // 空 scope 的 forbidden 先于行查找：不存在的 id 也回 forbidden 而不是 not_found。
     await expectAppError(demoInvoke("memory_get", { scope: empty, id: "mem-missing" }), "forbidden");
   });
 
@@ -89,7 +87,6 @@ describe("demo memory_* commands", () => {
     })) as DemoEntry;
     expect(edited.version).toBe(2);
 
-    // CAS 冲突必须携带 expected/actual detail，与内核 IPC 合约一致。
     await expectAppError(
       demoInvoke("memory_edit", { scope, id: created.id, expectedVersion: 1, content: "stale" }),
       "bad_param",

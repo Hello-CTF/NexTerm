@@ -1,7 +1,3 @@
-// 命令块面板（M1-T9）—— 块分隔 / 输出折叠 / 复制输出。
-//
-// 为什么「折叠」在这里而不在终端画布上：xterm.js 没有删除缓冲行的 API，
-// 在画布上折叠只能涂白留空。所以折叠语义落在本面板：每块默认收起，展开看输出预览。
 import { useState } from "react";
 import type { CommandBlock } from "./commandBlocks";
 import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconTrash } from "../../ui/icons";
@@ -9,14 +5,12 @@ import { describeError } from "../../ui/errorText";
 
 export interface CommandBlockPanelProps {
   blocks: CommandBlock[];
-  /** 由 XtermView 的 TerminalHandle 提供，从缓冲里抽出该块文本。 */
   getText: (index: number) => string;
   onLocate: (index: number) => void;
   onClear: () => void;
   onToast: (kind: "info" | "success" | "error", text: string) => void;
 }
 
-/** 输出预览最多显示的行数（复制时是全文）。 */
 const PREVIEW_LINES = 20;
 
 function clockOf(ms: number): string {
@@ -40,7 +34,6 @@ export function CommandBlockPanel({
   onToast,
 }: CommandBlockPanelProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
-  /** 展开时缓存的输出预览，避免每次渲染都去扫缓冲。 */
   const [preview, setPreview] = useState<Record<number, string>>({});
 
   const copy = async (index: number) => {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TERMINAL_KEYS, terminalKeySequence } from "../../features/terminal/terminalKeys";
 
-// 这里只验证终端字节序列；系统键盘、真实焦点与触摸选择仍属于 M29 真机验收。
 describe("mobile terminal key sequences", () => {
   it("emits navigation and editing keys without depending on a hardware keyboard", () => {
     const byId = new Map(TERMINAL_KEYS.map((key) => [key.id, key]));

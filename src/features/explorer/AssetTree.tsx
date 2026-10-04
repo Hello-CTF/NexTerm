@@ -1,7 +1,3 @@
-// 资产树（M1-T1）：分组 + 资产 + 搜索 + 双击连接 + 右键菜单。
-//
-// UI 要点：类型图标来自统一映射表（不再用 emoji）；行内操作只在 hover 时出现；
-// 分组用 chevron + 计数徽章；折叠状态由外壳的图标栏控制，这里不再自带展开按钮。
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
@@ -28,7 +24,6 @@ import {
 } from "../../ui/icons";
 import { SnippetsPanel } from "./SnippetsPanel";
 
-/** 资产类型 → 中文名（新建弹窗与提示里用）。 */
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH (Linux)",
   winrm: "WinRM (Windows)",
@@ -38,7 +33,6 @@ const KIND_LABEL: Record<string, string> = {
   redis: "Redis",
 };
 
-/** 拖拽资产用的 dataTransfer 类型（自定义 MIME，避免普通文本拖拽误触发）。 */
 const DRAG_ASSET = "application/x-nexterm-asset";
 
 export function AssetTree() {
@@ -47,13 +41,9 @@ export function AssetTree() {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
-  /** 从分组行上的 + 新建时 preset 为该分组；顶栏 + = 不分组。 */
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
-  /** 分组改名弹窗的目标；null = 关着。 */
   const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
-  /** 正在执行删除的分组 id（行内 busy，防连点）。 */
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
-  /** 分组操作失败的行内错误（附重试）；确认框已经点过「确定」，重试不再问一遍。 */
   const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
 
@@ -67,13 +57,11 @@ export function AssetTree() {
     queryFn: () => assetApi.groupList(),
     refetchOnWindowFocus: false,
   });
-  // 凭据数量徽章与表单里的「选已有凭据」共用这一份缓存
   const credentials = useQuery({
     queryKey: ["credentials"],
     queryFn: () => vaultApi.listCredentials(),
     refetchOnWindowFocus: false,
   });
-  // 片段数量徽章：与片段面板（["snippets"]）共用同一份缓存
   const snippets = useQuery({
     queryKey: ["snippets"],
     queryFn: () => assetApi.snippetList(),
@@ -108,7 +96,6 @@ export function AssetTree() {
     pushToast("info", "已删除");
   };
 
-  /** 拖拽落点：移入分组 / 移回未分组。groupId 传 null = 拖到根区域。 */
   const moveAsset = async (assetId: string, groupId: string | null) => {
     try {
       await assetApi.update({ id: assetId, groupId });
@@ -119,14 +106,12 @@ export function AssetTree() {
     }
   };
 
-  /** 删除分组的实际执行（确认框之后的部分单独拆出来，行内「重试」复用）。 */
   const runDeleteGroup = async (g: AssetGroup) => {
     setGroupBusyId(g.id);
     setGroupError(null);
     try {
       await assetApi.groupDelete(g.id);
       void qc.invalidateQueries({ queryKey: ["groups"] });
-      // 组内资产的 group_id 由外键置空（ON DELETE SET NULL），列表要一起刷
       void qc.invalidateQueries({ queryKey: ["assets"] });
       pushToast("info", "已删除分组");
     } catch (e) {
@@ -136,7 +121,6 @@ export function AssetTree() {
     }
   };
 
-  /** 删除分组：显式按钮 + 确认框；选中/展开分组不会触发任何写操作。 */
   const deleteGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
     const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」；子分组会被一并删除。`, {
@@ -189,7 +173,6 @@ export function AssetTree() {
         </div>
       </div>
 
-      {/* 根区域本身是「未分组」的放置目标：拖到空白处即移出分组 */}
       <div
         className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
         onDragOver={(e) => {
@@ -235,8 +218,6 @@ export function AssetTree() {
         )}
       </div>
 
-      {/* 片段入口：常驻底部（凭据上方）。片段是「资产区」的命令模板，
-          面板从这里打开，插入走当前终端（见 SnippetsPanel）。 */}
       <button
         className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
         title="命令片段（插入当前终端）"
@@ -248,8 +229,6 @@ export function AssetTree() {
         <IconChevronRight size={12} className="shrink-0 text-neutral-600" />
       </button>
 
-      {/* 凭据入口：常驻底部。凭据在语义上属于资产，入口放资产区；
-          点击后左栏整体切成「凭据」形态（凭据有自己的侧边栏，不再占主区标签） */}
       <button
         className="mx-1.5 mb-1.5 flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
         title="凭据库（左栏查看）"
@@ -339,9 +318,6 @@ function AssetRow({
       <Icon size={14} className="shrink-0 text-neutral-500" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {target && <span className="shrink-0 text-[11px] text-neutral-500">{target}</span>}
-      {/* 内置的「当前设备」：标出来，并且不给删除按钮 ——
-          它是「本机」这个概念的锚点，删掉之后终端 / 容器 / 文件树都没了落脚点。
-          内核同样拒绝删除（命令层能被脚本直接调），这里只是不给点。 */}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       <span className="nx-row-actions">
         <button
@@ -401,9 +377,7 @@ function GroupNode({
   onEdit: (a: Asset) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
-  /** 删除进行中：行内按钮禁用，防连点。 */
   busy: boolean;
-  /** 上一次删除失败的错误文本（行内展示 + 重试）。 */
   error: string | null;
   onRename: () => void;
   onDeleteGroup: () => void;
@@ -424,13 +398,12 @@ function GroupNode({
         }
       }}
       onDragLeave={(e) => {
-        // 子元素之间移动也会触发 dragleave，只有真正离开分组块才熄高亮
         if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false);
       }}
       onDrop={(e) => {
         if (!isAssetDrag(e)) return;
         e.preventDefault();
-        e.stopPropagation(); // 别冒泡给根区域（= 未分组）
+        e.stopPropagation();
         setOver(false);
         const id = e.dataTransfer.getData(DRAG_ASSET);
         if (id) onMoveAsset(id, group.id);
@@ -486,7 +459,6 @@ function GroupNode({
           </button>
         </span>
       </div>
-      {/* 删除失败的行内错误：确认已经点过，这里给的是直接重试，不再弹确认框 */}
       {error && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
           <IconXCircle size={12} className="shrink-0" />
@@ -515,7 +487,6 @@ function GroupNode({
   );
 }
 
-/** 分组改名弹窗：显式动作（行内按钮）才打开；保存失败错误留在弹窗里可直接重试。 */
 function GroupRenameDialog({
   group,
   onClose,
@@ -548,7 +519,6 @@ function GroupRenameDialog({
       pushToast("success", "已重命名");
       onRenamed();
     } catch (e) {
-      // 错误留在弹窗里：改完名字直接再点保存即重试，不必重新走一遍入口。
       setError(describeError(e));
     } finally {
       setSaving(false);
@@ -597,7 +567,6 @@ function GroupRenameDialog({
   );
 }
 
-/** 凭据选择：new = 新建一条；none = 不绑定；其余值 = 已有凭据的 id。 */
 type CredChoice = "new" | "none" | string;
 
 const CRED_KIND_LABEL: Record<string, string> = {
@@ -615,9 +584,7 @@ export function AssetEditor({
   onSaved,
 }: {
   kind: "asset" | "group";
-  /** 编辑已有资产（P1）。不传 = 新建。 */
   initial?: Asset;
-  /** 新建时的目标分组（分组行上的 + 进入）。 */
   presetGroupId?: string | null;
   onClose: () => void;
   onSaved: () => void;
@@ -633,7 +600,6 @@ export function AssetEditor({
   const [authKind, setAuthKind] = useState(initial?.authKind ?? "password");
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
   const [password, setPassword] = useState("");
-  /** 本机资产的两个启动选项（存进 options，连接时由内核读取）。空 = 用系统默认。 */
   const [shell, setShell] = useState(
     typeof initial?.options?.shell === "string" ? (initial.options.shell as string) : "",
   );
@@ -642,21 +608,16 @@ export function AssetEditor({
   );
   const pushToast = useUi((s) => s.pushToast);
 
-  /** 测试连接（M59）：只对「主机 + 端口」做有界 TCP 探测，绝不携带任何凭据。 */
   const [probe, setProbe] = useState<{ status: "idle" | "pending" | "ok" | "fail"; error?: string }>({
     status: "idle",
   });
-  /** 探测序号：在途结果回来时若已有更新的探测，旧结果直接丢弃（防陈旧覆盖）。 */
   const probeSeq = useRef(0);
-  /** 上次发起探测的时间戳：简单限速 —— 探测是网络操作，不能拿按钮当连点器。 */
   const probeAtRef = useRef(0);
-  /** host/port 的镜像：在途探测 resolve 时闭包里的是旧值，靠它判结果是否已陈旧。 */
   const hostRef = useRef(host);
   hostRef.current = host;
   const portRef = useRef(port);
   portRef.current = port;
 
-  // 目标一改，在途探测的结果就失去意义：作废序号并清掉旧结果。
   useEffect(() => {
     probeSeq.current += 1;
     setProbe({ status: "idle" });
@@ -669,17 +630,15 @@ export function AssetEditor({
       pushToast("error", "先填写有效的主机和端口");
       return;
     }
-    if (probe.status === "pending") return; // 上一次没回来就不发新的（配合下方限速双保险）
+    if (probe.status === "pending") return;
     const now = Date.now();
-    if (now - probeAtRef.current < 1500) return; // 限速：两次探测至少隔 1.5s
+    if (now - probeAtRef.current < 1500) return;
     probeAtRef.current = now;
     const seq = ++probeSeq.current;
     setProbe({ status: "pending" });
     try {
-      // 有界探测：显式 3s 超时（与内核缺省一致，不依赖缺省值）。
-      // probe 只收 host/port —— 密码 / 私钥 / 口令一概不出这个表单。
       const res = await sessionApi.probe(h, p, 3000);
-      if (seq !== probeSeq.current) return; // 已有更新的探测，陈旧结果丢弃
+      if (seq !== probeSeq.current) return;
       if (hostRef.current.trim() !== h || Number(portRef.current) !== p) {
         setProbe({ status: "idle" });
         return;
@@ -691,7 +650,6 @@ export function AssetEditor({
     }
   };
 
-  // 凭据绑定：默认跟随已有绑定；没有就「新建凭据」
   const [credChoice, setCredChoice] = useState<CredChoice>(initial?.credId ?? "new");
   const [credName, setCredName] = useState(initial?.name ?? "");
   const credNameTouched = useRef(false);
@@ -706,53 +664,33 @@ export function AssetEditor({
     refetchOnWindowFocus: false,
   });
 
-  /** 编辑时已绑定的凭据：它的 kind 与来源决定私钥区块怎么回显。 */
   const boundCred = credentials.data?.find((c) => c.id === initial?.credId);
   const boundIsVaultKey = boundCred?.kind === "private_key";
-  /** 已绑定的是「引用型」私钥凭据（库里只有路径，没有正文）。 */
   const boundIsRefKey = boundIsVaultKey && boundCred?.source === "file";
-  /** 可选的私钥凭据（入库模式的「选已有凭据」用）。 */
   const privateKeys = (credentials.data ?? []).filter((c) => c.kind === "private_key");
 
-  /**
-   * 私钥的两个正交选择：
-   *   来源 = 「引用本地文件」（只记路径）或「存入凭据库」（读内容加密保存）；
-   *   口令 = 私钥的一个属性，两种来源都能填，跟私钥存进同一条凭据。
-   * 编辑已有资产时按已绑定凭据的形态回显（引用型 → 引用；入库型 → 入库+选已有）。
-   */
   const [keyOrigin, setKeyOrigin] = useState<"ref" | "vault">(
     boundIsRefKey ? "ref" : boundIsVaultKey ? "vault" : "ref",
   );
-  /** 入库模式下：新建一条凭据，还是共选已有。 */
   const [vaultMode, setVaultMode] = useState<"new" | "existing">(
     boundIsVaultKey && !boundIsRefKey ? "existing" : "new",
   );
-  /** 入库模式下私钥内容的获取方式。 */
   const [keyContentMode, setKeyContentMode] = useState<"file" | "paste">("file");
   const [inlineKeyContent, setInlineKeyContent] = useState<string | null>(null);
   const [pastedKey, setPastedKey] = useState("");
-  /** 私钥口令：留空 = 不改动已有口令（同一条凭据上的字段）。 */
   const [passphrase, setPassphrase] = useState("");
-  /** 入库模式选中的 private_key 凭据。 */
   const [vaultCredId, setVaultCredId] = useState(boundIsVaultKey ? (initial?.credId ?? "") : "");
 
-  // 引用型凭据的路径存在凭据里（不在 asset.key_path），查询回来后才补进输入框。
-  // 只补一次：用户改过之后不再覆盖。
   useEffect(() => {
     if (!keyPath && boundIsRefKey && boundCred?.refPath) setKeyPath(boundCred.refPath);
-    // 依赖只看这两个：keyPath 变化不该重跑（否则会把用户正在输入的内容覆盖回去）
   }, [boundIsRefKey, boundCred?.refPath]);
 
   const isDb = groupKind === "mysql" || groupKind === "redis";
-  /** 私钥模式走自己的一组输入（文件/粘贴/凭据库 + 口令），不走凭据下拉。 */
   const keyAuth = authKind === "key";
-  /** 密码类（密码认证 / 数据库）走凭据下拉；agent / 私钥 / 无认证不显示。 */
   const usesCred = isDb || authKind === "password";
   const credKind = "password";
-  /** 编辑时已绑定的口令凭据：口令框占位提示「留空保持不变」。 */
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
-  /** 凭据名默认取资产名，跟着资产名输入走；一旦手改过就不再跟着变。 */
   const syncCredName = (assetName: string) => {
     setName(assetName);
     if (!credNameTouched.current) setCredName(assetName);
@@ -790,12 +728,6 @@ export function AssetEditor({
         onSaved();
         return;
       }
-      /*
-       * 私钥：来源二选一（引用本地文件 / 存入凭据库），口令跟私钥同一条凭据。
-       *
-       * 「已绑定私钥凭据」时原位更新同一条（改一次、所有共用它的资产一起生效，
-       * 与凭据共用的语义一致）；否则新建。
-       */
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
       const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
@@ -808,20 +740,15 @@ export function AssetEditor({
             return;
           }
           if (passphrase || boundIsRefKey) {
-            // 有口令（或原本就是引用型凭据）→ 路径与口令一起存成一条凭据：
-            // 口令必须跟着私钥走，不能在库里单飞。
             const res = await vaultApi.setCredential(credLabel, "private_key", path, {
               id: reuseCredId,
               source: "file",
-              // 留空 = 沿用原口令（后端会解出原载荷只换该字段）
               ...(passphrase ? { passphrase } : {}),
             });
             credId = res.id;
             finalKeyPath = null;
           } else {
-            // 纯引用：资产直接记路径，凭据库里不留东西
             finalKeyPath = path || null;
-            // 老数据可能把口令挂在一条独立凭据上，别因为"这次没填口令"就把它解绑
             credId = hasBoundPassphrase ? (initial?.credId ?? null) : null;
           }
         } else if (vaultMode === "existing") {
@@ -857,7 +784,6 @@ export function AssetEditor({
           finalKeyPath = null;
         }
       } else if (credChoice === "new") {
-        // 密码类：新建凭据。填了值才创建；不填 = 不绑定
         if (usesCred && password) {
           const res = await vaultApi.setCredential(
             credName.trim() || name.trim(),
@@ -869,13 +795,6 @@ export function AssetEditor({
       } else if (credChoice !== "none") {
         credId = credChoice;
       }
-      // 本机资产的两个启动选项。空值**不写进** options —— 于是「清空输入框」
-      // 就等于「回到系统默认（$SHELL / 家目录）」，而不是留一个空 shell 路径
-      // 让内核去启一个不存在的程序。
-      //
-      // 非本机一律不传 options（undefined）：`AssetUpdateArgs.options` 是
-      // `Option<Value>`，传了就是**整列替换** —— 顺手把 encoding / 初始命令
-      // 这些别的字段抹掉，是很容易犯的错。
       const options =
         groupKind === "local"
           ? {
@@ -1023,8 +942,6 @@ export function AssetEditor({
                 </div>
               </div>
 
-              {/* 测试连接：显式按钮 + 有界探测（3s）。结果就地展示；
-                  只探测主机端口，不带任何凭据 —— 密码/私钥/口令不出这个表单。 */}
               <div className="mb-3 flex items-center gap-2">
                 <button
                   type="button"

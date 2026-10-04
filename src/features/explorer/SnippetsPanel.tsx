@@ -1,15 +1,3 @@
-// 命令片段面板（M59）：片段的增删改查 + 插入到当前终端。
-//
-// 安全红线（别改坏）：
-// · 选中 / 编辑片段只碰字符串，**绝不执行内容** —— 内容进入终端的唯一路径是
-//   显式的「插入」按钮。
-// · 插入按风险分级（见 insertRisk）：只有真正可打印的内容才只是「打字」
-//   （写入 ≠ 执行，回车才运行）；含回车/换行（PTY 里 \r 就是回车，提交即执行）
-//   或任何控制字符（Tab 补全 / Ctrl-C / Ctrl-D / ESC 序列等）的片段必须先
-//   显式确认，不允许静默跑。
-// · 确认 ≠ 删改：任何片段都按原字节写入，分级只决定要不要先问。
-// · 保存 ≠ 删改：新建 / 编辑按原字节入库，trim 只做「是否空白」校验。
-// · 插入目标是**当前工作区的当前终端标签**；没有就明确提示，不偷偷开新终端。
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
@@ -26,7 +14,6 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-/** 片段行（与 facade 的 snippet_list 返回一致）。 */
 export interface Snippet {
   id: string;
   name: string;
@@ -35,7 +22,6 @@ export interface Snippet {
   sort: number;
 }
 
-/** 找当前工作区 → 当前面板 → 当前标签里的终端内核 tabId；没有返回 null。 */
 function activeTerminalTabId(): string | null {
   const st = useUi.getState();
   const ws =
@@ -48,26 +34,13 @@ function activeTerminalTabId(): string | null {
   return tab.tabId;
 }
 
-/**
- * 插入风险分级：
- * - `"execute"`：含 `\r` 或 `\n` —— 规范模式下两者都提交当前输入行
- *   （PTY 里裸 `\r` 就是回车），写入即逐行执行，必须显式确认；
- * - `"control"`：含任何非可打印字符（全部 C0、DEL、C1）—— 不会替你执行
- *   命令行，但 Tab 会触发 programmable completion（补全钩子是 shell 代码，
- *   不需要回车就会运行），DEL/其余 C0/C1 可能中断前台进程、结束输入或
- *   经 ESC 序列 / readline 绑定改变终端状态，必须显式确认；
- * - `"none"`：仅真正可打印字符（0x20–0x7e 与 ≥0xa0 的 Unicode）——
- *   只是「打字」，写入不执行。
- */
 type InsertRisk = "none" | "execute" | "control";
 
 function insertRisk(body: string): InsertRisk {
-  // 第一遍：回车/换行优先 —— 规范模式下 \r 与 \n 都提交当前输入行，写入即执行
   for (const ch of body) {
     const c = ch.codePointAt(0) ?? 0;
     if (c === 0x0a || c === 0x0d) return "execute";
   }
-  // 第二遍：可打印白名单之外的统统要确认（含 Tab 补全与 DEL），不再设例外
   for (const ch of body) {
     const c = ch.codePointAt(0) ?? 0;
     if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return "control";
@@ -79,7 +52,6 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const [editing, setEditing] = useState<Snippet | "new" | null>(null);
-  /** 正在删除的片段 id（行内 busy，防连点）。 */
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const snippets = useQuery({
@@ -98,7 +70,6 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     }
     const risk = insertRisk(s.body);
     if (risk === "execute") {
-      // 文案如实说明执行风险：回车/换行在 PTY 里就是「替你按回车」。
       const n = s.body.match(/[\r\n]/g)?.length ?? 0;
       const ok = await ask(
         `片段「${s.name}」包含 ${n} 处回车/换行：插入时每一处都会立即提交执行（相当于替你按回车）。\n仍要插入吗？`,
@@ -113,8 +84,6 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       if (!ok) return;
     }
     try {
-      // body 永远按原字节写入（确认 ≠ 删改）；risk=none 时不含任何提交/控制字符，
-      // 只是「打字」，落到终端输入行，由用户检查后再决定回车。
       await terminalApi.write(tabId, new TextEncoder().encode(s.body));
       pushToast(
         "success",
@@ -248,7 +217,6 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** 新建 / 编辑片段。保存失败时错误留在弹窗里，可直接重试。 */
 function SnippetEditor({
   initial,
   onClose,
@@ -267,8 +235,6 @@ function SnippetEditor({
   const save = async () => {
     if (saving) return;
     const n = name.trim();
-    // trim 只用于空白校验：正文按原字节保存（首尾空格 / Tab / CR / LF 都可能有语义，
-    // 尾部 CR/LF 正是「确认后提交执行」的内容），与插入路径一样不改字节。
     if (!n || !body.trim()) {
       setError("名称和内容都不能为空");
       return;
@@ -284,7 +250,6 @@ function SnippetEditor({
       pushToast("success", initial ? "已保存" : "已创建");
       onSaved();
     } catch (e) {
-      // 错误留在弹窗里（附在保存按钮上方），改完直接再点保存即重试。
       setError(describeError(e));
     } finally {
       setSaving(false);

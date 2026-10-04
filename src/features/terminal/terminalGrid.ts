@@ -248,7 +248,6 @@ export class TerminalGridCoordinator {
         this.committed = request.grid;
       }
     } catch {
-      // 后续测量、重连或显式 flush 会按最新目标重试。
     } finally {
       if (this.inFlight === request) {
         this.inFlight = null;

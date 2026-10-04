@@ -1,9 +1,3 @@
-// 应用外壳（§5.1）：左侧图标栏 + 标题栏 + 标签栏 + 三栏主体 + 状态栏。
-//
-// 相对旧版的布局变化：
-//   · 一级导航从「横向标签栏里塞按钮」搬到了最左的 48px 图标栏；
-//   · 标题栏（面包屑 + 全局动作）与标签栏拆成两行，各自只干一件事；
-//   · 状态栏用色更克制，并显式标出演示模式。
 import {
   useCallback,
   useEffect,
@@ -112,7 +106,6 @@ import {
   IconMergeH,
 } from "../ui/icons";
 
-/** 标签类型 → 图标；空态与标签栏共用。 */
 const TAB_ICON = {
   terminal: IconTerminal,
   files: IconFolderOpen,
@@ -134,20 +127,17 @@ function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
   }
 }
 
-/** 一级标签（工作区）的图标：会话工作区用资产类型图标，其余按种类给。 */
 function workspaceIcon(w: Workspace) {
   if (w.kind === "db") return w.dbKind === "redis" ? IconLayers : IconDatabase;
   if (w.kind === "tools") return IconSettings;
   return assetIcon(w.assetKind ?? "ssh");
 }
 
-/** 标签图标：编辑器标签按文件类型取图标（console.log 与 server.ts 长得不一样）。 */
 function tabIcon(t: AppTab) {
   if (t.kind === "files" && t.path) return fileVisual(t.path, "file").Icon;
   return TAB_ICON[t.kind] ?? IconTerminal;
 }
 
-/** 首启动自动连「当前设备」的一次性标记（StrictMode 下 effect 会跑两遍）。 */
 let bootLocalTried = false;
 
 function readWorkspaceViewport(): WorkspaceViewport {
@@ -177,13 +167,6 @@ function useWorkspaceViewport(): WorkspaceViewport {
   return viewport;
 }
 
-/**
- * ask 的 kind → 共享浮层 level：warning / error 走警示图标 + 危险按钮；info 走信息图标；
- * 不传 kind 的 ask 在本应用里几乎都是删除/断开类确认，按警示处理。
- *
- * 导出是为了让测试直接钉这条映射（R42 round-1 P1：缺省即 warning 曾让
- * 「保持 info」的调用点实际渲染成警示浮层 —— 调用点必须显式传 kind:"info"）。
- */
 export function dialogLevelForKind(kind?: string): "info" | "warning" {
   return kind === "info" ? "info" : "warning";
 }
@@ -214,7 +197,6 @@ export default function App() {
     pushToast,
   } = useUi();
 
-  /** 当前工作区（一级标签）；它的面板（二级分屏格）里挂着一排标签。 */
   const ws = useActiveWorkspace();
   const pane = ws?.panes.find((p) => p.id === ws.activePaneId) ?? ws?.panes[0] ?? null;
   const tabs = pane?.tabs ?? [];
@@ -247,10 +229,7 @@ export default function App() {
   );
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
-  // 左栏文件树、AI 侧栏都跟着"当前工作区的机器"走，而不是"最后一个打开过标签的机器"
   const activeSessionId = ws?.sessionId ?? sessions[0]?.id;
-
-  /* ── 面板打开动作（图标栏与命令面板共用） ───────────────────────────── */
 
   const needSession = useCallback(() => {
     pushToast("info", "先连接一台主机（双击左侧资产）");
@@ -258,9 +237,6 @@ export default function App() {
 
   const openLocalTerminal = useCallback(async () => {
     try {
-      // 内核会把这次调用落到内置的「当前设备」资产上（同一资产复用同一条会话）。
-      // 于是工作区叫「当前设备」、终端标签按「终端 N」编号 —— 一级标签已经写着
-      // 机器名了，二级再叫一遍没有信息量。
       const s = await sessionApi.connectLocal();
       const list = useUi.getState().sessions;
       setSessions([...list.filter((x) => x.id !== s.id), s]);
@@ -282,13 +258,6 @@ export default function App() {
   }, [activeSessionId, needSession]);
 
   const openMount = useCallback(() => {
-    // 磁盘挂载在 macOS 上暂不可用（要 macFUSE 系统扩展 + sshfs）。
-    //
-    // 这里仍然开面板，而不是弹一句「暂不可用」了事：面板会把缺失的依赖、
-    // 原因是内核侧下发的（app/capabilities.ts）、以及替代路径（文件树走 SFTP）
-    // 一次说清，提示条 5 秒就没了。图标上已有置灰 + 琥珀点 + tooltip 三重标记。
-    //
-    // 不可用时**不要求先连机器** —— 连了也不能挂，没必要多拦一道。
     const unavailable = mountUnavailableReason() !== null;
     if (!unavailable && !activeSessionId) return needSession();
     useUi.getState().addTab({
@@ -300,13 +269,6 @@ export default function App() {
     });
   }, [activeSessionId, needSession]);
 
-  /**
-   * 端口转发面板。
-   *
-   * 和其它会话级面板不同，它**不要求**先有会话：转发表是全局的，
-   * 用户经常是"回来看一眼我开过哪些口子 / 关掉一条忘了关的"。
-   * 没有会话时面板会提示去连机器，只是"创建"按钮禁用。
-   */
   const openForward = useCallback(() => {
     useUi.getState().addTab({
       id: nextTabId(`forward-${activeSessionId ?? "none"}`),
@@ -329,7 +291,6 @@ export default function App() {
     });
   }, [activeSessionId, needSession, sessions]);
 
-  /** 数据库：先按资产建连接，再开面板。 */
   const openDatabase = useCallback(async () => {
     try {
       const list = await assetApi.list();
@@ -366,24 +327,12 @@ export default function App() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
-  /**
-   * 「后台会话」：服务端还在跑、但没人在看的终端标签。
-   *
-   * 固定 id：再点一次只是把已开的面板激活，不堆第二个。
-   */
   const openBackground = useCallback(() => {
     useUi
       .getState()
       .addTab({ id: "background", kind: "background", title: "后台会话", closable: true });
   }, []);
 
-  /**
-   * 新标签：在当前工作区再开一个终端（最常用的"再来一个"）。
-   *
-   * 会话可能已经不在了 —— 本机会话一断开就被内核彻底回收、应用重启后旧工作区也可能
-   * 残留一个失效的 sessionId。这时**绝不能**退化成"开本机终端"：那会开到另一台机器上，
-   * 用户看到的是串台。按工作区记着的资产把同一台主机连回来才是对的。
-   */
   const openNewTerminal = useCallback(async () => {
     const sid = ws?.sessionId;
     const s = sid ? sessions.find((x) => x.id === sid) : undefined;
@@ -391,7 +340,6 @@ export default function App() {
       void openTerminalTab(s);
       return;
     }
-    // 会话还在池子里（只是断了）→ 原地重连，工作区里已有的标签会一起恢复
     if (s) {
       const started = await sessionApi.reconnect(s.id).catch(() => false);
       pushToast(
@@ -402,7 +350,6 @@ export default function App() {
       );
       return;
     }
-    // 会话已被回收 → 按资产重新连同一台主机
     if (ws?.assetId) {
       try {
         const fresh = await sessionApi.connect(ws.assetId);
@@ -416,8 +363,6 @@ export default function App() {
     }
     void openLocalTerminal();
   }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
-
-  /* ── 全局快捷键 ─────────────────────────────────────────────────────── */
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -438,7 +383,6 @@ export default function App() {
         e.preventDefault();
         void openLocalTerminal();
       } else if (mod && e.key === "\\") {
-        // 上下分屏 / 取消分屏
         e.preventDefault();
         const cur = useUi.getState();
         const id = cur.activeWorkspaceId;
@@ -462,8 +406,6 @@ export default function App() {
     openLocalTerminal,
   ]);
 
-  /* ── 全局文本输入弹窗（替代 window.prompt） ─────────────────────────── */
-
   useEffect(() => {
     registerPromptHandler((message, value, options) => {
       const { openTextPrompt } = useUi.getState();
@@ -472,8 +414,6 @@ export default function App() {
       });
     });
   }, []);
-
-  /* ── 全局确认 / 提示弹框（替代原生 plugin-dialog / window.confirm）──── */
 
   useEffect(() => {
     registerDialogHandlers({
@@ -502,7 +442,6 @@ export default function App() {
             .getState()
             .openAppDialog({ kind: "message", message, level: "info", resolve: () => resolve() });
         }),
-      // 多选一（关闭终端标签：后台继续运行 / 结束进程）。见 store.requestCloseTab。
       choose: (message, options) =>
         new Promise<string | null>((resolve) => {
           useUi.getState().openAppChoice({
@@ -516,14 +455,9 @@ export default function App() {
     });
   }, []);
 
-  /* ── 布局同步：服务端是权威运行态，浏览器只是显示器（§布局） ────────── */
-
   useEffect(() => {
-    // StrictMode 下会跑两遍；layout.ts 里有 started 幂等闸门。
     startLayoutSync();
   }, []);
-
-  /* ── 启动：刷新会话与凭据库状态；演示模式下自动接一台机器 ──────────── */
 
   useEffect(() => {
     void sessionApi.list().then(setSessions).catch(() => undefined);
@@ -539,12 +473,9 @@ export default function App() {
 
   useEffect(() => {
     if (!DEMO) return;
-    // 演示模式：自动连上 web-01 并开一个终端，让首屏就是"活着"的
     let cancelled = false;
     void (async () => {
       try {
-        // 先等布局恢复完成再决定要不要自动开终端：否则「从服务端恢复了一份
-        // 有工作区的布局」和「首启动自动连当前设备」会同时命中，凭空多出一个终端。
         await layoutBootstrapped;
         const list = await assetApi.list();
         const web = list.find((a) => a.name === "web-01");
@@ -557,7 +488,6 @@ export default function App() {
           .getState()
           .pushToast("info", "演示模式：数据都是假的，随便点 —— 终端里输入 help 看可用命令");
       } catch {
-        // 演示模式启动失败不影响后续手动操作
       }
     })();
     return () => {
@@ -565,21 +495,12 @@ export default function App() {
     };
   }, [setSessions]);
 
-  /* ── 首启动：直接把内置的「当前设备」连上 ──────────────────────────── */
-
   useEffect(() => {
-    if (DEMO) return; // 演示模式有自己的启动脚本（连 web-01）
-    // 只在"全新的安装"上自动开：一条**用户自建**资产都没有，说明还没开始用。
-    // 反过来，有资产的人一启动就多出一个本地终端是打扰 —— 他们显然知道
-    // Ctrl+T 和双击资产。
-    //
-    // 模块级一次性标记：StrictMode 下 effect 会跑两遍，而检查要在 await 之后
-    // 才看得到 workspaces —— 只靠那个检查会连开两个终端标签。
+    if (DEMO) return;
     if (bootLocalTried) return;
     bootLocalTried = true;
     void (async () => {
       try {
-        // 同上：先等布局恢复，别在"已经恢复出工作区"的情况下再自动连一台。
         await layoutBootstrapped;
         const list = await assetApi.list();
         if (list.some((a) => !a.builtin)) return;
@@ -588,26 +509,12 @@ export default function App() {
         if (useUi.getState().workspaces.length > 0) return;
         await connectAsset(builtin);
       } catch {
-        // 自动连接失败不影响手动操作：双击左栏「当前设备」即可重试
       }
     })();
   }, []);
 
-  /* ── 面包屑 ─────────────────────────────────────────────────────────── */
-
-  // 面包屑 = 一级标签 / 二级标签，与两级标签栏一一对应
   const crumb = [ws?.title ?? "未连接", active?.title ?? "工作区"];
 
-  /* ── 图标栏 ─────────────────────────────────────────────────────────── */
-
-  /*
-   * 图标栏分三层：
-   *   1) 左栏形态（资产 / 凭据 / 文件）—— 激活态反映"左栏现在是什么"，
-   *      而不是"当前标签是什么"。参考实现里开着终端标签时，
-   *      高亮的仍然是资源管理器那一个，这样用户不会误判左栏内容。
-   *   2) 快捷动作（终端 / 容器 / 数据库 / 挂载）—— 开对应类型的标签。
-   *   3) 底部常驻（AI / 审计 / 设置）。
-   */
   const railPanels: {
     key: string;
     label: string;
@@ -624,8 +531,6 @@ export default function App() {
       },
     },
     {
-      // 凭据是全局资源，没有一个会话时也该能进：
-      // 资产表单填的密码、数据库连接用的口令都往这里写。
       key: "credentials",
       label: "凭据",
       icon: IconKey,
@@ -653,12 +558,10 @@ export default function App() {
     label: string;
     icon: typeof IconServer;
     onClick: () => void;
-    /** 非空 = 本平台暂不可用，图标栏置灰并在 tooltip 里说明。 */
     unavailableReason?: string;
   }[  ] = [
     { key: "terminal", label: "新建终端", icon: IconTerminal, onClick: openNewTerminal },
     {
-      // 服务端模式下「关掉网页，任务还在跑」的落点：这里能看到并接回它们。
       key: "background",
       label: "后台会话",
       icon: IconActivity,
@@ -687,12 +590,9 @@ export default function App() {
       className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
       onDoubleClick={onDragRegionDoubleClick}
     >
-      {/* 接管横幅（§8.6）：置顶占满整行，非空即表示 AI 正在操作某个终端 */}
       <TakeoverBanner />
 
       <div className="flex min-h-0 flex-1">
-        {/* 最左：图标导航栏。macOS 原生红绿灯悬浮在窗口左上（约 28px 高），
-            顶部 Logo 必须让位，否则被红绿灯盖住。 */}
         <nav className={`nx-rail ${TRANSPORT === "desktop" && isMac() ? "pt-[28px]" : ""}`}>
           <div className="mb-2 flex items-center justify-center" title="NexTerm">
             <Logo size={26} />
@@ -735,20 +635,7 @@ export default function App() {
           ))}
         </nav>
 
-        {/* 右侧主区 */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/*
-            一级标签：工作区。一个工作区 ≈ 一台连上的机器（或一个数据库连接），
-            它自己的终端 / 编辑器都挂在下面（二级标签，在 main 里）。
-            关闭工作区不会断开连接（断连是另一个明确动作），只回收里面的终端。
-
-            窗口无边框：标签没占满的空白区是 Wails 拖拽区，最小化 / 最大化 /
-            关闭钉在条尾（sticky right，标签多到滚动时也不被挤走）。浏览器隐藏。
-
-            macOS 走原生红绿灯，自绘按钮组整个不渲染；红绿灯横向占到窗口左起
-            约 64px，图标栏占前 48px，所以标签条只需再让 32px（首个标签落在
-            ~80px，贴近原生间距），拖拽语义不变。
-          */}
           <div
             className={`nx-tabstrip is-top ${TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : ""}`}
             data-wails-drag-region style={wailsDragRegionStyle}
@@ -812,9 +699,7 @@ export default function App() {
             >
               <IconPlus size={13} />
             </button>
-            {/* 标签条空白拖拽区：标签少时占满剩余宽度，标签多时收缩为 0 */}
             <div className="nx-spacer min-w-0" data-wails-drag-region style={wailsDragRegionStyle} />
-            {/* macOS 用原生红绿灯；这组 Wails 窗口按钮只在桌面非 macOS 上出现。 */}
             {TRANSPORT === "desktop" && !isMac() && (
               <div className="sticky right-0 z-10 flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 bg-neutral-950 pl-1.5 pr-1.5">
                 <button
@@ -843,8 +728,6 @@ export default function App() {
             )}
           </div>
 
-          {/* 标题栏也是拖拽区；Wails 只检查事件目标自身，所以标题、
-              面包屑和 spacer 都保留各自的 CSS drag 标记。 */}
           <header
             className="flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 pl-3.5"
             data-wails-drag-region style={wailsDragRegionStyle}
@@ -903,7 +786,6 @@ export default function App() {
             </button>
           </header>
 
-        {/* 三栏主体 */}
         <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
           {viewport.overlaySidebars && (leftDockOpen || rightDockOpen) && (
             <button
@@ -913,11 +795,6 @@ export default function App() {
               onClick={() => setOverlayDock(null)}
             />
           )}
-          {/*
-            左栏三种形态：资产列表（管理）、凭据库（资源）、当前工作区的文件树（干活）。
-            连上机器后默认是文件树 —— 这台机器就是接下来一段时间的工作面。
-            用 key=sessionId 让每台机器各自保留自己的展开状态与选中项。
-          */}
           {leftDockOpen && (
             <div className="nx-left-dock">
               {leftMode === "credentials" ? (
@@ -939,14 +816,6 @@ export default function App() {
           )}
 
           <main className="nx-workspace-main min-w-0 flex-1">
-            {/*
-              关键：**所有工作区、所有面板、所有标签都保持挂载**，非激活的用 `hidden` 藏起来。
-              以前是 `key={active.id}` + 条件渲染，切标签会卸载/重建组件 →
-              新终端实例重新调 terminal_attach → 内核每次都 open_pty 开一个新 shell：
-              既"刷新"了界面，又把旧 shell 泄漏在远端。
-              分屏之后这条更要紧：一栏收起/切换都不该影响另一栏的 shell。
-              挂在 DOM 上还顺带保住了滚动位置、选中内容与命令块。
-            */}
             {workspaces.length === 0 ? (
               sessions.length > 0 ? (
                 <WorkspaceEmpty onNew={openNewTerminal} />
@@ -965,7 +834,6 @@ export default function App() {
                     visible={wsActive}
                     split={split}
                     canSplit={!split}
-                    /* 「取消分屏」始终收掉下面那一栏，符合直觉 */
                     onToggleSplit={() => {
                       if (split) void unsplitWorkspace(w.panes[1].id, w.id);
                       else splitWorkspace(w.id);
@@ -978,12 +846,6 @@ export default function App() {
                 ));
                 return (
                   <div key={w.id} className={wsActive ? "h-full min-h-0" : "hidden"}>
-                    {/*
-                      永远走 SplitStack（未分屏时 bottom 为 undefined）——
-                      别改回「split ? <SplitStack/> : groups[0]」。
-                      那会让取消分屏时 div 的子节点类型发生切换，React 卸载重建
-                      整棵子树，终端被迫重新 attach（详见 SplitStack 的注释）。
-                    */}
                     <SplitStack
                       ratio={w.splitRatio}
                       onRatio={(r) => setSplitRatio(r, w.id)}
@@ -1011,7 +873,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 状态栏 */}
         <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
           <span className="flex items-center gap-1.5">
             <IconServer size={11} />
@@ -1055,7 +916,6 @@ export default function App() {
 
       </div>
 
-      {/* Toast */}
       <div className="nx-toasts pointer-events-none fixed right-4 bottom-9 z-[95] flex flex-col gap-2">
         {toasts.map((t) => {
           const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
@@ -1096,15 +956,10 @@ export default function App() {
   );
 }
 
-/* ── 面板（分屏格） ───────────────────────────────────────────────────── */
-
 interface PaneGroupProps {
   pane: Pane;
-  /** 该面板是否拥有输入焦点；仅影响激活样式与焦点切换。 */
   active: boolean;
-  /** 所在工作区是否可见；分屏里的两个面板会同时为 true。 */
   visible: boolean;
-  /** 所在工作区是否处于分屏状态（决定激活态的视觉提示强弱）。 */
   split: boolean;
   canSplit: boolean;
   onToggleSplit: () => void;
@@ -1114,11 +969,6 @@ interface PaneGroupProps {
   onToggleLeft: () => void;
 }
 
-/**
- * 一个分屏格：自己的一排二级标签 + 内容区。
- *
- * 不分屏时它就是整个内容区；分屏时上下各一个，各自独立记着自己的标签与激活项。
- */
 function PaneGroup({
   pane,
   active,
@@ -1136,14 +986,12 @@ function PaneGroup({
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
-  /** 重命名标签：空输入视为取消，不改成空标题。 */
   const renameTab = async (id: string, title: string) => {
     const next = await promptText("重命名标签：", title);
     if (next === null || !next.trim()) return;
     updateTab(id, { title: next.trim() });
   };
 
-  /** 标签右键菜单。重命名只给终端标签（文件标签的标题是文件名，改了会对不上）。 */
   const tabMenu = (e: React.MouseEvent, t: (typeof pane.tabs)[number]) => {
     e.preventDefault();
     const items: MenuItem[] = [];
@@ -1169,7 +1017,6 @@ function PaneGroup({
   return (
     <div
       className="flex h-full min-h-0 flex-col"
-      // 点这一栏的任意位置（含终端画布）就把焦点切过来；已激活就别再动 store
       onMouseDown={() => {
         if (!active) onActivate();
       }}
@@ -1236,7 +1083,6 @@ function PaneGroup({
         ) : (
           pane.tabs.map((t) => (
             <div key={t.id} className={t.id === activeTabId ? "h-full min-h-0" : "hidden"}>
-              {/* 同一工作区的两个分屏都可见；焦点面板只决定激活样式。 */}
               <PaneForTab
                 tab={t}
                 active={t.id === activeTabId && visible}
@@ -1247,35 +1093,20 @@ function PaneGroup({
         )}
       </div>
 
-      {/* 标签右键菜单（重命名 / 关闭） */}
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
 
-/**
- * 上下分屏容器：一条可拖拽的分割条，上下各放一个面板。
- *
- * ★ 未分屏时它**依然挂在树上**，只是不渲染第二栏和分割条。
- *
- * 这点是必须的。以前是「分屏时渲 `<SplitStack>`，不分屏时直接渲 `groups[0]`」，
- * 于是取消分屏会让那个 div 的子节点类型从 `SplitStack` 变成 `PaneGroup` ——
- * React 判定类型不同，整棵子树卸载重建，里面所有 XtermView 重新走一遍
- * `terminal_attach`：丢滚动内容、在远端泄漏一个 shell，运气不好还会直接 attach
- * 失败（表现为终端里那句「[attach 失败] [object Object]」，只能重起工作区才恢复）。
- * 保持结构恒定，React 就能按 key 复用同一个 PaneGroup 实例。
- */
 function SplitStack({
   ratio,
   onRatio,
   top,
   bottom,
 }: {
-  /** 上栏高度占比 0.15 ~ 0.85。 */
   ratio: number;
   onRatio: (r: number) => void;
   top: ReactNode;
-  /** 为空表示未分屏：此时只渲染上栏。 */
   bottom?: ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -1368,17 +1199,10 @@ function SplitStack({
   );
 }
 
-/**
- * 会话的连接是否健在。
- *
- * 只有这三种状态算"能用"：`disconnected` / `failed` 会话的底层传输已经关了，
- * 往它上面 attach 只会拿到一句"连接已断开"。
- */
 function isSessionAlive(status: string): boolean {
   return status === "connected" || status === "connecting" || status === "reconnecting";
 }
 
-/** 单标签内容分发。由 App 的标签映射调用，保持挂载（生命周期与标签一致）。 */
 function PaneForTab({
   tab,
   active,
@@ -1396,9 +1220,6 @@ function PaneForTab({
           title={tab.title}
           containerId={tab.containerId}
           storeTabId={tab.id}
-          // ★「关掉网页再打开还能接回原终端」的总开关：把持久化下来的内核标签 id
-          // 传下去，XtermView 才会走 terminal_attach_tab（接管）而不是新建 shell。
-          // 漏了这个字段 = 每恢复一次就多泄漏一个远端 shell。
           resumeTabId={tab.tabId}
           visible={active}
         />
@@ -1406,9 +1227,6 @@ function PaneForTab({
         <EmptyState />
       );
     case "mount":
-      // 与「端口转发」同款：面板自己处理「没有会话」这件事。
-      // 不能因为没有 sessionId 就退化成 EmptyState —— 磁盘挂载在 macOS 上本来
-      // 就不依赖会话（已标暂不可用），退化成空白等于把理由一个字都吞掉。
       return <MountPanel sessionId={tab.sessionId} />;
     case "forward":
       return <ForwardPanel sessionId={tab.sessionId} />;
@@ -1432,13 +1250,10 @@ function PaneForTab({
     case "audit":
       return <AuditView />;
     case "background":
-      // 「后台会话」面板：只在它被激活时轮询，避免所有隐藏标签一起空转。
       return <BackgroundSessions visible={active} />;
     case "credentials":
       return <CredentialsPanel credId={tab.credId} />;
     case "credentialsText":
-      // 形态由标签上的 credView 决定：点左栏「文本 / JSON」= 写回它再激活，
-      // 所以标签已经开着时再点入口也会真的切过去。
       return (
         <CredentialsView view={tab.credView ?? "text"} onChange={openCredentialsViewTab} />
       );
@@ -1447,7 +1262,6 @@ function PaneForTab({
   }
 }
 
-/** 已连接但还没有任何标签时的空态：直接给一张"新建终端"的卡片，不铺品牌页。 */
 function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
   return (
     <div className="flex h-full items-center justify-center bg-neutral-900 px-6">
@@ -1469,7 +1283,6 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
   );
 }
 
-/** 空态：品牌 + 快捷入口。 */
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const { setSessions, sessions } = useUi();
   const shortcuts: [string, string][] = [

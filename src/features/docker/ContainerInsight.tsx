@@ -1,13 +1,3 @@
-// 容器洞察钻取视图（M61）：inspect 详情 / 可轮询 stats / 容器内目录浏览。
-//
-// 三条视图全部只走既有 `dockerApi` facade（docker_inspect / docker_stats /
-// docker_container_list_dir），sessionId 一律来自标签上下文 —— 用户没有任何输入
-// session 的入口，缓存键也全部带 sessionId，跨会话不会互相读到对方的缓存。
-//
-// 脱敏口径（review r1 P1）：当前 RPC 契约返回的是未脱敏原始 inspect，前端不提供
-// 任何「显示真实值」的路径 —— 详情页 DOM 只消费 buildInspectViewModel 产出的
-// 脱敏 view model，文件页的显示值与导航值分离（见 dockerRedact.ts）。这只是
-// 展示级遮蔽：所有权校验与强制遮蔽以内核为准，前端过滤不构成授权。
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -36,7 +26,6 @@ import { parseStatsOutput } from "./statsParse";
 interface InsightProps {
   sessionId: string;
   container: ContainerSummary;
-  /** 面板是否在前台（标签不可见时停掉一切轮询）。 */
   visible: boolean;
   onClose: () => void;
 }
@@ -84,8 +73,6 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
         </div>
       </div>
 
-      {/* 切换容器时 DockerPanel 用 key={container.id} 重建本组件，任何在途响应
-          都只能落进旧键的缓存，不会渲染到新容器头上。 */}
       {tab === "inspect" && <InspectView sessionId={sessionId} containerId={container.id} />}
       {tab === "stats" && (
         <StatsView
@@ -127,7 +114,6 @@ function InsightError({
   );
 }
 
-/** 展示级脱敏的统一口径提示。 */
 function RedactHint() {
   return (
     <span className="nx-hint inline-flex items-center gap-1">
@@ -136,8 +122,6 @@ function RedactHint() {
     </span>
   );
 }
-
-// ───────── 详情（inspect） ─────────
 
 function InspectView({ sessionId, containerId }: { sessionId: string; containerId: string }) {
   const q = useQuery({
@@ -150,8 +134,6 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
     return <InsightError error={q.error} onRetry={() => void q.refetch()} />;
   }
 
-  // DOM 的唯一数据源：脱敏 view model。原始 inspect JSON 不出 dockerRedact 模块，
-  // 也没有任何交互路径能拿到未脱敏值（review r1 P1 —— reveal 开关已移除）。
   const vm = buildInspectViewModel(q.data);
 
   return (
@@ -256,7 +238,6 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
                   <td className="nx-mono truncate" title={m.destination}>
                     {m.destination || "—"}
                   </td>
-                  {/* RW 是真实 boolean（兼容字符串），true → RW / false → RO */}
                   <td>{m.rw ? "RW" : "RO"}</td>
                 </tr>
               ))}
@@ -292,8 +273,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// ───────── 统计（stats） ─────────
-
 function StatsView({
   sessionId,
   containerId,
@@ -305,15 +284,11 @@ function StatsView({
   containerRunning: boolean;
   active: boolean;
 }) {
-  // stats 是**会话级**快照（一次返回全部运行中容器），live 感靠有界轮询：
-  // 只在「统计页签在前台 && 面板可见」时 3s 一跳；切页签 / 切标签 / 卸载即停。
   const stats = useQuery({
     queryKey: ["docker-stats", sessionId],
     queryFn: () => dockerApi.stats(sessionId),
     refetchInterval: active ? 3000 : false,
   });
-  // 展示级归属比对：只渲染当前会话容器清单里有的行，后端多返回/缓存串了的行
-  // 不上屏。清单还没加载出来时不拦 —— 后端本身就是按会话隔离的权威边界。
   const ps = useQuery({
     queryKey: ["docker-ps", sessionId],
     queryFn: () => dockerApi.ps(sessionId),
@@ -401,9 +376,6 @@ function StatsView({
   );
 }
 
-// ───────── 文件（容器内目录） ─────────
-
-/** `ls -1a` 的输出带 `.` / `..`，后端原样透传，这里必须滤掉。 */
 function cleanEntries(entries: string[]): string[] {
   return entries
     .map((e) => e.trim())
@@ -421,7 +393,6 @@ function parentOfContainerPath(path: string): string | null {
   return idx <= 0 ? "/" : path.slice(0, idx);
 }
 
-/** 面包屑段：path 是原始导航值，label 是遮蔽后的显示值（review r1 P2）。 */
 function crumbsOf(path: string): { label: string; path: string; sensitive: boolean }[] {
   const crumbs = [{ label: "/", path: "/", sensitive: false }];
   let acc = "";
@@ -438,14 +409,11 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
   const q = useQuery({
     queryKey: ["docker-container-files", sessionId, containerId, path],
     queryFn: () => dockerApi.containerListDir(sessionId, containerId, path),
-    // 路径打错/无权访问时自动重试没有意义，重试交给用户点的按钮。
     retry: false,
   });
 
   const up = parentOfContainerPath(path);
   const entries = cleanEntries(q.data ?? []);
-  // 带 `/` 后缀的条目（demo 数据里的目录）排前面；裸 `ls -1a` 输出没有类型信息，
-  // 排序只影响观感，能不能进由后端说了算。
   const sorted = [...entries].sort((a, b) => {
     const da = a.endsWith("/") ? 0 : 1;
     const db = b.endsWith("/") ? 0 : 1;
@@ -492,8 +460,6 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
           <InsightLoading text="读取容器目录…" />
         ) : q.isError ? (
           <InsightError
-            // 后端 ls stderr 会把原始路径包进错误（review r2 P2）—— 回显前用
-            // 逐段脱敏路径替换；describeError 对字符串原样返回，直接传脱敏文本。
             error={redactPathInText(describeError(q.error), path)}
             onRetry={() => void q.refetch()}
             extra={
@@ -513,8 +479,6 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                 const isDir = entry.endsWith("/");
                 const name = entry.replace(/\/+$/, "");
                 const sensitive = isSensitiveFileName(name);
-                // 显示值与导航值分离（review r1 P2）：敏感条目的文本与 title 一律
-                // 用遮蔽显示，原始文件名不上屏；点击导航仍用原始 name。
                 const display = sensitive ? redactFileName(name) : name;
                 return (
                   <tr

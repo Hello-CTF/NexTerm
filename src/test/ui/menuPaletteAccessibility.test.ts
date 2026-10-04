@@ -50,8 +50,6 @@ function menuItem(container: ParentNode, label: string): HTMLButtonElement {
   return item;
 }
 
-// jsdom 不做布局，getClientRects 恒为空。这里给“已渲染”元素一个非空矩形、
-// 给 display:none / hidden 子树空矩形，让 documentTabTarget 的可见性筛选可测。
 function hasRenderedLayout(element: HTMLElement): boolean {
   for (let current: HTMLElement | null = element; current; current = current.parentElement) {
     if (current.hidden || current.style.display === "none") return false;

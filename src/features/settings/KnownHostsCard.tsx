@@ -1,16 +1,3 @@
-// 已知主机（SSH 主机密钥）管理：列出 / 撤销信任。
-//
-// # 为什么只有「列出 / 删除」，没有「添加」
-//
-// 主机信任的唯一入口是首次连接时的 SSH 指纹确认（Strict 流程：连接触发
-// `host_key_pending`，确认框里展示的是**这次连接真实协商出的**指纹，
-// 见 store.connectAsset）。这里刻意不提供按指纹手动添加的表单 ——
-// 手抄的指纹一旦和真实协商结果对不上，等于亲手给中间人开门，Strict 就形同虚设。
-//
-// # 删除 = 撤销信任
-//
-// 删掉一条之后，下次连接这台机器会重新走首次连接的指纹确认。
-// 服务器重装 / 更换主机密钥之后，正确做法就是删掉旧条目、重新确认。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { assetApi } from "../../ipc/commands";
 import type { KnownHostDto } from "../../ipc/types";
@@ -25,10 +12,8 @@ export function KnownHostsCard() {
   const [hosts, setHosts] = useState<KnownHostDto[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  /** 正在撤销的那一条 id（同时只允许一个，避免连点把状态搞乱）。 */
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
-  // 陈旧完成防护：卸载后、或更新的读取已发出后，旧请求的迟到结果一律丢弃。
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
   useEffect(() => {
@@ -63,7 +48,6 @@ export function KnownHostsCard() {
   if (DEMO) return null;
 
   const revoke = async (host: KnownHostDto) => {
-    // 确认走应用内 DialogHost（role=alertdialog，焦点受管），不是 window.confirm。
     const ok = await ask(
       `撤销对 ${host.host}:${host.port} 的信任？\n指纹(${host.keyType}): ${host.fingerprint}\n\n撤销后下次连接这台机器会重新弹出指纹确认。`,
       { title: "撤销已知主机", kind: "warning" },

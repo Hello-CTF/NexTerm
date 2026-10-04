@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "../demo/mock";
 import { fsFileContent } from "../demo/data";
 
-// 演示实现走 window.setTimeout 模拟 IPC 延迟；node 环境下把全局定时器暴露成 window。
 beforeEach(() => {
   vi.stubGlobal("window", globalThis);
 });
@@ -15,7 +14,6 @@ function utf8Bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-// 独立参照实现：不分块、逐字节拼二进制串后一次 btoa，与被测的分块编码互证
 function refBase64(text: string): string {
   const bytes = utf8Bytes(text);
   let binary = "";
@@ -36,7 +34,6 @@ async function demoWrite(path: string, contentBase64: string): Promise<unknown> 
 }
 
 describe("demo fs_read base64", () => {
-  // 32766 是当前分块边界；32768 是历史缺陷分块边界，两组都必须覆盖
   for (const length of [0, 1, 2, 3, 32_765, 32_766, 32_767, 32_768, 32_769, 65_535, 65_536, 65_537]) {
     it(`encodes ${length} bytes exactly as one standards-valid base64 document`, async () => {
       const path = `/home/deploy/codec-read-${length}.txt`;
@@ -52,7 +49,7 @@ describe("demo fs_read base64", () => {
 
   it("keeps multi-byte UTF-8 intact across chunk boundaries and multi-MiB content", async () => {
     const boundary = "a".repeat(32_765) + "中" + "b".repeat(100);
-    const big = "中文🙂abc\n".repeat(600_000); // 8.4 MB UTF-8（多轮分块）
+    const big = "中文🙂abc\n".repeat(600_000);
     for (const [name, text] of [["boundary", boundary], ["big", big]] as const) {
       const path = `/home/deploy/codec-read-${name}.txt`;
       fsFileContent[path] = text;
@@ -92,7 +89,6 @@ describe("demo fs_write decode and error propagation", () => {
   it("rejects interior padding (the historical concatenated-chunks defect shape)", async () => {
     const path = "/home/deploy/codec-padded-chunks.txt";
     fsFileContent[path] = "original";
-    // 历史缺陷产物的形状：两段各自带 padding 的 btoa 结果拼接，中间出现 `=`
     await expect(demoWrite(path, "YQ==YQ==")).rejects.toMatchObject({ code: "bad_param" });
     expect(fsFileContent[path]).toBe("original");
   });

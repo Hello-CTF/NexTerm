@@ -1,4 +1,3 @@
-// 命令面板（§5.1 Ctrl+Shift+P）：动作中心注册表。
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useUi, connectAsset, nextTabId, openTerminalTab } from "./store";
 import { isMac } from "./platform";

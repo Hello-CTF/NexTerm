@@ -1,10 +1,3 @@
-// 模型选择器（P0-3）：下拉展示所有模型档案，点一条即切换激活。
-//
-// 「自己管自己」：自己拉档案列表、自己处理切换，外部只给一个 onManage
-// （打开配置面板的回调）。因此可以直接丢进 AI 功能行替换原来的模型胶囊。
-//
-// 每次展开都重新拉一次列表 —— 配置面板里刚改完/刚切过的结果要立刻反映出来，
-// 缓存一份旧列表只会让用户以为「改了没生效」。
 import { useEffect, useRef, useState } from "react";
 import { modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { useUi } from "../../app/store";
@@ -31,7 +24,6 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
     void refresh();
   }, [profilesRevision]);
 
-  // 点外部 / Esc 收起
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {

@@ -1,8 +1,3 @@
-// 文件编辑器（M1-T7）：CodeMirror 6，打开/编辑/保存 + 备份确认 + GBK 解码。
-//
-// 工具条对齐参考实现：保存 / 撤销 / 重做 / 查找 / 缩放 / 换行符 / 编码。
-// 其中「换行符」是真的转换（重写整篇文档的换行），「编码」是真的换解码器
-// （会重新读盘），不是只显示一个标签。
 import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
@@ -28,7 +23,6 @@ import { fileVisual } from "./fileTypes";
 import { bytesFromBase64, bytesToBase64, decodeContent, type EncChoice } from "./fileCodec";
 import { isActiveFileEditor, setFileEditorDirty, shouldClearEditorDirty, shouldHandleEditorSave } from "./editorGuards";
 
-// 轻量语法高亮：按扩展名选 legacy mode
 import { StreamLanguage } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { nginx } from "@codemirror/legacy-modes/mode/nginx";
@@ -66,7 +60,6 @@ const ENC_LABEL: Record<EncChoice, string> = {
   gbk: "GBK",
 };
 
-/** 字号档位（工具条上的 -/+ 在这几个值之间走）。 */
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
 export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
@@ -75,7 +68,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState<{ encoding: string; size: number } | null>(null);
   const [zoom, setZoom] = useState(2);
-  /** 换行符：从文档内容实时推导，工具条上那个 LF / CRLF 就是它。 */
   const [eol, setEol] = useState<"LF" | "CRLF">("LF");
   const [enc, setEnc] = useState<EncChoice>("auto");
   const [reloadEnc, setReloadEnc] = useState<EncChoice>("auto");
@@ -122,7 +114,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         setFileEditorDirty(sessionId, path, false);
         setDirty(false);
         if (hostRef.current) {
-          // 换编码会重建视图，所以旧实例必须显式销毁（否则会叠加两个画布）
           viewRef.current?.destroy();
           viewRef.current = null;
           const mode = modeFor(path);
@@ -131,7 +122,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
               doc: text,
               extensions: [
                 basicSetup,
-                // 顶部搜索面板（basicSetup 只带了快捷键，面板本身要显式装）
                 search({ top: true }),
                 ...(mode ? [mode] : []),
                 keymap.of([indentWithTab]),
@@ -161,7 +151,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-    // reloadEnc / reloadKey 变化 = 重新读盘重解码
   }, [sessionId, path, reloadEnc, reloadKey]);
 
   const save = async () => {
@@ -170,8 +159,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     saveInFlightRef.current = true;
     setSaving(true);
     try {
-      // 非 UTF-8 解码的文件没法按原编码写回（前端没有 GBK 编码器），
-      // 所以这里必须显式告知，而不是悄悄写成 UTF-8。
       if (meta && meta.encoding !== "utf-8") {
         const ok = await ask(
           `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，非 ASCII 字符的字节会变。继续？`,
@@ -183,7 +170,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       const savedVersion = editVersionRef.current;
       const bytes = new TextEncoder().encode(text);
       const b64 = bytesToBase64(bytes);
-      // 默认"保存即覆盖 + 保留远端备份"（§5.4）
       await fsApi.write(sessionId, path, b64, true);
       setMeta({ encoding: "utf-8", size: bytes.length });
       if (meta && meta.encoding !== "utf-8") setEnc("utf-8");
@@ -202,7 +188,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
   };
   saveRef.current = () => void save();
 
-  // Ctrl/Cmd+S 保存
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return;
@@ -222,7 +207,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     if (v) fn(v);
   };
 
-  /** LF ⇄ CRLF：整篇转换（脏标记由 updateListener 自动接上）。 */
   const toggleEol = () => {
     withView((v) => {
       const src = v.state.doc.toString();
@@ -242,7 +226,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     setReloadKey((k) => k + 1);
   };
 
-  /** 切换解码方式：有未保存改动时先确认（会重新读盘）。 */
   const switchEnc = async (next: EncChoice) => {
     if (saveInFlightRef.current) {
       pushToast("info", "保存进行中，完成后才能切换编码");
@@ -279,7 +262,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         )}
         <div className="nx-spacer" />
 
-        {/* 编辑动作 */}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="撤销 (Ctrl+Z)"
@@ -304,7 +286,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
 
         <span className="nx-divider-v" />
 
-        {/* 缩放 */}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="缩小字号"
@@ -330,7 +311,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
 
         <span className="nx-divider-v" />
 
-        {/* 换行符 / 编码 */}
         <button
           className="nx-btn nx-btn-ghost nx-btn-xs font-mono"
           title={`当前换行符 ${eol}，点击转换`}

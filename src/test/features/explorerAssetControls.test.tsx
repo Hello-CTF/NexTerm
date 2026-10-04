@@ -1,15 +1,5 @@
 /** @vitest-environment jsdom */
 
-// M59：资产区控件（分组改名/删除、测试连接、命令片段）的显式动作与护栏测试。
-//
-// 全部走 mission-local mock（vi.mock 本文件内的模块），不动共享 IPC/demo 文件。
-// 覆盖点：显式动作才触发写操作、确认框可取消、错误行内展示 + 重试、
-// 探测的防连点/防陈旧/不带凭据、片段插入只写入不执行、加载/空/错三态。
-//
-// 时序约定（与 reactTestUtils 的语义一致）：
-// · 初始渲染靠 react-query 驱动，waitFor 等文本出现即可；
-// · 点击触发的组件内异步（probe/save/delete） resolve 后，DOM 更新要等
-//   一个完整 act 退出才落盘 —— 所以先 waitFor 断言 mock 调用，再 flush() 后断言 DOM。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -43,9 +33,6 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
-// R42 真实浮层验收：工厂在既有覆盖之上 spread 真实模块 —— 组件照旧走 mocks.ask，
-// 钉板测试把 mocks.ask 委托回真实 ask()，经真实 registerDialogHandlers +
-// 真实映射（App 的 dialogLevelForKind）+ 真实 store/DialogHost 渲染验收级别。
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   mocks.realAsk = actual.ask;
@@ -159,8 +146,6 @@ function setTerminalWorkspace(tabId: string | null) {
 
 let mounted: MountedView | undefined;
 beforeEach(() => {
-  // reset（而非 clear）：连 once 队列一起清掉，避免上一个用例没吃完的
-  // mockResolvedValueOnce 漏进下一个用例的 ask 队列
   vi.resetAllMocks();
   document.body.replaceChildren();
   mocks.list.mockResolvedValue([]);
@@ -176,14 +161,11 @@ afterEach(() => {
   mounted = undefined;
 });
 
-// ───────── 分组：改名 / 删除 ─────────
-
 describe("asset group controls", () => {
   it("renames only through the explicit dialog — never on row selection", async () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.textContent).toContain("生产"));
 
-    // 选中/展开分组（点行首的折叠按钮）不得触发任何写操作
     const toggle = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("生产"),
     );
@@ -199,7 +181,6 @@ describe("asset group controls", () => {
     setInputValue(input, "生产环境");
     clickButton(mounted!.container, "保存");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledWith("g1", "生产环境"));
-    // 成功后弹窗关闭
     await flush();
     expect(mounted!.container.querySelector(".nx-modal input.nx-input")).toBeNull();
   });
@@ -217,7 +198,6 @@ describe("asset group controls", () => {
     setInputValue(input, "生产环境");
     clickButton(mounted!.container, "保存");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledTimes(1));
-    // 失败错误留在弹窗里（不关闭），可直接改完再点保存重试
     await flush();
     expect(mounted!.container.textContent).toContain("boom");
     expect(mounted!.container.querySelector(".nx-modal input.nx-input")).not.toBeNull();
@@ -262,13 +242,11 @@ describe("asset group controls", () => {
 
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledTimes(2));
-    expect(mocks.ask).toHaveBeenCalledTimes(1); // 重试不再弹确认
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
     await flush();
     expect(mounted!.container.textContent).not.toContain("disk on fire");
   });
 });
-
-// ───────── 资产编辑器：测试连接 ─────────
 
 async function mountEditor(): Promise<void> {
   mounted = mountWithClient(
@@ -287,7 +265,6 @@ describe("asset editor test connection", () => {
   it("probes host/port with an explicit bounded timeout and no credentials", async () => {
     await mountEditor();
     await setHost("10.0.0.8");
-    // 顺手在密码框里填一个「诱饵」：探测调用不得携带它
     const password = [
       ...mounted!.container.querySelectorAll<HTMLInputElement>('input[type="password"]'),
     ][0];
@@ -296,7 +273,6 @@ describe("asset editor test connection", () => {
     mocks.probe.mockResolvedValue({ open: true });
     clickButton(mounted!.container, "测试连接");
     await waitFor(() => expect(mocks.probe).toHaveBeenCalledTimes(1));
-    // 有界探测：host + port + 显式 3s 超时，参数里没有任何凭据
     expect(mocks.probe).toHaveBeenCalledWith("10.0.0.8", 22, 3000);
     expect(mocks.probe.mock.calls[0]).toHaveLength(3);
     await flush();
@@ -329,7 +305,6 @@ describe("asset editor test connection", () => {
     clickButton(mounted!.container, "测试连接");
     await flush();
 
-    // 探测在途时用户改了主机：旧结果描述的是旧目标，必须被丢弃
     await setHost("10.0.0.9");
     pending.resolve({ open: true });
     await flush();
@@ -347,8 +322,6 @@ describe("asset editor test connection", () => {
     expect(mounted!.container.textContent).toContain("不可连接:connection refused");
   });
 });
-
-// ───────── 命令片段 ─────────
 
 describe("snippets panel", () => {
   it("renders loading, then the list", async () => {
@@ -407,7 +380,6 @@ describe("snippets panel", () => {
     const body = modal?.querySelector("textarea");
     if (!name || !body) throw new Error("Snippet editor fields not found");
     setInputValue(name as HTMLInputElement, "带空白");
-    // 首尾空格 / Tab 都可能有语义：保存路径一个字节都不能动（trim 只做空白校验）
     setInputValue(body as HTMLTextAreaElement, "  docker ps \t ");
     clickButton(mounted.container, "保存");
     await waitFor(() => expect(mocks.snippetCreate).toHaveBeenCalledTimes(1));
@@ -423,8 +395,6 @@ describe("snippets panel", () => {
     await waitFor(() => expect(mounted!.container.textContent).toContain("带CRLF"));
 
     click(buttonByTitle(mounted.container, "编辑片段"));
-    // 不动正文直接保存：状态里的原始 body（含 \r\n）必须原样传给 update，
-    // 不能被 trim 成 "echo done"
     clickButton(mounted.container, "保存");
     await waitFor(() => expect(mocks.snippetUpdate).toHaveBeenCalledTimes(1));
     expect(mocks.snippetUpdate).toHaveBeenCalledWith("sn9", "带CRLF", "echo done\r\n");
@@ -445,7 +415,6 @@ describe("snippets panel", () => {
       (b) => b.textContent?.trim() === "保存",
     );
     if (!save) throw new Error("Save button not found");
-    // 纯空白正文：保存按钮直接禁用，任何写都不会发生
     expect(save).toHaveProperty("disabled", true);
     click(save);
     await flush();
@@ -472,7 +441,6 @@ describe("snippets panel", () => {
     setInputValue(body as HTMLTextAreaElement, "echo a\necho b");
     clickButton(mounted.container, "保存");
     await waitFor(() => expect(mocks.snippetCreate).toHaveBeenCalledWith("两段", "echo a\necho b"));
-    // 保存后列表刷新，新片段出现在面板里
     await waitFor(() => expect(mounted!.container.textContent).toContain("两段"));
 
     const rows = [...mounted.container.querySelectorAll(".nx-row")];
@@ -480,7 +448,6 @@ describe("snippets panel", () => {
     if (!createdRow) throw new Error("Created snippet row not found");
     click(buttonByTitle(createdRow, "插入到当前终端"));
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    // 保存 → 插入串联：恰好一次 execute-risk 确认（文案如实说明逐行提交），写入原始字节
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("回车/换行"),
@@ -515,13 +482,11 @@ describe("snippets panel", () => {
 
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    // 可打印内容无执行风险：不需要确认
     expect(mocks.ask).not.toHaveBeenCalled();
     const [tabId, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
     expect(tabId).toBe("kernel-1");
     const text = new TextDecoder().decode(bytes);
     expect(text).toBe("docker ps");
-    // 不带回车：写入 ≠ 执行，回车由用户自己按
     expect(text.endsWith("\n")).toBe(false);
     expect(text.endsWith("\r")).toBe(false);
   });
@@ -544,9 +509,7 @@ describe("snippets panel", () => {
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
     expect(mocks.write).toHaveBeenCalledTimes(1);
-    // 第二次 ask 必须被真正消费（防止 once 配置被 reset 静默吞掉）
     expect(mocks.ask).toHaveBeenCalledTimes(2);
-    // 已确认的含换行插入，结果提示不得再绝对声称「未执行」
     const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
     expect(toastText).not.toContain("未执行");
   });
@@ -559,7 +522,6 @@ describe("snippets panel", () => {
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("cr"));
 
-    // 未授权前绝不写入
     mocks.ask.mockResolvedValueOnce(false);
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
@@ -572,7 +534,6 @@ describe("snippets panel", () => {
     expect(mocks.write).toHaveBeenCalledTimes(1);
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     const [, bytes] = mocks.write.mock.calls[0] as [string, Uint8Array];
-    // 内容字节原样保留（含中间的 0x0d），确认 ≠ 删改
     expect(new TextDecoder().decode(bytes)).toBe("echo M59_R_EXECUTED\r#");
     const toastText = mocks.toast.mock.calls.at(-1)?.[1] as string;
     expect(toastText).not.toContain("未执行");
@@ -655,7 +616,6 @@ describe("snippets panel", () => {
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("tab"));
 
-    // 未授权前绝不写入
     mocks.ask.mockResolvedValueOnce(false);
     click(buttonByTitle(mounted.container, "插入到当前终端"));
     await flush();
@@ -743,17 +703,8 @@ describe("snippets panel", () => {
   });
 });
 
-// ───────── R42 审计钉板：资产删除显式 info ─────────
-//
-// Grid 报告把 AssetTree 的删除列进了候选，逐项审计后的结论是**标 info**：
-// 那是软删除（文案自述「可恢复；关联凭据保留」），不是 genuinely destructive。
-// 注意（round-1 P1）：App 共享映射对**不传 kind** 的 ask 默认按 warning 渲染
-// （App.tsx:470-471），所以「保持 info」必须显式传 { kind: "info" } ——
-// 这条回归把显式 info 钉住，防止后续无差别改动把它变成警示浮层。
-
 describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
   it("asset delete renders a plain info dialog: soft delete is recoverable", async () => {
-    // 真实浮层：mocks.ask 委托回真实 ask()，按 App 的注册形态接管共享弹框
     mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
       mocks.realAsk!(message, options),
     );

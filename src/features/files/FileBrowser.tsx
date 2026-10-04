@@ -1,4 +1,3 @@
-// 文件浏览器（M1-T6）：目录列表 + 上传/下载 + 常用操作 + 虚拟滚动 + 右键菜单。
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -48,14 +47,10 @@ import {
 export function FileBrowser({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
-  // 根与左栏文件树保持一致（`~` 由后端展开），否则同一个会话在两处看到的不是同一个目录
   const [path, setPath] = useState(HOME);
-  /** 地址栏的草稿：**不能**边打边 setPath —— 那会每个字符发一次 fs_list。 */
   const [draft, setDraft] = useState(HOME);
   const [selected, setSelected] = useState<string | null>(null);
-  /** 行 / 空白处右键菜单（见 openRowMenu / openBlankMenu）。 */
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  /** rename / chmod / checksum（M60）：与左栏文件树同一套预检与提醒。 */
   const fileOps = useFileOps(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -83,7 +78,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     };
   }, []);
 
-  /** 路径变了就同步草稿（点面包屑、进目录、上一级都会走这里）。 */
   useEffect(() => {
     setDraft(path);
   }, [path]);
@@ -99,7 +93,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     goto(joinPath(path, name));
   };
 
-  /** 双击文件：能编辑的开编辑器标签，不能编辑的提示走下载。 */
   const openEntry = (entry: (typeof list)[number]) => {
     if (entry.kind === "dir") {
       enter(entry.name, entry.kind);
@@ -112,14 +105,12 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     openFileTab(sessionId, entry.path);
   };
 
-  /** 上一级；盘符根与 `/` 就停住（`parentOf` 认识 `C:/` 与 `~`）。 */
   const up = () => {
     const parent = parentOf(path);
     if (parent) goto(parent);
   };
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["fs", sessionId, path] });
-  /** 刷别处：右键往某个子目录上传/新建之后，要失效的是那个目录而不是当前目录。 */
   const refreshDir = (dir: string) =>
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
 
@@ -135,8 +126,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     } catch (e) {
       pushToast("error", `上传失败：${describeError(e)}`);
     } finally {
-      // 浏览器模式选中的文件会先在盒子上存一份副本（见 `ui/dialogs.ts`），
-      // 传完就没有价值了，删掉别让盒子攒垃圾；桌面模式下这个是空操作。
       await discardStaged(file);
     }
   };
@@ -189,7 +178,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     }
   };
 
-  /** 「打包下载当前文件夹」：远端 tar.gz → 本地文件。 */
   const packDownload = async (dir: string) => {
     const target = await pickSavePath(`${baseName(dir)}.tar.gz`);
     if (!target) return;
@@ -206,7 +194,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     }
   };
 
-  /** 「解压」：内核解到「与压缩包同名的目录」，刷掉落点所在那一层。 */
   const extractHere = async (archive: string) => {
     pushToast("info", "正在解压…");
     try {
@@ -218,12 +205,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     }
   };
 
-  /**
-   * 「在终端打开」：新开一个终端标签并 cd 过去。
-   *
-   * cd 不在这里直接写 —— 此刻 attach 还没完成，没有内核 tabId 可写。
-   * 命令挂到标签的 pendingCommand 上，等 XtermView attach 成功再发（与左栏文件树同一套）。
-   */
   const openTerminalAt = (dir: string) => {
     const session = useUi.getState().sessions.find((s) => s.id === sessionId);
     if (!session) {
@@ -233,7 +214,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
   };
 
-  /** 「前进到当前目录」：让已有终端 cd 过去；一个终端都没有就退化成新开一个。 */
   const cdTerminalTo = (dir: string) => {
     const kernelTabId = findWritableTerminal(sessionId);
     if (!kernelTabId) {
@@ -246,18 +226,10 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
   };
 
-  /* ── 右键菜单 ──────────────────────────────────────────────────────── */
-
-  /**
-   * 行右键：与左栏文件树保持同一套结构与措辞。
-   *
-   * 目录落到它自己、文件落到它**所在的目录**（对文件路径 cd 没有意义）；
-   * 「进入目录」不再单列 —— 双击就是进入，菜单里再放一条是重复。
-   */
   const openRowMenu = (ev: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
     ev.preventDefault();
     ev.stopPropagation();
-    setSelected(entry.path); // 右键顺手选中，符合直觉
+    setSelected(entry.path);
     const isDir = entry.kind === "dir";
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? path);
     const items: MenuItem[] = [
@@ -333,10 +305,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         },
       );
     }
-    // 重命名 / 权限 / 校验值（M60）：目录与文件都有重命名和权限；
-    // 校验值只对非目录（符号链接算的是它指向的目标的内容）。
-    // rename/chmod 传入的 `path` 是当前列表的缓存键 —— 真实后端的 entry.path
-    // 是绝对路径，不能拿它反推缓存键（见 useFileOps 的 listKey 契约）。
     items.push(
       {
         kind: "item",
@@ -381,12 +349,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     setMenu({ x: ev.clientX, y: ev.clientY, title: entry.path, items });
   };
 
-  /**
-   * 空白处右键：所有动作都作用于「当前目录」本身。
-   *
-   * 列表是虚拟滚动的，行之外还有大片空白和"空目录"提示 —— 那些地方同样该能用，
-   * 否则用户会以为这块面板不支持右键。
-   */
   const openBlankMenu = (ev: ReactMouseEvent<HTMLDivElement>) => {
     ev.preventDefault();
     const items: MenuItem[] = [
@@ -456,7 +418,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                // 先跳转（跳不动就当作刷新）；回车同时给"再查一次当前目录"留个入口
                 const next = normalizeTypedPath(draft);
                 if (next && next !== path) goto(next);
                 else refresh();
@@ -527,7 +488,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         {entries.isLoading ? (
           <div className="nx-hint p-4 text-center">加载中…</div>
         ) : entries.isError ? (
-          // 失败不能伪装成空目录（react-query 的 error 不会冒到 window.onerror）
           <div className="nx-alert nx-alert-danger m-3 flex items-start gap-2">
             <IconAlert size={14} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
@@ -591,7 +551,6 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         )}
       </div>
 
-      {/* 菜单 fixed 定位，不占布局 */}
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );

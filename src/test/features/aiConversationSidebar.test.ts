@@ -1,8 +1,5 @@
 /** @vitest-environment jsdom */
 
-// AI 侧栏端到端（假 IPC + 假事件流 + 手动帧）：
-// 发送 → 流式 → 终态、HITL 确认 / 提问、停止、历史切换、接管、跟随滚动。
-// 帧由测试手动驱动：delta 先进合并队列，runFrames() 才落屏 —— 与生产 rAF 同一条路。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import {
@@ -34,7 +31,6 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   dispose: vi.fn(),
   channels: [] as { onEvent: (ev: Record<string, unknown>) => void }[],
-  /** channel → 重连回调：测试据此模拟「通道重开」，驱动 HITL 对账。 */
   reopens: new Map<unknown, () => void>(),
 }));
 
@@ -94,7 +90,6 @@ function emit(ev: Record<string, unknown>, channelIndex = -1) {
   act(() => channel.onEvent(ev));
 }
 
-/** 模拟「该通道的 WS 重连成功」：触发侧栏注册的 HITL 对账回调。 */
 function reconnect(channelIndex = -1) {
   const channel = mocks.channels.at(channelIndex);
   if (!channel) throw new Error("no fake channel");
@@ -103,10 +98,6 @@ function reconnect(channelIndex = -1) {
   act(() => cb());
 }
 
-/**
- * HITL 对账是「hitlEvents → hitlSnapshot → 落账」的多段链：一条 act 作用域里
- * 多放几个 tick，把整条链落定（单 tick 的 flush 只够一段 RPC）。
- */
 async function flushReplay() {
   await act(async () => {
     await Promise.resolve();
@@ -115,7 +106,6 @@ async function flushReplay() {
   });
 }
 
-/** 构造一份 HITL 快照 DTO（字段与内核 hitl.Snapshot 线格式一致）。 */
 function hitlSnapshotOf(
   status: string,
   pending: Record<string, unknown>[],
@@ -132,7 +122,6 @@ function hitlSnapshotOf(
   };
 }
 
-/** 构造一份 HITL 中断请求 DTO（字段与内核 hitl.Interrupt 线格式一致）。 */
 function hitlInterruptOf(overrides: Record<string, unknown> = {}) {
   return {
     id: "req-1",
@@ -154,7 +143,6 @@ function hitlInterruptOf(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** M23 落地实现（WithEventSequence）的身份：per-run 单调 seq，全事件共享计数。 */
 function perRun(seq: number) {
   return { seq };
 }
@@ -163,7 +151,6 @@ function textOf(view: MountedView): string {
   return view.container.textContent ?? "";
 }
 
-/** jsdom 无布局：显式 stub 滚动尺寸与 scrollTo，返回可编程的探针。 */
 function stubScroller(el: HTMLDivElement) {
   const metrics = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
   for (const key of ["scrollTop", "scrollHeight", "clientHeight"] as const) {
@@ -243,8 +230,6 @@ describe("AiSidebar conversation stream UX", () => {
       sessions: [],
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
-    // 挂载期副作用（ModelSelector 拉档案、AiSidebar 拉权限）在 act 内落定，
-    // 不留「未包 act」的悬挂更新。
     await flush();
   });
 
@@ -268,7 +253,6 @@ describe("AiSidebar conversation stream UX", () => {
 
     emit({ type: "delta", text: "流式" });
     emit({ type: "delta", text: "回答" });
-    // 合并队列未落帧前，正文不上屏。
     expect(textOf(view!)).not.toContain("流式回答");
     act(runFrames);
     expect(textOf(view!)).toContain("流式回答");
@@ -278,7 +262,6 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).toContain("本轮已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
 
-    // 重放终态：不重复气泡、不重复终态行，通道仍然幂等释放。
     const bubblesBefore = textOf(view!);
     emit({ type: "done", answer: "流式回答" });
     emit({ type: "error", message: "迟到错误" });
@@ -309,7 +292,6 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).not.toContain("需要你确认");
     expect(textOf(view!)).toContain("exec_commands · 已允许一次");
 
-    // 终态不会重开已结算的卡片。
     emit({ type: "done", answer: "跑完了" });
     await flush();
     expect(textOf(view!)).toContain("exec_commands · 已允许一次");
@@ -336,7 +318,6 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).not.toContain("AI 需要你回答");
     expect(textOf(view!)).toContain("提问 · 已回答：继续");
 
-    // 自由文本回答走另一张卡：输入草稿 → 提交 → 结算留痕。
     emit({
       type: "questionRequired",
       id: "q-2",
@@ -404,7 +385,6 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).not.toContain("迟到的完整答案");
     expect(textOf(view!)).toContain("已停止本轮");
-    // 已停止后可以发起新一轮。
     await send("下一句");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
   });
@@ -418,7 +398,6 @@ describe("AiSidebar conversation stream UX", () => {
       { role: "user", content: "旧问题" },
       { role: "assistant", content: "旧回答" },
     ]);
-    // 先展开历史列表，再点进旧会话。
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
@@ -428,7 +407,6 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).toContain("旧回答");
     expect(textOf(view!)).not.toContain("当前回答");
 
-    // 旧通道的迟到事件不得渗进历史视图。
     emit({ type: "delta", text: "残影" });
     act(runFrames);
     expect(textOf(view!)).not.toContain("残影");
@@ -447,14 +425,12 @@ describe("AiSidebar conversation stream UX", () => {
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
 
-    // 弹框取消：不发起删除，行还在。
     mocks.ask.mockResolvedValueOnce(false);
     click(view!.container.querySelector('button[title="删除「会话二」"]')!);
     await flush();
     expect(mocks.conversationDelete).not.toHaveBeenCalled();
     expect(textOf(view!)).toContain("会话二");
 
-    // 确认后：按 id 删除，只摘掉那一行。
     click(view!.container.querySelector('button[title="删除「会话二」"]')!);
     await flush();
     expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("会话二"), expect.anything());
@@ -475,7 +451,6 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).toContain("旧问题");
 
-    // 删掉正在看的会话：本地视图立即回到全新会话，不留空壳。
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
     click(view!.container.querySelector('button[title="删除「旧会话」"]')!);
@@ -483,7 +458,6 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.conversationDelete).toHaveBeenCalledWith("c-9");
     expect(textOf(view!)).not.toContain("旧问题");
     expect(textOf(view!)).toContain("命令与输出全程留痕");
-    // 删完接着能正常开聊（新会话不再挂已删 id）。
     mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-2" });
     await send("继续");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
@@ -494,7 +468,6 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("refuses to delete the current conversation while its run is active", async () => {
     await send("运行中的问题");
-    // chat 已返回（conversationId=conv-1），但这一轮还没终态 —— 正是评审指的窗口。
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
@@ -502,13 +475,11 @@ describe("AiSidebar conversation stream UX", () => {
 
     click(view!.container.querySelector('button[title="删除「当前会话」"]')!);
     await flush();
-    // 连确认弹框都不该出现：不 ask、不 RPC、行保留，并给出与 open/new 一致的提示。
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.conversationDelete).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("请先停止"));
     expect(textOf(view!)).toContain("当前会话");
 
-    // 终态照常结算：删除被拦没有扰动这一轮。
     emit({ type: "done", answer: "运行中的回答" });
     await flush();
     expect(textOf(view!)).toContain("本轮已完成");
@@ -523,7 +494,6 @@ describe("AiSidebar conversation stream UX", () => {
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
 
-    // 弹框挂起期间发起了新一轮：确认时必须重新把关，不能删。
     let resolveAsk: ((ok: boolean) => void) | undefined;
     mocks.ask.mockImplementationOnce(
       () => new Promise<boolean>((res) => { resolveAsk = res; }),
@@ -549,8 +519,6 @@ describe("AiSidebar conversation stream UX", () => {
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
 
-    // 删除 RPC 挂起期间发起新一轮：RPC 返回后绝不能 reset —— 否则终态被拒收、
-    // ownership 悬置、busy 卡死（评审 P1 的异步竞态）。
     let resolveDelete: (() => void) | undefined;
     mocks.conversationDelete.mockImplementationOnce(
       () => new Promise<void>((res) => { resolveDelete = res; }),
@@ -562,7 +530,6 @@ describe("AiSidebar conversation stream UX", () => {
 
     resolveDelete?.();
     await flush();
-    // 行已摘、会话 id 已清，但消息流保留：旧内容还在，新内容继续上屏。
     expect(textOf(view!)).not.toContain("当前会话");
     expect(textOf(view!)).toContain("第一轮回答");
     expect(textOf(view!)).not.toContain("命令与输出全程留痕");
@@ -570,12 +537,10 @@ describe("AiSidebar conversation stream UX", () => {
     act(runFrames);
     expect(textOf(view!)).toContain("第二轮输出");
 
-    // 终态正常结算，busy 释放，没有被卡死。
     emit({ type: "done", answer: "第二轮回答" });
     await flush();
     expect(textOf(view!)).toContain("本轮已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
-    // 下一条消息另开新会话，不再挂已删除的 id。
     await send("第三轮");
     expect(mocks.chat).toHaveBeenLastCalledWith(
       expect.objectContaining({ conversationId: undefined }),
@@ -590,8 +555,6 @@ describe("AiSidebar conversation stream UX", () => {
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
 
-    // 两个 RPC 都在途：删除与第二轮 chat。人为固定响应顺序 —— 先 delete 后 chat
-    // （runner 先校验会话、后经 stream factory 才返回同 ID，删除可在其间提交）。
     let resolveDelete: (() => void) | undefined;
     mocks.conversationDelete.mockImplementationOnce(
       () => new Promise<void>((res) => { resolveDelete = res; }),
@@ -604,16 +567,13 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     await send("第二轮");
 
-    // 删除先返回：行摘掉、ID 清除、流不 reset（第二轮仍活跃）。
     resolveDelete?.();
     await flush();
     expect(textOf(view!)).not.toContain("当前会话");
     expect(textOf(view!)).toContain("第一轮回答");
 
-    // chat 后返回同一个（已删除的）ID：不得写回。
     resolveChat?.({ jobId: "job-2", conversationId: "conv-1" });
     await flush();
-    // 本轮照常结算：事件照收、终态照落、busy 照放。
     emit({ type: "delta", text: "第二轮输出" });
     act(runFrames);
     expect(textOf(view!)).toContain("第二轮输出");
@@ -621,7 +581,6 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     expect(textOf(view!)).toContain("本轮已完成");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
-    // 下一轮另开新会话：不携带已删除的 conv-1。
     await send("第三轮");
     expect(mocks.chat).toHaveBeenLastCalledWith(
       expect.objectContaining({ conversationId: undefined }),
@@ -654,7 +613,6 @@ describe("AiSidebar conversation stream UX", () => {
     act(runFrames);
     expect(sc.scrollCalls.length).toBeGreaterThan(0);
 
-    // 用户上翻：之后的流式输出不再拽动视图，改亮「回到最新」。
     sc.setMetrics({ scrollTop: 100 });
     sc.dispatchScroll();
     const callsBefore = sc.scrollCalls.length;
@@ -677,11 +635,9 @@ describe("AiSidebar conversation stream UX", () => {
   it("keeps honoring manual scroll-up after a sidebar close/reopen cycle", async () => {
     await send("滚动生命周期");
     const first = view!.container.querySelector('[role="log"]');
-    // 收起侧栏：消息流卸载；再打开：是一个全新的 DOM 节点。
     act(() => useUi.setState({ rightOpen: false }));
     expect(view!.container.querySelector('[role="log"]')).toBeNull();
     act(() => useUi.setState({ rightOpen: true }));
-    // 重挂载的 ModelSelector / AiSidebar 副作用（拉档案、拉权限）在 act 内落定。
     await flush();
     const sc = stubScroller(view!.container.querySelector('[role="log"]') as HTMLDivElement);
     expect(sc.el).not.toBe(first);
@@ -691,7 +647,6 @@ describe("AiSidebar conversation stream UX", () => {
     act(runFrames);
     expect(sc.scrollCalls.length).toBeGreaterThan(0);
 
-    // 新节点上的手动上翻必须生效：不再自动滚底，改亮新输出入口。
     sc.setMetrics({ scrollTop: 100 });
     sc.dispatchScroll();
     const callsBefore = sc.scrollCalls.length;
@@ -707,7 +662,6 @@ describe("AiSidebar conversation stream UX", () => {
     await send("重连测试");
     emit({ type: "delta", text: "abcdefghij", ...perRun(1) });
     act(runFrames);
-    // 通道重连 ⇒ 补发缓存帧：同一三元组再来一遍是精确重放，新 seq 才是新内容。
     emit({ type: "delta", text: "abcdefghij", ...perRun(1) });
     emit({ type: "delta", text: " XYZ", ...perRun(2) });
     act(runFrames);
@@ -723,7 +677,6 @@ describe("AiSidebar conversation stream UX", () => {
     await send("重复内容");
     emit({ type: "reasoning", text: "ha", ...perRun(1) });
     act(runFrames);
-    // 相同文本、不同 seq：是真·新推理，绝不能被当成重放丢掉。
     emit({ type: "reasoning", text: "ha", ...perRun(2) });
     emit({ type: "reasoning", text: "!", ...perRun(3) });
     act(runFrames);
@@ -735,7 +688,6 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("replays a pending HITL request on reconnect even when its live event was lost", async () => {
     await send("跑个命令");
-    // 断线期间内核发起了确认，前端从没收到 confirmRequired。
     mocks.hitlEvents.mockResolvedValueOnce([
       {
         runId: "job-1",
@@ -752,12 +704,10 @@ describe("AiSidebar conversation stream UX", () => {
     );
     reconnect();
     await flushReplay();
-    // 补回来的卡与原面板同一处渲染，不新增重复面板。
     expect(textOf(view!)).toContain("需要你确认");
     expect(view!.container.querySelectorAll(".nx-alert")).toHaveLength(1);
     expect(mocks.hitlEvents).toHaveBeenCalledWith("job-1", 0);
 
-    // 补回来的卡可以正常回答，身份（callId + nonce）完整。
     clickButton(view!.container, "允许一次");
     await flush();
     expect(mocks.confirm).toHaveBeenCalledWith({
@@ -769,7 +719,6 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).not.toContain("需要你确认");
     expect(textOf(view!)).toContain("exec_commands · 已允许一次");
 
-    // 迟到的流重放（同一 callId）不会重开已结算的卡，也不会出第二张卡。
     emit({
       type: "confirmRequired",
       id: "call-9",
@@ -785,7 +734,6 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("replays a pending question from the snapshot and answers it", async () => {
     await send("问吧");
-    // 事件通道没补到（缓存窗口之外），只剩快照兜底。
     mocks.hitlEvents.mockResolvedValueOnce([]);
     mocks.hitlSnapshot.mockResolvedValueOnce(
       hitlSnapshotOf("interrupted", [
@@ -827,7 +775,6 @@ describe("AiSidebar conversation stream UX", () => {
       attempt: 1,
     });
     expect(textOf(view!)).toContain("需要你确认");
-    // 断线期间另开窗口回答了它：resumed 事件 + 快照都不再挂起该请求。
     mocks.hitlEvents.mockResolvedValueOnce([
       {
         runId: "job-1",
@@ -899,14 +846,11 @@ describe("AiSidebar conversation stream UX", () => {
       attempt: 1,
     });
     expect(textOf(view!)).toContain("需要你确认");
-    // 服务端拒绝（迟到 / 重复 / 参数变化，内核统一映射为「确认已过期…」）。
     mocks.confirm.mockRejectedValueOnce(new Error("确认已过期、重复或不属于当前工具调用"));
-    // 对账快照：该请求已不在挂起列表（已被消费或过期）。
     mocks.hitlSnapshot.mockResolvedValueOnce(hitlSnapshotOf("running", [], { attempt: 2, seq: 2 }));
     clickButton(view!.container, "允许一次");
     await flushReplay();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("确认已过期"));
-    // 卡片按服务端真相结算：不再挂起，也不能再点。
     expect(textOf(view!)).not.toContain("需要你确认");
     expect(textOf(view!)).toContain("exec_commands · 该交互已在服务端结束");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).toBeNull();
@@ -923,7 +867,6 @@ describe("AiSidebar conversation stream UX", () => {
       requestId: "req-1",
       attempt: 1,
     });
-    // 瞬时故障（不是拒绝）：快照里请求仍然挂起 ⇒ 卡片保留，可重试。
     mocks.confirm.mockRejectedValueOnce(new Error("网络抖动"));
     mocks.hitlSnapshot.mockResolvedValueOnce(
       hitlSnapshotOf("interrupted", [hitlInterruptOf()], { attempt: 1, seq: 1 }),
@@ -931,7 +874,6 @@ describe("AiSidebar conversation stream UX", () => {
     clickButton(view!.container, "允许一次");
     await flushReplay();
     expect(textOf(view!)).toContain("需要你确认");
-    // 重试成功，正常结算。
     clickButton(view!.container, "拒绝");
     await flush();
     expect(mocks.confirm).toHaveBeenLastCalledWith({
@@ -966,7 +908,6 @@ describe("AiSidebar conversation stream UX", () => {
     click(allow);
     click(allow);
     await flush();
-    // 在途期间的第二次点击不发 RPC；放行后只结算一次。
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
     release();
     await flush();
@@ -980,12 +921,10 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.reopens.has(chatChannel)).toBe(true);
     emit({ type: "done", answer: "完成" });
     await flush();
-    // 终态 ⇒ 通道释放、重连回调随之退订：已结算的轮次不会再触发对账。
     expect(mocks.reopens.has(chatChannel)).toBe(false);
     expect(mocks.hitlEvents).not.toHaveBeenCalled();
     expect(mocks.hitlSnapshot).not.toHaveBeenCalled();
 
-    // 接管通道根本不注册 HITL 重连回调（接管的 job 不在 HITL 管理器里）。
     click(view!.container.querySelector('button[title^="终端接管（实验性功能）：AI"]')!);
     await flush();
     await flush();

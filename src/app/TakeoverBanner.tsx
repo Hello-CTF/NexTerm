@@ -1,7 +1,3 @@
-// 接管横幅（§8.6）—— 硬性安全要求，不是可选装饰：
-//   · 进入接管后必须在**顶部**显示醒目提示，让用户随时知道「AI 正在操作此终端」；
-//   · 必须提供「立即夺回」按钮，一键中断；
-//   · Esc 也能夺回（终端内敲任意键由内核的 steal_on_key 处理）。
 import { useEffect, useState } from "react";
 import { useUi, type TakeoverState } from "./store";
 import { aiApi } from "../ipc/commands";
@@ -11,7 +7,6 @@ import { hasActiveOverlay, isImeKeyEvent } from "../ui/DialogHost";
 
 let stealBackInFlight: TakeoverState | null = null;
 
-/** 夺回：取消模型请求 + 退出接管 + 清横幅。幂等，可被按钮与 Esc 同时触发。 */
 export async function stealBack(reason = "用户夺回控制权") {
   const { takeover, setTakeover, pushToast } = useUi.getState();
   if (!takeover || stealBackInFlight === takeover) return;
@@ -34,7 +29,6 @@ export function TakeoverBanner() {
   const takeover = useUi((s) => s.takeover);
   const [now, setNow] = useState(() => Date.now());
 
-  // 每秒刷新「已用时」，让用户对 AI 持续操作有时长感知
   useEffect(() => {
     if (!takeover) return;
     setNow(Date.now());
@@ -42,7 +36,6 @@ export function TakeoverBanner() {
     return () => window.clearInterval(t);
   }, [takeover]);
 
-  // Esc 夺回（捕获阶段，避免被终端的 keydown 吞掉）；浮层与 IME 优先。
   useEffect(() => {
     if (!takeover) return;
     const onKey = (event: KeyboardEvent) => {

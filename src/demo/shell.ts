@@ -1,9 +1,3 @@
-// 演示模式的虚拟 shell。
-//
-// 为什么值得写：项目最核心的两个能力——**终端命令块**与**AI 命令汇入终端**——
-// 都建立在前端真实的"按键流 + 输出流"之上（commandBlocks.ts 靠吃 onData 还原命令边界）。
-// 所以演示模式不能只画静态文字，必须真的有一个会回显、会执行、会给出 ANSI 输出的 shell，
-// 这样命令块面板、搜索、录制、AI 接管这些面板才会真正"活"起来。
 
 import { containers, fsFileContent, fsTree, redisKeys } from "./data";
 
@@ -16,7 +10,6 @@ const YELLOW = "\x1b[33m";
 const BLUE = "\x1b[34m";
 const BOLD = "\x1b[1m";
 
-/** 演示机的家目录：左栏文件树的 `~` 与终端里的 `cd ~` 都落在这里。 */
 const HOME_DIR = "/home/deploy";
 
 function clock(offsetMs = 0): string {
@@ -25,7 +18,6 @@ function clock(offsetMs = 0): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** 终端里的一个"会话"。一个前端标签对应一个实例。 */
 export class DemoShell {
   private cwd: string;
   private buf = "";
@@ -39,7 +31,6 @@ export class DemoShell {
     this.cwd = opts.cwd ?? HOME_DIR;
   }
 
-  /** 连接建立：打印登录横幅并给出第一个提示符。 */
   start() {
     this.out(`${DIM}Last login: ${new Date(Date.now() - 46 * 60_000).toDateString()} ${clock(46 * 60_000)} from 10.0.0.8${RESET}`);
     this.out(`${DIM}# 演示模式：这是一台虚拟的 web-01，可以随便敲。输入 help 看支持哪些命令。${RESET}`);
@@ -47,13 +38,11 @@ export class DemoShell {
     this.prompt();
   }
 
-  /** 收到按键流。逐字符处理，模拟真实 PTY。 */
   input(data: string) {
     let i = 0;
     while (i < data.length) {
       const ch = data[i];
 
-      // 方向键等转义序列
       if (ch === "\u001b" && data[i + 1] === "[") {
         const code = data[i + 2];
         if (code === "A") this.recall(-1);
@@ -96,7 +85,6 @@ export class DemoShell {
       }
 
       if (ch === "\t") {
-        // 只做最小补全：唯一匹配才补
         const done = this.complete();
         if (!done) this.write("\x07");
         i += 1;
@@ -110,8 +98,6 @@ export class DemoShell {
       i += 1;
     }
   }
-
-  /* ── 内部 ─────────────────────────────────────────────────────────── */
 
   private out(line = "") {
     this.write(`${line}\n`);
@@ -145,7 +131,6 @@ export class DemoShell {
     if (this.history.length === 0) return;
     if (this.histIdx === -1) this.histIdx = this.history.length;
     this.histIdx = Math.max(0, Math.min(this.history.length, this.histIdx + dir));
-    // 清掉当前输入行再写回历史
     this.write(`\r\x1b[K${PROMPT_USER}:${BLUE}${this.shortCwd()}${RESET}$ `);
     this.buf = this.history[this.histIdx] ?? "";
     this.write(this.buf);
@@ -194,9 +179,7 @@ export class DemoShell {
     if (handled !== "exit") this.prompt();
   }
 
-  /** 返回 "exit" 表示要关闭这个 shell。 */
   private run(cmd: string, args: string[], line: string): "ok" | "exit" {
-    // sudo 前缀直接透传（演示不做密码交互）
     if (cmd === "sudo") {
       if (args.length === 0) {
         this.out(`${RED}usage: sudo command${RESET}`);
@@ -392,7 +375,6 @@ export class DemoShell {
       }
       return;
     }
-    // 短格式：多列排布
     const cells = entries.map((e) =>
       e.kind === "dir" ? `${BOLD}${BLUE}${e.name}${RESET}` : /\.(sh|bin)$/.test(e.name) ? `${GREEN}${e.name}${RESET}` : e.name,
     );
@@ -603,7 +585,6 @@ export class DemoShell {
   }
 }
 
-/** 容器日志（给终端与 Docker 面板共用同一份脚本）。 */
 export function containerLogLines(name: string): string[] {
   const t = (offsetMin: number) => new Date(Date.now() - offsetMin * 60_000).toISOString().replace("T", " ").slice(0, 19);
   if (name === "api-server") {
@@ -651,5 +632,4 @@ export function containerLogLines(name: string): string[] {
   return [`${t(5)} 容器 ${name} 暂无日志输出`];
 }
 
-/** Redis 里能看到的键（给 docker 终端外的其它面板用，导出避免 lint 报未使用）。 */
 export const demoRedisKeyList = redisKeys;
