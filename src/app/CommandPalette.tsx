@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useUi, connectAsset, nextTabId, openTerminalTab } from "./store";
+import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
 import { isMac } from "./platform";
 import { assetApi, dbApi, sessionApi } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
@@ -169,6 +169,25 @@ export function CommandPalette({
         hint: "用户与 AI 的动作记录",
         icon: IconHistory,
         run: () => addTab({ id: "audit", kind: "audit", title: "审计日志", closable: true }),
+      },
+      {
+        id: "kill-terminal",
+        label: "结束当前终端进程…",
+        hint: "危险操作 · 需二次确认",
+        icon: IconTerminal,
+        run: () => {
+          const st = useUi.getState();
+          const ws = st.workspaces.find((item) => item.id === st.activeWorkspaceId);
+          const pane = ws?.panes.find((item) => item.id === ws.activePaneId) ?? ws?.panes[0];
+          const tab =
+            pane?.tabs.find((item) => item.id === pane.activeTabId) ??
+            pane?.tabs[pane.tabs.length - 1];
+          if (!tab || tab.kind !== "terminal" || !tab.tabId || tab.dead || tab.exited) {
+            pushToast("info", "当前标签不是运行中的终端");
+            return;
+          }
+          void requestKillTab(tab.id);
+        },
       },
     ];
     for (const asset of assets) {

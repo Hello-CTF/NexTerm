@@ -43,6 +43,7 @@ export interface AppTab {
   pendingCommand?: string;
   closable: boolean;
   dead?: boolean;
+  exited?: boolean;
 }
 
 export type WorkspaceKind = "session" | "db" | "tools";
@@ -174,7 +175,7 @@ interface UiState {
 
   setActiveTab: (id: string) => void;
   addTab: (tab: AppTab, paneId?: string) => void;
-  closeTab: (id: string, mode?: "kill" | "detach") => Promise<void>;
+  closeTab: (id: string, mode?: "kill" | "detach") => Promise<boolean>;
   updateTab: (id: string, patch: Partial<AppTab>) => void;
 
   setSessions: (s: SessionInfo[]) => void;
@@ -359,8 +360,7 @@ export const useUi = create<UiState>((set, get) => ({
     if (!target) return;
     const tabs = target.panes.flatMap((p) => p.tabs);
     if (!(await confirmDirtyEditors(tabs, `关闭「${target.title}」`))) return;
-    const ok = await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`);
-    if (!ok) return;
+    if (!(await reclaimTerminals(tabs, "这个工作区", `关闭「${target.title}」`, target.assetKind))) return;
     const next = workspaces.filter((w) => w.id !== id);
     set({
       workspaces: next,
@@ -420,8 +420,7 @@ export const useUi = create<UiState>((set, get) => ({
     const keep = w.panes.filter((p) => p.id !== target.id);
     if (keep.length === 0) return;
     if (!(await confirmDirtyEditors(target.tabs, "取消分屏"))) return;
-    const ok = await reclaimTerminals(target.tabs, "这个面板", "取消分屏");
-    if (!ok) return;
+    if (!(await reclaimTerminals(target.tabs, "这个面板", "取消分屏", w.assetKind))) return;
     set((s2) => ({
       workspaces: s2.workspaces.map((x) =>
         x.id === id ? { ...x, panes: keep, activePaneId: keep[0].id } : x,
@@ -543,8 +542,15 @@ export const useUi = create<UiState>((set, get) => ({
       }
       if (target) break;
     }
-    if (!target || !wsId || !paneId) return;
-    if (target.tabId) await terminalApi.closeTab(target.tabId, mode).catch(() => undefined);
+    if (!target || !wsId || !paneId) return false;
+    if (target.tabId) {
+      try {
+        await terminalApi.closeTab(target.tabId, mode);
+      } catch (e) {
+        get().pushToast("error", `终端操作失败：${describeError(e)}`);
+        return false;
+      }
+    }
     set((s2) => ({
       workspaces: s2.workspaces.map((w) => {
         if (w.id !== wsId) return w;
@@ -570,6 +576,7 @@ export const useUi = create<UiState>((set, get) => ({
         };
       }),
     }));
+    return true;
   },
 
   updateTab: (id, patch) =>
@@ -709,90 +716,204 @@ async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boole
   });
 }
 
+function findTab(id: string): { tab: AppTab; ws: Workspace } | null {
+  for (const w of useUi.getState().workspaces) {
+    for (const p of w.panes) {
+      const t = p.tabs.find((x) => x.id === id);
+      if (t) return { tab: t, ws: w };
+    }
+  }
+  return null;
+}
+
+function isRunningTerminal(t: AppTab): boolean {
+  return t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
+}
+
+function detachBlockOf(
+  t: AppTab,
+  sessions: SessionInfo[],
+  assetKind?: string,
+): "exec" | "winrm" | "unknown" | null {
+  if (t.containerId) return "exec";
+  const kind = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.kind : undefined;
+  if (kind === "winrm") return "winrm";
+  if (kind) return null;
+  if (assetKind === "winrm") return "winrm";
+  if (assetKind) return null;
+  return "unknown";
+}
+
+function detachBlockLabel(block: "exec" | "winrm" | "unknown"): string {
+  if (block === "exec") return "容器 exec";
+  if (block === "winrm") return "WinRM 非交互";
+  return "类型未知";
+}
+
+function assetKindForTab(t: AppTab): string | undefined {
+  for (const w of useUi.getState().workspaces) {
+    for (const p of w.panes) {
+      if (p.tabs.some((x) => x.id === t.id)) return w.assetKind;
+    }
+  }
+  return undefined;
+}
+
+export function countBlockedTerminals(tabs: AppTab[], assetKind?: string): number {
+  const sessions = useUi.getState().sessions;
+  return tabs.filter((t) => isRunningTerminal(t) && detachBlockOf(t, sessions, assetKind) !== null)
+    .length;
+}
+
 async function reclaimTerminals(
   tabs: AppTab[],
   scope: string,
   title: string,
+  assetKind?: string,
 ): Promise<boolean> {
-  const tabIds = tabs.filter((t) => t.tabId).map((t) => t.tabId as string);
-  if (tabIds.length === 0) return true;
-  const { askChoice } = await import("../ui/dialogs");
-  const choice = await askChoice(`${scope}里有 ${tabIds.length} 个正在运行的终端，要如何处理？`, {
-    title,
-    level: "warning",
-    choices: [
-      {
-        key: "detach",
-        label: "后台继续运行",
-        hint: "进程保留在服务端，之后可在「后台会话」里重新接管",
-        primary: true,
-      },
-      {
-        key: "kill",
-        label: "结束进程",
-        hint: "停止这些终端里的进程并释放它们",
-        danger: true,
-      },
-    ],
-  });
-  if (choice !== "detach" && choice !== "kill") return false;
-  const results = await Promise.allSettled(
-    tabIds.map((tabId) => terminalApi.closeTab(tabId, choice)),
+  const st = useUi.getState();
+  const live = tabs.filter(isRunningTerminal);
+  const cleanup = tabs.filter(
+    (t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited,
   );
+  if (live.length === 0 && cleanup.length === 0) return true;
+  const blocked = live.filter((t) => detachBlockOf(t, st.sessions, assetKind) !== null);
+  const detachable = live.filter((t) => detachBlockOf(t, st.sessions, assetKind) === null);
+  if (blocked.length > 0) {
+    const { ask } = await import("../ui/dialogs");
+    const kinds = [
+      ...new Set(
+        blocked
+          .map((t) => detachBlockOf(t, st.sessions, assetKind))
+          .filter((b): b is "exec" | "winrm" | "unknown" => b !== null),
+      ),
+    ].map(detachBlockLabel).join("、");
+    const ok = await ask(
+      `${scope}里有 ${blocked.length} 个${kinds}终端，不支持转入后台。\n关闭会结束这些进程，无法恢复。仍要继续？`,
+      { title, kind: "warning" },
+    );
+    if (!ok) return false;
+  }
+  const results = await Promise.allSettled([
+    ...detachable.map((t) => terminalApi.closeTab(t.tabId as string, "detach")),
+    ...blocked.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+    ...cleanup.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+  ]);
   const failed = results.filter((r) => r.status === "rejected");
+  const { pushToast } = useUi.getState();
   if (failed.length) {
-    const first = (failed[0] as PromiseRejectedResult).reason;
-    useUi
-      .getState()
-      .pushToast(
-        "error",
-        `${failed.length}/${tabIds.length} 个终端回收失败：${describeError(first)}`,
-      );
+    pushToast(
+      "error",
+      `${failed.length}/${live.length + cleanup.length} 个终端回收失败：${describeError((failed[0] as PromiseRejectedResult).reason)}`,
+    );
+  }
+  const detachedOk = results.filter((r, i) => r.status === "fulfilled" && i < detachable.length).length;
+  const blockedOk = results.filter(
+    (r, i) =>
+      r.status === "fulfilled" && i >= detachable.length && i < detachable.length + blocked.length,
+  ).length;
+  if (detachedOk) {
+    pushToast("info", `${detachedOk} 个终端已转入后台，可在「后台会话」接管`);
+  }
+  if (blockedOk) {
+    pushToast("info", `${blockedOk} 个不支持后台的终端已结束`);
   }
   return true;
 }
 
+export function closeActionHint(t: AppTab): string | undefined {
+  if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
+  const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
+  if (block === "exec") return "结束容器 exec 进程";
+  if (block === "winrm") return "结束 WinRM 非交互进程";
+  if (block === "unknown") return "结束进程（类型未知）";
+  return "转入后台运行";
+}
+
+export function closeTabHint(t: AppTab): string {
+  if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签";
+  if (t.exited) return "关闭标签（进程已结束）";
+  const action = closeActionHint(t);
+  return action ? `关闭标签（${action}）` : "关闭标签";
+}
+
 export async function requestCloseTab(id: string): Promise<void> {
   const st = useUi.getState();
-  let target: AppTab | undefined;
-  for (const w of st.workspaces) {
-    for (const p of w.panes) {
-      const t = p.tabs.find((x) => x.id === id);
-      if (t) {
-        target = t;
-        break;
-      }
-    }
-    if (target) break;
-  }
-  if (!target) return;
+  const found = findTab(id);
+  if (!found) return;
+  const { tab: target, ws } = found;
   if (!(await confirmDirtyEditors([target], `关闭「${target.title}」`))) return;
-  if (target.kind !== "terminal" || !target.tabId) {
+  if (target.kind !== "terminal" || !target.tabId || target.dead) {
     await st.closeTab(id);
     return;
   }
-  const { askChoice } = await import("../ui/dialogs");
-  const choice = await askChoice("这个终端在服务端还在运行，要如何处理？", {
-    title: `关闭「${target.title}」`,
-    level: "warning",
-    choices: [
-      {
-        key: "detach",
-        label: "后台继续运行",
-        hint: "进程保留在服务端，之后可在「后台会话」里重新接管",
-        primary: true,
-      },
-      {
-        key: "kill",
-        label: "结束进程",
-        hint: "停止这个终端里的进程并释放它",
-        danger: true,
-      },
-    ],
-  });
-  if (choice === "detach" || choice === "kill") {
-    await st.closeTab(id, choice);
+  if (target.exited) {
+    await st.closeTab(id, "kill");
+    return;
   }
+  const block = detachBlockOf(target, st.sessions, ws.assetKind);
+  if (block) {
+    const { ask } = await import("../ui/dialogs");
+    const ok = await ask(
+      `「${target.title}」是${detachBlockLabel(block)}终端，不支持转入后台。\n关闭会结束这个进程，仍要关闭？`,
+      { title: `关闭「${target.title}」`, kind: "warning" },
+    );
+    if (!ok) return;
+    await st.closeTab(id, "kill");
+    return;
+  }
+  if (await st.closeTab(id, "detach")) {
+    st.pushToast("info", `「${target.title}」已转入后台，可在「后台会话」接管`);
+  }
+}
+
+export async function requestKillTab(id: string): Promise<void> {
+  const st = useUi.getState();
+  const found = findTab(id);
+  if (!found) return;
+  const { tab: target } = found;
+  if (target.kind !== "terminal" || !target.tabId || target.dead) {
+    await st.closeTab(id);
+    return;
+  }
+  const { ask } = await import("../ui/dialogs");
+  const ok = await ask(`结束「${target.title}」里的进程？\n\n进程会被终止，无法恢复。`, {
+    title: "结束进程",
+    kind: "warning",
+  });
+  if (!ok) return;
+  if (await st.closeTab(id, "kill")) {
+    st.pushToast("success", `已结束「${target.title}」的进程`);
+  }
+}
+
+export async function requestKillWorkspaceTerminals(workspaceId: string): Promise<void> {
+  const st = useUi.getState();
+  const ws = st.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return;
+  const live = ws.panes.flatMap((p) => p.tabs).filter(isRunningTerminal);
+  if (live.length === 0) {
+    st.pushToast("info", "这个工作区里没有正在运行的终端");
+    return;
+  }
+  const { ask } = await import("../ui/dialogs");
+  const ok = await ask(`结束「${ws.title}」里 ${live.length} 个终端的进程？\n\n进程会被终止，无法恢复。`, {
+    title: "结束全部终端进程",
+    kind: "warning",
+  });
+  if (!ok) return;
+  const results = await Promise.allSettled(
+    live.map((t) => terminalApi.closeTab(t.tabId as string, "kill")),
+  );
+  const failed = results.filter((r) => r.status === "rejected").length;
+  if (failed) {
+    st.pushToast("error", `${failed}/${live.length} 个终端结束失败`);
+  } else {
+    st.pushToast("success", `已结束 ${live.length} 个终端进程`);
+  }
+  live.forEach((t, i) => {
+    if (results[i].status === "fulfilled") st.updateTab(t.id, { exited: true });
+  });
 }
 
 export function takePendingCommand(storeTabId: string): string | null {

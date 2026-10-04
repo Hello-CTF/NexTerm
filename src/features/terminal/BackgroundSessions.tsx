@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
 import { nextTabId, useUi } from "../../app/store";
+import { TRANSPORT } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import {
@@ -12,6 +13,22 @@ import {
 } from "../../ui/icons";
 
 const POLL_MS = 5000;
+
+function persistenceFootnote(): string {
+  if (TRANSPORT === "web") {
+    return "这里的终端进程都跑在服务端：关掉本页面、换一台设备打开，它们都还在。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
+  }
+  if (TRANSPORT === "desktop") {
+    return "这里的终端进程都跑在本机。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
+  }
+  return "演示模式：这里的后台终端都是内存里的模拟数据，刷新页面就会消失。「接管」不会新开 shell。";
+}
+
+function runningCopy(count: number): string {
+  if (TRANSPORT === "web") return `${count} 个任务在服务端运行 · 5s 自动刷新`;
+  if (TRANSPORT === "desktop") return `${count} 个任务在本机运行 · 5s 自动刷新`;
+  return `${count} 个模拟任务在内存中 · 5s 自动刷新`;
+}
 
 function ago(ms: number): string {
   if (!Number.isFinite(ms) || ms < 1000) return "刚刚";
@@ -112,7 +129,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
         <IconActivity size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">后台会话</span>
         <span className="nx-hint">
-          {items === null ? "读取中…" : `${count} 个任务在服务端运行 · 5s 自动刷新`}
+          {items === null ? "读取中…" : runningCopy(count)}
         </span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
@@ -196,7 +213,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                 <td colSpan={5} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭终端标签时选「后台继续运行」，进程就会留在这里等你回来接管。
+                    关闭运行中的 SSH / 本地终端标签时，进程会自动留在这里，随时可以接管。
                   </div>
                 </td>
               </tr>
@@ -207,8 +224,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-2 text-[11px] leading-relaxed text-neutral-500">
         <IconTerminal size={11} className="mr-1 inline align-[-1px]" />
-        这里的终端进程都跑在服务端：关掉本页面、换一台设备打开，它们都还在。
-        「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。
+        {persistenceFootnote()}
       </div>
     </div>
   );
