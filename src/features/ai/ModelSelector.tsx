@@ -11,6 +11,8 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const chipRef = useRef<HTMLButtonElement>(null);
+  const [dropdownWidth, setDropdownWidth] = useState(248);
 
   const refresh = async () => {
     try {
@@ -43,7 +45,13 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    if (next) void refresh();
+    if (next) {
+      const rect = chipRef.current?.getBoundingClientRect();
+      if (rect) {
+        setDropdownWidth(Math.max(160, Math.min(248, window.innerWidth - rect.left - 8)));
+      }
+      void refresh();
+    }
   };
 
   const choose = async (id: string, name: string) => {
@@ -63,9 +71,10 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const active = view?.profiles.find((p) => p.id === view.activeId) ?? null;
 
   return (
-    <div className="relative" ref={boxRef}>
+    <div className="relative min-w-0" ref={boxRef}>
       <button
-        className="nx-chip max-w-[180px]"
+        ref={chipRef}
+        className="nx-chip pointer-coarse:min-h-6 max-w-[180px] min-w-0"
         title="模型配置（BYOK：可保存多份档案）"
         onClick={toggle}
       >
@@ -74,12 +83,15 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
         ) : (
           <IconPlus size={11} />
         )}
-        <span className="truncate">{active?.name || "添加模型"}</span>
+        <span className="min-w-0 truncate">{active?.name || "添加模型"}</span>
         <IconChevronUp size={10} className="shrink-0 opacity-60" />
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-[80] mb-1 max-h-72 w-[248px] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg">
+        <div
+          className="absolute bottom-full left-0 z-[80] mb-1 max-h-[min(288px,calc(100dvh-24px))] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg"
+          style={{ width: dropdownWidth }}
+        >
           <div className="nx-menu-title">选择模型档案</div>
           {view && view.profiles.length > 0 ? (
             view.profiles.map((p) => (

@@ -5,6 +5,7 @@ import { createAiChannel, disposeChannel, onChannelReopen } from "../../ipc/even
 import type { AiHitlEventDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ModelPanel } from "./ModelPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
@@ -618,10 +619,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   return (
     <aside
-      className="flex h-full shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950"
+      className="flex h-full shrink-0 flex-col overflow-y-auto border-l border-neutral-800/60 bg-neutral-950"
       style={{ width: rightWidth }}
     >
-      <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 pl-3">
+      <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
         <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
         {takeover && (
           <span className="nx-badge nx-badge-red" title="终端接管进行中 —— 按 Esc 随时夺回">
@@ -631,17 +632,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         )}
         <div className="nx-spacer" />
         <button
-          className={`nx-icon-btn nx-icon-btn-sm ${historyOpen ? "is-active" : ""}`}
+          className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${historyOpen ? "is-active" : ""}`}
           title="历史会话"
           onClick={toggleHistory}
         >
           <IconHistory size={14} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="新建会话" onClick={newConversation}>
+        <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="新建会话" onClick={newConversation}>
           <IconPlus size={14} />
         </button>
         <button
-          className="nx-icon-btn nx-icon-btn-sm"
+          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
           title="收起 AI 侧栏 (Ctrl+J)"
           onClick={() => setRightOpen(false)}
         >
@@ -680,7 +681,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                   </span>
                 </button>
                 <button
-                  className="nx-icon-btn nx-icon-btn-sm shrink-0"
+                  className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
                   title={`删除「${c.title || "(未命名会话)"}」`}
                   aria-label={`删除会话「${c.title || "(未命名会话)"}」`}
                   onClick={() => void deleteConversation(c)}
@@ -700,7 +701,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             AI 权限
             <span className="nx-spacer" />
             <button
-              className="nx-icon-btn nx-icon-btn-sm"
+              className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
               title="关闭"
               onClick={() => setPermOpen(false)}
             >
@@ -810,42 +811,44 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       </div>
 
       {confirmCard && (
-        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950 p-2.5">
-          <div className="nx-alert">
-            <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+        <div className="flex max-h-[45%] shrink flex-col border-t border-neutral-800/60 bg-neutral-950 p-2.5 min-h-[76px] [@media(max-height:480px)]:max-h-[32%]">
+          <div className="nx-alert flex min-h-0 flex-1 flex-col">
+            <div className="mb-1.5 flex shrink-0 items-center gap-1.5 font-semibold">
               <IconAlert size={13} />
               需要你确认
               <span className="nx-spacer" />
               <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
             </div>
-            <ConfirmBody card={confirmCard} />
-            <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-              不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <ConfirmBody card={confirmCard} />
+              <div className="text-[10.5px] leading-relaxed text-neutral-500">
+                不想每次都弹这个？把它加进「自定义危险操作」，或在权限设置里调整档位。
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="mt-2 flex shrink-0 flex-wrap gap-1.5">
               <button
-                className="nx-btn nx-btn-primary nx-btn-xs"
+                className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6"
                 disabled={submittingCardId === confirmCard.id}
                 onClick={() => void confirm("allow")}
               >
                 允许一次
               </button>
               <button
-                className="nx-btn nx-btn-outline nx-btn-xs"
+                className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
                 disabled={submittingCardId === confirmCard.id}
                 onClick={() => void confirm("allow_session")}
               >
                 本会话允许此类
               </button>
               <button
-                className="nx-btn nx-btn-ghost nx-btn-xs"
+                className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:min-h-6"
                 disabled={submittingCardId === confirmCard.id}
                 onClick={() => void confirm("deny")}
               >
                 拒绝
               </button>
               <button
-                className="nx-btn nx-btn-outline nx-btn-xs"
+                className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
                 title="打开设置的拦截规则，并把这条命令预填成一条新规则"
                 onClick={() => {
                   const ui = useUi.getState();
@@ -861,39 +864,41 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       )}
 
       {questionCard && (
-        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950 p-2.5">
+        <div className="flex max-h-[45%] shrink flex-col border-t border-neutral-800/60 bg-neutral-950 p-2.5 min-h-[82px] [@media(max-height:480px)]:max-h-[32%]">
           <form
-            className="nx-alert"
+            className="nx-alert flex min-h-0 flex-1 flex-col"
             onSubmit={(event) => {
               event.preventDefault();
               void answer();
             }}
           >
-            <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+            <div className="mb-1.5 flex shrink-0 items-center gap-1.5 font-semibold">
               <IconAlert size={13} />
               AI 需要你回答
             </div>
-            <div className="mb-2 whitespace-pre-wrap text-[12px] leading-relaxed text-neutral-200">
-              {questionCard.question}
-            </div>
-            {questionCard.options.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {questionCard.options.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    className="nx-btn nx-btn-outline nx-btn-xs"
-                    disabled={submittingCardId === questionCard.id}
-                    onClick={() => void answer(option)}
-                  >
-                    {option}
-                  </button>
-                ))}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mb-2 whitespace-pre-wrap text-[12px] leading-relaxed text-neutral-200">
+                {questionCard.question}
               </div>
-            )}
-            <div className="flex items-end gap-1.5">
+              {questionCard.options.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {questionCard.options.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
+                      disabled={submittingCardId === questionCard.id}
+                      onClick={() => void answer(option)}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="mt-2 flex shrink-0 items-end gap-1.5">
               <textarea
-                className="nx-textarea min-h-[36px] flex-1"
+                className="nx-textarea pointer-coarse:text-[16px] min-h-[36px] flex-1"
                 rows={2}
                 value={questionInput}
                 placeholder="输入回答…"
@@ -902,7 +907,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               />
               <button
                 type="submit"
-                className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
+                className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6 shrink-0"
                 disabled={!questionInput.trim() || submittingCardId === questionCard.id}
               >
                 回答
@@ -913,11 +918,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       )}
 
       {conv.todos.length > 0 && (
-        <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
+        <div className="flex min-h-0 max-h-[35%] shrink flex-col overflow-y-auto border-t border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2 [@media(max-height:480px)]:max-h-[28%]">
           <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
             <IconList size={11} />
             任务清单
-            <span className="text-neutral-600">
+            <span className="text-[var(--nx-fg-tertiary)]">
               {conv.todos.filter((t) => t.status === "completed").length}/{conv.todos.length}
             </span>
           </div>
@@ -927,10 +932,10 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 <span
                   className={
                     t.status === "completed"
-                      ? "text-teal-300"
+                      ? "text-green-400"
                       : t.status === "in_progress"
                         ? "text-blue-300"
-                        : "text-neutral-600"
+                        : "text-[var(--nx-fg-tertiary)]"
                   }
                 >
                   {t.status === "completed" ? "✓" : t.status === "in_progress" ? "▸" : "○"}
@@ -950,7 +955,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      <div className="shrink-0 border-t border-neutral-800/60 p-2.5">
+      <div className="shrink-0 border-t border-neutral-800/60 p-2.5 [padding-bottom:calc(0.625rem+var(--nx-kb-inset,0px))]">
         {planMode && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300/90">
             <IconList size={10} className="shrink-0" />
@@ -959,7 +964,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         )}
         {aiBusy && conv.status && (
           <div
-            className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500"
+            className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500 [@media(max-height:480px)]:sr-only"
             role="status"
             aria-live="polite"
           >
@@ -973,7 +978,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <span key={r.id} className="nx-chip nx-chip-accent" title={r.detail}>
                 <span className="truncate">{r.label}</span>
                 <button
-                  className="nx-chip-x"
+                  className="nx-chip-x pointer-coarse:min-h-6 pointer-coarse:min-w-6"
                   title="移除引用"
                   onClick={() => setRefs((prev) => prev.filter((x) => x.id !== r.id))}
                 >
@@ -990,7 +995,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <span key={i} className="nx-attach" title="粘贴的图片">
                 <img src={src} alt="" />
                 <button
-                  className="nx-attach-x"
+                  className="nx-attach-x pointer-coarse:min-h-6 pointer-coarse:min-w-6"
                   title="移除图片"
                   onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
                 >
@@ -1018,7 +1023,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
         <textarea
           ref={inputRef}
-          className="nx-textarea max-h-40 min-h-[64px] w-full"
+          className="nx-textarea pointer-coarse:text-[16px] max-h-40 min-h-[64px] w-full [@media(max-height:480px)]:h-9 [@media(max-height:480px)]:min-h-0"
           placeholder={
             aiBusy
               ? "运行中：Enter 发送补充指令，将在当前步骤完成后注入"
@@ -1038,6 +1043,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               return;
             }
             if (e.key === "Enter" && !e.shiftKey) {
+              if (isImeKeyEvent(e)) return;
               e.preventDefault();
               if (aiBusy) void steer();
               else void send();
@@ -1045,12 +1051,12 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           }}
         />
 
-        <div className="mt-1.5 flex items-center gap-1">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
           <div className="nx-spacer" />
           <UsageRing usage={conv.usage} />
           <button
-            className={`nx-icon-btn nx-icon-btn-sm ${
+            className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${
               perm?.mode === "silent" ? "is-active" : ""
             } ${permOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
             title={`AI 权限：${MODE_LABEL[perm?.mode ?? "read_write"]}（点击设置）`}
@@ -1059,7 +1065,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <IconShield size={13} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"
+            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 text-red-400 hover:text-red-300"
             title={
               tabId
                 ? "终端接管（实验性功能）：AI 直接接手当前终端，随时按 Esc 夺回"
@@ -1176,16 +1182,16 @@ function ChatBubble({
 }) {
   if (item.role === "user") {
     return (
-      <div className="ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-blue-50">
+      <div className="ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-[var(--nx-fg-on-tint)]">
         {item.imageCount ? (
-          <div className="mb-1 flex items-center gap-1 text-[11px] text-blue-200/80">
+          <div className="mb-1 flex items-center gap-1 text-[11px] text-[var(--nx-fg-soft)]">
             <IconImage size={11} />
             {item.imageCount} 张图片
           </div>
         ) : null}
-        <pre className="font-sans whitespace-pre-wrap">{item.text}</pre>
+        <pre className="font-sans break-words whitespace-pre-wrap">{item.text}</pre>
         {item.steer ? (
-          <div className="mt-1 text-[10.5px] text-blue-200/70">
+          <div className="mt-1 text-[10.5px] text-[var(--nx-fg-soft)]">
             {item.steer === "pending"
               ? "补充指令 · 等待注入…"
               : item.steer === "delivered"
@@ -1209,7 +1215,7 @@ function ChatBubble({
         className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500"
         open={streaming}
       >
-        <summary className="cursor-pointer select-none text-[10.5px] text-neutral-600 hover:text-neutral-400">
+        <summary className="cursor-pointer select-none text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
           思考过程（{item.text.length} 字）{streaming ? " · 进行中" : ""}
         </summary>
         <div className="mt-1 whitespace-pre-wrap italic">{item.text}</div>
@@ -1235,7 +1241,7 @@ function ChatBubble({
       <div
         role="status"
         className={`flex items-center justify-center gap-1.5 py-0.5 text-[10.5px] ${
-          item.outcome === "canceled" ? "text-[var(--nx-fg-warning)]" : "text-neutral-600"
+          item.outcome === "canceled" ? "text-[var(--nx-fg-warning)]" : "text-[var(--nx-fg-tertiary)]"
         }`}
       >
         {item.text}
@@ -1263,7 +1269,7 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   return (
     <div
       className={`flex items-center gap-1.5 text-[10.5px] ${
-        pending ? "text-[var(--nx-fg-warning)]" : "text-neutral-600"
+        pending ? "text-[var(--nx-fg-warning)]" : "text-[var(--nx-fg-tertiary)]"
       }`}
       title={text}
     >
@@ -1336,7 +1342,7 @@ function PlanBubble({
     <div className="rounded-lg border border-blue-500/30 bg-blue-500/[0.07] px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconList size={12} className="shrink-0 text-blue-300" />
-        <span className="font-medium text-blue-200">方案已提交</span>
+        <span className="font-medium text-blue-300">方案已提交</span>
         <span className="text-neutral-500">还没动任何东西</span>
       </div>
       <div className="max-h-72 overflow-y-auto">
@@ -1378,7 +1384,7 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
         </div>
       ) : null}
       <details className="mb-2">
-        <summary className="cursor-pointer text-[10.5px] text-neutral-600 hover:text-neutral-400">
+        <summary className="cursor-pointer text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
           查看原始参数
         </summary>
         <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-500">
