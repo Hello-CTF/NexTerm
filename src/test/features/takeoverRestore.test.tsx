@@ -31,7 +31,7 @@ vi.mock("../../ipc/commands", () => ({
   terminalApi: { snapshot: mocks.snapshot },
 }));
 
-import { TakeoverBanner, restoredTakeoverAlive, stealBack } from "../../app/TakeoverBanner";
+import { TakeoverBanner, restoredTakeoverAlive, stealBack, takeoverEndedIn } from "../../app/TakeoverBanner";
 import { useUi, type TakeoverState } from "../../app/store";
 
 async function flushProbe() {
@@ -41,6 +41,33 @@ async function flushProbe() {
 function takeover(overrides: Partial<TakeoverState> = {}): TakeoverState {
   return { ...mocks.seeded, startedAt: Date.now(), ...overrides };
 }
+
+describe("takeoverEndedIn", () => {
+  it("全新终端没有任何标记时未结束", () => {
+    expect(takeoverEndedIn("deploy@web-01:~$ ")).toBe(false);
+  });
+
+  it("只有上一次接管的结束标记时算已结束", () => {
+    expect(takeoverEndedIn("$ \r\n[接管结束: 任务完成]\r\ndeploy@web-01:~$ ")).toBe(true);
+  });
+
+  it("上一次结束标记与本次 EnterBanner 同屏时本次仍存活", () => {
+    const text =
+      "[接管结束: 任务完成]\r\n[AI 正在操作此终端 — 按 Esc 或任意键夺回]\r\ndeploy@web-01:~$ ";
+    expect(takeoverEndedIn(text)).toBe(false);
+  });
+
+  it("EnterBanner 之后又出现结束标记才算已结束", () => {
+    const text =
+      "[AI 正在操作此终端 — 按 Esc 或任意键夺回]\r\n$ \r\n[接管结束: 用户退出]\r\n$ ";
+    expect(takeoverEndedIn(text)).toBe(true);
+  });
+
+  it("多个历史结束标记但无 EnterBanner 时仍算已结束", () => {
+    const text = "[接管结束: 任务完成]\r\n[接管结束: 用户退出]\r\n$ ";
+    expect(takeoverEndedIn(text)).toBe(true);
+  });
+});
 
 describe("restoredTakeoverAlive", () => {
   it("快照里没有接管结束标记时认为接管仍存活", async () => {

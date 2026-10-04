@@ -36,6 +36,13 @@ export async function stealBack(reason = "用户夺回控制权") {
   }
 }
 
+export function takeoverEndedIn(text: string): boolean {
+  const lastEnd = text.lastIndexOf("接管结束");
+  if (lastEnd < 0) return false;
+  const lastEnter = text.lastIndexOf("AI 正在操作此终端");
+  return lastEnd > lastEnter;
+}
+
 export async function restoredTakeoverAlive(
   restored: TakeoverState,
   snapshot: (tabId: string) => Promise<{ text: string }>,
@@ -43,7 +50,7 @@ export async function restoredTakeoverAlive(
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const snap = await snapshot(restored.tabId);
-      return !snap.text.includes("接管结束");
+      return !takeoverEndedIn(snap.text);
     } catch {
       await new Promise((resolve) => window.setTimeout(resolve, 800));
     }
