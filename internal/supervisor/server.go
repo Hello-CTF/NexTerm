@@ -24,6 +24,10 @@ type Server struct {
 	closed bool
 
 	wg sync.WaitGroup
+
+	shutdownOnce sync.Once
+	shutdownDone chan struct{}
+	shutdownErr  error
 }
 
 func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
@@ -57,12 +61,13 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 		return nil, fmt.Errorf("inspect supervisor socket: %w", err)
 	}
 	server := &Server{
-		supervisor: supervisor,
-		socketPath: absolute,
-		listener:   listener,
-		socketFile: socketFile,
-		unlock:     unlock,
-		conns:      make(map[*serverConn]struct{}),
+		supervisor:   supervisor,
+		socketPath:   absolute,
+		listener:     listener,
+		socketFile:   socketFile,
+		unlock:       unlock,
+		conns:        make(map[*serverConn]struct{}),
+		shutdownDone: make(chan struct{}),
 	}
 	server.wg.Add(1)
 	go server.acceptLoop()
@@ -74,32 +79,32 @@ func (s *Server) SocketPath() string {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.mu.Lock()
-	if s.closed {
+	s.shutdownOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
 		s.mu.Unlock()
-		return nil
+		listenErr := s.listener.Close()
+		go s.finishShutdown(listenErr)
+	})
+	select {
+	case <-s.shutdownDone:
+		return s.shutdownErr
+	case <-ctx.Done():
+		return context.Cause(ctx)
 	}
-	s.closed = true
+}
+
+func (s *Server) finishShutdown(listenErr error) {
+	s.mu.Lock()
 	conns := make([]*serverConn, 0, len(s.conns))
 	for conn := range s.conns {
 		conns = append(conns, conn)
 	}
 	s.mu.Unlock()
-
-	listenErr := s.listener.Close()
 	for _, conn := range conns {
 		conn.close()
 	}
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-		return errors.Join(listenErr, context.Cause(ctx))
-	}
+	s.wg.Wait()
 	if info, err := os.Lstat(s.socketPath); err == nil && os.SameFile(s.socketFile, info) {
 		_ = os.Remove(s.socketPath)
 	}
@@ -107,7 +112,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if errors.Is(listenErr, net.ErrClosed) {
 		listenErr = nil
 	}
-	return listenErr
+	s.shutdownErr = listenErr
+	close(s.shutdownDone)
 }
 
 func (s *Server) acceptLoop() {

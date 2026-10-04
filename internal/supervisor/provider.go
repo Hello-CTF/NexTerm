@@ -137,15 +137,20 @@ func NewRemoteProvider(client *Client) *RemoteProvider {
 	return &RemoteProvider{client: client}
 }
 
-var remoteProviderAttach = func(ctx context.Context, client *Client, id string) (*Stream, error) {
-	return client.Attach(ctx, id, nil)
+var remoteProviderCreate = func(ctx context.Context, client *Client, options CreateOptions) (Info, error) {
+	return client.Create(ctx, options)
+}
+
+var remoteProviderAttach = func(ctx context.Context, client *Client, id string, expect *Identity) (*Stream, error) {
+	return client.Attach(ctx, id, expect)
 }
 
 func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateOptions) (base.DurableAttachment, error) {
-	if options.ID == "" {
+	generated := options.ID == ""
+	if generated {
 		options.ID = ids.New()
 	}
-	info, err := p.client.Create(ctx, CreateOptions{
+	info, err := remoteProviderCreate(ctx, p.client, CreateOptions{
 		ID:      options.ID,
 		Command: options.Command,
 		Dir:     options.Dir,
@@ -154,15 +159,23 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		Rows:    options.Rows,
 	})
 	if err != nil {
-		p.compensateCreate(options.ID, nil)
+		if generated && !definiteCreateRejection(err) {
+			p.compensateCreate(options.ID, nil)
+		}
 		return nil, translateError(err)
 	}
-	stream, err := remoteProviderAttach(ctx, p.client, info.ID)
+	expect := &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
+	stream, err := remoteProviderAttach(ctx, p.client, info.ID, expect)
 	if err != nil {
-		p.compensateCreate(info.ID, &Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation})
+		p.compensateCreate(info.ID, expect)
 		return nil, translateError(err)
 	}
 	return &streamAttachment{Stream: stream}, nil
+}
+
+func definiteCreateRejection(err error) bool {
+	var wire *wireError
+	return errors.As(err, &wire)
 }
 
 func (p *RemoteProvider) compensateCreate(id string, expected *Identity) {

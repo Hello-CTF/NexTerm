@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/pty"
 )
 
@@ -161,6 +162,9 @@ func (s *Supervisor) Attach(ctx context.Context, id string) (*Attachment, error)
 }
 
 func (s *Supervisor) resolveSession(id string) (*Session, error) {
+	if !ids.Valid(id) {
+		return nil, fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	session, exists := s.sessions[id]
@@ -193,6 +197,9 @@ func (s *Supervisor) Kill(ctx context.Context, id string) error {
 }
 
 func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) error {
+	if !ids.Valid(id) {
+		return fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
+	}
 	s.killMu.Lock()
 	defer s.killMu.Unlock()
 	s.mu.Lock()
@@ -235,6 +242,9 @@ func (s *Supervisor) kill(ctx context.Context, id string, expected *Identity) er
 }
 
 func (s *Supervisor) artifactsPresent(id string) (bool, error) {
+	if !ids.Valid(id) {
+		return false, fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
+	}
 	for _, path := range []string{sessionDir(s.stateDir, id), tombstonePath(s.stateDir, id)} {
 		if _, err := os.Lstat(path); err == nil {
 			return true, nil

@@ -169,6 +169,9 @@ func writeEntry(root string, entry registryEntry) error {
 }
 
 func removeRegistryArtifacts(root, id string) error {
+	if !ids.Valid(id) {
+		return fmt.Errorf("%w: invalid supervisor session ID", ErrInvalidInput)
+	}
 	original := filepath.Join(root, id)
 	tombstone := filepath.Join(root, id+".delete")
 	if _, err := os.Lstat(tombstone); err == nil {

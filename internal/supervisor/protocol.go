@@ -129,12 +129,20 @@ func errorCode(err error) string {
 	}
 }
 
+type wireError struct {
+	error
+}
+
+func (e *wireError) Unwrap() error {
+	return e.error
+}
+
 func codedError(code, message string) error {
 	sentinel := errorSentinel(code)
 	if message == "" {
-		return sentinel
+		return &wireError{sentinel}
 	}
-	return fmt.Errorf("%w: %s", sentinel, message)
+	return &wireError{fmt.Errorf("%w: %s", sentinel, message)}
 }
 
 func errorSentinel(code string) error {

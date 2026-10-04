@@ -327,9 +327,9 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 
 	t.Run("context canceled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		remoteProviderAttach = func(attachCtx context.Context, client *Client, id string) (*Stream, error) {
+		remoteProviderAttach = func(attachCtx context.Context, client *Client, id string, _ *Identity) (*Stream, error) {
 			cancel()
-			return realAttach(attachCtx, client, id)
+			return realAttach(attachCtx, client, id, nil)
 		}
 		_, err := provider.Create(ctx, base.DurableCreateOptions{
 			Command: []string{"/bin/sh", "-c", "sleep 30"},
@@ -339,7 +339,7 @@ func TestRemoteProviderCreateCompensatesOnAttachFailure(t *testing.T) {
 	})
 
 	t.Run("protocol failure", func(t *testing.T) {
-		remoteProviderAttach = func(context.Context, *Client, string) (*Stream, error) {
+		remoteProviderAttach = func(context.Context, *Client, string, *Identity) (*Stream, error) {
 			return nil, errors.New("attach: malformed attach response")
 		}
 		_, err := provider.Create(context.Background(), base.DurableCreateOptions{
