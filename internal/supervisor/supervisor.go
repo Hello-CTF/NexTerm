@@ -345,7 +345,16 @@ func (s *Supervisor) Close() error {
 			errs = append(errs, fmt.Errorf("%w: session %s did not stop", ErrUnavailable, session.ID()))
 		}
 	}
-	s.pumps.Wait()
+	pumpsDone := make(chan struct{})
+	go func() {
+		s.pumps.Wait()
+		close(pumpsDone)
+	}()
+	select {
+	case <-pumpsDone:
+	case <-time.After(s.commandTimeout):
+		errs = append(errs, fmt.Errorf("%w: supervisor pumps did not stop", ErrUnavailable))
+	}
 	s.mu.Lock()
 	errs = append(errs, s.finishErrs...)
 	s.mu.Unlock()
