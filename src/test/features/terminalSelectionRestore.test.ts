@@ -207,4 +207,112 @@ describe("resizeTerminalToGridPreservingSelection", () => {
     expect(term.hasSelection()).toBe(false);
     term.dispose();
   });
+
+  it("keeps the surviving tail when only the head of a multi-line selection is trimmed", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    await writeLines(term, 50);
+    setRangeSelection(term, [0, 1], [0, 6]);
+    expect(term.getSelection()).toBe("line-034\nline-035\nline-036\nline-037\nline-038\n");
+
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 5 });
+
+    expect(term.getSelection()).toBe("line-036\nline-037\nline-038\n");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 0, y: 3 } });
+    term.dispose();
+  });
+
+  it("keeps the surviving tail of a partial trim in the alternate buffer", async () => {
+    const term = openedTerminal({ scrollback: 100, cols: 80, rows: 6 });
+    await writeAltScreen(term, 6);
+    setRangeSelection(term, [0, 1], [0, 4]);
+    expect(term.getSelection()).toBe("line-002\nline-003\nline-004\n");
+
+    resizeTerminalToGridPreservingSelection(term, { cols: 80, rows: 3 });
+
+    expect(term.getSelection()).toBe("line-004\n");
+    expect(term.getSelectionPosition()).toEqual({ start: { x: 0, y: 0 }, end: { x: 0, y: 1 } });
+    term.dispose();
+  });
+});
+
+describe("trim listener lifecycle", () => {
+  interface BufferLines {
+    onTrim?: (listener: (amount: number) => void) => { dispose: () => void };
+  }
+
+  function activeLines(term: Terminal): BufferLines {
+    return (
+      term as unknown as {
+        _core: { _bufferService: { buffers: { active: { lines: BufferLines } } } };
+      }
+    )._core._bufferService.buffers.active.lines;
+  }
+
+  function instrumentTrimSubscriptions(lines: BufferLines) {
+    const original = lines.onTrim;
+    if (!original) throw new Error("onTrim unavailable");
+    let active = 0;
+    let subscribed = 0;
+    let disposed = 0;
+    let maxActive = 0;
+    lines.onTrim = (listener) => {
+      const disposable = original(listener);
+      active += 1;
+      subscribed += 1;
+      maxActive = Math.max(maxActive, active);
+      let done = false;
+      return {
+        dispose: () => {
+          if (done) return;
+          done = true;
+          active -= 1;
+          disposed += 1;
+          disposable.dispose();
+        },
+      };
+    };
+    return {
+      get active() { return active; },
+      get subscribed() { return subscribed; },
+      get disposed() { return disposed; },
+      get maxActive() { return maxActive; },
+    };
+  }
+
+  it("disposes the trim listener when resize throws, without leaking across repeats", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    await writeLines(term, 50);
+    const metrics = instrumentTrimSubscriptions(activeLines(term));
+    term.select(0, findLine(term, "line-040"), 8);
+
+    for (let i = 0; i < 3; i += 1) {
+      expect(() => resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 8.5 })).toThrow();
+    }
+
+    expect(metrics.active).toBe(0);
+    expect(metrics.subscribed).toBe(3);
+    expect(metrics.disposed).toBe(3);
+    term.dispose();
+  });
+
+  it("does not leak listeners across a normal resize storm", async () => {
+    const term = openedTerminal({ scrollback: 10, cols: 20, rows: 8 });
+    await writeLines(term, 50);
+    const metrics = instrumentTrimSubscriptions(activeLines(term));
+    term.select(0, findLine(term, "line-040"), 8);
+
+    for (let i = 0; i < 25; i += 1) {
+      resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 8 });
+      expect(metrics.active).toBe(0);
+    }
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 5 });
+    resizeTerminalToGridPreservingSelection(term, { cols: 20, rows: 8 });
+
+    expect(term.getSelection()).toBe("line-040");
+    expect(metrics.active).toBe(0);
+    expect(metrics.maxActive).toBe(1);
+    expect(metrics.subscribed).toBe(27);
+    expect(metrics.disposed).toBe(27);
+    term.dispose();
+  });
 });

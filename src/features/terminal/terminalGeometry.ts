@@ -93,17 +93,33 @@ export function resizeTerminalToGridPreservingSelection(term: Terminal, grid: Te
     lines?.onTrim?.((amount) => {
       trimmed += amount;
     }) ?? null;
-  resizeTerminalToGrid(term, grid);
-  trimListener?.dispose();
+  try {
+    resizeTerminalToGrid(term, grid);
+  } finally {
+    trimListener?.dispose();
+  }
   if (!pos || !text || term.hasSelection()) return;
-  if (pos.start.y < trimmed) return;
+  const startY = pos.start.y - trimmed;
+  const endY = pos.end.y - trimmed;
+  if (endY < 0) return;
+  let expected = text;
+  let restoreStartY = startY;
+  if (startY < 0) {
+    restoreStartY = 0;
+    const segments = text.split("\n").slice(-startY);
+    if (segments.length === 0) return;
+    segments[0] = segments[0].slice(pos.start.x);
+    expected = segments.join("\n");
+    if (endY === 0 && pos.end.x <= pos.start.x) return;
+  }
+  if (!expected) return;
   restoreSelectionRange(
     term,
-    { x: pos.start.x, y: pos.start.y - trimmed },
-    { x: pos.end.x, y: pos.end.y - trimmed },
-    text,
+    { x: pos.start.x, y: restoreStartY },
+    { x: pos.end.x, y: endY },
+    expected,
   );
-  if (term.getSelection() !== text) term.clearSelection();
+  if (term.getSelection() !== expected) term.clearSelection();
 }
 
 function restoreSelectionRange(
