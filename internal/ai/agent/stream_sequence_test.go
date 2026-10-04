@@ -115,6 +115,9 @@ func TestHubReconnectKeepsReplaySequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := firstReceiver.Ack(firstFrame.Sequence); err != nil {
+		t.Fatal(err)
+	}
 	if err := firstReceiver.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +134,9 @@ func TestHubReconnectKeepsReplaySequence(t *testing.T) {
 	}
 	replayedFrame, err := secondReceiver.Next(context.Background())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := secondReceiver.Ack(replayedFrame.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	newFrame, err := secondReceiver.Next(context.Background())

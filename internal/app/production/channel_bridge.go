@@ -120,11 +120,13 @@ func (b *terminalBridge) run(ctx context.Context, channelID string, channel *ter
 			return
 		}
 		if frame.Kind != hub.FrameBinary {
+			_ = channel.receiver.Ack(frame.Sequence)
 			continue
 		}
 		if err := channel.stream.SendBinary(ctx, frame.Data); err != nil {
 			return
 		}
+		_ = channel.receiver.Ack(frame.Sequence)
 	}
 }
 

@@ -52,3 +52,27 @@ func TestEnvironmentKeyCase(t *testing.T) {
 		t.Fatalf("TERM = %q", got)
 	}
 }
+
+func TestEnvironmentDefaultsColortermForTerminal(t *testing.T) {
+	t.Setenv("COLORTERM", "")
+	env := environment(nil, true, "")
+	if got := environmentValue(env, "COLORTERM"); got != "truecolor" {
+		t.Fatalf("COLORTERM = %q, want truecolor", got)
+	}
+}
+
+func TestEnvironmentKeepsExplicitColorterm(t *testing.T) {
+	t.Setenv("COLORTERM", "")
+	env := environment(map[string]string{"COLORTERM": "24bit"}, true, "")
+	if got := environmentValue(env, "COLORTERM"); got != "24bit" {
+		t.Fatalf("COLORTERM = %q, want 24bit", got)
+	}
+}
+
+func TestEnvironmentLeavesColortermOutsideTerminal(t *testing.T) {
+	t.Setenv("COLORTERM", "24bit")
+	env := environment(nil, false, "")
+	if got := environmentValue(env, "COLORTERM"); got != "24bit" {
+		t.Fatalf("COLORTERM = %q, want untouched 24bit", got)
+	}
+}

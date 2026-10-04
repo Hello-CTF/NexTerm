@@ -63,6 +63,10 @@ func (r *hubChannelReceiver) Next(ctx context.Context) (Frame, error) {
 	return Frame{Sequence: frame.Sequence, Kind: kind, Data: frame.Data}, nil
 }
 
+func (r *hubChannelReceiver) Ack(sequence uint64) error {
+	return r.receiver.Ack(sequence)
+}
+
 func (r *hubChannelReceiver) Close() error {
 	return r.receiver.Close()
 }

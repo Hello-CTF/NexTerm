@@ -69,7 +69,33 @@ func run(args []string) int {
 
 	ctx, stop := platform.NotifyContext(context.Background())
 	defer stop()
+	webSocket, err := server.ParseWebSocketEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
+	queueSize, err := server.ParseEventQueueEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
+	bufferSize, err := server.ParseEventBufferEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
 	broker := server.NewEventBroker()
+	if queueSize > 0 {
+		broker.QueueSize = queueSize
+	}
+	if bufferSize > 0 {
+		broker.BufferSize = bufferSize
+	}
+	if limit, err := platform.RaiseNoFileLimit(platform.DefaultNoFileLimit); err != nil {
+		logger.Warn("raise open file limit failed", "error", err)
+	} else if limit > 0 {
+		logger.Info("open file limit ensured", "limit", limit)
+	}
 	application, err := production.NewProduction(ctx, production.ProductionConfig{
 		Config: core.Config{
 			Logger: logger.Logger,
@@ -105,6 +131,7 @@ func run(args []string) int {
 		Vault:        application.Services.Vault,
 		Retention:    serverRetentionConfig(application.Services.Retention),
 		Logger:       logger.Logger,
+		WebSocket:    webSocket,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)

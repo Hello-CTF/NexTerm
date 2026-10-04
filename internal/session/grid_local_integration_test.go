@@ -100,6 +100,9 @@ func readLocalGridOutput(t *testing.T, receiver *hub.Receiver) []byte {
 			t.Fatalf("Hub sequence regressed from %d to %d", previous, frame.Sequence)
 		}
 		previous = frame.Sequence
+		if err := receiver.Ack(frame.Sequence); err != nil {
+			t.Fatal(err)
+		}
 		output = append(output, frame.Data...)
 		if bytes.Contains(output, []byte("30 100")) && bytes.Contains(output, []byte("nexterm-grid-done")) {
 			return output

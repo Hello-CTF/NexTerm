@@ -193,6 +193,10 @@ func TestConcurrentClientsChannelsAndThroughput(t *testing.T) {
 						results <- result{channelID: channelID, err: fmt.Errorf("frame %d kind = %d", index, frame.Kind)}
 						return
 					}
+					if err := receiver.Ack(frame.Sequence); err != nil {
+						results <- result{channelID: channelID, err: err}
+						return
+					}
 				}
 				results <- result{channelID: channelID}
 			}()
@@ -274,6 +278,9 @@ func receiveFrame(t *testing.T, receiver *Receiver) Frame {
 	defer cancel()
 	frame, err := receiver.Next(ctx)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receiver.Ack(frame.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	return frame

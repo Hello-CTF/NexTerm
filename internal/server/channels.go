@@ -17,6 +17,7 @@ type Frame struct {
 
 type ChannelReceiver interface {
 	Next(context.Context) (Frame, error)
+	Ack(sequence uint64) error
 	Close() error
 }
 
