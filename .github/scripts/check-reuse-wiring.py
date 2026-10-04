@@ -3,11 +3,14 @@ import copy
 import hashlib
 import json
 import os
+import platform
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import yaml
@@ -17,6 +20,8 @@ CI = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 RELEASE = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
 RESOLVER_TEXT = (ROOT / ".github/scripts/resolve-ci-reuse.sh").read_text()
 PACK_TEXT = (ROOT / "scripts/pack-linux-server.sh").read_text()
+HOST_GOOS = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
+HOST_GOARCH = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64"}.get(platform.machine())
 
 
 def matrix_substitute(script, values):
@@ -217,7 +222,7 @@ def normalized_step_if(step):
     return str(step.get("if", "")).replace(" ", "")
 
 
-def run_checks(ci, release, resolver_text, pack_text):
+def run_wiring_checks(ci, release, resolver_text, pack_text):
     results = []
 
     def check(name, ok, detail=""):
@@ -293,57 +298,9 @@ def run_checks(ci, release, resolver_text, pack_text):
     check("windows wails cache restores before setup-go",
           cache_index is not None and setup_go_index is not None and cache_index < setup_go_index,
           f"cache_index={cache_index} setup_go_index={setup_go_index}")
-    setup_go_if = str(desktop_steps[setup_go_index].get("if", "")) if setup_go_index is not None else ""
-    check("setup-go is skipped on a verified wails cache hit",
-          "steps.wails-cache.outputs.cache-hit" in setup_go_if, f"if={setup_go_if!r}")
-    wails_install_step = find_step(release["jobs"]["desktop"], "Install the pinned Wails CLI")
-    check("wails install step does not require go on PATH",
-          "go env GOPATH" not in str(wails_install_step.get("run", "")) and "$HOME/go/bin" in str(wails_install_step.get("run", "")),
-          "install step still resolves GOPATH through go")
-
-    full_names = sorted(resolver_required_artifacts(resolver_text))
-    green = runs_reply(ci_run_document("completed", "success"))
-    in_progress = runs_reply(ci_run_document("in_progress", None))
-    wait_env = {"CI_REUSE_WAIT_TIMEOUT": "30", "CI_REUSE_POLL_INTERVAL": "1"}
-    with tempfile.TemporaryDirectory() as stub_dir:
-        stub = Path(stub_dir)
-        result = run_resolver(resolver_text, stub, green, json.dumps(full_names))
-        check("resolver full set reuses the green run",
-              result.returncode == 0 and "reused=true" in result.stdout and "artifact-run-id=424242" in result.stdout,
-              f"stdout={result.stdout!r} stderr={result.stderr!r}")
-        for missing in full_names:
-            partial = json.dumps([name for name in full_names if name != missing])
-            result = run_resolver(resolver_text, stub, green, partial)
-            ok = result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
-            check(f"resolver falls back when {missing} is missing", ok, f"stdout={result.stdout!r}")
-        result = run_resolver(resolver_text, stub, runs_reply(), json.dumps(full_names))
-        check("resolver falls back when no green run exists",
-              result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout,
-              f"stdout={result.stdout!r}")
-        result = run_resolver(resolver_text, stub, [in_progress, green], json.dumps(full_names), wait_env)
-        check("resolver waits for an in-progress run and reuses its green completion",
-              result.returncode == 0 and "reused=true" in result.stdout and "artifact-run-id=424242" in result.stdout
-              and "still in progress" in result.stderr,
-              f"stdout={result.stdout!r} stderr={result.stderr!r}")
-        result = run_resolver(resolver_text, stub, in_progress, json.dumps(full_names),
-                              {"CI_REUSE_WAIT_TIMEOUT": "2", "CI_REUSE_POLL_INTERVAL": "1"})
-        check("resolver times out waiting and falls back to the full CI",
-              result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
-              and "timed out" in result.stderr and "reused=true" not in result.stdout,
-              f"stdout={result.stdout!r} stderr={result.stderr!r}")
-        for conclusion in ("failure", "cancelled"):
-            completed = runs_reply(ci_run_document("completed", conclusion))
-            result = run_resolver(resolver_text, stub, [in_progress, completed], json.dumps(full_names), wait_env)
-            check(f"resolver falls back when the waited run ends as {conclusion}",
-                  result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
-                  and f"conclusion {conclusion}" in result.stderr and "reused=true" not in result.stdout,
-                  f"stdout={result.stdout!r} stderr={result.stderr!r}")
-        partial = json.dumps([name for name in full_names if name != "frontend-dist"])
-        result = run_resolver(resolver_text, stub, [in_progress, green], partial, wait_env)
-        check("resolver falls back when the waited green run lacks artifacts",
-              result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
-              and "missing reusable artifacts" in result.stderr,
-              f"stdout={result.stdout!r} stderr={result.stderr!r}")
+    setup_go_condition = str(desktop_steps[setup_go_index].get("if", "")) if setup_go_index is not None else ""
+    check("desktop setup-go is never skipped by the wails cache hit",
+          "wails-cache" not in setup_go_condition, f"if={setup_go_condition!r}")
 
     upload_step = find_step(ci["jobs"]["native"], "Upload native runtime")
     upload_paths = [line.strip() for line in upload_step["with"]["path"].splitlines() if line.strip()]
@@ -409,6 +366,190 @@ def run_checks(ci, release, resolver_text, pack_text):
                     offenders.append(f"{job_id}/{step.get('name')}")
         check(f"{label} windows bash-syntax steps declare shell: bash", not offenders, f"offenders={offenders}")
 
+    return results
+
+
+def run_resolver_checks(resolver_text):
+    results = []
+
+    def check(name, ok, detail=""):
+        results.append((name, ok, detail))
+
+    full_names = sorted(resolver_required_artifacts(resolver_text))
+    green = runs_reply(ci_run_document("completed", "success"))
+    in_progress = runs_reply(ci_run_document("in_progress", None))
+    wait_env = {"CI_REUSE_WAIT_TIMEOUT": "30", "CI_REUSE_POLL_INTERVAL": "1"}
+    with tempfile.TemporaryDirectory() as stub_dir:
+        stub = Path(stub_dir)
+        result = run_resolver(resolver_text, stub, green, json.dumps(full_names))
+        check("resolver full set reuses the green run",
+              result.returncode == 0 and "reused=true" in result.stdout and "artifact-run-id=424242" in result.stdout,
+              f"stdout={result.stdout!r} stderr={result.stderr!r}")
+        for missing in full_names:
+            partial = json.dumps([name for name in full_names if name != missing])
+            result = run_resolver(resolver_text, stub, green, partial)
+            ok = result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
+            check(f"resolver falls back when {missing} is missing", ok, f"stdout={result.stdout!r}")
+        result = run_resolver(resolver_text, stub, runs_reply(), json.dumps(full_names))
+        check("resolver falls back when no green run exists",
+              result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout,
+              f"stdout={result.stdout!r}")
+        result = run_resolver(resolver_text, stub, [in_progress, green], json.dumps(full_names), wait_env)
+        check("resolver waits for an in-progress run and reuses its green completion",
+              result.returncode == 0 and "reused=true" in result.stdout and "artifact-run-id=424242" in result.stdout
+              and "still in progress" in result.stderr,
+              f"stdout={result.stdout!r} stderr={result.stderr!r}")
+        result = run_resolver(resolver_text, stub, in_progress, json.dumps(full_names),
+                              {"CI_REUSE_WAIT_TIMEOUT": "2", "CI_REUSE_POLL_INTERVAL": "1"})
+        check("resolver times out waiting and falls back to the full CI",
+              result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
+              and "timed out" in result.stderr and "reused=true" not in result.stdout,
+              f"stdout={result.stdout!r} stderr={result.stderr!r}")
+        for conclusion in ("failure", "cancelled"):
+            completed = runs_reply(ci_run_document("completed", conclusion))
+            result = run_resolver(resolver_text, stub, [in_progress, completed], json.dumps(full_names), wait_env)
+            check(f"resolver falls back when the waited run ends as {conclusion}",
+                  result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
+                  and f"conclusion {conclusion}" in result.stderr and "reused=true" not in result.stdout,
+                  f"stdout={result.stdout!r} stderr={result.stderr!r}")
+        partial = json.dumps([name for name in full_names if name != "frontend-dist"])
+        result = run_resolver(resolver_text, stub, [in_progress, green], partial, wait_env)
+        check("resolver falls back when the waited green run lacks artifacts",
+              result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
+              and "missing reusable artifacts" in result.stderr,
+              f"stdout={result.stdout!r} stderr={result.stderr!r}")
+    return results
+
+
+def path_without_go():
+    return os.pathsep.join(
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and not (Path(entry) / "go").exists()
+    )
+
+
+def build_stub_desktop_binary(directory):
+    (directory / "main.go").write_text("package main\n\nfunc main() {}\n")
+    subprocess.run(["go", "mod", "init", "stub"], cwd=directory, capture_output=True, check=True)
+    env = dict(os.environ)
+    env["CGO_ENABLED"] = "1"
+    subprocess.run(["go", "build", "-ldflags", "-s -w", "-o", "stub-desktop", "."],
+                   cwd=directory, env=env, capture_output=True, check=True)
+    return directory / "stub-desktop"
+
+
+def run_evidence_checks(release):
+    results = []
+
+    def check(name, ok, detail=""):
+        results.append((name, ok, detail))
+
+    install_step = find_step(release["jobs"]["desktop"], "Install the pinned Wails CLI")
+    script = str(install_step["run"]).replace("${{ steps.wails-cache.outputs.cache-hit }}", "true")
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        home = base / "home"
+        wails_dir = home / "go/bin"
+        wails_dir.mkdir(parents=True)
+        wails = wails_dir / "wails3"
+        wails.write_text("#!/usr/bin/env bash\necho wails3 v3.0.0-alpha.98\n")
+        wails.chmod(0o755)
+        (base / "ghpath").write_text("")
+        env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "GITHUB_PATH": str(base / "ghpath")}
+        hidden = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=base, env=env,
+                                capture_output=True, text=True, check=False)
+        check("wails3 stays invisible to the install step when only GITHUB_PATH is extended",
+              hidden.returncode != 0, f"rc={hidden.returncode} stdout={hidden.stdout!r} stderr={hidden.stderr!r}")
+        env["PATH"] = f"{wails_dir}:/usr/bin:/bin"
+        visible = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=base, env=env,
+                                 capture_output=True, text=True, check=False)
+        check("install step passes when the restored wails bin dir is already on PATH",
+              visible.returncode == 0 and "wails3 v3.0.0-alpha.98" in visible.stdout,
+              f"rc={visible.returncode} stderr={visible.stderr!r}")
+
+    build_text = (ROOT / "scripts/build.mjs").read_text()
+    check("embedded dist assertions stay wired into the desktop release report",
+          'requireEmbedded: kind === "desktop" && release' in build_text
+          and 'assertion("embedded-index"' in build_text and 'assertion("embedded-script"' in build_text,
+          "build.mjs no longer wires embedded dist assertions into the desktop release report")
+
+    if HOST_GOOS is None or HOST_GOARCH is None:
+        check("desktop evidence checks require a darwin/linux amd64/arm64 host", False,
+              f"host={platform.system()}/{platform.machine()}")
+        return results
+    if shutil.which("go") is None:
+        check("desktop evidence checks require a Go toolchain", False, "go is not on PATH")
+        return results
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        binary = build_stub_desktop_binary(base)
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        version = json.loads((ROOT / "wails.json").read_text())["info"]["version"]
+        cgo = "1"
+        cli = ["node", str(ROOT / "scripts/build.mjs"), "report", "--kind=desktop",
+               f"--os={HOST_GOOS}", f"--arch={HOST_GOARCH}", f"--cgo={cgo}",
+               f"--file={binary}", "--require-evidence"]
+        report_path = Path(f"{binary}.artifact.json")
+        no_go_env = dict(os.environ)
+        no_go_env["PATH"] = path_without_go()
+        closed = subprocess.run(cli, cwd=ROOT, env=no_go_env, capture_output=True, text=True, check=False)
+        closed_assertions = {}
+        if report_path.exists():
+            closed_assertions = {item["id"]: item["status"]
+                                 for item in json.loads(report_path.read_text()).get("assertions", [])}
+        check("desktop package-only evidence fails closed without go on PATH",
+              closed.returncode != 0 and closed_assertions.get("cgo-boundary") == "failed",
+              f"rc={closed.returncode} assertions={closed_assertions} stderr={closed.stderr[-300:]!r}")
+        passing = subprocess.run(cli, cwd=ROOT, capture_output=True, text=True, check=False)
+        passed_report = json.loads(report_path.read_text())
+        assertions = {item["id"]: item["status"] for item in passed_report.get("assertions", [])}
+        expected_assertions = ["binary-format", "binary-architecture", "cgo-boundary", "stripped-release"]
+        check("desktop binary evidence assertions pass with the toolchain present",
+              passing.returncode == 0
+              and passed_report.get("status") == "passed"
+              and all(assertions.get(name) == "passed" for name in expected_assertions)
+              and passed_report.get("commit") == head
+              and passed_report.get("artifact", {}).get("sha256") == digest,
+              f"rc={passing.returncode} status={passed_report.get('status')} assertions={assertions} stderr={passing.stderr[-300:]!r}")
+
+        manifest_path = Path(f"{binary}.manifest.json")
+
+        def write_manifest(commit):
+            manifest_path.write_text(json.dumps({
+                "schema_version": 1,
+                "kind": "go-binary",
+                "id": f"desktop-{HOST_GOOS}-{HOST_GOARCH}",
+                "platform": {"os": HOST_GOOS, "arch": HOST_GOARCH, "cgo": cgo},
+                "tags": ["production"],
+                "stripped": True,
+                "version": version,
+                "commit": commit,
+                "source_date_epoch": 1,
+                "artifact": {"size_bytes": binary.stat().st_size, "sha256": digest},
+            }))
+
+        verifier = ["node", str(ROOT / ".github/scripts/verify-reused-binary.mjs"), str(binary),
+                    f"desktop-{HOST_GOOS}-{HOST_GOARCH}", HOST_GOOS, HOST_GOARCH, cgo]
+        write_manifest("0" * 40)
+        mismatch = subprocess.run(verifier, cwd=ROOT, capture_output=True, text=True, check=False)
+        check("verify-reused-binary rejects a commit mismatch",
+              mismatch.returncode != 0 and "commit" in mismatch.stderr,
+              f"rc={mismatch.returncode} stderr={mismatch.stderr!r}")
+        write_manifest(head)
+        accepted = subprocess.run(verifier, cwd=ROOT, capture_output=True, text=True, check=False)
+        check("verify-reused-binary accepts the byte-identical manifest",
+              accepted.returncode == 0, f"rc={accepted.returncode} stderr={accepted.stderr!r}")
+    return results
+
+
+def run_checks(ci, release, resolver_text, pack_text, include_resolver=True, include_evidence=True):
+    results = run_wiring_checks(ci, release, resolver_text, pack_text)
+    if include_resolver:
+        results.extend(run_resolver_checks(resolver_text))
+    if include_evidence:
+        results.extend(run_evidence_checks(release))
     return results
 
 
@@ -479,57 +620,75 @@ def mutate_wails_cache_order(ci, release, pack_text):
     steps.insert(setup_go_index + 1, step)
 
 
-def mutate_setup_go_skip(ci, release, pack_text):
+def mutate_setup_go_cache_skip(ci, release, pack_text):
     for step in release["jobs"]["desktop"]["steps"]:
         if str(step.get("uses", "")).startswith("actions/setup-go"):
-            step.pop("if", None)
+            step["if"] = "matrix.os != 'windows' || steps.wails-cache.outputs.cache-hit != 'true'"
 
 
 NEGATIVE_CONTROLS = [
     ("round-1 upload name order regression is caught", mutate_upload_name_order,
-     "resolver required artifacts are all produced by CI"),
+     "resolver required artifacts are all produced by CI", False),
     ("round-1 native download path regression is caught", mutate_native_download_path,
-     "native download stages outside target/ (desktop)"),
+     "native download stages outside target/ (desktop)", False),
     ("precondition if removal is caught", mutate_precondition_if,
-     "job graph: reuse: ci skipped and release proceeds"),
+     "job graph: reuse: ci skipped and release proceeds", False),
     ("windows shell removal is caught", mutate_windows_shell,
-     "release.yml windows bash-syntax steps declare shell: bash"),
+     "release.yml windows bash-syntax steps declare shell: bash", False),
     ("standalone pnpm typecheck re-addition is caught", mutate_readd_typecheck,
-     "quality has no standalone pnpm typecheck step"),
+     "quality has no standalone pnpm typecheck step", False),
     ("plain go test re-addition is caught", mutate_readd_plain_go_test,
-     "quality runs the Go suite once with -race"),
+     "quality runs the Go suite once with -race", False),
     ("duplicate pack evidence report is caught", mutate_duplicate_pack_report,
-     "pack generates the server archive evidence report exactly once"),
+     "pack generates the server archive evidence report exactly once", False),
     ("e2e staging if removal is caught", mutate_e2e_stage_if,
-     "server stages the reused CI e2e report only on reuse-hit"),
+     "server stages the reused CI e2e report only on reuse-hit", False),
     ("e2e exercise if removal is caught", mutate_e2e_exercise_if,
-     "server reruns e2e only without reuse"),
+     "server reruns e2e only without reuse", False),
     ("upload parallelism regression is caught", mutate_upload_parallelism,
-     "release upload runs with parallelism 8"),
+     "release upload runs with parallelism 8", False),
     ("wails cache order regression is caught", mutate_wails_cache_order,
-     "windows wails cache restores before setup-go"),
-    ("setup-go skip removal is caught", mutate_setup_go_skip,
-     "setup-go is skipped on a verified wails cache hit"),
+     "windows wails cache restores before setup-go", False),
+    ("setup-go cache-hit skip re-addition is caught", mutate_setup_go_cache_skip,
+     "desktop setup-go is never skipped by the wails cache hit", False),
 ]
 
 
 def main():
-    results = run_checks(CI, RELEASE, RESOLVER_TEXT, PACK_TEXT)
+    started = time.monotonic()
+    wiring = run_wiring_checks(CI, RELEASE, RESOLVER_TEXT, PACK_TEXT)
+    wiring_elapsed = time.monotonic() - started
+    resolver_started = time.monotonic()
+    resolver = run_resolver_checks(RESOLVER_TEXT)
+    resolver_elapsed = time.monotonic() - resolver_started
+    evidence_started = time.monotonic()
+    evidence = run_evidence_checks(RELEASE)
+    evidence_elapsed = time.monotonic() - evidence_started
+    results = wiring + resolver + evidence
     for name, ok, detail in results:
         print(f"{'ok' if ok else 'FAIL'} - {name}" + (f": {detail}" if not ok else ""))
     failures = [f"{name}: {detail}" for name, ok, detail in results if not ok]
-    for label, mutate, expected in NEGATIVE_CONTROLS:
+    controls_started = time.monotonic()
+    for label, mutate, expected, needs_resolver in NEGATIVE_CONTROLS:
         ci_copy = copy.deepcopy(CI)
         release_copy = copy.deepcopy(RELEASE)
         pack_copy = mutate(ci_copy, release_copy, PACK_TEXT) or PACK_TEXT
-        caught = any(expected in name and not ok for name, ok, _ in run_checks(ci_copy, release_copy, RESOLVER_TEXT, pack_copy))
+        mutated = run_checks(ci_copy, release_copy, RESOLVER_TEXT, pack_copy,
+                             include_resolver=needs_resolver, include_evidence=False)
+        caught = any(expected in name and not ok for name, ok, _ in mutated)
         print(f"{'ok' if caught else 'FAIL'} - negative control: {label}")
         if not caught:
             failures.append(f"negative control: {label}: mutation not detected by {expected!r}")
+    controls_elapsed = time.monotonic() - controls_started
     if failures:
         print(f"\n{len(failures)} check(s) failed")
         sys.exit(1)
     print(f"\nall {len(results) + len(NEGATIVE_CONTROLS)} workflow reuse wiring checks passed")
+    print(f"sections: wiring {len(wiring)} checks {wiring_elapsed:.1f}s; "
+          f"resolver {len(resolver)} scenarios {resolver_elapsed:.1f}s; "
+          f"desktop evidence {len(evidence)} checks {evidence_elapsed:.1f}s; "
+          f"{len(NEGATIVE_CONTROLS)} negative controls (wiring-only re-runs) {controls_elapsed:.1f}s; "
+          f"total {time.monotonic() - started:.1f}s")
 
 
 if __name__ == "__main__":

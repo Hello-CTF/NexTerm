@@ -84,7 +84,6 @@ jobs:
           path: ~/go/bin
           key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
       - uses: actions/setup-go@v5
-        if: matrix.os != 'windows' || steps.wails-cache.outputs.cache-hit != 'true'
         with:
           go-version: 1.26.8
           cache: true
