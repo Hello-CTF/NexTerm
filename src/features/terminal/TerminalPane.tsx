@@ -9,10 +9,11 @@ import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent } from "../../ipc/events";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, useUi } from "../../app/store";
-import { modHint } from "../../app/platform";
+import { isMac, modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
   IconArrowDown,
@@ -100,6 +101,8 @@ export function TerminalPane({
     findPrevious: (t: string) => void;
   } | null>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
@@ -109,6 +112,7 @@ export function TerminalPane({
   const canReconnect =
     sessionStatus === "disconnected" || sessionStatus === "failed" || sessionStatus === undefined;
   const blocksSupported = !effectiveWinrm;
+  const mod = modHint();
 
   useEffect(() => {
     if (!blocksSupported || userClosedBlocks.current) return;
@@ -225,6 +229,32 @@ export function TerminalPane({
       cancelled = true;
       unlisten?.();
     };
+  }, []);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      const mac = isMac();
+      const primary = mac ? e.metaKey : e.ctrlKey;
+      const secondary = mac ? e.ctrlKey : e.metaKey;
+      if (!primary || secondary || e.shiftKey || e.altKey || e.key.toLowerCase() !== "f") return;
+      e.preventDefault();
+      e.stopPropagation();
+      const selected = (handleRef.current?.getSelection() ?? "").trim();
+      if (selected) {
+        const first = selected.split("\n")[0];
+        setQuery(first);
+        setSearchOpen(true);
+        window.setTimeout(() => searchApi.current?.findNext(first), 60);
+      } else {
+        setSearchOpen(true);
+      }
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
 
   const handleAttachDead = useCallback(
@@ -422,7 +452,7 @@ export function TerminalPane({
         kind: "item",
         label: "搜索选中内容",
         icon: <IconSearch size={13} />,
-        accel: "Ctrl+F",
+        accel: `${mod}+F`,
         disabled: !hasSel,
         onSelect: () => {
           setQuery(firstLine);
@@ -503,7 +533,7 @@ export function TerminalPane({
   };
 
   return (
-    <div className="nx-pane bg-term">
+    <div ref={paneRef} className="nx-pane bg-term">
       <div className="nx-toolbar">
         <span className="nx-toolbar-title">{title}</span>
         <span
@@ -524,7 +554,7 @@ export function TerminalPane({
 
         <button
           className={`nx-btn nx-btn-ghost nx-btn-sm ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-          title="搜索终端内容 (Ctrl+F)"
+          title={`搜索终端内容 (${mod}+F)`}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <IconSearch size={13} />
@@ -598,6 +628,7 @@ export function TerminalPane({
             </span>
             <input
               autoFocus
+              ref={searchInputRef}
               className="nx-input nx-input-sm"
               placeholder="搜索终端内容…"
               value={query}
