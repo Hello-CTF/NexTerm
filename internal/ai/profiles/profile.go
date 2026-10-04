@@ -30,6 +30,13 @@ func MaskAPIKey(key string) string {
 	return MaskedAPIKey
 }
 
+func RejectMaskedKey(key string) error {
+	if key == MaskedAPIKey {
+		return fmt.Errorf("%w: masked sentinel", ErrProfileKeyUnavailable)
+	}
+	return nil
+}
+
 func (p Profile) hasKeyMaterial() bool {
 	return p.APIKey != ""
 }

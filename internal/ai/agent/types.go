@@ -140,7 +140,6 @@ type job struct {
 	memory      *guard.Memory
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
-	subagents   *subagent.Manager
 
 	steer *steer.Queue
 
@@ -153,6 +152,8 @@ type job struct {
 	pendingMu      sync.Mutex
 	resumeIterator *adk.AsyncIterator[*adk.AgentEvent]
 	running        bool
+	subagents      *subagent.Manager
+	completed      bool
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {

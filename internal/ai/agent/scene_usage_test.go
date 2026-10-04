@@ -594,3 +594,160 @@ func TestHITLResumeKeepsSaturatedLatency(t *testing.T) {
 		t.Fatalf("resumed tokens = %d, want merged pre+post", row.TokensIn)
 	}
 }
+
+func TestParentRunSalvagesUsageOnStreamError(t *testing.T) {
+	usageFrame := assistantWithUsage("partial", 70, 30)
+	usageFrame.Extra = map[string]any{provider.MessageExtraCacheCreation: uint64(6)}
+	chat := &fakeModel{stream: func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		reader, writer := schema.Pipe[*schema.Message](2)
+		go func() {
+			writer.Send(usageFrame, nil)
+			writer.Send(nil, errors.New("connection lost"))
+		}()
+		return reader, nil
+	}}
+	runner, storage := sceneRunner(t, chat, nil)
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	events := waitClosed(t, stream)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("terminal counts done=%d error=%d", done, failed)
+	}
+	row := waitRunStatus(t, storage, response.JobID, store.RunStatusFailed)
+	if row.TokensIn != 70 || row.TokensOut != 30 || row.CacheCreationTokens != 6 {
+		t.Fatalf("salvaged usage = %+v", row)
+	}
+	found := false
+	for _, event := range runEventsOf(t, storage, response.JobID) {
+		if event.Type == "usage" && strings.Contains(event.PayloadJSON, `"promptTokens":70`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("salvaged usage event missing from journal")
+	}
+}
+
+func TestSubagentRunSalvagesUsageOnStreamError(t *testing.T) {
+	usageFrame := schema.AssistantMessage("partial", nil)
+	usageFrame.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 55, CompletionTokens: 20}}
+	usageFrame.Extra = map[string]any{provider.MessageExtraCacheCreation: uint64(4)}
+	child := &fakeModel{stream: func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		reader, writer := schema.Pipe[*schema.Message](2)
+		go func() {
+			writer.Send(usageFrame, nil)
+			writer.Send(nil, errors.New("connection lost"))
+		}()
+		return reader, nil
+	}}
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	runner, storage := subagentPersistenceRunner(t, parent, child, nil)
+	stream := &SliceStream{}
+	startTestJob(t, runner, stream, "go")
+	waitClosed(t, stream)
+	row := findSubagentRow(t, storage)
+	if row.Status != store.RunStatusFailed || row.FinishedAt == nil {
+		t.Fatalf("salvaged subagent row = %+v", *row)
+	}
+	if row.TokensIn != 55 || row.TokensOut != 20 || row.CacheCreationTokens != 4 {
+		t.Fatalf("salvaged subagent usage = %+v", *row)
+	}
+}
+
+type gatedRunStore struct {
+	*store.Store
+	gate    chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (g *gatedRunStore) RunInsert(ctx context.Context, row store.RunRow) error {
+	if row.Source == "subagent" {
+		g.once.Do(func() { close(g.entered) })
+		select {
+		case <-g.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return g.Store.RunInsert(ctx, row)
+}
+
+func TestSubagentPersistencePrecedesParentStreamClose(t *testing.T) {
+	childMessage := schema.AssistantMessage("child done", nil)
+	childMessage.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 40, CompletionTokens: 8}}
+	child := sequenceModel(childMessage)
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	gated := &gatedRunStore{Store: storage, gate: make(chan struct{}), entered: make(chan struct{})}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return parent, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: gated,
+		Checkpoints: NewStoreCheckpoints(storage),
+		Subagents: &tools.SubagentConfig{
+			Model:           func(context.Context) (model.BaseChatModel, error) { return child, nil },
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) { return child, nil },
+		},
+	})
+	t.Cleanup(func() { _ = runner.Close() })
+	stream := &SliceStream{}
+	startTestJob(t, runner, stream, "go")
+	<-gated.entered
+	if _, closed := stream.Snapshot(); closed {
+		t.Fatal("parent stream closed before subagent persistence finished")
+	}
+	close(gated.gate)
+	waitClosed(t, stream)
+	row := findSubagentRow(t, storage)
+	if row.TokensIn != 40 || row.Status != store.RunStatusCompleted {
+		t.Fatalf("subagent row = %+v", *row)
+	}
+}
+
+func TestEarlyCancelDuringInitializationClosesSubagents(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	runner, _ := sceneRunner(t, &fakeModel{stream: func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		once.Do(func() { close(entered) })
+		<-release
+		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
+	}}, func(config *Config) {
+		config.Subagents = &tools.SubagentConfig{
+			Model: func(context.Context) (model.BaseChatModel, error) {
+				return sequenceModel(schema.AssistantMessage("child", nil)), nil
+			},
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) {
+				return sequenceModel(schema.AssistantMessage("child", nil)), nil
+			},
+		}
+	})
+	stream := &SliceStream{}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	if err := runner.Cancel(response.JobID); err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, stream)
+	close(release)
+	row, err := runner.runs.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusCanceled {
+		t.Fatalf("row status = %q, want canceled", row.Status)
+	}
+}

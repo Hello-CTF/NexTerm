@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -94,5 +95,76 @@ func TestSpawnWithProfileRequiresFactory(t *testing.T) {
 	_, err = manager.Spawn(context.Background(), Request{Task: "x", Scope: &Scope{}, ModelProfileID: "profile-42"})
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("expected configuration error, got %v", err)
+	}
+}
+
+func TestWaitCancellationTimeoutIsHonest(t *testing.T) {
+	gate := make(chan struct{})
+	manager, err := NewManager(Config{
+		NewModel: func(context.Context) (model.BaseChatModel, error) {
+			return &testModel{step: func(context.Context, []*schema.Message, int) (*schema.Message, error) {
+				return schema.AssistantMessage("OK", nil), nil
+			}}, nil
+		},
+		OnFinish:   func(context.Context, Request, Result) { <-gate },
+		MaxRunTime: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := manager.Spawn(context.Background(), Request{Task: "slow persist", Scope: &Scope{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := manager.Wait(ctx, handle)
+	close(gate)
+	if !errors.Is(err, ErrTerminalWaitTimeout) {
+		t.Fatalf("wait err = %v, want ErrTerminalWaitTimeout", err)
+	}
+	if result.Status != StatusCompleted {
+		t.Fatalf("wait result status = %q, want completed snapshot", result.Status)
+	}
+	if _, err := manager.Wait(context.Background(), handle); err != nil {
+		t.Fatalf("terminal wait after release: %v", err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerCloseBoundedWithSlowOnFinish(t *testing.T) {
+	gate := make(chan struct{})
+	manager, err := NewManager(Config{
+		NewModel: func(context.Context) (model.BaseChatModel, error) {
+			return &testModel{step: func(context.Context, []*schema.Message, int) (*schema.Message, error) {
+				return schema.AssistantMessage("OK", nil), nil
+			}}, nil
+		},
+		OnFinish:   func(context.Context, Request, Result) { <-gate },
+		MaxRunTime: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := manager.Spawn(context.Background(), Request{Task: "slow persist", Scope: &Scope{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- manager.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before OnFinish finished: %v", err)
+	case <-time.After(2 * time.Second):
+	}
+	close(gate)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.Wait(context.Background(), handle)
+	if !errors.Is(err, context.Canceled) || result.Status != StatusCanceled {
+		t.Fatalf("result = %+v err = %v", result, err)
 	}
 }

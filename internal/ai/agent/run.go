@@ -283,7 +283,13 @@ func (r *Runner) initializeEino(current *job) error {
 	if err != nil {
 		return err
 	}
+	current.pendingMu.Lock()
 	current.subagents = execution.SubagentManager
+	completed := current.completed
+	current.pendingMu.Unlock()
+	if completed && execution.SubagentManager != nil {
+		r.closeSubagentManager(execution.SubagentManager)
+	}
 	memoryTools, err := r.memoryTools(current.ctx, current.args.PlanMode)
 	if err != nil {
 		return err
@@ -409,6 +415,13 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		}
 		message, err := r.consumeMessageVariant(current, variant)
 		if err != nil {
+			if message != nil && variant.Role == schema.Assistant {
+				latency := time.Duration(0)
+				if !started.IsZero() {
+					latency = time.Since(started)
+				}
+				_ = r.emitUsage(current, message, latency)
+			}
 			return runtime.failure(err)
 		}
 		if message == nil {
@@ -455,7 +468,14 @@ func (r *Runner) consumeMessageVariant(current *job, variant *adk.MessageVariant
 			break
 		}
 		if err != nil {
-			return nil, err
+			if len(frames) == 0 {
+				return nil, err
+			}
+			message, concatErr := schema.ConcatMessages(frames)
+			if concatErr != nil {
+				return nil, err
+			}
+			return message, err
 		}
 		frames = append(frames, frame)
 		if err := emitAssistantText(current, frame); err != nil {

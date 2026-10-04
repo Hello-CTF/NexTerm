@@ -188,6 +188,9 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 					if err != nil {
 						return nil, err
 					}
+					if err := profiles.RejectMaskedKey(key); err != nil {
+						return nil, err
+					}
 					config.APIKey = key
 				}
 				client, err := provider.NewClient(config)

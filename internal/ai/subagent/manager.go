@@ -215,6 +215,9 @@ func (m *Manager) Wait(ctx context.Context, handle Handle) (Result, error) {
 		select {
 		case <-current.done:
 		case <-time.After(terminalWaitTimeout):
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return current.result.clone(), errors.Join(ctx.Err(), fmt.Errorf("%w: %s", ErrTerminalWaitTimeout, handle.ID))
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -223,6 +226,8 @@ func (m *Manager) Wait(ctx context.Context, handle Handle) (Result, error) {
 }
 
 const terminalWaitTimeout = 10 * time.Second
+
+var ErrTerminalWaitTimeout = errors.New("subagent terminal state wait timed out")
 
 func (m *Manager) Snapshot(handle Handle) (Result, error) {
 	m.mu.Lock()
@@ -391,6 +396,13 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}
 		message, streamed, err := consumeVariant(current, variant)
 		if err != nil {
+			if message != nil && variant.Role == schema.Assistant {
+				latency := time.Duration(0)
+				if !started.IsZero() {
+					latency = time.Since(started)
+				}
+				accumulateUsage(&total, message, latency)
+			}
 			if forcedErr == nil && current.ctx.Err() == nil {
 				forcedErr = err
 				current.cancel()
@@ -487,7 +499,14 @@ func consumeVariant(current *task, variant *adk.MessageVariant) (*schema.Message
 			break
 		}
 		if err != nil {
-			return nil, true, err
+			if len(frames) == 0 {
+				return nil, true, err
+			}
+			message, concatErr := schema.ConcatMessages(frames)
+			if concatErr != nil {
+				return nil, true, err
+			}
+			return message, true, err
 		}
 		frames = append(frames, frame)
 		if frame != nil && frame.Content != "" {
