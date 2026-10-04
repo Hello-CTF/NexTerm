@@ -80,7 +80,7 @@ func TestRealHubWriteTimeoutReplaysInFlightFrameOnReconnect(t *testing.T) {
 
 func TestRealHubPongFailureReplaysInFlightFrameOnReconnect(t *testing.T) {
 	shared, adapter, baseURL := realHubChannelServer(t, WebSocketConfig{
-		KeepAlive: 50 * time.Millisecond, PingTimeout: 100 * time.Millisecond, WriteTimeout: 5 * time.Second,
+		KeepAlive: 50 * time.Millisecond, PingTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -102,6 +102,7 @@ func TestRealHubPongFailureReplaysInFlightFrameOnReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 1 })
 	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 0 })
 	_ = stuck.CloseNow()
 
@@ -151,6 +152,7 @@ func TestRealHubDrainingChannelSurvivesUntilInFlightAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 1 })
 	waitFor(t, func() bool { return adapter.Stats().LiveChannels == 0 })
 	stats := adapter.Stats()
 	if stats.PendingChannels != 1 {

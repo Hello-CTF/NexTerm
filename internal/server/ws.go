@@ -162,8 +162,9 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 			}
 		}
 	}()
+	writeGate := make(chan struct{}, 1)
 	if s.webSocket.KeepAlive > 0 {
-		go s.keepAliveSocket(ctx, connection)
+		go s.keepAliveSocket(ctx, connection, writeGate)
 	}
 	defer func() {
 		cancel()
@@ -176,9 +177,11 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 		if err != nil {
 			return
 		}
+		writeGate <- struct{}{}
 		writeCtx, writeCancel := context.WithTimeout(ctx, s.webSocket.WriteTimeout)
 		err = connection.Write(writeCtx, messageType, data)
 		writeCancel()
+		<-writeGate
 		if err != nil {
 			return
 		}
@@ -188,7 +191,7 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 	}
 }
 
-func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn) {
+func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn, writeGate chan struct{}) {
 	ticker := time.NewTicker(s.webSocket.KeepAlive)
 	defer ticker.Stop()
 	for {
@@ -197,9 +200,15 @@ func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn
 			return
 		case <-ticker.C:
 		}
+		select {
+		case writeGate <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		pingCtx, cancel := context.WithTimeout(ctx, s.webSocket.PingTimeout)
 		err := connection.Ping(pingCtx)
 		cancel()
+		<-writeGate
 		if err != nil {
 			_ = connection.CloseNow()
 			return
