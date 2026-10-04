@@ -770,6 +770,66 @@ describe("CronCard", () => {
     expect(mounted.container.textContent).not.toContain("请手动注销其中一条");
   });
 
+  it("冲突会话从会话列表消失但两条 cron 记录仍在：告警不清除且遗留任务仍可直接查询处理", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.unregister.mockRejectedValue(new Error("存储故障"));
+    const both = [JOB_A, job({ id: "j-10", sessionId: "c-1", enabled: false })];
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? both : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+    expect(mounted.container.textContent).toContain("请手动注销其中一条");
+
+    mocks.conversationList.mockResolvedValue([CONV_B]);
+    clickButton(mounted.container, "刷新");
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("请手动注销其中一条");
+    expect(text).toContain("c-1/j-1");
+    expect(text).toContain("c-1/j-10");
+    expect(text).toContain("check disk");
+
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? [JOB_A] : [JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    expect(mounted.container.textContent).not.toContain("请手动注销其中一条");
+  });
+
+  it("冲突会话消失且直接查询也失败：不算覆盖，告警保留", async () => {
+    mocks.register.mockResolvedValue(job({ id: "j-10", sessionId: "c-1", enabled: false }));
+    mocks.unregister.mockRejectedValue(new Error("存储故障"));
+    const both = [JOB_A, job({ id: "j-10", sessionId: "c-1", enabled: false })];
+    mocks.list.mockImplementation((sessionId: string) =>
+      Promise.resolve(sessionId === "c-1" ? both : [JOB_B]),
+    );
+    mounted = mount(createElement(CronCard));
+    await flush();
+
+    clickRowButton(mounted.container, "磁盘巡检", "编辑");
+    clickButton(mounted.container, "保存");
+    await flush();
+    expect(mounted.container.textContent).toContain("请手动注销其中一条");
+
+    mocks.conversationList.mockResolvedValue([CONV_B]);
+    mocks.list.mockImplementation((sessionId: string) =>
+      sessionId === "c-1"
+        ? Promise.reject(new Error("存储故障"))
+        : Promise.resolve([JOB_B]),
+    );
+    clickButton(mounted.container, "刷新");
+    await flush();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("部分会话的任务读取失败");
+    expect(text).toContain("请手动注销其中一条");
+  });
+
   it("行内启停 pending 时禁止保存；完成后按最新停用状态提交", async () => {
     const slowToggle = deferred<TestJob>();
     mocks.setEnabled.mockReturnValue(slowToggle.promise);

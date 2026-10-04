@@ -27,6 +27,15 @@ type RegisterDraft = {
   modelProfileId: string;
 };
 
+type ReplaceConflict = {
+  label: string;
+  oldKey: string;
+  newKey: string;
+  sessions: string[];
+  gen: number;
+  error: string;
+};
+
 function jobStatus(job: CronJob): { label: string; cls: string } {
   if (job.run.id) return { label: "执行中", cls: "nx-badge-blue" };
   if (job.circuitOpenUntil && Date.parse(job.circuitOpenUntil) > Date.now()) {
@@ -63,17 +72,15 @@ export function CronCard() {
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
-  const [replaceConflict, setReplaceConflict] = useState<{
-    label: string;
-    oldKey: string;
-    newKey: string;
-    sessions: string[];
-    gen: number;
-    error: string;
-  } | null>(null);
+  const replaceConflictRef = useRef<ReplaceConflict | null>(null);
+  const [replaceConflict, setReplaceConflictState] = useState<ReplaceConflict | null>(null);
+  const applyReplaceConflict = useCallback((conflict: ReplaceConflict | null) => {
+    replaceConflictRef.current = conflict;
+    setReplaceConflictState(conflict);
+  }, []);
 
   const [jobsGen, setJobsGen] = useState(0);
-  const [failedSessionIds, setFailedSessionIds] = useState<string[]>([]);
+  const [coveredSessionIds, setCoveredSessionIds] = useState<string[]>([]);
 
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
@@ -116,8 +123,16 @@ export function CronCard() {
       const options = list.map((c) => ({ id: c.id, title: c.title }));
       setConversations(options);
 
+      const conflict = replaceConflictRef.current;
+      const listedIds = new Set(options.map((c) => c.id));
+      const targets = [
+        ...options,
+        ...(conflict
+          ? conflict.sessions.filter((s) => !listedIds.has(s)).map((s) => ({ id: s, title: s }))
+          : []),
+      ];
       const results = await Promise.all(
-        options.map(async (c) => {
+        targets.map(async (c) => {
           try {
             const sessionJobs = await cronApi.list(c.id);
             return { ok: true as const, id: c.id, title: c.title, jobs: sessionJobs ?? [] };
@@ -131,7 +146,7 @@ export function CronCard() {
       const merged = results.flatMap((r) => (r.ok ? r.jobs : []));
       setJobs(merged);
       setJobsGen(gen);
-      setFailedSessionIds(failed.map((f) => f.id));
+      setCoveredSessionIds(results.filter((r) => r.ok).map((r) => r.id));
       if (failed.length > 0) {
         const detail = failed.map((f) => `「${f.title}」：${f.message}`).join("；");
         if (failed.length === results.length) {
@@ -158,12 +173,12 @@ export function CronCard() {
   useEffect(() => {
     if (!replaceConflict || !jobs) return;
     if (jobsGen <= replaceConflict.gen) return;
-    if (replaceConflict.sessions.some((s) => failedSessionIds.includes(s))) return;
+    if (!replaceConflict.sessions.every((s) => coveredSessionIds.includes(s))) return;
     const present = (key: string) => jobs.some((j) => `${j.sessionId}/${j.id}` === key);
     if (!present(replaceConflict.oldKey) || !present(replaceConflict.newKey)) {
-      setReplaceConflict(null);
+      applyReplaceConflict(null);
     }
-  }, [jobs, jobsGen, failedSessionIds, replaceConflict]);
+  }, [jobs, jobsGen, coveredSessionIds, replaceConflict, applyReplaceConflict]);
 
   if (DEMO) return null;
 
@@ -285,7 +300,7 @@ export function CronCard() {
             `保存失败：旧任务注销未成功（${describeError(e)}）。已清理重建的新任务，旧任务保持原样，可重试保存。`,
           );
         } catch (rollbackError) {
-          setReplaceConflict({
+          applyReplaceConflict({
             label: draft.name.trim() || draft.prompt.trim().slice(0, 40),
             oldKey: `${editingJob.sessionId}/${editingJob.id}`,
             newKey: `${created.sessionId}/${created.id}`,
