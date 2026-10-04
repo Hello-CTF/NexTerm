@@ -190,6 +190,12 @@ function startVite() {
   return waitHttp(VITE, process).then(() => process);
 }
 
+async function clickAt(page, x, y) {
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  await sleep(80);
+}
+
 async function screenshot(page, name) {
   const shot = await page.send("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(OUT, name), Buffer.from(shot.data, "base64"));
@@ -734,6 +740,88 @@ async function responsiveAcceptance(page) {
     assert.equal(evidence.hitIsKey, true, `lower pane keys unclickable under toast: ${JSON.stringify(evidence)}`);
     await screenshot(page, "toast-mixed-split-390.png");
     return { evidence };
+  });
+
+  await pass("ime-keys-clickable-390", async () => {
+    const vp = matrix.find((v) => v.name === "390x844");
+    await boot(page, { viewport: vp, vvPatch: true });
+    await showKeyboard(page, 500);
+    const before = await page.evaluate(`(() => {
+      const ctrlKey = [...document.querySelectorAll(".nx-terminal-key")].find((k) => k.textContent.trim() === "Ctrl");
+      const bar = document.querySelector(".nx-terminal-keys");
+      const statusBar = document.querySelector(".nx-statusbar");
+      statusBar.scrollLeft = statusBar.scrollWidth;
+      const link = [...document.querySelectorAll(".nx-statusbar .nx-link")].find((b) => b.textContent.includes("审计"));
+      const b = bar.getBoundingClientRect();
+      const c = ctrlKey.getBoundingClientRect();
+      const l = link.getBoundingClientRect();
+      const stack = document.elementsFromPoint(c.left + c.width / 2, c.top + c.height / 2);
+      const linkStack = document.elementsFromPoint(l.left + l.width / 2, l.top + l.height / 2);
+      return {
+        ctrl: { x: c.left + c.width / 2, y: c.top + c.height / 2 },
+        link: { x: l.left + l.width / 2, y: l.top + l.height / 2 },
+        barTop: Math.round(b.top),
+        barBottom: Math.round(b.bottom),
+        topHitIsKey: stack[0] === ctrlKey || ctrlKey.contains(stack[0]),
+        linkTopHit: linkStack[0] === link || link.contains(linkStack[0]),
+        stackHead: stack.slice(0, 3).map((el) => String(el.className?.baseVal ?? el.className ?? el.tagName)),
+      };
+    })()`);
+    assert.ok(before.barTop >= 0 && before.barBottom <= 500, `keys bar outside visible region: ${JSON.stringify(before)}`);
+    assert.equal(before.topHitIsKey, true, `xterm hit layer above keys: ${JSON.stringify(before)}`);
+    assert.equal(before.linkTopHit, true, `statusbar link covered: ${JSON.stringify(before)}`);
+    await clickAt(page, before.ctrl.x, before.ctrl.y);
+    const pressed = await page.evaluate(`[...document.querySelectorAll(".nx-terminal-key")].find((k) => k.textContent.trim() === "Ctrl")?.getAttribute("aria-pressed")`);
+    assert.equal(pressed, "true", "CDP click on Ctrl must toggle aria-pressed");
+    await clickAt(page, before.ctrl.x, before.ctrl.y);
+    await clickAt(page, before.link.x, before.link.y);
+    await page.waitFor("Boolean([...document.querySelectorAll('.nx-tab')].some((t) => t.textContent.includes('审计日志')))");
+    await screenshot(page, "ime-keys-clickable-390.png");
+    await restoreKeyboard(page);
+    return { evidence: { before, pressed } };
+  });
+
+  await pass("ime-short-landscape-keys-568x320", async () => {
+    const vp = { name: "568x320-touch", width: 568, height: 320, mobile: true };
+    for (const inset of [200, 240]) {
+      await boot(page, { viewport: vp, vvPatch: true });
+      await showKeyboard(page, 320 - inset);
+      const evidence = await page.evaluate(`(() => {
+        const ctrlKey = [...document.querySelectorAll(".nx-terminal-key")].find((k) => k.textContent.trim() === "Ctrl");
+        const bar = document.querySelector(".nx-terminal-keys");
+        const statusBar = document.querySelector(".nx-statusbar");
+        statusBar.scrollLeft = statusBar.scrollWidth;
+        const link = [...document.querySelectorAll(".nx-statusbar .nx-link")].find((b) => b.textContent.includes("审计"));
+        const b = bar.getBoundingClientRect();
+        const c = ctrlKey.getBoundingClientRect();
+        const l = link.getBoundingClientRect();
+        const stack = document.elementsFromPoint(c.left + c.width / 2, c.top + c.height / 2);
+        const linkStack = document.elementsFromPoint(l.left + l.width / 2, l.top + l.height / 2);
+        return {
+          visibleBottom: ${320 - inset},
+          barTop: Math.round(b.top),
+          barBottom: Math.round(b.bottom),
+          barHeight: Math.round(b.height),
+          ctrl: { x: c.left + c.width / 2, y: c.top + c.height / 2 },
+          link: { x: l.left + l.width / 2, y: l.top + l.height / 2 },
+          topHitIsKey: stack[0] === ctrlKey || ctrlKey.contains(stack[0]),
+          linkTopHit: linkStack[0] === link || link.contains(linkStack[0]),
+        };
+      })()`);
+      assert.ok(evidence.barTop >= 0, `keys bar clipped above viewport: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.barHeight >= 40, `keys bar clipped: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.barBottom <= evidence.visibleBottom, `keys bar under keyboard: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.topHitIsKey, true, `keys not clickable at inset ${inset}: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.linkTopHit, true, `statusbar link not clickable at inset ${inset}: ${JSON.stringify(evidence)}`);
+      await clickAt(page, evidence.ctrl.x, evidence.ctrl.y);
+      const pressed = await page.evaluate(`[...document.querySelectorAll(".nx-terminal-key")].find((k) => k.textContent.trim() === "Ctrl")?.getAttribute("aria-pressed")`);
+      assert.equal(pressed, "true", `CDP click on Ctrl must toggle aria-pressed at inset ${inset}`);
+      await clickAt(page, evidence.ctrl.x, evidence.ctrl.y);
+      await clickAt(page, evidence.link.x, evidence.link.y);
+      await page.waitFor("Boolean([...document.querySelectorAll('.nx-tab')].some((t) => t.textContent.includes('审计日志')))");
+      await screenshot(page, `ime-short-landscape-keys-568x320-inset-${inset}.png`);
+    }
+    return { evidence: { insets: [200, 240] } };
   });
 
   await pass("coarse-targets", async () => {
