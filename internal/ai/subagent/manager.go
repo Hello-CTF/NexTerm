@@ -96,6 +96,9 @@ func (m *Manager) Spawn(ctx context.Context, request Request) (Handle, error) {
 	if request.ModelProfileID != "" && m.config.NewModelForProfile == nil {
 		return Handle{}, errors.New("subagent model profile selection is not configured")
 	}
+	if request.ModelProfileID == "" && m.config.NewModelForProfile != nil && m.config.ResolveDefaultProfileID != nil {
+		request.ModelProfileID = m.config.ResolveDefaultProfileID()
+	}
 	if request.Timeout < 0 || request.Timeout > m.config.MaxRunTime {
 		return Handle{}, fmt.Errorf("subagent timeout must be between 0 and %s", m.config.MaxRunTime)
 	}
@@ -305,6 +308,9 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	current.cancel()
 	close(current.done)
 	m.mu.Unlock()
+	if m.config.OnFinish != nil {
+		m.config.OnFinish(context.WithoutCancel(current.ctx), request, result)
+	}
 }
 
 func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, int, usage.Usage, error) {

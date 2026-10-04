@@ -60,18 +60,20 @@ type Observer func(Event)
 type ObserverFactory func(context.Context) Observer
 
 type Config struct {
-	NewModel           ModelFactory
-	NewModelForProfile ProfileModelFactory
-	NewTools           ToolFactory
-	Instruction        string
-	MaxIterations      int
-	MaxRunTime         time.Duration
-	MaxTasks           int
-	MaxConcurrent      int
-	MaxOutputBytes     int
-	MaxHistoryMessages int
-	MaxHistoryBytes    int
-	NewID              func() string
+	NewModel                ModelFactory
+	NewModelForProfile      ProfileModelFactory
+	NewTools                ToolFactory
+	OnFinish                func(context.Context, Request, Result)
+	ResolveDefaultProfileID func() string
+	Instruction             string
+	MaxIterations           int
+	MaxRunTime              time.Duration
+	MaxTasks                int
+	MaxConcurrent           int
+	MaxOutputBytes          int
+	MaxHistoryMessages      int
+	MaxHistoryBytes         int
+	NewID                   func() string
 }
 
 type Scope struct {

@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -225,6 +227,7 @@ func TestSubagentRunPersistsWithDefaultProfile(t *testing.T) {
 		Checkpoints: NewStoreCheckpoints(storage),
 		Subagents: &tools.SubagentConfig{
 			Model:           func(context.Context) (model.BaseChatModel, error) { return child, nil },
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) { return child, nil },
 			ActiveProfileID: func() string { return "active-profile" },
 		},
 	})
@@ -336,5 +339,140 @@ func TestRecoveredUsageSaturatesInsteadOfWrapping(t *testing.T) {
 	maxInt64 := int64(math.MaxInt64)
 	if row.TokensIn != maxInt64 || row.TokensOut != maxInt64 || row.CacheCreationTokens != maxInt64 || row.LatencyMS != maxInt64 {
 		t.Fatalf("saturated row = %+v", row)
+	}
+}
+
+func subagentPersistenceRunner(t *testing.T, parent, child model.BaseChatModel, configure func(*tools.SubagentConfig)) (*Runner, *store.Store) {
+	t.Helper()
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	config := &tools.SubagentConfig{
+		Model:           func(context.Context) (model.BaseChatModel, error) { return child, nil },
+		ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) { return child, nil },
+	}
+	if configure != nil {
+		configure(config)
+	}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return parent, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: storage,
+		Checkpoints: NewStoreCheckpoints(storage),
+		Subagents:   config,
+	})
+	t.Cleanup(func() { _ = runner.Close() })
+	return runner, storage
+}
+
+func findSubagentRow(t *testing.T, storage *store.Store) *store.RunRow {
+	t.Helper()
+	rows, err := storage.RunList(context.Background(), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range rows {
+		if rows[index].Source == "subagent" {
+			return &rows[index]
+		}
+	}
+	t.Fatalf("no subagent run persisted: %+v", rows)
+	return nil
+}
+
+func TestSubagentRunPersistsFailureAfterUsage(t *testing.T) {
+	usageCall := toolCallMessage(namedToolCall("t-1", "todo_write", `{"todos":[]}`))
+	usageCall.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 100, CompletionTokens: 10}}
+	usageCall.Extra = map[string]any{provider.MessageExtraCacheCreation: uint64(2)}
+	var calls atomic.Int64
+	child := &fakeModel{stream: func(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{usageCall}), nil
+		}
+		return nil, errors.New("model exploded")
+	}}
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	runner, storage := subagentPersistenceRunner(t, parent, child, nil)
+	stream := &SliceStream{}
+	startTestJob(t, runner, stream, "go")
+	waitClosed(t, stream)
+	row := findSubagentRow(t, storage)
+	if row.Status != store.RunStatusFailed || row.FinishedAt == nil {
+		t.Fatalf("failed subagent row = %+v", *row)
+	}
+	if row.TokensIn != 100 || row.TokensOut != 10 || row.CacheCreationTokens != 2 || row.Turns != 1 {
+		t.Fatalf("failed subagent usage = %+v", *row)
+	}
+}
+
+func TestSubagentRunPersistsCancelAfterUsage(t *testing.T) {
+	usageCall := toolCallMessage(namedToolCall("t-1", "todo_write", `{"todos":[]}`))
+	usageCall.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 60, CompletionTokens: 5}}
+	var calls atomic.Int64
+	blocking := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{usageCall}), nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	runner, storage := subagentPersistenceRunner(t, parent, blocking, nil)
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	_ = waitEvent(t, stream, "subagentToolCall")
+	if err := runner.Cancel(response.JobID); err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, stream)
+	row := findSubagentRow(t, storage)
+	if row.Status != store.RunStatusCanceled || row.FinishedAt == nil {
+		t.Fatalf("canceled subagent row = %+v", *row)
+	}
+	if row.TokensIn != 60 || row.TokensOut != 5 || row.Turns != 1 {
+		t.Fatalf("canceled subagent usage = %+v", *row)
+	}
+}
+
+func TestSubagentDefaultProfilePinnedAcrossActiveSwitch(t *testing.T) {
+	release := make(chan struct{})
+	child := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		select {
+		case <-release:
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("child done", nil)}), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	var active atomic.Value
+	active.Store("profile-a")
+	pinned := make(chan struct{})
+	var pinnedOnce sync.Once
+	runner, storage := subagentPersistenceRunner(t, parent, child, func(config *tools.SubagentConfig) {
+		config.ActiveProfileID = func() string {
+			pinnedOnce.Do(func() { close(pinned) })
+			return active.Load().(string)
+		}
+	})
+	stream := &SliceStream{}
+	startTestJob(t, runner, stream, "go")
+	<-pinned
+	active.Store("profile-b")
+	close(release)
+	waitClosed(t, stream)
+	row := findSubagentRow(t, storage)
+	if row.ProfileID != "profile-a" {
+		t.Fatalf("subagent profile = %q, want spawn-time profile-a", row.ProfileID)
 	}
 }

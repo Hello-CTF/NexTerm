@@ -118,6 +118,14 @@ WHERE ended_at IS NOT NULL AND id IN (
 			return RetentionResult{}, fmt.Errorf("recording count retention: %w", dbError(err))
 		}
 	}
+	if policy.AIRunMaxAge > 0 || policy.AIRunMaxCount > 0 {
+		if _, err := retentionDelete(ctx, tx, `DELETE FROM ai_hitl_run WHERE id IN (SELECT id FROM ai_run WHERE finished_at IS NOT NULL)`); err != nil {
+			return RetentionResult{}, fmt.Errorf("terminal HITL cleanup: %w", dbError(err))
+		}
+		if _, err := retentionDelete(ctx, tx, `DELETE FROM ai_hitl_run WHERE id NOT IN (SELECT id FROM ai_run)`); err != nil {
+			return RetentionResult{}, fmt.Errorf("orphan HITL cleanup: %w", dbError(err))
+		}
+	}
 	if policy.AIRunMaxAge > 0 {
 		cutoff := now.Add(-policy.AIRunMaxAge).UnixMilli()
 		var deleted int64

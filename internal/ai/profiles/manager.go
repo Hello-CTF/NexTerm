@@ -184,12 +184,17 @@ func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
 	switch {
 	case profile.APIKey == "":
 		return "", nil
+	case profile.APIKey == MaskedAPIKey:
+		return "", fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 	case m.protector == nil:
 		return profile.APIKey, nil
 	case strings.HasPrefix(profile.APIKey, store.SecretEnvelopePrefix):
 		plaintext, err := m.protector.DecryptSecret(context.Background(), profile.APIKey)
 		if err != nil {
 			return "", err
+		}
+		if plaintext == MaskedAPIKey {
+			return "", fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 		}
 		return plaintext, nil
 	default:
@@ -219,9 +224,6 @@ func (m *Manager) ClientFor(id string, options ...provider.Option) (*provider.Cl
 	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrProfileNotFound, id)
-	}
-	if profile.APIKey == MaskedAPIKey {
-		return nil, fmt.Errorf("%w: %s", ErrProfileKeyUnavailable, profile.Name)
 	}
 	config := profile.ProviderConfig()
 	key, err := m.resolveAPIKey(profile)

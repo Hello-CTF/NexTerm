@@ -99,7 +99,7 @@ func TestRunUsageSummaryRoundsFractionalAverageLatency(t *testing.T) {
 
 func TestAIRetentionSkipsActiveAndPendingHitlRuns(t *testing.T) {
 	ctx := context.Background()
-	db := testStore(t)
+	db, path := fileStore(t)
 	conversation, err := db.ConvCreate(ctx, "retention", map[string]any{"scope": nil})
 	if err != nil {
 		t.Fatal(err)
@@ -115,34 +115,46 @@ func TestAIRetentionSkipsActiveAndPendingHitlRuns(t *testing.T) {
 	insert("run-old-failed", RunStatusFailed, &old)
 	insert("run-active", RunStatusRunning, nil)
 	insert("run-interrupted", RunStatusInterrupted, nil)
-	insert("run-hitl-finished", RunStatusCompleted, &old)
-	if err := db.HitlRunSave(ctx, "run-hitl-pending", []byte{1}); err != nil {
+	insert("run-hitl-pending", RunStatusInterrupted, nil)
+	insert("run-hitl-terminal", RunStatusCompleted, &old)
+	if err := db.HitlRunSave(ctx, "run-hitl-pending", []byte(`{"id":"run-hitl-pending","status":"interrupted"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.HitlRunSave(ctx, "run-hitl-finished", []byte{2}); err != nil {
+	if err := db.HitlRunSave(ctx, "run-hitl-terminal", []byte(`{"id":"run-hitl-terminal","status":"interrupted","terminal":{"type":"terminal"}}`)); err != nil {
 		t.Fatal(err)
 	}
-	result, err := db.EnforceRetention(ctx, RetentionPolicy{AIRunMaxAge: 24 * time.Hour})
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.AIRunsDeleted != 2 {
-		t.Fatalf("deleted = %d, want 2: %+v", result.AIRunsDeleted, result)
+	t.Cleanup(func() { _ = reopened.Close() })
+	result, err := reopened.EnforceRetention(ctx, RetentionPolicy{AIRunMaxAge: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := db.RunGet(ctx, "run-old-done"); err == nil {
+	if result.AIRunsDeleted != 3 {
+		t.Fatalf("deleted = %d, want 3 (two plain + one with terminal HITL): %+v", result.AIRunsDeleted, result)
+	}
+	if _, err := reopened.RunGet(ctx, "run-old-done"); err == nil {
 		t.Fatal("old finished run survived age retention")
 	}
-	if _, err := db.RunGet(ctx, "run-active"); err != nil {
+	if _, err := reopened.RunGet(ctx, "run-hitl-terminal"); err == nil {
+		t.Fatal("finished run with terminal HITL record survived age retention")
+	}
+	if rows, err := reopened.HitlRunList(ctx); err != nil || len(rows) != 1 || rows[0].ID != "run-hitl-pending" {
+		t.Fatalf("hitl rows after retention = %+v err=%v", rows, err)
+	}
+	if _, err := reopened.RunGet(ctx, "run-active"); err != nil {
 		t.Fatal("active run was deleted")
 	}
-	if _, err := db.RunGet(ctx, "run-interrupted"); err != nil {
+	if _, err := reopened.RunGet(ctx, "run-interrupted"); err != nil {
 		t.Fatal("interrupted run was deleted")
 	}
-	if _, err := db.RunGet(ctx, "run-hitl-finished"); err != nil {
-		t.Fatal("run with pending HITL state was deleted")
-	}
-	if _, err := db.HitlRunList(ctx); err != nil {
-		t.Fatal(err)
+	if _, err := reopened.RunGet(ctx, "run-hitl-pending"); err != nil {
+		t.Fatal("pending HITL run was deleted")
 	}
 }
 

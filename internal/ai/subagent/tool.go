@@ -16,13 +16,7 @@ type SpawnInput struct {
 	ModelProfileID string `json:"modelProfileId,omitempty"`
 }
 
-type ResultSink func(context.Context, Request, Result)
-
 func NewSpawnTool(manager *Manager, scope Scope, factories ...ObserverFactory) (tool.InvokableTool, error) {
-	return NewSpawnToolWithSink(manager, scope, nil, factories...)
-}
-
-func NewSpawnToolWithSink(manager *Manager, scope Scope, sink ResultSink, factories ...ObserverFactory) (tool.InvokableTool, error) {
 	if manager == nil {
 		return nil, errors.New("subagent manager is required")
 	}
@@ -54,9 +48,6 @@ func NewSpawnToolWithSink(manager *Manager, scope Scope, sink ResultSink, factor
 		result, err := manager.Wait(ctx, handle)
 		if err != nil {
 			return "", err
-		}
-		if sink != nil {
-			sink(ctx, request, result)
 		}
 		return result.Output, nil
 	})

@@ -3,6 +3,7 @@ package profiles_test
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -132,4 +133,72 @@ func TestClientForPropagatesVaultLocked(t *testing.T) {
 	credentialVault.Lock()
 	_, err = manager.ClientFor(overview.Profiles[0].ID)
 	requireIPCCode(t, err, ipc.CodeVaultLocked)
+}
+
+func TestMaskedSentinelRejectedAcrossActiveAndExplicitPaths(t *testing.T) {
+	ctx := context.Background()
+	database := openStore(t)
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := saveSceneProfile(t, manager, "active-key", "active")
+	scene := saveSceneProfile(t, manager, "scene-key", "scene")
+	raw := storedSetting(t, database, profiles.SettingKey)
+	tampered := strings.ReplaceAll(raw, `"apiKey":"active-key"`, `"apiKey":"`+profiles.MaskedAPIKey+`"`)
+	tampered = strings.ReplaceAll(tampered, `"apiKey":"scene-key"`, `"apiKey":"`+profiles.MaskedAPIKey+`"`)
+	if tampered == raw {
+		t.Fatal("failed to tamper stored profile keys")
+	}
+	if err := database.SettingSet(ctx, profiles.SettingKey, tampered); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reloaded.ActiveClient(); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+		t.Fatalf("ActiveClient with masked active key = %v", err)
+	}
+	if _, err := reloaded.ClientFor(""); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+		t.Fatalf("ClientFor(empty) with masked active key = %v", err)
+	}
+	if _, err := reloaded.ClientFor(scene.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+		t.Fatalf("ClientFor(explicit) with masked key = %v", err)
+	}
+	if _, err := reloaded.ClientFor(active.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+		t.Fatalf("ClientFor(active ID) with masked key = %v", err)
+	}
+}
+
+func TestMaskedSentinelRejectedWithUnlockedProtector(t *testing.T) {
+	ctx := context.Background()
+	database, _ := openVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	overview := saveKeyedProfile(t, manager, "masked-check", "real-key")
+	if len(overview.Profiles) != 1 {
+		t.Fatalf("overview = %+v", overview)
+	}
+	direct := saveSceneProfile(t, manager, "plain-key", "plain")
+	raw := storedSetting(t, database, profiles.SettingKey)
+	tampered := regexp.MustCompile(`"apiKey":"[^"]*"`).ReplaceAllString(raw, `"apiKey":"`+profiles.MaskedAPIKey+`"`)
+	if tampered == raw {
+		t.Fatal("failed to tamper stored profile keys")
+	}
+	if err := database.SettingSet(ctx, profiles.SettingKey, tampered); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reloaded.ClientFor(direct.ID); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+		t.Fatalf("ClientFor(masked with unlocked protector) = %v", err)
+	}
+	if _, err := reloaded.ActiveClient(); !errors.Is(err, profiles.ErrProfileKeyUnavailable) {
+		t.Fatalf("ActiveClient(masked with unlocked protector) = %v", err)
+	}
 }

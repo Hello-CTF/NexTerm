@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
@@ -416,6 +417,8 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	limits := e.Subagents.Limits
 	limits.NewModel = e.Subagents.Model
 	limits.NewModelForProfile = e.Subagents.ModelForProfile
+	limits.ResolveDefaultProfileID = e.Subagents.ActiveProfileID
+	limits.OnFinish = e.persistSubagentRun
 	var manager *subagent.Manager
 	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
 		return e.scopedSubagentTools(ctx, manager)
@@ -425,7 +428,7 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 		return nil, err
 	}
 	manager = composed
-	spawn, err := subagent.NewSpawnToolWithSink(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.persistSubagentRun, e.subagentObserver)
+	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.subagentObserver)
 	if err != nil {
 		return nil, err
 	}
@@ -437,10 +440,6 @@ func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Req
 	if config == nil || config.Runs == nil || config.ConversationID == "" {
 		return
 	}
-	profileID := request.ModelProfileID
-	if profileID == "" && config.ActiveProfileID != nil {
-		profileID = config.ActiveProfileID()
-	}
 	status := store.RunStatusCompleted
 	switch result.Status {
 	case subagent.StatusFailed:
@@ -449,12 +448,13 @@ func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Req
 		status = store.RunStatusCanceled
 	}
 	now := ids.NowMS()
-	errMessage := result.Error
-	_ = config.Runs.RunInsert(ctx, store.RunRow{
-		ID: ids.New(), ConversationID: config.ConversationID, Status: status, Source: "subagent", ProfileID: profileID,
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = config.Runs.RunInsert(writeCtx, store.RunRow{
+		ID: ids.New(), ConversationID: config.ConversationID, Status: status, Source: "subagent", ProfileID: request.ModelProfileID,
 		Turns: result.Turns, TokensIn: usage.SaturatingInt64(result.Usage.PromptTokens), TokensOut: usage.SaturatingInt64(result.Usage.CompletionTokens),
 		CacheCreationTokens: usage.SaturatingInt64(result.Usage.CacheCreationTokens), LatencyMS: result.Usage.LatencyMS,
-		Error: errMessage, CreatedAt: now, UpdatedAt: now, FinishedAt: &now,
+		Error: result.Error, CreatedAt: now, UpdatedAt: now, FinishedAt: &now,
 	})
 }
 
