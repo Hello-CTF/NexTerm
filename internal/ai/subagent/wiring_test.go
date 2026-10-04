@@ -3,6 +3,7 @@ package subagent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -413,5 +414,102 @@ func TestSpawnToolDispatchCancellation(t *testing.T) {
 	}
 	if !errors.Is(result.err, context.Canceled) && !strings.Contains(strings.ToLower(result.err.Error()), "cancel") {
 		t.Fatalf("cancellation error = %v", result.err)
+	}
+}
+
+func TestSpawnToolEmitsAttributedSubagentEvents(t *testing.T) {
+	var assetCalls atomic.Int64
+	chat := &wireModel{}
+	chat.step = func(_ context.Context, input []*schema.Message) (*schema.Message, error) {
+		switch lastUserText(input) {
+		case "parent task":
+			if toolResultText(input) == "" {
+				return wireToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`), nil
+			}
+			return schema.AssistantMessage("parent done", nil), nil
+		case "child task":
+			if toolResultText(input) == "" {
+				return wireToolCall("ls-1", "list_assets", `{}`), nil
+			}
+			return schema.AssistantMessage("child done", nil), nil
+		default:
+			return nil, errors.New("unexpected caller: " + lastUserText(input))
+		}
+	}
+	var mu sync.Mutex
+	var events []subagent.Event
+	var attributions []string
+	execution := wireExecution(chat, nil, assetDeps(&assetCalls))
+	execution.SubagentEvents = func(_ context.Context, parentCallID string, depth int, event subagent.Event) {
+		mu.Lock()
+		events = append(events, event)
+		attributions = append(attributions, fmt.Sprintf("%s/%d", parentCallID, depth))
+		mu.Unlock()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result := runWireAgent(ctx, t, execution, chat, "parent task")
+	if result.err != nil || result.interrupted {
+		t.Fatalf("parent run failed: err=%v interrupted=%v", result.err, result.interrupted)
+	}
+	mu.Lock()
+	recorded := append([]subagent.Event(nil), events...)
+	seen := append([]string(nil), attributions...)
+	mu.Unlock()
+	if len(recorded) != 4 {
+		t.Fatalf("subagent events = %d, want 4: %+v", len(recorded), recorded)
+	}
+	for _, attribution := range seen {
+		if attribution != "sp-1/1" {
+			t.Fatalf("event attribution = %q, want sp-1/1", attribution)
+		}
+	}
+	wantKinds := []subagent.EventKind{subagent.EventToolCall, subagent.EventToolResult, subagent.EventDelta, subagent.EventDone}
+	for index, kind := range wantKinds {
+		if recorded[index].Kind != kind {
+			t.Fatalf("event %d kind = %s, want %s (%+v)", index, recorded[index].Kind, kind, recorded)
+		}
+		if recorded[index].TaskID == "" {
+			t.Fatalf("event %d has no task ID: %+v", index, recorded[index])
+		}
+	}
+	if recorded[0].CallID != "ls-1" || recorded[0].Name != "list_assets" {
+		t.Fatalf("toolCall event = %+v", recorded[0])
+	}
+	if recorded[1].CallID != "ls-1" || !recorded[1].OK || !strings.Contains(recorded[1].Summary, "server") {
+		t.Fatalf("toolResult event = %+v", recorded[1])
+	}
+	if recorded[2].Text != "child done" {
+		t.Fatalf("delta event = %+v", recorded[2])
+	}
+	if recorded[3].Status != subagent.StatusCompleted || recorded[3].Summary != "child done" {
+		t.Fatalf("done event = %+v", recorded[3])
+	}
+}
+
+func TestSpawnToolEmitsNoEventsWithoutSink(t *testing.T) {
+	var assetCalls atomic.Int64
+	chat := &wireModel{}
+	chat.step = func(_ context.Context, input []*schema.Message) (*schema.Message, error) {
+		switch lastUserText(input) {
+		case "parent task":
+			if toolResultText(input) == "" {
+				return wireToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`), nil
+			}
+			return schema.AssistantMessage("parent done", nil), nil
+		case "child task":
+			return schema.AssistantMessage("child done", nil), nil
+		default:
+			return nil, errors.New("unexpected caller: " + lastUserText(input))
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result := runWireAgent(ctx, t, wireExecution(chat, nil, assetDeps(&assetCalls)), chat, "parent task")
+	if result.err != nil || result.interrupted {
+		t.Fatalf("parent run failed: err=%v interrupted=%v", result.err, result.interrupted)
+	}
+	if result.answer != "parent done" {
+		t.Fatalf("unexpected parent answer %q", result.answer)
 	}
 }

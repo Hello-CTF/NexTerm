@@ -1153,4 +1153,33 @@ describe("AiSidebar conversation stream UX", () => {
     await send("过期之后");
     expect(mocks.chat).toHaveBeenCalled();
   });
+
+  it("renders a collapsible subagent timeline inside the spawn tool card", async () => {
+    await send("派生子代理");
+    emit({ type: "toolCall", id: "sp-1", name: "spawn_subagent", display: "spawn_subagent", seq: 1 });
+    emit({ type: "subagentDelta", parentCallId: "sp-1", subagentId: "sub-1", depth: 1, text: "正在排查磁盘", seq: 2 });
+    emit({ type: "subagentToolCall", parentCallId: "sp-1", subagentId: "sub-1", depth: 1, id: "c1", name: "exec_commands", seq: 3 });
+    emit({ type: "subagentToolResult", parentCallId: "sp-1", subagentId: "sub-1", depth: 1, id: "c1", ok: true, summary: "df -h 完成", seq: 4 });
+    emit({ type: "subagentDone", parentCallId: "sp-1", subagentId: "sub-1", depth: 1, status: "completed", summary: "磁盘无异常", seq: 5 });
+    emit({ type: "toolResult", id: "sp-1", ok: true, summary: "磁盘无异常", text: "磁盘无异常", exitCode: 0, seq: 6 });
+    runFrames();
+    await flush();
+    const text = textOf(view!);
+    expect(text).toContain("spawn_subagent");
+    expect(text).toContain("子代理 · 已完成");
+    expect(text).toContain("正在排查磁盘");
+    expect(text).toContain("exec_commands");
+    expect(text).toContain("df -h 完成");
+    expect(text).toContain("磁盘无异常");
+
+    const toggle = [...view!.container.querySelectorAll("button")].find((candidate) =>
+      candidate.textContent?.includes("子代理 · 已完成"),
+    );
+    if (!toggle) throw new Error("subagent timeline toggle not found");
+    click(toggle);
+    await flush();
+    const collapsed = textOf(view!);
+    expect(collapsed).toContain("子代理 · 已完成");
+    expect(collapsed).not.toContain("正在排查磁盘");
+  });
 });

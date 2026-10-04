@@ -214,7 +214,11 @@ type Execution struct {
 	Memory     *guard.Memory
 	PlanMode   bool
 	Subagents  *SubagentConfig
+
+	SubagentEvents SubagentEventSink
 }
+
+type SubagentEventSink func(context.Context, string, int, subagent.Event)
 
 type SubagentConfig struct {
 	Model        subagent.ModelFactory
@@ -407,11 +411,24 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 		return nil, err
 	}
 	manager = composed
-	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()})
+	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.subagentObserver)
 	if err != nil {
 		return nil, err
 	}
 	return spawnOutputTool{InvokableTool: spawn}, nil
+}
+
+func (e *Execution) subagentObserver(ctx context.Context) subagent.Observer {
+	return func(event subagent.Event) {
+		if e.SubagentEvents == nil {
+			return
+		}
+		parentCallID := compose.GetToolCallID(ctx)
+		if parentCallID == "" {
+			return
+		}
+		e.SubagentEvents(ctx, parentCallID, 1, event)
+	}
 }
 
 type spawnOutputTool struct {

@@ -16,6 +16,23 @@ interface ItemBase {
 
 export type SteerDelivery = "pending" | "delivered" | "dropped";
 
+export interface SubagentToolEntry {
+  callId: string;
+  name: string;
+  status: "running" | "ok" | "error";
+  summary?: string;
+}
+
+export interface SubagentTimeline {
+  subagentId: string;
+  depth: number;
+  status: "running" | "completed" | "failed" | "canceled";
+  text: string;
+  tools: SubagentToolEntry[];
+  summary?: string;
+  error?: string;
+}
+
 export type ChatItem =
   | (ItemBase & { role: "user"; text: string; imageCount?: number; steer?: SteerDelivery })
   | (ItemBase & { role: "assistant"; text: string })
@@ -29,6 +46,7 @@ export type ChatItem =
       text?: string;
       ok?: boolean;
       exitCode?: number | null;
+      subagent?: SubagentTimeline;
     })
   | (ItemBase & { role: "diff"; path: string; before: string; after: string })
   | (ItemBase & { role: "plan"; text: string })
@@ -375,6 +393,35 @@ function kernelId(ev: Record<string, unknown>): string {
   return typeof ev.id === "string" ? ev.id : "";
 }
 
+function foldSubagent(
+  state: ConversationState,
+  generation: number,
+  ev: Record<string, unknown>,
+  fold: (timeline: SubagentTimeline) => SubagentTimeline,
+  allowTerminal = false,
+): ApplyResult {
+  const parentCallId = typeof ev.parentCallId === "string" ? ev.parentCallId : "";
+  if (!parentCallId) return rejected(state);
+  const target = state.items.find(
+    (item): item is ToolItem =>
+      item.role === "tool" && item.attempt === generation && item.callId === parentCallId,
+  );
+  if (!target) return rejected(state);
+  const subagentId = typeof ev.subagentId === "string" ? ev.subagentId : "";
+  const existing = target.subagent && target.subagent.subagentId === subagentId ? target.subagent : null;
+  if (target.subagent && !existing) return rejected(state);
+  if (existing && existing.status !== "running" && !allowTerminal) return rejected(state);
+  const depth = Number(ev.depth) >= 1 ? Number(ev.depth) : 1;
+  const base: SubagentTimeline = existing ?? {
+    subagentId,
+    depth,
+    status: "running",
+    text: "",
+    tools: [],
+  };
+  return accepted(replaceItem(state, target.id, { ...target, subagent: fold(base) }));
+}
+
 export function applyAiEvent(
   state: ConversationState,
   generation: number,
@@ -458,6 +505,51 @@ export function applyAiEvent(
         }),
       );
     }
+    case "subagentDelta":
+      return foldSubagent(state, generation, ev, (timeline) => ({
+        ...timeline,
+        text: (timeline.text + textOf(ev)).slice(0, 4000),
+      }));
+    case "subagentToolCall":
+      return foldSubagent(state, generation, ev, (timeline) => {
+        const callId = kernelId(ev);
+        const entry: SubagentToolEntry = { callId, name: (ev.name as string) ?? "", status: "running" };
+        const tools = timeline.tools.some((tool) => tool.callId === callId)
+          ? timeline.tools.map((tool) => (tool.callId === callId ? { ...tool, ...entry } : tool))
+          : [...timeline.tools, entry];
+        return { ...timeline, tools };
+      });
+    case "subagentToolResult":
+      return foldSubagent(state, generation, ev, (timeline) => {
+        const callId = kernelId(ev);
+        const patch = {
+          status: (ev.ok ? "ok" : "error") as "ok" | "error",
+          summary: (ev.summary as string) ?? "",
+        };
+        const tools = timeline.tools.some((tool) => tool.callId === callId)
+          ? timeline.tools.map((tool) => (tool.callId === callId ? { ...tool, ...patch } : tool))
+          : [...timeline.tools, { callId, name: "", ...patch }];
+        return { ...timeline, tools };
+      });
+    case "subagentDone":
+      return foldSubagent(
+        state,
+        generation,
+        ev,
+        (timeline) => {
+          const status = ev.status;
+          return {
+            ...timeline,
+            status:
+              status === "completed" || status === "failed" || status === "canceled"
+                ? status
+                : "failed",
+            summary: (ev.summary as string) || undefined,
+            error: (ev.error as string) || undefined,
+          };
+        },
+        true,
+      );
     case "fileChange": {
       const changeId = kernelId(ev);
       const id = changeId ? `g${generation}:diff:${changeId}` : "";

@@ -2,8 +2,10 @@ package subagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,7 @@ type task struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	recorder *historyRecorder
+	observer Observer
 
 	result   Result
 	err      error
@@ -141,6 +144,7 @@ func (m *Manager) Spawn(ctx context.Context, request Request) (Handle, error) {
 		cancel:   cancel,
 		done:     make(chan struct{}),
 		recorder: newHistoryRecorder(request.Task, m.config.MaxHistoryMessages, m.config.MaxHistoryBytes),
+		observer: request.Observer,
 		result:   Result{Handle: handle, Status: StatusRunning},
 	}
 	m.tasks[handle.ID] = current
@@ -280,6 +284,7 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	if err != nil {
 		result.Error = err.Error()
 	}
+	current.emit(Event{Kind: EventDone, Status: status, Summary: summarizeText(capped), Err: result.Error})
 
 	m.mu.Lock()
 	current.result = result
@@ -351,7 +356,7 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 			continue
 		}
 		variant := event.Output.MessageOutput
-		message, err := variant.GetMessage()
+		message, streamed, err := consumeVariant(current, variant)
 		if err != nil {
 			if forcedErr == nil && current.ctx.Err() == nil {
 				forcedErr = err
@@ -366,8 +371,19 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 			forcedErr = err
 			current.cancel()
 		}
-		if variant.Role == schema.Assistant && len(message.ToolCalls) == 0 {
-			output = message.Content
+		switch variant.Role {
+		case schema.Assistant:
+			if !streamed && message.Content != "" {
+				current.emit(Event{Kind: EventDelta, Text: message.Content})
+			}
+			for _, call := range message.ToolCalls {
+				current.emit(Event{Kind: EventToolCall, CallID: call.ID, Name: call.Function.Name})
+			}
+			if len(message.ToolCalls) == 0 {
+				output = message.Content
+			}
+		case schema.Tool:
+			emitToolResult(current, message)
 		}
 	}
 	if forcedErr != nil {
@@ -380,6 +396,74 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		return "", firstErr
 	}
 	return output, nil
+}
+
+func (t *task) emit(event Event) {
+	if t.observer == nil {
+		return
+	}
+	event.TaskID = t.handle.ID
+	t.observer(event)
+}
+
+func consumeVariant(current *task, variant *adk.MessageVariant) (*schema.Message, bool, error) {
+	if !variant.IsStreaming {
+		return variant.Message, false, nil
+	}
+	defer variant.MessageStream.Close()
+	var frames []*schema.Message
+	for {
+		frame, err := variant.MessageStream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, true, err
+		}
+		frames = append(frames, frame)
+		if frame != nil && frame.Content != "" {
+			current.emit(Event{Kind: EventDelta, Text: frame.Content})
+		}
+	}
+	if len(frames) == 0 {
+		return nil, true, nil
+	}
+	message, err := schema.ConcatMessages(frames)
+	if err != nil {
+		return nil, true, err
+	}
+	return message, true, nil
+}
+
+func emitToolResult(current *task, message *schema.Message) {
+	var result struct {
+		OK        bool   `json:"ok"`
+		Text      string `json:"text"`
+		ExitCode  int    `json:"exitCode"`
+		Truncated bool   `json:"truncated"`
+	}
+	_ = json.Unmarshal([]byte(message.Content), &result)
+	text, cut := capText(result.Text, 4096)
+	current.emit(Event{
+		Kind:      EventToolResult,
+		CallID:    message.ToolCallID,
+		OK:        result.OK,
+		Summary:   summarizeText(result.Text),
+		Text:      text,
+		Truncated: result.Truncated || cut,
+		ExitCode:  result.ExitCode,
+	})
+}
+
+func summarizeText(text string) string {
+	if len(text) <= 400 {
+		return text
+	}
+	end := 400
+	for end > 0 && !utf8.ValidString(text[:end]) {
+		end--
+	}
+	return text[:end] + "…"
 }
 
 func (m *Manager) scopedTools(ctx context.Context, scope Scope, allowed map[string]struct{}) ([]tool.BaseTool, error) {
