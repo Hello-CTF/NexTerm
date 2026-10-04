@@ -4,7 +4,6 @@ package supervisor
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -392,6 +391,18 @@ func killHelperProcessesWindows(t *testing.T, stateDir string) {
 	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", HelperCommand, stateDir)
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", script)
 	_ = cmd.Run()
+	waitScript := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Measure-Object | Select-Object -ExpandProperty Count", HelperCommand, stateDir)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", waitScript).Output()
+		if err == nil && strings.TrimSpace(string(output)) == "0" {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func TestEnsurePrivateDirWindows(t *testing.T) {
@@ -1021,18 +1032,61 @@ func TestStateDirDeniesSecondUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	grantDACL(t, shared, "D:(A;;GA;;;SY)(A;;GA;;;WD)(A;;GA;;;"+sid+")")
-	if code := runAsSecondUser(t, "Get-Content -LiteralPath '"+shared+"' | Out-Null"); code != 0 {
-		t.Fatalf("control read as the second user = exit %d, want 0", code)
-	}
-	if code := runAsSecondUser(t, "Get-Content -LiteralPath '"+secret+"' | Out-Null"); code == 0 {
-		t.Fatal("second user read the private state file")
-	}
-	if code := runAsSecondUser(t, "Set-Content -LiteralPath '"+filepath.Join(stateDir, "hack.txt")+"' -Value x"); code == 0 {
-		t.Fatal("second user wrote into the private state directory")
-	}
+
+	withSecondUser(t, func() {
+		if _, err := os.ReadFile(shared); err != nil {
+			t.Fatalf("control read as the second user: %v", err)
+		}
+		if _, err := os.ReadFile(secret); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("second user read the private state file: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(stateDir, "hack.txt"), []byte("x"), 0o600); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("second user wrote into the private state directory: %v", err)
+		}
+	})
 	if _, err := os.Stat(filepath.Join(stateDir, "hack.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("second-user write artifact present: %v", err)
 	}
+}
+
+var (
+	advapi32                    = windows.NewLazySystemDLL("advapi32.dll")
+	procLogonUserW              = advapi32.NewProc("LogonUserW")
+	procImpersonateLoggedOnUser = advapi32.NewProc("ImpersonateLoggedOnUser")
+)
+
+func withSecondUser(t *testing.T, fn func()) {
+	t.Helper()
+	username, err := windows.UTF16PtrFromString(windowsSecondUserName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain, err := windows.UTF16PtrFromString(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, err := windows.UTF16PtrFromString(windowsSecondUserPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var token windows.Handle
+	result, _, err := procLogonUserW.Call(
+		uintptr(unsafe.Pointer(username)),
+		uintptr(unsafe.Pointer(domain)),
+		uintptr(unsafe.Pointer(password)),
+		uintptr(3),
+		uintptr(0),
+		uintptr(unsafe.Pointer(&token)),
+	)
+	if result == 0 {
+		t.Fatalf("LogonUser: %v", err)
+	}
+	defer func() { _ = windows.CloseHandle(token) }()
+	if result, _, err := procImpersonateLoggedOnUser.Call(uintptr(token)); result == 0 {
+		t.Fatalf("ImpersonateLoggedOnUser: %v", err)
+	}
+	defer func() { _ = windows.RevertToSelf() }()
+	fn()
 }
 
 func grantDACL(t *testing.T, path, sddl string) {
@@ -1048,27 +1102,4 @@ func grantDACL(t *testing.T, path, sddl string) {
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func runAsSecondUser(t *testing.T, command string) int {
-	t.Helper()
-	encoded := base64.StdEncoding.EncodeToString(utf16LE("$ErrorActionPreference='Stop'\r\n" + command + "\r\nexit 0\r\n"))
-	wrapper := fmt.Sprintf("$pw = ConvertTo-SecureString '%s' -AsPlainText -Force; $cred = New-Object System.Management.Automation.PSCredential('%s', $pw); $p = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile','-EncodedCommand','%s' -Credential $cred -Wait -PassThru -NoNewWindow -LoadUserProfile:$false; exit $p.ExitCode", windowsSecondUserPass, windowsSecondUserName, encoded)
-	output, err := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", wrapper).CombinedOutput()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		t.Fatalf("run as the second user: %v (%s)", err, output)
-	}
-	return 0
-}
-
-func utf16LE(value string) []byte {
-	encoded := make([]byte, 0, len(value)*2)
-	for _, character := range value {
-		encoded = append(encoded, byte(character), byte(character>>8))
-	}
-	return encoded
 }
