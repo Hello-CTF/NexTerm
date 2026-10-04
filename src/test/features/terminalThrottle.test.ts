@@ -24,37 +24,29 @@ describe("terminal throttle tracker", () => {
     });
   });
 
-  it("keeps active while any channel is backpressured, recovered only when all drain", () => {
+  it("clears the whole channel set on the authoritative tab-level recovered", () => {
     const entryA = throttleStateFrom(null, { tabId: "t1", channelId: "a-1", inflightBytes: 4096, version: 1 }, 1000);
     const entryB = throttleStateFrom(entryA, { tabId: "t1", channelId: "b-1", inflightBytes: 8192, version: 2 }, 1100);
     expect(throttleView(entryB, 1100)?.inflightBytes).toBe(8192);
 
-    const drainA = throttleStateFrom(entryB, { tabId: "t1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 3 }, 1200);
-    expect(throttleView(drainA, 1200)).toEqual({
-      active: true,
-      recovered: false,
-      inflightBytes: 8192,
-    });
-
-    const drainB = throttleStateFrom(drainA, { tabId: "t1", channelId: "b-1", inflightBytes: 64, recovered: true, version: 4 }, 1300);
-    expect(throttleView(drainB, 1300)).toEqual({
+    const recovered = throttleStateFrom(entryB, { tabId: "t1", channelId: "b-1", inflightBytes: 64, recovered: true, version: 3 }, 1200);
+    expect(recovered.channels).toEqual({});
+    expect(throttleView(recovered, 1200)).toEqual({
       active: false,
       recovered: true,
       inflightBytes: 0,
     });
-    expect(throttleView(drainB, 1300 + THROTTLE_RECOVERED_MS + 1)).toBeNull();
+    expect(throttleView(recovered, 1200 + THROTTLE_RECOVERED_MS + 1)).toBeNull();
   });
 
-  it("ignores duplicate or unknown-channel recovery events", () => {
+  it("ignores duplicate recovered events when already clear", () => {
     const entryA = throttleStateFrom(null, { tabId: "t1", channelId: "a-1", inflightBytes: 4096, version: 1 }, 1000);
     const drainedA = throttleStateFrom(entryA, { tabId: "t1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 2 }, 1100);
     expect(throttleView(drainedA, 1100)?.recovered).toBe(true);
 
-    const duplicate = throttleStateFrom(drainedA, { tabId: "t1", channelId: "a-1", inflightBytes: 0, recovered: true, version: 3 }, 1200);
+    const duplicate = throttleStateFrom(drainedA, { tabId: "t1", channelId: "b-1", inflightBytes: 0, recovered: true, version: 3 }, 1200);
     expect(duplicate).toBe(drainedA);
-
-    const unknown = throttleStateFrom(drainedA, { tabId: "t1", channelId: "ghost", inflightBytes: 0, recovered: true, version: 4 }, 1300);
-    expect(unknown).toBe(drainedA);
+    expect(throttleView(null, 1300)).toBeNull();
   });
 
   it("re-arms active when a new episode arrives after recovery", () => {

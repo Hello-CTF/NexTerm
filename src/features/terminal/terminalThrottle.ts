@@ -18,19 +18,14 @@ export function throttleStateFrom(
   event: TerminalThrottledEvent,
   now: number,
 ): ThrottleState {
-  const channels = { ...(current?.channels ?? {}) };
-  const channelId = event.channelId ?? "";
   if (event.recovered === true) {
-    if (!(channelId in channels)) {
-      return current ?? { channels, recoveredAt: null };
+    if (!current || Object.keys(current.channels).length === 0) {
+      return current ?? { channels: {}, recoveredAt: null };
     }
-    delete channels[channelId];
-    return {
-      channels,
-      recoveredAt: Object.keys(channels).length === 0 ? now : null,
-    };
+    return { channels: {}, recoveredAt: now };
   }
-  channels[channelId] = event.inflightBytes;
+  const channels = { ...(current?.channels ?? {}) };
+  channels[event.channelId ?? ""] = event.inflightBytes;
   return { channels, recoveredAt: null };
 }
 

@@ -200,7 +200,7 @@ describe("terminal://throttled badge", () => {
     expect(badge("输出已恢复")).toBeNull();
   });
 
-  it("keeps active while any channel is backpressured and recovers only when all drain", async () => {
+  it("recovers on the single tab-level recovered after both channels drain (real production sequence)", async () => {
     vi.useFakeTimers();
     await act(async () => {
       await flush();
@@ -216,13 +216,29 @@ describe("terminal://throttled badge", () => {
     expect(badge("输出积压")).not.toBeNull();
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 3 });
+      throttled?.({ tabId: "kernel-1", channelId: "b-1", inflightBytes: 64, recovered: true, version: 3 });
     });
-    expect(badge("输出积压")).not.toBeNull();
-    expect(badge("输出已恢复")).toBeNull();
+    expect(badge("输出积压")).toBeNull();
+    expect(badge("输出已恢复")).not.toBeNull();
+  });
+
+  it("clears the whole set on discard/detach-style tab-level recovered", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      await flush();
+    });
+    const throttled = harness.handlers.get("terminal://throttled");
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", channelId: "b-1", inflightBytes: 64, recovered: true, version: 4 });
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 4096, version: 1 });
+    });
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "b-1", inflightBytes: 8192, version: 2 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 0, recovered: true, version: 3 });
     });
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).not.toBeNull();
