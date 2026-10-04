@@ -92,6 +92,58 @@ func TestProxyCommandCancelledContextDoesNotStart(t *testing.T) {
 	}
 }
 
+func TestProxyCommandLineKeepsPayloadVerbatim(t *testing.T) {
+	cases := []struct {
+		name       string
+		executable string
+		command    string
+		host       string
+		port       int
+		want       string
+	}{
+		{
+			name:       "plain command",
+			executable: `C:\Windows\System32\cmd.exe`,
+			command:    "nc %h %p",
+			host:       "example.test",
+			port:       2222,
+			want:       `"C:\Windows\System32\cmd.exe" /C nc example.test 2222`,
+		},
+		{
+			name:       "executable path with spaces",
+			executable: `C:\Program Files\Utility\cmd.exe`,
+			command:    "nc %h %p",
+			host:       "10.0.0.1",
+			port:       22,
+			want:       `"C:\Program Files\Utility\cmd.exe" /C nc 10.0.0.1 22`,
+		},
+		{
+			name:       "quoted set and quoted executable stay untouched",
+			executable: `C:\Windows\System32\cmd.exe`,
+			command:    `set "NEXTERM_SSH_PROXY_HELPER=1" && "C:\a b\ssh.test.exe" -test.run=^TestX$ %h %p`,
+			host:       "127.0.0.1",
+			port:       2201,
+			want:       `"C:\Windows\System32\cmd.exe" /C set "NEXTERM_SSH_PROXY_HELPER=1" && "C:\a b\ssh.test.exe" -test.run=^TestX$ 127.0.0.1 2201`,
+		},
+		{
+			name:       "cmd special characters are not escaped",
+			executable: `C:\Windows\System32\cmd.exe`,
+			command:    `echo 100%% & echo a^|b>c<d %p`,
+			host:       "h",
+			port:       22,
+			want:       `"C:\Windows\System32\cmd.exe" /C echo 100% & echo a^|b>c<d 22`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			line := proxyCommandLine(testCase.executable, expandProxyCommand(testCase.command, testCase.host, testCase.port))
+			if line != testCase.want {
+				t.Fatalf("command line = %q, want %q", line, testCase.want)
+			}
+		})
+	}
+}
+
 func TestSSHProxyCommandHelper(t *testing.T) {
 	if os.Getenv("NEXTERM_SSH_PROXY_HELPER") != "1" {
 		t.Skip("helper process for proxy command tests")
