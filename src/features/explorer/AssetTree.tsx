@@ -35,6 +35,18 @@ const KIND_LABEL: Record<string, string> = {
 
 const DRAG_ASSET = "application/x-nexterm-asset";
 
+function treeRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const tree = event.currentTarget.closest("[role='tree']");
+  if (!tree) return;
+  const rows = [...tree.querySelectorAll<HTMLElement>("[role='treeitem']")];
+  const index = rows.indexOf(event.currentTarget);
+  const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+  if (index < 0 || next < 0 || next >= rows.length) return;
+  event.preventDefault();
+  rows[next]?.focus();
+}
+
 export function AssetTree() {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
@@ -143,6 +155,7 @@ export function AssetTree() {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建资产"
+          aria-label="新建资产"
           onClick={() => {
             setPresetGroup(null);
             setEditing("asset");
@@ -153,6 +166,7 @@ export function AssetTree() {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建分组"
+          aria-label="新建分组"
           onClick={() => setEditing("group")}
         >
           <IconFolder size={14} />
@@ -167,6 +181,7 @@ export function AssetTree() {
           <input
             className="nx-input nx-input-sm"
             placeholder="搜索资产 / 主机 / 用户"
+            aria-label="搜索资产 / 主机 / 用户"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -174,6 +189,8 @@ export function AssetTree() {
       </div>
 
       <div
+        role="tree"
+        aria-label="资产"
         className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(DRAG_ASSET)) e.preventDefault();
@@ -187,6 +204,7 @@ export function AssetTree() {
           <AssetRow
             key={a.id}
             asset={a}
+            level={1}
             onDelete={() => void onDelete(a)}
             onEdit={() => setEditingAsset(a)}
           />
@@ -286,10 +304,12 @@ export function AssetTree() {
 
 function AssetRow({
   asset,
+  level,
   onDelete,
   onEdit,
 }: {
   asset: Asset;
+  level: number;
   onDelete: () => void;
   onEdit: () => void;
 }) {
@@ -306,13 +326,25 @@ function AssetRow({
     .join(" · ");
   return (
     <div
-      className="nx-row group"
+      role="treeitem"
+      aria-level={level}
+      tabIndex={0}
+      className="nx-row group focus-within:[&_.nx-row-actions]:flex"
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
         e.dataTransfer.effectAllowed = "move";
       }}
       onDoubleClick={() => void connectAsset(asset)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          void connectAsset(asset);
+          return;
+        }
+        treeRowKeyDown(e);
+      }}
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
@@ -323,6 +355,7 @@ function AssetRow({
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="连接"
+          aria-label={`连接 ${asset.name}`}
           onClick={(e) => {
             e.stopPropagation();
             void connectAsset(asset);
@@ -333,6 +366,7 @@ function AssetRow({
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="编辑"
+          aria-label={`编辑 ${asset.name}`}
           onClick={(e) => {
             e.stopPropagation();
             onEdit();
@@ -344,6 +378,7 @@ function AssetRow({
           <button
             className="nx-icon-btn nx-icon-btn-sm is-danger"
             title="删除"
+            aria-label={`删除 ${asset.name}`}
             onClick={(e) => {
               e.stopPropagation();
               onDelete();
@@ -390,7 +425,34 @@ function GroupNode({
     e.dataTransfer.types.includes(DRAG_ASSET);
   return (
     <div
-      className={`mb-0.5 rounded ${over ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40" : ""}`}
+      role="treeitem"
+      aria-expanded={open}
+      aria-level={1}
+      tabIndex={0}
+      className={`mb-0.5 rounded focus-within:[&_.nx-row-actions]:flex ${over ? "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40" : ""}`}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setOpen((v) => !v);
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          if (!open) {
+            e.preventDefault();
+            setOpen(true);
+          }
+          return;
+        }
+        if (e.key === "ArrowLeft") {
+          if (open) {
+            e.preventDefault();
+            setOpen(false);
+          }
+          return;
+        }
+        treeRowKeyDown(e);
+      }}
       onDragOver={(e) => {
         if (isAssetDrag(e)) {
           e.preventDefault();
@@ -427,6 +489,7 @@ function GroupNode({
           <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="在分组内新建资产"
+            aria-label={`在分组「${group.name}」内新建资产`}
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
@@ -438,6 +501,7 @@ function GroupNode({
           <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="重命名分组"
+            aria-label={`重命名分组「${group.name}」`}
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
@@ -449,6 +513,7 @@ function GroupNode({
           <button
             className="nx-icon-btn nx-icon-btn-sm is-danger"
             title="删除分组"
+            aria-label={`删除分组「${group.name}」`}
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
@@ -474,9 +539,15 @@ function GroupNode({
         </div>
       )}
       {open && (
-        <div className="ml-3.5">
+        <div role="group" className="ml-3.5">
           {assets.map((a) => (
-            <AssetRow key={a.id} asset={a} onDelete={() => onDelete(a)} onEdit={() => onEdit(a)} />
+            <AssetRow
+              key={a.id}
+              asset={a}
+              level={2}
+              onDelete={() => onDelete(a)}
+              onEdit={() => onEdit(a)}
+            />
           ))}
           {assets.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-neutral-600">（空分组 · 可拖资产进来）</div>
