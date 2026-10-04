@@ -64,6 +64,8 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return Confirm(KindDockerMutate, "Docker 容器状态变更")
 	case "db_query":
 		return ClassifySQL(stringField(fields, "sql"), config.DangerRules)
+	case "send_reminder":
+		return Confirm(KindSchedule, "创建定时提醒，到时间后将在本会话投递消息")
 	case "redis_command":
 		var command []string
 		if json.Unmarshal(fields["command"], &command) != nil {

@@ -55,3 +55,29 @@ func TestCustomDangerRuleCoversFixedToolsWithoutDowngradingForbidden(t *testing.
 		t.Fatalf("custom danger downgraded forbidden: %v", got)
 	}
 }
+
+func TestSendReminderNeedsConfirmation(t *testing.T) {
+	t.Parallel()
+	ruling := classifyToolForTest("send_reminder", `{"message":"重启后检查服务","delay_minutes":30}`)
+	if ruling.Risk != NeedsConfirm || ruling.Kind != KindSchedule {
+		t.Fatalf("ruling = %+v", ruling)
+	}
+	if decision := Decide(Config{Mode: Unattended}, ruling, nil); decision.Action != ActionDeny {
+		t.Fatalf("unattended decision = %+v, want deny", decision)
+	}
+	if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action != ActionDeny {
+		t.Fatalf("read-only decision = %+v, want deny", decision)
+	}
+	if decision := Decide(Config{Mode: ReadWrite}, ruling, nil); decision.Action != ActionAsk {
+		t.Fatalf("read-write decision = %+v, want ask", decision)
+	}
+	remembered := NewMemory()
+	remembered.Add(KindSchedule)
+	if decision := Decide(Config{Mode: ReadWrite}, ruling, remembered); decision.Action != ActionAllow {
+		t.Fatalf("remembered decision = %+v, want allow", decision)
+	}
+	config := Config{Mode: Silent, DangerRules: []string{"密码"}}
+	if got := ClassifyTool("send_reminder", json.RawMessage(`{"message":"密码是 hunter2","delay_minutes":5}`), config); got.Risk != Danger {
+		t.Fatalf("danger rule over reminder content: %+v", got)
+	}
+}

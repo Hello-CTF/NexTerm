@@ -11,6 +11,8 @@ type Schedule struct {
 	expression string
 	location   *time.Location
 	every      time.Duration
+	at         time.Time
+	oneShot    bool
 	minutes    []bool
 	hours      []bool
 	days       []bool
@@ -20,12 +22,31 @@ type Schedule struct {
 	weekdayAny bool
 }
 
+const atPrefix = "@at "
+
+func OneShot(expression string) bool {
+	return strings.HasPrefix(strings.TrimSpace(expression), atPrefix)
+}
+
+func AtExpression(at time.Time) string {
+	return atPrefix + at.UTC().Format(time.RFC3339)
+}
+
 func ParseSchedule(expression string, location *time.Location) (*Schedule, error) {
 	if location == nil {
 		location = time.UTC
 	}
 	expression = strings.TrimSpace(expression)
 	schedule := &Schedule{expression: expression, location: location}
+	if strings.HasPrefix(expression, atPrefix) {
+		at, err := time.Parse(time.RFC3339, strings.TrimSpace(strings.TrimPrefix(expression, atPrefix)))
+		if err != nil {
+			return nil, fmt.Errorf("%w: %q", ErrInvalidSchedule, expression)
+		}
+		schedule.at = at
+		schedule.oneShot = true
+		return schedule, nil
+	}
 	if strings.HasPrefix(expression, "@every ") {
 		every, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(expression, "@every ")))
 		if err != nil || every <= 0 {
@@ -151,6 +172,12 @@ func parseScheduleValue(raw string, names map[string]int) (int, error) {
 }
 
 func (s *Schedule) Next(after time.Time) (time.Time, bool) {
+	if s.oneShot {
+		if s.at.After(after) {
+			return s.at, true
+		}
+		return time.Time{}, false
+	}
 	if s.every > 0 {
 		return after.Add(s.every), true
 	}

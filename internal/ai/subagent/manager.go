@@ -540,6 +540,7 @@ func emitToolResult(current *task, message *schema.Message) {
 		Text      string `json:"text"`
 		ExitCode  int    `json:"exitCode"`
 		Truncated bool   `json:"truncated"`
+		Panic     bool   `json:"panic"`
 	}
 	_ = json.Unmarshal([]byte(message.Content), &result)
 	text, cut := capText(result.Text, 4096)
@@ -551,6 +552,7 @@ func emitToolResult(current *task, message *schema.Message) {
 		Text:      text,
 		Truncated: result.Truncated || cut,
 		ExitCode:  result.ExitCode,
+		Panic:     result.Panic,
 	})
 }
 

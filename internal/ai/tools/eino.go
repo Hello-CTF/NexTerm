@@ -5,7 +5,6 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -99,7 +98,7 @@ type ExitPlanModeArgs struct {
 var einoNames = []string{
 	"exec_commands", "read_file", "write_file", "list_dir", "search_files", "read_screen", "send_keys", "wait_for",
 	"docker_ps", "docker_logs", "docker_exec", "docker_control", "db_list_tables", "db_describe", "db_query", "redis_scan",
-	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode",
+	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool,
 }
 
 var einoDescriptions = map[string]string{
@@ -124,6 +123,7 @@ var einoDescriptions = map[string]string{
 	"edit_file":      "精确替换文本并保留备份；现有文件为用户授权的非事务覆盖，可能覆盖确认后的外部修改；写入前必须读取。",
 	"todo_write":     "替换当前任务的完整待办列表。",
 	"exit_plan_mode": "提交计划供用户审核，不自动执行。",
+	ReminderTool:     "创建一次性提醒（需用户确认），到时间后把消息投递到当前会话；message 为提醒内容，delay_minutes 或 at（RFC3339）二选一指定时间。",
 }
 
 func einoToolSchemas() []Schema {
@@ -191,6 +191,9 @@ func einoToolSchemas() []Schema {
 		"exit_plan_mode": func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[ExitPlanModeArgs]("exit_plan_mode", einoDescriptions["exit_plan_mode"])
 		},
+		ReminderTool: func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[SendReminderArgs](ReminderTool, einoDescriptions[ReminderTool])
+		},
 	}
 	result := make([]Schema, 0, len(einoNames))
 	for _, name := range einoNames {
@@ -211,13 +214,14 @@ func einoToolSchemas() []Schema {
 }
 
 type Execution struct {
-	JobID      string
-	Registry   *Registry
-	Scope      Scope
-	Permission guard.Config
-	Memory     *guard.Memory
-	PlanMode   bool
-	Subagents  *SubagentConfig
+	JobID          string
+	ConversationID string
+	Registry       *Registry
+	Scope          Scope
+	Permission     guard.Config
+	Memory         *guard.Memory
+	PlanMode       bool
+	Subagents      *SubagentConfig
 
 	SubagentManager *subagent.Manager
 
@@ -356,6 +360,11 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 				return e.run(ctx, "exit_plan_mode", input)
 			})
 		},
+		func() (tool.InvokableTool, error) {
+			return utils.InferTool(ReminderTool, einoDescriptions[ReminderTool], func(ctx context.Context, input SendReminderArgs) (Output, error) {
+				return e.run(ctx, ReminderTool, input)
+			})
+		},
 	}
 	result := make([]tool.BaseTool, 0, len(makers)+1)
 	for index, makeTool := range makers {
@@ -405,6 +414,8 @@ func (e *Execution) enabled(name string) bool {
 		return deps.ListAssets != nil
 	case "exit_plan_mode":
 		return e.PlanMode
+	case ReminderTool:
+		return deps.Reminders != nil
 	case subagent.SpawnToolName:
 		return e.Subagents != nil
 	default:
@@ -493,7 +504,7 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 			err = ctxErr
 			return
 		}
-		encoded, marshalErr := json.Marshal(Fail(fmt.Errorf("工具 %s 执行崩溃: %v", subagent.SpawnToolName, recovered)))
+		encoded, marshalErr := json.Marshal(panicOutput(subagent.SpawnToolName, recovered))
 		if marshalErr != nil {
 			err = marshalErr
 			return
@@ -512,7 +523,7 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 }
 
 func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.Manager) ([]tool.BaseTool, error) {
-	child := &Execution{JobID: e.JobID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode}
+	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode}
 	available, err := child.Tools()
 	if err != nil {
 		return nil, err
@@ -523,7 +534,7 @@ func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.M
 		if err != nil {
 			return nil, err
 		}
-		if info.Name == "exit_plan_mode" {
+		if info.Name == "exit_plan_mode" || info.Name == ReminderTool {
 			continue
 		}
 		scoped = append(scoped, candidate)
@@ -547,7 +558,7 @@ func (e *Execution) subagentAllowedTools() []string {
 	seen := make(map[string]struct{}, len(configured))
 	for _, name := range configured {
 		name = strings.TrimSpace(name)
-		if name == "" || name == "ask_user" || name == "exit_plan_mode" {
+		if name == "" || name == "ask_user" || name == "exit_plan_mode" || name == ReminderTool {
 			continue
 		}
 		if _, duplicate := seen[name]; duplicate || !e.enabled(name) {
@@ -617,6 +628,9 @@ func (e *Execution) runInner(ctx context.Context, name string, input any) (Outpu
 			}
 		}
 		call.AuthorizationID = state.AuthorizationID
+		if call.Name == ReminderTool {
+			return e.executeReminder(ctx, call), nil
+		}
 		return e.Registry.Execute(ctx, e.JobID, e.Scope, call, nil), nil
 	}
 	return e.initial(ctx, call)
@@ -669,6 +683,9 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	call.AuthorizationID = GuardAuthorizationID(decision)
+	if call.Name == ReminderTool {
+		return e.executeReminder(ctx, call), nil
+	}
 	result := e.Registry.Execute(ctx, e.JobID, e.Scope, call, preparation)
 	if result.Question != nil {
 		info := Interaction{Kind: "question", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Question: result.Question}

@@ -19,7 +19,7 @@ func TestEventGoldenJSON(t *testing.T) {
 		{Event{Type: "reasoning", Text: "r"}, `{"text":"r","type":"reasoning"}`},
 		{Event{Type: "toolArgs", Tool: "write_file", Chars: 42}, `{"chars":42,"tool":"write_file","type":"toolArgs"}`},
 		{Event{Type: "toolCall", ID: "c", Name: "edit_file", Args: json.RawMessage(`{"old_string":"a","replace_all":false}`), Display: "edit"}, `{"args":{"old_string":"a","replace_all":false},"display":"edit","id":"c","name":"edit_file","type":"toolCall"}`},
-		{Event{Type: "toolResult", ID: "c", OK: true, Summary: "s", Text: "full", ExitCode: 0}, `{"exitCode":0,"id":"c","ok":true,"summary":"s","text":"full","truncated":false,"type":"toolResult"}`},
+		{Event{Type: "toolResult", ID: "c", OK: true, Summary: "s", Text: "full", ExitCode: 0}, `{"exitCode":0,"id":"c","ok":true,"panic":false,"summary":"s","text":"full","truncated":false,"type":"toolResult"}`},
 		{Event{Type: "confirmRequired", ID: "c", Tool: "write_file", Args: json.RawMessage(`{}`), Risk: "needs_confirm", Nonce: "n", RequestID: "itr_1", Attempt: 2}, `{"args":{},"attempt":2,"confirmationNonce":"n","id":"c","preview":null,"reason":"","rendered":"","requestId":"itr_1","risk":"needs_confirm","tool":"write_file","type":"confirmRequired"}`},
 		{Event{Type: "questionRequired", ID: "q", Nonce: "n", Question: &tools.Question{Question: "继续？"}, RequestID: "itr_2", Attempt: 1}, `{"attempt":1,"confirmationNonce":"n","id":"q","question":{"question":"继续？"},"requestId":"itr_2","type":"questionRequired"}`},
 		{Event{Type: "screen", TabID: "t", Text: "screen"}, `{"tabId":"t","text":"screen","type":"screen"}`},
@@ -32,7 +32,7 @@ func TestEventGoldenJSON(t *testing.T) {
 		{Event{Type: "error", Message: "m", Retryable: true}, `{"message":"m","retryable":true,"type":"error"}`},
 		{Event{Type: "subagentDelta", ParentCallID: "sp", SubagentID: "sub", Depth: 1, Text: "d"}, `{"depth":1,"parentCallId":"sp","subagentId":"sub","text":"d","type":"subagentDelta"}`},
 		{Event{Type: "subagentToolCall", ParentCallID: "sp", SubagentID: "sub", Depth: 1, ID: "c", Name: "list_assets"}, `{"depth":1,"id":"c","name":"list_assets","parentCallId":"sp","subagentId":"sub","type":"subagentToolCall"}`},
-		{Event{Type: "subagentToolResult", ParentCallID: "sp", SubagentID: "sub", Depth: 1, ID: "c", OK: true, Summary: "s", Text: "t", ExitCode: 0}, `{"depth":1,"exitCode":0,"id":"c","ok":true,"parentCallId":"sp","subagentId":"sub","summary":"s","text":"t","truncated":false,"type":"subagentToolResult"}`},
+		{Event{Type: "subagentToolResult", ParentCallID: "sp", SubagentID: "sub", Depth: 1, ID: "c", OK: true, Summary: "s", Text: "t", ExitCode: 0}, `{"depth":1,"exitCode":0,"id":"c","ok":true,"panic":false,"parentCallId":"sp","subagentId":"sub","summary":"s","text":"t","truncated":false,"type":"subagentToolResult"}`},
 		{Event{Type: "subagentDone", ParentCallID: "sp", SubagentID: "sub", Depth: 1, Status: "completed", Summary: "s"}, `{"depth":1,"error":"","parentCallId":"sp","status":"completed","subagentId":"sub","summary":"s","type":"subagentDone"}`},
 	}
 	for _, test := range tests {

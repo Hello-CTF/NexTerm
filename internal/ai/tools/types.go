@@ -58,6 +58,7 @@ type Output struct {
 	Text      string     `json:"text"`
 	ExitCode  int        `json:"exitCode"`
 	Truncated bool       `json:"truncated"`
+	Panic     bool       `json:"panic,omitempty"`
 	Change    *Change    `json:"change,omitempty"`
 	Todos     []TodoItem `json:"todos,omitempty"`
 	Plan      string     `json:"plan,omitempty"`
@@ -164,6 +165,7 @@ type Dependencies struct {
 	DockerAct           func(context.Context, string, string, string) error
 	DockerActionAudited bool
 	Audit               func(context.Context, AuditEntry) error
+	Reminders           ReminderScheduler
 
 	Outcome      *outcome.Ledger
 	Now          func() time.Time

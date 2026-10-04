@@ -324,6 +324,16 @@ func replayOutput(record outcome.Record) Output {
 }
 
 func (r *Registry) execute(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
+	output, err := Guarded(ctx, call.Name, func() (Output, error) {
+		return r.executeTool(ctx, jobID, scope, call, preparation), nil
+	})
+	if err != nil {
+		return Fail(err)
+	}
+	return output
+}
+
+func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, call Call, preparation *Preparation) Output {
 	switch call.Name {
 	case "exec_commands":
 		return r.execCommands(ctx, scope, call.Args)

@@ -345,7 +345,9 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 		scheduledFor = now
 	}
 	next, ok := schedule.Next(now)
-	if !ok {
+	if !ok && schedule.oneShot {
+		next = time.Time{}
+	} else if !ok {
 		return false, fmt.Errorf("%w: no occurrence within ten years for job %s", ErrInvalidSchedule, job.ID)
 	}
 	following, ok := schedule.Next(scheduledFor)

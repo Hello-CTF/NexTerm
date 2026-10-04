@@ -130,6 +130,20 @@ describe("conversation aggregation: chunking and ordering", () => {
     expect(b?.summary).toBeUndefined();
   });
 
+  it("marks tool results that failed with a structured panic", () => {
+    const { s } = stream();
+    s.beginRun(1);
+    s.pushEvent(1, { type: "toolCall", id: "p", name: "list_assets", display: "list_assets" });
+    s.pushEvent(1, { type: "toolCall", id: "q", name: "read_file", display: "read_file /a" });
+    s.pushEvent(1, { type: "toolResult", id: "p", ok: false, summary: "工具 list_assets 执行崩溃: 后端不可用", text: "工具 list_assets 执行崩溃: 后端不可用", exitCode: 1, panic: true });
+    s.pushEvent(1, { type: "toolResult", id: "q", ok: false, summary: "文件不存在", text: "文件不存在", exitCode: 1, panic: false });
+    const items = s.getState().items;
+    const crashed = items.find((i): i is ToolItem => i.role === "tool" && i.callId === "p");
+    const failed = items.find((i): i is ToolItem => i.role === "tool" && i.callId === "q");
+    expect(crashed).toMatchObject({ ok: false, panic: true });
+    expect(failed).toMatchObject({ ok: false, panic: false });
+  });
+
   it("keeps model phases, usage and todos as overwrite snapshots and clears status on output", () => {
     const { s } = stream();
     s.beginRun(1);

@@ -46,6 +46,7 @@ export type ChatItem =
       text?: string;
       ok?: boolean;
       exitCode?: number | null;
+      panic?: boolean;
       subagent?: SubagentTimeline;
     })
   | (ItemBase & { role: "diff"; path: string; before: string; after: string })
@@ -502,6 +503,7 @@ export function applyAiEvent(
           text: textOf(ev),
           ok: ev.ok as boolean,
           exitCode: ev.exitCode as number | null,
+          panic: ev.panic === true,
         }),
       );
     }

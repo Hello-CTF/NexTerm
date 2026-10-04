@@ -31,7 +31,7 @@ func DisplayCall(call Call) string {
 	var fields map[string]any
 	_ = json.Unmarshal(call.Args, &fields)
 	display := call.Name
-	for _, key := range []string{"commands", "keys", "path", "container_id", "cmd", "action", "sql", "pattern", "question", "plan"} {
+	for _, key := range []string{"commands", "keys", "path", "container_id", "cmd", "action", "sql", "pattern", "question", "plan", "message"} {
 		if value, ok := fields[key]; ok {
 			encoded, _ := json.Marshal(value)
 			display += " " + string(encoded)

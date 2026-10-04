@@ -51,6 +51,7 @@ type Event struct {
 	Summary   string
 	Truncated bool
 	ExitCode  int
+	Panic     bool
 	Status    Status
 	Err       string
 }

@@ -26,7 +26,7 @@ func TestToolPanicIsolatedIntoFailureOutput(t *testing.T) {
 				continue
 			}
 			var output tools.Output
-			if json.Unmarshal([]byte(message.Content), &output) == nil && !output.OK && strings.Contains(output.Text, "崩溃") {
+			if json.Unmarshal([]byte(message.Content), &output) == nil && output.Panic && !output.OK && strings.Contains(output.Text, "崩溃") {
 				recovered.Store(true)
 			}
 		}
@@ -43,16 +43,66 @@ func TestToolPanicIsolatedIntoFailureOutput(t *testing.T) {
 		t.Fatalf("tool panic terminated the run: done=%d failed=%d events=%+v", done, failed, events)
 	}
 	if !recovered.Load() {
-		t.Fatal("model never received the tool failure output")
+		t.Fatal("model never received the structured tool failure output")
 	}
 	found := false
 	for _, event := range events {
-		if event.Type == "toolResult" && !event.OK && strings.Contains(event.Summary, "崩溃") {
+		if event.Type == "toolResult" && !event.OK && event.Panic && strings.Contains(event.Summary, "崩溃") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("missing tool failure event")
+		t.Fatal("missing structured tool failure event")
+	}
+}
+
+func TestToolPanicFailureIsPersistedInRunJournal(t *testing.T) {
+	chat := sequenceModel(toolCallMessage(namedToolCall("c1", "list_assets", `{}`)), schema.AssistantMessage("已恢复", nil))
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{ListAssets: func(context.Context) ([]tools.Asset, error) {
+			panic("资产后端崩溃")
+		}}),
+		Store:    storage,
+		Runs:     storage,
+		MaxTurns: 4,
+	})
+	t.Cleanup(func() {
+		_ = runner.Close()
+		_ = storage.Close()
+	})
+	stream := &SliceStream{}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "列出资产", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, stream)
+	rows, err := storage.RunEventsAfter(context.Background(), response.JobID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.Type != "toolResult" {
+			continue
+		}
+		var payload struct {
+			OK    bool `json:"ok"`
+			Panic bool `json:"panic"`
+		}
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Panic && !payload.OK {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("persisted events lack the structured panic failure: %+v", rows)
 	}
 }
 
