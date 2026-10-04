@@ -171,7 +171,7 @@ func (p *RemoteProvider) Create(ctx context.Context, options base.DurableCreateO
 		p.compensateCreate(info.ID, expect)
 		return nil, translateError(err)
 	}
-	return &streamAttachment{Stream: stream}, nil
+	return &streamAttachment{Stream: stream, provider: p}, nil
 }
 
 func definiteCreateRejection(err error) bool {
@@ -196,11 +196,12 @@ func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAtt
 	if err != nil {
 		return nil, translateError(err)
 	}
-	return &streamAttachment{Stream: stream}, nil
+	return &streamAttachment{Stream: stream, provider: p}, nil
 }
 
 type streamAttachment struct {
 	*Stream
+	provider *RemoteProvider
 }
 
 func (a *streamAttachment) Stderr() io.Reader  { return nil }
@@ -227,7 +228,18 @@ func (a *streamAttachment) Wait(ctx context.Context) error {
 }
 
 func (a *streamAttachment) Kill(ctx context.Context) error {
-	return translateError(a.Stream.Kill(ctx))
+	err := a.Stream.Kill(ctx)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrClosed) && !errors.Is(err, base.ErrDisconnected) {
+		return translateError(err)
+	}
+	identity := a.Identity()
+	if killErr := a.provider.client.Kill(ctx, a.Info().ID, &identity); killErr != nil {
+		return translateError(killErr)
+	}
+	return nil
 }
 
 func (a *streamAttachment) Close() error {

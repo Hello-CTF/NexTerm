@@ -10,6 +10,7 @@ import (
 	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
+	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -19,6 +20,9 @@ func main() {
 }
 
 func run(args []string) int {
+	if len(args) > 0 && args[0] == supervisor.HelperCommand {
+		return supervisor.RunHelperCLI(args[1:])
+	}
 	invocation, err := core.ParseCLI(args, core.CommandDesktop, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
@@ -84,10 +88,11 @@ func run(args []string) int {
 			Streams: streams,
 			Modules: desktopSmokeModules,
 		},
-		DataDir:         paths.DataDir,
-		Desktop:         true,
-		DesktopSmoke:    desktopSmokeEnabled(),
-		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
+		DataDir:                 paths.DataDir,
+		Desktop:                 true,
+		DesktopSmoke:            desktopSmokeEnabled(),
+		DesktopSupervisorHelper: !desktopSmokeEnabled(),
+		ForwardPlatform:         os.Getenv("NEXTERM_PLATFORM"),
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"path/filepath"
 	"sync"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
@@ -19,10 +18,7 @@ type Client struct {
 }
 
 func NewClient(socketPath string) *Client {
-	if absolute, err := filepath.Abs(socketPath); err == nil {
-		socketPath = absolute
-	}
-	return &Client{socketPath: socketPath}
+	return &Client{socketPath: endpointPath(socketPath)}
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
@@ -151,7 +147,7 @@ func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
 }
 
 func (c *Client) dial(ctx context.Context) (*clientConn, error) {
-	netConn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socketPath)
+	netConn, err := dialSocket(ctx, c.socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: dial supervisor: %v", ErrUnavailable, err)
 	}
@@ -409,6 +405,8 @@ func (s *Stream) Close() error {
 		s.mu.Lock()
 		s.userClosed = true
 		s.mu.Unlock()
+		s.reqMu.Lock()
+		defer s.reqMu.Unlock()
 		s.writeMu.Lock()
 		_ = writeFrame(s.conn.conn, frameDetach, []byte("{}"))
 		s.writeMu.Unlock()
