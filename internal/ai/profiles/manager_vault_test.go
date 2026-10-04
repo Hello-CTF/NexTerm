@@ -565,7 +565,7 @@ func TestMigrationScrubBusyWithHeldReader(t *testing.T) {
 	if !strings.Contains(stored, "busy-token-xyz") {
 		t.Fatalf("blocked migration write must leave the plaintext row untouched, got %s", stored)
 	}
-	requireScrubPending(t, database, false)
+	requireScrubPending(t, database, true)
 	requireFileTokenPresent(t, path+"-wal", "busy-token-xyz")
 
 	release()
@@ -691,7 +691,7 @@ func TestBusyMarkerWriteCannotBeFollowedByUnscrubbedLegacyDelete(t *testing.T) {
 	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
 		t.Fatal("busy marker write must abort the legacy delete")
 	}
-	requireScrubPending(t, database, false)
+	requireScrubPending(t, database, true)
 	requireFileTokenPresent(t, path+"-wal", "leftover-token-xyz")
 
 	release()
@@ -952,6 +952,7 @@ func TestScrubMarkerWithoutWritesRecovers(t *testing.T) {
 type hookScrubStore struct {
 	*store.Store
 	beforeScrub func()
+	afterScrub  func()
 }
 
 func (s *hookScrubStore) ScrubFreeSpace(ctx context.Context) error {
@@ -960,7 +961,13 @@ func (s *hookScrubStore) ScrubFreeSpace(ctx context.Context) error {
 		s.beforeScrub = nil
 		hook()
 	}
-	return s.Store.ScrubFreeSpace(ctx)
+	err := s.Store.ScrubFreeSpace(ctx)
+	if s.afterScrub != nil {
+		hook := s.afterScrub
+		s.afterScrub = nil
+		hook()
+	}
+	return err
 }
 
 func TestMalformedRowWithKeyIsReplacedAndScrubbed(t *testing.T) {
@@ -1169,4 +1176,135 @@ func TestConcurrentPlaintextWriteKeepsPendingAndSelfHeals(t *testing.T) {
 		t.Fatal(err)
 	}
 	scanFileBytes(t, path, "rogue-plaintext-token-xyz")
+}
+
+func TestDirectPlaintextOverwrittenByStaleManagerCannotLeaveRemnants(t *testing.T) {
+	ctx := context.Background()
+	path, database, _ := openFileVaultStore(t)
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "first", "sk-first")
+	direct := `{"version":1,"profiles":[{"id":"rogue","name":"rogue","baseUrl":"https://rogue.test/v1","apiKey":"r5-direct-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"rogue"}`
+	if err := database.SettingSet(ctx, profiles.SettingKey, direct); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database, true)
+	requireFileTokenPresent(t, path+"-wal", "r5-direct-token-xyz")
+
+	second := profiles.DefaultProfile()
+	second.Name = "second"
+	second.BaseURL = "https://ai.example/v1"
+	second.APIKey = "sk-second"
+	second.Model = "model-b"
+	if _, err := manager.Save(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database, false)
+	stored := storedSetting(t, database, profiles.SettingKey)
+	if strings.Contains(stored, "r5-direct-token-xyz") || strings.Contains(stored, "sk-second") {
+		t.Fatalf("stale save must persist only envelopes: %s", stored)
+	}
+	scanFileBytes(t, path, "r5-direct-token-xyz")
+	scanFileBytes(t, path+"-wal", "r5-direct-token-xyz")
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, database, false)
+	scanFileBytes(t, path, "r5-direct-token-xyz")
+	scanFileBytes(t, path+"-wal", "r5-direct-token-xyz")
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "r5-direct-token-xyz")
+}
+
+func TestPostScrubPlaintextThenCleanKeepsPending(t *testing.T) {
+	ctx := context.Background()
+	path, base, _ := openFileVaultStore(t)
+	database := &hookScrubStore{Store: base}
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	clean, _, err := base.SettingGet(ctx, profiles.SettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.afterScrub = func() {
+		plaintext := `{"version":1,"profiles":[{"id":"rogue","name":"rogue","baseUrl":"https://rogue.test/v1","apiKey":"r5-hidden-token-xyz","model":"m","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}],"activeId":"rogue"}`
+		if err := base.SettingSet(ctx, profiles.SettingKey, plaintext); err != nil {
+			t.Error(err)
+		}
+		if err := base.SettingSet(ctx, profiles.SettingKey, clean); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, true)
+	stored := storedSetting(t, base, profiles.SettingKey)
+	if strings.Contains(stored, "r5-hidden-token-xyz") {
+		t.Fatalf("final value must be the clean write-back: %s", stored)
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, false)
+	scanFileBytes(t, path, "r5-hidden-token-xyz")
+	scanFileBytes(t, path+"-wal", "r5-hidden-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "r5-hidden-token-xyz")
+}
+
+func TestPostScrubLegacyWriteThenDeleteKeepsPending(t *testing.T) {
+	ctx := context.Background()
+	path, base, _ := openFileVaultStore(t)
+	database := &hookScrubStore{Store: base}
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveKeyedProfile(t, manager, "steady", "sk-steady")
+	if err := base.SettingSet(ctx, profiles.ScrubPendingSetting, "1"); err != nil {
+		t.Fatal(err)
+	}
+	database.afterScrub = func() {
+		legacy := `{"baseUrl":"https://rogue.test/v1","apiKey":"r5-legacy-token-xyz","model":"rogue","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+		if err := base.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+			t.Error(err)
+		}
+		if err := base.SettingDelete(ctx, profiles.LegacySettingKey); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, true)
+	if _, found, err := base.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("legacy row must stay deleted: found=%v err=%v", found, err)
+	}
+
+	if err := manager.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	requireScrubPending(t, base, false)
+	scanFileBytes(t, path, "r5-legacy-token-xyz")
+	scanFileBytes(t, path+"-wal", "r5-legacy-token-xyz")
+	if err := base.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scanFileBytes(t, path, "r5-legacy-token-xyz")
 }

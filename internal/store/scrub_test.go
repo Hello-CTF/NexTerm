@@ -179,3 +179,118 @@ func TestSettingTxCommitAndRollback(t *testing.T) {
 		t.Fatalf("expected injected error, got %v", err)
 	}
 }
+
+func requireAIPending(t *testing.T, database *Store, want bool) {
+	t.Helper()
+	raw, found, err := database.SettingGet(context.Background(), AIScrubPendingSettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want && (!found || raw == "") {
+		t.Fatal("AI scrub pending marker must be set")
+	}
+	if !want && found && raw != "" {
+		t.Fatal("AI scrub pending marker must be absent")
+	}
+}
+
+func requireAIGeneration(t *testing.T, database *Store, want int64) {
+	t.Helper()
+	got, err := database.AISettingsGeneration(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("generation = %d, want %d", got, want)
+	}
+}
+
+func TestAISettingWritePathsMarkPendingAndGeneration(t *testing.T) {
+	ctx := context.Background()
+	plaintext := `{"version":1,"profiles":[{"id":"p1","apiKey":"direct-token","model":"m"}],"activeId":"p1"}`
+	envelope := `{"version":1,"profiles":[{"id":"p1","apiKey":"` + SecretEnvelopePrefix + `abc","model":"m"}],"activeId":"p1"}`
+	keyedLegacy := `{"baseUrl":"https://a.test/v1","apiKey":"legacy-token","model":"m"}`
+	for _, tc := range []struct {
+		name       string
+		write      func(t *testing.T, database *Store)
+		pending    bool
+		generation int64
+	}{
+		{"SettingSet plaintext", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, AIProfilesSettingKey, plaintext); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 1},
+		{"SettingSet envelope over plaintext", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, AIProfilesSettingKey, plaintext); err != nil {
+				t.Fatal(err)
+			}
+			if err := database.SettingSet(ctx, AIProfilesSettingKey, envelope); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 2},
+		{"SettingSet steady envelope", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, AIProfilesSettingKey, envelope); err != nil {
+				t.Fatal(err)
+			}
+		}, false, 1},
+		{"SettingSet corrupted", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, AIProfilesSettingKey, `{"profiles":[{"apiKey":"broken"`); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 1},
+		{"SettingSetMany keyed legacy", func(t *testing.T, database *Store) {
+			if err := database.SettingSetMany(ctx, map[string]string{AILegacySettingKey: keyedLegacy}); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 1},
+		{"SettingSetManyDelete keyed legacy", func(t *testing.T, database *Store) {
+			if err := database.SettingSetMany(ctx, map[string]string{AILegacySettingKey: keyedLegacy}); err != nil {
+				t.Fatal(err)
+			}
+			if err := database.SettingSetManyDelete(ctx, map[string]string{AIProfilesSettingKey: envelope}, AILegacySettingKey); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 2},
+		{"SettingDelete keyed legacy", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, AILegacySettingKey, keyedLegacy); err != nil {
+				t.Fatal(err)
+			}
+			if err := database.SettingDelete(ctx, AILegacySettingKey); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 2},
+		{"SettingDelete plaintext profiles", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, AIProfilesSettingKey, plaintext); err != nil {
+				t.Fatal(err)
+			}
+			if err := database.SettingDelete(ctx, AIProfilesSettingKey); err != nil {
+				t.Fatal(err)
+			}
+		}, true, 2},
+		{"SettingSet unrelated key", func(t *testing.T, database *Store) {
+			if err := database.SettingSet(ctx, "vault.mode", "master"); err != nil {
+				t.Fatal(err)
+			}
+		}, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database := testStore(t)
+			database.SetSecretProtector(stubProtector{})
+			tc.write(t, database)
+			requireAIPending(t, database, tc.pending)
+			requireAIGeneration(t, database, tc.generation)
+		})
+	}
+}
+
+func TestAISettingSteadyWritesDoNotVacuum(t *testing.T) {
+	ctx := context.Background()
+	database := testStore(t)
+	database.SetSecretProtector(stubProtector{})
+	envelope := `{"version":1,"profiles":[{"id":"p1","apiKey":"` + SecretEnvelopePrefix + `abc","model":"m"}],"activeId":"p1"}`
+	if err := database.SettingSet(ctx, AIProfilesSettingKey, envelope); err != nil {
+		t.Fatal(err)
+	}
+	requireAIPending(t, database, false)
+}
