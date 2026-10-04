@@ -88,6 +88,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
     path: optStr(raw.path),
     closable: boolOr(raw.closable, true),
     exited: raw.exited === true ? true : undefined,
+    renamedByUser: raw.renamedByUser === true ? true : undefined,
   };
 }
 

@@ -175,15 +175,33 @@ describe("SettingsView 响应式结构", () => {
   it("凭据保护开关整行是 label，点文字即可展开启用表单", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    const checkbox = mounted.container.querySelector<HTMLInputElement>(
-      'section input[type="checkbox"]',
+    const label = [...mounted.container.querySelectorAll("label")].find((l) =>
+      l.textContent?.includes("用密码保护凭据"),
     );
-    expect(checkbox).toBeTruthy();
-    const label = checkbox!.closest("label");
     expect(label).toBeTruthy();
+    expect(label!.querySelector('input[type="checkbox"]')).toBeTruthy();
     click(label!);
     await flush();
     expect(mounted.container.querySelector('input[type="password"]')).toBeTruthy();
+  });
+
+  it("终端 OSC 52 开关默认关闭，显式勾选后才允许远程写剪贴板", async () => {
+    useUi.setState({ terminalOsc52: false });
+    localStorage.clear();
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const label = [...mounted.container.querySelectorAll("label")].find((l) =>
+      l.textContent?.includes("允许远程主机写入剪贴板"),
+    );
+    expect(label).toBeTruthy();
+    const box = label!.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(box).toBeTruthy();
+    expect(box!.checked).toBe(false);
+    click(box!);
+    await flush();
+    expect(useUi.getState().terminalOsc52).toBe(true);
+    expect(localStorage.getItem("nexterm.terminal.v1")).toBe('{"osc52":true}');
+    useUi.setState({ terminalOsc52: false });
   });
 });
 

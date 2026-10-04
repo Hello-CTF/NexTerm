@@ -84,6 +84,9 @@ vi.mock("@xterm/xterm", () => ({
       this.scrollCallback = callback;
       return { dispose: vi.fn() };
     }
+    onTitleChange() {
+      return { dispose: vi.fn() };
+    }
   },
 }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));

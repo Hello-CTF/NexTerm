@@ -12,6 +12,7 @@ import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
+import { createOscStreamFilter } from "./oscStream";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
@@ -84,6 +85,9 @@ export interface XtermViewProps {
   onData?: (data: string) => void;
   onBlocks?: (blocks: CommandBlock[]) => void;
   onHandle?: (h: TerminalHandle) => void;
+  onTitle?: (title: string) => void;
+  onNotification?: (body: string) => void;
+  onClipboard?: (payload: string) => void;
 }
 
 export function XtermView(props: XtermViewProps) {
@@ -98,11 +102,17 @@ export function XtermView(props: XtermViewProps) {
   const onAttachInfoRef = useRef(props.onAttachInfo);
   const onAttachFailedRef = useRef(props.onAttachFailed);
   const onDataRef = useRef(props.onData);
+  const onTitleRef = useRef(props.onTitle);
+  const onNotificationRef = useRef(props.onNotification);
+  const onClipboardRef = useRef(props.onClipboard);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachInfoRef.current = props.onAttachInfo;
   onAttachFailedRef.current = props.onAttachFailed;
   onDataRef.current = props.onData;
+  onTitleRef.current = props.onTitle;
+  onNotificationRef.current = props.onNotification;
+  onClipboardRef.current = props.onClipboard;
 
   const fitIfSized = (afterClaim = false, final = false) => {
     const host = hostRef.current;
@@ -182,8 +192,13 @@ export function XtermView(props: XtermViewProps) {
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
+    const oscFilter = createOscStreamFilter((event) => {
+      if (event.kind === "notification") onNotificationRef.current?.(event.body);
+      else onClipboardRef.current?.(event.payload);
+    });
     const channel = createBinaryChannel((bytes) => {
-      term.write(bytes, updateLinesBelow);
+      const out = oscFilter.push(bytes);
+      if (out.length > 0) term.write(out, updateLinesBelow);
     });
     const applyRemoteDimensions = (cols: number, rows: number) => {
       applyGrid({ cols, rows });
@@ -307,6 +322,7 @@ export function XtermView(props: XtermViewProps) {
     }, 0);
 
     const dataDisposable = term.onData((data) => sendInput(data));
+    const titleDisposable = term.onTitleChange((t) => onTitleRef.current?.(t));
     props.registerSearch?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
@@ -360,6 +376,7 @@ export function XtermView(props: XtermViewProps) {
       ro.disconnect();
       dataDisposable.dispose();
       scrollDisposable.dispose();
+      titleDisposable.dispose();
       blocks.dispose();
       if (kernelTabId) {
         void terminalApi.detach(kernelTabId, channelIdOf(channel)).catch(() => undefined);
