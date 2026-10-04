@@ -234,7 +234,15 @@ func (r *Runner) initializeEino(current *job) error {
 	if contextWindow == 0 {
 		contextWindow = 32768
 	}
+	runtime := &einoRuntime{contextWindow: contextWindow}
+	compaction := newCompactionHandler(chatModel, contextWindow, func() {
+		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
+	})
 	messages := historyMessages(rows, current.id)
+	messages, err = compaction.compactHistory(current.ctx, messages)
+	if err != nil {
+		return err
+	}
 	if r.config.Context != nil {
 		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
 		if bundle.Volatile != "" {
@@ -260,7 +268,7 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	einoTools = append(einoTools, memoryTools...)
-	runtime := &einoRuntime{input: messages, contextWindow: contextWindow}
+	runtime.input = messages
 	instruction := systemPrompt()
 	returnDirectly := map[string]bool{}
 	if current.args.PlanMode {
@@ -278,14 +286,10 @@ func (r *Runner) initializeEino(current *job) error {
 				pending = append(pending, Event{Type: "steered", Text: steered.Content})
 			}
 			pending = append(pending, statusEvent("thinking", runtime.currentTurn()))
-			messages, compacted, err := fitMessageBudget(state.Messages, runtime.contextWindow)
-			if compacted {
-				pending = append(pending, statusEvent("compacting", runtime.currentTurn()))
-			}
 			current.queueEmits(pending...)
-			state.Messages = messages
-			return err
+			return nil
 		}}},
+		Handlers: []adk.ChatModelAgentMiddleware{compaction},
 	})
 	if err != nil {
 		return err
@@ -635,6 +639,7 @@ func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Mess
 	if window == 0 {
 		return messages, false, nil
 	}
+	messages = append([]*schema.Message(nil), messages...)
 	limit := int(window * 3)
 	compacted := false
 	for estimatedMessages(messages) > limit {
