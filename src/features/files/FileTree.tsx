@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, terminalApi } from "../../ipc/commands";
@@ -11,6 +11,7 @@ import {
   promptText,
 } from "../../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import {
   cdCommandFor,
@@ -83,7 +84,13 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const crumbRef = useRef<HTMLDivElement>(null);
   const fileOps = useFileOps(sessionId);
+
+  useEffect(() => {
+    const el = crumbRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [root, editing]);
 
   const beginEdit = () => {
     setDraft(root);
@@ -344,13 +351,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
   const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
 
-  const openRowMenu = (
-    e: ReactMouseEvent<HTMLDivElement>,
-    entry: FileEntryDto,
-    listKey: string,
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const openRowMenuAt = (entry: FileEntryDto, listKey: string, x: number, y: number) => {
     setSelected(entry.path);
     const isDir = entry.kind === "dir";
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? root);
@@ -444,7 +445,17 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         onSelect: () => void remove(entry.path),
       },
     );
-    setMenu({ x: e.clientX, y: e.clientY, title: entry.path, items });
+    setMenu({ x, y, title: entry.path, items });
+  };
+
+  const openRowMenu = (
+    e: ReactMouseEvent<HTMLDivElement>,
+    entry: FileEntryDto,
+    listKey: string,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openRowMenuAt(entry, listKey, e.clientX, e.clientY);
   };
 
   if (!leftOpen) return null;
@@ -458,7 +469,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
       style={{ width: leftWidth }}
     >
-      <div className="flex h-[34px] shrink-0 items-center gap-0.5 px-2">
+      <div className="flex h-[34px] shrink-0 items-center gap-0.5 overflow-x-auto px-2">
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
           文件
         </span>
@@ -530,7 +541,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
             placeholder="输入路径后回车（支持 ~ 与 C:/）"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !isImeKeyEvent(e)) {
                 e.preventDefault();
                 void commitEdit();
               } else if (e.key === "Escape") {
@@ -542,6 +553,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           />
         ) : (
           <div
+            ref={crumbRef}
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
             onClick={(e) => {
               if (e.target === e.currentTarget) beginEdit();
@@ -679,7 +691,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               )}
               <Icon size={13} className={`shrink-0 ${tone}`} />
               <span className="min-w-0 flex-1 truncate text-[12.5px]">{entry.name}</span>
-              <span className="nx-row-actions">
+              <span className="nx-row-actions [@media(pointer:coarse)]:flex">
                 {!isDir && (
                   <button
                     className="nx-icon-btn nx-icon-btn-sm"
@@ -703,6 +715,18 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                   }}
                 >
                   <IconTrash size={11} />
+                </button>
+                <button
+                  className="nx-icon-btn nx-icon-btn-sm"
+                  title={`更多操作 ${entry.name}`}
+                  aria-label={`更多操作 ${entry.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openRowMenuAt(entry, dir, r.left, r.bottom);
+                  }}
+                >
+                  ⋯
                 </button>
               </span>
             </div>

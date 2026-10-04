@@ -6,8 +6,16 @@ import { openCredentialsTab, openCredentialsViewTab, useCredentialsTabId } from 
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
+import { workspaceViewport } from "../terminal/workspaceLayout";
 import { describeError } from "../../ui/errorText";
 import { IconCode, IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
+
+function closeOverlayDockAfterNav() {
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  if (workspaceViewport(window.innerWidth, coarse).overlaySidebars) {
+    useUi.getState().setLeftOpen(false);
+  }
+}
 
 export function CredentialsSidebar() {
   const { leftOpen, leftWidth } = useUi();
@@ -161,7 +169,10 @@ export function CredentialsSidebar() {
                 key={c.id}
                 className={`nx-row w-full text-left ${sel ? "is-selected" : ""}`}
                 title={`${c.name} · ${meta.label}`}
-                onClick={() => openCredentialsTab(c.id)}
+                onClick={() => {
+                  openCredentialsTab(c.id);
+                  closeOverlayDockAfterNav();
+                }}
               >
                 <span
                   className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${meta.bg} ${meta.tone}`}
@@ -189,8 +200,10 @@ export function CredentialsSidebar() {
       <div className="shrink-0 border-t border-neutral-800/60 px-2.5 py-2">
         {all.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
-            <span>{all.length} 条凭据</span>
-            {unused > 0 && <span className="text-[var(--nx-fg-warning)]">{unused} 条未被使用</span>}
+            <span className="whitespace-nowrap">{all.length} 条凭据</span>
+            {unused > 0 && (
+              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} 条未被使用</span>
+            )}
             <div className="nx-spacer" />
             <span className="truncate">{protectionOn ? (locked ? "已锁定" : "已解锁") : "未启用密码保护"}</span>
           </div>
@@ -202,14 +215,20 @@ export function CredentialsSidebar() {
             <button
               className="nx-segment-item"
               title="以 ssh config 风格文本查看"
-              onClick={() => openCredentialsViewTab("text")}
+              onClick={() => {
+                openCredentialsViewTab("text");
+                closeOverlayDockAfterNav();
+              }}
             >
               文本
             </button>
             <button
               className="nx-segment-item"
               title="以 JSON 查看"
-              onClick={() => openCredentialsViewTab("json")}
+              onClick={() => {
+                openCredentialsViewTab("json");
+                closeOverlayDockAfterNav();
+              }}
             >
               JSON
             </button>

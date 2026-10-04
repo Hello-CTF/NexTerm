@@ -358,14 +358,14 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
         <span className="nx-divider-v" />
 
         <button
-          className={`nx-btn nx-btn-sm ${dirty ? "nx-btn-primary" : "nx-btn-ghost"}`}
+          className={`nx-btn nx-btn-sm max-[560px]:order-first ${dirty ? "nx-btn-primary" : "nx-btn-ghost"}`}
           disabled={!dirty || saving}
           onClick={() => void save()}
           title="保存（远端自动留一份 .nexterm-bak 备份）"
         >
           <IconSave size={13} />
           {saving ? "保存中…" : "保存"}
-          <span className="nx-kbd border-white/25 text-white/70">Ctrl S</span>
+          <span className="nx-kbd border-white/25 text-white/70 max-[560px]:hidden">Ctrl S</span>
         </button>
         {onClose && (
           <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器">
@@ -375,7 +375,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       </div>
 
       {meta && (
-        <div className="flex h-[22px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 text-[10.5px] text-neutral-500">
+        <div className="flex h-[22px] shrink-0 items-center gap-2 overflow-hidden border-b border-neutral-800/60 px-3 text-[10.5px] text-neutral-500">
           <IconLocate size={10} />
           <span>{(meta.size / 1024).toFixed(1)} KB</span>
           <span className="text-neutral-700">|</span>
@@ -383,7 +383,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
           <span className="text-neutral-700">|</span>
           <span>{eol}</span>
           <div className="nx-spacer" />
-          <span>保存前自动备份为 .nexterm-bak</span>
+          <span className="max-[560px]:hidden">保存前自动备份为 .nexterm-bak</span>
         </div>
       )}
 

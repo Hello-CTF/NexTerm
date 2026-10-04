@@ -50,10 +50,10 @@ export function CredentialsView({
   return (
     <div className="flex h-full flex-col bg-neutral-900">
       <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3">
-        <IconCode size={14} className="text-neutral-400" />
-        <span className="text-[13px] font-semibold text-neutral-100">凭据视图</span>
-        <span className="nx-badge">只读</span>
-        <div className="nx-segment ml-1">
+        <IconCode size={14} className="shrink-0 text-neutral-400" />
+        <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">凭据视图</span>
+        <span className="nx-badge hidden min-[400px]:inline-flex">只读</span>
+        <div className="nx-segment ml-1 shrink-0">
           <button
             className={`nx-segment-item ${view === "text" ? "is-active" : ""}`}
             onClick={() => onChange("text")}
@@ -75,10 +75,10 @@ export function CredentialsView({
             ? "加载中…"
             : `${credentials.length} 条凭据 · ${list.filter((a) => SSH_KINDS.has(a.kind)).length} 台可 SSH 主机`}
         </span>
-        <button className="nx-btn nx-btn-sm" title="重新读取" onClick={refresh}>
+        <button className="nx-btn nx-btn-sm shrink-0" title="重新读取" onClick={refresh}>
           <IconRefresh size={12} />
         </button>
-        <button className="nx-btn nx-btn-sm" onClick={() => void copy()}>
+        <button className="nx-btn nx-btn-sm shrink-0" onClick={() => void copy()}>
           <IconCopy size={12} />
           复制
         </button>

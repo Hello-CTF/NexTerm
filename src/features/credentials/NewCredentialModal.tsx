@@ -115,7 +115,7 @@ export function NewCredentialModal({
     <div className="nx-overlay" onClick={onClose}>
       <div
         ref={modalRef}
-        className="nx-modal max-w-[440px]"
+        className="nx-modal flex max-w-[440px] flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -132,10 +132,10 @@ export function NewCredentialModal({
           trapOverlayTab(e, modalRef.current);
         }}
       >
-        <div className="nx-modal-header">
+        <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">新建凭据</span>
         </div>
-        <div className="nx-modal-body">
+        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
             <span className="nx-label">类型</span>
             <div className="grid grid-cols-3 gap-1.5">
@@ -154,7 +154,7 @@ export function NewCredentialModal({
                     onClick={() => setKind(k)}
                   >
                     <span
-                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded ${meta.bg} ${meta.tone}`}
+                      className={`hidden min-[400px]:flex h-6 w-6 shrink-0 items-center justify-center rounded ${meta.bg} ${meta.tone}`}
                     >
                       <meta.Icon size={13} />
                     </span>
@@ -309,7 +309,7 @@ export function NewCredentialModal({
             </div>
           )}
         </div>
-        <div className="nx-modal-footer">
+        <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
             取消
           </button>

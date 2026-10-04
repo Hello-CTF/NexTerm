@@ -41,30 +41,30 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
   return (
     <div className="flex h-full flex-col bg-neutral-900">
       <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3">
-        <IconKey size={14} className="text-neutral-400" />
-        <span className="text-[13px] font-semibold text-neutral-100">凭据</span>
+        <IconKey size={14} className="shrink-0 text-neutral-400" />
+        <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">凭据</span>
         {st &&
           (protectionOn ? (
             locked ? (
-              <span className="nx-badge nx-badge-amber">
+              <span className="nx-badge nx-badge-amber hidden sm:inline-flex">
                 <IconLock size={11} /> 已锁定
               </span>
             ) : (
-              <span className="nx-badge nx-badge-green">已解锁</span>
+              <span className="nx-badge nx-badge-green hidden sm:inline-flex">已解锁</span>
             )
           ) : (
-            <span className="nx-badge">未启用密码保护</span>
+            <span className="nx-badge hidden sm:inline-flex">未启用密码保护</span>
           ))}
         <div className="nx-spacer" />
         <button
-          className="nx-btn nx-btn-outline nx-btn-sm"
+          className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
           title="以文本 / JSON 查看全部凭据"
           onClick={() => openCredentialsViewTab("text")}
         >
           <IconCode size={12} />
           凭据视图
         </button>
-        <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setCreating(true)}>
+        <button className="nx-btn nx-btn-primary nx-btn-sm shrink-0" onClick={() => setCreating(true)}>
           <IconPlus size={12} />
           新建凭据
         </button>
