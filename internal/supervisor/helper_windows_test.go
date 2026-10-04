@@ -389,7 +389,7 @@ func TestSpawnDetachedChildWindows(t *testing.T) {
 
 func killHelperProcessesWindows(t *testing.T, stateDir string) {
 	t.Helper()
-	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { taskkill /F /PID $_.ProcessId }", HelperCommand, stateDir)
+	script := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate }", HelperCommand, stateDir)
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", script)
 	_ = cmd.Run()
 	waitScript := fmt.Sprintf("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%%s --state-dir %s%%'\" | Where-Object { $_.ProcessId -ne $PID } | Measure-Object | Select-Object -ExpandProperty Count", HelperCommand, stateDir)
