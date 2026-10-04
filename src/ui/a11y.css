@@ -33,7 +33,8 @@
 .nx-menu-item:hover:not(:disabled) .nx-menu-hint,
 .nx-menu-item:hover:not(:disabled) .nx-menu-accel,
 .nx-menu-item:focus-visible .nx-menu-hint,
-.nx-menu-item:focus-visible .nx-menu-accel {
+.nx-menu-item:focus-visible .nx-menu-accel,
+.nx-row.is-selected .text-neutral-500 {
   color: var(--nx-fg-on-tint);
 }
 
