@@ -444,6 +444,9 @@ func (c *channel) ack(sequence uint64) bool {
 	} else {
 		drainCallback = nil
 	}
+	if drainCallback != nil {
+		drainCallback(c.id, queuedBytes)
+	}
 	drained := c.draining && c.pendingLocked() == 0
 	if drained {
 		c.closeLocked()
@@ -451,9 +454,6 @@ func (c *channel) ack(sequence uint64) bool {
 		c.signalLocked()
 	}
 	c.mu.Unlock()
-	if drainCallback != nil {
-		drainCallback(c.id, queuedBytes)
-	}
 	return drained
 }
 
@@ -499,6 +499,9 @@ func (c *channel) discardPending() bool {
 	c.queuedBytes = 0
 	c.inFlight = 0
 	c.backpressured = false
+	if drainCallback != nil {
+		drainCallback(c.id, 0)
+	}
 	finalized := c.draining
 	if c.draining {
 		c.closeLocked()
@@ -506,9 +509,6 @@ func (c *channel) discardPending() bool {
 		c.signalLocked()
 	}
 	c.mu.Unlock()
-	if drainCallback != nil {
-		drainCallback(c.id, 0)
-	}
 	return finalized
 }
 

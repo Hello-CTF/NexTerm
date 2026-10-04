@@ -130,3 +130,113 @@ func TestBackpressureDrainNotificationPairsWithEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBackpressureDrainCallbackPrecedesProducerWake(t *testing.T) {
+	drainStarted := make(chan struct{}, 1)
+	drainRelease := make(chan struct{})
+	entries := make(chan int, 4)
+	drained := make(chan int, 1)
+	h := New(Options{
+		QueueFrames:    4,
+		OnBackpressure: func(_ string, queuedBytes int) { entries <- queuedBytes },
+		OnDrain: func(_ string, queuedBytes int) {
+			drainStarted <- struct{}{}
+			<-drainRelease
+			drained <- queuedBytes
+		},
+	})
+	ctx := context.Background()
+	for range 4 {
+		if err := h.SendBinary(ctx, "terminal", []byte("12345")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked := make(chan error, 1)
+	go func() { blocked <- h.SendBinary(ctx, "terminal", []byte("12345")) }()
+	select {
+	case <-entries:
+	case <-time.After(time.Second):
+		t.Fatal("missing backpressure entry")
+	}
+	receiver, err := h.Bind("terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	receiveFrame(t, receiver)
+	if err := <-blocked; err != nil {
+		t.Fatal(err)
+	}
+	acksDone := make(chan error, 1)
+	go func() {
+		for i := 0; i < 3; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			frame, err := receiver.Next(ctx)
+			cancel()
+			if err != nil {
+				acksDone <- err
+				return
+			}
+			if err := receiver.Ack(frame.Sequence); err != nil {
+				acksDone <- err
+				return
+			}
+		}
+		acksDone <- nil
+	}()
+	select {
+	case <-drainStarted:
+	case <-time.After(time.Second):
+		t.Fatal("drain callback did not start")
+	}
+
+	sent := make(chan error, 1)
+	go func() { sent <- h.SendBinary(ctx, "terminal", []byte("12345")) }()
+	select {
+	case <-sent:
+		t.Fatal("producer completed while the drain callback was still blocked")
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case <-entries:
+		t.Fatal("new episode entered before the old drain completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(drainRelease)
+	if err := <-acksDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case queuedBytes := <-drained:
+		if queuedBytes != 5 {
+			t.Fatalf("drain queued bytes = %d, want remaining single frame", queuedBytes)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("drain callback did not complete")
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := h.SendBinary(ctx, "terminal", []byte("12345")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked = make(chan error, 1)
+	go func() { blocked <- h.SendBinary(ctx, "terminal", []byte("12345")) }()
+	select {
+	case <-entries:
+	case <-time.After(time.Second):
+		t.Fatal("new episode did not enter after the old drain completed")
+	}
+	select {
+	case <-drained:
+		t.Fatal("second drain fired without a new drain transition")
+	case <-time.After(50 * time.Millisecond):
+	}
+	receiveFrame(t, receiver)
+	if err := <-blocked; err != nil {
+		t.Fatal(err)
+	}
+}
