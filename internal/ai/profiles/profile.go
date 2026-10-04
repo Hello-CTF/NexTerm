@@ -19,6 +19,21 @@ type Profile struct {
 	ContextWindow uint64  `json:"contextWindow"`
 	Proxy         *string `json:"proxy"`
 	Stream        bool    `json:"stream"`
+
+	keyEnvelope string
+}
+
+const MaskedAPIKey = "••••••••••••"
+
+func MaskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	return MaskedAPIKey
+}
+
+func (p Profile) hasKeyMaterial() bool {
+	return p.APIKey != "" || p.keyEnvelope != ""
 }
 
 func DefaultProfile() Profile {

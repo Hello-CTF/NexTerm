@@ -102,6 +102,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		}
 		v.mu.Unlock()
 	}
+	db.SetSecretProtector(v)
 	return v
 }
 
