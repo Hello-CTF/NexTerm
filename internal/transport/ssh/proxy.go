@@ -17,8 +17,12 @@ import (
 
 const maxProxyResponseBytes = 64 << 10
 
-func dialSSH(ctx context.Context, proxyURL, host string, port int) (net.Conn, error) {
+func dialSSH(ctx context.Context, cfg Config, host string, port int) (net.Conn, error) {
 	target := endpointString(host, port)
+	if cfg.ProxyCommand != "" {
+		return dialProxyCommand(ctx, cfg.ProxyCommand, host, port)
+	}
+	proxyURL := cfg.ProxyURL
 	dialer := &net.Dialer{KeepAlive: 30 * time.Second}
 	if proxyURL == "" {
 		return dialTCP(ctx, dialer, target)

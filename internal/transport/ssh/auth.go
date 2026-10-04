@@ -16,6 +16,8 @@ func authentication(ctx context.Context, cfg AuthConfig) (ssh.AuthMethod, []io.C
 	switch cfg.Method {
 	case AuthPassword:
 		return ssh.Password(cfg.Password), nil, nil
+	case AuthKeyboardInteractive:
+		return keyboardInteractive(cfg.Password), nil, nil
 	case AuthKey:
 		key, err := privateKey(cfg)
 		if err != nil {
@@ -41,6 +43,16 @@ func authentication(ctx context.Context, cfg AuthConfig) (ssh.AuthMethod, []io.C
 	}
 }
 
+func keyboardInteractive(password string) ssh.AuthMethod {
+	return ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for index := range questions {
+			answers[index] = password
+		}
+		return answers, nil
+	})
+}
+
 func privateKey(cfg AuthConfig) (ssh.Signer, error) {
 	pem := cfg.KeyPEM
 	if len(pem) == 0 {
@@ -53,16 +65,45 @@ func privateKey(cfg AuthConfig) (ssh.Signer, error) {
 			return nil, fmt.Errorf("read SSH private key: %w", err)
 		}
 	}
+	var signer ssh.Signer
+	var err error
 	if cfg.Passphrase != "" {
-		key, err := ssh.ParsePrivateKeyWithPassphrase(pem, []byte(cfg.Passphrase))
+		signer, err = ssh.ParsePrivateKeyWithPassphrase(pem, []byte(cfg.Passphrase))
 		if err != nil {
 			return nil, fmt.Errorf("parse encrypted SSH private key: %w", err)
 		}
-		return key, nil
+	} else {
+		signer, err = ssh.ParsePrivateKey(pem)
+		if err != nil {
+			return nil, fmt.Errorf("parse SSH private key: %w", err)
+		}
 	}
-	key, err := ssh.ParsePrivateKey(pem)
+	return withCertificate(signer, cfg)
+}
+
+func withCertificate(signer ssh.Signer, cfg AuthConfig) (ssh.Signer, error) {
+	certPEM := cfg.CertPEM
+	if len(certPEM) == 0 {
+		if strings.TrimSpace(cfg.CertPath) == "" {
+			return signer, nil
+		}
+		var err error
+		certPEM, err = os.ReadFile(cfg.CertPath)
+		if err != nil {
+			return nil, fmt.Errorf("read SSH certificate: %w", err)
+		}
+	}
+	public, _, _, _, err := ssh.ParseAuthorizedKey(certPEM)
 	if err != nil {
-		return nil, fmt.Errorf("parse SSH private key: %w", err)
+		return nil, fmt.Errorf("parse SSH certificate: %w", err)
 	}
-	return key, nil
+	cert, ok := public.(*ssh.Certificate)
+	if !ok {
+		return nil, fmt.Errorf("parse SSH certificate: file does not contain an SSH certificate")
+	}
+	certSigner, err := ssh.NewCertSigner(cert, signer)
+	if err != nil {
+		return nil, fmt.Errorf("build SSH certificate signer: %w", err)
+	}
+	return certSigner, nil
 }

@@ -41,7 +41,7 @@ func TestHTTPConnectPreservesBufferedBytesAndAuthentication(t *testing.T) {
 	proxyURL := "http://user:pass@" + listener.Addr().String()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	conn, err := dialSSH(ctx, proxyURL, "example.test", 22)
+	conn, err := dialSSH(ctx, Config{ProxyURL: proxyURL}, "example.test", 22)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestHTTPConnectRejection(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := dialSSH(ctx, "http://"+listener.Addr().String(), "example.test", 22); err == nil || !strings.Contains(err.Error(), "407") {
+	if _, err := dialSSH(ctx, Config{ProxyURL: "http://" + listener.Addr().String()}, "example.test", 22); err == nil || !strings.Contains(err.Error(), "407") {
 		t.Fatalf("rejected CONNECT = %v", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestSOCKS5AuthenticationAndRemoteDNS(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	conn, err := dialSSH(ctx, "socks5://user:pass@"+listener.Addr().String(), "example.test", 22)
+	conn, err := dialSSH(ctx, Config{ProxyURL: "socks5://user:pass@" + listener.Addr().String()}, "example.test", 22)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestDirectDialIgnoresSystemProxyEnvironment(t *testing.T) {
 		}
 	}()
 	host, port := splitAddress(t, listener.Addr().String())
-	conn, err := dialSSH(context.Background(), "", host, port)
+	conn, err := dialSSH(context.Background(), Config{}, host, port)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestDirectDialIgnoresSystemProxyEnvironment(t *testing.T) {
 }
 
 func TestUnsupportedProxyScheme(t *testing.T) {
-	if _, err := dialSSH(context.Background(), "https://proxy.example:8443", "example.test", 22); err == nil || !strings.Contains(err.Error(), "unsupported") {
+	if _, err := dialSSH(context.Background(), Config{ProxyURL: "https://proxy.example:8443"}, "example.test", 22); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("HTTPS proxy = %v", err)
 	}
 }

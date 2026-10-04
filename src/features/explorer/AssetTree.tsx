@@ -794,6 +794,19 @@ export function AssetEditor({
   const [cwd, setCwd] = useState(
     typeof initial?.options?.cwd === "string" ? (initial.options.cwd as string) : "",
   );
+  const [jumpAssetId, setJumpAssetId] = useState(
+    typeof initial?.options?.jumpAssetId === "string" ? (initial.options.jumpAssetId as string) : "",
+  );
+  const [proxyCommand, setProxyCommand] = useState(
+    typeof initial?.options?.proxyCommand === "string" ? (initial.options.proxyCommand as string) : "",
+  );
+  const [forwardAgent, setForwardAgent] = useState(initial?.options?.forwardAgent === true);
+  const [agentSocket, setAgentSocket] = useState(
+    typeof initial?.options?.agentSocket === "string" ? (initial.options.agentSocket as string) : "",
+  );
+  const [certPath, setCertPath] = useState(
+    typeof initial?.options?.certPath === "string" ? (initial.options.certPath as string) : "",
+  );
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -854,6 +867,14 @@ export function AssetEditor({
     queryFn: () => assetApi.groupList(),
     refetchOnWindowFocus: false,
   });
+  const assets = useQuery({
+    queryKey: ["assets"],
+    queryFn: () => assetApi.list(),
+    refetchOnWindowFocus: false,
+  });
+  const jumpCandidates = (assets.data ?? []).filter(
+    (a) => (a.kind === "ssh" || a.kind === "docker") && a.id !== initial?.id,
+  );
 
   const boundCred = credentials.data?.find((c) => c.id === initial?.credId);
   const boundIsVaultKey = boundCred?.kind === "private_key";
@@ -878,7 +899,7 @@ export function AssetEditor({
 
   const isDb = groupKind === "mysql" || groupKind === "redis";
   const keyAuth = authKind === "key";
-  const usesCred = isDb || authKind === "password";
+  const usesCred = isDb || authKind === "password" || authKind === "keyboard-interactive";
   const credKind = "password";
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
@@ -910,6 +931,21 @@ export function AssetEditor({
     inlinePicker.invalidate();
     setKeyPath(next);
     setInlineKeyContent(null);
+  };
+
+  const sshConnectivityOptions = () => {
+    const options: Record<string, unknown> = { ...(initial?.options ?? {}) };
+    const setOrDelete = (key: string, value: string) => {
+      if (value.trim()) options[key] = value.trim();
+      else delete options[key];
+    };
+    setOrDelete("jumpAssetId", jumpAssetId);
+    setOrDelete("proxyCommand", proxyCommand);
+    setOrDelete("agentSocket", agentSocket);
+    setOrDelete("certPath", certPath);
+    if (forwardAgent) options.forwardAgent = true;
+    else delete options.forwardAgent;
+    return options;
   };
 
   const save = async () => {
@@ -996,7 +1032,9 @@ export function AssetEditor({
               ...(shell.trim() ? { shell: shell.trim() } : {}),
               ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
             }
-          : undefined;
+          : groupKind === "ssh" || groupKind === "docker"
+            ? sshConnectivityOptions()
+            : undefined;
       const fields = {
         kind: groupKind,
         name,
@@ -1183,6 +1221,7 @@ export function AssetEditor({
                     onChange={(e) => setAuthKind(e.target.value)}
                   >
                     <option value="password">密码</option>
+                    <option value="keyboard-interactive">键盘交互（密码）</option>
                     <option value="key">私钥文件</option>
                     <option value="agent">SSH Agent</option>
                   </select>
@@ -1396,6 +1435,83 @@ export function AssetEditor({
                   ) : credChoice !== "none" ? (
                     <div className="nx-hint mt-1">↳ 共用凭据 · 改一处，全部生效</div>
                   ) : null}
+                </div>
+              )}
+
+              {(groupKind === "ssh" || groupKind === "docker") && (
+                <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
+                  <div className="nx-form-row">
+                    <label className="nx-label">跳板机</label>
+                    <select
+                      className="nx-select"
+                      value={jumpAssetId}
+                      onChange={(e) => setJumpAssetId(e.target.value)}
+                    >
+                      <option value="">（不使用跳板机）</option>
+                      {jumpCandidates.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}（{a.host}:{a.port}）
+                        </option>
+                      ))}
+                    </select>
+                    <div className="nx-hint mt-1.5">
+                      ↳ 先登录跳板机 SSH，再经它连接本资产；每一跳的主机密钥与凭据各自验证。
+                    </div>
+                  </div>
+
+                  <div className="nx-form-row">
+                    <label className="nx-label">ProxyCommand</label>
+                    <input
+                      className="nx-input font-mono text-[12px]"
+                      value={proxyCommand}
+                      onChange={(e) => setProxyCommand(e.target.value)}
+                      placeholder="nc %h %p"
+                    />
+                    <div className="nx-hint mt-1.5">
+                      ↳ 选填。用外部命令建立连接：%h 主机、%p 端口、%% 字面 %。与代理 URL 互斥。
+                    </div>
+                  </div>
+
+                  <div className="nx-form-row">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12.5px] text-neutral-200">Agent 转发</div>
+                        <p className="nx-hint mt-0.5">
+                          默认关闭；开启后远端会话可使用本机 ssh-agent 里的密钥。
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 shrink-0"
+                        aria-label="Agent 转发"
+                        checked={forwardAgent}
+                        onChange={(e) => setForwardAgent(e.target.checked)}
+                      />
+                    </label>
+                    {forwardAgent && (
+                      <input
+                        className="nx-input font-mono text-[12px] mt-1.5"
+                        value={agentSocket}
+                        onChange={(e) => setAgentSocket(e.target.value)}
+                        placeholder="留空用 $SSH_AUTH_SOCK"
+                      />
+                    )}
+                  </div>
+
+                  {keyAuth && (
+                    <div className="nx-form-row">
+                      <label className="nx-label">SSH 证书</label>
+                      <input
+                        className="nx-input font-mono text-[12px]"
+                        value={certPath}
+                        onChange={(e) => setCertPath(e.target.value)}
+                        placeholder="id_ed25519-cert.pub（可选）"
+                      />
+                      <div className="nx-hint mt-1.5">
+                        ↳ 选填。与私钥配对的证书文件路径；不填则按普通私钥登录。
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>
