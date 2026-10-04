@@ -58,6 +58,9 @@ func ValidateReminderArgs(now time.Time, args SendReminderArgs) (Reminder, error
 		if args.DelayMinutes < 0 {
 			return Reminder{}, invalid("delay_minutes 不能为负数")
 		}
+		if args.DelayMinutes > int64(reminderDelayMax/time.Minute) {
+			return Reminder{}, invalid("delay_minutes 超过 30 天上限（%d 分钟）", int64(reminderDelayMax/time.Minute))
+		}
 		at = now.Add(time.Duration(args.DelayMinutes) * time.Minute)
 	default:
 		return Reminder{}, invalid("必须提供 delay_minutes 或 at 之一")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,25 @@ func TestValidateReminderArgs(t *testing.T) {
 	reminder, err := ValidateReminderArgs(now, SendReminderArgs{Message: "  带空格  ", DelayMinutes: 5})
 	if err != nil || reminder.Message != "带空格" {
 		t.Fatalf("message not trimmed: %+v err=%v", reminder, err)
+	}
+}
+
+func TestValidateReminderArgsRejectsOverflowingDelay(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
+	for _, delay := range []int64{math.MaxInt64, math.MaxInt64 / 2, int64(reminderDelayMax/time.Minute) + 1} {
+		if _, err := ValidateReminderArgs(now, SendReminderArgs{Message: "m", DelayMinutes: delay}); err == nil {
+			t.Errorf("delay_minutes=%d accepted", delay)
+		} else if !strings.Contains(err.Error(), "30 天") {
+			t.Errorf("delay_minutes=%d: err = %v", delay, err)
+		}
+	}
+	boundary, err := ValidateReminderArgs(now, SendReminderArgs{Message: "m", DelayMinutes: int64(reminderDelayMax / time.Minute)})
+	if err != nil {
+		t.Fatalf("30-day boundary rejected: %v", err)
+	}
+	if !boundary.At.Equal(now.Add(reminderDelayMax)) {
+		t.Fatalf("boundary at = %v", boundary.At)
 	}
 }
 

@@ -23,6 +23,7 @@ type harness struct {
 	userWrites [][]byte
 	banners    []string
 	writeAI    func([]byte) error
+	snapshot   func(context.Context, string) (tools.Screen, error)
 }
 
 func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
@@ -30,10 +31,15 @@ func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
 	deps := Dependencies{
 		Model:      func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
 		Permission: func(context.Context) (guard.Config, error) { return guard.Config{Mode: guard.ReadWrite}, nil },
-		Snapshot: func(context.Context, string) (tools.Screen, error) {
+		Snapshot: func(ctx context.Context, tabID string) (tools.Screen, error) {
 			h.mu.Lock()
-			defer h.mu.Unlock()
-			return h.screen, nil
+			custom := h.snapshot
+			screen := h.screen
+			h.mu.Unlock()
+			if custom != nil {
+				return custom(ctx, tabID)
+			}
+			return screen, nil
 		},
 		PollInterval: time.Millisecond,
 	}

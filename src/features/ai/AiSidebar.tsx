@@ -1538,6 +1538,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
                 <IconXCircle size={10} className="shrink-0 text-red-300" />
               )}
               <span className="shrink-0 font-mono text-neutral-400">{tool.name || "tool"}</span>
+              {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">崩溃</span> : null}
               {tool.summary ? (
                 <span className="min-w-0 flex-1 truncate text-neutral-600" title={tool.summary}>
                   {tool.summary}

@@ -21,6 +21,7 @@ export interface SubagentToolEntry {
   name: string;
   status: "running" | "ok" | "error";
   summary?: string;
+  panic?: boolean;
 }
 
 export interface SubagentTimeline {
@@ -527,6 +528,7 @@ export function applyAiEvent(
         const patch = {
           status: (ev.ok ? "ok" : "error") as "ok" | "error",
           summary: (ev.summary as string) ?? "",
+          panic: ev.panic === true,
         };
         const tools = timeline.tools.some((tool) => tool.callId === callId)
           ? timeline.tools.map((tool) => (tool.callId === callId ? { ...tool, ...patch } : tool))
