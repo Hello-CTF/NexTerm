@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * 把 `docs/diagrams/*.svg` 渲染成 `docs/images/*.png`。
+ * 把 `website/diagrams/*.svg` 渲染成 `website/images/*.png`。
  *
  * 为什么不直接把 SVG 塞进 README / 官网：
  *   · README 引用的图与官网共用同一份资产，官网的 Pages 流水线只抓
- *     `docs/images/*.png`（见 .github/workflows/pages.yml），PNG 是两边的公约数；
+ *     `website/images/*.png`（见 .github/workflows/pages.yml），PNG 是两边的公约数；
  *   · 图是**扁平色块 + 文字**，PNG 体积很小，且不会被各家 Markdown 渲染器的
  *     SVG 安全策略（脚本/外链）挡掉。
  *
@@ -27,8 +27,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC_DIR = join(REPO, "docs", "diagrams");
-const OUT_DIR = join(REPO, "docs", "images");
+const SRC_DIR = join(REPO, "website", "diagrams");
+const OUT_DIR = join(REPO, "website", "images");
 
 const CHROME_CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -101,10 +101,10 @@ function main() {
     );
 
     const kb = (statSync(dst).size / 1024).toFixed(1);
-    console.log(`[ok] ${name} -> docs/images/${name.replace(/\.svg$/, ".png")}  ${w * scale}x${h * scale}  ${kb} KB`);
+    console.log(`[ok] ${name} -> website/images/${name.replace(/\.svg$/, ".png")}  ${w * scale}x${h * scale}  ${kb} KB`);
     ok += 1;
   }
-  console.log(`\n${ok} 张 -> docs/images/`);
+  console.log(`\n${ok} 张 -> website/images/`);
 }
 
 main();

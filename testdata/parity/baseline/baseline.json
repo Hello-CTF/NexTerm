@@ -49,7 +49,7 @@
       "duration_seconds": 50.708,
       "started_at": "2026-10-02T12:16:06.856429+00:00",
       "finished_at": "2026-10-02T12:16:57.564256+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log"
+      "log": "testdata/parity/baseline/logs/rust-test-desktop.log"
     },
     {
       "id": "rust-test-server",
@@ -59,7 +59,7 @@
       "duration_seconds": 49.781,
       "started_at": "2026-10-02T12:16:57.564456+00:00",
       "finished_at": "2026-10-02T12:17:47.345738+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/rust-test-server.log"
+      "log": "testdata/parity/baseline/logs/rust-test-server.log"
     },
     {
       "id": "frontend-typecheck",
@@ -69,7 +69,7 @@
       "duration_seconds": 1.558,
       "started_at": "2026-10-02T12:17:47.345961+00:00",
       "finished_at": "2026-10-02T12:17:48.904187+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/frontend-typecheck.log"
+      "log": "testdata/parity/baseline/logs/frontend-typecheck.log"
     },
     {
       "id": "frontend-lint",
@@ -79,7 +79,7 @@
       "duration_seconds": 1.112,
       "started_at": "2026-10-02T12:17:48.904448+00:00",
       "finished_at": "2026-10-02T12:17:50.016626+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/frontend-lint.log"
+      "log": "testdata/parity/baseline/logs/frontend-lint.log"
     },
     {
       "id": "frontend-build",
@@ -89,7 +89,7 @@
       "duration_seconds": 5.822,
       "started_at": "2026-10-02T12:17:50.016863+00:00",
       "finished_at": "2026-10-02T12:17:55.839006+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/frontend-build.log"
+      "log": "testdata/parity/baseline/logs/frontend-build.log"
     },
     {
       "id": "terminal-throughput",
@@ -99,7 +99,7 @@
       "duration_seconds": 67.27,
       "started_at": "2026-10-02T12:17:55.839245+00:00",
       "finished_at": "2026-10-02T12:19:03.109721+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/terminal-throughput.log"
+      "log": "testdata/parity/baseline/logs/terminal-throughput.log"
     },
     {
       "id": "rust-release-desktop",
@@ -109,7 +109,7 @@
       "duration_seconds": 61.268,
       "started_at": "2026-10-02T12:19:03.110009+00:00",
       "finished_at": "2026-10-02T12:20:04.378298+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/rust-release-desktop.log"
+      "log": "testdata/parity/baseline/logs/rust-release-desktop.log"
     },
     {
       "id": "rust-bundle-desktop",
@@ -119,7 +119,7 @@
       "duration_seconds": 118.706,
       "started_at": "2026-10-02T12:20:04.378513+00:00",
       "finished_at": "2026-10-02T12:22:03.084384+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/rust-bundle-desktop.log"
+      "log": "testdata/parity/baseline/logs/rust-bundle-desktop.log"
     },
     {
       "id": "rust-release-server",
@@ -129,7 +129,7 @@
       "duration_seconds": 45.828,
       "started_at": "2026-10-02T12:22:03.084660+00:00",
       "finished_at": "2026-10-02T12:22:48.912838+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/rust-release-server.log"
+      "log": "testdata/parity/baseline/logs/rust-release-server.log"
     },
     {
       "id": "sync-e2e",
@@ -139,7 +139,7 @@
       "duration_seconds": 1.658,
       "started_at": "2026-10-02T12:22:48.913063+00:00",
       "finished_at": "2026-10-02T12:22:50.572115+00:00",
-      "log": "docs/acceptance-rwig/baseline/logs/sync-e2e.log"
+      "log": "testdata/parity/baseline/logs/sync-e2e.log"
     }
   ],
   "coverage_skips": [
@@ -266,37 +266,37 @@
         {
           "test": "vault::keychain::tests::keychain_roundtrip",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:251",
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:251",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "vault::tests::mac_init_dpapi_works_on_first_run",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:269",
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:269",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "vault::tests::mac_load_survives_missing_keychain_item",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:271",
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:271",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "vault::tests::mac_load_unlocks_via_keychain",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:273",
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:273",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "local_pty_keeps_utf8_filenames",
           "reason": "宿主已有 locale [\"zh_CN.UTF-8\"]，本用例只在无 locale 时判得动",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:377",
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:377",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "ssh_pty_pipeline_on_linux_target",
           "reason": "未设置 NEXTERM_SSH_E2E=1，跳过 SSH 实机测试",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:394",
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:394",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         }
       ],
@@ -305,19 +305,19 @@
           "test": "sync::client::tests::live_server_token_is_enough",
           "kind": "product-test",
           "note": "需要真服务端与真令牌，见本测试文档注释",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:177"
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:177"
         },
         {
           "test": "src-tauri/src/ipc_shim.rs - ipc_shim (line 11)",
           "kind": "documentation-example",
           "note": "",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:408"
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:408"
         },
         {
           "test": "src-tauri/nexterm-ipc-macros/src/lib.rs - (line 17)",
           "kind": "documentation-example",
           "note": "",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-desktop.log:415"
+          "evidence": "testdata/parity/baseline/logs/rust-test-desktop.log:415"
         }
       ],
       "executed_passed_excluding_early_return_skips": 273,
@@ -330,37 +330,37 @@
         {
           "test": "vault::keychain::tests::keychain_roundtrip",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:273",
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:273",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "vault::tests::mac_init_dpapi_works_on_first_run",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:291",
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:291",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "vault::tests::mac_load_survives_missing_keychain_item",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:293",
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:293",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "vault::tests::mac_load_unlocks_via_keychain",
           "reason": "未设置 NEXTERM_TEST_KEYCHAIN=1",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:295",
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:295",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "local_pty_keeps_utf8_filenames",
           "reason": "宿主已有 locale [\"zh_CN.UTF-8\"]，本用例只在无 locale 时判得动",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:399",
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:399",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         },
         {
           "test": "ssh_pty_pipeline_on_linux_target",
           "reason": "未设置 NEXTERM_SSH_E2E=1，跳过 SSH 实机测试",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:416",
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:416",
           "runner_outcome": "ok (early return; not counted as an executed pass)"
         }
       ],
@@ -369,19 +369,19 @@
           "test": "sync::client::tests::live_server_token_is_enough",
           "kind": "product-test",
           "note": "需要真服务端与真令牌，见本测试文档注释",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:194"
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:194"
         },
         {
           "test": "src-tauri/src/ipc_shim.rs - ipc_shim (line 11)",
           "kind": "documentation-example",
           "note": "",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:430"
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:430"
         },
         {
           "test": "src-tauri/nexterm-ipc-macros/src/lib.rs - (line 17)",
           "kind": "documentation-example",
           "note": "",
-          "evidence": "docs/acceptance-rwig/baseline/logs/rust-test-server.log:437"
+          "evidence": "testdata/parity/baseline/logs/rust-test-server.log:437"
         }
       ],
       "executed_passed_excluding_early_return_skips": 295,

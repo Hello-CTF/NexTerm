@@ -19,7 +19,7 @@ import urllib.request
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DOCS = ROOT / "docs/acceptance-rwig/baseline"
+BASELINE_DIR = ROOT / "testdata/parity/baseline"
 
 
 def utc_now() -> str:
@@ -272,10 +272,10 @@ def server_smoke(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Go-native IPC/deployment self-consistency checks and explicit coverage/size gates")
     parser.add_argument("--go-root", type=pathlib.Path, default=ROOT)
-    parser.add_argument("--baseline", type=pathlib.Path, default=DOCS / "baseline.json")
-    parser.add_argument("--output", type=pathlib.Path, default=DOCS / "go-selfcheck.json")
-    parser.add_argument("--coverage-output", type=pathlib.Path, default=DOCS / "go-coverage.json")
-    parser.add_argument("--log-dir", type=pathlib.Path, default=DOCS / "logs")
+    parser.add_argument("--baseline", type=pathlib.Path, default=BASELINE_DIR / "baseline.json")
+    parser.add_argument("--output", type=pathlib.Path, default=BASELINE_DIR / "go-selfcheck.json")
+    parser.add_argument("--coverage-output", type=pathlib.Path, default=BASELINE_DIR / "go-coverage.json")
+    parser.add_argument("--log-dir", type=pathlib.Path, default=BASELINE_DIR / "logs")
     parser.add_argument("--require-size", action="store_true")
     parser.add_argument("--require-features", action="store_true")
     args = parser.parse_args()

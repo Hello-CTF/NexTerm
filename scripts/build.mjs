@@ -432,26 +432,7 @@ function officialRustBaseline(id) {
 function rustBaseline(id) {
   const official = officialRustBaseline(id);
   if (official) return official;
-  const pinned = {
-    "desktop-darwin-arm64": ["docs/acceptance-rwig/baseline/baseline.json", "artifacts", "rust-desktop-macos-arm64"],
-    "server-darwin-arm64": ["docs/acceptance-rwig/baseline/baseline.json", "artifacts", "rust-server-macos-arm64"],
-    "desktop-dmg-darwin-arm64": ["docs/acceptance-rwig/baseline/baseline.json", "artifacts", "rust-desktop-dmg-macos-arm64"],
-  };
-  const historical = {
-    "server-linux-amd64": ["docs/acceptance-rwig/baseline/historical-metrics.json", "entries", "server-release-linux-amd64-lazycat"],
-  };
-  const reference = pinned[id] || historical[id];
-  if (!reference) return { status: "unavailable", reason: `no like-for-like recorded Rust baseline for ${id}` };
-  const [relative, collection, label] = reference;
-  const document = JSON.parse(fs.readFileSync(path.join(ROOT, relative), "utf8"));
-  const entry = document[collection]?.find((candidate) => (candidate.label || candidate.id) === label);
-  if (!entry?.size_bytes) return { status: "unavailable", reason: `${relative} has no byte measurement for ${label}` };
-  return {
-    source: `${relative}#${label}`,
-    provenance: collection === "entries" ? "historical-documented" : "same-host-pinned",
-    historical: collection === "entries",
-    size_bytes: entry.size_bytes,
-  };
+  return { status: "unavailable", reason: `no like-for-like recorded Rust baseline for ${id}` };
 }
 
 function customGoBaseline(id) {

@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DEFAULT = ROOT / "docs/acceptance-rwig/baseline/baseline.json"
+DEFAULT = ROOT / "testdata/parity/baseline/baseline.json"
 RESULT = re.compile(r"test result: .*?([0-9]+) passed; [0-9]+ failed; ([0-9]+) ignored")
 SKIP = re.compile(r"^(?:\[skip\]|跳过：)(.*)")
 

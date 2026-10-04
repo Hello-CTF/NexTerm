@@ -121,10 +121,10 @@ func buildAcceptanceWorkload(t *testing.T, enc Encoding) (chunks [][]byte, total
 	return chunks, total
 }
 
-// TestThroughputAcceptanceWorkload ports the Rust acceptance benchmark
-// (docs/bench-m0.md): 100 MiB UTF-8 and GBK at 120x40, hidden tab, full
+// TestThroughputAcceptanceWorkload ports the Rust acceptance benchmark:
+// 100 MiB UTF-8 and GBK at 120x40, hidden tab, full
 // transcode + VT + raw-ring path. The pre-existing budget is >=10 MB/s;
-// Rust references are 43.4/39.0 MB/s (bench-m0, Windows) and 149.3/149.7
+// Rust references are 43.4/39.0 MB/s (Windows) and 149.3/149.7
 // MB/s (acceptance baseline host). Ring retention and screen validity
 // are asserted exactly as in the Rust benchmark.
 func TestThroughputAcceptanceWorkload(t *testing.T) {

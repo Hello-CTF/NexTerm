@@ -11,8 +11,8 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "testdata/parity/inventory.json"
 ALIASES = ROOT / "testdata/parity/go-aliases.json"
-GO_REPORT = ROOT / "docs/acceptance-rwig/baseline/go-selfcheck.json"
-OUTPUT = ROOT / "docs/acceptance-rwig/baseline/go-coverage.json"
+GO_REPORT = ROOT / "testdata/parity/baseline/go-selfcheck.json"
+OUTPUT = ROOT / "testdata/parity/baseline/go-coverage.json"
 
 
 def alias_for(aliases: dict[str, Any], kind: str, canonical: str) -> str:

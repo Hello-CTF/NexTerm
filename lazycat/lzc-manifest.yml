@@ -192,8 +192,7 @@ application:
   #
   # ⚠️ 给后来的人：**别顺手加 `ingress`**。平台的 L4 规则集是「只增不减」的 ——
   # 声明过的 `publish_port` 只能改指、无法收回（删声明、`lpk install`、`project deploy`
-  # 全都撤不掉，已逐条实测）。完整机制与收尾手法见 `docs/LAZYCAT-PORT.md` §21
-  # 与 skill `lzc-l4-ingress`。
+  # 全都撤不掉，已逐条实测）。完整机制与收尾手法见 skill `lzc-l4-ingress`。
   #
   # 「想从外部连内网服务」在这台微服上请走微服自己的转发功能，或改用 SSH 隧道。
 

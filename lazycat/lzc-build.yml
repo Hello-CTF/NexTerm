@@ -8,7 +8,7 @@
 # 二进制由共享交付入口 `node scripts/build.mjs server --release --os=linux
 # --arch=<amd64|arm64>` 产出：Go 工具链内建交叉编译，CGO_ENABLED=0 静态 ELF，
 # **不需要容器、qemu 或交叉 gcc**。
-# 完整取舍见 `image/build-server.sh` 文件头，以及 docs/LAZYCAT-PORT.md §12.7.1。
+# 完整取舍见 `image/build-server.sh` 文件头。
 buildscript: bash ./image/build-server.sh
 
 manifest: ./lzc-manifest.yml
@@ -20,7 +20,6 @@ contentdir: ./content
 # 服务端镜像。构建器会沿父镜像链找 upstream-match；本项目的基线
 # `debian:bookworm-slim` **必须先推到官方 registry**，否则整个基础层会被全量内嵌进 LPK。
 #   lzc-cli appstore copy-image debian:bookworm-slim
-# 见 docs/LAZYCAT-PORT.md §5.3。
 images:
   nexterm-server:
     context: ./image
@@ -42,7 +41,6 @@ images:
     #
     # ⚠️ 曾经为了绕开「盒子侧无 DNS」而改成 `local` —— 那个判断在改 `FROM` 之前是对的，
     # 现在不成立了：盒子侧要连的是它**自己的**官方源，不再需要访问 Docker Hub。
-    # 历史细节见 docs/LAZYCAT-PORT.md §12.7 / §13.5。
     builder: remote
 
 # 产物落点：lazycat/app.lpk（`.gitignore` 已收 *.lpk）。

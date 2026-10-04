@@ -173,9 +173,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          notes="docs/releases/${GITHUB_REF_NAME}.md"
-          if [[ -f "$notes" ]]; then cat "$notes" > candidate/release-body.md; printf '\n---\n\n' >> candidate/release-body.md; else : > candidate/release-body.md; fi
-          cat .github/release-template.md >> candidate/release-body.md
+          cat .github/release-template.md > candidate/release-body.md
           printf '\n### Verification evidence\n\nSee `release-evidence.json`, `SHA256SUMS` and `real-target-gaps.json`. Evidence gaps are not passed acceptance. LazyCat and deployed Pages packaging/real-target acceptance are delivered by M47.\n' >> candidate/release-body.md
       - name: Create or update the draft release
         shell: bash

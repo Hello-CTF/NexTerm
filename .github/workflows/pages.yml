@@ -36,7 +36,7 @@ jobs:
           cp -r website/. _site/
           cp -r dist _site/demo
           mkdir -p _site/images _site/brand
-          cp docs/images/*.png _site/images/
+          cp website/images/*.png _site/images/
           cp public/brand/nexterm-mark-128.png _site/brand/
           cp .github/acceptance/real-target-gaps.json _site/acceptance-evidence-gaps.json
       - uses: actions/upload-pages-artifact@v3

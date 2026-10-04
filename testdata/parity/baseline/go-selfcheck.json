@@ -15,7 +15,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 0.012,
-      "log": "docs/acceptance-rwig/baseline/logs/go-harness-resolve.log"
+      "log": "testdata/parity/baseline/logs/go-harness-resolve.log"
     },
     {
       "id": "go-harness-tidy",
@@ -24,7 +24,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 0.086,
-      "log": "docs/acceptance-rwig/baseline/logs/go-harness-tidy.log"
+      "log": "testdata/parity/baseline/logs/go-harness-tidy.log"
     },
     {
       "id": "go-toolchain",
@@ -33,7 +33,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 0.012,
-      "log": "docs/acceptance-rwig/baseline/logs/go-toolchain.log"
+      "log": "testdata/parity/baseline/logs/go-toolchain.log"
     },
     {
       "id": "go-ipc-self-tests",
@@ -42,7 +42,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 2.499,
-      "log": "docs/acceptance-rwig/baseline/logs/go-ipc-self-tests.log"
+      "log": "testdata/parity/baseline/logs/go-ipc-self-tests.log"
     },
     {
       "id": "go-surface-probe",
@@ -51,7 +51,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 1.328,
-      "log": "docs/acceptance-rwig/baseline/logs/go-surface-probe.log"
+      "log": "testdata/parity/baseline/logs/go-surface-probe.log"
     },
     {
       "id": "go-server-build",
@@ -60,7 +60,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 0.262,
-      "log": "docs/acceptance-rwig/baseline/logs/go-server-build.log"
+      "log": "testdata/parity/baseline/logs/go-server-build.log"
     },
     {
       "id": "go-server-live-smoke",
@@ -68,7 +68,7 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 0.437,
-      "log": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log"
+      "log": "testdata/parity/baseline/logs/go-server-smoke.log"
     },
     {
       "id": "go-desktop-build",
@@ -77,18 +77,18 @@
       "status": "passed",
       "exit_code": 0,
       "duration_seconds": 0.262,
-      "log": "docs/acceptance-rwig/baseline/logs/go-desktop-build.log"
+      "log": "testdata/parity/baseline/logs/go-desktop-build.log"
     }
   ],
   "runtime": {
     "verified_commands": [
       {
         "name": "app_platform",
-        "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_platform"
+        "evidence": "testdata/parity/baseline/logs/go-server-smoke.log#app_platform"
       },
       {
         "name": "app_info",
-        "evidence": "docs/acceptance-rwig/baseline/logs/go-server-smoke.log#app_info"
+        "evidence": "testdata/parity/baseline/logs/go-server-smoke.log#app_info"
       }
     ],
     "implemented_commands": [
