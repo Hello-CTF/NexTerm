@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
@@ -477,4 +478,297 @@ func TestListenPipeLifecycle(t *testing.T) {
 		t.Fatalf("listenPipe restart after Close: %v", err)
 	}
 	_ = restarted.Close()
+}
+
+func requirePrivateDACL(t *testing.T, path string) {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatal("directory DACL is not protected against inheritance")
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := currentUserSIDString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.String() != sid {
+		t.Fatalf("directory owner = %s, want the current user %s", owner.String(), sid)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := unsafe.Pointer(dacl)
+	offset := 0
+	for index := 0; index < int(dacl.AceCount); index++ {
+		header := (*windows.ACE_HEADER)(unsafe.Add(base, offset))
+		ace := (*windows.ACCESS_ALLOWED_ACE)(unsafe.Add(base, offset))
+		trustee := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String()
+		if trustee != "S-1-5-18" && trustee != sid {
+			t.Fatalf("directory DACL grants access to foreign trustee %s", trustee)
+		}
+		offset += int(header.AceSize)
+	}
+}
+
+func TestEnsurePrivateDirSetsProtectedDACL(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDir(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	requirePrivateDACL(t, stateDir)
+	child := filepath.Join(stateDir, "sessions", "abc")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requirePrivateDACL(t, child)
+}
+
+func TestEnsurePrivateDirPermissiveParentWindows(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "shared")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	permissive, err := windows.SecurityDescriptorFromString("D:(A;OICI;GA;;;WD)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := permissive.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(parent, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(parent, "state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDir(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	requirePrivateDACL(t, stateDir)
+}
+
+func TestPipeFullDuplexConcurrentIO(t *testing.T) {
+	name, err := pipeEndpointName(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenPipe(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- conn
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	client, err := dialSocket(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConn := <-accepted
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		buffer := make([]byte, 4096)
+		for {
+			count, err := serverConn.Read(buffer)
+			if count > 0 {
+				if _, writeErr := serverConn.Write(buffer[:count]); writeErr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	const rounds = 50
+	received := make(chan []byte, rounds*2)
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		buffer := make([]byte, 4096)
+		for {
+			count, err := client.Read(buffer)
+			if count > 0 {
+				received <- append([]byte(nil), buffer[:count]...)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	for index := 0; index < rounds; index++ {
+		if _, err := client.Write([]byte(fmt.Sprintf("ping-%02d", index))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := 0
+	for seen < rounds {
+		select {
+		case <-received:
+			seen++
+		case <-time.After(30 * time.Second):
+			t.Fatalf("only %d of %d full-duplex echoes arrived", seen, rounds)
+		}
+	}
+	closed := make(chan struct{})
+	go func() {
+		_ = client.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("client Close hung with a pending read")
+	}
+	<-readerDone
+	_ = serverConn.Close()
+	<-serverDone
+}
+
+func fakePipeStreamServer(t *testing.T, stateDir string, handle func(conn net.Conn, kind frameType, payload []byte) bool) string {
+	t.Helper()
+	name, err := pipeEndpointName(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenPipe(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	digest, err := stateDigestFor(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		kind, payload, err := readFrame(conn)
+		if err != nil || kind != frameHello {
+			return
+		}
+		var hello helloMsg
+		if err := unmarshalFrame(payload, &hello); err != nil {
+			return
+		}
+		if hello.Version != ProtocolVersion || hello.StateDigest != digest {
+			_ = writeFrame(conn, frameError, []byte(`{"code":"state_mismatch","message":"wrong state"}`))
+			return
+		}
+		if err := writeFrame(conn, frameHelloAck, []byte(`{"version":2}`)); err != nil {
+			return
+		}
+		kind, payload, err = readFrame(conn)
+		if err != nil || kind != frameAttach {
+			return
+		}
+		attached, err := marshalFrame(frameAttached, Info{ID: ids.New(), CreatedAt: time.Now(), Incarnation: ids.New(), Cols: 80, Rows: 24})
+		if err != nil {
+			return
+		}
+		if err := writeFrame(conn, frameAttached, attached); err != nil {
+			return
+		}
+		for {
+			kind, payload, err = readFrame(conn)
+			if err != nil {
+				return
+			}
+			if !handle(conn, kind, payload) {
+				return
+			}
+		}
+	}()
+	return name
+}
+
+func TestPipeStreamCloseReturnsWhenServerStalls(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	name := fakePipeStreamServer(t, stateDir, func(conn net.Conn, kind frameType, payload []byte) bool {
+		return true
+	})
+	client := NewClient(name, stateDir)
+	stream, err := client.Attach(context.Background(), ids.New(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := stream.Write([]byte("stalled"))
+		writeErr <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	original := streamCloseDrainTimeout
+	streamCloseDrainTimeout = 500 * time.Millisecond
+	defer func() { streamCloseDrainTimeout = original }()
+	closed := make(chan struct{})
+	go func() {
+		_ = stream.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("Close hung on a stalling pipe server")
+	}
+	select {
+	case err := <-writeErr:
+		if err == nil {
+			t.Fatal("Write succeeded against a stalling pipe server")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("in-flight Write never woke after Close")
+	}
+}
+
+func TestPipeStreamCloseNoInflight(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	name := fakePipeStreamServer(t, stateDir, func(conn net.Conn, kind frameType, payload []byte) bool {
+		if kind == frameDetach {
+			return false
+		}
+		return true
+	})
+	client := NewClient(name, stateDir)
+	stream, err := client.Attach(context.Background(), ids.New(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	go func() {
+		_ = stream.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("Close without in-flight requests hung on a pipe stream")
+	}
 }
