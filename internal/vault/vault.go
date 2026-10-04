@@ -20,6 +20,7 @@ const (
 	settingSalt     = "vault.master_salt"
 	settingAutolock = "vault.autolock_ms"
 	defaultAutolock = uint64(30 * 60 * 1000)
+	maxAutoLockMS   = uint64(1440 * 60 * 1000)
 )
 
 type Mode string
@@ -83,7 +84,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		slog.Warn("凭据库模式无法识别，本次按未初始化处理")
 	}
 	if raw := readSetting(ctx, db, settingAutolock, "自动锁时长"); raw != "" {
-		if milliseconds, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		if milliseconds, err := strconv.ParseUint(raw, 10, 64); err == nil && milliseconds <= maxAutoLockMS {
 			v.autoLockMS = milliseconds
 		}
 	}
@@ -334,8 +335,8 @@ func (v *Vault) clearKeysLocked() {
 }
 
 func (v *Vault) SetAutoLock(ctx context.Context, minutes uint64) error {
-	if minutes > ^uint64(0)/60_000 {
-		return ipc.BadParam(errString("自动锁时长过大"))
+	if minutes > maxAutoLockMS/60_000 {
+		return ipc.BadParam(errString("自动锁时长需在 0（禁用）至 1440 分钟之间"))
 	}
 	milliseconds := minutes * 60_000
 	if err := v.store.SettingSet(ctx, settingAutolock, strconv.FormatUint(milliseconds, 10)); err != nil {
@@ -361,7 +362,7 @@ func (v *Vault) AutoLockIfIdle() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	idle := v.now() - v.lastUsedAt
-	if idle >= 0 && uint64(idle) > v.autoLockMS && v.mode == ModeMaster {
+	if v.autoLockMS > 0 && idle >= 0 && uint64(idle) > v.autoLockMS && v.mode == ModeMaster {
 		v.clearKeysLocked()
 	}
 }

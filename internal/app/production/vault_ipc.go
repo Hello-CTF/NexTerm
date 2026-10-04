@@ -16,6 +16,10 @@ type vaultPasswordRequest struct {
 	NewPassword string `json:"newPassword"`
 }
 
+type vaultAutoLockRequest struct {
+	Minutes uint64 `json:"minutes"`
+}
+
 type credentialSetRequest struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -79,6 +83,11 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 			return ipc.Register(dispatcher, "vault_lock", func(_ context.Context, _ *ipc.Call, _ struct{}) (any, error) {
 				credentialVault.Lock()
 				return nil, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "vault_set_autolock", func(ctx context.Context, _ *ipc.Call, input vaultAutoLockRequest) (any, error) {
+				return nil, credentialVault.SetAutoLock(ctx, input.Minutes)
 			})
 		},
 		func() error {

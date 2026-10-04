@@ -664,6 +664,7 @@ export const vaultApi = {
   initDpapi: () => call<void>("vault_init_dpapi"),
   unlock: (password: string) => call<void>("vault_unlock", { password }),
   lock: () => call<void>("vault_lock"),
+  setAutoLock: (minutes: number) => call<void>("vault_set_autolock", { minutes }),
   changePassword: (oldPassword: string, newPassword: string) =>
     call<void>("vault_change_password", { oldPassword, newPassword }),
   setCredential: (
