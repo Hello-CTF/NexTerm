@@ -7,6 +7,7 @@ import {
   type VaultStatus,
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
+import { modHint } from "../../app/platform";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -425,7 +426,7 @@ export function SettingsView() {
                 ["Ctrl+B", "收起 / 展开资产树"],
                 ["Ctrl+J", "收起 / 展开 AI 侧栏"],
                 ["Ctrl+W", "关闭当前标签"],
-                ["Ctrl+F", "终端内搜索"],
+                [`${modHint()}+F`, "终端内搜索"],
                 ["Esc", "AI 接管中一键夺回"],
                 ["Ctrl+Enter", "SQL 编辑器内运行"],
               ] as [string, string][]
