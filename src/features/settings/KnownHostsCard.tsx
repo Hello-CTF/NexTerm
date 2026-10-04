@@ -110,9 +110,11 @@ export function KnownHostsCard() {
           {hosts.map((h) => (
             <div key={h.id} className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-neutral-200">
-                  {h.host}:{h.port}
-                  <span className="nx-hint ml-2">{h.keyType}</span>
+                <div className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] text-neutral-200">
+                  <span className="min-w-0 truncate" title={`${h.host}:${h.port}`}>
+                    {h.host}:{h.port}
+                  </span>
+                  <span className="nx-hint shrink-0">{h.keyType}</span>
                 </div>
                 <div className="truncate font-mono text-[11px] text-neutral-500" title={h.fingerprint}>
                   {h.fingerprint}

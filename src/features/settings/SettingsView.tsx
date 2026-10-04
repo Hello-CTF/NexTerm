@@ -9,6 +9,7 @@ import {
 import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
+import { isImeKeyEvent } from "../../ui/DialogHost";
 import { ModelManager } from "../ai/ModelPanel";
 import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
@@ -171,7 +172,7 @@ export function SettingsView() {
         <AppearanceCard />
 
         <section className="nx-card">
-          <div className="mb-1 flex items-center gap-2">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
             <span className="nx-card-title">AI 模型</span>
             <span className="nx-badge">OpenAI 兼容协议 · BYOK</span>
@@ -185,8 +186,16 @@ export function SettingsView() {
 
           <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
             <div className="flex flex-wrap items-center gap-2">
-              <button className="nx-btn nx-btn-outline" disabled={testing} onClick={() => void test()}>
-                {testing ? <IconRefresh size={13} className="animate-spin" /> : <IconZap size={13} />}
+              <button
+                className="nx-btn nx-btn-outline h-auto min-h-7 shrink py-1 text-left whitespace-normal"
+                disabled={testing}
+                onClick={() => void test()}
+              >
+                {testing ? (
+                  <IconRefresh size={13} className="shrink-0 animate-spin" />
+                ) : (
+                  <IconZap size={13} className="shrink-0" />
+                )}
                 {testing ? "测试中…" : "连通性测试（两步）· 当前激活的模型"}
               </button>
               <span className="nx-hint">
@@ -196,7 +205,13 @@ export function SettingsView() {
             </div>
 
             {testResult && (
-              <div className={`mt-3.5 nx-alert ${testPassed ? "" : "nx-alert-danger"}`}>
+              <div
+                className={`mt-3.5 nx-alert ${
+                  testPassed
+                    ? "border-green-500/40 bg-[color-mix(in_srgb,var(--color-green-500)_18%,var(--nx-bg-pane))] text-green-300"
+                    : "nx-alert-danger"
+                }`}
+              >
                 <div className="mb-1 flex items-center gap-1.5 font-semibold">
                   {testPassed ? <IconCheckCircle size={13} /> : <IconXCircle size={13} />}
                   测试结果
@@ -229,7 +244,7 @@ export function SettingsView() {
                   defaultValue={r}
                   title={r}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !isImeKeyEvent(e)) {
                       e.preventDefault();
                       e.currentTarget.blur();
                     }
@@ -257,7 +272,7 @@ export function SettingsView() {
                 value={ruleDraft}
                 onChange={(e) => setRuleDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "Enter" && !isImeKeyEvent(e)) {
                     e.preventDefault();
                     addRule();
                   }
@@ -299,7 +314,7 @@ export function SettingsView() {
               ))}
           </div>
 
-          <div className="flex items-start gap-3">
+          <label className="flex cursor-pointer items-start gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] text-neutral-200">用密码保护凭据</div>
               <p className="nx-hint mt-0.5">
@@ -330,7 +345,7 @@ export function SettingsView() {
                 }
               }}
             />
-          </div>
+          </label>
 
           {pendingEnable && vault?.mode !== "master" && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -402,7 +417,7 @@ export function SettingsView() {
             <IconSettings size={15} className="text-neutral-400" />
             <span className="nx-card-title">快捷键</span>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 min-[480px]:grid-cols-2">
             {(
               [
                 ["Ctrl+Shift+P / Ctrl+K", "命令面板"],

@@ -266,7 +266,7 @@ export function MemoryCard() {
       </p>
 
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
-        <div className="flex items-start gap-3">
+        <label className="flex cursor-pointer items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-[12.5px] text-neutral-200">注入到 AI 运行</div>
             <p className="nx-hint mt-0.5">
@@ -282,8 +282,8 @@ export function MemoryCard() {
             checked={settings?.injectionEnabled ?? false}
             onChange={(e) => void toggleSetting("injectionEnabled", e.target.checked)}
           />
-        </div>
-        <div className="flex items-start gap-3">
+        </label>
+        <label className="flex cursor-pointer items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-[12.5px] text-neutral-200">允许模型使用记忆工具</div>
             <p className="nx-hint mt-0.5">
@@ -299,7 +299,7 @@ export function MemoryCard() {
             checked={settings?.toolsEnabled ?? false}
             onChange={(e) => void toggleSetting("toolsEnabled", e.target.checked)}
           />
-        </div>
+        </label>
       </div>
 
       {draft === null ? (
@@ -411,7 +411,7 @@ export function MemoryCard() {
         <div className="flex flex-col gap-2">
           {topics.map((t) => (
             <div key={t.topic}>
-              <div className="mb-1 font-mono text-[11px] text-neutral-500">{t.topic}</div>
+              <div className="mb-1 break-words font-mono text-[11px] text-neutral-500">{t.topic}</div>
               <div className="flex flex-col gap-1">
                 {t.entries.map((entry) => {
                   const open = expanded[entry.id];
@@ -419,18 +419,21 @@ export function MemoryCard() {
                     <div key={entry.id} className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <button
-                          className="min-w-0 flex-1 text-left"
+                          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 text-left"
                           aria-expanded={!!open}
                           title={open ? "收起正文" : "展开正文"}
                           onClick={() => void toggleExpand(entry.id)}
                         >
-                          <span className="font-mono text-[11.5px] text-neutral-300">
+                          <span
+                            className="min-w-0 truncate font-mono text-[11.5px] text-neutral-300"
+                            title={entry.id}
+                          >
                             {entry.id}
                           </span>
                           {entry.redacted && (
-                            <span className="nx-badge nx-badge-amber ml-2">已脱敏</span>
+                            <span className="nx-badge nx-badge-amber shrink-0">已脱敏</span>
                           )}
-                          <span className="nx-hint ml-2 text-[11px]">
+                          <span className="nx-hint text-[11px]">
                             v{entry.version} · {new Date(entry.updatedAt).toLocaleString()}
                           </span>
                         </button>
@@ -473,7 +476,7 @@ export function MemoryCard() {
                         </div>
                       )}
                       {open && open !== "loading" && open !== "error" && (
-                        <pre className="whitespace-pre-wrap rounded border border-neutral-800/60 bg-neutral-900/60 p-2 font-mono text-[11.5px] text-neutral-300">
+                        <pre className="whitespace-pre-wrap break-words rounded border border-neutral-800/60 bg-neutral-900/60 p-2 font-mono text-[11.5px] text-neutral-300">
                           {open.content}
                         </pre>
                       )}
