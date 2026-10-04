@@ -7,6 +7,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMakensis } from "./lib/makensis.mjs";
 import { resolveSpawnSpec } from "./lib/spawn-spec.mjs";
+import {
+  binaryManifestProblems,
+  createBinaryManifest,
+  createDistManifest,
+  distManifestProblems,
+  loadManifest,
+  treeHash,
+} from "./lib/build-manifest.mjs";
 
 const HELP_TEXT = `#!/usr/bin/env node
 /**
@@ -16,8 +24,11 @@ const HELP_TEXT = `#!/usr/bin/env node
  *   node scripts/build.mjs                         # frontend + host debug desktop
  *   node scripts/build.mjs release                 # reproducible frontend + native package
  *   node scripts/build.mjs frontend --repro-check
+ *   node scripts/build.mjs frontend --consume-dist=DIR --dist-manifest=PATH
  *   node scripts/build.mjs bindings
  *   node scripts/build.mjs desktop --release --os=darwin --arch=arm64 --package
+ *   node scripts/build.mjs desktop --release --package --package-only --consume-dist=DIR \\
+ *     --os=darwin --arch=arm64 --require-evidence
  *   node scripts/build.mjs server --release --os=linux --arch=amd64
  *   node scripts/build.mjs report --kind=server-archive --os=linux --arch=amd64 \\
  *     --flavor=full --file=target/release-assets/NexTerm.tar.gz --require-evidence
@@ -146,23 +157,45 @@ function distManifest() {
   return { dist, index, html, scripts };
 }
 
-function treeHash(root) {
-  const hash = crypto.createHash("sha256");
-  const visit = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const absolute = path.join(directory, entry.name);
-      const relative = path.relative(root, absolute).replaceAll(path.sep, "/");
-      if (entry.isDirectory()) visit(absolute);
-      else if (entry.isFile()) {
-        hash.update(relative);
-        hash.update("\0");
-        hash.update(fs.readFileSync(absolute));
-        hash.update("\0");
-      } else die(`frontend output contains a non-regular file: ${relative}`);
-    }
-  };
-  visit(root);
-  return hash.digest("hex");
+function treeHashOrDie(root) {
+  try {
+    return treeHash(root);
+  } catch (error) {
+    die(error.message);
+  }
+}
+
+function distManifestPath() {
+  return path.resolve(ROOT, option("dist-manifest", "target/dist-manifest.json"));
+}
+
+function writeDistManifest() {
+  const destination = distManifestPath();
+  const manifest = createDistManifest(path.join(ROOT, "dist"), { version: VERSION, commit: COMMIT });
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, `${JSON.stringify(manifest, null, 2)}\n`);
+  log(`frontend manifest: ${destination} (tree sha256:${manifest.tree_hash})`);
+}
+
+function consumeDist() {
+  const source = path.resolve(ROOT, option("consume-dist", ""));
+  if (!fs.existsSync(source) || !fs.statSync(source).isDirectory()) die(`--consume-dist directory does not exist: ${source}`);
+  let manifest;
+  try {
+    manifest = loadManifest(distManifestPath());
+  } catch (error) {
+    die(`--consume-dist: ${error.message}`);
+  }
+  const problems = distManifestProblems(source, manifest, { version: VERSION, commit: COMMIT });
+  if (problems.length) die(`verified dist consumption failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
+  const destination = path.join(ROOT, "dist");
+  if (source !== destination) {
+    fs.rmSync(destination, { recursive: true, force: true });
+    fs.cpSync(source, destination, { recursive: true });
+  }
+  if (treeHashOrDie(destination) !== manifest.tree_hash) die("restored dist tree hash differs from the verified manifest");
+  distManifest();
+  log(`frontend dist consumed from ${source} (tree sha256:${manifest.tree_hash})`);
 }
 
 function buildFrontend({ repro = false, base = "" } = {}) {
@@ -170,16 +203,17 @@ function buildFrontend({ repro = false, base = "" } = {}) {
   if (base) viteArgs.push(`--base=${base}`);
   run("pnpm", ["exec", "tsc", "-p", "tsconfig.json", "--noEmit"], { env: { ...process.env, NODE_OPTIONS: "" } });
   run("pnpm", viteArgs, { env: { ...process.env, NODE_OPTIONS: "" } });
-  const first = treeHash(path.join(ROOT, "dist"));
+  const first = treeHashOrDie(path.join(ROOT, "dist"));
   distManifest();
   if (repro) {
     run("pnpm", viteArgs, { env: { ...process.env, NODE_OPTIONS: "" } });
-    const second = treeHash(path.join(ROOT, "dist"));
+    const second = treeHashOrDie(path.join(ROOT, "dist"));
     if (first !== second) die(`frontend is not reproducible: ${first} != ${second}`);
     log(`frontend reproducibility: sha256:${second}`);
   } else {
     log(`frontend assets: sha256:${first}`);
   }
+  writeDistManifest();
   return first;
 }
 
@@ -238,6 +272,56 @@ function defaultBinaryPath(kind, goos, goarch) {
   return path.join(ROOT, "target/go-build", `nexterm-${kind}-${goos}-${goarch}${suffix}`);
 }
 
+function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, stripped }) {
+  const manifest = createBinaryManifest({
+    file,
+    id,
+    kind,
+    goos,
+    goarch,
+    tags: tags ? tags.split(",") : [],
+    cgo,
+    stripped,
+    version: VERSION,
+    commit: COMMIT,
+    source_date_epoch: Number(SOURCE_DATE_EPOCH),
+  });
+  const destination = path.resolve(ROOT, option("binary-manifest", `${file}.manifest.json`));
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, `${JSON.stringify(manifest, null, 2)}\n`);
+  log(`${id} binary manifest: ${destination}`);
+}
+
+function validateBinaryForPackaging(outputPath, kind, goos, goarch) {
+  if (!fs.existsSync(outputPath) || !fs.statSync(outputPath).isFile()) {
+    die(`--package-only requires the existing production binary: ${outputPath}`);
+  }
+  const manifestPath = path.resolve(ROOT, option("binary-manifest", `${outputPath}.manifest.json`));
+  let manifest;
+  try {
+    manifest = loadManifest(manifestPath);
+  } catch (error) {
+    die(`--package-only: ${error.message}`);
+  }
+  const problems = binaryManifestProblems({
+    manifest,
+    file: outputPath,
+    expect: {
+      id: `${kind}-${goos}-${goarch}`,
+      kind,
+      goos,
+      goarch,
+      tags: ["production"],
+      cgo: buildEnvironment(goos, goarch, kind).CGO_ENABLED,
+      stripped: true,
+      version: VERSION,
+      commit: COMMIT,
+    },
+  });
+  if (problems.length) die(`--package-only binary manifest validation failed:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`);
+  log(`${kind}-${goos}-${goarch}: reusing verified production binary sha256:${manifest.artifact.sha256}`);
+}
+
 function buildBinary(kind) {
   const goos = targetOS();
   const goarch = targetArch();
@@ -245,7 +329,21 @@ function buildBinary(kind) {
   assertTarget(kind, goos, goarch);
   if (!["windows", "darwin", "linux"].includes(goos)) die(`unsupported GOOS: ${goos}`);
   const outputPath = path.resolve(ROOT, option("out", defaultBinaryPath(kind, goos, goarch)));
-  if (kind === "desktop" && !flag("skip-frontend")) buildFrontend({ repro: release });
+  const packageOnly = flag("package-only");
+  if (packageOnly) {
+    if (!flag("package")) die("--package-only requires --package");
+    if (!release) die("--package-only requires --release");
+    if (flag("smoke")) die("--package-only refuses --smoke; smoke-tagged test binaries are never substituted for production release packages");
+    if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
+    if (flag("repro-check")) die("--package-only performs no compilation; --repro-check belongs to the producing job");
+    if (!option("consume-dist")) die("--package-only requires --consume-dist=DIR so embedded-asset assertions run against the verified frontend");
+  }
+  if (kind !== "desktop" && option("consume-dist")) die("--consume-dist is only meaningful for the frontend command and desktop builds");
+  if (flag("skip-frontend") && option("consume-dist")) die("--consume-dist cannot combine with --skip-frontend");
+  if (kind === "desktop" && !flag("skip-frontend")) {
+    if (option("consume-dist")) consumeDist();
+    else buildFrontend({ repro: release });
+  }
   if (kind === "desktop") distManifest();
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const tags = release ? (flag("smoke") ? "production,smoke" : "production") : flag("smoke") ? "smoke" : "";
@@ -253,27 +351,42 @@ function buildBinary(kind) {
   if (tags) args.push("-tags", tags);
   args.push("-ldflags", ldflags(kind, goos), "-o", outputPath, `./cmd/nexterm-${kind}`);
   const embeddedRoot = path.join(ROOT, "cmd/nexterm-desktop/dist");
-  if (kind === "desktop" && release) {
+  if (kind === "desktop" && release && !packageOnly) {
     fs.rmSync(embeddedRoot, { recursive: true, force: true });
     fs.cpSync(path.join(ROOT, "dist"), embeddedRoot, { recursive: true });
-    if (treeHash(path.join(ROOT, "dist")) !== treeHash(embeddedRoot)) die("staged desktop embed assets differ from dist");
+    if (treeHashOrDie(path.join(ROOT, "dist")) !== treeHashOrDie(embeddedRoot)) die("staged desktop embed assets differ from dist");
   }
   try {
-    run("go", args, { env: buildEnvironment(goos, goarch, kind) });
-    if (flag("repro-check")) {
-      const reproduction = `${outputPath}.repro`;
-      const reproductionArgs = [...args];
-      reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
-      run("go", reproductionArgs, { env: buildEnvironment(goos, goarch, kind) });
-      if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible: ${outputPath} != ${reproduction}`);
-      fs.rmSync(reproduction, { force: true });
-      log(`${kind} ${goos}/${goarch} reproducibility: ${sha256(outputPath)}`);
+    if (packageOnly) {
+      validateBinaryForPackaging(outputPath, kind, goos, goarch);
+    } else {
+      run("go", args, { env: buildEnvironment(goos, goarch, kind) });
+      if (flag("repro-check")) {
+        const reproduction = `${outputPath}.repro`;
+        const reproductionArgs = [...args];
+        reproductionArgs[reproductionArgs.indexOf("-o") + 1] = reproduction;
+        run("go", reproductionArgs, { env: buildEnvironment(goos, goarch, kind) });
+        if (sha256(outputPath) !== sha256(reproduction)) die(`${kind} binary is not reproducible: ${outputPath} != ${reproduction}`);
+        fs.rmSync(reproduction, { force: true });
+        log(`${kind} ${goos}/${goarch} reproducibility: ${sha256(outputPath)}`);
+      }
     }
   } finally {
     if (kind === "desktop" && release) fs.rmSync(embeddedRoot, { recursive: true, force: true });
   }
   if (!fs.existsSync(outputPath)) die(`Go linker did not produce ${outputPath}`);
   if (goos !== "windows") fs.chmodSync(outputPath, 0o755);
+  if (!packageOnly) {
+    writeBinaryManifest(outputPath, {
+      id: `${kind}-${goos}-${goarch}`,
+      kind,
+      goos,
+      goarch,
+      tags,
+      cgo: buildEnvironment(goos, goarch, kind).CGO_ENABLED,
+      stripped: release,
+    });
+  }
   const report = writeArtifactReport({
     id: `${kind}-${goos}-${goarch}`,
     kind,
@@ -674,7 +787,12 @@ function reportOnly() {
 
 switch (command) {
   case "frontend":
-    buildFrontend({ repro: flag("repro-check"), base: option("base", "") });
+    if (option("consume-dist")) {
+      if (flag("repro-check")) die("--consume-dist replaces the frontend build; --repro-check belongs to the producing job");
+      consumeDist();
+    } else {
+      buildFrontend({ repro: flag("repro-check"), base: option("base", "") });
+    }
     break;
   case "bindings":
     verifyBindings();
