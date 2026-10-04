@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, terminalApi } from "../../ipc/commands";
@@ -75,6 +75,21 @@ function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
   rows[next]?.focus();
 }
 
+function subscribeCoarse(callback: () => void): () => void {
+  const query = window.matchMedia?.("(pointer: coarse)");
+  if (!query) return () => {};
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+
+function useCoarsePointer(): boolean {
+  return useSyncExternalStore(
+    subscribeCoarse,
+    () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
+    () => false,
+  );
+}
+
 export function FileTree({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
@@ -87,6 +102,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const crumbRef = useRef<HTMLDivElement>(null);
   const fileOps = useFileOps(sessionId);
+  const coarse = useCoarsePointer();
 
   useEffect(() => {
     const el = crumbRef.current;
@@ -696,34 +712,10 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                 <span className="w-[14px] shrink-0" />
               )}
               <Icon size={13} className={`shrink-0 ${tone}`} />
-              <span className="min-w-0 flex-1 truncate text-[12.5px]">{entry.name}</span>
-              <span className="nx-row-actions [@media(pointer:coarse)]:flex">
-                {!isDir && (
-                  <button
-                    className="nx-icon-btn nx-icon-btn-sm"
-                    title="下载"
-                    aria-label={`下载 ${entry.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void download(entry.path);
-                    }}
-                  >
-                    <IconDownload size={11} />
-                  </button>
-                )}
+              <span className="nx-row-name min-w-0 flex-auto truncate text-[12.5px]">{entry.name}</span>
+              {coarse ? (
                 <button
-                  className="nx-icon-btn nx-icon-btn-sm is-danger"
-                  title="删除"
-                  aria-label={`删除 ${entry.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void remove(entry.path);
-                  }}
-                >
-                  <IconTrash size={11} />
-                </button>
-                <button
-                  className="nx-icon-btn nx-icon-btn-sm"
+                  className="nx-icon-btn nx-icon-btn-sm nx-row-more"
                   title={`更多操作 ${entry.name}`}
                   aria-label={`更多操作 ${entry.name}`}
                   onClick={(e) => {
@@ -734,7 +726,46 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                 >
                   ⋯
                 </button>
-              </span>
+              ) : (
+                <span className="nx-row-actions">
+                  {!isDir && (
+                    <button
+                      className="nx-icon-btn nx-icon-btn-sm"
+                      title="下载"
+                      aria-label={`下载 ${entry.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void download(entry.path);
+                      }}
+                    >
+                      <IconDownload size={11} />
+                    </button>
+                  )}
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm is-danger"
+                    title="删除"
+                    aria-label={`删除 ${entry.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void remove(entry.path);
+                    }}
+                  >
+                    <IconTrash size={11} />
+                  </button>
+                  <button
+                    className="nx-icon-btn nx-icon-btn-sm"
+                    title={`更多操作 ${entry.name}`}
+                    aria-label={`更多操作 ${entry.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = e.currentTarget.getBoundingClientRect();
+                      openRowMenuAt(entry, dir, r.left, r.bottom);
+                    }}
+                  >
+                    ⋯
+                  </button>
+                </span>
+              )}
             </div>
           );
         })}

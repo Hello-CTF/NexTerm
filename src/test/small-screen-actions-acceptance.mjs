@@ -415,6 +415,103 @@ async function smallScreenAcceptance(page) {
       return { evidence, menu };
     });
 
+    await pass(`files-rows-overflow-390-${theme}`, async () => {
+      await boot(page, { theme, viewport: PHONE });
+      await assertNoHorizontalOverflow(page, `390-files-${theme}`);
+
+      await page.evaluate(`document.querySelector('.nx-rail button[aria-label="文件树"]').click()`);
+      await page.waitFor(`Boolean(document.querySelector('[role="tree"][aria-label="文件"] [role="treeitem"] .nx-row-more'))`);
+      await sleep(150);
+      const treeEvidence = await page.evaluate(`(() => {
+        const rows = [...document.querySelectorAll('[role="tree"][aria-label="文件"] [role="treeitem"]')];
+        return rows.map((row) => {
+          const name = row.querySelector('.nx-row-name');
+          const more = row.querySelector('.nx-row-more');
+          const nr = name?.getBoundingClientRect();
+          const mr = more?.getBoundingClientRect();
+          return {
+            nameWidth: nr ? Math.round(nr.width) : null,
+            moreSize: mr ? { w: Math.round(mr.width), h: Math.round(mr.height) } : null,
+            moreOnScreen: !!mr && mr.left >= 0 && mr.right <= window.innerWidth,
+            stripPresent: Boolean(row.querySelector('.nx-row-actions')),
+          };
+        });
+      })()`);
+      assert.ok(treeEvidence.length >= 2, `expected file tree rows: ${JSON.stringify(treeEvidence)}`);
+      for (const row of treeEvidence) {
+        assert.ok(row.nameWidth !== null && row.nameWidth > 0, `file name collapsed: ${JSON.stringify(row)}`);
+        assert.ok(row.moreSize && row.moreSize.w >= 24 && row.moreSize.h >= 24, `overflow target too small: ${JSON.stringify(row)}`);
+        assert.equal(row.moreOnScreen, true, `overflow button off-screen: ${JSON.stringify(row)}`);
+        assert.equal(row.stripPresent, false, `desktop action strip rendered on coarse pointer: ${JSON.stringify(row)}`);
+      }
+
+      const opened = await page.evaluate(`(() => {
+        const row = [...document.querySelectorAll('[role="tree"][aria-label="文件"] [role="treeitem"]')].find(
+          (r) => r.querySelector(':scope > .nx-row-more') && !r.querySelector(':scope > .nx-tree-caret'),
+        );
+        if (!row) return false;
+        row.querySelector(':scope > .nx-row-more').click();
+        return true;
+      })()`);
+      assert.equal(opened, true, "no file row with an overflow button");
+      await page.waitFor(`Boolean(document.querySelector('[role="menu"]'))`);
+      const treeMenu = await page.evaluate(`(() => {
+        const box = document.querySelector('[role="menu"]');
+        const r = box.getBoundingClientRect();
+        const labels = [...box.querySelectorAll('[role="menuitem"]')].map(
+          (b) => b.querySelector('.nx-menu-label')?.textContent ?? '',
+        );
+        return { labels, left: Math.round(r.left), right: Math.round(r.right), innerWidth: window.innerWidth };
+      })()`);
+      for (const label of ["下载当前文件", "重命名", "权限…", "校验值…", "删除"]) {
+        assert.ok(treeMenu.labels.includes(label), `file tree menu missing ${label}: ${JSON.stringify(treeMenu)}`);
+      }
+      assert.ok(treeMenu.left >= 0 && treeMenu.right <= treeMenu.innerWidth, `file tree menu off-screen: ${JSON.stringify(treeMenu)}`);
+      await screenshot(page, `filetree-overflow-390-${theme}.png`);
+      await pressKey(page, { key: "Escape", code: "Escape", vk: 27 });
+      await page.waitFor(`!document.querySelector('[role="menu"]')`);
+
+      await page.evaluate(`(() => {
+        const backdrop = document.querySelector('.nx-dock-backdrop');
+        if (backdrop) backdrop.click();
+      })()`);
+      await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "p", code: "KeyP", windowsVirtualKeyCode: 80, modifiers: 10 });
+      await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "p", code: "KeyP", windowsVirtualKeyCode: 80, modifiers: 10 });
+      await sleep(150);
+      await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"], .nx-modal [role="combobox"]'))`);
+      await page.send("Input.insertText", { text: "文件" });
+      await page.waitFor(`[...document.querySelectorAll('[role="option"],[role="listbox"] *')].some((el) => el.textContent?.includes('打开宽幅文件浏览器'))`);
+      await page.evaluate(`(() => {
+        const option = [...document.querySelectorAll('[role="option"],[role="listbox"] *')].find((el) => el.textContent?.includes('打开宽幅文件浏览器'));
+        (option.closest('[role="option"]') ?? option).click();
+      })()`);
+      await page.waitFor(`Boolean(document.querySelector('.nx-pane .nx-toolbar input.font-mono'))`);
+      await sleep(200);
+      const browserEvidence = await page.evaluate(`(() => {
+        const panel = document.querySelector('[role="tabpanel"]:not(.hidden)');
+        const rows = [...panel.querySelectorAll('.cursor-pointer')];
+        return rows.slice(0, 10).map((row) => {
+          const name = row.querySelector('.nx-row-name');
+          const more = row.querySelector('.nx-row-more');
+          const nr = name?.getBoundingClientRect();
+          const mr = more?.getBoundingClientRect();
+          return {
+            nameWidth: nr ? Math.round(nr.width) : null,
+            moreOnScreen: !!mr && mr.left >= 0 && mr.right <= window.innerWidth,
+            stripPresent: Boolean(row.querySelector('.nx-row-actions')),
+          };
+        });
+      })()`);
+      assert.ok(browserEvidence.length >= 2, `expected file browser rows: ${JSON.stringify(browserEvidence)}`);
+      for (const row of browserEvidence) {
+        assert.ok(row.nameWidth !== null && row.nameWidth > 0, `browser file name collapsed: ${JSON.stringify(row)}`);
+        assert.equal(row.moreOnScreen, true, `browser overflow button off-screen: ${JSON.stringify(row)}`);
+        assert.equal(row.stripPresent, false, `browser hover strip rendered on coarse pointer: ${JSON.stringify(row)}`);
+      }
+      await screenshot(page, `filebrowser-rows-390-${theme}.png`);
+      return { treeEvidence, treeMenu, browserEvidence };
+    });
+
     await pass(`statusbar-actions-reachable-390-${theme}`, async () => {
       await boot(page, { theme, viewport: PHONE });
       await assertNoHorizontalOverflow(page, `390-statusbar-${theme}`);

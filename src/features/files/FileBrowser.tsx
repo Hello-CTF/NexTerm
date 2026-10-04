@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -46,6 +46,21 @@ import {
   IconUpload,
 } from "../../ui/icons";
 
+function subscribeCoarse(callback: () => void): () => void {
+  const query = window.matchMedia?.("(pointer: coarse)");
+  if (!query) return () => {};
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+
+function useCoarsePointer(): boolean {
+  return useSyncExternalStore(
+    subscribeCoarse,
+    () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
+    () => false,
+  );
+}
+
 export function FileBrowser({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
@@ -55,6 +70,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const fileOps = useFileOps(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
+  const coarse = useCoarsePointer();
 
   const entries = useQuery({
     queryKey: ["fs", sessionId, path],
@@ -554,18 +570,18 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                   title={isDir ? e.path : `${e.path} · 双击用内置编辑器打开`}
                 >
                   <Icon size={14} className={`shrink-0 ${tone}`} />
-                  <span className={`min-w-0 flex-1 truncate font-mono text-[12px] ${isSel ? "text-neutral-100" : ""}`}>
+                  <span className={`nx-row-name min-w-0 flex-auto truncate font-mono text-[12px] ${isSel ? "text-neutral-100" : ""}`}>
                     {e.name}
                   </span>
-                  <span className="w-24 shrink-0 text-right text-[11px] text-neutral-500 max-[560px]:hidden">
+                  <span className="w-24 min-w-0 shrink truncate text-right text-[11px] text-neutral-500 max-[560px]:hidden">
                     {isDir ? "—" : formatSize(e.size)}
                   </span>
-                  <span className="w-40 shrink-0 text-right text-[11px] text-neutral-500 max-[560px]:hidden">
+                  <span className="w-40 min-w-0 shrink truncate text-right text-[11px] text-neutral-500 max-[560px]:hidden">
                     {e.mtime ? new Date(e.mtime).toLocaleString() : "—"}
                   </span>
-                  <span className="nx-row-actions [@media(pointer:coarse)]:flex">
+                  {coarse ? (
                     <button
-                      className="nx-icon-btn nx-icon-btn-sm"
+                      className="nx-icon-btn nx-icon-btn-sm nx-row-more"
                       title={`更多操作 ${e.name}`}
                       aria-label={`更多操作 ${e.name}`}
                       onClick={(ev) => {
@@ -576,7 +592,22 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                     >
                       ⋯
                     </button>
-                  </span>
+                  ) : (
+                    <span className="nx-row-actions">
+                      <button
+                        className="nx-icon-btn nx-icon-btn-sm"
+                        title={`更多操作 ${e.name}`}
+                        aria-label={`更多操作 ${e.name}`}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          const r = ev.currentTarget.getBoundingClientRect();
+                          openRowMenuAt(e, r.left, r.bottom);
+                        }}
+                      >
+                        ⋯
+                      </button>
+                    </span>
+                  )}
                 </div>
               );
             })}
