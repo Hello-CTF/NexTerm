@@ -209,7 +209,7 @@ export function SettingsView() {
           </div>
           <p className="nx-hint mb-3.5">
             可存多份模型档案（不同厂商 / 不同 Key），选中一份「设为当前」供 AI 使用。
-            密钥以明文存在本机 sqlite，不会上传；模型可换成本地 Ollama / LM Studio / vLLM。
+            密钥加密后存在本机 sqlite，不会上传；模型可换成本地 Ollama / LM Studio / vLLM。
           </p>
 
           <ModelManager />

@@ -3,6 +3,8 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
@@ -71,6 +73,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 				if !ok {
 					config = provider.DefaultConfig()
 				}
+				config.APIKey = profiles.MaskAPIKey(config.APIKey)
 				return config, nil
 			})
 		},
@@ -179,7 +182,15 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_refresh", func(ctx context.Context, _ *ipc.Call, input aiProfileRequest) ([]string, error) {
-				client, err := provider.NewClient(input.Profile.ProviderConfig())
+				config := input.Profile.ProviderConfig()
+				if strings.TrimSpace(config.APIKey) == profiles.MaskedAPIKey {
+					key, err := resolveMaskedProfileKey(ctx, database, input.Profile.ID)
+					if err != nil {
+						return nil, err
+					}
+					config.APIKey = key
+				}
+				client, err := provider.NewClient(config)
 				if err != nil {
 					return nil, err
 				}
@@ -198,6 +209,49 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		}
 	}
 	return nil
+}
+
+func resolveMaskedProfileKey(ctx context.Context, database *store.Store, id string) (string, error) {
+	raw, found, err := database.SettingGet(ctx, profiles.SettingKey)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
+	}
+	var stored struct {
+		Profiles []profiles.Profile `json:"profiles"`
+	}
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return "", err
+	}
+	for _, saved := range stored.Profiles {
+		if saved.ID == id {
+			return resolveStoredProfileKey(ctx, database, saved.APIKey)
+		}
+	}
+	return "", fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
+}
+
+func resolveStoredProfileKey(ctx context.Context, database *store.Store, stored string) (string, error) {
+	if stored == "" {
+		return "", nil
+	}
+	protector := database.SecretProtector()
+	if protector == nil {
+		return stored, nil
+	}
+	if strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
+		plaintext, err := protector.DecryptSecret(ctx, stored)
+		if err != nil {
+			return "", err
+		}
+		return plaintext, nil
+	}
+	if _, err := protector.EncryptSecret(ctx, stored); err != nil {
+		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
+	}
+	return stored, nil
 }
 
 func productionConversation(row store.ConversationRow) conversationDTO {
