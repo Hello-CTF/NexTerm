@@ -260,6 +260,52 @@ function saveLayout(w: { leftWidth: number; rightWidth: number }): void {
   }
 }
 
+const TAKEOVER_KEY = "nexterm.takeover.v1";
+
+function loadPersistedTakeover(): TakeoverState | null {
+  try {
+    const raw = localStorage.getItem(TAKEOVER_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as Partial<TakeoverState>;
+    if (
+      typeof o.tabId !== "string" ||
+      typeof o.token !== "string" ||
+      typeof o.task !== "string" ||
+      typeof o.allowWrite !== "boolean" ||
+      typeof o.startedAt !== "number"
+    ) {
+      localStorage.removeItem(TAKEOVER_KEY);
+      return null;
+    }
+    return {
+      tabId: o.tabId,
+      jobId: typeof o.jobId === "string" ? o.jobId : undefined,
+      token: o.token,
+      task: o.task,
+      allowWrite: o.allowWrite,
+      startedAt: o.startedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+let restoredTakeover: TakeoverState | null = loadPersistedTakeover();
+
+export function consumeRestoredTakeover(): TakeoverState | null {
+  const current = restoredTakeover;
+  restoredTakeover = null;
+  return current;
+}
+
+function persistTakeover(t: TakeoverState | null): void {
+  try {
+    if (t) localStorage.setItem(TAKEOVER_KEY, JSON.stringify(t));
+    else localStorage.removeItem(TAKEOVER_KEY);
+  } catch {
+  }
+}
+
 export function nextTabId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${tabSeq++}`;
 }
@@ -306,7 +352,7 @@ export const useUi = create<UiState>((set, get) => ({
   activeWorkspaceId: null,
   sessions: [],
   aiBusy: false,
-  takeover: null,
+  takeover: restoredTakeover,
   modelProfilesRevision: 0,
   bumpModelProfilesRevision: () =>
     set((state) => ({ modelProfilesRevision: state.modelProfilesRevision + 1 })),
@@ -653,7 +699,11 @@ export const useUi = create<UiState>((set, get) => ({
     }
   },
   setAiBusy: (v) => set({ aiBusy: v }),
-  setTakeover: (t) => set({ takeover: t }),
+  setTakeover: (t) => {
+    restoredTakeover = null;
+    persistTakeover(t);
+    set({ takeover: t });
+  },
 
   connectingAssetIds: [],
 

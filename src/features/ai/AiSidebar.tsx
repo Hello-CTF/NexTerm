@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
@@ -79,6 +79,30 @@ const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
   allow_session: "本会话已允许此类",
   deny: "已拒绝",
 };
+
+const CONVERSATION_KEY = "nexterm.ai.conversation.v1";
+
+function loadPersistedConversationId(): string | undefined {
+  try {
+    return localStorage.getItem(CONVERSATION_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistConversationId(id: string | undefined): void {
+  try {
+    if (id) localStorage.setItem(CONVERSATION_KEY, id);
+    else localStorage.removeItem(CONVERSATION_KEY);
+  } catch {
+  }
+}
+
+export function runStatusOf(runs: AiRunDto[]): "running" | "interrupted" | null {
+  if (runs.some((run) => run.status === "running")) return "running";
+  if (runs.some((run) => run.status === "interrupted" && run.finishedAt == null)) return "interrupted";
+  return null;
+}
 
 export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
   const { rightOpen, setRightOpen, aiBusy, setAiBusy, pushToast, rightWidth, workspaces } = useUi();
@@ -182,6 +206,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const activeGeneration = activeRunRef.current?.generation ?? null;
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
+  const hitlWaiting = confirmCard
+    ? "等待你确认后继续…"
+    : questionCard
+      ? "等待你回答后继续…"
+      : null;
   useEffect(() => {
     setQuestionInput("");
   }, [questionCard?.id]);
@@ -192,6 +221,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const updateConversationId = (id: string | undefined) => {
     conversationIdRef.current = id;
     setConversationId(id);
+    persistConversationId(id);
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
@@ -201,6 +231,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const [atOpen, setAtOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<{ id: string; title: string; updatedAt: number }[]>([]);
+  const [runStatusByConv, setRunStatusByConv] = useState<Record<string, "running" | "interrupted">>({});
   const [historyStatus, setHistoryStatus] = useState<"loading" | "error" | "ready">("ready");
   const [historyError, setHistoryError] = useState<string | null>(null);
   const takeover = useUi((s) => s.takeover);
@@ -469,6 +500,34 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     void replayHitl(generation, resumable.run.id);
   };
 
+  useEffect(() => {
+    const id = loadPersistedConversationId();
+    if (!id) return;
+    const startSeq = runSequenceRef.current;
+    updateConversationId(id);
+    void (async () => {
+      try {
+        const list = await aiApi.conversationList();
+        if (conversationIdRef.current !== id) return;
+        if (!list.some((c) => c.id === id)) {
+          updateConversationId(undefined);
+          return;
+        }
+      } catch {
+        if (conversationIdRef.current !== id) return;
+      }
+      try {
+        const msgs = await aiApi.messages(id);
+        if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
+        stream.reset(historyToItems(stream.getState(), msgs));
+      } catch {
+        return;
+      }
+      if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
+      void restoreConversationRuns(id);
+    })();
+  }, []);
+
   const send = async (override?: { message?: string; planMode?: boolean }) => {
     const message = (override?.message ?? input).trim();
     if ((!message && images.length === 0) || aiBusy || aiRunBlocksStart(activeRunRef.current)) return;
@@ -554,8 +613,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   const steer = async () => {
     const message = input.trim();
+    if (!message) return;
     const run = activeRunRef.current;
-    if (!message || !run || run.settled || run.spawnPending) return;
+    if (!run || run.settled) {
+      pushToast("info", "这一轮已结束，补充指令没有送出，可直接作为新消息发送");
+      return;
+    }
+    if (run.spawnPending) {
+      pushToast("info", "这一轮还在启动，稍等一下再补充指令");
+      return;
+    }
     if (images.length > 0) {
       pushToast("info", "运行中的补充指令暂不支持图片，请先移除图片");
       return;
@@ -582,6 +649,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setPlanMode(false);
     void send({ message: `按上面的方案执行。\n\n方案原文：\n${plan}`, planMode: false });
   };
+  const approvePlanRef = useRef(approvePlan);
+  approvePlanRef.current = approvePlan;
+  const handleApprovePlan = useCallback((plan: string) => approvePlanRef.current(plan), []);
 
   const retryRun = (item: ChatItem) => {
     if (item.role !== "outcome" || item.outcome !== "error" || !item.retryable) return;
@@ -701,11 +771,34 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
+  const loadRunStatuses = async (ids: string[]) => {
+    const entries = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const runs = await aiApi.runs(id, 20);
+          return [id, runStatusOf(Array.isArray(runs) ? runs : [])] as const;
+        } catch {
+          return [id, null] as const;
+        }
+      }),
+    );
+    setRunStatusByConv((prev) => {
+      const next = { ...prev };
+      for (const [id, status] of entries) {
+        if (status) next[id] = status;
+        else delete next[id];
+      }
+      return next;
+    });
+  };
+
   const loadConversations = async () => {
     setHistoryStatus("loading");
     setHistoryError(null);
+    let ids: string[] = [];
     try {
       const list = await aiApi.conversationList();
+      ids = list.map((c) => c.id);
       setConversations(
         list.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt })),
       );
@@ -713,7 +806,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     } catch (e) {
       setHistoryStatus("error");
       setHistoryError(describeError(e));
+      return;
     }
+    void loadRunStatuses(ids);
   };
 
   const toggleHistory = () => {
@@ -762,6 +857,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("info", "这一轮仍在运行，请先停止再删除当前会话");
       return;
     }
+    try {
+      const runs = await aiApi.runs(c.id, 20);
+      const inFlight = runStatusOf(Array.isArray(runs) ? runs : []);
+      if (inFlight) {
+        pushToast(
+          "info",
+          inFlight === "running"
+            ? "这个会话还有正在运行的 AI 任务，等它结束或先停止再删除"
+            : "这个会话还有中断待恢复的 AI 任务，先打开会话处理完再删除",
+        );
+        return;
+      }
+    } catch {
+    }
     const ok = await ask(`删除会话「${c.title || "(未命名会话)"}」？消息记录一并清除，不可恢复。`, {
       kind: "warning",
     });
@@ -777,6 +886,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       return;
     }
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
+    setRunStatusByConv((prev) => {
+      const next = { ...prev };
+      delete next[c.id];
+      return next;
+    });
     if (conversationIdRef.current === c.id) {
       deletedConversationIdsRef.current.add(c.id);
       updateConversationId(undefined);
@@ -988,6 +1102,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                     {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : ""}
                   </span>
                 </button>
+                {runStatusByConv[c.id] && (
+                  <span
+                    className={`nx-badge shrink-0 ${runStatusByConv[c.id] === "running" ? "nx-badge-amber" : "nx-badge-purple"}`}
+                    title={runStatusByConv[c.id] === "running" ? "这个会话有正在运行的 AI 任务" : "这个会话有中断待恢复的 AI 任务"}
+                  >
+                    {runStatusByConv[c.id] === "running" ? "运行中" : "待恢复"}
+                  </span>
+                )}
                 <button
                   className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
                   title={`删除「${c.title || "(未命名会话)"}」`}
@@ -1102,7 +1224,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               key={item.id}
               item={item}
               streaming={aiBusy && i === conv.items.length - 1}
-              onApprovePlan={approvePlan}
+              onApprovePlan={handleApprovePlan}
               onRetry={retryRun}
             />
           ))}
@@ -1294,7 +1416,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             )}
           </div>
         )}
-        {aiBusy && conv.status && (
+        {aiBusy && hitlWaiting && (
+          <div
+            className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-200/90 [@media(max-height:480px)]:sr-only"
+            role="status"
+            aria-live="polite"
+          >
+            <IconAlert size={10} className="shrink-0 text-amber-300/90" />
+            <span className="truncate">{hitlWaiting}</span>
+          </div>
+        )}
+        {aiBusy && !hitlWaiting && conv.status && (
           <div
             className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500 [@media(max-height:480px)]:sr-only"
             role="status"
@@ -1505,7 +1637,7 @@ function ruleFromRendered(rendered: string): string {
   return picked.slice(0, 120);
 }
 
-function ChatBubble({
+const ChatBubble = memo(function ChatBubble({
   item,
   streaming,
   onApprovePlan,
@@ -1541,7 +1673,7 @@ function ChatBubble({
   if (item.role === "assistant") {
     return (
       <div className="mr-2 rounded-[10px] rounded-bl-[3px] border border-neutral-800 bg-neutral-800 px-3 py-2 text-[12.3px] leading-relaxed text-neutral-200">
-        <Markdown text={item.text} />
+        <Markdown text={item.text} streaming={streaming} />
       </div>
     );
   }
@@ -1600,7 +1732,7 @@ function ChatBubble({
   }
   if (item.role === "tool") return <ToolBubble item={item} />;
   return null;
-}
+});
 
 function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   const pending = item.resolution === undefined;

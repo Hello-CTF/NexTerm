@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import { useUi, type TakeoverState } from "./store";
+import { consumeRestoredTakeover, useUi, type TakeoverState } from "./store";
 import { formatBinding, formatBindingAria, getKeybinding, matchKeybinding, useKeybindings } from "./keybindings";
-import { aiApi } from "../ipc/commands";
+import { aiApi, terminalApi } from "../ipc/commands";
 import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
 import { describeError } from "../ui/errorText";
 import { hasActiveOverlay, isImeKeyEvent } from "../ui/DialogHost";
 
 let stealBackInFlight: TakeoverState | null = null;
+
+function alreadyEnded(message: string): boolean {
+  return message.includes("接管令牌已过期") || message.includes("接管任务不存在或已结束");
+}
 
 export async function stealBack(reason = "用户夺回控制权") {
   const { takeover, setTakeover, pushToast } = useUi.getState();
@@ -20,10 +24,31 @@ export async function stealBack(reason = "用户夺回控制权") {
     if (useUi.getState().takeover === takeover) setTakeover(null);
     pushToast("info", "已夺回终端控制权，AI 已停止");
   } catch (e) {
-    pushToast("error", `夺回失败，AI 可能仍在操作终端：${describeError(e)}`);
+    const message = describeError(e);
+    if (alreadyEnded(message)) {
+      if (useUi.getState().takeover === takeover) setTakeover(null);
+      pushToast("info", "接管已结束，终端已在你手中");
+      return;
+    }
+    pushToast("error", `夺回失败，AI 可能仍在操作终端：${message}`);
   } finally {
     if (stealBackInFlight === takeover) stealBackInFlight = null;
   }
+}
+
+export async function restoredTakeoverAlive(
+  restored: TakeoverState,
+  snapshot: (tabId: string) => Promise<{ text: string }>,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const snap = await snapshot(restored.tabId);
+      return !snap.text.includes("接管结束");
+    } catch {
+      await new Promise((resolve) => window.setTimeout(resolve, 800));
+    }
+  }
+  return true;
 }
 
 export function TakeoverBanner() {
@@ -51,6 +76,22 @@ export function TakeoverBanner() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [takeover]);
+
+  useEffect(() => {
+    const restored = consumeRestoredTakeover();
+    if (!restored) return;
+    let disposed = false;
+    void restoredTakeoverAlive(restored, (tabId) => terminalApi.snapshot(tabId)).then((alive) => {
+      if (disposed || alive) return;
+      const ui = useUi.getState();
+      if (ui.takeover !== restored) return;
+      ui.setTakeover(null);
+      ui.pushToast("info", "接管已结束");
+    });
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   if (!takeover) return null;
 

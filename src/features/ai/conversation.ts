@@ -811,7 +811,7 @@ export function resetConversation(
   state: ConversationState,
   items: ChatItem[] = [],
 ): ConversationState {
-  return { ...createConversation(), seq: state.seq + items.length, items, usage: state.usage, todos: state.todos };
+  return { ...createConversation(), seq: state.seq + items.length, items };
 }
 
 export function historyToItems(
