@@ -1,4 +1,3 @@
-// DB 面板（M3）：MySQL（SQL 编辑器 + 结果表格 + 库表浏览）+ Redis（SCAN + 查看器 + 命令台 + TTL）。
 import { useEffect, useRef, useState } from "react";
 import { EditorView, placeholder } from "@codemirror/view";
 import { basicSetup } from "codemirror";
@@ -26,8 +25,6 @@ export function DbPanel({ connId, kind }: { connId: string; kind: "mysql" | "red
   return kind === "mysql" ? <MysqlView connId={connId} /> : <RedisView connId={connId} />;
 }
 
-/* ───────────────────────── MySQL ───────────────────────── */
-
 function MysqlView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
   const [schema, setSchema] = useState("");
@@ -35,7 +32,6 @@ function MysqlView({ connId }: { connId: string }) {
   const [tables, setTables] = useState<string[]>([]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [running, setRunning] = useState(false);
-  /** 底部条：看表清单还是看表结构。 */
   const [browse, setBrowse] = useState<"tables" | "columns">("tables");
   const [activeTable, setActiveTable] = useState<string | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -52,7 +48,6 @@ function MysqlView({ connId }: { connId: string }) {
     }
   };
 
-  // 只在挂载时拉一次库列表；不再放在渲染体里（旧版每次重渲染都会重发请求）
   useEffect(() => {
     void (async () => {
       try {
@@ -66,13 +61,10 @@ function MysqlView({ connId }: { connId: string }) {
     })();
   }, [connId]);
 
-  // CodeMirror 实例只建一次
   useEffect(() => {
     if (!hostRef.current || viewRef.current) return;
     const view = new EditorView({
       state: EditorState.create({
-        // 真机上不要塞演示语料：早先这里写死了 `orders` 表的示例 SQL，
-        // 连真实库打开面板就提示"演示数据已就绪"，对着一个不存在的表。
         doc: DEMO
           ? "-- 演示模式：数据都是假的。试试：\nSELECT channel, COUNT(*) AS orders\nFROM orders GROUP BY channel;\n"
           : "",
@@ -80,7 +72,6 @@ function MysqlView({ connId }: { connId: string }) {
           basicSetup,
           sqlLang(),
           nxHighlight,
-          // 只在空文档时显示，演示模式下有初值所以不会出现
           placeholder("在这里写 SQL，然后点右上角「执行」"),
         ],
       }),
@@ -131,7 +122,6 @@ function MysqlView({ connId }: { connId: string }) {
             c.default ?? "NULL",
             c.extra || "—",
           ]),
-          // 索引跟在字段后面，一眼能看到主键与联合索引
           ...indexes.map((ix) => [
             `↳ ${ix.name}`,
             ix.unique ? "UNIQUE" : "INDEX",
@@ -304,8 +294,6 @@ async function copyAsCsv(result: QueryResult) {
   await navigator.clipboard.writeText(lines.join("\n"));
 }
 
-/* ───────────────────────── Redis ───────────────────────── */
-
 function RedisView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
   const [pattern, setPattern] = useState("*");
@@ -359,7 +347,6 @@ function RedisView({ connId }: { connId: string }) {
 
   return (
     <div className="nx-pane flex-row">
-      {/* 键列表 */}
       <div className="flex w-[272px] shrink-0 flex-col border-r border-neutral-800/60">
         <div className="flex h-[38px] shrink-0 items-center gap-1.5 px-2.5">
           <IconSearch size={13} className="shrink-0 text-neutral-500" />
@@ -396,7 +383,6 @@ function RedisView({ connId }: { connId: string }) {
         )}
       </div>
 
-      {/* 值 + 命令台 */}
       <div className="flex min-w-0 flex-1 flex-col">
         {view ? (
           <>

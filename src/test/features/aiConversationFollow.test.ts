@@ -1,7 +1,5 @@
 /** @vitest-environment jsdom */
 
-// 跟随滚动：用可编程的滚动尺寸（jsdom 无布局，全部显式指定）驱动真实 hook。
-// 每个新元素都要重新 stub 一次尺寸 —— 这正好模拟了侧栏关闭/重开后的新节点。
 import { afterEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
 import {
@@ -134,11 +132,9 @@ describe("useConversationFollow", () => {
     h.setRevision(1);
     expect(sc.scrollCalls().at(-1)).toBe(1000);
     const callsWhileFollowing = sc.scrollCalls().length;
-    // 用户上翻 ⇒ 停止跟随。
     sc.setMetrics({ scrollTop: 100 });
     sc.dispatchScroll();
     expect(h.follow().following).toBe(false);
-    // 新内容到来：不再调用 scrollTo，位置保持，亮新输出入口。
     sc.setMetrics({ scrollHeight: 1400 });
     h.setRevision(2);
     expect(sc.scrollCalls().length).toBe(callsWhileFollowing);
@@ -160,7 +156,6 @@ describe("useConversationFollow", () => {
     expect(sc.scrollCalls().at(-1)).toBe(1400);
     expect(h.follow().following).toBe(true);
     expect(h.follow().newOutput).toBe(false);
-    // 恢复跟随后，新内容再次自动滚动。
     sc.setMetrics({ scrollHeight: 1800 });
     h.setRevision(3);
     expect(sc.scrollCalls().at(-1)).toBe(1800);
@@ -190,7 +185,6 @@ describe("useConversationFollow", () => {
     h.setRevision(1);
     sc.setMetrics({ scrollTop: 100 });
     sc.dispatchScroll();
-    // revision 变了但内容高度没变（例如同值覆盖）：不算新输出。
     h.setRevision(2);
     expect(h.follow().newOutput).toBe(false);
   });
@@ -202,13 +196,11 @@ describe("useConversationFollow", () => {
     h.setRevision(1);
     expect(first.scrollCalls().at(-1)).toBe(1000);
 
-    // 侧栏收起 ⇒ 元素卸载；重开 ⇒ 一个全新的节点（不是同一个 DOM 元素）。
     h.setVisible(false);
     h.setVisible(true);
     const second = h.attach();
     expect(second.el).not.toBe(first.el);
 
-    // 新节点上的手动上翻必须被听到：不能再自动滚底，要亮新输出入口。
     second.setMetrics({ scrollHeight: 1000, clientHeight: 200, scrollTop: 800 });
     second.setMetrics({ scrollTop: 100 });
     second.dispatchScroll();
@@ -218,7 +210,6 @@ describe("useConversationFollow", () => {
     expect(second.scrollCalls()).toEqual([]);
     expect(h.follow().newOutput).toBe(true);
 
-    // 旧节点已摘除监听：它的滚动事件不再影响状态。
     first.setMetrics({ scrollTop: 800 });
     first.dispatchScroll();
     expect(h.follow().following).toBe(false);

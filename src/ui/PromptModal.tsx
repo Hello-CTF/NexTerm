@@ -1,4 +1,3 @@
-// 全局文本输入弹窗（替代 window.prompt，Tauri 下不可用）。
 import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useUi } from "../app/store";
 import { isMac } from "../app/platform";

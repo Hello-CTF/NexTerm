@@ -1,8 +1,4 @@
 /** @vitest-environment jsdom */
-//
-// R42：凭据详情页的 destructive 确认（清除私钥口令 / 删除凭据）走共享 warning 语义。
-// 两处的危害都是不可逆的：口令清掉后需要口令的私钥即无法连接；凭据删除后密钥材料
-// 即丢失（引用置空但资产保留）。取消必须原样中止，不发任何写 RPC。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
@@ -21,9 +17,6 @@ const mocks = vi.hoisted(() => ({
   pickKeyFile: vi.fn(),
   toast: vi.fn(),
 }));
-// R42 真实浮层验收：工厂在既有覆盖之上 spread 真实模块 —— 组件照旧走 mocks.ask，
-// 用例把 mocks.ask 委托回真实 ask()，经真实 registerDialogHandlers +
-// 真实映射（App 的 dialogLevelForKind）+ 真实 store/DialogHost 渲染验收级别。
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
@@ -96,7 +89,6 @@ beforeEach(() => {
   mocks.updateCredential.mockResolvedValue(undefined);
   mocks.deleteCredential.mockResolvedValue(undefined);
   useUi.setState({ pushToast: mocks.toast, appDialog: null });
-  // 真实浮层：mocks.ask 委托回真实 ask()，按 App 的注册形态接管共享弹框
   mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
     mocks.realAsk!(message, options),
   );

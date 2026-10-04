@@ -1,5 +1,3 @@
-// 挂载面板（M1-T8）：远端目录 ↔ 本机盘符。
-// 列表以本机真实状态为准（§5.5）：显示系统全部映射，含其他进程挂的。
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
@@ -9,12 +7,6 @@ import { useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
 import { IconArrowLeft, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
 
-/**
- * 暂不可用态。
- *
- * 这版 macOS 不做「点了才失败」：把理由和替代路径直接摆在面板里。
- * 理由文案来自内核（`mount_capability`），不在前端拼。
- */
 function MountUnavailable({ reason }: { reason: string }) {
   return (
     <div className="nx-pane">
@@ -48,10 +40,6 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const sessions = useUi((s) => s.sessions);
-  /**
-   * 本机会话上挂载没有意义：要挂的那个「远端」就是这台机器自己。
-   * 不给「点了才失败」的入口 —— 直接说明白并指出去哪儿看本机文件。
-   */
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const [localPoint, setLocalPoint] = useState("Z:");
   const [remotePath, setRemotePath] = useState("");

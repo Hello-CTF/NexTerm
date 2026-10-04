@@ -1,12 +1,4 @@
 /** @vitest-environment jsdom */
-//
-// R42 审计钉板：断开挂载**不是** destructive —— 远端数据原样保留，重新挂载即恢复。
-//
-// 关键背景（round-1 P1）：App 的共享映射（src/app/App.tsx:470-471）对**不传 kind**
-// 的 ask 默认按 warning 渲染，所以「保持 info」必须在调用点显式传 { kind: "info" }。
-// 本测试走真实管道 —— 真实 ask()（注册制 + 排队）→ registerDialogHandlers →
-// 真实 store openAppDialog → 真实 DialogHost —— 断言渲染出来的是 role="dialog"
-// （info 浮层）而不是 alertdialog（warning 警示浮层），而不是只断言调用形状。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
@@ -47,7 +39,6 @@ beforeEach(() => {
   ]);
   mocks.remove.mockResolvedValue(undefined);
   useUi.setState({ pushToast: mocks.toast, sessions: [], appDialog: null });
-  // 与 App.tsx 的注册形态相同，映射直接用真实导出（dialogLevelForKind）
   registerDialogHandlers({
     ask: (message, options) =>
       new Promise<boolean>((resolve) => {

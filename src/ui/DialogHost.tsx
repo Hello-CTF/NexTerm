@@ -1,4 +1,3 @@
-// 应用内确认 / 提示弹框宿主，以及共享浮层的焦点与键盘协调。
 import {
   useEffect,
   useId,
@@ -246,7 +245,6 @@ function isDocumentTabStop(element: HTMLElement): boolean {
   if (element.hidden) return false;
   if (element.closest('[aria-hidden="true"]')) return false;
   if (element.closest("[inert]")) return false;
-  // display:none 祖先（含隐藏面板、关闭的 details）不产生布局盒，focus() 会被浏览器静默拒绝
   if (element.getClientRects().length === 0) return false;
   for (let current: HTMLElement | null = element; current; current = current.parentElement) {
     if (getComputedStyle(current).visibility === "hidden") return false;

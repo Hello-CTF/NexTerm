@@ -92,13 +92,11 @@ describe("fallbackModel DTO and pure editor semantics", () => {
     expect(fallbackModelLabel(withFallback)).toBe("fb-1");
     expect(fallbackModelLabel(withoutFallback)).toBe("");
     expect(fallbackModelLabel(nullFallback)).toBe("");
-    // undefined 与 null 都是「未设置」⇒ 不算改动；设置/清除/改值 ⇒ 算改动。
     expect(sameModelProfile(withoutFallback, nullFallback)).toBe(true);
     expect(sameModelProfile(withFallback, nullFallback)).toBe(false);
     expect(sameModelProfile(withFallback, withoutFallback)).toBe(false);
     expect(sameModelProfile(withFallback, { ...withFallback, fallbackModel: "fb-2" })).toBe(false);
     expect(sameModelProfile(withFallback, { ...withFallback })).toBe(true);
-    // 其它字段的比较没有被回退字段破坏。
     expect(sameModelProfile(withFallback, { ...withFallback, baseUrl: "https://other" })).toBe(false);
   });
 

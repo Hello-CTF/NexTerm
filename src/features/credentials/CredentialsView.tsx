@@ -1,13 +1,3 @@
-// 凭据视图：把凭据库 + SSH 资产渲染成 ssh config 风格文本 / JSON。
-//
-// 动机很具体：以前"看一眼自己有哪些主机、用的什么密钥"要开 VSCode 去翻
-// `~/.ssh/config`。这里给一个等价物，但它读的是**NexTerm 自己的库** ——
-// 于是它同时也是"库长什么样"的答案。
-//
-// 三条边界（有意为之）：
-// · 只读：没有写回，改东西回左栏与详情页，避免出现"文本是真相还是库是真相"；
-// · 不含明文：私钥/密码正文一律不出现，只标注来源（要看明文去详情页，那里有 15 秒打回）；
-// · 纯前端拼装：数据都来自已有的两个查询，不加内核命令 —— 这类展示不值得多一条 IPC。
 import { useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { assetApi, vaultApi, type Asset, type Credential } from "../../ipc/commands";
@@ -17,15 +7,12 @@ import { IconCode, IconCopy, IconFile, IconRefresh } from "../../ui/icons";
 
 type ViewMode = "text" | "json";
 
-/** 只有真正走 SSH 的资产才配出现在 ssh config 里（docker 主机也是 SSH 连的）。 */
 const SSH_KINDS = new Set(["ssh", "docker"]);
 
 export function CredentialsView({
   view,
   onChange,
 }: {
-  /** 受控：形态存在标签上（`tab.credView`），左栏点「文本 / JSON」也能切过来。
-   *  用组件内部 state 的话，标签已经开着时再点入口会"没反应"。 */
   view: ViewMode;
   onChange: (v: ViewMode) => void;
 }) {
@@ -108,12 +95,6 @@ export function CredentialsView({
   );
 }
 
-/* ── 文本 ─────────────────────────────────────────────────────────────── */
-
-/**
- * ssh config 风格。刻意**不用** CodeMirror：这里只需要"注释灰、指令蓝、值亮"
- * 三档，自己渲染比挂一个编辑器实例更轻、也更容易控住行距。
- */
 function buildText(assets: Asset[], creds: Credential[]): string {
   const now = formatTime(Date.now());
   const byId = new Map(creds.map((c) => [c.id, c]));
@@ -166,7 +147,6 @@ function buildText(assets: Asset[], creds: Credential[]): string {
   return out.join("\n");
 }
 
-/** 认证方式那行注释：只说"钥匙在哪"，不吐正文。 */
 function authComment(a: Asset, byId: Map<string, Credential>): string {
   const cred = a.credId ? byId.get(a.credId) : undefined;
   switch (a.authKind) {
@@ -188,7 +168,6 @@ function authComment(a: Asset, byId: Map<string, Credential>): string {
   }
 }
 
-/** 注释行灰、指令名蓝、值亮。 */
 function ConfigLines({ text }: { text: string }) {
   const rows: ReactNode[] = [];
   text.split("\n").forEach((line, i) => {
@@ -217,8 +196,6 @@ function ConfigLines({ text }: { text: string }) {
   });
   return <>{rows}</>;
 }
-
-/* ── JSON ─────────────────────────────────────────────────────────────── */
 
 function buildJson(assets: Asset[], creds: Credential[]): string {
   const byId = new Map(creds.map((c) => [c.id, c]));
@@ -267,7 +244,6 @@ function buildJson(assets: Asset[], creds: Credential[]): string {
 
 const JSON_TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b/g;
 
-/** 单行 JSON 上色：键蓝、字符串值绿、数字琥珀、布尔与 null 紫。 */
 function JsonLine({ line }: { line: string }) {
   const parts: ReactNode[] = [];
   let last = 0;
@@ -276,7 +252,6 @@ function JsonLine({ line }: { line: string }) {
   while ((m = JSON_TOKEN.exec(line)) !== null) {
     if (m.index > last) parts.push(line.slice(last, m.index));
     if (m[1] !== undefined) {
-      // 后面跟着冒号的字符串是键，否则是值
       parts.push(
         <span key={`${m.index}-s`} className={m[2] ? "text-blue-300" : "text-green-300"}>
           {m[1]}

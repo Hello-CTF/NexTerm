@@ -1,13 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// webTransport 重连时序回归（真实浏览器验收 ws-reconnect-replay 的前端半边）。
-//
-// 真实验收里 WS 掉线后传输层必须用**同一通道 id** 自动重连、只在重连（而非首次
-// open）时通知 onChannelReopen，XtermView 的 reattachOnReopen 据此重新 attach 并
-// 拿到 scrollback 重放。这里用可控的假 WebSocket 把这条时序钉死：首次 open 不得
-// 误报 reopen；重连必须复用同一通道 id；退避按 300ms 指数增长；dispose 后不得再
-// 重连；单个订阅者抛错不得影响其他订阅者。
-
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
 
@@ -47,7 +39,6 @@ class FakeWebSocket {
     for (const listener of this.listeners.get("close") ?? []) listener({} as never);
   }
 
-  // ── 测试驱动：模拟网络侧/服务端事件 ──
   serverOpen() {
     this.readyState = 1;
     this.onopen?.({});
@@ -107,7 +98,6 @@ describe("webTransport 重连时序", () => {
     const first = FakeWebSocket.instances[0];
     expect(first.url).toContain(`/ws/channel/${encodeURIComponent(channel.id)}`);
 
-    // 首次 open 不触发 reopen —— 否则 attach 路径会重复登记订阅。
     first.serverOpen();
     expect(reopened).not.toHaveBeenCalled();
 
@@ -133,14 +123,12 @@ describe("webTransport 重连时序", () => {
     vi.advanceTimersByTime(1);
     expect(FakeWebSocket.instances).toHaveLength(2);
 
-    // 第二次掉线前没有 open 成功：retry 不归零，退避翻倍到 600ms。
     FakeWebSocket.instances[1].serverDrop();
     vi.advanceTimersByTime(599);
     expect(FakeWebSocket.instances).toHaveLength(2);
     vi.advanceTimersByTime(1);
     expect(FakeWebSocket.instances).toHaveLength(3);
 
-    // open 成功后 retry 重置：下一次掉线回到 300ms。
     FakeWebSocket.instances[2].serverOpen();
     FakeWebSocket.instances[2].serverDrop();
     vi.advanceTimersByTime(300);
@@ -215,11 +203,9 @@ describe("webTransport 重连时序", () => {
     FakeWebSocket.instances[1].serverOpen();
     expect(reopened).toHaveBeenCalledTimes(1);
 
-    // 重连后的字节仍经 decodeBytes 投递给 createBinaryChannel 的回调。
     FakeWebSocket.instances[1].serverMessage(new Uint8Array([0x6e, 0x78]).buffer);
     expect(frames).toEqual([[0x6e, 0x78]]);
 
-    // dispose 走同一通道 id：关闭后不得再重连。
     events.disposeChannel(channel);
     FakeWebSocket.instances[1].serverDrop();
     vi.advanceTimersByTime(60_000);

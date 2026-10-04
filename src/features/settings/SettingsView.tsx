@@ -1,8 +1,3 @@
-// 设置页：模型档案管理（与 AI 侧栏共用 ModelManager）+ 凭据库。
-//
-// 模型设置以前在这里单开了一份「单 provider 表单」，和 AI 侧栏的多档案面板是两份重复且
-// 版本落后的实现 —— 现在统一内联复用 `ModelManager`，这里不再碰 aiApi 的
-// getProvider / setProvider / presets（连通性测试除外，见下方说明）。
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -37,24 +32,19 @@ import {
 export function SettingsView() {
   const { pushToast } = useUi();
 
-  // 连通性测试的结果。原先这里先把表单值 setProvider 再测；现在只测激活档案，
-  // 所以除了两步的成败，还要把各自的错误信息留着给用户看。
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
     modelsOk: boolean;
     chatOk: boolean;
     modelsError?: string;
     chatError?: string;
-    /** 连调用本身都失败（IPC / 后端异常）时的兜底说明。 */
     fatal?: string;
   } | null>(null);
 
-  // 凭据保护（重做后：设置页只留一个开关；解锁 / 立即锁定挪到「凭据」页）
   const [vault, setVault] = useState<VaultStatus | null>(null);
   const [protPwd, setProtPwd] = useState("");
   const [pendingEnable, setPendingEnable] = useState(false);
 
-  // 开关一变，凭据页 / 状态栏的 vault-status 缓存都要跟着失效
   const qc = useQueryClient();
   const refreshVault = () => {
     void qc.invalidateQueries({ queryKey: ["vault-status"] });
@@ -70,11 +60,9 @@ export function SettingsView() {
       .catch(() => undefined);
   }, []);
 
-  // ── AI 拦截规则（从 AI 侧栏的权限浮层挪进来的规则库）──────────────────
   const [aiPerm, setAiPerm] = useState<AiPermissionConfig | null>(null);
   const [ruleDraft, setRuleDraft] = useState("");
   const [ruleDraftOpen, setRuleDraftOpen] = useState(false);
-  /** AI 侧栏确认卡片「加为拦截规则」跳过来时带的预填命令。 */
   const rulePrefill = useUi((s) => s.aiRulePrefill);
 
   useEffect(() => {
@@ -91,10 +79,6 @@ export function SettingsView() {
     useUi.getState().setAiRulePrefill(null);
   }, [rulePrefill]);
 
-  /**
-   * 保存规则：先取最新配置再改 —— 权限档位可能同时在 AI 侧栏被切，
-   * 拿着手里的旧对象整包 setPermission 会把档位也覆盖回去。
-   */
   const saveRules = async (rules: string[]) => {
     try {
       const latest = await aiApi.getPermission();
@@ -110,7 +94,6 @@ export function SettingsView() {
     }
   };
 
-  /** 提交新增规则（Enter 或失焦）：空值和重复都不落库，草稿行一律收起。 */
   const addRule = () => {
     const r = ruleDraft.trim();
     setRuleDraft("");
@@ -120,7 +103,6 @@ export function SettingsView() {
     void saveRules([...aiPerm.dangerRules, r]);
   };
 
-  /** 改一条已有规则：返回是否真的落了库（空值 / 重复当"没改"处理）。 */
   const editRule = (orig: string, next: string): boolean => {
     if (!aiPerm) return false;
     const r = next.trim();
@@ -132,13 +114,6 @@ export function SettingsView() {
     return true;
   };
 
-  /**
-   * 两步连通性测试。
-   *
-   * 为什么只能测「当前激活的模型」：后端 `ai_test_provider` 测的是**运行时生效的那份
-   * provider**，不接受前端临时塞一份配置（这正是它与旧版 setProvider + 测试的差别）。
-   * 想验证一份还没保存的草稿，请用模型管理区里的「刷新模型列表」。
-   */
   const test = async () => {
     setTesting(true);
     setTestResult(null);
@@ -192,7 +167,6 @@ export function SettingsView() {
           </section>
         )}
 
-        {/* AI 模型：内联复用侧栏那套多档案管理，避免两份实现漂移 */}
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
@@ -206,7 +180,6 @@ export function SettingsView() {
 
           <ModelManager />
 
-          {/* 连通性测试：只能针对激活档案，故独立成块放在管理区下方 */}
           <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <button className="nx-btn nx-btn-outline" disabled={testing} onClick={() => void test()}>
@@ -231,7 +204,6 @@ export function SettingsView() {
           </div>
         </section>
 
-        {/* AI 拦截规则：侧栏权限浮层只留一行入口，规则库整套在这里 */}
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconShield size={15} className="text-neutral-400" />
@@ -256,13 +228,10 @@ export function SettingsView() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      // Enter 只负责"提交"，真正保存交给 onBlur —— 两处都写会存两遍
                       e.currentTarget.blur();
                     }
                   }}
                   onBlur={(e) => {
-                    // 空值 / 重复都不会落库，输入框还原成库里的那条，
-                    // 否则界面显示的和真实生效的规则对不上
                     if (!editRule(r, e.currentTarget.value)) e.currentTarget.value = r;
                   }}
                 />
@@ -311,13 +280,10 @@ export function SettingsView() {
           </p>
         </section>
 
-        {/* AI 长期记忆（M46）：opt-in 开关 + 条目 CRUD，与 AI 运行同一份 scope */}
         <MemoryCard />
 
-        {/* 无人值守定时任务（M46）：持久 job 的列表 / 启停 / 注册 / 注销 */}
         <CronCard />
 
-        {/* 凭据保护：文案只写"会发生什么"，不出现算法与密钥层级 */}
         <section className="nx-card">
           <div className="mb-1 flex items-center gap-2">
             <IconLock size={15} className="text-neutral-400" />
@@ -345,7 +311,6 @@ export function SettingsView() {
               checked={vault?.mode === "master"}
               onChange={() => {
                 if (vault?.mode === "master") {
-                  // 关闭不是无感的：要明确知道"从此不需要密码"
                   void ask("关闭密码保护？\n关闭后凭据无需密码即可使用。").then((ok) => {
                     if (!ok) return;
                     void vaultApi
@@ -425,13 +390,10 @@ export function SettingsView() {
           )}
         </section>
 
-        {/* 已知主机：SSH 指纹信任库，只能列出 / 撤销（接受只能走首次连接的确认流程） */}
         <KnownHostsCard />
 
-        {/* 资产同步：桌面与微服之间搬资产。桌面是发起方，浏览器版是被同步的一端 */}
         <SyncCard />
 
-        {/* 快捷键速查 */}
         <section className="nx-card">
           <div className="mb-3 flex items-center gap-2">
             <IconSettings size={15} className="text-neutral-400" />

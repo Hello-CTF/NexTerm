@@ -1,18 +1,3 @@
-// AI 侧栏：对话 + 流式事件 + 工具调用卡片 + 确认卡片 + 接管 + 历史会话。
-//
-// 形态：顶栏（历史 / 新建）、消息流、底部输入区
-// （大输入框 + 功能行 + 圆形发送）。**AI 接管终端**是我们独有的能力，完整保留。
-//
-// 四条自己定的规矩：
-//   · 权限是**档位**（只读/读写/静默），不是"一个静默开关" —— 见 §零 的决策表；
-//   · 危险命令在任何档位都要问，硬底线在任何档位都不执行；
-//   · 图片走 data URI 内联，截图不出本机，也只在当次请求里存在（不落库）；
-//   · @ 引用是给模型的**显式目标**，不改内核 scope —— scope 仍由当前会话决定。
-//
-// 流式路径的分层（本文件只管副作用与渲染）：
-//   · conversation.ts —— 事件 → 结构化会话（条目 / attempt / 终态），重放幂等；
-//   · conversationStream.ts —— 逐 token 文本按帧合并，工具 / 交互 / 终态前强制 flush；
-//   · conversationFollow.ts —— 只有用户还在最新输出时才自动滚动。
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
 import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
@@ -65,7 +50,6 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-/** @ 引用选出来的一枚 chip。 */
 interface RefChip {
   id: string;
   kind: "asset" | "tab";
@@ -73,12 +57,6 @@ interface RefChip {
   detail: string;
 }
 
-/**
- * 三档权限的展示文案。
- *
- * 说明文字写"会发生什么"而不是"叫什么" —— 用户选档位时要判断的是
- * 「AI 接下来会不会突然动我的机器」，不是记住三个名词。
- */
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
   { value: "read_only", label: "只读", hint: "仅执行只读命令" },
   { value: "read_write", label: "读写", hint: "写操作需确认" },
@@ -91,7 +69,6 @@ const MODE_LABEL: Record<AiPermissionMode, string> = {
   silent: "完全静默",
 };
 
-/** 确认决定 → 留在消息流里的结算文案（交互完成后仍然可查）。 */
 const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
   allow: "已允许一次",
   allow_session: "本会话已允许此类",
@@ -100,11 +77,6 @@ const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "deny", string> = {
 
 export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: string }) {
   const { rightOpen, setRightOpen, aiBusy, setAiBusy, pushToast, rightWidth, workspaces } = useUi();
-  /**
-   * 会话流控制器：组件生命周期内唯一。卸载时只 flush 不 dispose ——
-   * StrictMode 的开发态会走一遍"挂载→清理→再挂载"，dispose 是不可逆的，
-   * 会把第二段生命周期里的控制器变成哑巴；flush 则两个场景都正确。
-   */
   const streamRef = useRef<ConversationStream | null>(null);
   if (!streamRef.current) streamRef.current = createConversationStream();
   const stream = streamRef.current;
@@ -115,7 +87,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   const [input, setInput] = useState("");
   const [questionInput, setQuestionInput] = useState("");
-  /** 正在提交中的交互卡 id：在途期间同一张卡的重复点击不再发第二次 RPC。 */
   const [submittingCardId, setSubmittingCardId] = useState<string | null>(null);
   const runSequenceRef = useRef(0);
   const activeRunRef = useRef<AiRunSlot | null>(null);
@@ -125,45 +96,28 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     stream.beginRun(run.generation, kind);
     return run;
   };
-  /** 当前轮的待处理交互：从会话里派生，终态 / 停止 / 切换会话会自动关闭。 */
   const activeGeneration = activeRunRef.current?.generation ?? null;
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
   useEffect(() => {
-    // 新提问卡 / 卡片关闭都重置草稿；同一张卡的流式重渲染不清空用户输入。
     setQuestionInput("");
   }, [questionCard?.id]);
-  /** 计划模式：只调研、出方案，等批准。 */
   const [planMode, setPlanMode] = useState(false);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
-  /**
-   * conversationId 的 ref 镜像：删除会话的异步链路（弹框 / RPC 在途）里 state
-   * 闭包可能是旧值，重算「删的是不是当前会话」必须以最新值为准。
-   */
   const conversationIdRef = useRef<string | undefined>(undefined);
   const updateConversationId = (id: string | undefined) => {
     conversationIdRef.current = id;
     setConversationId(id);
   };
-  /**
-   * 已删除会话 ID 的 tombstone：删除 RPC 与在途 chat RPC 的响应可能倒序 ——
-   * 删除先返回、chat 后返回时，后者不得把已删除的 ID 写回（否则下一轮会重新
-   * 携带它发消息）。内核 ID 唯一且不复用，组件生命周期内永久抑制是安全的；
-   * 删除之后新发起的 chat 走 conversationId=undefined，拿到的是全新 ID，不受影响。
-   */
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
-  /** 权限档位（+ 规则数量展示）。规则库本身在设置页，这里只留入口。 */
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permOpen, setPermOpen] = useState(false);
-  /** 待发送的图片（data URI）。 */
   const [images, setImages] = useState<string[]>([]);
-  /** @ 引用 chip。 */
   const [refs, setRefs] = useState<RefChip[]>([]);
   const [atOpen, setAtOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<{ id: string; title: string; updatedAt: number }[]>([]);
-  /** 接管状态来自全局 store（§8.6）：顶部横幅与这里读的是同一份。 */
   const takeover = useUi((s) => s.takeover);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const follow = useConversationFollow(conv.items);
@@ -175,8 +129,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       .catch(() => undefined);
   }, []);
 
-  // 规则库挪去设置页之后，档位和规则可能在那里被改 ——
-  // 浮层每次打开都拉最新，别拿旧数据覆盖（切档位是整包保存）。
   useEffect(() => {
     if (permOpen) {
       void aiApi
@@ -186,7 +138,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   }, [permOpen]);
 
-  /** 改权限：先落 UI 再写库（开关的手感不能等一次 IPC 往返），写失败再回滚提示。 */
   const savePerm = async (next: AiPermissionConfig) => {
     const prev = perm;
     setPerm(next);
@@ -198,7 +149,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  /** 切档位：先取最新配置再改 mode —— dangerRules 归设置页管，不能拿旧列表整包覆盖。 */
   const switchMode = (mode: AiPermissionConfig["mode"]) => {
     void aiApi
       .getPermission()
@@ -206,12 +156,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       .catch(() => savePerm({ ...(perm as AiPermissionConfig), mode }));
   };
 
-  /**
-   * 可引用的对象：当前会话的资产 + 工作区里所有终端标签。
-   *
-   * 刻意不列**别的**资产的连接信息 —— 内核的 AiScope 是当前会话单点，
-   * 列一个 AI 根本够不着的目标只会让它答非所问。
-   */
   const refCandidates = useMemo<RefChip[]>(() => {
     const out: RefChip[] = [];
     const sess = useUi.getState().sessions.find((s) => s.id === sessionId);
@@ -239,19 +183,12 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     return out;
   }, [sessionId, workspaces]);
 
-  /** 把引用折进消息文本：它们是给模型的显式目标，不是内核 scope 的一部分。 */
   const composeMessage = (text: string): string => {
     if (refs.length === 0) return text;
     const list = refs.map((r) => `- ${r.label}（${r.detail}）`).join("\n");
     return `[引用对象]\n${list}\n\n${text}`;
   };
 
-  /**
-   * HITL 重连对账：先按已见序号补事件（带结算标签），再用快照兜底（权威挂起列表）。
-   *
-   * 任何一步失败都静默降级 —— 流事件仍是主通道，对账只是安全网；事件拉取失败
-   * 不阻塞快照，快照失败时至少把已拉到的事件落账。
-   */
   const replayHitl = async (generation: number, jobId: string) => {
     const plan = stream.planHitlReplay(generation);
     let events: AiHitlEventDto[] = [];
@@ -272,8 +209,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const message = (override?.message ?? input).trim();
     if ((!message && images.length === 0) || aiBusy || aiRunBlocksStart(activeRunRef.current)) return;
     const run = beginRun();
-    // 计划模式可以按次覆盖：「批准并执行」那一下必须走普通模式，
-    // 否则模型会再给你一份计划 —— 用户点的是"执行"，不是"再想想"。
     const usePlan = override?.planMode ?? planMode;
     setAiBusy(true);
     setInput("");
@@ -291,7 +226,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (terminalEvent) dispose();
         return;
       }
-      // 聚合层负责幂等与可见终态；这里只保留副作用（ownership / toast / 通道释放）。
       const result = stream.pushEvent(run.generation, ev);
       if (!terminalEvent) return;
       if (result.accepted) {
@@ -299,13 +233,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         if (!current.spawnPending) setAiBusy(false);
         if (type === "error") pushToast("error", `AI: ${ev.message as string}`);
       }
-      // 终态到达 ⇒ 这次作业彻底结束，释放本次作业专用的通道（重复 / 迟到终态也一样，
-      // dispose 幂等）。不释放的话它对应的 WS 会一直挂着退避重连。
       dispose();
     });
 
-    // HITL 重连对账：通道重开 ⇒ 按 requestId/attempt/seq 补回中断状态与卡片。
-    // 只在 chat 通道挂 —— 接管的 job 不在 HITL 管理器里，快照只会回 not_found。
     const offHitlReopen = onChannelReopen(channel, () => {
       const current = activeRunRef.current;
       if (!isCurrentAiRun(current, run.generation) || current.settled || !current.jobId) return;
@@ -330,9 +260,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         dispose();
         return;
       }
-      // 即使终态早于 RPC 返回，也必须续用内核会话 id，否则下一轮会另开新会话。
-      // 例外：该会话在本 RPC 在途期间被删除（响应倒序），写回会让下一轮重新
-      // 携带已删除的 ID —— 压掉写回，本轮照常结算，下一轮另开新会话。
       if (!deletedConversationIdsRef.current.has(res.conversationId)) {
         updateConversationId(res.conversationId);
       }
@@ -346,8 +273,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     } catch (e) {
       const current = activeRunRef.current;
       if (isCurrentAiRun(current, run.generation)) {
-        // 命令级失败（未拿到 jobId）时服务端不会推任何终态事件：补一条本地 error，
-        // 失败的那一轮在消息流里同样留痕可查；已终态（如早到的 done）则不改写。
         const result = stream.pushEvent(run.generation, {
           type: "error",
           message: describeError(e),
@@ -360,12 +285,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  /**
-   * 运行中补充（mid-run steering）：不开新轮、不另开面板，文字进当前 job 的
-   * steering 队列，内核在下一个模型调用边界（工具配对完整之后）注入。
-   * 气泡先以「等待注入」落账，内核 steered 事件到了翻「已注入」；RPC 被拒
-   * （任务刚好结束 / 队列满）标「未送达」并把文字还回输入框。
-   */
   const steer = async () => {
     const message = input.trim();
     const run = activeRunRef.current;
@@ -392,13 +311,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  /**
-   * 批准计划：关掉计划模式，把方案原样回灌一条消息重新发起。
-   *
-   * 不复用 exit_plan_mode 那一轮的 job —— 那一轮已经结束了；而且新的一轮本该
-   * 就是「计划模式关掉」的状态。让模型在同一个 job 里接着跑，等于把「用户点头」
-   * 这个动作本身绕过去了。
-   */
   const approvePlan = (plan: string) => {
     setPlanMode(false);
     void send({ message: `按上面的方案执行。\n\n方案原文：\n${plan}`, planMode: false });
@@ -412,7 +324,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("info", "这一轮还没启动完，稍等一下再点");
       return;
     }
-    // 上一次提交还在途：重复点击不再发第二次 RPC（后端的「已消费」拒绝不该靠它触发）。
     if (submittingCardId) return;
     setSubmittingCardId(card.id);
     try {
@@ -421,9 +332,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       );
     } catch (e) {
       pushToast("error", `确认失败：${describeError(e)}`);
-      // 迟到 / 重复 / 参数变化的拒绝：以服务端快照为准结算这张卡，
-      // 而不是让它永远挂着（对账失败时卡片保持原状，下次重连再算）。
-      // 接管的 job 不在 HITL 管理器里，对账对它是空转 —— 只给 chat 轮次对。
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
@@ -432,7 +340,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       setSubmittingCardId(null);
     }
     if (isCurrentAiRun(activeRunRef.current, run.generation)) {
-      // 只结算这张卡（id + nonce 双重要件）：RPC 等待期间到来的新交互不受影响。
       stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
     }
   };
@@ -468,7 +375,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
-  /** chat 取消成功即可收尾；takeover 必须等终端终态清横幅，不能提前解锁。 */
   const stop = async () => {
     const run = activeRunRef.current;
     const id = run?.jobId;
@@ -492,8 +398,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("error", `停止失败：${describeError(e)}`);
     }
   };
-
-  /* ── 历史会话 ──────────────────────────────────────────────────────── */
 
   const loadConversations = async () => {
     try {
@@ -544,14 +448,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     setHistoryOpen(false);
   };
 
-  /**
-   * 删除历史会话：先弹框确认；删掉正在看的会话就回到全新会话，避免留着空壳。
-   *
-   * 与 open/new 同一道闸：正在运行的一轮（chat 或 takeover）所在会话不允许删除 ——
-   * reset 会清空未结算的 attempt，终态到达时被聚合层拒收，ownership 悬置、busy 卡死。
-   * 弹框与删除 RPC 都是异步的，每一程之后都按最新 ref 重算，堵住「确认后才发起运行」
-   * 的竞态；RPC 在途期间起的轮次不 reset，终态照常结算，只是下一条消息另开新会话。
-   */
   const deleteConversation = async (c: { id: string; title: string }) => {
     const blocksReset = (id: string) =>
       id === conversationIdRef.current && aiRunBlocksStart(activeRunRef.current);
@@ -575,18 +471,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
     if (conversationIdRef.current === c.id) {
-      // tombstone：早于删除发起、之后才返回的 chat RPC 不得把这个 ID 写回来。
       deletedConversationIdsRef.current.add(c.id);
       updateConversationId(undefined);
       if (!aiRunBlocksStart(activeRunRef.current)) stream.reset();
     }
   };
 
-  /* ── 输入区：@ 引用 / 粘贴图片 ─────────────────────────────────────── */
-
   const onInputChange = (v: string) => {
     setInput(v);
-    // 刚打出一个 `@`（词首）→ 弹引用列表；已开着就一直跟着过滤
     const at = v.lastIndexOf("@");
     if (at < 0) {
       setAtOpen(false);
@@ -603,7 +495,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     inputRef.current?.focus();
   };
 
-  /** 粘贴截图 → 附件列表。纯文本粘贴原样放行（不 preventDefault）。 */
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData.items)
       .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
@@ -621,8 +512,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast("error", "终端接管需要先打开一个终端标签");
       return;
     }
-    // 接管任务通常是好几行的步骤描述（先装什么、再改哪个配置、最后重启什么），
-    // 单行输入框写不下 —— 显式要求多行。
     const instruction = await promptText(
       "终端接管：要 AI 去做什么？（例如：安装 nginx 并启动）",
       "",
@@ -662,9 +551,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         clearTakeover();
         if (type === "error") pushToast("error", `接管：${ev.message as string}`);
       }
-      // 接管的终态。注意「Esc 夺回」也走这里 —— 服务端 `run_takeover` 在取消
-      // 分支 break 之后仍然会补推一条 `Done`，所以取消路径不需要另找释放点。
-      // 此刻之后该通道再无任何事件，可安全关闭（重复 / 迟到终态同样幂等释放）。
       disposeChannel(channel);
     });
 
@@ -708,8 +594,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       const current = activeRunRef.current;
       if (isCurrentAiRun(current, run.generation)) {
-        // 命令级失败：服务端若在 `begin`/建客户端阶段就退出，一个事件都不会推，
-        // 与 chat 一样补一条本地 error 留痕。
         const result = stream.pushEvent(run.generation, {
           type: "error",
           message: describeError(e),
@@ -730,7 +614,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       className="flex h-full shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950"
       style={{ width: rightWidth }}
     >
-      {/* 顶栏：历史会话 / 新建会话 */}
       <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 pl-3">
         <span className="text-[12.5px] font-semibold text-neutral-100">AI 助手</span>
         {takeover && (
@@ -759,7 +642,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </button>
       </div>
 
-      {/* 历史会话浮层 */}
       {historyOpen && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-1.5">
           {conversations.length === 0 ? (
@@ -791,7 +673,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      {/* 权限设置浮层 */}
       {permOpen && perm && (
         <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
@@ -807,7 +688,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             </button>
           </div>
 
-          {/* 三档 */}
           <div className="mb-2 flex flex-col gap-0.5">
             {MODE_OPTIONS.map((m) => (
               <button
@@ -826,9 +706,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             ))}
           </div>
 
-          {/* 工作方式：计划模式单独成组，不混进上面三档 ——
-              档位管的是"能不能动手"，计划模式管的是"先不先出方案"，
-              混在一起会被当成第四档权限。整行可点 + ●/○ 与三档的呈现保持一致。 */}
           <div className="mb-1 text-[11px] text-neutral-300">工作方式</div>
           <button
             className={`nx-menu-item mb-0.5 w-full ${planMode ? "bg-blue-500/15" : ""}`}
@@ -848,8 +725,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             {planMode ? "先出方案，批准后执行；期间只读" : "直接执行"}
           </div>
 
-          {/* 拦截规则：规则库整套在设置页，这里只留状态 + 显式跳转按钮 ——
-              侧栏是干活时顺手看档位的地方，不是管理规则的地方。 */}
           <div className="mb-2 flex items-center gap-1.5">
             <span className="shrink-0 text-neutral-500">
               <IconShield size={12} />
@@ -878,7 +753,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      {/* 消息流：跟随滚动由 useConversationFollow 决定，不再无条件拽到底部 */}
       <div className="relative min-h-0 flex-1">
         <div
           ref={follow.scrollRef}
@@ -950,8 +824,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               >
                 拒绝
               </button>
-              {/* 跳去设置页的规则库，并把这条命令预填成新规则的草稿 ——
-                  预填走全局 store：设置页可能还没挂载，等它读到再展开草稿行。 */}
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 title="打开设置的拦截规则，并把这条命令预填成一条新规则"
@@ -1020,9 +892,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      {/* 任务清单：AI 自己维护的待办。
-          钉在输入区上方而不是塞进消息流 —— 它是「现在做到哪了」的常驻视图，
-          要滚动上去才能看到的清单等于没做这个功能。 */}
       {conv.todos.length > 0 && (
         <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
@@ -1061,18 +930,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
-      {/* 输入区 */}
       <div className="shrink-0 border-t border-neutral-800/60 p-2.5">
-        {/* 计划模式开着时必须一直看得见。它已经从功能行搬进权限浮层，
-            而浮层一收起来就没人提醒用户"这一轮 AI 只出方案、不动手"了 ——
-            忘了它还开着，会以为 AI 变磨叽了。 */}
         {planMode && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300/90">
             <IconList size={10} className="shrink-0" />
             <span className="truncate">计划模式 · 先出方案，你批准了再动手</span>
           </div>
         )}
-        {/* 运行状态条：回答「它还在动吗」。phase 来自内核 status / toolArgs 事件。 */}
         {aiBusy && conv.status && (
           <div
             className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500"
@@ -1083,7 +947,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="truncate">{statusText(conv.status)}</span>
           </div>
         )}
-        {/* 引用 chip */}
         {refs.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {refs.map((r) => (
@@ -1101,7 +964,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           </div>
         )}
 
-        {/* 图片附件 */}
         {images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {images.map((src, i) => (
@@ -1119,7 +981,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           </div>
         )}
 
-        {/* @ 引用选择 */}
         {atOpen && refCandidates.length > 0 && (
           <div className="mb-1.5 max-h-40 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1">
             {refCandidates.map((r) => (
@@ -1157,20 +1018,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              // 运行中 Enter 不再是「另开一轮」（send 本就被 aiBusy 挡下），
-              // 而是给当前 job 发补充指令 —— 同一个输入框，两种语义按状态分流。
               if (aiBusy) void steer();
               else void send();
             }
           }}
         />
 
-        {/* 功能行 */}
         <div className="mt-1.5 flex items-center gap-1">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
           <div className="nx-spacer" />
           <UsageRing usage={conv.usage} />
-          {/* 盾牌不再是"静默开关"，而是权限设置入口（图标刻意不变，位置也不动） */}
           <button
             className={`nx-icon-btn nx-icon-btn-sm ${
               perm?.mode === "silent" ? "is-active" : ""
@@ -1180,7 +1037,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           >
             <IconShield size={13} />
           </button>
-          {/* 接管 = 完全权限，颜色要比旁边任何按钮都重 */}
           <button
             className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"
             title={
@@ -1193,8 +1049,6 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           >
             <IconMonitor size={13} />
           </button>
-          {/* 运行中这个圆钮就从「发送」变成「停止」——把它放在同一位置，
-              是因为用户想中断时的第一反应就是去点那个正在转圈的东西。 */}
           {aiBusy ? (
             <button
               className="nx-send-btn nx-send-btn-stop"
@@ -1216,13 +1070,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       </div>
 
-      {/* 模型配置面板：与权限面板同一套浮层位置，顶部展开、消息流让位 */}
       {modelPanelOpen && <ModelPanel onClose={() => setModelPanelOpen(false)} />}
     </aside>
   );
 }
 
-/** 发送按钮里的上箭头（细一号，圆钮里不显笨）。 */
 function IconSendArrow() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1237,7 +1089,6 @@ function IconSendArrow() {
   );
 }
 
-/** 停止按钮里的实心方块（停止 = 方块，是播放器/终端里最通用的语汇）。 */
 function IconStopSquare() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1246,7 +1097,6 @@ function IconStopSquare() {
   );
 }
 
-/** 读图 → data URI（内联进请求，不落盘）。 */
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -1256,25 +1106,15 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-/** 运行状态的一句话（把 `AiEvent::Status` 与工具参数进度翻成人话）。 */
 function statusText(s: StatusLine): string {
   if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期工具结果…";
   if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 轮 · 正在思考…` : "正在思考…";
   if (s.phase === "tool_args") {
-    // 报「已生成多少」而不是百分比：内核给的是参数 JSON 的**字节数**，
-    // 而这份 JSON 最终会长到多大没人知道 —— 分母不存在，百分比就是编的。
-    // 给一个会动的数字，用户就能判断它是活的，这正是这行字存在的全部意义。
     return `${preparingLabel(s.tool)} · 已生成 ${formatBytes(s.chars ?? 0)}`;
   }
   return s.detail ?? s.phase;
 }
 
-/**
- * 「正在准备什么」的人话说法。
- *
- * 单独一张表，而不是拼成 `${tool}…`：工具名是给模型看的标识符
- * （`write_file` / `edit_file`），直接摆给用户看等于让人读代码。
- */
 function preparingLabel(tool?: string): string {
   switch (tool) {
     case "write_file":
@@ -1290,19 +1130,11 @@ function preparingLabel(tool?: string): string {
   }
 }
 
-/** 字节数的粗略说法。参数是逐 token 长起来的，精确到个位没有意义。 */
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} 字节`;
   return `${(n / 1024).toFixed(1)} KB`;
 }
 
-/**
- * 从确认卡片的内核渲染文本里抠出一条待编辑的危险规则。
- *
- * 内核渲染一般会把真正要跑的命令单独放在一行（以 `$` 开头），优先取它；
- * 找不到就退回第一行。截到 120 字是因为规则是给人扫一眼的短模式，
- * 把整段上下文塞进去反而看不清要匹配什么。
- */
 function ruleFromRendered(rendered: string): string {
   const lines = rendered
     .split("\n")
@@ -1318,7 +1150,6 @@ function ChatBubble({
   onApprovePlan,
 }: {
   item: ChatItem;
-  /** 是不是"正在流出的最后一条"：思考过程在此期间保持展开，收尾自动折叠。 */
   streaming: boolean;
   onApprovePlan: (plan: string) => void;
 }) {
@@ -1352,9 +1183,6 @@ function ChatBubble({
     );
   }
   if (item.role === "reasoning") {
-    // 旧版把思考截到 200 字且无处可看全文。改成可折叠全文：
-    // 流式期间默认展开（看得见"它在想什么"），这一轮结束后收起成一行，
-    // 既保留现场又不让大段推理长期霸占消息流。
     return (
       <details
         className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500"
@@ -1371,8 +1199,6 @@ function ChatBubble({
     return <InteractionRecord item={item} />;
   }
   if (item.role === "outcome") {
-    // 一轮的可见终态：失败 / 取消 / 完成都留在消息流里，
-    // 流关闭或重连之后仍能回看，不再只是一个转瞬即逝的 toast。
     if (item.outcome === "error") {
       return (
         <div
@@ -1403,7 +1229,6 @@ function ChatBubble({
   return null;
 }
 
-/** 交互在消息流里的留痕：待处理是一行提示，结算后留下决定 / 回答。 */
 function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   const pending = item.resolution === undefined;
   const text =
@@ -1427,19 +1252,11 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   );
 }
 
-/**
- * 工具调用卡片：折叠态一行摘要，点「展开」看完整输出。
- *
- * 摘要只有 400 字（内核截的），排查问题时基本不够用 —— 一个 `docker ps`
- * 就可能超。所以完整输出也一并推过来了（上限 64K），这里默认收着，
- * 要用再铺开：一次几十屏的文本会把消息流冲散，反而找不到东西。
- */
 function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const [open, setOpen] = useState(false);
   const running = item.summary === undefined;
   const full = item.text ?? "";
   const preview = item.summary ?? "";
-  // 完整输出确实比摘要长，才给展开入口 —— 一条 40 字的 `pwd` 没什么可展开的。
   const expandable = full.length > preview.length;
   const body = open ? full : preview;
   return (
@@ -1487,12 +1304,6 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   );
 }
 
-/**
- * 「方案已提交」卡片（计划模式收尾）。
- *
- * 刻意带一个批准按钮而不是让用户自己打「开始执行」：计划模式下 AI 什么都没动，
- * 这一步是唯一的授权动作，给它一个明确的落点，用户才知道自己点的是什么。
- */
 function PlanBubble({
   item,
   onApprove,
@@ -1518,14 +1329,6 @@ function PlanBubble({
   );
 }
 
-/**
- * 确认卡片的主体。
- *
- * 写文件类工具在这里展示「到底要改什么」——**在用户按下「允许」之前**。
- * 这是「文件变更可审」真正生效的地方：执行完再看一张事后卡片没有意义，
- * 那时文件已经落盘了。内核算不出前后对照（非写文件类工具 / 二进制 / 超大文件）
- * 时退回展示原始参数，前端不做任何猜测。
- */
 function ConfirmBody({ card }: { card: ConfirmItem }) {
   const pv = card.preview;
   if (!pv) {
@@ -1553,8 +1356,6 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
           {card.reason}
         </div>
       ) : null}
-      {/* 原始参数折起来：它跟 diff 说的是同一件事，但没人读那坨 JSON；
-          留着是为了「参数被截断时还能看全」和排查用。 */}
       <details className="mb-2">
         <summary className="cursor-pointer text-[10.5px] text-neutral-600 hover:text-neutral-400">
           查看原始参数
@@ -1567,7 +1368,6 @@ function ConfirmBody({ card }: { card: ConfirmItem }) {
   );
 }
 
-/** 「变更记录」卡片：AI 改过的文件 + 行级 diff。 */
 function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
@@ -1585,21 +1385,9 @@ function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
   );
 }
 
-/**
- * 逐行 diff 的渲染，确认卡片与变更记录卡片共用一套。
- *
- * 共用是刻意的：同一个改动在「允许之前」和「执行之后」显示成两个样子，
- * 用户会以为中间又变了一次。
- */
 function DiffLines({ before, after }: { before: string; after: string }) {
   const lines = simpleDiff(before, after);
   if (!hasVisibleChange(lines)) {
-    // 逐行比不出增删。两种来源，都不能渲染成"一段没变的内容" ——
-    // 那看起来像卡片坏了：
-    //   · 两段完全相同（内核已经过滤掉了，这里只是防御）；
-    //   · 只差文件末尾的那一个换行（"a" → "a\n"）。要精确表达它得引入
-    //     「文件末尾无换行」标记，属完整 diff 算法的范围，本模块刻意不做，
-    //     但至少要明说是换行差异，而不是假装没变。
     return (
       <div className="text-neutral-500">
         {before === after ? "（内容没有变化）" : "（差异在文件末尾的换行）"}
@@ -1612,9 +1400,6 @@ function DiffLines({ before, after }: { before: string; after: string }) {
         <div
           key={i}
           className={
-            // diff 专用色，**不**复用通用成功/危险色：那两套色在本界面里还
-            // 扛着「操作成功 / 操作危险」的含义，而 diff 的增删只说明
-            // 「内容变了」—— 借同一套色会被读成价值判断（删了就是坏事）。
             l.kind === "add" ? "nx-diff-add" : l.kind === "del" ? "nx-diff-del" : "text-neutral-500"
           }
         >

@@ -1,13 +1,4 @@
 /** @vitest-environment jsdom */
-//
-// M60：rename / chmod / checksum 三个文件操作的界面测试。
-//
-// 覆盖边界（对应任务书的每一条）：
-//   · 输入预检：跨路径名、空名、非八进制 / 超界 mode、未知算法 —— 一律不发 RPC；
-//   · 符号链接 / 覆盖 / 权限收窄 / 算法边界：提醒与确认文案到位，取消即中止；
-//   · 后端权威：后端拒绝原样呈现，前端不冒充授权；
-//   · 状态纪律：double-submit 被 busy 挡住，卸载后的完成回调不碰任何状态，
-//     传输进度条与无关 dirty 编辑器不受操作影响。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode, type ReactElement } from "react";
 import { createElement } from "react";
@@ -47,10 +38,6 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   listenEvent: vi.fn(),
 }));
-// R42 真实浮层验收：dialogs/commands/events 三个工厂在既有覆盖之上 spread 真实模块 ——
-// 组件照旧走 mocks.ask 等替身，但钉板测试可把 mocks.ask 委托回真实 ask()，
-// 经真实 registerDialogHandlers + 真实映射（App 的 dialogLevelForKind）+ 真实
-// store/DialogHost 渲染，断言浮层的真实级别（role=dialog vs alertdialog）。
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   mocks.realAsk = actual.ask;
@@ -94,8 +81,6 @@ vi.mock("../../ipc/events", async (importOriginal) => {
     EVENTS: { fsProgress: "fs://progress" },
   };
 });
-// jsdom 没有 ResizeObserver，虚拟滚动永远量不到尺寸、一行都不渲染。
-// 这里把整个列表按行高铺平 —— 测的是操作逻辑，不是虚拟滚动本身。
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getVirtualItems: () =>
@@ -104,8 +89,6 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-// FileEditor（R42 编码切换回归）走 editorAsync.test.ts 同款的 CodeMirror 替身：
-// jsdom 量不到布局，真 EditorView 起不来；测的是确认框与读盘纪律，不是编辑器本身。
 interface FakeEditorState {
   doc: { toString: () => string; length: number };
   extensions: unknown[];
@@ -208,14 +191,12 @@ const SID = "s1";
 
 type AskOptions = { title?: string; kind?: "info" | "warning" | "error" };
 
-/** R42 真实浮层：把 mocks.ask 委托回真实 ask()（注册制 + 排队都是真的）。 */
 function useRealAsk(): void {
   mocks.ask.mockImplementation((message: string, options?: AskOptions) =>
     mocks.realAsk!(message, options),
   );
 }
 
-/** R42 真实浮层：按 App 的注册形态接管共享弹框（真实映射 + 真实 store）。 */
 function installRealDialogs(): void {
   registerDialogHandlers({
     ask: (message, options) =>
@@ -404,7 +385,6 @@ describe("重命名（FileBrowser）", () => {
     await triggerRename("c.txt");
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a.txt", "~/c.txt");
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已重命名"));
-    // 父目录缓存被失效 → 重新拉一次
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
   });
 
@@ -415,7 +395,6 @@ describe("重命名（FileBrowser）", () => {
       expect.stringContaining("已存在"),
       expect.objectContaining({ kind: "warning" }),
     );
-    // 覆盖方向必须讲清：被销毁的是既有目标 b 的内容，不是被重命名的源
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("旧「b.txt」的内容将丢失"),
       expect.anything(),
@@ -616,7 +595,6 @@ describe("FileTree 入口与状态搬迁", () => {
   });
 
   it("重命名目录后，展开与选中状态搬到新路径", async () => {
-    // 展开 sub（单击目录行），再重命名它
     click(rowByPath(mounted!.container, "~/sub"));
     await waitFor(() =>
       expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub"),
@@ -626,7 +604,6 @@ describe("FileTree 入口与状态搬迁", () => {
     clickMenuItem(mounted!.container, "重命名");
     await flush();
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~/sub", "~/sub2");
-    // 展开态已 remap → 对新路径发列表请求
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub2"));
   });
 });
@@ -763,8 +740,6 @@ describe("重命名目录时后代 dirty 编辑器同样告警（评审 P2-3 回
 });
 
 describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
-  // 后端 Windows 本地会话返回反斜杠路径，且 rename 之后**依旧**返回反斜杠 ——
-  // mock 在改名前后必须保持同一分隔符风格，否则测试给出虚假保证。
   beforeEach(async () => {
     let subRenamed = false;
     mocks.list.mockImplementation((_s: string, p: string) => {
@@ -805,7 +780,6 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     });
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~\\sub")).toBeTruthy());
-    // 展开子目录与其嵌套目录，让 dirMap 拿到反斜杠键与反斜杠后代
     click(rowByPath(mounted!.container, "~\\sub"));
     await waitFor(() =>
       expect(rowByPath(mounted!.container, "~\\sub\\a.txt")).toBeTruthy(),
@@ -831,10 +805,7 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     openRowMenu(mounted!.container, "~\\sub");
     clickMenuItem(mounted!.container, "重命名");
     await flush();
-    // RPC 的 to 维持归一化（后端两种分隔符都接受）……
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub", "~/sub2");
-    // ……但视图状态按原风格 remap：展开键变成 ~\sub2 / ~\sub2\inner，
-    // 与 rename 后依旧返回反斜杠的真实后端 entry.path 保持匹配
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub2"));
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub2\\inner"));
     await waitFor(() =>
@@ -843,7 +814,6 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
   });
 
   it("未参与改名的目录展开态不受影响", async () => {
-    // 展开无关目录 other，再改 sub 的名
     click(rowByPath(mounted!.container, "~\\other"));
     await waitFor(() =>
       expect(rowByPath(mounted!.container, "~\\other\\o.txt")).toBeTruthy(),
@@ -854,17 +824,11 @@ describe("Windows 反斜杠路径（评审 P2-2 / R2 回归）", () => {
     await flush();
     expect(mocks.rename).toHaveBeenCalledWith(SID, "~\\sub", "~/sub2");
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~\\sub2"));
-    // other 没被 norm 也没有被折叠：子项行仍然渲染
     expect(rowByPath(mounted!.container, "~\\other\\o.txt")).toBeTruthy();
   });
 });
 
 describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审 P1/P2 回归）", () => {
-  // 镜像 Go `internal/fs/local/filesystem.go` 的 real()：list 参数里的 `~` 先展开成
-  // 绝对家目录，entry.path 一律返回展开后的绝对路径；而前端查询键保留 `~`/`~/sub`
-  // 形态（FileTree 初始 root、FileBrowser 的 joinPath 导航）。之前测试 mock 让
-  // list(`~`) 返回 `~/x` 形态 entry.path，与真实后端相反，掩盖了根层 siblings
-  // 失配（跳过覆盖确认）与失效打不中 `~` 键（列表不刷新）两个失效。
   const HOME_ABS = "/home/u";
   let renamedRoot = false;
   let renamedSub = false;
@@ -883,7 +847,6 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     entry("b.txt", "file", { path: `${HOME_ABS}/sub/b.txt` }),
   ];
 
-  /** 某个列表键被拉取的次数（初始加载也算，断言时看增量）。 */
   const listCalls = (key: string): number =>
     mocks.list.mock.calls.filter((c) => c[1] === key).length;
 
@@ -899,8 +862,6 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     renamedRoot = false;
     renamedSub = false;
     mocks.list.mockImplementation((_s: string, p: string) => {
-      // FileTree 展开子目录用 entry.path（绝对）作键；FileBrowser 双击导航用
-      // joinPath 拼出的 `~/sub` 作键 —— 两种键后端都认（real() 同样展开 `~/`）。
       if (p === "~" || p === HOME_ABS) return Promise.resolve(homeEntries().map((e) => ({ ...e })));
       if (p === "~/sub" || p === `${HOME_ABS}/sub`)
         return Promise.resolve(subEntries().map((e) => ({ ...e })));
@@ -922,7 +883,6 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
     clickMenuItem(mounted!.container, "重命名");
     await flush();
-    // siblings 必须来自 `~` 键的真实列表（绝对 entry.path），覆盖确认不能被跳过
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("已存在"),
       expect.objectContaining({ kind: "warning" }),
@@ -946,7 +906,6 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     clickMenuItem(mounted!.container, "重命名");
     await flush();
     expect(mocks.rename).toHaveBeenCalledWith(SID, `${HOME_ABS}/a.txt`, `${HOME_ABS}/c.txt`);
-    // 失效必须打中 `~` 键（而不是绝对父路径）→ 重新拉取并渲染出新名字
     await waitFor(() => expect(listCalls("~")).toBeGreaterThan(before));
     await waitFor(() =>
       expect(rowByPath(mounted!.container, `${HOME_ABS}/c.txt`)).toBeTruthy(),
@@ -981,7 +940,6 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
     await waitFor(() =>
       expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("权限已更新")),
     );
-    // chmod 失效的是条目所在层（绝对键的展开目录），不是 parentOf 反推
     await waitFor(() => expect(listCalls(`${HOME_ABS}/sub`)).toBeGreaterThan(beforeChmod));
   });
 
@@ -1043,15 +1001,6 @@ describe("真实后端路径形态（~ 列表键 + 绝对 entry.path，R1 评审
   });
 });
 
-// ───────── R42：destructive 确认走共享 warning 语义（真实浮层验收）─────────
-//
-// Grid 报告的 files feature 调用点：FileBrowser / FileTree 的删除（递归、不可恢复）
-// 与 FileEditor 切换编码（丢弃未保存改动）—— 必须渲染为警示浮层（alertdialog）。
-// 大文件编辑确认（FileEditor :112）是性能提醒而非破坏 —— 普通信息浮层（dialog）。
-// round-1 P1：App 共享映射对缺省 kind 默认 warning，所以「保持 info」必须显式声明。
-// 以下用例全部走真实管道：真实 ask() → 真实映射 dialogLevelForKind → 真实 store
-// → 真实 DialogHost，断言渲染出的 role 与文案，并用 取消/确定 驱动后续流程。
-
 describe("删除与丢弃确认（R42 destructive dialogs）", () => {
   beforeEach(() => {
     editors.views = [];
@@ -1065,7 +1014,6 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     installRealDialogs();
   });
 
-  /** 组件与真实 DialogHost 并列挂载，浮层渲染进同一容器。 */
   function mountWithDialogHost(element: ReactElement): MountedView {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return mount(
@@ -1134,7 +1082,6 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/a.txt" }));
     await waitFor(() => expect(editors.views).toHaveLength(1));
 
-    // 制造未保存改动（走 fake view 的 dispatch，updateListener 会接上 dirty 标记）
     const view = editors.views[0];
     act(() => {
       view.dispatch({ changes: { from: 0, to: 8, insert: "changed!" } });
@@ -1148,14 +1095,11 @@ describe("删除与丢弃确认（R42 destructive dialogs）", () => {
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("未保存的改动会丢失");
     await closeModal(modal, "取消");
-    expect(mocks.read).toHaveBeenCalledTimes(1); // 取消：不重新读盘
+    expect(mocks.read).toHaveBeenCalledTimes(1);
 
-    // 确认步换一个目标编码：React 对 select 的 value 跟踪会吞掉「设回同一个值」的
-    // change 事件；且 reloadEnc 初值是 "auto"，必须换成别的值才会触发重新读盘。
     setSelectValue(select, "utf-8");
     const modal2 = await openModal();
     await closeModal(modal2, "确定");
-    // switchEnc 的确认链（ask → setEnc/setReloadEnc → 重读 effect）要一个 act 周期落地
     await flush();
     await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
   });

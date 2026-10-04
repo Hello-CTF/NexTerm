@@ -1,13 +1,3 @@
-// 左栏文件树（连上资产后的常驻左栏）。
-//
-// 背景：这个产品长期用在「先连一台机器，然后一直在这台机器上干活」的节奏上。
-// 所以左栏的默认形态不是资产列表，而是**当前会话的文件树**——
-// 资产列表退到图标栏的「资产」按钮后面（它依然是资产管理的主入口）。
-//
-// 三条交互约定（对齐参考实现）：
-//   · 单击目录展开/收起（文件则只选中整行）；双击目录「进去」（把浏览根切到它），双击文件开编辑器标签；
-//   · 目录列表按需加载（react-query 按目录缓存，与宽幅文件浏览器共用同一 key）；
-//   · 工具栏与右键无关，一切动作都能从工具栏或行内 hover 完成。
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
@@ -62,9 +52,6 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-/* ── 路径工具见 ./pathUtils（与宽幅文件浏览器共用） ───────────────────── */
-
-/** 目录在前、其余按名称排序（贴近 ls / 文件管理器的习惯）。 */
 function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
   return [...list].sort((a, b) => {
     const ad = a.kind === "dir" ? 0 : 1;
@@ -74,22 +61,16 @@ function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
   });
 }
 
-/* ── 组件 ──────────────────────────────────────────────────────────────── */
-
 export function FileTree({ sessionId }: { sessionId: string }) {
   const qc = useQueryClient();
   const { pushToast, leftOpen, leftWidth } = useUi();
   const [root, setRoot] = useState(HOME);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  /** 后端认不认 `~`。探测到不认就置 false，家目录入口随之关闭（见 HOME 的注释）。 */
   const [homeSupported, setHomeSupported] = useState(true);
-  /** 路径栏的「直接输入路径」模式：只能在面包屑之间挪是不够用的。 */
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  /** 行右键菜单（见 openRowMenu）。 */
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  /** rename / chmod / checksum（M60）：两处入口共用同一套预检与提醒。 */
   const fileOps = useFileOps(sessionId);
 
   const beginEdit = () => {
@@ -97,13 +78,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     setEditing(true);
   };
 
-  /**
-   * 提交手输路径。
-   *
-   * 归一化后去掉尾斜杠；空输入当取消；`/` 单独保留（否则会被尾斜杠正则吃成空串）。
-   * 显式跳转时清掉旧的展开与选中 —— 那是另一棵子树的浏览状态，留着会连带发出
-   * 一堆无关目录的请求。
-   */
   const commitEdit = () => {
     setEditing(false);
     const next = normalizeTypedPath(draft);
@@ -113,7 +87,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     setRoot(next);
   };
 
-  /** 需要加载的目录 = 根 + 所有展开项（含根，保证根被展开时也在列表里）。 */
   const dirs = useMemo(
     () => [root, ...expanded.filter((d) => d !== root)],
     [root, expanded],
@@ -124,7 +97,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       queryKey: ["fs", sessionId, dir],
       queryFn: () => fsApi.list(sessionId, dir),
       refetchOnWindowFocus: false,
-      // 后端不认 `~` 时不要反复重试，直接走下面的退回逻辑
       retry: false,
     })),
   });
@@ -133,7 +105,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     if (root !== HOME || !rootQuery?.isError) return;
-    // 后端不认 `~`：退到 `/`，关掉家目录入口，并明确告诉用户为什么不在家目录。
     setHomeSupported(false);
     setRoot("/");
     pushToast("info", "当前后端不支持 ~ 展开，文件树已改从根目录 / 开始");
@@ -149,13 +120,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     // results 每次渲染都是新数组，这里按内容较浅地依赖即可
   }, [dirs, results]);
 
-  /**
-   * 每个目录的读失败原因。
-   *
-   * 必须显式拿出来：react-query 的 error 不会冒到 window.onerror，
-   * 之前所有失败都被渲染成「这个目录是空的」—— 一次 SFTP 握手超时看起来就只是"空目录"，
-   * SSH 下整个文件树废了却完全看不出原因。
-   */
   const dirErrors = useMemo(() => {
     const map = new Map<string, string>();
     dirs.forEach((dir, i) => {
@@ -165,7 +129,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     return map;
   }, [dirs, results]);
 
-  /** 扁平化成可渲染的行（只有展开的目录才会展开其子项）。 */
   const rows = useMemo(() => {
     const out: { entry?: FileEntryDto; depth: number; error?: string; dir: string }[] = [];
     const walk = (dir: string, depth: number) => {
@@ -182,7 +145,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     return out;
   }, [dirMap, root, expanded, dirErrors]);
 
-  /** 重试某个目录（失败后点「重试」）。 */
   const retryDir = (dir: string) => {
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
   };
@@ -212,7 +174,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     openFileTab(sessionId, entry.path);
   };
 
-  /** 新建/上传的目标目录：选中目录就是它本身，选中文件则是它所在目录。 */
   const targetDir = (): string => {
     if (selected) {
       const entry = findEntry(selected);
@@ -261,8 +222,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     } catch (e) {
       pushToast("error", `上传失败：${describeError(e)}`);
     } finally {
-      // 浏览器模式选中的文件会先在盒子上存一份副本（见 `ui/dialogs.ts`），
-      // 传完就没有价值了，删掉别让盒子攒垃圾；桌面模式下这个是空操作。
       await discardStaged(file);
     }
   };
@@ -296,7 +255,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     }
   };
 
-  /** 「进目录」：把浏览根切到该目录 —— 只加载一层，不必从 / 一路展开下来。 */
   const enterDir = (path: string) => {
     if (path === root) return;
     setExpanded([]);
@@ -304,7 +262,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     setRoot(path);
   };
 
-  /** 「打包下载当前文件夹」：远端 tar.gz → 本地文件。 */
   const packDownload = async (dir: string) => {
     const target = await pickSavePath(`${baseName(dir)}.tar.gz`);
     if (!target) return;
@@ -321,12 +278,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     }
   };
 
-  /**
-   * 「解压」：内核解到「与压缩包同名的目录」。
-   *
-   * 成功后必须把落点那一层从缓存里作废 —— 新目录不在已展开的 query key 里，
-   * 不刷的话用户点完看着像什么都没发生。
-   */
   const extractHere = async (archive: string) => {
     pushToast("info", "正在解压…");
     try {
@@ -343,14 +294,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     }
   };
 
-  /* ── 右键菜单 ──────────────────────────────────────────────────────── */
-
-  /**
-   * 「在终端打开」：新开一个终端标签，并让它落地后 cd 到该目录。
-   *
-   * cd 不在这里直接写 —— 此刻还没有内核 tabId（attach 是异步的）。
-   * 命令挂到标签的 pendingCommand 上，等 XtermView attach 成功再发出去。
-   */
   const openTerminalAt = (dir: string) => {
     const session = useUi.getState().sessions.find((s) => s.id === sessionId);
     if (!session) {
@@ -360,7 +303,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     void openTerminalTab(session, undefined, undefined, { command: cdCommandFor(dir) });
   };
 
-  /** 「前进到当前目录」：让已有终端 cd 过去；一个终端都没有就退化成新开一个。 */
   const cdTerminalTo = (dir: string) => {
     const kernelTabId = findWritableTerminal(sessionId);
     if (!kernelTabId) {
@@ -373,20 +315,9 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
   };
 
-  /**
-   * 重命名成功后把本地路径状态（选中 / 展开 / 浏览根）整体搬到新路径。
-   *
-   * 两个必须同时成立的点：
-   *   · 命中的路径按**它自己的分隔符风格**替换 —— 消费端（expanded.includes /
-   *     selected === entry.path）拿的是后端原始串，Windows 会话在 rename 后
-   *     依旧返回反斜杠，统一 norm 成正斜杠反而让展开/选中全部失配；
-   *   · 未命中的路径原样保留 —— 一次改名不能把无关目录的展开态弄丢。
-   * 旧路径前缀下的目录缓存由 useFileOps 负责失效，这里只管视图状态。
-   */
   const remapAfterRename = (from: string, to: string) => {
     const fromN = norm(from);
     const toN = norm(to);
-    /** 把归一化目标渲染成 styleOf 的分隔符风格。 */
     const styled = (target: string, styleOf: string) =>
       styleOf.includes("\\") ? target.replace(/\//g, "\\") : target;
     const remap = (p: string) => {
@@ -400,26 +331,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
     if (norm(root) === fromN || norm(root).startsWith(`${fromN}/`)) setRoot(remap(root));
   };
 
-  /**
-   * 条目的同目录 siblings（重命名覆盖预判用）。
-   *
-   * 直接按行的 `dir`（条目所在列表的缓存键）精确取 —— 不做 parentOf/norm 反推：
-   * 真实后端 list `~` 返回的是绝对 entry.path，反推出来的父路径和 `~` 键恒不相等，
-   * 会让根层同名覆盖确认被静默跳过（R1 评审 P1）。
-   */
   const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
 
-  /**
-   * 行右键。
-   *
-   * 菜单只留「必须对着某个具体文件/目录做」的动作，其余（编码、录制、
-   * 上传下载的图标入口）交给工具栏，别在这里重复一遍。
-   * 按类型收敛：目录给「打包下载当前文件夹」，文件给「在下方编辑 / 解压 / 下载」。
-   * 目录落到它自己、文件落到它**所在的目录** —— 对文件路径本身 cd 没有意义。
-   *
-   * `listKey` 是这一行所在列表的缓存键（rows 的 dir 字段）：rename/chmod 的
-   * siblings 与缓存失效都认它，不做路径反推（见 useFileOps 的 listKey 契约）。
-   */
   const openRowMenu = (
     e: ReactMouseEvent<HTMLDivElement>,
     entry: FileEntryDto,
@@ -427,7 +340,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelected(entry.path); // 右键顺手选中，符合直觉
+    setSelected(entry.path);
     const isDir = entry.kind === "dir";
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? root);
     const items: MenuItem[] = [
@@ -465,7 +378,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         disabled: !isEditableFile(entry.name),
         onSelect: () => openFileTabInSplit(sessionId, entry.path),
       });
-      // 解压只对内核认得的归档出现 —— 给一个点了必然报错的入口更糟
       if (isExtractableArchive(entry.name)) {
         items.push({
           kind: "item",
@@ -482,8 +394,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         onSelect: () => void download(entry.path),
       });
     }
-    // 重命名 / 权限 / 校验值（M60）：目录与文件都有重命名和权限；
-    // 校验值只对非目录（符号链接算的是它指向的目标的内容）。
     items.push(
       {
         kind: "item",
@@ -537,7 +447,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
       style={{ width: leftWidth }}
     >
-      {/* 工具栏：一行放完，全部有 tooltip；危险动作是最后一个 */}
       <div className="flex h-[34px] shrink-0 items-center gap-0.5 px-2">
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
           文件
@@ -587,7 +496,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         </button>
       </div>
 
-      {/* 路径面包屑：↑ 上级 · 各段可点 · 🏠 回 ~ */}
       <div className="nx-pathbar">
         <button
           className="nx-tree-caret"
@@ -620,15 +528,12 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           <div
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
             onClick={(e) => {
-              // 点面包屑后面的空白处 = 直接改路径（和资源管理器一样的手感）；
-              // 点到具体的段上仍然是跳转那一段。
               if (e.target === e.currentTarget) beginEdit();
             }}
             title="点空白处可直接输入路径"
           >
             {crumbs.map((c, i) => (
               <span key={c.path} className="flex shrink-0 items-center gap-0.5">
-                {/* 前一段是根（`/`）时它自己就是分隔符，再补一个会变成 `//home/...` */}
                 {i > 0 && crumbs[i - 1].label !== "/" && (
                   <span className="text-neutral-600">/</span>
                 )}
@@ -666,10 +571,8 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         </button>
       </div>
 
-      {/* 目录树 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
         {rows.map(({ entry, depth, error, dir }) => {
-          // 失败的行：把后端的原话摆出来，而不是假装"空目录"
           if (error) {
             return (
               <div
@@ -700,12 +603,10 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               key={entry.path}
               className={`nx-row group ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
-              // 单击目录直接展开/收起（省掉「先选中、再双击」那两步）；文件只是选中
               onClick={() => {
                 setSelected(entry.path);
                 if (isDir) toggle(entry.path);
               }}
-              // 双击目录 = 「进去」：把浏览根切到它，不必从 / 一路展开下来
               onDoubleClick={() => (isDir ? enterDir(entry.path) : openFile(entry))}
               onContextMenu={(e) => openRowMenu(e, entry, dir)}
               title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
@@ -764,7 +665,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         )}
       </div>
 
-      {/* 底栏：数量 + 选中详情 */}
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
         <span>{rows.filter((r) => r.entry).length} 项</span>
         {selectedEntry && (

@@ -1,21 +1,3 @@
-// 模型配置（P0-3）：多份模型档案（BYOK）的增删改与切换。
-//
-// 拆成两层，是为了让同一份实现同时服务两个入口：
-//   · `ModelPanel`  —— 弹窗外壳（overlay / 遮罩 / 标题栏），AI 侧栏在用；
-//   · `ModelManager` —— 左档案列表 + 右编辑表单 + 底部操作条，**不含** overlay 与遮罩，
-//                       设置页把它直接内联进「AI 模型」卡片。
-// 为什么非拆不可：设置页原先另写了一份单 provider 表单（getProvider/setProvider + 硬编码
-// 预设表），与这里的两套字段和默认值迟早漂移，最后变成「两份模型设置」——
-// 拆出可内联的 `ModelManager` 后，两边就只有一处真相。
-//
-// 「自己管自己」：列表、草稿、保存全在 `ModelManager` 内部，外部不喂任何数据；
-// 因此它既能在卡片里内联，也能塞进弹窗。
-//
-// 两条自己定的规矩：
-//   · 展示名（name）是给列表看的，模型名（model）是发给接口的 —— 两者刻意分开，
-//     同一个模型挂在不同 baseUrl 上时，用户靠展示名区分，不会被 model 串味；
-//   · 「刷新模型列表」按**表单当前值**去请求，不要求先保存 ——
-//     用户想先验证 baseUrl + key 能不能连，这个顺序必须支持。
 import { useEffect, useState, type ReactNode } from "react";
 import { modelApi, type ModelProfile, type ModelProfilesView } from "../../ipc/commands";
 import { useUi } from "../../app/store";
@@ -41,9 +23,6 @@ import {
   IconTrash,
 } from "../../ui/icons";
 
-/* ── 纯函数 ─────────────────────────────────────────────────────────────── */
-
-/** 一张空白档案（新增时的初值）。数值取 `ProviderConfig` 的缺省。 */
 function blankProfile(): ModelProfile {
   return {
     id: "",
@@ -55,40 +34,25 @@ function blankProfile(): ModelProfile {
     contextWindow: 32768,
     proxy: null,
     stream: true,
-    // 新档案明确不带回退；已有档案的草稿是整份展开，原值不会被这里碰到。
     fallbackModel: null,
   };
 }
-
-/* ── 可内联的模型管理主体 ───────────────────────────────────────────────── */
 
 export function ModelManager({
   onRequestClose,
   onDirtyChange,
   listWidthClassName = "w-[30%] min-w-[150px] max-w-[210px] shrink-0",
 }: {
-  /** 仅供弹窗用：无草稿时显示「关闭」按钮，点它走父级的关闭流程（父级负责 guard）。 */
   onRequestClose?: () => void;
-  /**
-   * 把「有没有未保存改动」透给父级 —— 弹窗的遮罩 / 右上角 X 在 `ModelPanel` 里，
-   * 它自己拿不到 dirty，只能靠这个回调决定关之前要不要拦一下。
-   */
   onDirtyChange?: (dirty: boolean) => void;
-  /**
-   * 档案列表宽度。**不写死固定像素**：设置页卡片（≤720px）与侧栏弹窗都要用，
-   * 固定 188px 在窄容器里会把右边的表单挤变形，所以默认给相对宽度。
-   */
   listWidthClassName?: string;
 }) {
   const pushToast = useUi((s) => s.pushToast);
 
-  /** 后端档案总览（列表 + 激活项）。 */
   const [view, setView] = useState<ModelProfilesView | null>(null);
-  /** 正在编辑的草稿（null = 还没选/还没新增）。 */
   const [draft, setDraft] = useState<ModelProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
-  /** 「刷新模型列表」拉回的候选模型名 + 是否展开。 */
   const [models, setModels] = useState<string[]>([]);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [presets, setPresets] = useState<string[]>([]);
@@ -98,12 +62,10 @@ export function ModelManager({
   const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft));
   const isActive = !!draft && !!draft.id && view?.activeId === draft.id;
 
-  // 只把「脏没脏」透出去，不把草稿本身交出去 —— 父级不需要、也不该改草稿。
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
-  /** 重新拉列表；keepId 指定重载后选中哪一条（缺省沿用当前草稿/激活项）。 */
   const reload = async (keepId?: string) => {
     try {
       const v = await modelApi.overview();
@@ -129,7 +91,6 @@ export function ModelManager({
 
   const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
-  /** 有未保存改动时先问一句，避免静默丢弃。 */
   const guardDiscard = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
     return ask(`当前修改还没保存，${what}会丢掉这些改动，继续？`, {
@@ -230,7 +191,6 @@ export function ModelManager({
         const base = prev ?? blankProfile();
         return {
           ...base,
-          // 预设只填连接参数，不覆盖已有的展示名（除非还空着）与 API Key
           name: base.name.trim() ? base.name : tpl.name,
           baseUrl: tpl.baseUrl,
           model: tpl.model,
@@ -247,7 +207,6 @@ export function ModelManager({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex gap-4">
-        {/* 左：档案列表 */}
         <div className={`flex flex-col ${listWidthClassName}`}>
           <div className="mb-1.5 flex items-center gap-1">
             <span className="text-[11px] font-medium text-neutral-300">模型档案</span>
@@ -306,7 +265,6 @@ export function ModelManager({
           )}
         </div>
 
-        {/* 右：编辑表单 */}
         <div className="min-w-0 flex-1">
           {draft ? (
             <div className="flex flex-col gap-2.5">
@@ -387,8 +345,6 @@ export function ModelManager({
                 </div>
               </Field>
 
-              {/* 回退模型：草稿整份携带原值，不碰它 ⇒ 保存任何其它字段都原样保留；
-                  只有在这个框里清空才是「明确清除」。两种动作都不藏。 */}
               <Field label="回退模型（可选）">
                 <input
                   className="nx-input font-mono"
@@ -469,7 +425,6 @@ export function ModelManager({
         </div>
       </div>
 
-      {/* 底部操作条：刻意用普通边框而不是 nx-modal-footer —— 内联进设置页卡片时没有弹窗 chrome */}
       <div className="flex items-center gap-2 border-t border-neutral-800/60 pt-3">
         {draft ? (
           <>
@@ -511,13 +466,6 @@ export function ModelManager({
   );
 }
 
-/* ── 弹窗外壳 ───────────────────────────────────────────────────────────── */
-
-/**
- * 对外签名保持不变（AI 侧栏在用）：只包一层 overlay，内容交给 `ModelManager`。
- * 遮罩与右上角 X 的关闭必须先过「未保存」这道问询 —— 它们在这里，
- * 拿不到子组件的 dirty，所以用 `onDirtyChange` 把状态同步上来。
- */
 export function ModelPanel({ onClose }: { onClose: () => void }) {
   const [dirty, setDirty] = useState(false);
 
@@ -555,7 +503,6 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** 表单一行：标签 + 控件（统一间距，免得每处各写一遍）。 */
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>

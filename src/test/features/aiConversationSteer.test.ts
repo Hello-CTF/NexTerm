@@ -1,10 +1,5 @@
 /** @vitest-environment jsdom */
 
-// 运行中补充（mid-run steering）的前端闸门：
-//   · 同一个输入框按状态分流（空闲 = 新提问，运行中 = 补充指令），不另开面板；
-//   · 气泡先落账 pending，内核 steered / steerDropped 事件按 FIFO 结算送达状态；
-//   · RPC 拒绝（stale job / 队列满）标未送达并把文字还回输入框；
-//   · 终态与停止把仍 pending 的补充兜底标成未送达（模型从没看到）。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import {
@@ -99,14 +94,12 @@ function textareaOf(view: MountedView): HTMLTextAreaElement {
   return textarea;
 }
 
-/** 空闲态发送：填输入框 + 点发送按钮。 */
 async function send(view: MountedView, text: string) {
   setInputValue(textareaOf(view), text);
   click(view.container.querySelector('button[title="发送 (Enter)"]')!);
   await flush();
 }
 
-/** 运行中补充：填输入框 + 回车（与生产同一条 keydown 路径）。 */
 async function steer(view: MountedView, text: string) {
   const textarea = textareaOf(view);
   setInputValue(textarea, text);
@@ -175,18 +168,15 @@ describe("AiSidebar mid-run steering", () => {
   it("steers the running job through the same input — no new panel, no new run", async () => {
     await send(view!, "排查一下");
     expect(mocks.chat).toHaveBeenCalledOnce();
-    // 运行中：占位文案说明 Enter 的新语义，且仍然只有一个输入框（不另开面板）。
     expect(textareaOf(view!).placeholder).toContain("Enter 发送补充指令");
     expect(view!.container.querySelectorAll("textarea")).toHaveLength(1);
 
     await steer(view!, "顺便看看内存");
     expect(mocks.steer).toHaveBeenCalledWith("job-1", "顺便看看内存");
     expect(mocks.chat).toHaveBeenCalledOnce();
-    // 气泡先落账：等待注入。
     expect(textOf(view!)).toContain("顺便看看内存");
     expect(textOf(view!)).toContain("等待注入");
 
-    // 内核在模型调用边界真正注入后翻「已注入」。
     emit({ type: "steered", text: "顺便看看内存" });
     await flush();
     expect(textOf(view!)).toContain("已注入当前运行");
@@ -207,7 +197,6 @@ describe("AiSidebar mid-run steering", () => {
     act(() => {
       textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     });
-    // RPC 还在途，内核的 steered 事件先到了：气泡必须已经落账，否则这一帧会落空。
     emit({ type: "steered", text: "先别动数据库" });
     await flush();
     expect(textOf(view!)).toContain("已注入当前运行");
@@ -224,7 +213,6 @@ describe("AiSidebar mid-run steering", () => {
     mocks.steer.mockRejectedValueOnce(new Error("AI 任务不存在或已结束"));
     await steer(view!, "其实别跑");
     expect(mocks.steer).toHaveBeenCalledWith("job-1", "其实别跑");
-    // 未送达可见 + 文字还回输入框可重试 + toast 说明原因。
     expect(textOf(view!)).toContain("未送达（模型未看到）");
     expect(textareaOf(view!).value).toBe("其实别跑");
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("补充指令未送达"));
@@ -236,7 +224,6 @@ describe("AiSidebar mid-run steering", () => {
     await steer(view!, "第二条");
     expect(textOf(view!).match(/等待注入/g)?.length).toBe(2);
 
-    // 内核 FIFO 上报：一条 steerDropped（终态未送达）+ 一条 steered（边界注入）。
     emit({ type: "steerDropped", text: "第一条" });
     await flush();
     let texts = textOf(view!);
@@ -250,7 +237,6 @@ describe("AiSidebar mid-run steering", () => {
     expect(texts).toContain("已注入当前运行");
     expect(texts).not.toContain("等待注入");
 
-    // 重复帧（无 seq 的旧通道重放）不得误结算后来的气泡。
     emit({ type: "steered", text: "第二条" });
     await flush();
     expect(textOf(view!)).toBe(texts);
@@ -261,12 +247,10 @@ describe("AiSidebar mid-run steering", () => {
     await steer(view!, "等等，先看磁盘");
     expect(textOf(view!)).toContain("等待注入");
 
-    // done 先于任何 steered/steerDropped 到达（断线缺帧）：本地兜底标未送达。
     emit({ type: "done", answer: "查完了" });
     await flush();
     expect(textOf(view!)).toContain("未送达（模型未看到）");
 
-    // stale generation：这一轮已终态，Enter 是新提问而不是补充。
     await steer(view!, "下一个问题");
     expect(mocks.chat).toHaveBeenCalledTimes(2);
     expect(mocks.steer).toHaveBeenCalledOnce();

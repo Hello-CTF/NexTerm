@@ -1,10 +1,3 @@
-// 凭据侧边栏：左栏的第三种形态（资产 / 文件树 / 凭据）。
-//
-// 为什么给凭据一个独立形态：凭据会随使用自然增长（资产表单、数据库连接都会往里写），
-// 原来那行"资产树底部的小按钮"既发现不了、也承不下后续要加的东西。
-//
-// 分工（与主区详情页）：**左栏负责"找"与"切"，详情负责"看"与"改"**。
-// 左栏窄（默认 248px），塞不下值、引用关系、时间这些信息，硬塞就是两头都难用。
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { vaultApi } from "../../ipc/commands";
@@ -30,7 +23,6 @@ export function CredentialsSidebar() {
     queryFn: () => vaultApi.listCredentials(),
     refetchOnWindowFocus: false,
   });
-  // 主区详情标签当前选中的是哪条 —— 左栏高亮跟着它走，两边只有一个真相。
   const selectedId = useCredentialsTabId();
 
   if (!leftOpen) return null;
@@ -47,7 +39,6 @@ export function CredentialsSidebar() {
     return c.name.toLowerCase().includes(q) || kindMeta(c.kind).label.toLowerCase().includes(q);
   });
 
-  /** 各类型的条数（过滤条上显示；为 0 的类型不出现，避免一排空按钮）。 */
   const counts: Record<string, number> = {};
   for (const c of all) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
 
@@ -58,7 +49,6 @@ export function CredentialsSidebar() {
       className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
       style={{ width: leftWidth }}
     >
-      {/* 头部：标题 + 计数 + 锁定 / 新建 */}
       <div className="flex h-[34px] shrink-0 items-center gap-1.5 px-2.5">
         <span className="text-xs font-semibold tracking-wide text-neutral-200">凭据</span>
         <span className="nx-count">{all.length}</span>
@@ -86,7 +76,6 @@ export function CredentialsSidebar() {
         </button>
       </div>
 
-      {/* 锁定态横幅：列表照常可见（名称/类型/引用关系），值一律不可见 */}
       {locked && (
         <div className="mx-2 mb-2 flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300/90">
           <IconLock size={12} className="shrink-0" />
@@ -97,7 +86,6 @@ export function CredentialsSidebar() {
         </div>
       )}
 
-      {/* 搜索 */}
       <div className="px-2 pb-2">
         <div className="nx-field">
           <span className="nx-field-icon">
@@ -112,8 +100,6 @@ export function CredentialsSidebar() {
         </div>
       </div>
 
-      {/* 类型过滤：一排计数胶囊。凭据一多，"只看私钥"比搜索更常用。
-          用 wrap 而不是横向滚动 —— 248px 装不下 5 个类型，横滚会把最后一种藏起来。 */}
       {all.length > 0 && (
         <div className="flex shrink-0 flex-wrap gap-1 px-2.5 pb-2">
           <FilterChip
@@ -134,7 +120,6 @@ export function CredentialsSidebar() {
         </div>
       )}
 
-      {/* 列表 */}
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {credentials.isLoading ? (
           <div className="nx-hint px-2 py-6 text-center">加载中…</div>
@@ -184,7 +169,6 @@ export function CredentialsSidebar() {
         )}
       </div>
 
-      {/* 概览 + 视图入口 */}
       <div className="shrink-0 border-t border-neutral-800/60 px-2.5 py-2">
         {all.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
@@ -230,7 +214,6 @@ export function CredentialsSidebar() {
   );
 }
 
-/** 类型过滤胶囊。 */
 function FilterChip({
   active,
   label,

@@ -1,20 +1,3 @@
-// 无人值守定时任务（cron）的管理入口：持久 job 的列出 / 状态 / 启停 / 注册 / 注销。
-//
-// # 为什么按会话聚合
-//
-// cron 的持久化与调度都在内核（internal/ai/cron）：任务按 sessionId + jobId 定位，
-// 到点以所属 AI 会话为 conversationId 发起无人值守执行。设置页要回答的问题是
-// 「这台机器上到底有哪些定时任务在跑」，所以这里拉取全部 AI 会话再逐个 list
-// 聚合成一张表；每条操作仍严格携带它自己的 sessionId + jobId —— 切换 / 管理
-// 任何会话的任务都不会碰其它会话的（注销只有 unregister 一条路径，且必须先确认）。
-//
-// # 无人值守的诚实边界
-//
-// 无人值守执行在 guard 的 Unattended 模式下决策：需要人工确认或被禁止的操作会被
-// 明确拒绝并记进任务的 lastError，不会静默执行。所以列表里 lastError 必须如实
-// 展示，存储 / 调度错误也一样 —— 不把「没成功」说成成功。
-//
-// 演示模式没有 cron 后端（mock 未覆盖 cron_*），与已知主机卡片一样整体隐藏。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi } from "../../ipc/commands";
 import { cronApi, cronTimeoutMs, type CronJob } from "../../ipc/cron";
@@ -41,7 +24,6 @@ type RegisterDraft = {
   timeoutSec: string;
 };
 
-/** 任务状态徽标：执行中 > 熔断 > 上次失败 > 已停用 > 等待执行。 */
 function jobStatus(job: CronJob): { label: string; cls: string } {
   if (job.run.id) return { label: "执行中", cls: "nx-badge-blue" };
   if (job.circuitOpenUntil && Date.parse(job.circuitOpenUntil) > Date.now()) {
@@ -65,9 +47,7 @@ export function CronCard() {
   const [conversations, setConversations] = useState<ConversationOption[] | null>(null);
   const [jobs, setJobs] = useState<CronJob[] | null>(null);
   const [loading, setLoading] = useState(true);
-  /** 致命错误：会话列表拉不到，或所有会话的任务都拉不到（此时列表整体不可信）。 */
   const [error, setError] = useState<string | null>(null);
-  /** 部分失败：某些会话的任务没拉到 —— 已拉到的照常展示，但明确告知缺口。 */
   const [partialErrors, setPartialErrors] = useState<string[]>([]);
 
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -75,10 +55,8 @@ export function CronCard() {
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
 
-  /** 进行中的单条操作（同时只允许一个，避免连点把状态搞乱）。 */
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
-  // 陈旧完成防护：卸载后、或更新的读取已发出后，旧请求的迟到结果一律丢弃。
   const aliveRef = useRef(true);
   const loadGenRef = useRef(0);
   useEffect(() => {
@@ -100,7 +78,6 @@ export function CronCard() {
       const options = list.map((c) => ({ id: c.id, title: c.title }));
       setConversations(options);
 
-      // 逐个会话拉任务并聚合；单个会话失败只记缺口，不拖垮整张表。
       const results = await Promise.all(
         options.map(async (c) => {
           try {
@@ -118,7 +95,6 @@ export function CronCard() {
       if (failed.length > 0) {
         const detail = failed.map((f) => `「${f.title}」：${f.message}`).join("；");
         if (failed.length === results.length) {
-          // 一个都没拉到 —— 列表整体不可信，按致命错误处理
           setJobs(null);
           setError(`读取定时任务失败：${detail}`);
         } else {
@@ -127,8 +103,6 @@ export function CronCard() {
       }
     } catch (e) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
-      // 致命错误一律把列表清空：旧列表（包括空列表）不得在无标注的情况下
-      // 继续冒充最新状态 —— 错误与重试必须可见。
       setJobs(null);
       setError(describeError(e));
     } finally {
@@ -194,7 +168,6 @@ export function CronCard() {
       setDraft(null);
       await reload();
     } catch (e) {
-      // 表达式非法 / 会话不存在 / 存储失败：内核原文如实上屏
       setRegisterError(describeError(e));
     } finally {
       if (aliveRef.current) setRegistering(false);
@@ -234,7 +207,6 @@ export function CronCard() {
       pushToast("success", "定时任务已注销");
       await reload();
     } catch (e) {
-      // 失败就留着这条（库没变），如实报错
       pushToast("error", `注销失败：${describeError(e)}`);
     } finally {
       if (aliveRef.current) setActionBusy(null);
@@ -258,7 +230,6 @@ export function CronCard() {
         原因记在该任务的「上次错误」里；任务持久保存在本机，重启后照常对账。
       </p>
 
-      {/* 注册表单（内联） */}
       {registerOpen && draft ? (
         <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
           <div className="text-[12.5px] font-semibold text-neutral-200">注册定时任务</div>
@@ -372,7 +343,6 @@ export function CronCard() {
         </div>
       )}
 
-      {/* 任务列表：loading / error+retry / empty / 数据 */}
       {jobs === null ? (
         error ? (
           <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
@@ -392,7 +362,6 @@ export function CronCard() {
         )
       ) : (
         <div className="flex flex-col gap-1.5">
-          {/* 缺口横幅独立于列表长度渲染：部分失败时绝不能给出「确定没有任务」的结论 */}
           {partialErrors.map((message) => (
             <div
               key={message}

@@ -1,24 +1,3 @@
-// rename / chmod / checksum 三个文件操作的用户入口逻辑（M60）。
-//
-// 为什么值得一个 hook：FileTree 与 FileBrowser 两处入口必须走**完全同一套**
-// 预检、提醒与错误呈现 —— 任何一边多一句提示或少一道确认，同一个操作在两个
-// 界面里就是两个行为。
-//
-// 边界约定：
-//   · 只调用既有 fs RPC facade（fsApi.rename / chmod / checksum），不加新后端命令；
-//   · 前端只做输入形状预检与后果告知；存在性、覆盖、权限、算法是否被接受最终
-//     由后端裁决，后端拒绝原样呈现 —— 前端状态绝不替代后端授权；
-//   · 单 flight：一个操作从弹窗到 RPC 全程占用 busy，后来的触发直接挡住
-//     （防 double-submit）；组件卸载后到达的完成回调不再碰任何状态
-//     （防 stale completion / unmount 后 setState）；
-//   · 操作不碰 editorGuards 的 dirty 集合与传输进度 —— 别人的未保存修改和
-//     正在进行的传输原样保留。
-//
-// listKey 契约（R1 评审 P1/P2）：条目所在列表的**缓存键**必须由调用方传入 ——
-// 真实后端 list `~` 时把 `~` 展开成绝对路径返回 entry.path，而前端查询键保留
-// `~`/`~/sub` 形态；用 parentOf(entry.path) 反推键在根层恒失配（覆盖确认被跳过、
-// 失效打不中可见列表）。调用方的键（FileTree 行的 dir / FileBrowser 当前 path）
-// 与建查询时用的是同一串，天然兼容 `~`、绝对路径与 Windows 反斜杠。
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { fsApi } from "../../ipc/commands";
@@ -47,12 +26,6 @@ const OP_LABEL: Record<FileOpKind, string> = {
   checksum: "计算校验值",
 };
 
-/**
- * 该会话里受重命名影响的文件编辑标签。
- *
- * 目录要按前缀匹配后代（`~/sub` 改名会让 `~/sub/a.txt` 的标签指向旧路径）；
- * 两侧统一 norm —— 路径形态（正/反斜杠）不该影响匹配结果。
- */
 function editorTabsOf(sessionId: string, path: string, kind: string): AppTab[] {
   const target = norm(path);
   const hit = (p: string) => {
@@ -75,25 +48,19 @@ function editorTabsOf(sessionId: string, path: string, kind: string): AppTab[] {
 export function useFileOps(sessionId: string) {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
-  /** 渲染用（菜单项据此禁用）；判定用 ref，避免两次触发挤在同一帧里漏判。 */
   const [busy, setBusy] = useState<{ op: FileOpKind; path: string } | null>(null);
   const busyRef = useRef<{ op: FileOpKind; path: string } | null>(null);
   const mountedRef = useRef(true);
   const seqRef = useRef(0);
 
-  // setup 必须显式重置 true：StrictMode（main.tsx 全 App 启用）在开发模式会
-  // 重放 setup→cleanup→setup，只靠 useRef 初值的话 mountedRef 会永远停在 false，
-  // 三个操作都会在首个 await 后静默中止。
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      // 作废所有在途操作：它们随后的完成回调会因序号对不上而静默退出。
       seqRef.current++;
     };
   }, []);
 
-  /** 还活着吗：组件没卸载，且这是最新一次操作（防 stale completion）。 */
   const alive = (seq: number) => mountedRef.current && seqRef.current === seq;
 
   const begin = (op: FileOpKind, path: string): number | null => {
@@ -112,30 +79,11 @@ export function useFileOps(sessionId: string) {
     if (mountedRef.current) setBusy(null);
   };
 
-  /**
-   * 成功后刷新受影响的目录缓存。
-   *
-   * · `listKey`（调用方传入）：条目实际所在列表的键 —— 改名后列表里的名字靠它刷新；
-   * · `from`：被改名目录自己的旧键作废。注意 react-query 的 queryKey 匹配没有
-   *   字符串前缀语义，后代目录**不是**被这里失效的 —— FileTree 把展开态 remap 到
-   *   新路径后，新键无缓存会自动拉取。
-   */
   const invalidateAfterRename = (listKey: string, from: string) => {
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, listKey] });
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, from] });
   };
 
-  /**
-   * 重命名：只改同目录下的名字，不做移动。
-   *
-   * `listKey` 是条目所在列表的缓存键（见文件头的 listKey 契约）；`siblings` 是
-   * 该键对应的列表，两者都由调用方给出，不做任何路径反推。
-   *
-   * 三道前端关卡（都只是预检/告知，裁决权在后端）：
-   *   1. 符号链接 → 提醒「改的是链接本身，不是它指向的目标」；
-   *   2. 编辑器里开着且有未保存修改 → 提醒「标签仍指向旧路径，未保存内容会写到旧文件」；
-   *   3. 新名字与同目录现有项冲突 → 显式确认「将请求后端覆盖，能否覆盖由后端决定」。
-   */
   const renameEntry = async (
     entry: FileEntryDto,
     siblings: FileEntryDto[],
@@ -197,17 +145,6 @@ export function useFileOps(sessionId: string) {
     }
   };
 
-  /**
-   * 改权限（chmod）：八进制 000–777。
-   *
-   * `listKey` 是条目所在列表的缓存键（见文件头的 listKey 契约）——mode 展示
-   * 靠刷新这个键更新。
-   *
-   * · 符号链接 → chmod 跟随链接改的是**目标**，先讲清楚；
-   * · 新权限移除所有者的读/写 → 危险确认（可能自我锁死）；
-   * · Windows 类目标 → 后端报「不支持」，原样呈现，前端不预先藏入口
-   *   （入口可见性不是授权，且平台判定只有后端说了算）。
-   */
   const chmodEntry = async (entry: FileEntryDto, listKey: string) => {
     const seq = begin("chmod", entry.path);
     if (seq === null) return;
@@ -252,12 +189,6 @@ export function useFileOps(sessionId: string) {
     }
   };
 
-  /**
-   * 计算校验值：md5 / sha256（与后端支持的算法对齐，缺省 sha256）。
-   *
-   * 结果用 promptText 的单行输入框呈现：打开即全选，Cmd/Ctrl+C 直接复制 ——
-   * 比「看一眼就关」的消息框实用，也没有自动写剪贴板的副作用。
-   */
   const checksumEntry = async (entry: FileEntryDto) => {
     const seq = begin("checksum", entry.path);
     if (seq === null) return;

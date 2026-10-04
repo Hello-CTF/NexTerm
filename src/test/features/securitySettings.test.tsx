@@ -1,11 +1,4 @@
 /** @vitest-environment jsdom */
-//
-// 安全设置控件（M62）：已知主机的列出 / 撤销 + 同步卡片的受限令牌文案。
-// 运行环境固定成服务端模式（web）：SyncCard 才渲染「这台是同步目标」那一面，
-// KnownHostsCard 也不会被 DEMO 挡掉。
-//
-// 断言节奏与仓库里其他 React 测试一致：异步推进用 `flush()`（act 退出时 React
-// 会冲刷渲染），不在 vi.waitFor 里断言 React DOM —— act 作用域不退出渲染就不刷新。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -35,7 +28,6 @@ vi.mock("../../ipc/commands", () => ({
     token: mocks.syncToken,
     rotateToken: mocks.rotateToken,
   },
-  // store.ts 的顶层命名导入需要这些出口存在（运行期才用到，空对象即可）。
   dbApi: {},
   sessionApi: {},
   terminalApi: {},
@@ -143,7 +135,6 @@ describe("KnownHostsCard", () => {
     clickButton(mounted.container, "撤销信任");
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
-    // 确认框必须点名撤的是谁（主机 + 指纹），不能是一句泛泛的「确定吗」
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
     expect(question).toContain("10.0.0.8:22");
     expect(question).toContain("SHA256:aaa111");
@@ -158,7 +149,7 @@ describe("KnownHostsCard", () => {
     mounted = mount(createElement(KnownHostsCard));
     await flush();
 
-    clickButton(mounted.container, "撤销信任"); // 第一行 = KH1
+    clickButton(mounted.container, "撤销信任");
     await flush();
     expect(mocks.knownHostRemove).toHaveBeenCalledWith("kh1");
     expect(mounted.container.textContent).not.toContain("10.0.0.8:22");
@@ -177,7 +168,6 @@ describe("KnownHostsCard", () => {
     clickButton(mounted.container, "撤销信任");
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("撤销失败"));
-    // 失败就不该再拉一次列表（库没变），条目也还在
     expect(mocks.knownHostList).toHaveBeenCalledTimes(1);
     expect(mounted.container.textContent).toContain("10.0.0.8:22");
   });
@@ -217,11 +207,9 @@ describe("SyncCard（服务端一面）", () => {
     mounted = mountSyncCard();
     await flush();
     const text = mounted.container.textContent ?? "";
-    // 只授权受限同步接口 —— 绝不能写成「完全控制权」
     expect(text).toContain("只能用于资产同步");
     expect(text).toContain("/sync/rpc");
     expect(text).not.toContain("完全控制权");
-    // 完整版 /rpc 无内置鉴权的既有要求必须保留
     expect(text).toContain("反向代理");
   });
 });

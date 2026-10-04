@@ -1,5 +1,3 @@
-// 确定性假事件流：聚合 + 合并 + 重放 + 终态持久性的全分支测试。
-// 不碰 DOM / IPC / 真定时器 —— 帧调度用手动帧，事件顺序由测试逐条驱动。
 import { describe, expect, it } from "vitest";
 import {
   applyAiEvent,
@@ -43,7 +41,6 @@ function stream() {
   return { s, frames };
 }
 
-/** M23/tower 最终冻结的身份：每个 job 从 1 起单调 seq，全事件类型共享计数。 */
 function perRun(seq: number) {
   return { seq };
 }
@@ -109,7 +106,6 @@ describe("conversation aggregation: chunking and ordering", () => {
     s.pushEvent(1, { type: "delta", text: "后" });
     s.pushEvent(1, { type: "done", answer: "后" });
     expect(frames.scheduled()).toBe(0);
-    // 终态前最后一次 flush：「后」落在终态标记之前，而不是被丢掉或排到后面。
     expect(roles(s.getState().items)).toEqual([
       "assistant",
       "tool",
@@ -177,8 +173,6 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
     s.beginRun(1);
     s.pushEvent(1, { type: "delta", text: " authoritative answer" });
     frames.runFrame();
-    // 没有重连信号 ⇒ 入口不去重，同一段 delta 真的落了两遍；
-    // 终态仍必须把末段修成权威答案，而不是再补一条重复气泡。
     s.pushEvent(1, { type: "delta", text: " authoritative answer" });
     frames.runFrame();
     s.pushEvent(1, { type: "done", answer: " authoritative answer" });
@@ -240,7 +234,6 @@ describe("conversation aggregation: reconnect, replay and stale events", () => {
     }
     s.flush();
     expect(s.getState()).toBe(before);
-    // 新代的事件照常工作。
     expect(s.pushEvent(2, { type: "delta", text: "二" }).accepted).toBe(true);
   });
 
@@ -262,7 +255,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.beginRun(1);
     s.pushEvent(1, { type: "delta", text: "abcdefghij", ...perRun(1) });
     frames.runFrame();
-    // 重连补帧：同一 seq 再来一遍 ⇒ 精确重放，丢弃；新 seq ⇒ 新内容。
     expect(s.pushEvent(1, { type: "delta", text: "abcdefghij", ...perRun(1) }).accepted).toBe(false);
     s.pushEvent(1, { type: "delta", text: " XYZ", ...perRun(2) });
     frames.runFrame();
@@ -278,7 +270,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.beginRun(1);
     ["a1", "b2", "c3", "d4"].forEach((text, i) => s.pushEvent(1, { type: "delta", text, ...perRun(i + 1) }));
     frames.runFrame();
-    // 只补发后两段（seq 3、4），随后是全新的 seq 5。
     s.pushEvent(1, { type: "delta", text: "c3", ...perRun(3) });
     s.pushEvent(1, { type: "delta", text: "d4", ...perRun(4) });
     s.pushEvent(1, { type: "delta", text: "e5", ...perRun(5) });
@@ -298,7 +289,7 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     };
     script();
     frames.runFrame();
-    script(); // 整段重放：所有事件的 seq 都已见过（生产计数为全事件共享）
+    script();
     s.pushEvent(1, { type: "delta", text: "C", ...perRun(6) });
     frames.runFrame();
     const items = s.getState().items;
@@ -318,7 +309,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.pushEvent(1, { type: "reasoning", text: " and more", ...perRun(2) });
     frames.runFrame();
     expect(texts(s.getState().items, "reasoning")).toEqual(["same reasoning chunk and more"]);
-    // done 不带推理内容：推理的去重必须发生在入口，而不是终态。
     s.pushEvent(1, { type: "done", answer: "答案", ...perRun(3) });
     const items = s.getState().items;
     expect(texts(items, "reasoning")).toEqual(["same reasoning chunk and more"]);
@@ -329,7 +319,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     const { s, frames } = stream();
     s.beginRun(1);
     s.pushEvent(1, { type: "delta", text: "x", ...perRun(1) });
-    // 不跑帧：原片段还在 pending，身份在入口就已登记，重放依然被识别。
     s.pushEvent(1, { type: "delta", text: "x", ...perRun(1) });
     s.pushEvent(1, { type: "delta", text: "y", ...perRun(2) });
     frames.runFrame();
@@ -337,7 +326,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
   });
 
   it("never drops genuinely new identical reasoning, with or without seq", () => {
-    // per-job seq：相同文本、不同 seq ⇒ 两条都是新内容，一条都不能少。
     const withSeq = stream();
     withSeq.s.beginRun(1);
     withSeq.s.pushEvent(1, { type: "reasoning", text: "ha", ...perRun(1) });
@@ -345,7 +333,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     withSeq.s.pushEvent(1, { type: "reasoning", text: "!", ...perRun(3) });
     withSeq.s.pushEvent(1, { type: "done", answer: "答案", ...perRun(4) });
     expect(texts(withSeq.s.getState().items, "reasoning")).toEqual(["haha!"]);
-    // 无 seq（旧内核）：没有证据可判，同样一律保留，绝不按内容丢。
     const noSeq = stream();
     noSeq.s.beginRun(1);
     noSeq.s.pushEvent(1, { type: "reasoning", text: "ha" });
@@ -361,8 +348,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(1) });
     s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(2) });
     frames.runFrame();
-    // 补发后缀（原 seq）⇒ 丢弃；但**第三个全新的 x**（新 seq）必须活着，
-    // 内容相同不能成为丢弃理由（这正是内容对齐法会误杀的情形）。
     s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(2) });
     s.pushEvent(1, { type: "reasoning", text: "x", ...perRun(3) });
     s.pushEvent(1, { type: "reasoning", text: "y", ...perRun(4) });
@@ -377,8 +362,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.pushEvent(1, { type: "reasoning", text: "r", ...perRun(2) });
     s.pushEvent(1, { type: "delta", text: "b", ...perRun(3) });
     frames.runFrame();
-    // 进入第二次模型调用后计数**继续**（不重置）：seq 4、5 都是新帧；
-    // 而第一轮帧的重放（原 seq）依然被精确丢弃。
     s.pushEvent(1, { type: "reasoning", text: "r", ...perRun(2) });
     s.pushEvent(1, { type: "delta", text: "c", ...perRun(4) });
     s.pushEvent(1, { type: "reasoning", text: "r2", ...perRun(5) });
@@ -394,11 +377,9 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     s.pushEvent(1, { type: "delta", text: "一", ...perRun(1) });
     s.pushEvent(1, { type: "done", answer: "一", ...perRun(2) });
     s.beginRun(2);
-    // 另一个 job 的计数互不影响（不同前端 attempt，各自独立身份空间）。
     s.pushEvent(2, { type: "delta", text: "二", ...perRun(1) });
     frames.runFrame();
     expect(texts(s.getState().items, "assistant")).toEqual(["一", "二"]);
-    // 无效 seq（0 / 负数 / 小数 / 字符串 / 缺字段）= 无身份，一律按新事件保留。
     s.beginRun(3);
     const invalid = [{ seq: 0 }, { seq: -2 }, { seq: 1.5 }, { seq: "7" }, {}];
     for (const identity of invalid) {
@@ -421,7 +402,6 @@ describe("sequence-identity replay suppression (delta / reasoning)", () => {
     const items = s.getState().items;
     expect(roles(items)).toEqual(["assistant", "outcome"]);
     expect(texts(items, "assistant")).toEqual(["答"]);
-    // 终态后迟到文本一律无效（哪怕带着没见过的身份）。
     expect(s.pushEvent(1, { type: "delta", text: "答", ...perRun(3) }).accepted).toBe(false);
   });
 });
@@ -450,7 +430,6 @@ describe("conversation terminal reconciliation", () => {
     const long = doneWith("0123456789", "0123456789 后续");
     expect(texts(long.items, "assistant")).toEqual(["0123456789 后续"]);
     expect(roles(long.items)).toEqual(["assistant", "outcome"]);
-    // 短前缀 / 完全分叉也一样：answer 就是最终消息，流式末段只是它的过渡形态。
     const short = doneWith("好", "好，完整回答");
     expect(texts(short.items, "assistant")).toEqual(["好，完整回答"]);
     expect(roles(short.items)).toEqual(["assistant", "outcome"]);
@@ -479,7 +458,6 @@ describe("conversation terminal reconciliation", () => {
     frames.runFrame();
     s.pushEvent(1, { type: "done", answer: "authoritative final" });
     const items = s.getState().items;
-    // 末段被原位替换：不再冒出第二个答案气泡；旁白 / 工具卡 / 尾部推理都原样保留。
     expect(roles(items)).toEqual(["assistant", "tool", "assistant", "reasoning", "outcome"]);
     expect(texts(items, "assistant")).toEqual(["早先的旁白", "authoritative final"]);
     expect(texts(items, "reasoning")).toEqual(["trailing reasoning"]);
@@ -493,12 +471,10 @@ describe("conversation terminal reconciliation", () => {
     s.pushEvent(1, { type: "toolCall", id: "t", name: "exec", display: "ls" });
     s.pushEvent(1, { type: "reasoning", text: "收尾推理" });
     frames.runFrame();
-    // 末段 assistant 与尾部推理之间隔着工具卡 ⇒ 属于下一轮：答案另起一条，不改写旁白。
     s.pushEvent(1, { type: "done", answer: "工具后的答案" });
     expect(texts(s.getState().items, "assistant")).toEqual(["工具前的旁白", "工具后的答案"]);
     expect(roles(s.getState().items)).toEqual(["assistant", "tool", "reasoning", "assistant", "outcome"]);
 
-    // 同样的结构 + raw 为空：正文段没有被替换，但也不会补占位气泡。
     const empty = stream();
     empty.s.beginRun(1);
     empty.s.pushEvent(1, { type: "delta", text: "streamed final" });
@@ -555,7 +531,6 @@ describe("conversation terminal reconciliation", () => {
     const done = s.pushEvent(7, { type: "done", answer: "装好了" });
     expect(done.accepted).toBe(true);
     const items = s.getState().items;
-    // 读屏卡始终只有最新一屏。
     expect(items.filter((i) => i.role === "tool" && i.name === "read_screen")).toHaveLength(1);
     expect(texts(items, "assistant")).toEqual(["观察", "接管结束：装好了"]);
     expect(items.at(-1)).toMatchObject({ role: "outcome", outcome: "done" });
@@ -584,7 +559,6 @@ describe("HITL interaction lifecycle", () => {
     const question = pendingInteraction(s.getState(), 1, "question");
     expect(question).toMatchObject({ callId: "b" });
     expect(question?.resolution).toBeUndefined();
-    // 重复结算 / 错 nonce / 错代都是空操作。
     const before = s.getState();
     s.resolveInteraction(1, confirm!.id, "na", "已拒绝");
     s.resolveInteraction(1, question!.id, "wrong", "已回答：x");
@@ -691,7 +665,6 @@ describe("coalescing bounds and dispose", () => {
       const result = { type: "toolResult", id: `c${i}`, ok: i % 2 === 0, summary: `s${i}`, text: `t${i}`, exitCode: i % 2 };
       s.pushEvent(1, call);
       s.pushEvent(1, result);
-      // 任意位置的重放都不该改变结构。
       s.pushEvent(1, call);
       s.pushEvent(1, result);
     }
@@ -722,7 +695,6 @@ describe("history and reset", () => {
     expect(s.getState().attempts).toHaveLength(0);
     expect(s.pushEvent(1, { type: "delta", text: "stale" }).accepted).toBe(false);
     expect(s.getState().items).toBe(items);
-    // 新会话从头开始，条目 id 不与历史冲突。
     s.beginRun(2);
     s.pushEvent(2, { type: "delta", text: "新" });
     s.flush();

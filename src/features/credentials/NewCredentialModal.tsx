@@ -1,10 +1,3 @@
-// 新建凭据弹窗。
-//
-// 两条产品决定写在这里：
-// · **没有「私钥口令」这个类型** —— 口令是私钥的一个属性，在私钥表单里作为选填项出现，
-//   跟私钥存进同一条凭据（旧版把它做成独立凭据，列表里多出一条看不出属于哪把钥匙）；
-// · **私钥来源二选一**：「引用本地文件」（只记路径，不复制正文）或「存入凭据库」
-//   （读内容加密保存）。两种模式下口令都能填，也都跟着这条凭据走。
 import { useState } from "react";
 import { assetApi, vaultApi, type CredentialSource } from "../../ipc/commands";
 import { pickKeyFile } from "../../ui/dialogs";
@@ -27,7 +20,6 @@ export function NewCredentialModal({
   const [kind, setKind] = useState("password");
   const [value, setValue] = useState("");
   const [origin, setOrigin] = useState<Origin>("ref");
-  /** 私钥文件路径：引用模式 = 要引用的文件；入库模式 = 要读取的文件。 */
   const [keyFilePath, setKeyFilePath] = useState("");
   const [inlineKeyContent, setInlineKeyContent] = useState<string | null>(null);
   const [contentMode, setContentMode] = useState<"file" | "paste">("file");
@@ -82,7 +74,6 @@ export function NewCredentialModal({
       let source: CredentialSource | undefined;
       if (isKey) {
         if (origin === "ref") {
-          // 引用：库里只落路径（不读内容），口令可选
           source = "file";
           secret = keyFilePath.trim();
         } else {
@@ -116,7 +107,6 @@ export function NewCredentialModal({
           <span className="text-[13px] font-semibold text-neutral-100">新建凭据</span>
         </div>
         <div className="nx-modal-body">
-          {/* 类型：卡片比下拉框更直观 —— 选中项一眼可见，不用点开才知道有几个选项 */}
           <div className="nx-form-row">
             <label className="nx-label">类型</label>
             <div className="grid grid-cols-3 gap-1.5">

@@ -1,15 +1,3 @@
-// 端口转发面板（§5.2 / M3-T8）：静态转发 + SOCKS5 动态转发。
-//
-// 为什么要有这个面板：内核的 `forward_create` / `forward_create_socks` /
-// `forward_list` / `forward_remove` 四条命令一直在，但前端从来没有入口 ——
-// 于是"能建转发"这件事实际上不可达。
-//
-// 两种形态放在同一张表里，因为对用户来说都是"开了个口子"；
-// 差别只在「目标是谁定的」：静态转发建的时候就定死，动态转发由客户端当场指定。
-//
-// ⚠️ 监听地址与「本平台能不能用」都不是硬编码的，而是问内核（`forward_env`）：
-// 桌面形态绑 `127.0.0.1`（只有本机连得上），服务端形态绑 `0.0.0.0`
-// （转发到服务端的端口上，外部客户端才够得到），懒猫微服上整个功能不可用。
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
@@ -27,24 +15,10 @@ import {
 
 type Kind = "local" | "socks";
 
-/** 静态转发默认端口：习惯给 13306（MySQL 的 3306 加一万）；动态给 1080。 */
 const DEFAULT_PORT: Record<Kind, string> = { local: "13306", socks: "1080" };
 
-/**
- * 能力自述还没回来时的兜底监听地址。
- *
- * 用桌面形态的值（`127.0.0.1`）而不是 `0.0.0.0`：它只影响**这一瞬间界面上显示的字符串**
- * —— 真正绑哪个地址由内核按 `ForwardPolicy` 决定，前端说了不算。所以这里偏保守取小，
- * 不会出现「界面说对外、实际没对外」这种反向误导。
- */
 const FALLBACK_LISTEN_HOST = "127.0.0.1";
 
-/**
- * 懒猫微服上的提示文案。
- *
- * 纯文本、不加任何装饰：toast 与提示条都是纯文本渲染，写 `**强调**` 只会把星号原样打给用户看。
- * 也说「为什么不可用」的下一步（去微服平台用它自带的转发），而不只是一个「不支持」。
- */
 const LAZYCAT_UNAVAILABLE =
   "检测到懒猫微服，端口转发在此平台上暂不可用，您可以前往微服平台使用更强大的原生转发功能";
 
@@ -52,11 +26,6 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
   const { pushToast } = useUi();
   const sessions = useUi((s) => s.sessions);
-  /**
-   * 本机会话上转发没有意义：它存在的理由是把**远端**的口子搬到本机，
-   * 而本机自己就已经在 127.0.0.1 上。内核同样会拒（`AppError::Unsupported`），
-   * 这里把按钮禁掉并说清楚，不做「点了才失败」的入口。
-   */
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
   const [kind, setKind] = useState<Kind>("local");
   const [listenPort, setListenPort] = useState(DEFAULT_PORT.local);
@@ -64,26 +33,16 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const [targetPort, setTargetPort] = useState("3306");
   const [busy, setBusy] = useState(false);
 
-  /**
-   * 转发能力自述：本平台允不允许转发、监听地址是哪个。
-   *
-   * 不设 `refetchInterval`、`staleTime` 拉满：它由内核在启动时探测一次就定死
-   * （编译形态 + `NEXTERM_PLATFORM`），进程活着期间不会变，反复问只是白花请求。
-   */
   const env = useQuery({
     queryKey: ["forwardEnv"],
     queryFn: () => forwardApi.env(),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
-  /** 本平台是否**明确**说了「不可用」。查询失败时不判不可用 —— 让内核的错误去说话。 */
   const unavailable = env.data?.available === false;
   const listenHost = env.data?.listenHost ?? FALLBACK_LISTEN_HOST;
-  /** 静态转发在服务端形态下就是「把远端服务搬到服务端端口上」，文案要跟着变。 */
   const exposed = !listenHost.startsWith("127.");
 
-  // 转发是全局的（不跟着标签走），所以列表不带 sessionId 过滤 ——
-  // 用户最需要知道的恰恰是"我总共开了哪些口子"，漏掉别的工作区建的那条最危险。
   const forwards = useQuery({
     queryKey: ["forwards"],
     queryFn: () => forwardApi.list(),
@@ -98,8 +57,6 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   };
 
   const create = async () => {
-    // 本平台不可用就到此为止：内核同样会拒（`AppError::Unsupported`），但这里先说清楚
-    // 「为什么」，比让用户对着一个禁用按钮猜强。入口也已经被藏起来了，这是兜底。
     if (unavailable) {
       pushToast("info", LAZYCAT_UNAVAILABLE);
       return;
@@ -144,8 +101,6 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
           targetHost.trim(),
           Number(targetPort.trim()),
         );
-        // 桌面形态说「本地」是有意义的（确实只在本机）；服务端形态下它是对外口子，
-        // 说「本地」会让人以为没暴露 —— 所以文案跟着监听地址走。
         pushToast(
           "success",
           exposed
@@ -174,7 +129,6 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
         }
         return;
       }
-      // 端口被占用是这里最常见的失败，内核的原话已经说清楚了，直接透传
       pushToast("error", `创建失败：${describeError(e)}`);
     } finally {
       setBusy(false);
@@ -286,15 +240,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
 
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         {unavailable ? (
-          /* 本平台不支持就**不摆控件** —— 一排禁用的输入框比一句话更难懂，
-             而且会让人以为「是不是我哪里没填对」。 */
           <div className="nx-alert nx-alert-info flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
             <span>{LAZYCAT_UNAVAILABLE}</span>
           </div>
         ) : (
           <>
-            {/* 类型切换：两种转发要填的字段不一样，所以做成显式的两个 tab 而不是一堆可选输入框 */}
             <div className="mb-2.5 flex items-center gap-1.5">
               <button
                 className={`nx-btn nx-btn-sm ${kind === "local" ? "nx-btn-primary" : "nx-btn-ghost"}`}

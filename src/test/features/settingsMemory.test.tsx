@@ -1,10 +1,4 @@
 /** @vitest-environment jsdom */
-//
-// AI 长期记忆设置卡片（M46）：opt-in 开关、条目 CRUD、版本冲突、loading/empty/error/retry、
-// 密钥策略提示。运行环境固定成服务端模式（web），与 securitySettings 同一套路。
-//
-// 断言节奏与仓库里其他 React 测试一致：异步推进用 `flush()`（act 退出时 React
-// 会冲刷渲染），不在 vi.waitFor 里断言 React DOM。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import {
@@ -44,12 +38,10 @@ vi.mock("../../ipc/memory", () => ({
   },
 }));
 vi.mock("../../ipc/commands", () => ({
-  // toAppError 用与真身一致的形状归一化：测试里的错误都是 AppError 形状的对象
   toAppError: (e: unknown) =>
     e && typeof e === "object" && "code" in e
       ? (e as { code: string })
       : { code: "internal", message: String(e) },
-  // store.ts 的顶层命名导入需要这些出口存在（运行期才用到，空对象即可）。
   dbApi: {},
   sessionApi: {},
   terminalApi: {},
@@ -85,7 +77,6 @@ const CONFLICT = {
   detail: { id: "m-1", expected: 2, actual: 5 },
 };
 
-/** 图标按钮没有文字，按 aria-label 找。 */
 function iconButton(container: ParentNode, label: string): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find(
     (candidate) => candidate.getAttribute("aria-label") === label,
@@ -128,7 +119,6 @@ describe("MemoryCard", () => {
     expect(text).toContain("operations");
     expect(text).toContain("m-1");
     expect(text).toContain("1 条");
-    // scope 提示：让用户知道这份记忆归谁
     expect(text).toContain("local / default");
     expect(mocks.settings).toHaveBeenCalledWith(SCOPE);
     expect(mocks.index).toHaveBeenCalledWith(SCOPE);
@@ -179,7 +169,6 @@ describe("MemoryCard", () => {
       "error",
       expect.stringContaining("已被其他地方修改"),
     );
-    // 冲突后必须重新读取，而不是拿着旧版本硬写
     expect(mocks.settings).toHaveBeenCalledTimes(2);
   });
 
@@ -223,7 +212,6 @@ describe("MemoryCard", () => {
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("possible secret");
-    // 表单内容保留（用户改完策略还能再提交），且没假装成功去刷新列表
     expect(inputByLabel(mounted.container, "记忆主题").value).toBe("ops");
     expect(mocks.index).toHaveBeenCalledTimes(1);
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
@@ -275,7 +263,6 @@ describe("MemoryCard", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("已被其他地方修改");
     expect(text).toContain("2 → 5");
-    // 冲突后重新读取列表；旧内容没有硬盖上去（edit 只发了一次）
     expect(mocks.index).toHaveBeenCalledTimes(2);
     expect(mocks.edit).toHaveBeenCalledTimes(1);
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
@@ -289,7 +276,6 @@ describe("MemoryCard", () => {
     click(iconButton(mounted.container, "删除记忆 m-1"));
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
-    // 确认框必须点名删的是哪条（主题），不能是一句泛泛的「确定吗」
     expect(String(mocks.ask.mock.calls[0]?.[0] ?? "")).toContain("operations");
     expect(mocks.delete).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("m-1");
@@ -319,7 +305,6 @@ describe("MemoryCard", () => {
     click(iconButton(mounted.container, "删除记忆 m-1"));
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("删除失败"));
-    // 失败就不该再拉一次列表（库没变），条目也还在
     expect(mocks.index).toHaveBeenCalledTimes(1);
     expect(mounted.container.textContent).toContain("m-1");
   });
@@ -350,13 +335,11 @@ describe("MemoryCard", () => {
 
     click(iconButton(mounted.container, "编辑记忆 m-1"));
     await flush();
-    // 读取中：显式提示，且结构上就没有可提交的表单
     expect(mounted.container.textContent).toContain("读取记忆正文…");
     expect(mounted.container.querySelector('textarea[aria-label="记忆内容"]')).toBeNull();
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.edit).not.toHaveBeenCalled();
 
-    // 读取期间取消并改为新建；迟到的 get 响应不得把新草稿覆盖成编辑
     clickButton(mounted.container, "取消");
     await flush();
     clickButton(mounted.container, "新建一条记忆");
@@ -380,7 +363,6 @@ describe("MemoryCard", () => {
       "error",
       expect.stringContaining("读取记忆正文失败"),
     );
-    // 表单已关，不会留着一个能误提交的壳
     expect(mounted.container.querySelector('textarea[aria-label="记忆内容"]')).toBeNull();
     expect(mounted.container.textContent).toContain("新建一条记忆");
   });
@@ -394,7 +376,6 @@ describe("MemoryCard", () => {
     clickButton(mounted.container, "刷新");
     await flush();
     const text = mounted.container.textContent ?? "";
-    // 空态不得在无标注的情况下冒充最新状态
     expect(text).toContain("磁盘炸了");
     expect(text).not.toContain("还没有记忆");
 
@@ -428,7 +409,6 @@ describe("MemoryCard", () => {
 
     stale.resolve([]);
     await flush();
-    // 迟到的旧结果（空列表）不得覆盖新列表
     expect(mounted.container.textContent).toContain("m-1");
   });
 });

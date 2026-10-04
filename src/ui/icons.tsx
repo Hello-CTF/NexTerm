@@ -1,13 +1,6 @@
-// 图标系统：一套 24×24 线性图标，`currentColor` 描边，统一 1.7 线宽。
-//
-// 为什么自己内联而不用图标库：项目要求依赖可控（技术选型「低依赖」），
-// 而这套图标只需要一种尺寸、单色描边，内联反而更小、更可控、更好统一。
-//
-// 用法：<IconTerminal size={14} className="text-neutral-400" />
 import type { ReactNode, SVGProps } from "react";
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "children"> {
-  /** 边长（px），默认 16。 */
   size?: number;
 }
 
@@ -31,29 +24,6 @@ function Svg({ size = 16, children, ...rest }: IconProps & { children: ReactNode
   );
 }
 
-/* ── 品牌 ──────────────────────────────────────────────────────────────── */
-
-/**
- * 应用标识（霓虹猫娘 · 透明底）。
- *
- * 直接引用位图，而不是内联 SVG —— 这一版是带辉光和渐变的栅格画，
- * 没有任何矢量版本，硬描成 SVG 只会丢掉它最值钱的那层辉光。
- *
- * 资产来源与规格：
- *   `public/brand/nexterm-mark-128.png` ← 品牌图 1.375x 局部裁切（脸 + 耳机 + 终端）
- *   128px 是给 2x 屏上 52px 空态用的；图标栏 26px 也走它，缩放质量足够。
- *   应用图标（任务栏 / 安装包）的 1024 母版是 `public/brand/nexterm-icon-1024.png`，
- *   导出的 `public/brand/icon.icns` / `public/brand/icon.ico` 供 DMG / NSIS 打包取用
- *   （自 `src-tauri/icons/` 迁入；src-tauri 移除后打包不再依赖旧路径）。
- *
- * 背景是**纯透明**，不是早期的 `#0B0E14` 实底方砖 —— 实底会在 Dock / 任务栏上
- * 显出一个黑方块。品牌标刻意比应用图标裁得紧：全幅缩到 26px 只剩一团，
- * 深色侧栏（`--color-neutral-950`）上连轮廓都糊掉；同时仍保留透明边，
- * 否则裁成满幅又变成一个「方砖」。
- *
- * 换方案：把 `public/brand/nexterm-mark-*.png` 换成新裁切、`nexterm-icon-1024.png`
- * 换成新 1024 母版，并从母版重新导出 icon.icns / icon.ico。
- */
 export function Logo({ size = 26 }: { size?: number }) {
   return (
     <img
@@ -66,8 +36,6 @@ export function Logo({ size = 26 }: { size?: number }) {
     />
   );
 }
-
-/* ── 资产类型 ──────────────────────────────────────────────────────────── */
 
 export const IconServer = (p: IconProps) => (
   <Svg {...p}>
@@ -92,7 +60,6 @@ export const IconMonitor = (p: IconProps) => (
   </Svg>
 );
 
-/** Windows / WinRM 目标：四宫格。 */
 export const IconGrid = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="3" width="7.5" height="7.5" rx="1.8" />
@@ -122,9 +89,6 @@ export const IconFile = (p: IconProps) => (
   </Svg>
 );
 
-/* ── 文件树 / 编辑器用到的文件类型图标 ─────────────────────────────────── */
-
-/** 新建文件：文件轮廓内嵌加号。 */
 export const IconFilePlus = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12.5 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V9.5z" />
@@ -133,7 +97,6 @@ export const IconFilePlus = (p: IconProps) => (
   </Svg>
 );
 
-/** 新建目录：文件夹轮廓内嵌加号。 */
 export const IconFolderPlus = (p: IconProps) => (
   <Svg {...p}>
     <path d="M3.5 6.5A2 2 0 0 1 5.5 4.5h3.3a2 2 0 0 1 1.6.8l1 1.4h7.1a2 2 0 0 1 2 2v8.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
@@ -141,7 +104,6 @@ export const IconFolderPlus = (p: IconProps) => (
   </Svg>
 );
 
-/** 源码文件。 */
 export const IconCode = (p: IconProps) => (
   <Svg {...p}>
     <path d="m8.5 7.5-5 4.5 5 4.5" />
@@ -149,7 +111,6 @@ export const IconCode = (p: IconProps) => (
   </Svg>
 );
 
-/** 压缩包 / 归档。 */
 export const IconArchive = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="4.4" rx="1.5" />
@@ -158,7 +119,6 @@ export const IconArchive = (p: IconProps) => (
   </Svg>
 );
 
-/** 图片文件。 */
 export const IconImage = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
@@ -167,7 +127,6 @@ export const IconImage = (p: IconProps) => (
   </Svg>
 );
 
-/** 家目录（路径面包屑的「回到 ~」按钮）。 */
 export const IconHome = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 10.4 12 4l8 6.4V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
@@ -175,7 +134,6 @@ export const IconHome = (p: IconProps) => (
   </Svg>
 );
 
-/** 折叠全部：顶部一条基线 + 双层上箭头。 */
 export const IconFoldAll = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 4.5h16" />
@@ -184,7 +142,6 @@ export const IconFoldAll = (p: IconProps) => (
   </Svg>
 );
 
-/** 撤销 / 重做：一对方向相反的弧形箭头（别用同一个图标翻转，线帽会走形）。 */
 export const IconUndo = (p: IconProps) => (
   <Svg {...p}>
     <path d="M9 14.5 4 9.5l5-5" />
@@ -199,23 +156,18 @@ export const IconRedo = (p: IconProps) => (
   </Svg>
 );
 
-/** 减号。 */
 export const IconMinus = (p: IconProps) => (
   <Svg {...p}>
     <path d="M5 12h14" />
   </Svg>
 );
 
-/** 最大化 / 还原（窗口控制钮）。 */
 export const IconMaximize = (p: IconProps) => (
   <Svg {...p}>
     <rect x="5" y="5" width="14" height="14" rx="2" />
   </Svg>
 );
 
-/* ── 分屏 ─────────────────────────────────────────────────────────────── */
-
-/** 上下分屏：外框 + 一条横向分隔线。 */
 export const IconSplitH = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2.5" />
@@ -223,7 +175,6 @@ export const IconSplitH = (p: IconProps) => (
   </Svg>
 );
 
-/** 合并（取消分屏）：两个箭头对着中间那条线收拢。 */
 export const IconMergeH = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2.5" />
@@ -233,7 +184,6 @@ export const IconMergeH = (p: IconProps) => (
   </Svg>
 );
 
-/** 容器 / Docker。 */
 export const IconBox = (p: IconProps) => (
   <Svg {...p}>
     <path d="m21 7.6-9-5.1-9 5.1v8.8l9 5.1 9-5.1z" />
@@ -250,7 +200,6 @@ export const IconDatabase = (p: IconProps) => (
   </Svg>
 );
 
-/** Redis / 多类型存储。 */
 export const IconLayers = (p: IconProps) => (
   <Svg {...p}>
     <path d="m12 2.8 8.5 4.6-8.5 4.6-8.5-4.6z" />
@@ -266,8 +215,6 @@ export const IconGlobe = (p: IconProps) => (
     <path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z" />
   </Svg>
 );
-
-/* ── 操作 ──────────────────────────────────────────────────────────────── */
 
 export const IconSearch = (p: IconProps) => (
   <Svg {...p}>
@@ -340,7 +287,6 @@ export const IconRefresh = (p: IconProps) => (
   </Svg>
 );
 
-/** 重启（与「刷新」方向相反，避免同一屏出现两个一样的图标）。 */
 export const IconRestart = (p: IconProps) => (
   <Svg {...p}>
     <path d="M3.5 12a8.5 8.5 0 1 0 2.9-6.36" />
@@ -420,7 +366,6 @@ export const IconList = (p: IconProps) => (
   </Svg>
 );
 
-/** 数据表：带表头的网格。 */
 export const IconTable = (p: IconProps) => (
   <Svg {...p}>
     <rect x="2.5" y="4" width="19" height="16" rx="2.4" />
@@ -444,9 +389,6 @@ export const IconExternal = (p: IconProps) => (
   </Svg>
 );
 
-/* ── 状态 / AI ─────────────────────────────────────────────────────────── */
-
-/** AI / 助手。 */
 export const IconSparkles = (p: IconProps) => (
   <Svg {...p}>
     <path d="M10.5 3 12.2 8.3 17.5 10 12.2 11.7 10.5 17 8.8 11.7 3.5 10 8.8 8.3z" />
@@ -534,14 +476,12 @@ export const IconInfo = (p: IconProps) => (
   </Svg>
 );
 
-/** 加载态；外层配 `animate-spin`。 */
 export const IconLoader = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 3v3.6M12 17.4V21M5.5 5.5l2.6 2.6M15.9 15.9l2.6 2.6M3 12h3.6M17.4 12H21M5.5 18.5l2.6-2.6M15.9 8.1l2.6-2.6" />
   </Svg>
 );
 
-/** 端口转发：插头。 */
 export const IconPlug = (p: IconProps) => (
   <Svg {...p}>
     <path d="M9 3v6M15 3v6" />
@@ -595,7 +535,6 @@ export const IconCommand = (p: IconProps) => (
   </Svg>
 );
 
-/** 接管：游戏手柄。 */
 export const IconGamepad = (p: IconProps) => (
   <Svg {...p}>
     <path d="M7.5 7.5h9a5 5 0 0 1 4.8 6.4l-.7 2.4a2.3 2.3 0 0 1-3.9 1L15 15.5H9l-1.7 1.8a2.3 2.3 0 0 1-3.9-1l-.7-2.4A5 5 0 0 1 7.5 7.5Z" />
@@ -656,9 +595,6 @@ export const IconZap = (p: IconProps) => (
   </Svg>
 );
 
-/* ── 映射表 ────────────────────────────────────────────────────────────── */
-
-/** 资产类型 → 图标。集中一处，避免各面板各写一套。 */
 export const KIND_ICON_MAP = {
   ssh: IconServer,
   winrm: IconGrid,
@@ -670,7 +606,6 @@ export const KIND_ICON_MAP = {
 
 export type AssetKind = keyof typeof KIND_ICON_MAP;
 
-/** 取资产类型对应图标；未知类型回退到服务器图标。 */
 export function assetIcon(kind: string) {
   return KIND_ICON_MAP[kind as AssetKind] ?? IconServer;
 }

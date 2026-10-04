@@ -1,9 +1,5 @@
 /** @vitest-environment jsdom */
 
-// M61 Docker 洞察控件（overview / inspect / stats / 容器文件目录）的聚焦测试。
-// mock 全部 mission-local：只替换 ../../ipc/commands、../../ipc/events、
-// ../../ui/dialogs 三个边界，共享 IPC/demo/contract 文件一律不动。
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -31,9 +27,6 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
-// R42 真实浮层验收：工厂在既有覆盖之上 spread 真实模块 —— 组件照旧走 mocks.ask，
-// 钉板测试把 mocks.ask 委托回真实 ask()，经真实 registerDialogHandlers +
-// 真实映射（App 的 dialogLevelForKind）+ 真实 store/DialogHost 渲染验收级别。
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
@@ -120,16 +113,12 @@ const inspectA = {
     {
       Type: "volume",
       Name: "db-passwords",
-      // 真实 named-volume 契约：Source 路径里带卷名 —— 只遮 Name 会从 Source
-      // 原样漏出（review r1 P2），fixture 必须用这个真实形状做回归。
       Source: "/var/lib/docker/volumes/db-passwords/_data",
       Destination: "/secrets",
       RW: false,
     },
     { Type: "bind", Name: "", Source: "/home/alice/app", Destination: "/app", RW: true },
   ],
-  // 真实 inspect 契约（M16 对 docker 29.4 实测）：HostConfig.Binds 以
-  // `卷名:目标[:选项]` 原样带出卷名 —— Mounts[].Name/Source 之外的泄漏面。
   HostConfig: { Binds: ["db-passwords:/secrets", "/home/alice/app:/app:ro"] },
 };
 
@@ -138,7 +127,6 @@ const STATS_JSON_LINES = [
   '{"ID":"cccc55556666","Name":"/intruder","CPUPerc":"99.00%","MemUsage":"8GiB / 8GiB","MemPerc":"98.00%","NetIO":"9kB / 9kB","BlockIO":"1GB / 1GB","PIDs":"200"}',
 ].join("\n");
 
-/** 轮询停止断言要真实等过两个轮询周期；包在 act 里，让期间的查询落地不触发 act 警告。 */
 function sleep(ms: number): Promise<void> {
   return act(() => new Promise<void>((r) => setTimeout(r, ms)));
 }
@@ -154,7 +142,6 @@ function mountPanel(): MountedView {
   );
 }
 
-/** 打开第一个容器的洞察钻取（详情页签）。 */
 async function openInsight(m: MountedView, index = 0): Promise<void> {
   await waitFor(() =>
     expect(m.container.querySelectorAll('button[title="详情 / 统计 / 文件"]').length).toBeGreaterThan(index),
@@ -185,8 +172,6 @@ describe("Docker insight controls (M61)", () => {
     mounted = undefined;
   });
 
-  // ── overview ──
-
   it("overview strip renders loading, then host stats chips", async () => {
     const ov = deferred<{ containers: ContainerSummary[]; hostStats: Record<string, number> }>();
     mocks.overview.mockReturnValue(ov.promise);
@@ -197,7 +182,6 @@ describe("Docker insight controls (M61)", () => {
       containers: [containerA, containerB],
       hostStats: { containersRunning: 1, containersTotal: 2, images: 5 },
     });
-    // 「容器总数」只存在于概览条，等它就是等概览条完成加载
     await waitFor(() => expect(m.container.textContent).toContain("容器总数"));
     expect(m.container.textContent).toContain("运行中");
     expect(m.container.textContent).toContain("镜像");
@@ -215,8 +199,6 @@ describe("Docker insight controls (M61)", () => {
     expect(mocks.overview).toHaveBeenCalledTimes(2);
   });
 
-  // ── inspect ──
-
   it("inspect renders loading, summary and keeps secrets out of the DOM entirely", async () => {
     const pending = deferred<Record<string, unknown>>();
     mocks.inspect.mockReturnValue(pending.promise);
@@ -227,26 +209,19 @@ describe("Docker insight controls (M61)", () => {
     pending.resolve(inspectA);
     await waitFor(() => expect(m.container.textContent).toContain("环境变量"));
 
-    // 摘要与结构照常渲染
     expect(mockedText()).toContain("nginx:1.25");
     expect(mockedText()).toContain("POSTGRES_PASSWORD");
-    // 敏感值一律不上屏：env 值、敏感 label 值、敏感卷名（含 Source 路径里的卷名段）
     expect(mockedText()).not.toContain("hunter2secret");
     expect(mockedText()).not.toContain("tok-123456");
     expect(mockedText()).not.toContain("db-passwords");
     expect(mockedText()).toContain(REDACTED_MARK);
-    // Source 的目录结构保留、只有卷名段被遮蔽
     expect(mockedText()).toContain("/var/lib/docker/volumes/");
-    // 非敏感信息不受影响
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
-    // 口径提示：展示级脱敏 ≠ 授权
     expect(mockedText()).toContain("所有权与强制遮蔽以内核为准");
-    // review r1 P1：不存在任何 reveal 入口，DOM 只消费脱敏 view model
     expect(mockedText()).not.toContain("显示敏感值");
 
-    // 挂载 RW 按真实 boolean 渲染（review r1 P2）：bind RW:true → RW，volume RW:false → RO
     const rowOf = (needle: string) =>
       [...m.container.querySelectorAll("tbody tr")].find((r) => r.textContent?.includes(needle));
     const bindRow = rowOf("/home/alice/app");
@@ -257,7 +232,6 @@ describe("Docker insight controls (M61)", () => {
     expect(volumeRow.textContent).toContain("RO");
     expect(volumeRow.textContent).not.toContain("RW");
 
-    // 负向：任何交互（刷新 / 切页签再切回）都不得把真实 secret 带进 DOM
     clickButton(m.container, "刷新");
     clickButton(m.container, "统计");
     await waitFor(() => expect(mockedText()).toContain("3s 轮询"));
@@ -297,21 +271,17 @@ describe("Docker insight controls (M61)", () => {
     await openInsight(m, 0);
     expect(mockedText()).toContain("读取容器配置…");
 
-    // 容器 A 的响应还在飞：返回列表、改开容器 B
     clickButton(m.container, "返回");
     await waitFor(() => expect(m.container.querySelectorAll('button[title="详情 / 统计 / 文件"]').length).toBe(2));
     await openInsight(m, 1);
     await waitFor(() => expect(mockedText()).toContain("redis:7"));
 
-    // A 的迟到响应落地：不得渲染到 B 的界面上
     stale.resolve({ ...inspectA, Name: "/web-stale", Config: { Image: "nginx:1.25", Env: ["LEAK=AAA_SECRET_VALUE"], Labels: {} } });
     await flush();
     expect(mockedText()).not.toContain("AAA_SECRET_VALUE");
     expect(mockedText()).not.toContain("web-stale");
     expect(mockedText()).toContain("redis:7");
   });
-
-  // ── stats ──
 
   it("stats tab renders rows for this session only and marks the current container", async () => {
     const m = (mounted = mountPanel());
@@ -322,7 +292,6 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("web");
     expect(mockedText()).toContain("1.50%");
     expect(mockedText()).toContain("当前");
-    // 归属比对：不属于当前会话容器清单的行（后端多返回的 intruder）不上屏
     expect(mockedText()).not.toContain("intruder");
     expect(mockedText()).not.toContain("98.00%");
   });
@@ -330,7 +299,7 @@ describe("Docker insight controls (M61)", () => {
   it("stats empty state explains when the current container is stopped", async () => {
     mocks.stats.mockResolvedValue("");
     const m = (mounted = mountPanel());
-    await openInsight(m, 1); // worker 已停止
+    await openInsight(m, 1);
     clickButton(m.container, "统计");
 
     await waitFor(() => expect(mockedText()).toContain("当前容器已停止"));
@@ -362,8 +331,6 @@ describe("Docker insight controls (M61)", () => {
     expect(mocks.stats).toHaveBeenCalledTimes(1);
   }, 15000);
 
-  // ── files ──
-
   it("files tab lists entries without dot-link noise and navigates directories", async () => {
     mocks.listDir.mockImplementation((_s: string, _c: string, path: string) => {
       if (path === "/") return Promise.resolve([".", "..", "app/", "etc/", "server.js", ".env"]);
@@ -376,10 +343,8 @@ describe("Docker insight controls (M61)", () => {
 
     await waitFor(() => expect(mockedText()).toContain("server.js"));
     const rows = m.container.querySelectorAll("tbody tr");
-    // `.` / `..` 被过滤，其余 4 条上屏
     expect(rows.length).toBe(4);
     expect(mockedText()).not.toContain("etc/nginx");
-    // review r1 P2：敏感文件名不是「打标了事」——文本与 title 都按统一口径遮蔽
     expect(mockedText()).not.toContain(".env");
     expect(mockedText()).toContain(REDACTED_MARK);
     expect(mockedText()).toContain("敏感");
@@ -388,7 +353,6 @@ describe("Docker insight controls (M61)", () => {
     }
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/");
 
-    // 进入 etc/（passwd 也是敏感名：遮蔽显示，但点击导航仍用原始值）
     const etcRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("etc"),
     );
@@ -417,13 +381,11 @@ describe("Docker insight controls (M61)", () => {
     clickButton(m.container, "文件");
     await waitFor(() => expect(mockedText()).toContain("app"));
 
-    // 敏感条目（.env.production / id_rsa / cert.pem / secrets/）一律不上屏
     expect(mockedText()).not.toContain(".env.production");
     expect(mockedText()).not.toContain("id_rsa");
     expect(mockedText()).not.toContain("cert.pem");
     expect(mockedText()).not.toContain("secrets");
 
-    // 点击遮蔽显示的 secrets 行：导航用原始值，面包屑段同样遮蔽显示
     const secretsRow = [...m.container.querySelectorAll("tbody tr")].find(
       (r) => r.textContent?.includes("敏感") && r.textContent?.includes("目录"),
     );
@@ -431,7 +393,6 @@ describe("Docker insight controls (M61)", () => {
     expect(secretsRow.getAttribute("title")).toBe("已遮蔽");
     click(secretsRow);
     await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets"));
-    // 面包屑：/ + 遮蔽段；原始目录名不出现在任何 title
     expect(mockedText()).toContain(REDACTED_MARK);
     expect(mockedText()).not.toContain("secrets");
     expect(mockedText()).not.toContain("token.txt");
@@ -445,7 +406,6 @@ describe("Docker insight controls (M61)", () => {
       if (path === "/") return Promise.resolve(["secrets/"]);
       if (path === "/secrets") return Promise.resolve(["app/"]);
       if (path === "/secrets/app") return Promise.resolve(["server.js"]);
-      // 真实 Go ListDir 会把 ls stderr 连同请求路径包进错误（review r2 P2）
       return Promise.reject(new Error(`ls: ${path}: Not a directory`));
     });
     const m = (mounted = mountPanel());
@@ -453,7 +413,6 @@ describe("Docker insight controls (M61)", () => {
     clickButton(m.container, "文件");
     await waitFor(() => expect(mockedText()).toContain("敏感"));
 
-    // 敏感父目录行：自身遮蔽显示；点击导航仍用原始值
     const secretsRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("敏感"),
     );
@@ -461,7 +420,6 @@ describe("Docker insight controls (M61)", () => {
     click(secretsRow);
     await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets"));
 
-    // 非敏感后代 app/：文本正常，但完整路径 title 逐段脱敏（父段 secrets 不上屏）
     await waitFor(() => expect(mockedText()).toContain("app"));
     const appRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("app"),
@@ -470,7 +428,6 @@ describe("Docker insight controls (M61)", () => {
     expect(appRow.getAttribute("title")).toBe(`/${REDACTED_MARK}/app`);
     expect(appRow.getAttribute("title")).not.toContain("secrets");
 
-    // 深入 /secrets/app：上级按钮与面包屑 title 同样逐段脱敏
     click(appRow);
     await waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app"));
     await waitFor(() => expect(mockedText()).toContain("server.js"));
@@ -481,7 +438,6 @@ describe("Docker insight controls (M61)", () => {
     expect(titles.some((t) => t === `/${REDACTED_MARK}/app`)).toBe(true);
     for (const t of titles) expect(t).not.toContain("secrets");
 
-    // 错误回显：server.js 不是目录，ls stderr 带原始路径 —— 回显必须脱敏
     const serverRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("server.js"),
     );
@@ -494,7 +450,6 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain(`/${REDACTED_MARK}/app/server.js`);
     expect(mockedText()).not.toContain("secrets");
 
-    // 后端导航参数始终是原始路径（前端过滤不替代后端授权，只影响显示）
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets");
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app");
     expect(mocks.listDir).toHaveBeenCalledWith("s1", containerA.id, "/secrets/app/server.js");
@@ -518,7 +473,6 @@ describe("Docker insight controls (M61)", () => {
     click(etcRow);
     await waitFor(() => expect(mockedText()).toContain("shadow"));
 
-    // shadow 不是目录：后端报错，原地给重试 / 返回上级
     const shadowRow = [...m.container.querySelectorAll("tbody tr")].find((r) =>
       r.textContent?.includes("shadow"),
     );
@@ -567,7 +521,6 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     });
     mocks.action.mockResolvedValue(undefined);
     mocks.imageRemove.mockResolvedValue(undefined);
-    // 真实浮层：mocks.ask 委托回真实 ask()，按 App 的注册形态接管共享弹框
     mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
       mocks.realAsk!(message, options),
     );
@@ -724,10 +677,8 @@ describe("dockerRedact helpers", () => {
     expect(out.Config.Labels["com.example.ok"]).toBe("fine");
     expect(out.Config.Labels["auth.token"]).toBe(REDACTED_MARK);
     expect(out.Nested.DbPassword).toBe(REDACTED_MARK);
-    // Binds 源里的卷名整名遮蔽，目标与选项原样保留；非敏感 bind 源不动
     expect(out.HostConfig.Binds[0]).toBe(`${REDACTED_MARK}:/secrets:rw`);
     expect(out.HostConfig.Binds[1]).toBe("/home/alice/app:/app");
-    // 卷名与 Source 里的卷名段都遮蔽；目录结构与非敏感源路径保留
     expect(out.Mounts[0].Name).toBe(REDACTED_MARK);
     expect(out.Mounts[0].Source).toBe(`/var/lib/docker/volumes/${REDACTED_MARK}/_data`);
     expect(out.Mounts[0].Destination).toBe("/secrets");
@@ -754,7 +705,7 @@ describe("dockerRedact helpers", () => {
   it("redactFileName masks the name, keeping only non-sensitive extensions", () => {
     expect(redactFileName(".env.production")).toBe(REDACTED_MARK);
     expect(redactFileName("id_rsa")).toBe(REDACTED_MARK);
-    expect(redactFileName("cert.pem")).toBe(REDACTED_MARK); // 扩展名本身敏感
+    expect(redactFileName("cert.pem")).toBe(REDACTED_MARK);
     expect(redactFileName("passwd")).toBe(REDACTED_MARK);
     expect(redactFileName("app_secret.yaml")).toBe(`${REDACTED_MARK}.yaml`);
   });
@@ -767,7 +718,6 @@ describe("dockerRedact helpers", () => {
   });
 
   it("redactPathInText replaces the raw path in backend error echoes", () => {
-    // 前缀替换同时盖住「错误里带了更深层子路径」的形态
     expect(redactPathInText("ls: /secrets/app: Permission denied", "/secrets")).toBe(
       `ls: /${REDACTED_MARK}/app: Permission denied`,
     );
@@ -791,14 +741,12 @@ describe("dockerRedact helpers", () => {
       { key: "com.docker.compose.project", value: "shop" },
       { key: "x-api-token", value: REDACTED_MARK },
     ]);
-    // RW 是真实 boolean：true → RW / false → RO 的数据源
     expect(vm.mounts[0]).toMatchObject({
       name: REDACTED_MARK,
       source: `/var/lib/docker/volumes/${REDACTED_MARK}/_data`,
       rw: false,
     });
     expect(vm.mounts[1]).toMatchObject({ source: "/home/alice/app", rw: true });
-    // 序列化 dump 同样不含任何 secret
     expect(vm.json).not.toContain("hunter2secret");
     expect(vm.json).not.toContain("tok-123456");
     expect(vm.json).not.toContain("db-passwords");

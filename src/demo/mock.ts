@@ -1,10 +1,3 @@
-// 演示模式：把全部 Tauri 命令映射到内存实现。
-//
-// 目的：让《产品开发文档》里的每个面板在**没有 Rust 内核、没有真实服务器**的情况下
-// 都有内容可看、可点、可交互，从而在实现早期就能整体验收 UI。
-//
-// 接入点只有一处：`ipc/commands.ts` 的 `call()` 在演示模式下改走 `mockInvoke`，
-// 因此所有面板代码一行都不用为演示模式做改动。
 
 import {
   assets,
@@ -35,8 +28,6 @@ import {
 import { containerLogLines, DemoShell } from "./shell";
 import { emit, later, pushEvent, pushText } from "./bus";
 
-/* ── 会话 ─────────────────────────────────────────────────────────────── */
-
 interface DemoSession {
   id: string;
   assetId: string | null;
@@ -59,10 +50,6 @@ const sessions: DemoSession[] = [
   },
 ];
 
-/**
- * 演示模式的状态事件版本号，与内核 `Session.eventVersion` 同语义（会话内单调递增）。
- * 前端按 version 做高水位丢弃，演示模式不给 version 的话状态事件会被全部丢掉。
- */
 const sessionEventVersions = new Map<string, number>();
 
 function emitSessionStatus(sessionId: string, status: string, error: string | null) {
@@ -71,24 +58,13 @@ function emitSessionStatus(sessionId: string, status: string, error: string | nu
   emit("session://status", { sessionId, status, error, version });
 }
 
-/* ── 终端 ─────────────────────────────────────────────────────────────── */
-
 const shells = new Map<string, DemoShell>();
 const logTimers = new Map<string, () => void>();
 const pendingAi = new Map<string, (decision: string) => void>();
-/** 演示模式的「停止」：被取消的 jobId 与它们的通道。 */
 const cancelledAiJobs = new Set<string>();
 const aiChannels = new Map<string, unknown>();
 let jobSeq = 0;
 
-/**
- * 演示模式的内核标签表（`terminal_list` / `terminal_attach_tab` 的数据源）。
- *
- * 关键点：**detach 不等于销毁**。关闭标签选「后台继续运行」时只把 subscribers 置 0，
- * 进程（DemoShell）留着 —— 这样「后台会话」面板才有的看、也才接得回来。
- * 之前 detach 直接 delete 掉 shell，等于把"关掉网页任务还在跑"这个核心场景
- * 在演示模式里演成了反面，功能在演示里根本验不到。
- */
 interface DemoLiveTab {
   tabId: string;
   sessionId: string;
@@ -104,7 +80,6 @@ interface DemoLiveTab {
 
 const liveTabs = new Map<string, DemoLiveTab>();
 
-/** 预置一个「后台运行中」的标签：让「后台会话」面板一打开就有内容可看。 */
 liveTabs.set("t-bg-demo", {
   tabId: "t-bg-demo",
   sessionId: "s-web01",
@@ -118,14 +93,11 @@ liveTabs.set("t-bg-demo", {
   lastOutputAt: Date.now() - 42_000,
 });
 
-/** 演示模式的布局存储（`layout_get` / `layout_put`）。data 是前端自己的 JSON。 */
 const layoutState: { revision: number; updatedAt: number; data: unknown | null } = {
   revision: 0,
   updatedAt: 0,
   data: null,
 };
-
-/* ── 长期语义记忆 ──────────────────────────────────────────────────────── */
 
 interface DemoMemoryEntry {
   id: string;
@@ -160,12 +132,6 @@ const demoMemoryEntries: DemoMemoryEntry[] = [
 ];
 const demoMemorySettings = new Map<string, DemoMemorySettings>();
 
-/**
- * 演示模式的密钥规则：与内核 `memory.RedactText` 同口径的完整规则集 ——
- * 私钥块、Bearer、JWT、URI 内嵌凭据，以及赋值型密钥（password/token/
- * api_key 等关键词作为下划线分段出现的 key: value / key=value）。命中时
- * reject 策略整体拒写，redact 策略把命中片段替换为 [REDACTED]。
- */
 const demoSecretRules = [
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gi,
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
@@ -197,7 +163,6 @@ function demoMemoryScopeKey(tenant: string, subject: string): string {
   return `${tenant}\n${subject}`;
 }
 
-/** 与内核 normalizeScope 对齐：空 scope 一律 forbidden，先于任何行查找。 */
 function demoMemoryRequireScope(scope: { tenant?: string; subject?: string }): { tenant: string; subject: string } {
   const tenant = str(scope.tenant).trim();
   const subject = str(scope.subject).trim();
@@ -214,7 +179,6 @@ function demoMemoryFind(scope: { tenant: string; subject: string }, id: string):
   return entry;
 }
 
-/** 与内核 IPC 的 VersionConflictError 对齐：bad_param + expected/actual detail。 */
 function demoMemoryCAS(entry: { id: string; version: number }, expectedVersion: number) {
   if (entry.version !== expectedVersion) {
     throwAppError(
@@ -225,63 +189,38 @@ function demoMemoryCAS(entry: { id: string; version: number }, expectedVersion: 
   }
 }
 
-/**
- * 演示模式的错误：形状对齐内核的 `AppError`（`ipc/commands.ts::toAppError` 只看 `code`）。
- *
- * 不能 `throw new Error(...)` —— 那样 code 会退化成 `internal`，前端就分不出
- * 「别人正在操作终端」（not_controller）和真正的错误了。`detail` 对齐内核 IPC
- * 错误的 Detail 字段（如 memory CAS 冲突的 expected/actual）。
- */
 function throwAppError(code: string, message: string, detail?: Record<string, unknown>): never {
   throw { code, message, ...(detail === undefined ? {} : { detail }) };
 }
 
-/**
- * 演示「写文件」场景用的前后内容。
- *
- * 确认卡片的**改动预览**与执行后的**变更记录**必须用同一对常量：两处各写一份
- * 的话，演示本身就在演一个假的"前后一致"，而这个功能的价值恰恰是那份一致性。
- */
 const DEMO_NGINX_PATH = "/etc/nginx/nginx.conf";
 const DEMO_NGINX_BEFORE = "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;";
 const DEMO_NGINX_AFTER =
   "worker_processes auto;\nkeepalive_timeout 65;\nserver_tokens off;\nclient_max_body_size 64m;";
-/** 演示模式下"当前这条对话"的会话 id —— 镜像真机 `ai_chat` 的建会话/回传行为。 */
 let liveConvId: string | undefined;
 
 function newTabId(prefix = "t"): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** 演示模式下没有任何真实凭据，任何 secret 一律回显成掩码。 */
 const MASK = "••••••••••••";
-
-/* ── 凭据库（内存版，与真机 vault 命令一一对应）────────────────────────── */
 
 interface DemoCredential {
   id: string;
   name: string;
   kind: string;
-  /** 内容型：值本身 / 私钥正文；引用型私钥：本地文件路径。 */
   secret: string;
-  /** 私钥专用：来源与口令（对齐真机凭据载荷里的 ref / passphrase 两个字段）。 */
   source?: "inline" | "file";
   passphrase?: string;
   createdAt: number;
   updatedAt: number;
 }
 
-/**
- * 演示凭据：secret 是假数据，可以随便显示/复制。
- * cred-dbprod 被两个资产共用（db-prod / build-01），用来演示引用关系与改值联动。
- */
 const demoCredentials: DemoCredential[] = [
   { id: "cred-web01", name: "web-01", kind: "password", secret: "Xk9#web01$pw", createdAt: Date.now() - 20 * 86_400_000, updatedAt: Date.now() - 86_400_000 },
   { id: "cred-dbprod", name: "db-prod", kind: "password", secret: "Prod#db2026!", createdAt: Date.now() - 25 * 86_400_000, updatedAt: Date.now() - 3 * 86_400_000 },
   { id: "cred-nat", name: "nat-01", kind: "password", secret: "Nat0ld!2023", createdAt: Date.now() - 60 * 86_400_000, updatedAt: Date.now() - 30 * 86_400_000 },
-  // 旧版的「独立口令凭据」留一条：验证兼容显示（新建入口已经不再提供这个类型）
   { id: "cred-old", name: "旧机房-口令", kind: "passphrase", secret: "old-machine-room", createdAt: Date.now() - 200 * 86_400_000, updatedAt: Date.now() - 90 * 86_400_000 },
-  // 入库型私钥（带口令）：口令与私钥同一条凭据，详情页会有「私钥口令」卡片
   {
     id: "cred-key",
     name: "id_ed25519",
@@ -293,7 +232,6 @@ const demoCredentials: DemoCredential[] = [
     createdAt: Date.now() - 45 * 86_400_000,
     updatedAt: Date.now() - 5 * 86_400_000,
   },
-  // 引用型私钥：库里只有路径，正文不进库（演示「引用本地文件」这条来源）
   {
     id: "cred-key-ref",
     name: "id_rsa（引用）",
@@ -313,10 +251,6 @@ const demoCredentials: DemoCredential[] = [
   },
 ];
 
-/**
- * 凭据库状态：默认「未启用密码保护」（dpapi、解锁）——对应重做后开关的默认关闭。
- * 在设置页打开保护 → 变 master；凭据页「立即锁定」/解锁会翻转 unlocked。
- */
 const vaultState = {
   initialized: true,
   mode: "dpapi" as "dpapi" | "master",
@@ -324,12 +258,6 @@ const vaultState = {
   autoLockMinutes: 30,
 };
 
-/* ── 参数归一 ─────────────────────────────────────────────────────────── */
-
-/**
- * Rust 侧有的命令收 `args` 对象、有的收平铺参数（见 commands.ts）。
- * 这里统一取一层，避免每个 case 里都写 `a.args ?? a`。
- */
 function params(raw: unknown): Record<string, unknown> {
   const o = (raw ?? {}) as Record<string, unknown>;
   const inner = o.args;
@@ -346,12 +274,6 @@ function num(v: unknown, fallback = 0): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
-/**
- * 把 SFTP 风格的路径规整成绝对路径。
- *
- * 左栏文件树的根是 `~`（真实后端由服务端展开），演示里我们自己展开到
- * 这台演示机的家目录，这样 `~` 与终端里的 `cd ~` 指向同一个地方。
- */
 const DEMO_HOME = "/home/deploy";
 
 function absPath(v: unknown): string {
@@ -361,11 +283,6 @@ function absPath(v: unknown): string {
   return raw.replace(/\/+$/, "") || "/";
 }
 
-/**
- * 大文件的 base64：分块是为了不让 `String.fromCharCode(...bytes)` 展开超栈，
- * 但**块长必须是 3 的倍数** —— 否则除最后一块外每块结尾都带 `=` padding，
- * 拼起来就是一串非法 base64（解回来的内容从第一个块边界起全错）。
- */
 const BASE64_CHUNK_BYTES = 32_766;
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -375,8 +292,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
   return b64;
 }
-
-/* ── AI 脚本 ──────────────────────────────────────────────────────────── */
 
 function answerFor(question: string): { answer: string; commands: string[] } {
   const q = question.toLowerCase();
@@ -457,12 +372,6 @@ function answerFor(question: string): { answer: string; commands: string[] } {
 }
 
 function streamAnswer(rawChannel: unknown, jobId: string, question: string, planMode = false) {
-  // 取消闸门。
-  //
-  // 真机上是 `CancellationToken`，演示模式没有那个东西 —— 但「点了停止到底
-  // 有没有用」必须在演示里也看得见，否则这个按钮等于没人验过。这里把 channel
-  // 包一层：jobId 一旦进取消表，后续事件全部丢弃（等价于内核那边 break 掉整个循环）。
-  // 选择包 channel 而不是逐个改 `pushEvent(channel, …)`，是为了函数体一行都不用动。
   const channel = {
     onmessage: (evt: Record<string, unknown>) => {
       if (cancelledAiJobs.has(jobId)) return;
@@ -473,23 +382,13 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
   const { answer, commands } = answerFor(question);
   const yesNo = question.includes("重启") || question.includes("restart") || question.includes("删除");
 
-  /**
-   * 这一轮最终的完整回答 —— 流式和 `done` 用的是**同一个字符串**。
-   *
-   * 真机就是这么干的：整段正文都是流式（`delta`）推出去的，最后 `done` 再把同一份
-   * 完整文本回传一次。演示以前给 `done` 塞的是另一段文字（收尾的代码块），
-   * 于是「同一段回答在对话里出现两遍」这个真机 bug 在演示模式里**永远复现不出来** ——
-   * mock 越是"自成一派"，越容易把真机的问题挡在门外。
-   */
   const cmdsBlock = commands.length
     ? "```bash\n" + commands.map((c) => `$ ${c}`).join("\n") + "\n```\n"
     : "";
   const fullAnswer = `${answer}\n\n${cmdsBlock}—— 以上命令都已在你面前的终端里跑过，可回放。`;
 
-  // 思考片段先推完再开始跑工具，让"推理是否被合并"这件事在界面上看得清
   let delay = 430;
 
-  // 上下文用量圆环：真机上每轮 LLM 调用后都会推一次，这里固定一份可读的数
   later(140, () =>
     pushEvent(channel, {
       type: "usage",
@@ -500,14 +399,11 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     }),
   );
 
-  // 演示「思考过程」：真机上推理模型是**逐 token** 流式推的，这里故意拆成很多
-  // 小片段 —— 前端要是每条都新开一个气泡，就会变成"几个字一行"。
   const thinking = ["先看容器状态", "，确认是不是进程", "没了；", "再查内存", "，", "OOM 的可能性", "最大。"];
   thinking.forEach((t, i) =>
     later(70 + i * 45, () => pushEvent(channel, { type: "reasoning", text: t })),
   );
 
-  // 计划模式：只出方案、一个字都不动 —— 与内核行为一致
   if (planMode) {
     const plan = [
       "## 目标",
@@ -528,14 +424,8 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     return;
   }
 
-  // 写文件场景：演示「确认卡片在批准之前就给出逐行 diff」+ 执行后的变更记录。
-  //
-  // 这条路径必须留在演示里：没有本地模型的机器上，这是唯一能看到该功能的地方
-  // （本轮改动的原因就是"新建/写入的改动记录在真机上看不到"）。
   if (/写|新建|保存|创建|改一下|加一行/.test(question)) {
     const callId = `call-${uid("c")}`;
-    // 新建与修改两条都要能演：**新建文件**正是本轮修掉的那个缺口
-    // （文件原本不存在时，以前整条变更记录都不推）。只演修改等于把 bug 藏起来。
     const creating = /新建|创建/.test(question);
     const path = creating ? "/etc/nginx/conf.d/upload.conf" : DEMO_NGINX_PATH;
     const before = creating ? "" : DEMO_NGINX_BEFORE;
@@ -545,11 +435,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     const verb = creating ? "新建" : "修改";
 
     later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
-    // 模型把整份内容当成工具参数逐 token 吐出来 —— 这一段在真机上最长，
-    // 而 2026-09-30 之前内核在这期间**一个字都不往外说**：界面在 AI 说完
-    // 开场白之后完全静止几十秒，用户合理地把它读成卡死。演示必须留出这段，
-    // 否则「写入过程有反馈」在没有本地模型的机器上根本验不到。
-    // 间隔对齐内核的节流口径（120ms），不是随手取的数。
     [0.25, 0.5, 0.75, 1].forEach((frac, i) => {
       later(460 + i * 110, () =>
         pushEvent(channel, {
@@ -572,8 +457,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         type: "confirmRequired",
         id: callId,
         tool: "write_file",
-        // 真机这里塞的是 `工具名 + 原始 JSON 参数 + 理由`，前端只在没有 preview
-        // 时才展示它 —— 演示也照这个形状给，免得两边字段对不上。
         rendered: `write_file {"path":"${path}","content":"…"}\n这是本会话第 1 次请求写权限。`,
         reason: "这是本会话第 1 次请求写权限。",
         preview: { path, kind: creating ? "create" : "modify", before, after },
@@ -604,7 +487,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
           : `写入 ${path} 成功（${after.length} 字节）。原文件已备份为 ${path}.nexterm-bak`,
         exitCode: null,
       });
-      // 变更记录：与上面确认卡片里那份预览**同源**，两边显示不一致就是这个功能坏了。
       pushEvent(channel, { type: "fileChange", id: callId, path, before, after });
       const text = creating
         ? [`已${verb} \`${path}\`：`, "", "- 整份都是新增内容（原文件不存在）", "", "改错了直接删掉这个文件即可。"].join("\n")
@@ -623,9 +505,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     return;
   }
 
-  // 真机每轮 LLM 调用前都会推 `status`（"第 N 轮 · 正在思考…"）。
-  // 这个事件前端一直没渲染，界面在 AI 跑长命令时完全静止 ——
-  // 「卡住了」的焦虑有一半来自这里。演示也推一份，否则状态条永远验不到。
   later(400, () => pushEvent(channel, { type: "status", phase: "thinking", turn: 1 }));
 
   commands.forEach((cmd) => {
@@ -641,12 +520,9 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         tool: "docker_control",
         rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5–15 秒。\n这是本会话第 1 次请求写权限。`,
         reason: "这是本会话第 1 次请求写权限。",
-        // 重启容器不是写文件：没有前后对照可言，卡片走原始参数那条路。
         preview: null,
       });
       pendingAi.set(jobId, (decision) => {
-        // 拼出"这一轮最终回答"，再把它当成 done 的 answer —— 与真机一致：
-        // 流式推出去的那段就是 done 回传的那段。
         const head = decision === "deny" ? "" : "已按你的授权执行 `docker restart mysql-prod`，容器已重启：\n\n";
         const body =
           decision === "deny"
@@ -659,9 +535,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
       return;
     }
     commands.forEach((cmd, i) => {
-      // 真机推的是**两份**：summary 是 text 的 400 字截断，text 是完整输出。
-      // 演示里也必须分成两份 —— 否则「展开完整输出」永远不出现，
-      // 等于这个功能在演示模式下没人验得到（这个教训我们已经吃过一次了）。
       const output = `$ ${cmd}\n${toolOutputFor(cmd)}`;
       const summary = output.length > 400 ? `${output.slice(0, 400)}…` : output;
       later(240 + i * 260, () =>
@@ -675,12 +548,9 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
       );
     });
     delay = 240 + commands.length * 260 + 200;
-    // 工具跑完、开始组织回答的那一轮 —— 状态条跟着翻到第 2 轮，
-    // 让人看得出"它在往下走"，而不是停在同一句话上不动。
     later(delay - 160, () =>
       pushEvent(channel, { type: "status", phase: "thinking", turn: 2 }),
     );
-    // 演示「变更记录」：AI 改过文件时，会话里会出现这样一张 diff 卡片
     later(200 + commands.length * 260, () =>
       pushEvent(channel, {
         type: "fileChange",
@@ -690,7 +560,6 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         after: DEMO_NGINX_AFTER,
       }),
     );
-    // 演示「任务清单」：长任务里 AI 会边做边更新，清单钉在输入区上方
     if (/排查|部署|安装|迁移|优化|重构/.test(question)) {
       later(160 + commands.length * 260, () =>
         pushEvent(channel, {
@@ -728,8 +597,6 @@ function toolOutputFor(cmd: string): string {
     return "               total        used        free      shared  buff/cache   available\nMem:           7.7Gi       7.3Gi       380Mi        12Mi       189Mi       172Mi\nSwap:          2.0Gi       1.9Gi       104Mi";
   }
   if (cmd.startsWith("docker logs")) {
-    // 推**全量**日志（真机里 summary 是 400 字截断、text 是全文）——
-    // 演示模式得有一条明显超过 400 字的输出，「展开完整输出」才看得出价值。
     return containerLogLines("api-server").join("\n");
   }
   if (cmd.startsWith("docker exec redis")) {
@@ -739,8 +606,6 @@ function toolOutputFor(cmd: string): string {
     return "nginx: configuration file /etc/nginx/nginx.conf test is successful";
   }
   if (cmd.startsWith("cat /etc/nginx")) {
-    // 全文（49 行 ≈ 1.4K 字符）：折叠态只给前 400 字，展开才看得到
-    // 那个 `proxy_read_timeout` 之下的部分 —— 演示「展开」用最直观的一条。
     return fsFileContent["/etc/nginx/nginx.conf"];
   }
   if (cmd.startsWith("uptime")) {
@@ -755,22 +620,15 @@ function toolOutputFor(cmd: string): string {
   return "（演示模式：已省略该命令的完整输出）";
 }
 
-/* ── 主分发 ───────────────────────────────────────────────────────────── */
-
 export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>): Promise<unknown> {
   const a = params(rawArgs);
-  // `params` 只把 `args` 摊平，**顶层的兄弟键会一起丢掉** —— 而 Tauri 的 Channel
-  // 必须走顶层（塞不进结构体），于是 `ai_chat` 的 channel 会被吃掉、AI 事件
-  // 一个都推不出去（现象是发完消息界面毫无反应）。这里补回来。
   if (rawArgs && typeof rawArgs === "object") {
     const top = rawArgs as Record<string, unknown>;
     if ("channel" in top && !("channel" in a)) a.channel = top.channel;
   }
-  // 所有命令都加一点点延迟，模拟 IPC 往返；也让 loading 态可见
   await new Promise((r) => window.setTimeout(r, 40 + Math.random() * 60));
 
   switch (cmd) {
-    /* ─────────────── session ─────────────── */
     case "session_list":
       return sessions.map((s) => ({ ...s }));
 
@@ -804,18 +662,12 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const i = sessions.findIndex((s) => s.id === str(a.sessionId));
       if (i >= 0) {
         const s = sessions[i];
-        // 必须跟内核同语义，否则演示里验不出真实行为：
-        //   有重连语义的（ssh/docker/winrm）→ **对象留着**，只置 disconnected
-        //     （「重新连接」要靠它重建传输，删了那个按钮就永远点不动）
-        //   没有的（local 等）→ 断开就是结束，彻底摘掉
         if (s.kind === "ssh" || s.kind === "docker" || s.kind === "winrm") {
           s.status = "disconnected";
           s.tabs = [];
         } else {
           sessions.splice(i, 1);
         }
-        // 不发这条事件的话，前端的状态徽标会一直停在「已连接」，
-        // 于是「重新连接」永远是禁用态 —— 演示模式里这条路径就验不了。
         emitSessionStatus(s.id, "disconnected", null);
       }
       return null;
@@ -825,10 +677,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return { open: true };
 
     case "session_reconnect": {
-      // 内核侧是非阻塞的：马上返回 true（已开始），结果靠状态事件推。
-      // 演示模式没有真实传输层，就演一遍状态机：connecting → connected。
       const s = sessions.find((x) => x.id === str(a.sessionId));
-      // 跟内核一样，先判"有没有重连这回事"：本机会话与没绑定资产的都不可重连
       if (!s || !s.assetId || s.kind === "local") return false;
       s.status = "connecting";
       emitSessionStatus(s.id, "connecting", null);
@@ -852,12 +701,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "session_line_exec": {
       const line = str(a.line);
-      // WinRM 通道没有对应的 channel，这里从最近的 tab 找不到就只回显
       void line;
       return null;
     }
 
-    /* ─────────────── terminal ─────────────── */
     case "terminal_attach": {
       const tabId = newTabId("t");
       const sessionId = str(a.sessionId);
@@ -871,7 +718,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         sessionKind: sess?.kind ?? "ssh",
         cols: num(a.cols, 120),
         rows: num(a.rows, 30),
-        // 新建时先来的人自动成为操作者（对齐内核 open_terminal_tab 的语义）
         controller: str(a.clientId) || "desktop",
         subscribers: 1,
         exited: false,
@@ -886,18 +732,13 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "terminal_attach_tab": {
-      // 接管已有标签：不新开 shell。未知 tabId 报 not_found —— 和内核一致，
-      // 界面会给一句「[会话已结束]」的提示，而不是静默留一个空终端。
       const tabId = str(a.tabId);
       const lt = liveTabs.get(tabId);
       if (!lt) throwAppError("not_found", "终端标签不存在（可能进程已结束）");
       const client = str(a.clientId) || "desktop";
-      // 订阅者 +1；无人持权时先来的人自动成为操作者（对齐 attach_existing_tab 的 claim_if_free）
       lt.subscribers += 1;
       if (!lt.controller) lt.controller = client;
       lt.lastOutputAt = Date.now();
-      // 演示模式没有真正的回滚缓冲，用一个绑到新通道的 shell 顶替，
-      // 保证接管后能继续敲（不然只能看到一行横幅、字打不进去）。
       const shell = new DemoShell((text) => pushText(a.channel, text.replace(/\n/g, "\r\n")));
       shells.set(tabId, shell);
       later(70, () => {
@@ -919,7 +760,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const tabId = str(a.tabId);
       const lt = liveTabs.get(tabId);
       const client = str(a.clientId);
-      // 单点模式：别人持权时拒绝。前端据此切观察者态（不弹错误框）。
       if (lt && client && lt.controller && lt.controller !== client) {
         throwAppError("not_controller", "终端正在其他设备上操作中");
       }
@@ -990,7 +830,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
 
     case "terminal_detach": {
-      // 只摘订阅，**进程留着**：这正是「关掉网页任务还在跑」的语义。
       const lt = liveTabs.get(str(a.tabId));
       if (lt) {
         lt.subscribers = Math.max(0, lt.subscribers - 1);
@@ -1002,7 +841,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "terminal_close_tab": {
       const tabId = str(a.tabId);
       if (str(a.mode) === "detach") {
-        // 后台继续运行：从视图拿走，进程留在服务端（能在「后台会话」里接回来）
         const lt = liveTabs.get(tabId);
         if (lt) {
           lt.subscribers = 0;
@@ -1052,10 +890,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return 184_320;
 
     case "terminal_export_log":
-      // 演示模式不落盘，按回滚缓冲的字符数回一个"字节数"
       return 4096;
 
-    /* ─────────────── layout ─────────────── */
     case "layout_get":
       return {
         revision: layoutState.revision,
@@ -1064,8 +900,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       };
 
     case "layout_put": {
-      // 乐观锁：revision 对不上就是对端在我们之后改过 → conflict，**不覆盖**
-      // （布局没有可合并语义，前端拿到 conflict 会去拉最新）。
       if (num(a.revision, 0) !== layoutState.revision) {
         return { saved: false, revision: layoutState.revision, conflict: true };
       }
@@ -1076,15 +910,11 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       }
       layoutState.revision += 1;
       layoutState.updatedAt = Date.now();
-      // 事件**延迟一帧**发：真机上事件走 WS，一定晚于 RPC 的响应。
-      // 同步发的话会早于前端更新本地 revision，自己收到自己的事件、
-      // 触发一次多余的拉取（真机上不会发生）—— 演示也就演不出回声判据了。
       const rev = layoutState.revision;
       later(0, () => emit("layout://changed", { revision: rev }));
       return { saved: true, revision: rev, conflict: false };
     }
 
-    /* ─────────────── asset / group / snippet ─────────────── */
     case "asset_list":
       return assets.filter((x) => x.deletedAt === null).map((x) => ({ ...x }));
 
@@ -1143,8 +973,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "asset_delete": {
       const target = assets.find((x) => x.id === str(a.id));
-      // 与内核一致：内置的「当前设备」拒绝删除（UI 已经不给按钮，
-      // 但演示模式也得守住这条，否则"演示里能删、装上去删不掉"）。
       if (target?.builtin) throw new Error("「当前设备」是内置资产，不能删除");
       if (target) target.deletedAt = Date.now();
       return null;
@@ -1218,7 +1046,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         vault: { initialized: true, mode: "master", unlocked: true, autoLockMinutes: 30 },
       };
 
-    /* ─────────────── fs ─────────────── */
     case "fs_list": {
       const path = absPath(a.path);
       return (fsTree[path] ?? []).map((e) => ({ ...e }));
@@ -1238,12 +1065,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       try {
         bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       } catch {
-        // 与内核一致：坏输入要报错，不能假装写成功（否则界面显示已保存而内容没变）
         throwAppError("bad_param", "contentBase64 不是合法的 base64，写入已中止");
       }
       let text: string;
       try {
-        // 演示按文本存文件：fatal 解码，拒绝把非法 UTF-8 静默替换成 U+FFFD 后"写成功"
         text = new TextDecoder("utf-8", { fatal: true }).decode(bin);
       } catch {
         throwAppError("bad_param", "内容不是合法的 UTF-8 文本，写入已中止");
@@ -1320,7 +1145,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "fs_pack_download": {
-      // 和上一条共用一套假进度：演示模式里进度条也该动起来
       const taskId = uid("task");
       const total = 2_408_192;
       let done = 0;
@@ -1336,12 +1160,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "fs_extract": {
-      // 与内核约定一致：返回"去掉压缩后缀的同名目录"
       const p = absPath(a.path);
       return p.replace(/\.(tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz|tar|zip)$/i, "");
     }
 
-    /* ─────────────── mount ─────────────── */
     case "mount_list":
       return mounts.map((m) => ({ ...m }));
 
@@ -1363,7 +1185,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
-    /* ─────────────── docker ─────────────── */
     case "docker_ps":
       return containers.map((c) => ({ ...c }));
 
@@ -1479,7 +1300,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return tabId;
     }
 
-    /* ─────────────── db ─────────────── */
     case "db_connect":
       return { connId: uid("conn") };
 
@@ -1547,12 +1367,9 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "redis_set_ttl":
       return null;
 
-    /* ─────────────── ai ─────────────── */
     case "ai_chat": {
       jobSeq += 1;
       const jobId = `job-${jobSeq}`;
-      // 镜像真机：首轮没带 id → 新建会话；**并把 id 回传**给前端，后续追问带着它回来
-      // 才落在同一个会话里。真机曾经漏了这回传，于是每追问一次就多出一个历史项。
       const requested = str(a.conversationId) || liveConvId;
       if (requested) {
         liveConvId = requested;
@@ -1575,8 +1392,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const jobId = str(a.jobId);
       cancelledAiJobs.add(jobId);
       pendingAi.delete(jobId);
-      // 真机取消后会推一条 `error("已取消")`，界面据此复位。演示模式也推一份 ——
-      // 只把 jobId 记下来的话，停止按钮按下去是静默失效，看不出到底生效没有。
       pushEvent(aiChannels.get(jobId), {
         type: "error",
         message: "已取消",
@@ -1589,15 +1404,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "ai_steer": {
       const jobId = str(a.jobId);
       const message = str(a.message);
-      // 与真机同口径：已结束 / 已取消的 job 一律「不存在或已结束」——
-      // 前端据此把补充气泡标成未送达并把文字还回输入框。
       if (!message.trim()) throwAppError("invalid_argument", "补充指令不能为空");
       if (cancelledAiJobs.has(jobId) || !aiChannels.has(jobId)) {
         throwAppError("internal", "AI 任务不存在或已结束");
       }
-      // 演示的回答时间线是固定排程，没法像真机那样在「下一个模型调用边界」
-      // 注入；这里受理即推 steered，让气泡从「等待注入」翻成
-      // 「已注入当前运行」—— 送达语义看得见，演示不假装能改时间线。
       pushEvent(aiChannels.get(jobId), { type: "steered", text: message });
       return null;
     }
@@ -1612,15 +1422,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "ai_hitl_snapshot":
     case "ai_hitl_events":
-      // 演示模式的交互走 pendingAi 内存模拟，没有内核 HITL 管理器 —— 显式报错，
-      // 而不是编一份假快照/假事件：前端对账拿到错误会静默降级（卡片保持原状），
-      // 假快照反而会把进行中的确认卡误清掉。
       throwAppError("unsupported", "演示模式不提供 HITL 重连对账");
 
     case "ai_models":
       return ["deepseek-chat", "deepseek-reasoner", "gpt-4o-mini", "qwen-plus"];
-
-    /* ── 多模型档案（P0-3） ── */
 
     case "ai_model_profiles":
       return {
@@ -1635,7 +1440,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const idx = modelState.profiles.findIndex((x) => x.id === saved.id);
       if (idx >= 0) modelState.profiles[idx] = saved;
       else modelState.profiles.push(saved);
-      // 第一份档案自动成为当前 —— 否则用户存完发现"用不了"，会以为坏了
       if (modelState.profiles.length === 1) modelState.activeId = saved.id;
       return saved;
     }
@@ -1728,8 +1532,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "ai_messages": {
-      // 曾经这里无条件返回 []，于是演示模式下"点进历史会话"永远一片空白 ——
-      // 而真机那条路坏在别处（返回 Row 而非 DTO），两条路各坏各的，谁都盖不住谁。
       const id = str(a.conversationId);
       return (conversationMessages[id] ?? []).map((m) => ({ ...m, conversationId: id }));
     }
@@ -1766,7 +1568,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return jobId;
     }
 
-    /* ─────────────── memory（长期语义记忆）─────────────── */
     case "memory_create": {
       const scope = demoMemoryRequireScope((a.scope ?? {}) as { tenant?: string; subject?: string });
       const topic = str(a.topic).trim();
@@ -1871,7 +1672,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return next;
     }
 
-    /* ─────────────── vault ─────────────── */
     case "vault_status":
       return { ...vaultState };
 
@@ -1895,7 +1695,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
 
     case "vault_set_credential": {
-      // 带 id = 原位更新（对齐真机"已绑私钥凭据就地改"的语义），不带 = 新建
       const src: "inline" | "file" = a.source === "file" ? "file" : "inline";
       const existing = a.id ? demoCredentials.find((c) => c.id === str(a.id)) : undefined;
       if (existing) {
@@ -1904,7 +1703,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         if (typeof a.secret === "string") existing.secret = a.secret;
         if (existing.kind === "private_key") {
           existing.source = src;
-          // 口令"提供即覆盖"，空串/缺省 = 不动（对齐真机 credential_update）
           if (typeof a.passphrase === "string" && a.passphrase) existing.passphrase = a.passphrase;
         }
         existing.updatedAt = Date.now();
@@ -1932,13 +1730,11 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         if (typeof a.name === "string" && a.name.trim()) c.name = a.name.trim();
         if (typeof a.secret === "string" && a.secret) {
           c.secret = a.secret;
-          // 改了值就跟着改来源（真机在未提供 source 时沿用原来源，这里由调用方保证传对）
           if (c.kind === "private_key" && typeof a.source === "string") {
             c.source = a.source === "file" ? "file" : "inline";
           }
         }
         if (c.kind === "private_key" && typeof a.passphrase === "string") {
-          // 空串 = 清除口令
           c.passphrase = a.passphrase.trim() ? a.passphrase : undefined;
         }
         c.updatedAt = Date.now();
@@ -1950,7 +1746,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return demoCredentials.map((c) => {
         const isKey = c.kind === "private_key";
         const isRef = isKey && c.source === "file";
-        // 来源藏在密文里：锁定态一律给空（对齐真机，免得界面显示"没有口令"这种假信息）
         const readable = isKey && vaultState.unlocked;
         return {
           id: c.id,
@@ -1970,7 +1765,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "vault_delete_credential": {
       const i = demoCredentials.findIndex((c) => c.id === str(a.id));
       if (i >= 0) demoCredentials.splice(i, 1);
-      // 对齐真机 FK 的 ON DELETE SET NULL：删凭据后资产的引用清空、资产保留
       for (const x of assets) if (x.credId === str(a.id)) x.credId = null;
       return null;
     }
@@ -1981,7 +1775,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (!c) throw new Error("找不到这条凭据");
       if (c.kind === "private_key") {
         const isRef = c.source === "file";
-        // 引用型没有正文可给（库里本来就没有），路径单独给
         return {
           kind: c.kind,
           value: isRef ? "" : c.secret,
@@ -1993,7 +1786,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return { kind: c.kind, value: c.secret || MASK, source: null, refPath: null, passphrase: null };
     }
 
-    /* ─────────────── port forward ─────────────── */
     case "forward_list":
       return forwards.map((f) => ({ ...f }));
 
@@ -2012,7 +1804,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "forward_create_socks": {
-      // 演示模式不真起监听，只把这条记录塞进列表 —— 面板行为与真机一致
       const f = {
         id: uid("f"),
         sessionId: str(a.sessionId),
@@ -2033,7 +1824,6 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     default:
-      // 演示模式下未覆盖的命令一律静默成功，避免面板卡在 loading
       return null;
   }
 }
