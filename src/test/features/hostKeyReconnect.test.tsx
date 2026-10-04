@@ -339,6 +339,62 @@ describe("TerminalPane 菜单重连（reconnectSession）主机指纹确认", ()
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
+  it("probe 自身报 host_key_pending（跳板机）时取消则不重连", async () => {
+    mocks.probeHostKey.mockRejectedValue({
+      code: "host_key_pending",
+      message: "unknown SSH host key for jump.example:22",
+      detail: {
+        host: "jump.example",
+        port: 22,
+        keyType: "ssh-ed25519",
+        fingerprint: "SHA256:jumpfp",
+        changed: false,
+      },
+    });
+    mocks.ask.mockResolvedValue(false);
+    await flush();
+
+    await clickTerminalMenuItem("重新连接");
+    await waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+    expect(mocks.ask.mock.calls[0]?.[0]).toContain("首次连接 jump.example:22");
+    expect(mocks.ask.mock.calls[0]?.[0]).toContain("SHA256:jumpfp");
+    await waitFor(() => expect(toastTexts()).toContain("已取消重连"));
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+  });
+
+  it("probe 报 changed 时接受后记账并重连", async () => {
+    mocks.probeHostKey.mockRejectedValue({
+      code: "host_key_pending",
+      message: "SSH host key for jump.example:22 changed",
+      detail: {
+        host: "jump.example",
+        port: 22,
+        keyType: "ssh-ed25519",
+        fingerprint: "SHA256:jumpnew",
+        changed: true,
+        known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:jumpold" }],
+      },
+    });
+    mocks.ask.mockResolvedValue(true);
+    mocks.reconnect.mockResolvedValue(true);
+    await flush();
+
+    await clickTerminalMenuItem("重新连接");
+    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+
+    const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
+    expect(question).toContain("主机密钥已变更 jump.example:22");
+    expect(question).toContain("SHA256:jumpold");
+    expect(question).toContain("SHA256:jumpnew");
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "jump.example",
+      22,
+      "ssh-ed25519",
+      "SHA256:jumpnew",
+    );
+  });
+
   it("探测不可用回退为直接重连", async () => {
     mocks.probeHostKey.mockRejectedValue({ code: "not_found", message: "unknown command" });
     mocks.reconnect.mockResolvedValue(true);

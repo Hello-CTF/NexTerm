@@ -626,8 +626,6 @@ async function hostKeyAcceptance(page, state) {
 let vite;
 let chrome;
 let page;
-let ssh;
-let server;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-host-key-server-"));
 const keyFile = path.join(OUT, "ssh_host_key");
 const state = { dataDir, keyFile, sshPort: 0, ssh: null, server: null, assetId: "" };
@@ -635,13 +633,11 @@ try {
   state.sshPort = await freePort();
   await buildSSHFixture();
   [vite, chrome] = await Promise.all([startVite(), startChrome()]);
-  ssh = await startSSHFixture(state.sshPort, keyFile);
-  state.ssh = ssh;
-  server = await startServer(dataDir);
-  state.server = server;
+  state.ssh = await startSSHFixture(state.sshPort, keyFile);
+  state.server = await startServer(dataDir);
 
   const seeder = await newPage(chrome, () => {});
-  const seeded = await seedAsset(seeder, server.origin, state.sshPort);
+  const seeded = await seedAsset(seeder, state.server.origin, state.sshPort);
   state.assetId = seeded.assetId;
   seeder.close();
   console.warn(`seeded asset ${seeded.assetId} against 127.0.0.1:${state.sshPort}`);
@@ -655,8 +651,8 @@ try {
   if (page) page.close();
   stop(chrome?.process);
   stop(vite);
-  stop(server?.process);
-  stop(ssh?.process);
+  stop(state.server?.process);
+  stop(state.ssh?.process);
 }
 
 const checks = [...results.values()];

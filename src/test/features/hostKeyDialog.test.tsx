@@ -225,6 +225,73 @@ describe("新建终端（App openNewTerminal）主机指纹确认", () => {
     expect(mocks.knownHostAccept).not.toHaveBeenCalled();
   });
 
+  it("probe 自身报 host_key_pending（跳板机）时弹确认，取消则不重连", async () => {
+    seedWorkspace(true);
+    mocks.probeHostKey.mockRejectedValue({
+      code: "host_key_pending",
+      message: "unknown SSH host key for jump.example:22",
+      detail: {
+        host: "jump.example",
+        port: 22,
+        keyType: "ssh-ed25519",
+        fingerprint: "SHA256:jumpfp",
+        changed: false,
+      },
+    });
+    mounted = mountApp();
+    await flush();
+
+    clickRail("新建终端");
+    await waitFor(() => expect(dialog()).not.toBeNull());
+
+    const text = dialog()?.textContent ?? "";
+    expect(text).toContain("首次连接 jump.example:22");
+    expect(text).toContain("SHA256:jumpfp");
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+
+    clickButton(dialog() as HTMLElement, "取消");
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(mocks.knownHostAccept).not.toHaveBeenCalled();
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+    expect(toastTexts()).toContain("已取消重连");
+  });
+
+  it("probe 报 changed 时展示原/新指纹，接受后记账并重连", async () => {
+    seedWorkspace(true);
+    mocks.probeHostKey.mockRejectedValue({
+      code: "host_key_pending",
+      message: "SSH host key for jump.example:22 changed",
+      detail: {
+        host: "jump.example",
+        port: 22,
+        keyType: "ssh-ed25519",
+        fingerprint: "SHA256:jumpnew",
+        changed: true,
+        known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:jumpold" }],
+      },
+    });
+    mocks.reconnect.mockResolvedValue(true);
+    mounted = mountApp();
+    await flush();
+
+    clickRail("新建终端");
+    await waitFor(() => expect(dialog()).not.toBeNull());
+
+    const text = dialog()?.textContent ?? "";
+    expect(text).toContain("主机密钥已变更 jump.example:22");
+    expect(text).toContain("SHA256:jumpold");
+    expect(text).toContain("SHA256:jumpnew");
+
+    clickButton(dialog() as HTMLElement, "确定");
+    await waitFor(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith(
+      "jump.example",
+      22,
+      "ssh-ed25519",
+      "SHA256:jumpnew",
+    );
+  });
+
   it("探测不可用时回退为直接重连，不弹窗", async () => {
     seedWorkspace(true);
     mocks.probeHostKey.mockRejectedValue({ code: "not_found", message: "unknown command" });

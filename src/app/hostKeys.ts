@@ -86,8 +86,11 @@ export async function confirmHostKeyIfNeeded(
   let probe: SshHostKeyProbeDto;
   try {
     probe = await sessionApi.probeHostKey(assetId);
-  } catch {
-    return true;
+  } catch (e) {
+    const pending = hostKeyPendingError(e);
+    if (!pending) return true;
+    if (!(await confirmHostKey(pending.detail))) return false;
+    return trustPresentedHostKey(pending.detail);
   }
   if (probe.state === "known") return true;
   const detail = hostKeyDetailFromProbe(probe);
