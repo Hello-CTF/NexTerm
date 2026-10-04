@@ -15,7 +15,6 @@ export function describeError(e: unknown): string {
       const json = JSON.stringify(e);
       if (json && json !== "{}") return json;
     } catch {
-      // 循环引用之类，落到下面的兜底
     }
     return Object.prototype.toString.call(e);
   }

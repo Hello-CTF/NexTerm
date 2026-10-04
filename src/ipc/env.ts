@@ -12,7 +12,6 @@ function detect(): Transport {
   try {
     flag = new URLSearchParams(window.location.search).get("demo");
   } catch {
-    // 解析失败按自动判定处理
   }
 
   if (flag === "1") return "demo";
@@ -59,7 +58,6 @@ export function apiBase(): string {
     const fromStore = window.localStorage.getItem("nexterm.api");
     if (fromStore) return fromStore.replace(/\/$/, "");
   } catch {
-    // 隐私模式下 localStorage 会抛，忽略即可
   }
   return "";
 }

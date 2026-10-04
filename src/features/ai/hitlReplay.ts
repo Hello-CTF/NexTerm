@@ -129,7 +129,6 @@ export function applyHitlReplay(
         changed = true;
       }
     }
-    // interrupted：事件不带请求体，补卡是快照的职责。
   }
 
   if (snapshot) {

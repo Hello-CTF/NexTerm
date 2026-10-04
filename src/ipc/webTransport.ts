@@ -51,7 +51,6 @@ function notifyChannelReopen(channelId: string) {
     try {
       cb();
     } catch {
-      // 单个订阅者出错不该影响其他订阅者，也不该让 WS 的重连流程炸掉。
     }
   }
 }
@@ -75,7 +74,6 @@ function ensurePagehideHook() {
       try {
         s.close();
       } catch {
-        // 页面正在销毁，忽略
       }
     }
   });
@@ -117,7 +115,6 @@ export function disposeChannel(channelId: string) {
     try {
       ws.close();
     } catch {
-      // 可能已关闭，或页面正在销毁
     }
   }
 }
@@ -150,7 +147,6 @@ function connect(entry: ChannelEntry) {
     if (!entry.disposed) scheduleReconnect(entry);
   };
   ws.onerror = () => {
-    // onerror 之后必定跟 onclose；重连只放在 onclose，避免双触发。
   };
 }
 

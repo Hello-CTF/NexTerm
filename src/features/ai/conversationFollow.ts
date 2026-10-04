@@ -81,7 +81,6 @@ export function useConversationFollow(revision: unknown): ConversationFollow {
       setNewOutput(true);
     }
     lastHeightRef.current = el.scrollHeight;
-    // revision 只表达"内容变了，重新判断一次"，不参与其它取值。
   }, [el, revision]);
 
   return { scrollRef, newOutput, following, jumpToLatest: () => jumpRef.current() };

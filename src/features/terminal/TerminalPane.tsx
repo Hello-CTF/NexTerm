@@ -142,7 +142,6 @@ export function TerminalPane({
           setControl((c) => (c ? { ...c, exited: true } : c));
         }
       } catch {
-        // 拉不到就维持现状：控制权判定不该因为一次查询失败把用户踢成观察者
       }
     },
     [kernelTabId],

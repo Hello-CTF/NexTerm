@@ -10,7 +10,6 @@ export function emit(event: string, payload: unknown) {
     try {
       h(payload);
     } catch {
-      // 单个订阅者出错不影响其它订阅者
     }
   }
 }

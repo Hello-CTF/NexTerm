@@ -488,7 +488,6 @@ export default function App() {
           .getState()
           .pushToast("info", "演示模式：数据都是假的，随便点 —— 终端里输入 help 看可用命令");
       } catch {
-        // 演示模式启动失败不影响后续手动操作
       }
     })();
     return () => {
@@ -510,7 +509,6 @@ export default function App() {
         if (useUi.getState().workspaces.length > 0) return;
         await connectAsset(builtin);
       } catch {
-        // 自动连接失败不影响手动操作：双击左栏「当前设备」即可重试
       }
     })();
   }, []);

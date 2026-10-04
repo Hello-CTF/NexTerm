@@ -114,7 +114,7 @@ export function XtermView(props: XtermViewProps) {
   useEffect(() => {
     if (!hostRef.current || termRef.current) return;
     const term = new Terminal({
-      scrollback: 100_000, // §4.5
+      scrollback: 100_000,
       allowProposedApi: true,
       overviewRulerWidth: 14,
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
@@ -133,7 +133,6 @@ export function XtermView(props: XtermViewProps) {
       try {
         term.loadAddon(new CanvasAddon());
       } catch {
-        // 软件渲染兜底
       }
     }
 

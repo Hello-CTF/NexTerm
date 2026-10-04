@@ -59,7 +59,6 @@ async function bootstrap() {
     }
     setMountUnavailableReason(mountReason);
   } catch {
-    /* 后端还没就绪：维持 UA 探测 + 能力默认可用 */
   }
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>

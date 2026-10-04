@@ -208,7 +208,6 @@ function saveLayout(w: { leftWidth: number; rightWidth: number }): void {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(w));
   } catch {
-    /* 存不下就算了，不影响使用 */
   }
 }
 
@@ -764,7 +763,6 @@ export async function requestCloseTab(id: string): Promise<void> {
   if (choice === "detach" || choice === "kill") {
     await st.closeTab(id, choice);
   }
-  // choice === null = 取消：什么都不做（标签留着）
 }
 
 export function takePendingCommand(storeTabId: string): string | null {

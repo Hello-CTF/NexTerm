@@ -117,7 +117,6 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       if (data) map.set(dir, sortEntries(data));
     });
     return map;
-    // results 每次渲染都是新数组，这里按内容较浅地依赖即可
   }, [dirs, results]);
 
   const dirErrors = useMemo(() => {

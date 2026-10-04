@@ -151,7 +151,6 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-    // reloadEnc / reloadKey 变化 = 重新读盘重解码
   }, [sessionId, path, reloadEnc, reloadKey]);
 
   const save = async () => {

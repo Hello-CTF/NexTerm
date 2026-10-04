@@ -86,7 +86,6 @@ export function ModelManager({
       .presets()
       .then(setPresets)
       .catch(() => undefined);
-    // 只在挂载时拉一次；后续由具体操作触发 reload
   }, []);
 
   const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));

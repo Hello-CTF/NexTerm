@@ -683,7 +683,6 @@ export function AssetEditor({
 
   useEffect(() => {
     if (!keyPath && boundIsRefKey && boundCred?.refPath) setKeyPath(boundCred.refPath);
-    // 依赖只看这两个：keyPath 变化不该重跑（否则会把用户正在输入的内容覆盖回去）
   }, [boundIsRefKey, boundCred?.refPath]);
 
   const isDb = groupKind === "mysql" || groupKind === "redis";
