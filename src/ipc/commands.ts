@@ -490,12 +490,18 @@ export const aiApi = {
     call<void>("ai_set_permission", { config }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
   steer: (jobId: string, message: string) => call<void>("ai_steer", { jobId, message }),
-  confirm: (input: AiConfirmationInput) => call<void>("ai_confirm", { ...input }),
-  answer: (input: AiAnswerInput) => call<void>("ai_answer", { ...input }),
+  confirm: (input: AiConfirmationInput, channel?: unknown) =>
+    call<void>("ai_confirm", { ...input, ...(channel === undefined ? {} : { channel }) }),
+  answer: (input: AiAnswerInput, channel?: unknown) =>
+    call<void>("ai_answer", { ...input, ...(channel === undefined ? {} : { channel }) }),
   hitlSnapshot: (jobId: string) =>
     call<import("./types").AiHitlSnapshotDto>("ai_hitl_snapshot", { jobId }),
   hitlEvents: (jobId: string, afterSeq: number) =>
     call<import("./types").AiHitlEventDto[]>("ai_hitl_events", { jobId, afterSeq }),
+  runs: (conversationId: string, limit?: number) =>
+    call<import("./types").AiRunDto[]>("ai_run_list", { conversationId, limit }),
+  runEvents: (jobId: string, afterSeq: number) =>
+    call<import("./types").AiRunEventDto[]>("ai_run_events", { jobId, afterSeq }),
   models: () => call<string[]>("ai_models"),
   testProvider: () =>
     call<{ modelsOk: boolean; modelsError?: string; chatOk: boolean; chatError?: string }>(

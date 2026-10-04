@@ -15,6 +15,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 )
@@ -22,6 +23,7 @@ import (
 type Runner struct {
 	config       Config
 	store        ConversationStore
+	runs         RunStore
 	checkpoints  adk.CheckPointStore
 	hitl         *hitl.Manager
 	mu           sync.Mutex
@@ -63,13 +65,17 @@ func NewRunner(config Config) *Runner {
 	}
 	manager := config.HITL
 	if manager == nil {
+		hitlConfig := hitl.Config{Checkpoints: config.Checkpoints}
+		if config.Runs != nil {
+			hitlConfig.Store = hitlStoreBridge{config.Runs}
+		}
 		var err error
-		manager, err = hitl.NewManager(hitl.Config{Checkpoints: config.Checkpoints})
+		manager, err = hitl.NewManager(hitlConfig)
 		if err != nil {
 			panic(fmt.Sprintf("agent: hitl manager: %v", err))
 		}
 	}
-	return &Runner{config: config, store: config.Store, checkpoints: config.Checkpoints, hitl: manager, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
+	return &Runner{config: config, store: config.Store, runs: config.Runs, checkpoints: config.Checkpoints, hitl: manager, jobs: make(map[string]*job), reservedJobs: make(map[string]struct{})}
 }
 
 func (r *Runner) reserveJobID(jobID string) error {
@@ -154,7 +160,16 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		_ = stream.Close()
 		return StartResponse{}, err
 	}
-	stream = WithEventSequence(stream)
+	if r.runs != nil {
+		if err := r.runs.RunInsert(ctx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source}); err != nil {
+			r.releaseJobID(jobID)
+			cancel()
+			forceCancel()
+			_ = stream.Close()
+			return StartResponse{}, err
+		}
+	}
+	stream = r.wrapStream(stream, jobID)
 	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true}
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
@@ -163,6 +178,9 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		cancel()
 		forceCancel()
 		_ = stream.Close()
+		if r.runs != nil {
+			_ = r.runs.RunDelete(ctx, jobID)
+		}
 		return StartResponse{}, errors.New("AI runner 已关闭或 job ID 重复")
 	}
 	r.jobs[jobID] = current
@@ -179,6 +197,9 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		forceCancel()
 		_ = stream.Close()
 		r.releaseJobID(jobID)
+		if r.runs != nil {
+			_ = r.runs.RunDelete(ctx, jobID)
+		}
 		return StartResponse{}, err
 	}
 	go r.watchHITL(current)
@@ -205,6 +226,10 @@ func (r *Runner) Cancel(jobID string) error {
 	current := r.jobs[jobID]
 	r.mu.Unlock()
 	if current == nil {
+		if snapshot, err := r.hitl.Snapshot(jobID); err == nil && snapshot.Terminal == nil {
+			_, err := r.hitl.Cancel(jobID)
+			return err
+		}
 		if r.config.FallbackCancel != nil {
 			return r.config.FallbackCancel(jobID)
 		}
@@ -264,6 +289,10 @@ func (r *Runner) cancelRun(jobID string) error {
 }
 
 func (r *Runner) Confirm(confirmation Confirmation) error {
+	return r.ConfirmStream(context.Background(), confirmation, nil)
+}
+
+func (r *Runner) ConfirmStream(ctx context.Context, confirmation Confirmation, factory StreamFactory) error {
 	if confirmation.CallID == "" || confirmation.Nonce == "" {
 		return ErrInvalidConfirmation
 	}
@@ -272,14 +301,16 @@ func (r *Runner) Confirm(confirmation Confirmation) error {
 	default:
 		return ErrInvalidConfirmation
 	}
-	r.mu.Lock()
-	current := r.jobs[confirmation.JobID]
-	r.mu.Unlock()
+	current := r.lookupJob(confirmation.JobID)
 	if current == nil {
-		if r.config.FallbackConfirm != nil {
-			return r.config.FallbackConfirm(confirmation)
+		restored, err := r.restoreJob(ctx, confirmation.JobID, factory)
+		if err != nil {
+			if r.config.FallbackConfirm != nil {
+				return r.config.FallbackConfirm(confirmation)
+			}
+			return ErrJobNotFound
 		}
-		return ErrJobNotFound
+		current = restored
 	}
 	if current.ctx.Err() != nil {
 		return ErrJobNotFound
@@ -303,13 +334,22 @@ func (r *Runner) Confirm(confirmation Confirmation) error {
 }
 
 func (r *Runner) Answer(answer Answer) error {
+	return r.AnswerStream(context.Background(), answer, nil)
+}
+
+func (r *Runner) AnswerStream(ctx context.Context, answer Answer, factory StreamFactory) error {
 	if answer.CallID == "" || answer.Nonce == "" || strings.TrimSpace(answer.Text) == "" {
 		return ErrInvalidConfirmation
 	}
-	r.mu.Lock()
-	current := r.jobs[answer.JobID]
-	r.mu.Unlock()
-	if current == nil || current.ctx.Err() != nil {
+	current := r.lookupJob(answer.JobID)
+	if current == nil {
+		restored, err := r.restoreJob(ctx, answer.JobID, factory)
+		if err != nil {
+			return ErrJobNotFound
+		}
+		current = restored
+	}
+	if current.ctx.Err() != nil {
 		return ErrJobNotFound
 	}
 	request, err := r.pendingInterrupt(current.id, answer.CallID, answer.Nonce, hitl.KindQuestion)
@@ -328,6 +368,12 @@ func (r *Runner) Answer(answer Answer) error {
 		Text:         answer.Text,
 	}
 	return r.resumeWithAnswer(current, hitlAnswer)
+}
+
+func (r *Runner) lookupJob(jobID string) *job {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.jobs[jobID]
 }
 
 func (r *Runner) pendingInterrupt(jobID, callID, nonce string, kind hitl.Kind) (hitl.Interrupt, error) {
@@ -355,6 +401,7 @@ func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
 		current.pendingMu.Unlock()
 		return mapResumeError(err)
 	}
+	r.updateRunStatus(current, store.RunStatusRunning)
 	if current.running {
 		current.resumeIterator = iterator
 		current.pendingMu.Unlock()
@@ -390,10 +437,55 @@ func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
 		r.reportSteerLeftover(current)
-		_, _ = r.hitl.FinishError(current.id, terminalErr)
+		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
+		r.finishRun(current, answer, turns, total, terminalErr, terminal)
 		r.cleanup(current)
 	})
+}
+
+func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) {
+	if r.runs == nil {
+		return
+	}
+	status := store.RunStatusCompleted
+	message := ""
+	if terminalErr != nil {
+		message = terminalErr.Error()
+		switch terminal.Reason {
+		case hitl.TerminalCanceled:
+			status = store.RunStatusCanceled
+		case hitl.TerminalExpired:
+			status = store.RunStatusExpired
+		case hitl.TerminalFailed:
+			status = store.RunStatusFailed
+		default:
+			if errors.Is(terminalErr, context.Canceled) {
+				status = store.RunStatusCanceled
+			} else {
+				status = store.RunStatusFailed
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
+	defer cancel()
+	_ = r.runs.RunFinish(ctx, current.id, status, answer, message, turns, int64(total.PromptTokens), int64(total.CompletionTokens))
+}
+
+func (r *Runner) updateRunStatus(current *job, status string) {
+	if r.runs == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
+	defer cancel()
+	_ = r.runs.RunUpdateStatus(ctx, current.id, status)
+}
+
+func (r *Runner) wrapStream(stream Stream, jobID string) Stream {
+	if r.runs != nil {
+		return WithRunJournal(stream, r.runs, jobID)
+	}
+	return WithEventSequence(stream)
 }
 
 func (r *Runner) reportSteerLeftover(current *job) {
@@ -450,19 +542,20 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 	}
 	r.mu.Unlock()
 	for _, current := range jobs {
+		running, cancelFn := current.state()
+		if !running {
+			r.parkForShutdown(current)
+			continue
+		}
 		if current.forceCancel != nil {
 			current.forceCancel()
 		}
 		current.cancel()
-		running, cancelFn := current.state()
-		if cancelFn != nil && running {
+		if cancelFn != nil {
 			_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 		}
 
 		_, _ = r.hitl.Cancel(current.id)
-		if !running {
-			r.complete(current, "", 0, usage.Usage{}, context.Canceled)
-		}
 	}
 	done := make(chan struct{})
 	go func() {

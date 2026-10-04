@@ -123,3 +123,8 @@ func StaticStream(stream Stream) StreamFactory {
 		return stream, nil
 	}
 }
+
+type discardStream struct{}
+
+func (discardStream) Send(context.Context, Event) error { return nil }
+func (discardStream) Close() error                      { return nil }

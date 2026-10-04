@@ -153,6 +153,7 @@ type Snapshot struct {
 
 type Config struct {
 	Checkpoints adk.CheckPointStore
+	Store       Store
 	TTL         time.Duration
 	Now         func() time.Time
 	NewNonce    func() (string, error)

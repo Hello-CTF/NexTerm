@@ -54,6 +54,7 @@ type runState struct {
 
 type Manager struct {
 	checkpoints adk.CheckPointStore
+	store       Store
 	ttl         time.Duration
 	now         func() time.Time
 	newNonce    func() (string, error)
@@ -79,6 +80,7 @@ func NewManager(config Config) (*Manager, error) {
 	}
 	return &Manager{
 		checkpoints: config.Checkpoints,
+		store:       config.Store,
 		ttl:         config.TTL,
 		now:         config.Now,
 		newNonce:    config.NewNonce,
@@ -123,6 +125,13 @@ func (m *Manager) RegisterRun(ctx context.Context, runID, checkpointID string) (
 	}
 	m.runs[runID] = run
 	m.mu.Unlock()
+	if err := m.persistLocked(run); err != nil {
+		m.mu.Lock()
+		delete(m.runs, runID)
+		m.mu.Unlock()
+		cancel()
+		return Snapshot{}, err
+	}
 	return run.snapshot(), nil
 }
 
@@ -217,6 +226,9 @@ func (m *Manager) Interrupt(ctx context.Context, target *adk.InterruptCtx, input
 	interrupt.Sequence = event.Sequence
 	request.interrupt.Sequence = event.Sequence
 	request.timer = time.AfterFunc(m.ttl, func() { m.expire(run.id, requestID) })
+	if err := m.persistLocked(run); err != nil {
+		return Interrupt{}, err
+	}
 	return cloneInterrupt(interrupt), nil
 }
 
@@ -328,6 +340,10 @@ func (m *Manager) Resume(ctx context.Context, resumer Resumer, answer Answer, op
 	params := &adk.ResumeParams{Targets: map[string]any{request.interrupt.TargetID: value}}
 	options := append([]adk.AgentRunOption(nil), opts...)
 	options = append(options, cancelOption, adk.WithCheckPointID(run.checkpointID))
+	if err := m.persistLocked(run); err != nil {
+		run.mu.Unlock()
+		return Resume{}, nil, err
+	}
 	run.mu.Unlock()
 	iterator, resumeErr := resumer.ResumeWithParams(run.ctx, run.checkpointID, params, options...)
 	if resumeErr == nil && iterator == nil {
@@ -441,12 +457,16 @@ func (m *Manager) finish(run *runState, reason TerminalReason, message string, c
 	run.terminal = &event
 	cancelFn := run.cancelFn
 	run.cancelFn = nil
+	persistErr := m.persistLocked(run)
 	run.mu.Unlock()
 	run.cancel()
 	if cancelExecution && cancelFn != nil {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
 	cleanupErr := m.deleteCheckpoint(run.checkpointID)
+	if cleanupErr == nil {
+		cleanupErr = persistErr
+	}
 	run.mu.Lock()
 	run.cleanupErr = cleanupErr
 	run.mu.Unlock()
@@ -610,6 +630,12 @@ func (m *Manager) Close() error {
 	m.mu.Unlock()
 	var firstErr error
 	for _, run := range runs {
+		run.mu.Lock()
+		parked := run.terminal == nil && run.status == RunStatusInterrupted
+		run.mu.Unlock()
+		if parked {
+			continue
+		}
 		if _, err := m.finish(run, TerminalCanceled, "", true); err != nil && !errors.Is(err, ErrRunFinished) && firstErr == nil {
 			firstErr = err
 		}

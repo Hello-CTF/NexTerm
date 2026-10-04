@@ -2,12 +2,23 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
+
+func channelStreamFactory(call *ipc.Call) StreamFactory {
+	if call == nil || call.Channel.ID == "" {
+		return nil
+	}
+	base := IPCStreamFactory(call.Streams)
+	return func(ctx context.Context, _, jobID string) (Stream, error) {
+		return base(ctx, call.Channel.ID, jobID)
+	}
+}
 
 func Module(runner *Runner) app.Module {
 	return app.Module{Name: "ai-agent", RegisterCommands: runner.RegisterCommands, Component: runnerComponent{runner: runner}}
@@ -37,13 +48,29 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_confirm", func(_ context.Context, _ *ipc.Call, args Confirmation) (any, error) {
-				return nil, r.Confirm(args)
+			return ipc.Register(dispatcher, "ai_confirm", func(ctx context.Context, call *ipc.Call, args Confirmation) (any, error) {
+				return nil, r.ConfirmStream(ctx, args, channelStreamFactory(call))
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_answer", func(_ context.Context, _ *ipc.Call, args Answer) (any, error) {
-				return nil, r.Answer(args)
+			return ipc.Register(dispatcher, "ai_answer", func(ctx context.Context, call *ipc.Call, args Answer) (any, error) {
+				return nil, r.AnswerStream(ctx, args, channelStreamFactory(call))
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_run_list", func(ctx context.Context, _ *ipc.Call, args struct {
+				ConversationID string `json:"conversationId"`
+				Limit          int    `json:"limit"`
+			}) ([]RunDTO, error) {
+				return r.RunList(ctx, args.ConversationID, args.Limit)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_run_events", func(ctx context.Context, _ *ipc.Call, args struct {
+				JobID    string `json:"jobId"`
+				AfterSeq uint64 `json:"afterSeq"`
+			}) ([]json.RawMessage, error) {
+				return r.RunEvents(ctx, args.JobID, args.AfterSeq)
 			})
 		},
 		func() error {
