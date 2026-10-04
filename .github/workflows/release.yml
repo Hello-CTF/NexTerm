@@ -76,10 +76,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 1.26.8
-          cache: true
       - name: Restore the pinned Wails CLI
         if: matrix.os == 'windows'
         id: wails-cache
@@ -87,6 +83,11 @@ jobs:
         with:
           path: ~/go/bin
           key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
+      - uses: actions/setup-go@v5
+        if: matrix.os != 'windows' || steps.wails-cache.outputs.cache-hit != 'true'
+        with:
+          go-version: 1.26.8
+          cache: true
       - name: Install the pinned Wails CLI
         if: matrix.os == 'windows'
         shell: bash
@@ -94,7 +95,7 @@ jobs:
           if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
             go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
           fi
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
           wails3 version
       - name: Install NSIS
         if: matrix.os == 'windows'
@@ -184,7 +185,22 @@ jobs:
         run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
       - name: Re-assert the reused binary evidence
         run: node scripts/build.mjs report --kind=server --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
+      - name: Stage and verify the reused CI e2e report
+        if: needs.ci-source.outputs.reused == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/go-build/nexterm-server-linux-${{ matrix.arch }}"
+          report="reused-native/e2e-sync/report.json"
+          [ -f "$report" ] || { echo "reused CI artifact has no e2e report: $report" >&2; exit 1; }
+          jq -e '.status == "passed" and .failed == 0' "$report" >/dev/null || { echo "reused CI e2e report is not a clean pass: $report" >&2; exit 1; }
+          if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$binary" | cut -d' ' -f1)"; else actual="$(shasum -a 256 "$binary" | cut -d' ' -f1)"; fi
+          expected="$(jq -r '.artifact.sha256' "${binary}.manifest.json")"
+          [ "$actual" = "$expected" ] || { echo "staged server binary sha256 $actual does not match the CI manifest $expected that produced the e2e report" >&2; exit 1; }
+          mkdir -p target/e2e-sync
+          cp -R reused-native/e2e-sync/. target/e2e-sync/
       - name: Exercise the packaged server before archiving
+        if: needs.ci-source.outputs.reused != 'true'
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
       - name: Produce and validate the full archive with final evidence gates
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
@@ -249,5 +265,5 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --draft --title "NexTerm $GITHUB_REF_NAME" --notes-file candidate/release-body.md
           fi
-          printf '%s\0' "${files[@]}" | xargs -0 -P 4 -n 1 gh release upload "$GITHUB_REF_NAME" --clobber
+          printf '%s\0' "${files[@]}" | xargs -0 -P 8 -n 1 gh release upload "$GITHUB_REF_NAME" --clobber
           gh release view "$GITHUB_REF_NAME" --json assets,isDraft -q '{draft:.isDraft,assets:[.assets[].name]}'
