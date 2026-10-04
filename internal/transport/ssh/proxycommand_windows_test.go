@@ -14,7 +14,7 @@ import (
 )
 
 func proxyHelperCommand() string {
-	return fmt.Sprintf("set NEXTERM_SSH_PROXY_HELPER=1 && \"%s\" -test.run=^TestSSHProxyCommandHelper$ %%h %%p", os.Args[0])
+	return fmt.Sprintf("set \"NEXTERM_SSH_PROXY_HELPER=1\" && \"%s\" -test.run=^TestSSHProxyCommandHelper$ %%h %%p", os.Args[0])
 }
 
 func TestProxyCommandWindowsCloseKillsChildTree(t *testing.T) {
@@ -34,7 +34,7 @@ func TestProxyCommandWindowsCloseKillsChildTree(t *testing.T) {
 		}
 	}()
 	host, port := splitAddress(t, listener.Addr().String())
-	command := fmt.Sprintf("set NEXTERM_SSH_PROXY_TREE=1 && \"%s\" -test.run=^TestSSHProxyCommandTreeHelper$ %s %d", os.Args[0], host, port)
+	command := fmt.Sprintf("set \"NEXTERM_SSH_PROXY_TREE=1\" && \"%s\" -test.run=^TestSSHProxyCommandTreeHelper$ %s %d", os.Args[0], host, port)
 	conn, err := dialProxyCommand(context.Background(), command, "unused.test", 22)
 	if err != nil {
 		t.Fatal(err)

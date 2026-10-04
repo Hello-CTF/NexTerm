@@ -4,9 +4,8 @@ package ssh
 
 import (
 	"errors"
-	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -16,21 +15,98 @@ func proxyCommandShell(command string) []string {
 	return []string{"cmd", "/C", command}
 }
 
-func configureProxyProc(c *exec.Cmd) {}
-
 type proxyCommandProcess struct {
-	job windows.Handle
+	process windows.Handle
+	job     windows.Handle
 }
 
-func trackProxyCommand(cmd *exec.Cmd) (*proxyCommandProcess, error) {
-	if cmd.Process == nil {
-		return nil, fmt.Errorf("proxy command process not started")
-	}
-	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
+func startProxyCommand(shell []string) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
+	application, err := windows.UTF16PtrFromString(shell[0])
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, proxyCommandStartError(err)
 	}
-	defer windows.CloseHandle(process)
+	commandLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(shell))
+	if err != nil {
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	stdinRead, stdinWrite, err := os.Pipe()
+	if err != nil {
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		_ = stdinRead.Close()
+		_ = stdinWrite.Close()
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		_ = stdinRead.Close()
+		_ = stdinWrite.Close()
+		_ = stdoutRead.Close()
+		_ = stdoutWrite.Close()
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	childHandles := []*os.File{stdinRead, stdoutWrite, devNull}
+	cleanupPipes := func() {
+		_ = stdinRead.Close()
+		_ = stdinWrite.Close()
+		_ = stdoutRead.Close()
+		_ = stdoutWrite.Close()
+		_ = devNull.Close()
+	}
+	for _, file := range childHandles {
+		handle := windows.Handle(file.Fd())
+		if err := windows.SetHandleInformation(handle, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
+			cleanupPipes()
+			return nil, nil, nil, proxyCommandStartError(err)
+		}
+	}
+	startup := new(windows.StartupInfoEx)
+	startup.Cb = uint32(unsafe.Sizeof(startup.StartupInfo))
+	startup.Flags = windows.STARTF_USESTDHANDLES
+	startup.StdInput = windows.Handle(stdinRead.Fd())
+	startup.StdOutput = windows.Handle(stdoutWrite.Fd())
+	startup.StdErr = windows.Handle(devNull.Fd())
+	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+	var processInfo windows.ProcessInformation
+	if err := windows.CreateProcess(application, commandLine, nil, nil, true, flags, nil, nil, &startup.StartupInfo, &processInfo); err != nil {
+		cleanupPipes()
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	_ = stdinRead.Close()
+	_ = stdoutWrite.Close()
+	_ = devNull.Close()
+	proc, err := proxyCommandJob(processInfo.Process)
+	if err != nil {
+		_ = windows.TerminateProcess(processInfo.Process, 1)
+		_ = windows.CloseHandle(processInfo.Thread)
+		_ = windows.CloseHandle(processInfo.Process)
+		_ = stdinWrite.Close()
+		_ = stdoutRead.Close()
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	if _, err := windows.ResumeThread(processInfo.Thread); err != nil {
+		_ = proc.kill()
+		_ = proc.close()
+		_ = windows.CloseHandle(processInfo.Thread)
+		_ = windows.CloseHandle(processInfo.Process)
+		_ = stdinWrite.Close()
+		_ = stdoutRead.Close()
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	if err := windows.CloseHandle(processInfo.Thread); err != nil {
+		_ = proc.kill()
+		_ = proc.close()
+		_ = windows.CloseHandle(processInfo.Process)
+		_ = stdinWrite.Close()
+		_ = stdoutRead.Close()
+		return nil, nil, nil, proxyCommandStartError(err)
+	}
+	return proc, stdinWrite, stdoutRead, nil
+}
+
+func proxyCommandJob(process windows.Handle) (*proxyCommandProcess, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, err
@@ -45,7 +121,7 @@ func trackProxyCommand(cmd *exec.Cmd) (*proxyCommandProcess, error) {
 		_ = windows.CloseHandle(job)
 		return nil, err
 	}
-	return &proxyCommandProcess{job: job}, nil
+	return &proxyCommandProcess{process: process, job: job}, nil
 }
 
 func (p *proxyCommandProcess) kill() error {
@@ -56,6 +132,22 @@ func (p *proxyCommandProcess) kill() error {
 	return err
 }
 
+func (p *proxyCommandProcess) wait() error {
+	status, err := windows.WaitForSingleObject(p.process, windows.INFINITE)
+	if err != nil {
+		return err
+	}
+	if status != windows.WAIT_OBJECT_0 {
+		return os.ErrProcessDone
+	}
+	return nil
+}
+
 func (p *proxyCommandProcess) close() error {
-	return windows.CloseHandle(p.job)
+	err1 := windows.CloseHandle(p.process)
+	err2 := windows.CloseHandle(p.job)
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }

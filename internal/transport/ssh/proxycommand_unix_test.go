@@ -36,7 +36,7 @@ func TestProxyCommandCloseReapsProcess(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("proxy command process was not reaped on close")
 	}
-	if proxyConn.cmd.ProcessState == nil {
+	if proxyConn.proc.cmd.ProcessState == nil {
 		t.Fatal("proxy command Wait did not record a process state")
 	}
 	if err := proxyConn.Close(); err != nil {
@@ -58,7 +58,7 @@ func TestProxyCommandCloseKillsProcessGroup(t *testing.T) {
 	case <-time.After(proxyCommandCloseTimeout + 3*time.Second):
 		t.Fatal("closing the connection did not kill the proxy command process group")
 	}
-	if proxyConn.cmd.ProcessState == nil {
+	if proxyConn.proc.cmd.ProcessState == nil {
 		t.Fatal("proxy command Wait did not record a process state")
 	}
 }
