@@ -587,6 +587,100 @@ async function touchAcceptance(page) {
       return { evidence: { ...evidence, remaining } };
     });
 
+    await pass(`hit-row-actions-min-dock-${theme}`, async () => {
+      await boot(page, { theme, width: 390, height: 844, coarse: true, layout: { leftWidth: 180, rightWidth: 352 } });
+      await page.evaluate(`document.querySelector('.nx-rail-btn[aria-label="资产"]').click()`);
+      await page.waitFor("Boolean(document.querySelector('.nx-row .nx-row-actions button'))");
+      const bounds = await page.evaluate(`(() => {
+        const tree = document.querySelector('.nx-left-dock [role="tree"]');
+        const tr = tree.getBoundingClientRect();
+        const buttons = [...tree.querySelectorAll('.nx-row-actions .nx-icon-btn-sm')];
+        const bad = buttons.filter((b) => {
+          const r = b.getBoundingClientRect();
+          return r.width < 43.5 || r.height < 43.5 || r.left < tr.left - 0.5 || r.right > tr.right + 0.5;
+        }).map((b) => b.getAttribute('aria-label'));
+        return { total: buttons.length, bad, treeScrollWidth: tree.scrollWidth, treeClientWidth: tree.clientWidth };
+      })()`);
+      assert.ok(bounds.total >= 8, `expected many row action buttons: ${JSON.stringify(bounds)}`);
+      assert.deepEqual(bounds.bad, [], `min-width dock clips row action buttons: ${JSON.stringify(bounds)}`);
+      assert.ok(bounds.treeScrollWidth <= bounds.treeClientWidth + 1, `tree horizontally overflows at LEFT_MIN: ${JSON.stringify(bounds)}`);
+
+      const picks = await page.evaluate(`(() => {
+        const btn = (r, prefix) => [...r.querySelectorAll('.nx-row-actions button')].find((b) => (b.getAttribute('aria-label') ?? '').startsWith(prefix));
+        const complete = (r) => btn(r, '连接 ') && btn(r, '编辑 ') && btn(r, '删除 ') && btn(r, '更多操作 ');
+        const row = [...document.querySelectorAll('.nx-row')].find(complete);
+        if (!row) return null;
+        const owner = (x, y) => {
+          const el = document.elementFromPoint(x, y);
+          const b = el ? el.closest('button') : null;
+          return b ? b.getAttribute('aria-label') : null;
+        };
+        const center = (b) => {
+          const r = b.getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        };
+        const names = ['连接 ', '编辑 ', '删除 ', '更多操作 '].map((p) => btn(row, p).getAttribute('aria-label'));
+        const centers = names.map((label) => {
+          const b = [...row.querySelectorAll('.nx-row-actions button')].find((x) => x.getAttribute('aria-label') === label);
+          return owner(center(b).x, center(b).y);
+        });
+        const rects = ['连接 ', '编辑 ', '删除 ', '更多操作 '].map((p) => btn(row, p).getBoundingClientRect());
+        const gapH = rects.every((r, i) => i === 0 || r.top === rects[i - 1].top)
+          ? owner((rects[0].right + rects[1].left) / 2, rects[0].top + rects[0].height / 2)
+          : owner(rects[0].left + rects[0].width / 2, (rects[0].bottom + rects[3].top) / 2);
+        return {
+          name: btn(row, '编辑 ').getAttribute('aria-label').slice('编辑 '.length),
+          names,
+          centers,
+          gapOwner: gapH,
+          wrapped: rects[3].top > rects[0].top + 1,
+          edit: center(btn(row, '编辑 ')),
+          remove: center(btn(row, '删除 ')),
+          more: center(btn(row, '更多操作 ')),
+          connect: center(btn(row, '连接 ')),
+          tabs: document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length,
+        };
+      })()`);
+      assert.ok(picks, `need a complete asset row at LEFT_MIN: ${JSON.stringify(picks)}`);
+      assert.deepEqual(picks.centers, picks.names, `button centers mis-owned at LEFT_MIN: ${JSON.stringify(picks)}`);
+      assert.equal(picks.gapOwner, null, `strip gap owned by ${picks.gapOwner} at LEFT_MIN`);
+      assert.equal(picks.wrapped, true, `strip must wrap at LEFT_MIN: ${JSON.stringify(picks)}`);
+
+      const modalName = () => page.evaluate(`document.querySelector('.nx-modal input')?.value ?? null`);
+      const closeModal = async () => {
+        await page.evaluate(`[...document.querySelectorAll('.nx-modal-footer button')].find((b) => b.textContent.includes('取消'))?.click()`);
+        await page.waitFor("!document.querySelector('.nx-modal')");
+      };
+      const dockOpen = () => page.evaluate(`!document.querySelector('.nx-left-dock')?.classList.contains('is-hidden') && Boolean(document.querySelector('.nx-left-dock [role="tree"]'))`);
+
+      await tapAt(page, picks.edit.x, picks.edit.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-modal'))");
+      assert.equal(await modalName(), picks.name, "min-dock edit tap must open the tapped asset's editor");
+      await closeModal();
+
+      await tapAt(page, picks.remove.x, picks.remove.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-modal'))");
+      const confirmText = await page.evaluate(`document.querySelector('.nx-modal').textContent`);
+      assert.ok(confirmText.includes(`删除资产「${picks.name}」`), `min-dock delete tap must confirm the tapped asset: ${confirmText}`);
+      await closeModal();
+
+      await tapAt(page, picks.more.x, picks.more.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-menu'))");
+      const menuState = await page.evaluate(`({ text: document.querySelector('.nx-menu').textContent, modal: Boolean(document.querySelector('.nx-modal')) })`);
+      assert.ok(menuState.text.includes("克隆"), `min-dock more tap must open the row menu: ${menuState.text}`);
+      assert.equal(menuState.modal, false, "min-dock more tap must not open a dialog");
+      await page.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+      await page.waitFor("!document.querySelector('.nx-menu')");
+      assert.equal(await dockOpen(), true, "min-dock more tap must not collapse the sidebar");
+
+      await tapAt(page, picks.connect.x, picks.connect.y);
+      await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length > ${picks.tabs}`);
+      const cross = await page.evaluate(`({ modal: Boolean(document.querySelector('.nx-modal')), menu: Boolean(document.querySelector('.nx-menu')) })`);
+      assert.equal(cross.modal, false, "min-dock connect tap must not open the editor");
+      assert.equal(cross.menu, false, "min-dock connect tap must not open the more menu");
+      return { evidence: { bounds, name: picks.name } };
+    });
+
     await pass(`hit-rail-fine-compact-${theme}`, async () => {
       await boot(page, { theme, width: 1280, height: 800, coarse: false });
       const evidence = await page.evaluate(`(() => {

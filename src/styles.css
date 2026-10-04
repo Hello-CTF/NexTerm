@@ -2142,6 +2142,7 @@
 
   .nx-row-actions {
     flex-basis: 100%;
+    flex-wrap: wrap;
     gap: 8px;
   }
 

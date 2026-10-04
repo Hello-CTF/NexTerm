@@ -49,6 +49,7 @@ describe("coarse pointer hit areas", () => {
     const actions = rule(coarse, ".nx-row-actions");
     expect(actions).toMatch(/gap:\s*8px/);
     expect(actions).toMatch(/flex-basis:\s*100%/);
+    expect(actions).toMatch(/flex-wrap:\s*wrap/);
     const btn = rule(coarse, ".nx-row-actions .nx-icon-btn-sm");
     expect(btn).toMatch(/width:\s*44px/);
     expect(btn).toMatch(/height:\s*44px/);
