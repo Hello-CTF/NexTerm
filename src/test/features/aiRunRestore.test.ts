@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { latestResumableRun, replayableRuns } from "../../features/ai/runRestore";
+import {
+  findResumableRun,
+  replayableRuns,
+  resumableCandidates,
+  snapshotHasPending,
+} from "../../features/ai/runRestore";
 import { createConversationStream } from "../../features/ai/conversationStream";
 import { pendingInteraction } from "../../features/ai/conversation";
-import type { AiRunDto } from "../../ipc/types";
+import type { AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
 
 function runOf(overrides: Partial<AiRunDto>): AiRunDto {
   return {
@@ -41,19 +46,87 @@ describe("replayableRuns", () => {
   });
 });
 
-describe("latestResumableRun", () => {
-  it("picks the newest interrupted run", () => {
+describe("resumableCandidates", () => {
+  it("keeps only unfinished interrupted runs, newest first", () => {
+    const runs = [
+      runOf({ id: "old", status: "interrupted", createdAt: 1000 }),
+      runOf({ id: "finished", status: "interrupted", createdAt: 4000, finishedAt: 4000 }),
+      runOf({ id: "new", status: "interrupted", createdAt: 3000 }),
+      runOf({ id: "expired", status: "expired", createdAt: 5000 }),
+      runOf({ id: "running", status: "running", createdAt: 4500 }),
+    ];
+    expect(resumableCandidates(runs).map((run) => run.id)).toEqual(["new", "old"]);
+  });
+
+  it("returns an empty list without candidates", () => {
+    expect(resumableCandidates([runOf({ status: "completed" })])).toEqual([]);
+    expect(resumableCandidates([])).toEqual([]);
+  });
+});
+
+describe("findResumableRun", () => {
+  const snapshotOf =
+    (pendingByJob: Record<string, AiHitlSnapshotDto | null>) => async (jobId: string) =>
+      pendingByJob[jobId] ?? null;
+
+  it("picks the older run when only it is still pending", async () => {
+    const pending = { id: "req-1" } as unknown as AiHitlSnapshotDto["pending"][number];
     const runs = [
       runOf({ id: "old", status: "interrupted", createdAt: 1000 }),
       runOf({ id: "new", status: "interrupted", createdAt: 3000 }),
-      runOf({ id: "expired", status: "expired", createdAt: 4000 }),
     ];
-    expect(latestResumableRun(runs)?.id).toBe("new");
+    const found = await findResumableRun(
+      runs,
+      snapshotOf({
+        new: { runId: "new", checkpointId: "new", status: "interrupted", attempt: 1, seq: 1, pending: [] },
+        old: { runId: "old", checkpointId: "old", status: "interrupted", attempt: 1, seq: 1, pending: [pending] },
+      }),
+    );
+    expect(found?.id).toBe("old");
   });
 
-  it("returns null without interrupted runs", () => {
-    expect(latestResumableRun([runOf({ status: "completed" })])).toBeNull();
-    expect(latestResumableRun([])).toBeNull();
+  it("skips runs whose snapshot is terminal or missing", async () => {
+    const pending = { id: "req-1" } as unknown as AiHitlSnapshotDto["pending"][number];
+    const runs = [
+      runOf({ id: "terminal", status: "interrupted", createdAt: 3000 }),
+      runOf({ id: "pending", status: "interrupted", createdAt: 1000 }),
+    ];
+    const found = await findResumableRun(
+      runs,
+      snapshotOf({
+        terminal: {
+          runId: "terminal",
+          checkpointId: "terminal",
+          status: "expired",
+          attempt: 1,
+          seq: 2,
+          pending: [],
+          terminal: { runId: "terminal", checkpointId: "terminal", kind: "terminal", reason: "expired", attempt: 1, seq: 2 },
+        },
+        pending: { runId: "pending", checkpointId: "pending", status: "interrupted", attempt: 1, seq: 1, pending: [pending] },
+      }),
+    );
+    expect(found?.id).toBe("pending");
+  });
+
+  it("returns null when no candidate is pending", async () => {
+    const runs = [runOf({ id: "a", status: "interrupted", createdAt: 1000 })];
+    expect(await findResumableRun(runs, snapshotOf({}))).toBeNull();
+  });
+
+  it("snapshotHasPending requires pending without terminal", () => {
+    expect(snapshotHasPending(null)).toBe(false);
+    expect(snapshotHasPending({ runId: "x", checkpointId: "x", status: "interrupted", attempt: 1, seq: 1, pending: [] })).toBe(false);
+    expect(
+      snapshotHasPending({
+        runId: "x",
+        checkpointId: "x",
+        status: "interrupted",
+        attempt: 1,
+        seq: 1,
+        pending: [{} as AiHitlSnapshotDto["pending"][number]],
+      }),
+    ).toBe(true);
   });
 });
 

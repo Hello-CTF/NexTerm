@@ -21,7 +21,7 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
-import { latestResumableRun, replayableRuns } from "./runRestore";
+import { findResumableRun, replayableRuns } from "./runRestore";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -218,11 +218,23 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
   };
 
+  const settleRestoredRun = (generation: number) => {
+    const current = activeRunRef.current;
+    if (isCurrentAiRun(current, generation) && !current.settled) {
+      activeRunRef.current = settleAiRun(current);
+      setAiBusy(false);
+    }
+    disposeRestoredChannel();
+  };
+
   const replayRunEvents = async (generation: number, jobId: string) => {
     try {
       const events = await aiApi.runEvents(jobId, 0);
       for (const event of events) {
-        stream.pushEvent(generation, event as Record<string, unknown>);
+        const result = stream.pushEvent(generation, event as Record<string, unknown>);
+        if (result.terminal && result.accepted) {
+          settleRestoredRun(generation);
+        }
       }
       stream.flush();
     } catch {
@@ -256,9 +268,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         continue;
       }
     }
-    const resumable = latestResumableRun(runs);
-    const generation = resumable ? generations.get(resumable.id) : undefined;
-    if (!resumable || generation === undefined) return;
+    const resumable = await findResumableRun(runs, async (jobId) => {
+      try {
+        return await aiApi.hitlSnapshot(jobId);
+      } catch {
+        return null;
+      }
+    });
+    if (!resumable || conversationIdRef.current !== id) return;
+    const generation = generations.get(resumable.id);
+    if (generation === undefined) return;
     if (activeRunRef.current && !activeRunRef.current.settled) return;
     const channel = createAiChannel((ev) => {
       const type = ev.type as string;
@@ -271,11 +290,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       const result = stream.pushEvent(generation, ev);
       if (!terminalEvent) return;
       if (result.accepted) {
-        activeRunRef.current = settleAiRun(current);
-        setAiBusy(false);
+        settleRestoredRun(generation);
         if (type === "error") pushToast("error", `AI: ${ev.message as string}`);
+      } else {
+        disposeRestoredChannel();
       }
-      disposeRestoredChannel();
     });
     const offReopen = onChannelReopen(channel, () => {
       const current = activeRunRef.current;

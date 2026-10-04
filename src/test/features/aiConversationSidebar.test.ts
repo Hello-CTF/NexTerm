@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   answer: vi.fn(),
   hitlSnapshot: vi.fn(),
   hitlEvents: vi.fn(),
+  runs: vi.fn(),
+  runEvents: vi.fn(),
   getPermission: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
@@ -42,6 +44,8 @@ vi.mock("../../ipc/commands", () => ({
     answer: mocks.answer,
     hitlSnapshot: mocks.hitlSnapshot,
     hitlEvents: mocks.hitlEvents,
+    runs: mocks.runs,
+    runEvents: mocks.runEvents,
     getPermission: mocks.getPermission,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
@@ -211,6 +215,8 @@ describe("AiSidebar conversation stream UX", () => {
       pending: [],
     });
     mocks.hitlEvents.mockResolvedValue([]);
+    mocks.runs.mockResolvedValue([]);
+    mocks.runEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.conversationList.mockResolvedValue([]);
@@ -931,5 +937,117 @@ describe("AiSidebar conversation stream UX", () => {
     const takeoverChannel = mocks.channels.at(-1);
     expect(takeoverChannel).toBeDefined();
     expect(mocks.reopens.has(takeoverChannel)).toBe(false);
+  });
+
+  it("does not bind a finished interrupted run or leave the sidebar busy", async () => {
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.runs.mockResolvedValue([
+      {
+        id: "job-dead", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 2,
+        planMode: false, source: "chat", answer: "", turns: 1, tokensIn: 0, tokensOut: 0,
+        error: "AI 任务因应用重启而中断", createdAt: 1000, updatedAt: 1000, finishedAt: 1500,
+      },
+    ]);
+    mocks.runEvents.mockResolvedValue([
+      { type: "delta", seq: 1, text: "半截回答" },
+      { type: "error", seq: 2, message: "AI 任务因应用重启而中断", retryable: true },
+    ]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    await flushReplay();
+
+    expect(textOf(view!)).toContain("半截回答");
+    expect(textOf(view!)).toContain("AI 任务因应用重启而中断");
+    expect(useUi.getState().aiBusy).toBe(false);
+
+    await send("新问题");
+    expect(mocks.chat).toHaveBeenCalled();
+  });
+
+  it("binds the older interrupted run when only it still has a pending question", async () => {
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    const interruptedRun = (id: string, createdAt: number) => ({
+      id, conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
+      planMode: false, source: "chat", answer: "", turns: 0, tokensIn: 0, tokensOut: 0,
+      createdAt, updatedAt: createdAt,
+    });
+    mocks.runs.mockResolvedValue([interruptedRun("job-new", 3000), interruptedRun("job-old", 1000)]);
+    mocks.runEvents.mockImplementation(async (jobId: string) =>
+      jobId === "job-old"
+        ? [{ type: "questionRequired", seq: 1, id: "ask-1", question: { question: "继续吗？", options: ["继续"] }, confirmationNonce: "nonce-old", requestId: "req-old", attempt: 1 }]
+        : [{ type: "delta", seq: 1, text: "较新的中断" }],
+    );
+    mocks.hitlSnapshot.mockImplementation(async (jobId: string) =>
+      jobId === "job-old"
+        ? hitlSnapshotOf("interrupted", [
+            hitlInterruptOf({ id: "req-old", runId: "job-old", checkpointId: "job-old", callId: "ask-1", tool: "ask_user", kind: "question", parameters: {}, nonce: "nonce-old", question: { id: "req-old", text: "继续吗？", options: ["继续"] } }),
+          ], { runId: "job-old", checkpointId: "job-old" })
+        : hitlSnapshotOf("interrupted", [], { runId: "job-new", checkpointId: "job-new" }),
+    );
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    await flushReplay();
+
+    expect(useUi.getState().aiBusy).toBe(true);
+    expect(textOf(view!)).toContain("继续吗？");
+    clickButton(view!.container, "继续");
+    await flush();
+    expect(mocks.answer).toHaveBeenCalledWith(
+      { jobId: "job-old", callId: "ask-1", nonce: "nonce-old", text: "继续" },
+      expect.anything(),
+    );
+  });
+
+  it("settles the restored run when a reconnect replays its terminal event", async () => {
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.runs.mockResolvedValue([
+      {
+        id: "job-old", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
+        planMode: false, source: "chat", answer: "", turns: 0, tokensIn: 0, tokensOut: 0,
+        createdAt: 1000, updatedAt: 1000,
+      },
+    ]);
+    const questionJournal = [
+      { type: "questionRequired", seq: 1, id: "ask-1", question: { question: "继续吗？", options: ["继续"] }, confirmationNonce: "nonce-old", requestId: "req-old", attempt: 1 },
+    ];
+    mocks.runEvents.mockResolvedValue(questionJournal);
+    mocks.hitlSnapshot.mockResolvedValue(
+      hitlSnapshotOf("interrupted", [
+        hitlInterruptOf({ id: "req-old", runId: "job-old", checkpointId: "job-old", callId: "ask-1", tool: "ask_user", kind: "question", parameters: {}, nonce: "nonce-old", question: { id: "req-old", text: "继续吗？", options: ["继续"] } }),
+      ], { runId: "job-old", checkpointId: "job-old" }),
+    );
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    await flushReplay();
+
+    expect(useUi.getState().aiBusy).toBe(true);
+    const restoredChannel = mocks.channels.at(-1);
+    expect(mocks.reopens.has(restoredChannel)).toBe(true);
+
+    mocks.runEvents.mockResolvedValue([
+      ...questionJournal,
+      { type: "done", seq: 2, answer: "做完了", turns: 1, tokensIn: 1, tokensOut: 1 },
+    ]);
+    mocks.hitlSnapshot.mockResolvedValue(
+      hitlSnapshotOf("completed", [], {
+        runId: "job-old", checkpointId: "job-old",
+        terminal: { runId: "job-old", checkpointId: "job-old", kind: "terminal", reason: "completed", attempt: 2, seq: 2 },
+      }),
+    );
+    reconnect();
+    await flushReplay();
+
+    expect(useUi.getState().aiBusy).toBe(false);
+    expect(mocks.dispose).toHaveBeenCalledWith(restoredChannel);
+    expect(textOf(view!)).toContain("本轮已完成");
   });
 });

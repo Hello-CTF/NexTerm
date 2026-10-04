@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,54 @@ func TestRestartRecoversRunningRunAsInterrupted(t *testing.T) {
 	}
 	if _, found, err := storage.CheckpointGet(context.Background(), response.JobID); err != nil || found {
 		t.Fatalf("checkpoint of interrupted run survived recovery: found=%v err=%v", found, err)
+	}
+}
+
+func TestRecoverRunsIsIdempotentAcrossRestarts(t *testing.T) {
+	storage := restartStore(t)
+	var calls atomic.Int64
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("loop", "todo_write", `{"todos":[]}`))}), nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	runner := durableRunner(t, storage, chat, tools.Dependencies{}, nil)
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	_ = waitEvent(t, stream, "toolResult")
+
+	first := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("ok", nil)), tools.Dependencies{}, nil)
+	if err := first.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, storage, response.JobID, store.RunStatusInterrupted)
+	eventsAfterFirst := runEventsOf(t, storage, response.JobID)
+
+	if err := first.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("ok", nil)), tools.Dependencies{}, nil)
+	if err := second.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	eventsAfterSecond := runEventsOf(t, storage, response.JobID)
+	if len(eventsAfterSecond) != len(eventsAfterFirst) {
+		t.Fatalf("repeat recovery appended events: first=%d second=%d", len(eventsAfterFirst), len(eventsAfterSecond))
+	}
+	terminal := 0
+	for _, event := range eventsAfterSecond {
+		if event.Type == "error" && strings.Contains(event.PayloadJSON, "重启") {
+			terminal++
+		}
+	}
+	if terminal != 1 {
+		t.Fatalf("terminal restart events = %d, want exactly 1", terminal)
+	}
+	after, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil || after.Status != store.RunStatusInterrupted || after.FinishedAt == nil {
+		t.Fatalf("row changed on repeat recovery: %+v err=%v", after, err)
 	}
 }
 
@@ -308,5 +357,93 @@ func TestRestartWithoutStoreKeepsMemoryBehavior(t *testing.T) {
 	}
 	if err := runner.Confirm(Confirmation{JobID: "missing", CallID: "call", Nonce: "nonce", Decision: "allow"}); err != ErrJobNotFound {
 		t.Fatalf("confirm without store error = %v", err)
+	}
+}
+
+func hitlBlobOf(t *testing.T, storage *store.Store, id string) []byte {
+	t.Helper()
+	rows, err := storage.HitlRunList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == id {
+			return row.Data
+		}
+	}
+	t.Fatalf("hitl blob %s not found", id)
+	return nil
+}
+
+func TestCloseStopsParkedHitlTimerWithoutTerminalWrites(t *testing.T) {
+	storage := restartStore(t)
+	manager, err := hitl.NewManager(hitl.Config{
+		Checkpoints: NewStoreCheckpoints(storage),
+		Store:       hitlStoreBridge{storage},
+		TTL:         200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}
+	runner := durableRunner(t, storage, dockerConfirmChat(), deps, manager)
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	_ = waitEvent(t, stream, "confirmRequired")
+	if err := runner.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	blobAfterClose := hitlBlobOf(t, storage, response.JobID)
+	eventsAfterClose := len(runEventsOf(t, storage, response.JobID))
+	time.Sleep(400 * time.Millisecond)
+
+	if blob := hitlBlobOf(t, storage, response.JobID); !bytes.Equal(blob, blobAfterClose) {
+		t.Fatal("parked hitl blob was rewritten after Close")
+	}
+	if events := len(runEventsOf(t, storage, response.JobID)); events != eventsAfterClose {
+		t.Fatalf("journal grew after Close: %d -> %d", eventsAfterClose, events)
+	}
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil || row.Status != store.RunStatusInterrupted || row.FinishedAt != nil {
+		t.Fatalf("parked row after Close = %+v err=%v", row, err)
+	}
+	if _, found, err := storage.CheckpointGet(context.Background(), response.JobID); err != nil || !found {
+		t.Fatalf("parked checkpoint deleted after Close: found=%v err=%v", found, err)
+	}
+}
+
+func TestCloseQuiescesRestoredWatcherWithoutTerminalWrites(t *testing.T) {
+	storage := restartStore(t)
+	deps := tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}
+	runner := durableRunner(t, storage, dockerConfirmChat(), deps, nil)
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	_ = waitEvent(t, stream, "confirmRequired")
+
+	restarted := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("done", nil)), deps, nil)
+	if err := restarted.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	blobAfterClose := hitlBlobOf(t, storage, response.JobID)
+	eventsAfterClose := len(runEventsOf(t, storage, response.JobID))
+	time.Sleep(50 * time.Millisecond)
+
+	if blob := hitlBlobOf(t, storage, response.JobID); !bytes.Equal(blob, blobAfterClose) {
+		t.Fatal("restored hitl blob was rewritten after Close")
+	}
+	if events := len(runEventsOf(t, storage, response.JobID)); events != eventsAfterClose {
+		t.Fatalf("journal grew after Close: %d -> %d", eventsAfterClose, events)
+	}
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil || row.Status != store.RunStatusInterrupted || row.FinishedAt != nil {
+		t.Fatalf("restored row after Close = %+v err=%v", row, err)
+	}
+	if err := restarted.Cancel(response.JobID); err != ErrJobNotFound {
+		t.Fatalf("cancel after Close error = %v", err)
 	}
 }

@@ -223,6 +223,10 @@ var cancelTestHook func()
 
 func (r *Runner) Cancel(jobID string) error {
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return ErrJobNotFound
+	}
 	current := r.jobs[jobID]
 	r.mu.Unlock()
 	if current == nil {
@@ -557,6 +561,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 
 		_, _ = r.hitl.Cancel(current.id)
 	}
+	closeErr := r.hitl.Close()
 	done := make(chan struct{})
 	go func() {
 		r.wg.Wait()
@@ -565,15 +570,13 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 
 	select {
 	case <-done:
-		err := r.hitl.Close()
 		if r.config.Memory != nil {
-			if closeErr := r.config.Memory.Close(); err == nil {
-				err = closeErr
+			if err := r.config.Memory.Close(); closeErr == nil {
+				closeErr = err
 			}
 		}
-		return err
+		return closeErr
 	case <-ctx.Done():
-		_ = r.hitl.Close()
 		if r.config.Memory != nil {
 			_ = r.config.Memory.Close()
 		}

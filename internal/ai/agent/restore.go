@@ -91,13 +91,20 @@ func (r *Runner) watchRestoredRun(row store.RunRow) {
 	if err != nil {
 		return
 	}
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		<-done
 		snapshot, err := r.hitl.Snapshot(row.ID)
 		if err != nil || snapshot.Terminal == nil {
 			return
 		}
 		if r.lookupJob(row.ID) != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if current, err := r.runs.RunGet(ctx, row.ID); err == nil && current.FinishedAt != nil {
 			return
 		}
 		status := store.RunStatusInterrupted
@@ -116,8 +123,6 @@ func (r *Runner) watchRestoredRun(row store.RunRow) {
 			status = store.RunStatusCompleted
 			message = ""
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		r.finishRecoveredRun(ctx, row.ID, status, message, false)
 	}()
 }

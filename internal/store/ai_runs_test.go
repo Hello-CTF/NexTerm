@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func insertTestRun(t *testing.T, db *Store, id, status string) string {
@@ -62,6 +63,35 @@ func TestRunLifecycleAndEventPaging(t *testing.T) {
 		return []byte(`{}`), nil
 	}); err == nil {
 		t.Fatal("append to missing run succeeded")
+	}
+}
+
+func TestRunsActiveExcludesFinishedRows(t *testing.T) {
+	db := testStore(t)
+	conversation, err := db.ConvCreate(context.Background(), "t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now().UnixMilli()
+	for _, row := range []RunRow{
+		{ID: "live-running", ConversationID: conversation.ID, Status: RunStatusRunning},
+		{ID: "live-interrupted", ConversationID: conversation.ID, Status: RunStatusInterrupted},
+		{ID: "done-interrupted", ConversationID: conversation.ID, Status: RunStatusInterrupted, FinishedAt: &finished},
+	} {
+		if err := db.RunInsert(context.Background(), row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active, err := db.RunsActive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make(map[string]bool, len(active))
+	for _, row := range active {
+		ids[row.ID] = true
+	}
+	if len(ids) != 2 || !ids["live-running"] || !ids["live-interrupted"] {
+		t.Fatalf("active = %v", ids)
 	}
 }
 

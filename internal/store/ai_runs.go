@@ -124,7 +124,7 @@ func (s *Store) RunList(ctx context.Context, conversationID string, limit int) (
 }
 
 func (s *Store) RunsActive(ctx context.Context) ([]RunRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE status IN (?, ?) ORDER BY created_at`, RunStatusRunning, RunStatusInterrupted)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM ai_run WHERE status IN (?, ?) AND finished_at IS NULL ORDER BY created_at`, RunStatusRunning, RunStatusInterrupted)
 	if err != nil {
 		return nil, dbError(err)
 	}

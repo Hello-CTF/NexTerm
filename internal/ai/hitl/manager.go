@@ -479,8 +479,15 @@ func (m *Manager) expire(runID, requestID string) {
 		return
 	}
 	run.mu.Lock()
+	m.mu.RLock()
+	closed := m.closed
+	m.mu.RUnlock()
+	if closed || run.terminal != nil {
+		run.mu.Unlock()
+		return
+	}
 	request := run.requests[requestID]
-	if run.terminal != nil || request == nil || request.status != requestPending || m.now().Before(request.interrupt.ExpiresAt) {
+	if request == nil || request.status != requestPending || m.now().Before(request.interrupt.ExpiresAt) {
 		run.mu.Unlock()
 		return
 	}
@@ -632,8 +639,16 @@ func (m *Manager) Close() error {
 	for _, run := range runs {
 		run.mu.Lock()
 		parked := run.terminal == nil && run.status == RunStatusInterrupted
+		if parked {
+			for _, request := range run.requests {
+				if request.timer != nil {
+					request.timer.Stop()
+				}
+			}
+		}
 		run.mu.Unlock()
 		if parked {
+			run.cancel()
 			continue
 		}
 		if _, err := m.finish(run, TerminalCanceled, "", true); err != nil && !errors.Is(err, ErrRunFinished) && firstErr == nil {
