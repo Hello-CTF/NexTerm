@@ -149,6 +149,17 @@ func (m *Manager) ActiveProfile() (Profile, bool) {
 	return cloneProfile(profile), true
 }
 
+func (m *Manager) Profile(id string) (Profile, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, profile := range m.state.Profiles {
+		if profile.ID == id {
+			return cloneProfile(profile), true
+		}
+	}
+	return Profile{}, false
+}
+
 func (m *Manager) ActiveConfig() (provider.Config, bool) {
 	profile, ok := m.ActiveProfile()
 	if !ok {
@@ -177,7 +188,7 @@ func (m *Manager) ActiveClient(options ...provider.Option) (*provider.Client, er
 		return nil, err
 	}
 	config.APIKey = key
-	return provider.NewClient(config, options...)
+	return provider.NewClient(config, append(profile.ClientOptions(), options...)...)
 }
 
 func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
@@ -231,7 +242,7 @@ func (m *Manager) ClientFor(id string, options ...provider.Option) (*provider.Cl
 		return nil, err
 	}
 	config.APIKey = key
-	return provider.NewClient(config, options...)
+	return provider.NewClient(config, append(profile.ClientOptions(), options...)...)
 }
 
 func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {

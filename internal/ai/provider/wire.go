@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 )
 
 type wireTransport struct {
 	base http.RoundTripper
+	idle time.Duration
 }
 
 type statusError struct {
@@ -64,14 +66,17 @@ func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		return response, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusServiceUnavailable {
+			state.captureRetryAfter(response.Header.Get("Retry-After"), time.Now())
+		}
 		closeErrorBody(response)
 		return response, nil
 	}
 	if state.streaming {
-		response.Body = newSSEBody(response.Body, state)
+		response.Body = newSSEBody(newIdleTimeoutBody(response.Body, t.idle), state)
 		return response, nil
 	}
-	body, err := normalizeBlockBody(response.Body, state)
+	body, err := normalizeBlockBody(newIdleTimeoutBody(response.Body, t.idle), state)
 	if err != nil {
 		response.Body.Close()
 		return nil, fmt.Errorf("read AI block response: %w", err)

@@ -7,13 +7,18 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import {
   fallbackModelFromInput,
   fallbackModelLabel,
+  idleTimeoutLabel,
   MODEL_PARAM_DEFAULTS,
   modelParamsAtDefaults,
+  requestTimeoutLabel,
   resetModelParams,
   sameModelProfile,
   selectModelProfileId,
+  timeoutSecondsFromInput,
+  type ModelProfileTimeouts,
 } from "./modelLifecycle";
 import { formatTokens } from "./UsageRing";
+import { fetchProfileModels, testProfileConnection, type ProviderTestResult } from "./profileConnect";
 import {
   IconCheck,
   IconClose,
@@ -28,7 +33,7 @@ import {
   IconTrash,
 } from "../../ui/icons";
 
-function blankProfile(): ModelProfile {
+function blankProfile(): ModelProfileTimeouts {
   return {
     id: "",
     name: "",
@@ -36,6 +41,8 @@ function blankProfile(): ModelProfile {
     apiKey: "",
     model: "",
     ...MODEL_PARAM_DEFAULTS,
+    requestTimeoutSeconds: null,
+    idleTimeoutSeconds: null,
   };
 }
 
@@ -52,12 +59,14 @@ export function ModelManager({
 
   const [view, setView] = useState<ModelProfilesView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ModelProfile | null>(null);
+  const [draft, setDraft] = useState<ModelProfileTimeouts | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [presets, setPresets] = useState<string[]>([]);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
 
   const isNew = !!draft && draft.id === "";
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
@@ -92,7 +101,7 @@ export function ModelManager({
       .catch(() => undefined);
   }, []);
 
-  const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
+  const patch = (p: Partial<ModelProfileTimeouts>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
   const paramsAtDefaults = !!draft && modelParamsAtDefaults(draft);
 
@@ -113,6 +122,7 @@ export function ModelManager({
     setDraft({ ...p });
     setModels([]);
     setModelsOpen(false);
+    setTestResult(null);
   };
 
   const newProfile = async () => {
@@ -120,6 +130,7 @@ export function ModelManager({
     setDraft(blankProfile());
     setModels([]);
     setModelsOpen(false);
+    setTestResult(null);
   };
 
   const save = async () => {
@@ -139,6 +150,7 @@ export function ModelManager({
         };
       });
       pushToast("info", `已保存模型档案「${saved.name}」`);
+      setTestResult(null);
       await reload(saved.id);
     } catch (e) {
       pushToast("error", `保存失败：${describeError(e)}`);
@@ -190,14 +202,31 @@ export function ModelManager({
     if (!draft) return;
     setBusy(true);
     try {
-      const list = await modelApi.refresh(draft);
-      setModels(list);
+      const list = await fetchProfileModels(draft);
+      setModels(list.models);
       setModelsOpen(true);
-      if (list.length === 0) pushToast("info", "这个端点没有返回任何模型");
+      if (list.malformed > 0) {
+        pushToast("info", `端点返回的模型列表里有 ${list.malformed} 个格式异常的条目，已跳过`);
+      } else if (list.models.length === 0) {
+        pushToast("info", "这个端点没有返回任何模型");
+      }
     } catch (e) {
       pushToast("error", `拉取模型列表失败：${describeError(e)}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const testConnection = async () => {
+    if (!draft || !draft.id) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(await testProfileConnection(draft.id));
+    } catch (e) {
+      pushToast("error", `连接测试失败：${describeError(e)}`);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -442,6 +471,39 @@ export function ModelManager({
                 </div>
               </div>
 
+              <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                <div className="flex-1">
+                  <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                    <input
+                      id={`${fieldId}-request-timeout`}
+                      className="nx-input font-mono"
+                      type="number"
+                      min={1}
+                      max={3600}
+                      step={1}
+                      placeholder="默认 300"
+                      value={requestTimeoutLabel(draft)}
+                      onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
+                    />
+                  </Field>
+                </div>
+                <div className="flex-1">
+                  <Field label="流空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
+                    <input
+                      id={`${fieldId}-idle-timeout`}
+                      className="nx-input font-mono"
+                      type="number"
+                      min={0}
+                      max={3600}
+                      step={1}
+                      placeholder="默认 60"
+                      value={idleTimeoutLabel(draft)}
+                      onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
+                    />
+                  </Field>
+                </div>
+              </div>
+
               <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
                 <input
                   id={`${fieldId}-proxy`}
@@ -481,6 +543,25 @@ export function ModelManager({
         </div>
       </div>
 
+      {testResult && (
+        <div
+          className={`rounded-md border px-2.5 py-2 text-[11px] ${
+            testResult.modelsOk && testResult.chatOk
+              ? "border-green-800/60 bg-green-900/20 text-green-200"
+              : "border-red-800/60 bg-red-900/20 text-red-200"
+          }`}
+        >
+          {testResult.modelsOk && testResult.chatOk ? (
+            "连接正常：模型列表与对话均可用"
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {!testResult.modelsOk && <span>模型列表：{testResult.modelsError || "不可用"}</span>}
+              {!testResult.chatOk && <span>对话：{testResult.chatError || "不可用"}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-3">
         {draft ? (
           <>
@@ -496,6 +577,21 @@ export function ModelManager({
             >
               <IconRefresh size={12} />
               恢复默认参数
+            </button>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              title={
+                isNew
+                  ? "保存后才能测试连接"
+                  : dirty
+                    ? "有未保存的修改，保存后才能测试这份档案"
+                    : "用这份已保存的档案测试连通性"
+              }
+              disabled={busy || testing || isNew || dirty}
+              onClick={() => void testConnection()}
+            >
+              {testing ? <IconLoader size={12} className="animate-spin" /> : <IconRefresh size={12} />}
+              测试连接
             </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"

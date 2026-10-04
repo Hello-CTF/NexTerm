@@ -1,5 +1,28 @@
 import type { ModelProfile, ModelProfilesView } from "../../ipc/commands";
 
+export type ModelProfileTimeouts = ModelProfile & {
+  requestTimeoutSeconds?: number | null;
+  idleTimeoutSeconds?: number | null;
+};
+
+export function requestTimeoutLabel(profile: ModelProfileTimeouts): string {
+  return profile.requestTimeoutSeconds?.toString() ?? "";
+}
+
+export function idleTimeoutLabel(profile: ModelProfileTimeouts): string {
+  return profile.idleTimeoutSeconds?.toString() ?? "";
+}
+
+export function timeoutSecondsFromInput(raw: string, allowZero: boolean): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (allowZero ? rounded < 0 : rounded < 1) return null;
+  return rounded;
+}
+
 export function selectModelProfileId(
   view: ModelProfilesView,
   preferredId?: string,
@@ -48,6 +71,8 @@ export function profileKeyUnavailable(profile: ModelProfile): boolean {
 }
 
 export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
+  const left = a as ModelProfileTimeouts;
+  const right = b as ModelProfileTimeouts;
   return (
     a.name === b.name &&
     a.baseUrl === b.baseUrl &&
@@ -57,6 +82,8 @@ export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
     a.contextWindow === b.contextWindow &&
     (a.proxy ?? "") === (b.proxy ?? "") &&
     a.stream === b.stream &&
-    fallbackModelLabel(a) === fallbackModelLabel(b)
+    fallbackModelLabel(a) === fallbackModelLabel(b) &&
+    (left.requestTimeoutSeconds ?? null) === (right.requestTimeoutSeconds ?? null) &&
+    (left.idleTimeoutSeconds ?? null) === (right.idleTimeoutSeconds ?? null)
   );
 }

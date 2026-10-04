@@ -452,6 +452,12 @@ function foldSubagent(
   return accepted(replaceItem(state, target.id, { ...target, subagent: fold(base) }));
 }
 
+export function safeTokenCount(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(Math.floor(parsed), Number.MAX_SAFE_INTEGER);
+}
+
 export function applyAiEvent(
   state: ConversationState,
   generation: number,
@@ -676,10 +682,10 @@ export function applyAiEvent(
       return accepted({
         ...state,
         usage: {
-          promptTokens: Number(ev.promptTokens) || 0,
-          completionTokens: Number(ev.completionTokens) || 0,
-          cachedTokens: Number(ev.cachedTokens) || 0,
-          contextWindow: Number(ev.contextWindow) || 0,
+          promptTokens: safeTokenCount(ev.promptTokens),
+          completionTokens: safeTokenCount(ev.completionTokens),
+          cachedTokens: safeTokenCount(ev.cachedTokens),
+          contextWindow: safeTokenCount(ev.contextWindow),
         },
       });
     case "todos":

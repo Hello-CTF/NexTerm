@@ -7,8 +7,12 @@ import type { ProviderConfigDto } from "../../ipc/types";
 import {
   fallbackModelFromInput,
   fallbackModelLabel,
+  idleTimeoutLabel,
+  requestTimeoutLabel,
   sameModelProfile,
   selectModelProfileId,
+  timeoutSecondsFromInput,
+  type ModelProfileTimeouts,
 } from "../../features/ai/modelLifecycle";
 import { click, clickButton, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
@@ -20,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   presets: vi.fn(),
   preset: vi.fn(),
   refresh: vi.fn(),
+  testConnection: vi.fn(),
+  fetchModels: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
 }));
@@ -38,6 +44,10 @@ vi.mock("../../ipc/commands", () => ({
   sessionApi: {},
   vaultApi: {},
   terminalApi: {},
+}));
+vi.mock("../../features/ai/profileConnect", () => ({
+  testProfileConnection: mocks.testConnection,
+  fetchProfileModels: mocks.fetchModels,
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
@@ -190,5 +200,130 @@ describe("ModelManager fallback editing", () => {
     clickButton(view2!.container, "保存");
     await flush();
     expect(mocks.save.mock.calls[0][0]).toMatchObject({ id: "", fallbackModel: null });
+  });
+});
+
+describe("profile timeout semantics", () => {
+  it("parses timeout input with per-field minimums", () => {
+    expect(timeoutSecondsFromInput("", false)).toBeNull();
+    expect(timeoutSecondsFromInput("  ", true)).toBeNull();
+    expect(timeoutSecondsFromInput("5", false)).toBe(5);
+    expect(timeoutSecondsFromInput("0", false)).toBeNull();
+    expect(timeoutSecondsFromInput("0", true)).toBe(0);
+    expect(timeoutSecondsFromInput("-2", true)).toBeNull();
+    expect(timeoutSecondsFromInput("abc", false)).toBeNull();
+  });
+
+  it("treats absent and null timeouts as the same unset value", () => {
+    const timed = (overrides: Partial<ModelProfileTimeouts>): ModelProfileTimeouts => ({
+      ...profile("a"),
+      ...overrides,
+    });
+    const withTimeouts = timed({ requestTimeoutSeconds: 5, idleTimeoutSeconds: 0 });
+    expect(requestTimeoutLabel(withTimeouts)).toBe("5");
+    expect(idleTimeoutLabel(withTimeouts)).toBe("0");
+    expect(requestTimeoutLabel(profile("a"))).toBe("");
+    expect(sameModelProfile(profile("a"), timed({ requestTimeoutSeconds: null }))).toBe(true);
+    expect(sameModelProfile(withTimeouts, profile("a"))).toBe(false);
+    expect(sameModelProfile(withTimeouts, timed({ requestTimeoutSeconds: 5, idleTimeoutSeconds: 0 }))).toBe(true);
+    expect(sameModelProfile(withTimeouts, timed({ requestTimeoutSeconds: 6, idleTimeoutSeconds: 0 }))).toBe(false);
+    expect(sameModelProfile(withTimeouts, timed({ requestTimeoutSeconds: 5, idleTimeoutSeconds: null }))).toBe(false);
+  });
+});
+
+describe("ModelManager timeouts and connectivity testing", () => {
+  let view3: MountedView | null = null;
+
+  beforeEach(async () => {
+    mocks.overview.mockResolvedValue({
+      profiles: [{ ...profile("p1"), requestTimeoutSeconds: 300, idleTimeoutSeconds: 60 }],
+      activeId: "p1",
+    });
+    mocks.presets.mockResolvedValue([]);
+    mocks.save.mockImplementation(async (p: ModelProfile) => ({ ...p, id: p.id || "new-id" }));
+    mocks.ask.mockResolvedValue(true);
+    mocks.testConnection.mockResolvedValue({ modelsOk: true, chatOk: true });
+    mocks.fetchModels.mockResolvedValue({ models: ["m1"], malformed: 0 });
+    useUi.setState({ pushToast: mocks.toast });
+    view3 = mount(createElement(ModelManager));
+    await flush();
+  });
+
+  afterEach(() => {
+    view3?.unmount();
+    view3 = null;
+  });
+
+  function inputByLabel(prefix: string): HTMLInputElement {
+    const label = [...view3!.container.querySelectorAll("label")].find((l) =>
+      l.textContent?.trim().startsWith(prefix),
+    );
+    const id = label?.htmlFor;
+    const input = id ? view3!.container.querySelector(`input[id="${id}"]`) : null;
+    if (!input) throw new Error(`input not found for label ${prefix}`);
+    return input as HTMLInputElement;
+  }
+
+  function testButton(): HTMLButtonElement {
+    const button = [...view3!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "测试连接",
+    );
+    if (!button) throw new Error("test connection button not found");
+    return button as HTMLButtonElement;
+  }
+
+  it("shows saved timeout values and saves edits", async () => {
+    expect(inputByLabel("请求总超时").value).toBe("300");
+    expect(inputByLabel("流空闲超时").value).toBe("60");
+    setInputValue(inputByLabel("请求总超时"), "30");
+    setInputValue(inputByLabel("流空闲超时"), "0");
+    expect(view3!.container.textContent).toContain("有未保存的修改");
+    clickButton(view3!.container, "保存");
+    await flush();
+    expect(mocks.save).toHaveBeenCalledOnce();
+    expect(mocks.save.mock.calls[0][0]).toMatchObject({
+      id: "p1",
+      requestTimeoutSeconds: 30,
+      idleTimeoutSeconds: 0,
+    });
+  });
+
+  it("tests the selected saved profile and renders the result", async () => {
+    click(testButton());
+    await flush();
+    expect(mocks.testConnection).toHaveBeenCalledOnce();
+    expect(mocks.testConnection).toHaveBeenCalledWith("p1");
+    expect(view3!.container.textContent).toContain("连接正常");
+  });
+
+  it("renders honest failure details from the test result", async () => {
+    mocks.testConnection.mockResolvedValue({
+      modelsOk: false,
+      modelsError: "HTTP 401: bad key",
+      chatOk: true,
+    });
+    click(testButton());
+    await flush();
+    expect(view3!.container.textContent).toContain("模型列表：HTTP 401: bad key");
+  });
+
+  it("disables the test button for unsaved or dirty drafts", async () => {
+    expect(testButton().disabled).toBe(false);
+    setInputValue(inputByLabel("请求总超时"), "30");
+    expect(testButton().disabled).toBe(true);
+    click(view3!.container.querySelector('button[title="新增档案"]')!);
+    await flush();
+    expect(testButton().disabled).toBe(true);
+  });
+
+  it("surfaces malformed model entries from the refresh probe", async () => {
+    mocks.fetchModels.mockResolvedValue({ models: ["m1"], malformed: 2 });
+    clickButton(view3!.container, "刷新模型列表");
+    await flush();
+    expect(mocks.fetchModels).toHaveBeenCalledOnce();
+    expect(mocks.toast).toHaveBeenCalledWith(
+      "info",
+      "端点返回的模型列表里有 2 个格式异常的条目，已跳过",
+    );
   });
 });

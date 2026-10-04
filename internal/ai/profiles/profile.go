@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 )
@@ -19,6 +20,9 @@ type Profile struct {
 	ContextWindow uint64  `json:"contextWindow"`
 	Proxy         *string `json:"proxy"`
 	Stream        bool    `json:"stream"`
+
+	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
+	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
 }
 
 const MaskedAPIKey = "••••••••••••"
@@ -41,6 +45,11 @@ func (p Profile) hasKeyMaterial() bool {
 	return p.APIKey != ""
 }
 
+const (
+	maxRequestTimeoutSeconds = 3600
+	maxIdleTimeoutSeconds    = 3600
+)
+
 func DefaultProfile() Profile {
 	return Profile{
 		Temperature:   provider.DefaultTemperature,
@@ -60,6 +69,8 @@ func (p Profile) Normalized() Profile {
 	p.Temperature = config.Temperature
 	p.ContextWindow = config.ContextWindow
 	p.Proxy = config.Proxy
+	p.RequestTimeoutSeconds = clampTimeoutSeconds(p.RequestTimeoutSeconds, 1, maxRequestTimeoutSeconds)
+	p.IdleTimeoutSeconds = clampTimeoutSeconds(p.IdleTimeoutSeconds, 0, maxIdleTimeoutSeconds)
 	if p.Name == "" {
 		p.Name = p.Model
 		if p.Name == "" {
@@ -67,6 +78,26 @@ func (p Profile) Normalized() Profile {
 		}
 	}
 	return p
+}
+
+func clampTimeoutSeconds(value *int, minimum, maximum int) *int {
+	if value == nil {
+		return nil
+	}
+	clamped := min(max(*value, minimum), maximum)
+	return &clamped
+}
+
+func (p Profile) ClientOptions() []provider.Option {
+	var options []provider.Option
+	if p.RequestTimeoutSeconds != nil && *p.RequestTimeoutSeconds > 0 {
+		timeout := time.Duration(*p.RequestTimeoutSeconds) * time.Second
+		options = append(options, provider.WithTimeouts(provider.Timeouts{Stream: timeout, Block: timeout}))
+	}
+	if p.IdleTimeoutSeconds != nil {
+		options = append(options, provider.WithIdleTimeout(time.Duration(*p.IdleTimeoutSeconds)*time.Second))
+	}
+	return options
 }
 
 func (p Profile) ProviderConfig() provider.Config {
@@ -90,6 +121,9 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		ContextWindow *uint64  `json:"contextWindow"`
 		Proxy         *string  `json:"proxy"`
 		Stream        *bool    `json:"stream"`
+
+		RequestTimeoutSeconds *int `json:"requestTimeoutSeconds"`
+		IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -113,6 +147,8 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	if wire.Stream != nil {
 		p.Stream = *wire.Stream
 	}
+	p.RequestTimeoutSeconds = wire.RequestTimeoutSeconds
+	p.IdleTimeoutSeconds = wire.IdleTimeoutSeconds
 	return nil
 }
 
@@ -135,10 +171,20 @@ type Overview struct {
 
 func cloneProfile(profile Profile) Profile {
 	profile.Proxy = cloneString(profile.Proxy)
+	profile.RequestTimeoutSeconds = cloneInt(profile.RequestTimeoutSeconds)
+	profile.IdleTimeoutSeconds = cloneInt(profile.IdleTimeoutSeconds)
 	return profile
 }
 
 func cloneString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneInt(value *int) *int {
 	if value == nil {
 		return nil
 	}
