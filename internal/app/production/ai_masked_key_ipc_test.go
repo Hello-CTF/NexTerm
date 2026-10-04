@@ -150,3 +150,52 @@ func TestAIGetProviderMasksAPIKey(t *testing.T) {
 		t.Fatalf("config = %+v", config)
 	}
 }
+
+func TestAIModelRefreshWhitespacePaddedMaskedKey(t *testing.T) {
+	dispatcher := setupMaskedKeyDispatcher(t)
+	var authorization atomic.Value
+	var hits atomic.Int32
+	server := newModelsServer(t, &authorization, &hits)
+
+	response := dispatchStoreTest(dispatcher, "ai_model_save", `{"profile":{"name":"saved","baseUrl":"`+server.URL+`","apiKey":"stored-secret","model":"m1","temperature":0.3,"contextWindow":1000,"stream":true}}`)
+	var saved profiles.Profile
+	requireStoreTestResponse(t, response, &saved)
+
+	paddedMask := "  " + profiles.MaskedAPIKey + "  "
+	refreshArgs := func(id string) string {
+		return `{"profile":{"id":"` + id + `","name":"saved","baseUrl":"` + server.URL + `","apiKey":"` + paddedMask + `","model":"m1","temperature":0.3,"contextWindow":1000,"stream":true}}`
+	}
+
+	response = dispatchStoreTest(dispatcher, "ai_model_refresh", refreshArgs(saved.ID))
+	var models []string
+	requireStoreTestResponse(t, response, &models)
+	if len(models) != 2 || models[0] != "m1" || models[1] != "m2" {
+		t.Fatalf("models = %v", models)
+	}
+	if got := authorization.Load().(string); got != "Bearer stored-secret" {
+		t.Fatalf("authorization = %q, want resolved stored credential, never the mask", got)
+	}
+
+	response = dispatchStoreTest(dispatcher, "ai_model_refresh", refreshArgs("missing-profile"))
+	if response.OK {
+		t.Fatalf("refresh with unknown profile succeeded: %s", response.Data)
+	}
+	if response.Error == nil || !strings.Contains(response.Error.Message, "not found") {
+		t.Fatalf("error = %+v, want profile not found", response.Error)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("provider hits = %d, want only the resolved refresh", hits.Load())
+	}
+
+	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_lock", `null`))
+	response = dispatchStoreTest(dispatcher, "ai_model_refresh", refreshArgs(saved.ID))
+	if response.OK {
+		t.Fatalf("refresh with locked vault succeeded: %s", response.Data)
+	}
+	if response.Error == nil || response.Error.Code != ipc.CodeVaultLocked {
+		t.Fatalf("error = %+v, want %s", response.Error, ipc.CodeVaultLocked)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("provider hits = %d, locked refresh must fail before networking", hits.Load())
+	}
+}

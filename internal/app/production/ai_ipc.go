@@ -183,7 +183,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_refresh", func(ctx context.Context, _ *ipc.Call, input aiProfileRequest) ([]string, error) {
 				config := input.Profile.ProviderConfig()
-				if input.Profile.APIKey == profiles.MaskedAPIKey {
+				if strings.TrimSpace(config.APIKey) == profiles.MaskedAPIKey {
 					key, err := resolveMaskedProfileKey(ctx, database, input.Profile.ID)
 					if err != nil {
 						return nil, err
