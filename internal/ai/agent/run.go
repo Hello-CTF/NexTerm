@@ -283,6 +283,7 @@ func (r *Runner) initializeEino(current *job) error {
 	if err != nil {
 		return err
 	}
+	current.subagents = execution.SubagentManager
 	memoryTools, err := r.memoryTools(current.ctx, current.args.PlanMode)
 	if err != nil {
 		return err

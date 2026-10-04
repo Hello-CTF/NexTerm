@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -219,6 +220,8 @@ type Execution struct {
 	PlanMode   bool
 	Subagents  *SubagentConfig
 
+	SubagentManager *subagent.Manager
+
 	SubagentEvents SubagentEventSink
 }
 
@@ -428,6 +431,7 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 		return nil, err
 	}
 	manager = composed
+	e.SubagentManager = composed
 	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.subagentObserver)
 	if err != nil {
 		return nil, err
@@ -436,9 +440,15 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 }
 
 func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) {
+	if err := e.writeSubagentRun(ctx, request, result); err != nil {
+		slog.Warn("persist subagent run failed", "error", err)
+	}
+}
+
+func (e *Execution) writeSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) error {
 	config := e.Subagents
 	if config == nil || config.Runs == nil || config.ConversationID == "" {
-		return
+		return nil
 	}
 	status := store.RunStatusCompleted
 	switch result.Status {
@@ -450,7 +460,7 @@ func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Req
 	now := ids.NowMS()
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_ = config.Runs.RunInsert(writeCtx, store.RunRow{
+	return config.Runs.RunInsert(writeCtx, store.RunRow{
 		ID: ids.New(), ConversationID: config.ConversationID, Status: status, Source: "subagent", ProfileID: request.ModelProfileID,
 		Turns: result.Turns, TokensIn: usage.SaturatingInt64(result.Usage.PromptTokens), TokensOut: usage.SaturatingInt64(result.Usage.CompletionTokens),
 		CacheCreationTokens: usage.SaturatingInt64(result.Usage.CacheCreationTokens), LatencyMS: result.Usage.LatencyMS,

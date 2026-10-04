@@ -212,9 +212,17 @@ func (m *Manager) Wait(ctx context.Context, handle Handle) (Result, error) {
 		defer m.mu.Unlock()
 		return current.result.clone(), current.err
 	case <-ctx.Done():
-		return Result{}, ctx.Err()
+		select {
+		case <-current.done:
+		case <-time.After(terminalWaitTimeout):
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return current.result.clone(), current.err
 	}
 }
+
+const terminalWaitTimeout = 10 * time.Second
 
 func (m *Manager) Snapshot(handle Handle) (Result, error) {
 	m.mu.Lock()
@@ -305,12 +313,16 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	if registered := m.tasks[current.handle.ID]; registered == current && registered.handle.Generation == current.handle.Generation {
 		m.active--
 	}
-	current.cancel()
-	close(current.done)
 	m.mu.Unlock()
+
 	if m.config.OnFinish != nil {
 		m.config.OnFinish(context.WithoutCancel(current.ctx), request, result)
 	}
+
+	m.mu.Lock()
+	current.cancel()
+	close(current.done)
+	m.mu.Unlock()
 }
 
 func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, int, usage.Usage, error) {

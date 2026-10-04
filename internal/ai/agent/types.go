@@ -12,6 +12,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -139,6 +140,7 @@ type job struct {
 	memory      *guard.Memory
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
+	subagents   *subagent.Manager
 
 	steer *steer.Queue
 

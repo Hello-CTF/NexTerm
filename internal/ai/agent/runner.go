@@ -446,11 +446,27 @@ func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
 		r.reportSteerLeftover(current)
+		r.closeSubagents(current)
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
 		r.cleanup(current)
 	})
+}
+
+func (r *Runner) closeSubagents(current *job) {
+	if current.subagents == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = current.subagents.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
 }
 
 func (r *Runner) profileIDFor(args ChatArgs) string {
