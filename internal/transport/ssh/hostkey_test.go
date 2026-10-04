@@ -154,6 +154,68 @@ func TestFileHostKeyStorePersistsAndConflicts(t *testing.T) {
 	}
 }
 
+func TestHostKeyApprovalStoreLedgerApprovesExplicitlyAcceptedKeys(t *testing.T) {
+	ctx := context.Background()
+	first := hostKeyForTest(t)
+	second := hostKeyForTest(t)
+	firstInfo := newHostKey("example.test", 22, first)
+	secondInfo := newHostKey("example.test", 22, second)
+
+	store := &ledgerHostKeyStore{MemoryHostKeyStore: NewMemoryHostKeyStore()}
+	store.approved = []HostKey{{Host: "example.test", Port: 22, KeyType: firstInfo.KeyType, Fingerprint: firstInfo.Fingerprint}}
+
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, second); !errors.Is(err, ErrHostKeyPending) {
+		t.Fatalf("ledger fingerprint mismatch accepted unknown key: %v", err)
+	}
+	if err := verifyHostKey(ctx, store, "other.test", 22, false, nil, first); !errors.Is(err, ErrHostKeyPending) {
+		t.Fatalf("ledger entry leaked to a different host: %v", err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 2222, false, nil, first); !errors.Is(err, ErrHostKeyPending) {
+		t.Fatalf("ledger entry leaked to a different port: %v", err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, first); err != nil {
+		t.Fatalf("ledger-approved unknown key rejected: %v", err)
+	}
+	keys, err := store.HostKeys(ctx, "example.test", 22)
+	if err != nil || len(keys) != 1 || keys[0].Key != firstInfo.Key {
+		t.Fatalf("ledger-approved key was not persisted: %+v, %v", keys, err)
+	}
+
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, second); !errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("old ledger fingerprint approved a changed key: %v", err)
+	}
+	store.approved = []HostKey{{Host: "example.test", Port: 22, KeyType: "ssh-rsa", Fingerprint: secondInfo.Fingerprint}}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, second); !errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("ledger entry with mismatched key type approved a changed key: %v", err)
+	}
+	store.approved = []HostKey{{Host: "example.test", Port: 22, KeyType: secondInfo.KeyType, Fingerprint: secondInfo.Fingerprint}}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, second); err != nil {
+		t.Fatalf("ledger-approved changed key rejected: %v", err)
+	}
+	keys, err = store.HostKeys(ctx, "example.test", 22)
+	if err != nil || len(keys) != 1 || keys[0].Key != secondInfo.Key {
+		t.Fatalf("ledger-approved replacement was not persisted: %+v, %v", keys, err)
+	}
+	if err := verifyHostKey(ctx, store, "example.test", 22, false, nil, first); !errors.Is(err, ErrHostKeyChanged) {
+		t.Fatalf("replaced old key remained trusted: %v", err)
+	}
+}
+
+type ledgerHostKeyStore struct {
+	*MemoryHostKeyStore
+	approved []HostKey
+}
+
+func (s *ledgerHostKeyStore) ApprovedHostKeys(ctx context.Context, host string, port int) ([]HostKey, error) {
+	var result []HostKey
+	for _, key := range s.approved {
+		if key.Host == host && key.Port == port {
+			result = append(result, key)
+		}
+	}
+	return result, nil
+}
+
 func TestNormalizeEndpoint(t *testing.T) {
 	host, port, err := normalizeEndpoint("[2001:0db8::1]", 0)
 	if err != nil || host != "2001:db8::1" || port != 22 {

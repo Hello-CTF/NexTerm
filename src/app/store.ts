@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { dirtyFileEditors } from "../features/files/editorGuards";
 import {
@@ -917,14 +917,62 @@ async function ensureVaultReadyFor(asset: { name: string; credId?: string | null
   }
 }
 
+async function openConnectedAssetSession(
+  info: SessionInfo,
+  asset: { id: string; name: string; kind: string },
+): Promise<void> {
+  const { setSessions, sessions, addTab, ensureWorkspace, setLeftMode, setLeftOpen } =
+    useUi.getState();
+  setSessions([...sessions.filter((s) => s.id !== info.id), info]);
+  ensureWorkspace({
+    kind: "session",
+    sessionId: info.id,
+    title: info.name,
+    assetId: asset.id,
+    assetKind: asset.kind,
+  });
+  setLeftMode("files");
+  setLeftOpen(true);
+  if (asset.kind === "docker") {
+    addTab({
+      id: nextTabId(`docker-${info.id}`),
+      kind: "docker",
+      title: `容器 · ${info.name}`,
+      sessionId: info.id,
+      closable: true,
+    });
+    return;
+  }
+  await openTerminalTab(info);
+}
+
+type hostKeyPendingDetail = {
+  host?: string;
+  port?: number;
+  keyType?: string;
+  fingerprint?: string;
+  changed?: boolean;
+  known?: { keyType?: string; fingerprint?: string }[];
+};
+
+function hostKeyQuestion(detail: hostKeyPendingDetail | undefined): string {
+  if (detail?.changed) {
+    const previous = (detail.known ?? [])
+      .map((known) => known.fingerprint)
+      .filter((fingerprint): fingerprint is string => Boolean(fingerprint))
+      .join("、");
+    return `主机密钥已变更 ${detail.host}:${detail.port}\n原指纹(SHA256): ${previous}\n新指纹(SHA256): ${detail.fingerprint}\n主机密钥类型: ${detail.keyType}\n信任新指纹并继续？如非预期变更，请取消并核实服务器。`;
+  }
+  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型: ${detail?.keyType}\n指纹(SHA256): ${detail?.fingerprint}\n信任并继续？`;
+}
+
 export async function connectAsset(asset: {
   id: string;
   name: string;
   kind: string;
   credId?: string | null;
 }): Promise<void> {
-  const { pushToast, setSessions, sessions, addTab, ensureWorkspace, setLeftMode, setLeftOpen } =
-    useUi.getState();
+  const { pushToast } = useUi.getState();
 
   if (asset.kind === "mysql" || asset.kind === "redis") {
     try {
@@ -932,6 +980,7 @@ export async function connectAsset(asset: {
       const { connId } = await dbApi.connect(asset.id);
       const kind = asset.kind === "redis" ? "redis" : "mysql";
       const title = `${asset.name} · ${kind === "mysql" ? "SQL" : "Redis"}`;
+      const { addTab, ensureWorkspace } = useUi.getState();
       ensureWorkspace({ kind: "db", connId, dbKind: kind, title });
       addTab({
         id: nextTabId(`db-${connId}`),
@@ -950,57 +999,35 @@ export async function connectAsset(asset: {
   try {
     if (!(await ensureVaultReadyFor(asset))) return;
     const info = await sessionApi.connect(asset.id);
-    setSessions([...sessions.filter((s) => s.id !== info.id), info]);
-    ensureWorkspace({
-      kind: "session",
-      sessionId: info.id,
-      title: info.name,
-      assetId: asset.id,
-      assetKind: asset.kind,
-    });
-    setLeftMode("files");
-    setLeftOpen(true);
-    if (asset.kind === "docker") {
-      addTab({
-        id: nextTabId(`docker-${info.id}`),
-        kind: "docker",
-        title: `容器 · ${info.name}`,
-        sessionId: info.id,
-        closable: true,
-      });
-      return;
-    }
-    await openTerminalTab(info);
+    await openConnectedAssetSession(info, asset);
   } catch (e) {
     const err = e as { code?: string; message: string; detail?: Record<string, unknown> };
     if (err.code === "host_key_pending") {
-      const detail = err.detail as
-        | { host?: string; port?: number; keyType?: string; fingerprint?: string }
-        | undefined;
+      const detail = err.detail as hostKeyPendingDetail | undefined;
       const { ask } = await import("../ui/dialogs");
-      const ok = await ask(
-        `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型: ${detail?.keyType}\n指纹(SHA256): ${detail?.fingerprint}\n信任并继续？`,
-        { title: "确认主机指纹", kind: "warning" },
-      );
-      if (ok) {
-        try {
-          const info = await sessionApi.connect(asset.id, true);
-          setSessions([...sessions.filter((s) => s.id !== info.id), info]);
-          ensureWorkspace({
-            kind: "session",
-            sessionId: info.id,
-            title: info.name,
-            assetId: asset.id,
-            assetKind: asset.kind,
-          });
-          setLeftMode("files");
-          setLeftOpen(true);
-          await openTerminalTab(info);
-          return;
-        } catch (e2) {
-          pushToast("error", describeError(e2));
-          return;
+      const ok = await ask(hostKeyQuestion(detail), {
+        title: detail?.changed ? "主机密钥变更警告" : "确认主机指纹",
+        kind: "warning",
+      });
+      if (!ok) {
+        pushToast("info", "已取消连接");
+        return;
+      }
+      try {
+        if (detail?.host && detail?.port && detail?.keyType && detail?.fingerprint) {
+          await assetApi.knownHostAccept(
+            detail.host,
+            detail.port,
+            detail.keyType,
+            detail.fingerprint,
+          );
         }
+        const info = await sessionApi.connect(asset.id, true);
+        await openConnectedAssetSession(info, asset);
+        return;
+      } catch (e2) {
+        pushToast("error", describeError(e2));
+        return;
       }
     }
     pushToast("error", err.message || describeError(e));

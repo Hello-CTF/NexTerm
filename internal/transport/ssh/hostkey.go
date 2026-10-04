@@ -55,6 +55,10 @@ type HostKeyStore interface {
 	PutHostKey(ctx context.Context, key HostKey, replace bool) error
 }
 
+type HostKeyApprovalStore interface {
+	ApprovedHostKeys(ctx context.Context, host string, port int) ([]HostKey, error)
+}
+
 func newHostKey(host string, port int, key gossh.PublicKey) HostKey {
 	return HostKey{
 		Host:        host,
@@ -89,10 +93,10 @@ func verifyHostKey(ctx context.Context, store HostKeyStore, host string, port in
 			return nil
 		}
 	}
+	approved := loadApprovedHostKeys(ctx, store, host, port)
 
 	if len(knownSameType) == 0 {
-		approved := autoAcceptUnknown || (approval != nil && approval.Fingerprint == key.Fingerprint)
-		if !approved {
+		if !autoAcceptUnknown && !approvalApproves(approval, key) && !matchesApprovedKey(approved, key) {
 			return &HostKeyError{Pending: true, Presented: key}
 		}
 		if err := store.PutHostKey(ctx, key, false); err != nil {
@@ -101,13 +105,42 @@ func verifyHostKey(ctx context.Context, store HostKeyStore, host string, port in
 		return nil
 	}
 
-	if approval == nil || !approval.Replace || approval.Fingerprint != key.Fingerprint {
+	if !approvalReplaces(approval, key) && !matchesApprovedKey(approved, key) {
 		return &HostKeyError{Presented: key, Known: knownSameType}
 	}
 	if err := store.PutHostKey(ctx, key, true); err != nil {
 		return fmt.Errorf("replace approved SSH host key: %w", err)
 	}
 	return nil
+}
+
+func loadApprovedHostKeys(ctx context.Context, store HostKeyStore, host string, port int) []HostKey {
+	approvals, ok := store.(HostKeyApprovalStore)
+	if !ok {
+		return nil
+	}
+	keys, err := approvals.ApprovedHostKeys(ctx, host, port)
+	if err != nil {
+		return nil
+	}
+	return keys
+}
+
+func approvalApproves(approval *HostKeyApproval, key HostKey) bool {
+	return approval != nil && approval.Fingerprint == key.Fingerprint
+}
+
+func approvalReplaces(approval *HostKeyApproval, key HostKey) bool {
+	return approvalApproves(approval, key) && approval.Replace
+}
+
+func matchesApprovedKey(approved []HostKey, key HostKey) bool {
+	for _, candidate := range approved {
+		if candidate.KeyType == key.KeyType && candidate.Fingerprint == key.Fingerprint {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeEndpoint(host string, port int) (string, int, error) {
