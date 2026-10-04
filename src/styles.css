@@ -1918,7 +1918,10 @@
   top: calc(70px + 8px);
   bottom: auto;
   width: min(380px, calc(100vw - 16px));
-  max-height: calc(100dvh - 160px - var(--nx-kb-inset, 0px));
+  max-height: min(
+    calc(100dvh - 160px - var(--nx-kb-inset, 0px)),
+    var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px)))
+  );
 }
 
 .nx-terminal-keys {
@@ -2033,7 +2036,10 @@
     top: calc(70px + 8px);
     bottom: auto;
     width: min(380px, calc(100vw - 16px));
-    max-height: calc(100dvh - 160px - var(--nx-kb-inset, 0px));
+    max-height: min(
+      calc(100dvh - 160px - var(--nx-kb-inset, 0px)),
+      var(--nx-ai-toast-max, calc(100dvh - 160px - var(--nx-kb-inset, 0px)))
+    );
   }
 }
 
@@ -2129,7 +2135,13 @@
     height: 44px;
   }
 
+  .nx-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
   .nx-row-actions {
+    flex-basis: 100%;
     gap: 8px;
   }
 

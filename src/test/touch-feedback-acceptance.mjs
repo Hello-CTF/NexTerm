@@ -203,6 +203,23 @@ async function tapAt(page, x, y) {
   await sleep(150);
 }
 
+async function clickAt(page, x, y) {
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+  await sleep(40);
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  await sleep(150);
+}
+
+async function floodErrorToasts(page) {
+  await page.evaluate(`(async () => {
+    const { useUi } = await import('/src/app/store.ts');
+    for (let i = 1; i <= 16; i += 1) {
+      useUi.getState().pushToast('error', '错误 ' + i + '：' + '磁盘写入失败，请检查连接与权限后重试。'.repeat(8));
+    }
+  })()`);
+  await page.waitFor("document.querySelectorAll('.nx-toasts button').length >= 16");
+}
+
 async function setViewport(page, { width, height, coarse }) {
   await page.send("Emulation.setDeviceMetricsOverride", {
     width,
@@ -312,6 +329,28 @@ async function touchAcceptance(page) {
       return { evidence };
     });
 
+    await pass(`hit-row-actions-visible-bounds-${theme}`, async () => {
+      const evidence = await page.evaluate(`(() => {
+        const tree = document.querySelector('.nx-left-dock [role="tree"]');
+        const tr = tree.getBoundingClientRect();
+        const buttons = [...tree.querySelectorAll('.nx-row-actions .nx-icon-btn-sm')];
+        const bad = buttons.filter((b) => {
+          const r = b.getBoundingClientRect();
+          return r.width < 43.5 || r.height < 43.5 || r.left < tr.left - 0.5 || r.right > tr.right + 0.5;
+        }).map((b) => b.getAttribute('aria-label'));
+        return {
+          total: buttons.length,
+          bad,
+          treeScrollWidth: tree.scrollWidth,
+          treeClientWidth: tree.clientWidth,
+        };
+      })()`);
+      assert.ok(evidence.total >= 8, `expected many row action buttons: ${JSON.stringify(evidence)}`);
+      assert.deepEqual(evidence.bad, [], `row action buttons clipped or undersized inside the dock: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.treeScrollWidth <= evidence.treeClientWidth + 1, `tree horizontally overflows: ${JSON.stringify(evidence)}`);
+      return { evidence };
+    });
+
     await pass(`hit-attribution-elementfrompoint-${theme}`, async () => {
       const evidence = await page.evaluate(`(() => {
         const hasConnect = (r) => [...r.querySelectorAll('.nx-row-actions button')].some((b) => (b.getAttribute('aria-label') ?? '').startsWith('连接 '));
@@ -373,29 +412,30 @@ async function touchAcceptance(page) {
 
     await pass(`hit-attribution-touch-${theme}`, async () => {
       const before = await page.evaluate(`(() => {
-        const hasConnect = (r) => [...r.querySelectorAll('.nx-row-actions button')].some((b) => (b.getAttribute('aria-label') ?? '').startsWith('连接 '));
-        const assetRows = [...document.querySelectorAll('.nx-row')].filter(hasConnect);
+        const btn = (r, prefix) => [...r.querySelectorAll('.nx-row-actions button')].find((b) => (b.getAttribute('aria-label') ?? '').startsWith(prefix));
+        const complete = (r) => btn(r, '连接 ') && btn(r, '编辑 ') && btn(r, '删除 ') && btn(r, '更多操作 ');
+        const assetRows = [...document.querySelectorAll('.nx-row')].filter(complete);
         let rowA = null;
         let rowB = null;
         for (const r of assetRows) {
           const next = r.nextElementSibling;
-          if (next && next.classList.contains('nx-row') && hasConnect(next)) {
+          if (next && next.classList.contains('nx-row') && complete(next)) {
             rowA = r;
             rowB = next;
             break;
           }
         }
         const picks = [rowA, rowB].filter(Boolean).map((r) => {
-          const btns = [...r.querySelectorAll('.nx-row-actions button')];
-          const edit = btns.find((b) => (b.getAttribute('aria-label') ?? '').startsWith('编辑 '));
-          const connect = btns.find((b) => (b.getAttribute('aria-label') ?? '').startsWith('连接 '));
-          const er = edit.getBoundingClientRect();
-          const cr = connect.getBoundingClientRect();
-          const label = edit.getAttribute('aria-label');
+          const center = (b) => {
+            const rect = b.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          };
           return {
-            name: label.slice('编辑 '.length),
-            edit: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
-            connect: { x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 },
+            name: btn(r, '编辑 ').getAttribute('aria-label').slice('编辑 '.length),
+            edit: center(btn(r, '编辑 ')),
+            connect: center(btn(r, '连接 ')),
+            remove: center(btn(r, '删除 ')),
+            more: center(btn(r, '更多操作 ')),
           };
         });
         return {
@@ -425,12 +465,28 @@ async function touchAcceptance(page) {
       assert.equal(await modalName(), before.picks[1].name, "tap on row B edit must open row B's editor");
       await closeModal();
 
+      await tapAt(page, before.picks[0].remove.x, before.picks[0].remove.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-modal'))");
+      const confirmText = await page.evaluate(`document.querySelector('.nx-modal').textContent`);
+      assert.ok(confirmText.includes(`删除资产「${before.picks[0].name}」`), `delete tap must confirm the tapped asset: ${confirmText}`);
+      cross = await page.evaluate(`({ menu: Boolean(document.querySelector('.nx-menu')), tabs: document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length })`);
+      assert.equal(cross.menu, false, "delete tap must not open the more menu");
+      await closeModal();
+
+      await tapAt(page, before.picks[1].more.x, before.picks[1].more.y);
+      await page.waitFor("Boolean(document.querySelector('.nx-menu'))");
+      const menuState = await page.evaluate(`({ text: document.querySelector('.nx-menu').textContent, modal: Boolean(document.querySelector('.nx-modal')) })`);
+      assert.ok(menuState.text.includes("克隆"), `more tap must open the row menu: ${menuState.text}`);
+      assert.equal(menuState.modal, false, "more tap must not open a dialog");
+      await page.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+      await page.waitFor("!document.querySelector('.nx-menu')");
+
       await tapAt(page, before.picks[0].connect.x, before.picks[0].connect.y);
       await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length > ${before.tabs}`);
       cross = await page.evaluate(`({ modal: Boolean(document.querySelector('.nx-modal')), menu: Boolean(document.querySelector('.nx-menu')) })`);
       assert.equal(cross.modal, false, "connect tap must not open the editor");
       assert.equal(cross.menu, false, "connect tap must not open the more menu");
-      return { evidence: { taps: 3, tabsBefore: before.tabs } };
+      return { evidence: { taps: 5, tabsBefore: before.tabs } };
     });
 
     await pass(`toast-avoids-keys-and-statusbar-${theme}`, async () => {
@@ -481,13 +537,7 @@ async function touchAcceptance(page) {
     });
 
     await pass(`toast-flood-${theme}`, async () => {
-      await page.evaluate(`(async () => {
-        const { useUi } = await import('/src/app/store.ts');
-        for (let i = 1; i <= 16; i += 1) {
-          useUi.getState().pushToast('error', '错误 ' + i + '：' + '磁盘写入失败，请检查连接与权限后重试。'.repeat(8));
-        }
-      })()`);
-      await page.waitFor("document.querySelectorAll('.nx-toasts button').length >= 16");
+      await floodErrorToasts(page);
       const evidence = await page.evaluate(`(() => {
         const container = document.querySelector('.nx-toasts');
         const cr = container.getBoundingClientRect();
@@ -497,6 +547,11 @@ async function touchAcceptance(page) {
         const oldest = toasts[0].getBoundingClientRect();
         const cx = nr.left + nr.width / 2;
         const cy = nr.top + nr.height / 2;
+        const input = document.querySelector('.nx-right-dock textarea');
+        const ir = input.getBoundingClientRect();
+        const ix = ir.left + ir.width / 2;
+        const iy = ir.top + ir.height / 2;
+        const inputOwner = document.elementFromPoint(ix, iy);
         return {
           count: toasts.length,
           containerHeight: cr.height,
@@ -508,6 +563,9 @@ async function touchAcceptance(page) {
           newestHittable: newest.contains(document.elementFromPoint(cx, cy)),
           oldestClipped: oldest.top < cr.top - 0.5,
           containerBottom: cr.bottom,
+          inputTop: ir.top,
+          inputCenter: { x: ix, y: iy },
+          inputOwner: inputOwner ? (inputOwner === input || input.contains(inputOwner)) : false,
           innerHeight,
         };
       })()`);
@@ -517,10 +575,15 @@ async function touchAcceptance(page) {
       assert.ok(evidence.newestTop >= 0 && evidence.newestBottom <= evidence.innerHeight, `newest toast off-screen: ${JSON.stringify(evidence)}`);
       assert.equal(evidence.newestHittable, true, `newest toast not hittable at its center: ${JSON.stringify(evidence)}`);
       assert.equal(evidence.oldestClipped, true, `oldest toast should be clipped to keep the newest: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.containerBottom <= evidence.inputTop - 8, `toast stack must stay above the AI input: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.inputOwner, true, `AI input covered at its center: ${JSON.stringify(evidence)}`);
       await tapAt(page, evidence.newestCenter.x, evidence.newestCenter.y);
       await page.waitFor("![...document.querySelectorAll('.nx-toasts button')].some((b) => b.textContent.includes('错误 16'))");
       const remaining = await page.evaluate(`document.querySelectorAll('.nx-toasts button').length`);
       assert.equal(remaining, evidence.count - 1, "tapping the newest toast must dismiss exactly it");
+      await tapAt(page, evidence.inputCenter.x, evidence.inputCenter.y);
+      const focused = await page.evaluate(`document.activeElement === document.querySelector('.nx-right-dock textarea')`);
+      assert.equal(focused, true, "tap must move focus into the AI input");
       return { evidence: { ...evidence, remaining } };
     });
 
@@ -566,51 +629,74 @@ async function touchAcceptance(page) {
 
     await pass(`toast-ai-dock-shrunk-${theme}`, async () => {
       await boot(page, { theme, width: 1100, height: 800, coarse: false, layout: { leftWidth: 248, rightWidth: 760 } });
-      await page.evaluate(`document.querySelector('.nx-tab-new').click()`);
-      await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
       await ensureAiDock(page);
+      await floodErrorToasts(page);
       const evidence = await page.evaluate(`(() => {
         const t = document.querySelector('.nx-toasts').getBoundingClientRect();
         const dock = document.querySelector('.nx-right-dock').getBoundingClientRect();
+        const input = document.querySelector('.nx-right-dock textarea');
+        const ir = input.getBoundingClientRect();
+        const ix = ir.left + ir.width / 2;
+        const iy = ir.top + ir.height / 2;
         const placement = document.querySelector('.nx-app').getAttribute('data-nx-ai');
-        return { placement, toastLeft: t.left, toastRight: t.right, toastWidth: t.width, dockLeft: dock.left, innerWidth };
-      })()`);
-      assert.equal(evidence.placement, "dock", `760px dock at 1100px must keep dock placement: ${JSON.stringify(evidence)}`);
-      assert.ok(evidence.toastLeft >= 0, `toast pushed off-screen: ${JSON.stringify(evidence)}`);
-      assert.ok(evidence.toastRight <= evidence.dockLeft + 0.5, `toast overlaps the dock: ${JSON.stringify(evidence)}`);
-      assert.ok(evidence.toastWidth <= 380, `toast wider than the cap: ${JSON.stringify(evidence)}`);
-      return { evidence };
-    });
-
-    await pass(`toast-ai-dock-fallback-${theme}`, async () => {
-      await boot(page, { theme, width: 900, height: 800, coarse: false, layout: { leftWidth: 248, rightWidth: 760 } });
-      await page.evaluate(`document.querySelector('.nx-tab-new').click()`);
-      await page.waitFor("Boolean(document.querySelector('.nx-toasts button'))");
-      await ensureAiDock(page);
-      const evidence = await page.evaluate(`(() => {
-        const t = document.querySelector('.nx-toasts').getBoundingClientRect();
-        const input = document.querySelector('.nx-right-dock textarea').getBoundingClientRect();
-        const header = document.querySelector('header').getBoundingClientRect();
-        const placement = document.querySelector('.nx-app').getAttribute('data-nx-ai');
-        const cx = t.left + t.width / 2;
-        const cy = t.top + 12;
         const hit = (a, b) => !(a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5);
         return {
           placement,
           toastLeft: t.left,
           toastRight: t.right,
+          toastWidth: t.width,
+          dockLeft: dock.left,
+          overlapInput: hit(t, ir),
+          inputCenter: { x: ix, y: iy },
+          inputOwner: (() => { const el = document.elementFromPoint(ix, iy); return el === input || input.contains(el); })(),
+          innerWidth,
+        };
+      })()`);
+      assert.equal(evidence.placement, "dock", `760px dock at 1100px must keep dock placement: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastLeft >= 0, `toast pushed off-screen: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastRight <= evidence.dockLeft + 0.5, `toast overlaps the dock: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastWidth <= 380, `toast wider than the cap: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.overlapInput, false, `dock-mode toast must not cover the AI input: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.inputOwner, true, `AI input covered at its center: ${JSON.stringify(evidence)}`);
+      await clickAt(page, evidence.inputCenter.x, evidence.inputCenter.y);
+      const focused = await page.evaluate(`document.activeElement === document.querySelector('.nx-right-dock textarea')`);
+      assert.equal(focused, true, "click must move focus into the AI input");
+      return { evidence };
+    });
+
+    await pass(`toast-ai-dock-fallback-${theme}`, async () => {
+      await boot(page, { theme, width: 900, height: 800, coarse: false, layout: { leftWidth: 248, rightWidth: 760 } });
+      await ensureAiDock(page);
+      await floodErrorToasts(page);
+      const evidence = await page.evaluate(`(() => {
+        const t = document.querySelector('.nx-toasts').getBoundingClientRect();
+        const input = document.querySelector('.nx-right-dock textarea');
+        const ir = input.getBoundingClientRect();
+        const ix = ir.left + ir.width / 2;
+        const iy = ir.top + ir.height / 2;
+        const header = document.querySelector('header').getBoundingClientRect();
+        const placement = document.querySelector('.nx-app').getAttribute('data-nx-ai');
+        return {
+          placement,
+          toastLeft: t.left,
+          toastRight: t.right,
           toastTop: t.top,
+          toastBottom: t.bottom,
           headerBottom: header.bottom,
-          overlapInput: hit(t, input),
-          hittable: Boolean(document.elementFromPoint(cx, cy)?.closest('.nx-toasts button')),
+          inputTop: ir.top,
+          inputCenter: { x: ix, y: iy },
+          inputOwner: (() => { const el = document.elementFromPoint(ix, iy); return el === input || input.contains(el); })(),
           innerWidth,
         };
       })()`);
       assert.equal(evidence.placement, "left", `760px dock at 900px must fall back to reachable placement: ${JSON.stringify(evidence)}`);
       assert.ok(evidence.toastLeft >= 0 && evidence.toastRight <= evidence.innerWidth + 0.5, `toast off-screen: ${JSON.stringify(evidence)}`);
       assert.ok(evidence.toastTop >= evidence.headerBottom - 0.5, `fallback toast must sit below the header: ${JSON.stringify(evidence)}`);
-      assert.equal(evidence.overlapInput, false, `fallback toast must not cover the AI input: ${JSON.stringify(evidence)}`);
-      assert.equal(evidence.hittable, true, `fallback toast must be hittable: ${JSON.stringify(evidence)}`);
+      assert.ok(evidence.toastBottom <= evidence.inputTop - 8, `fallback stack must stay above the AI input: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.inputOwner, true, `AI input covered at its center: ${JSON.stringify(evidence)}`);
+      await clickAt(page, evidence.inputCenter.x, evidence.inputCenter.y);
+      const focused = await page.evaluate(`document.activeElement === document.querySelector('.nx-right-dock textarea')`);
+      assert.equal(focused, true, "click must move focus into the AI input");
       return { evidence };
     });
 

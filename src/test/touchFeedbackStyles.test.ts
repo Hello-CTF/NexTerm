@@ -44,8 +44,11 @@ describe("coarse pointer hit areas", () => {
     expect(bar).toMatch(/min-height:\s*52px/);
   });
 
-  it("row action buttons are real non-overlapping 44x44 hit areas", () => {
-    expect(rule(coarse, ".nx-row-actions")).toMatch(/gap:\s*8px/);
+  it("row action buttons are real non-overlapping 44x44 hit areas on their own row", () => {
+    expect(rule(coarse, ".nx-row")).toMatch(/flex-wrap:\s*wrap/);
+    const actions = rule(coarse, ".nx-row-actions");
+    expect(actions).toMatch(/gap:\s*8px/);
+    expect(actions).toMatch(/flex-basis:\s*100%/);
     const btn = rule(coarse, ".nx-row-actions .nx-icon-btn-sm");
     expect(btn).toMatch(/width:\s*44px/);
     expect(btn).toMatch(/height:\s*44px/);
@@ -73,10 +76,21 @@ describe("toast placement rules", () => {
     expect(body).toMatch(/width:\s*min\(380px, calc\(100vw - var\(--nx-right-w/);
   });
 
-  it("falls back to the left edge when the docked sidebar leaves too little room", () => {
+  it("falls back to the top-left edge when the docked sidebar leaves too little room", () => {
     const body = rule(css, '.nx-app[data-nx-ai="left"] .nx-toasts');
     expect(body).toMatch(/left:\s*8px/);
     expect(body).toMatch(/right:\s*auto/);
+    expect(body).toMatch(/bottom:\s*auto/);
+  });
+
+  it("caps the stack above the AI input via the measured inset variable", () => {
+    for (const body of [
+      rule(css, '.nx-app[data-nx-ai="left"] .nx-toasts'),
+      rule(narrow, ".nx-app[data-nx-ai] .nx-toasts"),
+    ]) {
+      expect(body).toMatch(/max-height:\s*min\(/);
+      expect(body).toMatch(/var\(--nx-ai-toast-max/);
+    }
   });
 
   it("on narrow screens toasts move to the top-left so the AI input stays reachable", () => {
