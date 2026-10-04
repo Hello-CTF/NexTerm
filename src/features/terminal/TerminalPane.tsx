@@ -11,6 +11,8 @@ import { onEventsResync } from "../../ipc/webTransport";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
+import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
+import { isMac, modHint } from "../../app/platform";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
 import {
@@ -115,6 +117,7 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
+  const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const effectiveWinrm = resolveWinrmMode(winrm, sessionKind);
@@ -358,7 +361,11 @@ export function TerminalPane({
     }
     setReconnecting(true);
     try {
-      const s = await sessionApi.connect(assetId);
+      const s = await connectWithHostKeyConfirm(() => sessionApi.connect(assetId));
+      if (!s) {
+        pushToast("info", "已取消重连");
+        return;
+      }
       const list = useUi.getState().sessions;
       useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
       useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: undefined, dead: false, exited: false });
@@ -451,6 +458,10 @@ export function TerminalPane({
 
   const reconnectSession = async () => {
     try {
+      if (!(await confirmHostKeyIfNeeded(sessionAssetId ?? "", sessionKind))) {
+        pushToast("info", "已取消重连");
+        return;
+      }
       const started = await sessionApi.reconnect(sessionId);
       pushToast(
         started ? "info" : "error",

@@ -48,6 +48,7 @@ import {
   useKeybindings,
   type KeybindingActionId,
 } from "./keybindings";
+import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "./hostKeys";
 import { assetApi, dbApi, sessionApi, vaultApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
@@ -528,6 +529,10 @@ export default function App() {
     }
     if (s) {
       try {
+        if (!(await confirmHostKeyIfNeeded(s.assetId ?? "", s.kind))) {
+          pushToast("info", "已取消重连");
+          return;
+        }
         const started = await sessionApi.reconnect(s.id);
         pushToast(
           started ? "info" : "error",
@@ -542,7 +547,11 @@ export default function App() {
     }
     if (ws?.assetId) {
       try {
-        const fresh = await sessionApi.connect(ws.assetId);
+        const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string));
+        if (!fresh) {
+          pushToast("info", "已取消重连");
+          return;
+        }
         const list = useUi.getState().sessions;
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);

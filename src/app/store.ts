@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { assetApi, dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
+import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
+import { connectWithHostKeyConfirm } from "./hostKeys";
 import { dirtyFileEditors } from "../features/files/editorGuards";
 import { splitAllowedForHeight } from "../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../features/explorer/connectHistory";
@@ -1175,26 +1176,6 @@ async function openConnectedAssetSession(
   await openTerminalTab(info);
 }
 
-type hostKeyPendingDetail = {
-  host?: string;
-  port?: number;
-  keyType?: string;
-  fingerprint?: string;
-  changed?: boolean;
-  known?: { keyType?: string; fingerprint?: string }[];
-};
-
-function hostKeyQuestion(detail: hostKeyPendingDetail | undefined): string {
-  if (detail?.changed) {
-    const previous = (detail.known ?? [])
-      .map((known) => known.fingerprint)
-      .filter((fingerprint): fingerprint is string => Boolean(fingerprint))
-      .join("、");
-    return `主机密钥已变更 ${detail.host}:${detail.port}\n原指纹(SHA256)：${previous}\n新指纹(SHA256)：${detail.fingerprint}\n主机密钥类型：${detail.keyType}\n信任新指纹并继续？如非预期变更，请取消并核实服务器。`;
-  }
-  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型：${detail?.keyType}\n指纹(SHA256)：${detail?.fingerprint}\n信任并继续？`;
-}
-
 export interface ConnectAssetInput {
   id: string;
   name: string;
@@ -1263,38 +1244,16 @@ async function runConnectAsset(asset: ConnectAssetInput): Promise<ConnectOutcome
 
   try {
     if (!(await ensureVaultReadyFor(asset))) return { ok: false, canceled: true };
-    const info = await sessionApi.connect(asset.id);
+    const info = await connectWithHostKeyConfirm(() => sessionApi.connect(asset.id));
+    if (!info) {
+      pushToast("info", "已取消连接");
+      return { ok: false, canceled: true };
+    }
     await openConnectedAssetSession(info, asset);
     useConnectHistory.getState().record(asset.id);
     return { ok: true };
   } catch (e) {
-    const err = e as { code?: string; message: string; detail?: Record<string, unknown> };
-    if (err.code === "host_key_pending") {
-      const detail = err.detail as hostKeyPendingDetail | undefined;
-      const { ask } = await import("../ui/dialogs");
-      const ok = await ask(hostKeyQuestion(detail), {
-        title: detail?.changed ? "主机密钥变更警告" : "确认主机指纹",
-        kind: "warning",
-      });
-      if (!ok) {
-        pushToast("info", "已取消连接");
-        return { ok: false, canceled: true };
-      }
-      if (!detail?.host || !detail?.port || !detail?.keyType || !detail?.fingerprint) {
-        pushToast("error", err.message || describeError(e));
-        return { ok: false, error: err.message || describeError(e) };
-      }
-      try {
-        await assetApi.knownHostAccept(detail.host, detail.port, detail.keyType, detail.fingerprint);
-        const info = await sessionApi.connect(asset.id);
-        await openConnectedAssetSession(info, asset);
-        useConnectHistory.getState().record(asset.id);
-        return { ok: true };
-      } catch (e2) {
-        pushToast("error", describeError(e2));
-        return { ok: false, error: describeError(e2) };
-      }
-    }
+    const err = e as { message?: string };
     pushToast("error", err.message || describeError(e));
     return { ok: false, error: err.message || describeError(e) };
   }
