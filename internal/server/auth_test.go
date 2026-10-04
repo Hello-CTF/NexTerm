@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -278,6 +279,110 @@ func TestExposedListenWebSocketAdmission(t *testing.T) {
 		t.Fatalf("channel websocket with subprotocol token: %v", err)
 	}
 	_ = connection.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestExposedListenWebSocketTokenVerificationIsBounded(t *testing.T) {
+	var verifyCalls atomic.Int32
+	config := exposedConfig(t)
+	config.Tokens = TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
+		verifyCalls.Add(1)
+		return token == "secret", nil
+	})
+	_, httpServer := newTestHTTP(t, config)
+	wsURL := strings.Replace(httpServer.URL, "http", "ws", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	dial := func(options *websocket.DialOptions) error {
+		connection, response, err := websocket.Dial(ctx, wsURL+"/ws/events", options)
+		if err != nil {
+			if response != nil && response.Body != nil {
+				response.Body.Close()
+			}
+			return err
+		}
+		_ = connection.Close(websocket.StatusNormalClosure, "")
+		return nil
+	}
+
+	garbage := make([]string, 2000)
+	for i := range garbage {
+		garbage[i] = "junk"
+	}
+	if err := dial(&websocket.DialOptions{Subprotocols: garbage}); err == nil {
+		t.Fatal("garbage candidates were accepted")
+	}
+	if calls := verifyCalls.Load(); calls != 0 {
+		t.Fatalf("garbage candidates triggered %d verifications", calls)
+	}
+
+	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol, "secret", "extra"}}); err == nil {
+		t.Fatal("extra candidates were accepted")
+	}
+	if calls := verifyCalls.Load(); calls != 0 {
+		t.Fatalf("extra candidates triggered %d verifications", calls)
+	}
+
+	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol}}); err == nil {
+		t.Fatal("marker without token was accepted")
+	}
+	if calls := verifyCalls.Load(); calls != 0 {
+		t.Fatalf("missing token triggered %d verifications", calls)
+	}
+
+	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol, "wrong"}}); err == nil {
+		t.Fatal("wrong token was accepted")
+	}
+	if calls := verifyCalls.Load(); calls != 1 {
+		t.Fatalf("wrong token verifications = %d", calls)
+	}
+
+	if err := dial(&websocket.DialOptions{Subprotocols: []string{wsAuthProtocol, "secret"}}); err != nil {
+		t.Fatalf("valid subprotocol token: %v", err)
+	}
+	if calls := verifyCalls.Load(); calls != 2 {
+		t.Fatalf("valid token verifications = %d", calls)
+	}
+
+	if err := dial(&websocket.DialOptions{
+		HTTPHeader:   http.Header{TokenHeader: []string{"wrong"}},
+		Subprotocols: []string{wsAuthProtocol, "secret"},
+	}); err == nil {
+		t.Fatal("wrong header token with valid subprotocol was accepted")
+	}
+	if calls := verifyCalls.Load(); calls != 3 {
+		t.Fatalf("header token must not fall through to subprotocol, verifications = %d", calls)
+	}
+}
+
+func TestExposedListenWebSocketGatewayKeySkipsTokenVerification(t *testing.T) {
+	var verifyCalls atomic.Int32
+	config := exposedConfig(t)
+	config.GatewayAuthKey = "gateway-secret"
+	config.Tokens = TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
+		verifyCalls.Add(1)
+		return token == "secret", nil
+	})
+	_, httpServer := newTestHTTP(t, config)
+	wsURL := strings.Replace(httpServer.URL, "http", "ws", 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	garbage := make([]string, 2000)
+	for i := range garbage {
+		garbage[i] = "junk"
+	}
+	connection, _, err := websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
+		HTTPHeader:   http.Header{GatewayAuthHeader: []string{"gateway-secret"}},
+		Subprotocols: garbage,
+	})
+	if err != nil {
+		t.Fatalf("gateway key with garbage candidates: %v", err)
+	}
+	_ = connection.Close(websocket.StatusNormalClosure, "")
+	if calls := verifyCalls.Load(); calls != 0 {
+		t.Fatalf("gateway key triggered %d verifications", calls)
+	}
 }
 
 func TestExposedListenWebSocketVerifierErrorIsServerError(t *testing.T) {

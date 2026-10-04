@@ -523,19 +523,24 @@ function ServerTokenBody({
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          <b>这个令牌只能用于资产同步</b>：它只授权受限的 <span className="nx-code">/sync/rpc</span>
-          接口（读摘要、推拉资产），<b>不是</b>完整版 <span className="nx-code">/rpc</span> 的钥匙 ——
-          拿它操作不了这台服务端的终端、文件或容器。但它仍能读写这台服务端上参与同步的全部资产，
-          别贴到聊天、截图或工单里；怀疑泄露了就点「重置令牌」。
+          <b>这枚令牌就是这台服务端的访问令牌</b>：在非回环监听的完整版上，它同时解锁{" "}
+          <span className="nx-code">/rpc</span>、<span className="nx-code">/ws</span> 与{" "}
+          <span className="nx-code">/files/blob</span>——持有者能操作这台服务端的终端、文件与容器；
+          <span className="nx-code">--sync-only</span> 模式下才只限于{" "}
+          <span className="nx-code">/sync/rpc</span> 的资产读写。别贴到聊天、截图或工单里；
+          怀疑泄露了就点「重置令牌」，旧令牌会立即失效。
         </div>
       </div>
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          <b>要把完整版服务端开放到非回环地址？</b>浏览器界面和{" "}
-          <span className="nx-code">/rpc</span> 没有内置登录鉴权，能访问端口的人就能操作终端、
-          文件和容器。请保留回环监听，在前面配置带身份验证和 TLS 的反向代理（详见 README）。
+          <b>要把完整版服务端开放到非回环地址？</b>非回环监听时{" "}
+          <span className="nx-code">/rpc</span>、<span className="nx-code">/ws</span> 与{" "}
+          <span className="nx-code">/files/blob</span> 会要求这枚同步令牌（
+          <span className="nx-code">/healthz</span> 与页面静态资源公开），浏览器首次打开会提示输入；
+          回环监听不强制。令牌走请求头，公网部署前面必须终止 TLS，请只监听回环地址并配置带 TLS
+          的反向代理（详见 README）。
         </div>
       </div>
     </>

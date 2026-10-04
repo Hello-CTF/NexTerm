@@ -8,7 +8,10 @@ import (
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 )
 
-const wsAuthProtocol = "nexterm"
+const (
+	wsAuthProtocol       = "nexterm"
+	wsAuthHeaderMaxBytes = 256
+)
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	if !s.authRequired {
@@ -44,27 +47,25 @@ func (s *Server) authorizeWebSocket(r *http.Request) (bool, error) {
 		return true, nil
 	}
 	if token := r.Header.Get(TokenHeader); token != "" {
-		valid, err := s.tokens.VerifyToken(r.Context(), token)
-		if err != nil {
-			return false, err
-		}
-		if valid {
-			return true, nil
-		}
+		return s.tokens.VerifyToken(r.Context(), token)
 	}
-	for _, candidate := range webSocketProtocolTokens(r) {
-		if candidate == wsAuthProtocol {
-			continue
-		}
-		valid, err := s.tokens.VerifyToken(r.Context(), candidate)
-		if err != nil {
-			return false, err
-		}
-		if valid {
-			return true, nil
-		}
+	token, ok := webSocketAuthToken(r)
+	if !ok {
+		return false, nil
 	}
-	return false, nil
+	return s.tokens.VerifyToken(r.Context(), token)
+}
+
+func webSocketAuthToken(r *http.Request) (string, bool) {
+	raw := r.Header.Get("Sec-WebSocket-Protocol")
+	if raw == "" || len(raw) > wsAuthHeaderMaxBytes {
+		return "", false
+	}
+	tokens := webSocketProtocolTokens(raw)
+	if len(tokens) != 2 || !strings.EqualFold(tokens[0], wsAuthProtocol) {
+		return "", false
+	}
+	return tokens[1], true
 }
 
 func (s *Server) admitWebSocket(w http.ResponseWriter, r *http.Request) bool {
@@ -80,11 +81,7 @@ func (s *Server) admitWebSocket(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func webSocketProtocolTokens(r *http.Request) []string {
-	raw := r.Header.Get("Sec-WebSocket-Protocol")
-	if raw == "" {
-		return nil
-	}
+func webSocketProtocolTokens(raw string) []string {
 	parts := strings.Split(raw, ",")
 	tokens := make([]string, 0, len(parts))
 	for _, part := range parts {

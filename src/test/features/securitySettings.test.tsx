@@ -206,13 +206,17 @@ describe("SyncCard（服务端一面）", () => {
     expect(mounted.container.textContent).not.toContain("sync-token-secret-xyz");
   });
 
-  it("describes the token as restricted sync-only and keeps the trusted-auth warning", async () => {
+  it("describes the token as the full-access key and keeps the exposure warning", async () => {
     mounted = mountSyncCard();
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("只能用于资产同步");
+    expect(text).toContain("访问令牌");
+    expect(text).toContain("/rpc");
+    expect(text).toContain("/files/blob");
+    expect(text).toContain("终端、文件与容器");
     expect(text).toContain("/sync/rpc");
-    expect(text).not.toContain("完全控制权");
+    expect(text).not.toContain("只能用于资产同步");
+    expect(text).not.toContain("没有内置登录鉴权");
     expect(text).toContain("反向代理");
   });
 
