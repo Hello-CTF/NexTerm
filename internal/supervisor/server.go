@@ -6,18 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
 
 type Server struct {
-	supervisor *Supervisor
-	socketPath string
-	listener   net.Listener
-	socketFile os.FileInfo
-	unlock     func()
+	supervisor  *Supervisor
+	stateDigest string
+	endpoint    endpointIdentity
+	listener    net.Listener
+	unlock      func()
 
 	mu     sync.Mutex
 	conns  map[*serverConn]struct{}
@@ -37,34 +35,19 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 	if socketPath == "" {
 		return nil, fmt.Errorf("%w: socket path is required", ErrInvalidInput)
 	}
-	absolute, err := filepath.Abs(socketPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: socket path: %v", ErrInvalidInput, err)
-	}
-	if err := ensurePrivateDir(filepath.Dir(absolute)); err != nil {
-		return nil, fmt.Errorf("supervisor socket directory: %w", err)
-	}
-	unlock, err := lockSocket(absolute)
+	stateDigest, err := stateDigestFor(supervisor.StateDir())
 	if err != nil {
 		return nil, err
 	}
-	listener, err := listenSocket(absolute)
+	listener, endpoint, unlock, err := prepareEndpoint(socketPath)
 	if err != nil {
-		unlock()
 		return nil, err
-	}
-	socketFile, err := os.Lstat(absolute)
-	if err != nil {
-		unlock()
-		_ = listener.Close()
-		_ = os.Remove(absolute)
-		return nil, fmt.Errorf("inspect supervisor socket: %w", err)
 	}
 	server := &Server{
 		supervisor:   supervisor,
-		socketPath:   absolute,
+		stateDigest:  stateDigest,
+		endpoint:     endpoint,
 		listener:     listener,
-		socketFile:   socketFile,
 		unlock:       unlock,
 		conns:        make(map[*serverConn]struct{}),
 		shutdownDone: make(chan struct{}),
@@ -75,7 +58,7 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 }
 
 func (s *Server) SocketPath() string {
-	return s.socketPath
+	return s.endpoint.Path()
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -105,8 +88,8 @@ func (s *Server) finishShutdown(listenErr error) {
 		conn.close()
 	}
 	s.wg.Wait()
-	if info, err := os.Lstat(s.socketPath); err == nil && os.SameFile(s.socketFile, info) {
-		_ = os.Remove(s.socketPath)
+	if err := s.endpoint.Cleanup(); err != nil {
+		listenErr = errors.Join(listenErr, err)
 	}
 	s.unlock()
 	if errors.Is(listenErr, net.ErrClosed) {
@@ -164,12 +147,7 @@ func (c *serverConn) serve() {
 			c.replyError(frameError, errorMsg{Code: codeInternal, Message: "internal supervisor error"})
 		}
 	}()
-	unixConn, ok := c.conn.(*net.UnixConn)
-	if !ok {
-		return
-	}
-	uid, err := peerUID(unixConn)
-	if err != nil || uid != os.Geteuid() {
+	if err := authorizePeer(c.conn); err != nil {
 		c.reply(frameError, errorMsg{Code: codeProtocol, Message: "peer is not authorized"})
 		return
 	}
@@ -188,6 +166,10 @@ func (c *serverConn) serve() {
 	}
 	if hello.Version != ProtocolVersion {
 		c.replyError(frameError, errorMsg{Code: codeVersionMismatch, Message: fmt.Sprintf("protocol version %d is not supported", hello.Version)})
+		return
+	}
+	if hello.StateDigest != c.server.stateDigest {
+		c.replyError(frameError, errorMsg{Code: codeStateMismatch, Message: "supervisor state digest does not match this endpoint"})
 		return
 	}
 	if err := c.reply(frameHelloAck, helloMsg{Version: ProtocolVersion}); err != nil {

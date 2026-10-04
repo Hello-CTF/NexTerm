@@ -31,6 +31,7 @@ type ProductionConfig struct {
 	DataDir                 string
 	Desktop                 bool
 	DesktopSmoke            bool
+	DesktopSupervisorHelper bool
 	ForwardPlatform         string
 	Connector               session.Connector
 	Terminals               session.TerminalFactory
@@ -122,26 +123,37 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if supervisorStateDir == "" {
 		supervisorStateDir = filepath.Join(config.DataDir, "durable", "supervisor")
 	}
-	supervisorInstance, supervisorErr := supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
 	var (
-		durableBackend  *durable.Backend
-		durableProvider base.DurableProvider
-		durableErr      error
+		durableBackend   *durable.Backend
+		durableProvider  base.DurableProvider
+		durableErr       error
+		supervisorHelper *supervisor.Helper
 	)
-	if supervisorErr == nil {
-		durableProvider = supervisor.NewProvider(supervisorInstance)
-	} else {
-		config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
-		durableBackend, durableErr = durable.New(durable.Config{
-			Binary: config.DurableBinary, SocketPath: productionDurableSocketPath(config.DataDir),
-			StateDir: filepath.Join(config.DataDir, "durable", "state"),
-		})
+	if config.DesktopSupervisorHelper {
+		supervisorHelper, durableErr = supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: supervisorStateDir})
 		if durableErr != nil {
-			if !errors.Is(durableErr, durable.ErrUnavailable) {
-				return nil, durableErr
-			}
+			config.Config.Logger.Warn("desktop supervisor helper unavailable, local durable tabs are disabled", "error", durableErr)
 		} else {
-			durableProvider = session.NewDurableProvider(durableBackend)
+			durableProvider = supervisor.NewRemoteProvider(supervisorHelper.Client())
+		}
+	} else {
+		var supervisorErr error
+		supervisorInstance, supervisorErr = supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
+		if supervisorErr == nil {
+			durableProvider = supervisor.NewProvider(supervisorInstance)
+		} else {
+			config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
+			durableBackend, durableErr = durable.New(durable.Config{
+				Binary: config.DurableBinary, SocketPath: productionDurableSocketPath(config.DataDir),
+				StateDir: filepath.Join(config.DataDir, "durable", "state"),
+			})
+			if durableErr != nil {
+				if !errors.Is(durableErr, durable.ErrUnavailable) {
+					return nil, durableErr
+				}
+			} else {
+				durableProvider = session.NewDurableProvider(durableBackend)
+			}
 		}
 	}
 	dockerService := config.Docker
@@ -177,7 +189,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
-		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, hostKeys: hostKeys, dataDir: config.DataDir,
+		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {

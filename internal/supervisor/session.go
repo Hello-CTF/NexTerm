@@ -300,6 +300,18 @@ func (s *Session) removeAttachment(attachment *Attachment) {
 	s.mu.Unlock()
 }
 
+func (s *Session) detachAttachments() {
+	s.mu.RLock()
+	attachments := make([]*Attachment, 0, len(s.attachments))
+	for attachment := range s.attachments {
+		attachments = append(attachments, attachment)
+	}
+	s.mu.RUnlock()
+	for _, attachment := range attachments {
+		_ = attachment.Detach()
+	}
+}
+
 func (s *Session) status() (dead bool, recErr error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

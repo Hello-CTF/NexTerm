@@ -65,7 +65,7 @@ func startHelperSupervisor(t *testing.T, dir string) (*exec.Cmd, string) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, dir)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		if _, err := client.List(context.Background()); err == nil {
@@ -81,7 +81,7 @@ func startHelperSupervisor(t *testing.T, dir string) (*exec.Cmd, string) {
 func TestRegistryRecoveryAfterSupervisorCrash(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	cmd, socketPath := startHelperSupervisor(t, dir)
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, dir)
 	ctx := context.Background()
 
 	id := ids.New()
@@ -153,7 +153,7 @@ func TestRegistryRecoveryAfterSupervisorCrash(t *testing.T) {
 func TestRegistryRecoveryAfterHelperGracefulStop(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	cmd, socketPath := startHelperSupervisor(t, dir)
-	client := NewClient(socketPath)
+	client := NewClient(socketPath, dir)
 	ctx := context.Background()
 
 	id := ids.New()

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
@@ -16,13 +16,11 @@ const maxStreamBuffer = 64 * 1024 * 1024
 
 type Client struct {
 	socketPath string
+	stateDir   string
 }
 
-func NewClient(socketPath string) *Client {
-	if absolute, err := filepath.Abs(socketPath); err == nil {
-		socketPath = absolute
-	}
-	return &Client{socketPath: socketPath}
+func NewClient(socketPath, stateDir string) *Client {
+	return &Client{socketPath: endpointPath(socketPath), stateDir: stateDir}
 }
 
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
@@ -104,6 +102,7 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 		conn:     conn,
 		info:     info,
 		identity: Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation},
+		reqToken: make(chan struct{}, 1),
 		resp:     make(chan clientFrame, 1),
 		newData:  make(chan struct{}, 1),
 		exitCh:   make(chan struct{}),
@@ -151,12 +150,17 @@ func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
 }
 
 func (c *Client) dial(ctx context.Context) (*clientConn, error) {
-	netConn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.socketPath)
+	netConn, err := dialSocket(ctx, c.socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: dial supervisor: %v", ErrUnavailable, err)
 	}
+	digest, err := stateDigestFor(c.stateDir)
+	if err != nil {
+		_ = netConn.Close()
+		return nil, err
+	}
 	conn := &clientConn{conn: netConn}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion})
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -240,7 +244,8 @@ type Stream struct {
 	identity Identity
 
 	writeMu sync.Mutex
-	reqMu   sync.Mutex
+
+	reqToken chan struct{}
 
 	mu         sync.Mutex
 	readBuf    []byte
@@ -257,6 +262,8 @@ type Stream struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 }
+
+var streamCloseDrainTimeout = 10 * time.Second
 
 func (s *Stream) Info() Info {
 	return s.info
@@ -409,6 +416,13 @@ func (s *Stream) Close() error {
 		s.mu.Lock()
 		s.userClosed = true
 		s.mu.Unlock()
+		select {
+		case s.reqToken <- struct{}{}:
+		case <-time.After(streamCloseDrainTimeout):
+			_ = s.conn.Close()
+			s.reqToken <- struct{}{}
+		}
+		defer func() { <-s.reqToken }()
 		s.writeMu.Lock()
 		_ = writeFrame(s.conn.conn, frameDetach, []byte("{}"))
 		s.writeMu.Unlock()
@@ -426,8 +440,8 @@ func (s *Stream) request(ctx context.Context, kind frameType, message any) (fram
 }
 
 func (s *Stream) requestRaw(ctx context.Context, kind frameType, payload []byte) (frameType, []byte, error) {
-	s.reqMu.Lock()
-	defer s.reqMu.Unlock()
+	s.reqToken <- struct{}{}
+	defer func() { <-s.reqToken }()
 	select {
 	case <-s.closed:
 		s.mu.Lock()
