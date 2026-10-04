@@ -18,13 +18,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -39,7 +39,7 @@ jobs:
           cp website/images/*.png _site/images/
           cp public/brand/nexterm-mark-128.png _site/brand/
           cp .github/acceptance/real-target-gaps.json _site/acceptance-evidence-gaps.json
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -51,6 +51,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
       - name: Deployed URL remains an M47 real-target acceptance input
         run: echo "${{ steps.deployment.outputs.page_url }} deployed; run M47 real-target acceptance before marking deployed Pages passed"

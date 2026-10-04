@@ -24,7 +24,7 @@ jobs:
       artifact-run-id: ${{ steps.resolve.outputs.artifact-run-id }}
       reused: ${{ steps.resolve.outputs.reused }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Find a completed green CI run with reusable artifacts
         id: resolve
         env:
@@ -41,7 +41,7 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: The tag and wails.json are the same version source
         run: node -e 'const v=require("./wails.json").info.version; if (process.env.GITHUB_REF_NAME !== `v${v}`) throw new Error(`${process.env.GITHUB_REF_NAME} != v${v}`)'
 
@@ -72,18 +72,18 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Restore the pinned Wails CLI
         if: matrix.os == 'windows'
         id: wails-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin
           key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
           cache: true
@@ -98,16 +98,16 @@ jobs:
           wails3 version
       - name: Install NSIS
         if: matrix.os == 'windows'
-        run: choco install nsis --version=3.11 --yes --no-progress
+        run: choco install nsis --version=3.12 --yes --no-progress
       - name: Download the verified frontend dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: verified-dist
           run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download the CI production desktop binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
           path: reused-native
@@ -127,7 +127,7 @@ jobs:
         run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidate and raw/final reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-desktop-${{ matrix.os }}-${{ matrix.arch }}
           path: |
@@ -148,23 +148,23 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-      - uses: actions/setup-go@v5
+          node-version: 24
+      - uses: actions/setup-go@v7
         with:
           go-version: 1.26.8
           cache: true
       - name: Download the verified frontend dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: verified-dist
           run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download the CI production server binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: native-linux-${{ matrix.arch }}-server
           path: reused-native
@@ -205,7 +205,7 @@ jobs:
         run: bash scripts/pack-linux-server.sh --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidates and raw/final reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-server-linux-${{ matrix.arch }}
           path: |
@@ -214,7 +214,7 @@ jobs:
           if-no-files-found: error
       - name: Upload runtime evidence outside the release candidate
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: runtime-server-linux-${{ matrix.arch }}
           path: target/e2e-sync/
@@ -225,8 +225,8 @@ jobs:
     needs: [desktop, server]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: candidate
