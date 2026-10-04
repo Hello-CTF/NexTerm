@@ -240,7 +240,7 @@ WHERE id = ? AND finished_at IS NULL`,
 }
 
 func (s *Store) RunUsageSummary(ctx context.Context) ([]RunUsageSummaryRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT source, profile_id, count(*), coalesce(sum(tokens_in), 0), coalesce(sum(tokens_out), 0), coalesce(sum(cache_creation_tokens), 0), coalesce(avg(latency_ms), 0)
+	rows, err := s.db.QueryContext(ctx, `SELECT source, profile_id, count(*), coalesce(sum(tokens_in), 0), coalesce(sum(tokens_out), 0), coalesce(sum(cache_creation_tokens), 0), CAST(round(coalesce(avg(latency_ms), 0)) AS INTEGER)
 FROM ai_run WHERE finished_at IS NOT NULL GROUP BY source, profile_id ORDER BY source, profile_id`)
 	if err != nil {
 		return nil, dbError(err)

@@ -3,7 +3,9 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -120,7 +122,10 @@ func (c *aiRetentionComponent) policy(ctx context.Context) (store.RetentionPolic
 		return store.RetentionPolicy{}, err
 	}
 	if settings.MaxAgeMS < 0 || settings.MaxCount < 0 {
-		return store.RetentionPolicy{}, nil
+		return store.RetentionPolicy{}, fmt.Errorf("%s: maxAgeMs and maxCount must not be negative", aiRetentionSettingKey)
+	}
+	if settings.MaxAgeMS > math.MaxInt64/int64(time.Millisecond) {
+		return store.RetentionPolicy{}, fmt.Errorf("%s: maxAgeMs is too large", aiRetentionSettingKey)
 	}
 	return store.RetentionPolicy{
 		AIRunMaxAge:   time.Duration(settings.MaxAgeMS) * time.Millisecond,

@@ -10,6 +10,9 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
@@ -225,6 +228,15 @@ type SubagentConfig struct {
 	ModelForProfile subagent.ProfileModelFactory
 	AllowedTools    []string
 	Limits          subagent.Config
+
+	Runs            SubagentRunStore
+	ConversationID  string
+	ActiveProfileID func() string
+}
+
+type SubagentRunStore interface {
+	RunInsert(ctx context.Context, row store.RunRow) error
+	RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error
 }
 
 type Interaction struct {
@@ -413,11 +425,37 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 		return nil, err
 	}
 	manager = composed
-	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.subagentObserver)
+	spawn, err := subagent.NewSpawnToolWithSink(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.persistSubagentRun, e.subagentObserver)
 	if err != nil {
 		return nil, err
 	}
 	return spawnOutputTool{InvokableTool: spawn}, nil
+}
+
+func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) {
+	config := e.Subagents
+	if config == nil || config.Runs == nil || config.ConversationID == "" {
+		return
+	}
+	profileID := request.ModelProfileID
+	if profileID == "" && config.ActiveProfileID != nil {
+		profileID = config.ActiveProfileID()
+	}
+	status := store.RunStatusCompleted
+	switch result.Status {
+	case subagent.StatusFailed:
+		status = store.RunStatusFailed
+	case subagent.StatusCanceled:
+		status = store.RunStatusCanceled
+	}
+	now := ids.NowMS()
+	errMessage := result.Error
+	_ = config.Runs.RunInsert(ctx, store.RunRow{
+		ID: ids.New(), ConversationID: config.ConversationID, Status: status, Source: "subagent", ProfileID: profileID,
+		Turns: result.Turns, TokensIn: usage.SaturatingInt64(result.Usage.PromptTokens), TokensOut: usage.SaturatingInt64(result.Usage.CompletionTokens),
+		CacheCreationTokens: usage.SaturatingInt64(result.Usage.CacheCreationTokens), LatencyMS: result.Usage.LatencyMS,
+		Error: errMessage, CreatedAt: now, UpdatedAt: now, FinishedAt: &now,
+	})
 }
 
 func (e *Execution) subagentObserver(ctx context.Context) subagent.Observer {

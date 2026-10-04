@@ -158,3 +158,15 @@ func saturatingAdd(left, right uint64) uint64 {
 	}
 	return left + right
 }
+
+func SaturatingAdd(left, right uint64) uint64 {
+	return saturatingAdd(left, right)
+}
+
+func SaturatingInt64(value uint64) int64 {
+	const maxInt64 = uint64(^uint64(0) >> 1)
+	if value > maxInt64 {
+		return int64(maxInt64)
+	}
+	return int64(value)
+}

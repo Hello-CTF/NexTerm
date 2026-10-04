@@ -310,7 +310,7 @@ DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11)`)
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 9)
+	requireTableCount(t, reopened, migrationsTable, 11)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

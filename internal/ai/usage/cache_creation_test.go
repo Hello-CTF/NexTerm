@@ -2,6 +2,7 @@ package usage
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 )
 
@@ -26,5 +27,26 @@ func TestAccumulateSumsCacheCreationAndLatency(t *testing.T) {
 	total.Accumulate(Usage{PromptTokens: 3, CacheCreationTokens: 7, LatencyMS: 80})
 	if total.CacheCreationTokens != 12 || total.LatencyMS != 200 || total.PromptTokens != 13 {
 		t.Fatalf("unexpected totals: %+v", total)
+	}
+}
+
+func TestSaturatingInt64(t *testing.T) {
+	if got := SaturatingInt64(math.MaxUint64); got != math.MaxInt64 {
+		t.Fatalf("SaturatingInt64(MaxUint64) = %d", got)
+	}
+	if got := SaturatingInt64(math.MaxInt64); got != math.MaxInt64 {
+		t.Fatalf("SaturatingInt64(MaxInt64) = %d", got)
+	}
+	if got := SaturatingInt64(42); got != 42 {
+		t.Fatalf("SaturatingInt64(42) = %d", got)
+	}
+}
+
+func TestSaturatingAdd(t *testing.T) {
+	if got := SaturatingAdd(math.MaxUint64-1, 10); got != math.MaxUint64 {
+		t.Fatalf("SaturatingAdd overflow = %d", got)
+	}
+	if got := SaturatingAdd(1, 2); got != 3 {
+		t.Fatalf("SaturatingAdd(1,2) = %d", got)
 	}
 }

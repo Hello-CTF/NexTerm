@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -68,6 +69,31 @@ func TestRunUsageSummaryGroupsBySceneAndProfile(t *testing.T) {
 	cron := byKey["cron/profile-2"]
 	if cron.Runs != 1 || cron.TokensIn != 200 || cron.CacheCreationTokens != 15 || cron.AverageLatencyMS != 3000 {
 		t.Fatalf("cron summary = %+v", cron)
+	}
+}
+
+func TestRunUsageSummaryRoundsFractionalAverageLatency(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	conversation, err := db.ConvCreate(ctx, "fraction", map[string]any{"scope": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, latency := range []int64{1, 2} {
+		id := fmt.Sprintf("run-frac-%d", i)
+		if err := db.RunInsert(ctx, RunRow{ID: id, ConversationID: conversation.ID, Status: RunStatusRunning, Source: "chat"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.RunFinishUsage(ctx, id, RunStatusCompleted, "", "", 1, 1, 1, 0, latency); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := db.RunUsageSummary(ctx)
+	if err != nil {
+		t.Fatalf("fractional average must not fail the summary: %v", err)
+	}
+	if len(rows) != 1 || rows[0].AverageLatencyMS != 2 {
+		t.Fatalf("rows = %+v, want rounded average 2", rows)
 	}
 }
 

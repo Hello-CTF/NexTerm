@@ -36,7 +36,7 @@ func openSQLiteStore(t *testing.T, path string) *SQLiteStore {
 		_ = db.Close()
 		t.Fatalf("apply 0005_cron.sql: %v", err)
 	}
-	contents, err = migrations.Files.ReadFile("0008_cron_model_profile.sql")
+	contents, err = migrations.Files.ReadFile("0010_cron_model_profile.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func openSQLiteStore(t *testing.T, path string) *SQLiteStore {
 	if err := db.QueryRowContext(context.Background(), `SELECT name FROM pragma_table_info('cron_job') WHERE name = 'model_profile_id'`).Scan(&column); errors.Is(err, sql.ErrNoRows) {
 		if _, err := db.ExecContext(context.Background(), string(contents)); err != nil {
 			_ = db.Close()
-			t.Fatalf("apply 0008_cron_model_profile.sql: %v", err)
+			t.Fatalf("apply 0010_cron_model_profile.sql: %v", err)
 		}
 	} else if err != nil {
 		_ = db.Close()

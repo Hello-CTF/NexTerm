@@ -16,6 +16,9 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 )
 
 type Manager struct {
@@ -266,7 +269,7 @@ func (m *Manager) lookupLocked(handle Handle) (*task, error) {
 
 func (m *Manager) run(current *task, request Request, scope Scope, allowed map[string]struct{}) {
 	defer m.wg.Done()
-	output, err := m.execute(current, request, scope, allowed)
+	output, turns, total, err := m.execute(current, request, scope, allowed)
 	current.recorder.discardIncomplete()
 	status := StatusCompleted
 	if err != nil {
@@ -284,6 +287,8 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 		OutputTruncated:  truncated,
 		History:          history,
 		HistoryTruncated: historyTruncated,
+		Turns:            turns,
+		Usage:            total,
 	}
 	if err != nil {
 		result.Error = err.Error()
@@ -302,17 +307,17 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	m.mu.Unlock()
 }
 
-func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, error) {
+func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, int, usage.Usage, error) {
 	chatModel, err := m.modelFor(current, request)
 	if err != nil {
-		return "", err
+		return "", 0, usage.Usage{}, err
 	}
 	if chatModel == nil {
-		return "", errors.New("subagent model factory returned nil")
+		return "", 0, usage.Usage{}, errors.New("subagent model factory returned nil")
 	}
 	tools, err := m.scopedTools(current.ctx, scope, allowed)
 	if err != nil {
-		return "", err
+		return "", 0, usage.Usage{}, err
 	}
 	instruction := strings.TrimSpace(strings.Join([]string{m.config.Instruction, request.Persona}, "\n"))
 	agent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
@@ -334,11 +339,13 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}}},
 	})
 	if err != nil {
-		return "", err
+		return "", 0, usage.Usage{}, err
 	}
 	runner := adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: agent, EnableStreaming: true})
 	iterator := runner.Run(current.ctx, []*schema.Message{schema.UserMessage(request.Task)})
 	var output string
+	var turns int
+	var total usage.Usage
 	var firstErr error
 	var forcedErr error
 	for {
@@ -360,6 +367,10 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 			continue
 		}
 		variant := event.Output.MessageOutput
+		started := time.Time{}
+		if variant.Role == schema.Assistant {
+			started = time.Now()
+		}
 		message, streamed, err := consumeVariant(current, variant)
 		if err != nil {
 			if forcedErr == nil && current.ctx.Err() == nil {
@@ -377,6 +388,12 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}
 		switch variant.Role {
 		case schema.Assistant:
+			turns++
+			latency := time.Duration(0)
+			if !started.IsZero() {
+				latency = time.Since(started)
+			}
+			accumulateUsage(&total, message, latency)
 			if !streamed && message.Content != "" {
 				current.emit(Event{Kind: EventDelta, Text: message.Content})
 			}
@@ -391,15 +408,38 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}
 	}
 	if forcedErr != nil {
-		return "", forcedErr
+		return "", turns, total, forcedErr
 	}
 	if err := current.ctx.Err(); err != nil {
-		return "", err
+		return "", turns, total, err
 	}
 	if firstErr != nil {
-		return "", firstErr
+		return "", turns, total, firstErr
 	}
-	return output, nil
+	return output, turns, total, nil
+}
+
+func accumulateUsage(total *usage.Usage, message *schema.Message, latency time.Duration) {
+	if meta := message.ResponseMeta; meta != nil && meta.Usage != nil {
+		total.Accumulate(usage.Usage{
+			PromptTokens:     uint64(max(meta.Usage.PromptTokens, 0)),
+			CompletionTokens: uint64(max(meta.Usage.CompletionTokens, 0)),
+			CachedTokens:     uint64(max(meta.Usage.PromptTokenDetails.CachedTokens, 0)),
+		})
+	}
+	if raw, ok := message.Extra[provider.MessageExtraCacheCreation]; ok {
+		switch typed := raw.(type) {
+		case uint64:
+			total.CacheCreationTokens = usage.SaturatingAdd(total.CacheCreationTokens, typed)
+		case float64:
+			total.CacheCreationTokens = usage.SaturatingAdd(total.CacheCreationTokens, uint64(max(typed, 0)))
+		case int:
+			total.CacheCreationTokens = usage.SaturatingAdd(total.CacheCreationTokens, uint64(max(typed, 0)))
+		}
+	}
+	if latency > 0 {
+		total.LatencyMS += latency.Milliseconds()
+	}
 }
 
 func (m *Manager) modelFor(current *task, request Request) (model.BaseChatModel, error) {

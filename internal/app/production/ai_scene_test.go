@@ -133,3 +133,27 @@ func TestAIRetentionEnforcesWithoutTouchingActiveRuns(t *testing.T) {
 		t.Fatal("active run deleted by retention")
 	}
 }
+
+func TestAIRetentionPolicyRejectsInvalidSettings(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	component := newAIRetentionComponent(database, time.Hour)
+	cases := map[string]string{
+		"negative age":   `{"maxAgeMs":-1,"maxCount":10}`,
+		"negative count": `{"maxAgeMs":1000,"maxCount":-1}`,
+		"overflow age":   `{"maxAgeMs":9223372036854775807,"maxCount":10}`,
+		"malformed":      `{`,
+	}
+	for name, raw := range cases {
+		if err := database.SettingSet(ctx, aiRetentionSettingKey, raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := component.policy(ctx); err == nil {
+			t.Fatalf("%s: expected configuration error, got nil", name)
+		}
+	}
+}

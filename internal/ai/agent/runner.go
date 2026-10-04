@@ -485,7 +485,9 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
 	defer cancel()
-	_ = r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns, int64(total.PromptTokens), int64(total.CompletionTokens), int64(total.CacheCreationTokens), total.LatencyMS)
+	_ = r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
+		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
+		usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
 }
 
 func (r *Runner) updateRunStatus(current *job, status string) {

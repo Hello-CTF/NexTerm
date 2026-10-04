@@ -10,6 +10,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 )
@@ -83,15 +84,19 @@ func (r *Runner) finishRecoveredRun(ctx context.Context, runID, status, message 
 	_, _ = r.runs.RunAppendEvent(ctx, runID, "error", func(seq uint64) ([]byte, error) {
 		return json.Marshal(Event{Type: "error", Seq: seq, Message: message, Retryable: retryable})
 	})
-	tokensIn, tokensOut, cacheCreation, latency := r.recoveredUsage(ctx, runID)
-	_ = r.runs.RunFinishUsage(ctx, runID, status, "", message, 0, tokensIn, tokensOut, cacheCreation, latency)
+	total := r.recoveredUsage(ctx, runID)
+	_ = r.runs.RunFinishUsage(ctx, runID, status, "", message, 0,
+		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
+		usage.SaturatingInt64(total.CacheCreationTokens), total.LatencyMS)
 }
 
-func (r *Runner) recoveredUsage(ctx context.Context, runID string) (tokensIn, tokensOut, cacheCreation, latency int64) {
+func (r *Runner) recoveredUsage(ctx context.Context, runID string) usage.Usage {
 	events, err := r.runs.RunEventsAfter(ctx, runID, 0)
 	if err != nil {
-		return 0, 0, 0, 0
+		return usage.Usage{}
 	}
+	var total usage.Usage
+	var latencyTotal uint64
 	for _, row := range events {
 		if row.Type != "usage" {
 			continue
@@ -100,17 +105,16 @@ func (r *Runner) recoveredUsage(ctx context.Context, runID string) (tokensIn, to
 			PromptTokens        uint64 `json:"promptTokens"`
 			CompletionTokens    uint64 `json:"completionTokens"`
 			CacheCreationTokens uint64 `json:"cacheCreationTokens"`
-			LatencyMS           int64  `json:"latencyMs"`
+			LatencyMS           uint64 `json:"latencyMs"`
 		}
 		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
 			continue
 		}
-		tokensIn += int64(min64(payload.PromptTokens, uint64(^uint64(0)>>1)))
-		tokensOut += int64(min64(payload.CompletionTokens, uint64(^uint64(0)>>1)))
-		cacheCreation += int64(min64(payload.CacheCreationTokens, uint64(^uint64(0)>>1)))
-		latency += payload.LatencyMS
+		total.Accumulate(usage.Usage{PromptTokens: payload.PromptTokens, CompletionTokens: payload.CompletionTokens, CacheCreationTokens: payload.CacheCreationTokens})
+		latencyTotal = usage.SaturatingAdd(latencyTotal, payload.LatencyMS)
 	}
-	return tokensIn, tokensOut, cacheCreation, latency
+	total.LatencyMS = usage.SaturatingInt64(latencyTotal)
+	return total
 }
 
 func (r *Runner) watchRestoredRun(row store.RunRow) {
@@ -187,7 +191,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
 	current := &job{
 		id:          jobID,
-		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scopeFromConversation(conversation.ScopeJSON), Source: row.Source},
+		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scopeFromConversation(conversation.ScopeJSON), Source: row.Source, ModelProfileID: row.ProfileID},
 		ctx:         jobContext,
 		cancel:      cancel,
 		deliveryCtx: deliveryContext,
@@ -235,6 +239,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		r.wg.Done()
 		return nil, err
 	}
+	current.eino.addUsage(r.recoveredUsage(context.Background(), jobID))
 	go r.watchHITL(current)
 	return current, nil
 }

@@ -261,7 +261,19 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 		messages = injection.Messages
 	}
-	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: r.config.Subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
+	subagents := r.config.Subagents
+	if subagents != nil {
+		cloned := *subagents
+		if r.runs != nil {
+			cloned.Runs = r.runs
+		}
+		cloned.ConversationID = current.args.ConversationID
+		if cloned.ActiveProfileID == nil {
+			cloned.ActiveProfileID = func() string { return r.profileIDFor(ChatArgs{}) }
+		}
+		subagents = &cloned
+	}
+	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
 		if event.Kind == "" {
 			return
 		}

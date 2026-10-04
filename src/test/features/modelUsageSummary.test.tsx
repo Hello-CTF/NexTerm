@@ -40,6 +40,7 @@ describe("模型用量汇总", () => {
     mocks.usageSummary.mockResolvedValue([
       { source: "chat", profileId: "profile-1", runs: 3, tokensIn: 1200, tokensOut: 300, cacheCreationTokens: 128, averageLatencyMs: 1500 },
       { source: "cron", profileId: "", runs: 1, tokensIn: 800, tokensOut: 0, cacheCreationTokens: 0, averageLatencyMs: 240 },
+      { source: "subagent", profileId: "profile-1", runs: 2, tokensIn: 400, tokensOut: 90, cacheCreationTokens: 12, averageLatencyMs: 620 },
     ]);
     mocks.presets.mockResolvedValue([]);
   });
@@ -55,6 +56,7 @@ describe("模型用量汇总", () => {
     const text = view.container.textContent ?? "";
     expect(text).toContain("交互聊天");
     expect(text).toContain("定时任务");
+    expect(text).toContain("子代理");
     expect(text).toContain("公司 DeepSeek");
     expect(text).toContain("未记录");
     expect(text).toContain("1.2k");
