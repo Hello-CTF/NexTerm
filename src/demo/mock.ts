@@ -1732,6 +1732,15 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       vaultState.unlocked = false;
       return null;
 
+    case "vault_set_autolock": {
+      const minutes = a.minutes;
+      if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
+        throwAppError("bad_param", "参数错误: 自动锁时长需在 0（禁用）至 1440 分钟之间");
+      }
+      vaultState.autoLockMinutes = minutes;
+      return null;
+    }
+
     case "vault_change_password":
       return null;
 
