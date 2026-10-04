@@ -7,6 +7,8 @@ import { THROTTLE_RECOVERED_MS } from "../../features/terminal/terminalThrottle"
 
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (payload: unknown) => void>(),
+  resyncSubs: new Set<() => void>(),
+  xtermProps: null as Record<string, unknown> | null,
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -30,6 +32,17 @@ vi.mock("../../ipc/commands", () => ({
     setVisible: vi.fn().mockResolvedValue(undefined),
   },
 }));
+
+vi.mock("../../ipc/webTransport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/webTransport")>();
+  return {
+    ...actual,
+    onEventsResync: (cb: () => void) => {
+      harness.resyncSubs.add(cb);
+      return () => harness.resyncSubs.delete(cb);
+    },
+  };
+});
 
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
@@ -66,6 +79,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
   const { useEffect } = await import("react");
   return {
     XtermView: (props: Record<string, unknown>) => {
+      harness.xtermProps = props;
       useEffect(() => {
         (props.onHandle as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
@@ -164,7 +178,7 @@ describe("terminal://throttled badge", () => {
     expect(throttled).toBeDefined();
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", inflightBytes: 8192, version: 1 });
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 8192, version: 1 });
     });
     expect(badge("输出积压")).not.toBeNull();
 
@@ -175,7 +189,7 @@ describe("terminal://throttled badge", () => {
     expect(badge("输出已恢复")).toBeNull();
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", inflightBytes: 128, recovered: true, version: 2 });
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 2 });
     });
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).not.toBeNull();
@@ -186,6 +200,34 @@ describe("terminal://throttled badge", () => {
     expect(badge("输出已恢复")).toBeNull();
   });
 
+  it("keeps active while any channel is backpressured and recovers only when all drain", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      await flush();
+    });
+    const throttled = harness.handlers.get("terminal://throttled");
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 4096, version: 1 });
+    });
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "b-1", inflightBytes: 8192, version: 2 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 3 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
+    expect(badge("输出已恢复")).toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "b-1", inflightBytes: 64, recovered: true, version: 4 });
+    });
+    expect(badge("输出积压")).toBeNull();
+    expect(badge("输出已恢复")).not.toBeNull();
+  });
+
   it("re-arms active on a new episode and ignores stale replayed events", async () => {
     vi.useFakeTimers();
     await act(async () => {
@@ -194,20 +236,58 @@ describe("terminal://throttled badge", () => {
     const throttled = harness.handlers.get("terminal://throttled");
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", inflightBytes: 128, recovered: true, version: 2 });
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 8192, version: 1 });
+    });
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 2 });
     });
     expect(badge("输出已恢复")).not.toBeNull();
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", inflightBytes: 16384, version: 3 });
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 16384, version: 3 });
     });
     expect(badge("输出已恢复")).toBeNull();
     expect(badge("输出积压")).not.toBeNull();
 
     act(() => {
-      throttled?.({ tabId: "kernel-1", inflightBytes: 128, recovered: true, version: 2 });
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 2 });
     });
     expect(badge("输出积压")).not.toBeNull();
+    expect(badge("输出已恢复")).toBeNull();
+  });
+
+  it("clears stale backlog on events resync and on channel reattach", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      await flush();
+    });
+    const throttled = harness.handlers.get("terminal://throttled");
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 8192, version: 1 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
+
+    act(() => {
+      for (const cb of [...harness.resyncSubs]) cb();
+    });
+    expect(badge("输出积压")).toBeNull();
+    expect(badge("输出已恢复")).toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-2", inflightBytes: 8192, version: 2 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
+
+    act(() => {
+      (harness.xtermProps?.onAttachInfo as ((info: unknown) => void) | undefined)?.({
+        controller: "me",
+        subscribers: 1,
+        viewers: 1,
+        exited: false,
+      });
+    });
+    expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).toBeNull();
   });
 
@@ -219,7 +299,7 @@ describe("terminal://throttled badge", () => {
     const throttled = harness.handlers.get("terminal://throttled");
 
     act(() => {
-      throttled?.({ tabId: "someone-else", inflightBytes: 8192, version: 1 });
+      throttled?.({ tabId: "someone-else", channelId: "a-1", inflightBytes: 8192, version: 1 });
     });
     expect(badge("输出积压")).toBeNull();
     expect(badge("输出已恢复")).toBeNull();

@@ -490,6 +490,10 @@ func (c *channel) closeLocked() {
 
 func (c *channel) discardPending() bool {
 	c.mu.Lock()
+	drainCallback := c.onDrain
+	if !c.backpressured {
+		drainCallback = nil
+	}
 	c.queue = nil
 	c.head = 0
 	c.queuedBytes = 0
@@ -502,6 +506,9 @@ func (c *channel) discardPending() bool {
 		c.signalLocked()
 	}
 	c.mu.Unlock()
+	if drainCallback != nil {
+		drainCallback(c.id, 0)
+	}
 	return finalized
 }
 

@@ -7,6 +7,7 @@ import { splitAllowedForHeight } from "./workspaceLayout";
 import type { CommandBlock } from "./commandBlocks";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
+import { onEventsResync } from "../../ipc/webTransport";
 import { clientId } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -279,7 +280,7 @@ export function TerminalPane({
       if (typeof p.version === "number" && p.version > 0 && !throttleVersions.current.accept(p.tabId, p.version)) {
         return;
       }
-      setThrottle(throttleStateFrom(p, Date.now()));
+      setThrottle((current) => throttleStateFrom(current, p, Date.now()));
     }).then((off) => {
       if (cancelled) off();
       else unlisten = off;
@@ -290,8 +291,10 @@ export function TerminalPane({
     };
   }, []);
 
+  useEffect(() => onEventsResync(() => setThrottle(null)), []);
+
   useEffect(() => {
-    if (throttle?.phase !== "recovered") return;
+    if (throttle?.recoveredAt == null) return;
     const clearTimer = window.setTimeout(
       () => setThrottleTick((n) => n + 1),
       THROTTLE_RECOVERED_MS + 50,
@@ -760,14 +763,15 @@ export function TerminalPane({
               visible={visible}
               onData={(d) => void sendData(d)}
               onAttachFailed={handleAttachDead}
-              onAttachInfo={(info) =>
+              onAttachInfo={(info) => {
+                setThrottle(null);
                 setControl({
                   controller: info.controller,
                   subscribers: info.subscribers,
                   viewers: info.viewers,
                   exited: info.exited,
-                })
-              }
+                });
+              }}
               onAttach={(id) => {
                 setKernelTabId(id);
                 setAttachDead(false);

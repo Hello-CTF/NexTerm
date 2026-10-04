@@ -476,6 +476,7 @@ func (m *Manager) DetachChannel(channelID string) error {
 	subscriber, attached := tab.subscribers[channelID]
 	delete(m.channelTabs, channelID)
 	delete(tab.subscribers, channelID)
+	throttleRecovered, throttleVersion := m.clearThrottleChannelLocked(tab.ID, channelID)
 	tab.releaseOrphanControllerLocked()
 	event := tab.controlEventLocked()
 	empty := len(tab.subscribers) == 0
@@ -488,6 +489,9 @@ func (m *Manager) DetachChannel(channelID string) error {
 		_ = m.bus.CloseChannel(channelID)
 	}
 	m.emit(context.Background(), TopicTerminalControl, event)
+	if throttleRecovered {
+		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: channelID, Recovered: true, Version: throttleVersion})
+	}
 	if attached && empty && ephemeral {
 		return m.CloseTab(tab.ID)
 	}
@@ -520,11 +524,19 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
 	}
 	tab.mu.Lock()
 	detached := make([]subscriber, 0)
+	throttleRecovered := false
+	var throttleVersion uint64
+	var throttleChannel string
 	for channel, subscriber := range tab.subscribers {
 		if match(subscriber.client) {
 			detached = append(detached, subscriber)
 			delete(tab.subscribers, channel)
 			delete(m.channelTabs, channel)
+			if recovered, version := m.clearThrottleChannelLocked(tab.ID, channel); recovered {
+				throttleRecovered = true
+				throttleVersion = version
+				throttleChannel = channel
+			}
 		}
 	}
 	tab.releaseOrphanControllerLocked()
@@ -538,6 +550,9 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool) error {
 	}
 	if len(detached) > 0 {
 		m.emit(context.Background(), TopicTerminalControl, event)
+	}
+	if throttleRecovered {
+		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: throttleChannel, Recovered: true, Version: throttleVersion})
 	}
 	if len(detached) > 0 && empty && ephemeral {
 		return m.CloseTab(tab.ID)
@@ -801,6 +816,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		delete(m.tabs, id)
 		delete(session.tabs, id)
 		delete(m.throttleVersions, id)
+		delete(m.throttleChannels, id)
 		if len(session.tabs) == 0 {
 			session.idleSince = time.Now()
 		}

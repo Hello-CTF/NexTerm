@@ -67,6 +67,7 @@ export interface FsProgressEvent {
 
 export interface TerminalThrottledEvent {
   tabId: string;
+  channelId?: string;
   inflightBytes: number;
   recovered?: boolean;
   version?: number;

@@ -7,6 +7,8 @@ const server = vi.hoisted(() => ({
   data: null as string | null,
   getCalls: 0,
   putCalls: 0,
+  holdNextGet: null as { revision: number; updatedAt: number; data: unknown } | null,
+  heldRelease: null as (() => void) | null,
   handlers: [] as Array<(payload: { revision?: number } | null) => void>,
 }));
 
@@ -14,6 +16,14 @@ vi.mock("../../ipc/commands", () => ({
   layoutApi: {
     get: vi.fn(async () => {
       server.getCalls += 1;
+      if (server.holdNextGet !== null) {
+        const snapshot = server.holdNextGet;
+        server.holdNextGet = null;
+        await new Promise<void>((resolve) => {
+          server.heldRelease = resolve;
+        });
+        return snapshot;
+      }
       return {
         revision: server.revision,
         updatedAt: 0,
@@ -112,6 +122,8 @@ beforeEach(() => {
   server.data = null;
   server.getCalls = 0;
   server.putCalls = 0;
+  server.holdNextGet = null;
+  server.heldRelease = null;
   server.handlers.length = 0;
 });
 
@@ -155,5 +167,32 @@ describe("两个浏览器标签页的 layout://changed 同步", () => {
     server.data = JSON.stringify(layout(280, "server-moved-on"));
     tabA.layout.onRemoteChange(null);
     await vi.waitFor(() => expect(tabA.store.getState().leftWidth).toBe(280));
+  });
+
+  it("拉取在途期间连续 5 个 revision 事件不丢失，结束后追到最新", async () => {
+    server.data = JSON.stringify(layout(248, "v0"));
+    const tabA = await openTab();
+    const tabB = await openTab();
+    expect(server.getCalls).toBe(2);
+
+    server.holdNextGet = { revision: 1, updatedAt: 0, data: layout(249, "v1") };
+    for (let i = 1; i <= 5; i += 1) {
+      tabA.store.setState({ leftWidth: 248 + i, workspaces: [workspace("ws", `v${i}`)] });
+      await tabA.layout.flushLayout();
+    }
+    expect(server.revision).toBe(5);
+    await vi.waitFor(() => expect(server.getCalls).toBe(3));
+    expect(tabB.store.getState().leftWidth).toBe(248);
+
+    server.heldRelease?.();
+    await vi.waitFor(() => {
+      expect(tabB.store.getState().leftWidth).toBe(253);
+      expect(tabB.store.getState().workspaces[0]?.title).toBe("v5");
+    });
+    expect(server.getCalls).toBe(4);
+
+    for (const handler of [...server.handlers]) handler({ revision: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(server.getCalls).toBe(4);
   });
 });
