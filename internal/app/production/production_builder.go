@@ -111,6 +111,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	connector := config.Connector
 	var hostKeys *productionHostKeyStore
+	var sshConnector *productionConnector
 	if connector == nil {
 		defaultConnector, err := newProductionConnector(database, credentialVault, config.DataDir)
 		if err != nil {
@@ -118,6 +119,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}
 		connector = defaultConnector
 		hostKeys = defaultConnector.hostKeys
+		sshConnector = defaultConnector
 	}
 	supervisorStateDir := config.SupervisorStateDir
 	if supervisorStateDir == "" {
@@ -189,7 +191,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
-		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, dataDir: config.DataDir,
+		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {

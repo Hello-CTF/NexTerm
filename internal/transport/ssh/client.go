@@ -32,23 +32,24 @@ type Client struct {
 }
 
 func Connect(ctx context.Context, cfg Config) (*Client, error) {
-	cfg, err := cfg.validate()
+	validated, err := cfg.validate()
 	if err != nil {
-		return nil, err
+		host, port := configErrorEndpoint(cfg, err)
+		return nil, newConnectError(ErrorKindConfig, "configuration", host, port, "", err)
 	}
-	return connect(ctx, cfg, 0)
+	return connect(ctx, validated, 0)
 }
 
 func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
 	if depth > maxJumpDepth {
-		return nil, fmt.Errorf("SSH jump chain exceeds %d hops", maxJumpDepth)
+		return nil, newConnectError(ErrorKindConfig, "configuration", cfg.Host, cfg.Port, "", fmt.Errorf("SSH jump chain exceeds %d hops", maxJumpDepth))
 	}
 	connectCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
 
 	auth, closers, err := authentication(connectCtx, cfg.Auth)
 	if err != nil {
-		return nil, err
+		return nil, newConnectError(ErrorKindAuth, "authentication setup", cfg.Host, cfg.Port, "", err)
 	}
 	defer func() {
 		for _, closer := range closers {
@@ -76,12 +77,12 @@ func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
 		netConn, err = jumpClient.ssh.DialContext(connectCtx, "tcp", target)
 		if err != nil {
 			jumpClient.Close()
-			return nil, fmt.Errorf("SSH dial %s through jump host: %w", target, err)
+			return nil, classifyJumpDialError(cfg.Host, cfg.Port, endpointString(cfg.Jump.Host, cfg.Jump.Port), err)
 		}
 	} else {
 		netConn, err = dialSSH(connectCtx, cfg, cfg.Host, cfg.Port)
 		if err != nil {
-			return nil, err
+			return nil, classifyDialError(cfg.Host, cfg.Port, err)
 		}
 	}
 	stop := context.AfterFunc(connectCtx, func() { netConn.Close() })
@@ -96,14 +97,11 @@ func connect(ctx context.Context, cfg Config, depth int) (*Client, error) {
 		if jumpClient != nil {
 			jumpClient.Close()
 		}
+		proxy, jump := dialHopLabels(cfg, jumpClient != nil)
 		if connectCtx.Err() != nil {
-			return nil, connectCtx.Err()
+			return nil, newConnectError(contextErrorKind(connectCtx.Err()), "handshake", cfg.Host, cfg.Port, proxy, connectCtx.Err()).withJump(jump)
 		}
-		var keyErr *HostKeyError
-		if errors.As(err, &keyErr) {
-			return nil, keyErr
-		}
-		return nil, fmt.Errorf("SSH handshake with %s: %w", target, err)
+		return nil, classifyHandshakeError(cfg.Host, cfg.Port, proxy, jump, err)
 	}
 	client := &Client{
 		ssh:          gossh.NewClient(conn, channels, requests),

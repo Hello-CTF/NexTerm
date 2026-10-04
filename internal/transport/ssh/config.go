@@ -91,7 +91,7 @@ func (c Config) validate() (Config, error) {
 	if c.Jump != nil {
 		jump, err := c.Jump.validate()
 		if err != nil {
-			return Config{}, fmt.Errorf("SSH jump host: %w", err)
+			return Config{}, wrapJumpConfigError(c.Jump, err)
 		}
 		c.Jump = &jump
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/ssh"
 )
 
 type terminalCommandService struct {
@@ -26,6 +27,8 @@ type terminalCommandService struct {
 	bridge           *terminalBridge
 	grid             *ipc.Dispatcher
 	smokeAttach      bool
+	hostKeys         *productionHostKeyStore
+	sshConnector     *productionConnector
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -124,10 +127,10 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableAvailable bool, durableErr error, bridge *terminalBridge, smokeAttach bool) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableAvailable bool, durableErr error, bridge *terminalBridge, smokeAttach bool, hostKeys *productionHostKeyStore, sshConnector *productionConnector) *terminalCommandService {
 	return &terminalCommandService{
 		database: database, sessions: sessions, docker: dockerService, durableAvailable: durableAvailable, durableErr: durableErr, bridge: bridge,
-		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), smokeAttach: smokeAttach,
+		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), smokeAttach: smokeAttach, hostKeys: hostKeys, sshConnector: sshConnector,
 	}
 }
 
@@ -461,6 +464,9 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			return err
 		}
 	}
+	if err := s.registerSSHDiagnostics(dispatcher); err != nil {
+		return err
+	}
 	return registerFSCommands(dispatcher, s.sessions)
 }
 
@@ -602,6 +608,10 @@ func gridRequestClient(environmentClient, requestClient string) string {
 func terminalIPCError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var connectErr *ssh.ConnectError
+	if errors.As(err, &connectErr) {
+		return sshConnectIPCError(connectErr)
 	}
 	if errors.Is(err, docker.ErrStreamClosed) {
 		return ipc.WrapError(ipc.CodeDisconnected, err.Error(), err)
