@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,11 +17,49 @@ env:
   GOFLAGS: -mod=readonly
 
 jobs:
+  ci-source:
+    name: Resolve a green same-SHA CI run
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-run-id: ${{ steps.resolve.outputs.artifact-run-id }}
+      reused: ${{ steps.resolve.outputs.reused }}
+    steps:
+      - name: Find a completed green CI run with reusable artifacts
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          required=(frontend-dist native-desktop-windows-amd64 native-desktop-windows-arm64 native-desktop-darwin-arm64 native-desktop-darwin-amd64 native-desktop-linux-amd64 native-desktop-linux-arm64 native-server-linux-amd64 native-server-linux-arm64)
+          run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&per_page=50" --jq '[.workflow_runs[] | select(.name == "CI" and .path == ".github/workflows/ci.yml" and .status == "completed" and .conclusion == "success")] | sort_by(.created_at) | last | .id // empty')"
+          if [ -n "$run_id" ]; then
+            artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" --jq '[.artifacts[].name]')"
+            missing=()
+            for name in "${required[@]}"; do
+              jq -e --arg name "$name" 'index($name) != null' <<<"$artifacts" >/dev/null || missing+=("$name")
+            done
+            if [ "${#missing[@]}" -gt 0 ]; then
+              echo "green CI run ${run_id} is missing reusable artifacts: ${missing[*]}"
+              run_id=""
+            fi
+          fi
+          if [ -n "$run_id" ]; then
+            echo "reusing green CI run ${run_id} for ${GITHUB_SHA}"
+            echo "artifact-run-id=${run_id}" >> "$GITHUB_OUTPUT"
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no reusable green CI run for ${GITHUB_SHA}; running the full CI"
+            echo "artifact-run-id=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
   ci:
+    needs: ci-source
+    if: needs.ci-source.outputs.reused != 'true'
     uses: ./.github/workflows/ci.yml
 
   precondition:
-    needs: ci
+    needs: [ci-source, ci]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +68,7 @@ jobs:
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
-    needs: precondition
+    needs: [precondition, ci-source]
     strategy:
       fail-fast: false
       matrix:
@@ -55,35 +94,47 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - uses: actions/setup-go@v5
         with:
           go-version: 1.26.8
           cache: true
-      - name: Install Linux WebView packaging dependencies
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Restore the pinned Wails CLI
+        if: matrix.os == 'windows'
+        id: wails-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
       - name: Install the pinned Wails CLI
+        if: matrix.os == 'windows'
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
+          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
+            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
+          fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          wails3 version
       - name: Install NSIS
         if: matrix.os == 'windows'
         run: choco install nsis --version=3.11 --yes --no-progress
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Verify bindings
-        run: node scripts/build.mjs bindings
-      - name: Build, package and enforce final artifact evidence
-        run: node scripts/build.mjs desktop --release --repro-check --os=${{ matrix.os }} --arch=${{ matrix.arch }} --package --require-evidence
+      - name: Download the verified frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: verified-dist
+          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download the CI production desktop binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-${{ matrix.os }}-${{ matrix.arch }}-desktop
+          path: target/go-build
+          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package the verified production binary and enforce final artifact evidence
+        run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
       - name: Upload candidate and raw/final reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,7 +147,7 @@ jobs:
 
   server:
     name: Linux ${{ matrix.arch }} full package with optional restricted runtime
-    needs: precondition
+    needs: [precondition, ci-source]
     strategy:
       fail-fast: false
       matrix:
@@ -108,23 +159,35 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - uses: actions/setup-go@v5
         with:
           go-version: 1.26.8
           cache: true
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Build static Go server and reproducible frontend
+      - name: Download the verified frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: verified-dist
+          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download the CI production server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-${{ matrix.arch }}-server
+          path: target/go-build
+          run-id: ${{ needs.ci-source.outputs.artifact-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify the reused production server binary against its manifest
         run: |
-          node scripts/build.mjs server --release --repro-check --os=linux --arch=${{ matrix.arch }}
-          node scripts/build.mjs frontend --repro-check
+          chmod +x "target/go-build/nexterm-server-linux-${{ matrix.arch }}"
+          node .github/scripts/verify-reused-binary.mjs "target/go-build/nexterm-server-linux-${{ matrix.arch }}" "server-linux-${{ matrix.arch }}" linux "${{ matrix.arch }}" 0
+      - name: Restore the verified frontend for packaging
+        run: node scripts/build.mjs frontend --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json
+      - name: Re-assert the reused binary evidence
+        run: node scripts/build.mjs report --kind=server --os=linux --arch=${{ matrix.arch }} --file=target/go-build/nexterm-server-linux-${{ matrix.arch }}
       - name: Exercise the packaged server before archiving
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-${{ matrix.arch }} --no-build
       - name: Produce and validate the full archive with final evidence gates
@@ -186,8 +249,9 @@ jobs:
           files=(candidate/*.exe candidate/*.dmg candidate/*.tar.gz candidate/SHA256SUMS candidate/release-evidence.json candidate/real-target-gaps.json)
           [ ${#files[@]} -eq 11 ] || { echo "expected 8 packages plus 3 evidence files, got ${#files[@]}"; exit 1; }
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+            echo "uploading ${#files[@]} assets to the existing draft $GITHUB_REF_NAME"
           else
-            gh release create "$GITHUB_REF_NAME" --draft --title "NexTerm $GITHUB_REF_NAME" --notes-file candidate/release-body.md "${files[@]}"
+            gh release create "$GITHUB_REF_NAME" --draft --title "NexTerm $GITHUB_REF_NAME" --notes-file candidate/release-body.md
           fi
+          printf '%s\0' "${files[@]}" | xargs -0 -P 4 -n 1 gh release upload "$GITHUB_REF_NAME" --clobber
           gh release view "$GITHUB_REF_NAME" --json assets,isDraft -q '{draft:.isDraft,assets:[.assets[].name]}'

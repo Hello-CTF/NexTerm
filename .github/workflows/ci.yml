@@ -38,10 +38,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Restore the pinned Wails CLI
+        id: wails-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: wails3-v3.0.0-alpha.98-${{ runner.os }}-${{ runner.arch }}-go1.26.8
       - name: Install the pinned Wails CLI
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
+          if [ "${{ steps.wails-cache.outputs.cache-hit }}" != "true" ]; then
+            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
+          fi
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          wails3 version
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Install manifest verifier dependency
@@ -82,6 +91,14 @@ jobs:
         run: |
           python3 -m unittest discover -s tests/parity -v
           python3 scripts/verify-manifest-injects.py
+      - name: Upload the verified frontend dist and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: |
+            dist/
+            target/dist-manifest.json
+          if-no-files-found: error
 
   native:
     name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
@@ -125,36 +142,41 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - uses: actions/setup-go@v5
         with:
           go-version: 1.26.8
           cache: true
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Download the verified frontend dist
+        if: matrix.kind == 'desktop'
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: verified-dist
       - name: Install Linux WebView and virtual display
         if: matrix.os == 'linux' && matrix.kind == 'desktop'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev xvfb
-      - name: Build stripped native artifact and inspect format/cgo/size evidence
-        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check --os=${{ matrix.os }} --arch=${{ matrix.arch }} ${{ matrix.kind == 'desktop' && '--smoke' || '' }}
+      - name: Build the smoke desktop binary and run the native smoke
+        if: matrix.kind == 'desktop'
+        run: node scripts/build.mjs desktop --release --smoke --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+      - name: Build the repro-checked production binary and inspect format/cgo/size evidence
+        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--skip-frontend' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
       - name: Run Go two-process server acceptance
         if: matrix.kind == 'server'
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }} --no-build
-      - name: Upload native runtime and artifact evidence
+      - name: Upload native runtime, production binary and artifact evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.kind }}
           path: |
             target/go-build/*.artifact.json
+            target/go-build/*.manifest.json
+            target/go-build/nexterm-${{ matrix.kind }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}
             target/release-assets/desktop-smoke-*.json
             target/e2e-sync/report.json
             target/e2e-sync/*.log
