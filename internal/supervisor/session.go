@@ -40,6 +40,8 @@ type Session struct {
 	deadCh     chan struct{}
 	finishOnce sync.Once
 
+	shellCleanup func()
+
 	versionsMu sync.Mutex
 }
 
@@ -361,6 +363,7 @@ func (s *Session) setRecErr(err error) {
 
 func (s *Session) finish(waitErr error) {
 	s.finishOnce.Do(func() {
+		defer s.cleanupShell()
 		code, signal, exitErr := exitStatus(waitErr)
 		s.mu.Lock()
 		s.dead = true
@@ -407,6 +410,12 @@ func exitStatus(err error) (code *int, signal string, exitErr error) {
 func (s *Session) closePTY() {
 	s.markKilled()
 	_ = s.pty.Close()
+}
+
+func (s *Session) cleanupShell() {
+	if s.shellCleanup != nil {
+		s.shellCleanup()
+	}
 }
 
 func (s *Session) markKilled() {

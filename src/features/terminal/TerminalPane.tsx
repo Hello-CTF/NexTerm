@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { XtermView, type TerminalHandle } from "./XtermView";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { TerminalKeysBar } from "./TerminalKeysBar";
+import { Cwd } from "./Cwd";
+import { Daemon } from "./Daemon";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import type { CommandBlock } from "./commandBlocks";
@@ -57,6 +59,11 @@ const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 
 const AUTO_OPEN_BLOCKS = 3;
 
+type TerminalControlStateEvent = TerminalControlEvent & {
+  cwd?: string;
+  durable?: boolean;
+};
+
 function isStoreTabDead(id: string): boolean {
   return useUi
     .getState()
@@ -97,6 +104,8 @@ export function TerminalPane({
   const [attachDead, setAttachDead] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [epoch, setEpoch] = useState(0);
+  const [cwd, setCwd] = useState<string | null>(null);
+  const [durable, setDurable] = useState(false);
   const me = clientId();
   const resumeRef = useRef(resumeTabId);
   const observerHintAt = useRef(0);
@@ -244,6 +253,10 @@ export function TerminalPane({
 
   const controlVersions = useRef(new EventVersionGate());
   useEffect(() => {
+    setCwd(null);
+    setDurable(false);
+  }, [kernelTabId]);
+  useEffect(() => {
     if (controlSupported && control?.exited) {
       useUi.getState().updateTab(storeTabId, { exited: true });
     }
@@ -251,7 +264,7 @@ export function TerminalPane({
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
-    void listenEvent<TerminalControlEvent>(EVENTS.terminalControl, (p) => {
+    void listenEvent<TerminalControlStateEvent>(EVENTS.terminalControl, (p) => {
       if (p.tabId !== kernelTabIdRef.current) return;
       if (!controlVersions.current.accept(p.tabId, p.version)) return;
       setControl({
@@ -263,6 +276,8 @@ export function TerminalPane({
       if (p.gridRevision > 0) {
         setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
       }
+      if (p.cwd !== undefined) setCwd(p.cwd || null);
+      if (p.durable !== undefined) setDurable(p.durable);
     }).then((off) => {
       if (cancelled) off();
       else unlisten = off;
@@ -727,6 +742,8 @@ export function TerminalPane({
           </span>
         )}
         {throttleNow?.recovered && <span className="nx-badge nx-badge-green">输出已恢复</span>}
+        <Cwd cwd={cwd} />
+        {kernelTabId && <Daemon durable={durable} sessionKind={sessionKind} />}
         <div className="nx-spacer" />
 
         <button
