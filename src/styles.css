@@ -2146,7 +2146,8 @@
     gap: 8px;
   }
 
-  .nx-row-actions .nx-icon-btn-sm {
+  .nx-row-actions .nx-icon-btn-sm,
+  .nx-icon-btn-sm.nx-row-more {
     width: 44px;
     height: 44px;
   }

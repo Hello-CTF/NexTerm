@@ -509,6 +509,7 @@ function AssetRow({
             const r = e.currentTarget.getBoundingClientRect();
             onMore(r.left, r.bottom, true);
           }}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
           ⋯
         </button>
@@ -687,6 +688,7 @@ function GroupNode({
               const r = e.currentTarget.getBoundingClientRect();
               setMenu({ x: r.left, y: r.bottom });
             }}
+            onDoubleClick={(e) => e.stopPropagation()}
           >
             ⋯
           </button>

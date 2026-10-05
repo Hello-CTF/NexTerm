@@ -589,6 +589,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                         const r = ev.currentTarget.getBoundingClientRect();
                         openRowMenuAt(e, r.left, r.bottom);
                       }}
+                      onDoubleClick={(ev) => ev.stopPropagation()}
                     >
                       ⋯
                     </button>
