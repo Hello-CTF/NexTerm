@@ -225,7 +225,7 @@ describe("demo AI 命令契约", () => {
     expect(encrypted).toEqual({ encrypted: true });
     await expect(
       mockInvoke("sync_bundle_read", { args: { path: "demo-bundle.enc.json" } }),
-    ).rejects.toMatchObject({ code: "decrypt" });
+    ).rejects.toMatchObject({ code: "bad_param" });
     await expect(
       mockInvoke("sync_bundle_read", { args: { path: "demo-bundle.enc.json", password: "wrong" } }),
     ).rejects.toMatchObject({ code: "decrypt" });

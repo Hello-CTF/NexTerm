@@ -2374,6 +2374,9 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (!path) throwAppError("bad_param", "资产包路径为空");
       const file = bundleFiles.get(path);
       if (!file) throwAppError("bad_param", `无法读取资产包文件: ${path}`);
+      if (file.encrypted && str(a.password) === "") {
+        throwAppError("bad_param", "资产包已加密，请提供口令");
+      }
       if (file.encrypted && str(a.password) !== file.password) {
         throwAppError("decrypt", "资产包解密失败：口令错误或数据已被篡改");
       }
