@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -439,10 +438,8 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	return spawnOutputTool{InvokableTool: spawn}, nil
 }
 
-func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) {
-	if err := e.writeSubagentRun(ctx, request, result); err != nil {
-		slog.Warn("persist subagent run failed", "error", err)
-	}
+func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) error {
+	return e.writeSubagentRun(ctx, request, result)
 }
 
 func (e *Execution) writeSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) error {

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
@@ -749,5 +750,147 @@ func TestEarlyCancelDuringInitializationClosesSubagents(t *testing.T) {
 	}
 	if row.Status != store.RunStatusCanceled {
 		t.Fatalf("row status = %q, want canceled", row.Status)
+	}
+}
+
+type hangingSubagentStore struct {
+	*store.Store
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (h *hangingSubagentStore) RunInsert(ctx context.Context, row store.RunRow) error {
+	if row.Source == "subagent" {
+		h.once.Do(func() { close(h.entered) })
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return h.Store.RunInsert(ctx, row)
+}
+
+type failingSubagentStore struct {
+	*store.Store
+}
+
+func (f *failingSubagentStore) RunInsert(ctx context.Context, row store.RunRow) error {
+	if row.Source == "subagent" {
+		return errors.New("disk exploded")
+	}
+	return f.Store.RunInsert(ctx, row)
+}
+
+func TestSubagentSlowWriteFailurePropagatesAndStoreClosesClean(t *testing.T) {
+	childMessage := schema.AssistantMessage("child done", nil)
+	childMessage.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 40, CompletionTokens: 8}}
+	child := sequenceModel(childMessage)
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hanging := &hangingSubagentStore{Store: storage, entered: make(chan struct{})}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return parent, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: hanging,
+		Checkpoints: NewStoreCheckpoints(storage),
+		Subagents: &tools.SubagentConfig{
+			Model:           func(context.Context) (model.BaseChatModel, error) { return child, nil },
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) { return child, nil },
+		},
+	})
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	<-hanging.entered
+	events := waitClosedTimeout(t, stream, 20*time.Second)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("terminal counts done=%d error=%d", done, failed)
+	}
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusCanceled || !strings.Contains(row.Error, "context deadline exceeded") {
+		t.Fatalf("parent row = %+v", row)
+	}
+	rows, err := storage.RunList(context.Background(), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range rows {
+		if candidate.Source == "subagent" {
+			t.Fatalf("subagent row persisted despite failed write: %+v", candidate)
+		}
+	}
+	if err := runner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("store closed with a live writer: %v", err)
+	}
+}
+
+func TestSubagentWriteFailureJoinsCancellation(t *testing.T) {
+	usageCall := toolCallMessage(namedToolCall("t-1", "todo_write", `{"todos":[]}`))
+	usageCall.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 60, CompletionTokens: 5}}
+	var calls atomic.Int64
+	blocking := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{usageCall}), nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing := &failingSubagentStore{Store: storage}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return parent, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: failing,
+		Checkpoints: NewStoreCheckpoints(storage),
+		Subagents: &tools.SubagentConfig{
+			Model:           func(context.Context) (model.BaseChatModel, error) { return blocking, nil },
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) { return blocking, nil },
+		},
+	})
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	_ = waitEvent(t, stream, "subagentToolCall")
+	if err := runner.Cancel(response.JobID); err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, stream)
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusCanceled {
+		t.Fatalf("parent row status = %q, want canceled", row.Status)
+	}
+	if !strings.Contains(row.Error, "context canceled") || !strings.Contains(row.Error, "disk exploded") {
+		t.Fatalf("parent row error must retain cancellation and write failure: %q", row.Error)
+	}
+	rows, err := storage.RunList(context.Background(), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range rows {
+		if candidate.Source == "subagent" {
+			t.Fatalf("subagent row persisted despite failed write: %+v", candidate)
+		}
+	}
+	if err := runner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("store closed with a live writer: %v", err)
 	}
 }

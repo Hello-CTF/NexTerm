@@ -63,7 +63,7 @@ type Config struct {
 	NewModel                ModelFactory
 	NewModelForProfile      ProfileModelFactory
 	NewTools                ToolFactory
-	OnFinish                func(context.Context, Request, Result)
+	OnFinish                func(context.Context, Request, Result) error
 	ResolveDefaultProfileID func() string
 	Instruction             string
 	MaxIterations           int

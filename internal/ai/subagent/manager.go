@@ -40,9 +40,10 @@ type task struct {
 	recorder *historyRecorder
 	observer Observer
 
-	result   Result
-	err      error
-	finished bool
+	result    Result
+	err       error
+	finishErr error
+	finished  bool
 }
 
 type childContextKey struct{}
@@ -255,7 +256,7 @@ func (m *Manager) Close() error {
 	if m.closed {
 		m.mu.Unlock()
 		m.wg.Wait()
-		return nil
+		return m.finishErrors()
 	}
 	m.closed = true
 	cancels := make([]context.CancelFunc, 0, m.active)
@@ -269,7 +270,19 @@ func (m *Manager) Close() error {
 		cancel()
 	}
 	m.wg.Wait()
-	return nil
+	return m.finishErrors()
+}
+
+func (m *Manager) finishErrors() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var errs []error
+	for _, current := range m.tasks {
+		if current.finishErr != nil {
+			errs = append(errs, fmt.Errorf("subagent %s: %w", current.handle.ID, current.finishErr))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (m *Manager) lookupLocked(handle Handle) (*task, error) {
@@ -320,11 +333,13 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	}
 	m.mu.Unlock()
 
+	var finishErr error
 	if m.config.OnFinish != nil {
-		m.config.OnFinish(context.WithoutCancel(current.ctx), request, result)
+		finishErr = m.config.OnFinish(context.WithoutCancel(current.ctx), request, result)
 	}
 
 	m.mu.Lock()
+	current.finishErr = finishErr
 	current.cancel()
 	close(current.done)
 	m.mu.Unlock()

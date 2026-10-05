@@ -261,6 +261,12 @@ func (r *Runner) parkForShutdown(current *job) {
 		if current.forceCancel != nil {
 			current.forceCancel()
 		}
+		current.pendingMu.Lock()
+		manager := current.subagents
+		current.pendingMu.Unlock()
+		if manager != nil {
+			_ = manager.Close()
+		}
 		r.mu.Lock()
 		if r.jobs[current.id] == current {
 			delete(r.jobs, current.id)

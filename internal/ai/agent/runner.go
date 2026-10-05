@@ -13,7 +13,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
-	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -447,8 +446,8 @@ func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
 		r.reportSteerLeftover(current)
-		if err := r.closeSubagents(current); err != nil && terminalErr == nil {
-			terminalErr = err
+		if closeErr := r.closeSubagents(current); closeErr != nil {
+			terminalErr = errors.Join(terminalErr, closeErr)
 		}
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
@@ -456,8 +455,6 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		r.cleanup(current)
 	})
 }
-
-var errSubagentCloseTimeout = errors.New("subagent shutdown timed out before persistence")
 
 func (r *Runner) closeSubagents(current *job) error {
 	current.pendingMu.Lock()
@@ -467,21 +464,7 @@ func (r *Runner) closeSubagents(current *job) error {
 	if manager == nil {
 		return nil
 	}
-	return r.closeSubagentManager(manager)
-}
-
-func (r *Runner) closeSubagentManager(manager *subagent.Manager) error {
-	done := make(chan struct{})
-	go func() {
-		_ = manager.Close()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-time.After(5 * time.Second):
-		return errSubagentCloseTimeout
-	}
+	return manager.Close()
 }
 
 func (r *Runner) profileIDFor(args ChatArgs) string {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -288,7 +289,9 @@ func (r *Runner) initializeEino(current *job) error {
 	completed := current.completed
 	current.pendingMu.Unlock()
 	if completed && execution.SubagentManager != nil {
-		r.closeSubagentManager(execution.SubagentManager)
+		if err := execution.SubagentManager.Close(); err != nil {
+			slog.Warn("close subagent manager after completed run failed", "error", err)
+		}
 	}
 	memoryTools, err := r.memoryTools(current.ctx, current.args.PlanMode)
 	if err != nil {

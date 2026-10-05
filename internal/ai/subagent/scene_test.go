@@ -106,7 +106,7 @@ func TestWaitCancellationTimeoutIsHonest(t *testing.T) {
 				return schema.AssistantMessage("OK", nil), nil
 			}}, nil
 		},
-		OnFinish:   func(context.Context, Request, Result) { <-gate },
+		OnFinish:   func(context.Context, Request, Result) error { <-gate; return nil },
 		MaxRunTime: 30 * time.Second,
 	})
 	if err != nil {
@@ -142,7 +142,7 @@ func TestManagerCloseBoundedWithSlowOnFinish(t *testing.T) {
 				return schema.AssistantMessage("OK", nil), nil
 			}}, nil
 		},
-		OnFinish:   func(context.Context, Request, Result) { <-gate },
+		OnFinish:   func(context.Context, Request, Result) error { <-gate; return nil },
 		MaxRunTime: 30 * time.Second,
 	})
 	if err != nil {
