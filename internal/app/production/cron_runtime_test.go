@@ -506,11 +506,12 @@ func TestCronSchedulerFailureEmitsAppErrorEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := &ipcEventRecorder{}
-	services := &ProductionServices{Store: database, Agent: agent.NewRunner(agent.Config{}), Events: recorder}
-	runtime, err := newCronRuntime(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
+	services := &ProductionServices{Store: database, Events: recorder}
+	scheduler, _, err := composeCronScheduler(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime := &cronRuntime{scheduler: scheduler}
 	if err := runtime.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -545,11 +546,12 @@ func TestCronJobFailureDoesNotEmitAppErrorEvent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	recorder := &ipcEventRecorder{}
-	services := &ProductionServices{Store: database, Agent: agent.NewRunner(agent.Config{}), Events: recorder}
-	runtime, err := newCronRuntime(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
+	services := &ProductionServices{Store: database, Events: recorder}
+	scheduler, _, err := composeCronScheduler(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime := &cronRuntime{scheduler: scheduler}
 	if err := runtime.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +570,7 @@ func TestCronJobFailureDoesNotEmitAppErrorEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	finished := waitCronJobFinished(t, runtime.scheduler, "session", job.ID)
-	if finished.LastError == "" || !strings.Contains(finished.LastError, "AI 会话存储未配置") {
+	if finished.LastError == "" || !strings.Contains(finished.LastError, "no runner") {
 		t.Fatalf("job failure not recorded: %+v", finished)
 	}
 	if _, ok := recorder.appError(); ok {
