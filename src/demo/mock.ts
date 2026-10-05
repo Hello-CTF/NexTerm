@@ -1498,6 +1498,15 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
+    case "ai_edit_resend": {
+      const messages = conversationMessages[str(a.conversationId)];
+      const index = messages?.findIndex((m) => m.id === str(a.messageId)) ?? -1;
+      if (!messages || index < 0) throwAppError("not_found", "消息不存在");
+      if (messages[index].role !== "user") throwAppError("invalid_argument", "只能编辑用户消息");
+      messages.splice(index + 1);
+      return null;
+    }
+
     case "ai_confirm": {
       const jobId = str(a.jobId);
       const fn = pendingAi.get(jobId);

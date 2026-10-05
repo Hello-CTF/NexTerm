@@ -557,6 +557,8 @@ export const aiApi = {
     call<void>("ai_set_permission", { config }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
   steer: (jobId: string, message: string) => call<void>("ai_steer", { jobId, message }),
+  editResend: (conversationId: string, messageId: string) =>
+    call<void>("ai_edit_resend", { conversationId, messageId }),
   confirm: (input: AiConfirmationInput, channel?: unknown) =>
     call<void>("ai_confirm", { ...input, ...(channel === undefined ? {} : { channel }) }),
   answer: (input: AiAnswerInput, channel?: unknown) =>

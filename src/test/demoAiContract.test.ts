@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "../demo/mock";
+import { conversationMessages } from "../demo/data";
 import type {
   AiRunDto,
   AiUsageSummaryRow,
@@ -55,6 +56,31 @@ describe("demo AI 命令契约", () => {
   it("ai_run_events 接受 limit 分页参数", async () => {
     const events = await mockInvoke("ai_run_events", { jobId: "job-1", afterSeq: 0, limit: 50 });
     expect(Array.isArray(events)).toBe(true);
+  });
+
+  it("ai_edit_resend 截断目标用户消息之后的记录并拒绝失败路径", async () => {
+    const seed = conversationMessages["conv-1"];
+    const snapshot = seed.map((m) => ({ ...m }));
+    try {
+      const before = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(before.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3", "msg-4"]);
+
+      await expect(
+        mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-2" }),
+      ).rejects.toMatchObject({ code: "invalid_argument" });
+      await expect(
+        mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-missing" }),
+      ).rejects.toMatchObject({ code: "not_found" });
+      await expect(
+        mockInvoke("ai_edit_resend", { conversationId: "conv-missing", messageId: "msg-1" }),
+      ).rejects.toMatchObject({ code: "not_found" });
+
+      expect(await mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-1" })).toBeNull();
+      const after = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(after.map((m) => m.id)).toEqual(["msg-1"]);
+    } finally {
+      seed.splice(0, seed.length, ...snapshot);
+    }
   });
 
   it("ai_usage_summary 返回 usage 行", async () => {
