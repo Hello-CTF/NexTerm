@@ -23,7 +23,7 @@ status: string, attempt: number, seq: number, pending: Array<AiHitlInterruptDto>
 
 export type AiRunDto = { id: string, conversationId: string, status: string, attempt: number, seq: number,
 planMode: boolean, source: string, profileId?: string, answer: string, turns: number, tokensIn: number, tokensOut: number,
-cacheCreationTokens?: number, latencyMs?: number, retries?: number, failures?: number, error?: string,
+cacheCreationTokens: number, latencyMs: number, retries: number, failures: number, error?: string,
 createdAt: number, updatedAt: number, finishedAt?: number, };
 
 export type AiRunEventDto = Record<string, unknown>;
@@ -64,9 +64,9 @@ export type ImageSummaryDto = { id: string, repository: string, tag: string, siz
 export type SkippedNewerEntry = { kind: string, id: string, name: string, 
 localRevision: number, remoteRevision: number, equalRevision: boolean, };
 
-export type ImportReport = { groupsCreated: number, groupsUpdated: number, assetsCreated: number, assetsUpdated: number, credsCreated: number, credsUpdated: number, 
-credsDeleted?: number,
-snippetsCreated?: number, snippetsUpdated?: number,
+export type ImportReport = { groupsCreated: number, groupsUpdated: number, assetsCreated: number, assetsUpdated: number, credsCreated: number, credsUpdated: number,
+credsDeleted: number,
+snippetsCreated: number, snippetsUpdated: number,
 skippedNewer: number,
 skippedNewerDetails?: Array<SkippedNewerEntry>,
 refused: number,

@@ -194,6 +194,10 @@ describe("demo AI 命令契约", () => {
   it("sync_token 系列在 demo 下与桌面端一致", async () => {
     expect(await mockInvoke("sync_token")).toBeNull();
     expect(await mockInvoke("sync_token_rotate", { args: {} })).toBeNull();
+    expect(await mockInvoke("sync_token_rotate", { args: { id: "" } })).toBeNull();
+    await expect(
+      mockInvoke("sync_token_rotate", { args: { id: "t-1" } }),
+    ).rejects.toMatchObject({ code: "unsupported" });
     expect(await mockInvoke("sync_token_list")).toBeNull();
     await expect(mockInvoke("sync_token_issue", { args: { clientId: "box-1" } })).rejects.toMatchObject({
       code: "unsupported",
@@ -221,7 +225,10 @@ describe("demo AI 命令契约", () => {
     expect(encrypted).toEqual({ encrypted: true });
     await expect(
       mockInvoke("sync_bundle_read", { args: { path: "demo-bundle.enc.json" } }),
-    ).rejects.toMatchObject({ code: "bad_param" });
+    ).rejects.toMatchObject({ code: "decrypt" });
+    await expect(
+      mockInvoke("sync_bundle_read", { args: { path: "demo-bundle.enc.json", password: "wrong" } }),
+    ).rejects.toMatchObject({ code: "decrypt" });
     expect(
       await mockInvoke("sync_bundle_read", { args: { path: "demo-bundle.enc.json", password: "pw" } }),
     ).toBe("{\"protocol\":1}");

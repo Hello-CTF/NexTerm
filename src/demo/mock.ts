@@ -274,7 +274,7 @@ const demoSnippets: DemoSnippet[] = [
   { id: "sn3", groupId: null, name: "nginx 重载", body: "sudo nginx -t && sudo nginx -s reload", sort: 3, createdAt: Date.now() - 7 * 86_400_000, updatedAt: Date.now() - 3 * 86_400_000 },
 ];
 
-const bundleFiles = new Map<string, { content: string; encrypted: boolean }>();
+const bundleFiles = new Map<string, { content: string; encrypted: boolean; password: string }>();
 
 function params(raw: unknown): Record<string, unknown> {
   const o = (raw ?? {}) as Record<string, unknown>;
@@ -2374,8 +2374,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (!path) throwAppError("bad_param", "资产包路径为空");
       const file = bundleFiles.get(path);
       if (!file) throwAppError("bad_param", `无法读取资产包文件: ${path}`);
-      if (file.encrypted && str(a.password) === "") {
-        throwAppError("bad_param", "资产包已加密，需要密码");
+      if (file.encrypted && str(a.password) !== file.password) {
+        throwAppError("decrypt", "资产包解密失败：口令错误或数据已被篡改");
       }
       return file.content;
     }
@@ -2385,16 +2385,19 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (!path) throwAppError("bad_param", "资产包路径为空");
       const content = str(a.content);
       if (content.length > 8 << 20) throwAppError("bad_param", "资产包内容超过 8 MiB，拒绝写入");
-      const encrypted = str(a.password) !== "";
-      bundleFiles.set(path, { content, encrypted });
-      return encrypted
+      const password = str(a.password);
+      bundleFiles.set(path, { content, encrypted: password !== "", password });
+      return password !== ""
         ? { encrypted: true }
         : { encrypted: false, warning: "资产包以明文导出，获得文件的人都能直接读取其中的凭据，请妥善保管" };
     }
 
     case "sync_token":
-    case "sync_token_rotate":
     case "sync_token_list":
+      return null;
+
+    case "sync_token_rotate":
+      if (str(a.id) !== "") throwAppError("unsupported", "该同步操作只在服务端可用");
       return null;
 
     case "sync_token_issue":
