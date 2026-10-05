@@ -1,5 +1,7 @@
 package sync
 
+import "github.com/ProbiusOfficial/NexTerm/internal/store"
+
 const ProtocolVersion = 1
 
 const (
@@ -42,20 +44,33 @@ type AssetPayload struct {
 }
 
 type CredentialPayload struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	Secret string `json:"secret"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Secret    string `json:"secret"`
+	UpdatedAt int64  `json:"updatedAt,omitempty"`
+}
+
+type SnippetPayload struct {
+	ID        string  `json:"id"`
+	GroupID   *string `json:"groupId"`
+	Name      string  `json:"name"`
+	Body      string  `json:"body"`
+	Sort      int64   `json:"sort"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
 }
 
 type Bundle struct {
-	Protocol    int                 `json:"protocol"`
-	Origin      string              `json:"origin"`
-	ExportedAt  int64               `json:"exportedAt"`
-	Groups      []GroupPayload      `json:"groups"`
-	Assets      []AssetPayload      `json:"assets"`
-	Credentials []CredentialPayload `json:"creds"`
-	Warnings    []string            `json:"warnings,omitempty"`
+	Protocol       int                         `json:"protocol"`
+	Origin         string                      `json:"origin"`
+	ExportedAt     int64                       `json:"exportedAt"`
+	Groups         []GroupPayload              `json:"groups"`
+	Assets         []AssetPayload              `json:"assets"`
+	Credentials    []CredentialPayload         `json:"creds"`
+	CredTombstones []store.CredentialTombstone `json:"credTombstones,omitempty"`
+	Snippets       []SnippetPayload            `json:"snippets,omitempty"`
+	Warnings       []string                    `json:"warnings,omitempty"`
 }
 
 type ExportRequest struct {
@@ -68,16 +83,29 @@ type ImportRequest struct {
 	Force  bool   `json:"force"`
 }
 
+type SkippedNewerEntry struct {
+	Kind           string `json:"kind"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	LocalRevision  int64  `json:"localRevision"`
+	RemoteRevision int64  `json:"remoteRevision"`
+	EqualRevision  bool   `json:"equalRevision"`
+}
+
 type ImportReport struct {
-	GroupsCreated int      `json:"groupsCreated"`
-	GroupsUpdated int      `json:"groupsUpdated"`
-	AssetsCreated int      `json:"assetsCreated"`
-	AssetsUpdated int      `json:"assetsUpdated"`
-	CredsCreated  int      `json:"credsCreated"`
-	CredsUpdated  int      `json:"credsUpdated"`
-	SkippedNewer  int      `json:"skippedNewer"`
-	Refused       int      `json:"refused"`
-	Warnings      []string `json:"warnings"`
+	GroupsCreated       int                 `json:"groupsCreated"`
+	GroupsUpdated       int                 `json:"groupsUpdated"`
+	AssetsCreated       int                 `json:"assetsCreated"`
+	AssetsUpdated       int                 `json:"assetsUpdated"`
+	CredsCreated        int                 `json:"credsCreated"`
+	CredsUpdated        int                 `json:"credsUpdated"`
+	CredsDeleted        int                 `json:"credsDeleted"`
+	SnippetsCreated     int                 `json:"snippetsCreated"`
+	SnippetsUpdated     int                 `json:"snippetsUpdated"`
+	SkippedNewer        int                 `json:"skippedNewer"`
+	SkippedNewerDetails []SkippedNewerEntry `json:"skippedNewerDetails,omitempty"`
+	Refused             int                 `json:"refused"`
+	Warnings            []string            `json:"warnings"`
 }
 
 type DigestEntry struct {

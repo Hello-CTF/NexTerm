@@ -74,6 +74,23 @@ func (s *Service) Export(ctx context.Context, request ExportRequest) (Bundle, er
 			bundle.Credentials = append(bundle.Credentials, credential)
 		}
 	}
+	snippets, err := s.store.SnippetList(ctx)
+	if err != nil {
+		return Bundle{}, err
+	}
+	for _, snippet := range snippets {
+		if snippet.GroupID != nil {
+			if err := s.collectAncestors(ctx, snippet.GroupID, &bundle, includedGroups); err != nil {
+				return Bundle{}, err
+			}
+		}
+		bundle.Snippets = append(bundle.Snippets, payloadFromSnippet(snippet))
+	}
+	tombstones, err := s.store.CredentialTombstoneList(ctx)
+	if err != nil {
+		return Bundle{}, err
+	}
+	bundle.CredTombstones = tombstones
 	return bundle, nil
 }
 
@@ -163,5 +180,5 @@ func (s *Service) exportCredential(ctx context.Context, id string, warnings *[]s
 			}
 		}
 	}
-	return CredentialPayload{ID: row.ID, Name: row.Name, Kind: row.Kind, Secret: secret}, nil
+	return CredentialPayload{ID: row.ID, Name: row.Name, Kind: row.Kind, Secret: secret, UpdatedAt: row.UpdatedAt}, nil
 }

@@ -137,6 +137,9 @@ func TestSyntheticGoFixtureRoundTripAndProtocolGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range exported.Credentials {
+		exported.Credentials[i].UpdatedAt = 0
+	}
 	if !reflect.DeepEqual(fixture.Assets[0], exported.Assets[0]) || !reflect.DeepEqual(fixture.Credentials, exported.Credentials) {
 		t.Fatalf("Go fixture did not survive import/export\nwant assets=%+v creds=%+v\ngot assets=%+v creds=%+v",
 			fixture.Assets, fixture.Credentials, exported.Assets, exported.Credentials)
@@ -279,6 +282,8 @@ func TestImportLWWForceTombstoneAndResurrection(t *testing.T) {
 		t.Fatalf("live row did not resurrect tombstone: %+v", local)
 	}
 
+	setTestOrigin(t, source, "origin-b")
+	setTestOrigin(t, target, "origin-a")
 	putTestAsset(t, target, store.AssetRow{ID: assetID, Name: "equal-local", CreatedAt: 50, UpdatedAt: 400})
 	sourceRow.Name = "equal-incoming"
 	putTestAsset(t, source, sourceRow)
@@ -287,7 +292,7 @@ func TestImportLWWForceTombstoneAndResurrection(t *testing.T) {
 	}
 	local, _ = target.db.AssetGet(ctx, assetID)
 	if local.Name != "equal-incoming" {
-		t.Fatal("equal timestamp should accept incoming row")
+		t.Fatal("equal revision with greater remote origin should accept incoming row")
 	}
 }
 

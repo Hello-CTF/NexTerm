@@ -63,6 +63,24 @@ func (s *Store) CredentialList(ctx context.Context) ([]CredentialRow, error) {
 }
 
 func (s *Store) CredentialDelete(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", id); err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credential_tombstone(id, deleted_at) VALUES(?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at=excluded.deleted_at`, id, ids.NowMS()); err != nil {
+		return dbError(err)
+	}
+	return tx.Commit()
+}
+
+// CredentialDeleteRow 只删除凭据行本身，不记录删除墓碑；同步协议应用远端墓碑时使用，
+// 墓碑修订由调用方经 CredentialTombstonePut 按远端修订单调写入。
+func (s *Store) CredentialDeleteRow(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", id)
 	if err != nil {
 		return dbError(err)

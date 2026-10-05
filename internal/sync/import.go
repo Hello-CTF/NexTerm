@@ -21,11 +21,18 @@ func (s *Service) Import(ctx context.Context, request ImportRequest) (ImportRepo
 	if len(bundle.Credentials) > 0 && (s.vault == nil || !s.vault.Status().Unlocked) {
 		return ImportReport{}, ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}
+	localOrigin, err := s.Origin(ctx)
+	if err != nil {
+		return ImportReport{}, err
+	}
 	report := ImportReport{Warnings: append([]string{}, bundle.Warnings...)}
-	assetDecisions := s.planAssets(ctx, bundle.Assets, request.Force)
+	assetDecisions := s.planAssets(ctx, bundle.Assets, request.Force, bundle.Origin, localOrigin)
+	blocked := blockedCredentials(bundle.Assets, assetDecisions)
 	s.importGroups(ctx, bundle.Groups, &report)
-	s.importCredentials(ctx, bundle.Credentials, bundle.Assets, assetDecisions, &report)
+	s.importCredentialTombstones(ctx, bundle.CredTombstones, blocked, request.Force, &report)
+	s.importCredentials(ctx, bundle.Credentials, blocked, request.Force, &report)
 	s.importAssets(ctx, bundle.Assets, assetDecisions, &report)
+	s.importSnippets(ctx, bundle.Snippets, request.Force, bundle.Origin, localOrigin, &report)
 	return report, nil
 }
 
@@ -125,8 +132,7 @@ func orderGroups(groups []GroupPayload) ([]GroupPayload, []string) {
 	return ordered, warnings
 }
 
-func (s *Service) importCredentials(ctx context.Context, credentials []CredentialPayload, assets []AssetPayload, decisions []assetDecision, report *ImportReport) {
-	blocked := blockedCredentials(assets, decisions)
+func (s *Service) importCredentials(ctx context.Context, credentials []CredentialPayload, blocked map[string]bool, force bool, report *ImportReport) {
 	for _, credential := range credentials {
 		if strings.TrimSpace(credential.ID) == "" {
 			report.Refused++
@@ -136,6 +142,25 @@ func (s *Service) importCredentials(ctx context.Context, credentials []Credentia
 		if blocked[credential.ID] {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变", credential.ID))
 			continue
+		}
+		if !force {
+			tombstone, err := s.store.CredentialTombstoneGet(ctx, credential.ID)
+			if err != nil && !isNotFound(err) {
+				report.Refused++
+				report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查凭据 %s 的删除墓碑: %v", credential.ID, err))
+				continue
+			}
+			if err == nil && tombstone.DeletedAt >= credential.UpdatedAt {
+				report.SkippedNewer++
+				report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+					Kind: "credential", ID: credential.ID, Name: credential.Name,
+					LocalRevision: tombstone.DeletedAt, RemoteRevision: credential.UpdatedAt,
+					EqualRevision: tombstone.DeletedAt == credential.UpdatedAt,
+				})
+				report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 已按修订 %d 的删除墓碑移除，忽略修订 %d 的普通凭据项；如需覆盖请使用强制同步",
+					credential.ID, tombstone.DeletedAt, credential.UpdatedAt))
+				continue
+			}
 		}
 		_, err := s.store.CredentialGetRow(ctx, credential.ID)
 		exists := err == nil
@@ -158,12 +183,74 @@ func (s *Service) importCredentials(ctx context.Context, credentials []Credentia
 			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 导入失败: %v", credential.ID, err))
 			continue
 		}
+		if err := s.store.CredentialTombstoneClear(ctx, credential.ID); err != nil {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 的删除墓碑清除失败: %v", credential.ID, err))
+		}
 		if exists {
 			report.CredsUpdated++
 		} else {
 			report.CredsCreated++
 		}
 		warnMissingReferencedKey(credential, report)
+	}
+}
+
+func (s *Service) importCredentialTombstones(ctx context.Context, tombstones []store.CredentialTombstone, blocked map[string]bool, force bool, report *ImportReport) {
+	for _, tombstone := range tombstones {
+		if strings.TrimSpace(tombstone.ID) == "" {
+			report.Refused++
+			report.Warnings = append(report.Warnings, "拒绝了 ID 为空的凭据墓碑")
+			continue
+		}
+		if blocked[tombstone.ID] {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变", tombstone.ID))
+			continue
+		}
+		local, err := s.store.CredentialTombstoneGet(ctx, tombstone.ID)
+		hasLocal := err == nil
+		if err != nil && !isNotFound(err) {
+			report.Refused++
+			report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查凭据 %s 的删除墓碑: %v", tombstone.ID, err))
+			continue
+		}
+		if hasLocal && !force && local.DeletedAt > tombstone.DeletedAt {
+			report.SkippedNewer++
+			report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+				Kind: "credential", ID: tombstone.ID,
+				LocalRevision: local.DeletedAt, RemoteRevision: tombstone.DeletedAt,
+			})
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 的本机删除墓碑较新（%d > %d），已忽略较旧的远端墓碑", tombstone.ID, local.DeletedAt, tombstone.DeletedAt))
+			continue
+		}
+		row, err := s.store.CredentialGetRow(ctx, tombstone.ID)
+		exists := err == nil
+		if err != nil && !isNotFound(err) {
+			report.Refused++
+			report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查凭据 %s: %v", tombstone.ID, err))
+			continue
+		}
+		if exists && !force && row.UpdatedAt > tombstone.DeletedAt {
+			report.SkippedNewer++
+			report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+				Kind: "credential", ID: tombstone.ID, Name: row.Name,
+				LocalRevision: row.UpdatedAt, RemoteRevision: tombstone.DeletedAt,
+			})
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 的本机版本较新，已忽略远端删除墓碑；如需覆盖请使用强制同步", tombstone.ID))
+			continue
+		}
+		if exists {
+			if err := s.store.CredentialDeleteRow(ctx, tombstone.ID); err != nil {
+				report.Refused++
+				report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 按同步墓碑删除失败: %v", tombstone.ID, err))
+				continue
+			}
+			report.CredsDeleted++
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 已按远端同步墓碑删除（删除时间 %d）", tombstone.ID, tombstone.DeletedAt))
+		}
+		if err := s.store.CredentialTombstonePut(ctx, tombstone.ID, tombstone.DeletedAt); err != nil {
+			report.Refused++
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 的删除墓碑记录失败: %v", tombstone.ID, err))
+		}
 	}
 }
 
@@ -183,14 +270,19 @@ func warnMissingReferencedKey(credential CredentialPayload, report *ImportReport
 func (s *Service) importAssets(ctx context.Context, assets []AssetPayload, decisions []assetDecision, report *ImportReport) {
 	for i, asset := range assets {
 		decision := decisions[i]
+		if decision.warning != "" {
+			report.Warnings = append(report.Warnings, decision.warning)
+		}
 		if decision.acceptance != assetAccepted {
 			if decision.acceptance == assetSkippedNewer {
 				report.SkippedNewer++
+				report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+					Kind: "asset", ID: asset.ID, Name: asset.Name,
+					LocalRevision: decision.localRevision, RemoteRevision: decision.remoteRevision,
+					EqualRevision: decision.equalRevision,
+				})
 			} else {
 				report.Refused++
-			}
-			if decision.warning != "" {
-				report.Warnings = append(report.Warnings, decision.warning)
 			}
 			continue
 		}
