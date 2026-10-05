@@ -61,7 +61,7 @@ describe("ModelManager masked key boundary", () => {
     const overview: ModelProfilesView = { profiles: [savedProfile()], activeId: "p1" };
     mocks.overview.mockResolvedValue(overview);
     mocks.presets.mockResolvedValue([]);
-    mocks.refresh.mockResolvedValue(["deepseek-chat", "deepseek-reasoner"]);
+    mocks.refresh.mockResolvedValue({ models: ["deepseek-chat", "deepseek-reasoner"], malformed: 0 });
     mocks.ask.mockResolvedValue(true);
     useUi.setState({ pushToast: mocks.toast });
     view = mount(createElement(ModelManager));
