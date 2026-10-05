@@ -549,3 +549,83 @@ func TestEditResendBlocksConcurrentStartUntilTruncate(t *testing.T) {
 		t.Fatalf("second run = %+v err=%v", secondRow, err)
 	}
 }
+
+func TestEditResendAffectedFollowsMessageOrderWithinSameMillisecond(t *testing.T) {
+	storage := restartStore(t)
+	ctx := context.Background()
+	conversation, err := storage.ConvCreate(ctx, "same-ms", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRun := "Z0000000000000000000000001"
+	laterRun := "A0000000000000000000000001"
+	if err := storage.MsgInsert(ctx, conversation.ID, "user", map[string]any{"role": "user", "content": "target", "jobId": targetRun}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.MsgInsert(ctx, conversation.ID, "user", map[string]any{"role": "user", "content": "later", "jobId": laterRun}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	created := ids.NowMS()
+	finished := created
+	for _, id := range []string{targetRun, laterRun} {
+		if err := storage.RunInsert(ctx, store.RunRow{ID: id, ConversationID: conversation.ID, Status: store.RunStatusCompleted, CreatedAt: created, UpdatedAt: created, FinishedAt: &finished}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("ok", nil)), tools.Dependencies{}, nil)
+	rows, err := storage.MsgList(ctx, conversation.ID)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows = %d err=%v", len(rows), err)
+	}
+	if err := runner.EditResend(ctx, conversation.ID, rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	laterRow, err := storage.RunGet(ctx, laterRun)
+	if err != nil || laterRow.Status != RunStatusSuperseded {
+		t.Fatalf("later run with smaller ID must be superseded: %+v err=%v", laterRow, err)
+	}
+	targetRow, err := storage.RunGet(ctx, targetRun)
+	if err != nil || targetRow.Status != RunStatusSuperseded {
+		t.Fatalf("target run = %+v err=%v", targetRow, err)
+	}
+	rows, err = storage.MsgList(ctx, conversation.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows after edit = %d err=%v", len(rows), err)
+	}
+}
+
+func TestEditResendSupersedesAllLaterRunsWhenStartWinsLock(t *testing.T) {
+	storage := restartStore(t)
+	runner := durableRunner(t, storage, sequenceModel(schema.AssistantMessage("ok", nil)), tools.Dependencies{}, nil)
+	responses := make([]StartResponse, 0, 3)
+	for _, message := range []string{"one", "two", "three"} {
+		stream := &SliceStream{}
+		var response StartResponse
+		if len(responses) == 0 {
+			response = startTestJob(t, runner, stream, message)
+		} else {
+			var err error
+			response, err = runner.Start(context.Background(), ChatArgs{ConversationID: responses[0].ConversationID, Message: message}, StaticStream(stream))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		waitClosed(t, stream)
+		responses = append(responses, response)
+	}
+	conversationID := responses[0].ConversationID
+	target := userMessageIDWithJob(t, storage, conversationID, responses[0].JobID)
+	if err := runner.EditResend(context.Background(), conversationID, target); err != nil {
+		t.Fatal(err)
+	}
+	for index, response := range responses {
+		row, err := storage.RunGet(context.Background(), response.JobID)
+		if err != nil || row.Status != RunStatusSuperseded {
+			t.Fatalf("run %d = %+v err=%v", index, row, err)
+		}
+	}
+	rows, err := storage.MsgList(context.Background(), conversationID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows after edit = %d err=%v", len(rows), err)
+	}
+}

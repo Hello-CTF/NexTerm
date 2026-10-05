@@ -36,11 +36,11 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 	}
 	unlock := r.lockConversation(conversationID)
 	defer unlock()
-	createdAt, ownerRun, err := r.editTarget(ctx, conversationID, messageID)
+	rows, targetIndex, err := r.editTarget(ctx, conversationID, messageID)
 	if err != nil {
 		return err
 	}
-	affected, err := r.editAffectedRuns(ctx, conversationID, ownerRun, createdAt)
+	affected, err := r.editAffectedRuns(ctx, conversationID, rows, targetIndex)
 	if err != nil {
 		return err
 	}
@@ -64,32 +64,32 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 
 var editResendTestHook func()
 
-func (r *Runner) editTarget(ctx context.Context, conversationID, messageID string) (int64, string, error) {
+func (r *Runner) editTarget(ctx context.Context, conversationID, messageID string) ([]store.MessageRow, int, error) {
 	rows, err := r.store.MsgList(ctx, conversationID)
 	if err != nil {
-		return 0, "", err
+		return nil, 0, err
 	}
-	for _, row := range rows {
+	for index, row := range rows {
 		if row.ID != messageID {
 			continue
 		}
 		var persisted historyRow
 		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
-			return 0, "", errors.New("消息内容损坏")
+			return nil, 0, errors.New("消息内容损坏")
 		}
 		role := persisted.Role
 		if role == "" {
 			role = row.Role
 		}
 		if role != "user" {
-			return 0, "", errors.New("只能编辑用户消息")
+			return nil, 0, errors.New("只能编辑用户消息")
 		}
-		return row.CreatedAt, persisted.JobID, nil
+		return rows, index, nil
 	}
-	return 0, "", errors.New("消息不存在")
+	return nil, 0, errors.New("消息不存在")
 }
 
-func (r *Runner) editAffectedRuns(ctx context.Context, conversationID, ownerRun string, messageCreatedAt int64) ([]store.RunRow, error) {
+func (r *Runner) editAffectedRuns(ctx context.Context, conversationID string, rows []store.MessageRow, targetIndex int) ([]store.RunRow, error) {
 	if r.runs == nil {
 		return nil, nil
 	}
@@ -97,29 +97,30 @@ func (r *Runner) editAffectedRuns(ctx context.Context, conversationID, ownerRun 
 	if err != nil {
 		return nil, err
 	}
-	var owner *store.RunRow
-	if ownerRun != "" {
-		for index := range runs {
-			if runs[index].ID == ownerRun {
-				owner = &runs[index]
-				break
-			}
+	anchor := make(map[string]int, len(runs))
+	for index, row := range rows {
+		var persisted historyRow
+		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil || persisted.JobID == "" {
+			continue
+		}
+		if _, ok := anchor[persisted.JobID]; !ok {
+			anchor[persisted.JobID] = index
 		}
 	}
 	affected := make([]store.RunRow, 0, len(runs))
 	for _, run := range runs {
-		if runSupersededByEdit(run, owner, messageCreatedAt) {
+		if index, ok := anchor[run.ID]; ok {
+			if index >= targetIndex {
+				affected = append(affected, run)
+			}
+			continue
+		}
+		// 无锚点消息的历史 run 按创建时间兜底
+		if run.CreatedAt > rows[targetIndex].CreatedAt {
 			affected = append(affected, run)
 		}
 	}
 	return affected, nil
-}
-
-func runSupersededByEdit(run store.RunRow, owner *store.RunRow, messageCreatedAt int64) bool {
-	if owner != nil {
-		return run.CreatedAt > owner.CreatedAt || (run.CreatedAt == owner.CreatedAt && run.ID >= owner.ID)
-	}
-	return run.CreatedAt > messageCreatedAt
 }
 
 func (r *Runner) cancelAndWaitJobs(ctx context.Context, conversationID string, affected []store.RunRow) error {
