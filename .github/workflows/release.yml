@@ -250,19 +250,7 @@ jobs:
           cat .github/release-template.md > candidate/release-body.md
           printf '\n### Verification evidence\n\nSee `release-evidence.json`, `SHA256SUMS` and `real-target-gaps.json`. Evidence gaps are not passed acceptance. LazyCat and deployed Pages packaging/real-target acceptance are delivered by M47.\n' >> candidate/release-body.md
       - name: Create or update the draft release
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(candidate/*.exe candidate/*.dmg candidate/*.tar.gz candidate/SHA256SUMS candidate/release-evidence.json candidate/real-target-gaps.json)
-          [ ${#files[@]} -eq 11 ] || { echo "expected 8 packages plus 3 evidence files, got ${#files[@]}"; exit 1; }
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "uploading ${#files[@]} assets to the existing draft $GITHUB_REF_NAME"
-          else
-            gh release create "$GITHUB_REF_NAME" --draft --title "NexTerm $GITHUB_REF_NAME" --notes-file candidate/release-body.md
-          fi
-          printf '%s\0' "${files[@]}" | xargs -0 -P 8 -n 1 gh release upload "$GITHUB_REF_NAME" --clobber
-          gh release view "$GITHUB_REF_NAME" --json assets,isDraft -q '{draft:.isDraft,assets:[.assets[].name]}'
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node .github/scripts/release-upload.mjs candidate --notes-file candidate/release-body.md

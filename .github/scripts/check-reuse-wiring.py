@@ -20,6 +20,8 @@ CI = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 RELEASE = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
 RESOLVER_TEXT = (ROOT / ".github/scripts/resolve-ci-reuse.sh").read_text()
 PACK_TEXT = (ROOT / "scripts/pack-linux-server.sh").read_text()
+UPLOAD_TEXT = (ROOT / ".github/scripts/release-upload.mjs").read_text()
+UPLOAD_TEST = ROOT / ".github/scripts/release-upload.test.mjs"
 HOST_GOOS = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
 HOST_GOARCH = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64"}.get(platform.machine())
 
@@ -287,9 +289,37 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
           f"if={e2e_exercise_step.get('if')!r}")
 
     publish_step = find_step(release["jobs"]["publish"], "Create or update the draft release")
-    check("release upload runs with parallelism 8",
-          "xargs -0 -P 8 -n 1 gh release upload" in str(publish_step.get("run", "")),
-          "missing the -P 8 upload parallelism")
+    publish_run = str(publish_step.get("run", ""))
+    check("release publish uploads through release-upload.mjs",
+          "node .github/scripts/release-upload.mjs candidate" in publish_run
+          and "gh release upload" not in publish_run and "xargs" not in publish_run,
+          f"run={publish_run!r}")
+    publish_env = publish_step.get("env") or {}
+    check("release publish passes the token and repository to the uploader",
+          "GH_TOKEN" in publish_env and "GITHUB_REPOSITORY" in publish_env,
+          f"env={sorted(publish_env)}")
+    evidence_text = (ROOT / ".github/scripts/release-evidence.mjs").read_text()
+    asset_templates = [
+        "NexTerm_${version}_x64-setup.exe",
+        "NexTerm_${version}_arm64-setup.exe",
+        "NexTerm_${version}_aarch64.dmg",
+        "NexTerm_${version}_x86_64.dmg",
+        "NexTerm-desktop_${version}_linux_${arch}.tar.gz",
+        "NexTerm-server_${version}_linux_${arch}.tar.gz",
+    ]
+    drifted = [template for template in asset_templates
+               if template not in evidence_text or template not in UPLOAD_TEXT]
+    check("release-upload expects the same 8 packages as the evidence gate", not drifted,
+          f"drifted={drifted}")
+    missing_evidence = [name for name in ("SHA256SUMS", "release-evidence.json", "real-target-gaps.json")
+                        if name not in UPLOAD_TEXT]
+    check("release-upload expects the 3 evidence files", not missing_evidence,
+          f"missing={missing_evidence}")
+    for env_name in ("GITHUB_REF_NAME", "GITHUB_REPOSITORY", "GH_TOKEN", "GITHUB_API_URL"):
+        check(f"release-upload.mjs reads {env_name}", env_name in UPLOAD_TEXT)
+    check("release-upload resolves releases through the list API, not the draft-blind tags endpoint",
+          "releases/tags/" not in UPLOAD_TEXT and "releases?per_page=" in UPLOAD_TEXT,
+          "drafts 404 on the tags endpoint; the uploader must discover them via the paginated releases list")
 
     desktop_steps = release["jobs"]["desktop"]["steps"]
     cache_index = next((index for index, step in enumerate(desktop_steps) if step.get("id") == "wails-cache"), None)
@@ -544,6 +574,23 @@ def run_evidence_checks(release):
     return results
 
 
+def run_upload_checks():
+    results = []
+
+    def check(name, ok, detail=""):
+        results.append((name, ok, detail))
+
+    if not UPLOAD_TEST.exists():
+        check("release-upload stub tests exist", False, str(UPLOAD_TEST))
+        return results
+    result = subprocess.run(["node", "--test", str(UPLOAD_TEST)], cwd=ROOT,
+                            capture_output=True, text=True, check=False)
+    ok = result.returncode == 0
+    check("release-upload stub tests pass", ok,
+          "" if ok else f"rc={result.returncode} stdout tail={result.stdout[-400:]!r} stderr tail={result.stderr[-400:]!r}")
+    return results
+
+
 def run_checks(ci, release, resolver_text, pack_text, include_resolver=True, include_evidence=True):
     results = run_wiring_checks(ci, release, resolver_text, pack_text)
     if include_resolver:
@@ -607,9 +654,9 @@ def mutate_e2e_exercise_if(ci, release, pack_text):
     find_step(release["jobs"]["server"], "Exercise the packaged server before archiving").pop("if", None)
 
 
-def mutate_upload_parallelism(ci, release, pack_text):
+def mutate_restore_xargs_upload(ci, release, pack_text):
     step = find_step(release["jobs"]["publish"], "Create or update the draft release")
-    step["run"] = str(step["run"]).replace("-P 8", "-P 4")
+    step["run"] = "printf '%s\\0' candidate/* | xargs -0 -P 8 -n 1 gh release upload \"$GITHUB_REF_NAME\" --clobber"
 
 
 def mutate_wails_cache_order(ci, release, pack_text):
@@ -645,8 +692,8 @@ NEGATIVE_CONTROLS = [
      "server stages the reused CI e2e report only on reuse-hit", False),
     ("e2e exercise if removal is caught", mutate_e2e_exercise_if,
      "server reruns e2e only without reuse", False),
-    ("upload parallelism regression is caught", mutate_upload_parallelism,
-     "release upload runs with parallelism 8", False),
+    ("xargs upload restore is caught", mutate_restore_xargs_upload,
+     "release publish uploads through release-upload.mjs", False),
     ("wails cache order regression is caught", mutate_wails_cache_order,
      "windows wails cache restores before setup-go", False),
     ("setup-go cache-hit skip re-addition is caught", mutate_setup_go_cache_skip,
@@ -664,7 +711,10 @@ def main():
     evidence_started = time.monotonic()
     evidence = run_evidence_checks(RELEASE)
     evidence_elapsed = time.monotonic() - evidence_started
-    results = wiring + resolver + evidence
+    upload_started = time.monotonic()
+    upload = run_upload_checks()
+    upload_elapsed = time.monotonic() - upload_started
+    results = wiring + resolver + upload + evidence
     for name, ok, detail in results:
         print(f"{'ok' if ok else 'FAIL'} - {name}" + (f": {detail}" if not ok else ""))
     failures = [f"{name}: {detail}" for name, ok, detail in results if not ok]
@@ -686,6 +736,7 @@ def main():
     print(f"\nall {len(results) + len(NEGATIVE_CONTROLS)} workflow reuse wiring checks passed")
     print(f"sections: wiring {len(wiring)} checks {wiring_elapsed:.1f}s; "
           f"resolver {len(resolver)} scenarios {resolver_elapsed:.1f}s; "
+          f"upload stub {len(upload)} checks {upload_elapsed:.1f}s; "
           f"desktop evidence {len(evidence)} checks {evidence_elapsed:.1f}s; "
           f"{len(NEGATIVE_CONTROLS)} negative controls (wiring-only re-runs) {controls_elapsed:.1f}s; "
           f"total {time.monotonic() - started:.1f}s")
