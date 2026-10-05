@@ -290,9 +290,15 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
           f"count={len(repro_steps)}")
     go_test_steps = [step for step in quality_steps
                      if str(step.get("run", "")).strip().startswith("go test ") and "-tags" not in str(step.get("run", ""))]
-    check("quality runs the Go suite once with -race",
-          len(go_test_steps) == 1 and "-race" in go_test_steps[0]["run"] and "./..." in go_test_steps[0]["run"],
+    check("quality runs the Go suite once without -race",
+          len(go_test_steps) == 1 and "-race" not in go_test_steps[0]["run"] and "./..." in go_test_steps[0]["run"],
           f"steps={[str(step.get('name')) for step in go_test_steps]}")
+    production_suite_steps = [str(step.get("name")) for step in quality_steps if "-tags production" in str(step.get("run", ""))]
+    check("quality runs no production-tagged Go suite", not production_suite_steps, f"steps={production_suite_steps}")
+    harness_test_steps = [str(step.get("name")) for step in quality_steps if "node --test" in str(step.get("run", ""))]
+    check("quality runs no build harness unit tests", not harness_test_steps, f"steps={harness_test_steps}")
+    removed_jobs = sorted({"browser", "windows-supervisor", "ssh-windows"} & set(ci["jobs"]))
+    check("ci.yml drops the browser acceptance and standalone windows native jobs", not removed_jobs, f"jobs={removed_jobs}")
 
     pack_report_lines = [line for line in pack_text.splitlines()
                          if re.search(r"node scripts/build\.mjs report\b", line)]
@@ -361,16 +367,26 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
     upload_paths = [line.strip() for line in upload_step["with"]["path"].splitlines() if line.strip()]
     check("native upload keeps target/ as the ZIP root", all(path.startswith("target/") for path in upload_paths),
           f"paths={upload_paths}")
+    smoke_steps = [str(step.get("name")) for step in ci["jobs"]["native"]["steps"]
+                   if "--smoke" in str(step.get("run", ""))]
+    check("native job builds and runs no smoke desktop binary", not smoke_steps, f"steps={smoke_steps}")
+    check("native upload carries no desktop smoke evidence", all("desktop-smoke" not in path for path in upload_paths),
+          f"paths={upload_paths}")
+    native_step_names = [str(step.get("name", "")) for step in ci["jobs"]["native"]["steps"]]
+    check("native job keeps the repro-checked production build",
+          any("Build the repro-checked production binary" in name for name in native_step_names))
+    check("native job keeps the two-process server acceptance",
+          any("Run Go two-process server acceptance" in name for name in native_step_names))
 
     staging_cases = [
         ("desktop", "Stage the reused production binary", {"os": "windows", "arch": "amd64"},
          ["go-build/nexterm-desktop-windows-amd64.exe", "go-build/nexterm-desktop-windows-amd64.exe.manifest.json",
-          "go-build/nexterm-desktop-windows-amd64.exe.artifact.json", "release-assets/desktop-smoke-windows-amd64.json",
+          "go-build/nexterm-desktop-windows-amd64.exe.artifact.json",
           "e2e-sync/report.json"],
          ["go-build/nexterm-desktop-windows-amd64.exe", "go-build/nexterm-desktop-windows-amd64.exe.manifest.json"]),
         ("desktop", "Stage the reused production binary", {"os": "darwin", "arch": "arm64"},
          ["go-build/nexterm-desktop-darwin-arm64", "go-build/nexterm-desktop-darwin-arm64.manifest.json",
-          "go-build/nexterm-desktop-darwin-arm64.artifact.json", "release-assets/desktop-smoke-darwin-arm64.json"],
+          "go-build/nexterm-desktop-darwin-arm64.artifact.json"],
          ["go-build/nexterm-desktop-darwin-arm64", "go-build/nexterm-desktop-darwin-arm64.manifest.json"]),
         ("server", "Stage the reused production server binary", {"arch": "amd64"},
          ["go-build/nexterm-server-linux-amd64", "go-build/nexterm-server-linux-amd64.manifest.json",
@@ -672,6 +688,43 @@ def mutate_readd_plain_go_test(ci, release, pack_text):
             return
 
 
+def mutate_restore_race(ci, release, pack_text):
+    for step in ci["jobs"]["quality"]["steps"]:
+        if str(step.get("name", "")).startswith("Go tests"):
+            step["run"] = str(step["run"]).replace("go test -mod=readonly", "go test -mod=readonly -race", 1)
+            return
+
+
+def mutate_readd_smoke_step(ci, release, pack_text):
+    ci["jobs"]["native"]["steps"].insert(0, {
+        "name": "Build the smoke desktop binary and run the native smoke",
+        "if": "matrix.kind == 'desktop'",
+        "run": "node scripts/build.mjs desktop --release --smoke --os=${{ matrix.os }} --arch=${{ matrix.arch }}",
+    })
+
+
+def mutate_readd_production_go_test(ci, release, pack_text):
+    steps = ci["jobs"]["quality"]["steps"]
+    for index, step in enumerate(steps):
+        if str(step.get("name", "")).startswith("Go self-consistency"):
+            steps.insert(index, {"name": "Go production tests with embedded desktop assets",
+                                 "run": "go test -mod=readonly -tags production ./..."})
+            return
+
+
+def mutate_readd_harness_tests(ci, release, pack_text):
+    steps = ci["jobs"]["quality"]["steps"]
+    for index, step in enumerate(steps):
+        if str(step.get("name", "")).startswith("Wails bindings drift"):
+            steps.insert(index, {"name": "Build harness unit tests", "run": "node --test scripts/lib/*.test.mjs"})
+            return
+
+
+def mutate_readd_windows_jobs(ci, release, pack_text):
+    ci["jobs"]["ssh-windows"] = {"name": "Windows SSH native tests", "runs-on": "windows-latest",
+                                 "steps": [{"uses": "actions/checkout@v7"}]}
+
+
 def mutate_duplicate_pack_report(ci, release, pack_text):
     return pack_text.replace(
         "(cd \"$ROOT\" && node scripts/build.mjs report \"${report_args[@]}\")",
@@ -723,7 +776,17 @@ NEGATIVE_CONTROLS = [
     ("standalone pnpm typecheck re-addition is caught", mutate_readd_typecheck,
      "quality has no standalone pnpm typecheck step", False),
     ("plain go test re-addition is caught", mutate_readd_plain_go_test,
-     "quality runs the Go suite once with -race", False),
+     "quality runs the Go suite once without -race", False),
+    ("race re-instrumentation of the quality suite is caught", mutate_restore_race,
+     "quality runs the Go suite once without -race", False),
+    ("smoke desktop step re-addition is caught", mutate_readd_smoke_step,
+     "native job builds and runs no smoke desktop binary", False),
+    ("production-tagged Go suite re-addition is caught", mutate_readd_production_go_test,
+     "quality runs no production-tagged Go suite", False),
+    ("build harness unit test re-addition is caught", mutate_readd_harness_tests,
+     "quality runs no build harness unit tests", False),
+    ("standalone windows job re-addition is caught", mutate_readd_windows_jobs,
+     "ci.yml drops the browser acceptance and standalone windows native jobs", False),
     ("duplicate pack evidence report is caught", mutate_duplicate_pack_report,
      "pack generates the server archive evidence report exactly once", False),
     ("e2e staging if removal is caught", mutate_e2e_stage_if,
