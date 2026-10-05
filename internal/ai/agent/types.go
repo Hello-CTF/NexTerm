@@ -73,24 +73,26 @@ type ConversationStore interface {
 }
 
 type Config struct {
-	Model           ModelFactory
-	ModelForProfile ProfileModelFactory
-	Profiles        *profiles.Manager
-	Permissions     *guard.Manager
-	Tools           *tools.Registry
-	Context         *aicontext.Builder
-	Store           ConversationStore
-	Runs            RunStore
-	Permission      func(context.Context) (guard.Config, error)
-	FallbackCancel  func(string) error
-	FallbackConfirm func(Confirmation) error
-	Checkpoints     adk.CheckPointStore
-	HITL            *hitl.Manager
-	Subagents       *tools.SubagentConfig
-	NewID           func() string
-	MaxTurns        int
-	MaxImages       int
-	MaxImageBytes   int
+	Model                 ModelFactory
+	ModelForProfile       ProfileModelFactory
+	Profiles              *profiles.Manager
+	Permissions           *guard.Manager
+	Tools                 *tools.Registry
+	Context               *aicontext.Builder
+	Store                 ConversationStore
+	Runs                  RunStore
+	Permission            func(context.Context) (guard.Config, error)
+	FallbackCancel        func(string) error
+	FallbackConfirm       func(Confirmation) error
+	Checkpoints           adk.CheckPointStore
+	HITL                  *hitl.Manager
+	HITLTTL               time.Duration
+	HITLTerminalRetention time.Duration
+	Subagents             *tools.SubagentConfig
+	NewID                 func() string
+	MaxTurns              int
+	MaxImages             int
+	MaxImageBytes         int
 
 	MaxPendingSteers int
 
@@ -191,7 +193,11 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 		defer cancel()
 		var event Event
 		if terminalErr != nil {
-			event = errorEvent(terminalErr, !errors.Is(terminalErr, context.Canceled))
+			if isCancellation(terminalErr) {
+				event = Event{Type: "canceled", Message: "已停止本轮"}
+			} else {
+				event = errorEvent(terminalErr, true)
+			}
 		} else {
 			event = doneEvent(answer, turns, total.PromptTokens, total.CompletionTokens)
 		}

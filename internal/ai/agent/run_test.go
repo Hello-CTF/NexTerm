@@ -89,7 +89,7 @@ func terminalCounts(events []Event) (done, failed int) {
 		switch event.Type {
 		case "done":
 			done++
-		case "error":
+		case "error", "canceled":
 			failed++
 		}
 	}

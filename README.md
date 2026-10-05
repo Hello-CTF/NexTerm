@@ -50,7 +50,7 @@ less README.md
 
 安装包的 systemd 配置默认监听 `127.0.0.1:8080`。启动后在本机打开 `http://127.0.0.1:8080`，或通过带鉴权的 HTTPS 反向代理访问。
 
-> **不要把完整版服务端直接暴露到公网。** 浏览器界面和 `/rpc` 没有内置登录鉴权；能访问端口的人就能操作终端、文件和容器。对外访问时，保留回环监听，并在前面配置带身份验证和 TLS 的反向代理。
+> **不要把完整版服务端直接暴露到公网。** 非回环监听时，`/rpc`、`/ws` 与 `/files/blob` 要求同步令牌（`/healthz` 与页面静态资源保持公开），浏览器首次打开会提示输入令牌，可用 `nexterm-server token` 查看；回环监听不强制。对外访问时，仍建议只监听回环地址，并在前面配置带 TLS 的反向代理。
 
 ### 仅同步运行
 
@@ -62,7 +62,7 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 
 该模式只开放 `/sync/rpc` 和 `/healthz`，RPC 仅有 `sync_digest`、`sync_export`、`sync_import` 三条，不提供浏览器界面或 `/rpc`。同步令牌泄漏的影响因此限于这份资产库，不会获得终端、文件或容器控制接口。
 
-使用 `nexterm-server token --data-dir /var/lib/nexterm` 获取令牌，然后在桌面端的「设置 → 资产同步」中填写服务端地址和令牌。公网同步必须使用 HTTPS，并妥善保管令牌。需要换令牌时使用 `rotate-token`；旧令牌会立即失效，桌面端也要同步更新。
+使用 `nexterm-server token --data-dir /var/lib/nexterm` 获取令牌，然后在桌面端的「设置 → 资产同步」中填写服务端地址和令牌。浏览器版首次打开时提示输入的也是这枚令牌。公网同步必须使用 HTTPS，并妥善保管令牌。需要换令牌时使用 `rotate-token`；旧令牌会立即失效，桌面端也要同步更新。
 
 ### 懒猫微服
 
@@ -81,6 +81,7 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 | `--web-root` | `NEXTERM_WEB_ROOT` | 浏览器界面的静态文件目录，仅同步模式不需要。 |
 | `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。 |
 | `--sync-only` | — | 只启动资产同步接口。 |
+| — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免同步令牌（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
 
 安装包中的 `nexterm-server.service` 与 `nexterm-onlyserver.service` 二选一，不要同时启用。完整版密钥放在 `/etc/nexterm/nexterm.env`，仅同步运行的密钥放在 `/etc/nexterm/onlyserver.env`，权限均设为 `0600`；不要把密钥直接写进可公开读取的 unit 文件。
 

@@ -1498,7 +1498,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "ai_model_refresh":
       await new Promise((r) => window.setTimeout(r, 600));
-      return ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"];
+      return { models: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"], malformed: 0 };
 
     case "ai_model_preset": {
       const name = str(a.preset);
@@ -1549,7 +1549,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
 
     case "ai_test_provider":
       await new Promise((r) => window.setTimeout(r, 900));
-      return { modelsOk: true, chatOk: true };
+      return { modelsOk: true, modelsError: null, chatOk: true, chatError: null };
 
     case "ai_conversation_list":
       return conversations.map((c) => ({ ...c }));
@@ -1731,6 +1731,15 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "vault_lock":
       vaultState.unlocked = false;
       return null;
+
+    case "vault_set_autolock": {
+      const minutes = a.minutes;
+      if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
+        throwAppError("bad_param", "参数错误: 自动锁时长需在 0（禁用）至 1440 分钟之间");
+      }
+      vaultState.autoLockMinutes = minutes;
+      return null;
+    }
 
     case "vault_change_password":
       return null;

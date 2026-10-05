@@ -21,6 +21,7 @@ type Timeouts struct {
 	Stream  time.Duration
 	Block   time.Duration
 	Models  time.Duration
+	Idle    time.Duration
 }
 
 func DefaultTimeouts() Timeouts {
@@ -29,6 +30,7 @@ func DefaultTimeouts() Timeouts {
 		Stream:  300 * time.Second,
 		Block:   180 * time.Second,
 		Models:  15 * time.Second,
+		Idle:    60 * time.Second,
 	}
 }
 
@@ -55,6 +57,15 @@ func WithTimeouts(timeouts Timeouts) Option {
 		if timeouts.Models > 0 {
 			options.timeouts.Models = timeouts.Models
 		}
+		if timeouts.Idle > 0 {
+			options.timeouts.Idle = timeouts.Idle
+		}
+	}
+}
+
+func WithIdleTimeout(idle time.Duration) Option {
+	return func(options *clientOptions) {
+		options.timeouts.Idle = max(idle, 0)
 	}
 }
 
@@ -97,7 +108,7 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 	}
 	return &Client{
 		config:   config,
-		http:     &http.Client{Transport: &wireTransport{base: transport}},
+		http:     &http.Client{Transport: &wireTransport{base: transport, idle: settings.timeouts.Idle}},
 		timeouts: settings.timeouts,
 		retry:    settings.retry,
 		sleep:    settings.sleep,

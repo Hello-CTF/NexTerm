@@ -37,8 +37,8 @@ func TestListModelsPreservesOrderAndDuplicates(t *testing.T) {
 	}
 }
 
-func TestListModelsMissingOrInvalidDataIsEmptySuccess(t *testing.T) {
-	for _, body := range []string{`{}`, `{"data":null}`, `{"data":{}}`} {
+func TestListModelsMissingDataIsEmptySuccess(t *testing.T) {
+	for _, body := range []string{`{}`, `{"data":null}`} {
 		t.Run(body, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 				_, _ = writer.Write([]byte(body))
@@ -50,6 +50,48 @@ func TestListModelsMissingOrInvalidDataIsEmptySuccess(t *testing.T) {
 				t.Fatalf("ListModels() = %v, %v", models, err)
 			}
 		})
+	}
+}
+
+func TestListModelsMalformedDataFieldFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+	client, _ := NewClient(Config{BaseURL: server.URL})
+	_, err := client.ListModels(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "malformed") {
+		t.Fatalf("malformed data error = %v", err)
+	}
+}
+
+func TestListModelsDetailedCountsMalformedEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"data":[{"id":"m1"},{"id":7},"junk",{"name":"missing"},{"id":"m2"}]}`))
+	}))
+	defer server.Close()
+	client, _ := NewClient(Config{BaseURL: server.URL})
+	list, err := client.ListModelsDetailed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(list.Models, []string{"m1", "m2"}) || list.Malformed != 3 {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestListModelsAllEntriesMalformedFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"data":[{"id":7},"junk"]}`))
+	}))
+	defer server.Close()
+	client, _ := NewClient(Config{BaseURL: server.URL})
+	list, err := client.ListModelsDetailed(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "2 entries malformed") {
+		t.Fatalf("all-malformed error = %v", err)
+	}
+	if list.Malformed != 2 || len(list.Models) != 0 {
+		t.Fatalf("list = %+v", list)
 	}
 }
 

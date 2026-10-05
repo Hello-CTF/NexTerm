@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -87,6 +89,8 @@ func statusCodeForError(err error) (int, bool) {
 }
 
 const maxRetryLimit = 8
+
+const maxRetryAfterDelay = 30 * time.Second
 
 type RetryPolicy struct {
 	MaxRetries     int
@@ -194,6 +198,38 @@ type attemptState struct {
 	requestedModel string
 	servingModel   atomic.Value
 	cacheCreation  atomic.Uint64
+	retryAfter     atomic.Int64
+}
+
+func (s *attemptState) captureRetryAfter(value string, now time.Time) {
+	delay := parseRetryAfter(value, now)
+	if delay > 0 {
+		s.retryAfter.Store(int64(delay))
+	}
+}
+
+func (s *attemptState) retryAfterHint() time.Duration {
+	return time.Duration(s.retryAfter.Load())
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		if seconds > int(maxRetryAfterDelay/time.Second) {
+			return maxRetryAfterDelay
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil {
+		return max(date.Sub(now), 0)
+	}
+	return 0
 }
 
 func (s *attemptState) setServingModel(model string) {

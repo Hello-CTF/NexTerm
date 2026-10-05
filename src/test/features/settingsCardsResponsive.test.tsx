@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     knownHostList: vi.fn(),
     conversationList: vi.fn(),
     cronList: vi.fn(),
+    modelOverview: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -39,6 +40,9 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     },
     aiApi: {
       conversationList: mocks.conversationList,
+    },
+    modelApi: {
+      overview: mocks.modelOverview,
     },
   };
 });
@@ -116,6 +120,7 @@ beforeEach(() => {
   mocks.knownHostList.mockResolvedValue([KNOWN_HOST]);
   mocks.conversationList.mockResolvedValue([{ id: "c1", title: "审查会话" }]);
   mocks.cronList.mockResolvedValue([CRON_JOB]);
+  mocks.modelOverview.mockResolvedValue({ profiles: [], activeId: null });
   mocks.ask.mockResolvedValue(true);
 });
 
@@ -210,5 +215,20 @@ describe("CronCard 窄屏结构", () => {
     );
     expect(nameSpan).toBeTruthy();
     expect(nameSpan!.className).toContain("break-words");
+  });
+
+  it("模型档案选择器行可折行，下拉可收缩不撑破卡片", async () => {
+    mounted = mount(createElement(CronCard));
+    await flushUntil(() => mounted!.container.textContent?.includes(CRON_JOB.name) ?? false);
+    clickButton(mounted.container, "注册定时任务");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="模型档案"]',
+    )!;
+    expect(select).toBeTruthy();
+    const row = select.closest("div")!;
+    expect(row.className).toContain("flex-wrap");
+    expect(select.className).toContain("min-w-0");
+    expect(select.className).toContain("flex-1");
+    expect(select.value).toBe("");
   });
 });

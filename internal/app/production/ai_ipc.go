@@ -22,6 +22,10 @@ type aiProviderRequest struct {
 	Config provider.Config `json:"config"`
 }
 
+type aiTestProviderRequest struct {
+	ID string `json:"id"`
+}
+
 type aiConversationRequest struct {
 	ID             string `json:"id"`
 	Title          string `json:"title"`
@@ -59,7 +63,14 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_test_provider", func(ctx context.Context, _ *ipc.Call, _ struct{}) (provider.TestResult, error) {
+			return ipc.Register(dispatcher, "ai_test_provider", func(ctx context.Context, _ *ipc.Call, input aiTestProviderRequest) (provider.TestResult, error) {
+				if input.ID != "" {
+					client, err := manager.ClientFor(input.ID)
+					if err != nil {
+						return provider.TestResult{}, err
+					}
+					return client.Test(ctx), nil
+				}
 				client, err := manager.ActiveClient()
 				if err != nil {
 					return provider.TestResult{}, err
@@ -181,23 +192,23 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "ai_model_refresh", func(ctx context.Context, _ *ipc.Call, input aiProfileRequest) ([]string, error) {
+			return ipc.Register(dispatcher, "ai_model_refresh", func(ctx context.Context, _ *ipc.Call, input aiProfileRequest) (provider.ModelList, error) {
 				config := input.Profile.ProviderConfig()
 				if strings.TrimSpace(config.APIKey) == profiles.MaskedAPIKey {
 					key, err := resolveMaskedProfileKey(ctx, database, input.Profile.ID)
 					if err != nil {
-						return nil, err
+						return provider.ModelList{}, err
 					}
 					if err := profiles.RejectMaskedKey(key); err != nil {
-						return nil, err
+						return provider.ModelList{}, err
 					}
 					config.APIKey = key
 				}
-				client, err := provider.NewClient(config)
+				client, err := provider.NewClient(config, input.Profile.ClientOptions()...)
 				if err != nil {
-					return nil, err
+					return provider.ModelList{}, err
 				}
-				return client.ListModels(ctx)
+				return client.ListModelsDetailed(ctx)
 			})
 		},
 		func() error {

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
   messages: vi.fn(),
+  runs: vi.fn(),
   overview: vi.fn(),
   toast: vi.fn(),
 }));
@@ -24,6 +25,7 @@ vi.mock("../../ipc/commands", () => ({
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
     messages: mocks.messages,
+    runs: mocks.runs,
     takeoverEnter: vi.fn(),
     takeoverRun: vi.fn(),
     takeoverExit: vi.fn(),
@@ -58,6 +60,7 @@ beforeEach(() => {
   mocks.conversationList.mockResolvedValue([]);
   mocks.conversationDelete.mockResolvedValue(undefined);
   mocks.messages.mockResolvedValue([]);
+  mocks.runs.mockResolvedValue([]);
   mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
   useUi.setState({
     rightOpen: true,

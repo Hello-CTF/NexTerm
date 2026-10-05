@@ -16,9 +16,11 @@ function utf8Bytes(text: string): Uint8Array {
 
 function refBase64(text: string): string {
   const bytes = utf8Bytes(text);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += 32_768) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + 32_768)));
+  }
+  return btoa(parts.join(""));
 }
 
 async function demoRead(path: string): Promise<{ path: string; size: number; contentBase64: string }> {
@@ -47,16 +49,22 @@ describe("demo fs_read base64", () => {
     });
   }
 
-  it("keeps multi-byte UTF-8 intact across chunk boundaries and multi-MiB content", async () => {
-    const boundary = "a".repeat(32_765) + "中" + "b".repeat(100);
-    const big = "中文🙂abc\n".repeat(600_000);
-    for (const [name, text] of [["boundary", boundary], ["big", big]] as const) {
-      const path = `/home/deploy/codec-read-${name}.txt`;
-      fsFileContent[path] = text;
-      const res = await demoRead(path);
-      expect(res.size).toBe(utf8Bytes(text).length);
-      expect(res.contentBase64).toBe(refBase64(text));
-    }
+  it("keeps multi-byte UTF-8 intact across chunk boundaries", async () => {
+    const text = "a".repeat(32_765) + "中" + "b".repeat(100);
+    const path = "/home/deploy/codec-read-boundary.txt";
+    fsFileContent[path] = text;
+    const res = await demoRead(path);
+    expect(res.size).toBe(utf8Bytes(text).length);
+    expect(res.contentBase64).toBe(refBase64(text));
+  });
+
+  it("keeps multi-byte UTF-8 intact across multi-MiB content", async () => {
+    const text = "中文🙂abc\n".repeat(600_000);
+    const path = "/home/deploy/codec-read-big.txt";
+    fsFileContent[path] = text;
+    const res = await demoRead(path);
+    expect(res.size).toBe(utf8Bytes(text).length);
+    expect(res.contentBase64).toBe(refBase64(text));
   }, 30_000);
 });
 

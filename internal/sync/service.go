@@ -33,14 +33,23 @@ func WithMetadata(appVersion string, desktop bool) Option {
 	}
 }
 
+func WithGatewayAuthKey(key string) Option {
+	return func(s *Service) {
+		s.gatewayAuthKey = key
+	}
+}
+
 type Service struct {
-	store      *store.Store
-	vault      *vault.Vault
-	appVersion string
-	desktop    bool
+	store          *store.Store
+	vault          *vault.Vault
+	appVersion     string
+	desktop        bool
+	gatewayAuthKey string
 
 	settingsMu stdsync.Mutex
 }
+
+func (s *Service) GatewayAuthKey() string { return s.gatewayAuthKey }
 
 func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Service {
 	s := &Service{store: db, vault: credentialVault}

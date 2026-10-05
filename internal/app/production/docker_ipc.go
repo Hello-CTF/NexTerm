@@ -3,6 +3,8 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -119,12 +121,18 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_image_pull", func(ctx context.Context, _ *ipc.Call, input dockerImageRequest) (string, error) {
+				if strings.TrimSpace(input.Image) == "" {
+					return "", ipc.BadParam(fmt.Errorf("镜像引用不能为空"))
+				}
 				value, err := s.docker.ImagePull(ctx, docker.ImagePullRequest{SessionID: input.SessionID, Reference: input.Image})
 				return value, terminalIPCError(err)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "docker_image_remove", func(ctx context.Context, _ *ipc.Call, input dockerImageRequest) (any, error) {
+				if strings.TrimSpace(input.Image) == "" {
+					return nil, ipc.BadParam(fmt.Errorf("镜像引用不能为空"))
+				}
 				return nil, terminalIPCError(s.docker.ImageRemove(ctx, input.SessionID, input.Image, input.Force))
 			})
 		},

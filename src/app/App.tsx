@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -48,6 +49,7 @@ import {
   useKeybindings,
   type KeybindingActionId,
 } from "./keybindings";
+import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "./hostKeys";
 import { assetApi, dbApi, sessionApi, vaultApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
@@ -108,6 +110,7 @@ import {
   IconInfo,
   IconKey,
   IconLayers,
+  IconLoader,
   IconLock,
   IconNetwork,
   IconPlus,
@@ -240,6 +243,17 @@ export function virtualKeyboardInset(
   return Math.max(0, Math.min(innerHeight, innerHeight - keyboardTop));
 }
 
+export function aiToastPlacement(
+  width: number,
+  overlaySidebars: boolean,
+  rightDockOpen: boolean,
+  rightWidth: number,
+): "dock" | "left" | "overlay" | null {
+  if (!rightDockOpen) return null;
+  if (overlaySidebars) return "overlay";
+  return width - rightWidth - 32 >= 200 ? "dock" : "left";
+}
+
 interface VirtualKeyboardLike extends EventTarget {
   overlaysContent: boolean;
   readonly boundingRect: DOMRect;
@@ -340,6 +354,37 @@ export function dialogLevelForKind(kind?: string): "info" | "warning" {
   return kind === "info" ? "info" : "warning";
 }
 
+function useAiToastInset(active: boolean): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!active) {
+      root.style.removeProperty("--nx-ai-toast-max");
+      return;
+    }
+    const measure = () => {
+      const input = document.querySelector(".nx-right-dock textarea");
+      if (!input) return;
+      const top = input.getBoundingClientRect().top;
+      if (top <= 0) return;
+      root.style.setProperty("--nx-ai-toast-max", `${Math.max(140, Math.round(top - 12 - 78))}px`);
+    };
+    measure();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    const dock = document.querySelector(".nx-right-dock");
+    const input = document.querySelector(".nx-right-dock textarea");
+    if (dock) observer?.observe(dock);
+    if (input) observer?.observe(input);
+    window.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
+      root.style.removeProperty("--nx-ai-toast-max");
+    };
+  }, [active]);
+}
+
 export default function App() {
   const {
     workspaces,
@@ -364,6 +409,7 @@ export default function App() {
     toasts,
     dismissToast,
     pushToast,
+    connectFocusRevision,
   } = useUi();
 
   const ws = useActiveWorkspace();
@@ -386,6 +432,7 @@ export default function App() {
   const rightDockOpen = viewport.overlaySidebars
     ? overlayDock === "right" && rightOpen
     : rightOpen;
+  useAiToastInset(rightDockOpen);
 
   const setLeftOpen = useCallback(
     (open: boolean) => {
@@ -401,6 +448,11 @@ export default function App() {
     },
     [setRightOpenStore, viewport.overlaySidebars],
   );
+
+  useEffect(() => {
+    if (!viewport.overlaySidebars) return;
+    setOverlayDock(null);
+  }, [connectFocusRevision, viewport.overlaySidebars]);
 
   const active = tabs.find((t) => t.id === activeTabId) ?? null;
   const terminalKeysVisible =
@@ -528,6 +580,10 @@ export default function App() {
     }
     if (s) {
       try {
+        if (!(await confirmHostKeyIfNeeded(s.assetId ?? "", s.kind))) {
+          pushToast("info", "已取消重连");
+          return;
+        }
         const started = await sessionApi.reconnect(s.id);
         pushToast(
           started ? "info" : "error",
@@ -542,7 +598,11 @@ export default function App() {
     }
     if (ws?.assetId) {
       try {
-        const fresh = await sessionApi.connect(ws.assetId);
+        const fresh = await connectWithHostKeyConfirm(() => sessionApi.connect(ws.assetId as string));
+        if (!fresh) {
+          pushToast("info", "已取消重连");
+          return;
+        }
         const list = useUi.getState().sessions;
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);
@@ -840,10 +900,19 @@ export default function App() {
     { key: "settings", label: "设置", icon: IconSettings, onClick: openSettings },
   ];
 
+  const aiToast = aiToastPlacement(
+    viewport.width,
+    viewport.overlaySidebars,
+    rightDockOpen,
+    rightWidth,
+  );
+
   return (
     <div
       className={`nx-app flex h-full flex-col ${viewport.compact ? "is-compact" : ""}`}
       data-nx-keys={terminalKeysVisible ? "true" : undefined}
+      data-nx-ai={aiToast ?? undefined}
+      style={{ "--nx-right-w": `${rightWidth}px` } as CSSProperties}
       onDoubleClick={onDragRegionDoubleClick}
     >
       <TakeoverBanner />
@@ -918,7 +987,7 @@ export default function App() {
                 const Icon = workspaceIcon(w);
                 const isActive = w.id === ws?.id;
                 const status = sessions.find((s) => s.id === w.sessionId)?.status;
-                const dot =
+                const tone =
                   status === undefined
                     ? null
                     : status === "connected"
@@ -958,7 +1027,23 @@ export default function App() {
                   >
                     <Icon size={13} />
                     <span className="truncate">{w.title}</span>
-                    {dot && <span className={`nx-ws-dot ${dot}`} />}
+                    {tone && status && (
+                      <span
+                        className={`nx-ws-status ${tone}`}
+                        role="img"
+                        aria-label={sessionStatusText(status)}
+                      >
+                        {status === "connected" ? (
+                          <IconCheckCircle size={11} />
+                        ) : status === "failed" ? (
+                          <IconXCircle size={11} />
+                        ) : status === "disconnected" ? (
+                          <IconInfo size={11} />
+                        ) : (
+                          <IconLoader size={11} className="animate-spin" />
+                        )}
+                      </span>
+                    )}
                     {w.closable && (
                       <button
                         type="button"
@@ -1189,43 +1274,46 @@ export default function App() {
         </div>
 
         <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
-          <span className="flex items-center gap-1.5">
-            <IconServer size={11} />
-            <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
-          </span>
-          <span className="text-neutral-700">|</span>
-          <span
-            className={
-              sessions.some((s) => s.status === "connected")
-                ? "flex items-center gap-1.5 text-green-300"
-                : "flex items-center gap-1.5"
-            }
-          >
-            <span className="nx-dot" />
-            <strong className="font-medium">{sessions.filter((s) => s.status === "connected").length}</strong> 已连接
-          </span>
-          <span className="text-neutral-700">|</span>
-          <span className="flex items-center gap-1.5">
-            <IconLock size={11} />
-            {vaultStatus}
-          </span>
-          <div className="nx-spacer" />
-          {DEMO && (
-            <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，未连接真实服务器">
-              演示模式
+          <div className="nx-statusbar-info">
+            <span className="flex items-center gap-1.5">
+              <IconServer size={11} />
+              <strong className="font-medium text-neutral-300">{sessions.length}</strong> 个会话
             </span>
-          )}
-          <span className="flex items-center gap-1.5">
-            <IconNetwork size={11} />
-            同步：本地模式
-          </span>
-          <span className="text-neutral-700">|</span>
-          <button className="nx-link" onClick={openAudit}>
-            审计
-          </button>
-          <button className="nx-link" onClick={openSettings}>
-            设置
-          </button>
+            <span className="text-neutral-700">|</span>
+            <span
+              className={
+                sessions.some((s) => s.status === "connected")
+                  ? "flex items-center gap-1.5 text-green-300"
+                  : "flex items-center gap-1.5"
+              }
+            >
+              <span className="nx-dot" />
+              <strong className="font-medium">{sessions.filter((s) => s.status === "connected").length}</strong> 已连接
+            </span>
+            <span className="text-neutral-700">|</span>
+            <span className="nx-statusbar-truncate flex items-center gap-1.5" title={vaultStatus}>
+              <IconLock size={11} />
+              {vaultStatus}
+            </span>
+          </div>
+          <div className="nx-statusbar-side">
+            {DEMO && (
+              <span className="nx-badge nx-badge-amber" title="数据来自内置假数据，未连接真实服务器">
+                演示模式
+              </span>
+            )}
+            <span className="nx-statusbar-truncate flex items-center gap-1.5">
+              <IconNetwork size={11} />
+              同步：本地模式
+            </span>
+            <span className="text-neutral-700">|</span>
+            <button className="nx-link" onClick={openAudit}>
+              审计
+            </button>
+            <button className="nx-link" onClick={openSettings}>
+              设置
+            </button>
+          </div>
         </footer>
       </div>
 

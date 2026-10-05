@@ -716,14 +716,14 @@ describe("history and reset", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("reset with no items yields an empty conversation but keeps usage/todos", () => {
+  it("reset with no items yields an empty conversation and clears usage/todos", () => {
     let state: ConversationState = createConversation();
     state = beginRun(state, 1);
     state = applyAiEvent(state, 1, { type: "usage", promptTokens: 3, contextWindow: 9 }).state;
     state = applyAiEvent(state, 1, { type: "todos", items: [{ content: "t", status: "pending" }] }).state;
     state = resetConversation(state);
     expect(state.items).toHaveLength(0);
-    expect(state.usage).toMatchObject({ promptTokens: 3 });
-    expect(state.todos).toHaveLength(1);
+    expect(state.usage).toBeNull();
+    expect(state.todos).toHaveLength(0);
   });
 });

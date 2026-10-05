@@ -48,11 +48,11 @@ func TestR4AgentCancelDeliversExactlyOneTerminal(t *testing.T) {
 			terminals := 0
 			for {
 				event := nextHubEvent(t, receiver)
-				if event["type"] != "done" && event["type"] != "error" {
+				if event["type"] != "done" && event["type"] != "error" && event["type"] != "canceled" {
 					continue
 				}
 				terminals++
-				if event["type"] != "error" {
+				if event["type"] != "canceled" {
 					t.Fatalf("cancel terminal = %v", event)
 				}
 				break

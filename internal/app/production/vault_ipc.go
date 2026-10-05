@@ -16,6 +16,10 @@ type vaultPasswordRequest struct {
 	NewPassword string `json:"newPassword"`
 }
 
+type vaultAutoLockRequest struct {
+	Minutes *uint64 `json:"minutes"`
+}
+
 type credentialSetRequest struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -82,6 +86,14 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "vault_set_autolock", func(ctx context.Context, _ *ipc.Call, input vaultAutoLockRequest) (any, error) {
+				if input.Minutes == nil {
+					return nil, ipc.BadParam(fmt.Errorf("自动锁时长需在 0（禁用）至 1440 分钟之间"))
+				}
+				return nil, credentialVault.SetAutoLock(ctx, *input.Minutes)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "vault_change_password", func(ctx context.Context, _ *ipc.Call, input vaultPasswordRequest) (any, error) {
 				return nil, credentialVault.ChangeMasterPassword(ctx, input.OldPassword, input.NewPassword)
 			})
@@ -100,7 +112,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 					case "inline":
 						plaintext = vault.InlinePrivateKey(input.Secret, input.Passphrase).Encode()
 					default:
-						return nil, ipc.BadParam(fmt.Errorf("unknown credential source %q", source))
+						return nil, ipc.BadParam(fmt.Errorf("未知的凭据来源 %q", source))
 					}
 				}
 				id, err := putProductionCredential(ctx, credentialVault, database, input.ID, input.Name, input.Kind, plaintext)
@@ -193,7 +205,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						case "inline":
 							payload = vault.InlinePrivateKey(*input.Secret, payload.Passphrase)
 						default:
-							return nil, ipc.BadParam(fmt.Errorf("unknown credential source %q", source))
+							return nil, ipc.BadParam(fmt.Errorf("未知的凭据来源 %q", source))
 						}
 					} else if input.Source != nil {
 						current := "inline"
@@ -201,7 +213,7 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 							current = "file"
 						}
 						if *input.Source != current {
-							return nil, ipc.BadParam(fmt.Errorf("credential source cannot change without new secret"))
+							return nil, ipc.BadParam(fmt.Errorf("更改凭据来源需要提供新的密钥内容"))
 						}
 					}
 					if input.Passphrase != nil {

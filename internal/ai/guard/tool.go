@@ -1,7 +1,9 @@
 package guard
 
 import (
+	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -10,10 +12,47 @@ func ClassifyTool(name string, args json.RawMessage, config Config) Ruling {
 	if name == "ask_user" || name == "todo_write" || name == "exit_plan_mode" {
 		return ruling
 	}
-	if matchDangerRule(string(args), config.DangerRules) {
+	if matchDangerArgs(args, config.DangerRules) {
 		return Worst(ruling, Dangerous("工具参数命中自定义危险规则"))
 	}
 	return ruling
+}
+
+func matchDangerArgs(args json.RawMessage, rules []string) bool {
+	if len(args) == 0 || len(rules) == 0 {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(args))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil || decoder.More() {
+		return matchDangerRule(string(args), rules)
+	}
+	return matchDangerValue(value, rules)
+}
+
+func matchDangerValue(value any, rules []string) bool {
+	switch typed := value.(type) {
+	case string:
+		return matchDangerRule(typed, rules)
+	case json.Number:
+		return matchDangerRule(typed.String(), rules)
+	case bool:
+		return matchDangerRule(strconv.FormatBool(typed), rules)
+	case []any:
+		for _, item := range typed {
+			if matchDangerValue(item, rules) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, item := range typed {
+			if matchDangerValue(item, rules) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func classifyTool(name string, args json.RawMessage, config Config) Ruling {

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -306,7 +305,7 @@ func TestRestartedManagerRecoversOnUnlock(t *testing.T) {
 	requireClientKey(t, restarted, "sk-restart")
 }
 
-func TestAutoLockBlocksConnectivityUntilUnlock(t *testing.T) {
+func TestLockedVaultBlocksConnectivityUntilUnlock(t *testing.T) {
 	ctx := context.Background()
 	database, credentialVault := openVaultStore(t)
 	manager, err := profiles.NewManager(ctx, database)
@@ -314,11 +313,7 @@ func TestAutoLockBlocksConnectivityUntilUnlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveKeyedProfile(t, manager, "autolock", "sk-autolock")
-	if err := credentialVault.SetAutoLock(ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(5 * time.Millisecond)
-	credentialVault.AutoLockIfIdle()
+	credentialVault.Lock()
 	requireLockedClient(t, manager)
 	if err := credentialVault.UnlockMaster(ctx, "correct-password"); err != nil {
 		t.Fatal(err)

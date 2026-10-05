@@ -60,7 +60,13 @@ func ParseWebSocketEnv(getenv func(string) string) (WebSocketConfig, error) {
 }
 
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
+	if !s.admitWebSocket(w, r) {
+		return
+	}
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: s.options.AllowedOrigins,
+		Subprotocols:   []string{wsAuthProtocol},
+	})
 	if err != nil {
 		return
 	}
@@ -102,7 +108,13 @@ func parseEventCursor(r *http.Request) (since uint64, present, resync bool) {
 }
 
 func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.options.AllowedOrigins})
+	if !s.admitWebSocket(w, r) {
+		return
+	}
+	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		OriginPatterns: s.options.AllowedOrigins,
+		Subprotocols:   []string{wsAuthProtocol},
+	})
 	if err != nil {
 		return
 	}
@@ -150,8 +162,9 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 			}
 		}
 	}()
+	writeGate := make(chan struct{}, 1)
 	if s.webSocket.KeepAlive > 0 {
-		go s.keepAliveSocket(ctx, connection)
+		go s.keepAliveSocket(ctx, connection, writeGate)
 	}
 	defer func() {
 		cancel()
@@ -164,9 +177,11 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 		if err != nil {
 			return
 		}
+		writeGate <- struct{}{}
 		writeCtx, writeCancel := context.WithTimeout(ctx, s.webSocket.WriteTimeout)
 		err = connection.Write(writeCtx, messageType, data)
 		writeCancel()
+		<-writeGate
 		if err != nil {
 			return
 		}
@@ -176,7 +191,7 @@ func (s *Server) pumpSocket(ctx context.Context, connection *websocket.Conn, nex
 	}
 }
 
-func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn) {
+func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn, writeGate chan struct{}) {
 	ticker := time.NewTicker(s.webSocket.KeepAlive)
 	defer ticker.Stop()
 	for {
@@ -185,9 +200,15 @@ func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn
 			return
 		case <-ticker.C:
 		}
+		select {
+		case writeGate <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		pingCtx, cancel := context.WithTimeout(ctx, s.webSocket.PingTimeout)
 		err := connection.Ping(pingCtx)
 		cancel()
+		<-writeGate
 		if err != nil {
 			_ = connection.CloseNow()
 			return

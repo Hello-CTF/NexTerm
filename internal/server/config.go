@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 
@@ -129,19 +128,13 @@ func BootstrapVault(ctx context.Context, credentialVault Vault, masterKey string
 }
 
 func warnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool) {
-	host, _, err := net.SplitHostPort(address)
-	if err == nil {
-		if host == "localhost" {
-			return
-		}
-		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-			return
-		}
+	if core.LoopbackListen(address) {
+		return
 	}
 
-	detail := "完整版的 /rpc 与浏览器界面没有自身鉴权；能连接此端口的人就拥有终端、文件、Docker 与凭据库的完整控制权。公网部署请使用 --sync-only，或只监听回环地址并由带鉴权的反向代理转发。"
+	detail := "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求同步令牌（浏览器打开时会提示输入，可用 nexterm-server token 查看、rotate-token 轮换），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
 	if syncOnly {
-		detail = "onlyServer 模式：能连接此端口且持有同步令牌的人可以读写资产库（含密码类凭据）。请使用防火墙限制对端地址。"
+		detail = "onlyServer 模式：/sync/rpc 要求同步令牌；能连接此端口且持有同步令牌的人可以读写资产库（含密码类凭据）。请使用防火墙限制对端地址。"
 	}
 	if logger != nil {
 		logger.Warn("HTTP server is listening on a non-loopback address", "listen", address, "syncOnly", syncOnly, "risk", detail)

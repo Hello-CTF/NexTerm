@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView } from "../../ipc/commands";
+import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView, type ProviderTestResult } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -7,8 +7,14 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import {
   fallbackModelFromInput,
   fallbackModelLabel,
+  idleTimeoutLabel,
+  MODEL_PARAM_DEFAULTS,
+  modelParamsAtDefaults,
+  requestTimeoutLabel,
+  resetModelParams,
   sameModelProfile,
   selectModelProfileId,
+  timeoutSecondsFromInput,
 } from "./modelLifecycle";
 import { formatTokens } from "./UsageRing";
 import {
@@ -32,11 +38,9 @@ function blankProfile(): ModelProfile {
     baseUrl: "",
     apiKey: "",
     model: "",
-    temperature: 0.3,
-    contextWindow: 32768,
-    proxy: null,
-    stream: true,
-    fallbackModel: null,
+    ...MODEL_PARAM_DEFAULTS,
+    requestTimeoutSeconds: null,
+    idleTimeoutSeconds: null,
   };
 }
 
@@ -59,6 +63,8 @@ export function ModelManager({
   const [models, setModels] = useState<string[]>([]);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [presets, setPresets] = useState<string[]>([]);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
 
   const isNew = !!draft && draft.id === "";
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
@@ -95,6 +101,10 @@ export function ModelManager({
 
   const patch = (p: Partial<ModelProfile>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
+  const paramsAtDefaults = !!draft && modelParamsAtDefaults(draft);
+
+  const resetParams = () => setDraft((prev) => (prev ? resetModelParams(prev) : prev));
+
   const guardDiscard = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
     return ask(`当前修改还没保存，${what}会丢掉这些改动，继续？`, {
@@ -110,6 +120,7 @@ export function ModelManager({
     setDraft({ ...p });
     setModels([]);
     setModelsOpen(false);
+    setTestResult(null);
   };
 
   const newProfile = async () => {
@@ -117,6 +128,7 @@ export function ModelManager({
     setDraft(blankProfile());
     setModels([]);
     setModelsOpen(false);
+    setTestResult(null);
   };
 
   const save = async () => {
@@ -136,6 +148,7 @@ export function ModelManager({
         };
       });
       pushToast("info", `已保存模型档案「${saved.name}」`);
+      setTestResult(null);
       await reload(saved.id);
     } catch (e) {
       pushToast("error", `保存失败：${describeError(e)}`);
@@ -188,13 +201,30 @@ export function ModelManager({
     setBusy(true);
     try {
       const list = await modelApi.refresh(draft);
-      setModels(list);
+      setModels(list.models);
       setModelsOpen(true);
-      if (list.length === 0) pushToast("info", "这个端点没有返回任何模型");
+      if (list.malformed > 0) {
+        pushToast("info", `端点返回的模型列表里有 ${list.malformed} 个格式异常的条目，已跳过`);
+      } else if (list.models.length === 0) {
+        pushToast("info", "这个端点没有返回任何模型");
+      }
     } catch (e) {
       pushToast("error", `拉取模型列表失败：${describeError(e)}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const testConnection = async () => {
+    if (!draft || !draft.id) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(await modelApi.test(draft.id));
+    } catch (e) {
+      pushToast("error", `连接测试失败：${describeError(e)}`);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -439,6 +469,39 @@ export function ModelManager({
                 </div>
               </div>
 
+              <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                <div className="flex-1">
+                  <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                    <input
+                      id={`${fieldId}-request-timeout`}
+                      className="nx-input font-mono"
+                      type="number"
+                      min={1}
+                      max={3600}
+                      step={1}
+                      placeholder="默认 300"
+                      value={requestTimeoutLabel(draft)}
+                      onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
+                    />
+                  </Field>
+                </div>
+                <div className="flex-1">
+                  <Field label="流空闲超时（秒，0 关闭）" htmlFor={`${fieldId}-idle-timeout`}>
+                    <input
+                      id={`${fieldId}-idle-timeout`}
+                      className="nx-input font-mono"
+                      type="number"
+                      min={0}
+                      max={3600}
+                      step={1}
+                      placeholder="默认 60"
+                      value={idleTimeoutLabel(draft)}
+                      onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
+                    />
+                  </Field>
+                </div>
+              </div>
+
               <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
                 <input
                   id={`${fieldId}-proxy`}
@@ -478,6 +541,25 @@ export function ModelManager({
         </div>
       </div>
 
+      {testResult && (
+        <div
+          className={`rounded-md border px-2.5 py-2 text-[11px] ${
+            testResult.modelsOk && testResult.chatOk
+              ? "border-green-800/60 bg-green-900/20 text-green-200"
+              : "border-red-800/60 bg-red-900/20 text-red-200"
+          }`}
+        >
+          {testResult.modelsOk && testResult.chatOk ? (
+            "连接正常：模型列表与对话均可用"
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {!testResult.modelsOk && <span>模型列表：{testResult.modelsError || "不可用"}</span>}
+              {!testResult.chatOk && <span>对话：{testResult.chatError || "不可用"}</span>}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-3">
         {draft ? (
           <>
@@ -485,6 +567,30 @@ export function ModelManager({
               {isNew ? "新档案（尚未保存）" : isActive ? "当前" : `${draft.name}`}
               {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">· 有未保存的修改</span>}
             </span>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              title="仅把温度、上下文窗口、代理、流式输出与回退模型恢复默认；名称、地址、密钥与模型名保持不变，点「保存」后才写入档案"
+              disabled={busy || paramsAtDefaults}
+              onClick={resetParams}
+            >
+              <IconRefresh size={12} />
+              恢复默认参数
+            </button>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              title={
+                isNew
+                  ? "保存后才能测试连接"
+                  : dirty
+                    ? "有未保存的修改，保存后才能测试这份档案"
+                    : "用这份已保存的档案测试连通性"
+              }
+              disabled={busy || testing || isNew || dirty}
+              onClick={() => void testConnection()}
+            >
+              {testing ? <IconLoader size={12} className="animate-spin" /> : <IconRefresh size={12} />}
+              测试连接
+            </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
               title={isNew ? "保存后才能设为当前" : isActive ? "已经是当前档案" : "切换到这个档案"}

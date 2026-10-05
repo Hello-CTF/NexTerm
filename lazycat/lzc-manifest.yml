@@ -28,6 +28,15 @@ application:
     - /sync/rpc
 
   injects:
+    - id: gateway-auth
+      on: request
+      when:
+        - /*
+      do:
+        - src: |
+            ctx.headers.set("X-NexTerm-Gateway-Auth", ctx.params.key);
+          params:
+            key: '{{ stable_secret "gateway_auth" }}'
     - id: lazycat-file-bridge
       on: request
       when:
@@ -85,6 +94,7 @@ services:
     image: embed:nexterm-server
     environment:
       - NEXTERM_MASTER_KEY={{ stable_secret "vault_master" }}
+      - NEXTERM_GATEWAY_AUTH={{ stable_secret "gateway_auth" }}
       - NEXTERM_DATA_DIR=/lzcapp/var/nexterm
       - NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web
       - NEXTERM_LISTEN=0.0.0.0:8080

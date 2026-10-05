@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/hub"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
@@ -86,6 +87,70 @@ func IPCStreamFactory(factory ipc.StreamFactory) StreamFactory {
 			return nil, err
 		}
 		return &ipcStream{stream: stream}, nil
+	}
+}
+
+type tryJSONSender interface {
+	TrySendJSON(context.Context, json.RawMessage) error
+}
+
+type resilientIPCStream struct {
+	dial   func(context.Context) (ipc.JSONStream, error)
+	stream ipc.JSONStream
+}
+
+func (s *resilientIPCStream) Send(ctx context.Context, event Event) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	for attempt := 0; ; attempt++ {
+		try, ok := s.stream.(tryJSONSender)
+		if !ok {
+			return s.stream.SendJSON(ctx, data)
+		}
+		err = try.TrySendJSON(ctx, data)
+		if errors.Is(err, hub.ErrQueueFull) {
+			_ = s.stream.Close()
+			return nil
+		}
+		if !errors.Is(err, hub.ErrClosed) {
+			return err
+		}
+		if attempt >= 2 {
+			return nil
+		}
+		reopened, dialErr := s.dial(ctx)
+		if dialErr != nil {
+			return dialErr
+		}
+		s.stream = reopened
+	}
+}
+
+func (s *resilientIPCStream) Close() error {
+	return s.stream.Close()
+}
+
+func (s *resilientIPCStream) CloseGracefully() error {
+	if graceful, ok := s.stream.(interface{ CloseGracefully() error }); ok {
+		return graceful.CloseGracefully()
+	}
+	return s.stream.Close()
+}
+
+func ResilientIPCStreamFactory(factory ipc.StreamFactory) StreamFactory {
+	return func(ctx context.Context, channelID, _ string) (Stream, error) {
+		stream, err := factory.OpenJSON(ctx, ipc.ChannelRef{ID: channelID})
+		if err != nil {
+			return nil, err
+		}
+		return &resilientIPCStream{
+			dial: func(ctx context.Context) (ipc.JSONStream, error) {
+				return factory.OpenJSON(ctx, ipc.ChannelRef{ID: channelID})
+			},
+			stream: stream,
+		}, nil
 	}
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { StreamParser } from "@codemirror/language";
 import { IconCopy } from "../../ui/icons";
 import { useUi } from "../../app/store";
@@ -321,8 +321,22 @@ function Table({ header, rows }: { header: string[]; rows: string[][] }) {
   );
 }
 
-export function Markdown({ text, className = "" }: { text: string; className?: string }) {
-  const blocks = parseBlocks(text);
+export const Markdown = memo(function Markdown({
+  text,
+  className = "",
+  streaming = false,
+}: {
+  text: string;
+  className?: string;
+  streaming?: boolean;
+}) {
+  const [stable, tail] = useMemo<[string, string]>(() => {
+    if (!streaming) return [text, ""];
+    const cut = text.lastIndexOf("\n");
+    if (cut < 0) return ["", text];
+    return [text.slice(0, cut + 1), text.slice(cut + 1)];
+  }, [text, streaming]);
+  const blocks = useMemo(() => parseBlocks(stable), [stable]);
   return (
     <div className={`nx-md ${className}`}>
       {blocks.map((b, i) => {
@@ -370,6 +384,7 @@ export function Markdown({ text, className = "" }: { text: string; className?: s
             );
         }
       })}
+      {tail ? <p className="nx-md-p">{tail}</p> : null}
     </div>
   );
-}
+});

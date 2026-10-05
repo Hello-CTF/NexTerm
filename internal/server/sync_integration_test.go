@@ -36,7 +36,7 @@ func newRealSyncConfig(t *testing.T, syncOnly bool) (Config, *realSyncFixture) {
 		t.Fatal(err)
 	}
 	t.Cleanup(credentialVault.Lock)
-	service := syncservice.New(db, credentialVault, syncservice.WithMetadata("server-test", false))
+	service := syncservice.New(db, credentialVault, syncservice.WithMetadata("server-test", false), syncservice.WithGatewayAuthKey("gateway-secret"))
 	if err := service.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +133,16 @@ func TestRealSyncServiceTokenGatewayHealthAndRPCBoundary(t *testing.T) {
 		t.Fatalf("rotated token HTTP = %d %+v", status, body)
 	}
 	status, body = postRPC(t, syncOnlyHTTP.Client(), syncOnlyHTTP.URL+"/sync/rpc", syncservice.CommandDigest, map[string]string{
-		TokenHeader: "wrong", PlatformUserHeader: "gateway-user",
+		TokenHeader: "wrong", GatewayAuthHeader: "gateway-secret",
 	})
 	if status != http.StatusOK || !body.OK {
-		t.Fatalf("platform gateway admission = %d %+v", status, body)
+		t.Fatalf("gateway key admission = %d %+v", status, body)
+	}
+	status, body = postRPC(t, syncOnlyHTTP.Client(), syncOnlyHTTP.URL+"/sync/rpc", syncservice.CommandDigest, map[string]string{
+		TokenHeader: "wrong", "X-HC-User-ID": "forged",
+	})
+	if status != http.StatusUnauthorized || body.OK {
+		t.Fatalf("forged platform identity = %d %+v", status, body)
 	}
 
 	fullConfig := config

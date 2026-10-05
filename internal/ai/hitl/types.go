@@ -151,12 +151,18 @@ type Snapshot struct {
 	Terminal     *Event      `json:"terminal,omitempty"`
 }
 
+const (
+	DefaultTTL               = 5 * time.Minute
+	DefaultTerminalRetention = time.Hour
+)
+
 type Config struct {
-	Checkpoints adk.CheckPointStore
-	Store       Store
-	TTL         time.Duration
-	Now         func() time.Time
-	NewNonce    func() (string, error)
+	Checkpoints       adk.CheckPointStore
+	Store             Store
+	TTL               time.Duration
+	TerminalRetention time.Duration
+	Now               func() time.Time
+	NewNonce          func() (string, error)
 }
 
 type Resumer interface {

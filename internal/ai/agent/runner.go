@@ -67,7 +67,11 @@ func NewRunner(config Config) *Runner {
 	}
 	manager := config.HITL
 	if manager == nil {
-		hitlConfig := hitl.Config{Checkpoints: config.Checkpoints}
+		hitlConfig := hitl.Config{
+			Checkpoints:       config.Checkpoints,
+			TTL:               config.HITLTTL,
+			TerminalRetention: config.HITLTerminalRetention,
+		}
 		if config.Runs != nil {
 			hitlConfig.Store = hitlStoreBridge{config.Runs}
 		}
@@ -481,6 +485,12 @@ func (r *Runner) profileIDFor(args ChatArgs) string {
 	return ""
 }
 
+func isCancellation(err error) bool {
+	var cancelErr *adk.CancelError
+	var streamCanceled *adk.StreamCanceledError
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &cancelErr) || errors.As(err, &streamCanceled)
+}
+
 func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) {
 	if r.runs == nil {
 		return
@@ -495,9 +505,13 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 		case hitl.TerminalExpired:
 			status = store.RunStatusExpired
 		case hitl.TerminalFailed:
-			status = store.RunStatusFailed
+			if isCancellation(terminalErr) {
+				status = store.RunStatusCanceled
+			} else {
+				status = store.RunStatusFailed
+			}
 		default:
-			if errors.Is(terminalErr, context.Canceled) {
+			if isCancellation(terminalErr) {
 				status = store.RunStatusCanceled
 			} else {
 				status = store.RunStatusFailed

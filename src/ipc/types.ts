@@ -80,7 +80,12 @@ id: string,
 name: string, baseUrl: string, apiKey: string, model: string, temperature: number, 
 contextWindow: number, 
 proxy: string | null, stream: boolean,
-fallbackModel?: string | null, };
+fallbackModel?: string | null,
+requestTimeoutSeconds?: number | null, idleTimeoutSeconds?: number | null, };
+
+export type ModelListDto = { models: Array<string>, malformed: number, };
+
+export type ProviderTestResult = { modelsOk: boolean, modelsError: string | null, chatOk: boolean, chatError: string | null, };
 
 export type ModelProfilesView = { profiles: Array<ModelProfile>, activeId: string | null, };
 

@@ -43,14 +43,15 @@ export function SettingsView() {
   const [testResult, setTestResult] = useState<{
     modelsOk: boolean;
     chatOk: boolean;
-    modelsError?: string;
-    chatError?: string;
+    modelsError?: string | null;
+    chatError?: string | null;
     fatal?: string;
   } | null>(null);
 
   const [vault, setVault] = useState<VaultStatus | null>(null);
   const [protPwd, setProtPwd] = useState("");
   const [pendingEnable, setPendingEnable] = useState(false);
+  const [autoLockDraft, setAutoLockDraft] = useState("");
 
   const qc = useQueryClient();
   const refreshVault = () => {
@@ -66,6 +67,26 @@ export function SettingsView() {
       .then(setVault)
       .catch(() => undefined);
   }, []);
+  useEffect(() => {
+    setAutoLockDraft(vault ? String(vault.autoLockMinutes) : "");
+  }, [vault]);
+
+  const saveAutoLock = () => {
+    const trimmed = autoLockDraft.trim();
+    const minutes = Number(trimmed);
+    if (trimmed === "" || !Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
+      pushToast("error", "自动锁时长需为 0（禁用）至 1440 之间的整数分钟");
+      return;
+    }
+    void vaultApi
+      .setAutoLock(minutes)
+      .then(() => {
+        pushToast("success", minutes === 0 ? "已禁用闲置自动锁定" : `闲置 ${minutes} 分钟后自动锁定`);
+        if (vault) setVault({ ...vault, autoLockMinutes: minutes });
+        void qc.invalidateQueries({ queryKey: ["vault-status"] });
+      })
+      .catch((e) => pushToast("error", describeError(e)));
+  };
 
   const [aiPerm, setAiPerm] = useState<AiPermissionConfig | null>(null);
   const [ruleDraft, setRuleDraft] = useState("");
@@ -435,6 +456,30 @@ export function SettingsView() {
               >
                 修改密码
               </button>
+            </div>
+          )}
+
+          {vault?.mode === "master" && (
+            <div className="mt-3 border-t border-neutral-800/60 pt-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] text-neutral-200">闲置自动锁定</span>
+                <input
+                  type="number"
+                  className="nx-input nx-input-sm w-[96px]"
+                  min={0}
+                  max={1440}
+                  step={1}
+                  value={autoLockDraft}
+                  onChange={(e) => setAutoLockDraft(e.target.value)}
+                />
+                <span className="nx-hint">分钟，0 为禁用</span>
+                <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void saveAutoLock()}>
+                  保存
+                </button>
+              </div>
+              <p className="nx-hint mt-1.5">
+                闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码；保存后立即生效，重启后保持。
+              </p>
             </div>
           )}
         </section>

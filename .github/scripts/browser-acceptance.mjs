@@ -139,6 +139,12 @@ class CDP {
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, method });
       this.socket.send(JSON.stringify({ id, method, params }));
+      setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error(`CDP send timeout: ${method} ${JSON.stringify(params).slice(0, 120)}`));
+        }
+      }, 30_000);
     });
   }
 
@@ -324,6 +330,8 @@ async function wsAcceptance(page, server) {
   await page.evaluate(`(async () => {
     const commands = await import('${VITE}/src/ipc/commands.ts');
     const events = await import('${VITE}/src/ipc/events.ts');
+    const serverAuth = await import('${VITE}/src/ipc/serverAuth.ts');
+    serverAuth.registerServerTokenPrompter(async () => null);
     const state = window.__nxAcceptance = { commands, events, frames: 0, text: '', reopened: 0, reconnectAttached: 0 };
     state.channel = events.createBinaryChannel((bytes) => {
       state.frames += 1;

@@ -20,7 +20,7 @@ type testInstance struct {
 	service *Service
 }
 
-func newTestInstance(t *testing.T, unlocked bool) *testInstance {
+func newTestInstance(t *testing.T, unlocked bool, options ...Option) *testInstance {
 	t.Helper()
 	ctx := context.Background()
 	db, err := store.OpenInMemory(ctx)
@@ -38,7 +38,7 @@ func newTestInstance(t *testing.T, unlocked bool) *testInstance {
 		}
 		t.Cleanup(credentialVault.Lock)
 	}
-	return &testInstance{db: db, vault: credentialVault, service: New(db, credentialVault, WithMetadata("test", true))}
+	return &testInstance{db: db, vault: credentialVault, service: New(db, credentialVault, append([]Option{WithMetadata("test", true)}, options...)...)}
 }
 
 func testPtr[T any](value T) *T { return &value }

@@ -27,7 +27,13 @@ export function mount(node: ReactNode): MountedView {
 
 export async function flush(): Promise<void> {
   await act(async () => {
-    await Promise.resolve();
+    const macrotask = new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await macrotask;
   });
 }
 

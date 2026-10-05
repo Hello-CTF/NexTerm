@@ -12,6 +12,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/durable"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -276,15 +277,18 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if err == nil {
 					return attachedSessionTab(info), nil
 				}
-				if errors.Is(err, session.ErrTabNotFound) && s.docker != nil {
+				if !errors.Is(err, session.ErrTabNotFound) {
+					return attachedTabDTO{}, terminalIPCError(err)
+				}
+				if s.docker != nil {
 					if _, _, statusErr := s.docker.StreamStatus(input.TabID); statusErr == nil {
 						return s.attachDocker(ctx, call, input.TabID)
 					}
 				}
-				if errors.Is(err, session.ErrTabNotFound) && s.durableErr != nil {
+				if s.durableErr != nil {
 					return attachedTabDTO{}, terminalIPCError(s.durableErr)
 				}
-				if errors.Is(err, session.ErrTabNotFound) && s.durableAvailable {
+				if s.durableAvailable && ids.Valid(input.TabID) {
 					recovered, recoveryErr := s.recoverDurable(ctx, call, input.TabID)
 					if recoveryErr == nil {
 						return recovered, nil
@@ -292,10 +296,10 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					s.bridge.Unbridge(call.Channel.ID)
 					return attachedTabDTO{}, terminalIPCError(recoveryErr)
 				}
-				if !errors.Is(err, session.ErrTabNotFound) || s.docker == nil {
-					return attachedTabDTO{}, terminalIPCError(err)
+				if !validTabID(input.TabID) {
+					return attachedTabDTO{}, ipc.BadParam(errors.New("invalid terminal tab id"))
 				}
-				return s.attachDocker(ctx, call, input.TabID)
+				return attachedTabDTO{}, terminalIPCError(session.ErrTabNotFound)
 			})
 		},
 		func() error {
@@ -542,7 +546,7 @@ func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Cal
 			Rows     uint   `json:"rows"`
 		}
 		if err := json.Unmarshal(call.Args, &input); err != nil {
-			return nil, ipc.BadParam(err)
+			return nil, ipc.BadParam(fmt.Errorf("终端调整大小参数无效: %w", err))
 		}
 		client := gridRequestClient(call.ClientID, input.ClientID)
 		return nil, terminalIPCError(s.resizeDocker(ctx, input.TabID, client, input.Cols, input.Rows))
@@ -553,7 +557,7 @@ func (s *terminalCommandService) dispatchGrid(ctx context.Context, call *ipc.Cal
 func productionSessionAsset(row store.AssetRow, acceptHostKey bool) (session.Asset, error) {
 	options, err := productionAssetOptionMap(row)
 	if err != nil {
-		return session.Asset{}, ipc.BadParam(err)
+		return session.Asset{}, ipc.BadParam(fmt.Errorf("资产选项不是有效的 JSON: %w", err))
 	}
 	if acceptHostKey {
 		options["autoAcceptUnknownHost"] = true
@@ -591,7 +595,7 @@ func productionBytes(values []int) ([]byte, error) {
 	result := make([]byte, len(values))
 	for index, value := range values {
 		if value < 0 || value > 255 {
-			return nil, ipc.BadParam(fmt.Errorf("terminal byte at index %d is outside 0..255", index))
+			return nil, ipc.BadParam(fmt.Errorf("序数 %d 的终端字节超出 0..255 范围", index))
 		}
 		result[index] = byte(value)
 	}
@@ -603,6 +607,19 @@ func gridRequestClient(environmentClient, requestClient string) string {
 		return requestClient
 	}
 	return environmentClient
+}
+
+func validTabID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for index := 0; index < len(id); index++ {
+		char := id[index]
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func terminalIPCError(err error) error {

@@ -1,6 +1,7 @@
 import { DEMO, WEB } from "../demo";
 import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
+import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
 
 export interface AppError {
@@ -33,7 +34,7 @@ export async function call<T>(cmd: string, args?: Record<string, unknown>): Prom
 
 async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
-  const res = await fetch(httpUrl("/rpc"), {
+  const res = await authedFetch(httpUrl("/rpc"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -566,10 +567,7 @@ export const aiApi = {
   runEvents: (jobId: string, afterSeq: number) =>
     call<import("./types").AiRunEventDto[]>("ai_run_events", { jobId, afterSeq }),
   models: () => call<string[]>("ai_models"),
-  testProvider: () =>
-    call<{ modelsOk: boolean; modelsError?: string; chatOk: boolean; chatError?: string }>(
-      "ai_test_provider",
-    ),
+  testProvider: () => call<import("./types").ProviderTestResult>("ai_test_provider"),
   setProvider: (config: ProviderConfig) =>
     call<void>("ai_set_provider", { config }),
   getProvider: () => call<ProviderConfig>("ai_get_provider"),
@@ -604,8 +602,8 @@ export const aiApi = {
     call<import("./types").MessageDto[]>("ai_messages", { conversationId }),
 };
 
-import type { AiUsageSummaryRow, ModelProfile, ModelProfilesView } from "./types";
-export type { AiUsageSummaryRow, ModelProfile, ModelProfilesView };
+import type { AiUsageSummaryRow, ModelProfile, ModelProfilesView, ProviderTestResult } from "./types";
+export type { AiUsageSummaryRow, ModelProfile, ModelProfilesView, ProviderTestResult };
 
 export const modelApi = {
   overview: () =>
@@ -615,8 +613,9 @@ export const modelApi = {
   save: (profile: ModelProfile) => call<ModelProfile>("ai_model_save", { profile }),
   remove: (id: string) => call<void>("ai_model_delete", { id }),
   activate: (id: string) => call<void>("ai_model_activate", { id }),
+  test: (id: string) => call<import("./types").ProviderTestResult>("ai_test_provider", { id }),
   refresh: (profile: ModelProfile) =>
-    call<string[] | null>("ai_model_refresh", { profile }).then((v) => v ?? []),
+    call<import("./types").ModelListDto>("ai_model_refresh", { profile }),
   presets: () => call<string[] | null>("ai_presets").then((v) => v ?? []),
   preset: (name: string) => call<ModelProfile>("ai_model_preset", { preset: name }),
   usageSummary: () =>
@@ -664,6 +663,7 @@ export const vaultApi = {
   initDpapi: () => call<void>("vault_init_dpapi"),
   unlock: (password: string) => call<void>("vault_unlock", { password }),
   lock: () => call<void>("vault_lock"),
+  setAutoLock: (minutes: number) => call<void>("vault_set_autolock", { minutes }),
   changePassword: (oldPassword: string, newPassword: string) =>
     call<void>("vault_change_password", { oldPassword, newPassword }),
   setCredential: (

@@ -98,12 +98,16 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 			}
 			lastErr = err
 			if ctx.Err() != nil || !replayAllowed(err, state) {
-				return nativeResult{}, err
+				return result, err
 			}
 			if retry == c.retry.MaxRetries {
 				break
 			}
-			if err := c.sleep(ctx, c.retry.backoff(retry+1, c.random)); err != nil {
+			delay := c.retry.backoff(retry+1, c.random)
+			if hint := state.retryAfterHint(); hint > 0 {
+				delay = min(hint, maxRetryAfterDelay)
+			}
+			if err := c.sleep(ctx, delay); err != nil {
 				return nativeResult{}, err
 			}
 			if err := ctx.Err(); err != nil {
@@ -170,21 +174,24 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 	}
 	defer reader.Close()
 	aggregate := streamState{pending: make(map[uint64]*pendingToolCall), handler: trackedItems}
+	partial := func(err error) (nativeResult, error) {
+		return nativeResult{completion: c.finishCompletion(aggregate.partialCompletion(), state)}, err
+	}
 	for {
 		message, recvErr := reader.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		if recvErr != nil {
-			return nativeResult{}, wrapNativeError("read AI event stream", recvErr)
+			return partial(wrapNativeError("read AI event stream", recvErr))
 		}
 		state.frameSeen.Store(true)
 		if message == nil {
-			return nativeResult{}, errors.New("AI stream returned a nil message")
+			return partial(errors.New("AI stream returned a nil message"))
 		}
 		message = c.decorateMessage(message, state)
 		if err := aggregate.consumeMessage(attemptContext, message); err != nil {
-			return nativeResult{}, err
+			return partial(err)
 		}
 		if onFrame != nil {
 			if err := onFrame(message); err != nil {
@@ -193,7 +200,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 		}
 	}
 	if err := attemptContext.Err(); err != nil {
-		return nativeResult{}, err
+		return partial(err)
 	}
 	if !aggregate.sawPayload {
 		return nativeResult{}, errors.New("AI stream ended without a response payload")

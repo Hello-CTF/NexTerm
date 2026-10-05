@@ -532,7 +532,12 @@ func (r *Runner) emitUsage(current *job, message *schema.Message, latency time.D
 	} else if configured, ok := message.Extra["context_window"].(float64); ok && configured > 0 {
 		window = uint64(configured)
 	}
-	currentUsage := usage.Usage{PromptTokens: uint64(value.PromptTokens), CompletionTokens: uint64(value.CompletionTokens), CachedTokens: uint64(value.PromptTokenDetails.CachedTokens), ContextWindow: window}
+	currentUsage := usage.Usage{
+		PromptTokens:     uint64(max(value.PromptTokens, 0)),
+		CompletionTokens: uint64(max(value.CompletionTokens, 0)),
+		CachedTokens:     uint64(max(value.PromptTokenDetails.CachedTokens, 0)),
+		ContextWindow:    window,
+	}
 	if raw, ok := message.Extra[provider.MessageExtraCacheCreation]; ok {
 		switch typed := raw.(type) {
 		case uint64:
@@ -689,9 +694,13 @@ func withNonce(raw json.RawMessage, nonce string) json.RawMessage {
 }
 
 func (r *Runner) persistAssistant(ctx context.Context, conversationID, answer string, total usage.Usage) error {
-	tokensIn := int64(min64(total.PromptTokens, uint64(^uint64(0)>>1)))
-	tokensOut := int64(min64(total.CompletionTokens, uint64(^uint64(0)>>1)))
+	tokensIn := clampTokensInt64(total.PromptTokens)
+	tokensOut := clampTokensInt64(total.CompletionTokens)
 	return r.store.MsgInsert(ctx, conversationID, "assistant", map[string]any{"role": "assistant", "content": answer}, &tokensIn, &tokensOut)
+}
+
+func clampTokensInt64(value uint64) int64 {
+	return int64(min64(value, uint64(^uint64(0)>>1)))
 }
 
 func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {

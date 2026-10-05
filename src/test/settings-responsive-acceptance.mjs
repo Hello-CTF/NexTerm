@@ -343,6 +343,31 @@ const READ_CRON_ROW = `(() => {
   };
 })()`;
 
+const READ_CRON_PROFILE = `(() => {
+  const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("定时任务"));
+  if (!card) return { found: false };
+  const text = card.textContent || "";
+  const cr = card.getBoundingClientRect();
+  return {
+    found: text.includes("档案「r120 验收档案"),
+    deleted: text.includes("档案已删除"),
+    unavailable: text.includes("档案密钥不可用"),
+    overflowsViewport: cr.right > window.innerWidth + 1,
+  };
+})()`;
+
+const READ_CRON_PROFILE_SELECT = `(() => {
+  const select = document.querySelector('select[aria-label="模型档案"]');
+  if (!select) return { found: false };
+  const sr = select.getBoundingClientRect();
+  return {
+    found: true,
+    value: select.value,
+    options: [...select.options].map((o) => o.textContent || ""),
+    overflowsViewport: sr.right > window.innerWidth + 1,
+  };
+})()`;
+
 const READ_AUDIT = `(() => {
   const pane = [...document.querySelectorAll(".nx-pane")].find((p) => p.textContent?.includes("审计日志"));
   if (!pane) return { found: false };
@@ -406,7 +431,7 @@ async function seedSettingsData(page) {
   const out = await page.evaluate(`(async () => {
     const out = {};
     try {
-      const { aiApi, assetApi } = await import('/src/ipc/commands.ts');
+      const { aiApi, assetApi, modelApi } = await import('/src/ipc/commands.ts');
       const { cronApi } = await import('/src/ipc/cron.ts');
       const { memoryApi } = await import('/src/ipc/memory.ts');
       const scope = { tenant: "local", subject: "default" };
@@ -414,6 +439,19 @@ async function seedSettingsData(page) {
       out.convId = conv.id;
       await assetApi.knownHostAccept(${JSON.stringify(LONG_HOST)}, 2222, "ssh-ed25519", ${JSON.stringify(LONG_FINGERPRINT)});
       out.kh = "ok";
+      const savedProfile = await modelApi.save({
+        id: "",
+        name: "r120 验收档案（长名称验证窄屏折行）",
+        baseUrl: "https://api.example.com",
+        apiKey: "r120-acceptance-key",
+        model: "r120-acceptance-model",
+        temperature: 0.3,
+        contextWindow: 32768,
+        proxy: null,
+        stream: true,
+        fallbackModel: null,
+      });
+      out.profileId = savedProfile && savedProfile.id;
       const job = await cronApi.register({
         sessionId: conv.id,
         name: ${JSON.stringify(LONG_JOB_NAME)},
@@ -421,6 +459,7 @@ async function seedSettingsData(page) {
         schedule: "0 2 * * *",
         timezone: "UTC",
         timeoutMs: 60000,
+        modelProfileId: out.profileId,
       });
       out.cronId = job && job.id;
       const mem = await memoryApi.create(scope, ${JSON.stringify(LONG_TOPIC)}, ${JSON.stringify(LONG_MEM_CONTENT)}, "reject");
@@ -432,6 +471,7 @@ async function seedSettingsData(page) {
   })()`);
   assert.ok(out.convId, `conversation seed failed: ${JSON.stringify(out)}`);
   assert.equal(out.kh, "ok", `known host seed failed: ${JSON.stringify(out)}`);
+  assert.ok(out.profileId, `model profile seed failed: ${JSON.stringify(out)}`);
   assert.ok(out.cronId, `cron register failed: ${JSON.stringify(out)}`);
   assert.ok(out.memId, `memory create failed: ${JSON.stringify(out)}`);
   assert.equal(out.rules, "ok", `rules seed failed: ${JSON.stringify(out)}`);
@@ -558,6 +598,49 @@ async function darkSettingsChecks(page) {
     assert.ok(state.found, "cron unregister button not found");
     assert.equal(state.overflowsCard, false, `unregister button overflows card: ${JSON.stringify(state)}`);
     return { evidence: state };
+  });
+
+  await pass("A-cron-profile-row-320", async () => {
+    await setViewport(page, 320, 720);
+    const state = await page.evaluate(READ_CRON_PROFILE);
+    assert.ok(state.found, `cron row must show the saved profile name: ${JSON.stringify(state)}`);
+    assert.equal(state.deleted, false, `saved profile must not be flagged deleted: ${JSON.stringify(state)}`);
+    assert.equal(state.unavailable, false, `saved profile must not be flagged unavailable: ${JSON.stringify(state)}`);
+    assert.equal(state.overflowsViewport, false, `cron card overflows viewport: ${JSON.stringify(state)}`);
+    const shot = await screenshot(page, "A-cron-profile-row-320.png");
+    return { evidence: { shot } };
+  });
+
+  await pass("A-cron-profile-selector-320", async () => {
+    await setViewport(page, 320, 720);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "注册定时任务");
+      if (!btn) throw new Error("register button not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`!!document.querySelector('select[aria-label="模型档案"]')`);
+    const state = await page.evaluate(READ_CRON_PROFILE_SELECT);
+    assert.ok(state.found, "cron profile select not found");
+    assert.equal(state.value, "", `default must be the explicit follow-active option: ${JSON.stringify(state)}`);
+    assert.ok(
+      state.options.some((o) => o.includes("跟随当前激活档案")),
+      `follow-active default option missing: ${JSON.stringify(state.options)}`,
+    );
+    assert.ok(
+      state.options.some((o) => o.includes("r120 验收档案")),
+      `saved profile missing from selector options: ${JSON.stringify(state.options)}`,
+    );
+    assert.equal(state.overflowsViewport, false, `profile select overflows viewport: ${JSON.stringify(state)}`);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    assertNoOverflow(sample, "cron profile selector 320");
+    const shot = await screenshot(page, "A-cron-profile-selector-320.png");
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消");
+      if (!btn) throw new Error("cancel button not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`!document.querySelector('select[aria-label="模型档案"]')`);
+    return { evidence: { options: state.options, shot } };
   });
 }
 

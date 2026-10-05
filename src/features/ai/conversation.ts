@@ -80,6 +80,7 @@ export type ChatItem =
       role: "outcome";
       outcome: "done" | "error" | "canceled";
       text: string;
+      retryable?: boolean;
     });
 
 export type ToolItem = Extract<ChatItem, { role: "tool" }>;
@@ -282,6 +283,32 @@ function closeInteractions(
   };
 }
 
+function settleOpenTools(
+  state: ConversationState,
+  generation: number,
+  summary: string,
+  subagentStatus: "failed" | "canceled",
+): ConversationState {
+  return {
+    ...state,
+    items: state.items.map((item) => {
+      if (item.attempt !== generation || item.role !== "tool") return item;
+      const subagent =
+        item.subagent && item.subagent.status === "running"
+          ? {
+              ...item.subagent,
+              status: subagentStatus,
+              tools: item.subagent.tools.map((tool) =>
+                tool.status === "running" ? { ...tool, status: "error" as const, summary: tool.summary ?? summary } : tool,
+              ),
+            }
+          : item.subagent;
+      if (item.summary !== undefined && subagent === item.subagent) return item;
+      return { ...item, summary: item.summary ?? summary, subagent };
+    }),
+  };
+}
+
 export function resolveInteraction(
   state: ConversationState,
   generation: number,
@@ -376,14 +403,15 @@ export function appendHitlInterrupt(
 export interface ApplyResult {
   state: ConversationState;
   accepted: boolean;
-  terminal: "done" | "error" | null;
+  terminal: "done" | "error" | "canceled" | null;
+  gap?: { from: number; to: number } | null;
 }
 
-function rejected(state: ConversationState, terminal: "done" | "error" | null = null): ApplyResult {
+function rejected(state: ConversationState, terminal: "done" | "error" | "canceled" | null = null): ApplyResult {
   return { state, accepted: false, terminal };
 }
 
-function accepted(state: ConversationState, terminal: "done" | "error" | null = null): ApplyResult {
+function accepted(state: ConversationState, terminal: "done" | "error" | "canceled" | null = null): ApplyResult {
   return { state, accepted: true, terminal };
 }
 
@@ -424,13 +452,22 @@ function foldSubagent(
   return accepted(replaceItem(state, target.id, { ...target, subagent: fold(base) }));
 }
 
+export function safeTokenCount(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(Math.floor(parsed), Number.MAX_SAFE_INTEGER);
+}
+
 export function applyAiEvent(
   state: ConversationState,
   generation: number,
   ev: Record<string, unknown>,
 ): ApplyResult {
   const type = ev.type as string;
-  const terminalEvent = type === "done" || type === "error" ? (type as "done" | "error") : null;
+  const terminalEvent =
+    type === "done" || type === "error" || type === "canceled"
+      ? (type as "done" | "error" | "canceled")
+      : null;
   const attempt = attemptOf(state, generation);
   if (!attempt) return rejected(state, terminalEvent);
   if (attempt.outcome) return rejected(state, terminalEvent);
@@ -645,10 +682,10 @@ export function applyAiEvent(
       return accepted({
         ...state,
         usage: {
-          promptTokens: Number(ev.promptTokens) || 0,
-          completionTokens: Number(ev.completionTokens) || 0,
-          cachedTokens: Number(ev.cachedTokens) || 0,
-          contextWindow: Number(ev.contextWindow) || 0,
+          promptTokens: safeTokenCount(ev.promptTokens),
+          completionTokens: safeTokenCount(ev.completionTokens),
+          cachedTokens: safeTokenCount(ev.cachedTokens),
+          contextWindow: safeTokenCount(ev.contextWindow),
         },
       });
     case "todos":
@@ -656,14 +693,24 @@ export function applyAiEvent(
     case "planSubmitted":
       return accepted(patchAttempt(state, generation, { planPending: true }));
     case "done":
-      return accepted(finishDone(state, attempt, ev), "done");
+      return accepted(settleOpenTools(finishDone(state, attempt, ev), generation, "未返回结果", "canceled"), "done");
     case "error": {
       const message = (ev.message as string) || "未知错误";
       let next = patchAttempt(state, generation, { outcome: "error", planPending: false });
       next = closeInteractions({ ...next, status: null }, generation, "本轮已出错，交互已关闭");
       next = settlePendingSteers(next, generation);
-      next = appendOutcome(next, generation, "error", message);
+      next = settleOpenTools(next, generation, "本轮出错中断", "failed");
+      next = appendOutcome(next, generation, "error", message, ev.retryable === true);
       return accepted(next, "error");
+    }
+    case "canceled": {
+      const message = (ev.message as string) || "已停止本轮";
+      let next = patchAttempt(state, generation, { outcome: "canceled", planPending: false });
+      next = closeInteractions({ ...next, status: null }, generation, "本轮已停止，交互已关闭");
+      next = settlePendingSteers(next, generation);
+      next = settleOpenTools(next, generation, "已停止", "canceled");
+      next = appendOutcome(next, generation, "canceled", message);
+      return accepted(next, "canceled");
     }
     default:
       return rejected(state);
@@ -738,10 +785,11 @@ function appendOutcome(
   generation: number,
   outcome: "done" | "error" | "canceled",
   text: string,
+  retryable?: boolean,
 ): ConversationState {
   const id = `g${generation}:outcome`;
   if (hasItem(state, id)) return state;
-  return appendItems(state, [{ id, attempt: generation, role: "outcome", outcome, text }]);
+  return appendItems(state, [{ id, attempt: generation, role: "outcome", outcome, text, retryable }]);
 }
 
 export function cancelRun(
@@ -753,6 +801,7 @@ export function cancelRun(
   if (!attempt || attempt.outcome) return state;
   let next = closeInteractions({ ...state, status: null }, generation, "本轮已停止，交互已关闭");
   next = settlePendingSteers(next, generation);
+  next = settleOpenTools(next, generation, "已停止", "canceled");
   if (!settle) return next;
   next = patchAttempt(next, generation, { outcome: "canceled", planPending: false });
   return appendOutcome(next, generation, "canceled", "已停止本轮");
@@ -762,7 +811,7 @@ export function resetConversation(
   state: ConversationState,
   items: ChatItem[] = [],
 ): ConversationState {
-  return { ...createConversation(), seq: state.seq + items.length, items, usage: state.usage, todos: state.todos };
+  return { ...createConversation(), seq: state.seq + items.length, items };
 }
 
 export function historyToItems(

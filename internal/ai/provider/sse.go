@@ -72,6 +72,12 @@ func (s *streamState) consumeMessage(ctx context.Context, message *schema.Messag
 	return nil
 }
 
+func (s *streamState) partialCompletion() Completion {
+	s.completion.Content = s.content.String()
+	s.completion.Reasoning = s.reasoning.String()
+	return s.completion
+}
+
 func (s *streamState) finishTools() {
 	indexes := make([]uint64, 0, len(s.pending))
 	for index := range s.pending {

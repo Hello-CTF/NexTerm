@@ -3,8 +3,8 @@ package sync
 const ProtocolVersion = 1
 
 const (
-	TokenHeader        = "X-NexTerm-Sync-Token"
-	PlatformUserHeader = "X-HC-User-ID"
+	TokenHeader       = "X-NexTerm-Sync-Token"
+	GatewayAuthHeader = "X-NexTerm-Gateway-Auth"
 )
 
 const (
