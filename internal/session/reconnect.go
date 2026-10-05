@@ -179,6 +179,7 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 		}
 		durableTab := tab.durable != nil
 		cols, rows := tab.cols, tab.rows
+		durableFed := tab.durableFed
 		if tab.grid != nil {
 			if desired := tab.grid.Snapshot().DesiredGrid; desired.Valid() {
 				cols, rows = uint32(desired.Cols), uint32(desired.Rows)
@@ -208,7 +209,10 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 				_ = attachment.Close()
 				return opened, gone, err
 			}
-			opened[tab] = &replacementChannel{channel: newChannelHandle(attachment), durable: attachment}
+			opened[tab] = &replacementChannel{
+				channel: newChannelHandle(&prefixSkipChannel{Channel: attachment, remaining: durableFed}),
+				durable: attachment,
+			}
 			continue
 		}
 		ptyTransport, ok := transport.Transport.(base.PTYTransport)

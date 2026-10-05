@@ -40,7 +40,7 @@ func TestReconnectReattachesSSHDurableTab(t *testing.T) {
 	}
 	waitForTabMarker(t, manager, tabID, "daemon-live-output")
 	provider.mu.Lock()
-	record.output = []byte("daemon-replay-marker")
+	record.output = []byte("daemon-live-output daemon-replay-marker")
 	provider.mu.Unlock()
 
 	if err := manager.Reconnect(ctx, connected.ID); err != nil {
@@ -69,6 +69,16 @@ func TestReconnectReattachesSSHDurableTab(t *testing.T) {
 		t.Fatalf("tab after reconnect = %+v; want durable and live", got)
 	}
 	waitForTabMarker(t, manager, tabID, "daemon-replay-marker")
+	raw, err := manager.RawDump(tabID, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(raw), "daemon-live-output"); count != 1 {
+		t.Fatalf("consumed prefix replayed %d times; want 1: %q", count, raw)
+	}
+	if count := strings.Count(string(raw), "daemon-replay-marker"); count != 1 {
+		t.Fatalf("replay marker appears %d times; want 1: %q", count, raw)
+	}
 
 	provider.mu.Lock()
 	attachment := record.attachments[len(record.attachments)-1]

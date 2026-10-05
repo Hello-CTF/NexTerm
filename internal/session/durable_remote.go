@@ -82,3 +82,37 @@ func containsDurableID(ids []string, id string) bool {
 	}
 	return false
 }
+
+func (t *Tab) addDurableFed(count int64) {
+	t.mu.Lock()
+	if t.durable != nil {
+		t.durableFed += count
+	}
+	t.mu.Unlock()
+}
+
+// prefixSkipChannel drops the leading bytes of the wrapped channel so a
+// reattached durable stream resumes where the previous attachment stopped
+// instead of replaying consumed history into the terminal and transcript.
+type prefixSkipChannel struct {
+	base.Channel
+	remaining int64
+}
+
+func (c *prefixSkipChannel) Read(p []byte) (int, error) {
+	for c.remaining > 0 {
+		discard := p
+		if int64(len(discard)) > c.remaining {
+			discard = discard[:c.remaining]
+		}
+		count, err := c.Channel.Read(discard)
+		c.remaining -= int64(count)
+		if err != nil {
+			return 0, err
+		}
+		if count == 0 {
+			return 0, nil
+		}
+	}
+	return c.Channel.Read(p)
+}

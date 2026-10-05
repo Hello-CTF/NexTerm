@@ -52,6 +52,7 @@ type Tab struct {
 	cancelPump   context.CancelFunc
 	cwdTracker   *shellintegr.Tracker
 	cwd          string
+	durableFed   int64
 
 	catchUpRemaining int64
 
@@ -952,9 +953,13 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		count, err := channel.Read(buffer)
 		if count > 0 {
 			chunk := append([]byte(nil), buffer[:count]...)
-			if feedErr := m.feed(ctx, tab, generation, chunk); feedErr != nil && ctx.Err() != nil {
+			feedErr := m.feed(ctx, tab, generation, chunk)
+			if feedErr != nil && ctx.Err() != nil {
 				readErr = feedErr
 				break
+			}
+			if feedErr == nil {
+				tab.addDurableFed(int64(count))
 			}
 		}
 		if err != nil {

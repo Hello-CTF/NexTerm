@@ -143,6 +143,7 @@ type fakeChannel struct {
 	closeCount atomic.Int32
 
 	mu         sync.Mutex
+	pending    []byte
 	input      []byte
 	resizes    int
 	cols       uint32
@@ -157,9 +158,23 @@ func newFakeChannel(generation uint64) *fakeChannel {
 }
 
 func (c *fakeChannel) Read(buffer []byte) (int, error) {
+	c.mu.Lock()
+	if len(c.pending) > 0 {
+		count := copy(buffer, c.pending)
+		c.pending = c.pending[count:]
+		c.mu.Unlock()
+		return count, nil
+	}
+	c.mu.Unlock()
 	select {
 	case data := <-c.reads:
-		return copy(buffer, data), nil
+		count := copy(buffer, data)
+		if count < len(data) {
+			c.mu.Lock()
+			c.pending = append(c.pending, data[count:]...)
+			c.mu.Unlock()
+		}
+		return count, nil
 	case <-c.closed:
 		return 0, io.EOF
 	}
