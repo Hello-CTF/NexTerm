@@ -1,4 +1,5 @@
 import type { ModelProfile, ModelProfilesView } from "../../ipc/commands";
+import type { AiCircuitStatusDto } from "../../ipc/types";
 
 export function requestTimeoutLabel(profile: ModelProfile): string {
   return profile.requestTimeoutSeconds?.toString() ?? "";
@@ -15,6 +16,73 @@ export function timeoutSecondsFromInput(raw: string, allowZero: boolean): number
   if (!Number.isFinite(value)) return null;
   const rounded = Math.round(value);
   if (allowZero ? rounded < 0 : rounded < 1) return null;
+  return rounded;
+}
+
+export const MAX_TOKENS_HARD_LIMIT = 32768;
+
+export function maxTokensLabel(profile: ModelProfile): string {
+  return profile.maxTokens?.toString() ?? "";
+}
+
+export function maxTokensFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
+
+export const CIRCUIT_DEFAULT_THRESHOLD = 5;
+export const CIRCUIT_DEFAULT_COOLDOWN_SECONDS = 300;
+
+export function circuitThresholdLabel(profile: ModelProfile): string {
+  return profile.circuitFailureThreshold?.toString() ?? "";
+}
+
+export function circuitCooldownLabel(profile: ModelProfile): string {
+  return profile.circuitCooldownSeconds?.toString() ?? "";
+}
+
+export function circuitThresholdFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
+
+export function circuitCooldownFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
+
+export type CircuitRuntimeState = "open" | "closed" | "expired" | "zero";
+
+export function circuitRuntimeState(
+  status: AiCircuitStatusDto,
+  now: number,
+): CircuitRuntimeState {
+  if (status.openUntil != null) return status.openUntil > now ? "open" : "expired";
+  return status.consecutiveFailures > 0 ? "closed" : "zero";
+}
+
+export function circuitRemainingSeconds(openUntil: number, now: number): number {
+  return Math.max(0, Math.ceil((openUntil - now) / 1000));
+}
+
+export function circuitStatusText(status: AiCircuitStatusDto, now: number): string {
+  const openUntil = status.openUntil;
+  if (openUntil != null) {
+    if (openUntil > now) {
+      return `熔断中：连续失败 ${status.consecutiveFailures} 次，冷却剩余 ${circuitRemainingSeconds(openUntil, now)} 秒`;
+    }
+    return `冷却已结束：连续失败 ${status.consecutiveFailures} 次，等待请求恢复`;
+  }
+  if (status.consecutiveFailures > 0) {
+    return `未熔断：最近连续失败 ${status.consecutiveFailures} 次`;
+  }
+  return "运行正常：暂无连续失败";
+}
+
+function positiveIntFromInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (rounded < 1) return null;
   return rounded;
 }
 
@@ -77,6 +145,9 @@ export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
     a.stream === b.stream &&
     fallbackModelLabel(a) === fallbackModelLabel(b) &&
     (a.requestTimeoutSeconds ?? null) === (b.requestTimeoutSeconds ?? null) &&
-    (a.idleTimeoutSeconds ?? null) === (b.idleTimeoutSeconds ?? null)
+    (a.idleTimeoutSeconds ?? null) === (b.idleTimeoutSeconds ?? null) &&
+    (a.maxTokens ?? null) === (b.maxTokens ?? null) &&
+    (a.circuitFailureThreshold ?? null) === (b.circuitFailureThreshold ?? null) &&
+    (a.circuitCooldownSeconds ?? null) === (b.circuitCooldownSeconds ?? null)
   );
 }
