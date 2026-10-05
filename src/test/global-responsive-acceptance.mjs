@@ -891,15 +891,15 @@ async function responsiveAcceptance(page) {
 }
 
 const textScaleMatrix = [
-  { name: "320x568", width: 320, height: 568, mobile: true, dsf: 1.25 },
-  { name: "390x844", width: 390, height: 844, mobile: true, dsf: 1.25 },
-  { name: "560x800", width: 560, height: 800, mobile: true, dsf: 1.25 },
-  { name: "820x1180", width: 820, height: 1180, mobile: false, dsf: 1.25 },
-  { name: "1280x900-desktop", width: 1280, height: 900, mobile: false, dsf: 1.25 },
+  { name: "320x568", width: 320, height: 568, mobile: true, dsf: 1.6 },
+  { name: "390x844", width: 390, height: 844, mobile: true, dsf: 1.6 },
+  { name: "560x800", width: 560, height: 800, mobile: true, dsf: 1.6 },
+  { name: "820x1180", width: 820, height: 1180, mobile: false, dsf: 1.6 },
+  { name: "1280x900-desktop", width: 1280, height: 900, mobile: false, dsf: 1.6 },
 ];
 
 const appearanceSeed = (terminalTheme) =>
-  `try { localStorage.setItem("nexterm.appearance.v1", JSON.stringify({ uiFontPreset: 13, uiFontScale: 1.6, terminalFontSize: 13, terminalTheme: ${JSON.stringify(terminalTheme)} })); } catch {}`;
+  `try { localStorage.setItem("nexterm.appearance.v1", JSON.stringify({ uiFontPreset: 13, uiFontScale: 1.25, terminalFontSize: 13, terminalTheme: ${JSON.stringify(terminalTheme)} })); } catch {}`;
 
 async function textScaleAcceptance(page) {
   for (const vp of textScaleMatrix) {
@@ -913,7 +913,7 @@ async function textScaleAcceptance(page) {
         termTheme: document.documentElement.dataset.nxTermTheme ?? null,
         uiTheme: document.documentElement.dataset.nxTheme ?? null,
       }))()`);
-      assert.equal(evidence.bodyFontSize, "20.8px", `in-app 1.6x on the 13px preset must compose: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.bodyFontSize, "16.25px", `in-app 1.25x on the 13px preset must compose (1.25 x OS 1.6 = 200% text): ${JSON.stringify(evidence)}`);
       assert.equal(evidence.termTheme, "dark", `terminal theme must stay dark by default: ${JSON.stringify(evidence)}`);
       assert.ok(
         evidence.docScrollWidth <= evidence.innerWidth + 1 && evidence.bodyScrollWidth <= evidence.innerWidth + 1,
