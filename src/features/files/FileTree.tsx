@@ -13,6 +13,7 @@ import {
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
+import "../../ui/skeleton.css";
 import {
   cdCommandFor,
   findWritableTerminal,
@@ -771,7 +772,17 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           );
         })}
 
-        {loading && rows.length === 0 && <div className="nx-hint px-2 py-6 text-center">加载中…</div>}
+        {loading && rows.length === 0 && (
+          <div role="status" aria-label="加载中">
+            {Array.from({ length: 8 }, (_, i) => (
+              <div key={i} className="nx-skeleton-row" aria-hidden="true">
+                <span className="nx-skeleton nx-skeleton-icon" />
+                <span className="nx-skeleton min-w-0 flex-1" />
+              </div>
+            ))}
+            <span className="nx-sr-only">加载中…</span>
+          </div>
+        )}
         {!loading && rows.length === 0 && dirErrors.size === 0 && (
           <div className="nx-hint px-2 py-6 text-center">
             这个目录是空的
