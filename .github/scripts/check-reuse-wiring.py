@@ -378,6 +378,37 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
     check("native job keeps the two-process server acceptance",
           any("Run Go two-process server acceptance" in name for name in native_step_names))
 
+    native_steps = ci["jobs"]["native"]["steps"]
+    dist_download = next((step for step in native_steps
+                          if str(step.get("uses", "")).startswith("actions/download-artifact")
+                          and str((step.get("with") or {}).get("name", "")) == "frontend-dist"), None)
+    check("native job downloads the verified frontend dist for every desktop build",
+          dist_download is not None and normalized_step_if(dist_download) == "matrix.kind=='desktop'",
+          f"step={dist_download!r}")
+    dist_download_path = str((dist_download.get("with") or {}).get("path", "")) if dist_download else ""
+    check("native frontend dist downloads outside target/",
+          bool(dist_download_path) and not dist_download_path.startswith("target/"),
+          f"path={dist_download_path!r}")
+    build_step = find_step(ci["jobs"]["native"], "Build the repro-checked production binary")
+    check("native frontend dist download precedes the production build",
+          dist_download is not None and native_steps.index(dist_download) < native_steps.index(build_step),
+          "the dist download must run before the build that consumes it")
+    desktop_build_run = matrix_substitute(str(build_step["run"]), {"kind": "desktop", "os": "linux", "arch": "amd64"})
+    server_build_run = matrix_substitute(str(build_step["run"]), {"kind": "server", "os": "linux", "arch": "amd64"})
+    check("desktop production build consumes the downloaded verified dist",
+          bool(dist_download_path)
+          and f"--consume-dist={dist_download_path}/dist" in desktop_build_run
+          and f"--dist-manifest={dist_download_path}/target/dist-manifest.json" in desktop_build_run,
+          f"run={desktop_build_run!r}")
+    check("desktop production build does not skip the frontend without a staged dist",
+          "--skip-frontend" not in desktop_build_run, f"run={desktop_build_run!r}")
+    check("server production build stays free of frontend dist handling",
+          "--consume-dist" not in server_build_run and "--skip-frontend" not in server_build_run,
+          f"run={server_build_run!r}")
+    apt_install_runs = [str(step.get("run", "")) for step in native_steps if "apt-get install" in str(step.get("run", ""))]
+    check("native job installs no virtual display for removed smoke runs",
+          all("xvfb" not in run for run in apt_install_runs), f"runs={apt_install_runs}")
+
     staging_cases = [
         ("desktop", "Stage the reused production binary", {"os": "windows", "arch": "amd64"},
          ["go-build/nexterm-desktop-windows-amd64.exe", "go-build/nexterm-desktop-windows-amd64.exe.manifest.json",
@@ -703,6 +734,26 @@ def mutate_readd_smoke_step(ci, release, pack_text):
     })
 
 
+def mutate_remove_dist_download(ci, release, pack_text):
+    steps = ci["jobs"]["native"]["steps"]
+    index = next(i for i, step in enumerate(steps)
+                 if str(step.get("uses", "")).startswith("actions/download-artifact")
+                 and str((step.get("with") or {}).get("name", "")) == "frontend-dist")
+    steps.pop(index)
+
+
+def mutate_restore_skip_frontend(ci, release, pack_text):
+    for step in ci["jobs"]["native"]["steps"]:
+        if "Build the repro-checked production binary" in str(step.get("name", "")):
+            step["run"] = re.sub(r"&& '--consume-dist=[^']*'", "&& '--skip-frontend'", str(step["run"]))
+
+
+def mutate_readd_xvfb(ci, release, pack_text):
+    for step in ci["jobs"]["native"]["steps"]:
+        if "apt-get install" in str(step.get("run", "")):
+            step["run"] = str(step["run"]).replace("libwebkitgtk-6.0-dev", "libwebkitgtk-6.0-dev xvfb")
+
+
 def mutate_readd_production_go_test(ci, release, pack_text):
     steps = ci["jobs"]["quality"]["steps"]
     for index, step in enumerate(steps):
@@ -781,6 +832,12 @@ NEGATIVE_CONTROLS = [
      "quality runs the Go suite once without -race", False),
     ("smoke desktop step re-addition is caught", mutate_readd_smoke_step,
      "native job builds and runs no smoke desktop binary", False),
+    ("frontend dist download removal is caught", mutate_remove_dist_download,
+     "native job downloads the verified frontend dist for every desktop build", False),
+    ("desktop skip-frontend restore is caught", mutate_restore_skip_frontend,
+     "desktop production build consumes the downloaded verified dist", False),
+    ("xvfb reintroduction is caught", mutate_readd_xvfb,
+     "native job installs no virtual display for removed smoke runs", False),
     ("production-tagged Go suite re-addition is caught", mutate_readd_production_go_test,
      "quality runs no production-tagged Go suite", False),
     ("build harness unit test re-addition is caught", mutate_readd_harness_tests,
