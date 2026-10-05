@@ -723,6 +723,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
                     const r = e.currentTarget.getBoundingClientRect();
                     openRowMenuAt(entry, dir, r.left, r.bottom);
                   }}
+                  onDoubleClick={(e) => e.stopPropagation()}
                 >
                   ⋯
                 </button>

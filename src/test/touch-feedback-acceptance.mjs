@@ -684,6 +684,48 @@ async function touchAcceptance(page) {
       return { evidence: { bounds, name: picks.name } };
     });
 
+    await pass(`hit-filetree-retap-${theme}`, async () => {
+      await boot(page, { theme, width: 390, height: 844, coarse: true });
+      await page.evaluate(`document.querySelector('.nx-rail-btn[aria-label="文件树"]').click()`);
+      await page.waitFor("Boolean(document.querySelector('.nx-left-dock [role=\"tree\"] .nx-row-more'))");
+      const triggerCenter = async (name) => page.evaluate(`(() => {
+        const row = [...document.querySelectorAll('.nx-left-dock [role="tree"] .nx-row')].find((r) => r.textContent.includes('${name}'));
+        const trigger = row?.querySelector('.nx-row-more');
+        if (!trigger) return null;
+        const r = trigger.getBoundingClientRect();
+        if (r.top < 0 || r.bottom > innerHeight) return null;
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      })()`);
+      const retap = async (name) => {
+        const center = await triggerCenter(name);
+        assert.ok(center, `${name} overflow trigger not visible`);
+        await tapAt(page, center.x, center.y);
+        await page.waitFor("Boolean(document.querySelector('.nx-menu'))");
+        await page.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+        await page.waitFor("!document.querySelector('.nx-menu')");
+        await tapAt(page, center.x, center.y);
+        await sleep(120);
+        await tapAt(page, center.x, center.y);
+        await sleep(300);
+      };
+      const before = await page.evaluate(`({
+        tabs: document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length,
+      })`);
+      await retap(".bashrc");
+      const afterFile = await page.evaluate(`({
+        tabs: document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length,
+        stillHome: [...document.querySelectorAll('.nx-left-dock [role="tree"] .nx-row')].some((r) => r.textContent.includes('.bashrc')),
+      })`);
+      assert.equal(afterFile.tabs, before.tabs, `file retap must not open a tab: ${JSON.stringify({ before, afterFile })}`);
+      assert.equal(afterFile.stillHome, true, "file retap must not navigate the tree");
+      await retap("backups");
+      const afterDir = await page.evaluate(`({
+        stillHome: [...document.querySelectorAll('.nx-left-dock [role="tree"] .nx-row')].some((r) => r.textContent.includes('.bashrc')),
+      })`);
+      assert.equal(afterDir.stillHome, true, "dir retap must not navigate into the directory");
+      return { evidence: { before, afterFile, afterDir } };
+    });
+
     await pass(`hit-rail-fine-compact-${theme}`, async () => {
       await boot(page, { theme, width: 1280, height: 800, coarse: false });
       const evidence = await page.evaluate(`(() => {

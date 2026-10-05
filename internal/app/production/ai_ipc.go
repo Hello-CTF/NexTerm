@@ -65,11 +65,7 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		func() error {
 			return ipc.Register(dispatcher, "ai_test_provider", func(ctx context.Context, _ *ipc.Call, input aiTestProviderRequest) (provider.TestResult, error) {
 				if input.ID != "" {
-					profile, ok := manager.Profile(input.ID)
-					if !ok {
-						return provider.TestResult{}, fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, input.ID)
-					}
-					client, err := provider.NewClient(profile.ProviderConfig(), profile.ClientOptions()...)
+					client, err := manager.ClientFor(input.ID)
 					if err != nil {
 						return provider.TestResult{}, err
 					}

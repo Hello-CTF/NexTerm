@@ -190,6 +190,32 @@ describe("FileTree row actions", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
+  it("does not leak double-clicks from the overflow trigger into openFile/enterDir", async () => {
+    stubPointer(true);
+    mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
+
+    const tabsBefore = (useUi.getState().workspaces[0]?.panes[0]?.tabs ?? []).length;
+    const callsBefore = mocks.fsList.mock.calls.length;
+
+    const fileMore = rowByName(mounted!.container, "notes.txt").querySelector<HTMLButtonElement>(".nx-row-more");
+    if (!fileMore) throw new Error("overflow button not found");
+    act(() => {
+      fileMore.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await flush();
+    expect((useUi.getState().workspaces[0]?.panes[0]?.tabs ?? []).length).toBe(tabsBefore);
+
+    const dirMore = rowByName(mounted!.container, "logs").querySelector<HTMLButtonElement>(".nx-row-more");
+    if (!dirMore) throw new Error("overflow button not found");
+    act(() => {
+      dirMore.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await flush();
+    const dirCalls = mocks.fsList.mock.calls.slice(callsBefore).map((call) => call[1]);
+    expect(dirCalls).not.toContain("~/logs");
+  });
+
   it("offers directory actions without file-only entries on coarse pointers", async () => {
     stubPointer(true);
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -198,5 +199,70 @@ func TestAIModelRefreshWhitespacePaddedMaskedKey(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("provider hits = %d, locked refresh must fail before networking", hits.Load())
+	}
+}
+
+func newProviderTestServer(t *testing.T, authorizations *sync.Map, hits *atomic.Int32) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		hits.Add(1)
+		authorizations.Store(request.URL.Path, request.Header.Get("Authorization"))
+		switch request.URL.Path {
+		case "/models":
+			_, _ = writer.Write([]byte(`{"data":[{"id":"m1"}]}`))
+		case "/chat/completions":
+			_, _ = writer.Write([]byte(`{"choices":[{"message":{"content":"pong"}}]}`))
+		default:
+			t.Errorf("path = %s", request.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestAITestProviderResolvesEncryptedSavedProfileKey(t *testing.T) {
+	dispatcher := setupMaskedKeyDispatcher(t)
+	var authorizations sync.Map
+	var hits atomic.Int32
+	server := newProviderTestServer(t, &authorizations, &hits)
+
+	response := dispatchStoreTest(dispatcher, "ai_model_save", `{"profile":{"name":"saved","baseUrl":"`+server.URL+`","apiKey":"stored-secret","model":"m1","temperature":0.3,"contextWindow":1000,"stream":true}}`)
+	var saved profiles.Profile
+	requireStoreTestResponse(t, response, &saved)
+
+	response = dispatchStoreTest(dispatcher, "ai_test_provider", `{"id":"`+saved.ID+`"}`)
+	var result provider.TestResult
+	requireStoreTestResponse(t, response, &result)
+	if !result.ModelsOK || !result.ChatOK {
+		t.Fatalf("test result = %+v", result)
+	}
+	for _, path := range []string{"/models", "/chat/completions"} {
+		value, ok := authorizations.Load(path)
+		if !ok || value.(string) != "Bearer stored-secret" {
+			t.Fatalf("%s authorization = %v, want resolved stored credential", path, value)
+		}
+	}
+}
+
+func TestAITestProviderLockedVaultFailsClosed(t *testing.T) {
+	dispatcher := setupMaskedKeyDispatcher(t)
+	var authorizations sync.Map
+	var hits atomic.Int32
+	server := newProviderTestServer(t, &authorizations, &hits)
+
+	response := dispatchStoreTest(dispatcher, "ai_model_save", `{"profile":{"name":"saved","baseUrl":"`+server.URL+`","apiKey":"stored-secret","model":"m1","temperature":0.3,"contextWindow":1000,"stream":true}}`)
+	var saved profiles.Profile
+	requireStoreTestResponse(t, response, &saved)
+	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_lock", `null`))
+
+	response = dispatchStoreTest(dispatcher, "ai_test_provider", `{"id":"`+saved.ID+`"}`)
+	if response.OK {
+		t.Fatalf("test provider with locked vault succeeded: %s", response.Data)
+	}
+	if response.Error == nil || response.Error.Code != ipc.CodeVaultLocked {
+		t.Fatalf("error = %+v, want %s", response.Error, ipc.CodeVaultLocked)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("provider was contacted %d times, locked test must fail before networking", hits.Load())
 	}
 }
