@@ -169,3 +169,85 @@ func TestRecoverRemoteDurable(t *testing.T) {
 		t.Fatalf("RecoverRemoteDurable error = %v; want ErrTabNotFound", err)
 	}
 }
+
+type failingListDurableProvider struct {
+	*fakeDurableProvider
+	err error
+}
+
+func (p *failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
+	return nil, p.err
+}
+
+func TestRecoverRemoteDurableResolverErrorPropagates(t *testing.T) {
+	resolverErr := errors.New("daemon unavailable")
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: &countingResolver{err: resolverErr},
+	})
+	ctx := context.Background()
+	if _, err := manager.Connect(ctx, Asset{ID: "ssh-resolver-error", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := manager.RecoverRemoteDurable(ctx, "0123456789abcdef0123456789abcdef", OpenTabOptions{ClientID: "client-a", ChannelID: "recover-resolver-error", Cols: 80, Rows: 24})
+	if errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("RecoverRemoteDurable error = %v; resolver failures must not collapse into ErrTabNotFound", err)
+	}
+	if !errors.Is(err, resolverErr) {
+		t.Fatalf("RecoverRemoteDurable error = %v; want the resolver error", err)
+	}
+}
+
+func TestRecoverRemoteDurableListErrorPropagates(t *testing.T) {
+	listErr := errors.New("daemon enumeration failed")
+	provider := &failingListDurableProvider{fakeDurableProvider: newFakeDurableProvider(), err: listErr}
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: &countingResolver{provider: provider},
+	})
+	ctx := context.Background()
+	if _, err := manager.Connect(ctx, Asset{ID: "ssh-list-error", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := manager.RecoverRemoteDurable(ctx, "0123456789abcdef0123456789abcdef", OpenTabOptions{ClientID: "client-a", ChannelID: "recover-list-error", Cols: 80, Rows: 24})
+	if errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("RecoverRemoteDurable error = %v; enumeration failures must not collapse into ErrTabNotFound", err)
+	}
+	if !errors.Is(err, listErr) {
+		t.Fatalf("RecoverRemoteDurable error = %v; want the enumeration error", err)
+	}
+}
+
+func TestRecoverRemoteDurableJoinsSearchErrors(t *testing.T) {
+	firstErr := errors.New("first daemon unreachable")
+	secondErr := errors.New("second daemon unreachable")
+	var calls int
+	resolver := DurableResolverFunc(func(context.Context, base.Transport) (base.DurableProvider, error) {
+		calls++
+		if calls == 1 {
+			return nil, firstErr
+		}
+		return nil, secondErr
+	})
+	manager := NewManager(Config{
+		Connector:       newFakeConnector(),
+		Terminals:       newFakeTerminalFactory(),
+		DurableResolver: resolver,
+	})
+	ctx := context.Background()
+	if _, err := manager.Connect(ctx, Asset{ID: "ssh-join-a", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Connect(ctx, Asset{ID: "ssh-join-b", Kind: KindSSH}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := manager.RecoverRemoteDurable(ctx, "0123456789abcdef0123456789abcdef", OpenTabOptions{ClientID: "client-a", ChannelID: "recover-join", Cols: 80, Rows: 24})
+	if errors.Is(err, ErrTabNotFound) {
+		t.Fatalf("RecoverRemoteDurable error = %v; search failures must not collapse into ErrTabNotFound", err)
+	}
+	if !errors.Is(err, firstErr) || !errors.Is(err, secondErr) {
+		t.Fatalf("RecoverRemoteDurable error = %v; want both daemon failures joined", err)
+	}
+}

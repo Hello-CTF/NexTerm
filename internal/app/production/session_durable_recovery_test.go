@@ -5,7 +5,6 @@ package production
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
@@ -260,15 +260,49 @@ func TestProductionAttachTabRemoteEnumerationMissReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestProductionAttachTabRemoteResolverFailureReturnsNotFound(t *testing.T) {
-	resolver := &recordingDurableResolver{err: errors.New("remote daemon unreachable")}
+func TestProductionAttachTabRemoteResolverFailurePropagatesMapping(t *testing.T) {
+	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
 	production, _ := newRemoteRecoveryHarness(t, resolver)
 	connectRemoteSSHAsset(t, production)
 
 	missing := ids.New()
 	response := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+missing+`","replayBytes":1024}`, "remote-resolver-fail", "client-a")
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
-		t.Fatalf("attach tab %s = %+v, want not_found", missing, response)
+	if response.OK || response.Error == nil {
+		t.Fatalf("attach tab %s = %+v, want the resolver failure surfaced", missing, response)
+	}
+	if response.Error.Code == ipc.CodeNotFound {
+		t.Fatalf("attach tab %s = %+v, resolver failure must not collapse into not_found", missing, response)
+	}
+	if response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("attach tab %s = %+v, want unsupported for an unavailable daemon", missing, response)
+	}
+}
+
+type failingListDurableProvider struct {
+	base.DurableProvider
+	err error
+}
+
+func (p failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
+	return nil, p.err
+}
+
+func TestProductionAttachTabRemoteListFailurePropagatesMapping(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: failingListDurableProvider{DurableProvider: fixture.provider, err: durable.ErrUnavailable}}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+
+	missing := ids.New()
+	response := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+missing+`","replayBytes":1024}`, "remote-list-fail", "client-a")
+	if response.OK || response.Error == nil {
+		t.Fatalf("attach tab %s = %+v, want the enumeration failure surfaced", missing, response)
+	}
+	if response.Error.Code == ipc.CodeNotFound {
+		t.Fatalf("attach tab %s = %+v, enumeration failure must not collapse into not_found", missing, response)
+	}
+	if response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("attach tab %s = %+v, want unsupported for an unenumerable daemon", missing, response)
 	}
 }
 

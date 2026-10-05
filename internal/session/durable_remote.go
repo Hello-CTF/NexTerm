@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
@@ -37,8 +38,11 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 
 // RecoverRemoteDurable searches the durable providers of connected SSH
 // sessions for a tab ID and reopens the first match with the given attach
-// options. It returns ErrTabNotFound when no remote daemon owns the tab.
+// options. It returns ErrTabNotFound only when the search completes with no
+// owning daemon; resolver and enumeration failures are joined and returned
+// after exhausting the connected sessions so callers can classify them.
 func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, options OpenTabOptions) (TabInfo, error) {
+	var searchErrs []error
 	for _, info := range m.ListSessions() {
 		if info.Kind != KindSSH || info.Status != StatusConnected {
 			continue
@@ -53,6 +57,7 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 		session.mu.Unlock()
 		provider, err := m.durableProviderFor(ctx, session, transport, info.Kind, generation)
 		if err != nil {
+			searchErrs = append(searchErrs, err)
 			continue
 		}
 		lister, ok := provider.(DurableLister)
@@ -61,6 +66,7 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 		}
 		ids, err := lister.ListDurable(ctx)
 		if err != nil {
+			searchErrs = append(searchErrs, err)
 			continue
 		}
 		if !containsDurableID(ids, tabID) {
@@ -70,6 +76,9 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 		options.SessionID = session.ID
 		options.Durable = &DurableTabOptions{Recover: true}
 		return m.OpenTab(ctx, options)
+	}
+	if len(searchErrs) > 0 {
+		return TabInfo{}, errors.Join(searchErrs...)
 	}
 	return TabInfo{}, ErrTabNotFound
 }
