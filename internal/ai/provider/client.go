@@ -17,20 +17,22 @@ import (
 const maxErrorBody = 64 << 10
 
 type Timeouts struct {
-	Connect time.Duration
-	Stream  time.Duration
-	Block   time.Duration
-	Models  time.Duration
-	Idle    time.Duration
+	Connect        time.Duration
+	Stream         time.Duration
+	Block          time.Duration
+	Models         time.Duration
+	Idle           time.Duration
+	ResponseHeader time.Duration
 }
 
 func DefaultTimeouts() Timeouts {
 	return Timeouts{
-		Connect: 20 * time.Second,
-		Stream:  300 * time.Second,
-		Block:   180 * time.Second,
-		Models:  15 * time.Second,
-		Idle:    60 * time.Second,
+		Connect:        20 * time.Second,
+		Stream:         300 * time.Second,
+		Block:          180 * time.Second,
+		Models:         15 * time.Second,
+		Idle:           60 * time.Second,
+		ResponseHeader: 300 * time.Second,
 	}
 }
 
@@ -39,6 +41,7 @@ type Option func(*clientOptions)
 type clientOptions struct {
 	timeouts Timeouts
 	retry    RetryPolicy
+	circuit  *CircuitBreaker
 	sleep    func(context.Context, time.Duration) error
 	random   func() float64
 }
@@ -60,6 +63,9 @@ func WithTimeouts(timeouts Timeouts) Option {
 		if timeouts.Idle > 0 {
 			options.timeouts.Idle = timeouts.Idle
 		}
+		if timeouts.ResponseHeader > 0 {
+			options.timeouts.ResponseHeader = timeouts.ResponseHeader
+		}
 	}
 }
 
@@ -69,11 +75,18 @@ func WithIdleTimeout(idle time.Duration) Option {
 	}
 }
 
+func WithCircuitBreaker(breaker *CircuitBreaker) Option {
+	return func(options *clientOptions) {
+		options.circuit = breaker
+	}
+}
+
 type Client struct {
 	config   Config
 	http     *http.Client
 	timeouts Timeouts
 	retry    RetryPolicy
+	circuit  *CircuitBreaker
 	sleep    func(context.Context, time.Duration) error
 	random   func() float64
 }
@@ -94,6 +107,7 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 	dialer := &net.Dialer{Timeout: settings.timeouts.Connect, KeepAlive: 30 * time.Second}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = dialer.DialContext
+	transport.ResponseHeaderTimeout = settings.timeouts.ResponseHeader
 	if config.Proxy != nil {
 		proxyURL, err := url.Parse(*config.Proxy)
 		if err != nil || proxyURL.Host == "" || proxyURL.Hostname() == "" {
@@ -111,6 +125,7 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 		http:     &http.Client{Transport: &wireTransport{base: transport, idle: settings.timeouts.Idle}},
 		timeouts: settings.timeouts,
 		retry:    settings.retry,
+		circuit:  settings.circuit,
 		sleep:    settings.sleep,
 		random:   settings.random,
 	}, nil
@@ -118,6 +133,10 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 
 func (c *Client) Config() Config {
 	config := c.config
+	if c.config.MaxTokens != nil {
+		maxTokens := *c.config.MaxTokens
+		config.MaxTokens = &maxTokens
+	}
 	if c.config.Proxy != nil {
 		proxy := *c.config.Proxy
 		config.Proxy = &proxy

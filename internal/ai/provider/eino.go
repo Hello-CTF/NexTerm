@@ -75,5 +75,6 @@ func (c *Client) newChatModel(ctx context.Context, servingModel string) (model.T
 	return openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		BaseURL: c.config.BaseURL, APIKey: c.config.APIKey, Model: servingModel,
 		Temperature: &temperature, HTTPClient: c.http,
+		MaxTokens: c.config.MaxTokens,
 	})
 }

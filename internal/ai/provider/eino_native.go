@@ -86,12 +86,17 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	for modelIndex, servingModel := range models {
 		useBlock := !preferStream
 		for retry := 0; retry <= c.retry.MaxRetries; retry++ {
+			if c.circuit != nil && !c.circuit.Allow() {
+				return nativeResult{}, c.circuitOpenError()
+			}
 			state := &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
 			result, err := c.invokeNative(ctx, input, options, servingModel, useBlock, state, onFrame, onItem)
+			c.recordCircuitOutcome(err)
 			if err != nil && !useBlock && ctx.Err() == nil && !state.frameSeen.Load() && !state.emitted && safeStreamFallback(err) {
 				useBlock = true
 				state = &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
 				result, err = c.invokeNative(ctx, input, options, servingModel, true, state, onFrame, onItem)
+				c.recordCircuitOutcome(err)
 			}
 			if err == nil {
 				return result, nil

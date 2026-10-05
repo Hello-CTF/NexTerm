@@ -12,6 +12,7 @@ const (
 	DefaultContextWindow = 32_768
 	MinContextWindow     = 1_000
 	MaxContextWindow     = 2_000_000
+	MaxTokensHardLimit   = 32_768
 )
 
 var ErrUnknownPreset = errors.New("unknown AI provider preset")
@@ -23,6 +24,7 @@ type Config struct {
 	FallbackModel string  `json:"fallbackModel,omitempty"`
 	Temperature   float64 `json:"temperature"`
 	ContextWindow uint64  `json:"contextWindow"`
+	MaxTokens     *int    `json:"maxTokens,omitempty"`
 	Proxy         *string `json:"proxy"`
 	Stream        bool    `json:"stream"`
 }
@@ -45,6 +47,11 @@ func (c Config) Normalized() Config {
 		c.Temperature = min(max(c.Temperature, 0), 2)
 	}
 	c.ContextWindow = min(max(c.ContextWindow, MinContextWindow), MaxContextWindow)
+	if c.MaxTokens != nil {
+		limit := min(int64(MaxTokensHardLimit), int64(c.ContextWindow/2))
+		clamped := int(min(max(int64(*c.MaxTokens), 1), limit))
+		c.MaxTokens = &clamped
+	}
 	if c.Proxy != nil {
 		proxy := strings.TrimSpace(*c.Proxy)
 		if proxy == "" {
@@ -65,6 +72,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		FallbackModel string   `json:"fallbackModel"`
 		Temperature   *float64 `json:"temperature"`
 		ContextWindow *uint64  `json:"contextWindow"`
+		MaxTokens     *int     `json:"maxTokens"`
 		Proxy         *string  `json:"proxy"`
 		Stream        *bool    `json:"stream"`
 	}
@@ -83,6 +91,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	if wire.ContextWindow != nil {
 		c.ContextWindow = *wire.ContextWindow
 	}
+	c.MaxTokens = wire.MaxTokens
 	c.Proxy = wire.Proxy
 	c.Stream = defaults.Stream
 	if wire.Stream != nil {
