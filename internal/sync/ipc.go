@@ -18,6 +18,9 @@ const (
 	CommandPull         = "sync_pull"
 	CommandToken        = "sync_token"
 	CommandTokenRotate  = "sync_token_rotate"
+	CommandTokenList    = "sync_token_list"
+	CommandTokenIssue   = "sync_token_issue"
+	CommandTokenRevoke  = "sync_token_revoke"
 	CommandBundleRead   = "sync_bundle_read"
 	CommandBundleWrite  = "sync_bundle_write"
 )
@@ -71,6 +74,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				if s.desktop {
 					return nil, nil
 				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
+				}
 				token, err := s.Token(ctx)
 				if err != nil {
 					return nil, err
@@ -79,11 +85,25 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandTokenRotate, func(ctx context.Context, _ *ipc.Call, _ struct{}) (*string, error) {
+			return ipc.RegisterNested(dispatcher, CommandTokenRotate, func(ctx context.Context, _ *ipc.Call, input TokenRotateRequest) (*string, error) {
 				if s.desktop {
+					if input.ID != "" {
+						return nil, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
+					}
 					return nil, nil
 				}
-				token, err := s.RotateToken(ctx)
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
+				}
+				var (
+					token string
+					err   error
+				)
+				if input.ID == "" {
+					token, err = s.RotateToken(ctx)
+				} else {
+					token, err = s.TokenRotate(ctx, input.ID)
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -91,13 +111,53 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandBundleRead, func(ctx context.Context, _ *ipc.Call, input BundleFileRequest) (string, error) {
-				return s.ReadBundleFile(ctx, input.Path)
+			return ipc.Register(dispatcher, CommandTokenList, func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]Token, error) {
+				if s.desktop {
+					return nil, nil
+				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
+				}
+				return s.TokenList(ctx)
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandBundleWrite, func(ctx context.Context, _ *ipc.Call, input BundleFileRequest) (struct{}, error) {
-				return struct{}{}, s.WriteBundleFile(ctx, input.Path, input.Content)
+			return ipc.RegisterNested(dispatcher, CommandTokenIssue, func(ctx context.Context, _ *ipc.Call, input TokenIssueRequest) (*TokenIssueResult, error) {
+				if s.desktop {
+					return nil, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
+				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
+				}
+				result, err := s.TokenIssue(ctx, input)
+				if err != nil {
+					return nil, err
+				}
+				return &result, nil
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandTokenRevoke, func(ctx context.Context, _ *ipc.Call, input TokenRevokeRequest) (struct{}, error) {
+				if s.desktop {
+					return struct{}{}, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
+				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return struct{}{}, err
+				}
+				if input.ID == "" {
+					return struct{}{}, ipc.NewError(ipc.CodeBadParam, "令牌 ID 不能为空")
+				}
+				return struct{}{}, s.TokenRevoke(ctx, input.ID)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandBundleRead, func(ctx context.Context, _ *ipc.Call, input BundleFileRequest) (string, error) {
+				return s.ReadBundleFileWithOptions(ctx, input.Path, BundleReadOptions{Password: input.Password})
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandBundleWrite, func(ctx context.Context, _ *ipc.Call, input BundleFileRequest) (*BundleWriteResult, error) {
+				return s.WriteBundleFileWithOptions(ctx, input.Path, input.Content, BundleWriteOptions{Password: input.Password})
 			})
 		},
 	}

@@ -59,6 +59,10 @@ func (h *PeerRPCHandler) VerifyToken(ctx context.Context, token string) (bool, e
 	return h.service.VerifyToken(ctx, token)
 }
 
+func (h *PeerRPCHandler) VerifyTokenIdentity(ctx context.Context, token string) (TokenIdentity, bool, error) {
+	return h.service.VerifyTokenIdentity(ctx, token)
+}
+
 func (h *PeerRPCHandler) GatewayAuthKey() string { return h.service.GatewayAuthKey() }
 
 func GatewayAuthorized(r *http.Request, key string) bool {

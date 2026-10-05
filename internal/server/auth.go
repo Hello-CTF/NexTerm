@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,12 @@ const (
 	wsAuthProtocol       = "nexterm"
 	wsAuthHeaderMaxBytes = 256
 )
+
+// TokenIdentityVerifier 在令牌验证通过时返回令牌身份，
+// 供命令层区分管理员令牌与普通客户端令牌。
+type TokenIdentityVerifier interface {
+	VerifyTokenIdentity(ctx context.Context, presented string) (syncservice.TokenIdentity, bool, error)
+}
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	if !s.authRequired {
@@ -25,18 +32,26 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		token := r.Header.Get(TokenHeader)
 		if token != "" {
-			valid, err := s.tokens.VerifyToken(r.Context(), token)
+			identity, valid, err := s.verifyTokenIdentity(r.Context(), token)
 			if err != nil {
 				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
 				return
 			}
 			if valid {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, r.WithContext(syncservice.WithTokenIdentity(r.Context(), identity)))
 				return
 			}
 		}
 		writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "访问令牌无效或缺失"))
 	})
+}
+
+func (s *Server) verifyTokenIdentity(ctx context.Context, token string) (syncservice.TokenIdentity, bool, error) {
+	if verifier, ok := s.tokens.(TokenIdentityVerifier); ok {
+		return verifier.VerifyTokenIdentity(ctx, token)
+	}
+	valid, err := s.tokens.VerifyToken(ctx, token)
+	return syncservice.TokenIdentity{}, valid, err
 }
 
 func (s *Server) authorizeWebSocket(r *http.Request) (bool, error) {

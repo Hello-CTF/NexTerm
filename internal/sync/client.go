@@ -44,7 +44,7 @@ func (c *Client) Push(ctx context.Context, request PushRequest) (ImportReport, e
 	if err != nil {
 		return ImportReport{}, err
 	}
-	if len(bundle.Assets) == 0 {
+	if len(bundle.Assets) == 0 && len(bundle.Snippets) == 0 {
 		return ImportReport{Warnings: append([]string{}, bundle.Warnings...)}, nil
 	}
 	var report ImportReport
