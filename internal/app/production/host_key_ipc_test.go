@@ -212,7 +212,7 @@ func newHostKeyTestProduction(t *testing.T) *Production {
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{},
 		},
-		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		DataDir: t.TempDir(), Desktop: true,
 	})
 	if err != nil {
 		t.Fatal(err)
