@@ -21,6 +21,103 @@ func exposedConfig(t *testing.T) Config {
 	return config
 }
 
+func TestAuthModeMatrixAcrossListens(t *testing.T) {
+	for _, mode := range []string{AuthOn, AuthLoopback, AuthOff} {
+		for _, listen := range []string{"127.0.0.1:0", "0.0.0.0:8080"} {
+			name := mode + "/" + listen
+			t.Run(name, func(t *testing.T) {
+				config := testConfig(t, false)
+				config.Options.Listen = listen
+				config.Options.Auth = mode
+				_, httpServer := newTestHTTP(t, config)
+
+				authRequired := mode == AuthOn || mode == AuthLoopback && listen != "127.0.0.1:0"
+
+				status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", nil)
+				if authRequired && status != http.StatusUnauthorized {
+					t.Fatalf("tokenless RPC = %d, want %d", status, http.StatusUnauthorized)
+				}
+				if !authRequired && status != http.StatusOK {
+					t.Fatalf("tokenless RPC = %d, want %d", status, http.StatusOK)
+				}
+				status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "secret"})
+				if status != http.StatusOK {
+					t.Fatalf("token RPC = %d, want %d", status, http.StatusOK)
+				}
+
+				request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/files/blob?name=matrix.txt", strings.NewReader("payload"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				response, err := httpServer.Client().Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				response.Body.Close()
+				if authRequired && response.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("tokenless blob = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+				}
+				if !authRequired && response.StatusCode != http.StatusOK {
+					t.Fatalf("tokenless blob = %d, want %d", response.StatusCode, http.StatusOK)
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				connection, wsResponse, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/events", nil)
+				if authRequired {
+					if err == nil {
+						connection.Close(websocket.StatusNormalClosure, "")
+						t.Fatal("tokenless websocket was accepted")
+					}
+					if wsResponse == nil || wsResponse.StatusCode != http.StatusUnauthorized {
+						t.Fatalf("tokenless websocket response = %+v", wsResponse)
+					}
+					if wsResponse != nil {
+						wsResponse.Body.Close()
+					}
+				} else {
+					if err != nil {
+						t.Fatalf("tokenless websocket: %v", err)
+					}
+					_ = connection.Close(websocket.StatusNormalClosure, "")
+				}
+			})
+		}
+	}
+}
+
+func TestAuthModeConfigurationValidation(t *testing.T) {
+	config := testConfig(t, false)
+	config.Options.Auth = "bogus"
+	if _, err := New(config); err == nil {
+		t.Fatal("invalid auth mode was accepted")
+	}
+
+	plainHandler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	requireVerifier := func(mode, listen string) error {
+		t.Helper()
+		config := testConfig(t, false)
+		config.Options.Listen = listen
+		config.Options.Auth = mode
+		config.Tokens = nil
+		config.SyncRPC = plainHandler
+		_, err := New(config)
+		return err
+	}
+	if err := requireVerifier(AuthOn, "127.0.0.1:0"); err == nil {
+		t.Fatal("auth=on without token verifier was accepted")
+	}
+	if err := requireVerifier(AuthLoopback, "0.0.0.0:8080"); err == nil {
+		t.Fatal("auth=loopback on non-loopback listen without token verifier was accepted")
+	}
+	if err := requireVerifier(AuthLoopback, "127.0.0.1:0"); err != nil {
+		t.Fatalf("auth=loopback on loopback listen: %v", err)
+	}
+	if err := requireVerifier(AuthOff, "0.0.0.0:8080"); err != nil {
+		t.Fatalf("auth=off: %v", err)
+	}
+}
+
 func TestExposedListenRequiresTokenForRPC(t *testing.T) {
 	_, httpServer := newTestHTTP(t, exposedConfig(t))
 	url := httpServer.URL + "/rpc"

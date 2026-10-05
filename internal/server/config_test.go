@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -45,6 +47,9 @@ func (v *fakeVault) UnlockMaster(_ context.Context, password string) error {
 	defer v.mu.Unlock()
 	v.unlocked++
 	v.password = password
+	if v.err == nil {
+		v.status.Unlocked = true
+	}
 	return v.err
 }
 
@@ -94,9 +99,49 @@ func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 	if invocation.Command != core.CommandRotateToken || invocation.Options.DataDir != "/flag/data" || invocation.Options.Listen != "127.0.0.1:9000" || invocation.Options.WebRoot != "/env/web" || invocation.Options.MasterKey != "flag-secret" || invocation.Options.SyncOnly {
 		t.Fatalf("invocation = %+v", invocation)
 	}
+	if invocation.Options.Auth != AuthOn {
+		t.Fatalf("default auth mode = %q, want %q", invocation.Options.Auth, AuthOn)
+	}
+	invocation, err = ParseCLI([]string{"--auth=loopback"}, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.Options.Auth != AuthLoopback {
+		t.Fatalf("auth flag = %+v", invocation)
+	}
+	coreInvocation, err := core.ParseCLI([]string{"--auth=loopback", "--require-vault"}, core.CommandServe, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coreInvocation.Auth != core.AuthLoopback || !coreInvocation.RequireVault {
+		t.Fatalf("core auth flags = %+v", coreInvocation)
+	}
 	invocation, err = ParseCLI(nil, func(string) string { return "" })
 	if err != nil || invocation.Command != core.CommandServe || invocation.Options.Listen != DefaultListen || invocation.Options.DataDir == "" || invocation.Options.WebRoot == "" {
 		t.Fatalf("bare invocation = %+v, %v", invocation, err)
+	}
+	if invocation.Options.Auth != AuthOn {
+		t.Fatalf("bare auth mode = %q, want %q", invocation.Options.Auth, AuthOn)
+	}
+	if _, err := ParseCLI([]string{"--auth=bogus"}, getenv); err == nil {
+		t.Fatal("invalid --auth value was accepted")
+	}
+	if _, err := ParseCLI(nil, func(name string) string {
+		if name == "NEXTERM_AUTH" {
+			return "bogus"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("invalid NEXTERM_AUTH was accepted")
+	}
+	invocation, err = ParseCLI(nil, func(name string) string {
+		if name == "NEXTERM_AUTH" {
+			return AuthOff
+		}
+		return ""
+	})
+	if err != nil || invocation.Options.Auth != AuthOff {
+		t.Fatalf("NEXTERM_AUTH = %+v, %v", invocation, err)
 	}
 	if _, err := ParseCLI([]string{"desktop"}, getenv); err == nil {
 		t.Fatal("server accepted desktop command")
@@ -120,6 +165,68 @@ func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 	}
 	if stdout.String() != "rotated\n" || store.rotateCall != 1 {
 		t.Fatalf("rotate stdout = %q calls=%d", stdout.String(), store.rotateCall)
+	}
+}
+
+func TestResolveMasterKey(t *testing.T) {
+	key, err := ResolveMasterKey("env-secret", "")
+	if err != nil || key != "env-secret" {
+		t.Fatalf("passthrough = %q, %v", key, err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyFile, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err = ResolveMasterKey("", keyFile)
+	if err != nil || key != "file-secret" {
+		t.Fatalf("file key = %q, %v", key, err)
+	}
+	if _, err := ResolveMasterKey("env-secret", keyFile); err == nil {
+		t.Fatal("combined --master-key and --master-key-file were accepted")
+	}
+	emptyFile := filepath.Join(t.TempDir(), "empty.key")
+	if err := os.WriteFile(emptyFile, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveMasterKey("", emptyFile); err == nil {
+		t.Fatal("empty master key file was accepted")
+	}
+	if _, err := ResolveMasterKey("", filepath.Join(t.TempDir(), "missing.key")); err == nil {
+		t.Fatal("missing master key file was accepted")
+	}
+	invocation, err := ParseCLI([]string{"--master-key-file", keyFile, "--data-dir", t.TempDir()}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.Options.MasterKey != "file-secret" {
+		t.Fatalf("ParseCLI master key = %q", invocation.Options.MasterKey)
+	}
+	if _, err := ParseCLI([]string{"--master-key=flag-secret", "--master-key-file", keyFile, "--data-dir", t.TempDir()}, func(string) string { return "" }); err == nil {
+		t.Fatal("ParseCLI accepted combined key sources")
+	}
+}
+
+func TestBootstrapVaultRequired(t *testing.T) {
+	if err := BootstrapVaultRequired(context.Background(), &fakeVault{}, ""); err == nil {
+		t.Fatal("missing master key was accepted")
+	}
+	failure := &fakeVault{err: errors.New("wrong key"), status: vault.Status{Initialized: true}}
+	if err := BootstrapVaultRequired(context.Background(), failure, "wrong-password"); err == nil {
+		t.Fatal("vault bootstrap failure was accepted")
+	}
+	fresh := &fakeVault{}
+	if err := BootstrapVaultRequired(context.Background(), fresh, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.initialized != 1 || !fresh.status.Unlocked {
+		t.Fatalf("fresh vault = %+v", fresh)
+	}
+	initialized := &fakeVault{status: vault.Status{Initialized: true}}
+	if err := BootstrapVaultRequired(context.Background(), initialized, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	if initialized.unlocked != 1 || !initialized.status.Unlocked {
+		t.Fatalf("initialized vault = %+v", initialized)
 	}
 }
 

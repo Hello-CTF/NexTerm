@@ -13,6 +13,108 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestLoopbackHostValidation(t *testing.T) {
+	for host, expected := range map[string]bool{
+		"localhost":          true,
+		"localhost:8080":     true,
+		"LOCALHOST:8080":     true,
+		"localhost.":         true,
+		"127.0.0.1":          true,
+		"127.0.0.1:8080":     true,
+		"[::1]":              true,
+		"[::1]:8080":         true,
+		"::1":                true,
+		"evil.com":           false,
+		"evil.com:8080":      false,
+		"localhost.evil.com": false,
+		"127.0.0.2:8080":     false,
+		"192.168.1.10:8080":  false,
+		"user@localhost":     false,
+		"":                   false,
+	} {
+		if got := loopbackHost(host); got != expected {
+			t.Errorf("loopbackHost(%q) = %v, want %v", host, got, expected)
+		}
+	}
+}
+
+func TestLoopbackModeRejectsNonLoopbackHost(t *testing.T) {
+	config := testConfig(t, false)
+	config.Options.Auth = AuthLoopback
+	_, httpServer := newTestHTTP(t, config)
+
+	post := func(host string) int {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Host = host
+		response, err := httpServer.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+
+	for host, expected := range map[string]int{
+		"evil.com":       http.StatusMisdirectedRequest,
+		"evil.com:8080":  http.StatusMisdirectedRequest,
+		"127.0.0.2:8080": http.StatusMisdirectedRequest,
+		"localhost:8080": http.StatusOK,
+		"127.0.0.1":      http.StatusOK,
+		"[::1]":          http.StatusOK,
+	} {
+		if status := post(host); status != expected {
+			t.Errorf("Host %q = %d, want %d", host, status, expected)
+		}
+	}
+}
+
+func TestHostValidationAppliesOnlyToLoopbackModeOnLoopbackListen(t *testing.T) {
+	exposed := exposedConfig(t)
+	exposed.Options.Auth = AuthLoopback
+	_, httpServer := newTestHTTP(t, exposed)
+
+	post := func(host string, token bool) int {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Host = host
+		if token {
+			request.Header.Set(TokenHeader, "secret")
+		}
+		response, err := httpServer.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+
+	if status := post("evil.com", false); status != http.StatusUnauthorized {
+		t.Fatalf("non-loopback listen tokenless = %d, want %d", status, http.StatusUnauthorized)
+	}
+	if status := post("evil.com", true); status != http.StatusOK {
+		t.Fatalf("non-loopback listen with token = %d, want %d", status, http.StatusOK)
+	}
+
+	config := testConfig(t, false)
+	config.Options.Auth = AuthOn
+	_, httpServer = newTestHTTP(t, config)
+	if status := post("evil.com", false); status != http.StatusUnauthorized {
+		t.Fatalf("auth=on tokenless with foreign Host = %d, want %d", status, http.StatusUnauthorized)
+	}
+	if status := post("evil.com", true); status != http.StatusOK {
+		t.Fatalf("auth=on with token and foreign Host = %d, want %d", status, http.StatusOK)
+	}
+}
+
 func TestRPCContentTypeAndOriginAdmission(t *testing.T) {
 	_, httpServer := newTestHTTP(t, testConfig(t, false))
 	request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))

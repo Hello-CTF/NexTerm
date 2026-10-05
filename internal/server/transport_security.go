@@ -2,18 +2,25 @@ package server
 
 import (
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
 
+	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
 var defaultAllowedOrigins = []string{"localhost:*", "127.0.0.1:*"}
 
 func (s *Server) transportGuard(next http.Handler) http.Handler {
+	hostGuard := s.options.Auth == AuthLoopback && core.LoopbackListen(s.options.Listen)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hostGuard && !loopbackHost(r.Host) {
+			http.Error(w, "loopback listener requires a loopback Host", http.StatusMisdirectedRequest)
+			return
+		}
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			if !requestOriginAllowed(r, s.options.AllowedOrigins) {
@@ -43,6 +50,17 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func loopbackHost(hostport string) bool {
+	host := hostport
+	if parsed, _, err := net.SplitHostPort(hostport); err == nil {
+		host = parsed
+	} else {
+		host = strings.TrimPrefix(strings.TrimSuffix(hostport, "]"), "[")
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func requestOriginAllowed(r *http.Request, patterns []string) bool {

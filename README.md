@@ -48,9 +48,9 @@ cd NexTerm-server_x.y.z_linux_amd64
 less README.md
 ```
 
-安装包的 systemd 配置默认监听 `127.0.0.1:8080`。启动后在本机打开 `http://127.0.0.1:8080`，或通过带鉴权的 HTTPS 反向代理访问。
+安装包的 systemd 配置默认监听 `127.0.0.1:8080`，并显式声明 `--auth on`（任何访问都要同步令牌）。启动后在本机打开 `http://127.0.0.1:8080`，或通过带鉴权的 HTTPS 反向代理访问。
 
-> **不要把完整版服务端直接暴露到公网。** 非回环监听时，`/rpc`、`/ws` 与 `/files/blob` 要求同步令牌（`/healthz` 与页面静态资源保持公开），浏览器首次打开会提示输入令牌，可用 `nexterm-server token` 查看；回环监听不强制。对外访问时，仍建议只监听回环地址，并在前面配置带 TLS 的反向代理。
+> **不要把完整版服务端直接暴露到公网。** 访问控制默认开启（`--auth on`，rc3 起）：无论监听地址，`/rpc`、`/ws` 与 `/files/blob` 都要求同步令牌（`/healthz` 与页面静态资源保持公开），浏览器首次打开会提示输入令牌，可用 `nexterm-server token` 查看。回环豁免仅在显式指定 `--auth loopback` 时生效，且该模式校验 Host 只允许 `localhost`、`127.0.0.1`、`[::1]`（防 DNS 重绑定），不匹配返回 421。对外访问时，仍建议只监听回环地址，并在前面配置带 TLS 的反向代理。
 
 ### 仅同步运行
 
@@ -63,6 +63,15 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 该模式只开放 `/sync/rpc` 和 `/healthz`，RPC 仅有 `sync_digest`、`sync_export`、`sync_import` 三条，不提供浏览器界面或 `/rpc`。同步令牌泄漏的影响因此限于这份资产库，不会获得终端、文件或容器控制接口。
 
 使用 `nexterm-server token --data-dir /var/lib/nexterm` 获取令牌，然后在桌面端的「设置 → 资产同步」中填写服务端地址和令牌。浏览器版首次打开时提示输入的也是这枚令牌。公网同步必须使用 HTTPS，并妥善保管令牌。需要换令牌时使用 `rotate-token`；旧令牌会立即失效，桌面端也要同步更新。
+
+### 从 rc2 升级（rc3 默认变化）
+
+rc3 把完整版访问控制的默认值从 "仅非回环监听强制" 翻转为 `--auth on`（任何监听地址都强制），仓库自带的 systemd 单元也显式使用 `--auth on`。升级前请对照部署形态处理：
+
+- 监听 `0.0.0.0` 等非回环地址的现有部署：原本就强制令牌，行为不变，无需处理。
+- 监听回环地址的现有部署：升级后浏览器首次打开会提示输入同步令牌（`nexterm-server token` 查看），这是推荐的默认行为。如确需恢复回环免令牌，请自行显式设置 `--auth loopback` 或 `NEXTERM_AUTH=loopback`。
+- `--auth loopback` 仅适合直接本机访问：它把 Host 限制为 `localhost`、`127.0.0.1`、`[::1]`，经反向代理以域名访问会收到 421。反向代理部署请保持默认 `--auth on`。
+- 确需关闭访问控制可显式 `--auth off`（强烈不建议；启动日志会给出警告）。
 
 ### 懒猫微服
 
@@ -79,11 +88,18 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 | `--listen` | `NEXTERM_LISTEN` | 监听地址。直接运行二进制时默认为 `0.0.0.0:8080`；安装包的 systemd 配置使用 `127.0.0.1:8080`。 |
 | `--data-dir` | `NEXTERM_DATA_DIR` | 数据库、日志和同步令牌等数据的保存目录。 |
 | `--web-root` | `NEXTERM_WEB_ROOT` | 浏览器界面的静态文件目录，仅同步模式不需要。 |
-| `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。 |
+| `--auth` | `NEXTERM_AUTH` | 访问控制：`on`（默认，任何监听地址都强制同步令牌）、`loopback`（仅回环监听豁免，需显式指定）、`off`（关闭，不建议）。仅影响完整模式的 `/rpc`、`/ws`、`/files/blob`；`/sync/rpc` 始终要求同步令牌。 |
+| `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。已弃用，请改用 `--master-key-file`。 |
+| `--master-key-file` | `NEXTERM_MASTER_KEY_FILE` | 从文件读取凭据库根密钥（推荐；与 `--master-key` 互斥）。 |
+| `--require-vault` | — | 启动时凭据库未能解锁则以非零状态退出。 |
 | `--sync-only` | — | 只启动资产同步接口。 |
 | — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免同步令牌（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
 
 安装包中的 `nexterm-server.service` 与 `nexterm-onlyserver.service` 二选一，不要同时启用。完整版密钥放在 `/etc/nexterm/nexterm.env`，仅同步运行的密钥放在 `/etc/nexterm/onlyserver.env`，权限均设为 `0600`；不要把密钥直接写进可公开读取的 unit 文件。
+
+同步令牌以明文保存在数据目录的数据库中：备份数据目录等于备份同步令牌，请像保管密钥一样保管备份。存放 `NEXTERM_MASTER_KEY` 的 EnvironmentFile 必须保持 `0600` 且属主为运行用户，避免同机其他用户读取。
+
+`NEXTERM_MASTER_KEY` 环境变量已弃用（进程环境对同机用户可见），请改用 `--master-key-file /etc/nexterm/master.key`（或 `NEXTERM_MASTER_KEY_FILE`），文件权限设为 `0600`。对凭据同步有强依赖的部署可加 `--require-vault`：启动时凭据库未能解锁（未配置密钥或密钥错误）会直接以非零状态退出。
 
 请备份密钥文件和数据目录。更换根密钥后，已有的密码类凭据将无法解密。
 
@@ -110,7 +126,7 @@ systemctl status nexterm-server
 
 ### 保存密码或同步凭据失败
 
-确认服务已配置 `NEXTERM_MASTER_KEY`，并且升级或迁移后仍使用原来的密钥和数据目录。同步失败时，还要检查服务端地址、HTTPS 证书和同步令牌；令牌轮换后必须更新桌面端保存的令牌。
+确认服务已通过 `--master-key-file`（或已弃用的 `NEXTERM_MASTER_KEY`）配置根密钥，并且升级或迁移后仍使用原来的密钥和数据目录。同步失败时，还要检查服务端地址、HTTPS 证书和同步令牌；令牌轮换后必须更新桌面端保存的令牌。
 
 ## License
 

@@ -66,6 +66,17 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "nexterm-server: close log:", err)
 		}
 	}()
+	if os.Getenv("NEXTERM_MASTER_KEY") != "" {
+		logger.Warn("NEXTERM_MASTER_KEY is deprecated; store the master key in a 0600 file and pass --master-key-file instead")
+	}
+	if invocation.Auth == core.AuthOff {
+		logger.Warn("access control is disabled via --auth=off: anyone who can reach the listen address can operate the server", "listen", invocation.Listen)
+	}
+	masterKey, err := server.ResolveMasterKey(invocation.MasterKey, invocation.MasterKeyFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
 
 	ctx, stop := platform.NotifyContext(context.Background())
 	defer stop()
@@ -121,6 +132,7 @@ func run(args []string) int {
 			DataDir:  paths.DataDir,
 			WebRoot:  invocation.WebRoot,
 			SyncOnly: invocation.SyncOnly,
+			Auth:     invocation.Auth,
 		},
 		Dispatcher:   application.Dispatcher,
 		Environment:  application.Environment(""),
@@ -137,10 +149,18 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 1
 	}
-	if invocation.MasterKey == "" {
+	switch {
+	case invocation.RequireVault:
+		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
+			logger.Error("vault is required but unavailable", "error", err)
+			return 1
+		}
+	case masterKey == "":
 		logger.Warn("no vault master key provided; credential synchronization may be unavailable")
-	} else if err := server.BootstrapVault(ctx, application.Services.Vault, invocation.MasterKey); err != nil {
-		logger.Error("vault bootstrap failed", "error", err)
+	default:
+		if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
+			logger.Error("vault bootstrap failed", "error", err)
+		}
 	}
 	if err := application.Serve(ctx, core.ServeConfig{
 		Listen:         invocation.Listen,

@@ -56,7 +56,7 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir)
+	cmd := exec.Command(binary, "--listen", address, "--data-dir", dataDir, "--auth=loopback")
 	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", "NEXTERM_MASTER_KEY=regression-master-key")
 	buffer := &syncBuffer{}
 	cmd.Stdout = buffer
@@ -70,6 +70,9 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	health := waitForHealth(t, process, address)
 	if health.Vault == nil {
 		t.Fatal("health has no vault status")
+	}
+	if !strings.Contains(process.output.String(), "deprecated") {
+		t.Fatalf("NEXTERM_MASTER_KEY deprecation warning missing: %q", process.output.String())
 	}
 	encoded, err := json.Marshal(health.Vault)
 	if err != nil {
@@ -149,7 +152,7 @@ func TestSyncOnlyProcessUsesRealTokenAndOnlyThreeRPCs(t *testing.T) {
 func TestFullServerProcessKeepsProductionGrid(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
-	process, address := startServerProcess(t, binary, dataDir, false)
+	process, address := startServerProcess(t, binary, dataDir, false, "--auth=loopback")
 	defer process.stop(t)
 	health := waitForHealth(t, process, address)
 	if !health.OK || health.SyncOnly || health.Commands < 120 {
@@ -198,6 +201,120 @@ type rpcTestResponse struct {
 	body   []byte
 }
 
+func TestServerProcessAuthDefaultsOn(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	process, address := startServerProcess(t, binary, dataDir, false)
+	defer process.stop(t)
+	waitForHealth(t, process, address)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, nil, http.StatusUnauthorized)
+	requestURL(t, client, "http://"+address+"/healthz", http.MethodGet, nil, nil, http.StatusOK)
+
+	token := runServerToken(t, binary, dataDir, "token")
+	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, &token)
+}
+
+func TestServerProcessRequireVault(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+
+	exitCode := func(args ...string) (int, string) {
+		t.Helper()
+		cmd := exec.Command(binary, args...)
+		cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("process succeeded, want failure: %s", output)
+		}
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("process error = %v", err)
+		}
+		return exitErr.ExitCode(), string(output)
+	}
+
+	code, output := exitCode("--listen", "127.0.0.1:0", "--data-dir", dataDir, "--require-vault")
+	if code != 1 || !strings.Contains(output, "vault") {
+		t.Fatalf("require-vault without key = code %d, output %q", code, output)
+	}
+
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyFile, []byte("first-master-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	process, address := startServerProcess(t, binary, dataDir, false, "--require-vault", "--master-key-file", keyFile)
+	health := waitForHealth(t, process, address)
+	encoded, err := json.Marshal(health.Vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Initialized bool `json:"initialized"`
+		Unlocked    bool `json:"unlocked"`
+	}
+	if err := json.Unmarshal(encoded, &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Initialized || !status.Unlocked {
+		t.Fatalf("vault status = %+v", status)
+	}
+	if strings.Contains(process.output.String(), "deprecated") {
+		t.Fatalf("master key file triggered env deprecation warning: %q", process.output.String())
+	}
+	process.stop(t)
+
+	if err := os.WriteFile(keyFile, []byte("second-master-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, output = exitCode("--listen", "127.0.0.1:0", "--data-dir", dataDir, "--require-vault", "--master-key-file", keyFile)
+	if code != 1 || !strings.Contains(output, "vault") {
+		t.Fatalf("require-vault with wrong key = code %d, output %q", code, output)
+	}
+
+	process, address = startServerProcess(t, binary, dataDir, false, "--master-key-file", keyFile)
+	defer process.stop(t)
+	health = waitForHealth(t, process, address)
+	encoded, err = json.Marshal(health.Vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Initialized || status.Unlocked {
+		t.Fatalf("wrong key without require-vault = %+v, want locked vault still serving", status)
+	}
+}
+
+func TestSystemdUnitsEnforceAuthOn(t *testing.T) {
+	for _, unit := range []string{"nexterm-server.service", "nexterm-onlyserver.service"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "systemd", unit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		if !strings.Contains(content, "--auth on") {
+			t.Fatalf("%s does not enforce --auth on:\n%s", unit, content)
+		}
+		if strings.Contains(content, "--auth loopback") || strings.Contains(content, "--auth off") {
+			t.Fatalf("%s weakens access control:\n%s", unit, content)
+		}
+	}
+}
+
+func TestServerProcessRejectsInvalidAuthMode(t *testing.T) {
+	binary := buildServerBinary(t)
+	cmd := exec.Command(binary, "--listen", "127.0.0.1:0", "--data-dir", t.TempDir(), "--auth=bogus")
+	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
+	output, err := cmd.CombinedOutput()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("invalid --auth = %v, output %q", err, output)
+	}
+}
+
 func buildServerBinary(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "nexterm-server")
@@ -228,7 +345,7 @@ func serverProcessEnv(t *testing.T, extra ...string) []string {
 	return append(append(env, "TMPDIR="+shared), extra...)
 }
 
-func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool) (*testServerProcess, string) {
+func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool, extraArgs ...string) (*testServerProcess, string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -242,6 +359,7 @@ func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool) (*t
 	if syncOnly {
 		args = append(args, "--sync-only")
 	}
+	args = append(args, extraArgs...)
 	cmd := exec.Command(binary, args...)
 	cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
 	buffer := &syncBuffer{}
