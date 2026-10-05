@@ -122,6 +122,41 @@ describe("demo AI 命令契约", () => {
     }
   }, 15000);
 
+  it("ai_edit_resend 不再取消自然完成的 job，旧 channel 无 post-done 取消且 completed run 不变", async () => {
+    const seed = conversationMessages["conv-1"];
+    const snapshot = seed.map((m) => ({ ...m }));
+    const events: { type?: string; message?: string }[] = [];
+    const channel = { onmessage: (event: { type?: string; message?: string }) => events.push(event) };
+    try {
+      await mockInvoke("ai_chat", {
+        conversationId: "conv-1",
+        message: "redis 状态如何",
+        channel,
+      });
+      const deadline = Date.now() + 8000;
+      while (!events.some((e) => e.type === "done") && Date.now() < deadline) {
+        await new Promise((r) => window.setTimeout(r, 50));
+      }
+      expect(events.some((e) => e.type === "done")).toBe(true);
+
+      expect(await mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-1" })).toBeNull();
+      expect(events.some((e) => e.type === "error" && e.message === "已取消")).toBe(false);
+
+      const settled = events.length;
+      await new Promise((r) => window.setTimeout(r, 300));
+      expect(events.length).toBe(settled);
+
+      const runs = (await mockInvoke("ai_run_list", { conversationId: "conv-1" })) as { id: string; status: string }[];
+      expect(runs.find((r) => r.id === "run-1")?.status).toBe("completed");
+      expect(runs.find((r) => r.id === "run-2")?.status).toBe("superseded");
+
+      const messages = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(messages.map((m) => m.id)).toEqual(["msg-1"]);
+    } finally {
+      seed.splice(0, seed.length, ...snapshot);
+    }
+  }, 15000);
+
   it("ai_usage_summary 返回 usage 行", async () => {
     const rows = (await mockInvoke("ai_usage_summary")) as AiUsageSummaryRow[];
     expect(rows.length).toBeGreaterThan(0);

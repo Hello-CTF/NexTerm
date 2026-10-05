@@ -63,12 +63,13 @@ const logTimers = new Map<string, () => void>();
 const pendingAi = new Map<string, (decision: string) => void>();
 const cancelledAiJobs = new Set<string>();
 const aiChannels = new Map<string, unknown>();
-const aiJobConversations = new Map<string, string>();
+const activeAiJobs = new Map<string, string>();
 let jobSeq = 0;
 
 function cancelAiJob(jobId: string) {
   cancelledAiJobs.add(jobId);
   pendingAi.delete(jobId);
+  activeAiJobs.delete(jobId);
   pushEvent(aiChannels.get(jobId), {
     type: "error",
     message: "已取消",
@@ -495,7 +496,10 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
       "- 若第 4 步未通过，需要回滚到上一次镜像",
     ].join("\n");
     later(360, () => pushEvent(channel, { type: "planSubmitted", plan }));
-    later(560, () => pushEvent(channel, { type: "done", answer: plan }));
+    later(560, () => {
+      activeAiJobs.delete(jobId);
+      pushEvent(channel, { type: "done", answer: plan });
+    });
     return;
   }
 
@@ -656,6 +660,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
 
   function finish(finalAnswer: string) {
     later(0, () => {
+      activeAiJobs.delete(jobId);
       emitSessionStatus("s-web01", "connected", null);
       pushEvent(channel, { type: "done", answer: finalAnswer });
     });
@@ -1527,7 +1532,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         });
       }
       aiChannels.set(jobId, a.channel);
-      aiJobConversations.set(jobId, liveConvId);
+      activeAiJobs.set(jobId, liveConvId);
       streamAnswer(a.channel, jobId, str(a.message), Boolean(a.planMode));
       return { jobId, conversationId: liveConvId };
     }
@@ -1555,8 +1560,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       if (!messages || index < 0) throwAppError("not_found", "消息不存在");
       const target = messages[index];
       if (target.role !== "user") throwAppError("invalid_argument", "只能编辑用户消息");
-      for (const [jobId, convId] of aiJobConversations) {
-        if (convId === conversationId && !cancelledAiJobs.has(jobId)) cancelAiJob(jobId);
+      for (const [jobId, convId] of activeAiJobs) {
+        if (convId === conversationId) cancelAiJob(jobId);
       }
       messages.splice(index + 1);
       for (const run of demoRuns) {
