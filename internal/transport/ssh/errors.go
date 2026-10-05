@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"syscall"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -125,11 +124,8 @@ func classifyErrorKind(err error) (ErrorKind, bool) {
 		}
 		return ErrorKindDNS, true
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return ErrorKindRefused, true
-	}
-	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
-		return ErrorKindUnreachable, true
+	if kind, ok := classifySyscallKind(err); ok {
+		return kind, true
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
