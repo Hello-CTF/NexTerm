@@ -66,12 +66,16 @@ function centerElement(
 ): void {
   const containerRect = container.getBoundingClientRect();
   const targetRect = target.getBoundingClientRect();
-  const next = centeredScrollTop(
-    containerRect.top,
-    container.scrollTop,
-    container.clientHeight,
-    targetRect.top,
-    targetRect.height,
+  const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+  const next = Math.min(
+    centeredScrollTop(
+      containerRect.top,
+      container.scrollTop,
+      container.clientHeight,
+      targetRect.top,
+      targetRect.height,
+    ),
+    maxScroll,
   );
   if (Math.abs(next - container.scrollTop) <= 1) {
     pending.current = null;

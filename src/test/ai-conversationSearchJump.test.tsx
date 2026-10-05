@@ -98,15 +98,17 @@ let currentScrollTop = 0;
 let topOf: (index: number) => number = (i) => 200 + i * 150;
 let heightOf: (index: number) => number = (i) => (i === 2 || i === 70 ? 300 : 30);
 
-function stubGeometry(view: MountedView): HTMLDivElement {
+function stubGeometry(view: MountedView, scrollHeight = Number.MAX_SAFE_INTEGER): HTMLDivElement {
   const log = view.container.querySelector<HTMLDivElement>('div[role="log"]');
   if (!log) throw new Error("log container not found");
   Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 400 });
+  Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => scrollHeight });
   Object.defineProperty(log, "scrollTop", {
     configurable: true,
     get: () => currentScrollTop,
     set: (value: number) => {
-      currentScrollTop = value;
+      const max = Math.max(0, log.scrollHeight - log.clientHeight);
+      currentScrollTop = Math.min(Math.max(0, value), max);
     },
   });
   log.getBoundingClientRect = () => rect(0, 0);
@@ -300,5 +302,50 @@ describe("AiSidebar search jump", () => {
 
     await flush();
     expect(log.scrollTop).toBe(centered);
+  });
+
+  it("底部边界：短最后项按真实最大偏移 clamp 并判定 settled，手滚离开无 snapback、无 frozen 残留", async () => {
+    const text = () => view!.container.textContent ?? "";
+    topOf = (i) => i * 88;
+    heightOf = (i) => (i === 99 ? 30 : 88);
+    const rows = Array.from({ length: 100 }, (_, i) =>
+      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+    );
+    mocks.messages.mockResolvedValue(rows);
+    view?.unmount();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => text().includes("词1 回答"));
+    const maxScroll = 99 * 88 + 30 - 400;
+    const log = stubGeometry(view!, 99 * 88 + 30);
+
+    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await flush();
+    setInputValue(
+      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
+      "词99",
+    );
+    await flush();
+
+    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
+    await flush();
+    expect(log.scrollTop).toBe(maxScroll);
+
+    act(() => {
+      log.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(wrapperOf(view!, 99)).not.toBeNull();
+    expect(log.scrollTop).toBe(maxScroll);
+    expect(log.scrollTop).not.toBe(99 * 88 - (400 - 30) / 2);
+    expect(wrapperOf(view!, 99)?.className).toContain("ring-amber");
+
+    log.scrollTop = 100;
+    act(() => {
+      log.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(log.scrollTop).toBe(100);
+    expect(wrapperOf(view!, 0)).not.toBeNull();
+    expect(wrapperOf(view!, 99)).toBeNull();
   });
 });
