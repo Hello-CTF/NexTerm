@@ -85,28 +85,39 @@ def find_native_download_step(release, job_key):
     raise AssertionError(f"native download step not found in {job_key}")
 
 
+def job_needs(job):
+    needs = job.get("needs")
+    return [needs] if isinstance(needs, str) else list(needs or [])
+
+
 def evaluate_release(release, scenario):
     results = {"ci-source": scenario["ci-source"]}
     outputs = {"reused": scenario["reused"]} if scenario["ci-source"] == "success" else {}
-    for job_id in ("ci", "precondition", "desktop", "server", "publish"):
-        job = release["jobs"][job_id]
-        needs = job.get("needs")
-        need_list = [needs] if isinstance(needs, str) else list(needs or [])
-        if any(results.get(need) in ("failure", "cancelled") for need in need_list):
-            results[job_id] = "skipped"
-            continue
-        condition = job.get("if")
-        if condition is None:
-            runs = all(results.get(need) == "success" for need in need_list)
-        else:
-            expr = condition.replace("${{", "").replace("}}", "").strip()
-            if expr == "!failure() && !cancelled()":
-                runs = True
-            elif expr == "needs.ci-source.outputs.reused != 'true'":
-                runs = outputs.get("reused") != "true"
-            else:
+    order = ("ci", "precondition", "desktop", "server", "publish")
+    ancestors = {"ci-source": set()}
+    for job_id in order:
+        closure = set()
+        for need in job_needs(release["jobs"][job_id]):
+            closure.add(need)
+            closure |= ancestors[need]
+        ancestors[job_id] = closure
+    status_functions = ("success(", "failure(", "cancelled(", "always(", "skipped(")
+    for job_id in order:
+        condition = release["jobs"][job_id].get("if")
+        expr = condition.replace("${{", "").replace("}}", "").strip() if condition is not None else None
+        upstream = [results[ancestor] for ancestor in ancestors[job_id]]
+        has_status_check = expr is not None and any(fn in expr for fn in status_functions)
+        if has_status_check:
+            if expr != "!failure() && !cancelled()":
                 raise AssertionError(f"unhandled job-level if: {expr}")
-        results[job_id] = scenario[job_id] if (runs and job_id == "ci") else ("success" if runs else "skipped")
+            runs = "failure" not in upstream and "cancelled" not in upstream
+        else:
+            runs = all(result == "success" for result in upstream)
+            if expr is not None:
+                if expr != "needs.ci-source.outputs.reused != 'true'":
+                    raise AssertionError(f"unhandled job-level if: {expr}")
+                runs = runs and outputs.get("reused") != "true"
+        results[job_id] = scenario.get(job_id, "success") if runs else "skipped"
     return results
 
 
@@ -240,7 +251,7 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
           any("actions/checkout" in str(step.get("uses", "")) for step in release["jobs"]["ci-source"]["steps"]))
 
     scenarios = [
-        ("reuse: ci skipped and release proceeds",
+        ("reuse: successful ci-source + skipped ci + successful precondition proceeds to packaging and publish",
          {"ci-source": "success", "reused": "true", "ci": "success"},
          {"ci-source": "success", "ci": "skipped", "precondition": "success", "desktop": "success", "server": "success", "publish": "success"}),
         ("fallback: full CI success and release proceeds",
@@ -249,13 +260,27 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
         ("fallback: CI failure gates the release",
          {"ci-source": "success", "reused": "false", "ci": "failure"},
          {"ci-source": "success", "ci": "failure", "precondition": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}),
+        ("reuse: desktop packaging failure still gates publish",
+         {"ci-source": "success", "reused": "true", "desktop": "failure"},
+         {"ci-source": "success", "ci": "skipped", "precondition": "success", "desktop": "failure", "server": "success", "publish": "skipped"}),
+        ("reuse: server packaging failure still gates publish",
+         {"ci-source": "success", "reused": "true", "server": "failure"},
+         {"ci-source": "success", "ci": "skipped", "precondition": "success", "desktop": "success", "server": "failure", "publish": "skipped"}),
         ("ci-source failure gates the release",
          {"ci-source": "failure", "reused": "false", "ci": "success"},
          {"ci-source": "failure", "ci": "skipped", "precondition": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}),
+        ("ci-source cancellation gates the release",
+         {"ci-source": "cancelled", "reused": "false", "ci": "success"},
+         {"ci-source": "cancelled", "ci": "skipped", "precondition": "skipped", "desktop": "skipped", "server": "skipped", "publish": "skipped"}),
     ]
     for name, scenario, expected in scenarios:
         actual = evaluate_release(release, scenario)
         check(f"job graph: {name}", actual == expected, f"actual={actual}")
+
+    for job_key in ("desktop", "server", "publish"):
+        job_if = str(release["jobs"][job_key].get("if", "")).replace(" ", "")
+        check(f"{job_key} continues past a skipped reused CI without hiding failures",
+              job_if == "${{!failure()&&!cancelled()}}", f"if={release['jobs'][job_key].get('if')!r}")
 
     quality_steps = ci["jobs"]["quality"]["steps"]
     typecheck_offenders = [str(step.get("name")) for step in quality_steps if "pnpm typecheck" in str(step.get("run", ""))]
@@ -616,6 +641,15 @@ def mutate_precondition_if(ci, release, pack_text):
     release["jobs"]["precondition"].pop("if", None)
 
 
+def mutate_packaging_gate_if(ci, release, pack_text):
+    for job_key in ("desktop", "server", "publish"):
+        release["jobs"][job_key].pop("if", None)
+
+
+def mutate_publish_gate_if(ci, release, pack_text):
+    release["jobs"]["publish"].pop("if", None)
+
+
 def mutate_windows_shell(ci, release, pack_text):
     for step in release["jobs"]["desktop"]["steps"]:
         if step.get("name") == "Install the pinned Wails CLI":
@@ -679,7 +713,11 @@ NEGATIVE_CONTROLS = [
     ("round-1 native download path regression is caught", mutate_native_download_path,
      "native download stages outside target/ (desktop)", False),
     ("precondition if removal is caught", mutate_precondition_if,
-     "job graph: reuse: ci skipped and release proceeds", False),
+     "job graph: reuse: successful ci-source", False),
+    ("packaging gate if removal is caught", mutate_packaging_gate_if,
+     "job graph: reuse: successful ci-source", False),
+    ("publish gate if removal is caught", mutate_publish_gate_if,
+     "job graph: reuse: successful ci-source", False),
     ("windows shell removal is caught", mutate_windows_shell,
      "release.yml windows bash-syntax steps declare shell: bash", False),
     ("standalone pnpm typecheck re-addition is caught", mutate_readd_typecheck,
