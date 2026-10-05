@@ -24,6 +24,7 @@ type TableBrief struct {
 }
 
 type Bundle struct {
+	Now        time.Time
 	Session    *SessionBrief
 	Screen     string
 	Tail       []string
@@ -74,7 +75,7 @@ type Prompt struct {
 }
 
 func (b *Builder) Build(ctx context.Context, scope tools.Scope, selection string) Prompt {
-	bundle := Bundle{Selection: selection}
+	bundle := Bundle{Selection: selection, Now: b.deps.Now()}
 	if b.deps.Session != nil && scope.SessionID != "" {
 		if session, err := b.deps.Session(ctx, scope.SessionID); err == nil {
 			bundle.Session = &session

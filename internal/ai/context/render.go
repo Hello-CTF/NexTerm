@@ -3,11 +3,29 @@ package aicontext
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
+var weekdayNames = [...]string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+
 func Render(bundle Bundle) string {
 	var output strings.Builder
+	if !bundle.Now.IsZero() {
+		output.WriteString("[当前时间]\n")
+		name, offset := bundle.Now.Zone()
+		sign := "+"
+		if offset < 0 {
+			sign, offset = "-", -offset
+		}
+		zone := fmt.Sprintf("UTC%s%02d:%02d", sign, offset/3600, offset%3600/60)
+		if name != "" {
+			zone = fmt.Sprintf("%s（%s）", name, zone)
+		}
+		fmt.Fprintf(&output, "- 时间：%s\n", bundle.Now.Format(time.RFC3339))
+		fmt.Fprintf(&output, "- 时区：%s\n", zone)
+		fmt.Fprintf(&output, "- 星期：%s\n", weekdayNames[bundle.Now.Weekday()])
+	}
 	if bundle.Session != nil {
 		output.WriteString("[会话上下文]\n")
 		fmt.Fprintf(&output, "- 连接：%s（%s）\n", bundle.Session.Name, bundle.Session.Kind)
