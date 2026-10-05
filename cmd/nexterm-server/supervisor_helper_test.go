@@ -5,12 +5,34 @@ package main
 import (
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 )
+
+func TestServerBinaryServesSupervisorHelperCommand(t *testing.T) {
+	binary := buildServerBinary(t)
+	cmd := exec.Command(binary, supervisor.HelperCommand, "--probe")
+	cmd.Env = serverProcessEnv(t)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("supervisor-helper --probe: %v", err)
+	}
+	if string(output) != strconv.Itoa(supervisor.ProtocolVersion)+"\n" {
+		t.Fatalf("probe output = %q, want the protocol version", output)
+	}
+
+	cmd = exec.Command(binary, supervisor.HelperCommand, "--bogus")
+	cmd.Env = serverProcessEnv(t)
+	err = cmd.Run()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("supervisor-helper --bogus error = %v, want exit code 2", err)
+	}
+}
 
 func TestSupervisorHelperProbePrintsProtocolVersion(t *testing.T) {
 	code, output := runSupervisorHelperCLI(t, []string{"--probe"})
