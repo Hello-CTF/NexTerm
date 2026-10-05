@@ -720,6 +720,13 @@ function runDesktopSmoke(binary, goos, goarch) {
   if (goos !== HOST_OS || goarch !== HOST_ARCH) die(`desktop runtime smoke must be native, not ${goos}/${goarch} on ${HOST_OS}/${HOST_ARCH}`);
   const smokeSource = path.join(ROOT, "cmd/nexterm-desktop/smoke.go");
   if (!fs.existsSync(smokeSource)) die("the M27 -tags smoke runtime entry point is unavailable; refusing to count a launch attempt as a smoke pass");
+  const attempts = Math.max(1, Number.parseInt(process.env.NEXTERM_SMOKE_ATTEMPTS || "1", 10) || 1);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    runDesktopSmokeOnce(binary, goos, goarch, attempt, attempts);
+  }
+}
+
+function runDesktopSmokeOnce(binary, goos, goarch, attempt, attempts) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-desktop-smoke-"));
   fs.mkdirSync(path.join(work, ".buildcheck/m27"), { recursive: true });
   const args = goos === "linux" ? ["xvfb-run", "-a", binary] : [binary];
@@ -747,6 +754,8 @@ function runDesktopSmoke(binary, goos, goarch) {
       target: `${goos}/${goarch}`,
       host: `${HOST_OS}/${HOST_ARCH}`,
       workdir: work,
+      attempt,
+      attempts,
     }, null, 2)}\n`);
   };
   if (result.status !== 0 || !fs.existsSync(evidence)) {

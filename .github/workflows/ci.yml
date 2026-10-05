@@ -164,6 +164,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev xvfb
       - name: Build the smoke desktop binary and run the native smoke
         if: matrix.kind == 'desktop'
+        env:
+          NEXTERM_SMOKE_ATTEMPTS: "8"
         run: node scripts/build.mjs desktop --release --smoke --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }}
       - name: Build the repro-checked production binary and inspect format/cgo/size evidence
         run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--skip-frontend' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
