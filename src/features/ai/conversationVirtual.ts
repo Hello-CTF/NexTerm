@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const VIRTUAL_ITEM_ESTIMATE_PX = 88;
 export const VIRTUAL_OVERSCAN = 6;
@@ -41,15 +41,40 @@ export function virtualOffsetForIndex(
   return Math.max(0, index) * estimate;
 }
 
+export function centeredScrollTop(
+  containerViewportTop: number,
+  currentScrollTop: number,
+  containerHeight: number,
+  itemViewportTop: number,
+  itemHeight: number,
+): number {
+  const centered =
+    currentScrollTop + (itemViewportTop - containerViewportTop) - (containerHeight - itemHeight) / 2;
+  return Math.max(0, centered);
+}
+
 export interface VirtualWindow {
   scrollRef: (el: HTMLElement | null) => void;
-  scrollToIndex: (index: number) => void;
+  revealIndex: (index: number) => void;
   range: VirtualRange;
+}
+
+function centerElement(container: HTMLElement, target: Element): void {
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  container.scrollTop = centeredScrollTop(
+    containerRect.top,
+    container.scrollTop,
+    container.clientHeight,
+    targetRect.top,
+    targetRect.height,
+  );
 }
 
 export function useVirtualWindow(count: number): VirtualWindow {
   const [el, setEl] = useState<HTMLElement | null>(null);
   const [metrics, setMetrics] = useState({ scrollTop: 0, viewportHeight: 0 });
+  const revealTargetRef = useRef<number | null>(null);
 
   const scrollRef = useCallback((node: HTMLElement | null) => {
     setEl(node);
@@ -69,18 +94,35 @@ export function useVirtualWindow(count: number): VirtualWindow {
     return () => el.removeEventListener("scroll", measure);
   }, [el]);
 
-  const scrollToIndex = useCallback(
+  const revealIndex = useCallback(
     (index: number) => {
       const node = el;
       if (!node) return;
+      const mounted = node.querySelector(`[data-conversation-index="${index}"]`);
+      if (mounted) {
+        revealTargetRef.current = null;
+        centerElement(node, mounted);
+        return;
+      }
+      revealTargetRef.current = index;
       node.scrollTop = virtualOffsetForIndex(index);
     },
     [el],
   );
 
+  useEffect(() => {
+    const index = revealTargetRef.current;
+    if (index === null || !el) return;
+    const target = el.querySelector(`[data-conversation-index="${index}"]`);
+    if (target) {
+      revealTargetRef.current = null;
+      centerElement(el, target);
+    }
+  });
+
   return {
     scrollRef,
-    scrollToIndex,
+    revealIndex,
     range: virtualRange(count, metrics.scrollTop, metrics.viewportHeight),
   };
 }

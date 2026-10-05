@@ -57,6 +57,7 @@ vi.mock("../ipc/events", async (importOriginal) => ({
 }));
 
 import { AiSidebar } from "../features/ai/AiSidebar";
+import { replayableJobIds } from "../features/ai/runRestore";
 import { useUi } from "../app/store";
 
 function message(id: string, role: string, content: unknown) {
@@ -131,6 +132,26 @@ const runRows = [
     createdAt: 3,
     updatedAt: 3,
   },
+  {
+    id: "job-3",
+    conversationId: "conv-1",
+    status: "superseded",
+    attempt: 1,
+    seq: 3,
+    planMode: false,
+    source: "chat",
+    answer: "被替换的回答",
+    turns: 1,
+    tokensIn: 5,
+    tokensOut: 0,
+    cacheCreationTokens: 0,
+    latencyMs: 50,
+    retries: 0,
+    failures: 0,
+    createdAt: 4,
+    updatedAt: 4,
+    finishedAt: 4,
+  },
 ];
 
 describe("AiSidebar history reload", () => {
@@ -151,7 +172,13 @@ describe("AiSidebar history reload", () => {
               { type: "toolCall", id: "call-2", name: "exec_commands", display: "systemctl reload demo", seq: 1 },
               { type: "toolResult", id: "call-2", ok: true, summary: "reload 完成", text: "", seq: 2 },
             ]
-          : [],
+          : jobId === "job-3"
+            ? [
+                { type: "toolCall", id: "call-3", name: "exec_commands", display: "被替换的工具", seq: 1 },
+                { type: "delta", text: "被替换的回答", seq: 2 },
+                { type: "done", answer: "被替换的回答", turns: 1, tokensIn: 1, tokensOut: 1, seq: 3 },
+              ]
+            : [],
       ),
     );
     mocks.hitlSnapshot.mockResolvedValue({
@@ -201,5 +228,15 @@ describe("AiSidebar history reload", () => {
 
     const execBadges = text().split("exec_commands").length - 1;
     expect(execBadges).toBe(1);
+  });
+
+  it("never replays superseded runs: replaced tools, answers and outcomes stay absent", async () => {
+    const text = () => view!.container.textContent ?? "";
+    await flushUntil(() => text().includes("systemctl reload demo"));
+    await flush();
+
+    expect(text()).not.toContain("被替换的工具");
+    expect(text()).not.toContain("被替换的回答");
+    expect(replayableJobIds(runRows)).toEqual(new Set(["job-2"]));
   });
 });

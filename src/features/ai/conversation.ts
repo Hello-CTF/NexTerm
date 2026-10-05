@@ -958,3 +958,33 @@ export function truncateItemsAfter(state: ConversationState, itemId: string): Co
     usage: null,
   };
 }
+
+export function hydrateUserMessageIds(
+  state: ConversationState,
+  messages: { id?: string; role: string; content: unknown }[],
+): ConversationState {
+  const known = new Set(
+    state.items.map((item) => (item.role === "user" ? item.messageId : undefined)),
+  );
+  const rowsByJob = new Map<string, string[]>();
+  for (const m of messages) {
+    if (m.role !== "user" || typeof m.id !== "string" || !m.id || known.has(m.id)) continue;
+    const jobId = historyString(m.content, "jobId");
+    if (!jobId) continue;
+    const queue = rowsByJob.get(jobId);
+    if (queue) queue.push(m.id);
+    else rowsByJob.set(jobId, [m.id]);
+  }
+  if (rowsByJob.size === 0) return state;
+  let changed = false;
+  const items = state.items.map((item) => {
+    if (item.role !== "user" || item.messageId || item.attempt === null || item.steer) return item;
+    const jobId = attemptOf(state, item.attempt)?.jobId;
+    if (!jobId) return item;
+    const nextId = rowsByJob.get(jobId)?.shift();
+    if (!nextId) return item;
+    changed = true;
+    return { ...item, messageId: nextId };
+  });
+  return changed ? { ...state, items } : state;
+}

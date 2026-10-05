@@ -1,8 +1,17 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { act, createElement } from "react";
+import {
+  click,
+  clickButton,
+  deferred,
+  flush,
+  flushUntil,
+  mount,
+  setInputValue,
+  type MountedView,
+} from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
@@ -119,6 +128,15 @@ function editButtonFor(view: MountedView, text: string): HTMLButtonElement {
   const button = wrapper?.querySelector('button[aria-label="编辑并重新发送"]');
   if (!button) throw new Error(`edit button not found for: ${text}`);
   return button as HTMLButtonElement;
+}
+
+function hasEditButton(view: MountedView, text: string): boolean {
+  try {
+    editButtonFor(view, text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function composerOf(view: MountedView): HTMLTextAreaElement {
@@ -312,6 +330,67 @@ describe("AiSidebar edit and resend", () => {
     expect(text()).toContain("输出摘要");
     expect(text()).toContain("编辑重发：此后的消息与运行会被替换");
     expect(composerOf(view!).value).toBe("第一问（改）");
+  });
+
+  it("提交串行化：deferred double-submit 只发一次 editResend/chat，后续 continuation 不 dispose 首个新 run", async () => {
+    const text = () => view!.container.textContent ?? "";
+    await flushUntil(() => text().includes("第二答"));
+    const editGate = deferred<void>();
+    const chatGate = deferred<{ jobId: string; conversationId: string }>();
+    mocks.editResend.mockReturnValue(editGate.promise);
+    mocks.chat.mockReturnValue(chatGate.promise);
+
+    click(editButtonFor(view!, "第一问"));
+    await flush();
+    setInputValue(composerOf(view!), "第一问（改）");
+    const submitButton = clickButton(view!.container, "替换并重新发送");
+    expect(submitButton.disabled).toBe(true);
+    expect(text()).toContain("正在替换并重新发送…");
+
+    act(() => {
+      composerOf(view!).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+    expect(mocks.editResend).toHaveBeenCalledTimes(1);
+
+    editGate.resolve();
+    await flushUntil(() => mocks.chat.mock.calls.length > 0);
+    expect(mocks.chat).toHaveBeenCalledTimes(1);
+    const newRunChannel = mocks.channels.at(-1);
+    expect(newRunChannel).toBeDefined();
+
+    chatGate.resolve({ jobId: "job-9", conversationId: "conv-1" });
+    await flush();
+    expect(mocks.dispose).not.toHaveBeenCalledWith(newRunChannel);
+    expect(text()).not.toContain("正在替换并重新发送…");
+  });
+
+  it("新发送完成的消息无需 remount 即可编辑：chat 后通过 messages IPC 补齐 messageId", async () => {
+    const text = () => view!.container.textContent ?? "";
+    await flushUntil(() => text().includes("第二答"));
+    mocks.chat.mockResolvedValue({ jobId: "job-1", conversationId: "conv-1" });
+    mocks.messages.mockImplementation(() =>
+      Promise.resolve([
+        ...historyMessages,
+        message("m-100", "user", { role: "user", content: "第三问", imageCount: 0, jobId: "job-1" }),
+        message("m-101", "assistant", { role: "assistant", content: "第三答" }),
+      ]),
+    );
+
+    setInputValue(composerOf(view!), "第三问");
+    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    await flushUntil(() => mocks.messages.mock.calls.length >= 2);
+    await flushUntil(() => hasEditButton(view!, "第三问"));
+
+    click(editButtonFor(view!, "第三问"));
+    await flush();
+    expect(composerOf(view!).value).toBe("第三问");
+    setInputValue(composerOf(view!), "第三问（改）");
+    clickButton(view!.container, "替换并重新发送");
+    await flushUntil(() => mocks.editResend.mock.calls.length > 0);
+    expect(mocks.editResend).toHaveBeenCalledWith("conv-1", "m-100");
   });
 
   it("取消编辑：不发起任何 IPC，保留输入框内容", async () => {

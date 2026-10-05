@@ -263,7 +263,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const next = stepMatch(matchCursor, searchMatches.length, direction);
     setMatchCursor(next);
     const target = searchMatches[next];
-    if (target !== undefined) virtual.scrollToIndex(target);
+    if (target !== undefined) virtual.revealIndex(target);
   };
   useEffect(() => {
     setMatchCursor(searchMatches.length > 0 ? 0 : -1);
@@ -570,6 +570,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     })();
   }, []);
 
+  const hydrateMessageIds = async (convId: string) => {
+    try {
+      const msgs = await aiApi.messages(convId);
+      if (conversationIdRef.current !== convId) return;
+      stream.hydrateUserMessageIds(msgs);
+    } catch {
+      return;
+    }
+  };
+
   const send = async (override?: { message?: string; planMode?: boolean }) => {
     const message = (override?.message ?? input).trim();
     if (
@@ -643,6 +653,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       activeRunRef.current = bindAiRunJob(current, res.jobId);
       stream.bindJob(run.generation, res.jobId);
       if (stream.hasGap(run.generation)) resyncRun(run.generation, res.jobId);
+      void hydrateMessageIds(res.conversationId);
     } catch (e) {
       const current = activeRunRef.current;
       if (isCurrentAiRun(current, run.generation)) {
@@ -724,6 +735,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const handleRetryRun = useCallback((item: ChatItem) => retryRunRef.current(item), []);
 
   const [editing, setEditing] = useState<{ itemId: string; messageId: string } | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const editSubmittingRef = useRef(false);
   const startEditResend = (item: ChatItem) => {
     if (item.role !== "user" || !item.messageId) return;
     setEditing({ itemId: item.id, messageId: item.messageId });
@@ -739,30 +752,39 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     const edit = editing;
     const text = input.trim();
     const conversationId = conversationIdRef.current;
-    if (!edit || !text) return;
+    if (!edit || !text || editSubmittingRef.current) return;
     if (!conversationId) {
       pushToast("error", "编辑重发需要先打开一个会话");
       return;
     }
+    editSubmittingRef.current = true;
+    setEditSubmitting(true);
     try {
       await aiApi.editResend(conversationId, edit.messageId);
     } catch (e) {
+      editSubmittingRef.current = false;
+      setEditSubmitting(false);
       pushToast("error", `编辑重发失败：${describeError(e)}`);
       return;
     }
-    const current = activeRunRef.current;
-    if (current && !current.settled) {
-      activeRunRef.current = settleAiRun(current);
-      stream.cancelRun(current.generation, false);
-      clearResyncState(current.generation);
+    try {
+      const current = activeRunRef.current;
+      if (current && !current.settled) {
+        activeRunRef.current = settleAiRun(current);
+        stream.cancelRun(current.generation, false);
+        clearResyncState(current.generation);
+      }
+      setAiBusy(false);
+      const live = runChannelRef.current;
+      if (live) live.dispose();
+      disposeRestoredChannel();
+      stream.truncateAfterItem(edit.itemId);
+      setEditing(null);
+      await send({ message: text });
+    } finally {
+      editSubmittingRef.current = false;
+      setEditSubmitting(false);
     }
-    setAiBusy(false);
-    const live = runChannelRef.current;
-    if (live) live.dispose();
-    disposeRestoredChannel();
-    stream.truncateAfterItem(edit.itemId);
-    setEditing(null);
-    await send({ message: text });
   };
 
   const confirm = async (decision: "allow" | "allow_session" | "deny") => {
@@ -1565,16 +1587,19 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         {editing && (
           <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-200">
             <IconEdit size={10} className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate">编辑重发：此后的消息与运行会被替换</span>
+            <span className="min-w-0 flex-1 truncate">
+              {editSubmitting ? "正在替换并重新发送…" : "编辑重发：此后的消息与运行会被替换"}
+            </span>
             <button
               className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
-              disabled={!input.trim()}
+              disabled={!input.trim() || editSubmitting}
               onClick={() => void submitEditResend()}
             >
               替换并重新发送
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+              disabled={editSubmitting}
               onClick={() => setEditing(null)}
             >
               取消
@@ -1756,7 +1781,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <button
               className="nx-send-btn"
               title={editing ? "替换并重新发送" : "发送 (Enter)"}
-              disabled={!input.trim() && images.length === 0}
+              disabled={(!input.trim() && images.length === 0) || editSubmitting}
               onClick={() => (editing ? void submitEditResend() : void send())}
             >
               <IconSendArrow />

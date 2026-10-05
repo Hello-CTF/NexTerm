@@ -7,7 +7,7 @@ export interface ResumableRun {
 
 export function replayableRuns(runs: AiRunDto[]): AiRunDto[] {
   return runs
-    .filter((run) => run.status !== "completed")
+    .filter((run) => run.status !== "completed" && run.status !== "superseded")
     .slice()
     .sort((a, b) => a.createdAt - b.createdAt);
 }

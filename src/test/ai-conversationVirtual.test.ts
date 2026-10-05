@@ -3,6 +3,7 @@ import {
   VIRTUAL_ITEM_ESTIMATE_PX,
   VIRTUAL_OVERSCAN,
   VIRTUAL_THRESHOLD,
+  centeredScrollTop,
   virtualOffsetForIndex,
   virtualRange,
 } from "../features/ai/conversationVirtual";
@@ -52,5 +53,17 @@ describe("virtualOffsetForIndex", () => {
   it("maps an item index to its estimated scroll offset", () => {
     expect(virtualOffsetForIndex(10)).toBe(10 * VIRTUAL_ITEM_ESTIMATE_PX);
     expect(virtualOffsetForIndex(-3)).toBe(0);
+  });
+});
+
+describe("centeredScrollTop", () => {
+  it("centers items of any real height on measured geometry instead of the estimate", () => {
+    expect(centeredScrollTop(100, 500, 400, 1000, 30)).toBe(500 + 900 - 185);
+    expect(centeredScrollTop(100, 500, 400, 1000, 300)).toBe(500 + 900 - 50);
+  });
+
+  it("clamps at zero and tolerates zero-height viewports", () => {
+    expect(centeredScrollTop(0, 0, 400, 10, 30)).toBe(0);
+    expect(centeredScrollTop(0, 0, 0, 10, 30)).toBe(25);
   });
 });

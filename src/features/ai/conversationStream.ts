@@ -7,6 +7,7 @@ import {
   bindRunJob,
   cancelRun,
   createConversation,
+  hydrateUserMessageIds,
   resetConversation,
   resolveInteraction,
   resolveSteerById,
@@ -65,6 +66,7 @@ export interface ConversationStream {
   cancelRun(generation: number, settle: boolean): void;
   reset(items?: ChatItem[]): void;
   truncateAfterItem(itemId: string): void;
+  hydrateUserMessageIds(messages: { id?: string; role: string; content: unknown }[]): void;
   lastSeq(generation: number): number;
   hasGap(generation: number): boolean;
   hitlSeq(generation: number): number;
@@ -344,6 +346,15 @@ export function createConversationStream(
     truncateAfterItem(itemId) {
       mutate(() => {
         const next = truncateItemsAfter(state, itemId);
+        if (next !== state) {
+          state = next;
+          publish();
+        }
+      });
+    },
+    hydrateUserMessageIds(messages) {
+      mutate(() => {
+        const next = hydrateUserMessageIds(state, messages);
         if (next !== state) {
           state = next;
           publish();
