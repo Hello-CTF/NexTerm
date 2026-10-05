@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { assetApi } from "../../ipc/commands";
+import type { AuditEntryDto } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
 import { IconHistory, IconRefresh } from "../../ui/icons";
 
@@ -15,48 +16,139 @@ interface AuditEntry {
   durationMs: number | null;
 }
 
-const FILTERS: { value: "" | "user" | "ai"; label: string }[] = [
+type SourceFilter = "" | "user" | "ai";
+
+const FILTERS: { value: SourceFilter; label: string }[] = [
   { value: "", label: "全部" },
   { value: "user", label: "用户" },
   { value: "ai", label: "AI" },
 ];
 
+const PAGE_SIZE = 100;
+const SKELETON_ROWS = 8;
+
+function toEntry(r: AuditEntryDto): AuditEntry {
+  return {
+    id: r.id,
+    ts: r.ts,
+    sessionId: r.sessionId,
+    assetId: r.assetId,
+    source: r.source,
+    kind: r.kind,
+    payload: r.payload,
+    exitCode: r.exitCode,
+    durationMs: r.durationMs,
+  };
+}
+
+function mergeEntries(prev: AuditEntry[], rows: AuditEntryDto[]): AuditEntry[] {
+  if (prev.length === 0) return rows.map(toEntry);
+  const seen = new Set(prev.map((e) => e.id));
+  const added: AuditEntry[] = [];
+  for (const r of rows) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    added.push(toEntry(r));
+  }
+  return [...prev, ...added];
+}
+
+function AuditSkeletonRows() {
+  return (
+    <>
+      {Array.from({ length: SKELETON_ROWS }, (_, i) => (
+        <tr key={i} aria-hidden="true">
+          <td>
+            <span className="nx-skeleton w-4/5" />
+          </td>
+          <td>
+            <span className="nx-skeleton nx-skeleton-chip w-3/5" />
+          </td>
+          <td>
+            <span className="nx-skeleton w-3/5" />
+          </td>
+          <td>
+            <span className="nx-skeleton w-3/4" />
+          </td>
+          <td>
+            <span className="nx-skeleton ml-auto w-1/3" />
+          </td>
+          <td>
+            <span className="nx-skeleton ml-auto w-1/2" />
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
 export function AuditView() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
-  const [source, setSource] = useState<"" | "user" | "ai">("");
+  const [source, setSource] = useState<SourceFilter>("");
+  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const [lastPageFull, setLastPageFull] = useState(false);
+  const loadSeq = useRef(0);
+  const fetchedRef = useRef(0);
 
-  const load = async () => {
+  const loadFirstPage = useCallback(async (src: SourceFilter) => {
+    const seq = ++loadSeq.current;
+    fetchedRef.current = 0;
+    setEntries([]);
+    setTotal(null);
+    setError(null);
+    setMoreError(null);
+    setLastPageFull(false);
     setLoading(true);
+    void (async () => {
+      try {
+        const count = await assetApi.auditCount({ source: src || undefined });
+        if (seq === loadSeq.current) setTotal(count.total);
+      } catch {
+        if (seq === loadSeq.current) setTotal(null);
+      }
+    })();
     try {
-      const rows = await assetApi.auditQuery({ source: source || undefined, limit: 300 });
-      setEntries(
-        rows.map((r) => ({
-          id: r.id,
-          ts: r.ts,
-          sessionId: r.sessionId,
-          assetId: r.assetId,
-          source: r.source,
-          kind: r.kind,
-          payload: r.payload,
-          exitCode: r.exitCode,
-          durationMs: r.durationMs,
-        })),
-      );
+      const rows = await assetApi.auditQuery({ source: src || undefined, limit: PAGE_SIZE, offset: 0 });
+      if (seq !== loadSeq.current) return;
+      fetchedRef.current = rows.length;
+      setLastPageFull(rows.length === PAGE_SIZE);
+      setEntries(mergeEntries([], rows));
       setError(null);
     } catch (e) {
-      setError(describeError(e));
+      if (seq === loadSeq.current) setError(describeError(e));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    void load();
-  }, [source]);
+    void loadFirstPage(source);
+  }, [source, loadFirstPage]);
 
-  const aiCount = entries.filter((e) => e.source === "ai").length;
+  const hasMore = lastPageFull && (total === null || entries.length < total);
+
+  const loadMore = async () => {
+    if (loading || loadingMore || !hasMore) return;
+    const seq = loadSeq.current;
+    const offset = fetchedRef.current;
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      const rows = await assetApi.auditQuery({ source: source || undefined, limit: PAGE_SIZE, offset });
+      if (seq !== loadSeq.current) return;
+      fetchedRef.current += rows.length;
+      setLastPageFull(rows.length === PAGE_SIZE);
+      setEntries((prev) => mergeEntries(prev, rows));
+    } catch (e) {
+      if (seq === loadSeq.current) setMoreError(describeError(e));
+    } finally {
+      if (seq === loadSeq.current) setLoadingMore(false);
+    }
+  };
 
   return (
     <div className="nx-pane">
@@ -64,9 +156,7 @@ export function AuditView() {
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">审计日志</span>
         <span className="nx-hint">
-          {error && entries.length === 0
-            ? "审计记录加载失败"
-            : `共 ${entries.length} 条 · AI 发起 ${aiCount} 条`}
+          {error && entries.length === 0 ? "审计记录加载失败" : `共 ${total ?? entries.length} 条`}
         </span>
         {error && entries.length > 0 && (
           <span className="nx-hint text-red-300">刷新失败 · {error}</span>
@@ -83,7 +173,11 @@ export function AuditView() {
             </button>
           ))}
         </div>
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void load()} disabled={loading}>
+        <button
+          className="nx-btn nx-btn-ghost nx-btn-sm"
+          onClick={() => void loadFirstPage(source)}
+          disabled={loading}
+        >
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
           刷新
         </button>
@@ -137,18 +231,14 @@ export function AuditView() {
               </tr>
             ))}
             {entries.length === 0 && loading ? (
-              <tr>
-                <td colSpan={6} className="nx-table-empty">
-                  审计记录加载中…
-                </td>
-              </tr>
+              <AuditSkeletonRows />
             ) : entries.length === 0 && error ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
                   <span className="text-red-300">审计记录加载失败 · {error}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
-                    onClick={() => void load()}
+                    onClick={() => void loadFirstPage(source)}
                     disabled={loading}
                   >
                     <IconRefresh size={12} />
@@ -166,6 +256,39 @@ export function AuditView() {
           </tbody>
         </table>
       </div>
+
+      {entries.length > 0 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
+          <span className="nx-hint min-w-0 truncate">
+            {total !== null ? `已显示 ${entries.length} / ${total} 条` : `已显示 ${entries.length} 条`}
+          </span>
+          <div className="nx-spacer" />
+          {moreError ? (
+            <>
+              <span className="text-red-300">加载更多失败 · {moreError}</span>
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs"
+                onClick={() => void loadMore()}
+                disabled={loadingMore}
+              >
+                {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
+                重试
+              </button>
+            </>
+          ) : hasMore ? (
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-xs"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
+              加载更多
+            </button>
+          ) : (
+            <span>已加载全部</span>
+          )}
+        </div>
+      )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>所有会话命令、AI 动作、文件写操作都会落库，逐条标注来源；有退出码的记录会一并展示。</span>
