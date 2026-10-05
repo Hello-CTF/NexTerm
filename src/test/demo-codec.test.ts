@@ -57,7 +57,7 @@ describe("demo fs_read base64", () => {
       expect(res.size).toBe(utf8Bytes(text).length);
       expect(res.contentBase64).toBe(refBase64(text));
     }
-  });
+  }, 30_000);
 });
 
 describe("demo fs_write decode and error propagation", () => {

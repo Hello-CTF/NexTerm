@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -82,6 +83,23 @@ func TestConnectValidationAndErrorCodes(t *testing.T) {
 		if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeBadParam {
 			t.Errorf("args=%+v error=%#v", args, err)
 		}
+	}
+}
+
+func TestDisconnectFailureIsSurfacedAndHandleReleased(t *testing.T) {
+	service := NewService(nil)
+	service.conns["bad"] = &redisConnection{closeFn: func() error { return errors.New("driver: bad conn") }}
+
+	err := service.Disconnect("bad")
+	var ipcErr *ipc.Error
+	if !errors.As(err, &ipcErr) || ipcErr.Code != ipc.CodeInternal || !strings.Contains(ipcErr.Message, "关闭数据库连接") {
+		t.Fatalf("disconnect error=%#v", err)
+	}
+	if _, err := service.redisOf("bad"); err == nil {
+		t.Fatal("connection handle survived failed disconnect")
+	}
+	if err := service.Disconnect("bad"); err != nil {
+		t.Fatalf("retry after failed disconnect: %v", err)
 	}
 }
 

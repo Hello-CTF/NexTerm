@@ -174,6 +174,50 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 	if len(result.Rows) != MaxRows || !result.Truncated {
 		t.Fatalf("truncation rows=%d truncated=%v", len(result.Rows), result.Truncated)
 	}
+
+	withService := mysqlThreadsConnected(t, container, config)
+	if withService < 2 {
+		t.Fatalf("Threads_connected=%d, want the service connection plus the probe", withService)
+	}
+	if err := service.Disconnect(connID); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	if _, err := service.mysqlOf(connID); err == nil {
+		t.Fatal("MySQL connection handle survived disconnect")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		after := mysqlThreadsConnected(t, container, config)
+		if after < withService {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Threads_connected=%d after disconnect, want < %d", after, withService)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err := service.Disconnect(connID); err != nil {
+		t.Fatalf("idempotent disconnect: %v", err)
+	}
+}
+
+func mysqlThreadsConnected(t *testing.T, container dockerTestContainer, config MySQLConfig) int {
+	t.Helper()
+	config.Host = container.host
+	config.Port = container.port
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	connection, err := connectMySQL(ctx, config)
+	if err != nil {
+		t.Fatalf("probe connect: %v", err)
+	}
+	defer connection.Close()
+	var name string
+	var value int
+	if err := connection.db.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Threads_connected'").Scan(&name, &value); err != nil {
+		t.Fatalf("probe Threads_connected: %v", err)
+	}
+	return value
 }
 
 func mustMySQLQuery(t *testing.T, service *Service, connID, statement string, limit uint64, timeout time.Duration) QueryResult {

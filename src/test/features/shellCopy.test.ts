@@ -68,9 +68,18 @@ describe("describeError", () => {
     expect(describeError({ code: "io", message: "IO 错误: no space left" })).toBe("IO 错误: no space left");
   });
 
-  it("未知 code 保留 code: message 诊断", () => {
+  it("已知 code db_migrate 映射为中文标签，message 已带前缀时不叠加", () => {
     expect(describeError({ code: "db_migrate", message: "checksum mismatch" })).toBe(
-      "db_migrate: checksum mismatch",
+      "数据库迁移错误：checksum mismatch",
+    );
+    expect(describeError({ code: "db_migrate", message: "数据库迁移错误: checksum mismatch" })).toBe(
+      "数据库迁移错误: checksum mismatch",
+    );
+  });
+
+  it("未知 code 保留 code: message 诊断", () => {
+    expect(describeError({ code: "some_future_code", message: "checksum mismatch" })).toBe(
+      "some_future_code: checksum mismatch",
     );
   });
 

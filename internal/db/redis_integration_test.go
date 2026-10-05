@@ -164,10 +164,37 @@ func TestRedis74DockerIntegration(t *testing.T) {
 		t.Fatalf("console state was lost: output=%q err=%v", output, err)
 	}
 
+	redisClients := func() int {
+		connection, err := connectRedis(context.Background(), RedisConfig{Host: container.host, Port: container.port, Password: password, Database: 2, TLSConfig: tlsConfig})
+		if err != nil {
+			t.Fatalf("probe connect: %v", err)
+		}
+		defer connection.Close()
+		listing, err := connection.client.Do(context.Background(), "CLIENT", "LIST").Text()
+		if err != nil {
+			t.Fatalf("probe CLIENT LIST: %v", err)
+		}
+		return len(strings.Split(strings.TrimSpace(listing), "\n"))
+	}
+	withService := redisClients()
+	if withService < 2 {
+		t.Fatalf("CLIENT LIST lines=%d, want the service connections plus the probe", withService)
+	}
 	if err := service.Disconnect(connID); err != nil {
 		t.Fatalf("disconnect: %v", err)
 	}
 	if _, err := service.RedisCommand(context.Background(), connID, []string{"PING"}); err == nil {
 		t.Fatal("Redis command succeeded after disconnect")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		after := redisClients()
+		if after < withService {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("CLIENT LIST lines=%d after disconnect, want < %d", after, withService)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 }
