@@ -52,6 +52,12 @@ function text(container: ParentNode): string {
   return container.textContent ?? "";
 }
 
+function moreButton(container: ParentNode): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) => b.textContent?.trim() === "加载更多",
+  );
+}
+
 let mounted: MountedView | undefined;
 
 beforeEach(() => {
@@ -127,6 +133,70 @@ describe("AuditView 分页", () => {
     expect(text(mounted!.container)).toContain("已显示 200 / 250 条");
     expect(mocks.auditQuery).toHaveBeenLastCalledWith({ source: undefined, limit: 100, offset: 100 });
   });
+
+  it("load-more pending 时刷新不锁死分页，旧响应落地后按新 offset 继续", async () => {
+    mocks.auditCount.mockResolvedValue({ total: 250 });
+    const stale = deferred<AuditEntryDto[]>();
+    mocks.auditQuery
+      .mockResolvedValueOnce(makeRows(100, 1))
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(makeRows(100, 500))
+      .mockResolvedValueOnce(makeRows(100, 600));
+    mounted = mount(createElement(AuditView));
+    await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 100);
+
+    clickButton(mounted!.container, "加载更多");
+    await flush();
+    clickButton(mounted!.container, "刷新");
+    await flushUntil(() => rowKinds(mounted!.container)[0] === "k500");
+
+    stale.resolve(makeRows(100, 900));
+    await flush();
+
+    const kinds = rowKinds(mounted!.container);
+    expect(kinds).toHaveLength(100);
+    expect(kinds.some((k) => k.startsWith("k9"))).toBe(false);
+    const button = moreButton(mounted!.container);
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+
+    clickButton(mounted!.container, "加载更多");
+    await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 200);
+    expect(mocks.auditQuery).toHaveBeenLastCalledWith({ source: undefined, limit: 100, offset: 100 });
+    expect(rowKinds(mounted!.container)[199]).toBe("k699");
+  });
+
+  it("load-more pending 时切换筛选不锁死分页，旧响应不混入新筛选", async () => {
+    mocks.auditCount.mockResolvedValue({ total: 250 });
+    const stale = deferred<AuditEntryDto[]>();
+    mocks.auditQuery
+      .mockResolvedValueOnce(makeRows(100, 1))
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce(makeRows(100, 1001, "ai"))
+      .mockResolvedValueOnce(makeRows(100, 1101, "ai"));
+    mounted = mount(createElement(AuditView));
+    await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 100);
+
+    clickButton(mounted!.container, "加载更多");
+    await flush();
+    clickButton(mounted!.container, "AI");
+    await flushUntil(() => rowKinds(mounted!.container)[0] === "k1001");
+
+    stale.resolve(makeRows(100, 2001));
+    await flush();
+
+    const kinds = rowKinds(mounted!.container);
+    expect(kinds).toHaveLength(100);
+    expect(kinds.some((k) => k.startsWith("k2"))).toBe(false);
+    const button = moreButton(mounted!.container);
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+
+    clickButton(mounted!.container, "加载更多");
+    await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 200);
+    expect(mocks.auditQuery).toHaveBeenLastCalledWith({ source: "ai", limit: 100, offset: 100 });
+    expect(rowKinds(mounted!.container)[199]).toBe("k1200");
+  });
 });
 
 describe("AuditView 计数与筛选", () => {
@@ -162,14 +232,33 @@ describe("AuditView 计数与筛选", () => {
     expect(text(mounted!.container)).toContain("已显示 100 / 250 条");
   });
 
-  it("audit_count 失败时降级为已加载条数，行仍正常渲染", async () => {
+  it("audit_count 失败但短页已证明取完时仍显示精确总数", async () => {
     mocks.auditCount.mockRejectedValue(new Error("count 不可用"));
     mocks.auditQuery.mockResolvedValue(makeRows(3, 1));
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 
     expect(text(mounted!.container)).toContain("共 3 条");
-    expect(text(mounted!.container)).toContain("已显示 3 条");
+    expect(text(mounted!.container)).toContain("已显示 3 / 3 条");
+  });
+
+  it("audit_count 失败且满页时显示已加载而非总数，取完后转为精确总数", async () => {
+    mocks.auditCount.mockRejectedValue(new Error("count 不可用"));
+    mocks.auditQuery
+      .mockResolvedValueOnce(makeRows(100, 1))
+      .mockResolvedValueOnce(makeRows(50, 101));
+    mounted = mount(createElement(AuditView));
+    await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 100);
+
+    expect(text(mounted!.container)).toContain("已加载 100 条");
+    expect(text(mounted!.container)).not.toContain("共 100 条");
+    expect(text(mounted!.container)).toContain("已显示 100 条");
+
+    clickButton(mounted!.container, "加载更多");
+    await flushUntil(() => text(mounted!.container).includes("已加载全部"));
+    expect(text(mounted!.container)).toContain("共 150 条");
+    expect(text(mounted!.container)).toContain("已显示 150 / 150 条");
+    expect(mounted!.container.querySelectorAll("tbody tr").length).toBe(150);
   });
 });
 
@@ -207,15 +296,19 @@ describe("AuditView 加载状态", () => {
 });
 
 describe("AuditView 响应式", () => {
-  it("320/390/桌面下骨架条只用百分比或自动宽度，分页条可换行且文本可截断", async () => {
+  it("320/390/桌面下骨架真实 pending、分页条可换行、长错误文本可收缩断行", async () => {
     for (const width of [320, 390, 1280]) {
       setViewportWidth(width);
+      mocks.auditQuery.mockReset();
+      mocks.auditCount.mockReset();
       const first = deferred<AuditEntryDto[]>();
       mocks.auditCount.mockResolvedValue({ total: 250 });
-      mocks.auditQuery.mockReturnValueOnce(first.promise).mockResolvedValueOnce(makeRows(100, 101));
+      mocks.auditQuery.mockReturnValue(first.promise);
       mounted = mount(createElement(AuditView));
 
-      await flushUntil(() => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length > 0);
+      await flushUntil(
+        () => mounted!.container.querySelectorAll('tbody tr[aria-hidden="true"]').length === 8,
+      );
       for (const bar of mounted!.container.querySelectorAll("tbody .nx-skeleton")) {
         expect(bar.className).not.toMatch(/min-w-\[/);
         expect(bar.className).toMatch(/nx-skeleton-chip|w-\d+\/\d+|ml-auto/);
@@ -231,6 +324,18 @@ describe("AuditView 响应式", () => {
       const status = paginationBar!.querySelector("span");
       expect(status!.className).toContain("min-w-0");
       expect(status!.className).toContain("truncate");
+
+      const longError = `E${"x".repeat(200)}`;
+      mocks.auditQuery.mockReset();
+      mocks.auditQuery.mockRejectedValueOnce(new Error(longError));
+      clickButton(mounted!.container, "加载更多");
+      await flushUntil(() => text(mounted!.container).includes("加载更多失败"));
+      const errorSpan = [...mounted!.container.querySelectorAll("span")].find((s) =>
+        s.textContent?.includes("加载更多失败"),
+      );
+      expect(errorSpan!.className).toContain("min-w-0");
+      expect(errorSpan!.className).toContain("break-words");
+      expect(errorSpan!.textContent).toContain(longError);
 
       mounted.unmount();
       mounted = undefined;

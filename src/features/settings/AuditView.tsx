@@ -102,6 +102,7 @@ export function AuditView() {
     setError(null);
     setMoreError(null);
     setLastPageFull(false);
+    setLoadingMore(false);
     setLoading(true);
     void (async () => {
       try {
@@ -129,7 +130,8 @@ export function AuditView() {
     void loadFirstPage(source);
   }, [source, loadFirstPage]);
 
-  const hasMore = lastPageFull && (total === null || entries.length < total);
+  const knownTotal = total !== null ? total : lastPageFull ? null : entries.length;
+  const hasMore = lastPageFull && (knownTotal === null || entries.length < knownTotal);
 
   const loadMore = async () => {
     if (loading || loadingMore || !hasMore) return;
@@ -156,7 +158,11 @@ export function AuditView() {
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">审计日志</span>
         <span className="nx-hint">
-          {error && entries.length === 0 ? "审计记录加载失败" : `共 ${total ?? entries.length} 条`}
+          {error && entries.length === 0
+            ? "审计记录加载失败"
+            : knownTotal !== null
+              ? `共 ${knownTotal} 条`
+              : `已加载 ${entries.length} 条`}
         </span>
         {error && entries.length > 0 && (
           <span className="nx-hint text-red-300">刷新失败 · {error}</span>
@@ -260,12 +266,12 @@ export function AuditView() {
       {entries.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
           <span className="nx-hint min-w-0 truncate">
-            {total !== null ? `已显示 ${entries.length} / ${total} 条` : `已显示 ${entries.length} 条`}
+            {knownTotal !== null ? `已显示 ${entries.length} / ${knownTotal} 条` : `已显示 ${entries.length} 条`}
           </span>
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="text-red-300">加载更多失败 · {moreError}</span>
+              <span className="min-w-0 break-words text-red-300">加载更多失败 · {moreError}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 onClick={() => void loadMore()}
