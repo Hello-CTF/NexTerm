@@ -3,18 +3,23 @@
 package production
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type controlEventLog struct {
@@ -58,128 +63,276 @@ func (l *controlEventLog) maxVersion(tabID string) uint64 {
 	return max
 }
 
-func TestProductionDurableRecoveryResumesVersionsAndGridWithoutEcho(t *testing.T) {
-	requireRealTmux(t)
-	dataDir := durableTestDataDir(t)
-
-	firstLog := &controlEventLog{}
-	firstFactory := &bridgeTestFactory{}
-	first := newRecoveryTestProduction(t, dataDir, firstFactory, firstLog)
-	connectedResponse := dispatchDurableTest(t, first, "session_connect_local", `null`, "", "")
-	var connected sessionInfoDTO
-	requireStoreTestResponse(t, connectedResponse, &connected)
-	channelID := "durable-recovery-channel"
-	attachResponse := dispatchDurableTest(t, first, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
-	var tabID string
-	requireStoreTestResponse(t, attachResponse, &tabID)
-	waitForProductionOutput(t, firstFactory.at(channelID, 0), "$ ")
-	requireProductionNull(t, dispatchDurableTest(t, first, "terminal_resize", `{"tabId":"`+tabID+`","cols":100,"rows":30}`, "", "client-a"))
-
-	before := firstLog.forTab(tabID)
-	if len(before) < 2 {
-		t.Fatalf("control events before restart = %+v", before)
-	}
-	lastBefore := before[len(before)-1]
-	if lastBefore.GridRevision == 0 || lastBefore.Cols != 100 || lastBefore.Rows != 30 {
-		t.Fatalf("last pre-restart event = %+v, want resized 100x30 with a bumped revision", lastBefore)
-	}
-	highWater := firstLog.maxVersion(tabID)
-	if err := first.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	floorEvent, floorGrid := readDurableVersionsFloor(t, filepath.Join(dataDir, "durable", "state", tabID, "versions"))
-	if floorEvent < highWater || floorGrid != lastBefore.GridRevision {
-		t.Fatalf("persisted floor = %d/%d, want event >= %d and grid %d", floorEvent, floorGrid, highWater, lastBefore.GridRevision)
-	}
-
-	secondLog := &controlEventLog{}
-	secondFactory := &bridgeTestFactory{}
-	second := newRecoveryTestProduction(t, dataDir, secondFactory, secondLog)
-	connectedResponse = dispatchDurableTest(t, second, "session_connect_local", `null`, "", "")
-	requireStoreTestResponse(t, connectedResponse, &connected)
-	recoveredResponse := dispatchDurableTest(t, second, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":65536}`, channelID, "client-a")
-	var recovered attachedTabDTO
-	requireStoreTestResponse(t, recoveredResponse, &recovered)
-	if recovered.Cols != 100 || recovered.Rows != 30 {
-		t.Fatalf("recovered tab grid = %dx%d, want the real 100x30 window", recovered.Cols, recovered.Rows)
-	}
-
-	after := secondLog.forTab(tabID)
-	if len(after) == 0 {
-		t.Fatal("recovery emitted no control event")
-	}
-	firstAfter := after[0]
-	if firstAfter.Version <= highWater {
-		t.Fatalf("first recovered event version = %d, want > high-water %d", firstAfter.Version, highWater)
-	}
-	if firstAfter.GridRevision != lastBefore.GridRevision || firstAfter.Cols != lastBefore.Cols || firstAfter.Rows != lastBefore.Rows {
-		t.Fatalf("recovery event = %+v, want unchanged grid %+v", firstAfter, lastBefore)
-	}
-	for _, event := range after {
-		if event.Version <= highWater {
-			t.Fatalf("post-recovery event version = %d, want > high-water %d", event.Version, highWater)
-		}
-	}
-
-	requireProductionNull(t, dispatchDurableTest(t, second, "terminal_resize", `{"tabId":"`+tabID+`","cols":110,"rows":40}`, "", "client-a"))
-	events := secondLog.forTab(tabID)
-	resized := events[len(events)-1]
-	if resized.GridRevision != lastBefore.GridRevision+1 {
-		t.Fatalf("post-recovery revision = %d, want %d", resized.GridRevision, lastBefore.GridRevision+1)
-	}
-	if resized.Version <= firstAfter.Version {
-		t.Fatalf("post-recovery resize version = %d, want > %d", resized.Version, firstAfter.Version)
-	}
-	waitForProductionOutput(t, secondFactory.at(channelID, 0), "$ ")
-
-	requireProductionNull(t, dispatchDurableTest(t, second, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
-	if err := second.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "durable", "state", tabID, "versions")); !os.IsNotExist(err) {
-		t.Fatalf("killed durable identity kept its version floor: %v", err)
-	}
+type recordingDurableResolver struct {
+	mu         sync.Mutex
+	transports []base.Transport
+	provider   base.DurableProvider
+	err        error
 }
 
-func newRecoveryTestProduction(t *testing.T, dataDir string, factory *bridgeTestFactory, events ipc.Emitter) *Production {
+func (r *recordingDurableResolver) ResolveDurable(_ context.Context, transport base.Transport) (base.DurableProvider, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.transports = append(r.transports, transport)
+	return r.provider, r.err
+}
+
+func (r *recordingDurableResolver) recorded() []base.Transport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]base.Transport(nil), r.transports...)
+}
+
+type remoteDaemonFixture struct {
+	client   *supervisor.Client
+	provider *supervisor.RemoteProvider
+}
+
+func newRemoteDaemonFixture(t *testing.T) *remoteDaemonFixture {
 	t.Helper()
-	production, err := NewProduction(t.Context(), ProductionConfig{
-		Config: Config{
-			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
-			Events:  events,
-		},
-		DataDir: dataDir, Desktop: true,
-		SupervisorStateDir: blockedSupervisorStateDir(t),
-	})
+	stateDir, err := os.MkdirTemp("", "nexterm-remote-daemon-")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(stateDir) })
+	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := supervisor.NewServer(instance, filepath.Join(stateDir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		_ = instance.Close()
+	})
+	client := supervisor.NewClient(server.SocketPath(), stateDir)
+	return &remoteDaemonFixture{client: client, provider: supervisor.NewRemoteProvider(client)}
+}
+
+func newRemoteRecoveryHarness(t *testing.T, resolver session.DurableResolver) (*Production, *bridgeTestFactory) {
+	t.Helper()
+	factory := &bridgeTestFactory{}
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	localSupervisor, err := supervisor.New(supervisor.Config{StateDir: filepath.Join(durableTestDataDir(t), "local-supervisor")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager(session.Config{
+		Connector:       fakeSSHConnector{},
+		Durable:         supervisor.NewProvider(localSupervisor),
+		DurableResolver: resolver,
+	})
+	production, err := NewProductionWithServices(Config{
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
+	}, ProductionServices{Store: database, Sessions: manager, Supervisor: localSupervisor})
+	if err != nil {
+		_ = database.Close()
+		_ = localSupervisor.Close()
 		t.Fatal(err)
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
-	return production
+	return production, factory
 }
 
-func readDurableVersionsFloor(t *testing.T, path string) (eventVersion, gridRevision uint64) {
+func connectRemoteSSHAsset(t *testing.T, production *Production) sessionInfoDTO {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read version floor: %v", err)
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) != 2 {
-		t.Fatalf("version floor %q has %d fields, want 2", data, len(fields))
-	}
-	eventVersion, err = strconv.ParseUint(fields[0], 10, 64)
+	host := "127.0.0.1"
+	port := int32(22)
+	username := "root"
+	assetRow, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
+		Kind: "ssh", Name: "remote-recovery", Host: &host, Port: &port, Username: &username,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	gridRevision, err = strconv.ParseUint(fields[1], 10, 64)
+	connectedResponse := dispatchDurableTest(t, production, "session_connect", `{"args":{"assetId":"`+assetRow.ID+`"}}`, "remote-ssh-connect", "client-a")
+	var connected sessionInfoDTO
+	requireStoreTestResponse(t, connectedResponse, &connected)
+	if connected.Kind != session.KindSSH {
+		t.Fatalf("connected session kind = %q, want ssh", connected.Kind)
+	}
+	return connected
+}
+
+func createDaemonTab(t *testing.T, provider base.DurableProvider, marker string) string {
+	t.Helper()
+	tabID := ids.New()
+	attachment, err := provider.Create(t.Context(), base.DurableCreateOptions{
+		ID: tabID, Command: []string{"sh", "-c", "printf '" + marker + "\\n'; sleep 30"}, Cols: 80, Rows: 24,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return eventVersion, gridRevision
+	readUntilDurableOutput(t, attachment, marker)
+	if err := attachment.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return tabID
+}
+
+func readUntilDurableOutput(t *testing.T, attachment base.DurableAttachment, text string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var seen []byte
+	buffer := make([]byte, 4096)
+	for !bytes.Contains(seen, []byte(text)) {
+		if time.Now().After(deadline) {
+			t.Fatalf("daemon output = %q, want %q", seen, text)
+		}
+		count, err := attachment.Read(buffer)
+		seen = append(seen, buffer[:count]...)
+		if err != nil {
+			t.Fatalf("read daemon output: %v (seen %q)", err, seen)
+		}
+	}
+}
+
+func TestProductionAttachTabRecoversRemoteDaemonTabOverConnectedSSHSession(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, factory := newRemoteRecoveryHarness(t, resolver)
+	connected := connectRemoteSSHAsset(t, production)
+	tabID := createDaemonTab(t, fixture.provider, "remote-daemon-marker")
+
+	channelID := "remote-recovery-channel"
+	recoveredResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":262144}`, channelID, "client-a")
+	var recovered attachedTabDTO
+	requireStoreTestResponse(t, recoveredResponse, &recovered)
+	if recovered.TabID != tabID || recovered.SessionID != connected.ID || recovered.Exited {
+		t.Fatalf("recovered tab = %+v, want tab %s live on SSH session %s", recovered, tabID, connected.ID)
+	}
+	transport, err := production.Services.Sessions.Transport(t.Context(), connected.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded := resolver.recorded(); len(recorded) != 1 || recorded[0] != transport {
+		t.Fatalf("resolver transports = %v, want only the already connected session transport", recorded)
+	}
+	if streams := len(factory.streams[channelID]); streams != 2 {
+		t.Fatalf("bridged streams = %d, want the failed local attempt plus the remote recovery", streams)
+	}
+	waitRetention(t, func() bool { return factory.at(channelID, 0).isClosed() })
+	replayed := factory.at(channelID, 1)
+	waitForProductionOutput(t, replayed, "remote-daemon-marker")
+	if count := bytes.Count(replayed.output(), []byte("remote-daemon-marker")); count != 1 {
+		t.Fatalf("remote marker replayed %d times: %q", count, replayed.output())
+	}
+
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
+	infos, err := fixture.client.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.ID == tabID {
+			t.Fatal("close-tab kept the remote daemon session")
+		}
+	}
+}
+
+func TestProductionAttachTabRemoteEnumerationMissReturnsNotFound(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+
+	missing := ids.New()
+	response := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+missing+`","replayBytes":1024}`, "remote-missing-channel", "client-a")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("attach tab %s = %+v, want not_found", missing, response)
+	}
+	if len(resolver.recorded()) == 0 {
+		t.Fatal("remote daemons were not enumerated")
+	}
+}
+
+func TestProductionAttachTabRemoteResolverFailurePropagatesMapping(t *testing.T) {
+	resolver := &recordingDurableResolver{err: durable.ErrUnavailable}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+
+	missing := ids.New()
+	response := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+missing+`","replayBytes":1024}`, "remote-resolver-fail", "client-a")
+	if response.OK || response.Error == nil {
+		t.Fatalf("attach tab %s = %+v, want the resolver failure surfaced", missing, response)
+	}
+	if response.Error.Code == ipc.CodeNotFound {
+		t.Fatalf("attach tab %s = %+v, resolver failure must not collapse into not_found", missing, response)
+	}
+	if response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("attach tab %s = %+v, want unsupported for an unavailable daemon", missing, response)
+	}
+}
+
+type failingListDurableProvider struct {
+	base.DurableProvider
+	err error
+}
+
+func (p failingListDurableProvider) ListDurable(context.Context) ([]string, error) {
+	return nil, p.err
+}
+
+func TestProductionAttachTabRemoteListFailurePropagatesMapping(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: failingListDurableProvider{DurableProvider: fixture.provider, err: durable.ErrUnavailable}}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+
+	missing := ids.New()
+	response := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+missing+`","replayBytes":1024}`, "remote-list-fail", "client-a")
+	if response.OK || response.Error == nil {
+		t.Fatalf("attach tab %s = %+v, want the enumeration failure surfaced", missing, response)
+	}
+	if response.Error.Code == ipc.CodeNotFound {
+		t.Fatalf("attach tab %s = %+v, enumeration failure must not collapse into not_found", missing, response)
+	}
+	if response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("attach tab %s = %+v, want unsupported for an unenumerable daemon", missing, response)
+	}
+}
+
+func TestProductionAttachTabPrefersLocalDaemonOverRemote(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, factory := newRemoteRecoveryHarness(t, resolver)
+	connected := connectRemoteSSHAsset(t, production)
+
+	localProvider := supervisor.NewProvider(production.Services.Supervisor)
+	tabID := createDaemonTab(t, localProvider, "local-daemon-marker")
+
+	channelID := "local-priority-channel"
+	recoveredResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":262144}`, channelID, "client-a")
+	var recovered attachedTabDTO
+	requireStoreTestResponse(t, recoveredResponse, &recovered)
+	if recovered.TabID != tabID || recovered.SessionID == connected.ID {
+		t.Fatalf("recovered tab = %+v, want the locally owned tab off the SSH session", recovered)
+	}
+	localSession, err := production.Services.Sessions.Session(recovered.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localSession.Asset().Kind != session.KindLocal {
+		t.Fatalf("recovered session kind = %q, want local", localSession.Asset().Kind)
+	}
+	if recorded := resolver.recorded(); len(recorded) != 0 {
+		t.Fatal("remote enumeration ran for a locally owned tab")
+	}
+	waitForProductionOutput(t, factory.at(channelID, 0), "local-daemon-marker")
+
+	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
 }

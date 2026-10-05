@@ -394,7 +394,7 @@ func newProbeCustomConnectorProduction(t *testing.T) *Production {
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{},
 		},
-		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		DataDir: t.TempDir(), Desktop: true,
 		Connector: session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 			return nil, fmt.Errorf("stub connector")
 		}),

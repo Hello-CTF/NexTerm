@@ -2,8 +2,6 @@ package production
 
 import (
 	"context"
-	"crypto/sha256"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,7 +11,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
-	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/forward"
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
@@ -38,7 +35,6 @@ type ProductionConfig struct {
 	Terminals               session.TerminalFactory
 	TaskOptions             tasks.Options
 	Docker                  *docker.Service
-	DurableBinary           string
 	SupervisorStateDir      string
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
@@ -127,7 +123,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		supervisorStateDir = filepath.Join(config.DataDir, "durable", "supervisor")
 	}
 	var (
-		durableBackend   *durable.Backend
 		durableProvider  base.DurableProvider
 		durableErr       error
 		supervisorHelper *supervisor.Helper
@@ -143,28 +138,13 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			}
 		}
 	} else {
-		var supervisorErr error
-		supervisorInstance, supervisorErr = supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
-		if supervisorErr == nil {
+		supervisorInstance, durableErr = supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
+		if durableErr != nil {
+			config.Config.Logger.Warn("embedded session supervisor unavailable, local durable tabs are disabled", "error", durableErr)
+		} else {
 			durableProvider = &catchUpProvider{
 				DurableProvider: supervisor.NewProvider(supervisorInstance),
 				database:        database,
-			}
-		} else {
-			config.Config.Logger.Warn("embedded session supervisor unavailable, falling back to the tmux durable backend", "error", supervisorErr)
-			durableBackend, durableErr = durable.New(durable.Config{
-				Binary: config.DurableBinary, SocketPath: productionDurableSocketPath(config.DataDir),
-				StateDir: filepath.Join(config.DataDir, "durable", "state"),
-			})
-			if durableErr != nil {
-				if !errors.Is(durableErr, durable.ErrUnavailable) {
-					return nil, durableErr
-				}
-			} else {
-				durableProvider = &catchUpProvider{
-					DurableProvider: session.NewDurableProvider(durableBackend),
-					database:        database,
-				}
 			}
 		}
 	}
@@ -212,7 +192,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
-		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
+		Docker:   dockerService, Retention: retention, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
 		Transcripts: transcriptWriter,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
@@ -228,9 +208,4 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	return production, nil
-}
-
-func productionDurableSocketPath(dataDir string) string {
-	digest := sha256.Sum256([]byte(dataDir))
-	return filepath.Join(os.TempDir(), "nexterm-durable-"+fmt.Sprintf("%x", digest[:8]), "d.sock")
 }

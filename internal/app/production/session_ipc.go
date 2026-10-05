@@ -294,7 +294,17 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return recovered, nil
 					}
 					s.bridge.Unbridge(call.Channel.ID)
-					return attachedTabDTO{}, terminalIPCError(recoveryErr)
+					if !errors.Is(recoveryErr, durable.ErrNotFound) {
+						return attachedTabDTO{}, terminalIPCError(recoveryErr)
+					}
+					recovered, recoveryErr = s.recoverRemoteDurable(ctx, call, input.TabID)
+					if recoveryErr == nil {
+						return recovered, nil
+					}
+					if !errors.Is(recoveryErr, session.ErrTabNotFound) {
+						return attachedTabDTO{}, terminalIPCError(recoveryErr)
+					}
+					return attachedTabDTO{}, terminalIPCError(durable.ErrNotFound)
 				}
 				if !validTabID(input.TabID) {
 					return attachedTabDTO{}, ipc.BadParam(errors.New("invalid terminal tab id"))
@@ -514,6 +524,20 @@ func (s *terminalCommandService) recoverDurable(ctx context.Context, call *ipc.C
 		Cols: 80, Rows: 24, Durable: &session.DurableTabOptions{Recover: true},
 	})
 	if err != nil {
+		return attachedTabDTO{}, err
+	}
+	return attachedSessionTab(info), nil
+}
+
+func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {
+	if err := s.bridge.Bridge(call.Channel.ID); err != nil {
+		return attachedTabDTO{}, err
+	}
+	info, err := s.sessions.RecoverRemoteDurable(context.WithoutCancel(ctx), tabID, session.OpenTabOptions{
+		ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		s.bridge.Unbridge(call.Channel.ID)
 		return attachedTabDTO{}, err
 	}
 	return attachedSessionTab(info), nil

@@ -10,6 +10,7 @@ import (
 	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
 	"github.com/ProbiusOfficial/NexTerm/internal/server"
+	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
 
@@ -18,6 +19,9 @@ func main() {
 }
 
 func run(args []string) int {
+	if len(args) > 0 && args[0] == supervisor.HelperCommand {
+		return supervisor.RunHelperCLI(args[1:])
+	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)

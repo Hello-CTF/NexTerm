@@ -5,7 +5,6 @@ package production
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
-	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -66,22 +64,23 @@ func (c *fakePTYChannel) CloseWrite() error                            { return 
 func (c *fakePTYChannel) ID() string                                   { return c.id }
 func (c *fakePTYChannel) Generation() uint64                           { return c.generation }
 
-func TestProductionMissingTmuxDoesNotBlockNonLocalTerminal(t *testing.T) {
+func TestProductionMissingSupervisorDoesNotBlockNonLocalTerminal(t *testing.T) {
 	factory := &bridgeTestFactory{}
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
-		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		DataDir:            t.TempDir(),
+		Desktop:            true,
 		SupervisorStateDir: blockedSupervisorStateDir(t),
 		Connector:          fakeSSHConnector{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(production.Services.DurableErr, durable.ErrUnavailable) {
-		t.Fatalf("durable constructor error = %v", production.Services.DurableErr)
+	if production.Services.DurableErr == nil {
+		t.Fatal("durable composition error is nil despite the blocked supervisor state directory")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -105,7 +104,7 @@ func TestProductionMissingTmuxDoesNotBlockNonLocalTerminal(t *testing.T) {
 	var tabID string
 	requireStoreTestResponse(t, attachResponse, &tabID)
 	if tabID == "" {
-		t.Fatal("non-local terminal_attach returned no tab with missing local tmux")
+		t.Fatal("non-local terminal_attach returned no tab with a missing local supervisor")
 	}
 	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 1 {
 		t.Fatalf("tabs = %+v", tabs)
@@ -118,7 +117,7 @@ func TestProductionMissingTmuxDoesNotBlockNonLocalTerminal(t *testing.T) {
 	var localTabID string
 	requireStoreTestResponse(t, localAttach, &localTabID)
 	if localTabID == "" {
-		t.Fatal("local attach with missing tmux returned no volatile tab")
+		t.Fatal("local attach with a missing supervisor returned no volatile tab")
 	}
 	if streams := factory.streams["local-channel"]; len(streams) != 1 {
 		t.Fatalf("volatile fallback did not bridge the local channel: %+v", streams)
@@ -186,7 +185,7 @@ func (s *fakeExecSession) Wait(ctx context.Context) (int, error) {
 	}
 }
 
-func TestProductionMissingTmuxKeepsDockerReattachFallback(t *testing.T) {
+func TestProductionMissingSupervisorKeepsDockerReattachFallback(t *testing.T) {
 	factory := &bridgeTestFactory{}
 	dockerService := docker.NewService(docker.StaticBackends{
 		SDKBackend:     fakeDockerBackend{},
@@ -197,15 +196,16 @@ func TestProductionMissingTmuxKeepsDockerReattachFallback(t *testing.T) {
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
-		DataDir: t.TempDir(), Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		DataDir:            t.TempDir(),
+		Desktop:            true,
 		SupervisorStateDir: blockedSupervisorStateDir(t),
 		Docker:             dockerService,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(production.Services.DurableErr, durable.ErrUnavailable) {
-		t.Fatalf("durable constructor error = %v", production.Services.DurableErr)
+	if production.Services.DurableErr == nil {
+		t.Fatal("durable composition error is nil despite the blocked supervisor state directory")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -227,6 +227,6 @@ func TestProductionMissingTmuxKeepsDockerReattachFallback(t *testing.T) {
 	var attached attachedTabDTO
 	requireStoreTestResponse(t, attachResponse, &attached)
 	if attached.TabID != streamID {
-		t.Fatalf("docker reattach masked by missing tmux: %+v", attached)
+		t.Fatalf("docker reattach masked by the missing supervisor: %+v", attached)
 	}
 }

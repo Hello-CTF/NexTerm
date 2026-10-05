@@ -12,10 +12,9 @@ import (
 )
 
 func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
-	requireRealTmux(t)
 	dataDir := durableTestDataDir(t)
 	factory := &bridgeTestFactory{}
-	production := newTmuxDurableTestProduction(t, dataDir, factory)
+	production := newSupervisorTestProduction(t, dataDir, factory, nil)
 	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "", "")
 	var connected sessionInfoDTO
 	requireStoreTestResponse(t, connectedResponse, &connected)
@@ -23,12 +22,6 @@ func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
 	attachResponse := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, channelID, "client-a")
 	var tabID string
 	requireStoreTestResponse(t, attachResponse, &tabID)
-	backend := production.Services.Durable
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = backend.Kill(ctx, tabID)
-	})
 	waitForProductionOutput(t, factory.at(channelID, 0), "$ ")
 	writeDurableTestCommand(t, production, tabID, "shutdown-drain-marker", "client-a")
 	waitForProductionOutput(t, factory.at(channelID, 0), "shutdown-drain-marker")

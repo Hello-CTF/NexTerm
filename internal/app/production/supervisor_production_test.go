@@ -21,7 +21,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 )
 
-func TestProductionSupervisorLocalAttachWithoutTmux(t *testing.T) {
+func TestProductionSupervisorLocalAttach(t *testing.T) {
 	dataDir := durableTestDataDir(t)
 	factory := &bridgeTestFactory{}
 	production := newSupervisorTestProduction(t, dataDir, factory, nil)
@@ -501,7 +501,7 @@ func newSupervisorTestProduction(t *testing.T, dataDir string, factory *bridgeTe
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 			Events:  events,
 		},
-		DataDir: dataDir, Desktop: true, DurableBinary: "nexterm-no-such-tmux-binary",
+		DataDir: dataDir, Desktop: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -511,9 +511,6 @@ func newSupervisorTestProduction(t *testing.T, dataDir string, factory *bridgeTe
 	}
 	if production.Services.DurableErr != nil {
 		t.Fatalf("durable composition error = %v", production.Services.DurableErr)
-	}
-	if production.Services.Durable != nil {
-		t.Fatal("tmux backend composed despite the active supervisor")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)

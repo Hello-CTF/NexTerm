@@ -165,7 +165,6 @@ func TestProductionDesktopHelperUnavailableKeepsVolatileTabs(t *testing.T) {
 		Desktop:                 true,
 		DesktopSupervisorHelper: true,
 		SupervisorStateDir:      blockedSupervisorStateDir(t),
-		DurableBinary:           "nexterm-no-such-tmux-binary",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +204,6 @@ func newHelperTestProduction(t *testing.T, dataDir string, factory *bridgeTestFa
 		DataDir:                 dataDir,
 		Desktop:                 true,
 		DesktopSupervisorHelper: true,
-		DurableBinary:           "nexterm-no-such-tmux-binary",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -218,9 +216,6 @@ func newHelperTestProduction(t *testing.T, dataDir string, factory *bridgeTestFa
 	}
 	if production.Services.DurableErr != nil {
 		t.Fatalf("durable composition error = %v", production.Services.DurableErr)
-	}
-	if production.Services.Durable != nil {
-		t.Fatal("tmux backend composed despite the active helper")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
