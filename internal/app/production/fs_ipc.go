@@ -182,9 +182,14 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 					return 0, terminalIPCError(base.ErrUnsupported)
 				}
 				taskID := ids.New()
+				var last sshfs.Progress
 				value, err := provider.PackDownload(ctx, input.RemotePath, input.LocalPath, sshfs.TransferOptions{Progress: func(progress sshfs.Progress) {
+					last = progress
 					_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
 				}})
+				if err != nil && ctx.Err() == nil {
+					_ = ipc.Emit(ctx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: last.Transferred, Total: last.Total, Done: true, Error: err.Error()})
+				}
 				return value, terminalIPCError(err)
 			})
 		},

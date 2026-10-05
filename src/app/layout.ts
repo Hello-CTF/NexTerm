@@ -203,6 +203,7 @@ let fetchInFlight = false;
 let writing = false;
 let dirty = false;
 let remoteEventDuringWrite = false;
+let pendingRemoteRev: number | null = null;
 
 function clearSaveTimer() {
   if (saveTimer !== null) {
@@ -364,28 +365,37 @@ async function pullLatest(
 ): Promise<PersistedLayout | null> {
   if (fetchInFlight) return null;
   fetchInFlight = true;
+  let result: PersistedLayout | null = null;
+  let failed = false;
   try {
     const dto = await layoutApi.get();
     revision = dto.revision;
     const parsed = sanitizeLayout(dto.data);
-    if (!parsed) {
-      return null;
+    if (parsed) {
+      result = parsed;
+      if (apply) {
+        const removed = reason === "remote" ? collectRemovedTerminals(parsed) : [];
+        lastSynced = JSON.stringify(parsed);
+        applyToStore(parsed);
+        if (reason === "conflict") {
+          useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
+        }
+        if (removed.length > 0) void notifyBackgroundedTerminals(removed);
+      }
     }
-    if (!apply) return parsed;
-    const removed = reason === "remote" ? collectRemovedTerminals(parsed) : [];
-    lastSynced = JSON.stringify(parsed);
-    applyToStore(parsed);
-    if (reason === "conflict") {
-      useUi.getState().pushToast("info", "布局已在其他设备上更新，已刷新为最新版本");
-    }
-    if (removed.length > 0) void notifyBackgroundedTerminals(removed);
-    return parsed;
   } catch (e) {
+    failed = true;
     console.warn("[NexTerm] 拉取服务端布局失败", e);
-    return null;
   } finally {
     fetchInFlight = false;
   }
+  if (failed) return result;
+  if (pendingRemoteRev !== null && pendingRemoteRev > revision) {
+    pendingRemoteRev = null;
+    return pullLatest("remote", apply);
+  }
+  pendingRemoteRev = null;
+  return result;
 }
 
 async function putLayout(json: string, allowTakeover = true): Promise<void> {
@@ -446,8 +456,12 @@ export async function flushLayout(): Promise<void> {
     await flushLayout();
   }
   if (remoteEventDuringWrite) {
-    await pullLatest("remote");
     remoteEventDuringWrite = false;
+    if (fetchInFlight) {
+      pendingRemoteRev = Number.MAX_SAFE_INTEGER;
+    } else {
+      await pullLatest("remote");
+    }
   }
 }
 
@@ -505,6 +519,7 @@ export function resetLayoutSyncForTest(): void {
   writing = false;
   dirty = false;
   remoteEventDuringWrite = false;
+  pendingRemoteRev = null;
   clearSaveTimer();
   clearRetryTimer();
 }
@@ -523,6 +538,14 @@ export function onRemoteChange(payload: { revision?: number } | null) {
   if (typeof rev === "number" && rev <= revision) return;
   if (writing) {
     remoteEventDuringWrite = true;
+    return;
+  }
+  if (fetchInFlight) {
+    if (typeof rev === "number") {
+      pendingRemoteRev = pendingRemoteRev === null ? rev : Math.max(pendingRemoteRev, rev);
+    } else {
+      pendingRemoteRev = Number.MAX_SAFE_INTEGER;
+    }
     return;
   }
   void pullLatest("remote");

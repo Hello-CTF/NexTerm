@@ -498,3 +498,82 @@ func waitCronJobFinished(t *testing.T, scheduler *cron.Scheduler, sessionID, job
 		time.Sleep(25 * time.Millisecond)
 	}
 }
+
+func TestCronSchedulerFailureEmitsAppErrorEvent(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &ipcEventRecorder{}
+	services := &ProductionServices{Store: database, Events: recorder}
+	scheduler, _, err := composeCronScheduler(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &cronRuntime{scheduler: scheduler}
+	if err := runtime.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = runtime.Shutdown(shutdownCtx)
+	})
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if payload, ok := recorder.appError(); ok {
+			if payload.Code != "cron" || !strings.Contains(payload.Message, "sql: database is closed") {
+				t.Fatalf("app error payload = %+v", payload)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cron scheduler failure did not emit app://error")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestCronJobFailureDoesNotEmitAppErrorEvent(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	recorder := &ipcEventRecorder{}
+	services := &ProductionServices{Store: database, Events: recorder}
+	scheduler, _, err := composeCronScheduler(ctx, services, cron.Options{PollInterval: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &cronRuntime{scheduler: scheduler}
+	if err := runtime.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = runtime.Shutdown(shutdownCtx)
+	})
+	job, err := runtime.scheduler.Register(ctx, cron.Registration{SessionID: "session", Prompt: "fail", Schedule: "* * * * *"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB().ExecContext(ctx,
+		`UPDATE cron_job SET next_run_at = ? WHERE id = ?`,
+		time.Now().Add(-time.Minute).UnixMilli(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	finished := waitCronJobFinished(t, runtime.scheduler, "session", job.ID)
+	if finished.LastError == "" || !strings.Contains(finished.LastError, "no runner") {
+		t.Fatalf("job failure not recorded: %+v", finished)
+	}
+	if _, ok := recorder.appError(); ok {
+		t.Fatal("ordinary job failure must not emit app://error")
+	}
+}

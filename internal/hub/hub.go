@@ -14,7 +14,7 @@ var (
 	ErrDetached       = errors.New("hub channel detached")
 	ErrReplaced       = errors.New("hub channel receiver replaced")
 	ErrHubClosed      = errors.New("hub closed")
-	ErrInvalidChannel = errors.New("hub channel id is empty")
+	ErrInvalidChannel = errors.New("通道 ID 不能为空")
 	ErrInvalidJSON    = errors.New("hub JSON frame is invalid")
 )
 
@@ -36,6 +36,7 @@ type Options struct {
 	QueueBytes     int
 	OnChannelClose func(channelID string)
 	OnBackpressure func(channelID string, queuedBytes int)
+	OnDrain        func(channelID string, queuedBytes int)
 }
 
 type Hub struct {
@@ -261,7 +262,7 @@ func (h *Hub) channel(channelID string) (*channel, error) {
 	if ch := h.channels[channelID]; ch != nil {
 		return ch, nil
 	}
-	ch := newChannel(channelID, h.options.QueueFrames, h.options.QueueBytes, h.options.OnBackpressure)
+	ch := newChannel(channelID, h.options.QueueFrames, h.options.QueueBytes, h.options.OnBackpressure, h.options.OnDrain)
 	h.channels[channelID] = ch
 	return ch, nil
 }
@@ -336,10 +337,11 @@ type channel struct {
 	maxFrames      int
 	maxBytes       int
 	onBackpressure func(string, int)
+	onDrain        func(string, int)
 }
 
-func newChannel(id string, maxFrames, maxBytes int, onBackpressure func(string, int)) *channel {
-	return &channel{changed: make(chan struct{}), id: id, maxFrames: maxFrames, maxBytes: maxBytes, onBackpressure: onBackpressure}
+func newChannel(id string, maxFrames, maxBytes int, onBackpressure func(string, int), onDrain func(string, int)) *channel {
+	return &channel{changed: make(chan struct{}), id: id, maxFrames: maxFrames, maxBytes: maxBytes, onBackpressure: onBackpressure, onDrain: onDrain}
 }
 
 func (c *channel) send(ctx context.Context, frame Frame) error {
@@ -366,17 +368,14 @@ func (c *channel) sendProducer(ctx context.Context, frame Frame, producer uint64
 			c.mu.Unlock()
 			return nil
 		}
-		var callback func(string, int)
-		queuedBytes := c.queuedBytes
 		if !c.backpressured {
 			c.backpressured = true
-			callback = c.onBackpressure
+			if c.onBackpressure != nil {
+				c.onBackpressure(c.id, c.queuedBytes)
+			}
 		}
 		changed := c.changed
 		c.mu.Unlock()
-		if callback != nil {
-			callback(c.id, queuedBytes)
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -418,8 +417,8 @@ func (c *channel) next(ctx context.Context, generation uint64) (Frame, error) {
 
 func (c *channel) ack(sequence uint64) bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.inFlight != sequence || c.head >= len(c.queue) || c.queue[c.head].Sequence != sequence {
+		c.mu.Unlock()
 		return false
 	}
 	frame := c.queue[c.head]
@@ -435,8 +434,15 @@ func (c *channel) ack(sequence uint64) bool {
 		c.head = 0
 	}
 	c.inFlight = 0
+	drainCallback := c.onDrain
+	queuedBytes := c.queuedBytes
 	if c.backpressured && c.pendingLocked() <= c.maxFrames/4 && c.queuedBytes <= c.maxBytes/4 {
 		c.backpressured = false
+	} else {
+		drainCallback = nil
+	}
+	if drainCallback != nil {
+		drainCallback(c.id, queuedBytes)
 	}
 	drained := c.draining && c.pendingLocked() == 0
 	if drained {
@@ -444,6 +450,7 @@ func (c *channel) ack(sequence uint64) bool {
 	} else {
 		c.signalLocked()
 	}
+	c.mu.Unlock()
 	return drained
 }
 
@@ -474,17 +481,30 @@ func (c *channel) closeLocked() {
 		c.head = 0
 		c.queuedBytes = 0
 		c.inFlight = 0
+		if c.backpressured {
+			c.backpressured = false
+			if c.onDrain != nil {
+				c.onDrain(c.id, 0)
+			}
+		}
 		c.signalLocked()
 	}
 }
 
 func (c *channel) discardPending() bool {
 	c.mu.Lock()
+	drainCallback := c.onDrain
+	if !c.backpressured {
+		drainCallback = nil
+	}
 	c.queue = nil
 	c.head = 0
 	c.queuedBytes = 0
 	c.inFlight = 0
 	c.backpressured = false
+	if drainCallback != nil {
+		drainCallback(c.id, 0)
+	}
 	finalized := c.draining
 	if c.draining {
 		c.closeLocked()

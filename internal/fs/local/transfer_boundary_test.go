@@ -56,7 +56,7 @@ func TestUploadSourceChangesAfterStat(t *testing.T) {
 			t.Fatalf("shrunk upload = %d, %v", transferred, err)
 		}
 		assertBytes(t, remote, []byte("x"))
-		assertNoDoneProgress(t, progress)
+		assertFailedProgress(t, progress, 1, 6)
 	})
 	t.Run("growth", func(t *testing.T) {
 		dir := t.TempDir()
@@ -90,7 +90,7 @@ func TestDownloadShortAndGrowingSources(t *testing.T) {
 			t.Fatalf("short download = %d, %v", transferred, err)
 		}
 		assertBytes(t, local, []byte("abc"))
-		assertNoDoneProgress(t, progress)
+		assertFailedProgress(t, progress, 3, 6)
 	})
 	t.Run("growth", func(t *testing.T) {
 		source := &staticReaderFS{reader: &sizedStringReader{Reader: strings.NewReader("abcdefgh"), size: 6}}
@@ -283,7 +283,18 @@ func assertDoneProgress(t *testing.T, progress []Progress, transferred int64) {
 		t.Fatal("missing final progress")
 	}
 	last := progress[len(progress)-1]
-	if !last.Done || last.Transferred != transferred || last.Total != transferred {
+	if !last.Done || last.Error != "" || last.Transferred != transferred || last.Total != transferred {
 		t.Fatalf("final progress = %#v", last)
+	}
+}
+
+func assertFailedProgress(t *testing.T, progress []Progress, transferred, total int64) {
+	t.Helper()
+	if len(progress) == 0 {
+		t.Fatal("missing failure progress")
+	}
+	last := progress[len(progress)-1]
+	if !last.Done || last.Error == "" || last.Transferred != transferred || last.Total != total {
+		t.Fatalf("failure progress = %#v", last)
 	}
 }

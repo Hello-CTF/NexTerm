@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	fslocal "github.com/ProbiusOfficial/NexTerm/internal/fs/local"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
@@ -111,6 +112,53 @@ func TestProductionFSCommandsUseLiveTransportAndEmitProgress(t *testing.T) {
 	}
 	response = production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_delete", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"isDir":false}`)}, production.Environment(""))
 	requireProductionNull(t, response)
+}
+
+func TestProductionFSUploadFailureEmitsErrorProgress(t *testing.T) {
+	events := &fsEventRecorder{}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-fail", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing.bin")
+	response := production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_upload", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","localPath":` + jsonString(missing) + `,"remotePath":` + jsonString(filepath.Join(t.TempDir(), "remote.bin")) + `}`)}, production.Environment(""))
+	if response.OK || response.Error == nil {
+		t.Fatalf("missing upload source = %+v", response)
+	}
+	var failures, dones int
+	for _, event := range events.events {
+		if event.Event != ipc.TopicFSProgress {
+			continue
+		}
+		progress, ok := event.Payload.(fslocal.Progress)
+		if !ok {
+			t.Fatalf("progress payload = %#v", event.Payload)
+		}
+		if progress.Done {
+			dones++
+			if progress.Error == "" {
+				t.Fatalf("failure event lacks error: %#v", progress)
+			}
+		}
+		if progress.Error != "" {
+			failures++
+		}
+	}
+	if failures != 1 || dones != 1 {
+		t.Fatalf("failure events = %d, done events = %d", failures, dones)
+	}
 }
 
 func jsonString(value string) string {

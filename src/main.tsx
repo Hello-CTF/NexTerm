@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
 import "./styles.css";
-import { listenEvent, EVENTS, EventVersionGate, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
+import { listenEvent, EVENTS, EventVersionGate, type AppErrorEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
 import { useUi } from "./app/store";
@@ -38,7 +38,7 @@ void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
   }
 });
 
-void listenEvent<{ code: string; message: string }>(EVENTS.appError, (p) => {
+void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
   useUi.getState().pushToast("error", p.message);
 });
 

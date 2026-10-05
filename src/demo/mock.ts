@@ -620,6 +620,38 @@ function toolOutputFor(cmd: string): string {
   return "（演示模式：已省略该命令的完整输出）";
 }
 
+function demoFsEntryExists(path: string): boolean {
+  const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+  return fsTree[parent]?.some((e) => e.path === path) === true;
+}
+
+function failTransfer(message: string): never {
+  emit("fs://progress", { taskId: uid("task"), transferred: 0, total: 0, done: true, error: message });
+  throw new Error(message);
+}
+
+async function simulateTransfer(
+  total: number,
+  durationMs: number,
+  failMessage: string | null,
+): Promise<number> {
+  const taskId = uid("task");
+  const failAt = failMessage === null ? total : Math.floor(total / 2);
+  let done = 0;
+  const timer = window.setInterval(() => {
+    done = Math.min(failAt, done + total / 8);
+    emit("fs://progress", { taskId, transferred: done, total, done: false });
+  }, 180);
+  await new Promise((r) => window.setTimeout(r, durationMs));
+  window.clearInterval(timer);
+  if (failMessage !== null) {
+    emit("fs://progress", { taskId, transferred: done, total, done: true, error: failMessage });
+    throw new Error(failMessage);
+  }
+  emit("fs://progress", { taskId, transferred: total, total, done: true });
+  return total;
+}
+
 export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>): Promise<unknown> {
   const a = params(rawArgs);
   if (rawArgs && typeof rawArgs === "object") {
@@ -1128,35 +1160,44 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "fs_checksum":
       return "d41d8cd98f00b204e9800998ecf8427e  (演示模式：固定示例值)";
 
-    case "fs_upload":
+    case "fs_upload": {
+      const remote = absPath(a.remotePath);
+      const parent = remote.slice(0, remote.lastIndexOf("/")) || "/";
+      if (!fsTree[parent]) {
+        failTransfer(`演示模式：目录不存在：${parent}`);
+      }
+      const name = remote.slice(remote.lastIndexOf("/") + 1);
+      return simulateTransfer(
+        4_812_640,
+        1500,
+        name.includes("fail") ? "演示模式：模拟传输中断（连接被对端重置）" : null,
+      );
+    }
+
     case "fs_download": {
-      const taskId = uid("task");
-      const total = 4_812_640;
-      let done = 0;
-      const timer = window.setInterval(() => {
-        done = Math.min(total, done + total / 8);
-        emit("fs://progress", { taskId, transferred: done, total, done: done >= total });
-        if (done >= total) window.clearInterval(timer);
-      }, 180);
-      await new Promise((r) => window.setTimeout(r, 1500));
-      window.clearInterval(timer);
-      emit("fs://progress", { taskId, transferred: total, total, done: true });
-      return total;
+      const remote = absPath(a.remotePath);
+      if (!demoFsEntryExists(remote)) {
+        failTransfer(`演示模式：文件不存在：${remote}`);
+      }
+      const name = remote.slice(remote.lastIndexOf("/") + 1);
+      return simulateTransfer(
+        4_812_640,
+        1500,
+        name.includes("fail") ? "演示模式：模拟传输中断（连接被对端重置）" : null,
+      );
     }
 
     case "fs_pack_download": {
-      const taskId = uid("task");
-      const total = 2_408_192;
-      let done = 0;
-      const timer = window.setInterval(() => {
-        done = Math.min(total, done + total / 8);
-        emit("fs://progress", { taskId, transferred: done, total, done: done >= total });
-        if (done >= total) window.clearInterval(timer);
-      }, 180);
-      await new Promise((r) => window.setTimeout(r, 1200));
-      window.clearInterval(timer);
-      emit("fs://progress", { taskId, transferred: total, total, done: true });
-      return total;
+      const remote = absPath(a.remotePath);
+      if (!fsTree[remote]) {
+        failTransfer(`演示模式：目录不存在：${remote}`);
+      }
+      const name = remote.slice(remote.lastIndexOf("/") + 1);
+      return simulateTransfer(
+        2_408_192,
+        1200,
+        name.includes("fail") ? "演示模式：模拟打包中断（连接被对端重置）" : null,
+      );
     }
 
     case "fs_extract": {

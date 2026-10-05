@@ -73,12 +73,15 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
   const [progress, setProgress] = useState<FileProgressMap>({});
   useEffect(() => {
     const un = listenEvent<FsProgressEvent>(EVENTS.fsProgress, (event) => {
+      if (event.error) {
+        pushToast("error", `文件传输失败：${event.error}`);
+      }
       setProgress((current) => reduceFileProgress(current, event));
     });
     return () => {
       void un.then((f) => f());
     };
-  }, []);
+  }, [pushToast]);
 
   useEffect(() => {
     setDraft(path);

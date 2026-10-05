@@ -198,7 +198,10 @@ func nullableController(controller string) *string {
 
 type ThrottleEvent struct {
 	TabID         string `json:"tabId"`
+	ChannelID     string `json:"channelId"`
 	InflightBytes int    `json:"inflightBytes"`
+	Recovered     bool   `json:"recovered,omitempty"`
+	Version       uint64 `json:"version"`
 }
 
 type Session struct {

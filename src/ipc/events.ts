@@ -62,6 +62,20 @@ export interface FsProgressEvent {
   transferred: number;
   total: number;
   done: boolean;
+  error?: string;
+}
+
+export interface TerminalThrottledEvent {
+  tabId: string;
+  channelId?: string;
+  inflightBytes: number;
+  recovered?: boolean;
+  version?: number;
+}
+
+export interface AppErrorEvent {
+  code: string;
+  message: string;
 }
 
 function demoChannel<T>(): IpcChannel<T> {

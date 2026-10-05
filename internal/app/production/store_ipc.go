@@ -194,8 +194,11 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, "layout_put", func(ctx context.Context, _ *ipc.Call, input layoutPutRequest) (layoutSaveDTO, error) {
+			return ipc.RegisterNested(dispatcher, "layout_put", func(ctx context.Context, call *ipc.Call, input layoutPutRequest) (layoutSaveDTO, error) {
 				saved, revision, err := database.LayoutSave(ctx, input.Revision, input.Data)
+				if err == nil && saved {
+					_ = ipc.Emit(ctx, call.Events, ipc.TopicLayoutChanged, ipc.LayoutChangedEvent{Revision: revision})
+				}
 				return layoutSaveDTO{Saved: saved, Revision: revision, Conflict: !saved}, err
 			})
 		},

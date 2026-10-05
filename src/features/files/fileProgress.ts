@@ -6,7 +6,7 @@ export function reduceFileProgress(
   current: FileProgressMap,
   event: FsProgressEvent,
 ): FileProgressMap {
-  if (event.done) {
+  if (event.done || event.error) {
     if (!(event.taskId in current)) return current;
     const next = { ...current };
     delete next[event.taskId];
