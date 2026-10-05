@@ -143,13 +143,19 @@ jobs:
         with:
           go-version: 1.26.8
           cache: true
+      - name: Download the verified frontend dist
+        if: matrix.kind == 'desktop'
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: verified-dist
       - name: Install Linux WebView prerequisites
         if: matrix.os == 'linux' && matrix.kind == 'desktop'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Build the repro-checked production binary and inspect format/cgo/size evidence
-        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--skip-frontend' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+        run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
       - name: Run Go two-process server acceptance
         if: matrix.kind == 'server'
         run: python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-${{ matrix.os }}-${{ matrix.arch }} --no-build
