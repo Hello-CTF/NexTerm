@@ -47,17 +47,17 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 158 个方法和 156 个唯一命令", () => {
+  it("保留 162 个方法和 160 个唯一命令", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(158);
-    expect(new Set(names)).toHaveProperty("size", 156);
+    expect(names).toHaveLength(162);
+    expect(new Set(names)).toHaveProperty("size", 160);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",
     ]);
   });
 
-  it("保留全部 25 个嵌套 args 命令", () => {
+  it("保留全部 29 个嵌套 args 命令", () => {
     const nested = commandCalls("commands.ts", commandsSource)
       .filter((call) => call.nested)
       .map((call) => call.command);
@@ -70,6 +70,7 @@ describe("IPC facade 静态契约", () => {
       "asset_create",
       "asset_update",
       "audit_query",
+      "audit_count",
       "asset_probe_batch",
       "fs_write",
       "mount_create",
@@ -86,6 +87,9 @@ describe("IPC facade 静态契约", () => {
       "sync_link_set",
       "sync_push",
       "sync_pull",
+      "sync_token_rotate",
+      "sync_token_issue",
+      "sync_token_revoke",
     ]);
   });
 

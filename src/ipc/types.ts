@@ -21,8 +21,9 @@ export type AiHitlQuestionDto = { id: string, text: string, options?: Array<stri
 export type AiHitlSnapshotDto = { runId: string, checkpointId: string, 
 status: string, attempt: number, seq: number, pending: Array<AiHitlInterruptDto>, terminal?: AiHitlEventDto, };
 
-export type AiRunDto = { id: string, conversationId: string, status: string, attempt: number, seq: number, 
-planMode: boolean, source: string, answer: string, turns: number, tokensIn: number, tokensOut: number, error?: string, 
+export type AiRunDto = { id: string, conversationId: string, status: string, attempt: number, seq: number,
+planMode: boolean, source: string, profileId?: string, answer: string, turns: number, tokensIn: number, tokensOut: number,
+cacheCreationTokens: number, latencyMs: number, retries: number, failures: number, error?: string,
 createdAt: number, updatedAt: number, finishedAt?: number, };
 
 export type AiRunEventDto = Record<string, unknown>;
@@ -60,9 +61,15 @@ kind: string, createdAt: number, };
 
 export type ImageSummaryDto = { id: string, repository: string, tag: string, size: string, createdSince: string, };
 
-export type ImportReport = { groupsCreated: number, groupsUpdated: number, assetsCreated: number, assetsUpdated: number, credsCreated: number, credsUpdated: number, 
-skippedNewer: number, 
-refused: number, 
+export type SkippedNewerEntry = { kind: string, id: string, name: string, 
+localRevision: number, remoteRevision: number, equalRevision: boolean, };
+
+export type ImportReport = { groupsCreated: number, groupsUpdated: number, assetsCreated: number, assetsUpdated: number, credsCreated: number, credsUpdated: number,
+credsDeleted: number,
+snippetsCreated: number, snippetsUpdated: number,
+skippedNewer: number,
+skippedNewerDetails?: Array<SkippedNewerEntry>,
+refused: number,
 warnings: Array<string>, };
 
 export type KnownHostDto = { id: string, host: string, port: number, keyType: string, fingerprint: string, addedAt: number, };
@@ -81,7 +88,9 @@ name: string, baseUrl: string, apiKey: string, model: string, temperature: numbe
 contextWindow: number, 
 proxy: string | null, stream: boolean,
 fallbackModel?: string | null,
-requestTimeoutSeconds?: number | null, idleTimeoutSeconds?: number | null, };
+maxTokens?: number | null,
+requestTimeoutSeconds?: number | null, idleTimeoutSeconds?: number | null,
+circuitFailureThreshold?: number | null, circuitCooldownSeconds?: number | null, };
 
 export type ModelListDto = { models: Array<string>, malformed: number, };
 
@@ -94,7 +103,8 @@ export type AiUsageSummaryRow = { source: string, profileId: string, runs: numbe
 export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
 
 export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature: number, contextWindow: number, proxy: string | null, stream: boolean,
-fallbackModel?: string | null, };
+fallbackModel?: string | null,
+maxTokens?: number | null, };
 
 export type QueryResultDto = { columns: Array<string>, rows: Array<Array<JsonValue>>, rowsAffected: number, durationMs: number, truncated: boolean, error: string | null, };
 
@@ -116,9 +126,13 @@ export type SyncBundleGroup = { id: string, parentId: string | null, name: strin
 
 export type SyncBundleAsset = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, optionsJson: string, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, };
 
-export type SyncBundleCredential = { id: string, name: string, kind: string, secret: string, };
+export type SyncBundleCredential = { id: string, name: string, kind: string, secret: string, updatedAt?: number, };
 
-export type SyncBundle = { protocol: number, origin: string, exportedAt: number, groups: Array<SyncBundleGroup>, assets: Array<SyncBundleAsset>, creds: Array<SyncBundleCredential>, warnings?: Array<string>, };
+export type SyncCredentialTombstone = { id: string, deletedAt: number, };
+
+export type SyncBundleSnippet = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, };
+
+export type SyncBundle = { protocol: number, origin: string, exportedAt: number, groups: Array<SyncBundleGroup>, assets: Array<SyncBundleAsset>, creds: Array<SyncBundleCredential>, credTombstones?: Array<SyncCredentialTombstone>, snippets?: Array<SyncBundleSnippet>, warnings?: Array<string>, };
 
 export type SyncLink = { 
 url: string, 
@@ -127,6 +141,14 @@ token: string,
 insecure: boolean, 
 verifiedAt: number, 
 lastError: string | null, };
+
+export type SyncTokenDto = { id: string, clientId: string, purpose: string, createdAt: number, expiresAt: number, revokedAt: number | null, lastUsedAt: number | null, };
+
+export type SyncTokenIssueResult = { token: SyncTokenDto, secret: string, };
+
+export type SyncBundleWriteResult = { encrypted: boolean, warning?: string, };
+
+export type AuditCountDto = { total: number, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
 

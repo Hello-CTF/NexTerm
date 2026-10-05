@@ -295,17 +295,20 @@ export const assetApi = {
   groupUpdate: (id: string, name?: string, parentId?: string | null) =>
     call<AssetGroup>("group_update", { id, name, parentId }),
   groupDelete: (id: string) => call<void>("group_delete", { id }),
-  snippetList: () =>
-    call<
-      { id: string; name: string; body: string; groupId: string | null; sort: number }[]
-    >("snippet_list"),
-  snippetCreate: (name: string, body: string) =>
-    call<{ id: string }>("snippet_create", { name, body }),
-  snippetUpdate: (id: string, name: string, body: string) =>
-    call<void>("snippet_update", { id, name, body }),
+  snippetList: () => call<import("./types").SnippetDto[]>("snippet_list"),
+  snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
+    call<{ id: string }>("snippet_create", { name, body, groupId, sort }),
+  snippetUpdate: (
+    id: string,
+    name: string,
+    body: string,
+    patch: { groupId?: string | null; sort?: number } = {},
+  ) => call<void>("snippet_update", { id, name, body, ...patch }),
   snippetDelete: (id: string) => call<void>("snippet_delete", { id }),
   auditQuery: (args: Record<string, unknown> = {}) =>
     call<import("./types").AuditEntryDto[]>("audit_query", { args }),
+  auditCount: (args: Record<string, unknown> = {}) =>
+    call<import("./types").AuditCountDto>("audit_count", { args }),
   probeBatch: (assetIds: string[], timeoutMs?: number, maxConcurrent?: number) =>
     call<import("./types").AssetProbeBatchDto>("asset_probe_batch", {
       args: { assetIds, timeoutMs, maxConcurrent },
@@ -564,8 +567,8 @@ export const aiApi = {
     call<import("./types").AiHitlEventDto[]>("ai_hitl_events", { jobId, afterSeq }),
   runs: (conversationId: string, limit?: number) =>
     call<import("./types").AiRunDto[]>("ai_run_list", { conversationId, limit }),
-  runEvents: (jobId: string, afterSeq: number) =>
-    call<import("./types").AiRunEventDto[]>("ai_run_events", { jobId, afterSeq }),
+  runEvents: (jobId: string, afterSeq: number, limit?: number) =>
+    call<import("./types").AiRunEventDto[]>("ai_run_events", { jobId, afterSeq, limit }),
   models: () => call<string[]>("ai_models"),
   testProvider: () => call<import("./types").ProviderTestResult>("ai_test_provider"),
   setProvider: (config: ProviderConfig) =>
@@ -725,11 +728,13 @@ export const syncApi = {
   importBundle: (bundle: import("./types").SyncBundle, force: boolean) =>
     call<import("./types").ImportReport>("sync_import", { args: { bundle, force } }),
 
-  readBundleFile: (path: string) =>
-    call<string>("sync_bundle_read", { args: { path } }),
+  readBundleFile: (path: string, password?: string) =>
+    call<string>("sync_bundle_read", { args: { path, password } }),
 
-  writeBundleFile: (path: string, content: string) =>
-    call<void>("sync_bundle_write", { args: { path, content } }),
+  writeBundleFile: (path: string, content: string, password?: string) =>
+    call<import("./types").SyncBundleWriteResult>("sync_bundle_write", {
+      args: { path, content, password },
+    }),
 
   linkGet: () => call<import("./types").SyncLink>("sync_link_get"),
   linkSet: (patch: { url: string; tokenKind?: string; token?: string; insecure?: boolean }) =>
@@ -743,5 +748,13 @@ export const syncApi = {
     call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
 
   token: () => call<string | null>("sync_token"),
-  rotateToken: () => call<string | null>("sync_token_rotate"),
+  rotateToken: (id?: string) =>
+    call<string | null>("sync_token_rotate", { args: { id } }),
+  tokenList: () =>
+    call<import("./types").SyncTokenDto[] | null>("sync_token_list").then((v) => v ?? []),
+  tokenIssue: (clientId: string, purpose?: string, ttlMs?: number) =>
+    call<import("./types").SyncTokenIssueResult>("sync_token_issue", {
+      args: { clientId, purpose, ttlMs },
+    }),
+  tokenRevoke: (id: string) => call<void>("sync_token_revoke", { args: { id } }),
 };
