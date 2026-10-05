@@ -223,6 +223,32 @@ describe("SyncCard 客户端令牌（服务端一面）", () => {
     expect(rowButton(revokedRow, "吊销").disabled).toBe(true);
   });
 
+  it("面板轮换 admin 后主令牌框同步：旧主令牌不再显示/复制", async () => {
+    await mountAndExpand();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
+    mocks.rotateToken.mockResolvedValue("admin-rotated-secret");
+    click(rowButton(tokenRow("admin"), "轮换"));
+    await flushUntil(() => mocks.rotateToken.mock.calls.length > 0);
+    expect(mocks.rotateToken).toHaveBeenCalledWith("admin");
+
+    const mainBox = [...mounted!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "重置令牌",
+    )!.parentElement!;
+    const revealBtn = [...mainBox.querySelectorAll("button")].find((b) => b.textContent?.trim() === "显示")!;
+    click(revealBtn);
+    await flushUntil(() => text().includes("admin-rotated-secret"));
+    expect(text()).not.toContain("admin-secret-value");
+
+    const copyBtn = [...mainBox.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制")!;
+    click(copyBtn);
+    await flush();
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("admin-rotated-secret");
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalledWith("admin-secret-value");
+  });
+
   it("列表读取失败时内联报错并可重试", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => text().includes("这台是同步目标"));

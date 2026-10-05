@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flushUntil, mount, setSelectValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -102,6 +102,10 @@ function exportableRow(name: string): HTMLElement {
   return row;
 }
 
+function choosePlaintextExport() {
+  setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#bundle-format")!, "plaintext");
+}
+
 describe("SyncBundleCard 导出", () => {
   it("默认不含凭据：导出调用 exportAssets(ids, false)，摘要不出现任何秘密", async () => {
     mocks.exportAssets.mockResolvedValue({
@@ -115,7 +119,8 @@ describe("SyncBundleCard 导出", () => {
     });
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出为 JSON 文件");
+    choosePlaintextExport();
+    clickButton(mounted!.container, "导出为明文 JSON 文件");
     await flushUntil(() => text().includes("导出完成"));
     expect(mocks.exportAssets).toHaveBeenCalledWith(["a1"], false);
     expect(mocks.saveBundleFile).toHaveBeenCalledOnce();
@@ -141,7 +146,8 @@ describe("SyncBundleCard 导出", () => {
     click(credsToggle.querySelector('input[type="checkbox"]')!);
     await flushUntil(() => text().includes("可还原的凭据明文"));
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出为 JSON 文件");
+    choosePlaintextExport();
+    clickButton(mounted!.container, "导出为明文 JSON 文件");
     await flushUntil(() => text().includes("导出完成"));
     expect(mocks.exportAssets).toHaveBeenCalledWith(["a1"], true);
     expect(text()).toContain("凭据 1");
@@ -152,7 +158,8 @@ describe("SyncBundleCard 导出", () => {
     mocks.exportAssets.mockRejectedValue(new Error("凭据库已锁定"));
     await mountCard();
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
-    clickButton(mounted!.container, "导出为 JSON 文件");
+    choosePlaintextExport();
+    clickButton(mounted!.container, "导出为明文 JSON 文件");
     await flushUntil(() => text().includes("凭据库已锁定"));
     expect(text()).not.toContain("导出完成");
   });

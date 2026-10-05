@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -106,40 +106,62 @@ function exportRow(name: string): HTMLElement {
   return row;
 }
 
+function formatSelect(): HTMLSelectElement {
+  const select = mounted!.container.querySelector<HTMLSelectElement>("#bundle-format");
+  if (!select) throw new Error("format select not found");
+  return select;
+}
+
 function exportButton(): HTMLButtonElement {
   const btn = [...mounted!.container.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === "导出为 JSON 文件",
+    (b) => b.textContent?.trim() === "导出为 JSON 文件" || b.textContent?.trim() === "导出为明文 JSON 文件" || b.textContent?.trim() === "导出为加密资产包 (.nxbm)",
   ) as HTMLButtonElement | undefined;
   if (!btn) throw new Error("export button not found");
   return btn;
 }
 
-function checkEncrypt(): void {
-  const toggle = [...mounted!.container.querySelectorAll("label")].find((l) =>
-    l.textContent?.includes("加密资产包"),
-  )!;
-  click(toggle.querySelector('input[type="checkbox"]')!);
+function chooseFormat(format: "encrypted" | "plaintext"): void {
+  setSelectValue(formatSelect(), format);
 }
 
-describe("SyncBundleCard 明文导出风险提示", () => {
-  it("未加密时常驻明文风险警告；勾选加密后警告消失并出现口令输入", async () => {
+describe("SyncBundleCard 导出格式显式选择", () => {
+  it("默认不选格式：导出按钮禁用，点击不发起任何导出", async () => {
     await mountCard();
-    expect(text()).toContain("将以明文导出");
-    expect(text()).toContain("未设置导出口令");
+    click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
+    const btn = exportButton();
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent?.trim()).toBe("导出为 JSON 文件");
+    expect(btn.getAttribute("title")).toBe("先选择导出格式");
+    expect(text()).not.toContain("将以明文导出");
     expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
 
-    checkEncrypt();
-    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
-    expect(text()).not.toContain("将以明文导出");
-    expect(text()).toContain("口令无法找回");
-    expect(mounted!.container.querySelector("#bundle-password2")).not.toBeNull();
+    click(btn);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mocks.exportAssets).not.toHaveBeenCalled();
+    expect(mocks.saveBundleFile).not.toHaveBeenCalled();
+    expect(mocks.writeBundleFile).not.toHaveBeenCalled();
   });
 
-  it("口令不一致时禁用导出并提示；一致后放行", async () => {
+  it("主动选明文后出现常驻风险警告，按钮文案与格式一致", async () => {
     await mountCard();
-    checkEncrypt();
-    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
+    chooseFormat("plaintext");
+    await flushUntil(() => text().includes("将以明文导出"));
+    expect(text()).toContain("任何拿到这个文件的人都能直接读取");
+    const btn = exportButton();
+    expect(btn.textContent?.trim()).toBe("导出为明文 JSON 文件");
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("选加密后出现口令输入；口令不一致禁用导出并提示，一致后放行", async () => {
+    await mountCard();
+    click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
+    chooseFormat("encrypted");
+    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
+    expect(text()).toContain("口令无法找回");
+    expect(text()).not.toContain("将以明文导出");
+    expect(exportButton().textContent?.trim()).toBe("导出为加密资产包 (.nxbm)");
+
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!, "correct-horse");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password2")!, "battery-staple");
     expect(text()).toContain("两次输入的导出口令不一致");
@@ -153,9 +175,9 @@ describe("SyncBundleCard 明文导出风险提示", () => {
 describe("SyncBundleCard 加密导出", () => {
   it("加密导出走 .nxbm 容器写入并携带口令，摘要标注已加密", async () => {
     await mountCard();
-    checkEncrypt();
-    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
+    chooseFormat("encrypted");
+    await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!, "correct-horse");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#bundle-password2")!, "correct-horse");
     click(exportButton());
@@ -176,6 +198,8 @@ describe("SyncBundleCard 加密导出", () => {
   it("明文导出不经过加密写入路径", async () => {
     await mountCard();
     click(exportRow("web-01").querySelector('input[type="checkbox"]')!);
+    chooseFormat("plaintext");
+    await flushUntil(() => text().includes("将以明文导出"));
     click(exportButton());
     await flushUntil(() => text().includes("导出完成"));
     expect(mocks.saveBundleFile).toHaveBeenCalledOnce();
@@ -235,7 +259,7 @@ describe("SyncBundleCard 加密导入", () => {
 describe("SyncBundleCard 口令行窄屏结构", () => {
   it("口令行可换行、输入框可收缩", async () => {
     await mountCard();
-    checkEncrypt();
+    chooseFormat("encrypted");
     await flushUntil(() => mounted!.container.querySelector("#bundle-password") !== null);
     const row = mounted!.container.querySelector<HTMLInputElement>("#bundle-password")!.closest("div")!;
     expect(row.className).toContain("flex-wrap");

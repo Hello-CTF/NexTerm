@@ -75,7 +75,7 @@ function OneTimeSecret({ secret, label, onDone }: { secret: string; label: strin
   );
 }
 
-export function SyncTokenPanel() {
+export function SyncTokenPanel({ onAdminRotate }: { onAdminRotate?: (secret: string) => void }) {
   const { pushToast } = useUi();
   const [open, setOpen] = useState(false);
   const [tokens, setTokens] = useState<SyncTokenDto[] | null>(null);
@@ -135,7 +135,10 @@ export function SyncTokenPanel() {
     if (!ok) return;
     try {
       const next = await syncApi.rotateToken(t.id);
-      if (next) setSecret({ value: next, label: `${t.clientId}（${t.purpose}）` });
+      if (next) {
+        setSecret({ value: next, label: `${t.clientId}（${t.purpose}）` });
+        if (t.id === "admin") onAdminRotate?.(next);
+      }
       await load();
       pushToast("success", "已轮换，旧令牌立即失效");
     } catch (e) {

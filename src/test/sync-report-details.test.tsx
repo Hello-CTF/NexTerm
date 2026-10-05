@@ -133,6 +133,22 @@ describe("ImportReportView 跳过明细", () => {
     expect(text).not.toContain("删除 0");
     expect(text).not.toContain("片段");
   });
+
+  it("凭据墓碑等名称为空的明细回退展示条目 ID", () => {
+    mounted = view({
+      title: "导入结果",
+      data: {
+        ...REPORT_BASE,
+        skippedNewerDetails: [
+          { kind: "credential", id: "cred-tombstone-1", name: "", localRevision: 200, remoteRevision: 100, equalRevision: false },
+        ],
+      },
+    });
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("cred-tombstone-1");
+    expect(text).toContain("（凭据）");
+    expect(text).toContain("本机修订 200 较包内修订 100 新");
+  });
 });
 
 describe("SyncCard 对照区 NTP 提示", () => {

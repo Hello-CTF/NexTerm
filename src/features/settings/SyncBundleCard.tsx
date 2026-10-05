@@ -26,9 +26,16 @@ const BUNDLE_PROTOCOL = 1;
 
 const canEncryptBundle = !WEB && !DEMO;
 
+type ExportFormat = "" | "encrypted" | "plaintext";
+
 function isEncryptedBundleError(e: unknown): boolean {
   const o = e as { code?: unknown; message?: unknown } | null;
   return o?.code === "bad_param" && typeof o.message === "string" && o.message.includes("已加密");
+}
+
+function nxbmContainerKind(text: string): "encrypted" | "plaintext" | null {
+  if (!text.startsWith("NXBM")) return null;
+  return text.charCodeAt(5) & 1 ? "encrypted" : "plaintext";
 }
 
 interface BundlePreview {
@@ -95,7 +102,7 @@ export function SyncBundleCard() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withCreds, setWithCreds] = useState(false);
-  const [encrypt, setEncrypt] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -146,7 +153,8 @@ export function SyncBundleCard() {
       pushToast("error", "先勾选要导出的资产");
       return;
     }
-    const usePassword = canEncryptBundle && encrypt;
+    if (!exportFormat) return;
+    const usePassword = exportFormat === "encrypted";
     if (usePassword && password !== password2) {
       setExportError("两次输入的导出口令不一致");
       return;
@@ -201,8 +209,13 @@ export function SyncBundleCard() {
         picked = await pickEncryptedBundle();
       }
       if (!picked) return;
-      if (picked.text.startsWith("NXBM")) {
+      const containerKind = nxbmContainerKind(picked.text);
+      if (containerKind === "encrypted") {
         setImportError(`${picked.name}：这是加密的资产包，请在桌面版 NexTerm 中导入（当前环境无法解密）`);
+        return;
+      }
+      if (containerKind === "plaintext") {
+        setImportError(`${picked.name}：这是 NexTerm 资产包容器（.nxbm），请在桌面版 NexTerm 中导入（当前环境无法读取）`);
         return;
       }
       const { bundle, error } = parseBundle(picked.text);
@@ -348,30 +361,40 @@ export function SyncBundleCard() {
           </div>
         )}
 
-        {canEncryptBundle ? (
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
-              checked={encrypt}
-              onChange={(e) => setEncrypt(e.target.checked)}
-            />
-            <span className="text-[12px] text-neutral-300">
-              加密资产包（推荐）
-              <span className="nx-hint block">
-                用口令把资产包加密成 <code>.nxbm</code> 容器，只有知道口令的人才能导入。
-                口令无法找回，丢失后将无法导入，请妥善保管。
-              </span>
-            </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-format">
+            导出格式
           </label>
-        ) : (
+          <select
+            id="bundle-format"
+            className="nx-input min-w-0 flex-1 min-[560px]:w-[280px] min-[560px]:flex-none"
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+          >
+            <option value="">选择导出格式…</option>
+            {canEncryptBundle ? (
+              <option value="encrypted">加密资产包（.nxbm · 推荐）</option>
+            ) : (
+              <option value="encrypted" disabled>
+                加密资产包（.nxbm · 仅桌面版）
+              </option>
+            )}
+            <option value="plaintext">明文 JSON（拿到文件即可直接读取）</option>
+          </select>
+        </div>
+
+        {!canEncryptBundle && (
           <p className="nx-hint text-[12px]">
             加密导出（.nxbm）仅在桌面版 NexTerm 可用；当前环境由浏览器直接保存明文 JSON。
           </p>
         )}
 
-        {canEncryptBundle && encrypt && (
+        {exportFormat === "encrypted" && (
           <div className="flex flex-col gap-2">
+            <p className="nx-hint text-[12px]">
+              用口令把资产包加密成 <code>.nxbm</code> 容器，只有知道口令的人才能导入。
+              口令无法找回，丢失后将无法导入，请妥善保管。
+            </p>
             <div className="flex flex-wrap items-center gap-2">
               <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password">
                 导出口令
@@ -404,11 +427,11 @@ export function SyncBundleCard() {
           </div>
         )}
 
-        {!encrypt && (
+        {exportFormat === "plaintext" && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconShield size={14} className="mt-0.5 shrink-0" />
             <div>
-              <b>将以明文导出</b>：未设置导出口令，任何拿到这个文件的人都能直接读取其中的资产
+              <b>将以明文导出</b>：任何拿到这个文件的人都能直接读取其中的资产
               （主机、账号{withCreds ? "与可还原的凭据明文" : ""}）。
               请只在可信设备之间传递，用毕及时删除。
             </div>
@@ -421,12 +444,20 @@ export function SyncBundleCard() {
             disabled={
               exporting ||
               selected.size === 0 ||
-              (canEncryptBundle && encrypt && (password.length === 0 || password !== password2))
+              !exportFormat ||
+              (exportFormat === "encrypted" && (password.length === 0 || password !== password2))
             }
+            title={!exportFormat ? "先选择导出格式" : undefined}
             onClick={() => void doExport()}
           >
             {exporting ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
-            {exporting ? "导出中…" : "导出为 JSON 文件"}
+            {exporting
+              ? "导出中…"
+              : exportFormat === "encrypted"
+                ? "导出为加密资产包 (.nxbm)"
+                : exportFormat === "plaintext"
+                  ? "导出为明文 JSON 文件"
+                  : "导出为 JSON 文件"}
           </button>
         </div>
 

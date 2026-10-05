@@ -15,7 +15,7 @@ function revisionLabels(dir?: "push" | "pull"): { local: string; remote: string 
 function SkippedNewerLine({ entry, labels }: { entry: SkippedNewerEntry; labels: { local: string; remote: string } }) {
   return (
     <li>
-      {entry.name}
+      {entry.name || entry.id}
       <span className="nx-hint">（{KIND_LABELS[entry.kind] ?? entry.kind}）</span>
       {entry.equalRevision
         ? ` — ${labels.local}与${labels.remote}修订号相同（${entry.localRevision}），按 Origin 字典序裁决`

@@ -546,7 +546,7 @@ function ServerTokenBody({
         </div>
       </div>
 
-      <SyncTokenPanel />
+      <SyncTokenPanel onAdminRotate={onRotate} />
     </>
   );
 }
