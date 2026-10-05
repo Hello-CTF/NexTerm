@@ -6,6 +6,7 @@ import { dockerApi, terminalApi, type ContainerSummary, type ImageSummary } from
 import { useUi } from "../../app/store";
 import { createBinaryChannel, disposeChannel, onChannelReopen } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
+import "../../ui/skeleton.css";
 import {
   IconArrowLeft,
   IconBox,
@@ -48,6 +49,7 @@ function TableQueryBody({
   onRetry,
   emptyText,
   isEmpty,
+  skeleton,
   children,
 }: {
   colSpan: number;
@@ -57,15 +59,19 @@ function TableQueryBody({
   onRetry: () => void;
   emptyText: string;
   isEmpty: boolean;
+  skeleton: ReactNode;
   children: ReactNode;
 }) {
   if (pending) {
     return (
-      <tr>
-        <td colSpan={colSpan} className="nx-table-empty">
-          加载中…
-        </td>
-      </tr>
+      <>
+        {skeleton}
+        <tr>
+          <td colSpan={colSpan} className="nx-sr-only">
+            加载中…
+          </td>
+        </tr>
+      </>
     );
   }
   if (error) {
@@ -434,6 +440,32 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 onRetry={() => void containers.refetch()}
                 emptyText="这台主机上还没有容器"
                 isEmpty={cRows.length === 0}
+                skeleton={
+                  <>
+                    {Array.from({ length: 5 }, (_, i) => (
+                      <tr key={i} aria-hidden="true">
+                        <td>
+                          <span className="nx-skeleton nx-skeleton-icon" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-3/5" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-4/5" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-2/3" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-3/4" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton ml-auto w-24" />
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                }
               >
                 {cRows.map((c) => (
                 <tr key={c.id} className={pending.has(c.id) ? "opacity-50" : undefined}>
@@ -562,6 +594,29 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 onRetry={() => void images.refetch()}
                 emptyText="这台主机上还没有镜像"
                 isEmpty={iRows.length === 0}
+                skeleton={
+                  <>
+                    {Array.from({ length: 5 }, (_, i) => (
+                      <tr key={i} aria-hidden="true">
+                        <td>
+                          <span className="nx-skeleton nx-skeleton-icon" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-2/3" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-3/4" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton w-4/5" />
+                        </td>
+                        <td>
+                          <span className="nx-skeleton ml-auto w-10" />
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                }
               >
                 {iRows.map((i) => {
                 const key = imageKey(i);
@@ -720,8 +775,16 @@ function OverviewStrip({ sessionId, visible }: { sessionId: string; visible: boo
 
   if (overview.isPending) {
     return (
-      <div className="shrink-0 border-b border-neutral-800/60 px-3 py-1.5">
-        <span className="nx-hint">主机概览加载中…</span>
+      <div
+        className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-800/60 px-3 py-1.5"
+        role="status"
+        aria-label="主机概览加载中"
+      >
+        <span className="nx-skeleton nx-skeleton-chip w-16" aria-hidden="true" />
+        {Array.from({ length: 5 }, (_, i) => (
+          <span key={i} className="nx-skeleton nx-skeleton-chip w-24" aria-hidden="true" />
+        ))}
+        <span className="nx-sr-only">主机概览加载中…</span>
       </div>
     );
   }

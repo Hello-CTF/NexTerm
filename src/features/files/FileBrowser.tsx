@@ -23,6 +23,7 @@ import {
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
+import "../../ui/skeleton.css";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import { HOME, baseName, joinPath, normalizeTypedPath, parentOf } from "./pathUtils";
 import { progressPercent, reduceFileProgress, visibleFileProgress, type FileProgressMap } from "./fileProgress";
@@ -535,7 +536,17 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto" onContextMenu={openBlankMenu}>
         {entries.isLoading ? (
-          <div className="nx-hint p-4 text-center">加载中…</div>
+          <div role="status" aria-label="加载中">
+            {Array.from({ length: 10 }, (_, i) => (
+              <div key={i} className="nx-skeleton-row" aria-hidden="true">
+                <span className="nx-skeleton nx-skeleton-icon" />
+                <span className="nx-skeleton min-w-0 flex-1" />
+                <span className="nx-skeleton w-24 max-[560px]:hidden" />
+                <span className="nx-skeleton w-40 max-[560px]:hidden" />
+              </div>
+            ))}
+            <span className="nx-sr-only">加载中…</span>
+          </div>
         ) : entries.isError ? (
           <div className="nx-alert nx-alert-danger m-3 flex items-start gap-2">
             <IconAlert size={14} className="mt-0.5 shrink-0" />

@@ -4,6 +4,7 @@ import { nextTabId, useUi } from "../../app/store";
 import { TRANSPORT } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import "../../ui/skeleton.css";
 import {
   IconActivity,
   IconGamepad,
@@ -150,6 +151,29 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
             </tr>
           </thead>
           <tbody>
+            {items === null && !error && (
+              <>
+                {Array.from({ length: 4 }, (_, i) => (
+                  <tr key={`skeleton-${i}`} aria-hidden="true">
+                    <td>
+                      <span className="nx-skeleton w-4/5" />
+                    </td>
+                    <td>
+                      <span className="nx-skeleton w-3/5" />
+                    </td>
+                    <td>
+                      <span className="nx-skeleton w-2/3" />
+                    </td>
+                    <td>
+                      <span className="nx-skeleton w-3/5" />
+                    </td>
+                    <td>
+                      <span className="nx-skeleton ml-auto w-32" />
+                    </td>
+                  </tr>
+                ))}
+              </>
+            )}
             {list.map((t) => {
               const action = busy[t.tabId];
               const rowBusy = action !== undefined;

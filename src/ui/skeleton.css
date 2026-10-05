@@ -1,0 +1,47 @@
+.nx-skeleton {
+  display: block;
+  height: 10px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--nx-fg) 13%, transparent);
+  animation: nx-skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.nx-skeleton-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+}
+
+.nx-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+}
+
+.nx-skeleton-chip {
+  height: 21px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+}
+
+@keyframes nx-skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-skeleton {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .nx-skeleton {
+    background: CanvasText;
+    opacity: 0.3;
+  }
+}
