@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -38,13 +39,22 @@ func TestResilientStreamKicksFullQueueWithoutFreezingRun(t *testing.T) {
 		t.Fatalf("terminal journal event = %+v", events[len(events)-1])
 	}
 	deltas := 0
+	deltaText := ""
 	for _, event := range events {
-		if event.Type == "delta" {
-			deltas++
+		if event.Type != "delta" {
+			continue
 		}
+		deltas++
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+			t.Fatal(err)
+		}
+		deltaText += payload.Text
 	}
-	if deltas != 3 {
-		t.Fatalf("journaled deltas = %d, want 3: %+v", deltas, events)
+	if deltas != 1 || deltaText != "第一段第二段第三段" {
+		t.Fatalf("journaled deltas = %d text %q, want merged window batch: %+v", deltas, deltaText, events)
 	}
 	if stats := bus.Stats(); stats.LiveChannels != 0 || stats.PendingChannels > 1 {
 		t.Fatalf("kicked channel remains: %+v", stats)
