@@ -14,6 +14,15 @@ var desktopSmokeEvidenceWritten atomic.Bool
 
 func desktopSmokeAssetHandler(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__desktop_smoke_progress__" && r.Method == http.MethodPost {
+			var update struct {
+				Step string `json:"step"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&update)
+			fmt.Fprintf(os.Stderr, "desktop smoke progress: %s t=%s\n", update.Step, desktopSmokeElapsed())
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.URL.Path == "/__desktop_smoke_result__" && r.Method == http.MethodPost {
 			var result desktopSmokeResult
 			if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
