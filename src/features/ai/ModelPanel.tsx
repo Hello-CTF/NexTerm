@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView, type ProviderTestResult } from "../../ipc/commands";
+import type { AiCircuitStatusDto } from "../../ipc/types";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -9,7 +10,8 @@ import {
   CIRCUIT_DEFAULT_THRESHOLD,
   circuitCooldownFromInput,
   circuitCooldownLabel,
-  circuitEffective,
+  circuitRuntimeState,
+  circuitStatusText,
   circuitThresholdFromInput,
   circuitThresholdLabel,
   fallbackModelFromInput,
@@ -78,6 +80,7 @@ export function ModelManager({
   const [presets, setPresets] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
+  const [circuitNonce, setCircuitNonce] = useState(0);
 
   const isNew = !!draft && draft.id === "";
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
@@ -150,6 +153,7 @@ export function ModelManager({
     try {
       const saved = await modelApi.save(draft);
       useUi.getState().bumpModelProfilesRevision();
+      setCircuitNonce((n) => n + 1);
       setView((prev) => {
         if (!prev) return prev;
         const exists = prev.profiles.some((p) => p.id === saved.id);
@@ -234,6 +238,7 @@ export function ModelManager({
     setTestResult(null);
     try {
       setTestResult(await modelApi.test(draft.id));
+      setCircuitNonce((n) => n + 1);
     } catch (e) {
       pushToast("error", `连接测试失败：${describeError(e)}`);
     } finally {
@@ -565,8 +570,13 @@ export function ModelManager({
                 </div>
               </div>
               <div className="nx-hint mt-0.5 text-[10.5px]">
-                当前生效：连续失败 {circuitEffective(draft).threshold} 次后熔断这份档案，冷却 {circuitEffective(draft).cooldownSeconds} 秒；只统计网络与服务端错误，和聊天里的「可重试」标记是两回事。
+                阈值与冷却留空则用默认值；熔断只统计网络与服务端错误。
               </div>
+              {isNew ? (
+                <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看熔断状态</div>
+              ) : (
+                <CircuitRuntimeStatus key={draft.id} profileId={draft.id} nonce={circuitNonce} />
+              )}
 
               <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
                 <input
@@ -687,6 +697,69 @@ export function ModelManager({
           )
         )}
       </div>
+    </div>
+  );
+}
+
+function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: number }) {
+  const [status, setStatus] = useState<AiCircuitStatusDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await modelApi.circuitStatus(profileId));
+      setError(null);
+    } catch (e) {
+      setError(describeError(e));
+    }
+  }, [profileId]);
+
+  useEffect(() => {
+    void load();
+  }, [load, nonce]);
+
+  const state = status ? circuitRuntimeState(status, now) : null;
+  const openUntil = status?.openUntil;
+
+  useEffect(() => {
+    if (state !== "open" || openUntil == null) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [state, openUntil]);
+
+  return (
+    <div className="mt-0.5 flex items-start gap-1.5">
+      <span className="nx-hint flex-1 text-[10.5px]">
+        {error ? (
+          <span className="text-red-300">熔断状态读取失败 · {error}</span>
+        ) : !status ? (
+          "熔断状态加载中…"
+        ) : (
+          <>
+            <span
+              className={
+                state === "open"
+                  ? "text-red-300"
+                  : state === "closed"
+                    ? "text-[var(--nx-fg-warning)]"
+                    : undefined
+              }
+            >
+              {circuitStatusText(status, now)}
+            </span>
+            <span className="text-neutral-500">；与聊天里的「可重试」标记是两回事</span>
+          </>
+        )}
+      </span>
+      <button
+        className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+        title="重新读取熔断状态"
+        onClick={() => void load()}
+      >
+        <IconRefresh size={11} />
+      </button>
     </div>
   );
 }

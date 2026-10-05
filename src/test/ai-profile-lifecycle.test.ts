@@ -5,7 +5,9 @@ import {
   CIRCUIT_DEFAULT_THRESHOLD,
   circuitCooldownFromInput,
   circuitCooldownLabel,
-  circuitEffective,
+  circuitRemainingSeconds,
+  circuitRuntimeState,
+  circuitStatusText,
   circuitThresholdFromInput,
   circuitThresholdLabel,
   maxTokensFromInput,
@@ -67,21 +69,43 @@ describe("circuit breaker input, label and effective config", () => {
     expect(circuitCooldownFromInput("600")).toBe(600);
   });
 
-  it("falls back to the backend defaults (5 failures, 300s) only when unset", () => {
-    expect(circuitEffective(profile())).toEqual({
-      threshold: CIRCUIT_DEFAULT_THRESHOLD,
-      cooldownSeconds: CIRCUIT_DEFAULT_COOLDOWN_SECONDS,
-    });
+  it("exposes the backend defaults (5 failures, 300s) for the form placeholders", () => {
     expect(CIRCUIT_DEFAULT_THRESHOLD).toBe(5);
     expect(CIRCUIT_DEFAULT_COOLDOWN_SECONDS).toBe(300);
-    expect(circuitEffective(profile({ circuitFailureThreshold: 3 }))).toEqual({
-      threshold: 3,
-      cooldownSeconds: CIRCUIT_DEFAULT_COOLDOWN_SECONDS,
-    });
-    expect(circuitEffective(profile({ circuitCooldownSeconds: 60 }))).toEqual({
-      threshold: CIRCUIT_DEFAULT_THRESHOLD,
-      cooldownSeconds: 60,
-    });
+  });
+});
+
+describe("circuit runtime state classification and copy", () => {
+  const now = 1_000_000;
+
+  it("classifies zero/closed/open/expired from the DTO", () => {
+    expect(circuitRuntimeState({ consecutiveFailures: 0, openUntil: null }, now)).toBe("zero");
+    expect(circuitRuntimeState({ consecutiveFailures: 2, openUntil: null }, now)).toBe("closed");
+    expect(circuitRuntimeState({ consecutiveFailures: 5, openUntil: now + 60_000 }, now)).toBe("open");
+    expect(circuitRuntimeState({ consecutiveFailures: 5, openUntil: now - 1 }, now)).toBe("expired");
+    expect(circuitRuntimeState({ consecutiveFailures: 0, openUntil: now - 1 }, now)).toBe("expired");
+  });
+
+  it("renders accurate copy per state", () => {
+    expect(circuitStatusText({ consecutiveFailures: 0, openUntil: null }, now)).toBe(
+      "运行正常：暂无连续失败",
+    );
+    expect(circuitStatusText({ consecutiveFailures: 2, openUntil: null }, now)).toBe(
+      "未熔断：最近连续失败 2 次",
+    );
+    expect(circuitStatusText({ consecutiveFailures: 5, openUntil: now + 60_000 }, now)).toBe(
+      "熔断中：连续失败 5 次，冷却剩余 60 秒",
+    );
+    expect(circuitStatusText({ consecutiveFailures: 5, openUntil: now - 1 }, now)).toBe(
+      "冷却已结束：连续失败 5 次，等待请求恢复",
+    );
+  });
+
+  it("counts remaining whole seconds, never negative", () => {
+    expect(circuitRemainingSeconds(5_000, 2_000)).toBe(3);
+    expect(circuitRemainingSeconds(2_500, 2_000)).toBe(1);
+    expect(circuitRemainingSeconds(2_000, 2_000)).toBe(0);
+    expect(circuitRemainingSeconds(1_000, 2_000)).toBe(0);
   });
 });
 

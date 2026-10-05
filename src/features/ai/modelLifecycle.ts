@@ -1,4 +1,5 @@
 import type { ModelProfile, ModelProfilesView } from "../../ipc/commands";
+import type { AiCircuitStatusDto } from "../../ipc/types";
 
 export function requestTimeoutLabel(profile: ModelProfile): string {
   return profile.requestTimeoutSeconds?.toString() ?? "";
@@ -47,14 +48,32 @@ export function circuitCooldownFromInput(raw: string): number | null {
   return positiveIntFromInput(raw);
 }
 
-export function circuitEffective(profile: ModelProfile): {
-  threshold: number;
-  cooldownSeconds: number;
-} {
-  return {
-    threshold: profile.circuitFailureThreshold ?? CIRCUIT_DEFAULT_THRESHOLD,
-    cooldownSeconds: profile.circuitCooldownSeconds ?? CIRCUIT_DEFAULT_COOLDOWN_SECONDS,
-  };
+export type CircuitRuntimeState = "open" | "closed" | "expired" | "zero";
+
+export function circuitRuntimeState(
+  status: AiCircuitStatusDto,
+  now: number,
+): CircuitRuntimeState {
+  if (status.openUntil != null) return status.openUntil > now ? "open" : "expired";
+  return status.consecutiveFailures > 0 ? "closed" : "zero";
+}
+
+export function circuitRemainingSeconds(openUntil: number, now: number): number {
+  return Math.max(0, Math.ceil((openUntil - now) / 1000));
+}
+
+export function circuitStatusText(status: AiCircuitStatusDto, now: number): string {
+  const openUntil = status.openUntil;
+  if (openUntil != null) {
+    if (openUntil > now) {
+      return `熔断中：连续失败 ${status.consecutiveFailures} 次，冷却剩余 ${circuitRemainingSeconds(openUntil, now)} 秒`;
+    }
+    return `冷却已结束：连续失败 ${status.consecutiveFailures} 次，等待请求恢复`;
+  }
+  if (status.consecutiveFailures > 0) {
+    return `未熔断：最近连续失败 ${status.consecutiveFailures} 次`;
+  }
+  return "运行正常：暂无连续失败";
 }
 
 function positiveIntFromInput(raw: string): number | null {
