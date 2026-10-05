@@ -52,6 +52,8 @@ func (s *spawnScriptServer) ServeHTTP(writer http.ResponseWriter, request *http.
 
 	writer.Header().Set("Content-Type", "text/event-stream")
 	switch {
+	case len(parsed.Messages) == 1 && parsed.Messages[0].Role == "user" && len(parsed.Tools) == 0:
+		spawnWriteContent(writer, "parent task title")
 	case spawnHasUserText(&parsed, "parent task") && !spawnHasRole(&parsed, "tool"):
 		spawnWriteToolCall(writer, "call-spawn-1", subagent.SpawnToolName, `{"task":"child task"}`)
 	case spawnHasUserText(&parsed, "parent task"):
@@ -241,11 +243,15 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 		t.Fatal("spawn tool was never dispatched through the composed agent runner")
 	}
 
-	requests := script.snapshot()
-	if len(requests) != 5 {
-		t.Fatalf("provider requests = %d, want 5 (parent x2, child x3)", len(requests))
+	deadline = time.Now().Add(5 * time.Second)
+	for len(script.snapshot()) < 6 {
+		if time.Now().After(deadline) {
+			t.Fatalf("provider requests = %d, want 6 (parent x2, child x3, title x1)", len(script.snapshot()))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	parentSeen, childSeen := 0, 0
+	requests := script.snapshot()
+	parentSeen, childSeen, titleSeen := 0, 0, 0
 	for index := range requests {
 		request := &requests[index]
 		names := spawnToolNames(request)
@@ -257,6 +263,8 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 			t.Fatalf("spawn tool registered %d times in one request: %v", seen[subagent.SpawnToolName], names)
 		}
 		switch {
+		case len(request.Messages) == 1 && request.Messages[0].Role == "user" && len(request.Tools) == 0:
+			titleSeen++
 		case spawnHasUserText(request, "parent task"):
 			parentSeen++
 			if seen[subagent.SpawnToolName] != 1 {
@@ -279,7 +287,7 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 			t.Fatalf("request %d matched neither the parent nor the child script", index)
 		}
 	}
-	if parentSeen != 2 || childSeen != 3 {
-		t.Fatalf("scripted requests parent=%d child=%d, want 2 and 3", parentSeen, childSeen)
+	if parentSeen != 2 || childSeen != 3 || titleSeen != 1 {
+		t.Fatalf("scripted requests parent=%d child=%d title=%d, want 2, 3 and 1", parentSeen, childSeen, titleSeen)
 	}
 }

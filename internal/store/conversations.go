@@ -130,6 +130,36 @@ VALUES(?,?,?,?,?,?,?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM ai_message WHERE co
 	return nil
 }
 
+func (s *Store) MsgTruncateAfter(ctx context.Context, conversationID, messageID string) (returnErr error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() {
+		if returnErr != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var seq int64
+	err = tx.QueryRowContext(ctx, `SELECT seq FROM ai_message WHERE id = ? AND conversation_id = ?`, messageID, conversationID).Scan(&seq)
+	if isNoRows(err) {
+		return notFound("消息 " + messageID)
+	}
+	if err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ai_message WHERE conversation_id = ? AND seq > ?`, conversationID, seq); err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE ai_conversation SET updated_at=? WHERE id=?", ids.NowMS(), conversationID); err != nil {
+		return dbError(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
 func (s *Store) MsgList(ctx context.Context, conversationID string) ([]MessageRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, role, content_json, tokens_in, tokens_out, created_at
 FROM ai_message WHERE conversation_id = ? ORDER BY seq`, conversationID)

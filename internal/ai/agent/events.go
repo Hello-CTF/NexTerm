@@ -53,6 +53,7 @@ type Event struct {
 	TokensOut           uint64
 	Message             string
 	Retryable           bool
+	MaxIterations       bool
 	ParentCallID        string
 	SubagentID          string
 	Depth               int
@@ -117,6 +118,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["answer"], payload["turns"], payload["tokensIn"], payload["tokensOut"] = e.Answer, e.Turns, e.TokensIn, e.TokensOut
 	case "error":
 		payload["message"], payload["retryable"] = e.Message, e.Retryable
+		if e.MaxIterations {
+			payload["maxIterations"] = true
+		}
 	case "canceled":
 		payload["message"] = e.Message
 	case "subagentDelta":

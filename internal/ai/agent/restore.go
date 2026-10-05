@@ -185,6 +185,8 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	if err != nil {
 		return nil, ErrJobNotFound
 	}
+	unlock := r.lockConversation(row.ConversationID)
+	defer unlock()
 	stream := Stream(discardStream{})
 	if factory != nil {
 		opened, err := factory(ctx, "", jobID)

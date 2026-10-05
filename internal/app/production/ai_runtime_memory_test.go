@@ -200,13 +200,23 @@ func TestComposedMemoryInjectionIsOptIn(t *testing.T) {
 
 	conversationID := run("second question")
 	requests = script.snapshot()
-	latest := requests[len(requests)-1]
-	payload := string(mustJSON(t, latest))
+	latest := -1
+	for index, request := range requests {
+		for _, message := range request.Messages {
+			if message.Role == "user" && spawnMessageText(message.Content) == "second question" {
+				latest = index
+			}
+		}
+	}
+	if latest < 0 {
+		t.Fatal("second chat request missing from the provider requests")
+	}
+	payload := string(mustJSON(t, requests[latest]))
 	if !strings.Contains(payload, "Long-term operational memory") || !strings.Contains(payload, "restart at 02:00") {
 		t.Fatalf("opted-in injection missing from the provider request: %s", payload)
 	}
 	found := map[string]bool{}
-	for _, name := range script.toolNames(len(requests) - 1) {
+	for _, name := range script.toolNames(latest) {
 		found[name] = true
 	}
 	for _, name := range []string{"memory_save", "memory_list", "memory_recall", "memory_forget"} {

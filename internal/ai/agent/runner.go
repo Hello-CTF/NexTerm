@@ -33,6 +33,8 @@ type Runner struct {
 	drainDone    chan struct{}
 	shutdownErrs []error
 	wg           sync.WaitGroup
+
+	conversationLocks sync.Map
 }
 
 func NewRunner(config Config) *Runner {
@@ -164,6 +166,8 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, errors.New("AI 事件流为空")
 	}
 
+	unlock := r.lockConversation(conversationID)
+	defer unlock()
 	if err := r.store.MsgInsert(ctx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
 		r.releaseJobID(jobID)
 		cancel()
@@ -391,6 +395,13 @@ func (r *Runner) lookupJob(jobID string) *job {
 	return r.jobs[jobID]
 }
 
+func (r *Runner) lockConversation(conversationID string) func() {
+	value, _ := r.conversationLocks.LoadOrStore(conversationID, &sync.Mutex{})
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	return mutex.Unlock
+}
+
 func (r *Runner) pendingInterrupt(jobID, callID, nonce string, kind hitl.Kind) (hitl.Interrupt, error) {
 	snapshot, err := r.hitl.Snapshot(jobID)
 	if err != nil {
@@ -458,6 +469,7 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
+		r.maybeGenerateConversationTitle(current)
 		r.cleanup(current)
 	})
 }

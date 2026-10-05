@@ -469,8 +469,8 @@ func TestSteerEventSequenceAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 3 {
-		t.Fatalf("persisted messages = %d, want user + steered user + assistant: %+v", len(messages), messages)
+	if len(messages) != 5 {
+		t.Fatalf("persisted messages = %d, want user + toolCall + steered user + toolResult + assistant: %+v", len(messages), messages)
 	}
 	found := false
 	for _, message := range messages {

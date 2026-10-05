@@ -196,7 +196,12 @@ func (j *job) finish(answer string, turns int, total usage.Usage, terminalErr er
 			if isCancellation(terminalErr) {
 				event = Event{Type: "canceled", Message: "已停止本轮"}
 			} else {
-				event = errorEvent(terminalErr, true)
+				var exceeded *maxIterationsError
+				retryable := !errors.As(terminalErr, &exceeded)
+				event = errorEvent(terminalErr, retryable)
+				if exceeded != nil {
+					event.MaxIterations = true
+				}
 			}
 		} else {
 			event = doneEvent(answer, turns, total.PromptTokens, total.CompletionTokens)
