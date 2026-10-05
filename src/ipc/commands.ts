@@ -625,6 +625,8 @@ export const modelApi = {
   preset: (name: string) => call<ModelProfile>("ai_model_preset", { preset: name }),
   usageSummary: () =>
     call<AiUsageSummaryRow[] | null>("ai_usage_summary").then((v) => v ?? []),
+  circuitStatus: (id: string) =>
+    call<import("./types").AiCircuitStatusDto>("ai_circuit_status", { id }),
 };
 
 export interface VaultStatus {

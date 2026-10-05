@@ -100,6 +100,8 @@ export type ModelProfilesView = { profiles: Array<ModelProfile>, activeId: strin
 
 export type AiUsageSummaryRow = { source: string, profileId: string, runs: number, tokensIn: number, tokensOut: number, cacheCreationTokens: number, averageLatencyMs: number, };
 
+export type AiCircuitStatusDto = { consecutiveFailures: number, openUntil: number | null, };
+
 export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
 
 export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature: number, contextWindow: number, proxy: string | null, stream: boolean,
