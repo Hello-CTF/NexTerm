@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -14,6 +15,8 @@ import (
 const compactionTriggerPercent = 70
 
 const durableCompactionReserve = 2048
+
+const defaultSummaryTimeout = 90 * time.Second
 
 func compactionTriggerTokens(window uint64) int {
 	return int(window * compactionTriggerPercent / 100)
@@ -25,13 +28,14 @@ func estimateHistoryTokens(messages []*schema.Message) int {
 
 type compactionHandler struct {
 	*adk.BaseChatModelAgentMiddleware
-	model     model.BaseChatModel
-	window    uint64
-	onCompact func()
+	model          model.BaseChatModel
+	window         uint64
+	summaryTimeout time.Duration
+	onCompact      func()
 }
 
 func newCompactionHandler(chatModel model.BaseChatModel, window uint64, onCompact func()) *compactionHandler {
-	return &compactionHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, model: chatModel, window: window, onCompact: onCompact}
+	return &compactionHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, model: chatModel, window: window, summaryTimeout: defaultSummaryTimeout, onCompact: onCompact}
 }
 
 func (h *compactionHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
@@ -83,12 +87,21 @@ func (h *compactionHandler) compactHistory(ctx context.Context, messages []*sche
 }
 
 func (h *compactionHandler) summarize(ctx context.Context, messages []*schema.Message, retainedReserve int) ([]*schema.Message, error) {
+	summaryCtx, cancel := context.WithTimeout(ctx, h.summaryCallTimeout())
+	defer cancel()
 	system, contextMsgs := splitSystemPrefix(messages)
-	summary, err := h.summarizeAll(ctx, contextMsgs)
+	summary, err := h.summarizeAll(summaryCtx, contextMsgs)
 	if err != nil {
 		return nil, err
 	}
 	return h.finalize(system, contextMsgs, summary, retainedReserve), nil
+}
+
+func (h *compactionHandler) summaryCallTimeout() time.Duration {
+	if h.summaryTimeout <= 0 {
+		return defaultSummaryTimeout
+	}
+	return h.summaryTimeout
 }
 
 func (h *compactionHandler) summarizeAll(ctx context.Context, contextMsgs []*schema.Message) (string, error) {

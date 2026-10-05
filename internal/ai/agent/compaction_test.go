@@ -259,6 +259,127 @@ func TestSummarizationCancellationIsNotSwallowed(t *testing.T) {
 	}
 }
 
+func longCompactionMessages() []*schema.Message {
+	var messages []*schema.Message
+	for i := 0; i < 24; i++ {
+		content := fmt.Sprintf("旧 filler %d %s", i, strings.Repeat("x", 400))
+		if i == 23 {
+			content = "最近的问题：nginx 502 如何修复"
+		}
+		if i%2 == 0 {
+			messages = append(messages, schema.UserMessage(content))
+			continue
+		}
+		messages = append(messages, schema.AssistantMessage(content, nil))
+	}
+	return messages
+}
+
+func hangingSummaryModel(timeoutSeen chan<- time.Duration) *compactionModel {
+	return &compactionModel{generate: func(ctx context.Context, _ []*schema.Message) (*schema.Message, error) {
+		if deadline, ok := ctx.Deadline(); ok {
+			select {
+			case timeoutSeen <- time.Until(deadline):
+			default:
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return nil, errors.New("summary endpoint never returned")
+		}
+	}}
+}
+
+func TestSummarizationTimeoutFallsBackToTruncation(t *testing.T) {
+	t.Parallel()
+	timeoutSeen := make(chan time.Duration, 1)
+	handler := newCompactionHandler(hangingSummaryModel(timeoutSeen), 2000, nil)
+	if handler.summaryTimeout != 90*time.Second {
+		t.Fatalf("default summary timeout = %s, want 90s", handler.summaryTimeout)
+	}
+	handler.summaryTimeout = 500 * time.Millisecond
+	state := &adk.ChatModelAgentState{Messages: longCompactionMessages()}
+	begin := time.Now()
+	_, after, err := handler.BeforeModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("summary timeout must fall back to truncation: %v", err)
+	}
+	if elapsed := time.Since(begin); elapsed > 5*time.Second {
+		t.Fatalf("summary hang held the round for %s", elapsed)
+	}
+	select {
+	case remaining := <-timeoutSeen:
+		if remaining <= 0 || remaining > 500*time.Millisecond {
+			t.Fatalf("summary context deadline = %s, want within configured 500ms", remaining)
+		}
+	default:
+		t.Fatal("summary context carried no deadline")
+	}
+	context := flattenMessages(after.Messages)
+	if strings.Contains(context, "[历史摘要]") {
+		t.Fatalf("timed-out summary still replaced history:\n%s", context)
+	}
+	if strings.Contains(context, "旧 filler 0") || !strings.Contains(context, "最近的问题") {
+		t.Fatalf("fallback truncation did not fit the budget:\n%s", context)
+	}
+	if estimatedMessages(after.Messages) > 2000*3 {
+		t.Fatalf("history still over budget: %d", estimatedMessages(after.Messages))
+	}
+}
+
+func TestDurableSummarizationTimeoutFallsBackToTruncation(t *testing.T) {
+	t.Parallel()
+	timeoutSeen := make(chan time.Duration, 1)
+	handler := newCompactionHandler(hangingSummaryModel(timeoutSeen), 2000, nil)
+	handler.summaryTimeout = 500 * time.Millisecond
+	fitted, err := handler.compactHistory(context.Background(), longCompactionMessages())
+	if err != nil {
+		t.Fatalf("summary timeout must fall back to history truncation: %v", err)
+	}
+	context := flattenMessages(fitted)
+	if strings.Contains(context, "[历史摘要]") {
+		t.Fatalf("timed-out summary still replaced history:\n%s", context)
+	}
+	if strings.Contains(context, "旧 filler 0") || !strings.Contains(context, "最近的问题") {
+		t.Fatalf("fallback truncation did not fit the budget:\n%s", context)
+	}
+}
+
+func TestSummarizationCallerCancellationTerminates(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	var once sync.Once
+	chat := &compactionModel{generate: func(ctx context.Context, _ []*schema.Message) (*schema.Message, error) {
+		once.Do(func() { close(started) })
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	handler := newCompactionHandler(chat, 2000, nil)
+	handler.summaryTimeout = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := handler.BeforeModelRewriteState(ctx, &adk.ChatModelAgentState{Messages: longCompactionMessages()}, nil)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("summarization never started")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("caller cancellation must terminate the summary, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("caller cancellation did not terminate the hanging summary")
+	}
+}
+
 func TestDurableOversizedLatestExchangeSummarized(t *testing.T) {
 	chat := &compactionModel{generate: derivingSummaryGenerate(t)}
 	runner, storage := compactionRunner(t, chat, 2000)
