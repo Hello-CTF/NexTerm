@@ -83,6 +83,45 @@ describe("demo AI 命令契约", () => {
     }
   });
 
+  it("ai_edit_resend 取消活动 run 与 pending HITL，旧轮次不再推事件也不能继续确认", async () => {
+    const seed = conversationMessages["conv-1"];
+    const snapshot = seed.map((m) => ({ ...m }));
+    const events: { type?: string; message?: string }[] = [];
+    const channel = { onmessage: (event: { type?: string; message?: string }) => events.push(event) };
+    try {
+      const started = (await mockInvoke("ai_chat", {
+        conversationId: "conv-1",
+        message: "帮我写一下 nginx 配置",
+        channel,
+      })) as { jobId: string };
+      const deadline = Date.now() + 5000;
+      while (!events.some((e) => e.type === "confirmRequired") && Date.now() < deadline) {
+        await new Promise((r) => window.setTimeout(r, 50));
+      }
+      expect(events.some((e) => e.type === "confirmRequired")).toBe(true);
+
+      expect(await mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-1" })).toBeNull();
+      expect(events.some((e) => e.type === "error" && e.message === "已取消")).toBe(true);
+
+      await mockInvoke("ai_confirm", { jobId: started.jobId, callId: "call-x", decision: "allow" });
+      const settled = events.length;
+      await new Promise((r) => window.setTimeout(r, 600));
+      const late = events
+        .slice(settled)
+        .filter((e) => ["delta", "done", "toolResult", "fileChange", "confirmRequired"].includes(e.type ?? ""));
+      expect(late).toEqual([]);
+
+      const runs = (await mockInvoke("ai_run_list", { conversationId: "conv-1" })) as { id: string; status: string }[];
+      expect(runs.find((r) => r.id === "run-2")?.status).toBe("superseded");
+      expect(runs.find((r) => r.id === "run-1")?.status).toBe("completed");
+
+      const messages = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(messages.map((m) => m.id)).toEqual(["msg-1"]);
+    } finally {
+      seed.splice(0, seed.length, ...snapshot);
+    }
+  }, 15000);
+
   it("ai_usage_summary 返回 usage 行", async () => {
     const rows = (await mockInvoke("ai_usage_summary")) as AiUsageSummaryRow[];
     expect(rows.length).toBeGreaterThan(0);

@@ -63,7 +63,64 @@ const logTimers = new Map<string, () => void>();
 const pendingAi = new Map<string, (decision: string) => void>();
 const cancelledAiJobs = new Set<string>();
 const aiChannels = new Map<string, unknown>();
+const aiJobConversations = new Map<string, string>();
 let jobSeq = 0;
+
+function cancelAiJob(jobId: string) {
+  cancelledAiJobs.add(jobId);
+  pendingAi.delete(jobId);
+  pushEvent(aiChannels.get(jobId), {
+    type: "error",
+    message: "已取消",
+    retryable: false,
+  });
+  aiChannels.delete(jobId);
+}
+
+const demoRuns = [
+  {
+    id: "run-1",
+    conversationId: "conv-1",
+    status: "completed",
+    attempt: 1,
+    seq: 12,
+    planMode: false,
+    source: "chat",
+    profileId: "m-deepseek",
+    answer: "已定位 502 来自上游 api-server 的连接池耗尽，建议先扩容并加连接复用。",
+    turns: 4,
+    tokensIn: 3120,
+    tokensOut: 486,
+    cacheCreationTokens: 0,
+    latencyMs: 5230,
+    retries: 0,
+    failures: 0,
+    createdAt: Date.now() - 21 * 60_000,
+    updatedAt: Date.now() - 20 * 60_000,
+    finishedAt: Date.now() - 20 * 60_000,
+  },
+  {
+    id: "run-2",
+    conversationId: "conv-1",
+    status: "superseded",
+    attempt: 2,
+    seq: 13,
+    planMode: false,
+    source: "chat",
+    profileId: "m-deepseek",
+    answer: "",
+    turns: 1,
+    tokensIn: 980,
+    tokensOut: 0,
+    cacheCreationTokens: 0,
+    latencyMs: 1200,
+    retries: 0,
+    failures: 0,
+    createdAt: Date.now() - 19 * 60_000,
+    updatedAt: Date.now() - 19 * 60_000,
+    finishedAt: Date.now() - 19 * 60_000,
+  },
+];
 
 interface DemoLiveTab {
   tabId: string;
@@ -1470,20 +1527,13 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         });
       }
       aiChannels.set(jobId, a.channel);
+      aiJobConversations.set(jobId, liveConvId);
       streamAnswer(a.channel, jobId, str(a.message), Boolean(a.planMode));
       return { jobId, conversationId: liveConvId };
     }
 
     case "ai_cancel": {
-      const jobId = str(a.jobId);
-      cancelledAiJobs.add(jobId);
-      pendingAi.delete(jobId);
-      pushEvent(aiChannels.get(jobId), {
-        type: "error",
-        message: "已取消",
-        retryable: false,
-      });
-      aiChannels.delete(jobId);
+      cancelAiJob(str(a.jobId));
       return null;
     }
 
@@ -1499,11 +1549,21 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "ai_edit_resend": {
-      const messages = conversationMessages[str(a.conversationId)];
+      const conversationId = str(a.conversationId);
+      const messages = conversationMessages[conversationId];
       const index = messages?.findIndex((m) => m.id === str(a.messageId)) ?? -1;
       if (!messages || index < 0) throwAppError("not_found", "消息不存在");
-      if (messages[index].role !== "user") throwAppError("invalid_argument", "只能编辑用户消息");
+      const target = messages[index];
+      if (target.role !== "user") throwAppError("invalid_argument", "只能编辑用户消息");
+      for (const [jobId, convId] of aiJobConversations) {
+        if (convId === conversationId && !cancelledAiJobs.has(jobId)) cancelAiJob(jobId);
+      }
       messages.splice(index + 1);
+      for (const run of demoRuns) {
+        if (run.conversationId === conversationId && run.createdAt > target.createdAt) {
+          run.status = "superseded";
+        }
+      }
       return null;
     }
 
@@ -1634,51 +1694,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "ai_run_list": {
       const conversationId = str(a.conversationId);
       const limit = num(a.limit, 0);
-      const all = [
-        {
-          id: "run-1",
-          conversationId: "conv-1",
-          status: "completed",
-          attempt: 1,
-          seq: 12,
-          planMode: false,
-          source: "chat",
-          profileId: "m-deepseek",
-          answer: "已定位 502 来自上游 api-server 的连接池耗尽，建议先扩容并加连接复用。",
-          turns: 4,
-          tokensIn: 3120,
-          tokensOut: 486,
-          cacheCreationTokens: 0,
-          latencyMs: 5230,
-          retries: 0,
-          failures: 0,
-          createdAt: Date.now() - 21 * 60_000,
-          updatedAt: Date.now() - 20 * 60_000,
-          finishedAt: Date.now() - 20 * 60_000,
-        },
-        {
-          id: "run-2",
-          conversationId: "conv-1",
-          status: "superseded",
-          attempt: 2,
-          seq: 13,
-          planMode: false,
-          source: "chat",
-          profileId: "m-deepseek",
-          answer: "",
-          turns: 1,
-          tokensIn: 980,
-          tokensOut: 0,
-          cacheCreationTokens: 0,
-          latencyMs: 1200,
-          retries: 0,
-          failures: 0,
-          createdAt: Date.now() - 19 * 60_000,
-          updatedAt: Date.now() - 19 * 60_000,
-          finishedAt: Date.now() - 19 * 60_000,
-        },
-      ];
-      const runs = all.filter((r) => !conversationId || r.conversationId === conversationId);
+      const runs = demoRuns.filter((r) => !conversationId || r.conversationId === conversationId);
       return limit > 0 ? runs.slice(0, limit) : runs;
     }
 
