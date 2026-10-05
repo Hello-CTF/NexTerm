@@ -107,6 +107,14 @@ export type SnippetDto = { id: string, groupId: string | null, name: string, bod
 export type SyncDigest = { origin: string, protocol: number, appVersion: string, 
 desktop: boolean, assets: Array<DigestEntry>, };
 
+export type SyncBundleGroup = { id: string, parentId: string | null, name: string, sort: number, createdAt: number, updatedAt: number, };
+
+export type SyncBundleAsset = { id: string, groupId: string | null, kind: string, name: string, host: string | null, port: number | null, username: string | null, authKind: string | null, keyPath: string | null, credId: string | null, optionsJson: string, tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt: number | null, };
+
+export type SyncBundleCredential = { id: string, name: string, kind: string, secret: string, };
+
+export type SyncBundle = { protocol: number, origin: string, exportedAt: number, groups: Array<SyncBundleGroup>, assets: Array<SyncBundleAsset>, creds: Array<SyncBundleCredential>, warnings?: Array<string>, };
+
 export type SyncLink = { 
 url: string, 
 tokenKind: string, 

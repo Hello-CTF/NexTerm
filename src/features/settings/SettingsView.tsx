@@ -17,6 +17,7 @@ import { MemoryCard } from "./MemoryCard";
 import { CronCard } from "./CronCard";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
+import { SyncBundleCard } from "./SyncBundleCard";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
@@ -441,6 +442,8 @@ export function SettingsView() {
         <KnownHostsCard />
 
         <SyncCard />
+
+        <SyncBundleCard />
 
         <ShortcutsCard />
       </div>

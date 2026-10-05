@@ -18,6 +18,8 @@ const (
 	CommandPull         = "sync_pull"
 	CommandToken        = "sync_token"
 	CommandTokenRotate  = "sync_token_rotate"
+	CommandBundleRead   = "sync_bundle_read"
+	CommandBundleWrite  = "sync_bundle_write"
 )
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
@@ -77,7 +79,7 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, CommandTokenRotate, func(ctx context.Context, _ *ipc.Call, _ struct{}) (*string, error) {
+			return ipc.RegisterNested(dispatcher, CommandTokenRotate, func(ctx context.Context, _ *ipc.Call, _ struct{}) (*string, error) {
 				if s.desktop {
 					return nil, nil
 				}
@@ -86,6 +88,16 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 					return nil, err
 				}
 				return &token, nil
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandBundleRead, func(ctx context.Context, _ *ipc.Call, input BundleFileRequest) (string, error) {
+				return s.ReadBundleFile(ctx, input.Path)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandBundleWrite, func(ctx context.Context, _ *ipc.Call, input BundleFileRequest) (struct{}, error) {
+				return struct{}{}, s.WriteBundleFile(ctx, input.Path, input.Content)
 			})
 		},
 	}

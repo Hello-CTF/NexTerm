@@ -720,10 +720,16 @@ export const syncApi = {
   origin: () => call<string>("sync_origin"),
 
   exportAssets: (assetIds: string[], withCreds: boolean) =>
-    call<unknown>("sync_export", { args: { assetIds, withCreds } }),
+    call<import("./types").SyncBundle>("sync_export", { args: { assetIds, withCreds } }),
 
-  importBundle: (bundle: unknown, force: boolean) =>
+  importBundle: (bundle: import("./types").SyncBundle, force: boolean) =>
     call<import("./types").ImportReport>("sync_import", { args: { bundle, force } }),
+
+  readBundleFile: (path: string) =>
+    call<string>("sync_bundle_read", { args: { path } }),
+
+  writeBundleFile: (path: string, content: string) =>
+    call<void>("sync_bundle_write", { args: { path, content } }),
 
   linkGet: () => call<import("./types").SyncLink>("sync_link_get"),
   linkSet: (patch: { url: string; tokenKind?: string; token?: string; insecure?: boolean }) =>

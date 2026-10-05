@@ -1823,6 +1823,284 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
+    case "sync_digest":
+      return {
+        origin: "demo",
+        protocol: 1,
+        appVersion: "0.1.0-demo",
+        desktop: false,
+        assets: assets
+          .filter((x) => !x.builtin)
+          .map((x) => ({
+            id: x.id,
+            name: x.name,
+            kind: x.kind,
+            host: x.host,
+            username: x.username,
+            updatedAt: x.updatedAt,
+            deletedAt: x.deletedAt,
+            hasCred: !!x.credId,
+            groupId: x.groupId,
+          })),
+      };
+
+    case "sync_export": {
+      const ids = new Set(Array.isArray(a.assetIds) ? (a.assetIds as string[]) : []);
+      const withCreds = a.withCreds === true;
+      const bundle: {
+        protocol: number;
+        origin: string;
+        exportedAt: number;
+        groups: Record<string, unknown>[];
+        assets: Record<string, unknown>[];
+        creds: Record<string, unknown>[];
+        warnings: string[];
+      } = { protocol: 1, origin: "demo", exportedAt: Date.now(), groups: [], assets: [], creds: [], warnings: [] };
+      const includedGroups = new Set<string>();
+      for (const asset of assets) {
+        if (!ids.has(asset.id) || asset.builtin) continue;
+        const chain: (typeof groups)[number][] = [];
+        let cursor = asset.groupId;
+        const visiting = new Set<string>();
+        while (cursor && !includedGroups.has(cursor)) {
+          if (visiting.has(cursor)) {
+            bundle.warnings.push("分组祖先链存在循环，已停止继续向上收集");
+            break;
+          }
+          visiting.add(cursor);
+          const g = groups.find((x) => x.id === cursor);
+          if (!g) {
+            bundle.warnings.push(`分组 ${cursor} 不存在，祖先链在此处停止`);
+            break;
+          }
+          chain.push(g);
+          cursor = g.parentId;
+        }
+        for (const g of chain.reverse()) {
+          bundle.groups.push({
+            id: g.id,
+            parentId: g.parentId,
+            name: g.name,
+            sort: g.sort,
+            createdAt: g.createdAt,
+            updatedAt: g.updatedAt,
+          });
+          includedGroups.add(g.id);
+        }
+        bundle.assets.push({
+          id: asset.id,
+          groupId: asset.groupId,
+          kind: asset.kind,
+          name: asset.name,
+          host: asset.host,
+          port: asset.port,
+          username: asset.username,
+          authKind: asset.authKind,
+          keyPath: asset.keyPath,
+          credId: asset.credId,
+          optionsJson: JSON.stringify(asset.options ?? {}),
+          tags: asset.tags,
+          note: asset.note,
+          sort: asset.sort,
+          createdAt: asset.createdAt,
+          updatedAt: asset.updatedAt,
+          deletedAt: asset.deletedAt,
+        });
+      }
+      if (withCreds) {
+        const seen = new Set<string>();
+        for (const payload of bundle.assets) {
+          const credId = typeof payload.credId === "string" ? payload.credId : "";
+          if (!credId || seen.has(credId)) continue;
+          seen.add(credId);
+          const cred = demoCredentials.find((c) => c.id === credId);
+          if (!cred) {
+            bundle.warnings.push(`资产 ${String(payload.id)} 引用的凭据 ${credId} 不存在`);
+            continue;
+          }
+          if (!vaultState.unlocked) throwAppError("vault_locked", "凭据库已锁定，请先解锁");
+          bundle.creds.push({ id: cred.id, name: cred.name, kind: cred.kind, secret: cred.secret });
+        }
+      }
+      return bundle;
+    }
+
+    case "sync_import": {
+      const bundle = a.bundle as Record<string, unknown> | undefined;
+      if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
+        throwAppError("bad_param", "资产包格式不正确");
+      }
+      if (bundle.protocol !== 1) {
+        throwAppError("unsupported", `不支持的同步协议版本 ${String(bundle.protocol)}（当前支持 1）`);
+      }
+      const bundleCreds = Array.isArray(bundle.creds) ? bundle.creds : [];
+      if (bundleCreds.length > 0 && !vaultState.unlocked) {
+        throwAppError("vault_locked", "凭据库已锁定，请先解锁");
+      }
+      const force = a.force === true;
+      const report = {
+        groupsCreated: 0,
+        groupsUpdated: 0,
+        assetsCreated: 0,
+        assetsUpdated: 0,
+        credsCreated: 0,
+        credsUpdated: 0,
+        skippedNewer: 0,
+        refused: 0,
+        warnings: Array.isArray(bundle.warnings)
+          ? (bundle.warnings as unknown[]).filter((w): w is string => typeof w === "string")
+          : [],
+      };
+      const bundleAssets = Array.isArray(bundle.assets) ? bundle.assets : [];
+      const effectiveRevision = (updatedAt: unknown, deletedAt: unknown): number =>
+        Math.max(num(updatedAt, 0), typeof deletedAt === "number" ? deletedAt : 0);
+      const assetDecisions = (bundleAssets as Record<string, unknown>[]).map((p) => {
+        const id = str(p?.id).trim();
+        const existing = assets.find((x) => x.id === id);
+        if (existing?.builtin) {
+          return { acceptance: "refused" as const, warning: "内置「当前设备」不接受同步覆盖" };
+        }
+        if (!id || !str(p.name).trim()) {
+          return {
+            acceptance: "refused" as const,
+            warning: `资产 ${id || "(空)"} 的 ID 或名称不合法，已拒绝导入`,
+          };
+        }
+        if (
+          existing &&
+          !force &&
+          effectiveRevision(existing.updatedAt, existing.deletedAt) >
+            effectiveRevision(p.updatedAt, p.deletedAt)
+        ) {
+          return {
+            acceptance: "skipped" as const,
+            warning: `资产 ${id} 的本机版本较新，已跳过；如需覆盖请使用强制同步`,
+          };
+        }
+        return { acceptance: "accepted" as const, warning: "" };
+      });
+      const blockedCredIds = new Set<string>();
+      (bundleAssets as Record<string, unknown>[]).forEach((p, i) => {
+        const credId = str(p?.credId).trim();
+        if (credId && assetDecisions[i].acceptance !== "accepted") blockedCredIds.add(credId);
+      });
+      const bundleGroups = Array.isArray(bundle.groups) ? bundle.groups : [];
+      for (const g of bundleGroups as Record<string, unknown>[]) {
+        const id = str(g?.id).trim();
+        if (!id) {
+          report.refused += 1;
+          report.warnings.push("拒绝了 ID 为空的分组");
+          continue;
+        }
+        const existing = groups.find((x) => x.id === id);
+        const parentId = str(g.parentId).trim();
+        const row = {
+          id,
+          parentId: parentId || null,
+          name: str(g.name, "分组"),
+          sort: num(g.sort, 0),
+          createdAt: num(g.createdAt, Date.now()),
+          updatedAt: num(g.updatedAt, Date.now()),
+        };
+        if (existing) {
+          Object.assign(existing, row);
+          report.groupsUpdated += 1;
+        } else {
+          groups.push(row);
+          report.groupsCreated += 1;
+        }
+      }
+      for (const c of bundleCreds as Record<string, unknown>[]) {
+        const id = str(c?.id).trim();
+        if (!id) {
+          report.refused += 1;
+          report.warnings.push("拒绝了 ID 为空的凭据");
+          continue;
+        }
+        if (blockedCredIds.has(id)) {
+          report.warnings.push(`凭据 ${id} 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变`);
+          continue;
+        }
+        const existing = demoCredentials.find((x) => x.id === id);
+        const secret = str(c.secret);
+        if (existing) {
+          existing.name = str(c.name, existing.name);
+          existing.kind = str(c.kind, existing.kind);
+          existing.secret = secret;
+          existing.updatedAt = Date.now();
+          report.credsUpdated += 1;
+        } else {
+          demoCredentials.push({
+            id,
+            name: str(c.name, "凭据"),
+            kind: str(c.kind, "password"),
+            secret,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          report.credsCreated += 1;
+        }
+      }
+      (bundleAssets as Record<string, unknown>[]).forEach((p, i) => {
+        const decision = assetDecisions[i];
+        if (decision.acceptance !== "accepted") {
+          if (decision.acceptance === "skipped") report.skippedNewer += 1;
+          else report.refused += 1;
+          report.warnings.push(decision.warning);
+          return;
+        }
+        const id = str(p.id).trim();
+        const existing = assets.find((x) => x.id === id);
+        const incomingUpdated = num(p.updatedAt, 0);
+        const credId = str(p.credId).trim();
+        const groupId = str(p.groupId).trim();
+        let options: Record<string, unknown> = {};
+        if (typeof p.optionsJson === "string") {
+          try {
+            const parsed = JSON.parse(p.optionsJson);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) options = parsed;
+          } catch {
+            report.warnings.push(`资产 ${id} 的 optionsJson 不是合法 JSON，已按空处理`);
+          }
+        }
+        const row = {
+          id,
+          groupId: groupId || null,
+          kind: str(p.kind, "ssh"),
+          name: str(p.name, "资产"),
+          host: typeof p.host === "string" ? p.host : null,
+          port: typeof p.port === "number" ? p.port : null,
+          username: typeof p.username === "string" ? p.username : null,
+          authKind: typeof p.authKind === "string" ? p.authKind : "password",
+          keyPath: str(p.keyPath).trim() || null,
+          credId: credId && demoCredentials.some((c) => c.id === credId) ? credId : null,
+          options,
+          tags: str(p.tags, ""),
+          note: str(p.note, ""),
+          sort: num(p.sort, 0),
+          createdAt: num(p.createdAt, Date.now()),
+          updatedAt: incomingUpdated || Date.now(),
+          deletedAt: typeof p.deletedAt === "number" ? p.deletedAt : null,
+          builtin: false,
+        };
+        if (credId && !row.credId) {
+          report.warnings.push(`资产 ${id} 引用的凭据 ${credId} 不存在，已清除该引用`);
+        }
+        if (row.groupId && !groups.some((g) => g.id === row.groupId)) {
+          report.warnings.push(`资产 ${id} 引用的分组 ${row.groupId} 不存在，已清除该引用`);
+          row.groupId = null;
+        }
+        if (existing) {
+          Object.assign(existing, row);
+          report.assetsUpdated += 1;
+        } else {
+          assets.push(row);
+          report.assetsCreated += 1;
+        }
+      });
+      return report;
+    }
+
     default:
       return null;
   }
