@@ -211,6 +211,49 @@ func TestTitleGenerationSkipsRenamedConversation(t *testing.T) {
 	}
 }
 
+func TestTitleGenerationDoesNotOverwriteUserRenameDuringModelCall(t *testing.T) {
+	release := make(chan struct{})
+	generateCalled := make(chan struct{})
+	var generateOnce sync.Once
+	chat := &titleTestModel{
+		fakeModel: fakeModel{stream: answeringStream},
+		generate: func(ctx context.Context) (*schema.Message, error) {
+			generateOnce.Do(func() { close(generateCalled) })
+			select {
+			case <-release:
+				return schema.AssistantMessage("自动生成标题", nil), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	}
+	runner, storage := titleTestRunner(t, chat)
+	const message = "帮我排查数据库连接失败的问题"
+	conversation, err := storage.ConvCreate(context.Background(), AutoTitle(message), map[string]any{"scope": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.maybeGenerateConversationTitle(&job{args: ChatArgs{ConversationID: conversation.ID, Message: message}})
+	waitChannelClosed(t, generateCalled, "title generation did not start")
+	if err := storage.ConvRename(context.Background(), conversation.ID, "用户改的标题"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	time.Sleep(300 * time.Millisecond)
+	if title := conversationTitleOf(t, storage, conversation.ID); title != "用户改的标题" {
+		t.Fatalf("user rename during model call was overwritten: %q", title)
+	}
+	summary, err := storage.RunUsageSummary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range summary {
+		if row.Source == store.RunSourceTitle {
+			t.Fatalf("skipped rename recorded title usage: %+v", row)
+		}
+	}
+}
+
 func TestTitleGenerationTimeout(t *testing.T) {
 	original := titleGenerationTimeout
 	titleGenerationTimeout = 50 * time.Millisecond

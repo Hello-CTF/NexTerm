@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -245,6 +246,88 @@ func TestJournalReplayReconstructsIdenticalText(t *testing.T) {
 		if got := prefixText + journalDeltaText(page); got != "你好！。" {
 			t.Fatalf("replay at cut %d reconstructs %q", cut, got)
 		}
+	}
+}
+
+func TestJournalTerminalJournaledWhenDownstreamFailsDuringFlush(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	stream := WithRunJournal(&failingDownstream{}, storage, runID)
+	for _, event := range []Event{
+		{Type: "delta", Text: "a"},
+		{Type: "delta", Text: "b"},
+		{Type: "reasoning", Text: "r"},
+		{Type: "toolArgs", Tool: "write_file", Chars: 7},
+	} {
+		if err := stream.Send(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stream.Send(context.Background(), doneEvent("done", 1, 2, 3)); err == nil {
+		t.Fatal("terminal send must surface the downstream failure")
+	}
+	events := journalEventsOf(t, storage, runID)
+	requireContiguousSeq(t, events)
+	if len(events) != 4 {
+		t.Fatalf("journaled events = %+v, want merged delta, reasoning, toolArgs and done", events)
+	}
+	if events[0].Type != "delta" || journalDeltaText(events) != "ab" {
+		t.Fatalf("journaled delta = %+v", events)
+	}
+	if events[1].Type != "reasoning" || events[2].Type != "toolArgs" {
+		t.Fatalf("journaled merged events = %+v", events[1:3])
+	}
+	if events[3].Type != "done" {
+		t.Fatalf("terminal event missing from journal: %+v", events)
+	}
+}
+
+type failingDownstream struct{}
+
+func (failingDownstream) Send(context.Context, Event) error { return errors.New("downstream broken") }
+func (failingDownstream) Close() error                      { return nil }
+
+type failFirstDownstream struct {
+	*SliceStream
+	remaining int
+}
+
+func (f *failFirstDownstream) Send(ctx context.Context, event Event) error {
+	if f.remaining > 0 {
+		f.remaining--
+		return errors.New("downstream broken")
+	}
+	return f.SliceStream.Send(ctx, event)
+}
+
+func TestJournalFlushDownstreamFailureKeepsJournalComplete(t *testing.T) {
+	storage, runID := journalTestStore(t)
+	live := &SliceStream{}
+	stream := WithRunJournal(&failFirstDownstream{SliceStream: live, remaining: 2}, storage, runID)
+	for _, event := range []Event{
+		{Type: "delta", Text: "x"},
+		{Type: "delta", Text: "y"},
+	} {
+		if err := stream.Send(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stream.Send(context.Background(), statusEvent("thinking", 1)); err == nil {
+		t.Fatal("status send must surface its own downstream failure")
+	}
+	if err := stream.Send(context.Background(), doneEvent("done", 0, 0, 0)); err != nil {
+		t.Fatalf("terminal send must not fail after flush swallowed the downstream error: %v", err)
+	}
+	events := journalEventsOf(t, storage, runID)
+	requireContiguousSeq(t, events)
+	if len(events) != 3 || events[0].Type != "delta" || events[1].Type != "status" || events[2].Type != "done" {
+		t.Fatalf("journaled events = %+v", events)
+	}
+	if got := journalDeltaText(events); got != "xy" {
+		t.Fatalf("journaled delta text = %q", got)
+	}
+	liveEvents, _ := live.Snapshot()
+	if len(liveEvents) != 1 || liveEvents[0].Type != "done" {
+		t.Fatalf("live events = %+v, want only the terminal event", liveEvents)
 	}
 }
 

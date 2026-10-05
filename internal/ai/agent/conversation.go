@@ -115,6 +115,13 @@ func (r *Runner) maybeGenerateConversationTitle(current *job) {
 	}()
 }
 
+// conditionalTitleRenamer is implemented by stores that support an atomic
+// compare-and-swap rename; it keeps a user rename that lands while the title model is
+// running from being overwritten by the generated title.
+type conditionalTitleRenamer interface {
+	ConvRenameIfTitle(ctx context.Context, id, expectedTitle, title string) (bool, error)
+}
+
 func (r *Runner) generateConversationTitle(ctx context.Context, factory ModelFactory, conversationID, message, profileID string) {
 	row, err := r.store.ConvGet(ctx, conversationID)
 	if err != nil || row.Title != AutoTitle(message) {
@@ -125,8 +132,19 @@ func (r *Runner) generateConversationTitle(ctx context.Context, factory ModelFac
 	if err != nil || title == "" {
 		return
 	}
-	if err := r.store.ConvRename(ctx, conversationID, title); err != nil {
-		return
+	if renamer, ok := r.store.(conditionalTitleRenamer); ok {
+		renamed, err := renamer.ConvRenameIfTitle(ctx, conversationID, AutoTitle(message), title)
+		if err != nil || !renamed {
+			return
+		}
+	} else {
+		row, err := r.store.ConvGet(ctx, conversationID)
+		if err != nil || row.Title != AutoTitle(message) {
+			return
+		}
+		if err := r.store.ConvRename(ctx, conversationID, title); err != nil {
+			return
+		}
 	}
 	r.recordTitleUsage(ctx, conversationID, profileID, title, tokensIn, tokensOut, time.Since(started).Milliseconds())
 }

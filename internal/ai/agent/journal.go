@@ -114,6 +114,11 @@ func (s *journalStream) flushTimeout() {
 	_ = s.flushLocked(context.Background())
 }
 
+// flushLocked persists every buffered event to the journal first, then delivers each to
+// the live stream on a best-effort basis. It returns an error only when a journal append
+// fails; events not yet appended stay pending for the next flush. A live-stream failure
+// never blocks journaling of the remaining events, so a terminal event sent right after a
+// flush is always journaled even when the downstream stream is broken.
 func (s *journalStream) flushLocked(ctx context.Context) error {
 	if s.timer != nil {
 		s.timer.Stop()
@@ -123,14 +128,29 @@ func (s *journalStream) flushLocked(ctx context.Context) error {
 		return nil
 	}
 	merged := mergeJournalEvents(s.pending)
-	s.pending = nil
-	s.pendingBytes = 0
-	for _, event := range merged {
-		if err := s.sendLocked(ctx, event); err != nil {
+	for index, event := range merged {
+		seq, err := s.journal.RunAppendEvent(ctx, s.runID, event.Type, func(seq uint64) ([]byte, error) {
+			event.Seq = seq
+			return json.Marshal(event)
+		})
+		if err != nil {
+			s.retainLocked(merged[index:])
 			return err
 		}
+		event.Seq = seq
+		_ = s.stream.Send(ctx, event)
 	}
+	s.pending = nil
+	s.pendingBytes = 0
 	return nil
+}
+
+func (s *journalStream) retainLocked(events []Event) {
+	s.pending = events
+	s.pendingBytes = 0
+	for _, event := range events {
+		s.pendingBytes += journalEventBytes(event)
+	}
 }
 
 func (s *journalStream) sendLocked(ctx context.Context, event Event) error {
