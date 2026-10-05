@@ -29,7 +29,7 @@ type resilientChatModel struct {
 }
 
 func (m *resilientChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	result, err := m.client.runNative(ctx, input, m.withBoundTools(opts), false, nil, nil)
+	result, err := m.client.runNative(ctx, input, m.withBoundTools(opts), nil, false, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (m *resilientChatModel) Stream(ctx context.Context, input []*schema.Message
 			}
 			return nil
 		}
-		_, err := m.client.runNative(ctx, input, options, true, onFrame, nil)
+		_, err := m.client.runNative(ctx, input, options, nil, true, onFrame, nil)
 		if err != nil && !errors.Is(err, errStreamClosed) {
 			writer.Send(nil, err)
 		}
@@ -70,10 +70,24 @@ func (m *resilientChatModel) withBoundTools(opts []model.Option) []model.Option 
 	return append(options, model.WithTools(m.tools))
 }
 
-func (c *Client) newChatModel(ctx context.Context, servingModel string) (model.ToolCallingChatModel, error) {
+func (c *Client) newChatModel(ctx context.Context, servingModel string, responseFormat *ResponseFormat) (model.ToolCallingChatModel, error) {
 	temperature := float32(c.config.Temperature)
 	return openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		BaseURL: c.config.BaseURL, APIKey: c.config.APIKey, Model: servingModel,
 		Temperature: &temperature, HTTPClient: c.http,
+		MaxTokens: c.config.MaxTokens, ResponseFormat: nativeResponseFormat(responseFormat),
 	})
+}
+
+func nativeResponseFormat(format *ResponseFormat) *openai.ChatCompletionResponseFormat {
+	if format == nil {
+		return nil
+	}
+	return &openai.ChatCompletionResponseFormat{
+		Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+		JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+			Name: format.Name, Description: format.Description,
+			JSONSchema: format.Schema, Strict: format.Strict,
+		},
+	}
 }

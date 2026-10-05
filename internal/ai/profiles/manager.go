@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
@@ -45,6 +46,13 @@ type Manager struct {
 	protector store.SecretProtector
 	mu        sync.RWMutex
 	state     state
+	circuits  map[string]circuitEntry
+}
+
+type circuitEntry struct {
+	breaker   *provider.CircuitBreaker
+	threshold int
+	cooldown  time.Duration
 }
 
 type protectorSource interface {
@@ -91,7 +99,7 @@ func NewManager(ctx context.Context, settings Settings) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager := &Manager{settings: settings, protector: protector, state: result.state}
+	manager := &Manager{settings: settings, protector: protector, state: result.state, circuits: map[string]circuitEntry{}}
 	if err := manager.applyLoadResult(ctx, result); err != nil {
 		return nil, err
 	}
@@ -177,7 +185,41 @@ func (m *Manager) ActiveClient(options ...provider.Option) (*provider.Client, er
 		return nil, err
 	}
 	config.APIKey = key
-	return provider.NewClient(config, append(profile.ClientOptions(), options...)...)
+	clientOptions := append(profile.ClientOptions(), m.circuitOption(profile))
+	return provider.NewClient(config, append(clientOptions, options...)...)
+}
+
+func (m *Manager) circuitOption(profile Profile) provider.Option {
+	threshold, cooldown := profile.CircuitConfig()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if entry, ok := m.circuits[profile.ID]; ok && entry.threshold == threshold && entry.cooldown == cooldown {
+		return provider.WithCircuitBreaker(entry.breaker)
+	}
+	breaker := provider.NewCircuitBreaker(threshold, cooldown)
+	m.circuits[profile.ID] = circuitEntry{breaker: breaker, threshold: threshold, cooldown: cooldown}
+	return provider.WithCircuitBreaker(breaker)
+}
+
+type CircuitStatus struct {
+	ConsecutiveFailures int        `json:"consecutiveFailures"`
+	OpenUntil           *time.Time `json:"openUntil,omitempty"`
+}
+
+func (m *Manager) CircuitStatus(id string) (CircuitStatus, bool) {
+	m.mu.RLock()
+	entry, ok := m.circuits[id]
+	m.mu.RUnlock()
+	if !ok {
+		return CircuitStatus{}, false
+	}
+	snapshot := entry.breaker.Snapshot()
+	status := CircuitStatus{ConsecutiveFailures: snapshot.ConsecutiveFailures}
+	if !snapshot.OpenUntil.IsZero() {
+		openUntil := snapshot.OpenUntil
+		status.OpenUntil = &openUntil
+	}
+	return status, true
 }
 
 func (m *Manager) resolveAPIKey(profile Profile) (string, error) {
@@ -231,7 +273,8 @@ func (m *Manager) ClientFor(id string, options ...provider.Option) (*provider.Cl
 		return nil, err
 	}
 	config.APIKey = key
-	return provider.NewClient(config, append(profile.ClientOptions(), options...)...)
+	clientOptions := append(profile.ClientOptions(), m.circuitOption(profile))
+	return provider.NewClient(config, append(clientOptions, options...)...)
 }
 
 func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
@@ -313,6 +356,7 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	next.Profiles = profiles
 	next.ensureActive()
+	delete(m.circuits, id)
 	saved, err := save(ctx, m.settings, m.protector, next, m.deleteLegacyWithSave(ctx))
 	if err != nil {
 		return m.state.overview(), err

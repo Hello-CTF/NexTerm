@@ -35,6 +35,9 @@ func ClassifyError(err error) ErrorClass {
 	if err == nil {
 		return ""
 	}
+	if isResponseHeaderTimeout(err) {
+		return ErrorClassTransport
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return ErrorClassCancellation
 	}
@@ -51,6 +54,14 @@ func ClassifyError(err error) ErrorClass {
 		return ErrorClassTransport
 	}
 	return ErrorClassUnknown
+}
+
+func isResponseHeaderTimeout(err error) bool {
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		return false
+	}
+	return strings.Contains(err.Error(), "timeout awaiting response headers")
 }
 
 func classifyHTTPStatus(status int) ErrorClass {

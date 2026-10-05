@@ -18,11 +18,15 @@ type Profile struct {
 	FallbackModel string  `json:"fallbackModel,omitempty"`
 	Temperature   float64 `json:"temperature"`
 	ContextWindow uint64  `json:"contextWindow"`
+	MaxTokens     *int    `json:"maxTokens,omitempty"`
 	Proxy         *string `json:"proxy"`
 	Stream        bool    `json:"stream"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
+
+	CircuitFailureThreshold *int `json:"circuitFailureThreshold,omitempty"`
+	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
 }
 
 const MaskedAPIKey = "••••••••••••"
@@ -46,8 +50,10 @@ func (p Profile) hasKeyMaterial() bool {
 }
 
 const (
-	maxRequestTimeoutSeconds = 3600
-	maxIdleTimeoutSeconds    = 3600
+	maxRequestTimeoutSeconds  = 3600
+	maxIdleTimeoutSeconds     = 3600
+	maxCircuitThreshold       = 100
+	maxCircuitCooldownSeconds = 3600
 )
 
 func DefaultProfile() Profile {
@@ -68,9 +74,12 @@ func (p Profile) Normalized() Profile {
 	p.FallbackModel = config.FallbackModel
 	p.Temperature = config.Temperature
 	p.ContextWindow = config.ContextWindow
+	p.MaxTokens = config.MaxTokens
 	p.Proxy = config.Proxy
-	p.RequestTimeoutSeconds = clampTimeoutSeconds(p.RequestTimeoutSeconds, 1, maxRequestTimeoutSeconds)
-	p.IdleTimeoutSeconds = clampTimeoutSeconds(p.IdleTimeoutSeconds, 0, maxIdleTimeoutSeconds)
+	p.RequestTimeoutSeconds = clampOptionalInt(p.RequestTimeoutSeconds, 1, maxRequestTimeoutSeconds)
+	p.IdleTimeoutSeconds = clampOptionalInt(p.IdleTimeoutSeconds, 0, maxIdleTimeoutSeconds)
+	p.CircuitFailureThreshold = clampOptionalInt(p.CircuitFailureThreshold, 1, maxCircuitThreshold)
+	p.CircuitCooldownSeconds = clampOptionalInt(p.CircuitCooldownSeconds, 1, maxCircuitCooldownSeconds)
 	if p.Name == "" {
 		p.Name = p.Model
 		if p.Name == "" {
@@ -80,7 +89,7 @@ func (p Profile) Normalized() Profile {
 	return p
 }
 
-func clampTimeoutSeconds(value *int, minimum, maximum int) *int {
+func clampOptionalInt(value *int, minimum, maximum int) *int {
 	if value == nil {
 		return nil
 	}
@@ -104,8 +113,21 @@ func (p Profile) ProviderConfig() provider.Config {
 	return provider.Config{
 		BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model, FallbackModel: p.FallbackModel,
 		Temperature: p.Temperature, ContextWindow: p.ContextWindow,
-		Proxy: cloneString(p.Proxy), Stream: p.Stream,
+		MaxTokens: cloneInt(p.MaxTokens),
+		Proxy:     cloneString(p.Proxy), Stream: p.Stream,
 	}
+}
+
+func (p Profile) CircuitConfig() (int, time.Duration) {
+	threshold := provider.DefaultCircuitThreshold
+	if p.CircuitFailureThreshold != nil {
+		threshold = *p.CircuitFailureThreshold
+	}
+	cooldown := provider.DefaultCircuitCooldown
+	if p.CircuitCooldownSeconds != nil {
+		cooldown = time.Duration(*p.CircuitCooldownSeconds) * time.Second
+	}
+	return threshold, cooldown
 }
 
 func (p *Profile) UnmarshalJSON(data []byte) error {
@@ -119,11 +141,15 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		FallbackModel string   `json:"fallbackModel"`
 		Temperature   *float64 `json:"temperature"`
 		ContextWindow *uint64  `json:"contextWindow"`
+		MaxTokens     *int     `json:"maxTokens"`
 		Proxy         *string  `json:"proxy"`
 		Stream        *bool    `json:"stream"`
 
 		RequestTimeoutSeconds *int `json:"requestTimeoutSeconds"`
 		IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds"`
+
+		CircuitFailureThreshold *int `json:"circuitFailureThreshold"`
+		CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -142,6 +168,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	if wire.ContextWindow != nil {
 		p.ContextWindow = *wire.ContextWindow
 	}
+	p.MaxTokens = wire.MaxTokens
 	p.Proxy = wire.Proxy
 	p.Stream = defaults.Stream
 	if wire.Stream != nil {
@@ -149,6 +176,8 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	}
 	p.RequestTimeoutSeconds = wire.RequestTimeoutSeconds
 	p.IdleTimeoutSeconds = wire.IdleTimeoutSeconds
+	p.CircuitFailureThreshold = wire.CircuitFailureThreshold
+	p.CircuitCooldownSeconds = wire.CircuitCooldownSeconds
 	return nil
 }
 
@@ -171,8 +200,11 @@ type Overview struct {
 
 func cloneProfile(profile Profile) Profile {
 	profile.Proxy = cloneString(profile.Proxy)
+	profile.MaxTokens = cloneInt(profile.MaxTokens)
 	profile.RequestTimeoutSeconds = cloneInt(profile.RequestTimeoutSeconds)
 	profile.IdleTimeoutSeconds = cloneInt(profile.IdleTimeoutSeconds)
+	profile.CircuitFailureThreshold = cloneInt(profile.CircuitFailureThreshold)
+	profile.CircuitCooldownSeconds = cloneInt(profile.CircuitCooldownSeconds)
 	return profile
 }
 
