@@ -94,7 +94,7 @@ function AssetTreeSkeleton() {
           <div key={i} className="nx-row cursor-default">
             <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-sm bg-neutral-800 motion-reduce:animate-none" />
             <span
-              className={`h-3 shrink-0 animate-pulse rounded-sm bg-neutral-800 motion-reduce:animate-none ${width}`}
+              className={`h-3 min-w-0 animate-pulse rounded-sm bg-neutral-800 motion-reduce:animate-none ${width}`}
             />
             <span className="nx-spacer" />
             <span className="h-3 w-12 shrink-0 animate-pulse rounded-sm bg-neutral-800/70 motion-reduce:animate-none" />

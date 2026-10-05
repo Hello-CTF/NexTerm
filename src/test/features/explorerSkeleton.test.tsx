@@ -157,7 +157,13 @@ describe("资产树加载骨架屏", () => {
     pending.resolve([]);
   });
 
-  it("320/390 窄屏下骨架行只用比例宽度，不撑破容器", async () => {
+  it("320/390 窄屏下比例中条可收缩，固定条预算不超出内容宽", async () => {
+    const NARROW_ROW_GAP_PX = 7;
+    const NARROW_CONTENT_PX = 180 - 12 - 16;
+    const classPxWidth = (className: string): number => {
+      const match = /(?:^|\s)w-(\d+(?:\.\d+)?)(?:\s|$)/.exec(className);
+      return match ? Number(match[1]) * 4 : 0;
+    };
     for (const width of [320, 390]) {
       setViewportWidth(width);
       const pending = deferred<typeof WEB[]>();
@@ -168,12 +174,25 @@ describe("资产树加载骨架屏", () => {
       const status = mounted.container.querySelector('[role="status"]');
       expect(status).not.toBeNull();
       expect(status!.closest('[role="tree"]')).not.toBeNull();
-      const bars = [...status!.querySelectorAll(".animate-pulse")];
-      expect(bars.length).toBeGreaterThan(0);
-      for (const bar of bars) {
-        expect(bar.className).not.toMatch(/w-\[\d{3,}px\]/);
+      const rows = [...status!.querySelectorAll<HTMLElement>(".nx-row")];
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        const bars = [...row.querySelectorAll<HTMLElement>("span.animate-pulse")];
+        const proportional = bars.filter((bar) => /w-\d\/\d/.test(bar.className));
+        const fixed = bars.filter((bar) => !proportional.includes(bar));
+        expect(proportional.length).toBe(1);
+        for (const bar of proportional) {
+          expect(bar.className).not.toContain("shrink-0");
+          expect(bar.className).toContain("min-w-0");
+        }
+        for (const bar of bars) {
+          expect(bar.className).not.toMatch(/w-\[\d{3,}px\]/);
+        }
+        const fixedPx = fixed.reduce((sum, bar) => sum + classPxWidth(bar.className), 0);
+        expect(fixedPx + NARROW_ROW_GAP_PX * (row.children.length - 1)).toBeLessThan(
+          NARROW_CONTENT_PX,
+        );
       }
-      expect(bars.some((bar) => /w-\d\/\d/.test(bar.className))).toBe(true);
 
       pending.resolve([]);
       await waitFor(() => expect(mounted!.container.textContent).toContain("还没有资产"));
