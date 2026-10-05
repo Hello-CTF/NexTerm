@@ -108,8 +108,29 @@ func New(config Config) (*Server, error) {
 			config.GatewayAuthKey = provider.GatewayAuthKey()
 		}
 	}
-	authRequired := !config.Options.SyncOnly && !core.LoopbackListen(config.Options.Listen)
+	authMode := config.Options.Auth
+	if authMode == "" {
+		authMode = AuthLoopback
+	}
+	switch authMode {
+	case AuthOn, AuthLoopback, AuthOff:
+	default:
+		return nil, fmt.Errorf("invalid auth mode %q", authMode)
+	}
+	config.Options.Auth = authMode
+	authRequired := false
+	if !config.Options.SyncOnly {
+		switch authMode {
+		case AuthOn:
+			authRequired = true
+		case AuthLoopback:
+			authRequired = !core.LoopbackListen(config.Options.Listen)
+		}
+	}
 	if authRequired && config.Tokens == nil {
+		if authMode == AuthOn {
+			return nil, fmt.Errorf("token verifier is required when auth mode is %q", AuthOn)
+		}
 		return nil, fmt.Errorf("token verifier is required when listening on a non-loopback address")
 	}
 	if err := core.ValidateListenAddress(config.Options.Listen); config.Options.Listen != "" && err != nil {

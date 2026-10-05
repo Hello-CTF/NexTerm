@@ -352,8 +352,8 @@
         <p>带完整浏览器界面，打开 <code>http://&lt;地址&gt;:8080</code> 即用。</p>
         <ul>
           <li>解压即得二进制、前端产物、systemd 单元</li>
-          <li>单元默认只听 <code>127.0.0.1</code>，对外自己接反代</li>
-          <li>非回环监听时 <code>/rpc</code>、<code>/ws</code>、<code>/files/blob</code> 要求同步令牌（<code>/healthz</code> 与页面公开），公网仍建议套 TLS 反代</li>
+          <li>单元默认只听 <code>127.0.0.1</code> 并显式声明 <code>--auth loopback</code>，对外自己接反代</li>
+          <li>访问控制默认开启（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code>、<code>/files/blob</code> 一律要求同步令牌（<code>/healthz</code> 与页面公开），公网仍建议套 TLS 反代</li>
         </ul>
         <span class="file">NexTerm-server_x.y.z_linux_amd64.tar.gz · _arm64.tar.gz</span>
       </div>
@@ -389,7 +389,7 @@
       </details>
       <details>
         <summary>服务端放公网安全吗？</summary>
-        <div class="faq-body">完整版在非回环监听下已内置令牌鉴权：<code>/rpc</code>、<code>/ws</code> 与 <code>/files/blob</code> 没有同步令牌一律拒绝，<code>/healthz</code> 与页面静态资源公开；浏览器首次打开会提示输入令牌（<code>nexterm-server token</code> 查看）。令牌走请求头，公网部署前面必须终止 TLS，并建议用防火墙限制来源。公网只想做资产同步，请用 <code>--sync-only</code> 模式 —— 它只注册同步用的三条命令，令牌泄漏也只能读写这份资产库。懒猫微服上由平台登录门加网关注入的网关密钥放行，无需手动填令牌。</div>
+        <div class="faq-body">完整版默认开启令牌鉴权（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code> 与 <code>/files/blob</code> 没有同步令牌一律拒绝，<code>/healthz</code> 与页面静态资源公开；浏览器首次打开会提示输入令牌（<code>nexterm-server token</code> 查看）。回环免令牌仅限显式 <code>--auth loopback</code>（会校验 Host 防 DNS 重绑定），且不适合反代场景。令牌走请求头，公网部署前面必须终止 TLS，并建议用防火墙限制来源。公网只想做资产同步，请用 <code>--sync-only</code> 模式 —— 它只注册同步用的三条命令，令牌泄漏也只能读写这份资产库。懒猫微服上由平台登录门加网关注入的网关密钥放行，无需手动填令牌。</div>
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>

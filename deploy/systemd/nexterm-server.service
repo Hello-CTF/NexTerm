@@ -13,6 +13,7 @@ EnvironmentFile=-/etc/nexterm/nexterm.env
 
 ExecStart=/opt/nexterm/nexterm-server \
   --listen 127.0.0.1:8080 \
+  --auth loopback \
   --data-dir /var/lib/nexterm \
   --web-root /opt/nexterm/web
 

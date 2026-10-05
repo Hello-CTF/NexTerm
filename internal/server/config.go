@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
@@ -23,12 +24,19 @@ const (
 	CommandRotateToken = core.CommandRotateToken
 )
 
+const (
+	AuthOn       = core.AuthOn
+	AuthLoopback = core.AuthLoopback
+	AuthOff      = core.AuthOff
+)
+
 type Options struct {
 	Listen         string
 	DataDir        string
 	WebRoot        string
 	MasterKey      string
 	SyncOnly       bool
+	Auth           string
 	AllowedOrigins []string
 }
 
@@ -62,14 +70,39 @@ func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
 	if webRoot == "" && !parsed.SyncOnly && !parsed.Help && !parsed.Version {
 		webRoot = ProbeWebRoot()
 	}
+	masterKey := parsed.MasterKey
+	if !parsed.Help && !parsed.Version {
+		masterKey, err = ResolveMasterKey(parsed.MasterKey, parsed.MasterKeyFile)
+		if err != nil {
+			return Invocation{}, err
+		}
+	}
 	return Invocation{
 		Command: parsed.Command,
 		Options: Options{
 			Listen: parsed.Listen, DataDir: dataDir, WebRoot: webRoot,
-			MasterKey: parsed.MasterKey, SyncOnly: parsed.SyncOnly,
+			MasterKey: masterKey, SyncOnly: parsed.SyncOnly, Auth: parsed.Auth,
 		},
 		Help: parsed.Help, Version: parsed.Version,
 	}, nil
+}
+
+func ResolveMasterKey(masterKey, masterKeyFile string) (string, error) {
+	if masterKeyFile == "" {
+		return masterKey, nil
+	}
+	if masterKey != "" {
+		return "", fmt.Errorf("--master-key and --master-key-file cannot be combined")
+	}
+	data, err := os.ReadFile(masterKeyFile)
+	if err != nil {
+		return "", fmt.Errorf("read master key file: %w", err)
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return "", fmt.Errorf("master key file %s is empty", masterKeyFile)
+	}
+	return key, nil
 }
 
 func Usage(program string) string {
@@ -85,7 +118,10 @@ Flags:
   --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
   --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
   --web-root PATH     Web assets directory (env NEXTERM_WEB_ROOT)
-  --master-key KEY    Vault master key (env NEXTERM_MASTER_KEY)
+  --master-key KEY    Vault master key (env NEXTERM_MASTER_KEY, deprecated; use --master-key-file)
+  --master-key-file PATH  Read the vault master key from a file (env NEXTERM_MASTER_KEY_FILE)
+  --auth MODE         Access control: on, loopback, or off (env NEXTERM_AUTH, default on)
+  --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --version           Print the version
   -h, --help          Print this help
@@ -125,6 +161,19 @@ func BootstrapVault(ctx context.Context, credentialVault Vault, masterKey string
 		return credentialVault.UnlockMaster(ctx, masterKey)
 	}
 	return credentialVault.InitMaster(ctx, masterKey)
+}
+
+func BootstrapVaultRequired(ctx context.Context, credentialVault Vault, masterKey string) error {
+	if masterKey == "" {
+		return fmt.Errorf("vault is required but no master key is configured")
+	}
+	if err := BootstrapVault(ctx, credentialVault, masterKey); err != nil {
+		return fmt.Errorf("vault bootstrap failed: %w", err)
+	}
+	if !credentialVault.Status().Unlocked {
+		return fmt.Errorf("vault is required but remained locked after bootstrap")
+	}
+	return nil
 }
 
 func warnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool) {
