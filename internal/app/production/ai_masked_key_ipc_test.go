@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
@@ -65,10 +66,10 @@ func TestAIModelRefreshResolvesMaskedKeyFromStoredProfile(t *testing.T) {
 	}
 
 	response = dispatchStoreTest(dispatcher, "ai_model_refresh", `{"profile":{"id":"`+saved.ID+`","name":"saved","baseUrl":"`+server.URL+`","apiKey":"`+profiles.MaskedAPIKey+`","model":"m1","temperature":0.3,"contextWindow":1000,"stream":true}}`)
-	var models []string
+	var models provider.ModelList
 	requireStoreTestResponse(t, response, &models)
-	if len(models) != 2 || models[0] != "m1" || models[1] != "m2" {
-		t.Fatalf("models = %v", models)
+	if len(models.Models) != 2 || models.Models[0] != "m1" || models.Models[1] != "m2" {
+		t.Fatalf("models = %v", models.Models)
 	}
 	if got := authorization.Load().(string); got != "Bearer stored-secret" {
 		t.Fatalf("authorization = %q, want resolved stored credential", got)
@@ -82,10 +83,10 @@ func TestAIModelRefreshSendsExplicitKeyVerbatim(t *testing.T) {
 	server := newModelsServer(t, &authorization, &hits)
 
 	response := dispatchStoreTest(dispatcher, "ai_model_refresh", `{"profile":{"id":"","name":"draft","baseUrl":"`+server.URL+`","apiKey":"sk-explicit-new","model":"m1","temperature":0.3,"contextWindow":1000,"stream":true}}`)
-	var models []string
+	var models provider.ModelList
 	requireStoreTestResponse(t, response, &models)
-	if len(models) != 2 {
-		t.Fatalf("models = %v", models)
+	if len(models.Models) != 2 {
+		t.Fatalf("models = %v", models.Models)
 	}
 	if got := authorization.Load().(string); got != "Bearer sk-explicit-new" {
 		t.Fatalf("authorization = %q, want explicit key verbatim", got)
@@ -167,10 +168,10 @@ func TestAIModelRefreshWhitespacePaddedMaskedKey(t *testing.T) {
 	}
 
 	response = dispatchStoreTest(dispatcher, "ai_model_refresh", refreshArgs(saved.ID))
-	var models []string
+	var models provider.ModelList
 	requireStoreTestResponse(t, response, &models)
-	if len(models) != 2 || models[0] != "m1" || models[1] != "m2" {
-		t.Fatalf("models = %v", models)
+	if len(models.Models) != 2 || models.Models[0] != "m1" || models.Models[1] != "m2" {
+		t.Fatalf("models = %v", models.Models)
 	}
 	if got := authorization.Load().(string); got != "Bearer stored-secret" {
 		t.Fatalf("authorization = %q, want resolved stored credential, never the mask", got)

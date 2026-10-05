@@ -17,7 +17,6 @@ import {
   timeoutSecondsFromInput,
 } from "./modelLifecycle";
 import { formatTokens } from "./UsageRing";
-import { fetchProfileModels, testProfileConnection } from "./profileConnect";
 import {
   IconCheck,
   IconClose,
