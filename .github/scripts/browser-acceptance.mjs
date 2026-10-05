@@ -308,15 +308,6 @@ async function wsAcceptance(page, server) {
   await page.navigate(`${server.origin}/healthz`);
   await page.evaluate(`window.__NEXTERM_TRANSPORT__ = 'web'; true`);
   await page.evaluate(`(() => {
-    // 登记页面里的每一条 WebSocket，供 ws-reconnect-replay 主动掐线。
-    //
-    // 为什么必须自己掐：实测（headless Chromium 154，Linux CI 与本机 macOS 一致）
-    // Network.emulateNetworkConditions(offline) 只让**新建**连接失败；一条已建立的
-    // loopback WebSocket 在整个 offline 窗口内不会收到任何 close/error 事件
-    // （readyState 保持 OPEN，服务端 subscribers 计数也不掉），于是传输层永远等不到
-    // onclose、不会重连，reopened 恒为 0 —— 该检查自 0f65688 引入起就从未真正
-    // 跑到过重连路径。这里由 harness 显式 close 已建立的 socket，等价于网络分区对
-    // TCP 连接做的事；offline 仿真则保证重连尝试在窗口内真实失败。
     const registry = window.__nxSockets = [];
     const Orig = window.WebSocket;
     window.WebSocket = function (url, protocols) {

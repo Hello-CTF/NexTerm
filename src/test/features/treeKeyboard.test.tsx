@@ -302,7 +302,6 @@ describe("AssetTree keyboard navigation", () => {
     if (!connect) throw new Error("connect button not found");
     act(() => connect.focus());
 
-    // 行的 Enter 处理不得吞掉按钮上的按键，否则原生 click 无法合成。
     const event = keyDown(connect, "Enter");
     expect(event.defaultPrevented).toBe(false);
     expect(mocks.connect).not.toHaveBeenCalled();
