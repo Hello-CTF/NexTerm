@@ -78,6 +78,16 @@ ON CONFLICT(id) DO UPDATE SET deleted_at=excluded.deleted_at`, id, ids.NowMS());
 	return tx.Commit()
 }
 
+// CredentialDeleteRow 只删除凭据行本身，不记录删除墓碑；同步协议应用远端墓碑时使用，
+// 墓碑修订由调用方经 CredentialTombstonePut 按远端修订单调写入。
+func (s *Store) CredentialDeleteRow(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", id)
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
 func (s *Store) CredentialUsage(ctx context.Context, credID string) ([]AssetRef, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, kind FROM asset
 WHERE cred_id = ? AND deleted_at IS NULL ORDER BY sort, name`, credID)

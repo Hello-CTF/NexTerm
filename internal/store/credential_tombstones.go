@@ -41,7 +41,7 @@ func (s *Store) CredentialTombstoneGet(ctx context.Context, id string) (Credenti
 
 func (s *Store) CredentialTombstonePut(ctx context.Context, id string, deletedAt int64) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO credential_tombstone(id, deleted_at) VALUES(?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at=excluded.deleted_at`, id, deletedAt)
+ON CONFLICT(id) DO UPDATE SET deleted_at=max(deleted_at, excluded.deleted_at)`, id, deletedAt)
 	if err != nil {
 		return dbError(err)
 	}

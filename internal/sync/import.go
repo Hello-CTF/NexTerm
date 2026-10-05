@@ -206,6 +206,22 @@ func (s *Service) importCredentialTombstones(ctx context.Context, tombstones []s
 			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变", tombstone.ID))
 			continue
 		}
+		local, err := s.store.CredentialTombstoneGet(ctx, tombstone.ID)
+		hasLocal := err == nil
+		if err != nil && !isNotFound(err) {
+			report.Refused++
+			report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查凭据 %s 的删除墓碑: %v", tombstone.ID, err))
+			continue
+		}
+		if hasLocal && !force && local.DeletedAt > tombstone.DeletedAt {
+			report.SkippedNewer++
+			report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+				Kind: "credential", ID: tombstone.ID,
+				LocalRevision: local.DeletedAt, RemoteRevision: tombstone.DeletedAt,
+			})
+			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 的本机删除墓碑较新（%d > %d），已忽略较旧的远端墓碑", tombstone.ID, local.DeletedAt, tombstone.DeletedAt))
+			continue
+		}
 		row, err := s.store.CredentialGetRow(ctx, tombstone.ID)
 		exists := err == nil
 		if err != nil && !isNotFound(err) {
@@ -223,7 +239,7 @@ func (s *Service) importCredentialTombstones(ctx context.Context, tombstones []s
 			continue
 		}
 		if exists {
-			if err := s.store.CredentialDelete(ctx, tombstone.ID); err != nil {
+			if err := s.store.CredentialDeleteRow(ctx, tombstone.ID); err != nil {
 				report.Refused++
 				report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 按同步墓碑删除失败: %v", tombstone.ID, err))
 				continue

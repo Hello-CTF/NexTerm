@@ -499,3 +499,64 @@ func TestSnippetSyncRoundTrip(t *testing.T) {
 		t.Fatalf("newer remote snippet lost: %+v", row)
 	}
 }
+
+func TestCredentialTombstoneMergeKeepsMaxRevision(t *testing.T) {
+	ctx := context.Background()
+	target := newTestInstance(t, true)
+	credentialID := ids.New()
+	if err := target.db.CredentialTombstonePut(ctx, credentialID, 200); err != nil {
+		t.Fatal(err)
+	}
+
+	olderRemote := Bundle{Protocol: ProtocolVersion, Origin: "peer-a",
+		CredTombstones: []store.CredentialTombstone{{ID: credentialID, DeletedAt: 100}}}
+	report, err := target.service.Import(ctx, ImportRequest{Bundle: olderRemote})
+	if err != nil || report.SkippedNewer != 1 || report.CredsDeleted != 0 {
+		t.Fatalf("newer local tombstone must win: %+v err=%v", report, err)
+	}
+	if len(report.SkippedNewerDetails) != 1 {
+		t.Fatalf("skip detail missing: %+v", report)
+	}
+	detail := report.SkippedNewerDetails[0]
+	if detail.Kind != "credential" || detail.LocalRevision != 200 || detail.RemoteRevision != 100 || detail.EqualRevision {
+		t.Fatalf("unexpected detail: %+v", detail)
+	}
+	tombstone, err := target.db.CredentialTombstoneGet(ctx, credentialID)
+	if err != nil || tombstone.DeletedAt != 200 {
+		t.Fatalf("tombstone revision regressed: %+v err=%v", tombstone, err)
+	}
+
+	middle := Bundle{Protocol: ProtocolVersion, Origin: "peer-a",
+		Credentials: []CredentialPayload{{ID: credentialID, Name: "shared", Kind: "password", Secret: "mid-secret", UpdatedAt: 150}}}
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: middle})
+	if err != nil || report.SkippedNewer != 1 || report.CredsCreated != 0 || report.CredsUpdated != 0 {
+		t.Fatalf("mid-revision credential must not resurrect: %+v err=%v", report, err)
+	}
+	if _, err := target.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
+		t.Fatal("mid-revision credential bypassed the tombstone")
+	}
+
+	mixed := Bundle{Protocol: ProtocolVersion, Origin: "peer-a",
+		CredTombstones: []store.CredentialTombstone{{ID: credentialID, DeletedAt: 300}, {ID: credentialID, DeletedAt: 250}}}
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: mixed})
+	if err != nil || report.SkippedNewer != 1 {
+		t.Fatalf("out-of-order duplicate tombstones: %+v err=%v", report, err)
+	}
+	tombstone, _ = target.db.CredentialTombstoneGet(ctx, credentialID)
+	if tombstone.DeletedAt != 300 {
+		t.Fatalf("out-of-order tombstone regressed revision: %+v", tombstone)
+	}
+
+	putTestCredential(t, target, credentialID, "shared", "password", "local-secret")
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: olderRemote, Force: true})
+	if err != nil || report.CredsDeleted != 1 {
+		t.Fatalf("force must delete the live row: %+v err=%v", report, err)
+	}
+	if _, err := target.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
+		t.Fatal("force tombstone did not delete the live row")
+	}
+	tombstone, _ = target.db.CredentialTombstoneGet(ctx, credentialID)
+	if tombstone.DeletedAt != 300 {
+		t.Fatalf("force must not shrink the persisted revision: %+v", tombstone)
+	}
+}
