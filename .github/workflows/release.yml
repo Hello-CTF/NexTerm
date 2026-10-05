@@ -48,6 +48,7 @@ jobs:
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
     needs: [precondition, ci-source]
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +139,7 @@ jobs:
   server:
     name: Linux ${{ matrix.arch }} full package with optional restricted runtime
     needs: [precondition, ci-source]
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -223,6 +225,7 @@ jobs:
   publish:
     name: Verify complete release evidence and upload a draft
     needs: [desktop, server]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
