@@ -11,22 +11,26 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 DATA = ROOT / "testdata/parity"
 OUTPUT = DATA / "manifest.json"
 ROLES = {
-    "source.json": "pinned Rust feature and artifact baseline commit",
-    "rust-registry.json": "Rust command/event/stream registry frozen from the removed Rust tree at the pinned commit; parity reads this instead of Rust sources",
-    "inventory.json": "source-derived command/event/stream feature inventory",
-    "go-aliases.json": "optional canonical feature IDs to Go-internal names; no wire compatibility requirement",
+    "source.json": ("pinned Rust feature and artifact baseline commit", "frozen-historical"),
+    "rust-registry.json": (
+        "Rust command/event/stream registry frozen from the removed Rust tree at the pinned commit; parity reads this instead of Rust sources",
+        "frozen-historical",
+    ),
+    "inventory.json": ("source-derived command/event/stream feature inventory", "generated"),
+    "go-aliases.json": ("optional canonical feature IDs to Go-internal names; no wire compatibility requirement", "configuration"),
 }
 
 
 def generate() -> dict:
     source = json.loads((DATA / "source.json").read_text(encoding="utf-8"))
     files = []
-    for name, role in ROLES.items():
+    for name, (role, status) in ROLES.items():
         data = (DATA / name).read_bytes()
         files.append(
             {
                 "path": f"testdata/parity/{name}",
                 "role": role,
+                "status": status,
                 "bytes": len(data),
                 "sha256": hashlib.sha256(data).hexdigest(),
             }

@@ -15,24 +15,28 @@
     {
       "path": "testdata/parity/source.json",
       "role": "pinned Rust feature and artifact baseline commit",
+      "status": "frozen-historical",
       "bytes": 167,
       "sha256": "03ecc791753a47a51ac6e76f7b31d69349247b50749b6d58d054070c895647ed"
     },
     {
       "path": "testdata/parity/rust-registry.json",
       "role": "Rust command/event/stream registry frozen from the removed Rust tree at the pinned commit; parity reads this instead of Rust sources",
+      "status": "frozen-historical",
       "bytes": 31149,
       "sha256": "fbfc6a0294b8311f551083161bc7e098066567201d40e1afc507b445ffeb4493"
     },
     {
       "path": "testdata/parity/inventory.json",
       "role": "source-derived command/event/stream feature inventory",
+      "status": "generated",
       "bytes": 71062,
       "sha256": "0848ca1f661830faecfa069b0513067c17562ff636f6bb474c0f6776a5e22d09"
     },
     {
       "path": "testdata/parity/go-aliases.json",
       "role": "optional canonical feature IDs to Go-internal names; no wire compatibility requirement",
+      "status": "configuration",
       "bytes": 205,
       "sha256": "c0620a09e86dde48c414409f77635d67de19f76b200729e1feaf9cd622dc6804"
     }

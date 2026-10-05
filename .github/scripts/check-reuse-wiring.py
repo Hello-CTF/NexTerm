@@ -26,6 +26,19 @@ HOST_GOOS = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
 HOST_GOARCH = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64"}.get(platform.machine())
 
 
+class CheckCollector:
+    def __init__(self):
+        self.results = []
+
+    def check(self, name, ok, detail=""):
+        self.results.append((name, ok, detail))
+
+
+def run_timed(fn):
+    started = time.monotonic()
+    return fn(), time.monotonic() - started
+
+
 def matrix_substitute(script, values):
     def repl(match):
         expr = match.group(1).strip()
@@ -251,10 +264,8 @@ def normalized_step_if(step):
 
 
 def run_wiring_checks(ci, release, resolver_text, pack_text):
-    results = []
-
-    def check(name, ok, detail=""):
-        results.append((name, ok, detail))
+    collector = CheckCollector()
+    check = collector.check
 
     produced = ci_produced_artifacts(ci)
     required = resolver_required_artifacts(resolver_text)
@@ -369,6 +380,12 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
     check("release-upload resolves releases through the list API, not the draft-blind tags endpoint",
           "releases/tags/" not in UPLOAD_TEXT and "releases?per_page=" in UPLOAD_TEXT,
           "drafts 404 on the tags endpoint; the uploader must discover them via the paginated releases list")
+
+    for name in ("custom-go.json", "rust-official-v0.2.1.json"):
+        document = json.dumps(json.loads((ROOT / ".github/baselines" / name).read_text()))
+        check(f".github/baselines/{name} stays informational-only, never a release gate",
+              "informational" in document and "never" in document and "gate" in document,
+              "the baseline document must keep declaring informational-only, never-gate semantics")
 
     desktop_steps = release["jobs"]["desktop"]["steps"]
     cache_index = next((index for index, step in enumerate(desktop_steps) if step.get("id") == "wails-cache"), None)
@@ -486,14 +503,12 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
                     offenders.append(f"{job_id}/{step.get('name')}")
         check(f"{label} windows bash-syntax steps declare shell: bash", not offenders, f"offenders={offenders}")
 
-    return results
+    return collector.results
 
 
 def run_resolver_checks(resolver_text):
-    results = []
-
-    def check(name, ok, detail=""):
-        results.append((name, ok, detail))
+    collector = CheckCollector()
+    check = collector.check
 
     full_names = sorted(resolver_required_artifacts(resolver_text))
     green = runs_reply(ci_run_document("completed", "success"))
@@ -538,7 +553,7 @@ def run_resolver_checks(resolver_text):
               result.returncode == 0 and "reused=false" in result.stdout and "artifact-run-id=999" in result.stdout
               and "missing reusable artifacts" in result.stderr,
               f"stdout={result.stdout!r} stderr={result.stderr!r}")
-    return results
+    return collector.results
 
 
 def path_without_go():
@@ -546,6 +561,18 @@ def path_without_go():
         entry for entry in os.environ.get("PATH", "").split(os.pathsep)
         if entry and not (Path(entry) / "go").exists()
     )
+
+
+def env_without_go(shim_dir):
+    env = dict(os.environ)
+    env["PATH"] = path_without_go()
+    if shutil.which("node", path=env["PATH"]) is None:
+        node = shutil.which("node")
+        if node is None:
+            raise AssertionError("node is required for the desktop evidence checks")
+        (shim_dir / "node").symlink_to(node)
+        env["PATH"] = f"{shim_dir}{os.pathsep}{env['PATH']}"
+    return env
 
 
 def build_stub_desktop_binary(directory):
@@ -559,10 +586,8 @@ def build_stub_desktop_binary(directory):
 
 
 def run_evidence_checks(release):
-    results = []
-
-    def check(name, ok, detail=""):
-        results.append((name, ok, detail))
+    collector = CheckCollector()
+    check = collector.check
 
     install_step = find_step(release["jobs"]["desktop"], "Install the pinned Wails CLI")
     script = str(install_step["run"]).replace("${{ steps.wails-cache.outputs.cache-hit }}", "true")
@@ -593,13 +618,24 @@ def run_evidence_checks(release):
           and 'assertion("embedded-index"' in build_text and 'assertion("embedded-script"' in build_text,
           "build.mjs no longer wires embedded dist assertions into the desktop release report")
 
+    size_rule_markers = (
+        "rust.informational = true",
+        'rust.rule = "historical reference only; never a pass/fail gate"',
+        "custom.informational = true",
+        'custom.rule = "full-Eino size impact reporting only; never a pass/fail gate"',
+        "stay informational and never gate release",
+    )
+    missing_markers = [marker for marker in size_rule_markers if marker not in build_text]
+    check("build.mjs keeps Rust and custom-Go size comparisons informational, never a gate",
+          not missing_markers, f"missing markers: {missing_markers}")
+
     if HOST_GOOS is None or HOST_GOARCH is None:
         check("desktop evidence checks require a darwin/linux amd64/arm64 host", False,
               f"host={platform.system()}/{platform.machine()}")
-        return results
+        return collector.results
     if shutil.which("go") is None:
         check("desktop evidence checks require a Go toolchain", False, "go is not on PATH")
-        return results
+        return collector.results
 
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
@@ -612,8 +648,7 @@ def run_evidence_checks(release):
                f"--os={HOST_GOOS}", f"--arch={HOST_GOARCH}", f"--cgo={cgo}",
                f"--file={binary}", "--require-evidence"]
         report_path = Path(f"{binary}.artifact.json")
-        no_go_env = dict(os.environ)
-        no_go_env["PATH"] = path_without_go()
+        no_go_env = env_without_go(base)
         closed = subprocess.run(cli, cwd=ROOT, env=no_go_env, capture_output=True, text=True, check=False)
         closed_assertions = {}
         if report_path.exists():
@@ -661,24 +696,22 @@ def run_evidence_checks(release):
         accepted = subprocess.run(verifier, cwd=ROOT, capture_output=True, text=True, check=False)
         check("verify-reused-binary accepts the byte-identical manifest",
               accepted.returncode == 0, f"rc={accepted.returncode} stderr={accepted.stderr!r}")
-    return results
+    return collector.results
 
 
 def run_upload_checks():
-    results = []
-
-    def check(name, ok, detail=""):
-        results.append((name, ok, detail))
+    collector = CheckCollector()
+    check = collector.check
 
     if not UPLOAD_TEST.exists():
         check("release-upload stub tests exist", False, str(UPLOAD_TEST))
-        return results
+        return collector.results
     result = subprocess.run(["node", "--test", str(UPLOAD_TEST)], cwd=ROOT,
                             capture_output=True, text=True, check=False)
     ok = result.returncode == 0
     check("release-upload stub tests pass", ok,
           "" if ok else f"rc={result.returncode} stdout tail={result.stdout[-400:]!r} stderr tail={result.stderr[-400:]!r}")
-    return results
+    return collector.results
 
 
 def run_checks(ci, release, resolver_text, pack_text, include_resolver=True, include_evidence=True):
@@ -702,17 +735,25 @@ def mutate_native_download_path(ci, release, pack_text):
         step["with"]["path"] = "target/go-build"
 
 
-def mutate_precondition_if(ci, release, pack_text):
-    release["jobs"]["precondition"].pop("if", None)
-
-
-def mutate_packaging_gate_if(ci, release, pack_text):
-    for job_key in ("desktop", "server", "publish"):
+def pop_job_if(release, *job_keys):
+    for job_key in job_keys:
         release["jobs"][job_key].pop("if", None)
 
 
+def pop_step_if(release, job_key, step_name_part):
+    find_step(release["jobs"][job_key], step_name_part).pop("if", None)
+
+
+def mutate_precondition_if(ci, release, pack_text):
+    pop_job_if(release, "precondition")
+
+
+def mutate_packaging_gate_if(ci, release, pack_text):
+    pop_job_if(release, "desktop", "server", "publish")
+
+
 def mutate_publish_gate_if(ci, release, pack_text):
-    release["jobs"]["publish"].pop("if", None)
+    pop_job_if(release, "publish")
 
 
 def mutate_windows_shell(ci, release, pack_text):
@@ -814,11 +855,11 @@ def mutate_duplicate_pack_report(ci, release, pack_text):
 
 
 def mutate_e2e_stage_if(ci, release, pack_text):
-    find_step(release["jobs"]["server"], "Stage and verify the reused CI e2e report").pop("if", None)
+    pop_step_if(release, "server", "Stage and verify the reused CI e2e report")
 
 
 def mutate_e2e_exercise_if(ci, release, pack_text):
-    find_step(release["jobs"]["server"], "Exercise the packaged server before archiving").pop("if", None)
+    pop_step_if(release, "server", "Exercise the packaged server before archiving")
 
 
 def mutate_restore_xargs_upload(ci, release, pack_text):
@@ -892,24 +933,8 @@ NEGATIVE_CONTROLS = [
 ]
 
 
-def main():
-    started = time.monotonic()
-    wiring = run_wiring_checks(CI, RELEASE, RESOLVER_TEXT, PACK_TEXT)
-    wiring_elapsed = time.monotonic() - started
-    resolver_started = time.monotonic()
-    resolver = run_resolver_checks(RESOLVER_TEXT)
-    resolver_elapsed = time.monotonic() - resolver_started
-    evidence_started = time.monotonic()
-    evidence = run_evidence_checks(RELEASE)
-    evidence_elapsed = time.monotonic() - evidence_started
-    upload_started = time.monotonic()
-    upload = run_upload_checks()
-    upload_elapsed = time.monotonic() - upload_started
-    results = wiring + resolver + upload + evidence
-    for name, ok, detail in results:
-        print(f"{'ok' if ok else 'FAIL'} - {name}" + (f": {detail}" if not ok else ""))
-    failures = [f"{name}: {detail}" for name, ok, detail in results if not ok]
-    controls_started = time.monotonic()
+def run_negative_controls():
+    missed = []
     for label, mutate, expected, needs_resolver in NEGATIVE_CONTROLS:
         ci_copy = copy.deepcopy(CI)
         release_copy = copy.deepcopy(RELEASE)
@@ -919,8 +944,22 @@ def main():
         caught = any(expected in name and not ok for name, ok, _ in mutated)
         print(f"{'ok' if caught else 'FAIL'} - negative control: {label}")
         if not caught:
-            failures.append(f"negative control: {label}: mutation not detected by {expected!r}")
-    controls_elapsed = time.monotonic() - controls_started
+            missed.append(f"negative control: {label}: mutation not detected by {expected!r}")
+    return missed
+
+
+def main():
+    started = time.monotonic()
+    wiring, wiring_elapsed = run_timed(lambda: run_wiring_checks(CI, RELEASE, RESOLVER_TEXT, PACK_TEXT))
+    resolver, resolver_elapsed = run_timed(lambda: run_resolver_checks(RESOLVER_TEXT))
+    evidence, evidence_elapsed = run_timed(lambda: run_evidence_checks(RELEASE))
+    upload, upload_elapsed = run_timed(run_upload_checks)
+    results = wiring + resolver + upload + evidence
+    for name, ok, detail in results:
+        print(f"{'ok' if ok else 'FAIL'} - {name}" + (f": {detail}" if not ok else ""))
+    failures = [f"{name}: {detail}" for name, ok, detail in results if not ok]
+    controls, controls_elapsed = run_timed(run_negative_controls)
+    failures += controls
     if failures:
         print(f"\n{len(failures)} check(s) failed")
         sys.exit(1)
