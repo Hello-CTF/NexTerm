@@ -332,7 +332,7 @@ func (m *Manager) emitToolResult(state *runState, message *schema.Message) error
 	text, cut := takeoverPrefix(result.Text, 64<<10)
 	result.Truncated = result.Truncated || cut
 	summary, _ := takeoverPrefix(result.Text, 400)
-	return state.emit(state.ctx, agent.Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summary, Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode})
+	return state.emit(state.ctx, agent.Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summary, Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic})
 }
 
 func (m *Manager) handleInterrupt(state *runState, contexts []*adk.InterruptCtx) error {
@@ -394,27 +394,35 @@ type TakeoverDoneArgs struct {
 }
 
 func (e *actionExecution) tools() ([]tool.BaseTool, error) {
-	readScreen, err := utils.InferTool("read_screen", "读取执行动作时的最新终端屏幕。", func(context.Context, tools.EmptyArgs) (tools.Output, error) {
-		return e.readScreen()
+	readScreen, err := utils.InferTool("read_screen", "读取执行动作时的最新终端屏幕。", func(ctx context.Context, _ tools.EmptyArgs) (tools.Output, error) {
+		return tools.Guarded(ctx, "read_screen", func() (tools.Output, error) {
+			return e.readScreen()
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
 	sendKeys, err := utils.InferTool("send_keys", "发送按键；enter 或 <enter> 会真实提交命令。", func(ctx context.Context, input tools.SendKeysArgs) (tools.Output, error) {
-		return e.sendKeys(ctx, input)
+		return tools.Guarded(ctx, "send_keys", func() (tools.Output, error) {
+			return e.sendKeys(ctx, input)
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
 	waitFor, err := utils.InferTool("wait_for", "等待终端最近输出匹配正则。", func(ctx context.Context, input tools.WaitForArgs) (tools.Output, error) {
-		output, err := e.manager.waitFor(ctx, e.state.args.TabID, input.Pattern, input.TimeoutMS)
-		return output, err
+		return tools.Guarded(ctx, "wait_for", func() (tools.Output, error) {
+			output, err := e.manager.waitFor(ctx, e.state.args.TabID, input.Pattern, input.TimeoutMS)
+			return output, err
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
-	done, err := utils.InferTool("done", "结束接管并报告任务是否成功。", func(_ context.Context, input TakeoverDoneArgs) (tools.Output, error) {
-		return tools.Output{OK: input.Success, Text: input.Summary, ExitCode: 0, Plan: input.Summary}, nil
+	done, err := utils.InferTool("done", "结束接管并报告任务是否成功。", func(ctx context.Context, input TakeoverDoneArgs) (tools.Output, error) {
+		return tools.Guarded(ctx, "done", func() (tools.Output, error) {
+			return tools.Output{OK: input.Success, Text: input.Summary, ExitCode: 0, Plan: input.Summary}, nil
+		})
 	})
 	if err != nil {
 		return nil, err

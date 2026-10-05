@@ -114,6 +114,10 @@ func (s *Scheduler) finish(ctx context.Context, job Job, executionErr error, now
 		job.ConsecutiveFailures = 0
 		job.RetryAt = time.Time{}
 		job.CircuitOpenUntil = time.Time{}
+		if OneShot(job.Schedule) {
+			job.Enabled = false
+			job.NextRunAt = time.Time{}
+		}
 	} else {
 		job.LastError = boundedError(executionErr)
 		job.ConsecutiveFailures++

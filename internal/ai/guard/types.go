@@ -54,6 +54,7 @@ const (
 	KindProcess      Kind = "process"
 	KindDBWrite      Kind = "db_write"
 	KindShellPipe    Kind = "shell_pipe"
+	KindSchedule     Kind = "schedule"
 	KindPermission   Kind = "perm"
 	KindDanger       Kind = "danger"
 )

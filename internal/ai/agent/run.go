@@ -274,7 +274,7 @@ func (r *Runner) initializeEino(current *job) error {
 		}
 		subagents = &cloned
 	}
-	execution := &tools.Execution{JobID: current.id, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
+	execution := &tools.Execution{JobID: current.id, ConversationID: current.args.ConversationID, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
 		if event.Kind == "" {
 			return
 		}
@@ -575,7 +575,7 @@ func mapSubagentEvent(parentCallID string, depth int, event subagent.Event) Even
 		mapped.Type, mapped.ID, mapped.Name = "subagentToolCall", event.CallID, event.Name
 	case subagent.EventToolResult:
 		mapped.Type, mapped.ID, mapped.OK, mapped.Summary, mapped.Text = "subagentToolResult", event.CallID, event.OK, event.Summary, event.Text
-		mapped.Truncated, mapped.ExitCode = event.Truncated, event.ExitCode
+		mapped.Truncated, mapped.ExitCode, mapped.Panic = event.Truncated, event.ExitCode, event.Panic
 	case subagent.EventDone:
 		mapped.Type, mapped.Status, mapped.Summary, mapped.Message = "subagentDone", string(event.Status), event.Summary, event.Err
 	}
@@ -594,7 +594,7 @@ func (r *Runner) emitToolResult(current *job, message *schema.Message) error {
 	}
 	text, cut := prefixBytes(result.Text, 64<<10)
 	result.Truncated = result.Truncated || cut
-	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode}); err != nil {
+	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic}); err != nil {
 		return err
 	}
 	if result.Todos != nil {

@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestRegistryExactly21Tools(t *testing.T) {
+func TestRegistryExactly22Tools(t *testing.T) {
 	t.Parallel()
 	names := Names()
-	if len(names) != 21 {
+	if len(names) != 22 {
 		t.Fatalf("tool count=%d: %v", len(names), names)
 	}
 	seen := map[string]bool{}
@@ -24,7 +24,7 @@ func TestRegistryExactly21Tools(t *testing.T) {
 			t.Errorf("%s not dispatchable", name)
 		}
 	}
-	if !PlanAllowed("redis_scan") || PlanAllowed("exec_commands") || PlanAllowed("write_file") {
+	if !PlanAllowed("redis_scan") || PlanAllowed("exec_commands") || PlanAllowed("write_file") || PlanAllowed(ReminderTool) {
 		t.Fatal("incorrect plan policy")
 	}
 }

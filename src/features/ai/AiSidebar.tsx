@@ -1453,7 +1453,8 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
           {item.display}
         </span>
-        <span className="sr-only">{running ? "工具执行中" : item.ok ? "工具执行成功" : "工具执行失败"}</span>
+        <span className="sr-only">{running ? "工具执行中" : item.panic ? "工具执行崩溃" : item.ok ? "工具执行成功" : "工具执行失败"}</span>
+        {item.panic && !running ? <span className="nx-badge nx-badge-red">崩溃</span> : null}
         {running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />
         ) : item.ok ? (
@@ -1537,6 +1538,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
                 <IconXCircle size={10} className="shrink-0 text-red-300" />
               )}
               <span className="shrink-0 font-mono text-neutral-400">{tool.name || "tool"}</span>
+              {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">崩溃</span> : null}
               {tool.summary ? (
                 <span className="min-w-0 flex-1 truncate text-neutral-600" title={tool.summary}>
                   {tool.summary}

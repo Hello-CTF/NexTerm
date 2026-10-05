@@ -80,7 +80,29 @@ describe("subagent timeline folding", () => {
       summary: "child done",
     });
     expect(timeline?.tools).toEqual([
-      { callId: "c1", name: "list_assets", status: "ok", summary: "1 asset" },
+      { callId: "c1", name: "list_assets", status: "ok", summary: "1 asset", panic: false },
+    ]);
+  });
+
+  it("marks panicked subagent tools with the crash flag like main tools", () => {
+    const { s, frames } = stream();
+    s.beginRun(1);
+    spawnCard(s, 1, "sp-1", 1);
+    s.pushEvent(1, subagentEvent({ type: "subagentToolCall", id: "c1", name: "list_assets", seq: 2 }));
+    s.pushEvent(
+      1,
+      subagentEvent({ type: "subagentToolResult", id: "c1", ok: false, summary: "工具 list_assets 执行崩溃: 后端不可用", panic: true, seq: 3 }),
+    );
+    s.pushEvent(1, subagentEvent({ type: "subagentToolCall", id: "c2", name: "read_file", seq: 4 }));
+    s.pushEvent(
+      1,
+      subagentEvent({ type: "subagentToolResult", id: "c2", ok: false, summary: "文件不存在", panic: false, seq: 5 }),
+    );
+    frames.runFrame();
+    const tools = timelineOf(s, 1, "sp-1")?.tools;
+    expect(tools).toEqual([
+      { callId: "c1", name: "list_assets", status: "error", summary: "工具 list_assets 执行崩溃: 后端不可用", panic: true },
+      { callId: "c2", name: "read_file", status: "error", summary: "文件不存在", panic: false },
     ]);
   });
 

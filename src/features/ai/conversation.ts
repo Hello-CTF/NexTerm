@@ -21,6 +21,7 @@ export interface SubagentToolEntry {
   name: string;
   status: "running" | "ok" | "error";
   summary?: string;
+  panic?: boolean;
 }
 
 export interface SubagentTimeline {
@@ -46,6 +47,7 @@ export type ChatItem =
       text?: string;
       ok?: boolean;
       exitCode?: number | null;
+      panic?: boolean;
       subagent?: SubagentTimeline;
     })
   | (ItemBase & { role: "diff"; path: string; before: string; after: string })
@@ -502,6 +504,7 @@ export function applyAiEvent(
           text: textOf(ev),
           ok: ev.ok as boolean,
           exitCode: ev.exitCode as number | null,
+          panic: ev.panic === true,
         }),
       );
     }
@@ -525,6 +528,7 @@ export function applyAiEvent(
         const patch = {
           status: (ev.ok ? "ok" : "error") as "ok" | "error",
           summary: (ev.summary as string) ?? "",
+          panic: ev.panic === true,
         };
         const tools = timeline.tools.some((tool) => tool.callId === callId)
           ? timeline.tools.map((tool) => (tool.callId === callId ? { ...tool, ...patch } : tool))

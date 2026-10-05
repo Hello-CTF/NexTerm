@@ -8,6 +8,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	aicontext "github.com/ProbiusOfficial/NexTerm/internal/ai/context"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/cron"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
@@ -38,9 +39,15 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 		return err
 	}
 
+	cronScheduler, cronExecutor, err := composeCronScheduler(ctx, services, cron.Options{})
+	if err != nil {
+		return err
+	}
+
 	toolsDeps := tools.WithSession(tools.Dependencies{}, services.Sessions)
 	toolsDeps = tools.WithStore(toolsDeps, services.Store, services.Database)
 	toolsDeps.Outcome = outcomeLedger
+	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler}
 	if services.Docker != nil {
 		toolsDeps = tools.WithDocker(toolsDeps, services.Docker, "")
 	}
@@ -94,11 +101,8 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 	services.Agent = runner
 	services.Takeover = takeoverManager
 
-	cronRuntime, err := composeCronRuntime(ctx, services)
-	if err != nil {
-		return err
-	}
-	services.cron = cronRuntime
+	cronExecutor.Runner = services.Agent
+	services.cron = &cronRuntime{scheduler: cronScheduler, conversations: services.Store, profiles: services.Profiles}
 
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)
 	return nil

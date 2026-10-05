@@ -63,19 +63,15 @@ type profileLookup interface {
 	Profile(id string) (profiles.Profile, bool)
 }
 
-func composeCronRuntime(ctx context.Context, services *ProductionServices) (*cronRuntime, error) {
-	return newCronRuntime(ctx, services, cron.Options{})
-}
-
-func newCronRuntime(ctx context.Context, services *ProductionServices, options cron.Options) (*cronRuntime, error) {
-	if services.Store == nil || services.Agent == nil {
-		return nil, errors.New("cron runtime requires store and agent services")
+func composeCronScheduler(ctx context.Context, services *ProductionServices, options cron.Options) (*cron.Scheduler, *cron.AgentExecutor, error) {
+	if services.Store == nil {
+		return nil, nil, errors.New("cron runtime requires store and agent services")
 	}
 	cronStore, err := cron.NewSQLiteStore(ctx, services.Store.DB())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	executor := &cron.AgentExecutor{Runner: services.Agent, ScopeFor: scopeForConversation(services.Store)}
+	executor := &cron.AgentExecutor{ScopeFor: scopeForConversation(services.Store)}
 	if options.OnError == nil {
 		options.OnError = func(err error) {
 			slog.Warn("cron scheduler asynchronous failure", "error", err)
@@ -83,9 +79,33 @@ func newCronRuntime(ctx context.Context, services *ProductionServices, options c
 	}
 	scheduler, err := cron.NewScheduler(cronStore, executor, options)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &cronRuntime{scheduler: scheduler, conversations: services.Store, profiles: services.Profiles}, nil
+	return scheduler, executor, nil
+}
+
+type reminderScheduler struct{ scheduler *cron.Scheduler }
+
+func (s reminderScheduler) ScheduleReminder(ctx context.Context, conversationID string, reminder tools.Reminder) (tools.ScheduledReminder, error) {
+	job, err := s.scheduler.Register(ctx, cron.Registration{
+		SessionID: conversationID,
+		Name:      reminderName(reminder.Message),
+		Prompt:    reminder.Message,
+		Schedule:  cron.AtExpression(reminder.At),
+		Timezone:  "UTC",
+	})
+	if err != nil {
+		return tools.ScheduledReminder{}, err
+	}
+	return tools.ScheduledReminder{ID: job.ID, At: job.NextRunAt}, nil
+}
+
+func reminderName(message string) string {
+	runes := []rune(message)
+	if len(runes) > 40 {
+		message = string(runes[:40]) + "…"
+	}
+	return "提醒: " + message
 }
 
 func cronModule(runtime *cronRuntime) Module {
