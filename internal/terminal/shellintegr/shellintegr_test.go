@@ -2,6 +2,7 @@ package shellintegr
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -57,6 +58,51 @@ func TestWrapBash(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Errorf("bash wrapper missing %q:\n%s", want, content)
 		}
+	}
+}
+
+// TestBashWrapperPromptCommandBranches pins the two-branch PROMPT_COMMAND
+// injection: bash >= 5.1 executes PROMPT_COMMAND as an array, older releases
+// only run element 0, so the legacy branch must keep scalar concatenation.
+func TestBashWrapperPromptCommandBranches(t *testing.T) {
+	for _, want := range []string{
+		`BASH_VERSINFO[0] > 5`,
+		`PROMPT_COMMAND=(__nexterm_osc7 ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"})`,
+		`PROMPT_COMMAND="__nexterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"`,
+	} {
+		if !strings.Contains(bashWrapper, want) {
+			t.Errorf("bash wrapper missing branch line %q:\n%s", want, bashWrapper)
+		}
+	}
+}
+
+// TestBashScalarPromptCommandConcat exercises the exact legacy-branch idiom
+// on any bash: the user's scalar PROMPT_COMMAND must survive concatenation
+// verbatim, and an unset one must not leave a trailing separator.
+func TestBashScalarPromptCommandConcat(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not installed")
+	}
+	tests := []struct {
+		name  string
+		setup string
+		want  string
+	}{
+		{"existing command preserved", `PROMPT_COMMAND='printf USER-RAN'; `, "__nexterm_osc7;printf USER-RAN"},
+		{"unset stays bare", "", "__nexterm_osc7"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := tt.setup + `PROMPT_COMMAND="__nexterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; printf '%s' "$PROMPT_COMMAND"`
+			out, err := exec.Command(bash, "-c", script).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != tt.want {
+				t.Fatalf("PROMPT_COMMAND = %q; want %q", out, tt.want)
+			}
+		})
 	}
 }
 

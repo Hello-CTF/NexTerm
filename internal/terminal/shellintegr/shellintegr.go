@@ -110,7 +110,11 @@ __nexterm_osc7() {
     out=${out// /%20}
     printf '\033]7;file://%s%s\033\\' "$__nexterm_host" "$out"
 }
-PROMPT_COMMAND=(__nexterm_osc7 ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"})
+if ((BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1))); then
+    PROMPT_COMMAND=(__nexterm_osc7 ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"})
+else
+    PROMPT_COMMAND="__nexterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
 `
 
 const zshIntegration = `__nexterm_host=${HOST:-$(hostname)}
