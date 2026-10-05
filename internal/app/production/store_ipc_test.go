@@ -25,7 +25,7 @@ func TestStoreCommandsProjectDTOsAndPreserveTriStatePatches(t *testing.T) {
 	for _, command := range []string{
 		"layout_get", "layout_put", "asset_list", "asset_get", "asset_create", "asset_update", "asset_delete", "asset_search",
 		"asset_save_key_file", "asset_read_key_file", "group_list", "group_create", "group_update", "group_delete",
-		"snippet_list", "snippet_create", "snippet_update", "snippet_delete", "audit_query", "known_host_list", "known_host_accept", "known_host_remove",
+		"snippet_list", "snippet_create", "snippet_update", "snippet_delete", "audit_query", "audit_count", "known_host_list", "known_host_accept", "known_host_remove",
 	} {
 		if !slices.Contains(dispatcher.Commands(), command) {
 			t.Fatalf("missing %s in %v", command, dispatcher.Commands())
