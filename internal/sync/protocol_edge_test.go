@@ -180,21 +180,27 @@ func TestClockSkewFollowsRevisionWithoutCorrection(t *testing.T) {
 
 func TestCredentialTombstoneRoundTripAndAudit(t *testing.T) {
 	ctx := context.Background()
+	source := newTestInstance(t, true)
 	target := newTestInstance(t, true)
 	credentialID := ids.New()
-	putTestCredential(t, target, credentialID, "local", "password", "local-secret")
-	target.vault.Lock()
+	putTestCredential(t, source, credentialID, "shared", "password", "source-secret")
+	putTestCredential(t, target, credentialID, "shared", "password", "target-secret")
 
-	deletedAt := ids.NowMS() + 1000
-	tombstones := []CredentialPayload{{ID: credentialID, Name: "local", Kind: "password", DeletedAt: &deletedAt}}
-	report, err := target.service.Import(ctx, ImportRequest{Bundle: Bundle{
-		Protocol: ProtocolVersion, Origin: "tombstone-peer", Credentials: tombstones,
-	}})
-	if err != nil {
-		t.Fatalf("tombstone-only bundle must not require an unlocked vault: %v", err)
+	if err := source.db.CredentialDelete(ctx, credentialID); err != nil {
+		t.Fatal(err)
 	}
-	if report.CredsDeleted != 1 {
-		t.Fatalf("tombstone was not applied: %+v", report)
+	bundle, err := source.service.Export(ctx, ExportRequest{})
+	if err != nil || len(bundle.CredTombstones) != 1 {
+		t.Fatalf("export after real delete bundle=%+v err=%v", bundle, err)
+	}
+	tombstone := bundle.CredTombstones[0]
+	if tombstone.ID != credentialID || tombstone.DeletedAt <= 0 {
+		t.Fatalf("exported tombstone=%+v", tombstone)
+	}
+
+	report, err := target.service.Import(ctx, ImportRequest{Bundle: bundle})
+	if err != nil || report.CredsDeleted != 1 {
+		t.Fatalf("tombstone import report=%+v err=%v", report, err)
 	}
 	if _, err := target.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
 		t.Fatalf("credential survived its tombstone: %v", err)
@@ -203,35 +209,131 @@ func TestCredentialTombstoneRoundTripAndAudit(t *testing.T) {
 		t.Fatalf("deletion audit missing from warnings: %v", report.Warnings)
 	}
 
-	report, err = target.service.Import(ctx, ImportRequest{Bundle: Bundle{
-		Protocol: ProtocolVersion, Origin: "tombstone-peer", Credentials: tombstones,
-	}})
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: bundle})
 	if err != nil || report.CredsDeleted != 0 || len(report.Warnings) != 0 {
 		t.Fatalf("tombstone replay must be a silent no-op: %+v err=%v", report, err)
 	}
 
-	newer := newTestInstance(t, true)
-	putTestCredential(t, newer, credentialID, "local", "password", "local-secret")
+	stale := Bundle{Protocol: ProtocolVersion, Origin: "legacy-peer",
+		Credentials: []CredentialPayload{{ID: credentialID, Name: "shared", Kind: "password", Secret: "stale-secret"}}}
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: stale})
+	if err != nil || report.SkippedNewer != 1 || report.CredsCreated != 0 || report.CredsUpdated != 0 {
+		t.Fatalf("stale credential must not resurrect: %+v err=%v", report, err)
+	}
+	if len(report.SkippedNewerDetails) != 1 || report.SkippedNewerDetails[0].Kind != "credential" {
+		t.Fatalf("credential skip detail missing: %+v", report)
+	}
+	if _, err := target.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
+		t.Fatal("stale credential bypassed the tombstone")
+	}
+
+	newer := Bundle{Protocol: ProtocolVersion, Origin: "legacy-peer",
+		Credentials: []CredentialPayload{{ID: credentialID, Name: "shared", Kind: "password", Secret: "newer-secret", UpdatedAt: tombstone.DeletedAt + 100}}}
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: newer})
+	if err != nil || report.CredsCreated != 1 {
+		t.Fatalf("newer credential should recreate: %+v err=%v", report, err)
+	}
+	if _, err := target.db.CredentialTombstoneGet(ctx, credentialID); !isNotFound(err) {
+		t.Fatalf("tombstone should be cleared after recreation: %v", err)
+	}
+	row, err := target.db.CredentialGetRow(ctx, credentialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plaintext, err := target.vault.DecryptCredentialString(ctx, row); err != nil || plaintext != "newer-secret" {
+		t.Fatalf("recreated plaintext=%q err=%v", plaintext, err)
+	}
+
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: stale, Force: true})
+	if err != nil || report.CredsUpdated != 1 {
+		t.Fatalf("force must override the tombstone gate: %+v err=%v", report, err)
+	}
+	row, _ = target.db.CredentialGetRow(ctx, credentialID)
+	if plaintext, _ := target.vault.DecryptCredentialString(ctx, row); plaintext != "stale-secret" {
+		t.Fatalf("forced import plaintext=%q", plaintext)
+	}
+}
+
+func TestCredentialTombstoneSkipsNewerLocalAndWorksLocked(t *testing.T) {
+	ctx := context.Background()
+	target := newTestInstance(t, true)
+	credentialID := ids.New()
+	putTestCredential(t, target, credentialID, "local", "password", "local-secret")
 	stale := int64(1)
-	staleBundle := Bundle{Protocol: ProtocolVersion, Origin: "tombstone-peer",
-		Credentials: []CredentialPayload{{ID: credentialID, DeletedAt: &stale}}}
-	report, err = newer.service.Import(ctx, ImportRequest{Bundle: staleBundle})
+	tombstoneBundle := Bundle{Protocol: ProtocolVersion, Origin: "tombstone-peer",
+		CredTombstones: []store.CredentialTombstone{{ID: credentialID, DeletedAt: stale}}}
+	report, err := target.service.Import(ctx, ImportRequest{Bundle: tombstoneBundle})
 	if err != nil || report.SkippedNewer != 1 || report.CredsDeleted != 0 {
 		t.Fatalf("stale tombstone must not delete a newer credential: %+v err=%v", report, err)
 	}
 	if len(report.SkippedNewerDetails) != 1 || report.SkippedNewerDetails[0].Kind != "credential" {
 		t.Fatalf("credential skip detail missing: %+v", report)
 	}
-	if _, err := newer.db.CredentialGetRow(ctx, credentialID); err != nil {
+	if _, err := target.db.CredentialGetRow(ctx, credentialID); err != nil {
 		t.Fatalf("newer credential was deleted by a stale tombstone: %v", err)
 	}
 
-	report, err = newer.service.Import(ctx, ImportRequest{Bundle: staleBundle, Force: true})
+	locked := newTestInstance(t, true)
+	putTestCredential(t, locked, credentialID, "local", "password", "locked-secret")
+	locked.vault.Lock()
+	report, err = locked.service.Import(ctx, ImportRequest{Bundle: Bundle{
+		Protocol: ProtocolVersion, Origin: "tombstone-peer",
+		CredTombstones: []store.CredentialTombstone{{ID: credentialID, DeletedAt: ids.NowMS() + 1000}},
+	}})
+	if err != nil {
+		t.Fatalf("tombstone-only bundle must not require an unlocked vault: %v", err)
+	}
+	if report.CredsDeleted != 1 {
+		t.Fatalf("locked-vault tombstone not applied: %+v", report)
+	}
+	if _, err := locked.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
+		t.Fatalf("locked-vault tombstone did not delete: %v", err)
+	}
+
+	report, err = target.service.Import(ctx, ImportRequest{Bundle: tombstoneBundle, Force: true})
 	if err != nil || report.CredsDeleted != 1 {
 		t.Fatalf("force must apply the tombstone: %+v err=%v", report, err)
 	}
-	if _, err := newer.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
+	if _, err := target.db.CredentialGetRow(ctx, credentialID); !isNotFound(err) {
 		t.Fatalf("forced tombstone did not delete: %v", err)
+	}
+}
+
+type legacyCredentialPayload struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Secret string `json:"secret"`
+}
+
+type legacyBundle struct {
+	Protocol    int                       `json:"protocol"`
+	Origin      string                    `json:"origin"`
+	ExportedAt  int64                     `json:"exportedAt"`
+	Groups      []GroupPayload            `json:"groups"`
+	Assets      []AssetPayload            `json:"assets"`
+	Credentials []legacyCredentialPayload `json:"creds"`
+}
+
+// legacyImportCredentials 复刻 rwig 旧端 importCredentials 的实际行为：
+// 没有墓碑分支，对 creds 数组逐项重加密写入（空 Secret 也会覆盖同 ID 现有秘密）。
+func legacyImportCredentials(t *testing.T, instance *testInstance, credentials []legacyCredentialPayload) {
+	t.Helper()
+	ctx := context.Background()
+	for _, credential := range credentials {
+		if strings.TrimSpace(credential.ID) == "" {
+			continue
+		}
+		nonce, blob, err := instance.vault.EncryptCredential(ctx, credential.Secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := instance.db.CredentialPut(ctx, store.CredentialInput{
+			ID: credential.ID, Name: credential.Name, Kind: credential.Kind,
+			Nonce: nonce, Blob: blob, KEKHint: instance.vault.KEKHint(),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -239,33 +341,18 @@ func TestOldPeersIgnoreNewWireFields(t *testing.T) {
 	if ProtocolVersion != 1 {
 		t.Fatal("ProtocolVersion 必须保持 1")
 	}
-	type legacyCredential struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Kind   string `json:"kind"`
-		Secret string `json:"secret"`
-	}
-	type legacyBundle struct {
-		Protocol    int                `json:"protocol"`
-		Origin      string             `json:"origin"`
-		ExportedAt  int64              `json:"exportedAt"`
-		Groups      []GroupPayload     `json:"groups"`
-		Assets      []AssetPayload     `json:"assets"`
-		Credentials []legacyCredential `json:"creds"`
-	}
-
-	deletedAt := int64(100)
 	modern := Bundle{
 		Protocol: ProtocolVersion, Origin: "modern-peer", ExportedAt: 1,
-		Credentials: []CredentialPayload{{ID: ids.New(), Name: "gone", Kind: "password", DeletedAt: &deletedAt}},
-		Snippets:    []SnippetPayload{{ID: ids.New(), Name: "snippet", Body: "body", CreatedAt: 1, UpdatedAt: 2}},
+		Credentials:    []CredentialPayload{{ID: ids.New(), Name: "real", Kind: "password", Secret: "real-secret", UpdatedAt: 5}},
+		CredTombstones: []store.CredentialTombstone{{ID: ids.New(), DeletedAt: 100}},
+		Snippets:       []SnippetPayload{{ID: ids.New(), Name: "snippet", Body: "body", CreatedAt: 1, UpdatedAt: 2}},
 	}
 	encoded, err := json.Marshal(modern)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wire := string(encoded)
-	if !strings.Contains(wire, "deletedAt") || !strings.Contains(wire, "snippets") {
+	if !strings.Contains(wire, "credTombstones") || !strings.Contains(wire, "snippets") || !strings.Contains(wire, "updatedAt") {
 		t.Fatalf("new fields missing on the wire: %s", wire)
 	}
 	var legacy legacyBundle
@@ -284,8 +371,47 @@ func TestOldPeersIgnoreNewWireFields(t *testing.T) {
 	if err := json.Unmarshal(roundTrip, &decoded); err != nil {
 		t.Fatalf("新对端必须容忍旧 JSON: %v", err)
 	}
-	if decoded.Credentials[0].DeletedAt != nil || len(decoded.Snippets) != 0 {
+	if decoded.Credentials[0].UpdatedAt != 0 || len(decoded.CredTombstones) != 0 || len(decoded.Snippets) != 0 {
 		t.Fatalf("legacy JSON leaked into new fields: %+v", decoded)
+	}
+}
+
+func TestLegacyPeerImportKeepsSecretsIntact(t *testing.T) {
+	ctx := context.Background()
+	existingID, incomingID := ids.New(), ids.New()
+	legacyPeer := newTestInstance(t, true)
+	putTestCredential(t, legacyPeer, existingID, "keepme", "password", "real-secret")
+
+	modern := Bundle{
+		Protocol: ProtocolVersion, Origin: "modern-peer",
+		Credentials:    []CredentialPayload{{ID: incomingID, Name: "incoming", Kind: "password", Secret: "incoming-secret", UpdatedAt: 5}},
+		CredTombstones: []store.CredentialTombstone{{ID: existingID, DeletedAt: ids.NowMS()}},
+	}
+	encoded, err := json.Marshal(modern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy legacyBundle
+	if err := json.Unmarshal(encoded, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	for _, credential := range legacy.Credentials {
+		if credential.ID == existingID {
+			t.Fatal("墓碑不得以任何形式进入旧端 creds 数组")
+		}
+	}
+
+	legacyImportCredentials(t, legacyPeer, legacy.Credentials)
+
+	row, err := legacyPeer.db.CredentialGetRow(ctx, existingID)
+	if err != nil {
+		t.Fatalf("旧端已有凭据受墓碑影响: %v", err)
+	}
+	if plaintext, err := legacyPeer.vault.DecryptCredentialString(ctx, row); err != nil || plaintext != "real-secret" {
+		t.Fatalf("旧端秘密被覆盖 plaintext=%q err=%v", plaintext, err)
+	}
+	if _, err := legacyPeer.db.CredentialGetRow(ctx, incomingID); err != nil {
+		t.Fatalf("旧端未导入正常凭据项: %v", err)
 	}
 }
 

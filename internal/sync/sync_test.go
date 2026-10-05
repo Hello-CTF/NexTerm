@@ -137,6 +137,9 @@ func TestSyntheticGoFixtureRoundTripAndProtocolGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range exported.Credentials {
+		exported.Credentials[i].UpdatedAt = 0
+	}
 	if !reflect.DeepEqual(fixture.Assets[0], exported.Assets[0]) || !reflect.DeepEqual(fixture.Credentials, exported.Credentials) {
 		t.Fatalf("Go fixture did not survive import/export\nwant assets=%+v creds=%+v\ngot assets=%+v creds=%+v",
 			fixture.Assets, fixture.Credentials, exported.Assets, exported.Credentials)

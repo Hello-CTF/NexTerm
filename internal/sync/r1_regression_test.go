@@ -205,7 +205,7 @@ func TestBlockedCredentialIgnoresTombstone(t *testing.T) {
 		Assets: []AssetPayload{{
 			ID: assetID, CredID: &credentialID, Name: "remote-older", Kind: "ssh", OptionsJSON: `{}`, UpdatedAt: 100,
 		}},
-		Credentials: []CredentialPayload{{ID: credentialID, DeletedAt: &deletedAt}},
+		CredTombstones: []store.CredentialTombstone{{ID: credentialID, DeletedAt: deletedAt}},
 	}})
 	if err != nil || report.SkippedNewer != 1 || report.CredsDeleted != 0 {
 		t.Fatalf("protected credential must ignore tombstone: %+v err=%v", report, err)

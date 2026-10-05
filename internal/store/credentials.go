@@ -63,11 +63,19 @@ func (s *Store) CredentialList(ctx context.Context) ([]CredentialRow, error) {
 }
 
 func (s *Store) CredentialDelete(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return dbError(err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM credential WHERE id = ?", id); err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credential_tombstone(id, deleted_at) VALUES(?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at=excluded.deleted_at`, id, ids.NowMS()); err != nil {
+		return dbError(err)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CredentialUsage(ctx context.Context, credID string) ([]AssetRef, error) {

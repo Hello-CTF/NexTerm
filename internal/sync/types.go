@@ -1,5 +1,7 @@
 package sync
 
+import "github.com/ProbiusOfficial/NexTerm/internal/store"
+
 const ProtocolVersion = 1
 
 const (
@@ -46,7 +48,7 @@ type CredentialPayload struct {
 	Name      string `json:"name"`
 	Kind      string `json:"kind"`
 	Secret    string `json:"secret"`
-	DeletedAt *int64 `json:"deletedAt,omitempty"`
+	UpdatedAt int64  `json:"updatedAt,omitempty"`
 }
 
 type SnippetPayload struct {
@@ -60,14 +62,15 @@ type SnippetPayload struct {
 }
 
 type Bundle struct {
-	Protocol    int                 `json:"protocol"`
-	Origin      string              `json:"origin"`
-	ExportedAt  int64               `json:"exportedAt"`
-	Groups      []GroupPayload      `json:"groups"`
-	Assets      []AssetPayload      `json:"assets"`
-	Credentials []CredentialPayload `json:"creds"`
-	Snippets    []SnippetPayload    `json:"snippets,omitempty"`
-	Warnings    []string            `json:"warnings,omitempty"`
+	Protocol       int                         `json:"protocol"`
+	Origin         string                      `json:"origin"`
+	ExportedAt     int64                       `json:"exportedAt"`
+	Groups         []GroupPayload              `json:"groups"`
+	Assets         []AssetPayload              `json:"assets"`
+	Credentials    []CredentialPayload         `json:"creds"`
+	CredTombstones []store.CredentialTombstone `json:"credTombstones,omitempty"`
+	Snippets       []SnippetPayload            `json:"snippets,omitempty"`
+	Warnings       []string                    `json:"warnings,omitempty"`
 }
 
 type ExportRequest struct {
