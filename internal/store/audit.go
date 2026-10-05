@@ -50,6 +50,18 @@ VALUES(?,?,?,?,?,?,?,?)`, ids.NowMS(), input.SessionID, input.AssetID, input.Sou
 	return nil
 }
 
+func (s *Store) AuditCount(ctx context.Context, query AuditQuery) (int64, error) {
+	var count int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log
+WHERE (? IS NULL OR session_id = ?) AND (? IS NULL OR asset_id = ?)
+AND (? IS NULL OR source = ?) AND (? IS NULL OR kind = ?)`,
+		query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind).Scan(&count)
+	if err != nil {
+		return 0, dbError(err)
+	}
+	return count, nil
+}
+
 func (s *Store) AuditQuery(ctx context.Context, query AuditQuery) ([]AuditRow, error) {
 	limit := query.Limit
 	if limit <= 0 || limit > 1000 {

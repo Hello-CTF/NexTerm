@@ -138,11 +138,32 @@ type groupPatchRequest struct {
 }
 
 type snippetDTO struct {
-	ID      string  `json:"id"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Body      string  `json:"body"`
+	GroupID   *string `json:"groupId"`
+	Sort      int64   `json:"sort"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
+type snippetInputRequest struct {
 	Name    string  `json:"name"`
 	Body    string  `json:"body"`
 	GroupID *string `json:"groupId"`
 	Sort    int64   `json:"sort"`
+}
+
+type snippetPatchRequest struct {
+	ID      string                   `json:"id"`
+	Name    string                   `json:"name"`
+	Body    string                   `json:"body"`
+	GroupID optionalIPCValue[string] `json:"groupId"`
+	Sort    *int64                   `json:"sort"`
+}
+
+type auditCountDTO struct {
+	Total int64 `json:"total"`
 }
 
 type auditQueryRequest struct {
@@ -318,13 +339,13 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 				rows, err := database.SnippetList(ctx)
 				result := make([]snippetDTO, len(rows))
 				for index, row := range rows {
-					result[index] = snippetDTO{ID: row.ID, Name: row.Name, Body: row.Body, GroupID: row.GroupID, Sort: row.Sort}
+					result[index] = productionSnippetDTO(row)
 				}
 				return result, err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "snippet_create", func(ctx context.Context, _ *ipc.Call, input idRequest) (map[string]string, error) {
+			return ipc.Register(dispatcher, "snippet_create", func(ctx context.Context, _ *ipc.Call, input snippetInputRequest) (map[string]string, error) {
 				name, err := validatedSnippetName(input.Name)
 				if err != nil {
 					return nil, err
@@ -332,12 +353,12 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 				if err := validateSnippetBody(input.Body); err != nil {
 					return nil, err
 				}
-				row, err := database.SnippetCreate(ctx, name, input.Body, nil, 0)
+				row, err := database.SnippetCreate(ctx, name, input.Body, input.GroupID, input.Sort)
 				return map[string]string{"id": row.ID}, err
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, "snippet_update", func(ctx context.Context, _ *ipc.Call, input idRequest) (any, error) {
+			return ipc.Register(dispatcher, "snippet_update", func(ctx context.Context, _ *ipc.Call, input snippetPatchRequest) (any, error) {
 				name, err := validatedSnippetName(input.Name)
 				if err != nil {
 					return nil, err
@@ -345,7 +366,9 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 				if err := validateSnippetBody(input.Body); err != nil {
 					return nil, err
 				}
-				return nil, database.SnippetUpdate(ctx, input.ID, name, input.Body)
+				return nil, database.SnippetUpdateFields(ctx, input.ID, store.SnippetPatch{
+					Name: name, Body: input.Body, GroupID: input.GroupID.storeValue(), Sort: input.Sort,
+				})
 			})
 		},
 		func() error {
@@ -366,6 +389,14 @@ func registerStoreCommands(dispatcher *ipc.Dispatcher, database *store.Store, ho
 					}
 				}
 				return result, err
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "audit_count", func(ctx context.Context, _ *ipc.Call, input auditQueryRequest) (auditCountDTO, error) {
+				total, err := database.AuditCount(ctx, store.AuditQuery{
+					SessionID: input.SessionID, AssetID: input.AssetID, Source: input.Source, Kind: input.Kind,
+				})
+				return auditCountDTO{Total: total}, err
 			})
 		},
 		func() error {
@@ -406,6 +437,13 @@ func productionAssetDTO(row store.AssetRow) assetDTO {
 
 func productionGroupDTO(row store.AssetGroupRow) groupDTO {
 	return groupDTO{ID: row.ID, ParentID: row.ParentID, Name: row.Name, Sort: row.Sort, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func productionSnippetDTO(row store.SnippetRow) snippetDTO {
+	return snippetDTO{
+		ID: row.ID, Name: row.Name, Body: row.Body, GroupID: row.GroupID, Sort: row.Sort,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
 }
 
 func productionJSONText(raw json.RawMessage, fallback string) string {

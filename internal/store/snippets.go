@@ -13,7 +13,7 @@ func scanSnippet(row rowScanner) (SnippetRow, error) {
 }
 
 func (s *Store) SnippetList(ctx context.Context) ([]SnippetRow, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, group_id, name, body, sort, created_at, updated_at FROM snippet ORDER BY sort, name")
+	rows, err := s.db.QueryContext(ctx, "SELECT id, group_id, name, body, sort, created_at, updated_at FROM snippet ORDER BY group_id, sort, name, id")
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -55,6 +55,32 @@ func (s *Store) SnippetGet(ctx context.Context, id string) (SnippetRow, error) {
 func (s *Store) SnippetUpdate(ctx context.Context, id, name, body string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE snippet SET name=?, body=?, updated_at=? WHERE id=?",
 		name, body, ids.NowMS(), id)
+	if err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+type SnippetPatch struct {
+	Name    string
+	Body    string
+	GroupID Optional[string]
+	Sort    *int64
+}
+
+func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch SnippetPatch) error {
+	row, err := s.SnippetGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	row.Name = patch.Name
+	row.Body = patch.Body
+	applyOptional(&row.GroupID, patch.GroupID)
+	if patch.Sort != nil {
+		row.Sort = *patch.Sort
+	}
+	_, err = s.db.ExecContext(ctx, "UPDATE snippet SET name=?, body=?, group_id=?, sort=?, updated_at=? WHERE id=?",
+		row.Name, row.Body, row.GroupID, row.Sort, ids.NowMS(), id)
 	if err != nil {
 		return dbError(err)
 	}
