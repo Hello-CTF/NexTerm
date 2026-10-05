@@ -95,6 +95,16 @@ class RustTreeIndependenceTest(unittest.TestCase):
         self.assertEqual(registry["source"]["implementation"], "rust")
 
 
+class HistoricalFreezeTest(unittest.TestCase):
+    def test_historical_parity_assets_stay_frozen(self):
+        manifest = load(DATA / "manifest.json")
+        status = {entry["path"]: entry["status"] for entry in manifest["files"]}
+        self.assertEqual(status["testdata/parity/source.json"], "frozen-historical")
+        self.assertEqual(status["testdata/parity/rust-registry.json"], "frozen-historical")
+        self.assertEqual(status["testdata/parity/inventory.json"], "generated")
+        self.assertEqual(status["testdata/parity/go-aliases.json"], "configuration")
+
+
 class BaselineReportTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
