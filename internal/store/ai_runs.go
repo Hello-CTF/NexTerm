@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
@@ -14,6 +16,13 @@ const (
 	RunStatusFailed      = "failed"
 	RunStatusExpired     = "expired"
 )
+
+const RunSourceTitle = "title"
+
+type RunErrorCounts struct {
+	Retries  int64
+	Failures int64
+}
 
 type RunRow struct {
 	ID                  string
@@ -109,10 +118,10 @@ func (s *Store) RunGet(ctx context.Context, id string) (RunRow, error) {
 }
 
 func (s *Store) RunList(ctx context.Context, conversationID string, limit int) ([]RunRow, error) {
-	query := `SELECT ` + runColumns + ` FROM ai_run`
-	args := []any{}
+	query := `SELECT ` + runColumns + ` FROM ai_run WHERE source != ?`
+	args := []any{RunSourceTitle}
 	if conversationID != "" {
-		query += ` WHERE conversation_id = ?`
+		query += ` AND conversation_id = ?`
 		args = append(args, conversationID)
 	}
 	query += ` ORDER BY created_at DESC, id DESC`
@@ -185,8 +194,18 @@ VALUES(?,?,?,?,?)`, runID, seq, eventType, string(encoded), now); err != nil {
 }
 
 func (s *Store) RunEventsAfter(ctx context.Context, runID string, afterSeq uint64) ([]RunEventRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT run_id, seq, type, payload_json, created_at FROM ai_run_event
-WHERE run_id = ? AND seq > ? ORDER BY seq`, runID, afterSeq)
+	return s.RunEventsAfterLimit(ctx, runID, afterSeq, 0)
+}
+
+func (s *Store) RunEventsAfterLimit(ctx context.Context, runID string, afterSeq uint64, limit int) ([]RunEventRow, error) {
+	query := `SELECT run_id, seq, type, payload_json, created_at FROM ai_run_event
+WHERE run_id = ? AND seq > ? ORDER BY seq`
+	args := []any{runID, afterSeq}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, dbError(err)
 	}
@@ -198,6 +217,44 @@ WHERE run_id = ? AND seq > ? ORDER BY seq`, runID, afterSeq)
 			return nil, dbError(err)
 		}
 		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) RunErrorCounts(ctx context.Context, runIDs []string) (map[string]RunErrorCounts, error) {
+	result := make(map[string]RunErrorCounts, len(runIDs))
+	if len(runIDs) == 0 {
+		return result, nil
+	}
+	query := `SELECT run_id, payload_json FROM ai_run_event WHERE type = 'error' AND run_id IN (?` + strings.Repeat(",?", len(runIDs)-1) + `)`
+	args := make([]any, len(runIDs))
+	for index, id := range runIDs {
+		args[index] = id
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var runID string
+		var payload string
+		if err := rows.Scan(&runID, &payload); err != nil {
+			return nil, dbError(err)
+		}
+		var event struct {
+			Retryable bool `json:"retryable"`
+		}
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			return nil, dbError(err)
+		}
+		counts := result[runID]
+		if event.Retryable {
+			counts.Retries++
+		} else {
+			counts.Failures++
+		}
+		result[runID] = counts
 	}
 	return result, rows.Err()
 }

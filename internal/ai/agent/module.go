@@ -69,8 +69,9 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			return ipc.Register(dispatcher, "ai_run_events", func(ctx context.Context, _ *ipc.Call, args struct {
 				JobID    string `json:"jobId"`
 				AfterSeq uint64 `json:"afterSeq"`
+				Limit    int    `json:"limit"`
 			}) ([]json.RawMessage, error) {
-				return r.RunEvents(ctx, args.JobID, args.AfterSeq)
+				return r.RunEventsLimit(ctx, args.JobID, args.AfterSeq, args.Limit)
 			})
 		},
 		func() error {
