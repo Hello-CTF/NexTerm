@@ -886,6 +886,67 @@ async function responsiveAcceptance(page) {
     })()`);
     return { evidence };
   });
+
+  await textScaleAcceptance(page);
+}
+
+const textScaleMatrix = [
+  { name: "320x568", width: 320, height: 568, mobile: true, dsf: 1.25 },
+  { name: "390x844", width: 390, height: 844, mobile: true, dsf: 1.25 },
+  { name: "560x800", width: 560, height: 800, mobile: true, dsf: 1.25 },
+  { name: "820x1180", width: 820, height: 1180, mobile: false, dsf: 1.25 },
+  { name: "1280x900-desktop", width: 1280, height: 900, mobile: false, dsf: 1.25 },
+];
+
+const appearanceSeed = (terminalTheme) =>
+  `try { localStorage.setItem("nexterm.appearance.v1", JSON.stringify({ uiFontPreset: 13, uiFontScale: 1.6, terminalFontSize: 13, terminalTheme: ${JSON.stringify(terminalTheme)} })); } catch {}`;
+
+async function textScaleAcceptance(page) {
+  for (const vp of textScaleMatrix) {
+    await pass(`text200-no-hoverflow-${vp.name}`, async () => {
+      await boot(page, { viewport: vp, extraInit: appearanceSeed("dark") });
+      const evidence = await page.evaluate(`(() => ({
+        innerWidth: window.innerWidth,
+        docScrollWidth: document.scrollingElement.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        bodyFontSize: getComputedStyle(document.body).fontSize,
+        termTheme: document.documentElement.dataset.nxTermTheme ?? null,
+        uiTheme: document.documentElement.dataset.nxTheme ?? null,
+      }))()`);
+      assert.equal(evidence.bodyFontSize, "20.8px", `in-app 1.6x on the 13px preset must compose: ${JSON.stringify(evidence)}`);
+      assert.equal(evidence.termTheme, "dark", `terminal theme must stay dark by default: ${JSON.stringify(evidence)}`);
+      assert.ok(
+        evidence.docScrollWidth <= evidence.innerWidth + 1 && evidence.bodyScrollWidth <= evidence.innerWidth + 1,
+        `page-level horizontal overflow at 200% text: ${JSON.stringify(evidence)}`,
+      );
+      if (vp.name === "320x568" || vp.name === "1280x900-desktop") {
+        await screenshot(page, `text200-${vp.name}.png`);
+      }
+      return { evidence };
+    });
+  }
+
+  for (const name of ["390x844", "1280x900-desktop"]) {
+    await pass(`text200-light-terminal-${name}`, async () => {
+      const vp = textScaleMatrix.find((v) => v.name === name);
+      await boot(page, { viewport: vp, extraInit: appearanceSeed("light") });
+      const evidence = await page.evaluate(`(() => ({
+        innerWidth: window.innerWidth,
+        docScrollWidth: document.scrollingElement.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        termTheme: document.documentElement.dataset.nxTermTheme ?? null,
+        xtermRendered: Boolean(document.querySelector(".xterm-screen")),
+      }))()`);
+      assert.equal(evidence.termTheme, "light", JSON.stringify(evidence));
+      assert.equal(evidence.xtermRendered, true, JSON.stringify(evidence));
+      assert.ok(
+        evidence.docScrollWidth <= evidence.innerWidth + 1 && evidence.bodyScrollWidth <= evidence.innerWidth + 1,
+        `page-level horizontal overflow with light terminal at 200% text: ${JSON.stringify(evidence)}`,
+      );
+      await screenshot(page, `text200-light-terminal-${name}.png`);
+      return { evidence };
+    });
+  }
 }
 
 async function main() {
