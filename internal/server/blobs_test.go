@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -94,6 +95,7 @@ func TestBlobStageReserveStreamAndDelete(t *testing.T) {
 func TestBlobPersistenceTTLAndIDBoundary(t *testing.T) {
 	config := testConfig(t, false)
 	store := NewBlobStore(config.Options.DataDir, testLogger())
+	store.diskUsage = func(string) (float64, error) { return 0, nil }
 	config.Blobs = store
 	_, httpServer := newTestHTTP(t, config)
 
@@ -161,6 +163,230 @@ func TestSafeBlobName(t *testing.T) {
 	}
 	if actual, expected := SafeBlobName(strings.Repeat("界", 120)), strings.Repeat("界", 80); actual != expected {
 		t.Errorf("long UTF-8 name has %d bytes, want %d: %q", len(actual), len(expected), actual)
+	}
+}
+
+func TestBlobBodyLimitRejectsOversizedUploads(t *testing.T) {
+	config := testConfig(t, false)
+	store := NewBlobStore(config.Options.DataDir, testLogger())
+	store.maxBytes = 64
+	config.Blobs = store
+	_, httpServer := newTestHTTP(t, config)
+
+	response, err := httpServer.Client().Post(httpServer.URL+"/files/blob?name=a.bin", "application/octet-stream", bytes.NewReader(make([]byte, 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeStagedBlob(t, response)
+
+	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob?name=big.bin", "application/octet-stream", bytes.NewReader(make([]byte, 65)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "maximum allowed size") {
+		t.Fatalf("oversized status = %d: %s", response.StatusCode, body)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/files/blob?name=chunked.bin", bytes.NewReader(make([]byte, 65)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ContentLength = -1
+	request.Header.Set("Content-Type", "application/octet-stream")
+	response, err = httpServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "maximum allowed size") {
+		t.Fatalf("chunked oversized status = %d: %s", response.StatusCode, body)
+	}
+
+	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob/reserve?name=r.txt", "application/octet-stream", bytes.NewReader(make([]byte, 65)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("reserve oversized status = %d", response.StatusCode)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(config.Options.DataDir, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("staging dirs after rejects = %d, want 1", len(entries))
+	}
+}
+
+func TestBlobPersistQuotaRejectsAndSurvivesSweep(t *testing.T) {
+	config := testConfig(t, false)
+	store := NewBlobStore(config.Options.DataDir, testLogger())
+	store.persistQuota = 128
+	store.diskUsage = func(string) (float64, error) { return 0, nil }
+	config.Blobs = store
+	_, httpServer := newTestHTTP(t, config)
+
+	persist := func(name string, size int) *http.Response {
+		t.Helper()
+		response, err := httpServer.Client().Post(httpServer.URL+"/files/blob?name="+name+"&persist=1", "application/octet-stream", bytes.NewReader(make([]byte, size)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	first := decodeStagedBlob(t, persist("a.bin", 64))
+	response := persist("big.bin", 65)
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "quota exceeded") {
+		t.Fatalf("known-length quota status = %d: %s", response.StatusCode, body)
+	}
+	second := decodeStagedBlob(t, persist("b.bin", 64))
+	response = persist("c.bin", 1)
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "quota exceeded") {
+		t.Fatalf("full quota status = %d: %s", response.StatusCode, body)
+	}
+
+	response, err := httpServer.Client().Post(httpServer.URL+"/files/blob?name=t.bin", "application/octet-stream", bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := decodeStagedBlob(t, response)
+
+	store.now = func() time.Time { return time.Now().Add(3 * time.Hour) }
+	removed, err := store.SweepOnce(context.Background())
+	if err != nil || removed != 1 {
+		t.Fatalf("sweep = %d, %v", removed, err)
+	}
+	for _, path := range []string{first.Path, second.Path} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("persisted file was swept: %v", err)
+		}
+	}
+	if _, err := os.Stat(temporary.Path); !os.IsNotExist(err) {
+		t.Fatalf("staged file still exists: %v", err)
+	}
+}
+
+func TestParseBlobLimitEnv(t *testing.T) {
+	if value, err := ParseBlobMaxBytesEnv(func(string) string { return "" }); err != nil || value != 0 {
+		t.Fatalf("empty max bytes = %d, %v", value, err)
+	}
+	if value, err := ParseBlobMaxBytesEnv(func(string) string { return "4096" }); err != nil || value != 4096 {
+		t.Fatalf("valid max bytes = %d, %v", value, err)
+	}
+	for _, invalid := range []string{"abc", "0", "-3"} {
+		if _, err := ParseBlobMaxBytesEnv(func(string) string { return invalid }); err == nil {
+			t.Fatalf("ParseBlobMaxBytesEnv(%q) accepted", invalid)
+		}
+	}
+	if value, err := ParseBlobPersistQuotaEnv(func(string) string { return "8192" }); err != nil || value != 8192 {
+		t.Fatalf("valid persist quota = %d, %v", value, err)
+	}
+	if _, err := ParseBlobPersistQuotaEnv(func(string) string { return "1g" }); err == nil {
+		t.Fatal("ParseBlobPersistQuotaEnv accepted 1g")
+	}
+	if value, err := ParseBlobDiskMaxPercentEnv(func(string) string { return "" }); err != nil || value != 0 {
+		t.Fatalf("empty disk percent = %f, %v", value, err)
+	}
+	if value, err := ParseBlobDiskMaxPercentEnv(func(string) string { return "90.5" }); err != nil || value != 90.5 {
+		t.Fatalf("valid disk percent = %f, %v", value, err)
+	}
+	for _, invalid := range []string{"abc", "0", "-1", "100.1"} {
+		if _, err := ParseBlobDiskMaxPercentEnv(func(string) string { return invalid }); err == nil {
+			t.Fatalf("ParseBlobDiskMaxPercentEnv(%q) accepted", invalid)
+		}
+	}
+}
+
+func TestNewBlobStoreEnvOverrides(t *testing.T) {
+	t.Setenv("NEXTERM_BLOB_MAX_BYTES", "1024")
+	t.Setenv("NEXTERM_BLOB_PERSIST_MAX_BYTES", "4096")
+	t.Setenv("NEXTERM_BLOB_DISK_MAX_PERCENT", "85")
+	store := NewBlobStore(t.TempDir(), testLogger())
+	if store.maxBlobBytes() != 1024 {
+		t.Fatalf("maxBlobBytes = %d", store.maxBlobBytes())
+	}
+	if store.persistQuotaBytes() != 4096 {
+		t.Fatalf("persistQuotaBytes = %d", store.persistQuotaBytes())
+	}
+	if store.diskThresholdPercent() != 85 {
+		t.Fatalf("diskThresholdPercent = %f", store.diskThresholdPercent())
+	}
+
+	t.Setenv("NEXTERM_BLOB_MAX_BYTES", "not-a-number")
+	store = NewBlobStore(t.TempDir(), testLogger())
+	if store.maxBlobBytes() != DefaultBlobMaxBytes {
+		t.Fatalf("invalid env maxBlobBytes = %d", store.maxBlobBytes())
+	}
+	if store.persistQuotaBytes() != 4096 {
+		t.Fatalf("persistQuotaBytes after invalid sibling env = %d", store.persistQuotaBytes())
+	}
+	if store.diskThresholdPercent() != 85 {
+		t.Fatalf("diskThresholdPercent after invalid sibling env = %f", store.diskThresholdPercent())
+	}
+}
+
+func TestBlobPersistDiskThresholdRejects(t *testing.T) {
+	config := testConfig(t, false)
+	store := NewBlobStore(config.Options.DataDir, testLogger())
+	store.diskUsage = func(string) (float64, error) { return 0.95, nil }
+	config.Blobs = store
+	_, httpServer := newTestHTTP(t, config)
+
+	response, err := httpServer.Client().Post(httpServer.URL+"/files/blob?name=p.bin&persist=1", "application/octet-stream", bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusInsufficientStorage || !strings.Contains(string(body), "disk usage exceeds threshold") {
+		t.Fatalf("disk threshold status = %d: %s", response.StatusCode, body)
+	}
+
+	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob?name=s.bin", "application/octet-stream", bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeStagedBlob(t, response)
+
+	store.diskUsage = func(string) (float64, error) { return 0.5, nil }
+	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob?name=p.bin&persist=1", "application/octet-stream", bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeStagedBlob(t, response)
+
+	store.diskUsage = func(string) (float64, error) { return 0, errors.New("statfs failed") }
+	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob?name=p.bin&persist=1", "application/octet-stream", bytes.NewReader(make([]byte, 8)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "disk usage unavailable") {
+		t.Fatalf("disk stat failure status = %d: %s", response.StatusCode, body)
+	}
+}
+
+func TestDiskUsageRate(t *testing.T) {
+	usage, err := diskUsageRate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage < 0 || usage > 1 {
+		t.Fatalf("disk usage rate = %f", usage)
+	}
+	if usage, err := diskUsageRate(filepath.Join(t.TempDir(), "missing")); err == nil || usage != 0 {
+		t.Fatalf("missing path = %f, %v", usage, err)
 	}
 }
 

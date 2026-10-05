@@ -19,18 +19,31 @@ import (
 )
 
 const (
-	DefaultBlobTTL           = 2 * time.Hour
-	DefaultBlobSweepInterval = 10 * time.Minute
-	blobCopyBuffer           = 256 << 10
+	DefaultBlobTTL                  = 2 * time.Hour
+	DefaultBlobSweepInterval        = 10 * time.Minute
+	DefaultBlobMaxBytes       int64 = 256 << 20
+	DefaultBlobPersistQuota   int64 = 1 << 30
+	DefaultBlobDiskMaxPercent       = 90.0
+	blobCopyBuffer                  = 256 << 10
+	blobTooLargeMessage             = "blob exceeds the maximum allowed size"
+)
+
+var (
+	errBlobPersistQuota  = errors.New("persisted blob storage quota exceeded")
+	errBlobDiskThreshold = errors.New("persisted blob storage disk usage exceeds threshold")
 )
 
 type BlobStore struct {
-	dataDir    string
-	ttl        time.Duration
-	sweepEvery time.Duration
-	newID      func() string
-	now        func() time.Time
-	logger     *slog.Logger
+	dataDir        string
+	ttl            time.Duration
+	sweepEvery     time.Duration
+	maxBytes       int64
+	persistQuota   int64
+	diskMaxPercent float64
+	diskUsage      func(string) (float64, error)
+	newID          func() string
+	now            func() time.Time
+	logger         *slog.Logger
 }
 
 type stagedBlob struct {
@@ -43,10 +56,79 @@ func NewBlobStore(dataDir string, logger *slog.Logger) *BlobStore {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &BlobStore{
+	store := &BlobStore{
 		dataDir: dataDir, ttl: DefaultBlobTTL, sweepEvery: DefaultBlobSweepInterval,
-		newID: ids.New, now: time.Now, logger: logger,
+		newID: ids.New, now: time.Now, logger: logger, diskUsage: diskUsageRate,
 	}
+	if maxBytes, err := ParseBlobMaxBytesEnv(os.Getenv); err != nil {
+		logger.Warn("ignoring invalid blob limit override", "error", err)
+	} else {
+		store.maxBytes = maxBytes
+	}
+	if quota, err := ParseBlobPersistQuotaEnv(os.Getenv); err != nil {
+		logger.Warn("ignoring invalid persist quota override", "error", err)
+	} else {
+		store.persistQuota = quota
+	}
+	if percent, err := ParseBlobDiskMaxPercentEnv(os.Getenv); err != nil {
+		logger.Warn("ignoring invalid disk threshold override", "error", err)
+	} else {
+		store.diskMaxPercent = percent
+	}
+	return store
+}
+
+func ParseBlobMaxBytesEnv(getenv func(string) string) (int64, error) {
+	return parseBlobByteEnv(getenv, "NEXTERM_BLOB_MAX_BYTES")
+}
+
+func ParseBlobPersistQuotaEnv(getenv func(string) string) (int64, error) {
+	return parseBlobByteEnv(getenv, "NEXTERM_BLOB_PERSIST_MAX_BYTES")
+}
+
+func ParseBlobDiskMaxPercentEnv(getenv func(string) string) (float64, error) {
+	raw := getenv("NEXTERM_BLOB_DISK_MAX_PERCENT")
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || value <= 0 || value > 100 {
+		return 0, fmt.Errorf("NEXTERM_BLOB_DISK_MAX_PERCENT must be a number in (0, 100], got %q", raw)
+	}
+	return value, nil
+}
+
+func parseBlobByteEnv(getenv func(string) string, key string) (int64, error) {
+	raw := getenv(key)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, raw)
+	}
+	return value, nil
+}
+
+func (b *BlobStore) maxBlobBytes() int64 {
+	if b.maxBytes > 0 {
+		return b.maxBytes
+	}
+	return DefaultBlobMaxBytes
+}
+
+func (b *BlobStore) persistQuotaBytes() int64 {
+	if b.persistQuota > 0 {
+		return b.persistQuota
+	}
+	return DefaultBlobPersistQuota
+}
+
+func (b *BlobStore) diskThresholdPercent() float64 {
+	if b.diskMaxPercent > 0 {
+		return b.diskMaxPercent
+	}
+	return DefaultBlobDiskMaxPercent
 }
 
 func (b *BlobStore) stageRoot() string { return filepath.Join(b.dataDir, "blobs") }
@@ -58,9 +140,31 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid persist value", http.StatusBadRequest)
 		return
 	}
+	limit := b.maxBlobBytes()
+	if r.ContentLength > limit {
+		http.Error(w, blobTooLargeMessage, http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	root := b.stageRoot()
 	if persist {
 		root = b.keepRoot()
+		if err := b.checkPersistQuota(r.ContentLength); err != nil {
+			if errors.Is(err, errBlobPersistQuota) {
+				http.Error(w, errBlobPersistQuota.Error(), http.StatusInsufficientStorage)
+				return
+			}
+			http.Error(w, "persist storage usage unavailable", http.StatusInternalServerError)
+			return
+		}
+		if err := b.checkDiskThreshold(); err != nil {
+			if errors.Is(err, errBlobDiskThreshold) {
+				http.Error(w, errBlobDiskThreshold.Error(), http.StatusInsufficientStorage)
+				return
+			}
+			http.Error(w, "persist disk usage unavailable", http.StatusInternalServerError)
+			return
+		}
 	}
 	dir, id, err := b.createItemDir(root)
 	if err != nil {
@@ -78,6 +182,11 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 	closeErr := file.Close()
 	if copyErr != nil || closeErr != nil {
 		_ = os.RemoveAll(dir)
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(copyErr, &maxBytesErr) {
+			http.Error(w, blobTooLargeMessage, http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "staging write failed", http.StatusInternalServerError)
 		return
 	}
@@ -85,6 +194,12 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
+	limit := b.maxBlobBytes()
+	if r.ContentLength > limit {
+		http.Error(w, blobTooLargeMessage, http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dir, id, err := b.createItemDir(b.stageRoot())
 	if err != nil {
 		http.Error(w, "staging directory unavailable", http.StatusInternalServerError)
@@ -173,6 +288,54 @@ func (b *BlobStore) createItemDir(root string) (string, string, error) {
 		return dir, id, err
 	}
 	return "", "", fmt.Errorf("blob id collision")
+}
+
+func (b *BlobStore) checkPersistQuota(incoming int64) error {
+	usage, err := b.persistUsage()
+	if err != nil {
+		return err
+	}
+	quota := b.persistQuotaBytes()
+	if usage >= quota || incoming > 0 && usage+incoming > quota {
+		return errBlobPersistQuota
+	}
+	return nil
+}
+
+func (b *BlobStore) checkDiskThreshold() error {
+	if err := os.MkdirAll(b.dataDir, 0o700); err != nil {
+		return err
+	}
+	usage, err := b.diskUsage(b.dataDir)
+	if err != nil {
+		return err
+	}
+	if usage*100 >= b.diskThresholdPercent() {
+		return errBlobDiskThreshold
+	}
+	return nil
+}
+
+func (b *BlobStore) persistUsage() (int64, error) {
+	var usage int64
+	err := filepath.WalkDir(b.keepRoot(), func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		usage += info.Size()
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return usage, err
 }
 
 func SafeBlobName(raw string) string {
