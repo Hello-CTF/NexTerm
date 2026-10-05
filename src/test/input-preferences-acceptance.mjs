@@ -362,7 +362,7 @@ async function inputPreferenceAcceptance(page) {
       return { rowCount: rows.length, labels, autoCopyChecked: autoCopy?.checked ?? null, conflictBadges };
     })()`);
     const mod = evidence.labels[0]?.startsWith("⌘") ? "⌘" : "Ctrl";
-    assert.equal(evidence.rowCount, 10, JSON.stringify(evidence));
+    assert.equal(evidence.rowCount, 11, JSON.stringify(evidence));
     assert.ok(evidence.labels.includes(`${mod}+Shift+P`), JSON.stringify(evidence.labels));
     assert.ok(evidence.labels.includes(`${mod}+1…9`), JSON.stringify(evidence.labels));
     assert.ok(evidence.labels.includes(`${mod}+F`), JSON.stringify(evidence.labels));
@@ -508,7 +508,7 @@ async function inputPreferenceAcceptance(page) {
     })()`);
     assert.equal(evidence.tracks, 1, `390px must be single column: ${JSON.stringify(evidence)}`);
     assert.ok(evidence.docScrollWidth <= evidence.innerWidth, JSON.stringify(evidence));
-    assert.equal(evidence.editButtonCount, 10);
+    assert.equal(evidence.editButtonCount, 11);
     assert.equal(evidence.reachable, true, JSON.stringify(evidence));
     const shot = await screenshot(page, "responsive-390-settings.png");
     return { evidence: { ...evidence, shot } };

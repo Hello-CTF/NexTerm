@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, createElement } from "react";
 import { click, mount, type MountedView } from "./reactTestUtils";
 import { ShortcutsCard } from "../../features/settings/ShortcutsCard";
-import { getKeybinding, matchAppKeybinding, resetAllKeybindings } from "../../app/keybindings";
+import {
+  KEYBINDING_ACTIONS,
+  getKeybinding,
+  matchAppKeybinding,
+  resetAllKeybindings,
+} from "../../app/keybindings";
 import { getInputPrefs, setSelectionAutoCopy } from "../../app/preferences";
 
 const STORAGE_KEY = "nexterm.keybindings.v1";
@@ -65,9 +70,12 @@ afterEach(() => {
 
 describe("shortcuts editor", () => {
   it("renders every action with its default binding", () => {
-    expect(mounted?.container.querySelectorAll("[data-shortcut-row]").length).toBe(10);
+    expect(mounted?.container.querySelectorAll("[data-shortcut-row]").length).toBe(
+      KEYBINDING_ACTIONS.length,
+    );
     expect(kbdText("commandPalette")).toBe("Ctrl+Shift+P");
     expect(kbdText("globalSearch")).toBe("Ctrl+K");
+    expect(kbdText("quickConnect")).toBe("Ctrl+Shift+K");
     expect(kbdText("newTerminal")).toBe("Ctrl+T");
     expect(kbdText("terminalSearch")).toBe("Ctrl+F");
     expect(kbdText("reclaimTakeover")).toBe("Esc");
