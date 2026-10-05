@@ -90,6 +90,21 @@ def job_needs(job):
     return [needs] if isinstance(needs, str) else list(needs or [])
 
 
+def minimum_release_age_offenders(node, path="ci.yml"):
+    offenders = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if "minimumreleaseage" in str(key).lower() or "minimum_release_age" in str(key).lower():
+                offenders.append(f"{path} key {key}")
+            offenders.extend(minimum_release_age_offenders(value, f"{path}.{key}"))
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            offenders.extend(minimum_release_age_offenders(item, f"{path}[{index}]"))
+    elif isinstance(node, str) and ("minimumreleaseage" in node.lower() or "minimum_release_age" in node.lower()):
+        offenders.append(path)
+    return offenders
+
+
 def evaluate_release(release, scenario):
     results = {"ci-source": scenario["ci-source"]}
     outputs = {"reused": scenario["reused"]} if scenario["ci-source"] == "success" else {}
@@ -299,6 +314,9 @@ def run_wiring_checks(ci, release, resolver_text, pack_text):
     check("quality runs no build harness unit tests", not harness_test_steps, f"steps={harness_test_steps}")
     removed_jobs = sorted({"browser", "windows-supervisor", "ssh-windows"} & set(ci["jobs"]))
     check("ci.yml drops the browser acceptance and standalone windows native jobs", not removed_jobs, f"jobs={removed_jobs}")
+
+    age_offenders = minimum_release_age_offenders(ci)
+    check("ci.yml carries no pnpm minimumReleaseAge bypass", not age_offenders, f"offenders={age_offenders}")
 
     pack_report_lines = [line for line in pack_text.splitlines()
                          if re.search(r"node scripts/build\.mjs report\b", line)]
@@ -776,6 +794,17 @@ def mutate_readd_windows_jobs(ci, release, pack_text):
                                  "steps": [{"uses": "actions/checkout@v7"}]}
 
 
+def mutate_add_minimum_release_age_env(ci, release, pack_text):
+    ci.setdefault("env", {})["pnpm_config_minimum_release_age"] = 0
+
+
+def mutate_add_minimum_release_age_flag(ci, release, pack_text):
+    for step in ci["jobs"]["quality"]["steps"]:
+        if "pnpm install" in str(step.get("run", "")):
+            step["run"] = str(step["run"]) + " --config.minimumReleaseAge=0"
+            return
+
+
 def mutate_duplicate_pack_report(ci, release, pack_text):
     return pack_text.replace(
         "(cd \"$ROOT\" && node scripts/build.mjs report \"${report_args[@]}\")",
@@ -844,6 +873,10 @@ NEGATIVE_CONTROLS = [
      "quality runs no build harness unit tests", False),
     ("standalone windows job re-addition is caught", mutate_readd_windows_jobs,
      "ci.yml drops the browser acceptance and standalone windows native jobs", False),
+    ("minimumReleaseAge env bypass re-addition is caught", mutate_add_minimum_release_age_env,
+     "ci.yml carries no pnpm minimumReleaseAge bypass", False),
+    ("minimumReleaseAge install flag re-addition is caught", mutate_add_minimum_release_age_flag,
+     "ci.yml carries no pnpm minimumReleaseAge bypass", False),
     ("duplicate pack evidence report is caught", mutate_duplicate_pack_report,
      "pack generates the server archive evidence report exactly once", False),
     ("e2e staging if removal is caught", mutate_e2e_stage_if,
