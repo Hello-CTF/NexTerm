@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
@@ -42,6 +42,20 @@ const KIND_LABEL: Record<string, string> = {
 
 const DRAG_ASSET = "application/x-nexterm-asset";
 
+const ASSET_FIELD_IDLE_VALIDATION_MS = 500;
+
+function validateAssetHost(value: string): string | null {
+  const h = value.trim();
+  if (!h) return "请填写主机";
+  if (/\s/.test(h)) return "主机不能包含空格";
+  return null;
+}
+
+function validateAssetPort(port: number): string | null {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return "端口需在 1-65535 之间";
+  return null;
+}
+
 function treeRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
   const tree = event.currentTarget.closest("[role='tree']");
@@ -66,6 +80,28 @@ function useCoarsePointer(): boolean {
     subscribeCoarse,
     () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
     () => false,
+  );
+}
+
+const SKELETON_ROW_WIDTHS = ["w-3/5", "w-2/5", "w-1/2", "w-3/5", "w-2/5"];
+
+function AssetTreeSkeleton() {
+  return (
+    <div role="status" aria-label="正在加载资产">
+      <span className="nx-sr-only">正在加载资产…</span>
+      <div aria-hidden="true">
+        {SKELETON_ROW_WIDTHS.map((width, i) => (
+          <div key={i} className="nx-row cursor-default">
+            <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-sm bg-neutral-800 motion-reduce:animate-none" />
+            <span
+              className={`h-3 shrink-0 animate-pulse rounded-sm bg-neutral-800 motion-reduce:animate-none ${width}`}
+            />
+            <span className="nx-spacer" />
+            <span className="h-3 w-12 shrink-0 animate-pulse rounded-sm bg-neutral-800/70 motion-reduce:animate-none" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -312,47 +348,53 @@ export function AssetTree() {
           if (id) void moveAsset(id, null);
         }}
       >
-        {(byGroup.get(null) ?? []).map((a) => (
-          <AssetRow
-            key={a.id}
-            asset={a}
-            level={1}
-            hidden={isHidden(a.id)}
-            onDelete={() => void onDelete(a)}
-            onEdit={() => setEditingAsset(a)}
-            onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
-          />
-        ))}
-        {(groups.data ?? []).map((g: AssetGroup) => (
-          <GroupNode
-            key={g.id}
-            group={g}
-            assets={byGroup.get(g.id) ?? []}
-            hiddenIds={hiddenIds}
-            onDelete={(a) => void onDelete(a)}
-            onEdit={(a) => setEditingAsset(a)}
-            onMore={(a, x, y, full) => setRowMenu({ x, y, asset: a, full })}
-            onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
-            onCreateIn={() => {
-              setPresetGroup(g.id);
-              setEditing("asset");
-            }}
-            busy={groupBusyId === g.id}
-            error={groupError?.id === g.id ? groupError.message : null}
-            onRename={() => setRenamingGroup(g)}
-            onDeleteGroup={() => void deleteGroup(g)}
-            onRetry={() => void runDeleteGroup(g)}
-            onDismissError={() => setGroupError(null)}
-          />
-        ))}
-        {visible.length === 0 && (
-          <div className="nx-hint px-2 py-8 text-center">
-            {query
-              ? "没有匹配的资产"
-              : (assets.data?.length ?? 0) > 0
-                ? "资产都隐藏了 — 点右上角眼睛按钮显示"
-                : "还没有资产 — 点右上角的 + 新建一个"}
-          </div>
+        {assets.isPending ? (
+          <AssetTreeSkeleton />
+        ) : (
+          <>
+            {(byGroup.get(null) ?? []).map((a) => (
+              <AssetRow
+                key={a.id}
+                asset={a}
+                level={1}
+                hidden={isHidden(a.id)}
+                onDelete={() => void onDelete(a)}
+                onEdit={() => setEditingAsset(a)}
+                onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
+              />
+            ))}
+            {(groups.data ?? []).map((g: AssetGroup) => (
+              <GroupNode
+                key={g.id}
+                group={g}
+                assets={byGroup.get(g.id) ?? []}
+                hiddenIds={hiddenIds}
+                onDelete={(a) => void onDelete(a)}
+                onEdit={(a) => setEditingAsset(a)}
+                onMore={(a, x, y, full) => setRowMenu({ x, y, asset: a, full })}
+                onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
+                onCreateIn={() => {
+                  setPresetGroup(g.id);
+                  setEditing("asset");
+                }}
+                busy={groupBusyId === g.id}
+                error={groupError?.id === g.id ? groupError.message : null}
+                onRename={() => setRenamingGroup(g)}
+                onDeleteGroup={() => void deleteGroup(g)}
+                onRetry={() => void runDeleteGroup(g)}
+                onDismissError={() => setGroupError(null)}
+              />
+            ))}
+            {visible.length === 0 && (
+              <div className="nx-hint px-2 py-8 text-center">
+                {query
+                  ? "没有匹配的资产"
+                  : (assets.data?.length ?? 0) > 0
+                    ? "资产都隐藏了 — 点右上角眼睛按钮显示"
+                    : "还没有资产 — 点右上角的 + 新建一个"}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -957,6 +999,54 @@ export function AssetEditor({
     setProbe({ status: "idle" });
   }, [host, port, groupKind]);
 
+  const hostInputId = useId();
+  const portInputId = useId();
+  const hostErrorId = useId();
+  const portErrorId = useId();
+  const [hostError, setHostError] = useState<string | null>(null);
+  const [portError, setPortError] = useState<string | null>(null);
+  const hostValidateTimer = useRef<number | null>(null);
+  const portValidateTimer = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (hostValidateTimer.current !== null) window.clearTimeout(hostValidateTimer.current);
+      if (portValidateTimer.current !== null) window.clearTimeout(portValidateTimer.current);
+    },
+    [],
+  );
+
+  const onHostChange = (value: string) => {
+    setHost(value);
+    if (hostValidateTimer.current !== null) window.clearTimeout(hostValidateTimer.current);
+    hostValidateTimer.current = window.setTimeout(() => {
+      hostValidateTimer.current = null;
+      setHostError(validateAssetHost(value));
+    }, ASSET_FIELD_IDLE_VALIDATION_MS);
+  };
+  const onHostBlur = () => {
+    if (hostValidateTimer.current !== null) {
+      window.clearTimeout(hostValidateTimer.current);
+      hostValidateTimer.current = null;
+    }
+    setHostError(validateAssetHost(hostRef.current));
+  };
+  const onPortChange = (value: number) => {
+    setPort(value);
+    if (portValidateTimer.current !== null) window.clearTimeout(portValidateTimer.current);
+    portValidateTimer.current = window.setTimeout(() => {
+      portValidateTimer.current = null;
+      setPortError(validateAssetPort(value));
+    }, ASSET_FIELD_IDLE_VALIDATION_MS);
+  };
+  const onPortBlur = () => {
+    if (portValidateTimer.current !== null) {
+      window.clearTimeout(portValidateTimer.current);
+      portValidateTimer.current = null;
+    }
+    setPortError(validateAssetPort(portRef.current));
+  };
+
   const runProbe = async () => {
     const h = host.trim();
     const p = Number(port);
@@ -1210,6 +1300,8 @@ export function AssetEditor({
                 onChange={(e) => {
                   const v = e.target.value as typeof groupKind;
                   setGroupKind(v);
+                  setHostError(null);
+                  setPortError(null);
                   if (v === "winrm") setPort(5985);
                   else if (v === "mysql") setPort(3306);
                   else if (v === "redis") setPort(6379);
@@ -1289,22 +1381,40 @@ export function AssetEditor({
             <>
               <div className="mb-3 flex gap-2">
                 <div className="min-w-0 flex-1">
-                  <label className="nx-label">主机</label>
+                  <label className="nx-label" htmlFor={hostInputId}>主机</label>
                   <input
+                    id={hostInputId}
                     className="nx-input"
                     value={host}
-                    onChange={(e) => setHost(e.target.value)}
+                    onChange={(e) => onHostChange(e.target.value)}
+                    onBlur={onHostBlur}
                     placeholder="1.2.3.4"
+                    aria-invalid={hostError ? true : undefined}
+                    aria-describedby={hostError ? hostErrorId : undefined}
                   />
+                  {hostError && (
+                    <p id={hostErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                      {hostError}
+                    </p>
+                  )}
                 </div>
                 <div className="w-[86px] shrink-0">
-                  <label className="nx-label">端口</label>
+                  <label className="nx-label" htmlFor={portInputId}>端口</label>
                   <input
+                    id={portInputId}
                     type="number"
                     className="nx-input"
                     value={port}
-                    onChange={(e) => setPort(Number(e.target.value))}
+                    onChange={(e) => onPortChange(Number(e.target.value))}
+                    onBlur={onPortBlur}
+                    aria-invalid={portError ? true : undefined}
+                    aria-describedby={portError ? portErrorId : undefined}
                   />
+                  {portError && (
+                    <p id={portErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                      {portError}
+                    </p>
+                  )}
                 </div>
               </div>
 
