@@ -134,11 +134,16 @@ export function getResolvedTerminalTheme(): ResolvedTerminalTheme {
     : appearance.terminalTheme;
 }
 
+export function uiTextFactor(prefs: AppearancePrefs = appearance): number {
+  return (prefs.uiFontScale * prefs.uiFontPreset) / 13;
+}
+
 function applyAppearance(): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.style.setProperty("--nx-ui-font-size", `${appearance.uiFontPreset}px`);
   root.style.setProperty("--nx-ui-scale", String(appearance.uiFontScale));
+  root.style.setProperty("--nx-ui-text-factor", String(uiTextFactor()));
   root.dataset.nxTermTheme = getResolvedTerminalTheme();
 }
 

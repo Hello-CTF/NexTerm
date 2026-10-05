@@ -164,7 +164,7 @@ export function AppearanceCard() {
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-sm"
           title="恢复默认主题与外观（跟随系统、深色终端、13px、100% 倍率）；不影响布局、凭据与模型档案"
-          aria-label="恢复默认主题"
+          aria-label="恢复默认主题与外观"
           disabled={themeMode === "system" && appearanceIsDefault}
           onClick={resetAll}
         >

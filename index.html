@@ -23,7 +23,39 @@
             resolved = "dark";
           }
         }
-        document.documentElement.dataset.nxTheme = resolved;
+        var root = document.documentElement;
+        root.dataset.nxTheme = resolved;
+
+        var preset = 13;
+        var scale = 1;
+        var termTheme = "dark";
+        try {
+          var raw = localStorage.getItem("nexterm.appearance.v1");
+          if (raw) {
+            var o = JSON.parse(raw);
+            if (o && typeof o === "object") {
+              if (o.uiFontPreset === 12 || o.uiFontPreset === 13 || o.uiFontPreset === 14.5) {
+                preset = o.uiFontPreset;
+              }
+              if (typeof o.uiFontScale === "number" && isFinite(o.uiFontScale)) {
+                var clamped = Math.min(2, Math.max(1, o.uiFontScale));
+                var steps = [1, 1.25, 1.5, 1.75, 2];
+                var best = steps[0];
+                for (var i = 1; i < steps.length; i++) {
+                  if (Math.abs(steps[i] - clamped) < Math.abs(best - clamped)) best = steps[i];
+                }
+                scale = best;
+              }
+              if (o.terminalTheme === "dark" || o.terminalTheme === "light" || o.terminalTheme === "interface") {
+                termTheme = o.terminalTheme;
+              }
+            }
+          }
+        } catch (e) {}
+        root.style.setProperty("--nx-ui-font-size", preset + "px");
+        root.style.setProperty("--nx-ui-scale", String(scale));
+        root.style.setProperty("--nx-ui-text-factor", String((scale * preset) / 13));
+        root.dataset.nxTermTheme = termTheme === "interface" ? resolved : termTheme;
       })();
     </script>
   </head>

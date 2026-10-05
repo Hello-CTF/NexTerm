@@ -901,6 +901,24 @@ const textScaleMatrix = [
 const appearanceSeed = (terminalTheme) =>
   `try { localStorage.setItem("nexterm.appearance.v1", JSON.stringify({ uiFontPreset: 13, uiFontScale: 1.25, terminalFontSize: 13, terminalTheme: ${JSON.stringify(terminalTheme)} })); } catch {}`;
 
+const appearanceSeedFull = (overrides) =>
+  `try { localStorage.setItem("nexterm.appearance.v1", JSON.stringify({ uiFontPreset: 13, uiFontScale: 1, terminalFontSize: 13, terminalTheme: "dark", ...${JSON.stringify(overrides)} })); } catch {}`;
+
+const TEXT_SNAPSHOT = `(() => {
+  const out = [];
+  for (const el of document.querySelectorAll("#root *")) {
+    if (el.closest(".xterm")) continue;
+    if (!el.getClientRects().length) continue;
+    const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+    if (!hasText) continue;
+    out.push({
+      key: out.length + "|" + el.tagName + "|" + String(el.className).slice(0, 50),
+      size: parseFloat(getComputedStyle(el).fontSize),
+    });
+  }
+  return out;
+})()`;
+
 async function textScaleAcceptance(page) {
   for (const vp of textScaleMatrix) {
     await pass(`text200-no-hoverflow-${vp.name}`, async () => {
@@ -947,6 +965,95 @@ async function textScaleAcceptance(page) {
       return { evidence };
     });
   }
+
+  const desktopVp = textScaleMatrix.find((v) => v.name === "1280x900-desktop");
+
+  await pass("text-factor-covers-all-text", async () => {
+    await boot(page, { viewport: desktopVp, extraInit: appearanceSeedFull({}) });
+    await sleep(400);
+    const base = await page.evaluate(TEXT_SNAPSHOT);
+    const baseMap = new Map(base.map((e) => [e.key, e.size]));
+
+    const scenarios = [
+      { name: "scale1.25", seed: { uiFontScale: 1.25 }, min: 1.2, max: 1.3 },
+      { name: "preset14.5", seed: { uiFontPreset: 14.5 }, min: 1.1, max: 1.13 },
+      { name: "preset12", seed: { uiFontPreset: 12 }, min: 0.91, max: 0.94 },
+    ];
+    const evidence = { baseTotal: base.length, scenarios: {} };
+    for (const scenario of scenarios) {
+      await boot(page, { viewport: desktopVp, extraInit: appearanceSeedFull(scenario.seed) });
+      await sleep(400);
+      const snap = await page.evaluate(TEXT_SNAPSHOT);
+      const missed = [];
+      let matched = 0;
+      for (const el of snap) {
+        const before = baseMap.get(el.key);
+        if (before === undefined) continue;
+        matched++;
+        const ratio = el.size / before;
+        if (ratio < scenario.min || ratio > scenario.max) {
+          missed.push(`${el.key} ${before}->${el.size} (${ratio.toFixed(3)})`);
+        }
+      }
+      evidence.scenarios[scenario.name] = { matched, missed: missed.slice(0, 8) };
+      assert.ok(matched >= 40, `${scenario.name}: only ${matched} matched elements, snapshot unstable`);
+      assert.deepEqual(missed, [], `${scenario.name}: text elements not following the factor`);
+    }
+    return { evidence };
+  });
+
+  await pass("text-factor-representative-elements", async () => {
+    const representativeSizes = `(() => {
+      const byText = (selector, text) => [...document.querySelectorAll(selector)].find(
+        (el) => el.childNodes.length && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim() === text),
+      );
+      const treeRow = document.querySelector('.nx-left-dock [role="treeitem"]');
+      const xs = [...document.querySelectorAll("#root *")].find((el) => el.classList?.contains("text-xs"));
+      const entries = {
+        fileTreeRow: treeRow ? parseFloat(getComputedStyle(treeRow).fontSize) : null,
+        tab: document.querySelector(".nx-tab") ? parseFloat(getComputedStyle(document.querySelector(".nx-tab")).fontSize) : null,
+        toolbarTitle: byText("span", "NexTerm") ? parseFloat(getComputedStyle(byText("span", "NexTerm")).fontSize) : null,
+        textXsSection: xs ? parseFloat(getComputedStyle(xs).fontSize) : null,
+      };
+      return entries;
+    })()`;
+    const openTree = `document.querySelector('.nx-rail button[aria-label="文件树"]').click()`;
+
+    await boot(page, { viewport: desktopVp, extraInit: appearanceSeedFull({}) });
+    await page.evaluate(openTree);
+    await page.waitFor('Boolean(document.querySelector(\'.nx-left-dock [role="treeitem"\'))');
+    const base = await page.evaluate(representativeSizes);
+
+    await boot(page, { viewport: desktopVp, extraInit: appearanceSeedFull({ uiFontScale: 1.25 }) });
+    await page.evaluate(openTree);
+    await page.waitFor('Boolean(document.querySelector(\'.nx-left-dock [role="treeitem"\'))');
+    const scaled = await page.evaluate(representativeSizes);
+
+    const expected = { scale: 1.25, preset: 14.5 / 13 };
+    const evidence = { base, scaled };
+    for (const key of Object.keys(base)) {
+      assert.ok(base[key] !== null, `${key} missing on the default workspace`);
+      const ratio = scaled[key] / base[key];
+      assert.ok(
+        Math.abs(ratio - expected.scale) <= 0.02,
+        `${key}: expected ${expected.scale}x, got ${ratio} (${base[key]}->${scaled[key]})`,
+      );
+    }
+    await boot(page, { viewport: desktopVp, extraInit: appearanceSeedFull({ uiFontPreset: 14.5 }) });
+    await page.evaluate(openTree);
+    await page.waitFor('Boolean(document.querySelector(\'.nx-left-dock [role="treeitem"\'))');
+    const preset = await page.evaluate(representativeSizes);
+    evidence.preset = preset;
+    for (const key of Object.keys(base)) {
+      const ratio = preset[key] / base[key];
+      assert.ok(
+        Math.abs(ratio - expected.preset) <= 0.02,
+        `${key}: expected preset ratio ${expected.preset}, got ${ratio} (${base[key]}->${preset[key]})`,
+      );
+    }
+    await screenshot(page, "text-factor-representative-1280.png");
+    return { evidence };
+  });
 }
 
 async function main() {

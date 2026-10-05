@@ -14,6 +14,10 @@ function rootStyle(name: string): string {
   return document.documentElement.style.getPropertyValue(name);
 }
 
+function textFactor(): number {
+  return Number(rootStyle("--nx-ui-text-factor"));
+}
+
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-nx-theme");
@@ -34,6 +38,7 @@ describe("appearance prefs defaults", () => {
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(rootStyle("--nx-ui-font-size")).toBe("13px");
     expect(rootStyle("--nx-ui-scale")).toBe("1");
+    expect(textFactor()).toBe(1);
     expect(document.documentElement.dataset.nxTermTheme).toBe("dark");
     expect(prefs.getResolvedTerminalTheme()).toBe("dark");
   });
@@ -94,6 +99,7 @@ describe("appearance prefs persistence", () => {
     });
     expect(rootStyle("--nx-ui-font-size")).toBe("14.5px");
     expect(rootStyle("--nx-ui-scale")).toBe("1.5");
+    expect(textFactor()).toBeCloseTo((1.5 * 14.5) / 13, 10);
     expect(document.documentElement.dataset.nxTermTheme).toBe("light");
 
     const reloaded = await loadPrefs();
@@ -146,8 +152,36 @@ describe("appearance prefs persistence", () => {
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(rootStyle("--nx-ui-font-size")).toBe("13px");
     expect(rootStyle("--nx-ui-scale")).toBe("1");
+    expect(textFactor()).toBe(1);
     expect(seen).toEqual([1]);
     unsubscribe();
+  });
+});
+
+describe("text factor composition", () => {
+  it("multiplies the preset and the scale into one unitless factor", async () => {
+    const { prefs } = await loadPrefs();
+    expect(prefs.uiTextFactor()).toBe(1);
+
+    prefs.setUiFontPreset(14.5);
+    expect(prefs.uiTextFactor()).toBeCloseTo(14.5 / 13, 10);
+    expect(textFactor()).toBeCloseTo(14.5 / 13, 10);
+
+    prefs.setUiFontScale(2);
+    expect(prefs.uiTextFactor()).toBeCloseTo((2 * 14.5) / 13, 10);
+    expect(textFactor()).toBeCloseTo((2 * 14.5) / 13, 10);
+
+    prefs.setUiFontPreset(12);
+    expect(prefs.uiTextFactor()).toBeCloseTo((2 * 12) / 13, 10);
+  });
+
+  it("tracks the factor through reset", async () => {
+    const { prefs } = await loadPrefs();
+    prefs.setUiFontPreset(12);
+    prefs.setUiFontScale(1.75);
+    expect(textFactor()).toBeCloseTo((1.75 * 12) / 13, 10);
+    prefs.resetAppearancePrefs();
+    expect(textFactor()).toBe(1);
   });
 });
 
