@@ -396,6 +396,9 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 			return answer, turns, total, nil
 		}
 		if event.Err != nil {
+			if errors.Is(event.Err, adk.ErrExceedMaxIterations) {
+				return runtime.failure(&maxIterationsError{limit: r.config.MaxTurns})
+			}
 			return runtime.failure(event.Err)
 		}
 		if event.Action != nil && event.Action.Interrupted != nil {
@@ -449,8 +452,23 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 			if err := r.emitToolCalls(current, message.ToolCalls); err != nil {
 				return runtime.failure(err)
 			}
+			if len(message.ToolCalls) > 0 {
+				if err := r.persistToolCallRows(current.ctx, current.args.ConversationID, current.id, message.ToolCalls); err != nil {
+					if ctxErr := current.ctx.Err(); ctxErr != nil {
+						return runtime.failure(ctxErr)
+					}
+					return runtime.failure(err)
+				}
+			}
 		case schema.Tool:
-			if err := r.emitToolResult(current, message); err != nil {
+			result, text, err := r.emitToolResult(current, message)
+			if err != nil {
+				return runtime.failure(err)
+			}
+			if err := r.persistToolResultRows(current.ctx, current, message, result, text); err != nil {
+				if ctxErr := current.ctx.Err(); ctxErr != nil {
+					return runtime.failure(ctxErr)
+				}
 				return runtime.failure(err)
 			}
 		}
@@ -587,33 +605,33 @@ func mapSubagentEvent(parentCallID string, depth int, event subagent.Event) Even
 	return mapped
 }
 
-func (r *Runner) emitToolResult(current *job, message *schema.Message) error {
+func (r *Runner) emitToolResult(current *job, message *schema.Message) (tools.Output, string, error) {
 	var result tools.Output
 	if err := json.Unmarshal([]byte(message.Content), &result); err != nil {
-		return fmt.Errorf("解析领域工具 %s 结果失败: %w", message.ToolName, err)
+		return result, "", fmt.Errorf("解析领域工具 %s 结果失败: %w", message.ToolName, err)
 	}
 	if result.Change != nil {
 		if err := current.emit(current.ctx, Event{Type: "fileChange", ID: result.Change.ID, Path: result.Change.Path, Before: result.Change.Before, After: result.Change.After}); err != nil {
-			return err
+			return result, "", err
 		}
 	}
-	text, cut := prefixBytes(result.Text, 64<<10)
+	text, cut := prefixBytes(result.Text, persistedToolResultLimit)
 	result.Truncated = result.Truncated || cut
 	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic}); err != nil {
-		return err
+		return result, "", err
 	}
 	if result.Todos != nil {
 		if err := current.emit(current.ctx, Event{Type: "todos", Items: result.Todos}); err != nil {
-			return err
+			return result, "", err
 		}
 	}
 	if result.Plan != "" && current.args.PlanMode {
 		if err := current.emit(current.ctx, Event{Type: "planSubmitted", Plan: result.Plan}); err != nil {
-			return err
+			return result, "", err
 		}
 		current.eino.setAnswer(result.Plan)
 	}
-	return nil
+	return result, text, nil
 }
 
 func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) error {
@@ -701,36 +719,6 @@ func (r *Runner) persistAssistant(ctx context.Context, conversationID, answer st
 
 func clampTokensInt64(value uint64) int64 {
 	return int64(min64(value, uint64(^uint64(0)>>1)))
-}
-
-func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {
-	messages := make([]*schema.Message, 0, len(rows))
-	for _, row := range rows {
-		var persisted struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-			Steered bool   `json:"steered"`
-			JobID   string `json:"jobId"`
-		}
-		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil || persisted.Content == "" {
-			continue
-		}
-
-		if persisted.JobID != "" && persisted.JobID == jobID {
-			continue
-		}
-		role := persisted.Role
-		if role == "" {
-			role = row.Role
-		}
-		switch role {
-		case "user":
-			messages = append(messages, schema.UserMessage(persisted.Content))
-		case "assistant":
-			messages = append(messages, schema.AssistantMessage(persisted.Content, nil))
-		}
-	}
-	return messages
 }
 
 func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Message, bool, error) {
