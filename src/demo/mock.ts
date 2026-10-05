@@ -1615,6 +1615,20 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       modelState.activeId = str(a.id);
       return null;
 
+    case "ai_circuit_status": {
+      const id = str(a.id) || modelState.activeId;
+      if (id === "m-deepseek") {
+        return { consecutiveFailures: 5, openUntil: Date.now() + 5 * 60_000 };
+      }
+      if (id === "m-glm") {
+        return { consecutiveFailures: 1, openUntil: null };
+      }
+      if (modelState.profiles.some((p) => p.id === id)) {
+        return { consecutiveFailures: 0, openUntil: null };
+      }
+      throwAppError("not_found", `模型档案不存在: ${id}`);
+    }
+
     case "ai_model_refresh":
       await new Promise((r) => window.setTimeout(r, 600));
       return { models: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"], malformed: 0 };

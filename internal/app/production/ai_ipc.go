@@ -26,6 +26,15 @@ type aiTestProviderRequest struct {
 	ID string `json:"id"`
 }
 
+type aiCircuitStatusRequest struct {
+	ID string `json:"id"`
+}
+
+type aiCircuitStatusDTO struct {
+	ConsecutiveFailures int    `json:"consecutiveFailures"`
+	OpenUntil           *int64 `json:"openUntil"`
+}
+
 type aiConversationRequest struct {
 	ID             string `json:"id"`
 	Title          string `json:"title"`
@@ -158,6 +167,30 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_profiles", func(_ context.Context, _ *ipc.Call, _ struct{}) (profiles.Overview, error) {
 				return manager.Overview(), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_circuit_status", func(_ context.Context, _ *ipc.Call, input aiCircuitStatusRequest) (aiCircuitStatusDTO, error) {
+				id := input.ID
+				if id == "" {
+					profile, ok := manager.ActiveProfile()
+					if !ok {
+						return aiCircuitStatusDTO{}, profiles.ErrNoActiveProfile
+					}
+					id = profile.ID
+				} else if _, ok := manager.Profile(id); !ok {
+					return aiCircuitStatusDTO{}, fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, id)
+				}
+				status, ok := manager.CircuitStatus(id)
+				if !ok {
+					return aiCircuitStatusDTO{}, nil
+				}
+				dto := aiCircuitStatusDTO{ConsecutiveFailures: status.ConsecutiveFailures}
+				if status.OpenUntil != nil {
+					openUntil := status.OpenUntil.UnixMilli()
+					dto.OpenUntil = &openUntil
+				}
+				return dto, nil
 			})
 		},
 		func() error {

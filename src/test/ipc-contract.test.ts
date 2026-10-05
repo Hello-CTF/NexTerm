@@ -47,10 +47,10 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 163 个方法和 161 个唯一命令", () => {
+  it("保留 164 个方法和 162 个唯一命令", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(163);
-    expect(new Set(names)).toHaveProperty("size", 161);
+    expect(names).toHaveLength(164);
+    expect(new Set(names)).toHaveProperty("size", 162);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",
@@ -282,6 +282,29 @@ describe("ai_edit_resend 线上契约", () => {
     expect(calls[0]?.url).toBe("/rpc");
     expect(calls[0]?.cmd).toBe("ai_edit_resend");
     expect(calls[0]?.args).toEqual({ conversationId: "conv-1", messageId: "msg-3" });
+    expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
+  });
+});
+
+describe("ai_circuit_status 线上契约", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    installWebEnv();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("ai_circuit_status 线上 args 扁平且字段精确", async () => {
+    const calls = captureRpc();
+    const { modelApi } = await import("../ipc/commands");
+
+    await modelApi.circuitStatus("m-1");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("/rpc");
+    expect(calls[0]?.cmd).toBe("ai_circuit_status");
+    expect(calls[0]?.args).toEqual({ id: "m-1" });
     expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
   });
 });

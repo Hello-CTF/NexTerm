@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "../demo/mock";
 import { conversationMessages } from "../demo/data";
 import type {
+  AiCircuitStatusDto,
   AiRunDto,
   AiUsageSummaryRow,
   AuditCountDto,
@@ -193,6 +194,29 @@ describe("demo AI 命令契约", () => {
         expect(profile[key] === undefined || typeof profile[key] === "number").toBe(true);
       }
     }
+  });
+
+  it("ai_circuit_status 返回运行态熔断状态而非配置默认值", async () => {
+    const open = (await mockInvoke("ai_circuit_status", { id: "m-deepseek" })) as AiCircuitStatusDto;
+    expect(open.consecutiveFailures).toBeGreaterThan(0);
+    expect(typeof open.openUntil).toBe("number");
+    expect(open.openUntil).toBeGreaterThan(Date.now());
+
+    const viaActive = (await mockInvoke("ai_circuit_status", { id: "" })) as AiCircuitStatusDto;
+    expect(viaActive.consecutiveFailures).toBe(open.consecutiveFailures);
+    expect(typeof viaActive.openUntil).toBe("number");
+    expect(viaActive.openUntil).toBeGreaterThan(Date.now());
+
+    const counting = (await mockInvoke("ai_circuit_status", { id: "m-glm" })) as AiCircuitStatusDto;
+    expect(counting.consecutiveFailures).toBeGreaterThan(0);
+    expect(counting.openUntil).toBeNull();
+
+    const closed = (await mockInvoke("ai_circuit_status", { id: "m-local" })) as AiCircuitStatusDto;
+    expect(closed).toEqual({ consecutiveFailures: 0, openUntil: null });
+
+    await expect(mockInvoke("ai_circuit_status", { id: "m-missing" })).rejects.toMatchObject({
+      code: "not_found",
+    });
   });
 
   it("audit_count 返回与 audit_query 同过滤的 total", async () => {
