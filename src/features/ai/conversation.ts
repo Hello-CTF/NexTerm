@@ -35,7 +35,13 @@ export interface SubagentTimeline {
 }
 
 export type ChatItem =
-  | (ItemBase & { role: "user"; text: string; imageCount?: number; steer?: SteerDelivery })
+  | (ItemBase & {
+      role: "user";
+      text: string;
+      imageCount?: number;
+      steer?: SteerDelivery;
+      messageId?: string;
+    })
   | (ItemBase & { role: "assistant"; text: string })
   | (ItemBase & { role: "reasoning"; text: string })
   | (ItemBase & {
@@ -844,7 +850,7 @@ function historyTextOf(raw: unknown): string {
 
 export function historyToItems(
   state: ConversationState,
-  messages: { role: string; content: unknown }[],
+  messages: { id?: string; role: string; content: unknown }[],
   skipJobIds?: ReadonlySet<string>,
 ): ChatItem[] {
   const items: ChatItem[] = [];
@@ -922,10 +928,33 @@ export function historyToItems(
     if (!text) continue;
     if (m.role === "user") {
       const n = Number(historyField(raw, "imageCount") ?? 0);
-      items.push({ id: `h${seq++}`, attempt: null, role: "user", text, imageCount: n || undefined });
+      items.push({
+        id: `h${seq++}`,
+        attempt: null,
+        role: "user",
+        text,
+        imageCount: n || undefined,
+        ...(typeof m.id === "string" && m.id ? { messageId: m.id } : {}),
+      });
     } else if (m.role === "assistant") {
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
     }
   }
   return items;
+}
+
+export function truncateItemsAfter(state: ConversationState, itemId: string): ConversationState {
+  const index = state.items.findIndex((item) => item.id === itemId);
+  if (index < 0 || index === state.items.length - 1) return state;
+  const items = state.items.slice(0, index + 1);
+  return {
+    ...state,
+    items,
+    attempts: state.attempts.filter((attempt) =>
+      items.some((item) => item.attempt === attempt.generation),
+    ),
+    status: null,
+    todos: [],
+    usage: null,
+  };
 }

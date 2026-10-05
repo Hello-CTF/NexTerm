@@ -572,7 +572,13 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
   const send = async (override?: { message?: string; planMode?: boolean }) => {
     const message = (override?.message ?? input).trim();
-    if ((!message && images.length === 0) || aiBusy || aiRunBlocksStart(activeRunRef.current)) return;
+    if (
+      (!message && images.length === 0) ||
+      useUi.getState().aiBusy ||
+      aiRunBlocksStart(activeRunRef.current)
+    ) {
+      return;
+    }
     const run = beginRun();
     const usePlan = override?.planMode ?? planMode;
     setAiBusy(true);
@@ -716,6 +722,48 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const retryRunRef = useRef(retryRun);
   retryRunRef.current = retryRun;
   const handleRetryRun = useCallback((item: ChatItem) => retryRunRef.current(item), []);
+
+  const [editing, setEditing] = useState<{ itemId: string; messageId: string } | null>(null);
+  const startEditResend = (item: ChatItem) => {
+    if (item.role !== "user" || !item.messageId) return;
+    setEditing({ itemId: item.id, messageId: item.messageId });
+    setInput(item.text);
+    setAtOpen(false);
+    inputRef.current?.focus();
+  };
+  const startEditResendRef = useRef(startEditResend);
+  startEditResendRef.current = startEditResend;
+  const handleEditResend = useCallback((item: ChatItem) => startEditResendRef.current(item), []);
+
+  const submitEditResend = async () => {
+    const edit = editing;
+    const text = input.trim();
+    const conversationId = conversationIdRef.current;
+    if (!edit || !text) return;
+    if (!conversationId) {
+      pushToast("error", "编辑重发需要先打开一个会话");
+      return;
+    }
+    try {
+      await aiApi.editResend(conversationId, edit.messageId);
+    } catch (e) {
+      pushToast("error", `编辑重发失败：${describeError(e)}`);
+      return;
+    }
+    const current = activeRunRef.current;
+    if (current && !current.settled) {
+      activeRunRef.current = settleAiRun(current);
+      stream.cancelRun(current.generation, false);
+      clearResyncState(current.generation);
+    }
+    setAiBusy(false);
+    const live = runChannelRef.current;
+    if (live) live.dispose();
+    disposeRestoredChannel();
+    stream.truncateAfterItem(edit.itemId);
+    setEditing(null);
+    await send({ message: text });
+  };
 
   const confirm = async (decision: "allow" | "allow_session" | "deny") => {
     const run = activeRunRef.current;
@@ -881,6 +929,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       }
       stream.reset(historyToItems(stream.getState(), msgs, replayableJobIds(runs)));
       updateConversationId(id);
+      setEditing(null);
       setHistoryOpen(false);
       void restoreConversationRuns(id, runs);
     } catch (e) {
@@ -895,6 +944,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     updateConversationId(undefined);
     setConversationRuns([]);
+    setEditing(null);
     stream.reset();
     setHistoryOpen(false);
   };
@@ -943,6 +993,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     if (conversationIdRef.current === c.id) {
       deletedConversationIdsRef.current.add(c.id);
       updateConversationId(undefined);
+      setEditing(null);
       if (!aiRunBlocksStart(activeRunRef.current)) stream.reset();
     }
   };
@@ -1347,6 +1398,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                   streaming={aiBusy && index === conv.items.length - 1}
                   onApprovePlan={handleApprovePlan}
                   onRetry={handleRetryRun}
+                  onEdit={handleEditResend}
                 />
               </div>
             );
@@ -1510,6 +1562,25 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <span className="truncate">计划模式 · 先出方案，你批准了再动手</span>
           </div>
         )}
+        {editing && (
+          <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-200">
+            <IconEdit size={10} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">编辑重发：此后的消息与运行会被替换</span>
+            <button
+              className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
+              disabled={!input.trim()}
+              onClick={() => void submitEditResend()}
+            >
+              替换并重新发送
+            </button>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+              onClick={() => setEditing(null)}
+            >
+              取消
+            </button>
+          </div>
+        )}
         {syncNotice && syncNotice.generation === activeGeneration && (
           <div
             className="mb-1.5 flex items-center gap-1.5 text-[11px] text-neutral-500 [@media(max-height:480px)]:sr-only"
@@ -1636,6 +1707,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               if (isImeKeyEvent(e)) return;
               e.preventDefault();
               if (aiBusy) void steer();
+              else if (editing) void submitEditResend();
               else void send();
             }
           }}
@@ -1683,9 +1755,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           ) : (
             <button
               className="nx-send-btn"
-              title="发送 (Enter)"
+              title={editing ? "替换并重新发送" : "发送 (Enter)"}
               disabled={!input.trim() && images.length === 0}
-              onClick={() => void send()}
+              onClick={() => (editing ? void submitEditResend() : void send())}
             >
               <IconSendArrow />
             </button>
@@ -1772,15 +1844,28 @@ const ChatBubble = memo(function ChatBubble({
   streaming,
   onApprovePlan,
   onRetry,
+  onEdit,
 }: {
   item: ChatItem;
   streaming: boolean;
   onApprovePlan: (plan: string) => void;
   onRetry: (item: ChatItem) => void;
+  onEdit: (item: ChatItem) => void;
 }) {
   if (item.role === "user") {
     return (
-      <div className="ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-[var(--nx-fg-on-tint)]">
+      <div className="group/user relative ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-[var(--nx-fg-on-tint)]">
+        {item.messageId ? (
+          <button
+            type="button"
+            className="absolute right-1.5 top-1.5 rounded p-0.5 text-[var(--nx-fg-soft)] opacity-0 transition-opacity hover:text-neutral-100 focus:opacity-100 group-hover/user:opacity-100"
+            title="编辑并重新发送"
+            aria-label="编辑并重新发送"
+            onClick={() => onEdit(item)}
+          >
+            <IconEdit size={11} />
+          </button>
+        ) : null}
         {item.imageCount ? (
           <div className="mb-1 flex items-center gap-1 text-[11px] text-[var(--nx-fg-soft)]">
             <IconImage size={11} />

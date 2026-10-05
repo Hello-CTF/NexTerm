@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createConversation, historyToItems } from "../features/ai/conversation";
+import {
+  appendUserMessage,
+  applyAiEvent,
+  beginRun,
+  createConversation,
+  historyToItems,
+  truncateItemsAfter,
+  type ConversationState,
+} from "../features/ai/conversation";
 
 const state = createConversation();
 
@@ -134,5 +142,53 @@ describe("structured history mapping", () => {
   it("continues history ids from the conversation sequence", () => {
     const items = historyToItems({ ...state, seq: 41 }, [msg("assistant", "a")]);
     expect(items[0].id).toBe("h41");
+  });
+
+  it("carries the source message id on user items for edit-resend", () => {
+    const items = historyToItems(state, [
+      { id: "m-1", role: "user", content: { role: "user", content: "问题" } },
+      { role: "user", content: { role: "user", content: "无 id 的老数据" } },
+    ]);
+    expect(items[0]).toMatchObject({ messageId: "m-1" });
+    const second = items[1];
+    expect(second.role === "user" ? second.messageId : "not-a-user-item").toBeUndefined();
+  });
+});
+
+describe("truncateItemsAfter", () => {
+  it("keeps items through the anchor and prunes later attempts/status/todos/usage", () => {
+    const history = historyToItems(state, [
+      { id: "m-1", role: "user", content: { role: "user", content: "旧问题" } },
+    ]);
+    let s: ConversationState = { ...state, items: history, seq: 1 };
+    s = appendUserMessage(s, 1, "新问题");
+    s = beginRun(s, 1);
+    s = applyAiEvent(s, 1, { type: "toolCall", id: "c1", name: "read_file", display: "read_file" }).state;
+    s = applyAiEvent(s, 1, { type: "usage", promptTokens: 5, contextWindow: 10 }).state;
+    s = applyAiEvent(s, 1, { type: "todos", items: [{ content: "t", status: "pending" }] }).state;
+
+    const truncated = truncateItemsAfter(s, history[0].id);
+    expect(truncated.items.map((i) => i.role)).toEqual(["user"]);
+    expect(truncated.items[0]).toMatchObject({ text: "旧问题", messageId: "m-1" });
+    expect(truncated.attempts).toHaveLength(0);
+    expect(truncated.usage).toBeNull();
+    expect(truncated.todos).toEqual([]);
+    expect(truncated.status).toBeNull();
+  });
+
+  it("keeps attempts that still own items before the anchor", () => {
+    let s = beginRun(createConversation(), 1);
+    s = applyAiEvent(s, 1, { type: "toolCall", id: "c1", name: "read_file", display: "read_file" }).state;
+    const anchor = appendUserMessage(s, 1, "新问题");
+    const truncated = truncateItemsAfter(anchor, s.items[0].id);
+    expect(truncated.items.map((i) => i.role)).toEqual(["tool"]);
+    expect(truncated.attempts).toHaveLength(1);
+  });
+
+  it("is a no-op for unknown ids and for the last item", () => {
+    let s = beginRun(createConversation(), 1);
+    s = applyAiEvent(s, 1, { type: "delta", text: "回答" }).state;
+    expect(truncateItemsAfter(s, "missing")).toBe(s);
+    expect(truncateItemsAfter(s, s.items[0].id)).toBe(s);
   });
 });
