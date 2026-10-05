@@ -9,7 +9,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest, handler StreamHa
 	if err != nil {
 		return Completion{}, err
 	}
-	result, err := c.runNative(ctx, messages, options, request.ResponseFormat, c.config.Stream, nil, handler)
+	result, err := c.runNative(ctx, messages, options, c.config.Stream, nil, handler)
 	if err != nil {
 		return result.completion, err
 	}
@@ -21,7 +21,7 @@ func (c *Client) ChatBlock(ctx context.Context, request ChatRequest) (Completion
 	if err != nil {
 		return Completion{}, err
 	}
-	result, err := c.runNative(ctx, messages, options, request.ResponseFormat, false, nil, nil)
+	result, err := c.runNative(ctx, messages, options, false, nil, nil)
 	if err != nil {
 		return result.completion, err
 	}

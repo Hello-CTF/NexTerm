@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/eino-contrib/jsonschema"
 )
 
 func TestDefaultTimeoutsIncludeResponseHeader(t *testing.T) {
@@ -132,46 +130,6 @@ func TestChatRequestOmitsMaxTokensWhenUnset(t *testing.T) {
 	}
 	if _, exists := captured.body["max_tokens"]; exists {
 		t.Fatalf("max_tokens leaked without configuration: %v", captured.body["max_tokens"])
-	}
-}
-
-func TestChatRequestPassesResponseFormat(t *testing.T) {
-	var captured capturedRequest
-	client := newCaptureClient(t, Config{}, &captured)
-	schema := jsonschema.Reflect(struct {
-		Plan string `json:"plan"`
-	}{})
-	request := ChatRequest{ResponseFormat: &ResponseFormat{Name: "plan_extraction", Schema: schema, Strict: true}}
-	if _, err := client.ChatBlock(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	format, ok := captured.body["response_format"].(map[string]any)
-	if !ok {
-		t.Fatalf("response_format on wire = %v", captured.body["response_format"])
-	}
-	if format["type"] != "json_schema" {
-		t.Fatalf("response_format type = %v", format["type"])
-	}
-	nested, ok := format["json_schema"].(map[string]any)
-	if !ok {
-		t.Fatalf("json_schema = %v", format["json_schema"])
-	}
-	if nested["name"] != "plan_extraction" || nested["strict"] != true {
-		t.Fatalf("json_schema = %+v", nested)
-	}
-	if _, exists := nested["schema"]; !exists {
-		t.Fatalf("json_schema missing schema: %+v", nested)
-	}
-}
-
-func TestChatRequestOmitsResponseFormatWhenUnset(t *testing.T) {
-	var captured capturedRequest
-	client := newCaptureClient(t, Config{}, &captured)
-	if _, err := client.ChatBlock(context.Background(), ChatRequest{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := captured.body["response_format"]; exists {
-		t.Fatalf("response_format leaked without configuration: %v", captured.body["response_format"])
 	}
 }
 

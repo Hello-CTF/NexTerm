@@ -66,7 +66,7 @@ type nativeResult struct {
 
 type nativeFrameHandler func(*schema.Message) error
 
-func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, responseFormat *ResponseFormat, preferStream bool, onFrame nativeFrameHandler, onItem StreamHandler) (nativeResult, error) {
+func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler, onItem StreamHandler) (nativeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nativeResult{}, err
 	}
@@ -90,12 +90,12 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 				return nativeResult{}, c.circuitOpenError()
 			}
 			state := &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
-			result, err := c.invokeNative(ctx, input, options, servingModel, useBlock, state, onFrame, onItem, responseFormat)
+			result, err := c.invokeNative(ctx, input, options, servingModel, useBlock, state, onFrame, onItem)
 			c.recordCircuitOutcome(err)
 			if err != nil && !useBlock && ctx.Err() == nil && !state.frameSeen.Load() && !state.emitted && safeStreamFallback(err) {
 				useBlock = true
 				state = &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
-				result, err = c.invokeNative(ctx, input, options, servingModel, true, state, onFrame, onItem, responseFormat)
+				result, err = c.invokeNative(ctx, input, options, servingModel, true, state, onFrame, onItem)
 				c.recordCircuitOutcome(err)
 			}
 			if err == nil {
@@ -129,7 +129,7 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	return nativeResult{}, lastErr
 }
 
-func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, options []model.Option, servingModel string, block bool, state *attemptState, onFrame nativeFrameHandler, onItem StreamHandler, responseFormat *ResponseFormat) (nativeResult, error) {
+func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, options []model.Option, servingModel string, block bool, state *attemptState, onFrame nativeFrameHandler, onItem StreamHandler) (nativeResult, error) {
 	timeout := c.timeouts.Stream
 	if block {
 		timeout = c.timeouts.Block
@@ -138,7 +138,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 	defer cancel()
 	state.streaming = !block
 	attemptContext = state.trackContext(attemptContext)
-	chatModel, err := c.newChatModel(attemptContext, servingModel, responseFormat)
+	chatModel, err := c.newChatModel(attemptContext, servingModel)
 	if err != nil {
 		return nativeResult{}, err
 	}

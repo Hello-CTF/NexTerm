@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
-	"github.com/eino-contrib/jsonschema"
 )
 
 type ChatMessage struct {
@@ -75,16 +74,8 @@ type ToolSchema struct {
 }
 
 type ChatRequest struct {
-	Messages       []ChatMessage
-	Tools          []ToolSchema
-	ResponseFormat *ResponseFormat
-}
-
-type ResponseFormat struct {
-	Name        string
-	Description string
-	Schema      *jsonschema.Schema
-	Strict      bool
+	Messages []ChatMessage
+	Tools    []ToolSchema
 }
 
 type Completion struct {
