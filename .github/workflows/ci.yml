@@ -16,7 +16,6 @@ concurrency:
 env:
   GOTOOLCHAIN: go1.26.8
   GOFLAGS: -mod=readonly
-  pnpm_config_minimum_release_age: 0
 
 jobs:
   quality:
@@ -53,7 +52,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           wails3 version
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
+        run: pnpm install --frozen-lockfile
       - name: Install manifest verifier dependency
         run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
       - name: Verify the selected toolchain and modules
