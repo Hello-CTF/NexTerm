@@ -120,7 +120,7 @@ func productionModules(services ProductionServices) []Module {
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 				return registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir)
 			},
-			Component: closeStoreComponent(services.Store),
+			Component: closeStoreComponent(services.Store, services.Agent),
 		})
 	}
 	if services.Vault != nil {

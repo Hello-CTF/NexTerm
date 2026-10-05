@@ -168,3 +168,44 @@ func TestManagerCloseBoundedWithSlowOnFinish(t *testing.T) {
 		t.Fatalf("result = %+v err = %v", result, err)
 	}
 }
+
+func TestCloseRetainsEvictedTaskPersistenceErrors(t *testing.T) {
+	manager, err := NewManager(Config{
+		NewModel: func(context.Context) (model.BaseChatModel, error) {
+			return &testModel{step: func(context.Context, []*schema.Message, int) (*schema.Message, error) {
+				return schema.AssistantMessage("OK", nil), nil
+			}}, nil
+		},
+		OnFinish: func(_ context.Context, request Request, _ Result) error {
+			if request.Task == "a" {
+				return errors.New("write A failed")
+			}
+			return nil
+		},
+		MaxTasks:      1,
+		MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handleA, err := manager.Spawn(context.Background(), Request{Task: "a", Scope: &Scope{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := waitResult(t, manager, handleA); err != nil {
+		t.Fatal(err)
+	}
+	handleB, err := manager.Spawn(context.Background(), Request{Task: "b", Scope: &Scope{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := waitResult(t, manager, handleB); err != nil {
+		t.Fatal(err)
+	}
+	if manager.Len() != 1 {
+		t.Fatalf("registry len = %d, want 1 (A evicted)", manager.Len())
+	}
+	if err := manager.Close(); err == nil || !strings.Contains(err.Error(), "write A failed") {
+		t.Fatalf("close err = %v, want evicted task A's write failure", err)
+	}
+}

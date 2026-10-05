@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -892,5 +894,111 @@ func TestSubagentWriteFailureJoinsCancellation(t *testing.T) {
 	}
 	if err := storage.Close(); err != nil {
 		t.Fatalf("store closed with a live writer: %v", err)
+	}
+}
+
+func TestCloseContextDeadlineStillDrainsWritersBeforeStoreClose(t *testing.T) {
+	childMessage := schema.AssistantMessage("child done", nil)
+	childMessage.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 40, CompletionTokens: 8}}
+	child := sequenceModel(childMessage)
+	parent := sequenceModel(
+		toolCallMessage(namedToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`)),
+		schema.AssistantMessage("parent done", nil),
+	)
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hanging := &hangingSubagentStore{Store: storage, entered: make(chan struct{})}
+	runner := NewRunner(Config{
+		Model: func(context.Context) (model.BaseChatModel, uint64, error) { return parent, 32768, nil },
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: hanging,
+		Checkpoints: NewStoreCheckpoints(storage),
+		Subagents: &tools.SubagentConfig{
+			Model:           func(context.Context) (model.BaseChatModel, error) { return child, nil },
+			ModelForProfile: func(context.Context, string) (model.BaseChatModel, error) { return child, nil },
+		},
+	})
+	stream := &SliceStream{}
+	response := startTestJob(t, runner, stream, "go")
+	<-hanging.entered
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := runner.CloseContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext err = %v, want caller deadline preserved", err)
+	}
+	if err := runner.Close(); err != nil {
+		t.Fatalf("Close after deadline must drain, got %v", err)
+	}
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusCanceled || !strings.Contains(row.Error, "context deadline exceeded") {
+		t.Fatalf("parent row = %+v", row)
+	}
+	rows, err := storage.RunList(context.Background(), "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range rows {
+		if candidate.Source == "subagent" {
+			t.Fatalf("subagent row persisted despite failed write: %+v", candidate)
+		}
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("store closed with a live writer: %v", err)
+	}
+}
+
+func TestParkForShutdownPropagatesSubagentWriteFailure(t *testing.T) {
+	storage := restartStore(t)
+	conversation, err := storage.ConvCreate(context.Background(), "parked", map[string]any{"scope": nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RunInsert(context.Background(), store.RunRow{ID: "parked-1", ConversationID: conversation.ID, Status: store.RunStatusInterrupted}); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := subagent.NewManager(subagent.Config{
+		NewModel: func(context.Context) (model.BaseChatModel, error) {
+			return sequenceModel(schema.AssistantMessage("child", nil)), nil
+		},
+		OnFinish: func(context.Context, subagent.Request, subagent.Result) error {
+			return errors.New("disk exploded")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := manager.Spawn(context.Background(), subagent.Request{Task: "child", Scope: &subagent.Scope{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Wait(context.Background(), handle); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(Config{Store: storage, Runs: storage})
+	current := &job{
+		id: "parked-1", ctx: context.Background(), cancel: func() {},
+		stream: discardStream{}, memory: guard.NewMemory(), steer: steer.NewQueue(1), subagents: manager,
+	}
+	runner.mu.Lock()
+	runner.jobs[current.id] = current
+	runner.mu.Unlock()
+	runner.wg.Add(1)
+	err = runner.CloseContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "disk exploded") {
+		t.Fatalf("CloseContext err = %v, want parked subagent write failure", err)
+	}
+	row, err := storage.RunGet(context.Background(), "parked-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusInterrupted || row.FinishedAt != nil {
+		t.Fatalf("parked run terminal state changed: %+v", row)
+	}
+	if err := runner.Close(); err == nil || !strings.Contains(err.Error(), "disk exploded") {
+		t.Fatalf("repeated Close must keep reporting the drain error, got %v", err)
 	}
 }

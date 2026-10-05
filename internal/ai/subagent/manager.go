@@ -26,6 +26,7 @@ type Manager struct {
 
 	mu             sync.Mutex
 	tasks          map[string]*task
+	finishErrs     []error
 	active         int
 	nextGeneration uint64
 	closed         bool
@@ -40,10 +41,9 @@ type task struct {
 	recorder *historyRecorder
 	observer Observer
 
-	result    Result
-	err       error
-	finishErr error
-	finished  bool
+	result   Result
+	err      error
+	finished bool
 }
 
 type childContextKey struct{}
@@ -276,13 +276,7 @@ func (m *Manager) Close() error {
 func (m *Manager) finishErrors() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var errs []error
-	for _, current := range m.tasks {
-		if current.finishErr != nil {
-			errs = append(errs, fmt.Errorf("subagent %s: %w", current.handle.ID, current.finishErr))
-		}
-	}
-	return errors.Join(errs...)
+	return errors.Join(m.finishErrs...)
 }
 
 func (m *Manager) lookupLocked(handle Handle) (*task, error) {
@@ -339,7 +333,9 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	}
 
 	m.mu.Lock()
-	current.finishErr = finishErr
+	if finishErr != nil {
+		m.finishErrs = append(m.finishErrs, fmt.Errorf("subagent %s: %w", current.handle.ID, finishErr))
+	}
 	current.cancel()
 	close(current.done)
 	m.mu.Unlock()

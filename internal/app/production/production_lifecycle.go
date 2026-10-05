@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
@@ -12,8 +13,13 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
-func closeStoreComponent(store *store.Store) Component {
+func closeStoreComponent(store *store.Store, agent *agent.Runner) Component {
 	return ComponentFuncs{ShutdownFunc: func(context.Context) error {
+		if agent != nil {
+			if drain := agent.Drain(); drain != nil {
+				<-drain
+			}
+		}
 		return store.Close()
 	}}
 }

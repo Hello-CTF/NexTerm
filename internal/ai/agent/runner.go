@@ -30,6 +30,8 @@ type Runner struct {
 	jobs         map[string]*job
 	reservedJobs map[string]struct{}
 	closed       bool
+	drainDone    chan struct{}
+	shutdownErrs []error
 	wg           sync.WaitGroup
 }
 
@@ -569,10 +571,17 @@ func (r *Runner) Close() error {
 func (r *Runner) CloseContext(ctx context.Context) error {
 	r.mu.Lock()
 	if r.closed {
+		drain := r.drainDone
 		r.mu.Unlock()
-		return nil
+		select {
+		case <-drain:
+			return r.shutdownError()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	r.closed = true
+	r.drainDone = make(chan struct{})
 	jobs := make([]*job, 0, len(r.jobs))
 	for _, current := range r.jobs {
 		jobs = append(jobs, current)
@@ -594,25 +603,44 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 
 		_, _ = r.hitl.Cancel(current.id)
 	}
-	closeErr := r.hitl.Close()
-	done := make(chan struct{})
+	if err := r.hitl.Close(); err != nil {
+		r.appendShutdownErr(err)
+	}
 	go func() {
 		r.wg.Wait()
-		close(done)
+		if r.config.Memory != nil {
+			if err := r.config.Memory.Close(); err != nil {
+				r.appendShutdownErr(err)
+			}
+		}
+		close(r.drainDone)
 	}()
 
 	select {
-	case <-done:
-		if r.config.Memory != nil {
-			if err := r.config.Memory.Close(); closeErr == nil {
-				closeErr = err
-			}
-		}
-		return closeErr
+	case <-r.drainDone:
+		return r.shutdownError()
 	case <-ctx.Done():
-		if r.config.Memory != nil {
-			_ = r.config.Memory.Close()
-		}
 		return ctx.Err()
 	}
+}
+
+func (r *Runner) Drain() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drainDone
+}
+
+func (r *Runner) appendShutdownErr(err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	r.shutdownErrs = append(r.shutdownErrs, err)
+	r.mu.Unlock()
+}
+
+func (r *Runner) shutdownError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return errors.Join(r.shutdownErrs...)
 }

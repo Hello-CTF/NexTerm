@@ -265,7 +265,9 @@ func (r *Runner) parkForShutdown(current *job) {
 		manager := current.subagents
 		current.pendingMu.Unlock()
 		if manager != nil {
-			_ = manager.Close()
+			if err := manager.Close(); err != nil {
+				r.appendShutdownErr(err)
+			}
 		}
 		r.mu.Lock()
 		if r.jobs[current.id] == current {

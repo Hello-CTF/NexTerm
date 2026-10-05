@@ -292,6 +292,9 @@ func (c *Client) finishCompletion(completion Completion, state *attemptState) Co
 	completion.Usage.CallID = completion.CallID
 	completion.Usage.Model = completion.Model
 	completion.Usage.ContextWindow = c.config.ContextWindow
+	if completion.Usage.CacheCreationTokens == 0 {
+		completion.Usage.CacheCreationTokens = state.cacheCreationTokens()
+	}
 	return completion
 }
 
