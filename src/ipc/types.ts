@@ -84,6 +84,8 @@ fallbackModel?: string | null, };
 
 export type ModelProfilesView = { profiles: Array<ModelProfile>, activeId: string | null, };
 
+export type AiUsageSummaryRow = { source: string, profileId: string, runs: number, tokensIn: number, tokensOut: number, cacheCreationTokens: number, averageLatencyMs: number, };
+
 export type MountEntryDto = { id: string, localPoint: string, remote: string, sessionId: string | null, createdAt: number | null, };
 
 export type ProviderConfigDto = { baseUrl: string, apiKey: string, model: string, temperature: number, contextWindow: number, proxy: string | null, stream: boolean,

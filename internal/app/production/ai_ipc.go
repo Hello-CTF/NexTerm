@@ -188,6 +188,9 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 					if err != nil {
 						return nil, err
 					}
+					if err := profiles.RejectMaskedKey(key); err != nil {
+						return nil, err
+					}
 					config.APIKey = key
 				}
 				client, err := provider.NewClient(config)
@@ -200,6 +203,11 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		func() error {
 			return ipc.Register(dispatcher, "ai_model_preset", func(_ context.Context, _ *ipc.Call, input aiProfileRequest) (profiles.Profile, error) {
 				return profiles.PresetProfile(input.Preset)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_usage_summary", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]store.RunUsageSummaryRow, error) {
+				return database.RunUsageSummary(ctx)
 			})
 		},
 	}

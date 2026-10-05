@@ -604,8 +604,8 @@ export const aiApi = {
     call<import("./types").MessageDto[]>("ai_messages", { conversationId }),
 };
 
-import type { ModelProfile, ModelProfilesView } from "./types";
-export type { ModelProfile, ModelProfilesView };
+import type { AiUsageSummaryRow, ModelProfile, ModelProfilesView } from "./types";
+export type { AiUsageSummaryRow, ModelProfile, ModelProfilesView };
 
 export const modelApi = {
   overview: () =>
@@ -619,6 +619,8 @@ export const modelApi = {
     call<string[] | null>("ai_model_refresh", { profile }).then((v) => v ?? []),
   presets: () => call<string[] | null>("ai_presets").then((v) => v ?? []),
   preset: (name: string) => call<ModelProfile>("ai_model_preset", { preset: name }),
+  usageSummary: () =>
+    call<AiUsageSummaryRow[] | null>("ai_usage_summary").then((v) => v ?? []),
 };
 
 export interface VaultStatus {

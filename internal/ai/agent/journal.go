@@ -19,6 +19,7 @@ type RunStore interface {
 	RunEventsAfter(ctx context.Context, runID string, afterSeq uint64) ([]store.RunEventRow, error)
 	RunUpdateStatus(ctx context.Context, runID, status string) error
 	RunFinish(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut int64) error
+	RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error
 	HitlRunSave(ctx context.Context, id string, data []byte) error
 	HitlRunList(ctx context.Context) ([]store.HitlRunRow, error)
 	HitlRunDelete(ctx context.Context, id string) error
@@ -85,21 +86,24 @@ func (s *journalStream) CloseGracefully() error {
 }
 
 type RunDTO struct {
-	ID             string `json:"id"`
-	ConversationID string `json:"conversationId"`
-	Status         string `json:"status"`
-	Attempt        int64  `json:"attempt"`
-	Seq            uint64 `json:"seq"`
-	PlanMode       bool   `json:"planMode"`
-	Source         string `json:"source"`
-	Answer         string `json:"answer"`
-	Turns          int    `json:"turns"`
-	TokensIn       int64  `json:"tokensIn"`
-	TokensOut      int64  `json:"tokensOut"`
-	Error          string `json:"error,omitempty"`
-	CreatedAt      int64  `json:"createdAt"`
-	UpdatedAt      int64  `json:"updatedAt"`
-	FinishedAt     *int64 `json:"finishedAt,omitempty"`
+	ID                  string `json:"id"`
+	ConversationID      string `json:"conversationId"`
+	Status              string `json:"status"`
+	Attempt             int64  `json:"attempt"`
+	Seq                 uint64 `json:"seq"`
+	PlanMode            bool   `json:"planMode"`
+	Source              string `json:"source"`
+	ProfileID           string `json:"profileId,omitempty"`
+	Answer              string `json:"answer"`
+	Turns               int    `json:"turns"`
+	TokensIn            int64  `json:"tokensIn"`
+	TokensOut           int64  `json:"tokensOut"`
+	CacheCreationTokens int64  `json:"cacheCreationTokens"`
+	LatencyMS           int64  `json:"latencyMs"`
+	Error               string `json:"error,omitempty"`
+	CreatedAt           int64  `json:"createdAt"`
+	UpdatedAt           int64  `json:"updatedAt"`
+	FinishedAt          *int64 `json:"finishedAt,omitempty"`
 }
 
 func (r *Runner) RunList(ctx context.Context, conversationID string, limit int) ([]RunDTO, error) {
@@ -114,8 +118,8 @@ func (r *Runner) RunList(ctx context.Context, conversationID string, limit int) 
 	for index, row := range rows {
 		result[index] = RunDTO{
 			ID: row.ID, ConversationID: row.ConversationID, Status: row.Status, Attempt: row.Attempt, Seq: row.Seq,
-			PlanMode: row.PlanMode, Source: row.Source, Answer: row.Answer, Turns: row.Turns,
-			TokensIn: row.TokensIn, TokensOut: row.TokensOut, Error: row.Error,
+			PlanMode: row.PlanMode, Source: row.Source, ProfileID: row.ProfileID, Answer: row.Answer, Turns: row.Turns,
+			TokensIn: row.TokensIn, TokensOut: row.TokensOut, CacheCreationTokens: row.CacheCreationTokens, LatencyMS: row.LatencyMS, Error: row.Error,
 			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FinishedAt: row.FinishedAt,
 		}
 	}

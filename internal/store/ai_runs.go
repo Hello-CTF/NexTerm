@@ -16,21 +16,34 @@ const (
 )
 
 type RunRow struct {
-	ID             string
-	ConversationID string
-	Status         string
-	Attempt        int64
-	Seq            uint64
-	PlanMode       bool
-	Source         string
-	Answer         string
-	Turns          int
-	TokensIn       int64
-	TokensOut      int64
-	Error          string
-	CreatedAt      int64
-	UpdatedAt      int64
-	FinishedAt     *int64
+	ID                  string
+	ConversationID      string
+	Status              string
+	Attempt             int64
+	Seq                 uint64
+	PlanMode            bool
+	Source              string
+	ProfileID           string
+	Answer              string
+	Turns               int
+	TokensIn            int64
+	TokensOut           int64
+	CacheCreationTokens int64
+	LatencyMS           int64
+	Error               string
+	CreatedAt           int64
+	UpdatedAt           int64
+	FinishedAt          *int64
+}
+
+type RunUsageSummaryRow struct {
+	Source              string `json:"source"`
+	ProfileID           string `json:"profileId"`
+	Runs                int64  `json:"runs"`
+	TokensIn            int64  `json:"tokensIn"`
+	TokensOut           int64  `json:"tokensOut"`
+	CacheCreationTokens int64  `json:"cacheCreationTokens"`
+	AverageLatencyMS    int64  `json:"averageLatencyMs"`
 }
 
 type RunEventRow struct {
@@ -51,13 +64,13 @@ func scanRun(row rowScanner) (RunRow, error) {
 	var result RunRow
 	var planMode int
 	err := row.Scan(&result.ID, &result.ConversationID, &result.Status, &result.Attempt, &result.Seq,
-		&planMode, &result.Source, &result.Answer, &result.Turns, &result.TokensIn, &result.TokensOut,
-		&result.Error, &result.CreatedAt, &result.UpdatedAt, &result.FinishedAt)
+		&planMode, &result.Source, &result.ProfileID, &result.Answer, &result.Turns, &result.TokensIn, &result.TokensOut,
+		&result.CacheCreationTokens, &result.LatencyMS, &result.Error, &result.CreatedAt, &result.UpdatedAt, &result.FinishedAt)
 	result.PlanMode = planMode != 0
 	return result, err
 }
 
-const runColumns = `id, conversation_id, status, attempt, seq, plan_mode, source, answer, turns, tokens_in, tokens_out, error, created_at, updated_at, finished_at`
+const runColumns = `id, conversation_id, status, attempt, seq, plan_mode, source, profile_id, answer, turns, tokens_in, tokens_out, cache_creation_tokens, latency_ms, error, created_at, updated_at, finished_at`
 
 func (s *Store) RunInsert(ctx context.Context, run RunRow) error {
 	planMode := 0
@@ -75,9 +88,9 @@ func (s *Store) RunInsert(ctx context.Context, run RunRow) error {
 		run.UpdatedAt = now
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO ai_run(`+runColumns+`)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		run.ID, run.ConversationID, run.Status, run.Attempt, run.Seq, planMode, run.Source,
-		run.Answer, run.Turns, run.TokensIn, run.TokensOut, run.Error, run.CreatedAt, run.UpdatedAt, run.FinishedAt)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.ConversationID, run.Status, run.Attempt, run.Seq, planMode, run.Source, run.ProfileID,
+		run.Answer, run.Turns, run.TokensIn, run.TokensOut, run.CacheCreationTokens, run.LatencyMS, run.Error, run.CreatedAt, run.UpdatedAt, run.FinishedAt)
 	if err != nil {
 		return dbError(err)
 	}
@@ -208,9 +221,13 @@ func (s *Store) RunUpdateStatus(ctx context.Context, runID, status string) error
 }
 
 func (s *Store) RunFinish(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut int64) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, answer = ?, turns = ?, tokens_in = ?, tokens_out = ?, error = ?, updated_at = ?, finished_at = ?
+	return s.RunFinishUsage(ctx, runID, status, answer, errMsg, turns, tokensIn, tokensOut, 0, 0)
+}
+
+func (s *Store) RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE ai_run SET status = ?, answer = ?, turns = ?, tokens_in = ?, tokens_out = ?, cache_creation_tokens = ?, latency_ms = ?, error = ?, updated_at = ?, finished_at = ?
 WHERE id = ? AND finished_at IS NULL`,
-		status, answer, turns, tokensIn, tokensOut, errMsg, ids.NowMS(), ids.NowMS(), runID)
+		status, answer, turns, tokensIn, tokensOut, cacheCreationTokens, latencyMS, errMsg, ids.NowMS(), ids.NowMS(), runID)
 	if err != nil {
 		return dbError(err)
 	}
@@ -220,6 +237,24 @@ WHERE id = ? AND finished_at IS NULL`,
 		}
 	}
 	return nil
+}
+
+func (s *Store) RunUsageSummary(ctx context.Context) ([]RunUsageSummaryRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT source, profile_id, count(*), coalesce(sum(tokens_in), 0), coalesce(sum(tokens_out), 0), coalesce(sum(cache_creation_tokens), 0), CAST(round(coalesce(avg(latency_ms), 0)) AS INTEGER)
+FROM ai_run WHERE finished_at IS NOT NULL GROUP BY source, profile_id ORDER BY source, profile_id`)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+	result := []RunUsageSummaryRow{}
+	for rows.Next() {
+		var row RunUsageSummaryRow
+		if err := rows.Scan(&row.Source, &row.ProfileID, &row.Runs, &row.TokensIn, &row.TokensOut, &row.CacheCreationTokens, &row.AverageLatencyMS); err != nil {
+			return nil, dbError(err)
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) CheckpointGet(ctx context.Context, id string) ([]byte, bool, error) {

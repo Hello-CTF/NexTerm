@@ -30,6 +30,8 @@ type Runner struct {
 	jobs         map[string]*job
 	reservedJobs map[string]struct{}
 	closed       bool
+	drainDone    chan struct{}
+	shutdownErrs []error
 	wg           sync.WaitGroup
 }
 
@@ -130,6 +132,11 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	args.ConversationID = conversationID
+	if args.ModelProfileID == "" && r.config.Profiles != nil {
+		if profile, ok := r.config.Profiles.ActiveProfile(); ok {
+			args.ModelProfileID = profile.ID
+		}
+	}
 	jobID := r.config.NewID()
 	if strings.TrimSpace(jobID) == "" {
 		return StartResponse{}, errors.New("AI job ID 为空")
@@ -161,7 +168,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	if r.runs != nil {
-		if err := r.runs.RunInsert(ctx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source}); err != nil {
+		if err := r.runs.RunInsert(ctx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source, ProfileID: r.profileIDFor(args)}); err != nil {
 			r.releaseJobID(jobID)
 			cancel()
 			forceCancel()
@@ -441,11 +448,37 @@ func (r *Runner) HITLEvents(jobID string, after uint64) ([]hitl.Event, error) {
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
 		r.reportSteerLeftover(current)
+		if closeErr := r.closeSubagents(current); closeErr != nil {
+			terminalErr = errors.Join(terminalErr, closeErr)
+		}
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
 		r.cleanup(current)
 	})
+}
+
+func (r *Runner) closeSubagents(current *job) error {
+	current.pendingMu.Lock()
+	current.completed = true
+	manager := current.subagents
+	current.pendingMu.Unlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.Close()
+}
+
+func (r *Runner) profileIDFor(args ChatArgs) string {
+	if args.ModelProfileID != "" {
+		return args.ModelProfileID
+	}
+	if r.config.Profiles != nil {
+		if profile, ok := r.config.Profiles.ActiveProfile(); ok {
+			return profile.ID
+		}
+	}
+	return ""
 }
 
 func (r *Runner) finishRun(current *job, answer string, turns int, total usage.Usage, terminalErr error, terminal hitl.Event) {
@@ -473,7 +506,9 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
 	defer cancel()
-	_ = r.runs.RunFinish(ctx, current.id, status, answer, message, turns, int64(total.PromptTokens), int64(total.CompletionTokens))
+	_ = r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
+		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
+		usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
 }
 
 func (r *Runner) updateRunStatus(current *job, status string) {
@@ -536,10 +571,17 @@ func (r *Runner) Close() error {
 func (r *Runner) CloseContext(ctx context.Context) error {
 	r.mu.Lock()
 	if r.closed {
+		drain := r.drainDone
 		r.mu.Unlock()
-		return nil
+		select {
+		case <-drain:
+			return r.shutdownError()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	r.closed = true
+	r.drainDone = make(chan struct{})
 	jobs := make([]*job, 0, len(r.jobs))
 	for _, current := range r.jobs {
 		jobs = append(jobs, current)
@@ -561,25 +603,44 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 
 		_, _ = r.hitl.Cancel(current.id)
 	}
-	closeErr := r.hitl.Close()
-	done := make(chan struct{})
+	if err := r.hitl.Close(); err != nil {
+		r.appendShutdownErr(err)
+	}
 	go func() {
 		r.wg.Wait()
-		close(done)
+		if r.config.Memory != nil {
+			if err := r.config.Memory.Close(); err != nil {
+				r.appendShutdownErr(err)
+			}
+		}
+		close(r.drainDone)
 	}()
 
 	select {
-	case <-done:
-		if r.config.Memory != nil {
-			if err := r.config.Memory.Close(); closeErr == nil {
-				closeErr = err
-			}
-		}
-		return closeErr
+	case <-r.drainDone:
+		return r.shutdownError()
 	case <-ctx.Done():
-		if r.config.Memory != nil {
-			_ = r.config.Memory.Close()
-		}
 		return ctx.Err()
 	}
+}
+
+func (r *Runner) Drain() <-chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drainDone
+}
+
+func (r *Runner) appendShutdownErr(err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	r.shutdownErrs = append(r.shutdownErrs, err)
+	r.mu.Unlock()
+}
+
+func (r *Runner) shutdownError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return errors.Join(r.shutdownErrs...)
 }

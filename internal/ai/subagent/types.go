@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -26,6 +27,8 @@ var (
 )
 
 type ModelFactory func(context.Context) (model.BaseChatModel, error)
+
+type ProfileModelFactory func(context.Context, string) (model.BaseChatModel, error)
 
 type ToolFactory func(context.Context, Scope) ([]tool.BaseTool, error)
 
@@ -57,17 +60,20 @@ type Observer func(Event)
 type ObserverFactory func(context.Context) Observer
 
 type Config struct {
-	NewModel           ModelFactory
-	NewTools           ToolFactory
-	Instruction        string
-	MaxIterations      int
-	MaxRunTime         time.Duration
-	MaxTasks           int
-	MaxConcurrent      int
-	MaxOutputBytes     int
-	MaxHistoryMessages int
-	MaxHistoryBytes    int
-	NewID              func() string
+	NewModel                ModelFactory
+	NewModelForProfile      ProfileModelFactory
+	NewTools                ToolFactory
+	OnFinish                func(context.Context, Request, Result) error
+	ResolveDefaultProfileID func() string
+	Instruction             string
+	MaxIterations           int
+	MaxRunTime              time.Duration
+	MaxTasks                int
+	MaxConcurrent           int
+	MaxOutputBytes          int
+	MaxHistoryMessages      int
+	MaxHistoryBytes         int
+	NewID                   func() string
 }
 
 type Scope struct {
@@ -75,12 +81,13 @@ type Scope struct {
 }
 
 type Request struct {
-	ID       string
-	Task     string
-	Persona  string
-	Scope    *Scope
-	Timeout  time.Duration
-	Observer Observer
+	ID             string
+	Task           string
+	Persona        string
+	Scope          *Scope
+	Timeout        time.Duration
+	Observer       Observer
+	ModelProfileID string
 }
 
 type Handle struct {
@@ -105,6 +112,8 @@ type Result struct {
 	History          []*schema.Message
 	HistoryTruncated bool
 	Error            string
+	Turns            int
+	Usage            usage.Usage
 }
 
 func (r Result) clone() Result {

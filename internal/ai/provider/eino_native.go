@@ -19,6 +19,7 @@ const (
 	MessageExtraCallID        = "call_id"
 	MessageExtraServingModel  = "model"
 	MessageExtraContextWindow = "context_window"
+	MessageExtraCacheCreation = "cache_creation_tokens"
 )
 
 type ExecutionMetadata struct {
@@ -261,6 +262,9 @@ func (c *Client) decorateMessage(message *schema.Message, state *attemptState) *
 	extra[MessageExtraCallID] = state.callID
 	extra[MessageExtraServingModel] = state.actualModel()
 	extra[MessageExtraContextWindow] = c.config.ContextWindow
+	if tokens := state.cacheCreationTokens(); tokens > 0 {
+		extra[MessageExtraCacheCreation] = tokens
+	}
 	cloned.Extra = extra
 	return &cloned
 }
@@ -276,6 +280,7 @@ func completionFromMessage(message *schema.Message) Completion {
 			completion.Usage = usageFromNative(message.ResponseMeta.Usage)
 		}
 	}
+	completion.Usage.CacheCreationTokens = extraUint64(message.Extra, MessageExtraCacheCreation)
 	return completion
 }
 
@@ -287,6 +292,9 @@ func (c *Client) finishCompletion(completion Completion, state *attemptState) Co
 	completion.Usage.CallID = completion.CallID
 	completion.Usage.Model = completion.Model
 	completion.Usage.ContextWindow = c.config.ContextWindow
+	if completion.Usage.CacheCreationTokens == 0 {
+		completion.Usage.CacheCreationTokens = state.cacheCreationTokens()
+	}
 	return completion
 }
 

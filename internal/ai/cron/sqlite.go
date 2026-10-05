@@ -152,21 +152,21 @@ func (s *SQLiteStore) Delete(ctx context.Context, sessionID, jobID string, expec
 	return tx.Commit()
 }
 
-const jobColumns = `id, session_id, name, prompt, schedule, timezone, enabled, timeout_ms,
+const jobColumns = `id, session_id, name, prompt, schedule, timezone, enabled, timeout_ms, model_profile_id,
 	created_at, updated_at, revision, next_run_at, retry_at, circuit_open_until,
 	consecutive_failures, last_run_at, last_scheduled_for, last_coalesced, last_error,
 	lease_owner, lease_expires_at, run_id, run_scheduled_for, run_started_at, run_deadline, run_coalesced`
 
-const jobPlaceholders = `?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
+const jobPlaceholders = `?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
 
-const jobAssignments = `session_id = ?, name = ?, prompt = ?, schedule = ?, timezone = ?, enabled = ?, timeout_ms = ?,
+const jobAssignments = `session_id = ?, name = ?, prompt = ?, schedule = ?, timezone = ?, enabled = ?, timeout_ms = ?, model_profile_id = ?,
 	created_at = ?, updated_at = ?, revision = ?, next_run_at = ?, retry_at = ?, circuit_open_until = ?,
 	consecutive_failures = ?, last_run_at = ?, last_scheduled_for = ?, last_coalesced = ?, last_error = ?,
 	lease_owner = ?, lease_expires_at = ?, run_id = ?, run_scheduled_for = ?, run_started_at = ?, run_deadline = ?, run_coalesced = ?`
 
 func jobValues(job Job) []any {
 	return []any{
-		job.ID, job.SessionID, job.Name, job.Prompt, job.Schedule, job.Timezone, boolInt(job.Enabled), job.Timeout.Milliseconds(),
+		job.ID, job.SessionID, job.Name, job.Prompt, job.Schedule, job.Timezone, boolInt(job.Enabled), job.Timeout.Milliseconds(), job.ModelProfileID,
 		timeMS(job.CreatedAt), timeMS(job.UpdatedAt), job.Revision, timeMS(job.NextRunAt), optionalTimeMS(job.RetryAt), optionalTimeMS(job.CircuitOpenUntil),
 		job.ConsecutiveFailures, optionalTimeMS(job.LastRunAt), optionalTimeMS(job.LastScheduledFor), boolInt(job.LastCoalesced), job.LastError,
 		job.Lease.Owner, optionalTimeMS(job.Lease.ExpiresAt), job.Run.ID, optionalTimeMS(job.Run.ScheduledFor), optionalTimeMS(job.Run.StartedAt), optionalTimeMS(job.Run.Deadline), boolInt(job.Run.Coalesced),
@@ -185,7 +185,7 @@ func scanJob(scanner jobScanner) (Job, error) {
 	var retryAt, circuitOpenUntil, lastRunAt, lastScheduledFor sql.NullInt64
 	var leaseExpiresAt, runScheduledFor, runStartedAt, runDeadline sql.NullInt64
 	err := scanner.Scan(
-		&job.ID, &job.SessionID, &job.Name, &job.Prompt, &job.Schedule, &job.Timezone, &enabled, &timeoutMS,
+		&job.ID, &job.SessionID, &job.Name, &job.Prompt, &job.Schedule, &job.Timezone, &enabled, &timeoutMS, &job.ModelProfileID,
 		&createdAt, &updatedAt, &job.Revision, &nextRunAt, &retryAt, &circuitOpenUntil,
 		&job.ConsecutiveFailures, &lastRunAt, &lastScheduledFor, &lastCoalesced, &job.LastError,
 		&job.Lease.Owner, &leaseExpiresAt, &job.Run.ID, &runScheduledFor, &runStartedAt, &runDeadline, &runCoalesced,

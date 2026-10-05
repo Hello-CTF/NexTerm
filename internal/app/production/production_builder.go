@@ -207,6 +207,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Docker:   dockerService, Retention: retention, Durable: durableBackend, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		smokeAttach: config.DesktopSmoke,
 		Transcripts: transcriptWriter,
+		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 	}
 	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
 		services.closeAIRuntime()

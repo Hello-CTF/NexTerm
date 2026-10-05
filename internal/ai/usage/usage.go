@@ -8,16 +8,18 @@ import (
 )
 
 type Usage struct {
-	RunID            string `json:"runId,omitempty"`
-	CallID           string `json:"callId,omitempty"`
-	Model            string `json:"model,omitempty"`
-	PromptTokens     uint64 `json:"promptTokens"`
-	CompletionTokens uint64 `json:"completionTokens"`
-	CachedTokens     uint64 `json:"cachedTokens"`
-	ContextWindow    uint64 `json:"contextWindow"`
-	mixedModels      bool
-	mixedRunIDs      bool
-	mixedCallIDs     bool
+	RunID               string `json:"runId,omitempty"`
+	CallID              string `json:"callId,omitempty"`
+	Model               string `json:"model,omitempty"`
+	PromptTokens        uint64 `json:"promptTokens"`
+	CompletionTokens    uint64 `json:"completionTokens"`
+	CachedTokens        uint64 `json:"cachedTokens"`
+	CacheCreationTokens uint64 `json:"cacheCreationTokens,omitempty"`
+	LatencyMS           int64  `json:"latencyMs,omitempty"`
+	ContextWindow       uint64 `json:"contextWindow"`
+	mixedModels         bool
+	mixedRunIDs         bool
+	mixedCallIDs        bool
 }
 
 func Parse(raw json.RawMessage) Usage {
@@ -44,6 +46,13 @@ func Parse(raw json.RawMessage) Usage {
 		[]string{"cached_tokens"},
 		[]string{"cache_read_input_tokens"},
 	)
+	cacheCreation, _ := firstUint(root,
+		[]string{"prompt_tokens_details", "cache_creation_tokens"},
+		[]string{"input_tokens_details", "cache_creation_tokens"},
+		[]string{"cache_creation_input_tokens"},
+		[]string{"prompt_cache_creation_tokens"},
+		[]string{"cache_creation", "tokens"},
+	)
 
 	hit, hitSet := uintAt(root, []string{"prompt_cache_hit_tokens"})
 	miss, missSet := uintAt(root, []string{"prompt_cache_miss_tokens"})
@@ -54,7 +63,7 @@ func Parse(raw json.RawMessage) Usage {
 	if promptSet && cached > prompt {
 		cached = prompt
 	}
-	return Usage{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached}
+	return Usage{PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached, CacheCreationTokens: cacheCreation}
 }
 
 func (u Usage) HasData() bool {
@@ -81,6 +90,10 @@ func (u *Usage) Accumulate(other Usage) {
 	u.PromptTokens = saturatingAdd(u.PromptTokens, other.PromptTokens)
 	u.CompletionTokens = saturatingAdd(u.CompletionTokens, other.CompletionTokens)
 	u.CachedTokens = saturatingAdd(u.CachedTokens, other.CachedTokens)
+	u.CacheCreationTokens = saturatingAdd(u.CacheCreationTokens, other.CacheCreationTokens)
+	if other.LatencyMS > 0 {
+		u.LatencyMS = SaturatingInt64(saturatingAdd(uint64(u.LatencyMS), uint64(other.LatencyMS)))
+	}
 	if other.ContextWindow != 0 {
 		u.ContextWindow = other.ContextWindow
 	}
@@ -144,4 +157,16 @@ func saturatingAdd(left, right uint64) uint64 {
 		return math.MaxUint64
 	}
 	return left + right
+}
+
+func SaturatingAdd(left, right uint64) uint64 {
+	return saturatingAdd(left, right)
+}
+
+func SaturatingInt64(value uint64) int64 {
+	const maxInt64 = uint64(^uint64(0) >> 1)
+	if value > maxInt64 {
+		return int64(maxInt64)
+	}
+	return int64(value)
 }

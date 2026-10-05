@@ -12,6 +12,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/memory"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/steer"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -28,6 +29,8 @@ var (
 )
 
 type ModelFactory func(context.Context) (model.BaseChatModel, uint64, error)
+
+type ProfileModelFactory func(context.Context, string) (model.BaseChatModel, uint64, error)
 
 type baseChatModelClient interface {
 	BaseChatModel(context.Context) (model.BaseChatModel, uint64, error)
@@ -71,6 +74,7 @@ type ConversationStore interface {
 
 type Config struct {
 	Model           ModelFactory
+	ModelForProfile ProfileModelFactory
 	Profiles        *profiles.Manager
 	Permissions     *guard.Manager
 	Tools           *tools.Registry
@@ -103,6 +107,7 @@ type ChatArgs struct {
 	Images         []string    `json:"images,omitempty"`
 	PlanMode       bool        `json:"planMode,omitempty"`
 	Source         string      `json:"-"`
+	ModelProfileID string      `json:"-"`
 }
 
 type StartResponse struct {
@@ -147,6 +152,8 @@ type job struct {
 	pendingMu      sync.Mutex
 	resumeIterator *adk.AsyncIterator[*adk.AgentEvent]
 	running        bool
+	subagents      *subagent.Manager
+	completed      bool
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {

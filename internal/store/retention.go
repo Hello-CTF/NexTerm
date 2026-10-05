@@ -13,11 +13,14 @@ type RetentionPolicy struct {
 	AuditMaxCount     int64
 	RecordingMaxAge   time.Duration
 	RecordingMaxCount int64
+	AIRunMaxAge       time.Duration
+	AIRunMaxCount     int64
 }
 
 type RetentionResult struct {
 	AuditDeleted      int64 `json:"auditDeleted"`
 	RecordingsDeleted int64 `json:"recordingsDeleted"`
+	AIRunsDeleted     int64 `json:"aiRunsDeleted"`
 }
 
 type RetentionStatus struct {
@@ -35,6 +38,7 @@ func (p RetentionPolicy) validate() error {
 	for name, value := range map[string]time.Duration{
 		"audit max age":     p.AuditMaxAge,
 		"recording max age": p.RecordingMaxAge,
+		"AI run max age":    p.AIRunMaxAge,
 	} {
 		if value < 0 {
 			return fmt.Errorf("%s must not be negative", name)
@@ -43,6 +47,7 @@ func (p RetentionPolicy) validate() error {
 	for name, value := range map[string]int64{
 		"audit max count":     p.AuditMaxCount,
 		"recording max count": p.RecordingMaxCount,
+		"AI run max count":    p.AIRunMaxCount,
 	} {
 		if value < 0 {
 			return fmt.Errorf("%s must not be negative", name)
@@ -51,13 +56,18 @@ func (p RetentionPolicy) validate() error {
 	return nil
 }
 
+func (p RetentionPolicy) empty() bool {
+	return p.AuditMaxAge == 0 && p.AuditMaxCount == 0 &&
+		p.RecordingMaxAge == 0 && p.RecordingMaxCount == 0 &&
+		p.AIRunMaxAge == 0 && p.AIRunMaxCount == 0
+}
+
 func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (result RetentionResult, returnErr error) {
 	defer func() { s.recordRetentionResult(returnErr) }()
 	if err := policy.validate(); err != nil {
 		return RetentionResult{}, badParam(err)
 	}
-	if policy.AuditMaxAge == 0 && policy.AuditMaxCount == 0 &&
-		policy.RecordingMaxAge == 0 && policy.RecordingMaxCount == 0 {
+	if policy.empty() {
 		return RetentionResult{}, nil
 	}
 
@@ -106,6 +116,40 @@ WHERE ended_at IS NOT NULL AND id IN (
 		result.RecordingsDeleted += deleted
 		if err != nil {
 			return RetentionResult{}, fmt.Errorf("recording count retention: %w", dbError(err))
+		}
+	}
+	if policy.AIRunMaxAge > 0 || policy.AIRunMaxCount > 0 {
+		if _, err := retentionDelete(ctx, tx, `DELETE FROM ai_hitl_run WHERE id IN (SELECT id FROM ai_run WHERE finished_at IS NOT NULL)`); err != nil {
+			return RetentionResult{}, fmt.Errorf("terminal HITL cleanup: %w", dbError(err))
+		}
+		if _, err := retentionDelete(ctx, tx, `DELETE FROM ai_hitl_run WHERE id NOT IN (SELECT id FROM ai_run)`); err != nil {
+			return RetentionResult{}, fmt.Errorf("orphan HITL cleanup: %w", dbError(err))
+		}
+	}
+	if policy.AIRunMaxAge > 0 {
+		cutoff := now.Add(-policy.AIRunMaxAge).UnixMilli()
+		var deleted int64
+		deleted, err = retentionDelete(ctx, tx, `DELETE FROM ai_run
+WHERE finished_at IS NOT NULL AND finished_at < ?
+AND id NOT IN (SELECT id FROM ai_hitl_run)`, cutoff)
+		result.AIRunsDeleted = deleted
+		if err != nil {
+			return RetentionResult{}, fmt.Errorf("AI run age retention: %w", dbError(err))
+		}
+	}
+	if policy.AIRunMaxCount > 0 {
+		var deleted int64
+		deleted, err = retentionDelete(ctx, tx, `DELETE FROM ai_run
+WHERE finished_at IS NOT NULL
+AND id NOT IN (SELECT id FROM ai_hitl_run)
+AND id IN (
+	SELECT id FROM ai_run WHERE finished_at IS NOT NULL
+	AND id NOT IN (SELECT id FROM ai_hitl_run)
+	ORDER BY finished_at DESC, id DESC LIMIT -1 OFFSET ?
+)`, policy.AIRunMaxCount)
+		result.AIRunsDeleted += deleted
+		if err != nil {
+			return RetentionResult{}, fmt.Errorf("AI run count retention: %w", dbError(err))
 		}
 	}
 	if err := tx.Commit(); err != nil {

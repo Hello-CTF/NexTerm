@@ -9,6 +9,7 @@ export interface CronJob {
   timezone: string;
   enabled: boolean;
   timeout: number;
+  modelProfileId?: string;
   createdAt: string;
   updatedAt: string;
   revision: number;
@@ -41,6 +42,7 @@ export interface CronRegistration {
   timezone?: string;
   disabled?: boolean;
   timeoutMs?: number;
+  modelProfileId?: string;
 }
 
 export function cronTimeoutMs(job: CronJob): number {

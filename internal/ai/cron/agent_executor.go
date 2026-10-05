@@ -29,7 +29,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 		return errors.New("cron: agent executor has no runner")
 	}
 	stream := newTerminalStream()
-	args := agent.ChatArgs{ConversationID: trigger.SessionID, Message: trigger.Prompt, Source: "cron"}
+	args := agent.ChatArgs{ConversationID: trigger.SessionID, Message: trigger.Prompt, Source: "cron", ModelProfileID: trigger.ModelProfileID}
 	if e.ScopeFor != nil {
 		args.Scope = e.ScopeFor(trigger)
 	}

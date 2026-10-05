@@ -45,6 +45,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       remove: vi.fn(),
       refresh: vi.fn(),
       preset: vi.fn(),
+      usageSummary: vi.fn().mockResolvedValue([]),
     },
     sessionApi: {},
     terminalApi: {},

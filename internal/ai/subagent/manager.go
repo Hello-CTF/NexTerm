@@ -12,9 +12,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 )
 
 type Manager struct {
@@ -22,6 +26,7 @@ type Manager struct {
 
 	mu             sync.Mutex
 	tasks          map[string]*task
+	finishErrs     []error
 	active         int
 	nextGeneration uint64
 	closed         bool
@@ -88,6 +93,12 @@ func (m *Manager) Spawn(ctx context.Context, request Request) (Handle, error) {
 	}
 	if strings.TrimSpace(request.Task) == "" {
 		return Handle{}, errors.New("subagent task cannot be empty")
+	}
+	if request.ModelProfileID != "" && m.config.NewModelForProfile == nil {
+		return Handle{}, errors.New("subagent model profile selection is not configured")
+	}
+	if request.ModelProfileID == "" && m.config.NewModelForProfile != nil && m.config.ResolveDefaultProfileID != nil {
+		request.ModelProfileID = m.config.ResolveDefaultProfileID()
 	}
 	if request.Timeout < 0 || request.Timeout > m.config.MaxRunTime {
 		return Handle{}, fmt.Errorf("subagent timeout must be between 0 and %s", m.config.MaxRunTime)
@@ -202,9 +213,22 @@ func (m *Manager) Wait(ctx context.Context, handle Handle) (Result, error) {
 		defer m.mu.Unlock()
 		return current.result.clone(), current.err
 	case <-ctx.Done():
-		return Result{}, ctx.Err()
+		select {
+		case <-current.done:
+		case <-time.After(terminalWaitTimeout):
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return current.result.clone(), errors.Join(ctx.Err(), fmt.Errorf("%w: %s", ErrTerminalWaitTimeout, handle.ID))
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return current.result.clone(), current.err
 	}
 }
+
+const terminalWaitTimeout = 10 * time.Second
+
+var ErrTerminalWaitTimeout = errors.New("subagent terminal state wait timed out")
 
 func (m *Manager) Snapshot(handle Handle) (Result, error) {
 	m.mu.Lock()
@@ -232,7 +256,7 @@ func (m *Manager) Close() error {
 	if m.closed {
 		m.mu.Unlock()
 		m.wg.Wait()
-		return nil
+		return m.finishErrors()
 	}
 	m.closed = true
 	cancels := make([]context.CancelFunc, 0, m.active)
@@ -246,7 +270,13 @@ func (m *Manager) Close() error {
 		cancel()
 	}
 	m.wg.Wait()
-	return nil
+	return m.finishErrors()
+}
+
+func (m *Manager) finishErrors() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return errors.Join(m.finishErrs...)
 }
 
 func (m *Manager) lookupLocked(handle Handle) (*task, error) {
@@ -262,7 +292,7 @@ func (m *Manager) lookupLocked(handle Handle) (*task, error) {
 
 func (m *Manager) run(current *task, request Request, scope Scope, allowed map[string]struct{}) {
 	defer m.wg.Done()
-	output, err := m.execute(current, request, scope, allowed)
+	output, turns, total, err := m.execute(current, request, scope, allowed)
 	current.recorder.discardIncomplete()
 	status := StatusCompleted
 	if err != nil {
@@ -280,6 +310,8 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 		OutputTruncated:  truncated,
 		History:          history,
 		HistoryTruncated: historyTruncated,
+		Turns:            turns,
+		Usage:            total,
 	}
 	if err != nil {
 		result.Error = err.Error()
@@ -293,22 +325,33 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	if registered := m.tasks[current.handle.ID]; registered == current && registered.handle.Generation == current.handle.Generation {
 		m.active--
 	}
+	m.mu.Unlock()
+
+	var finishErr error
+	if m.config.OnFinish != nil {
+		finishErr = m.config.OnFinish(context.WithoutCancel(current.ctx), request, result)
+	}
+
+	m.mu.Lock()
+	if finishErr != nil {
+		m.finishErrs = append(m.finishErrs, fmt.Errorf("subagent %s: %w", current.handle.ID, finishErr))
+	}
 	current.cancel()
 	close(current.done)
 	m.mu.Unlock()
 }
 
-func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, error) {
-	chatModel, err := m.config.NewModel(current.ctx)
+func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, int, usage.Usage, error) {
+	chatModel, err := m.modelFor(current, request)
 	if err != nil {
-		return "", err
+		return "", 0, usage.Usage{}, err
 	}
 	if chatModel == nil {
-		return "", errors.New("subagent model factory returned nil")
+		return "", 0, usage.Usage{}, errors.New("subagent model factory returned nil")
 	}
 	tools, err := m.scopedTools(current.ctx, scope, allowed)
 	if err != nil {
-		return "", err
+		return "", 0, usage.Usage{}, err
 	}
 	instruction := strings.TrimSpace(strings.Join([]string{m.config.Instruction, request.Persona}, "\n"))
 	agent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
@@ -330,11 +373,13 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}}},
 	})
 	if err != nil {
-		return "", err
+		return "", 0, usage.Usage{}, err
 	}
 	runner := adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: agent, EnableStreaming: true})
 	iterator := runner.Run(current.ctx, []*schema.Message{schema.UserMessage(request.Task)})
 	var output string
+	var turns int
+	var total usage.Usage
 	var firstErr error
 	var forcedErr error
 	for {
@@ -356,8 +401,19 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 			continue
 		}
 		variant := event.Output.MessageOutput
+		started := time.Time{}
+		if variant.Role == schema.Assistant {
+			started = time.Now()
+		}
 		message, streamed, err := consumeVariant(current, variant)
 		if err != nil {
+			if message != nil && variant.Role == schema.Assistant {
+				latency := time.Duration(0)
+				if !started.IsZero() {
+					latency = time.Since(started)
+				}
+				accumulateUsage(&total, message, latency)
+			}
 			if forcedErr == nil && current.ctx.Err() == nil {
 				forcedErr = err
 				current.cancel()
@@ -373,6 +429,12 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}
 		switch variant.Role {
 		case schema.Assistant:
+			turns++
+			latency := time.Duration(0)
+			if !started.IsZero() {
+				latency = time.Since(started)
+			}
+			accumulateUsage(&total, message, latency)
 			if !streamed && message.Content != "" {
 				current.emit(Event{Kind: EventDelta, Text: message.Content})
 			}
@@ -387,15 +449,45 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		}
 	}
 	if forcedErr != nil {
-		return "", forcedErr
+		return "", turns, total, forcedErr
 	}
 	if err := current.ctx.Err(); err != nil {
-		return "", err
+		return "", turns, total, err
 	}
 	if firstErr != nil {
-		return "", firstErr
+		return "", turns, total, firstErr
 	}
-	return output, nil
+	return output, turns, total, nil
+}
+
+func accumulateUsage(total *usage.Usage, message *schema.Message, latency time.Duration) {
+	if meta := message.ResponseMeta; meta != nil && meta.Usage != nil {
+		total.Accumulate(usage.Usage{
+			PromptTokens:     uint64(max(meta.Usage.PromptTokens, 0)),
+			CompletionTokens: uint64(max(meta.Usage.CompletionTokens, 0)),
+			CachedTokens:     uint64(max(meta.Usage.PromptTokenDetails.CachedTokens, 0)),
+		})
+	}
+	if raw, ok := message.Extra[provider.MessageExtraCacheCreation]; ok {
+		switch typed := raw.(type) {
+		case uint64:
+			total.CacheCreationTokens = usage.SaturatingAdd(total.CacheCreationTokens, typed)
+		case float64:
+			total.CacheCreationTokens = usage.SaturatingAdd(total.CacheCreationTokens, uint64(max(typed, 0)))
+		case int:
+			total.CacheCreationTokens = usage.SaturatingAdd(total.CacheCreationTokens, uint64(max(typed, 0)))
+		}
+	}
+	if latency > 0 {
+		total.LatencyMS += latency.Milliseconds()
+	}
+}
+
+func (m *Manager) modelFor(current *task, request Request) (model.BaseChatModel, error) {
+	if request.ModelProfileID != "" {
+		return m.config.NewModelForProfile(current.ctx, request.ModelProfileID)
+	}
+	return m.config.NewModel(current.ctx)
 }
 
 func (t *task) emit(event Event) {
@@ -418,7 +510,14 @@ func consumeVariant(current *task, variant *adk.MessageVariant) (*schema.Message
 			break
 		}
 		if err != nil {
-			return nil, true, err
+			if len(frames) == 0 {
+				return nil, true, err
+			}
+			message, concatErr := schema.ConcatMessages(frames)
+			if concatErr != nil {
+				return nil, true, err
+			}
+			return message, true, err
 		}
 		frames = append(frames, frame)
 		if frame != nil && frame.Content != "" {

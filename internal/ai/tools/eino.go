@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/subagent"
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
@@ -215,15 +219,27 @@ type Execution struct {
 	PlanMode   bool
 	Subagents  *SubagentConfig
 
+	SubagentManager *subagent.Manager
+
 	SubagentEvents SubagentEventSink
 }
 
 type SubagentEventSink func(context.Context, string, int, subagent.Event)
 
 type SubagentConfig struct {
-	Model        subagent.ModelFactory
-	AllowedTools []string
-	Limits       subagent.Config
+	Model           subagent.ModelFactory
+	ModelForProfile subagent.ProfileModelFactory
+	AllowedTools    []string
+	Limits          subagent.Config
+
+	Runs            SubagentRunStore
+	ConversationID  string
+	ActiveProfileID func() string
+}
+
+type SubagentRunStore interface {
+	RunInsert(ctx context.Context, row store.RunRow) error
+	RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error
 }
 
 type Interaction struct {
@@ -402,6 +418,9 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	}
 	limits := e.Subagents.Limits
 	limits.NewModel = e.Subagents.Model
+	limits.NewModelForProfile = e.Subagents.ModelForProfile
+	limits.ResolveDefaultProfileID = e.Subagents.ActiveProfileID
+	limits.OnFinish = e.persistSubagentRun
 	var manager *subagent.Manager
 	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
 		return e.scopedSubagentTools(ctx, manager)
@@ -411,11 +430,39 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 		return nil, err
 	}
 	manager = composed
+	e.SubagentManager = composed
 	spawn, err := subagent.NewSpawnTool(manager, subagent.Scope{AllowedTools: e.subagentAllowedTools()}, e.subagentObserver)
 	if err != nil {
 		return nil, err
 	}
 	return spawnOutputTool{InvokableTool: spawn}, nil
+}
+
+func (e *Execution) persistSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) error {
+	return e.writeSubagentRun(ctx, request, result)
+}
+
+func (e *Execution) writeSubagentRun(ctx context.Context, request subagent.Request, result subagent.Result) error {
+	config := e.Subagents
+	if config == nil || config.Runs == nil || config.ConversationID == "" {
+		return nil
+	}
+	status := store.RunStatusCompleted
+	switch result.Status {
+	case subagent.StatusFailed:
+		status = store.RunStatusFailed
+	case subagent.StatusCanceled:
+		status = store.RunStatusCanceled
+	}
+	now := ids.NowMS()
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return config.Runs.RunInsert(writeCtx, store.RunRow{
+		ID: ids.New(), ConversationID: config.ConversationID, Status: status, Source: "subagent", ProfileID: request.ModelProfileID,
+		Turns: result.Turns, TokensIn: usage.SaturatingInt64(result.Usage.PromptTokens), TokensOut: usage.SaturatingInt64(result.Usage.CompletionTokens),
+		CacheCreationTokens: usage.SaturatingInt64(result.Usage.CacheCreationTokens), LatencyMS: result.Usage.LatencyMS,
+		Error: result.Error, CreatedAt: now, UpdatedAt: now, FinishedAt: &now,
+	})
 }
 
 func (e *Execution) subagentObserver(ctx context.Context) subagent.Observer {
