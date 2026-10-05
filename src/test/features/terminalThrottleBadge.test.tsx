@@ -307,6 +307,38 @@ describe("terminal://throttled badge", () => {
     expect(badge("输出已恢复")).toBeNull();
   });
 
+  it("accepts a genuine rewound episode after resync resets the version gate", async () => {
+    vi.useFakeTimers();
+    await act(async () => {
+      await flush();
+    });
+    const throttled = harness.handlers.get("terminal://throttled");
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 4096, version: 1 });
+    });
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 128, recovered: true, version: 2 });
+    });
+    expect(badge("输出已恢复")).not.toBeNull();
+
+    act(() => {
+      for (const cb of [...harness.resyncSubs]) cb();
+    });
+    expect(badge("输出已恢复")).toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 8192, version: 1 });
+    });
+    expect(badge("输出积压")).not.toBeNull();
+
+    act(() => {
+      throttled?.({ tabId: "kernel-1", channelId: "a-1", inflightBytes: 64, recovered: true, version: 2 });
+    });
+    expect(badge("输出积压")).toBeNull();
+    expect(badge("输出已恢复")).not.toBeNull();
+  });
+
   it("ignores throttle events for other tabs", async () => {
     vi.useFakeTimers();
     await act(async () => {

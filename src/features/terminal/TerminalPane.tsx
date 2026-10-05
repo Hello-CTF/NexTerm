@@ -291,7 +291,14 @@ export function TerminalPane({
     };
   }, []);
 
-  useEffect(() => onEventsResync(() => setThrottle(null)), []);
+  useEffect(
+    () =>
+      onEventsResync(() => {
+        throttleVersions.current = new EventVersionGate();
+        setThrottle(null);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (throttle?.recoveredAt == null) return;
