@@ -74,6 +74,18 @@ func (s *Service) Export(ctx context.Context, request ExportRequest) (Bundle, er
 			bundle.Credentials = append(bundle.Credentials, credential)
 		}
 	}
+	snippets, err := s.store.SnippetList(ctx)
+	if err != nil {
+		return Bundle{}, err
+	}
+	for _, snippet := range snippets {
+		if snippet.GroupID != nil {
+			if err := s.collectAncestors(ctx, snippet.GroupID, &bundle, includedGroups); err != nil {
+				return Bundle{}, err
+			}
+		}
+		bundle.Snippets = append(bundle.Snippets, payloadFromSnippet(snippet))
+	}
 	return bundle, nil
 }
 

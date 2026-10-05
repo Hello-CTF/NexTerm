@@ -192,3 +192,30 @@ func TestMergedDestinationGroupTopology(t *testing.T) {
 		}
 	})
 }
+
+func TestBlockedCredentialIgnoresTombstone(t *testing.T) {
+	ctx := context.Background()
+	target := newTestInstance(t, true)
+	assetID, credentialID := ids.New(), ids.New()
+	putTestCredential(t, target, credentialID, "local", "password", "local-secret")
+	putTestAsset(t, target, store.AssetRow{ID: assetID, CredID: &credentialID, Name: "local-newer", UpdatedAt: 200})
+	deletedAt := int64(1)
+	report, err := target.service.Import(ctx, ImportRequest{Bundle: Bundle{
+		Protocol: ProtocolVersion, Origin: "regression-peer",
+		Assets: []AssetPayload{{
+			ID: assetID, CredID: &credentialID, Name: "remote-older", Kind: "ssh", OptionsJSON: `{}`, UpdatedAt: 100,
+		}},
+		Credentials: []CredentialPayload{{ID: credentialID, DeletedAt: &deletedAt}},
+	}})
+	if err != nil || report.SkippedNewer != 1 || report.CredsDeleted != 0 {
+		t.Fatalf("protected credential must ignore tombstone: %+v err=%v", report, err)
+	}
+	if !strings.Contains(strings.Join(report.Warnings, "\n"), "保护") {
+		t.Fatalf("protection warning missing: %v", report.Warnings)
+	}
+	credential, _ := target.db.CredentialGetRow(ctx, credentialID)
+	plaintext, err := target.vault.DecryptCredentialString(ctx, credential)
+	if err != nil || plaintext != "local-secret" {
+		t.Fatalf("protected credential plaintext=%q err=%v", plaintext, err)
+	}
+}

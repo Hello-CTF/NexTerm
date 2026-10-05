@@ -279,6 +279,8 @@ func TestImportLWWForceTombstoneAndResurrection(t *testing.T) {
 		t.Fatalf("live row did not resurrect tombstone: %+v", local)
 	}
 
+	setTestOrigin(t, source, "origin-b")
+	setTestOrigin(t, target, "origin-a")
 	putTestAsset(t, target, store.AssetRow{ID: assetID, Name: "equal-local", CreatedAt: 50, UpdatedAt: 400})
 	sourceRow.Name = "equal-incoming"
 	putTestAsset(t, source, sourceRow)
@@ -287,7 +289,7 @@ func TestImportLWWForceTombstoneAndResurrection(t *testing.T) {
 	}
 	local, _ = target.db.AssetGet(ctx, assetID)
 	if local.Name != "equal-incoming" {
-		t.Fatal("equal timestamp should accept incoming row")
+		t.Fatal("equal revision with greater remote origin should accept incoming row")
 	}
 }
 

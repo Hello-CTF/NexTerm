@@ -18,15 +18,29 @@ func (s *Service) Import(ctx context.Context, request ImportRequest) (ImportRepo
 		return ImportReport{}, ipc.NewError(ipc.CodeUnsupported,
 			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", bundle.Protocol, ProtocolVersion))
 	}
-	if len(bundle.Credentials) > 0 && (s.vault == nil || !s.vault.Status().Unlocked) {
+	if credentialsNeedVault(bundle.Credentials) && (s.vault == nil || !s.vault.Status().Unlocked) {
 		return ImportReport{}, ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}
+	localOrigin, err := s.Origin(ctx)
+	if err != nil {
+		return ImportReport{}, err
+	}
 	report := ImportReport{Warnings: append([]string{}, bundle.Warnings...)}
-	assetDecisions := s.planAssets(ctx, bundle.Assets, request.Force)
+	assetDecisions := s.planAssets(ctx, bundle.Assets, request.Force, bundle.Origin, localOrigin)
 	s.importGroups(ctx, bundle.Groups, &report)
-	s.importCredentials(ctx, bundle.Credentials, bundle.Assets, assetDecisions, &report)
+	s.importCredentials(ctx, bundle.Credentials, bundle.Assets, assetDecisions, request.Force, &report)
 	s.importAssets(ctx, bundle.Assets, assetDecisions, &report)
+	s.importSnippets(ctx, bundle.Snippets, request.Force, bundle.Origin, localOrigin, &report)
 	return report, nil
+}
+
+func credentialsNeedVault(credentials []CredentialPayload) bool {
+	for _, credential := range credentials {
+		if credential.DeletedAt == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) importGroups(ctx context.Context, groups []GroupPayload, report *ImportReport) {
@@ -125,7 +139,7 @@ func orderGroups(groups []GroupPayload) ([]GroupPayload, []string) {
 	return ordered, warnings
 }
 
-func (s *Service) importCredentials(ctx context.Context, credentials []CredentialPayload, assets []AssetPayload, decisions []assetDecision, report *ImportReport) {
+func (s *Service) importCredentials(ctx context.Context, credentials []CredentialPayload, assets []AssetPayload, decisions []assetDecision, force bool, report *ImportReport) {
 	blocked := blockedCredentials(assets, decisions)
 	for _, credential := range credentials {
 		if strings.TrimSpace(credential.ID) == "" {
@@ -135,6 +149,10 @@ func (s *Service) importCredentials(ctx context.Context, credentials []Credentia
 		}
 		if blocked[credential.ID] {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 关联的资产因本机版本较新或导入被拒而受到保护，本机凭据保持不变", credential.ID))
+			continue
+		}
+		if credential.DeletedAt != nil {
+			s.importCredentialTombstone(ctx, credential, force, report)
 			continue
 		}
 		_, err := s.store.CredentialGetRow(ctx, credential.ID)
@@ -167,6 +185,34 @@ func (s *Service) importCredentials(ctx context.Context, credentials []Credentia
 	}
 }
 
+func (s *Service) importCredentialTombstone(ctx context.Context, credential CredentialPayload, force bool, report *ImportReport) {
+	row, err := s.store.CredentialGetRow(ctx, credential.ID)
+	if isNotFound(err) {
+		return
+	}
+	if err != nil {
+		report.Refused++
+		report.Warnings = append(report.Warnings, fmt.Sprintf("无法检查凭据 %s: %v", credential.ID, err))
+		return
+	}
+	if !force && row.UpdatedAt > *credential.DeletedAt {
+		report.SkippedNewer++
+		report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+			Kind: "credential", ID: credential.ID, Name: row.Name,
+			LocalRevision: row.UpdatedAt, RemoteRevision: *credential.DeletedAt,
+		})
+		report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 的本机版本较新，已忽略远端删除墓碑；如需覆盖请使用强制同步", credential.ID))
+		return
+	}
+	if err := s.store.CredentialDelete(ctx, credential.ID); err != nil {
+		report.Refused++
+		report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 按同步墓碑删除失败: %v", credential.ID, err))
+		return
+	}
+	report.CredsDeleted++
+	report.Warnings = append(report.Warnings, fmt.Sprintf("凭据 %s 已按远端同步墓碑删除（删除时间 %d）", credential.ID, *credential.DeletedAt))
+}
+
 func warnMissingReferencedKey(credential CredentialPayload, report *ImportReport) {
 	if credential.Kind != vault.KindPrivateKey {
 		return
@@ -183,14 +229,19 @@ func warnMissingReferencedKey(credential CredentialPayload, report *ImportReport
 func (s *Service) importAssets(ctx context.Context, assets []AssetPayload, decisions []assetDecision, report *ImportReport) {
 	for i, asset := range assets {
 		decision := decisions[i]
+		if decision.warning != "" {
+			report.Warnings = append(report.Warnings, decision.warning)
+		}
 		if decision.acceptance != assetAccepted {
 			if decision.acceptance == assetSkippedNewer {
 				report.SkippedNewer++
+				report.SkippedNewerDetails = append(report.SkippedNewerDetails, SkippedNewerEntry{
+					Kind: "asset", ID: asset.ID, Name: asset.Name,
+					LocalRevision: decision.localRevision, RemoteRevision: decision.remoteRevision,
+					EqualRevision: decision.equalRevision,
+				})
 			} else {
 				report.Refused++
-			}
-			if decision.warning != "" {
-				report.Warnings = append(report.Warnings, decision.warning)
 			}
 			continue
 		}
