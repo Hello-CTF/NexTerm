@@ -18,6 +18,55 @@ export function timeoutSecondsFromInput(raw: string, allowZero: boolean): number
   return rounded;
 }
 
+export const MAX_TOKENS_HARD_LIMIT = 32768;
+
+export function maxTokensLabel(profile: ModelProfile): string {
+  return profile.maxTokens?.toString() ?? "";
+}
+
+export function maxTokensFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
+
+export const CIRCUIT_DEFAULT_THRESHOLD = 5;
+export const CIRCUIT_DEFAULT_COOLDOWN_SECONDS = 300;
+
+export function circuitThresholdLabel(profile: ModelProfile): string {
+  return profile.circuitFailureThreshold?.toString() ?? "";
+}
+
+export function circuitCooldownLabel(profile: ModelProfile): string {
+  return profile.circuitCooldownSeconds?.toString() ?? "";
+}
+
+export function circuitThresholdFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
+
+export function circuitCooldownFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
+
+export function circuitEffective(profile: ModelProfile): {
+  threshold: number;
+  cooldownSeconds: number;
+} {
+  return {
+    threshold: profile.circuitFailureThreshold ?? CIRCUIT_DEFAULT_THRESHOLD,
+    cooldownSeconds: profile.circuitCooldownSeconds ?? CIRCUIT_DEFAULT_COOLDOWN_SECONDS,
+  };
+}
+
+function positiveIntFromInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (rounded < 1) return null;
+  return rounded;
+}
+
 export function selectModelProfileId(
   view: ModelProfilesView,
   preferredId?: string,
@@ -77,6 +126,9 @@ export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
     a.stream === b.stream &&
     fallbackModelLabel(a) === fallbackModelLabel(b) &&
     (a.requestTimeoutSeconds ?? null) === (b.requestTimeoutSeconds ?? null) &&
-    (a.idleTimeoutSeconds ?? null) === (b.idleTimeoutSeconds ?? null)
+    (a.idleTimeoutSeconds ?? null) === (b.idleTimeoutSeconds ?? null) &&
+    (a.maxTokens ?? null) === (b.maxTokens ?? null) &&
+    (a.circuitFailureThreshold ?? null) === (b.circuitFailureThreshold ?? null) &&
+    (a.circuitCooldownSeconds ?? null) === (b.circuitCooldownSeconds ?? null)
   );
 }

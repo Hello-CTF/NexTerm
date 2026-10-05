@@ -5,9 +5,19 @@ import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
+  CIRCUIT_DEFAULT_COOLDOWN_SECONDS,
+  CIRCUIT_DEFAULT_THRESHOLD,
+  circuitCooldownFromInput,
+  circuitCooldownLabel,
+  circuitEffective,
+  circuitThresholdFromInput,
+  circuitThresholdLabel,
   fallbackModelFromInput,
   fallbackModelLabel,
   idleTimeoutLabel,
+  MAX_TOKENS_HARD_LIMIT,
+  maxTokensFromInput,
+  maxTokensLabel,
   MODEL_PARAM_DEFAULTS,
   modelParamsAtDefaults,
   requestTimeoutLabel,
@@ -41,6 +51,9 @@ function blankProfile(): ModelProfile {
     ...MODEL_PARAM_DEFAULTS,
     requestTimeoutSeconds: null,
     idleTimeoutSeconds: null,
+    maxTokens: null,
+    circuitFailureThreshold: null,
+    circuitCooldownSeconds: null,
   };
 }
 
@@ -469,6 +482,23 @@ export function ModelManager({
                 </div>
               </div>
 
+              <Field label="最大输出 tokens（留空不限）" htmlFor={`${fieldId}-max-tokens`}>
+                <input
+                  id={`${fieldId}-max-tokens`}
+                  className="nx-input font-mono"
+                  type="number"
+                  min={1}
+                  max={MAX_TOKENS_HARD_LIMIT}
+                  step={1}
+                  placeholder="不限"
+                  value={maxTokensLabel(draft)}
+                  onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
+                />
+                <div className="nx-hint mt-1 text-[10.5px]">
+                  留空 = 不限制单次输出（旧档案默认）；填写后按上下文窗口一半、最高 {MAX_TOKENS_HARD_LIMIT} 生效。
+                </div>
+              </Field>
+
               <div className="flex flex-col gap-3 min-[400px]:flex-row">
                 <div className="flex-1">
                   <Field label="请求总超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
@@ -500,6 +530,42 @@ export function ModelManager({
                     />
                   </Field>
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                <div className="flex-1">
+                  <Field label="熔断失败阈值（次）" htmlFor={`${fieldId}-circuit-threshold`}>
+                    <input
+                      id={`${fieldId}-circuit-threshold`}
+                      className="nx-input font-mono"
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={1}
+                      placeholder={`默认 ${CIRCUIT_DEFAULT_THRESHOLD}`}
+                      value={circuitThresholdLabel(draft)}
+                      onChange={(e) => patch({ circuitFailureThreshold: circuitThresholdFromInput(e.target.value) })}
+                    />
+                  </Field>
+                </div>
+                <div className="flex-1">
+                  <Field label="熔断冷却（秒）" htmlFor={`${fieldId}-circuit-cooldown`}>
+                    <input
+                      id={`${fieldId}-circuit-cooldown`}
+                      className="nx-input font-mono"
+                      type="number"
+                      min={1}
+                      max={3600}
+                      step={1}
+                      placeholder={`默认 ${CIRCUIT_DEFAULT_COOLDOWN_SECONDS}`}
+                      value={circuitCooldownLabel(draft)}
+                      onChange={(e) => patch({ circuitCooldownSeconds: circuitCooldownFromInput(e.target.value) })}
+                    />
+                  </Field>
+                </div>
+              </div>
+              <div className="nx-hint mt-0.5 text-[10.5px]">
+                当前生效：连续失败 {circuitEffective(draft).threshold} 次后熔断这份档案，冷却 {circuitEffective(draft).cooldownSeconds} 秒；只统计网络与服务端错误，和聊天里的「可重试」标记是两回事。
               </div>
 
               <Field label="代理（留空则跟随系统代理）" htmlFor={`${fieldId}-proxy`}>
