@@ -42,7 +42,7 @@ describe("AppearanceCard 恢复默认", () => {
 
     const button = resetButton(mounted.container);
     expect(button.disabled).toBe(false);
-    expect(button.getAttribute("aria-label")).toBe("恢复默认主题");
+    expect(button.getAttribute("aria-label")).toBe("恢复默认主题与外观");
 
     clickButton(mounted.container, "恢复默认");
 

@@ -11,7 +11,13 @@ import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
-import { getInputPrefs } from "../../app/preferences";
+import {
+  getAppearancePrefs,
+  getInputPrefs,
+  getResolvedTerminalTheme,
+  subscribeAppearancePrefs,
+  type ResolvedTerminalTheme,
+} from "../../app/preferences";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import { createOscStreamFilter } from "./oscStream";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
@@ -20,7 +26,7 @@ import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { wrapBracketedPaste } from "./terminalPaste";
 
-const THEME = {
+export const XTERM_DARK_THEME = {
   background: "#101217",
   foreground: "#c6cbd6",
   cursorAccent: "#101217",
@@ -45,6 +51,36 @@ const THEME = {
   white: "#c6cbd6",
   brightWhite: "#eef1f6",
 };
+
+export const XTERM_LIGHT_THEME = {
+  background: "#f4f6fa",
+  foreground: "#2f3642",
+  cursorAccent: "#f4f6fa",
+  selectionBackground: "#c9d6f2",
+  scrollbarSliderBackground: "#ccd3de",
+  scrollbarSliderHoverBackground: "#aeb7c5",
+  scrollbarSliderActiveBackground: "#8a94a6",
+  black: "#2f3642",
+  brightBlack: "#5d6572",
+  red: "#c23636",
+  brightRed: "#a12222",
+  green: "#1a6b41",
+  brightGreen: "#226e46",
+  yellow: "#8a5a00",
+  brightYellow: "#96660a",
+  blue: "#3c59cc",
+  brightBlue: "#324a9e",
+  magenta: "#6440b8",
+  brightMagenta: "#4c2f96",
+  cyan: "#0e5a9e",
+  brightCyan: "#0b4a80",
+  white: "#5d6572",
+  brightWhite: "#10141b",
+};
+
+export function xtermThemeFor(resolved: ResolvedTerminalTheme) {
+  return resolved === "light" ? XTERM_LIGHT_THEME : XTERM_DARK_THEME;
+}
 
 function accentColor(): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
@@ -139,9 +175,9 @@ export function XtermView(props: XtermViewProps) {
       allowProposedApi: true,
       overviewRuler: { width: 14 },
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
-      fontSize: 13,
+      fontSize: getAppearancePrefs().terminalFontSize,
       cursorBlink: true,
-      theme: { ...THEME, cursor: accentColor() },
+      theme: { ...xtermThemeFor(getResolvedTerminalTheme()), cursor: accentColor() },
     });
     const search = new SearchAddon();
     term.loadAddon(search);
@@ -401,6 +437,20 @@ export function XtermView(props: XtermViewProps) {
       termRef.current = null;
     };
   }, [props.sessionId, props.containerId, props.resumeTabId]);
+
+  useEffect(() => {
+    const applyAppearance = () => {
+      const term = termRef.current;
+      if (!term) return;
+      const prefs = getAppearancePrefs();
+      if (term.options.fontSize !== prefs.terminalFontSize) {
+        term.options.fontSize = prefs.terminalFontSize;
+        fitIfSized(false, true);
+      }
+      term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme()), cursor: accentColor() };
+    };
+    return subscribeAppearancePrefs(applyAppearance);
+  }, []);
 
   useEffect(() => {
     const visible = props.visible !== false;
