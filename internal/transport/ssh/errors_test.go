@@ -1,10 +1,12 @@
 package ssh
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"syscall"
@@ -220,10 +222,14 @@ func TestConnectErrorClassificationHTTPProxyRejection(t *testing.T) {
 	defer listener.Close()
 	go func() {
 		connection, err := listener.Accept()
-		if err == nil {
-			_, _ = connection.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n"))
-			connection.Close()
+		if err != nil {
+			return
 		}
+		defer connection.Close()
+		if _, err := http.ReadRequest(bufio.NewReader(connection)); err != nil {
+			return
+		}
+		_, _ = connection.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n"))
 	}()
 	server := newTestSSHServer(t, nil)
 	cfg := testClientConfig(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
