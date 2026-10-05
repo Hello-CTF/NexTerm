@@ -59,22 +59,31 @@ export interface VirtualWindow {
   range: VirtualRange;
 }
 
-function centerElement(container: HTMLElement, target: Element): void {
+function centerElement(
+  container: HTMLElement,
+  target: Element,
+  pending: { current: number | null },
+): void {
   const containerRect = container.getBoundingClientRect();
   const targetRect = target.getBoundingClientRect();
-  container.scrollTop = centeredScrollTop(
+  const next = centeredScrollTop(
     containerRect.top,
     container.scrollTop,
     container.clientHeight,
     targetRect.top,
     targetRect.height,
   );
+  if (Math.abs(next - container.scrollTop) <= 1) {
+    pending.current = null;
+  }
+  container.scrollTop = next;
 }
 
 export function useVirtualWindow(count: number): VirtualWindow {
   const [el, setEl] = useState<HTMLElement | null>(null);
   const [metrics, setMetrics] = useState({ scrollTop: 0, viewportHeight: 0 });
   const revealTargetRef = useRef<number | null>(null);
+  const frozenWindowRef = useRef<{ start: number; end: number } | null>(null);
 
   const scrollRef = useCallback((node: HTMLElement | null) => {
     setEl(node);
@@ -94,35 +103,61 @@ export function useVirtualWindow(count: number): VirtualWindow {
     return () => el.removeEventListener("scroll", measure);
   }, [el]);
 
+  const derivedRange = virtualRange(count, metrics.scrollTop, metrics.viewportHeight);
+  const frozen = frozenWindowRef.current;
+  const range =
+    frozen && derivedRange.active && frozen.start < count
+      ? {
+          active: true as const,
+          start: frozen.start,
+          end: Math.min(frozen.end, count),
+          padTop: frozen.start * VIRTUAL_ITEM_ESTIMATE_PX,
+          padBottom: (count - Math.min(frozen.end, count)) * VIRTUAL_ITEM_ESTIMATE_PX,
+        }
+      : derivedRange;
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
+
+  const settleReveal = useCallback((node: HTMLElement, target: Element) => {
+    if (frozenWindowRef.current === null) {
+      frozenWindowRef.current = { start: rangeRef.current.start, end: rangeRef.current.end };
+    }
+    centerElement(node, target, revealTargetRef);
+    if (revealTargetRef.current === null) {
+      frozenWindowRef.current = null;
+    }
+  }, []);
+
   const revealIndex = useCallback(
     (index: number) => {
       const node = el;
       if (!node) return;
+      revealTargetRef.current = index;
       const mounted = node.querySelector(`[data-conversation-index="${index}"]`);
       if (mounted) {
-        revealTargetRef.current = null;
-        centerElement(node, mounted);
+        settleReveal(node, mounted);
         return;
       }
-      revealTargetRef.current = index;
       node.scrollTop = virtualOffsetForIndex(index);
     },
-    [el],
+    [el, settleReveal],
   );
 
   useEffect(() => {
     const index = revealTargetRef.current;
     if (index === null || !el) return;
-    const target = el.querySelector(`[data-conversation-index="${index}"]`);
-    if (target) {
+    if (index >= count) {
       revealTargetRef.current = null;
-      centerElement(el, target);
+      frozenWindowRef.current = null;
+      return;
     }
+    const target = el.querySelector(`[data-conversation-index="${index}"]`);
+    if (target) settleReveal(el, target);
   });
 
   return {
     scrollRef,
     revealIndex,
-    range: virtualRange(count, metrics.scrollTop, metrics.viewportHeight),
+    range,
   };
 }

@@ -94,15 +94,9 @@ function rect(top: number, height: number): DOMRect {
   } as DOMRect;
 }
 
-function itemTop(index: number): number {
-  return 200 + index * 150;
-}
-
-function itemHeight(index: number): number {
-  return index === 2 || index === 70 ? 300 : 30;
-}
-
 let currentScrollTop = 0;
+let topOf: (index: number) => number = (i) => 200 + i * 150;
+let heightOf: (index: number) => number = (i) => (i === 2 || i === 70 ? 300 : 30);
 
 function stubGeometry(view: MountedView): HTMLDivElement {
   const log = view.container.querySelector<HTMLDivElement>('div[role="log"]');
@@ -134,6 +128,8 @@ describe("AiSidebar search jump", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", () => undefined);
     currentScrollTop = 0;
+    topOf = (i) => 200 + i * 150;
+    heightOf = (i) => (i === 2 || i === 70 ? 300 : 30);
     mocks.channels.length = 0;
     mocks.runs.mockResolvedValue([]);
     mocks.runEvents.mockResolvedValue([]);
@@ -157,7 +153,7 @@ describe("AiSidebar search jump", () => {
         const index = this.getAttribute("data-conversation-index");
         if (index !== null) {
           const i = Number(index);
-          return rect(itemTop(i) - currentScrollTop, itemHeight(i));
+          return rect(topOf(i) - currentScrollTop, heightOf(i));
         }
         return rect(0, 0);
       });
@@ -206,13 +202,13 @@ describe("AiSidebar search jump", () => {
 
     click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
     await flush();
-    expect(log.scrollTop).toBe(itemTop(2) - (400 - itemHeight(2)) / 2);
+    expect(log.scrollTop).toBe(topOf(2) - (400 - heightOf(2)) / 2);
     expect(log.scrollTop).not.toBe(2 * 88);
     expect(wrapperOf(view!, 2)?.className).toContain("ring-amber");
 
     click(view!.container.querySelector('button[aria-label="上一个匹配"]')!);
     await flush();
-    expect(log.scrollTop).toBe(itemTop(1) - (400 - itemHeight(1)) / 2);
+    expect(log.scrollTop).toBe(topOf(1) - (400 - heightOf(1)) / 2);
     expect(log.scrollTop).not.toBe(88);
     expect(wrapperOf(view!, 1)?.className).toContain("ring-amber");
   });
@@ -247,9 +243,62 @@ describe("AiSidebar search jump", () => {
     });
     await flush();
     expect(wrapperOf(view!, 70)).not.toBeNull();
-    const expected = itemTop(70) - (400 - itemHeight(70)) / 2;
+    const expected = topOf(70) - (400 - heightOf(70)) / 2;
     expect(log.scrollTop).toBe(expected);
     expect(log.scrollTop).not.toBe(70 * 88);
     expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
+
+    act(() => {
+      log.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(wrapperOf(view!, 70)).not.toBeNull();
+    expect(log.scrollTop).toBe(expected);
+    expect(wrapperOf(view!, 70)?.className).toContain("ring-amber");
+  });
+
+  it("reviewer 场景：100 条中命中 50，前置 6 个 300px 气泡，校正后的第二次 scroll 不再卸载目标", async () => {
+    const text = () => view!.container.textContent ?? "";
+    topOf = (i) => (i <= 44 ? i * 88 : 3872 + (i - 44) * 300);
+    heightOf = (i) => (i >= 44 && i <= 49 ? 300 : 30);
+    const rows = Array.from({ length: 100 }, (_, i) =>
+      message(`m${i}`, i % 2 === 0 ? "user" : "assistant", `词${i} ${i % 2 === 0 ? "问题" : "回答"}`),
+    );
+    mocks.messages.mockResolvedValue(rows);
+    view?.unmount();
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flushUntil(() => text().includes("词1 回答"));
+    const log = stubGeometry(view!);
+
+    click(view!.container.querySelector('button[title="搜索对话内容"]')!);
+    await flush();
+    setInputValue(
+      view!.container.querySelector('input[aria-label="搜索对话内容"]') as HTMLInputElement,
+      "词50",
+    );
+    await flush();
+
+    click(view!.container.querySelector('button[aria-label="下一个匹配"]')!);
+    await flush();
+    expect(log.scrollTop).toBe(50 * 88);
+
+    act(() => {
+      log.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(wrapperOf(view!, 50)).not.toBeNull();
+    const centered = 5672 - (400 - 30) / 2;
+    expect(log.scrollTop).toBe(centered);
+
+    act(() => {
+      log.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+    expect(wrapperOf(view!, 50)).not.toBeNull();
+    expect(log.scrollTop).toBe(centered);
+    expect(wrapperOf(view!, 50)?.className).toContain("ring-amber");
+
+    await flush();
+    expect(log.scrollTop).toBe(centered);
   });
 });
