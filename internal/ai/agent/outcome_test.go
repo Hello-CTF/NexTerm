@@ -473,3 +473,79 @@ func TestEditResendConcurrentToolWriteDuringTruncate(t *testing.T) {
 		t.Fatalf("canceled run terminal counts done=%d error=%d", done, failed)
 	}
 }
+
+func TestEditResendBlocksConcurrentStartUntilTruncate(t *testing.T) {
+	storage := restartStore(t)
+	var calls atomic.Int64
+	secondModelCalled := make(chan struct{})
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		switch calls.Add(1) {
+		case 1:
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("one", nil)}), nil
+		case 2:
+			close(secondModelCalled)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		default:
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("three", nil)}), nil
+		}
+	}}
+	runner := durableRunner(t, storage, chat, tools.Dependencies{}, nil)
+	first := &SliceStream{}
+	firstResponse := startTestJob(t, runner, first, "first")
+	waitClosed(t, first)
+	second := &SliceStream{}
+	secondResponse, err := runner.Start(context.Background(), ChatArgs{ConversationID: firstResponse.ConversationID, Message: "second"}, StaticStream(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannelClosed(t, secondModelCalled, "second run model was not invoked")
+	target := userMessageIDWithJob(t, storage, firstResponse.ConversationID, secondResponse.JobID)
+
+	hookEntered := make(chan struct{})
+	hookRelease := make(chan struct{})
+	editResendTestHook = func() {
+		close(hookEntered)
+		<-hookRelease
+	}
+	t.Cleanup(func() { editResendTestHook = nil })
+	editDone := make(chan error, 1)
+	go func() {
+		editDone <- runner.EditResend(context.Background(), firstResponse.ConversationID, target)
+	}()
+	waitChannelClosed(t, hookEntered, "edit-resend did not reach the truncate gate")
+
+	third := &SliceStream{}
+	thirdDone := make(chan error, 1)
+	go func() {
+		_, err := runner.Start(context.Background(), ChatArgs{ConversationID: firstResponse.ConversationID, Message: "third"}, StaticStream(third))
+		thirdDone <- err
+	}()
+	select {
+	case err := <-thirdDone:
+		t.Fatalf("concurrent Start completed inside the edit window: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(hookRelease)
+	if err := <-editDone; err != nil {
+		t.Fatalf("edit-resend: %v", err)
+	}
+	if err := <-thirdDone; err != nil {
+		t.Fatalf("third start: %v", err)
+	}
+	events := waitClosed(t, third)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("third run terminal counts done=%d error=%d", done, failed)
+	}
+	rows, err := storage.MsgList(context.Background(), firstResponse.ConversationID)
+	if err != nil || len(rows) != 5 {
+		t.Fatalf("rows = %d err=%v", len(rows), err)
+	}
+	if rows[0].Role != "user" || rows[1].Role != "assistant" || rows[2].Role != "user" || rows[3].Role != "user" || rows[4].Role != "assistant" {
+		t.Fatalf("row roles = %s, %s, %s, %s, %s", rows[0].Role, rows[1].Role, rows[2].Role, rows[3].Role, rows[4].Role)
+	}
+	secondRow, err := storage.RunGet(context.Background(), secondResponse.JobID)
+	if err != nil || secondRow.Status != RunStatusSuperseded {
+		t.Fatalf("second run = %+v err=%v", secondRow, err)
+	}
+}

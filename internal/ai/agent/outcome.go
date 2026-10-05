@@ -34,6 +34,8 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 	if !ok {
 		return errors.New("AI 会话存储不支持消息截断")
 	}
+	unlock := r.lockConversation(conversationID)
+	defer unlock()
 	createdAt, ownerRun, err := r.editTarget(ctx, conversationID, messageID)
 	if err != nil {
 		return err
@@ -54,8 +56,13 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
+	if editResendTestHook != nil {
+		editResendTestHook()
+	}
 	return truncater.MsgTruncateAfter(ctx, conversationID, messageID)
 }
+
+var editResendTestHook func()
 
 func (r *Runner) editTarget(ctx context.Context, conversationID, messageID string) (int64, string, error) {
 	rows, err := r.store.MsgList(ctx, conversationID)
