@@ -31,9 +31,13 @@ func TestCoreTerminalRawReplayAndResponseIntegration(t *testing.T) {
 	if dump, err := manager.RawDump(tab.ID, 1024); err != nil || !bytes.Contains(dump, raw) {
 		t.Fatalf("shared raw dump = %v, err = %v", dump, err)
 	}
-	if current, err := manager.RecordingBytes(tab.ID); err != nil || current < uint64(len(raw)) {
-		t.Fatalf("recording bytes = %d, err = %v", current, err)
-	}
+	waitFor(t, func() bool {
+		current, err := manager.RecordingBytes(tab.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return current >= uint64(len(raw))
+	})
 	recorded, err := manager.StopRecording(tab.ID)
 	if err != nil || recorded < uint64(len(raw)) {
 		t.Fatalf("stopped recording bytes = %d, err = %v", recorded, err)

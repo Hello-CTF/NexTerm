@@ -163,6 +163,10 @@ func (m *Manager) StartRecording(tabID, path string) error {
 	if err != nil {
 		return err
 	}
+	if err := tab.lockFeed(context.Background()); err != nil {
+		return err
+	}
+	defer tab.unlockFeed()
 	core, ok := tab.terminal.(interface{ StartRecording(string) error })
 	if !ok {
 		return ErrUnsupported
@@ -175,6 +179,10 @@ func (m *Manager) StopRecording(tabID string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if err := tab.lockFeed(context.Background()); err != nil {
+		return 0, err
+	}
+	defer tab.unlockFeed()
 	core, ok := tab.terminal.(interface{ StopRecording() uint64 })
 	if !ok {
 		return 0, ErrUnsupported
