@@ -212,6 +212,16 @@ const CLICK_BUTTON = (label) => `(() => {
   return true;
 })()`;
 
+const SET_PLAINTEXT_FORMAT = `(() => {
+  const select = document.querySelector("#bundle-format");
+  if (!select) return false;
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+  setter.call(select, "plaintext");
+  select.dispatchEvent(new Event("input", { bubbles: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+})()`;
+
 const BODY_HAS = (snippet) => `document.body.textContent.includes(${JSON.stringify(snippet)})`;
 
 async function bootDemoSettings(page) {
@@ -258,11 +268,14 @@ try {
       row.querySelector('input[type="checkbox"]').click();
       return true;
     })()`);
+    const formatChosen = await page.evaluate(SET_PLAINTEXT_FORMAT);
+    assert.ok(formatChosen, "plaintext format option not chosen");
+    await page.waitFor(BODY_HAS("将以明文导出"));
     await page.waitFor(`(() => {
-      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "导出为 JSON 文件");
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "导出为明文 JSON 文件");
       return !!btn && !btn.disabled;
     })()`);
-    const clicked = await page.evaluate(CLICK_BUTTON("导出为 JSON 文件"));
+    const clicked = await page.evaluate(CLICK_BUTTON("导出为明文 JSON 文件"));
     assert.ok(clicked, "export button not found");
     await page.waitFor(BODY_HAS("导出完成"));
     assert.ok(await page.evaluate(BODY_HAS("凭据 0")), "summary must show zero credentials");
