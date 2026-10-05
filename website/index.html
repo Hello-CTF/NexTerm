@@ -352,7 +352,7 @@
         <p>带完整浏览器界面，打开 <code>http://&lt;地址&gt;:8080</code> 即用。</p>
         <ul>
           <li>解压即得二进制、前端产物、systemd 单元</li>
-          <li>单元默认只听 <code>127.0.0.1</code> 并显式声明 <code>--auth loopback</code>，对外自己接反代</li>
+          <li>单元默认只听 <code>127.0.0.1</code> 并显式声明 <code>--auth on</code>，对外自己接反代</li>
           <li>访问控制默认开启（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code>、<code>/files/blob</code> 一律要求同步令牌（<code>/healthz</code> 与页面公开），公网仍建议套 TLS 反代</li>
         </ul>
         <span class="file">NexTerm-server_x.y.z_linux_amd64.tar.gz · _arm64.tar.gz</span>

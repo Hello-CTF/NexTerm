@@ -288,6 +288,22 @@ func TestServerProcessRequireVault(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitsEnforceAuthOn(t *testing.T) {
+	for _, unit := range []string{"nexterm-server.service", "nexterm-onlyserver.service"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "deploy", "systemd", unit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		if !strings.Contains(content, "--auth on") {
+			t.Fatalf("%s does not enforce --auth on:\n%s", unit, content)
+		}
+		if strings.Contains(content, "--auth loopback") || strings.Contains(content, "--auth off") {
+			t.Fatalf("%s weakens access control:\n%s", unit, content)
+		}
+	}
+}
+
 func TestServerProcessRejectsInvalidAuthMode(t *testing.T) {
 	binary := buildServerBinary(t)
 	cmd := exec.Command(binary, "--listen", "127.0.0.1:0", "--data-dir", t.TempDir(), "--auth=bogus")
