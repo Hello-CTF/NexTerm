@@ -258,6 +258,24 @@ const vaultState = {
   autoLockMinutes: 30,
 };
 
+interface DemoSnippet {
+  id: string;
+  groupId: string | null;
+  name: string;
+  body: string;
+  sort: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const demoSnippets: DemoSnippet[] = [
+  { id: "sn1", groupId: null, name: "看容器状态", body: "docker ps --format '{{.Names}}\\t{{.Status}}'", sort: 1, createdAt: Date.now() - 9 * 86_400_000, updatedAt: Date.now() - 86_400_000 },
+  { id: "sn2", groupId: null, name: "磁盘水位", body: "df -h && du -sh /data/*", sort: 2, createdAt: Date.now() - 8 * 86_400_000, updatedAt: Date.now() - 2 * 86_400_000 },
+  { id: "sn3", groupId: null, name: "nginx 重载", body: "sudo nginx -t && sudo nginx -s reload", sort: 3, createdAt: Date.now() - 7 * 86_400_000, updatedAt: Date.now() - 3 * 86_400_000 },
+];
+
+const bundleFiles = new Map<string, { content: string; encrypted: boolean }>();
+
 function params(raw: unknown): Record<string, unknown> {
   const o = (raw ?? {}) as Record<string, unknown>;
   const inner = o.args;
@@ -1042,23 +1060,50 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "snippet_list":
-      return [
-        { id: "sn1", groupId: null, name: "看容器状态", body: "docker ps --format '{{.Names}}\\t{{.Status}}'", sort: 1 },
-        { id: "sn2", groupId: null, name: "磁盘水位", body: "df -h && du -sh /data/*", sort: 2 },
-        { id: "sn3", groupId: null, name: "nginx 重载", body: "sudo nginx -t && sudo nginx -s reload", sort: 3 },
-      ];
+      return demoSnippets.map((s) => ({ ...s }));
 
-    case "snippet_create":
-      return { id: uid("sn") };
+    case "snippet_create": {
+      const snippet: DemoSnippet = {
+        id: uid("sn"),
+        groupId: str(a.groupId).trim() || null,
+        name: str(a.name, "未命名片段"),
+        body: str(a.body),
+        sort: num(a.sort, 0),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      demoSnippets.push(snippet);
+      return { id: snippet.id };
+    }
 
-    case "snippet_update":
-    case "snippet_delete":
+    case "snippet_update": {
+      const snippet = demoSnippets.find((s) => s.id === str(a.id));
+      if (!snippet) throwAppError("not_found", "片段不存在");
+      snippet.name = str(a.name, snippet.name);
+      snippet.body = str(a.body, snippet.body);
+      if (typeof a.groupId === "string" || a.groupId === null) {
+        snippet.groupId = str(a.groupId).trim() || null;
+      }
+      if (typeof a.sort === "number") snippet.sort = a.sort;
+      snippet.updatedAt = Date.now();
       return null;
+    }
+
+    case "snippet_delete": {
+      const i = demoSnippets.findIndex((s) => s.id === str(a.id));
+      if (i >= 0) demoSnippets.splice(i, 1);
+      return null;
+    }
 
     case "audit_query": {
       const source = str(a.source);
       const limit = num(a.limit, 300);
       return auditEntries.filter((e) => !source || e.source === source).slice(0, limit);
+    }
+
+    case "audit_count": {
+      const source = str(a.source);
+      return { total: auditEntries.filter((e) => !source || e.source === source).length };
     }
 
     case "known_host_list":
@@ -1577,6 +1622,67 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return (conversationMessages[id] ?? []).map((m) => ({ ...m, conversationId: id }));
     }
 
+    case "ai_run_list": {
+      const conversationId = str(a.conversationId);
+      const limit = num(a.limit, 0);
+      const all = [
+        {
+          id: "run-1",
+          conversationId: "conv-1",
+          status: "completed",
+          attempt: 1,
+          seq: 12,
+          planMode: false,
+          source: "chat",
+          profileId: "m-deepseek",
+          answer: "已定位 502 来自上游 api-server 的连接池耗尽，建议先扩容并加连接复用。",
+          turns: 4,
+          tokensIn: 3120,
+          tokensOut: 486,
+          cacheCreationTokens: 0,
+          latencyMs: 5230,
+          retries: 0,
+          failures: 0,
+          createdAt: Date.now() - 21 * 60_000,
+          updatedAt: Date.now() - 20 * 60_000,
+          finishedAt: Date.now() - 20 * 60_000,
+        },
+        {
+          id: "run-2",
+          conversationId: "conv-1",
+          status: "superseded",
+          attempt: 2,
+          seq: 13,
+          planMode: false,
+          source: "chat",
+          profileId: "m-deepseek",
+          answer: "",
+          turns: 1,
+          tokensIn: 980,
+          tokensOut: 0,
+          cacheCreationTokens: 0,
+          latencyMs: 1200,
+          retries: 0,
+          failures: 0,
+          createdAt: Date.now() - 19 * 60_000,
+          updatedAt: Date.now() - 19 * 60_000,
+          finishedAt: Date.now() - 19 * 60_000,
+        },
+      ];
+      const runs = all.filter((r) => !conversationId || r.conversationId === conversationId);
+      return limit > 0 ? runs.slice(0, limit) : runs;
+    }
+
+    case "ai_run_events":
+      return [];
+
+    case "ai_usage_summary":
+      return [
+        { source: "chat", profileId: "m-deepseek", runs: 12, tokensIn: 48210, tokensOut: 9310, cacheCreationTokens: 1204, averageLatencyMs: 4120 },
+        { source: "chat", profileId: "m-glm", runs: 3, tokensIn: 8204, tokensOut: 1502, cacheCreationTokens: 0, averageLatencyMs: 2860 },
+        { source: "title", profileId: "m-deepseek", runs: 8, tokensIn: 2100, tokensOut: 96, cacheCreationTokens: 0, averageLatencyMs: 980 },
+      ];
+
     case "ai_takeover_enter":
     case "ai_takeover_exit":
       return null;
@@ -1904,13 +2010,13 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         groups: Record<string, unknown>[];
         assets: Record<string, unknown>[];
         creds: Record<string, unknown>[];
+        snippets: Record<string, unknown>[];
         warnings: string[];
-      } = { protocol: 1, origin: "demo", exportedAt: Date.now(), groups: [], assets: [], creds: [], warnings: [] };
+      } = { protocol: 1, origin: "demo", exportedAt: Date.now(), groups: [], assets: [], creds: [], snippets: [], warnings: [] };
       const includedGroups = new Set<string>();
-      for (const asset of assets) {
-        if (!ids.has(asset.id) || asset.builtin) continue;
+      const collectGroupAncestors = (groupId: string | null) => {
         const chain: (typeof groups)[number][] = [];
-        let cursor = asset.groupId;
+        let cursor = groupId;
         const visiting = new Set<string>();
         while (cursor && !includedGroups.has(cursor)) {
           if (visiting.has(cursor)) {
@@ -1937,6 +2043,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           });
           includedGroups.add(g.id);
         }
+      };
+      for (const asset of assets) {
+        if (!ids.has(asset.id) || asset.builtin) continue;
+        collectGroupAncestors(asset.groupId);
         bundle.assets.push({
           id: asset.id,
           groupId: asset.groupId,
@@ -1969,8 +2079,20 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
             continue;
           }
           if (!vaultState.unlocked) throwAppError("vault_locked", "凭据库已锁定，请先解锁");
-          bundle.creds.push({ id: cred.id, name: cred.name, kind: cred.kind, secret: cred.secret });
+          bundle.creds.push({ id: cred.id, name: cred.name, kind: cred.kind, secret: cred.secret, updatedAt: cred.updatedAt });
         }
+      }
+      for (const snippet of demoSnippets) {
+        collectGroupAncestors(snippet.groupId);
+        bundle.snippets.push({
+          id: snippet.id,
+          groupId: snippet.groupId,
+          name: snippet.name,
+          body: snippet.body,
+          sort: snippet.sort,
+          createdAt: snippet.createdAt,
+          updatedAt: snippet.updatedAt,
+        });
       }
       return bundle;
     }
@@ -1995,7 +2117,18 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         assetsUpdated: 0,
         credsCreated: 0,
         credsUpdated: 0,
+        credsDeleted: 0,
+        snippetsCreated: 0,
+        snippetsUpdated: 0,
         skippedNewer: 0,
+        skippedNewerDetails: [] as {
+          kind: string;
+          id: string;
+          name: string;
+          localRevision: number;
+          remoteRevision: number;
+          equalRevision: boolean;
+        }[],
         refused: 0,
         warnings: Array.isArray(bundle.warnings)
           ? (bundle.warnings as unknown[]).filter((w): w is string => typeof w === "string")
@@ -2016,15 +2149,17 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
             warning: `资产 ${id || "(空)"} 的 ID 或名称不合法，已拒绝导入`,
           };
         }
-        if (
-          existing &&
-          !force &&
-          effectiveRevision(existing.updatedAt, existing.deletedAt) >
-            effectiveRevision(p.updatedAt, p.deletedAt)
-        ) {
+        const localRevision = existing
+          ? effectiveRevision(existing.updatedAt, existing.deletedAt)
+          : 0;
+        const remoteRevision = effectiveRevision(p.updatedAt, p.deletedAt);
+        if (existing && !force && localRevision > remoteRevision) {
           return {
             acceptance: "skipped" as const,
             warning: `资产 ${id} 的本机版本较新，已跳过；如需覆盖请使用强制同步`,
+            localRevision,
+            remoteRevision,
+            equalRevision: localRevision === remoteRevision,
           };
         }
         return { acceptance: "accepted" as const, warning: "" };
@@ -2094,8 +2229,19 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       (bundleAssets as Record<string, unknown>[]).forEach((p, i) => {
         const decision = assetDecisions[i];
         if (decision.acceptance !== "accepted") {
-          if (decision.acceptance === "skipped") report.skippedNewer += 1;
-          else report.refused += 1;
+          if (decision.acceptance === "skipped") {
+            report.skippedNewer += 1;
+            report.skippedNewerDetails.push({
+              kind: "asset",
+              id: str(p?.id).trim(),
+              name: str(p?.name),
+              localRevision: decision.localRevision,
+              remoteRevision: decision.remoteRevision,
+              equalRevision: decision.equalRevision,
+            });
+          } else {
+            report.refused += 1;
+          }
           report.warnings.push(decision.warning);
           return;
         }
@@ -2148,8 +2294,112 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           report.assetsCreated += 1;
         }
       });
+      const bundleTombstones = Array.isArray(bundle.credTombstones) ? bundle.credTombstones : [];
+      for (const t of bundleTombstones as Record<string, unknown>[]) {
+        const id = str(t?.id).trim();
+        if (!id) {
+          report.refused += 1;
+          report.warnings.push("拒绝了 ID 为空的凭据删除墓碑");
+          continue;
+        }
+        const local = demoCredentials.find((c) => c.id === id);
+        if (!local) continue;
+        const remoteRevision = num(t.deletedAt, 0);
+        if (!force && local.updatedAt > remoteRevision) {
+          report.skippedNewer += 1;
+          report.skippedNewerDetails.push({
+            kind: "credential",
+            id,
+            name: local.name,
+            localRevision: local.updatedAt,
+            remoteRevision,
+            equalRevision: false,
+          });
+          report.warnings.push(`凭据 ${id} 的本机版本较新，已忽略远端删除墓碑；如需覆盖请使用强制同步`);
+          continue;
+        }
+        demoCredentials.splice(demoCredentials.indexOf(local), 1);
+        report.credsDeleted += 1;
+      }
+      const bundleSnippets = Array.isArray(bundle.snippets) ? bundle.snippets : [];
+      for (const p of bundleSnippets as Record<string, unknown>[]) {
+        const id = str(p?.id).trim();
+        if (!id || !str(p.name).trim()) {
+          report.refused += 1;
+          report.warnings.push(`片段 ${id || "(空)"} 的 ID 或名称不合法，已拒绝导入`);
+          continue;
+        }
+        const existing = demoSnippets.find((s) => s.id === id);
+        const incomingUpdated = num(p.updatedAt, 0);
+        if (existing && !force && existing.updatedAt > incomingUpdated) {
+          report.skippedNewer += 1;
+          report.skippedNewerDetails.push({
+            kind: "snippet",
+            id,
+            name: existing.name,
+            localRevision: existing.updatedAt,
+            remoteRevision: incomingUpdated,
+            equalRevision: false,
+          });
+          report.warnings.push(`片段 ${id} 的本机版本较新，已跳过；如需覆盖请使用强制同步`);
+          continue;
+        }
+        const groupId = str(p.groupId).trim();
+        const row: DemoSnippet = {
+          id,
+          groupId: groupId || null,
+          name: str(p.name, "片段"),
+          body: str(p.body),
+          sort: num(p.sort, 0),
+          createdAt: num(p.createdAt, Date.now()),
+          updatedAt: incomingUpdated || Date.now(),
+        };
+        if (row.groupId && !groups.some((g) => g.id === row.groupId)) {
+          report.warnings.push(`片段 ${id} 引用的分组 ${row.groupId} 不存在，已清除该引用`);
+          row.groupId = null;
+        }
+        if (existing) {
+          Object.assign(existing, row);
+          report.snippetsUpdated += 1;
+        } else {
+          demoSnippets.push(row);
+          report.snippetsCreated += 1;
+        }
+      }
       return report;
     }
+
+    case "sync_bundle_read": {
+      const path = str(a.path).trim();
+      if (!path) throwAppError("bad_param", "资产包路径为空");
+      const file = bundleFiles.get(path);
+      if (!file) throwAppError("bad_param", `无法读取资产包文件: ${path}`);
+      if (file.encrypted && str(a.password) === "") {
+        throwAppError("bad_param", "资产包已加密，需要密码");
+      }
+      return file.content;
+    }
+
+    case "sync_bundle_write": {
+      const path = str(a.path).trim();
+      if (!path) throwAppError("bad_param", "资产包路径为空");
+      const content = str(a.content);
+      if (content.length > 8 << 20) throwAppError("bad_param", "资产包内容超过 8 MiB，拒绝写入");
+      const encrypted = str(a.password) !== "";
+      bundleFiles.set(path, { content, encrypted });
+      return encrypted
+        ? { encrypted: true }
+        : { encrypted: false, warning: "资产包以明文导出，获得文件的人都能直接读取其中的凭据，请妥善保管" };
+    }
+
+    case "sync_token":
+    case "sync_token_rotate":
+    case "sync_token_list":
+      return null;
+
+    case "sync_token_issue":
+    case "sync_token_revoke":
+      throwAppError("unsupported", "该同步操作只在服务端可用");
 
     default:
       return null;
