@@ -67,24 +67,16 @@ jobs:
           if [ -n "$files" ]; then printf 'gofmt required:\n%s\n' "$files"; exit 1; fi
       - name: Go vet
         run: go vet -mod=readonly ./...
-      - name: Go tests with race detection
-        run: go test -mod=readonly -race ./...
+      - name: Go tests
+        run: go test -mod=readonly ./...
       - name: Frontend lint and tests
         run: |
           pnpm lint
           pnpm test
-      - name: Build harness unit tests (spawn resolution and makensis discovery)
-        run: node --test scripts/lib/*.test.mjs
       - name: Wails bindings drift
         run: node scripts/build.mjs bindings
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
-      - name: Go production tests with embedded desktop assets
-        run: |
-          rm -rf cmd/nexterm-desktop/dist
-          cp -R dist cmd/nexterm-desktop/dist
-          go test -mod=readonly -tags production ./...
-          rm -rf cmd/nexterm-desktop/dist
       - name: Go self-consistency and LazyCat static contracts
         run: |
           python3 -m unittest discover -s tests/parity -v
@@ -151,20 +143,11 @@ jobs:
         with:
           go-version: 1.26.8
           cache: true
-      - name: Download the verified frontend dist
-        if: matrix.kind == 'desktop'
-        uses: actions/download-artifact@v8
-        with:
-          name: frontend-dist
-          path: verified-dist
-      - name: Install Linux WebView and virtual display
+      - name: Install Linux WebView prerequisites
         if: matrix.os == 'linux' && matrix.kind == 'desktop'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev xvfb
-      - name: Build the smoke desktop binary and run the native smoke
-        if: matrix.kind == 'desktop'
-        run: node scripts/build.mjs desktop --release --smoke --consume-dist=verified-dist/dist --dist-manifest=verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Build the repro-checked production binary and inspect format/cgo/size evidence
         run: node scripts/build.mjs ${{ matrix.kind }} --release --repro-check ${{ matrix.kind == 'desktop' && '--skip-frontend' || '' }} --os=${{ matrix.os }} --arch=${{ matrix.arch }}
       - name: Run Go two-process server acceptance
@@ -179,81 +162,6 @@ jobs:
             target/go-build/*.artifact.json
             target/go-build/*.manifest.json
             target/go-build/nexterm-${{ matrix.kind }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }}
-            target/release-assets/desktop-smoke-*.json
             target/e2e-sync/report.json
             target/e2e-sync/*.log
-          if-no-files-found: error
-
-  windows-supervisor:
-    name: Windows native supervisor helper tests
-    needs: quality
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Vet the supervisor package on Windows
-        run: go vet -mod=readonly ./internal/supervisor/
-      - name: Run native Windows supervisor helper tests
-        run: go test -mod=readonly -count=1 ./internal/supervisor/
-
-  ssh-windows:
-    name: Windows SSH native tests
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Run the full SSH transport package
-        run: go test -mod=readonly -count=1 ./internal/transport/ssh
-      - name: Run SSH ProxyCommand native cases verbosely
-        run: go test -mod=readonly -count=1 -v -run 'TestSSHProxyCommandConnect|TestSSHProxyCommandCompositionWithJump|TestProxyCommandWindowsCloseKillsChildTree|TestProxyCommandLineKeepsPayloadVerbatim' ./internal/transport/ssh
-      - name: Old cmd.exe-only kill fails the tree test, new job kill passes
-        shell: bash
-        run: |
-          file=internal/transport/ssh/proxycommand_shell_windows.go
-          cp "$file" "$file.bak"
-          sed -i 's/windows\.TerminateJobObject(p\.job, 1)/windows.TerminateProcess(p.process, 1)/' "$file"
-          sed -i 's/windows\.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/0/' "$file"
-          if go test -mod=readonly -count=1 -run 'TestProxyCommandWindowsCloseKillsChildTree' ./internal/transport/ssh; then
-            mv "$file.bak" "$file"
-            echo "old cmd.exe-only kill unexpectedly passed the tree test"
-            exit 1
-          fi
-          mv "$file.bak" "$file"
-          go test -mod=readonly -count=1 -run 'TestProxyCommandWindowsCloseKillsChildTree' ./internal/transport/ssh
-
-  browser:
-    name: Real Chromium responsive and WS acceptance
-    needs: quality
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 11
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 1.26.8
-          cache: true
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile --config.minimumReleaseAge=0
-      - name: Require a real browser
-        run: google-chrome --version
-      - name: Run real-browser acceptance
-        run: node .github/scripts/browser-acceptance.mjs
-      - name: Upload browser evidence and explicit real-target gaps
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: real-browser-acceptance
-          path: target/acceptance-browser/
           if-no-files-found: error

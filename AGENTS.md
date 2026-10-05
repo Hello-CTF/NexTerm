@@ -24,6 +24,7 @@
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
 - 已安装 task 时 `task check` 一次跑完上述常规项；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
+- CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑、build harness 单测、矩阵 native desktop smoke、Real Chromium 验收与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`，WebView 冒烟用 `task desktop:smoke` 本地按需执行。
 
 ## 分层测试节奏
 

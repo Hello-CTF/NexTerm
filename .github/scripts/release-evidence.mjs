@@ -76,6 +76,7 @@ const evidence = {
   artifacts,
   unexpected_artifacts: unexpected,
   gate_rule: "each candidate passes only on file integrity (reported sha256/size match), target identity (artifact id and version) and real content/static/cgo assertions; Rust and custom-Go size comparisons are informational only and never gate release (user decision 2026-10-03)",
+  non_gates: "CI gates release on one ordinary go test run, frontend lint/test with tsc riding the reproducible frontend build, bindings drift, static wiring/manifest checks and native production builds with artifact evidence; race instrumentation, production-tagged duplicate suites, build-harness unit tests, the matrix native desktop smoke, real-browser acceptance and standalone Windows supervisor/SSH jobs are not CI release gates and remain local on-demand checks (user decision 2026-10-04)",
   reports,
   supporting_reports: supportingReports,
   real_target_acceptance: gaps,
