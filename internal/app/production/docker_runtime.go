@@ -2,8 +2,11 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
@@ -47,6 +50,10 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 			return docker.NewMobyBackend(client), nil
 		},
 		func(ctx context.Context, sessionID string, _ uint64) (docker.Backend, error) {
+			connected, err := sessions.Session(sessionID)
+			if err != nil {
+				return nil, err
+			}
 			transport, err := sessions.Transport(ctx, sessionID)
 			if err != nil {
 				return nil, err
@@ -58,7 +65,7 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 				}, err
 			})
 			opener := dockerCommandOpener{transport: transport}
-			return docker.NewCommandBackend(runner, opener, docker.ShellPOSIX), nil
+			return docker.NewCommandBackend(runner, opener, dockerFallbackShell(connected.Asset())), nil
 		},
 	)
 	return docker.NewService(provider, docker.WithAuditor(docker.AuditorFunc(func(ctx context.Context, event docker.AuditEvent) error {
@@ -76,6 +83,41 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 			Payload: event.Payload, ExitCode: &exitCode, DurationMS: &duration,
 		})
 	})))
+}
+
+func dockerFallbackShell(asset session.Asset) docker.Shell {
+	return dockerFallbackShellForGOOS(asset, runtime.GOOS)
+}
+
+func dockerFallbackShellForGOOS(asset session.Asset, goos string) docker.Shell {
+	if asset.Kind == session.KindWinRM {
+		return docker.ShellPowerShell
+	}
+	var options struct {
+		Shell string `json:"shell"`
+	}
+	if raw, err := json.Marshal(asset.Options); err == nil {
+		_ = json.Unmarshal(raw, &options)
+	}
+	if options.Shell == "" {
+		if asset.Kind == session.KindLocal && goos == "windows" {
+			return docker.ShellPowerShell
+		}
+		return docker.ShellPOSIX
+	}
+	if windowsShell(options.Shell) {
+		return docker.ShellPowerShell
+	}
+	return docker.ShellPOSIX
+}
+
+func windowsShell(shell string) bool {
+	name := strings.ToLower(strings.TrimSpace(shell))
+	if index := strings.LastIndexAny(name, `/\`); index >= 0 {
+		name = name[index+1:]
+	}
+	name = strings.TrimSuffix(name, ".exe")
+	return name == "powershell" || name == "pwsh"
 }
 
 type dockerCommandOpener struct {
