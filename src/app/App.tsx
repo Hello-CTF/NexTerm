@@ -915,10 +915,19 @@ export default function App() {
       style={{ "--nx-right-w": `${rightWidth}px` } as CSSProperties}
       onDoubleClick={onDragRegionDoubleClick}
     >
+      <a
+        href="#nx-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded focus:bg-neutral-800 focus:px-3 focus:py-2 focus:text-xs focus:text-neutral-100"
+      >
+        跳到主内容
+      </a>
       <TakeoverBanner />
 
       <div className="flex min-h-0 flex-1">
-        <nav className={`nx-rail ${TRANSPORT === "desktop" && isMac() ? "pt-[28px]" : ""}`}>
+        <nav
+          className={`nx-rail ${TRANSPORT === "desktop" && isMac() ? "pt-[28px]" : ""}`}
+          aria-label="主导航"
+        >
           <div className="mb-2 flex items-center justify-center" title="NexTerm">
             <Logo size={26} />
           </div>
@@ -1188,7 +1197,7 @@ export default function App() {
             />
           )}
           {leftDockOpen && (
-            <div className="nx-left-dock">
+            <div className="nx-left-dock" role="navigation" aria-label="左栏">
               {leftMode === "credentials" ? (
                 <CredentialsSidebar />
               ) : leftMode === "files" && ws?.sessionId ? (
@@ -1207,7 +1216,7 @@ export default function App() {
             </div>
           )}
 
-          <main className="nx-workspace-main min-w-0 flex-1">
+          <main id="nx-main" tabIndex={-1} className="nx-workspace-main min-w-0 flex-1">
             {workspaces.length === 0 ? (
               sessions.length > 0 ? (
                 <WorkspaceEmpty onNew={openNewTerminal} />
