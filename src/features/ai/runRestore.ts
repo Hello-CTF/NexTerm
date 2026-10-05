@@ -12,6 +12,10 @@ export function replayableRuns(runs: AiRunDto[]): AiRunDto[] {
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
+export function replayableJobIds(runs: AiRunDto[]): Set<string> {
+  return new Set(replayableRuns(runs).map((run) => run.id));
+}
+
 export function resumableCandidates(runs: AiRunDto[]): AiRunDto[] {
   return runs
     .filter((run) => run.status === "interrupted" && run.finishedAt == null)

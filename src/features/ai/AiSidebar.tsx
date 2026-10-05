@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ask, promptText } from "../../ui/dialogs";
-import { aiApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
+import { aiApi, modelApi, type AiPermissionConfig, type AiPermissionMode } from "../../ipc/commands";
 import { createAiChannel, disposeChannel, onChannelReopen, type IpcChannel } from "../../ipc/events";
-import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
+import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../ipc/types";
 import { useUi, type TakeoverState } from "../../app/store";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { describeError } from "../../ui/errorText";
@@ -23,7 +23,9 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
-import { findResumableRun, pendingDeadline, replayableRuns } from "./runRestore";
+import { findResumableRun, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
+import { findItemMatches, stepMatch } from "./conversationSearch";
+import { useVirtualWindow } from "./conversationVirtual";
 import {
   aiRunBlocksStart,
   bindAiRunJob,
@@ -39,7 +41,9 @@ import {
   IconAlert,
   IconBot,
   IconCheck,
+  IconChevronDown,
   IconChevronRight,
+  IconChevronUp,
   IconClose,
   IconEdit,
   IconHistory,
@@ -50,6 +54,7 @@ import {
   IconPlay,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconShield,
   IconTrash,
   IconXCircle,
@@ -237,6 +242,32 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const takeover = useUi((s) => s.takeover);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const follow = useConversationFollow(conv.items);
+  const virtual = useVirtualWindow(conv.items.length);
+  const setScrollEl = useCallback(
+    (el: HTMLElement | null) => {
+      follow.scrollRef(el);
+      virtual.scrollRef(el);
+    },
+    [follow.scrollRef, virtual.scrollRef],
+  );
+  const [conversationRuns, setConversationRuns] = useState<AiRunDto[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [matchCursor, setMatchCursor] = useState(-1);
+  const searchMatches = useMemo(
+    () => findItemMatches(conv.items, searchQuery),
+    [conv.items, searchQuery],
+  );
+  const activeMatchIndex = matchCursor >= 0 ? (searchMatches[matchCursor] ?? -1) : -1;
+  const jumpToMatch = (direction: 1 | -1) => {
+    const next = stepMatch(matchCursor, searchMatches.length, direction);
+    setMatchCursor(next);
+    const target = searchMatches[next];
+    if (target !== undefined) virtual.scrollToIndex(target);
+  };
+  useEffect(() => {
+    setMatchCursor(searchMatches.length > 0 ? 0 : -1);
+  }, [searchMatches]);
 
   useEffect(() => {
     void aiApi
@@ -428,14 +459,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }, delay);
   };
 
-  const restoreConversationRuns = async (id: string) => {
+  const restoreConversationRuns = async (id: string, preloaded?: AiRunDto[]) => {
     let runs: AiRunDto[];
-    try {
-      runs = await aiApi.runs(id);
-    } catch {
-      return;
+    if (preloaded) {
+      runs = preloaded;
+    } else {
+      try {
+        runs = await aiApi.runs(id);
+      } catch {
+        return;
+      }
     }
-    if (!Array.isArray(runs) || runs.length === 0 || conversationIdRef.current !== id) return;
+    if (conversationIdRef.current !== id) return;
+    setConversationRuns(runs);
+    if (runs.length === 0) return;
     const replay = replayableRuns(runs);
     const generations = new Map<string, number>();
     for (const run of replay) {
@@ -516,15 +553,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       } catch {
         if (conversationIdRef.current !== id) return;
       }
+      let msgs: MessageDto[];
+      let runs: AiRunDto[];
       try {
-        const msgs = await aiApi.messages(id);
-        if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
-        stream.reset(historyToItems(stream.getState(), msgs));
+        [msgs, runs] = await Promise.all([
+          aiApi.messages(id),
+          aiApi.runs(id).catch((): AiRunDto[] => []),
+        ]);
       } catch {
         return;
       }
       if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
-      void restoreConversationRuns(id);
+      stream.reset(historyToItems(stream.getState(), msgs, replayableJobIds(runs)));
+      if (conversationIdRef.current !== id || runSequenceRef.current !== startSeq) return;
+      void restoreConversationRuns(id, runs);
     })();
   }, []);
 
@@ -827,17 +869,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     const generation = activeRunRef.current?.generation ?? null;
     try {
-      const msgs = await aiApi.messages(id);
+      const [msgs, runs] = await Promise.all([
+        aiApi.messages(id),
+        aiApi.runs(id).catch((): AiRunDto[] => []),
+      ]);
       if (
         aiRunBlocksStart(activeRunRef.current) ||
         (activeRunRef.current?.generation ?? null) !== generation
       ) {
         return;
       }
-      stream.reset(historyToItems(stream.getState(), msgs));
+      stream.reset(historyToItems(stream.getState(), msgs, replayableJobIds(runs)));
       updateConversationId(id);
       setHistoryOpen(false);
-      void restoreConversationRuns(id);
+      void restoreConversationRuns(id, runs);
     } catch (e) {
       pushToast("error", `打开会话失败：${describeError(e)}`);
     }
@@ -849,6 +894,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       return;
     }
     updateConversationId(undefined);
+    setConversationRuns([]);
     stream.reset();
     setHistoryOpen(false);
   };
@@ -1056,6 +1102,14 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         )}
         <div className="nx-spacer" />
         <button
+          className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${searchOpen ? "is-active" : ""}`}
+          title="搜索对话内容"
+          aria-expanded={searchOpen}
+          onClick={() => setSearchOpen((v) => !v)}
+        >
+          <IconSearch size={14} />
+        </button>
+        <button
           className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${historyOpen ? "is-active" : ""}`}
           title="历史会话"
           onClick={toggleHistory}
@@ -1074,6 +1128,59 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           <IconChevronRight size={14} />
         </button>
       </div>
+
+      {searchOpen && (
+        <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 py-1">
+          <input
+            className="nx-input min-w-0 flex-1 py-1 text-[12px]"
+            placeholder="搜索对话内容，Enter 下一个，Shift+Enter 上一个"
+            aria-label="搜索对话内容"
+            value={searchQuery}
+            autoFocus
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                jumpToMatch(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setSearchOpen(false);
+              }
+            }}
+          />
+          <span className="shrink-0 font-mono text-[10.5px] text-neutral-500" aria-live="polite">
+            {searchQuery.trim()
+              ? `${matchCursor >= 0 ? matchCursor + 1 : 0}/${searchMatches.length}`
+              : "0/0"}
+          </span>
+          <button
+            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+            title="上一个匹配（Shift+Enter）"
+            aria-label="上一个匹配"
+            disabled={searchMatches.length === 0}
+            onClick={() => jumpToMatch(-1)}
+          >
+            <IconChevronUp size={12} />
+          </button>
+          <button
+            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+            title="下一个匹配（Enter）"
+            aria-label="下一个匹配"
+            disabled={searchMatches.length === 0}
+            onClick={() => jumpToMatch(1)}
+          >
+            <IconChevronDown size={12} />
+          </button>
+          <button
+            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+            title="关闭搜索"
+            aria-label="关闭搜索"
+            onClick={() => setSearchOpen(false)}
+          >
+            <IconClose size={11} />
+          </button>
+        </div>
+      )}
 
       {historyOpen && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-1.5">
@@ -1209,7 +1316,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
-          ref={follow.scrollRef}
+          ref={setScrollEl}
           role="log"
           aria-label="AI 对话记录"
           className="h-full space-y-2.5 overflow-y-auto p-3"
@@ -1222,15 +1329,31 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <div className="text-xs text-neutral-400">新建会话 · 命令与输出全程留痕</div>
             </div>
           )}
-          {conv.items.map((item, i) => (
-            <ChatBubble
-              key={item.id}
-              item={item}
-              streaming={aiBusy && i === conv.items.length - 1}
-              onApprovePlan={handleApprovePlan}
-              onRetry={handleRetryRun}
-            />
-          ))}
+          {virtual.range.padTop > 0 && (
+            <div style={{ height: virtual.range.padTop }} aria-hidden="true" />
+          )}
+          {conv.items.slice(virtual.range.start, virtual.range.end).map((item, i) => {
+            const index = virtual.range.start + i;
+            return (
+              <div
+                key={item.id}
+                data-conversation-index={index}
+                className={
+                  index === activeMatchIndex ? "rounded-xl ring-2 ring-amber-400/70" : undefined
+                }
+              >
+                <ChatBubble
+                  item={item}
+                  streaming={aiBusy && index === conv.items.length - 1}
+                  onApprovePlan={handleApprovePlan}
+                  onRetry={handleRetryRun}
+                />
+              </div>
+            );
+          })}
+          {virtual.range.padBottom > 0 && (
+            <div style={{ height: virtual.range.padBottom }} aria-hidden="true" />
+          )}
           {confirmCard && (
             <div className="nx-alert">
               <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
@@ -1521,7 +1644,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           <ModelSelector onManage={() => setModelPanelOpen(true)} />
           <div className="nx-spacer" />
-          <UsageRing usage={conv.usage} />
+          <UsageRing
+            usage={conv.usage}
+            runs={conversationRuns}
+            loadSummary={() => modelApi.usageSummary()}
+          />
           <button
             className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${
               perm?.mode === "silent" ? "is-active" : ""
@@ -1704,6 +1831,9 @@ const ChatBubble = memo(function ChatBubble({
           className="flex items-start gap-1.5 rounded-lg border border-red-500/30 bg-red-500/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-red-200"
         >
           <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
+          {item.maxIterations ? (
+            <span className="nx-badge nx-badge-amber shrink-0">迭代上限</span>
+          ) : null}
           <span className="whitespace-pre-wrap">本轮出错：{item.text}</span>
           {item.retryable ? (
             <button
