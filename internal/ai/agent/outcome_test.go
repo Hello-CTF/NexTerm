@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
@@ -262,5 +265,211 @@ func TestEditResendRejectsNonUserAndMissingMessages(t *testing.T) {
 	}
 	if err := runner.EditResend(context.Background(), conversation.ID, ids.New()); err == nil || !strings.Contains(err.Error(), "消息不存在") {
 		t.Fatalf("missing edit error = %v", err)
+	}
+}
+
+type failingRunStore struct {
+	RunStore
+	failFinishUsage  error
+	failUpdateStatus error
+	failHitlDelete   error
+}
+
+func (f *failingRunStore) RunFinishUsage(ctx context.Context, runID, status, answer, errMsg string, turns int, tokensIn, tokensOut, cacheCreationTokens, latencyMS int64) error {
+	if f.failFinishUsage != nil {
+		return f.failFinishUsage
+	}
+	return f.RunStore.RunFinishUsage(ctx, runID, status, answer, errMsg, turns, tokensIn, tokensOut, cacheCreationTokens, latencyMS)
+}
+
+func (f *failingRunStore) RunUpdateStatus(ctx context.Context, runID, status string) error {
+	if f.failUpdateStatus != nil {
+		return f.failUpdateStatus
+	}
+	return f.RunStore.RunUpdateStatus(ctx, runID, status)
+}
+
+func (f *failingRunStore) HitlRunDelete(ctx context.Context, id string) error {
+	if f.failHitlDelete != nil {
+		return f.failHitlDelete
+	}
+	return f.RunStore.HitlRunDelete(ctx, id)
+}
+
+func failingStoreRunner(t *testing.T, storage *store.Store, chat model.BaseChatModel, runs RunStore) *Runner {
+	t.Helper()
+	config := Config{
+		Model:       func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+		Tools:       tools.NewRegistry(tools.Dependencies{}),
+		Store:       storage,
+		Runs:        runs,
+		Checkpoints: NewStoreCheckpoints(storage),
+	}
+	runner := NewRunner(config)
+	t.Cleanup(func() { _ = runner.Close() })
+	return runner
+}
+
+func startTwoFinishedJobs(t *testing.T, runner *Runner) (StartResponse, StartResponse) {
+	t.Helper()
+	first := &SliceStream{}
+	firstResponse := startTestJob(t, runner, first, "first")
+	waitClosed(t, first)
+	second := &SliceStream{}
+	secondResponse, err := runner.Start(context.Background(), ChatArgs{ConversationID: firstResponse.ConversationID, Message: "second"}, StaticStream(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, second)
+	return firstResponse, secondResponse
+}
+
+func TestEditResendStatusUpdateFailureAborts(t *testing.T) {
+	storage := restartStore(t)
+	failing := &failingRunStore{RunStore: storage, failUpdateStatus: errors.New("status store down")}
+	runner := failingStoreRunner(t, storage, sequenceModel(schema.AssistantMessage("ok", nil)), failing)
+	firstResponse, secondResponse := startTwoFinishedJobs(t, runner)
+	target := userMessageIDWithJob(t, storage, firstResponse.ConversationID, secondResponse.JobID)
+	err := runner.EditResend(context.Background(), firstResponse.ConversationID, target)
+	if err == nil || !strings.Contains(err.Error(), "更新 AI 运行") {
+		t.Fatalf("edit-resend error = %v", err)
+	}
+	rows, listErr := storage.MsgList(context.Background(), firstResponse.ConversationID)
+	if listErr != nil || len(rows) != 4 {
+		t.Fatalf("messages must stay intact after failed edit: rows=%d err=%v", len(rows), listErr)
+	}
+	secondRow, getErr := storage.RunGet(context.Background(), secondResponse.JobID)
+	if getErr != nil || secondRow.Status != store.RunStatusCompleted {
+		t.Fatalf("second run = %+v err=%v", secondRow, getErr)
+	}
+}
+
+func TestEditResendFinishUsageFailureAborts(t *testing.T) {
+	storage := restartStore(t)
+	failing := &failingRunStore{RunStore: storage, failFinishUsage: errors.New("finish store down")}
+	var calls atomic.Int64
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("one", nil)}), nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	runner := failingStoreRunner(t, storage, chat, failing)
+	first := &SliceStream{}
+	firstResponse := startTestJob(t, runner, first, "first")
+	waitClosed(t, first)
+	second := &SliceStream{}
+	secondResponse, err := runner.Start(context.Background(), ChatArgs{ConversationID: firstResponse.ConversationID, Message: "second"}, StaticStream(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := userMessageIDWithJob(t, storage, firstResponse.ConversationID, secondResponse.JobID)
+	editErr := runner.EditResend(context.Background(), firstResponse.ConversationID, target)
+	if editErr == nil || !strings.Contains(editErr.Error(), "标记 AI 运行") {
+		t.Fatalf("edit-resend error = %v", editErr)
+	}
+	events := waitClosed(t, second)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("canceled run terminal counts done=%d error=%d", done, failed)
+	}
+	rows, listErr := storage.MsgList(context.Background(), firstResponse.ConversationID)
+	if listErr != nil || len(rows) != 3 {
+		t.Fatalf("messages must stay intact after failed edit: rows=%d err=%v", len(rows), listErr)
+	}
+	secondRow, getErr := storage.RunGet(context.Background(), secondResponse.JobID)
+	if getErr != nil || secondRow.Status == RunStatusSuperseded {
+		t.Fatalf("second run must not be marked superseded: %+v err=%v", secondRow, getErr)
+	}
+}
+
+func TestEditResendCleanupFailureAbortsThenRetrySucceeds(t *testing.T) {
+	storage := restartStore(t)
+	failing := &failingRunStore{RunStore: storage, failHitlDelete: errors.New("blob store down")}
+	runner := failingStoreRunner(t, storage, sequenceModel(schema.AssistantMessage("ok", nil)), failing)
+	firstResponse, secondResponse := startTwoFinishedJobs(t, runner)
+	target := userMessageIDWithJob(t, storage, firstResponse.ConversationID, secondResponse.JobID)
+	err := runner.EditResend(context.Background(), firstResponse.ConversationID, target)
+	if err == nil || !strings.Contains(err.Error(), "清理 AI 任务") {
+		t.Fatalf("edit-resend error = %v", err)
+	}
+	rows, listErr := storage.MsgList(context.Background(), firstResponse.ConversationID)
+	if listErr != nil || len(rows) != 4 {
+		t.Fatalf("messages must stay intact after failed edit: rows=%d err=%v", len(rows), listErr)
+	}
+	secondRow, getErr := storage.RunGet(context.Background(), secondResponse.JobID)
+	if getErr != nil || secondRow.Status != RunStatusSuperseded {
+		t.Fatalf("second run = %+v err=%v", secondRow, getErr)
+	}
+	failing.failHitlDelete = nil
+	if err := runner.EditResend(context.Background(), firstResponse.ConversationID, target); err != nil {
+		t.Fatalf("retry edit-resend: %v", err)
+	}
+	rows, listErr = storage.MsgList(context.Background(), firstResponse.ConversationID)
+	if listErr != nil || len(rows) != 3 {
+		t.Fatalf("rows after retry = %d err=%v", len(rows), listErr)
+	}
+}
+
+func TestEditResendConcurrentToolWriteDuringTruncate(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	deps := tools.Dependencies{DockerExec: func(context.Context, string, string, string) (tools.ExecResult, error) {
+		once.Do(func() { close(started) })
+		<-release
+		return tools.ExecResult{Output: "late output", ExitCode: 0}, nil
+	}}
+	chat := sequenceModel(
+		schema.AssistantMessage("one", nil),
+		toolCallMessage(namedToolCall("probe", "docker_exec", `{"container_id":"web","cmd":"ls"}`)),
+		schema.AssistantMessage("two", nil),
+	)
+	runner := steerRunner(t, chat, deps, 0)
+	silentPermission(runner)
+	first := &SliceStream{}
+	firstResponse := startTestJob(t, runner, first, "first")
+	waitClosed(t, first)
+	second := &SliceStream{}
+	secondResponse, err := runner.Start(context.Background(), ChatArgs{ConversationID: firstResponse.ConversationID, Message: "second", Scope: tools.Scope{SessionID: "session"}}, StaticStream(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannelClosed(t, started, "tool did not start")
+
+	messages, err := runner.Messages(context.Background(), firstResponse.ConversationID)
+	if err != nil || len(messages) != 4 {
+		t.Fatalf("pre-edit messages = %d err=%v", len(messages), err)
+	}
+	target := ""
+	for _, message := range messages {
+		content, ok := message.Content.(map[string]any)
+		if ok && message.Role == "user" && content["jobId"] == secondResponse.JobID {
+			target = message.ID
+		}
+	}
+	if target == "" {
+		t.Fatal("edit target not found")
+	}
+
+	editErr := make(chan error, 1)
+	go func() {
+		editErr <- runner.EditResend(context.Background(), firstResponse.ConversationID, target)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	if err := <-editErr; err != nil {
+		t.Fatalf("edit-resend: %v", err)
+	}
+	messages, err = runner.Messages(context.Background(), firstResponse.ConversationID)
+	if err != nil || len(messages) != 3 {
+		t.Fatalf("post-edit messages = %d err=%v", len(messages), err)
+	}
+	if messages[2].Role != "user" {
+		t.Fatalf("last surviving row = %+v", messages[2])
+	}
+	events := waitClosed(t, second)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("canceled run terminal counts done=%d error=%d", done, failed)
 	}
 }

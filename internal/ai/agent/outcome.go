@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/hitl"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/cloudwego/eino/adk"
 )
 
 const RunStatusSuperseded = "superseded"
+
+const editResendJobWait = 5 * time.Second
 
 type maxIterationsError struct{ limit int }
 
@@ -30,45 +34,61 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 	if !ok {
 		return errors.New("AI 会话存储不支持消息截断")
 	}
-	rows, err := r.store.MsgList(ctx, conversationID)
+	createdAt, ownerRun, err := r.editTarget(ctx, conversationID, messageID)
 	if err != nil {
 		return err
 	}
-	var createdAt int64
-	ownerRun := ""
-	found := false
+	affected, err := r.editAffectedRuns(ctx, conversationID, ownerRun, createdAt)
+	if err != nil {
+		return err
+	}
+	if err := r.cancelAndWaitJobs(ctx, conversationID, affected); err != nil {
+		return err
+	}
+	var errs []error
+	for _, run := range affected {
+		if err := r.supersedeRun(ctx, run.ID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	return truncater.MsgTruncateAfter(ctx, conversationID, messageID)
+}
+
+func (r *Runner) editTarget(ctx context.Context, conversationID, messageID string) (int64, string, error) {
+	rows, err := r.store.MsgList(ctx, conversationID)
+	if err != nil {
+		return 0, "", err
+	}
 	for _, row := range rows {
 		if row.ID != messageID {
 			continue
 		}
 		var persisted historyRow
 		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
-			return errors.New("消息内容损坏")
+			return 0, "", errors.New("消息内容损坏")
 		}
 		role := persisted.Role
 		if role == "" {
 			role = row.Role
 		}
 		if role != "user" {
-			return errors.New("只能编辑用户消息")
+			return 0, "", errors.New("只能编辑用户消息")
 		}
-		createdAt = row.CreatedAt
-		ownerRun = persisted.JobID
-		found = true
-		break
+		return row.CreatedAt, persisted.JobID, nil
 	}
-	if !found {
-		return errors.New("消息不存在")
-	}
-	if err := truncater.MsgTruncateAfter(ctx, conversationID, messageID); err != nil {
-		return err
-	}
+	return 0, "", errors.New("消息不存在")
+}
+
+func (r *Runner) editAffectedRuns(ctx context.Context, conversationID, ownerRun string, messageCreatedAt int64) ([]store.RunRow, error) {
 	if r.runs == nil {
-		return nil
+		return nil, nil
 	}
 	runs, err := r.runs.RunList(ctx, conversationID, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var owner *store.RunRow
 	if ownerRun != "" {
@@ -79,13 +99,13 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 			}
 		}
 	}
+	affected := make([]store.RunRow, 0, len(runs))
 	for _, run := range runs {
-		if !runSupersededByEdit(run, owner, createdAt) {
-			continue
+		if runSupersededByEdit(run, owner, messageCreatedAt) {
+			affected = append(affected, run)
 		}
-		r.supersedeRun(ctx, run)
 	}
-	return nil
+	return affected, nil
 }
 
 func runSupersededByEdit(run store.RunRow, owner *store.RunRow, messageCreatedAt int64) bool {
@@ -95,18 +115,82 @@ func runSupersededByEdit(run store.RunRow, owner *store.RunRow, messageCreatedAt
 	return run.CreatedAt > messageCreatedAt
 }
 
-func (r *Runner) supersedeRun(ctx context.Context, run store.RunRow) {
-	if run.FinishedAt == nil {
-		_ = r.runs.RunFinishUsage(ctx, run.ID, RunStatusSuperseded, run.Answer, "", run.Turns, run.TokensIn, run.TokensOut, run.CacheCreationTokens, run.LatencyMS)
-		if r.lookupJob(run.ID) != nil {
-			_ = r.Cancel(run.ID)
+func (r *Runner) cancelAndWaitJobs(ctx context.Context, conversationID string, affected []store.RunRow) error {
+	ids := make([]string, 0, len(affected))
+	seen := make(map[string]struct{}, len(affected))
+	for _, run := range affected {
+		ids = append(ids, run.ID)
+		seen[run.ID] = struct{}{}
+	}
+	r.mu.Lock()
+	for id, current := range r.jobs {
+		if current.args.ConversationID != conversationID {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	r.mu.Unlock()
+	var errs []error
+	for _, id := range ids {
+		if r.lookupJob(id) == nil {
+			continue
+		}
+		if err := r.Cancel(id); err != nil && !errors.Is(err, ErrJobNotFound) {
+			errs = append(errs, fmt.Errorf("取消 AI 任务 %s: %w", id, err))
+		}
+	}
+	deadline := time.Now().Add(editResendJobWait)
+	for {
+		pending := ""
+		for _, id := range ids {
+			if r.lookupJob(id) != nil {
+				pending = id
+				break
+			}
+		}
+		if pending == "" {
+			return errors.Join(errs...)
+		}
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("等待 AI 任务 %s 停止: %w", pending, err))
+			return errors.Join(errs...)
+		}
+		if time.Now().After(deadline) {
+			errs = append(errs, fmt.Errorf("等待 AI 任务 %s 停止超时", pending))
+			return errors.Join(errs...)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (r *Runner) supersedeRun(ctx context.Context, runID string) error {
+	fresh, err := r.runs.RunGet(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("读取 AI 运行 %s: %w", runID, err)
+	}
+	var errs []error
+	if fresh.FinishedAt == nil {
+		if err := r.runs.RunFinishUsage(ctx, runID, RunStatusSuperseded, fresh.Answer, "", fresh.Turns, fresh.TokensIn, fresh.TokensOut, fresh.CacheCreationTokens, fresh.LatencyMS); err != nil {
+			errs = append(errs, fmt.Errorf("标记 AI 运行 %s 已被替换: %w", runID, err))
 		}
 	} else {
-		_ = r.runs.RunUpdateStatus(ctx, run.ID, RunStatusSuperseded)
+		if err := r.runs.RunUpdateStatus(ctx, runID, RunStatusSuperseded); err != nil {
+			errs = append(errs, fmt.Errorf("更新 AI 运行 %s 状态: %w", runID, err))
+		}
 	}
-	_, _ = r.hitl.Cancel(run.ID)
-	_ = r.runs.HitlRunDelete(ctx, run.ID)
+	if _, err := r.hitl.Cancel(runID); err != nil && !errors.Is(err, hitl.ErrRunNotFound) && !errors.Is(err, hitl.ErrRunFinished) {
+		errs = append(errs, fmt.Errorf("结束 AI 任务 %s 交互状态: %w", runID, err))
+	}
+	if err := r.runs.HitlRunDelete(ctx, runID); err != nil {
+		errs = append(errs, fmt.Errorf("清理 AI 任务 %s 交互记录: %w", runID, err))
+	}
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
-		_ = deleter.Delete(context.Background(), run.ID)
+		if err := deleter.Delete(context.Background(), runID); err != nil {
+			errs = append(errs, fmt.Errorf("清理 AI 任务 %s 检查点: %w", runID, err))
+		}
 	}
+	return errors.Join(errs...)
 }
