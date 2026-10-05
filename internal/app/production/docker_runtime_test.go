@@ -88,8 +88,8 @@ func TestWindowsShellDetection(t *testing.T) {
 		{shell: "PowerShell.EXE", want: true},
 		{shell: "pwsh", want: true},
 		{shell: `C:\Program Files\PowerShell\7\pwsh.exe`, want: true},
-		{shell: "cmd.exe", want: true},
-		{shell: "cmd", want: true},
+		{shell: "cmd.exe", want: false},
+		{shell: "cmd", want: false},
 		{shell: "/bin/bash", want: false},
 		{shell: "/usr/bin/pwsh", want: true},
 		{shell: "", want: false},
@@ -98,5 +98,31 @@ func TestWindowsShellDetection(t *testing.T) {
 		if got := windowsShell(testCase.shell); got != testCase.want {
 			t.Fatalf("windowsShell(%q) = %v, want %v", testCase.shell, got, testCase.want)
 		}
+	}
+}
+
+func TestDockerFallbackShellLocalDefault(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		goos    string
+		options any
+		want    docker.Shell
+	}{
+		{name: "windows default", goos: "windows", want: docker.ShellPowerShell},
+		{name: "linux default", goos: "linux", want: docker.ShellPOSIX},
+		{name: "darwin default", goos: "darwin", want: docker.ShellPOSIX},
+		{name: "windows explicit powershell", goos: "windows", options: map[string]any{"shell": "powershell.exe"}, want: docker.ShellPowerShell},
+		{name: "windows explicit pwsh", goos: "windows", options: map[string]any{"shell": "pwsh"}, want: docker.ShellPowerShell},
+		{name: "windows explicit bash", goos: "windows", options: map[string]any{"shell": `C:\msys64\bin\bash.exe`}, want: docker.ShellPOSIX},
+		{name: "windows explicit cmd", goos: "windows", options: map[string]any{"shell": "cmd.exe"}, want: docker.ShellPOSIX},
+		{name: "linux explicit pwsh", goos: "linux", options: map[string]any{"shell": "pwsh"}, want: docker.ShellPowerShell},
+		{name: "linux explicit bash", goos: "linux", options: map[string]any{"shell": "/bin/bash"}, want: docker.ShellPOSIX},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			asset := session.Asset{ID: "a-local", Kind: session.KindLocal, Options: testCase.options}
+			if got := dockerFallbackShellForGOOS(asset, testCase.goos); got != testCase.want {
+				t.Fatalf("dockerFallbackShellForGOOS(%v, %q) = %v, want %v", testCase.options, testCase.goos, got, testCase.want)
+			}
+		})
 	}
 }

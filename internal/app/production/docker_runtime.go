@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
@@ -85,6 +86,10 @@ func newProductionDockerService(sessions *session.Manager, database *store.Store
 }
 
 func dockerFallbackShell(asset session.Asset) docker.Shell {
+	return dockerFallbackShellForGOOS(asset, runtime.GOOS)
+}
+
+func dockerFallbackShellForGOOS(asset session.Asset, goos string) docker.Shell {
 	if asset.Kind == session.KindWinRM {
 		return docker.ShellPowerShell
 	}
@@ -93,6 +98,12 @@ func dockerFallbackShell(asset session.Asset) docker.Shell {
 	}
 	if raw, err := json.Marshal(asset.Options); err == nil {
 		_ = json.Unmarshal(raw, &options)
+	}
+	if options.Shell == "" {
+		if asset.Kind == session.KindLocal && goos == "windows" {
+			return docker.ShellPowerShell
+		}
+		return docker.ShellPOSIX
 	}
 	if windowsShell(options.Shell) {
 		return docker.ShellPowerShell
@@ -106,11 +117,7 @@ func windowsShell(shell string) bool {
 		name = name[index+1:]
 	}
 	name = strings.TrimSuffix(name, ".exe")
-	switch name {
-	case "powershell", "pwsh", "cmd":
-		return true
-	}
-	return false
+	return name == "powershell" || name == "pwsh"
 }
 
 type dockerCommandOpener struct {
