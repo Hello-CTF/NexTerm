@@ -522,7 +522,7 @@ export function TerminalPane({
       kind: "item",
       label: "搜索终端内容",
       icon: <IconSearch size={13} />,
-      accel: `${mod}+F`,
+      accel: searchBindingLabel,
       onSelect: () => {
         const next = !searchOpen;
         setSearchOpen(next);
