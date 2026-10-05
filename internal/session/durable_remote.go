@@ -22,7 +22,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	}
 	session.durableMu.Lock()
 	defer session.durableMu.Unlock()
-	if session.durableProvider != nil && session.durableGen == generation {
+	if session.durableProvider != nil && session.durableGen == generation && session.durableTransport == transport {
 		return session.durableProvider, nil
 	}
 	provider, err := m.resolver.ResolveDurable(ctx, transport.Transport)
@@ -31,6 +31,7 @@ func (m *Manager) durableProviderFor(ctx context.Context, session *Session, tran
 	}
 	session.durableProvider = provider
 	session.durableGen = generation
+	session.durableTransport = transport
 	return provider, nil
 }
 

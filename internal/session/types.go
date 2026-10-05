@@ -251,9 +251,10 @@ type Session struct {
 	reconnectDone   chan struct{}
 	reconnectErr    error
 
-	durableMu       sync.Mutex
-	durableProvider base.DurableProvider
-	durableGen      uint64
+	durableMu        sync.Mutex
+	durableProvider  base.DurableProvider
+	durableGen       uint64
+	durableTransport *transportHandle
 }
 
 func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {

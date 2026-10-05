@@ -252,10 +252,31 @@ export function TerminalPane({
   }, [kernelTabId, claiming, me, pushToast]);
 
   const controlVersions = useRef(new EventVersionGate());
+  const pendingControl = useRef(new Map<string, TerminalControlStateEvent>());
+  const applyControl = useCallback((p: TerminalControlStateEvent) => {
+    if (!controlVersions.current.accept(p.tabId, p.version)) return;
+    setControl({
+      controller: p.controller,
+      subscribers: p.subscribers,
+      viewers: p.viewers,
+      exited: p.exited,
+    });
+    if (p.gridRevision > 0) {
+      setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
+    }
+    if (p.cwd !== undefined) setCwd(p.cwd || null);
+    if (p.durable !== undefined) setDurable(p.durable);
+  }, []);
   useEffect(() => {
     setCwd(null);
     setDurable(false);
-  }, [kernelTabId]);
+    if (!kernelTabId) return;
+    const pending = pendingControl.current.get(kernelTabId);
+    if (pending) {
+      pendingControl.current.delete(kernelTabId);
+      applyControl(pending);
+    }
+  }, [kernelTabId, applyControl]);
   useEffect(() => {
     if (controlSupported && control?.exited) {
       useUi.getState().updateTab(storeTabId, { exited: true });
@@ -265,19 +286,17 @@ export function TerminalPane({
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     void listenEvent<TerminalControlStateEvent>(EVENTS.terminalControl, (p) => {
-      if (p.tabId !== kernelTabIdRef.current) return;
-      if (!controlVersions.current.accept(p.tabId, p.version)) return;
-      setControl({
-        controller: p.controller,
-        subscribers: p.subscribers,
-        viewers: p.viewers,
-        exited: p.exited,
-      });
-      if (p.gridRevision > 0) {
-        setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
+      if (p.tabId !== kernelTabIdRef.current) {
+        if (p.cwd !== undefined || p.durable !== undefined) {
+          pendingControl.current.set(p.tabId, p);
+          if (pendingControl.current.size > 64) {
+            const oldest = pendingControl.current.keys().next().value;
+            if (oldest !== undefined) pendingControl.current.delete(oldest);
+          }
+        }
+        return;
       }
-      if (p.cwd !== undefined) setCwd(p.cwd || null);
-      if (p.durable !== undefined) setDurable(p.durable);
+      applyControl(p);
     }).then((off) => {
       if (cancelled) off();
       else unlisten = off;

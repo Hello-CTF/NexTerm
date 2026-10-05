@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/durable"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -121,17 +122,18 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			err = ErrStaleGeneration
 		}
 		if err == nil {
-			var opened map[*Tab]*channelHandle
-			opened, err = m.openReplacementChannels(ctx, session, handle, generation)
+			var opened map[*Tab]*replacementChannel
+			var gone map[*Tab]struct{}
+			opened, gone, err = m.openReplacementChannels(ctx, session, handle, generation)
 			if err == nil {
-				committed, commitErr := m.commitReconnect(session, handle, opened, generation)
+				committed, commitErr := m.commitReconnect(session, handle, opened, gone, generation)
 				if committed {
 					return commitErr
 				}
 				err = commitErr
 			}
-			for _, channel := range opened {
-				_ = channel.Close()
+			for _, replacement := range opened {
+				_ = replacement.channel.Close()
 			}
 		}
 		if handle != nil {
@@ -155,27 +157,27 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 	return m.finishReconnect(session, generation, lastErr)
 }
 
-func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*channelHandle, error) {
-	opened := make(map[*Tab]*channelHandle)
+func (m *Manager) openReplacementChannels(ctx context.Context, session *Session, transport *transportHandle, generation uint64) (map[*Tab]*replacementChannel, map[*Tab]struct{}, error) {
+	opened := make(map[*Tab]*replacementChannel)
+	gone := make(map[*Tab]struct{})
 	if !ptyBacked(session.asset.Kind) {
-		return opened, nil
-	}
-	ptyTransport, ok := transport.Transport.(base.PTYTransport)
-	if !ok {
-		return opened, ErrUnsupported
+		return opened, gone, nil
 	}
 	session.mu.Lock()
 	tabs := make([]*Tab, 0, len(session.tabs))
 	for _, tab := range session.tabs {
 		tabs = append(tabs, tab)
 	}
+	kind := session.asset.Kind
 	session.mu.Unlock()
+	var provider base.DurableProvider
 	for _, tab := range tabs {
 		tab.mu.Lock()
 		if tab.closed {
 			tab.mu.Unlock()
 			continue
 		}
+		durableTab := tab.durable != nil
 		cols, rows := tab.cols, tab.rows
 		if tab.grid != nil {
 			if desired := tab.grid.Snapshot().DesiredGrid; desired.Valid() {
@@ -183,6 +185,36 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 			}
 		}
 		tab.mu.Unlock()
+		if durableTab {
+			if provider == nil {
+				var err error
+				provider, err = m.durableProviderFor(ctx, session, transport, kind, generation)
+				if err != nil {
+					return opened, gone, err
+				}
+			}
+			attachment, err := provider.Attach(ctx, tab.ID)
+			if errors.Is(err, durable.ErrNotFound) {
+				gone[tab] = struct{}{}
+				continue
+			}
+			if attachment == nil {
+				if err == nil {
+					err = errors.New("durable provider returned a nil attachment")
+				}
+				return opened, gone, err
+			}
+			if err != nil {
+				_ = attachment.Close()
+				return opened, gone, err
+			}
+			opened[tab] = &replacementChannel{channel: newChannelHandle(attachment), durable: attachment}
+			continue
+		}
+		ptyTransport, ok := transport.Transport.(base.PTYTransport)
+		if !ok {
+			return opened, gone, ErrUnsupported
+		}
 		channel, err := ptyTransport.OpenPTY(ctx, base.PTYOptions{
 			Cols: cols, Rows: rows, Term: "xterm-256color", ExpectedGeneration: transport.Generation(),
 		})
@@ -190,17 +222,22 @@ func (m *Manager) openReplacementChannels(ctx context.Context, session *Session,
 			if channel != nil {
 				_ = channel.Close()
 			}
-			return opened, err
+			return opened, gone, err
 		}
 		if channel == nil {
-			return opened, errors.New("transport returned a nil PTY")
+			return opened, gone, errors.New("transport returned a nil PTY")
 		}
-		opened[tab] = newChannelHandle(channel)
+		opened[tab] = &replacementChannel{channel: newChannelHandle(channel)}
 	}
-	return opened, nil
+	return opened, gone, nil
 }
 
-func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*channelHandle, generation uint64) (bool, error) {
+type replacementChannel struct {
+	channel *channelHandle
+	durable base.DurableAttachment
+}
+
+func (m *Manager) commitReconnect(session *Session, transport *transportHandle, opened map[*Tab]*replacementChannel, gone map[*Tab]struct{}, generation uint64) (bool, error) {
 	m.mu.Lock()
 	session.mu.Lock()
 	if m.closed || session.closed || m.sessions[session.ID] != session || session.status != StatusReconnecting || !session.reconnecting || session.generation != generation {
@@ -209,24 +246,43 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		return false, ErrStaleGeneration
 	}
 	start := make([]*Tab, 0, len(opened))
-	controls := make([]ControlEvent, 0, len(opened))
-	for tab, channel := range opened {
+	controls := make([]ControlEvent, 0, len(opened)+len(gone))
+	exits := make([]ExitEvent, 0, len(gone))
+	var retired []base.DurableAttachment
+	for tab, replacement := range opened {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
 			if tab.grid != nil {
-				if err := tab.grid.Reattach(m.gridResize(tab, channel, generation)); err != nil {
+				if err := tab.grid.Reattach(m.gridResize(tab, replacement.channel, generation)); err != nil {
 					tab.mu.Unlock()
 					session.mu.Unlock()
 					m.mu.Unlock()
 					return false, err
 				}
 			}
-			tab.channel = channel
+			if tab.durable != nil {
+				retired = append(retired, tab.durable)
+			}
+			tab.channel = replacement.channel
+			tab.durable = replacement.durable
 			tab.setGenerationLocked(generation)
 			tab.exited = false
 			controls = append(controls, tab.controlEventLocked())
 			start = append(start, tab)
 			delete(opened, tab)
+		}
+		tab.mu.Unlock()
+	}
+	for tab := range gone {
+		tab.mu.Lock()
+		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
+			if tab.durable != nil {
+				retired = append(retired, tab.durable)
+				tab.durable = nil
+			}
+			tab.exited = true
+			exits = append(exits, tab.exitEventLocked(nil))
+			controls = append(controls, tab.controlEventLocked())
 		}
 		tab.mu.Unlock()
 	}
@@ -258,10 +314,16 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	connectedEvent := session.statusEventLocked(StatusConnected, nil)
 	session.mu.Unlock()
 	m.mu.Unlock()
-	for _, channel := range opened {
-		_ = channel.Close()
+	for _, replacement := range opened {
+		_ = replacement.channel.Close()
+	}
+	for _, attachment := range retired {
+		_ = attachment.Close()
 	}
 	m.transcriptStarted(reconnectCtx, session)
+	for _, exit := range exits {
+		m.emit(context.Background(), TopicTerminalExit, exit)
+	}
 	for _, control := range controls {
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}
