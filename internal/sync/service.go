@@ -61,7 +61,9 @@ func (s *Service) Start(ctx context.Context) error {
 	if s.desktop {
 		return nil
 	}
-	_, err := s.Token(ctx)
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	_, err := s.ensureAdminRowLocked(ctx)
 	return err
 }
 

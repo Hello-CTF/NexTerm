@@ -281,6 +281,37 @@ func TestAdminRevokeForbiddenAndRotationRecovery(t *testing.T) {
 	}
 }
 
+func TestServiceStartToleratesOutOfBandRevokedAdmin(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, false)
+	service := New(instance.db, instance.vault, WithMetadata("test", false))
+	original, err := service.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := instance.db.DB().ExecContext(ctx, "UPDATE sync_tokens SET revoked_at = 1 WHERE id = ?", adminTokenID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(ctx); err != nil {
+		t.Fatalf("startup must not fail on an out-of-band revoked admin: %v", err)
+	}
+	if _, err := service.Token(ctx); err == nil {
+		t.Fatal("Token() must still refuse the revoked admin secret")
+	} else {
+		requireCode(t, err, ipc.CodeForbidden)
+	}
+	recovered, err := service.RotateToken(ctx)
+	if err != nil || recovered == original {
+		t.Fatalf("recovery rotation=%q err=%v", recovered, err)
+	}
+	if valid, _ := service.VerifyToken(ctx, recovered); !valid {
+		t.Fatal("recovered secret rejected")
+	}
+	if valid, _ := service.VerifyToken(ctx, original); valid {
+		t.Fatal("revoked secret survived recovery")
+	}
+}
+
 func TestTokenCommandsRequireAdminIdentity(t *testing.T) {
 	ctx := context.Background()
 	instance := newTestInstance(t, false)
