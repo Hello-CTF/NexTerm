@@ -671,6 +671,9 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     }
     void send({ message: source.text });
   };
+  const retryRunRef = useRef(retryRun);
+  retryRunRef.current = retryRun;
+  const handleRetryRun = useCallback((item: ChatItem) => retryRunRef.current(item), []);
 
   const confirm = async (decision: "allow" | "allow_session" | "deny") => {
     const run = activeRunRef.current;
@@ -1225,7 +1228,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               item={item}
               streaming={aiBusy && i === conv.items.length - 1}
               onApprovePlan={handleApprovePlan}
-              onRetry={retryRun}
+              onRetry={handleRetryRun}
             />
           ))}
           {confirmCard && (
