@@ -3,8 +3,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { syncApi } from "../../ipc/commands";
 import type { ImportReport, SyncBundle, SyncDigest } from "../../ipc/types";
 import { pickBundleFile, saveBundleFile } from "../../ipc/bundleFiles";
+import { baseName } from "../../ipc/webFiles";
+import { openWailsFile, saveWailsFile } from "../../ipc/wails";
 import { useUi } from "../../app/store";
+import { DEMO, WEB } from "../../demo";
+import { promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { ImportReportView } from "./SyncCardReport";
 import {
   IconArchive,
   IconCheckCircle,
@@ -18,6 +23,13 @@ import {
 } from "../../ui/icons";
 
 const BUNDLE_PROTOCOL = 1;
+
+const canEncryptBundle = !WEB && !DEMO;
+
+function isEncryptedBundleError(e: unknown): boolean {
+  const o = e as { code?: unknown; message?: unknown } | null;
+  return o?.code === "bad_param" && typeof o.message === "string" && o.message.includes("已加密");
+}
 
 interface BundlePreview {
   bundle: SyncBundle;
@@ -60,6 +72,20 @@ function formatExportedAt(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+async function pickEncryptedBundle(): Promise<{ name: string; text: string } | null> {
+  const password = await promptText("该资产包已加密。请输入口令，然后重新选择该文件：", "", {
+    secret: true,
+  });
+  if (!password) return null;
+  const path = await openWailsFile([
+    { name: "NexTerm 加密资产包", extensions: ["nxbm"] },
+    { name: "所有文件", extensions: ["*"] },
+  ]);
+  if (!path) return null;
+  const text = await syncApi.readBundleFile(path, password);
+  return { name: baseName(path), text };
+}
+
 export function SyncBundleCard() {
   const { pushToast } = useUi();
   const qc = useQueryClient();
@@ -69,12 +95,16 @@ export function SyncBundleCard() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [withCreds, setWithCreds] = useState(false);
+  const [encrypt, setEncrypt] = useState(false);
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportSummary, setExportSummary] = useState<{
     assets: number;
     groups: number;
     creds: number;
+    encrypted: boolean;
     warnings: string[];
   } | null>(null);
 
@@ -116,6 +146,11 @@ export function SyncBundleCard() {
       pushToast("error", "先勾选要导出的资产");
       return;
     }
+    const usePassword = canEncryptBundle && encrypt;
+    if (usePassword && password !== password2) {
+      setExportError("两次输入的导出口令不一致");
+      return;
+    }
     setExporting(true);
     setExportError(null);
     setExportSummary(null);
@@ -123,17 +158,28 @@ export function SyncBundleCard() {
       const bundle = await syncApi.exportAssets(ids, withCreds);
       const text = JSON.stringify(bundle, null, 2);
       const stamp = new Date().toISOString().slice(0, 10);
-      const saved = await saveBundleFile(`nexterm-assets-${stamp}.json`, text);
-      if (!saved) return;
+      if (usePassword) {
+        const path = await saveWailsFile(`nexterm-assets-${stamp}.nxbm`);
+        if (!path) return;
+        await syncApi.writeBundleFile(path, text, password);
+        setPassword("");
+        setPassword2("");
+      } else {
+        const saved = await saveBundleFile(`nexterm-assets-${stamp}.json`, text);
+        if (!saved) return;
+      }
       setExportSummary({
         assets: bundle.assets.length,
         groups: bundle.groups.length,
         creds: bundle.creds.length,
+        encrypted: usePassword,
         warnings: bundle.warnings ?? [],
       });
       pushToast(
         "success",
-        `已导出 ${bundle.assets.length} 条资产${bundle.creds.length > 0 ? `（含 ${bundle.creds.length} 条凭据）` : ""}`,
+        usePassword
+          ? `已加密导出 ${bundle.assets.length} 条资产（.nxbm 容器）`
+          : `已导出 ${bundle.assets.length} 条资产${bundle.creds.length > 0 ? `（含 ${bundle.creds.length} 条凭据）` : ""}`,
       );
     } catch (e) {
       setExportError(describeError(e));
@@ -147,8 +193,18 @@ export function SyncBundleCard() {
     setPreview(null);
     setReport(null);
     try {
-      const picked = await pickBundleFile();
+      let picked: { name: string; text: string } | null = null;
+      try {
+        picked = await pickBundleFile();
+      } catch (e) {
+        if (!isEncryptedBundleError(e) || !canEncryptBundle) throw e;
+        picked = await pickEncryptedBundle();
+      }
       if (!picked) return;
+      if (picked.text.startsWith("NXBM")) {
+        setImportError(`${picked.name}：这是加密的资产包，请在桌面版 NexTerm 中导入（当前环境无法解密）`);
+        return;
+      }
       const { bundle, error } = parseBundle(picked.text);
       if (!bundle) {
         setImportError(`${picked.name}：${error}`);
@@ -292,10 +348,81 @@ export function SyncBundleCard() {
           </div>
         )}
 
+        {canEncryptBundle ? (
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={encrypt}
+              onChange={(e) => setEncrypt(e.target.checked)}
+            />
+            <span className="text-[12px] text-neutral-300">
+              加密资产包（推荐）
+              <span className="nx-hint block">
+                用口令把资产包加密成 <code>.nxbm</code> 容器，只有知道口令的人才能导入。
+                口令无法找回，丢失后将无法导入，请妥善保管。
+              </span>
+            </span>
+          </label>
+        ) : (
+          <p className="nx-hint text-[12px]">
+            加密导出（.nxbm）仅在桌面版 NexTerm 可用；当前环境由浏览器直接保存明文 JSON。
+          </p>
+        )}
+
+        {canEncryptBundle && encrypt && (
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password">
+                导出口令
+              </label>
+              <input
+                id="bundle-password"
+                type="password"
+                className="nx-input min-w-0 flex-1 font-mono"
+                autoComplete="off"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="w-[76px] shrink-0 text-[12px] text-neutral-400" htmlFor="bundle-password2">
+                确认口令
+              </label>
+              <input
+                id="bundle-password2"
+                type="password"
+                className="nx-input min-w-0 flex-1 font-mono"
+                autoComplete="off"
+                value={password2}
+                onChange={(e) => setPassword2(e.target.value)}
+              />
+            </div>
+            {password !== password2 && (
+              <span className="text-[12px] text-amber-300">两次输入的导出口令不一致</span>
+            )}
+          </div>
+        )}
+
+        {!encrypt && (
+          <div className="nx-alert nx-alert-danger flex items-start gap-2">
+            <IconShield size={14} className="mt-0.5 shrink-0" />
+            <div>
+              <b>将以明文导出</b>：未设置导出口令，任何拿到这个文件的人都能直接读取其中的资产
+              （主机、账号{withCreds ? "与可还原的凭据明文" : ""}）。
+              请只在可信设备之间传递，用毕及时删除。
+            </div>
+          </div>
+        )}
+
         <div>
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
-            disabled={exporting || selected.size === 0}
+            disabled={
+              exporting ||
+              selected.size === 0 ||
+              (canEncryptBundle && encrypt && (password.length === 0 || password !== password2))
+            }
             onClick={() => void doExport()}
           >
             {exporting ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
@@ -315,8 +442,8 @@ export function SyncBundleCard() {
             <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
               <div>
-                导出完成：资产 {exportSummary.assets} · 分组 {exportSummary.groups} · 凭据{" "}
-                {exportSummary.creds}
+                {exportSummary.encrypted ? "已加密导出" : "导出完成"}：资产 {exportSummary.assets} · 分组{" "}
+                {exportSummary.groups} · 凭据 {exportSummary.creds}
               </div>
               {exportSummary.warnings.length > 0 && (
                 <ul className="mt-1 list-disc pl-4 text-[11.5px] text-amber-200">
@@ -339,6 +466,11 @@ export function SyncBundleCard() {
             选择资产包文件…
           </button>
         </div>
+        <p className="nx-hint mb-2 text-[12px]">
+          {canEncryptBundle
+            ? "支持旧版 .json 资产包与 .nxbm 加密资产包（加密包导入时需输入口令）。"
+            : "支持旧版 .json 资产包；.nxbm 加密资产包请在桌面版 NexTerm 中导入。"}
+        </p>
 
         {importError && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
@@ -417,35 +549,8 @@ export function SyncBundleCard() {
           </div>
         )}
 
-        {report && <ImportReportBody data={report} />}
+        {report && <ImportReportView title="导入结果" data={report} />}
       </div>
     </section>
-  );
-}
-
-function ImportReportBody({ data }: { data: ImportReport }) {
-  const touched =
-    data.assetsCreated +
-    data.assetsUpdated +
-    data.groupsCreated +
-    data.groupsUpdated +
-    data.credsCreated +
-    data.credsUpdated;
-  return (
-    <div className={`mt-3 nx-alert ${touched > 0 ? "" : "nx-alert-danger"}`}>
-      <div className="mb-1 font-semibold">导入结果</div>
-      <div className="font-mono text-[11px]">
-        资产 新建 {data.assetsCreated} / 更新 {data.assetsUpdated}； 凭据 新建 {data.credsCreated} / 更新{" "}
-        {data.credsUpdated}； 分组 新建 {data.groupsCreated} / 更新 {data.groupsUpdated}；
-        跳过（本机较新） {data.skippedNewer}； 被拒 {data.refused}
-      </div>
-      {data.warnings.length > 0 && (
-        <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">
-          {data.warnings.map((w, i) => (
-            <li key={i}>{w}</li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }

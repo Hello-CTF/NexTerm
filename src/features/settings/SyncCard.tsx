@@ -6,6 +6,8 @@ import { useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { ImportReportView } from "./SyncCardReport";
+import { SyncTokenPanel } from "./SyncCardTokens";
 import {
   IconCheckCircle,
   IconCopy,
@@ -331,7 +333,7 @@ export function SyncCard() {
               <IconInfo size={14} className="mt-0.5 shrink-0" />
               <div>
                 <b>令牌在哪儿拿</b>：{isBox ? "微服上" : "你自己的服务器上"}打开 NexTerm，
-                进「设置 → 资产同步」，复制那里的令牌填到上面。
+                进「设置 → 资产同步 → 客户端令牌」，为这台设备签发一枚令牌填到上面。
                 {isBox ? (
                   <>
                     微服这一侧不需要额外配置 —— 应用已经把同步入口从平台的登录门里放行，
@@ -451,7 +453,7 @@ export function SyncCard() {
             remoteOrigin={remote.origin}
           />}
 
-          {report && <ReportBody dir={report.dir} data={report.data} />}
+          {report && <ImportReportView title={report.dir === "push" ? "推送结果" : "拉取结果"} dir={report.dir} data={report.data} />}
         </>
       )}
     </section>
@@ -543,6 +545,8 @@ function ServerTokenBody({
           的反向代理（详见 README）。
         </div>
       </div>
+
+      <SyncTokenPanel />
     </>
   );
 }
@@ -676,31 +680,9 @@ function CompareTable(props: {
       <p className="nx-hint mt-2 text-[11px]">
         方向由按钮决定，勾选框只表示「参与这次同步」。两边都改过的条目默认不会被覆盖 ——
         要覆盖较新的一份，勾上「强制覆盖较新的一份」。
+        冲突按修订号（最后修改时间）裁决，协议假设各设备时钟已经 <b>NTP 同步</b>，
+        不检测也不校正时钟偏移；时钟不准时「较新」判定可能不符合预期。
       </p>
-    </div>
-  );
-}
-
-function ReportBody({ dir, data }: { dir: "push" | "pull"; data: ImportReport }) {
-  const touched =
-    data.assetsCreated + data.assetsUpdated + data.groupsCreated + data.credsCreated + data.credsUpdated;
-  return (
-    <div className={`mt-3 nx-alert ${touched > 0 ? "" : "nx-alert-danger"}`}>
-      <div className="mb-1 font-semibold">
-        {dir === "push" ? "推送结果" : "拉取结果"}
-      </div>
-      <div className="font-mono text-[11px]">
-        资产 新建 {data.assetsCreated} / 更新 {data.assetsUpdated}； 凭据 新建 {data.credsCreated} / 更新{" "}
-        {data.credsUpdated}； 分组 新建 {data.groupsCreated} / 更新 {data.groupsUpdated}；
-        跳过（{dir === "push" ? "对端较新" : "本机较新"}） {data.skippedNewer}； 被拒 {data.refused}
-      </div>
-      {data.warnings.length > 0 && (
-        <ul className="mt-2 list-disc pl-4 text-[11.5px] text-amber-200">
-          {data.warnings.map((w, i) => (
-            <li key={i}>{w}</li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
