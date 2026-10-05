@@ -29,6 +29,7 @@ type Manager struct {
 	connector   Connector
 	terminals   TerminalFactory
 	durable     base.DurableProvider
+	resolver    DurableResolver
 	bus         *hub.Hub
 	ownsBus     bool
 	emitter     Emitter
@@ -63,6 +64,7 @@ func NewManager(config Config) *Manager {
 		connector:        config.Connector,
 		terminals:        config.Terminals,
 		durable:          config.Durable,
+		resolver:         config.DurableResolver,
 		emitter:          config.Emitter,
 		transcripts:      config.Transcripts,
 		newID:            config.NewID,

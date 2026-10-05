@@ -17,6 +17,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/forward"
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	sshdaemon "github.com/ProbiusOfficial/NexTerm/internal/ssh"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
@@ -172,11 +173,18 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
 		Database: database, Logger: config.Config.Logger,
 	})
+	var durableResolver session.DurableResolver
+	if executable, err := os.Executable(); err == nil {
+		durableResolver = &sshdaemon.Resolver{Executable: executable}
+	} else {
+		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", err)
+	}
 	sessionManager = session.NewManager(session.Config{
-		Connector:   connector,
-		Terminals:   config.Terminals,
-		Durable:     durableProvider,
-		Transcripts: transcriptWriter,
+		Connector:       connector,
+		Terminals:       config.Terminals,
+		Durable:         durableProvider,
+		DurableResolver: durableResolver,
+		Transcripts:     transcriptWriter,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {

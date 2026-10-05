@@ -118,22 +118,34 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	if err != nil {
 		return abort(fmt.Errorf("create supervisor recording: %w", err))
 	}
+	launch, wrapped := wrapShellIntegration(options.Command, options.Env)
+	command, commandEnv := options.Command, options.Env
+	if wrapped {
+		command, commandEnv = launch.command, launch.env
+	}
 	ptySession, err := ptyStart(s.ctx, pty.Config{
-		Path: options.Command[0],
-		Args: options.Command[1:],
+		Path: command[0],
+		Args: command[1:],
 		Dir:  options.Dir,
-		Env:  mergedEnv(options.Env),
+		Env:  mergedEnv(commandEnv),
 		Cols: options.Cols,
 		Rows: options.Rows,
 		ID:   id,
 	})
 	if err != nil {
+		if wrapped {
+			launch.cleanup()
+		}
 		_ = recording.Close()
 		return abort(err)
 	}
 	session := newSession(s, options, id, ptySession, recording)
+	if wrapped {
+		session.shellCleanup = launch.cleanup
+	}
 	if err := writeEntry(sessionsRoot(s.stateDir), session.entry); err != nil {
 		session.closePTY()
+		session.cleanupShell()
 		_ = recording.Close()
 		return abort(err)
 	}
@@ -141,6 +153,7 @@ func (s *Supervisor) Create(ctx context.Context, options CreateOptions) (*Sessio
 	if s.closing {
 		s.mu.Unlock()
 		session.closePTY()
+		session.cleanupShell()
 		_ = recording.Close()
 		return abort(ErrClosed)
 	}

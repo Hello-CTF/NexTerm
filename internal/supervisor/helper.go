@@ -23,6 +23,8 @@ type HelperConfig struct {
 	Executable     string
 	CommandTimeout time.Duration
 	SpawnTimeout   time.Duration
+	Bridge         bool
+	Probe          bool
 }
 
 type Helper struct {
@@ -174,6 +176,23 @@ func RunHelperCLI(args []string) int {
 		fmt.Fprintln(os.Stderr, HelperCommand+":", err)
 		return 2
 	}
+	if config.Probe {
+		fmt.Fprintln(os.Stdout, ProtocolVersion)
+		return 0
+	}
+	if config.Bridge {
+		stateDir, err := filepath.Abs(config.StateDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, HelperCommand+":", err)
+			return 2
+		}
+		config.StateDir = stateDir
+		if err := runBridge(context.Background(), config); err != nil {
+			fmt.Fprintln(os.Stderr, HelperCommand+":", err)
+			return 1
+		}
+		return 0
+	}
 	if err := RunHelper(context.Background(), config); err != nil {
 		fmt.Fprintln(os.Stderr, HelperCommand+":", err)
 		return 1
@@ -193,6 +212,17 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 			return HelperConfig{}, fmt.Errorf("unexpected argument %q", argument)
 		}
 		name, value, hasValue := strings.Cut(argument, "=")
+		if name == "--bridge" || name == "--probe" {
+			if hasValue {
+				return HelperConfig{}, fmt.Errorf("option %s takes no value", name)
+			}
+			if name == "--bridge" {
+				config.Bridge = true
+			} else {
+				config.Probe = true
+			}
+			continue
+		}
 		if name != "--state-dir" && name != "--data-dir" {
 			return HelperConfig{}, fmt.Errorf("unknown option %s", name)
 		}
@@ -209,7 +239,7 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 			dataDir = value
 		}
 	}
-	if config.StateDir == "" {
+	if config.StateDir == "" && !config.Probe {
 		if dataDir == "" {
 			dataDir = getenv("NEXTERM_DATA_DIR")
 		}

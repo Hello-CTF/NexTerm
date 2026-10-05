@@ -14,20 +14,32 @@ import (
 
 const maxStreamBuffer = 64 * 1024 * 1024
 
+type DialFunc func(ctx context.Context) (net.Conn, error)
+
 type Client struct {
-	socketPath string
-	stateDir   string
+	socketPath  string
+	stateDir    string
+	stateDigest string
+	dial        DialFunc
 }
 
 func NewClient(socketPath, stateDir string) *Client {
 	return &Client{socketPath: endpointPath(socketPath), stateDir: stateDir}
 }
 
+// NewRemoteClient returns a Client that speaks the supervisor protocol over
+// connections produced by dial, such as an SSH exec channel bridged to the
+// remote daemon socket. The state digest of the remote state directory is
+// presented at hello; the caller computes it on the remote host.
+func NewRemoteClient(dial DialFunc, stateDigest string) *Client {
+	return &Client{stateDigest: stateDigest, dial: dial}
+}
+
 func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error) {
 	if options.Attempt == "" {
 		options.Attempt = ids.New()
 	}
-	conn, err := c.dial(ctx)
+	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return Info{}, err
 	}
@@ -55,7 +67,7 @@ func (c *Client) Create(ctx context.Context, options CreateOptions) (Info, error
 }
 
 func (c *Client) List(ctx context.Context) ([]Info, error) {
-	conn, err := c.dial(ctx)
+	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +87,7 @@ func (c *Client) List(ctx context.Context) ([]Info, error) {
 }
 
 func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stream, error) {
-	conn, err := c.dial(ctx)
+	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +125,7 @@ func (c *Client) Attach(ctx context.Context, id string, expect *Identity) (*Stre
 }
 
 func (c *Client) ReconcileCreate(ctx context.Context, id, attempt string) error {
-	conn, err := c.dial(ctx)
+	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return err
 	}
@@ -129,7 +141,7 @@ func (c *Client) ReconcileCreate(ctx context.Context, id, attempt string) error 
 }
 
 func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
-	conn, err := c.dial(ctx)
+	conn, err := c.dialConn(ctx)
 	if err != nil {
 		return err
 	}
@@ -149,15 +161,18 @@ func (c *Client) Kill(ctx context.Context, id string, expect *Identity) error {
 	return nil
 }
 
-func (c *Client) dial(ctx context.Context) (*clientConn, error) {
-	netConn, err := dialSocket(ctx, c.socketPath)
+func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
+	netConn, err := c.dialNet(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: dial supervisor: %v", ErrUnavailable, err)
 	}
-	digest, err := stateDigestFor(c.stateDir)
-	if err != nil {
-		_ = netConn.Close()
-		return nil, err
+	digest := c.stateDigest
+	if digest == "" {
+		digest, err = stateDigestFor(c.stateDir)
+		if err != nil {
+			_ = netConn.Close()
+			return nil, err
+		}
 	}
 	conn := &clientConn{conn: netConn}
 	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest})
@@ -179,6 +194,13 @@ func (c *Client) dial(ctx context.Context) (*clientConn, error) {
 		return nil, fmt.Errorf("%w: server speaks protocol %d", ErrProtocol, ack.Version)
 	}
 	return conn, nil
+}
+
+func (c *Client) dialNet(ctx context.Context) (net.Conn, error) {
+	if c.dial != nil {
+		return c.dial(ctx)
+	}
+	return dialSocket(ctx, c.socketPath)
 }
 
 type clientFrame struct {

@@ -10,6 +10,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/terminal"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
 	"github.com/ProbiusOfficial/NexTerm/internal/terminalgrid"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
@@ -49,6 +50,9 @@ type Tab struct {
 	closed       bool
 	destroying   bool
 	cancelPump   context.CancelFunc
+	cwdTracker   *shellintegr.Tracker
+	cwd          string
+	durableFed   int64
 
 	catchUpRemaining int64
 
@@ -76,7 +80,7 @@ func (t *Tab) infoLocked() TabInfo {
 	return TabInfo{
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		Controller: t.controller, Subscribers: len(t.subscribers), Viewers: len(viewers),
-		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil,
+		Exited: t.exited, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd,
 	}
 }
 
@@ -87,7 +91,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 	return ControlEvent{
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		Controller: info.Controller, Subscribers: info.Subscribers,
-		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion,
+		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
 	}
 }
 
@@ -116,9 +120,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return TabInfo{}, ErrUnsupported
 	}
 	if options.Durable != nil {
-		if m.durable == nil {
-			return TabInfo{}, ErrUnsupported
-		}
 		if options.Ephemeral || options.Durable.Recover && options.TabID == "" {
 			return TabInfo{}, ErrInvalidOptions
 		}
@@ -157,8 +158,13 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	encoding := session.asset.Encoding
 	session.mu.Unlock()
 	m.mu.Unlock()
-	if options.Durable != nil && kind != KindLocal {
-		return TabInfo{}, ErrUnsupported
+	var provider base.DurableProvider
+	if options.Durable != nil {
+		var err error
+		provider, err = m.durableProviderFor(ctx, session, transport, kind, generation)
+		if err != nil {
+			return TabInfo{}, err
+		}
 	}
 	if err := validateEncoding(encoding); err != nil {
 		return TabInfo{}, err
@@ -186,9 +192,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable != nil {
 		var opened base.DurableAttachment
 		if options.Durable.Recover {
-			opened, err = m.durable.Attach(ctx, tabID)
+			opened, err = provider.Attach(ctx, tabID)
 		} else {
-			opened, err = m.durable.Create(ctx, base.DurableCreateOptions{
+			opened, err = provider.Create(ctx, base.DurableCreateOptions{
 				ID: tabID, Command: options.Durable.Command, Dir: options.Durable.Dir, Env: options.Durable.Env,
 				Cols: options.Cols, Rows: options.Rows,
 			})
@@ -246,6 +252,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		ephemeral: options.Ephemeral, cols: cols, rows: rows,
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
+		cwdTracker: shellintegr.NewTracker(),
 	}
 	if options.Durable != nil {
 		if source, ok := m.durable.(durableTranscriptOffsetSource); ok {
@@ -892,6 +899,12 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 	tab.mu.Unlock()
 	tab.terminal.Feed(data)
 	m.transcriptOutput(feedCtx, tab, data)
+	if _, changed := tab.observeCWD(data); changed {
+		tab.mu.Lock()
+		event := tab.controlEventLocked()
+		tab.mu.Unlock()
+		m.emit(feedCtx, TopicTerminalControl, event)
+	}
 	tab.mu.Lock()
 	subscribers := make([]subscriber, 0, len(tab.subscribers))
 	for _, subscriber := range tab.subscribers {
@@ -940,9 +953,13 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 		count, err := channel.Read(buffer)
 		if count > 0 {
 			chunk := append([]byte(nil), buffer[:count]...)
-			if feedErr := m.feed(ctx, tab, generation, chunk); feedErr != nil && ctx.Err() != nil {
+			feedErr := m.feed(ctx, tab, generation, chunk)
+			if feedErr != nil && ctx.Err() != nil {
 				readErr = feedErr
 				break
+			}
+			if feedErr == nil {
+				tab.addDurableFed(int64(count))
 			}
 		}
 		if err != nil {

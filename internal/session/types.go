@@ -61,6 +61,26 @@ type Connector interface {
 	Connect(context.Context, Asset, uint64) (base.Transport, error)
 }
 
+// DurableResolver resolves the durable provider for a session whose transport
+// is not local, such as the supervisor daemon reached through the session's
+// SSH channel. Implementations must tolerate repeated calls; the manager
+// caches the result per session generation.
+type DurableResolver interface {
+	ResolveDurable(ctx context.Context, transport base.Transport) (base.DurableProvider, error)
+}
+
+type DurableResolverFunc func(context.Context, base.Transport) (base.DurableProvider, error)
+
+func (f DurableResolverFunc) ResolveDurable(ctx context.Context, transport base.Transport) (base.DurableProvider, error) {
+	return f(ctx, transport)
+}
+
+// DurableLister enumerates the durable tab IDs a provider owns. Providers
+// that cannot enumerate return nothing through this interface.
+type DurableLister interface {
+	ListDurable(ctx context.Context) ([]string, error)
+}
+
 type ConnectorFunc func(context.Context, Asset, uint64) (base.Transport, error)
 
 func (f ConnectorFunc) Connect(ctx context.Context, asset Asset, generation uint64) (base.Transport, error) {
@@ -112,6 +132,7 @@ type Config struct {
 	Connector        Connector
 	Terminals        TerminalFactory
 	Durable          base.DurableProvider
+	DurableResolver  DurableResolver
 	Hub              *hub.Hub
 	Emitter          Emitter
 	Transcripts      TranscriptSink
@@ -146,6 +167,7 @@ type TabInfo struct {
 	Exited       bool   `json:"exited"`
 	Ephemeral    bool   `json:"ephemeral,omitempty"`
 	Durable      bool   `json:"durable,omitempty"`
+	Cwd          string `json:"cwd,omitempty"`
 }
 
 func (t TabInfo) MarshalJSON() ([]byte, error) {
@@ -179,6 +201,8 @@ type ControlEvent struct {
 	Viewers      int    `json:"viewers"`
 	Exited       bool   `json:"exited"`
 	Version      uint64 `json:"version"`
+	Cwd          string `json:"cwd,omitempty"`
+	Durable      bool   `json:"durable,omitempty"`
 }
 
 func (e ControlEvent) MarshalJSON() ([]byte, error) {
@@ -226,6 +250,11 @@ type Session struct {
 	reconnecting    bool
 	reconnectDone   chan struct{}
 	reconnectErr    error
+
+	durableMu        sync.Mutex
+	durableProvider  base.DurableProvider
+	durableGen       uint64
+	durableTransport *transportHandle
 }
 
 func (s *Session) statusEventLocked(status Status, cause error) StatusEvent {

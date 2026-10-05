@@ -75,6 +75,18 @@ func (p *Provider) Attach(ctx context.Context, id string) (base.DurableAttachmen
 	return &channelAttachment{Attachment: attachment}, nil
 }
 
+func (p *Provider) ListDurable(ctx context.Context) ([]string, error) {
+	infos, err := p.supervisor.List(ctx)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	ids := make([]string, len(infos))
+	for index, info := range infos {
+		ids[index] = info.ID
+	}
+	return ids, nil
+}
+
 type channelAttachment struct {
 	*Attachment
 }
@@ -197,6 +209,18 @@ func (p *RemoteProvider) Attach(ctx context.Context, id string) (base.DurableAtt
 		return nil, translateError(err)
 	}
 	return &streamAttachment{Stream: stream, provider: p}, nil
+}
+
+func (p *RemoteProvider) ListDurable(ctx context.Context) ([]string, error) {
+	infos, err := p.client.List(ctx)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	ids := make([]string, len(infos))
+	for index, info := range infos {
+		ids[index] = info.ID
+	}
+	return ids, nil
 }
 
 type streamAttachment struct {
