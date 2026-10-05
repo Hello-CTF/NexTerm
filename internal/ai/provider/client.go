@@ -133,6 +133,10 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 
 func (c *Client) Config() Config {
 	config := c.config
+	if c.config.MaxTokens != nil {
+		maxTokens := *c.config.MaxTokens
+		config.MaxTokens = &maxTokens
+	}
 	if c.config.Proxy != nil {
 		proxy := *c.config.Proxy
 		config.Proxy = &proxy

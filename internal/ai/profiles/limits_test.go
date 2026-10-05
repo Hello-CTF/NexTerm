@@ -166,3 +166,62 @@ func TestManagerCircuitBreakerSharedAcrossClients(t *testing.T) {
 		t.Fatal("missing profile reported circuit status")
 	}
 }
+
+func TestManagerDeleteFailureKeepsCircuitState(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		writer.WriteHeader(http.StatusInternalServerError)
+		_, _ = writer.Write([]byte(`{"error":{"message":"injected"}}`))
+	}))
+	defer server.Close()
+	ctx := context.Background()
+	settings := &failingSettings{base: openStore(t)}
+	manager, err := profiles.NewManager(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	overview, err := manager.Save(ctx, profiles.Profile{
+		BaseURL: server.URL, Model: "m",
+		CircuitFailureThreshold: intPointer(1), CircuitCooldownSeconds: intPointer(3600),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := overview.Profiles[0].ID
+	client, err := manager.ActiveClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ChatBlock(ctx, provider.ChatRequest{}); err == nil {
+		t.Fatal("failing server succeeded")
+	}
+	settings.fail = true
+	if _, err := manager.Delete(ctx, id); err == nil {
+		t.Fatal("delete succeeded despite settings failure")
+	}
+	settings.fail = false
+	if _, ok := manager.Profile(id); !ok {
+		t.Fatal("profile lost after failed delete")
+	}
+	status, ok := manager.CircuitStatus(id)
+	if !ok || status.ConsecutiveFailures != 1 || status.OpenUntil == nil || !status.OpenUntil.After(time.Now()) {
+		t.Fatalf("circuit state lost after failed delete: %+v ok=%v", status, ok)
+	}
+	second, err := manager.ActiveClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ChatBlock(ctx, provider.ChatRequest{}); !errors.Is(err, provider.ErrCircuitOpen) {
+		t.Fatalf("breaker was reset by failed delete: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("reset breaker hit the server: calls = %d", calls.Load())
+	}
+	if _, err := manager.Delete(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.CircuitStatus(id); ok {
+		t.Fatal("circuit state survived successful delete")
+	}
+}

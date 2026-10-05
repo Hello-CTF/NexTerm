@@ -133,6 +133,25 @@ func TestChatRequestOmitsMaxTokensWhenUnset(t *testing.T) {
 	}
 }
 
+func TestClientConfigClonesMaxTokens(t *testing.T) {
+	maxTokens := 4_096
+	client, err := NewClient(Config{Model: "m", ContextWindow: 128_000, MaxTokens: &maxTokens})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := client.Config()
+	if config.MaxTokens == nil || *config.MaxTokens != 4_096 {
+		t.Fatalf("Config() MaxTokens = %v", config.MaxTokens)
+	}
+	if config.MaxTokens == client.config.MaxTokens {
+		t.Fatal("Config() aliases the internal MaxTokens pointer")
+	}
+	*config.MaxTokens = 0
+	if again := client.Config(); again.MaxTokens == nil || *again.MaxTokens != 4_096 {
+		t.Fatalf("mutation leaked into client config: %v", again.MaxTokens)
+	}
+}
+
 func TestCircuitBreakerCountsOnlyTransportAndServer(t *testing.T) {
 	breaker := NewCircuitBreaker(2, time.Hour)
 	breaker.RecordFailure(ErrorClassClient)

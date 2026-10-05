@@ -356,12 +356,12 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	next.Profiles = profiles
 	next.ensureActive()
-	delete(m.circuits, id)
 	saved, err := save(ctx, m.settings, m.protector, next, m.deleteLegacyWithSave(ctx))
 	if err != nil {
 		return m.state.overview(), err
 	}
 	m.state = saved
+	delete(m.circuits, id)
 	if err := m.finalizeScrub(ctx); err != nil {
 		return m.state.overview(), err
 	}
