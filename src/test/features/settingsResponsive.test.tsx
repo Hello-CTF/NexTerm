@@ -48,6 +48,7 @@ vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 import { SettingsView } from "../../features/settings/SettingsView";
 import { AuditView } from "../../features/settings/AuditView";
 import { useUi } from "../../app/store";
+import { KEYBINDING_ACTIONS } from "../../app/keybindings";
 
 const PERMISSIONS = { mode: "read_write" as const, dangerRules: ["kubectl delete"] };
 const VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 0 };
@@ -92,7 +93,7 @@ describe("SettingsView 响应式结构", () => {
     expect(grid).toBeTruthy();
     expect(grid!.className).toContain("grid-cols-1");
     expect(grid!.className).toContain("min-[480px]:grid-cols-2");
-    expect(grid!.querySelectorAll(".nx-kbd").length).toBe(8);
+    expect(grid!.querySelectorAll(".nx-kbd").length).toBe(KEYBINDING_ACTIONS.length);
   });
 
   it("AI 模型卡头可换行、连通性测试按钮可折行", async () => {

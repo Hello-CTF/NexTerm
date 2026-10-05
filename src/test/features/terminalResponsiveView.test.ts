@@ -87,6 +87,9 @@ vi.mock("@xterm/xterm", () => ({
     onTitleChange() {
       return { dispose: vi.fn() };
     }
+    onSelectionChange() {
+      return { dispose: vi.fn() };
+    }
   },
 }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));

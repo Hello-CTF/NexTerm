@@ -42,13 +42,18 @@ import {
   type FrameCoalescer,
 } from "../ui/ResizeHandle";
 import { layoutBootstrapped, startLayoutSync } from "./layout";
+import {
+  formatBinding,
+  matchAppKeybinding,
+  useKeybindings,
+  type KeybindingActionId,
+} from "./keybindings";
 import { assetApi, dbApi, sessionApi, vaultApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT } from "../demo";
 import {
   isMac,
   isWailsDragRegionTarget,
-  modHint,
   wailsDragRegionStyle,
   wailsNoDragRegionStyle,
 } from "./platform";
@@ -582,36 +587,57 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.shiftKey && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        setPaletteOpen(true);
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setQuickConnectOpen(true);
-      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPaletteOpen(true);
-      } else if (mod && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        setLeftOpen(!leftDockOpen);
-      } else if (mod && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        setRightOpen(!rightDockOpen);
-      } else if (mod && e.key.toLowerCase() === "t") {
-        e.preventDefault();
-        void openLocalTerminal();
-      } else if (mod && e.key === "\\") {
-        e.preventDefault();
-        const cur = useUi.getState();
-        const id = cur.activeWorkspaceId;
-        const target = cur.workspaces.find((w) => w.id === id);
-        if (!target) return;
-        if (target.panes.length > 1) void cur.unsplitWorkspace(target.panes[1].id, target.id);
-        else if (viewport.splitAllowed) cur.splitWorkspace(target.id);
-      } else if (mod && e.key.toLowerCase() === "w" && activeTabId) {
-        e.preventDefault();
-        void requestCloseTab(activeTabId);
+      const hit = matchAppKeybinding(e);
+      if (!hit) return;
+      switch (hit.action) {
+        case "commandPalette":
+        case "globalSearch":
+          e.preventDefault();
+          setPaletteOpen(true);
+          return;
+        case "quickConnect":
+          e.preventDefault();
+          setQuickConnectOpen(true);
+          return;
+        case "toggleSidebar":
+          e.preventDefault();
+          setLeftOpen(!leftDockOpen);
+          return;
+        case "toggleAiSidebar":
+          e.preventDefault();
+          setRightOpen(!rightDockOpen);
+          return;
+        case "newTerminal":
+          e.preventDefault();
+          void openLocalTerminal();
+          return;
+        case "toggleSplit": {
+          e.preventDefault();
+          const cur = useUi.getState();
+          const id = cur.activeWorkspaceId;
+          const target = id ? cur.workspaces.find((w) => w.id === id) : undefined;
+          if (!target) return;
+          if (target.panes.length > 1) void cur.unsplitWorkspace(target.panes[1].id, target.id);
+          else if (viewport.splitAllowed) cur.splitWorkspace(target.id);
+          return;
+        }
+        case "closeTab":
+          if (!activeTabId) return;
+          e.preventDefault();
+          void requestCloseTab(activeTabId);
+          return;
+        case "switchTab": {
+          if (hit.digit === null) return;
+          const st = useUi.getState();
+          const current = st.workspaces.find((w) => w.id === st.activeWorkspaceId);
+          const currentPane =
+            current?.panes.find((p) => p.id === current.activePaneId) ?? current?.panes[0];
+          const target = currentPane?.tabs[hit.digit - 1];
+          if (!target) return;
+          e.preventDefault();
+          st.setActiveTab(target.id);
+          return;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -735,6 +761,9 @@ export default function App() {
 
   const crumb = [ws?.title ?? "未连接", active?.title ?? "工作区"];
 
+  const bindings = useKeybindings();
+  const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
+
   const railPanels: {
     key: string;
     label: string;
@@ -772,7 +801,6 @@ export default function App() {
   ];
 
   const railActive = leftMode;
-  const mod = modHint();
 
   const railItems: {
     key: string;
@@ -1049,16 +1077,16 @@ export default function App() {
             </button>
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title={`命令面板 (${mod}+Shift+P)`}
-              aria-label={`命令面板 (${mod}+Shift+P)`}
+              title={`命令面板 (${kbLabel("commandPalette")})`}
+              aria-label={`命令面板 (${kbLabel("commandPalette")})`}
               onClick={() => setPaletteOpen(true)}
             >
               <IconCommand size={15} />
             </button>
             <button
               className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title={`全局搜索 (${mod}+K)`}
-              aria-label={`全局搜索 (${mod}+K)`}
+              title={`全局搜索 (${kbLabel("globalSearch")})`}
+              aria-label={`全局搜索 (${kbLabel("globalSearch")})`}
               onClick={() => setPaletteOpen(true)}
             >
               <IconSearch size={15} />
@@ -1295,7 +1323,8 @@ function PaneGroup({
   const updateTab = useUi((s) => s.updateTab);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const mod = modHint();
+  const bindings = useKeybindings();
+  const kbLabel = (id: KeybindingActionId) => formatBinding(bindings[id]);
 
   const renameTab = async (id: string, title: string) => {
     const next = await promptText("重命名标签：", title);
@@ -1410,7 +1439,7 @@ function PaneGroup({
         </div>
         <button
           className="nx-tab-new"
-          title={`新建终端标签 (${mod}+T)`}
+          title={`新建终端标签 (${kbLabel("newTerminal")})`}
           aria-label="新建终端标签"
           onClick={onNewTerminal}
         >
@@ -1423,9 +1452,9 @@ function PaneGroup({
           title={
             canSplit
               ? splitAllowed
-                ? `上下分屏 (${mod}+\\)`
+                ? `上下分屏 (${kbLabel("toggleSplit")})`
                 : "窗口高度不足，无法上下分屏"
-              : `取消分屏 (${mod}+\\)`
+              : `取消分屏 (${kbLabel("toggleSplit")})`
           }
           aria-label={canSplit ? "上下分屏" : "取消分屏"}
           onClick={onToggleSplit}
@@ -1434,7 +1463,7 @@ function PaneGroup({
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={leftOpen ? `收起左栏 (${mod}+B)` : `展开左栏 (${mod}+B)`}
+          title={leftOpen ? `收起左栏 (${kbLabel("toggleSidebar")})` : `展开左栏 (${kbLabel("toggleSidebar")})`}
           aria-label={leftOpen ? "收起左栏" : "展开左栏"}
           onClick={onToggleLeft}
         >
@@ -1658,13 +1687,13 @@ function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
 
 function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: () => void }) {
   const { setSessions, sessions } = useUi();
-  const mod = modHint();
+  const bindings = useKeybindings();
   const shortcuts: [string, string][] = [
-    [`${mod}+T`, "本地终端"],
-    [`${mod}+Shift+K`, "快速连接"],
-    [`${mod}+Shift+P`, "命令面板"],
-    [`${mod}+B`, "资产树"],
-    [`${mod}+J`, "AI 侧栏"],
+    [formatBinding(bindings.newTerminal), "本地终端"],
+    [formatBinding(bindings.quickConnect), "快速连接"],
+    [formatBinding(bindings.commandPalette), "命令面板"],
+    [formatBinding(bindings.toggleSidebar), "资产树"],
+    [formatBinding(bindings.toggleAiSidebar), "AI 侧栏"],
   ];
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 bg-neutral-900 px-6">

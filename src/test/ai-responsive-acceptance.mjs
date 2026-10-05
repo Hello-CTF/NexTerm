@@ -734,7 +734,7 @@ async function acceptance(page) {
       };
       pick("historyBtn", document.querySelector('button[title="历史会话"]'));
       pick("newBtn", document.querySelector('button[title="新建会话"]'));
-      pick("collapseBtn", document.querySelector('button[title="收起 AI 侧栏 (Ctrl+J)"]'));
+      pick("collapseBtn", [...document.querySelectorAll("button")].find((b) => (b.title || "").startsWith("收起 AI 侧栏")));
       pick("modelChip", document.querySelector("button.nx-chip"));
       pick("permBtn", [...document.querySelectorAll("button")].find((b) => (b.title || "").startsWith("AI 权限")));
       pick("takeoverBtn", [...document.querySelectorAll("button")].find((b) => (b.title || "").startsWith("终端接管")));

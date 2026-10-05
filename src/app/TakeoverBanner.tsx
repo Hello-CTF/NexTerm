@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useUi, type TakeoverState } from "./store";
+import { formatBinding, formatBindingAria, getKeybinding, matchKeybinding, useKeybindings } from "./keybindings";
 import { aiApi } from "../ipc/commands";
 import { IconAlert, IconGamepad, IconShield } from "../ui/icons";
 import { describeError } from "../ui/errorText";
@@ -27,6 +28,8 @@ export async function stealBack(reason = "用户夺回控制权") {
 
 export function TakeoverBanner() {
   const takeover = useUi((s) => s.takeover);
+  const bindings = useKeybindings();
+  const reclaimLabel = formatBinding(bindings.reclaimTakeover);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -39,17 +42,11 @@ export function TakeoverBanner() {
   useEffect(() => {
     if (!takeover) return;
     const onKey = (event: KeyboardEvent) => {
-      if (
-        event.key !== "Escape" ||
-        event.repeat ||
-        isImeKeyEvent(event) ||
-        hasActiveOverlay()
-      ) {
-        return;
-      }
+      if (event.repeat || isImeKeyEvent(event) || hasActiveOverlay()) return;
+      if (!matchKeybinding(event, "reclaimTakeover")) return;
       event.preventDefault();
       event.stopPropagation();
-      void stealBack("用户按 Esc 夺回");
+      void stealBack(`用户按 ${formatBinding(getKeybinding("reclaimTakeover"))} 夺回`);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -69,7 +66,8 @@ export function TakeoverBanner() {
       aria-label="AI 终端接管状态"
     >
       <span className="nx-sr-only" role="status" aria-atomic="true">
-        AI 正在操作此终端，{mode}。按 Escape 可立即夺回控制权。
+        AI 正在操作此终端，{mode}。
+        {bindings.reclaimTakeover ? `按 ${reclaimLabel} 可立即夺回控制权。` : "可立即夺回控制权。"}
       </span>
       <span className="flex items-center gap-1.5 font-semibold text-red-100">
         <IconAlert size={14} className="text-red-300" />
@@ -90,12 +88,18 @@ export function TakeoverBanner() {
         {mm}:{ss}
       </span>
       <span className="shrink-0 text-red-300/70">
-        按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">Esc</span> 随时夺回
+        {bindings.reclaimTakeover ? (
+          <>
+            按 <span className="nx-kbd border-red-500/40 bg-red-900/60 text-red-200">{reclaimLabel}</span> 随时夺回
+          </>
+        ) : (
+          "可随时夺回"
+        )}
       </span>
       <button
         type="button"
         className="nx-btn nx-btn-danger-solid nx-btn-sm shrink-0"
-        aria-keyshortcuts="Escape"
+        aria-keyshortcuts={formatBindingAria(bindings.reclaimTakeover) ?? undefined}
         onClick={() => void stealBack()}
       >
         <IconGamepad size={12} />
