@@ -239,6 +239,21 @@ async function clickSelector(page, selector) {
   await sleep(80);
 }
 
+async function clickButtonText(page, text) {
+  const point = await page.evaluate(`(() => {
+    const el = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === ${JSON.stringify(text)});
+    if (!el) return null;
+    el.scrollIntoView({ block: "center" });
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  if (!point) throw new Error(`button not found: ${text}`);
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await page.send("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
+  }
+  await sleep(80);
+}
+
 async function dragSelect(page, from, to) {
   const rect = await page.evaluate(`(() => {
     const el = document.querySelector('.xterm');
@@ -431,6 +446,44 @@ async function inputPreferenceAcceptance(page) {
     const afterNinth = await page.evaluate(selectedPaneTab);
     assert.equal(afterNinth, afterFirst, "digit beyond tab count must not switch");
     return { evidence: { tabs, afterFirst } };
+  });
+
+  await pass("palette-hints-follow-bindings", async () => {
+    await boot(page);
+    await openSettingsViaPalette(page);
+
+    await clickSelector(page, '[data-shortcut-row="quickConnect"] button[aria-label="修改快捷键：快速连接"]');
+    await page.waitFor(`Boolean(document.querySelector('input[aria-label="捕获快捷键：快速连接"]'))`);
+    await pressCombo(page, "q", "KeyQ", 81, 1);
+    await page.waitFor(`document.querySelector('[data-shortcut-row="quickConnect"] .nx-kbd')?.textContent === 'Alt+Q'`);
+
+    await clickSelector(page, '[data-shortcut-row="toggleSplit"] button[aria-label="修改快捷键：上下分屏 / 取消分屏"]');
+    await page.waitFor(`Boolean(document.querySelector('input[aria-label="捕获快捷键：上下分屏 / 取消分屏"]'))`);
+    await pressCombo(page, "Backspace", "Backspace", 8, 0);
+    await page.waitFor(`document.querySelector('[data-shortcut-row="toggleSplit"] .nx-kbd')?.textContent === '未绑定'`);
+
+    await pressCtrl(page, "k", 75);
+    await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
+    const evidence = await page.evaluate(`(() => {
+      const options = [...document.querySelectorAll('[role="option"]')];
+      const hintOf = (label) => {
+        const option = options.find((o) => o.textContent?.includes(label));
+        return option?.querySelector('.nx-command-hint')?.textContent ?? null;
+      };
+      return {
+        quickConnect: hintOf('快速连接'),
+        split: hintOf('上下分屏'),
+        localTerminal: hintOf('打开本地终端'),
+      };
+    })()`);
+    assert.equal(evidence.quickConnect, "Alt+Q · 最近使用优先", JSON.stringify(evidence));
+    assert.equal(evidence.split, null, `unbound split hint must disappear: ${JSON.stringify(evidence)}`);
+    await press(page, "Escape");
+    await page.waitFor(`!document.querySelector('[role="dialog"] [role="combobox"]')`);
+
+    await clickButtonText(page, "全部恢复默认");
+    await page.waitFor(`[...document.querySelectorAll('[data-shortcut-row] .nx-kbd')].some((k) => k.textContent === 'Ctrl+Shift+K' || k.textContent === '⌘+Shift+K')`);
+    return { evidence };
   });
 
   await pass("auto-copy-disabled-by-default", async () => {

@@ -45,6 +45,9 @@ vi.mock("../../features/explorer/AssetTree", () => ({ AssetTree: () => null }));
 vi.mock("../../app/CommandPalette", () => ({
   CommandPalette: () => <div data-testid="command-palette" />,
 }));
+vi.mock("../../app/QuickConnect", () => ({
+  QuickConnect: () => <div data-testid="quick-connect" />,
+}));
 vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 
 import App from "../../app/App";
@@ -250,5 +253,20 @@ describe("rebound app shortcuts", () => {
     const event = keyDown(window, "j", { ctrlKey: true });
     expect(event.defaultPrevented).toBe(false);
     expect(useUi.getState().rightOpen).toBe(false);
+  });
+
+  it("opens quick connect via the binding shown in the palette hint", async () => {
+    setKeybinding("quickConnect", "Alt+q");
+    mounted = mountApp();
+    await flush();
+
+    keyDown(window, "q", { altKey: true });
+    expect(mounted.container.querySelector('[data-testid="quick-connect"]')).not.toBeNull();
+
+    mounted.unmount();
+    mounted = mountApp();
+    await flush();
+    keyDown(window, "k", { ctrlKey: true, shiftKey: true });
+    expect(mounted.container.querySelector('[data-testid="quick-connect"]')).toBeNull();
   });
 });

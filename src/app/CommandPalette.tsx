@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUi, connectAsset, nextTabId, openTerminalTab, requestKillTab } from "./store";
-import { isMac } from "./platform";
+import { formatBinding, useKeybindings, type KeybindingActionId } from "./keybindings";
 import { assetApi, dbApi, sessionApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO } from "../demo";
@@ -79,7 +79,12 @@ export function CommandPalette({
   const titleId = useId();
   const helpId = useId();
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
-  const modHint = isMac() ? "⌘" : "Ctrl";
+  const bindings = useKeybindings();
+  const keyHint = (id: KeybindingActionId, description?: string): string | undefined => {
+    const binding = bindings[id];
+    if (!binding) return description;
+    return description ? `${formatBinding(binding)} · ${description}` : formatBinding(binding);
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -164,14 +169,14 @@ export function CommandPalette({
       {
         id: "quick-connect",
         label: "快速连接…",
-        hint: `${modHint}+Shift+K · 最近使用优先`,
+        hint: keyHint("quickConnect", "最近使用优先"),
         icon: IconZap,
         run: () => onQuickConnect?.(),
       },
       {
         id: "local-terminal",
         label: "打开本地终端",
-        hint: `${modHint}+T · 当前设备`,
+        hint: keyHint("newTerminal", "当前设备"),
         icon: IconTerminal,
         run: () => {
           void sessionApi
@@ -213,7 +218,7 @@ export function CommandPalette({
       {
         id: "split-pane",
         label: "上下分屏 / 取消分屏",
-        hint: `${modHint}+\\`,
+        hint: keyHint("toggleSplit"),
         icon: IconSplitH,
         run: () => {
           const current = useUi.getState();
@@ -359,7 +364,7 @@ export function CommandPalette({
     onOpenFiles,
     onEditAsset,
     onQuickConnect,
-    modHint,
+    bindings,
     themeMode,
     setThemeMode,
     reachEntries,
