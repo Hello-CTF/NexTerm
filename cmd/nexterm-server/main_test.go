@@ -19,6 +19,7 @@ import (
 	"time"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 )
 
@@ -418,10 +419,10 @@ func waitForHealth(t *testing.T, process *testServerProcess, address string) cor
 	}
 }
 
-func runServerToken(t *testing.T, binary, dataDir, command string) string {
+func runServerToken(t *testing.T, binary, dataDir, command string, extraEnv ...string) string {
 	t.Helper()
 	cmd := exec.Command(binary, command, "--data-dir", dataDir)
-	cmd.Env = serverProcessEnv(t)
+	cmd.Env = serverProcessEnv(t, extraEnv...)
 	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("%s: %v", command, err)
@@ -431,6 +432,49 @@ func runServerToken(t *testing.T, binary, dataDir, command string) string {
 		t.Fatalf("%s stdout = %q", command, token)
 	}
 	return strings.TrimSpace(token)
+}
+
+func TestTokenCommandBootstrapsVaultAndKeepsEnvelopeAtRest(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	token := runServerToken(t, binary, dataDir, "token", "NEXTERM_MASTER_KEY=cli-master-key")
+	if token == "" {
+		t.Fatal("token command returned empty token")
+	}
+	if again := runServerToken(t, binary, dataDir, "token"); again != token {
+		t.Fatalf("locked read via rollback key = %q, want %q", again, token)
+	}
+	lockedRotate := exec.Command(binary, "rotate-token", "--data-dir", dataDir)
+	lockedRotate.Env = serverProcessEnv(t)
+	if output, err := lockedRotate.CombinedOutput(); err == nil {
+		t.Fatalf("locked rotation must fail, got %q", output)
+	} else if !strings.Contains(string(output), "凭据库已锁定") {
+		t.Fatalf("locked rotation error = %q", output)
+	}
+	rotated := runServerToken(t, binary, dataDir, "rotate-token", "NEXTERM_MASTER_KEY=cli-master-key")
+	if rotated == "" || rotated == token {
+		t.Fatalf("unlocked rotation = %q", rotated)
+	}
+	if current := runServerToken(t, binary, dataDir, "token", "NEXTERM_MASTER_KEY=cli-master-key"); current != rotated {
+		t.Fatalf("token after rotation = %q, want %q", current, rotated)
+	}
+
+	db, err := store.Open(context.Background(), filepath.Join(dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stored, found, err := db.SettingGet(context.Background(), "sync.token")
+	if err != nil || !found {
+		t.Fatalf("sync.token found=%v err=%v", found, err)
+	}
+	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) || strings.Contains(stored, rotated) {
+		t.Fatalf("sync.token must stay an envelope without plaintext: %q", stored)
+	}
+	backup, found, err := db.SettingGet(context.Background(), "sync.token.plaintext_backup")
+	if err != nil || !found || backup != rotated {
+		t.Fatalf("backup=%q found=%v err=%v", backup, found, err)
+	}
 }
 
 func requestFullRPC(t *testing.T, client *http.Client, address, command string, args any) rpcTestResponse {

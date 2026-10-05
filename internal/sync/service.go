@@ -97,8 +97,12 @@ func (s *Service) originLocked(ctx context.Context) (string, error) {
 func (s *Service) Token(ctx context.Context) (string, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	if err := s.ensureAdminRowLocked(ctx); err != nil {
+	admin, err := s.ensureAdminRowLocked(ctx)
+	if err != nil {
 		return "", err
+	}
+	if admin.RevokedAt != nil {
+		return "", ipc.NewError(ipc.CodeForbidden, "管理员令牌已吊销，请轮换以恢复")
 	}
 	return s.adminTokenPlaintextLocked(ctx)
 }
@@ -106,7 +110,7 @@ func (s *Service) Token(ctx context.Context) (string, error) {
 func (s *Service) RotateToken(ctx context.Context) (string, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	if err := s.ensureAdminRowLocked(ctx); err != nil {
+	if _, err := s.ensureAdminRowLocked(ctx); err != nil {
 		return "", err
 	}
 	return s.rotateTokenByIDLocked(ctx, adminTokenID)

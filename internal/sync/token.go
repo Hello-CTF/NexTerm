@@ -191,7 +191,7 @@ func (s *Service) rotateTokenByIDLocked(ctx context.Context, id string) (string,
 	if err != nil {
 		return "", err
 	}
-	if token.RevokedAt != nil {
+	if token.RevokedAt != nil && id != adminTokenID {
 		return "", ipc.NewError(ipc.CodeBadParam, "令牌已吊销，不能轮换")
 	}
 	secret, err := generateTokenSecret()
@@ -201,8 +201,8 @@ func (s *Service) rotateTokenByIDLocked(ctx context.Context, id string) (string,
 	hash := tokenSecretHash(secret)
 	if id == adminTokenID {
 		err = s.withTx(ctx, func(tx *sql.Tx) error {
-			if err := txUpdateTokenHash(ctx, tx, id, hash); err != nil {
-				return err
+			if _, err := tx.ExecContext(ctx, "UPDATE sync_tokens SET secret_hash = ?, revoked_at = NULL WHERE id = ?", hash, id); err != nil {
+				return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 			}
 			return s.persistAdminTokenTx(ctx, tx, secret)
 		})
@@ -215,20 +215,17 @@ func (s *Service) rotateTokenByIDLocked(ctx context.Context, id string) (string,
 	if err != nil {
 		return "", err
 	}
+	token.RevokedAt = nil
 	s.auditToken(ctx, "rotate", token)
 	return secret, nil
-}
-
-func txUpdateTokenHash(ctx context.Context, tx *sql.Tx, id, hash string) error {
-	if _, err := tx.ExecContext(ctx, "UPDATE sync_tokens SET secret_hash = ? WHERE id = ?", hash, id); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	return nil
 }
 
 func (s *Service) TokenRevoke(ctx context.Context, id string) error {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
+	if id == adminTokenID {
+		return ipc.NewError(ipc.CodeBadParam, "管理员令牌不可吊销，请改用轮换")
+	}
 	token, err := s.tokenByID(ctx, id)
 	if err != nil {
 		return err
@@ -246,37 +243,67 @@ func (s *Service) TokenRevoke(ctx context.Context, id string) error {
 }
 
 func (s *Service) VerifyToken(ctx context.Context, presented string) (bool, error) {
-	return s.verifyToken(ctx, presented, PurposeSync)
+	_, valid, err := s.VerifyTokenIdentity(ctx, presented)
+	return valid, err
+}
+
+// TokenIdentity 是已通过验证的令牌身份，由服务端中间件注入请求上下文，
+// 供管理类命令区分管理员令牌与普通客户端令牌。
+type TokenIdentity struct {
+	TokenID  string
+	ClientID string
+	Purpose  string
+	Admin    bool
+}
+
+type tokenIdentityContextKey struct{}
+
+func WithTokenIdentity(ctx context.Context, identity TokenIdentity) context.Context {
+	return context.WithValue(ctx, tokenIdentityContextKey{}, identity)
+}
+
+func TokenIdentityFromContext(ctx context.Context) (TokenIdentity, bool) {
+	identity, ok := ctx.Value(tokenIdentityContextKey{}).(TokenIdentity)
+	return identity, ok
+}
+
+func (s *Service) VerifyTokenIdentity(ctx context.Context, presented string) (TokenIdentity, bool, error) {
+	return s.verifyTokenIdentity(ctx, presented, PurposeSync)
 }
 
 func (s *Service) verifyToken(ctx context.Context, presented, purpose string) (bool, error) {
+	_, valid, err := s.verifyTokenIdentity(ctx, presented, purpose)
+	return valid, err
+}
+
+func (s *Service) verifyTokenIdentity(ctx context.Context, presented, purpose string) (TokenIdentity, bool, error) {
 	if presented == "" {
-		return false, nil
+		return TokenIdentity{}, false, nil
 	}
-	valid, err := s.matchToken(ctx, presented, purpose)
+	identity, valid, err := s.matchToken(ctx, presented, purpose)
 	if err != nil || valid {
-		return valid, err
+		return identity, valid, err
 	}
 	migrated, err := s.migrateLegacyToken(ctx)
 	if err != nil || !migrated {
-		return false, err
+		return TokenIdentity{}, false, err
 	}
 	return s.matchToken(ctx, presented, purpose)
 }
 
-func (s *Service) matchToken(ctx context.Context, presented, purpose string) (bool, error) {
+func (s *Service) matchToken(ctx context.Context, presented, purpose string) (TokenIdentity, bool, error) {
 	token, err := scanToken(s.store.DB().QueryRowContext(ctx, "SELECT "+tokenColumns+" FROM sync_tokens WHERE secret_hash = ?", tokenSecretHash(presented)))
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return TokenIdentity{}, false, nil
 	}
 	if err != nil {
-		return false, err
+		return TokenIdentity{}, false, err
 	}
 	if token.RevokedAt != nil || (token.ExpiresAt > 0 && ids.NowMS() > token.ExpiresAt) || token.Purpose != purpose {
-		return false, nil
+		return TokenIdentity{}, false, nil
 	}
 	_, _ = s.store.DB().ExecContext(ctx, "UPDATE sync_tokens SET last_used_at = ? WHERE id = ?", ids.NowMS(), token.ID)
-	return true, nil
+	return TokenIdentity{TokenID: token.ID, ClientID: token.ClientID, Purpose: token.Purpose, Admin: token.ID == adminTokenID}, true, nil
 }
 
 func (s *Service) migrateLegacyToken(ctx context.Context) (bool, error) {
@@ -318,18 +345,20 @@ VALUES(?,?,?,?,?,0)`, token.ID, token.ClientID, token.Purpose, tokenSecretHash(p
 	return true, nil
 }
 
-func (s *Service) ensureAdminRowLocked(ctx context.Context) error {
-	if _, err := s.tokenByID(ctx, adminTokenID); err == nil {
-		return nil
+func (s *Service) ensureAdminRowLocked(ctx context.Context) (Token, error) {
+	if token, err := s.tokenByID(ctx, adminTokenID); err == nil {
+		return token, nil
 	} else if !isNotFound(err) {
-		return err
+		return Token{}, err
 	}
-	if migrated, err := s.migrateLegacyTokenLocked(ctx); err != nil || migrated {
-		return err
+	if migrated, err := s.migrateLegacyTokenLocked(ctx); err != nil {
+		return Token{}, err
+	} else if migrated {
+		return s.tokenByID(ctx, adminTokenID)
 	}
 	secret, err := generateTokenSecret()
 	if err != nil {
-		return err
+		return Token{}, err
 	}
 	token := Token{ID: adminTokenID, ClientID: adminClientID, Purpose: PurposeSync, CreatedAt: ids.NowMS()}
 	err = s.withTx(ctx, func(tx *sql.Tx) error {
@@ -340,10 +369,10 @@ VALUES(?,?,?,?,?,0)`, token.ID, token.ClientID, token.Purpose, tokenSecretHash(s
 		return s.persistAdminTokenTx(ctx, tx, secret)
 	})
 	if err != nil {
-		return err
+		return Token{}, err
 	}
 	s.auditToken(ctx, "issue", token)
-	return nil
+	return token, nil
 }
 
 func (s *Service) adminTokenPlaintextFromStored(ctx context.Context, stored string) (string, error) {
@@ -403,4 +432,14 @@ func (s *Service) auditToken(ctx context.Context, action string, token Token) {
 func isVaultLockedError(err error) bool {
 	var appErr *ipc.Error
 	return errors.As(err, &appErr) && appErr.Code == ipc.CodeVaultLocked
+}
+
+// requireTokenAdmin 限制令牌读取与管理命令：远程调用必须携带管理员令牌身份；
+// 无身份（本机 IPC、免认证环回、网关代理）视为本地受信。
+func (s *Service) requireTokenAdmin(ctx context.Context) error {
+	identity, ok := TokenIdentityFromContext(ctx)
+	if !ok || identity.Admin {
+		return nil
+	}
+	return ipc.NewError(ipc.CodeForbidden, "该操作需要管理员令牌")
 }

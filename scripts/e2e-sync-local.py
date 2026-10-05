@@ -131,7 +131,9 @@ class Instance:
 
     def cli_token(self, rotate: bool = False) -> str:
         arguments = [str(self.binary), "rotate-token" if rotate else "token", "--data-dir", str(self.data_dir)]
-        result = subprocess.run(arguments, cwd=ROOT, capture_output=True, text=True, timeout=30)
+        environment = dict(os.environ)
+        environment["NEXTERM_MASTER_KEY"] = self.master_key
+        result = subprocess.run(arguments, cwd=ROOT, capture_output=True, text=True, timeout=30, env=environment)
         if result.returncode != 0:
             raise AssertionError(f"token command failed: {result.stderr.strip()}; log={self.log_path}")
         return result.stdout.strip()
@@ -374,6 +376,25 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         check("rotated-out token is rejected", status == 401, status)
         status, envelope = call(c.port, "sync_digest", token=rotated_c)
         check("rotated token is admitted", status == 200 and envelope.get("ok") is True, envelope)
+
+        print("[9] Non-admin tokens cannot administer tokens on the exposed server", flush=True)
+        issued_c2 = data(c.port, "sync_token_issue", {"args": {"clientId": "e2e-exposed-client-2"}}, rotated_c)
+        secret_c2 = issued_c2.get("secret", "")
+        status, envelope = call(c.port, "sync_digest", token=secret_c2)
+        check("non-admin token still syncs", status == 200 and envelope.get("ok") is True, envelope)
+        for command in ("sync_token", "sync_token_list", "sync_token_issue", "sync_token_rotate", "sync_token_revoke"):
+            status, envelope = call(c.port, command, token=secret_c2)
+            ok = status == 200 and envelope.get("ok") is False and envelope.get("error", {}).get("code") == "forbidden"
+            check(f"exposed /rpc forbids non-admin {command}", ok, envelope)
+        data(c.port, "sync_token_revoke", {"args": {"id": issued_c2["token"]["id"]}}, rotated_c)
+        status, _ = call(c.port, "sync_digest", token=secret_c2)
+        check("revoked non-admin gets 401 on peer routes", status == 401, status)
+        status, _ = call(c.port, "sync_token", token=secret_c2)
+        check("revoked non-admin cannot read the admin token", status == 401, status)
+        status, _ = call(c.port, "sync_token", token=token_c)
+        check("rotated-out admin token stays rejected", status == 401, status)
+        status, envelope = call(c.port, "sync_token", token=rotated_c)
+        check("admin token survives client revocation", status == 200 and envelope.get("ok") is True and envelope.get("data") == rotated_c, envelope)
     finally:
         a.stop()
         b.stop()

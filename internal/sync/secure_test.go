@@ -61,31 +61,60 @@ func TestSyncTokenLockedVaultWithoutBackupFailsExplicit(t *testing.T) {
 	requireCode(t, err, ipc.CodeVaultLocked)
 }
 
-func TestSyncTokenRotateLockedVaultWritesPlaintextBackup(t *testing.T) {
+func TestSyncTokenRotateLockedVaultFailsWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	instance := newTestInstance(t, true)
 	original, err := instance.service.Token(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	storedBefore, _, _ := instance.db.SettingGet(ctx, settingToken)
+	backupBefore, _, _ := instance.db.SettingGet(ctx, settingTokenBackup)
+
 	instance.vault.Lock()
 	rotated, err := instance.service.RotateToken(ctx)
-	if err != nil || rotated == original {
-		t.Fatalf("locked-vault rotation=%q err=%v", rotated, err)
+	requireCode(t, err, ipc.CodeVaultLocked)
+	if rotated != "" {
+		t.Fatalf("locked rotation returned a token: %q", rotated)
+	}
+	storedAfter, _, _ := instance.db.SettingGet(ctx, settingToken)
+	backupAfter, _, _ := instance.db.SettingGet(ctx, settingTokenBackup)
+	if storedAfter != storedBefore || backupAfter != backupBefore {
+		t.Fatal("locked rotation mutated token settings")
+	}
+	if valid, _ := instance.service.VerifyToken(ctx, original); !valid {
+		t.Fatal("locked rotation must leave the previous token valid")
+	}
+	tokens, _ := instance.service.TokenList(ctx)
+	for _, token := range tokens {
+		if token.ID == adminTokenID && token.RevokedAt != nil {
+			t.Fatal("locked rotation mutated the admin row")
+		}
+	}
+}
+
+func TestLegacyMigrationLockedVaultFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, true)
+	const legacy = "legacy-plaintext-token"
+	if err := instance.db.SettingSet(ctx, settingToken, legacy); err != nil {
+		t.Fatal(err)
+	}
+	instance.vault.Lock()
+	if _, err := instance.service.VerifyToken(ctx, legacy); err == nil {
+		t.Fatal("locked vault must block migration instead of writing hash or settings")
+	} else {
+		requireCode(t, err, ipc.CodeVaultLocked)
+	}
+	if tokens, _ := instance.service.TokenList(ctx); len(tokens) != 0 {
+		t.Fatalf("locked migration wrote a token row: %+v", tokens)
 	}
 	stored, _, _ := instance.db.SettingGet(ctx, settingToken)
-	if stored != rotated {
-		t.Fatalf("locked-vault rotation must keep a readable token setting: %q", stored)
+	if stored != legacy {
+		t.Fatalf("locked migration rewrote the legacy setting: %q", stored)
 	}
-	backup, _, _ := instance.db.SettingGet(ctx, settingTokenBackup)
-	if backup != rotated {
-		t.Fatalf("backup did not follow locked-vault rotation: %q", backup)
-	}
-	if valid, _ := instance.service.VerifyToken(ctx, original); valid {
-		t.Fatal("old token survived locked-vault rotation")
-	}
-	if valid, _ := instance.service.VerifyToken(ctx, rotated); !valid {
-		t.Fatal("rotated token rejected")
+	if _, found, _ := instance.db.SettingGet(ctx, settingTokenBackup); found {
+		t.Fatal("locked migration wrote the plaintext backup")
 	}
 }
 

@@ -30,16 +30,6 @@ func (s *Service) protectSettingSecret(ctx context.Context, plaintext string) (s
 	return s.vault.EncryptSecret(ctx, plaintext)
 }
 
-// protectTokenSecret 供 sync.token 使用：CLI 与引导路径不一定能解锁凭据库，
-// 锁定时退回明文并同步更新明文备份，保证轮换与旧版本回读可用。
-func (s *Service) protectTokenSecret(ctx context.Context, plaintext string) (string, error) {
-	initialized, unlocked := s.vaultStatus()
-	if !initialized || !unlocked {
-		return plaintext, nil
-	}
-	return s.vault.EncryptSecret(ctx, plaintext)
-}
-
 // revealSettingSecret 双读：enc:v1: 信封走凭据库解密，历史明文原样返回。
 func (s *Service) revealSettingSecret(ctx context.Context, stored string) (string, error) {
 	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
@@ -52,7 +42,7 @@ func (s *Service) revealSettingSecret(ctx context.Context, stored string) (strin
 }
 
 func (s *Service) persistAdminTokenTx(ctx context.Context, tx *sql.Tx, plaintext string) error {
-	protected, err := s.protectTokenSecret(ctx, plaintext)
+	protected, err := s.protectSettingSecret(ctx, plaintext)
 	if err != nil {
 		return err
 	}

@@ -202,10 +202,19 @@ func runServerTokenCommand(invocation core.Invocation) error {
 	if err != nil {
 		return err
 	}
+	masterKey, err := server.ResolveMasterKey(invocation.MasterKey, invocation.MasterKeyFile)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 	application, err := production.NewProduction(ctx, production.ProductionConfig{DataDir: paths.DataDir, Desktop: false})
 	if err != nil {
 		return err
+	}
+	if masterKey != "" {
+		if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
+			return err
+		}
 	}
 	if err := application.Start(ctx); err != nil {
 		return err

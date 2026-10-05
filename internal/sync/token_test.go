@@ -229,6 +229,116 @@ func TestTokenAuditRecordsClientIDOnly(t *testing.T) {
 	}
 }
 
+func TestAdminRevokeForbiddenAndRotationRecovery(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, false)
+	original, err := instance.service.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = instance.service.TokenRevoke(ctx, adminTokenID)
+	requireCode(t, err, ipc.CodeBadParam)
+	if valid, _ := instance.service.VerifyToken(ctx, original); !valid {
+		t.Fatal("forbidden admin revocation still disabled the token")
+	}
+
+	if _, err := instance.db.DB().ExecContext(ctx, "UPDATE sync_tokens SET revoked_at = 1 WHERE id = ?", adminTokenID); err != nil {
+		t.Fatal(err)
+	}
+	if valid, _ := instance.service.VerifyToken(ctx, original); valid {
+		t.Fatal("out-of-band revoked admin token still verifies")
+	}
+	if _, err := instance.service.Token(ctx); err == nil {
+		t.Fatal("Token() must not hand out a revoked admin secret")
+	} else {
+		requireCode(t, err, ipc.CodeForbidden)
+	}
+
+	recovered, err := instance.service.RotateToken(ctx)
+	if err != nil || recovered == original {
+		t.Fatalf("admin rotation must recover a revoked admin token: %q err=%v", recovered, err)
+	}
+	if valid, _ := instance.service.VerifyToken(ctx, original); valid {
+		t.Fatal("recovered admin token kept the revoked secret")
+	}
+	if valid, _ := instance.service.VerifyToken(ctx, recovered); !valid {
+		t.Fatal("recovered admin secret rejected")
+	}
+	tokens, _ := instance.service.TokenList(ctx)
+	for _, token := range tokens {
+		if token.ID == adminTokenID && token.RevokedAt != nil {
+			t.Fatal("admin rotation did not clear revoked_at")
+		}
+	}
+	plaintext, err := instance.service.Token(ctx)
+	if err != nil || plaintext != recovered {
+		t.Fatalf("Token() after recovery=%q err=%v", plaintext, err)
+	}
+	backup, _, _ := instance.db.SettingGet(ctx, settingTokenBackup)
+	if backup != recovered {
+		t.Fatalf("backup did not follow recovery rotation: %q", backup)
+	}
+}
+
+func TestTokenCommandsRequireAdminIdentity(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, false)
+	service := New(instance.db, instance.vault, WithMetadata("test", false))
+	dispatcher := ipc.NewDispatcher()
+	if err := service.RegisterCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := service.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := instance.service.TokenIssue(ctx, TokenIssueRequest{ClientID: "ordinary-client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, valid, err := instance.service.VerifyTokenIdentity(ctx, issued.Secret)
+	if err != nil || !valid || identity.Admin || identity.ClientID != "ordinary-client" {
+		t.Fatalf("identity=%+v valid=%v err=%v", identity, valid, err)
+	}
+	nonAdminCtx := WithTokenIdentity(ctx, identity)
+
+	forbidden := []struct {
+		name string
+		call ipc.Response
+	}{
+		{name: "reveal", call: dispatcher.Dispatch(nonAdminCtx, ipc.Request{Command: CommandToken}, ipc.Environment{})},
+		{name: "list", call: dispatcher.Dispatch(nonAdminCtx, ipc.Request{Command: CommandTokenList}, ipc.Environment{})},
+		{name: "issue", call: dispatcher.Dispatch(nonAdminCtx, ipc.Request{Command: CommandTokenIssue, Args: json.RawMessage(`{"args":{"clientId":"sneaky"}}`)}, ipc.Environment{})},
+		{name: "rotate", call: dispatcher.Dispatch(nonAdminCtx, ipc.Request{Command: CommandTokenRotate, Args: json.RawMessage(`{"args":{}}`)}, ipc.Environment{})},
+		{name: "rotate-by-id", call: dispatcher.Dispatch(nonAdminCtx, ipc.Request{Command: CommandTokenRotate, Args: json.RawMessage(`{"args":{"id":"` + issued.Token.ID + `"}}`)}, ipc.Environment{})},
+		{name: "revoke", call: dispatcher.Dispatch(nonAdminCtx, ipc.Request{Command: CommandTokenRevoke, Args: json.RawMessage(`{"args":{"id":"` + issued.Token.ID + `"}}`)}, ipc.Environment{})},
+	}
+	for _, test := range forbidden {
+		if test.call.OK || test.call.Error == nil || test.call.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("non-admin %s response=%+v", test.name, test.call)
+		}
+	}
+
+	adminIdentity, valid, err := instance.service.VerifyTokenIdentity(ctx, adminToken)
+	if err != nil || !valid || !adminIdentity.Admin {
+		t.Fatalf("admin identity=%+v valid=%v err=%v", adminIdentity, valid, err)
+	}
+	adminCtx := WithTokenIdentity(ctx, adminIdentity)
+	if response := dispatcher.Dispatch(adminCtx, ipc.Request{Command: CommandToken}, ipc.Environment{}); !response.OK {
+		t.Fatalf("admin reveal response=%+v", response)
+	}
+	if response := dispatcher.Dispatch(ctx, ipc.Request{Command: CommandToken}, ipc.Environment{}); !response.OK {
+		t.Fatalf("identity-free local call must stay available: %+v", response)
+	}
+	if tokens, _ := instance.service.TokenList(ctx); len(tokens) != 2 {
+		t.Fatalf("forbidden calls mutated tokens: %+v", tokens)
+	}
+	if valid, _ := instance.service.VerifyToken(ctx, issued.Secret); !valid {
+		t.Fatal("forbidden rotate-by-id still rotated the token")
+	}
+}
+
 func TestMigrationCreatesSyncTokensTable(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.OpenInMemory(ctx)

@@ -74,6 +74,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				if s.desktop {
 					return nil, nil
 				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
+				}
 				token, err := s.Token(ctx)
 				if err != nil {
 					return nil, err
@@ -88,6 +91,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 						return nil, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
 					}
 					return nil, nil
+				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
 				}
 				var (
 					token string
@@ -109,6 +115,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				if s.desktop {
 					return nil, nil
 				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
+				}
 				return s.TokenList(ctx)
 			})
 		},
@@ -116,6 +125,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			return ipc.RegisterNested(dispatcher, CommandTokenIssue, func(ctx context.Context, _ *ipc.Call, input TokenIssueRequest) (*TokenIssueResult, error) {
 				if s.desktop {
 					return nil, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
+				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return nil, err
 				}
 				result, err := s.TokenIssue(ctx, input)
 				if err != nil {
@@ -128,6 +140,9 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			return ipc.RegisterNested(dispatcher, CommandTokenRevoke, func(ctx context.Context, _ *ipc.Call, input TokenRevokeRequest) (struct{}, error) {
 				if s.desktop {
 					return struct{}{}, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
+				}
+				if err := s.requireTokenAdmin(ctx); err != nil {
+					return struct{}{}, err
 				}
 				if input.ID == "" {
 					return struct{}{}, ipc.NewError(ipc.CodeBadParam, "令牌 ID 不能为空")
