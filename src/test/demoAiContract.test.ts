@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockInvoke } from "../demo/mock";
+import { conversationMessages } from "../demo/data";
 import type {
   AiRunDto,
   AiUsageSummaryRow,
@@ -56,6 +57,105 @@ describe("demo AI 命令契约", () => {
     const events = await mockInvoke("ai_run_events", { jobId: "job-1", afterSeq: 0, limit: 50 });
     expect(Array.isArray(events)).toBe(true);
   });
+
+  it("ai_edit_resend 截断目标用户消息之后的记录并拒绝失败路径", async () => {
+    const seed = conversationMessages["conv-1"];
+    const snapshot = seed.map((m) => ({ ...m }));
+    try {
+      const before = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(before.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3", "msg-4"]);
+
+      await expect(
+        mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-2" }),
+      ).rejects.toMatchObject({ code: "invalid_argument" });
+      await expect(
+        mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-missing" }),
+      ).rejects.toMatchObject({ code: "not_found" });
+      await expect(
+        mockInvoke("ai_edit_resend", { conversationId: "conv-missing", messageId: "msg-1" }),
+      ).rejects.toMatchObject({ code: "not_found" });
+
+      expect(await mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-1" })).toBeNull();
+      const after = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(after.map((m) => m.id)).toEqual(["msg-1"]);
+    } finally {
+      seed.splice(0, seed.length, ...snapshot);
+    }
+  });
+
+  it("ai_edit_resend 取消活动 run 与 pending HITL，旧轮次不再推事件也不能继续确认", async () => {
+    const seed = conversationMessages["conv-1"];
+    const snapshot = seed.map((m) => ({ ...m }));
+    const events: { type?: string; message?: string }[] = [];
+    const channel = { onmessage: (event: { type?: string; message?: string }) => events.push(event) };
+    try {
+      const started = (await mockInvoke("ai_chat", {
+        conversationId: "conv-1",
+        message: "帮我写一下 nginx 配置",
+        channel,
+      })) as { jobId: string };
+      const deadline = Date.now() + 5000;
+      while (!events.some((e) => e.type === "confirmRequired") && Date.now() < deadline) {
+        await new Promise((r) => window.setTimeout(r, 50));
+      }
+      expect(events.some((e) => e.type === "confirmRequired")).toBe(true);
+
+      expect(await mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-1" })).toBeNull();
+      expect(events.some((e) => e.type === "error" && e.message === "已取消")).toBe(true);
+
+      await mockInvoke("ai_confirm", { jobId: started.jobId, callId: "call-x", decision: "allow" });
+      const settled = events.length;
+      await new Promise((r) => window.setTimeout(r, 600));
+      const late = events
+        .slice(settled)
+        .filter((e) => ["delta", "done", "toolResult", "fileChange", "confirmRequired"].includes(e.type ?? ""));
+      expect(late).toEqual([]);
+
+      const runs = (await mockInvoke("ai_run_list", { conversationId: "conv-1" })) as { id: string; status: string }[];
+      expect(runs.find((r) => r.id === "run-2")?.status).toBe("superseded");
+      expect(runs.find((r) => r.id === "run-1")?.status).toBe("completed");
+
+      const messages = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(messages.map((m) => m.id)).toEqual(["msg-1"]);
+    } finally {
+      seed.splice(0, seed.length, ...snapshot);
+    }
+  }, 15000);
+
+  it("ai_edit_resend 不再取消自然完成的 job，旧 channel 无 post-done 取消且 completed run 不变", async () => {
+    const seed = conversationMessages["conv-1"];
+    const snapshot = seed.map((m) => ({ ...m }));
+    const events: { type?: string; message?: string }[] = [];
+    const channel = { onmessage: (event: { type?: string; message?: string }) => events.push(event) };
+    try {
+      await mockInvoke("ai_chat", {
+        conversationId: "conv-1",
+        message: "redis 状态如何",
+        channel,
+      });
+      const deadline = Date.now() + 8000;
+      while (!events.some((e) => e.type === "done") && Date.now() < deadline) {
+        await new Promise((r) => window.setTimeout(r, 50));
+      }
+      expect(events.some((e) => e.type === "done")).toBe(true);
+
+      expect(await mockInvoke("ai_edit_resend", { conversationId: "conv-1", messageId: "msg-1" })).toBeNull();
+      expect(events.some((e) => e.type === "error" && e.message === "已取消")).toBe(false);
+
+      const settled = events.length;
+      await new Promise((r) => window.setTimeout(r, 300));
+      expect(events.length).toBe(settled);
+
+      const runs = (await mockInvoke("ai_run_list", { conversationId: "conv-1" })) as { id: string; status: string }[];
+      expect(runs.find((r) => r.id === "run-1")?.status).toBe("completed");
+      expect(runs.find((r) => r.id === "run-2")?.status).toBe("superseded");
+
+      const messages = (await mockInvoke("ai_messages", { conversationId: "conv-1" })) as { id: string }[];
+      expect(messages.map((m) => m.id)).toEqual(["msg-1"]);
+    } finally {
+      seed.splice(0, seed.length, ...snapshot);
+    }
+  }, 15000);
 
   it("ai_usage_summary 返回 usage 行", async () => {
     const rows = (await mockInvoke("ai_usage_summary")) as AiUsageSummaryRow[];

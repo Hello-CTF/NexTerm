@@ -48,6 +48,14 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_edit_resend", func(ctx context.Context, _ *ipc.Call, args struct {
+				ConversationID string `json:"conversationId"`
+				MessageID      string `json:"messageId"`
+			}) (any, error) {
+				return nil, r.EditResend(ctx, args.ConversationID, args.MessageID)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_confirm", func(ctx context.Context, call *ipc.Call, args Confirmation) (any, error) {
 				return nil, r.ConfirmStream(ctx, args, channelStreamFactory(call))
 			})

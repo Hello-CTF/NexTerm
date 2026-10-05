@@ -61,7 +61,7 @@ func TestChatIPCUsesSharedDispatcherAndChannel(t *testing.T) {
 	if err := runner.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	runtime := []string{"ai_chat", "ai_cancel", "ai_steer", "ai_confirm", "ai_answer", "ai_hitl_snapshot", "ai_hitl_events", "ai_run_list", "ai_run_events", "ai_get_permission", "ai_set_permission"}
+	runtime := []string{"ai_chat", "ai_cancel", "ai_steer", "ai_edit_resend", "ai_confirm", "ai_answer", "ai_hitl_snapshot", "ai_hitl_events", "ai_run_list", "ai_run_events", "ai_get_permission", "ai_set_permission"}
 	registered := dispatcher.Commands()
 	if len(registered) != len(runtime) {
 		t.Fatalf("agent module must register exactly the runtime surface, got %v", registered)
@@ -132,6 +132,64 @@ func TestSteerDispatchParsesWireArgs(t *testing.T) {
 	}
 }
 
+func TestEditResendDispatchParsesWireArgsAndPropagatesErrors(t *testing.T) {
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	runner := NewRunner(Config{Store: storage})
+	defer runner.Close()
+	dispatcher := ipc.NewDispatcher()
+	if err := runner.RegisterCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+
+	missing := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_edit_resend", Args: json.RawMessage(`{"conversationId":"conv-missing","messageId":"msg-missing"}`)}, ipc.Environment{})
+	if missing.OK || missing.Error == nil || !strings.Contains(missing.Error.Message, "消息不存在") {
+		t.Fatalf("missing message dispatch = %+v", missing)
+	}
+
+	conversation, err := storage.ConvCreate(context.Background(), "edit", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.MsgInsert(context.Background(), conversation.ID, "user", map[string]any{"role": "user", "content": "hello"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.MsgInsert(context.Background(), conversation.ID, "assistant", map[string]any{"role": "assistant", "content": "hi"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := storage.MsgList(context.Background(), conversation.ID)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows = %+v err=%v", rows, err)
+	}
+
+	nonUser := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_edit_resend", Args: json.RawMessage(`{"conversationId":"` + conversation.ID + `","messageId":"` + rows[1].ID + `"}`)}, ipc.Environment{})
+	if nonUser.OK || nonUser.Error == nil || !strings.Contains(nonUser.Error.Message, "只能编辑用户消息") {
+		t.Fatalf("non-user message dispatch = %+v", nonUser)
+	}
+
+	ok := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "ai_edit_resend", Args: json.RawMessage(`{"conversationId":"` + conversation.ID + `","messageId":"` + rows[0].ID + `"}`)}, ipc.Environment{})
+	if !ok.OK {
+		t.Fatalf("edit resend dispatch failed: %+v", ok.Error)
+	}
+	truncated, err := storage.MsgList(context.Background(), conversation.ID)
+	if err != nil || len(truncated) != 1 || truncated[0].ID != rows[0].ID {
+		t.Fatalf("truncated rows = %+v err=%v", truncated, err)
+	}
+
+	withoutStore := NewRunner(Config{})
+	defer withoutStore.Close()
+	bare := ipc.NewDispatcher()
+	if err := withoutStore.RegisterCommands(bare); err != nil {
+		t.Fatal(err)
+	}
+	unconfigured := bare.Dispatch(context.Background(), ipc.Request{Command: "ai_edit_resend", Args: json.RawMessage(`{"conversationId":"conv-1","messageId":"msg-1"}`)}, ipc.Environment{})
+	if unconfigured.OK || unconfigured.Error == nil || !strings.Contains(unconfigured.Error.Message, "AI 会话存储未配置") {
+		t.Fatalf("unconfigured store dispatch = %+v", unconfigured)
+	}
+}
 func TestModuleComposesAfterOwnerModules(t *testing.T) {
 	storage, err := store.OpenInMemory(context.Background())
 	if err != nil {

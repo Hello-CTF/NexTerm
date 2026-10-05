@@ -47,10 +47,10 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 162 个方法和 160 个唯一命令", () => {
+  it("保留 163 个方法和 161 个唯一命令", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(162);
-    expect(new Set(names)).toHaveProperty("size", 160);
+    expect(names).toHaveLength(163);
+    expect(new Set(names)).toHaveProperty("size", 161);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",
@@ -260,5 +260,28 @@ describe("cron IPC 线上契约", () => {
       { url: "/rpc", cmd: "cron_set_enabled", args: { sessionId: "c-1", jobId: "j-1", enabled: false } },
       { url: "/rpc", cmd: "cron_unregister", args: { sessionId: "c-1", jobId: "j-1" } },
     ]);
+  });
+});
+
+describe("ai_edit_resend 线上契约", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    installWebEnv();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("ai_edit_resend 线上 args 扁平且字段精确", async () => {
+    const calls = captureRpc();
+    const { aiApi } = await import("../ipc/commands");
+
+    await aiApi.editResend("conv-1", "msg-3");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("/rpc");
+    expect(calls[0]?.cmd).toBe("ai_edit_resend");
+    expect(calls[0]?.args).toEqual({ conversationId: "conv-1", messageId: "msg-3" });
+    expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
   });
 });
