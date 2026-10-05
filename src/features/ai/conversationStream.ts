@@ -7,9 +7,11 @@ import {
   bindRunJob,
   cancelRun,
   createConversation,
+  hydrateUserMessageIds,
   resetConversation,
   resolveInteraction,
   resolveSteerById,
+  truncateItemsAfter,
   type ApplyResult,
   type ChatItem,
   type ConversationState,
@@ -63,6 +65,8 @@ export interface ConversationStream {
   resolveInteraction(generation: number, itemId: string, nonce: string, label: string): void;
   cancelRun(generation: number, settle: boolean): void;
   reset(items?: ChatItem[]): void;
+  truncateAfterItem(itemId: string): void;
+  hydrateUserMessageIds(messages: { id?: string; role: string; content: unknown }[]): void;
   lastSeq(generation: number): number;
   hasGap(generation: number): boolean;
   hitlSeq(generation: number): number;
@@ -337,6 +341,24 @@ export function createConversationStream(
         reorderBuffers.clear();
         hitlSequences.clear();
         publish();
+      });
+    },
+    truncateAfterItem(itemId) {
+      mutate(() => {
+        const next = truncateItemsAfter(state, itemId);
+        if (next !== state) {
+          state = next;
+          publish();
+        }
+      });
+    },
+    hydrateUserMessageIds(messages) {
+      mutate(() => {
+        const next = hydrateUserMessageIds(state, messages);
+        if (next !== state) {
+          state = next;
+          publish();
+        }
       });
     },
     lastSeq: lastSeqOf,

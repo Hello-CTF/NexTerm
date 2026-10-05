@@ -35,7 +35,13 @@ export interface SubagentTimeline {
 }
 
 export type ChatItem =
-  | (ItemBase & { role: "user"; text: string; imageCount?: number; steer?: SteerDelivery })
+  | (ItemBase & {
+      role: "user";
+      text: string;
+      imageCount?: number;
+      steer?: SteerDelivery;
+      messageId?: string;
+    })
   | (ItemBase & { role: "assistant"; text: string })
   | (ItemBase & { role: "reasoning"; text: string })
   | (ItemBase & {
@@ -81,6 +87,7 @@ export type ChatItem =
       outcome: "done" | "error" | "canceled";
       text: string;
       retryable?: boolean;
+      maxIterations?: boolean;
     });
 
 export type ToolItem = Extract<ChatItem, { role: "tool" }>;
@@ -700,7 +707,7 @@ export function applyAiEvent(
       next = closeInteractions({ ...next, status: null }, generation, "本轮已出错，交互已关闭");
       next = settlePendingSteers(next, generation);
       next = settleOpenTools(next, generation, "本轮出错中断", "failed");
-      next = appendOutcome(next, generation, "error", message, ev.retryable === true);
+      next = appendOutcome(next, generation, "error", message, ev.retryable === true, ev.maxIterations === true);
       return accepted(next, "error");
     }
     case "canceled": {
@@ -786,10 +793,21 @@ function appendOutcome(
   outcome: "done" | "error" | "canceled",
   text: string,
   retryable?: boolean,
+  maxIterations?: boolean,
 ): ConversationState {
   const id = `g${generation}:outcome`;
   if (hasItem(state, id)) return state;
-  return appendItems(state, [{ id, attempt: generation, role: "outcome", outcome, text, retryable }]);
+  return appendItems(state, [
+    {
+      id,
+      attempt: generation,
+      role: "outcome",
+      outcome,
+      text,
+      retryable,
+      ...(maxIterations ? { maxIterations: true } : {}),
+    },
+  ]);
 }
 
 export function cancelRun(
@@ -814,30 +832,159 @@ export function resetConversation(
   return { ...createConversation(), seq: state.seq + items.length, items };
 }
 
+function historyField(raw: unknown, key: string): unknown {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  return (raw as Record<string, unknown>)[key];
+}
+
+function historyString(raw: unknown, key: string): string {
+  const value = historyField(raw, key);
+  return typeof value === "string" ? value : "";
+}
+
+function historyTextOf(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  const value = historyField(raw, "content");
+  return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
 export function historyToItems(
   state: ConversationState,
-  messages: { role: string; content: unknown }[],
+  messages: { id?: string; role: string; content: unknown }[],
+  skipJobIds?: ReadonlySet<string>,
 ): ChatItem[] {
   const items: ChatItem[] = [];
   let seq = state.seq;
+  const pendingTools = new Map<string, number>();
+  const jobSkipped = (raw: unknown): boolean => {
+    const jobId = historyString(raw, "jobId");
+    return jobId !== "" && skipJobIds?.has(jobId) === true;
+  };
   for (const m of messages) {
     const raw = m.content;
-    const text =
-      typeof raw === "string"
-        ? raw
-        : typeof raw === "object" && raw !== null && "content" in raw
-          ? String((raw as { content?: unknown }).content ?? "")
-          : "";
+    const structured = historyField(raw, "type");
+    if (typeof structured === "string") {
+      if (jobSkipped(raw)) continue;
+      if (structured === "toolCall") {
+        const callId = historyString(raw, "id");
+        const name = historyString(raw, "name");
+        pendingTools.set(callId, items.length);
+        items.push({
+          id: `h${seq++}`,
+          attempt: null,
+          role: "tool",
+          callId,
+          name,
+          display: name,
+        });
+        continue;
+      }
+      if (structured === "toolResult") {
+        const callId = historyString(raw, "id");
+        const exitCode = historyField(raw, "exitCode");
+        const patch = {
+          summary: historyString(raw, "summary"),
+          text: historyString(raw, "text"),
+          ok: historyField(raw, "ok") === true,
+          exitCode: typeof exitCode === "number" && Number.isFinite(exitCode) ? exitCode : null,
+          panic: historyField(raw, "panic") === true,
+        };
+        const pending = pendingTools.get(callId);
+        if (pending !== undefined) {
+          pendingTools.delete(callId);
+          items[pending] = { ...(items[pending] as ToolItem), ...patch };
+          continue;
+        }
+        const tool = historyString(raw, "tool");
+        items.push({
+          id: `h${seq++}`,
+          attempt: null,
+          role: "tool",
+          callId,
+          name: tool,
+          display: patch.summary || tool,
+          ...patch,
+        });
+        continue;
+      }
+      if (structured === "fileChange") {
+        items.push({
+          id: `h${seq++}`,
+          attempt: null,
+          role: "diff",
+          path: historyString(raw, "path"),
+          before: historyString(raw, "before"),
+          after: historyString(raw, "after"),
+        });
+        continue;
+      }
+      if (structured === "planSubmitted") {
+        items.push({ id: `h${seq++}`, attempt: null, role: "plan", text: historyString(raw, "plan") });
+        continue;
+      }
+      continue;
+    }
+    const text = historyTextOf(raw);
     if (!text) continue;
     if (m.role === "user") {
-      const n =
-        typeof raw === "object" && raw !== null && "imageCount" in raw
-          ? Number((raw as { imageCount?: unknown }).imageCount ?? 0)
-          : 0;
-      items.push({ id: `h${seq++}`, attempt: null, role: "user", text, imageCount: n || undefined });
+      const n = Number(historyField(raw, "imageCount") ?? 0);
+      items.push({
+        id: `h${seq++}`,
+        attempt: null,
+        role: "user",
+        text,
+        imageCount: n || undefined,
+        ...(typeof m.id === "string" && m.id ? { messageId: m.id } : {}),
+      });
     } else if (m.role === "assistant") {
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
     }
   }
   return items;
+}
+
+export function truncateItemsAfter(state: ConversationState, itemId: string): ConversationState {
+  const index = state.items.findIndex((item) => item.id === itemId);
+  if (index < 0 || index === state.items.length - 1) return state;
+  const items = state.items.slice(0, index + 1);
+  return {
+    ...state,
+    items,
+    attempts: state.attempts.filter((attempt) =>
+      items.some((item) => item.attempt === attempt.generation),
+    ),
+    status: null,
+    todos: [],
+    usage: null,
+  };
+}
+
+export function hydrateUserMessageIds(
+  state: ConversationState,
+  messages: { id?: string; role: string; content: unknown }[],
+): ConversationState {
+  const known = new Set(
+    state.items.map((item) => (item.role === "user" ? item.messageId : undefined)),
+  );
+  const rowsByJob = new Map<string, string[]>();
+  for (const m of messages) {
+    if (m.role !== "user" || typeof m.id !== "string" || !m.id || known.has(m.id)) continue;
+    const jobId = historyString(m.content, "jobId");
+    if (!jobId) continue;
+    const queue = rowsByJob.get(jobId);
+    if (queue) queue.push(m.id);
+    else rowsByJob.set(jobId, [m.id]);
+  }
+  if (rowsByJob.size === 0) return state;
+  let changed = false;
+  const items = state.items.map((item) => {
+    if (item.role !== "user" || item.messageId || item.attempt === null || item.steer) return item;
+    const jobId = attemptOf(state, item.attempt)?.jobId;
+    if (!jobId) return item;
+    const nextId = rowsByJob.get(jobId)?.shift();
+    if (!nextId) return item;
+    changed = true;
+    return { ...item, messageId: nextId };
+  });
+  return changed ? { ...state, items } : state;
 }
