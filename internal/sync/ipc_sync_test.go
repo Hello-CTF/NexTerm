@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -42,7 +43,7 @@ func TestCommandRegistrationPeerSurfaceAndLifecycle(t *testing.T) {
 	}
 	wantCommands := []string{
 		CommandBundleRead, CommandBundleWrite, CommandDigest, CommandExport, CommandImport, CommandLinkGet, CommandLinkSet, CommandOrigin,
-		CommandPull, CommandPush, CommandRemoteDigest, CommandToken, CommandTokenRotate,
+		CommandPull, CommandPush, CommandRemoteDigest, CommandToken, CommandTokenIssue, CommandTokenList, CommandTokenRevoke, CommandTokenRotate,
 	}
 	if got := dispatcher.Commands(); !reflect.DeepEqual(got, wantCommands) {
 		t.Fatalf("full commands=%v want=%v", got, wantCommands)
@@ -101,5 +102,63 @@ func TestCommandRegistrationPeerSurfaceAndLifecycle(t *testing.T) {
 	response = desktopDispatcher.Dispatch(ctx, ipc.Request{Command: CommandRemoteDigest}, ipc.Environment{})
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("desktop command should reach configured-client validation: %+v", response)
+	}
+}
+
+func TestBundlePasswordAndPlaintextWarningFlowThroughIPC(t *testing.T) {
+	instance := newTestInstance(t, false)
+	dispatcher := ipc.NewDispatcher()
+	if err := instance.service.RegisterCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	path := t.TempDir() + "/bundle-nxbm.json"
+
+	write := dispatchJSON(t, dispatcher, CommandBundleWrite, `{"args":{"path":`+jsonString(path)+`,"content":"{\"protocol\":1}","password":"bundle-pass-中文"}}`)
+	if !write.OK {
+		t.Fatalf("encrypted write response=%+v", write)
+	}
+	var writeResult BundleWriteResult
+	if err := json.Unmarshal(write.Data, &writeResult); err != nil {
+		t.Fatal(err)
+	}
+	if !writeResult.Encrypted || writeResult.Warning != "" {
+		t.Fatalf("encrypted write result=%+v", writeResult)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if DetectBundleFormat(data) != BundleFormatEncrypted {
+		t.Fatalf("bundle file is not an encrypted container: %q", data[:16])
+	}
+
+	read := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(path)+`,"password":"bundle-pass-中文"}}`)
+	if !read.OK {
+		t.Fatalf("encrypted read response=%+v", read)
+	}
+	var text string
+	if err := json.Unmarshal(read.Data, &text); err != nil || text != `{"protocol":1}` {
+		t.Fatalf("encrypted read text=%q err=%v", text, err)
+	}
+	wrong := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(path)+`,"password":"wrong"}}`)
+	if wrong.OK || wrong.Error == nil || wrong.Error.Code != ipc.CodeDecrypt {
+		t.Fatalf("wrong-password read response=%+v", wrong)
+	}
+
+	plainPath := t.TempDir() + "/bundle-plain.json"
+	plain := dispatchJSON(t, dispatcher, CommandBundleWrite, `{"args":{"path":`+jsonString(plainPath)+`,"content":"{\"protocol\":1}"}}`)
+	if !plain.OK {
+		t.Fatalf("plaintext write response=%+v", plain)
+	}
+	var plainResult BundleWriteResult
+	if err := json.Unmarshal(plain.Data, &plainResult); err != nil {
+		t.Fatal(err)
+	}
+	if plainResult.Encrypted || plainResult.Warning == "" {
+		t.Fatalf("plaintext write must warn explicitly: %+v", plainResult)
+	}
+	legacy := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(plainPath)+`}}`)
+	if !legacy.OK {
+		t.Fatalf("old-format read must stay available: %+v", legacy)
 	}
 }

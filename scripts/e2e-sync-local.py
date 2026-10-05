@@ -3,8 +3,10 @@
 
 Builds CGO_ENABLED=0 by default, uses independent data directories and master
 keys, exports from one real server into another, verifies idempotence,
-re-encryption, tombstones and version rejection, then restarts the peer in
---sync-only mode. There are no Rust fixtures and no skip-as-pass paths.
+re-encryption, tombstones, snippet sync and version rejection, exercises the
+per-client token lifecycle (issue, independent rotation, revocation, expiry,
+purpose scoping), then restarts the peer in --sync-only mode. There are no
+Rust fixtures and no skip-as-pass paths.
 
     python3 scripts/e2e-sync-local.py
     python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-amd64 --no-build
@@ -106,6 +108,7 @@ class Instance:
                 "NEXTERM_DATA_DIR": str(self.data_dir),
                 "NEXTERM_LISTEN": f"{host}:{self.port}",
                 "NEXTERM_MASTER_KEY": self.master_key,
+                "NEXTERM_AUTH": "loopback",
             }
         )
         environment.update(env_extra or {})
@@ -202,6 +205,15 @@ def synthetic_bundle() -> dict:
             "deletedAt": None,
         }],
         "creds": [{"id": credential_id, "name": "go-e2e-root", "kind": "password", "secret": "s3cret-中文-go-e2e"}],
+        "snippets": [{
+            "id": synthetic_id(),
+            "groupId": None,
+            "name": "go-e2e-snippet",
+            "body": "echo snippet-中文",
+            "sort": 1,
+            "createdAt": now,
+            "updatedAt": now,
+        }],
     }
 
 
@@ -233,7 +245,47 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         status, envelope = call(b.port, "sync_digest", token=token_b, route="/sync/rpc")
         check("B token admits B peer RPC", status == 200 and envelope.get("ok") is True, envelope)
 
-        print("[3] Real A export to real B import with credential re-encryption", flush=True)
+        print("[3] Per-client token lifecycle on B", flush=True)
+        issued = data(b.port, "sync_token_issue", {"args": {"clientId": "e2e-desktop-2", "purpose": "sync"}})
+        token2 = issued.get("token", {})
+        secret2 = issued.get("secret", "")
+        check("issued token carries client id and purpose", token2.get("clientId") == "e2e-desktop-2" and token2.get("purpose") == "sync" and bool(secret2), issued)
+        status, envelope = call(b.port, "sync_digest", token=secret2, route="/sync/rpc")
+        check("second client token admits peer RPC", status == 200 and envelope.get("ok") is True, envelope)
+        listed = data(b.port, "sync_token_list")
+        listed_json = json.dumps(listed)
+        check("token list shows admin and the new client", token2.get("id") in {entry.get("id") for entry in listed} and len(listed) >= 2, listed)
+        check("token list never carries secret material", secret2 not in listed_json and token_b not in listed_json, listed)
+        status, envelope = call(b.port, "sync_digest", token=token_b, route="/sync/rpc")
+        check("admin token still admitted after issuing", status == 200 and envelope.get("ok") is True, envelope)
+
+        rotated2 = str(data(b.port, "sync_token_rotate", {"args": {"id": token2.get("id")}}))
+        check("client token rotation returns a fresh secret", bool(rotated2) and rotated2 != secret2)
+        status, _ = call(b.port, "sync_digest", token=secret2, route="/sync/rpc")
+        check("rotated-out client token is rejected without grace", status == 401, status)
+        status, envelope = call(b.port, "sync_digest", token=rotated2, route="/sync/rpc")
+        check("rotated client token is admitted", status == 200 and envelope.get("ok") is True, envelope)
+        status, envelope = call(b.port, "sync_digest", token=token_b, route="/sync/rpc")
+        check("client rotation leaves the admin token intact", status == 200 and envelope.get("ok") is True, envelope)
+
+        data(b.port, "sync_token_revoke", {"args": {"id": token2.get("id")}})
+        status, _ = call(b.port, "sync_digest", token=rotated2, route="/sync/rpc")
+        check("revoked client token is rejected", status == 401, status)
+        status, envelope = call(b.port, "sync_digest", token=token_b, route="/sync/rpc")
+        check("revoking one client leaves the admin token intact", status == 200 and envelope.get("ok") is True, envelope)
+
+        short = data(b.port, "sync_token_issue", {"args": {"clientId": "e2e-short-lived", "ttlMs": 200}})
+        status, envelope = call(b.port, "sync_digest", token=short.get("secret"), route="/sync/rpc")
+        check("short-lived token admitted before expiry", status == 200 and envelope.get("ok") is True, envelope)
+        time.sleep(0.4)
+        status, _ = call(b.port, "sync_digest", token=short.get("secret"), route="/sync/rpc")
+        check("expired token is rejected", status == 401, status)
+
+        foreign = data(b.port, "sync_token_issue", {"args": {"clientId": "e2e-metrics", "purpose": "metrics"}})
+        status, _ = call(b.port, "sync_digest", token=foreign.get("secret"), route="/sync/rpc")
+        check("token of a foreign purpose is rejected on sync routes", status == 401, status)
+
+        print("[4] Real A export to real B import with credential re-encryption", flush=True)
         seed = synthetic_bundle()
         asset_id = seed["assets"][0]["id"]
         created_a = data(a.port, "sync_import", {"args": {"bundle": seed, "force": False}})
@@ -242,13 +294,16 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         check("A export contains one asset/group/credential", tuple(len(exported_a.get(key, [])) for key in ("assets", "groups", "creds")) == (1, 1, 1), exported_a)
         created_b = data(b.port, "sync_import", {"args": {"bundle": exported_a, "force": False}}, token_b, "/sync/rpc")
         check("B creates one asset/group/credential", (created_b.get("assetsCreated"), created_b.get("groupsCreated"), created_b.get("credsCreated")) == (1, 1, 1), created_b)
+        check("B creates the pushed snippet", created_b.get("snippetsCreated") == 1, created_b)
         exported_b = data(b.port, "sync_export", {"args": {"assetIds": [asset_id], "withCreds": True}}, token_b, "/sync/rpc")
         check("B can decrypt and re-export the secret with its own master key", exported_b["creds"][0].get("secret") == seed["creds"][0]["secret"], exported_b)
         check("Go options JSON survives as JSON text", json.loads(exported_b["assets"][0]["optionsJson"]) == {"keepalive": 30}, exported_b["assets"][0])
+        check("snippet body survives the round trip", exported_b.get("snippets", [{}])[0].get("body") == "echo snippet-中文", exported_b.get("snippets"))
 
-        print("[4] Idempotent update and version gate", flush=True)
+        print("[5] Idempotent update and version gate", flush=True)
         repeated = data(b.port, "sync_import", {"args": {"bundle": exported_a, "force": False}}, token_b, "/sync/rpc")
         check("repeat import updates rather than duplicates", repeated.get("assetsCreated") == 0 and repeated.get("assetsUpdated") == 1, repeated)
+        check("repeat import updates the snippet rather than duplicating", repeated.get("snippetsCreated") == 0 and repeated.get("snippetsUpdated") == 1, repeated)
         digest = data(b.port, "sync_digest", token=token_b, route="/sync/rpc")
         check("digest still has exactly one copy", len([entry for entry in digest.get("assets", []) if entry.get("id") == asset_id]) == 1, digest)
         forged = dict(exported_a)
@@ -256,7 +311,7 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         status, envelope = call(b.port, "sync_import", {"args": {"bundle": forged, "force": True}}, token_b, "/sync/rpc")
         check("unsupported protocol is rejected", status == 200 and envelope.get("ok") is False and envelope.get("error", {}).get("code") == "unsupported", envelope)
 
-        print("[5] Tombstone propagates in the reverse direction", flush=True)
+        print("[6] Tombstone propagates in the reverse direction", flush=True)
         tombstone = dict(exported_b)
         tombstone["creds"] = []
         tombstone["exportedAt"] = int(time.time() * 1000) + 1000
@@ -267,7 +322,7 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
         deleted_a = data(a.port, "sync_export", {"args": {"assetIds": [asset_id], "withCreds": False}})
         check("A retains the propagated deletion marker", deleted_a["assets"][0].get("deletedAt") is not None, deleted_a)
 
-        print("[6] Restart B as sync-only and verify the reduced attack surface", flush=True)
+        print("[7] Restart B as sync-only and verify the reduced attack surface", flush=True)
         b.start(sync_only=True)
         sync_health = b.health()
         check("sync-only health reports exactly three commands", sync_health.get("syncOnly") is True and sync_health.get("commands") == 3, sync_health)
@@ -285,7 +340,7 @@ def run_acceptance(binary: pathlib.Path, work: pathlib.Path) -> None:
             status = 200
         check("sync-only does not serve a browser UI", status == 404, status)
 
-        print("[7] Exposed listener requires the token everywhere except healthz", flush=True)
+        print("[8] Exposed listener requires the token everywhere except healthz", flush=True)
         c.start(host="0.0.0.0", env_extra={"NEXTERM_GATEWAY_AUTH": "e2e-gateway-secret"})
         token_c = c.cli_token()
         check("CLI provisions the exposed instance token", bool(token_c))

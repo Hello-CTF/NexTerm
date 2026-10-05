@@ -3,9 +3,6 @@ package sync
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"sort"
@@ -19,9 +16,10 @@ import (
 )
 
 const (
-	settingOrigin = "sync.origin"
-	settingToken  = "sync.token"
-	settingLink   = "sync.link"
+	settingOrigin      = "sync.origin"
+	settingToken       = "sync.token"
+	settingTokenBackup = "sync.token.plaintext_backup"
+	settingLink        = "sync.link"
 )
 
 type Option func(*Service)
@@ -99,24 +97,19 @@ func (s *Service) originLocked(ctx context.Context) (string, error) {
 func (s *Service) Token(ctx context.Context) (string, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	return s.tokenLocked(ctx)
-}
-
-func (s *Service) tokenLocked(ctx context.Context) (string, error) {
-	token, found, err := s.store.SettingGet(ctx, settingToken)
-	if err != nil {
+	if err := s.ensureAdminRowLocked(ctx); err != nil {
 		return "", err
 	}
-	if found && token != "" {
-		return token, nil
-	}
-	return s.rotateTokenLocked(ctx)
+	return s.adminTokenPlaintextLocked(ctx)
 }
 
 func (s *Service) RotateToken(ctx context.Context) (string, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	return s.rotateTokenLocked(ctx)
+	if err := s.ensureAdminRowLocked(ctx); err != nil {
+		return "", err
+	}
+	return s.rotateTokenByIDLocked(ctx, adminTokenID)
 }
 
 func (s *Service) SyncToken(ctx context.Context) (string, error) {
@@ -125,31 +118,6 @@ func (s *Service) SyncToken(ctx context.Context) (string, error) {
 
 func (s *Service) RotateSyncToken(ctx context.Context) (string, error) {
 	return s.RotateToken(ctx)
-}
-
-func (s *Service) rotateTokenLocked(ctx context.Context) (string, error) {
-	var random [32]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return "", ipc.WrapError(ipc.CodeCrypto, "无法生成同步令牌", err)
-	}
-	token := base64.RawURLEncoding.EncodeToString(random[:])
-	if err := s.store.SettingSet(ctx, settingToken, token); err != nil {
-		return "", err
-	}
-	return token, nil
-}
-
-func (s *Service) VerifyToken(ctx context.Context, presented string) (bool, error) {
-	expected, found, err := s.store.SettingGet(ctx, settingToken)
-	if err != nil {
-		return false, err
-	}
-	if !found || expected == "" || presented == "" {
-		return false, nil
-	}
-	expectedDigest := sha256.Sum256([]byte(expected))
-	presentedDigest := sha256.Sum256([]byte(presented))
-	return subtle.ConstantTimeCompare(expectedDigest[:], presentedDigest[:]) == 1, nil
 }
 
 func (s *Service) LinkGet(ctx context.Context) (Link, error) {
@@ -161,7 +129,11 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 	if !found || strings.TrimSpace(value) == "" {
 		return link, nil
 	}
-	if err := json.Unmarshal([]byte(value), &link); err != nil {
+	plaintext, err := s.revealSettingSecret(ctx, value)
+	if err != nil {
+		return Link{}, err
+	}
+	if err := json.Unmarshal([]byte(plaintext), &link); err != nil {
 		return Link{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
 	}
 	link.URL = strings.TrimSpace(link.URL)
@@ -201,7 +173,11 @@ func (s *Service) saveLink(ctx context.Context, link Link) error {
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
 	}
-	return s.store.SettingSet(ctx, settingLink, string(encoded))
+	protected, err := s.protectSettingSecret(ctx, string(encoded))
+	if err != nil {
+		return err
+	}
+	return s.store.SettingSet(ctx, settingLink, protected)
 }
 
 func (s *Service) recordProbe(ctx context.Context, probeErr error) {
