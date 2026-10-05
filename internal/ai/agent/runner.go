@@ -469,6 +469,7 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		current.finish(answer, turns, total, terminalErr)
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
+		r.maybeGenerateConversationTitle(current)
 		r.cleanup(current)
 	})
 }
