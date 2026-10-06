@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type collectSink struct {
@@ -467,3 +469,14 @@ type commandStreamAdapter struct {
 }
 
 func (s *commandStreamAdapter) Wait(context.Context) (int, error) { return 0, nil }
+func (s *commandStreamAdapter) NextOutput(context.Context) (base.OutputEvent, error) {
+	buffer := make([]byte, 32*1024)
+	count, err := s.reader.Read(buffer)
+	if count > 0 {
+		return base.OutputEvent{Data: buffer[:count]}, nil
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) {
+		return base.OutputEvent{}, io.EOF
+	}
+	return base.OutputEvent{}, err
+}

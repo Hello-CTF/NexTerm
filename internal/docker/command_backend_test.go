@@ -3,8 +3,11 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type recordingRunner struct {
@@ -142,13 +145,27 @@ type bufferCommandStream struct {
 	*strings.Reader
 }
 
+func (s *bufferCommandStream) NextOutput(context.Context) (base.OutputEvent, error) {
+	if s.Reader == nil {
+		return base.OutputEvent{}, io.EOF
+	}
+	data, _ := io.ReadAll(s.Reader)
+	s.Reader = nil
+	if len(data) == 0 {
+		return base.OutputEvent{}, io.EOF
+	}
+	return base.OutputEvent{Data: data}, nil
+}
 func (s *bufferCommandStream) Write(p []byte) (int, error)              { return len(p), nil }
 func (s *bufferCommandStream) Close() error                             { return nil }
 func (s *bufferCommandStream) CloseWrite() error                        { return nil }
 func (s *bufferCommandStream) Resize(context.Context, uint, uint) error { return nil }
 func (s *bufferCommandStream) Wait(context.Context) (int, error)        { return 0, nil }
 
-func (s *fakeCommandStream) Read([]byte) (int, error)                 { return 0, nil }
+func (s *fakeCommandStream) Read([]byte) (int, error) { return 0, nil }
+func (s *fakeCommandStream) NextOutput(context.Context) (base.OutputEvent, error) {
+	return base.OutputEvent{}, io.EOF
+}
 func (s *fakeCommandStream) Write(p []byte) (int, error)              { return len(p), nil }
 func (s *fakeCommandStream) Close() error                             { return nil }
 func (s *fakeCommandStream) CloseWrite() error                        { return nil }

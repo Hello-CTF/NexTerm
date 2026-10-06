@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"sync/atomic"
 )
 
 type streamKind int
@@ -23,7 +22,6 @@ type streamRegistry struct {
 	streams map[string]*managedStream
 	epochs  map[string]uint64
 	closed  bool
-	counter atomic.Uint64
 }
 
 func newStreamRegistry() *streamRegistry {
@@ -32,10 +30,8 @@ func newStreamRegistry() *streamRegistry {
 
 func (r *streamRegistry) nextID() string {
 	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err == nil {
-		return hex.EncodeToString(bytes[:])
-	}
-	return fmt.Sprintf("docker-%d", r.counter.Add(1))
+	_, _ = rand.Read(bytes[:])
+	return hex.EncodeToString(bytes[:])
 }
 
 func (r *streamRegistry) token(sessionID string) uint64 {

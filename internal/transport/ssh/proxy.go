@@ -49,11 +49,7 @@ func dialSSH(ctx context.Context, cfg Config, host string, port int) (net.Conn, 
 		if err != nil {
 			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("configure SOCKS5 proxy: %w", err)}
 		}
-		contextDialer, ok := d.(proxy.ContextDialer)
-		if !ok {
-			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("configure SOCKS5 proxy: context-aware dialing unsupported")}
-		}
-		conn, err := contextDialer.DialContext(ctx, "tcp", target)
+		conn, err := d.(proxy.ContextDialer).DialContext(ctx, "tcp", target)
 		if err != nil {
 			return nil, &proxyError{endpoint: proxyEndpoint(u), err: fmt.Errorf("SOCKS5 connect: %w", err)}
 		}
