@@ -10,6 +10,51 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
+func TestSyncTombstoneTriggerMillisecondPrecision(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+
+	// 同秒内更新并删除: 触发器必须写入毫秒级 deleted_at, 且不小于 updated_at。
+	groupID := ids.New()
+	if _, err := db.GroupUpsert(ctx, groupID, nil, "precision", 0, 1, ids.NowMS()); err != nil {
+		t.Fatal(err)
+	}
+	group, err := db.GroupGet(ctx, groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.GroupDelete(ctx, groupID); err != nil {
+		t.Fatal(err)
+	}
+	var groupDeletedAt int64
+	if err := db.DB().QueryRowContext(ctx, "SELECT deleted_at FROM sync_tombstone WHERE id=?", groupID).Scan(&groupDeletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if groupDeletedAt < group.UpdatedAt {
+		t.Fatalf("group tombstone deleted_at=%d < updated_at=%d (second-precision trigger)", groupDeletedAt, group.UpdatedAt)
+	}
+
+	snippetID := ids.New()
+	if _, err := db.DB().ExecContext(ctx, `INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at) VALUES(?,NULL,?,?,0,?,?)`,
+		snippetID, "precision", "body", 1, ids.NowMS()); err != nil {
+		t.Fatal(err)
+	}
+	var snippetUpdatedAt int64
+	if err := db.DB().QueryRowContext(ctx, "SELECT updated_at FROM snippet WHERE id=?", snippetID).Scan(&snippetUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SnippetDelete(ctx, snippetID); err != nil {
+		t.Fatal(err)
+	}
+	var snippetDeletedAt int64
+	if err := db.DB().QueryRowContext(ctx, "SELECT deleted_at FROM sync_tombstone WHERE id=?", snippetID).Scan(&snippetDeletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if snippetDeletedAt < snippetUpdatedAt {
+		t.Fatalf("snippet tombstone deleted_at=%d < updated_at=%d (second-precision trigger)", snippetDeletedAt, snippetUpdatedAt)
+	}
+}
+
 func TestTranscriptSyncOptInRules(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
@@ -42,6 +87,15 @@ func TestTranscriptSyncOptInRules(t *testing.T) {
 	activeRow, err := db.TranscriptGet(ctx, endedID)
 	if err != nil || activeRow.SyncOptIn {
 		t.Fatalf("opt-out failed: %+v err=%v", activeRow, err)
+	}
+
+	// opt-out 后重新 opt-in 必须在 store 层被拒绝, 不能留下重推循环。
+	if err := db.TranscriptSetSyncOptIn(ctx, endedID, true); err == nil {
+		t.Fatal("re-opt-in after opt-out must be rejected")
+	}
+	stillOptedOut, err := db.TranscriptGet(ctx, endedID)
+	if err != nil || stillOptedOut.SyncOptIn {
+		t.Fatalf("rejected re-opt-in must not set the flag: %+v err=%v", stillOptedOut, err)
 	}
 }
 

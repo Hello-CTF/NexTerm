@@ -23,6 +23,8 @@ type testSyncServer struct {
 	*httptest.Server
 	db       *store.Store
 	accounts *account.Accounts
+
+	failNextPushWith409 bool
 }
 
 func testCSRFToken(sessionID string) string {
@@ -44,12 +46,24 @@ func newTestSyncServer(t *testing.T) *testSyncServer {
 	mux.HandleFunc("POST /auth/login", server.serveLogin)
 	mux.Handle("GET /auth/me", server.requireSession(http.HandlerFunc(server.serveMe)))
 	mux.Handle("GET /auth/dek", server.requireSession(http.HandlerFunc(server.serveDEK)))
-	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(NewObjectHandler(db.DB()))))
+	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.DB())))))
 	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.DB())))
 	mux.Handle("POST /sync/v2/ids", server.requireSession(NewObjectHandler(db.DB())))
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Server.Close)
 	return server
+}
+
+// maybeFailPush 让下一次推送返回 409, 用于验证引擎的真实冲突重试路径。
+func (s *testSyncServer) maybeFailPush(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.failNextPushWith409 {
+			s.failNextPushWith409 = false
+			writeSyncError(w, http.StatusConflict, ipc.NewError(ipc.CodeForbidden, "同步头不一致"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *testSyncServer) serveLogin(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +221,8 @@ func putDeviceCredential(t *testing.T, device *testDevice, id, name, secret stri
 func putDeviceSnippet(t *testing.T, device *testDevice, id, name, body string, updatedAt int64) {
 	t.Helper()
 	if _, err := device.db.DB().ExecContext(context.Background(),
-		"INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at) VALUES(?,NULL,?,?,0,?,?)",
+		`INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at) VALUES(?,NULL,?,?,0,?,?)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name, body=excluded.body, updated_at=excluded.updated_at`,
 		id, name, body, 1, updatedAt); err != nil {
 		t.Fatal(err)
 	}

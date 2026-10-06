@@ -127,7 +127,7 @@ func (c *remoteClient) dekEnvelopes(ctx context.Context) (*vault.UserDEKEnvelope
 
 func (c *remoteClient) push(ctx context.Context, knownHead string, objects []WireObject) (*PushResponse, error) {
 	var response PushResponse
-	status, err := c.post(ctx, "/sync/v2/push", PushRequest{Protocol: ProtocolVersion, KnownHead: knownHead, Objects: objects}, &response, true)
+	status, rpcErr, err := c.post(ctx, "/sync/v2/push", PushRequest{Protocol: ProtocolVersion, KnownHead: knownHead, Objects: objects}, &response, true)
 	if err != nil {
 		return nil, err
 	}
@@ -139,13 +139,13 @@ func (c *remoteClient) push(ctx context.Context, knownHead string, objects []Wir
 	case http.StatusConflict:
 		return nil, errHeadMismatch
 	default:
-		return nil, ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端同步服务返回 HTTP %d", status))
+		return nil, remoteStatusError(status, rpcErr)
 	}
 }
 
 func (c *remoteClient) pull(ctx context.Context, sinceSeq int64, ids []string, maxBytes int64) (*PullResponse, error) {
 	var response PullResponse
-	status, err := c.post(ctx, "/sync/v2/pull", PullRequest{
+	status, rpcErr, err := c.post(ctx, "/sync/v2/pull", PullRequest{
 		Protocol: ProtocolVersion, SinceSeq: sinceSeq, IDs: ids, MaxBytes: maxBytes,
 	}, &response, false)
 	if err != nil {
@@ -157,13 +157,13 @@ func (c *remoteClient) pull(ctx context.Context, sinceSeq int64, ids []string, m
 	case http.StatusUnauthorized:
 		return nil, errSessionExpired
 	default:
-		return nil, ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端同步服务返回 HTTP %d", status))
+		return nil, remoteStatusError(status, rpcErr)
 	}
 }
 
 func (c *remoteClient) ids(ctx context.Context) (*IDsResponse, error) {
 	var response IDsResponse
-	status, err := c.post(ctx, "/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion}, &response, false)
+	status, rpcErr, err := c.post(ctx, "/sync/v2/ids", IDsRequest{Protocol: ProtocolVersion}, &response, false)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func (c *remoteClient) ids(ctx context.Context) (*IDsResponse, error) {
 	case http.StatusUnauthorized:
 		return nil, errSessionExpired
 	default:
-		return nil, ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端同步服务返回 HTTP %d", status))
+		return nil, remoteStatusError(status, rpcErr)
 	}
 }
 
@@ -182,30 +182,37 @@ func (c *remoteClient) get(ctx context.Context, path string, out any) error {
 	if err != nil {
 		return ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
 	}
-	return c.do(request, out, false)
+	status, rpcErr, err := c.do(request, out, false)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized:
+		return errSessionExpired
+	default:
+		return remoteStatusError(status, rpcErr)
+	}
 }
 
-func (c *remoteClient) post(ctx context.Context, path string, payload, out any, csrf bool) (int, error) {
+func (c *remoteClient) post(ctx context.Context, path string, payload, out any, csrf bool) (int, *ipc.Error, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 0, ipc.WrapError(ipc.CodeInternal, "无法编码同步请求", err)
+		return 0, nil, ipc.WrapError(ipc.CodeInternal, "无法编码同步请求", err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
 	if err != nil {
-		return 0, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
+		return 0, nil, ipc.WrapError(ipc.CodeBadParam, "同步链接不合法", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	if err := c.do(request, out, csrf); err != nil {
-		if errors.Is(err, errSessionExpired) {
-			return http.StatusUnauthorized, nil
-		}
-		return 0, err
-	}
-	return http.StatusOK, nil
+	return c.do(request, out, csrf)
 }
 
-func (c *remoteClient) do(request *http.Request, out any, csrf bool) error {
+// do 执行请求并保留 HTTP 状态: err 仅覆盖传输层失败, 业务失败以状态码+rpcErr 返回,
+// 保证 409 等语义状态能到达调用方的映射逻辑(如 errHeadMismatch)。
+func (c *remoteClient) do(request *http.Request, out any, csrf bool) (int, *ipc.Error, error) {
 	if c.cookieToken != "" {
 		request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: c.cookieToken})
 	}
@@ -214,31 +221,35 @@ func (c *remoteClient) do(request *http.Request, out any, csrf bool) error {
 	}
 	response, err := syncHTTPClient(c.insecure).Do(request)
 	if err != nil {
-		return ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
+		return 0, nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode == http.StatusUnauthorized {
-		return errSessionExpired
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxSyncObjectBytes*2+1))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxPullWireBytes+(1<<20)+1))
 	if err != nil {
-		return ipc.WrapError(ipc.CodeDisconnected, "读取远端同步响应失败", err)
+		return 0, nil, ipc.WrapError(ipc.CodeDisconnected, "读取远端同步响应失败", err)
 	}
 	if response.StatusCode != http.StatusOK {
 		var failure struct {
 			Error *ipc.Error `json:"error"`
 		}
 		if err := json.Unmarshal(raw, &failure); err == nil && failure.Error != nil {
-			return ipc.NewError(failure.Error.Code, "远端同步失败: "+failure.Error.Message)
+			return response.StatusCode, failure.Error, nil
 		}
-		return ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端同步服务返回 HTTP %d", response.StatusCode))
+		return response.StatusCode, nil, nil
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return ipc.WrapError(ipc.CodeInternal, "远端同步响应数据形状不合法", err)
+			return 0, nil, ipc.WrapError(ipc.CodeInternal, "远端同步响应数据形状不合法", err)
 		}
 	}
-	return nil
+	return response.StatusCode, nil, nil
+}
+
+func remoteStatusError(status int, rpcErr *ipc.Error) error {
+	if rpcErr != nil {
+		return ipc.NewError(rpcErr.Code, "远端同步失败: "+rpcErr.Message)
+	}
+	return ipc.NewError(ipc.CodeInternal, fmt.Sprintf("远端同步服务返回 HTTP %d", status))
 }
 
 func accountRouteError(response *http.Response) error {

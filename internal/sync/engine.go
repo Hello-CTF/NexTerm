@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxPullBytes      = 128 << 20
+	maxPullBytes      = maxPullWireBytes
 	maxPushBatchBytes = 32 << 20
 	maxSyncAttempts   = 3
 )
@@ -347,17 +347,25 @@ ON CONFLICT(id) DO UPDATE SET deleted_at = max(deleted_at, excluded.deleted_at)`
 	return nil
 }
 
-// snippetUpsert 与 store.GroupUpsert 同款语义: 按 ID 幂等写入并保留对端修订号。
+// snippetUpsert 与 store.GroupUpsert 同款语义: 按 ID 幂等写入并保留对端修订号,
+// 并在同一事务清除同 ID 的删除墓碑: 较新片段胜过旧墓碑后不得留下可回滚对象的墓碑。
 func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow) error {
-	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, name=excluded.name, body=excluded.body,
-sort=excluded.sort, updated_at=excluded.updated_at`,
-		row.ID, row.GroupID, row.Name, row.Body, row.Sort, row.CreatedAt, row.UpdatedAt)
+	tx, err := e.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO snippet(id, group_id, name, body, sort, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET group_id=excluded.group_id, name=excluded.name, body=excluded.body,
+sort=excluded.sort, updated_at=excluded.updated_at`,
+		row.ID, row.GroupID, row.Name, row.Body, row.Sort, row.CreatedAt, row.UpdatedAt); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", row.ID); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return tx.Commit()
 }
 
 func isNotFound(err error) bool {

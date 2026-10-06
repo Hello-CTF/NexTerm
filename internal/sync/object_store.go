@@ -23,7 +23,14 @@ const (
 	maxPushObjects   = 4096
 	maxPullIDLookup  = 4096
 	maxIDListEntries = 200000
+	// maxPullWireBytes 是拉取响应的线上(JSON/base64)预算上限, 服务端分页与客户端读取共用。
+	maxPullWireBytes = 128 << 20
 )
+
+// wireObjectCost 估算单个对象在线上响应中的 JSON/base64 成本, 作为分页预算单位。
+func wireObjectCost(blob []byte) int64 {
+	return int64((len(blob)+2)/3*4) + 256
+}
 
 // WireObject 是线上传输的密文对象; 服务端不解读 blob 内容。
 type WireObject struct {
@@ -181,8 +188,8 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 	if len(ids) > maxPullIDLookup {
 		return nil, "", 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 补拉数量超过 %d", maxPullIDLookup))
 	}
-	if maxBytes <= 0 || maxBytes > maxSyncObjectBytes*2 {
-		maxBytes = maxSyncObjectBytes * 2
+	if maxBytes <= 0 || maxBytes > maxPullWireBytes {
+		maxBytes = maxPullWireBytes
 	}
 	head, err := o.currentHead(ctx, userID)
 	if err != nil {
@@ -204,12 +211,14 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 		if err := rows.Scan(&object.ID, &object.Seq, &object.Blob); err != nil {
 			return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
+		// 追加前按线上成本判断预算(首个对象除外): 保证响应整体不超过上限。
+		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
+			break
+		} else {
+			budget -= cost
+		}
 		objects = append(objects, object)
 		seen[object.ID] = true
-		budget -= int64(len(object.Blob))
-		if budget <= 0 {
-			break
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
@@ -229,6 +238,11 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 		}
 		if err != nil {
 			return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
+			continue
+		} else {
+			budget -= cost
 		}
 		objects = append(objects, object)
 	}

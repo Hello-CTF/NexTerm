@@ -1,7 +1,9 @@
 package sync
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
@@ -139,5 +141,40 @@ func TestObjectStoreMultiUserIsolation(t *testing.T) {
 	pulled, _, _, _, err := store.pull(ctx, userA, 0, []string{"obj-a"}, 0)
 	if err != nil || len(pulled) != 1 || string(pulled[0].Blob) != "alice" {
 		t.Fatalf("userA pulled=%+v err=%v", pulled, err)
+	}
+}
+
+// 两条接近 64MiB 的 transcript(密文约 87MiB)必须被线上成本预算分页, 单条响应不超上限。
+func TestObjectStorePullWireBudgetPaginatesLargeObjects(t *testing.T) {
+	ctx, store, userID := newObjectStoreUser(t)
+	big := make([]byte, 87<<20)
+	if _, err := rand.Read(big[:1024]); err != nil {
+		t.Fatal(err)
+	}
+	objects := []WireObject{{ID: "obj-big-1", Blob: big}, {ID: "obj-big-2", Blob: bytes.Clone(big)}}
+	if _, _, _, _, err := store.push(ctx, userID, genesisHead(userID), objects); err != nil {
+		t.Fatal(err)
+	}
+	cost := wireObjectCost(big)
+	if cost <= maxPullWireBytes/2 || cost > maxPullWireBytes {
+		t.Fatalf("wireObjectCost(%d MiB)=%d, 期望介于半数与满额预算之间", len(big)>>20, cost)
+	}
+
+	pulled, _, maxSeq, done, err := store.pull(ctx, userID, 0, nil, maxPullWireBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pulled) != 1 || pulled[0].ID != "obj-big-1" || done {
+		t.Fatalf("first page=%+v done=%v, want only obj-big-1 and not done", pulled, done)
+	}
+	if wireObjectCost(pulled[0].Blob) > maxPullWireBytes {
+		t.Fatalf("first page wire cost %d exceeds budget", wireObjectCost(pulled[0].Blob))
+	}
+	pulled, _, maxSeq, done, err = store.pull(ctx, userID, pulled[0].Seq, nil, maxPullWireBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pulled) != 1 || pulled[0].ID != "obj-big-2" || !done || maxSeq != 2 {
+		t.Fatalf("second page=%+v done=%v maxSeq=%d, want obj-big-2 and done", pulled, done, maxSeq)
 	}
 }

@@ -599,6 +599,8 @@ WHERE id=? AND content_omitted=1`, bytes, chunks, boolInt(truncated), transcript
 
 // TranscriptSetSyncOptIn 切换单条会话记录的同步 opt-in; 进行中的会话不允许 opt-in。
 // opt-out 会同时写入删除墓碑: 服务端副本与其他设备副本随下一轮同步清除, 本地记录保留。
+// 已写入墓碑的记录不允许重新 opt-in: 墓碑的语义是"从同步集合中彻底删除",
+// 允许恢复会让任意设备上的旧副本借 re-opt-in 复活, 与防复活语义冲突。
 func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn bool) error {
 	flag := 0
 	if optIn {
@@ -616,6 +618,15 @@ func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn boo
 	}
 	if err != nil {
 		return dbError(err)
+	}
+	if flag == 1 {
+		var tombstones int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sync_tombstone WHERE id=?", id).Scan(&tombstones); err != nil {
+			return dbError(err)
+		}
+		if tombstones > 0 {
+			return badParam(fmt.Errorf("该记录已关闭同步并清除远端副本, 不能重新开启"))
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE transcript SET sync_opt_in=?
 WHERE id=? AND (? = 0 OR ended_at IS NOT NULL)`, flag, id, flag)

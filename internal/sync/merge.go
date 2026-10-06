@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
@@ -309,11 +310,37 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 			parentID = nil
 		}
 	}
-	if _, err := e.store.GroupUpsert(ctx, payload.ID, parentID, payload.Name, payload.Sort, payload.CreatedAt, payload.UpdatedAt); err != nil {
+	if err := e.groupUpsert(ctx, payload, parentID); err != nil {
 		report.warnf("分组 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
 	return true, false
+}
+
+// groupUpsert 与 store.GroupUpsert 同款语义, 并在同一事务清除同 ID 的删除墓碑:
+// 较新分组胜过旧墓碑后不得留下可回滚对象的墓碑。
+func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID *string) error {
+	if err := store.EnsureID(payload.ID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(payload.Name) == "" {
+		return ipc.NewError(ipc.CodeBadParam, "分组名称不能为空")
+	}
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_group(id, parent_id, name, sort, created_at, updated_at)
+VALUES(?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id, name=excluded.name, sort=excluded.sort, updated_at=excluded.updated_at`,
+		payload.ID, parentID, strings.TrimSpace(payload.Name), payload.Sort, payload.CreatedAt, payload.UpdatedAt); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", payload.ID); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return tx.Commit()
 }
 
 func (e *Engine) groupParents(ctx context.Context) (map[string]*string, error) {
@@ -453,25 +480,30 @@ func (e *Engine) applyCredentialObject(ctx context.Context, plaintext []byte, re
 		report.warnf("凭据 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
-	if err := e.store.CredentialTombstoneClear(ctx, payload.ID); err != nil {
-		report.warnf("凭据 %s 的删除墓碑清除失败: %v", payload.ID, err)
-	}
 	return true, false
 }
 
 // credentialUpsert 与 store.CredentialPut 同款, 但保留对端修订号: store 层按本机时钟写 updated_at,
 // 同步载荷哈希以修订号为准, 必须原样保留才能幂等对账。
+// 写入与删除墓碑清除在同一事务: 较新凭据胜过旧墓碑后不得留下可回滚对象的墓碑。
 func (e *Engine) credentialUpsert(ctx context.Context, payload credentialObject, nonce, blob []byte) error {
-	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO credential(id, name, kind, cipher, nonce, blob, kek_hint, created_at, updated_at)
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO credential(id, name, kind, cipher, nonce, blob, kek_hint, created_at, updated_at)
 VALUES(?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, cipher=excluded.cipher,
 nonce=excluded.nonce, blob=excluded.blob, kek_hint=excluded.kek_hint, updated_at=excluded.updated_at`,
 		payload.ID, payload.Name, payload.Kind, store.CipherAES256GCM, nonce, blob, e.vault.KEKHint(),
-		payload.UpdatedAt, payload.UpdatedAt)
-	if err != nil {
+		payload.UpdatedAt, payload.UpdatedAt); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, "DELETE FROM credential_tombstone WHERE id = ?", payload.ID); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return tx.Commit()
 }
 
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
