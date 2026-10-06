@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ai/guard"
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
 	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
@@ -201,6 +202,7 @@ type Dependencies struct {
 	DockerActionAudited bool
 	Audit               func(context.Context, AuditEntry) error
 	Reminders           ReminderScheduler
+	Grants              *guard.Grants
 
 	Outcome      *outcome.Ledger
 	Now          func() time.Time
