@@ -785,6 +785,9 @@ export const syncApi = {
   status: () => call<import("./types").SyncStatus>("sync_status"),
   syncNow: () => call<import("./types").SyncReport>("sync_now"),
 
+  applyObjects: (objects: import("./types").SyncApplyObject[]) =>
+    call<import("./types").SyncApplyResult>("sync_apply_objects", { args: { objects } }),
+
   token: () => call<string | null>("sync_token"),
   rotateToken: (id?: string) =>
     call<string | null>("sync_token_rotate", { args: { id } }),

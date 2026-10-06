@@ -215,21 +215,7 @@ func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object Wi
 		return
 	}
 	payloadHash := objectPayloadHash(plaintext)
-	applied, identical := false, false
-	switch kind {
-	case KindGroup:
-		applied, identical = e.applyGroupObject(ctx, plaintext, report)
-	case KindAsset:
-		applied, identical = e.applyAssetObject(ctx, plaintext, report)
-	case KindCredential:
-		applied, identical = e.applyCredentialObject(ctx, plaintext, report)
-	case KindSnippet:
-		applied, identical = e.applySnippetObject(ctx, plaintext, report)
-	case KindTombstone:
-		applied, identical = e.applyTombstoneObject(ctx, object.ID, plaintext, report)
-	case KindTranscript:
-		applied, identical = e.applyTranscriptObject(ctx, plaintext, report)
-	}
+	applied, identical := e.applyDecryptedObject(ctx, object.ID, kind, plaintext, report)
 	report.PullSkipped++
 	if applied {
 		report.Applied++
