@@ -117,6 +117,11 @@ type Answer struct {
 	Text   string `json:"text"`
 }
 
+type queuedEmit struct {
+	turn  uint64
+	event Event
+}
+
 type job struct {
 	id          string
 	args        ChatArgs
@@ -132,7 +137,9 @@ type job struct {
 	steer *steer.Queue
 
 	emitMu         sync.Mutex
-	pendingEmits   []Event
+	emitTurn       uint64
+	pendingEmits   []queuedEmit
+	assistantTurn  uint64
 	eventMu        sync.Mutex
 	finished       bool
 	finalOnce      sync.Once
@@ -153,16 +160,53 @@ func (j *job) emit(ctx context.Context, event Event) error {
 	return j.stream.Send(ctx, event)
 }
 
-func (j *job) queueEmits(events ...Event) {
+func (j *job) queueTurnEmits(events ...Event) {
 	j.emitMu.Lock()
-	j.pendingEmits = append(j.pendingEmits, events...)
+	j.emitTurn++
+	j.queueEmitsLocked(j.emitTurn, events)
 	j.emitMu.Unlock()
 }
 
-func (j *job) drainEmits() []Event {
+func (j *job) queueEmits(events ...Event) {
+	j.emitMu.Lock()
+	j.queueEmitsLocked(j.emitTurn, events)
+	j.emitMu.Unlock()
+}
+
+func (j *job) queueEmitsLocked(turn uint64, events []Event) {
+	for _, event := range events {
+		j.pendingEmits = append(j.pendingEmits, queuedEmit{turn: turn, event: event})
+	}
+}
+
+func (j *job) drainEmitsUpTo(turn uint64) []Event {
 	j.emitMu.Lock()
 	defer j.emitMu.Unlock()
-	events := j.pendingEmits
+	index := 0
+	for index < len(j.pendingEmits) && j.pendingEmits[index].turn <= turn {
+		index++
+	}
+	if index == 0 {
+		return nil
+	}
+	events := make([]Event, 0, index)
+	for _, queued := range j.pendingEmits[:index] {
+		events = append(events, queued.event)
+	}
+	j.pendingEmits = append([]queuedEmit(nil), j.pendingEmits[index:]...)
+	return events
+}
+
+func (j *job) drainAllEmits() []Event {
+	j.emitMu.Lock()
+	defer j.emitMu.Unlock()
+	if len(j.pendingEmits) == 0 {
+		return nil
+	}
+	events := make([]Event, 0, len(j.pendingEmits))
+	for _, queued := range j.pendingEmits {
+		events = append(events, queued.event)
+	}
 	j.pendingEmits = nil
 	return events
 }

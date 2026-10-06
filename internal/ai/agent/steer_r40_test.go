@@ -264,6 +264,128 @@ func TestSteeredAckWaitsForPrecedingToolResult(t *testing.T) {
 	}
 }
 
+func lastEventIndex(events []Event, kind string) int {
+	last := -1
+	for i, event := range events {
+		if event.Type == kind {
+			last = i
+		}
+	}
+	return last
+}
+
+func describeEvent(event Event) string {
+	switch event.Type {
+	case "status":
+		return "status:" + event.Phase
+	case "toolArgs":
+		return "toolArgs:" + event.Tool
+	case "toolCall":
+		return "toolCall:" + event.Name
+	case "toolResult":
+		return "toolResult:" + event.ID
+	case "steered", "steerDropped", "delta", "reasoning":
+		return event.Type + ":" + event.Text
+	default:
+		return event.Type
+	}
+}
+
+func eventSequence(events []Event) string {
+	descriptors := make([]string, len(events))
+	for i, event := range events {
+		descriptors[i] = describeEvent(event)
+	}
+	return strings.Join(descriptors, " ")
+}
+
+func TestSteeredAckDoesNotLeapfrogQueuedTurnEmits(t *testing.T) {
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	secondStarted := make(chan struct{})
+	secondRelease := make(chan struct{})
+	thirdCall := make(chan struct{})
+	var firstOnce, secondOnce, thirdOnce sync.Once
+	var execCount atomic.Int64
+	chat := &recordingChat{}
+	chat.step = func(call int, _ []*schema.Message) *schema.Message {
+		switch call {
+		case 1:
+			return toolCallMessage(namedToolCall("probe-1", "docker_exec", `{"container_id":"web","cmd":"ls"}`))
+		case 2:
+			return toolCallMessage(namedToolCall("probe-2", "docker_exec", `{"container_id":"web","cmd":"ls"}`))
+		}
+		thirdOnce.Do(func() { close(thirdCall) })
+		return schema.AssistantMessage("done", nil)
+	}
+	exec := func(ctx context.Context, _, _, _ string) (tools.ExecResult, error) {
+		if execCount.Add(1) == 1 {
+			firstOnce.Do(func() { close(firstStarted) })
+			select {
+			case <-firstRelease:
+			case <-ctx.Done():
+				return tools.ExecResult{}, ctx.Err()
+			}
+			return tools.ExecResult{Output: "exec done", ExitCode: 0}, nil
+		}
+		secondOnce.Do(func() { close(secondStarted) })
+		select {
+		case <-secondRelease:
+		case <-ctx.Done():
+			return tools.ExecResult{}, ctx.Err()
+		}
+		return tools.ExecResult{Output: "exec done", ExitCode: 0}, nil
+	}
+	runner := steerRunner(t, chat, tools.Dependencies{DockerExec: exec}, 0)
+	silentPermission(runner)
+	stream := &gatedEventStream{SliceStream: &SliceStream{}, gateType: "toolResult", reached: make(chan struct{}), release: make(chan struct{})}
+	response, err := runner.Start(context.Background(), ChatArgs{Message: "go", Scope: tools.Scope{SessionID: "session"}}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChannelClosed(t, firstStarted, "first tool did not start")
+	close(firstRelease)
+	waitChannelClosed(t, stream.reached, "first toolResult did not reach the gate")
+	waitChannelClosed(t, secondStarted, "second tool did not start")
+	if err := runner.Steer(response.JobID, "mid-run steer"); err != nil {
+		t.Fatal(err)
+	}
+	close(secondRelease)
+	waitChannelClosed(t, thirdCall, "third model call did not start")
+
+	if events, _ := stream.Snapshot(); eventCount(events, "steered") != 0 {
+		t.Fatalf("steered ack emitted while the first toolResult was still gated: %+v", events)
+	}
+	close(stream.release)
+	events := waitClosed(t, stream.SliceStream)
+	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
+		t.Fatalf("terminal counts done=%d error=%d events=%+v", done, failed, events)
+	}
+	if eventCount(events, "steered") != 1 || eventCount(events, "toolResult") != 2 {
+		t.Fatalf("steered=%d toolResult=%d, want 1 and 2: %+v", eventCount(events, "steered"), eventCount(events, "toolResult"), events)
+	}
+	if steeredAt, lastResultAt := eventIndex(events, "steered"), lastEventIndex(events, "toolResult"); steeredAt < lastResultAt {
+		t.Fatalf("steered ack leapfrogged the preceding toolResult: steered=%d lastToolResult=%d events=%+v", steeredAt, lastResultAt, events)
+	}
+	want := "status:thinking toolArgs:docker_exec toolCall:docker_exec toolResult:probe-1 status:thinking toolArgs:docker_exec toolCall:docker_exec toolResult:probe-2 steered:mid-run steer status:thinking delta:done done"
+	if got := eventSequence(events); got != want {
+		t.Fatalf("event sequence mismatch:\n got: %s\nwant: %s", got, want)
+	}
+	chat.mu.Lock()
+	inputs := chat.inputs
+	chat.mu.Unlock()
+	if len(inputs) != 3 {
+		t.Fatalf("model calls = %d, want 3", len(inputs))
+	}
+	if err := steer.ValidateHistory(inputs[2]); err != nil {
+		t.Fatalf("third model input has broken tool pairing: %v (%s)", err, describeMessages(inputs[2]))
+	}
+	third := inputs[2]
+	if len(third) < 2 || third[len(third)-1].Role != schema.User || third[len(third)-1].Content != "mid-run steer" || third[len(third)-2].Role != schema.Tool {
+		t.Fatalf("steered message did not land after the complete tool pair: %s", describeMessages(third))
+	}
+}
+
 func TestSteerQueueFullIsRejected(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
