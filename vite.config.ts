@@ -18,6 +18,7 @@ const config = defineConfig({
   test: {
     environment: "node",
     include: ["src/test/**/*.test.ts", "src/test/**/*.test.tsx"],
+    setupFiles: ["src/test/setup.ts"],
     clearMocks: true,
     restoreMocks: true,
     unstubGlobals: true,

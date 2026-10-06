@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installMatchMediaStub } from "./setup";
 
 vi.mock("../ipc/commands", () => ({
   dbApi: {},
@@ -45,10 +46,6 @@ function installMatchMedia(initialLight: boolean): MediaControl {
   };
 }
 
-function removeMatchMedia(): void {
-  Reflect.deleteProperty(window, "matchMedia");
-}
-
 async function loadTheme() {
   vi.resetModules();
   return await import("../app/theme");
@@ -57,7 +54,7 @@ async function loadTheme() {
 beforeEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-nx-theme");
-  removeMatchMedia();
+  installMatchMediaStub();
 });
 
 describe("theme mode", () => {

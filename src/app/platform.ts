@@ -1,4 +1,24 @@
-import type { CSSProperties } from "react";
+import { useSyncExternalStore, type CSSProperties } from "react";
+
+const COARSE_POINTER_QUERY = "(pointer: coarse)";
+
+export function coarsePointerMedia(): MediaQueryList {
+  return window.matchMedia(COARSE_POINTER_QUERY);
+}
+
+export function isCoarsePointer(): boolean {
+  return coarsePointerMedia().matches;
+}
+
+function subscribeCoarsePointer(callback: () => void): () => void {
+  const query = coarsePointerMedia();
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+
+export function useCoarsePointer(): boolean {
+  return useSyncExternalStore(subscribeCoarsePointer, isCoarsePointer);
+}
 
 let macPlatform =
   typeof navigator !== "undefined" &&

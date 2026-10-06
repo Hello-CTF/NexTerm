@@ -54,6 +54,8 @@ import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset } from "../i
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT, WEB } from "../demo";
 import {
+  coarsePointerMedia,
+  isCoarsePointer,
   isMac,
   isWailsDragRegionTarget,
   wailsDragRegionStyle,
@@ -191,8 +193,7 @@ function handleTablistKeyDown(
 let bootLocalTried = false;
 
 function readWorkspaceViewport(): WorkspaceViewport {
-  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-  return workspaceViewport(window.innerWidth, coarse, window.innerHeight);
+  return workspaceViewport(window.innerWidth, isCoarsePointer(), window.innerHeight);
 }
 
 function sameViewport(a: WorkspaceViewport, b: WorkspaceViewport): boolean {
@@ -207,16 +208,16 @@ function useWorkspaceViewport(): WorkspaceViewport {
       setViewport((prev) => (sameViewport(prev, next) ? prev : next)),
     );
     const update = () => frames.schedule(readWorkspaceViewport());
-    const coarseQuery = window.matchMedia?.("(pointer: coarse)");
+    const coarseQuery = coarsePointerMedia();
     window.addEventListener("resize", update);
     window.visualViewport?.addEventListener("resize", update);
-    coarseQuery?.addEventListener("change", update);
+    coarseQuery.addEventListener("change", update);
     update();
     return () => {
       frames.cancel();
       window.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("resize", update);
-      coarseQuery?.removeEventListener("change", update);
+      coarseQuery.removeEventListener("change", update);
     };
   }, []);
 

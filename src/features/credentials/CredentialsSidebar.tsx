@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { vaultApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { openCredentialsTab, openCredentialsViewTab, useCredentialsTabId } from "../../app/store";
+import { isCoarsePointer } from "../../app/platform";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
@@ -11,8 +12,7 @@ import { describeError } from "../../ui/errorText";
 import { IconCode, IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
 
 function closeOverlayDockAfterNav() {
-  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-  if (workspaceViewport(window.innerWidth, coarse).overlaySidebars) {
+  if (workspaceViewport(window.innerWidth, isCoarsePointer()).overlaySidebars) {
     useUi.getState().setLeftOpen(false);
   }
 }
