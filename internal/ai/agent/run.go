@@ -316,7 +316,7 @@ func (r *Runner) initializeEino(current *job) error {
 				pending = append(pending, Event{Type: "steered", Text: steered.Content})
 			}
 			pending = append(pending, statusEvent("thinking", runtime.currentTurn()))
-			current.queueEmits(pending...)
+			current.queueTurnEmits(pending...)
 			return nil
 		}}},
 		Handlers: []adk.ChatModelAgentMiddleware{compaction},
@@ -359,11 +359,23 @@ func imageParts(image string) (string, string) {
 	return "image/png", image
 }
 
-func (r *Runner) flushPendingEvents(current *job, bestEffort bool) error {
-	pending := current.drainEmits()
+func (r *Runner) flushPendingEvents(current *job, turn uint64, bestEffort bool) error {
+	pending := current.drainEmitsUpTo(turn)
 	if len(pending) == 0 {
 		return nil
 	}
+	return r.emitPendingEvents(current, pending, bestEffort)
+}
+
+func (r *Runner) flushAllPendingEvents(current *job, bestEffort bool) error {
+	pending := current.drainAllEmits()
+	if len(pending) == 0 {
+		return nil
+	}
+	return r.emitPendingEvents(current, pending, bestEffort)
+}
+
+func (r *Runner) emitPendingEvents(current *job, pending []Event, bestEffort bool) error {
 	ctx := current.ctx
 	if bestEffort {
 		parent := current.deliveryCtx
@@ -388,7 +400,7 @@ func (r *Runner) flushPendingEvents(current *job, bestEffort bool) error {
 func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEvent]) (string, int, usage.Usage, error) {
 	runtime := current.eino
 
-	defer func() { _ = r.flushPendingEvents(current, true) }()
+	defer func() { _ = r.flushAllPendingEvents(current, true) }()
 	for {
 		event, ok := iterator.Next()
 		if !ok {
@@ -414,8 +426,8 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		started := time.Time{}
 		if variant.Role == schema.Assistant {
 			started = time.Now()
-
-			if err := r.flushPendingEvents(current, false); err != nil {
+			current.assistantTurn++
+			if err := r.flushPendingEvents(current, current.assistantTurn, false); err != nil {
 				return runtime.failure(err)
 			}
 		}
