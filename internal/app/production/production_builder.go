@@ -26,7 +26,6 @@ type ProductionConfig struct {
 	Config                  Config
 	DataDir                 string
 	Desktop                 bool
-	DesktopSupervisorHelper bool
 	ForwardPlatform         string
 	Connector               session.Connector
 	Terminals               session.TerminalFactory

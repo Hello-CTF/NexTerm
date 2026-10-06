@@ -8,7 +8,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/agent"
 	"github.com/ProbiusOfficial/NexTerm/internal/docker"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
@@ -33,12 +32,6 @@ func closeTasksComponent(manager *tasks.Manager) Component {
 func closeDockerComponent(service *docker.Service) Component {
 	return ComponentFuncs{ShutdownFunc: func(context.Context) error {
 		return service.Close()
-	}}
-}
-
-func closeSupervisorComponent(instance *supervisor.Supervisor) Component {
-	return ComponentFuncs{ShutdownFunc: func(context.Context) error {
-		return instance.Close()
 	}}
 }
 

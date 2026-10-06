@@ -82,10 +82,9 @@ func run(args []string) int {
 			Events:  events,
 			Streams: streams,
 		},
-		DataDir:                 paths.DataDir,
-		Desktop:                 true,
-		DesktopSupervisorHelper: true,
-		ForwardPlatform:         os.Getenv("NEXTERM_PLATFORM"),
+		DataDir:         paths.DataDir,
+		Desktop:         true,
+		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
