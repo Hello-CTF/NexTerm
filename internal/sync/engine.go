@@ -148,7 +148,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	if len(unreconciled) > maxPullIDLookup {
 		unreconciled = unreconciled[:maxPullIDLookup]
 	}
-	if err := e.pullAndApply(ctx, session, &cursor, unreconciled, report); err != nil {
+	if err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report); err != nil {
 		return false, err
 	}
 	objects, err := e.collectLocalObjects(ctx, report)
@@ -195,7 +195,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		pending, pendingHashes = rest, restHashes
 	}
 	// 收尾拉取: 把游标推进到推送时点, 使空闲同步保持静默, 并立即看到推送期间其他设备的变更。
-	if err := e.pullAndApply(ctx, session, &cursor, nil, report); err != nil {
+	if err := e.pullAllAndApply(ctx, session, &cursor, nil, report); err != nil {
 		return false, err
 	}
 	if err := e.saveCursor(ctx, userID, cursor); err != nil {
@@ -206,19 +206,51 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	return false, nil
 }
 
-func (e *Engine) pullAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, ids []string, report *SyncReport) error {
-	pullResponse, err := session.client.pull(ctx, cursor.Seq, ids, maxPullBytes)
-	if err != nil {
-		return err
+// pullAllAndApply 耗尽所有游标分页, 并确认全部 unreconciled ID 已返回或已不存在,
+// 然后才允许进入推送。任何 push 前不得采用最新 head 跳过后续对象:
+// 未拉取页的远端新 revision 可能被本地旧对象覆盖。
+// 首个对象必完整返回的预算规则保证每页至少消化一个对象, 循环必然收敛。
+func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport) error {
+	remaining := make(map[string]bool, len(unreconciled))
+	for _, id := range unreconciled {
+		remaining[id] = true
 	}
-	for _, object := range pullResponse.Objects {
-		e.applyRemoteObject(ctx, session.userID, object, session.dek, report)
-		if object.Seq > cursor.Seq {
-			cursor.Seq = object.Seq
+	stalls := 0
+	for {
+		lookup := make([]string, 0, len(remaining))
+		for id := range remaining {
+			lookup = append(lookup, id)
+		}
+		if len(lookup) > maxPullIDLookup {
+			lookup = lookup[:maxPullIDLookup]
+		}
+		pullResponse, err := session.client.pull(ctx, cursor.Seq, lookup, maxPullBytes)
+		if err != nil {
+			return err
+		}
+		returned := 0
+		for _, object := range pullResponse.Objects {
+			e.applyRemoteObject(ctx, session.userID, object, session.dek, report)
+			if object.Seq > cursor.Seq {
+				cursor.Seq = object.Seq
+			}
+			delete(remaining, object.ID)
+			returned++
+		}
+		cursor.Head = pullResponse.Head
+		if pullResponse.Done && len(remaining) == 0 {
+			return nil
+		}
+		if returned == 0 && len(remaining) > 0 {
+			stalls++
+			if stalls >= 3 {
+				e.logger.Warn("sync pull stalled on missing objects; deferring to next round", "remaining", len(remaining))
+				return nil
+			}
+		} else {
+			stalls = 0
 		}
 	}
-	cursor.Head = pullResponse.Head
-	return nil
 }
 
 func takePushBatch(objects []WireObject, hashes []string) (batch []WireObject, batchHashes []string, rest []WireObject, restHashes []string) {
