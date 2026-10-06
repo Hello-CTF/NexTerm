@@ -114,9 +114,7 @@ func remoteAlreadyExists(expected conditional.Expectation) error {
 
 func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (temporary string, err error) {
 	var suffix [8]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return "", err
-	}
+	_, _ = rand.Read(suffix[:])
 	temporary = path.Join(path.Dir(remotePath), "."+path.Base(remotePath)+".nexterm-tmp-"+hex.EncodeToString(suffix[:]))
 	file, err := f.client.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
