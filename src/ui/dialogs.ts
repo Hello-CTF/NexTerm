@@ -1,10 +1,4 @@
-import {
-  askWails,
-  confirmWails,
-  messageWails,
-  openWailsFile,
-  saveWailsFile,
-} from "../ipc/wails";
+import { askWails, messageWails, openWailsFile, saveWailsFile } from "../ipc/wails";
 import { DEMO, TRANSPORT } from "../demo";
 import { isMac } from "../app/platform";
 import {
@@ -88,7 +82,7 @@ const nativeAsk: AskFn = NATIVE_BROWSER_DIALOG
   : askWails;
 const nativeConfirm: ConfirmFn = NATIVE_BROWSER_DIALOG
   ? async (message) => window.confirm(message)
-  : confirmWails;
+  : askWails;
 const nativeMessage: MessageFn = NATIVE_BROWSER_DIALOG
   ? async (message) => {
       window.alert(message);

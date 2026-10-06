@@ -1,8 +1,9 @@
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
+import { useCoarsePointer } from "../../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { describeError } from "../../ui/errorText";
@@ -66,21 +67,6 @@ function treeRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (index < 0 || next < 0 || next >= rows.length) return;
   event.preventDefault();
   rows[next]?.focus();
-}
-
-function subscribeCoarse(callback: () => void): () => void {
-  const query = window.matchMedia?.("(pointer: coarse)");
-  if (!query) return () => {};
-  query.addEventListener("change", callback);
-  return () => query.removeEventListener("change", callback);
-}
-
-function useCoarsePointer(): boolean {
-  return useSyncExternalStore(
-    subscribeCoarse,
-    () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
-    () => false,
-  );
 }
 
 const SKELETON_ROW_WIDTHS = ["w-3/5", "w-2/5", "w-1/2", "w-3/5", "w-2/5"];

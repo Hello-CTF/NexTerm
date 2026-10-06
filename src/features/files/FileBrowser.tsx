@@ -2,7 +2,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -27,6 +26,7 @@ import {
   openTerminalTab,
   useUi,
 } from "../../app/store";
+import { useCoarsePointer } from "../../app/platform";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
@@ -53,21 +53,6 @@ import {
   IconTrash,
   IconUpload,
 } from "../../ui/icons";
-
-function subscribeCoarse(callback: () => void): () => void {
-  const query = window.matchMedia?.("(pointer: coarse)");
-  if (!query) return () => {};
-  query.addEventListener("change", callback);
-  return () => query.removeEventListener("change", callback);
-}
-
-function useCoarsePointer(): boolean {
-  return useSyncExternalStore(
-    subscribeCoarse,
-    () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
-    () => false,
-  );
-}
 
 function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;

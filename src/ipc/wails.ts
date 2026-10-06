@@ -122,10 +122,6 @@ export async function askWails(
   return selected === "确定";
 }
 
-export async function confirmWails(message: string): Promise<boolean> {
-  return askWails(message);
-}
-
 export async function messageWails(message: string): Promise<void> {
   const { Dialogs } = await runtime();
   await Dialogs.Info({ Message: message, Buttons: [{ Label: "确定", IsDefault: true }] });

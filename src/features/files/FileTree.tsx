@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, terminalApi } from "../../ipc/commands";
@@ -22,6 +22,7 @@ import {
   openTerminalTab,
   useUi,
 } from "../../app/store";
+import { useCoarsePointer } from "../../app/platform";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
   HOME,
@@ -74,21 +75,6 @@ function treeRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
   if (index < 0 || next < 0 || next >= rows.length) return;
   event.preventDefault();
   rows[next]?.focus();
-}
-
-function subscribeCoarse(callback: () => void): () => void {
-  const query = window.matchMedia?.("(pointer: coarse)");
-  if (!query) return () => {};
-  query.addEventListener("change", callback);
-  return () => query.removeEventListener("change", callback);
-}
-
-function useCoarsePointer(): boolean {
-  return useSyncExternalStore(
-    subscribeCoarse,
-    () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
-    () => false,
-  );
 }
 
 export function FileTree({ sessionId }: { sessionId: string }) {

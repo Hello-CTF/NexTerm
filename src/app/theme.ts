@@ -21,7 +21,7 @@ function loadMode(): ThemeMode {
 }
 
 function systemTheme(): ResolvedTheme {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "dark";
+  if (typeof window === "undefined") return "dark";
   return window.matchMedia(LIGHT_QUERY).matches ? "light" : "dark";
 }
 
@@ -69,7 +69,7 @@ export function subscribeTheme(listener: ThemeListener): () => void {
 
 export function initTheme(): void {
   apply();
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+  if (typeof window === "undefined") return;
   if (media) return;
   media = window.matchMedia(LIGHT_QUERY);
   media.addEventListener("change", () => {
