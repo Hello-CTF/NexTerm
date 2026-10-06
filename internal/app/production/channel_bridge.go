@@ -107,12 +107,12 @@ func (b *terminalBridge) Unbridge(channelID string) {
 func (b *terminalBridge) run(ctx context.Context, channelID string, channel *terminalBridgeChannel) {
 	defer b.wg.Done()
 	defer func() {
-		channel.close()
 		b.mu.Lock()
 		if b.channels[channelID] == channel {
 			delete(b.channels, channelID)
 		}
 		b.mu.Unlock()
+		channel.close()
 	}()
 	for {
 		frame, err := channel.receiver.Next(ctx)
