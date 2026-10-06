@@ -25,7 +25,7 @@ export function throttleStateFrom(
     return { channels: {}, recoveredAt: now };
   }
   const channels = { ...(current?.channels ?? {}) };
-  channels[event.channelId ?? ""] = event.inflightBytes;
+  channels[event.channelId] = event.inflightBytes;
   return { channels, recoveredAt: null };
 }
 
