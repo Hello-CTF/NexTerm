@@ -33,14 +33,14 @@ func TestAuthModeMatrixAcrossListens(t *testing.T) {
 
 				authRequired := mode == AuthOn || mode == AuthLoopback && listen != "127.0.0.1:0"
 
-				status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", nil)
+				status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", nil)
 				if authRequired && status != http.StatusUnauthorized {
 					t.Fatalf("tokenless RPC = %d, want %d", status, http.StatusUnauthorized)
 				}
 				if !authRequired && status != http.StatusOK {
 					t.Fatalf("tokenless RPC = %d, want %d", status, http.StatusOK)
 				}
-				status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "secret"})
+				status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
 				if status != http.StatusOK {
 					t.Fatalf("token RPC = %d, want %d", status, http.StatusOK)
 				}
@@ -100,7 +100,7 @@ func TestAuthModeConfigurationValidation(t *testing.T) {
 		config.Options.Listen = listen
 		config.Options.Auth = mode
 		config.Tokens = nil
-		config.SyncRPC = plainHandler
+		config.SyncObjects = plainHandler
 		_, err := New(config)
 		return err
 	}
@@ -122,19 +122,19 @@ func TestExposedListenRequiresTokenForRPC(t *testing.T) {
 	_, httpServer := newTestHTTP(t, exposedConfig(t))
 	url := httpServer.URL + "/rpc"
 
-	status, body := postRPC(t, httpServer.Client(), url, "sync_digest", nil)
+	status, body := postRPC(t, httpServer.Client(), url, "app_info", nil)
 	if status != http.StatusUnauthorized || body.OK || body.Error == nil || body.Error.Code != ipc.CodeForbidden {
 		t.Fatalf("missing token = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{TokenHeader: "wrong"})
+	status, body = postRPC(t, httpServer.Client(), url, "app_info", map[string]string{TokenHeader: "wrong"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("wrong token = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{TokenHeader: "secret"})
+	status, body = postRPC(t, httpServer.Client(), url, "app_info", map[string]string{TokenHeader: "secret"})
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("valid token = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{"X-HC-User-ID": "forged"})
+	status, body = postRPC(t, httpServer.Client(), url, "app_info", map[string]string{"X-HC-User-ID": "forged"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("forged platform identity = %d %+v", status, body)
 	}
@@ -148,16 +148,16 @@ func TestExposedListenRejectsAfterTokenRotation(t *testing.T) {
 	})
 	_, httpServer := newTestHTTP(t, config)
 
-	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "before-rotation"})
+	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "before-rotation"})
 	if status != http.StatusOK {
 		t.Fatalf("token before rotation = %d", status)
 	}
 	current = "after-rotation"
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "before-rotation"})
+	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "before-rotation"})
 	if status != http.StatusUnauthorized {
 		t.Fatalf("rotated-out token = %d", status)
 	}
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "after-rotation"})
+	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "after-rotation"})
 	if status != http.StatusOK {
 		t.Fatalf("rotated token = %d", status)
 	}
@@ -170,7 +170,7 @@ func TestExposedListenVerifierErrorIsServerError(t *testing.T) {
 	})
 	_, httpServer := newTestHTTP(t, config)
 
-	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "secret"})
+	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
 	if status != http.StatusInternalServerError {
 		t.Fatalf("verifier error status = %d", status)
 	}
@@ -181,19 +181,19 @@ func TestExposedListenGatewayKeyAdmission(t *testing.T) {
 	config.GatewayAuthKey = "gateway-secret"
 	_, httpServer := newTestHTTP(t, config)
 
-	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "gateway-secret"})
+	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "gateway-secret"})
 	if status != http.StatusOK || !body.OK {
 		t.Fatalf("gateway key admission = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "wrong"})
+	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "wrong"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("wrong gateway key = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{"X-HC-User-ID": "forged"})
+	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{"X-HC-User-ID": "forged"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("forged platform identity header = %d %+v", status, body)
 	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{"X-HC-User-ID": "forged", GatewayAuthHeader: "wrong"})
+	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{"X-HC-User-ID": "forged", GatewayAuthHeader: "wrong"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("forged platform header with wrong gateway key = %d %+v", status, body)
 	}
@@ -209,7 +209,7 @@ func TestExposedListenGatewayKeyAdmission(t *testing.T) {
 
 func TestExposedListenEmptyGatewayKeyIgnoresHeader(t *testing.T) {
 	_, httpServer := newTestHTTP(t, exposedConfig(t))
-	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "anything"})
+	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", map[string]string{GatewayAuthHeader: "anything"})
 	if status != http.StatusUnauthorized || body.OK {
 		t.Fatalf("gateway header without configured key = %d %+v", status, body)
 	}
@@ -506,46 +506,6 @@ func TestExposedListenWebSocketVerifierErrorIsServerError(t *testing.T) {
 	}
 }
 
-func TestExposedListenSyncRPCHandlerCarriesVerifier(t *testing.T) {
-	config := exposedConfig(t)
-	config.Tokens = nil
-	config.SyncRPC = &authCarryingHandler{token: "secret", gatewayKey: "gateway-secret"}
-	_, httpServer := newTestHTTP(t, config)
-
-	status, _ := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", nil)
-	if status != http.StatusUnauthorized {
-		t.Fatalf("missing token = %d", status)
-	}
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{TokenHeader: "secret"})
-	if status != http.StatusOK {
-		t.Fatalf("carried verifier token = %d", status)
-	}
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "gateway-secret"})
-	if status != http.StatusOK {
-		t.Fatalf("carried gateway key = %d", status)
-	}
-	status, _ = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", map[string]string{"X-HC-User-ID": "forged"})
-	if status != http.StatusUnauthorized {
-		t.Fatalf("forged platform identity = %d", status)
-	}
-}
-
-type authCarryingHandler struct {
-	token      string
-	gatewayKey string
-}
-
-func (h *authCarryingHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-}
-
-func (h *authCarryingHandler) VerifyToken(_ context.Context, token string) (bool, error) {
-	return token == h.token, nil
-}
-
-func (h *authCarryingHandler) GatewayAuthKey() string { return h.gatewayKey }
-
 func TestExposedListenWithoutVerifierFailsClosed(t *testing.T) {
 	config := exposedConfig(t)
 	config.Tokens = nil
@@ -555,8 +515,8 @@ func TestExposedListenWithoutVerifierFailsClosed(t *testing.T) {
 
 	loopback := testConfig(t, false)
 	loopback.Tokens = nil
-	loopback.SyncRPC = nil
+	loopback.SyncObjects = nil
 	if _, err := New(loopback); err == nil {
-		t.Fatal("missing sync RPC handler and token verifier was accepted")
+		t.Fatal("missing sync object handler and token verifier was accepted")
 	}
 }

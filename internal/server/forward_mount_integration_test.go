@@ -53,11 +53,12 @@ func TestRealForwardMountModulesThroughApplicationAndHTTP(t *testing.T) {
 		Reconnect: forward.ReconnectPolicy{Attempts: 1},
 	})
 	mountService := mount.NewService(mount.Config{})
-	config, fixture := newRealSyncConfig(t, false)
+	config := testConfig(t, false)
+	_, _, syncService := newRealSyncService(t)
 	application, err := app.New(app.Config{
 		Logger: testLogger(),
 		Modules: []app.Module{
-			{Name: "sync", RegisterCommands: fixture.service.RegisterCommands, Component: fixture.service},
+			{Name: "sync", RegisterCommands: syncService.RegisterCommands, Component: syncService},
 			{Name: "forward", RegisterCommands: forwardService.RegisterCommands, Component: forwardService},
 			{Name: "mount", RegisterCommands: mountService.RegisterCommands, Component: mountService},
 		},
@@ -71,7 +72,7 @@ func TestRealForwardMountModulesThroughApplicationAndHTTP(t *testing.T) {
 	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
 	registered := application.Dispatcher.Commands()
 	for _, command := range []string{
-		"sync_digest", "sync_export", "sync_import", "sync_bundle_read", "sync_bundle_write",
+		"sync_link_get", "sync_status", "sync_now", "sync_bundle_read", "sync_bundle_write",
 		"forward_env", "forward_create", "forward_create_socks", "forward_list", "forward_remove",
 		"mount_capability", "mount_create", "mount_list", "mount_remove",
 	} {

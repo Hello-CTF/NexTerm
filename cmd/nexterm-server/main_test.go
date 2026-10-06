@@ -21,9 +21,7 @@ import (
 	"time"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
-	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
-	"github.com/coder/websocket"
+	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
 type syncBuffer struct {
@@ -109,48 +107,44 @@ func TestServerProcessBootstrapsVaultFromMasterKeyEnv(t *testing.T) {
 	}
 }
 
-func TestSyncOnlyProcessUsesRealTokenAndOnlyThreeRPCs(t *testing.T) {
+func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
 	process, address := startServerProcess(t, binary, dataDir, true)
 	defer process.stop(t)
 	health := waitForHealth(t, process, address)
-	if !health.OK || !health.SyncOnly || health.Commands != 3 || health.WebRoot != nil || health.Vault == nil || health.Retention == nil {
+	if !health.OK || !health.SyncOnly || health.Commands != 0 || health.WebRoot != nil || health.Vault == nil || health.Retention == nil {
 		t.Fatalf("sync-only health = %+v", health)
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	requestURL(t, client, "http://"+address+"/rpc", http.MethodPost, strings.NewReader(`{"cmd":"app_platform","args":null}`), map[string]string{"Content-Type": "application/json"}, http.StatusNotFound)
 	requestURL(t, client, "http://"+address+"/", http.MethodGet, nil, nil, http.StatusNotFound)
-	token := runServerToken(t, binary, dataDir, "token")
-	requestRPC(t, client, address, "sync_digest", nil, nil, http.StatusUnauthorized)
+	requestURL(t, client, "http://"+address+"/sync/v2/push", http.MethodPost, strings.NewReader(`{"protocol":2,"known_head":"","objects":[]}`), map[string]string{"Content-Type": "application/json"}, http.StatusUnauthorized)
 
-	digest := requestRPC(t, client, address, "sync_digest", nil, &token)
-	var digestData map[string]any
-	decodeRPCData(t, digest, &digestData)
-	if digestData["origin"] == "" || digestData["desktop"] != false || digestData["protocol"] != float64(syncservice.ProtocolVersion) {
-		t.Fatalf("sync_digest data = %+v", digestData)
+	session := initSuperadminThroughProcess(t, process, address, "alice", "alice-pw-123")
+	push := requestAccountJSON(t, client, address, "/sync/v2/push", map[string]any{
+		"protocol": 2, "known_head": genesisHeadForTest(session.userID), "objects": []map[string]any{},
+	}, session, http.StatusOK)
+	var pushed struct {
+		Head    string `json:"head"`
+		Applied int    `json:"applied"`
 	}
-	exported := requestRPC(t, client, address, "sync_export", map[string]any{"args": map[string]any{"assetIds": []string{}, "withCreds": false}}, &token)
-	var bundle map[string]any
-	decodeRPCData(t, exported, &bundle)
-	if bundle["origin"] == "" || bundle["protocol"] != float64(syncservice.ProtocolVersion) {
-		t.Fatalf("sync_export data = %+v", bundle)
+	decodeAccountData(t, push, &pushed)
+	if pushed.Head == "" {
+		t.Fatalf("push response = %s", push.body)
 	}
-	imported := requestRPC(t, client, address, "sync_import", map[string]any{"args": map[string]any{
-		"bundle": map[string]any{"protocol": 1, "origin": "test-peer", "exportedAt": 1, "groups": []any{}, "assets": []any{}, "creds": []any{}}, "force": true,
-	}}, &token)
-	var report map[string]any
-	decodeRPCData(t, imported, &report)
-	if report["refused"] != float64(0) {
-		t.Fatalf("sync_import data = %+v", report)
+	pull := requestAccountJSON(t, client, address, "/sync/v2/pull", map[string]any{"protocol": 2, "since_seq": 0}, session, http.StatusOK)
+	if !strings.Contains(string(pull.body), `"objects"`) {
+		t.Fatalf("pull response = %s", pull.body)
 	}
-
-	rotated := runServerToken(t, binary, dataDir, "rotate-token")
-	if rotated == token {
-		t.Fatal("rotate-token did not rotate")
+	ids := requestAccountJSON(t, client, address, "/sync/v2/ids", map[string]any{"protocol": 2}, session, http.StatusOK)
+	if !strings.Contains(string(ids.body), `"entries"`) {
+		t.Fatalf("ids response = %s", ids.body)
 	}
-	requestRPC(t, client, address, "sync_digest", nil, &token, http.StatusUnauthorized)
-	requestRPC(t, client, address, "sync_digest", nil, &rotated)
+	// 推送必须携带 CSRF 头; 缺失时拒绝。
+	requestAccountJSON(t, client, address, "/sync/v2/push", map[string]any{
+		"protocol": 2, "known_head": pushed.Head, "objects": []map[string]any{},
+	}, &accountSession{cookie: session.cookie}, http.StatusForbidden)
 }
 
 func TestFullServerProcessKeepsProductionGrid(t *testing.T) {
@@ -213,58 +207,16 @@ func TestServerProcessAuthDefaultsOn(t *testing.T) {
 	waitForHealth(t, process, address)
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, nil, http.StatusUnauthorized)
+	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, http.StatusUnauthorized)
 	requestURL(t, client, "http://"+address+"/healthz", http.MethodGet, nil, nil, http.StatusOK)
 
-	token := runServerToken(t, binary, dataDir, "token")
-	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, &token)
-}
-
-func TestServerProcessTokenAuthenticatesRPCAndWebSocket(t *testing.T) {
-	binary := buildServerBinary(t)
-	dataDir := t.TempDir()
-	process, address := startServerProcess(t, binary, dataDir, false)
-	defer process.stop(t)
-	waitForHealth(t, process, address)
-	token := runServerToken(t, binary, dataDir, "token")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, &token)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	wsURL := "ws://" + address
-
-	connection, response, err := websocket.Dial(ctx, wsURL+"/ws/channel/browser-acceptance", nil)
-	if err == nil {
-		connection.Close(websocket.StatusNormalClosure, "")
-		t.Fatal("tokenless channel websocket was accepted")
+	session := initSuperadminThroughProcess(t, process, address, "alice", "alice-pw-123")
+	authenticated := requestAccountJSON(t, client, address, "/rpc", map[string]any{
+		"cmd": "app_platform", "args": map[string]any{}, "channel": "process-grid", "clientId": "process-client",
+	}, session, http.StatusOK)
+	if !strings.Contains(string(authenticated.body), `"ok":true`) {
+		t.Fatalf("session RPC response = %s", authenticated.body)
 	}
-	if response == nil || response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("tokenless channel websocket response = %+v", response)
-	}
-	if response != nil {
-		response.Body.Close()
-	}
-
-	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/channel/browser-acceptance", &websocket.DialOptions{
-		Subprotocols: []string{"nexterm", token},
-	})
-	if err != nil {
-		t.Fatalf("channel websocket with sync token: %v", response)
-	}
-	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != "nexterm" {
-		t.Fatalf("negotiated subprotocol = %q", got)
-	}
-	_ = connection.Close(websocket.StatusNormalClosure, "")
-
-	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
-		Subprotocols: []string{"nexterm", token},
-	})
-	if err != nil {
-		t.Fatalf("events websocket with sync token: %v", response)
-	}
-	_ = connection.Close(websocket.StatusNormalClosure, "")
 }
 
 func TestServerProcessRequireVault(t *testing.T) {
@@ -519,6 +471,122 @@ func (p *testServerProcess) err() error {
 	}
 }
 
+type accountSession struct {
+	cookie *http.Cookie
+	csrf   string
+	userID string
+}
+
+// initSuperadminThroughProcess 经控制台初始化码完成超管初始化并登录, 返回会话 cookie 与 CSRF 令牌。
+func initSuperadminThroughProcess(t *testing.T, process *testServerProcess, address, username, password string) *accountSession {
+	t.Helper()
+	marker := "一次性初始化码: "
+	deadline := time.Now().Add(15 * time.Second)
+	var code string
+	for time.Now().Before(deadline) {
+		for _, line := range strings.Split(process.output.String(), "\n") {
+			if strings.Contains(line, marker) {
+				code = strings.TrimSpace(strings.SplitN(line, marker, 2)[1])
+			}
+		}
+		if code != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if code == "" {
+		t.Fatalf("init code not found in process output: %s", process.output.String())
+	}
+	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"code": code, "username": username, "password": password,
+		"dek_envelope": envelopes.DEKEnvelope, "kdf_salt": envelopes.KDFSalt, "kdf_params": envelopes.KDFParams,
+		"recovery_envelope": envelopes.RecoveryEnvelope, "recovery_hash": envelopes.RecoveryHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/auth/init", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("init status = %d", response.StatusCode)
+	}
+	var body struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	session := &accountSession{csrf: body.CSRFToken, userID: body.User.ID}
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == "nexterm_session" {
+			session.cookie = cookie
+		}
+	}
+	if session.cookie == nil || session.csrf == "" || session.userID == "" {
+		t.Fatalf("init session incomplete: %+v", session)
+	}
+	return session
+}
+
+func requestAccountJSON(t *testing.T, client *http.Client, address, path string, payload any, session *accountSession, expectedStatus int) rpcTestResponse {
+	t.Helper()
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+address+path, bytes.NewReader(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if session != nil && session.cookie != nil {
+		request.AddCookie(session.cookie)
+	}
+	if session != nil && session.csrf != "" {
+		request.Header.Set("X-NexTerm-CSRF", session.csrf)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != expectedStatus {
+		t.Fatalf("%s status = %d, want %d: %s", path, response.StatusCode, expectedStatus, body)
+	}
+	return rpcTestResponse{status: response.StatusCode, body: body}
+}
+
+func decodeAccountData(t *testing.T, response rpcTestResponse, target any) {
+	t.Helper()
+	if err := json.Unmarshal(response.body, target); err != nil {
+		t.Fatalf("decode %s: %v", response.body, err)
+	}
+}
+
+func genesisHeadForTest(userID string) string {
+	digest := sha256.Sum256([]byte("nexterm/go/sync-head/v1\x00" + userID))
+	return hex.EncodeToString(digest[:])
+}
+
 func waitForHealth(t *testing.T, process *testServerProcess, address string) core.Health {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
@@ -545,131 +613,17 @@ func waitForHealth(t *testing.T, process *testServerProcess, address string) cor
 	}
 }
 
-func runServerToken(t *testing.T, binary, dataDir, command string, extraEnv ...string) string {
-	t.Helper()
-	cmd := exec.Command(binary, command, "--data-dir", dataDir)
-	cmd.Env = serverProcessEnv(t, extraEnv...)
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("%s: %v", command, err)
-	}
-	token := string(output)
-	if strings.Count(token, "\n") != 1 || strings.TrimSpace(token) == "" || strings.TrimSpace(token) != strings.TrimRight(token, "\n") {
-		t.Fatalf("%s stdout = %q", command, token)
-	}
-	return strings.TrimSpace(token)
-}
-
-func TestTokenCommandBootstrapsVaultAndKeepsEnvelopeAtRest(t *testing.T) {
-	binary := buildServerBinary(t)
-	dataDir := t.TempDir()
-	token := runServerToken(t, binary, dataDir, "token", "NEXTERM_MASTER_KEY=cli-master-key")
-	if token == "" {
-		t.Fatal("token command returned empty token")
-	}
-	if again := runServerToken(t, binary, dataDir, "token"); again != token {
-		t.Fatalf("locked read via rollback key = %q, want %q", again, token)
-	}
-	lockedRotate := exec.Command(binary, "rotate-token", "--data-dir", dataDir)
-	lockedRotate.Env = serverProcessEnv(t)
-	if output, err := lockedRotate.CombinedOutput(); err == nil {
-		t.Fatalf("locked rotation must fail, got %q", output)
-	} else if !strings.Contains(string(output), "凭据库已锁定") {
-		t.Fatalf("locked rotation error = %q", output)
-	}
-	rotated := runServerToken(t, binary, dataDir, "rotate-token", "NEXTERM_MASTER_KEY=cli-master-key")
-	if rotated == "" || rotated == token {
-		t.Fatalf("unlocked rotation = %q", rotated)
-	}
-	if current := runServerToken(t, binary, dataDir, "token", "NEXTERM_MASTER_KEY=cli-master-key"); current != rotated {
-		t.Fatalf("token after rotation = %q, want %q", current, rotated)
-	}
-
-	db, err := store.Open(context.Background(), filepath.Join(dataDir, "data.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	stored, found, err := db.SettingGet(context.Background(), "sync.token")
-	if err != nil || !found {
-		t.Fatalf("sync.token found=%v err=%v", found, err)
-	}
-	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) || strings.Contains(stored, rotated) {
-		t.Fatalf("sync.token must stay an envelope without plaintext: %q", stored)
-	}
-	backup, found, err := db.SettingGet(context.Background(), "sync.token.plaintext_backup")
-	if err != nil || !found || backup != rotated {
-		t.Fatalf("backup=%q found=%v err=%v", backup, found, err)
-	}
-}
-
-func TestTokenCommandRecoversOutOfBandRevokedAdmin(t *testing.T) {
-	binary := buildServerBinary(t)
-	dataDir := t.TempDir()
-	const masterKeyEnv = "NEXTERM_MASTER_KEY=cli-master-key"
-	token := runServerToken(t, binary, dataDir, "token", masterKeyEnv)
-
-	db, err := store.Open(context.Background(), filepath.Join(dataDir, "data.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.DB().ExecContext(context.Background(), "UPDATE sync_tokens SET revoked_at = 1 WHERE id = 'admin'"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	revokedRead := exec.Command(binary, "token", "--data-dir", dataDir)
-	revokedRead.Env = serverProcessEnv(t, masterKeyEnv)
-	if output, err := revokedRead.CombinedOutput(); err == nil {
-		t.Fatalf("revoked admin read must fail, got %q", output)
-	} else if !strings.Contains(string(output), "已吊销") {
-		t.Fatalf("revoked admin read error = %q", output)
-	}
-
-	recovered := runServerToken(t, binary, dataDir, "rotate-token", masterKeyEnv)
-	if recovered == "" || recovered == token {
-		t.Fatalf("recovery rotation = %q, want a fresh secret", recovered)
-	}
-
-	reopened, err := store.Open(context.Background(), filepath.Join(dataDir, "data.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	var hash string
-	if err := reopened.DB().QueryRowContext(context.Background(), "SELECT secret_hash FROM sync_tokens WHERE id = 'admin'").Scan(&hash); err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256([]byte(recovered))
-	if hash != hex.EncodeToString(digest[:]) {
-		t.Fatal("recovered secret does not match the live admin hash")
-	}
-	stored, found, err := reopened.SettingGet(context.Background(), "sync.token")
-	if err != nil || !found {
-		t.Fatalf("sync.token found=%v err=%v", found, err)
-	}
-	if !strings.HasPrefix(stored, store.SecretEnvelopePrefix) || strings.Contains(stored, recovered) {
-		t.Fatalf("sync.token must stay an envelope without plaintext: %q", stored)
-	}
-	backup, found, err := reopened.SettingGet(context.Background(), "sync.token.plaintext_backup")
-	if err != nil || !found || backup != recovered {
-		t.Fatalf("backup=%q found=%v err=%v", backup, found, err)
-	}
-}
-
 func requestFullRPC(t *testing.T, client *http.Client, address, command string, args any) rpcTestResponse {
 	t.Helper()
-	return requestRPCPath(t, client, address, "/rpc", command, args, nil)
+	return requestRPCPath(t, client, address, "/rpc", command, args)
 }
 
-func requestRPC(t *testing.T, client *http.Client, address, command string, args any, token *string, expectedStatus ...int) rpcTestResponse {
+func requestRPC(t *testing.T, client *http.Client, address, command string, args any, expectedStatus ...int) rpcTestResponse {
 	t.Helper()
-	return requestRPCPath(t, client, address, "/sync/rpc", command, args, token, expectedStatus...)
+	return requestRPCPath(t, client, address, "/sync/rpc", command, args, expectedStatus...)
 }
 
-func requestRPCPath(t *testing.T, client *http.Client, address, path, command string, args any, token *string, expectedStatus ...int) rpcTestResponse {
+func requestRPCPath(t *testing.T, client *http.Client, address, path, command string, args any, expectedStatus ...int) rpcTestResponse {
 	t.Helper()
 	envelope := map[string]any{"cmd": command, "args": args}
 	if path == "/rpc" {
@@ -685,9 +639,6 @@ func requestRPCPath(t *testing.T, client *http.Client, address, path, command st
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	if token != nil {
-		request.Header.Set(syncservice.TokenHeader, *token)
-	}
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)

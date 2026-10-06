@@ -169,7 +169,7 @@ class Instance:
             return json.loads(response.read())
 
     def db_path(self) -> pathlib.Path:
-        return self.data_dir / "nexterm.db"
+        return self.data_dir / "data.db"
 
     def stop(self) -> None:
         if self.process is not None and self.process.poll() is None:

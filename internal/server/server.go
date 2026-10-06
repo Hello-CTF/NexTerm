@@ -17,12 +17,12 @@ import (
 )
 
 const (
-	TokenHeader       = syncservice.TokenHeader
+	TokenHeader       = "X-NexTerm-Sync-Token"
 	GatewayAuthHeader = syncservice.GatewayAuthHeader
 )
 
-var syncOnlyCommands = [...]string{syncservice.CommandDigest, syncservice.CommandExport, syncservice.CommandImport}
-
+// TokenVerifier 服务于 /rpc 与 /ws 的遗留静态令牌分支(留给 M125 删除);
+// v2 同步协议只认会话, 不再产生任何静态令牌。
 type TokenVerifier interface {
 	VerifyToken(context.Context, string) (bool, error)
 }
@@ -48,7 +48,7 @@ type Config struct {
 	Environment    ipc.Environment
 	Tokens         TokenVerifier
 	Accounts       *account.Accounts
-	SyncRPC        http.Handler
+	SyncObjects    http.Handler
 	GatewayAuthKey string
 	Events         *EventBroker
 	Channels       ChannelBinder
@@ -70,7 +70,6 @@ type Config struct {
 type Server struct {
 	options         Options
 	dispatcher      *ipc.Dispatcher
-	syncDispatcher  *ipc.Dispatcher
 	environment     ipc.Environment
 	tokens          TokenVerifier
 	accounts        *account.Accounts
@@ -131,18 +130,8 @@ func New(config Config) (*Server, error) {
 	if config.Dispatcher == nil {
 		return nil, fmt.Errorf("RPC dispatcher is required")
 	}
-	if config.SyncRPC == nil && config.Tokens == nil && config.Accounts == nil {
-		return nil, fmt.Errorf("sync RPC handler, token verifier, or account service is required")
-	}
-	if config.Tokens == nil && config.SyncRPC != nil {
-		if verifier, ok := config.SyncRPC.(TokenVerifier); ok {
-			config.Tokens = verifier
-		}
-	}
-	if config.GatewayAuthKey == "" && config.SyncRPC != nil {
-		if provider, ok := config.SyncRPC.(interface{ GatewayAuthKey() string }); ok {
-			config.GatewayAuthKey = provider.GatewayAuthKey()
-		}
+	if config.SyncObjects == nil && config.Accounts == nil {
+		return nil, fmt.Errorf("sync object handler or account service is required")
 	}
 	authMode := config.Options.Auth
 	if authMode == "" {
@@ -230,59 +219,29 @@ func New(config Config) (*Server, error) {
 		s.environment.Events = s.events
 	}
 
-	syncDispatcher, err := NewSyncOnlyDispatcher(config.Dispatcher)
-	if err != nil {
-		return nil, err
-	}
-	s.syncDispatcher = syncDispatcher
 	s.handler = s.transportGuard(s.routes(config))
 	return s, nil
 }
 
-func NewSyncOnlyDispatcher(full *ipc.Dispatcher) (*ipc.Dispatcher, error) {
-	if full == nil {
-		return nil, fmt.Errorf("RPC dispatcher is required")
-	}
-	available := make(map[string]bool)
-	for _, command := range full.Commands() {
-		available[command] = true
-	}
-	restricted := ipc.NewDispatcher()
-	for _, command := range syncOnlyCommands {
-		if !available[command] {
-			return nil, fmt.Errorf("sync-only dispatcher is missing %s", command)
-		}
-		if err := restricted.RegisterRaw(command, func(ctx context.Context, call *ipc.Call) (any, error) {
-			response := full.Dispatch(ctx, ipc.Request{
-				Command: call.Command, Args: call.Args, Channel: call.Channel, ClientID: call.ClientID,
-			}, ipc.Environment{ClientID: call.ClientID, Events: call.Events, Streams: call.Streams})
-			if !response.OK {
-				return nil, response.Error
-			}
-			return response.Data, nil
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return restricted, nil
-}
-
-func SyncOnlyCommands() []string {
-	commands := make([]string, len(syncOnlyCommands))
-	copy(commands, syncOnlyCommands[:])
-	return commands
-}
-
 func (s *Server) routes(config Config) http.Handler {
 	mux := http.NewServeMux()
-	if config.SyncRPC != nil {
-		mux.Handle("POST /sync/rpc", config.SyncRPC)
-	} else {
-		syncRPC := ipc.NewRPCHandler(s.syncDispatcher, s.environment)
-		syncRPC.MaxBytes = config.MaxRPCBytes
-		mux.Handle("POST /sync/rpc", s.authenticatedSync(syncRPC))
-	}
 	mux.HandleFunc("GET /healthz", s.serveHealth)
+	s.mountAccountRoutes(mux)
+	if config.SyncObjects != nil && s.accounts != nil {
+		inject := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				identity := accountIdentityFrom(r.Context())
+				if identity == nil {
+					writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+					return
+				}
+				next.ServeHTTP(w, r.WithContext(syncservice.WithUserID(r.Context(), identity.UserID)))
+			})
+		}
+		mux.Handle("POST /sync/v2/push", s.accountGuard(s.requireAccountSession(s.requireAccountCSRF(inject(config.SyncObjects)))))
+		mux.Handle("POST /sync/v2/pull", s.accountGuard(s.requireAccountSession(inject(config.SyncObjects))))
+		mux.Handle("POST /sync/v2/ids", s.accountGuard(s.requireAccountSession(inject(config.SyncObjects))))
+	}
 	if s.options.SyncOnly {
 		return mux
 	}
@@ -292,7 +251,6 @@ func (s *Server) routes(config Config) http.Handler {
 	mux.Handle("POST /rpc", s.requireAuth(rpcHandler))
 	mux.HandleFunc("GET /ws/events", s.serveEvents)
 	mux.HandleFunc("GET /ws/channel/{id}", s.serveChannel)
-	s.mountAccountRoutes(mux)
 
 	blobs := config.Blobs
 	if blobs == nil && s.options.DataDir != "" {
@@ -323,28 +281,6 @@ func (s *Server) routes(config Config) http.Handler {
 		mux.Handle("/", staticHandler)
 	}
 	return mux
-}
-
-func (s *Server) authenticatedSync(next *ipc.RPCHandler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if !syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
-			if s.tokens == nil {
-				writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "同步令牌无效或缺失"))
-				return
-			}
-			valid, err := s.tokens.VerifyToken(r.Context(), r.Header.Get(TokenHeader))
-			if err != nil {
-				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
-				return
-			}
-			if !valid {
-				writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "同步令牌无效或缺失"))
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func writeRPCError(w http.ResponseWriter, status int, err *ipc.Error) {
@@ -381,7 +317,7 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	commands := s.dispatcher.Len()
 	if s.options.SyncOnly {
-		commands = s.syncDispatcher.Len()
+		commands = 0
 	}
 	var imageLinks *ImageLinkHealth
 	if s.images != nil {

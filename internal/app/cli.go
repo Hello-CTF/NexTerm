@@ -11,10 +11,8 @@ import (
 type Command string
 
 const (
-	CommandDesktop     Command = "desktop"
-	CommandServe       Command = "serve"
-	CommandToken       Command = "token"
-	CommandRotateToken Command = "rotate-token"
+	CommandDesktop Command = "desktop"
+	CommandServe   Command = "serve"
 )
 
 const (
@@ -207,8 +205,6 @@ func Usage(program string, defaultCommand Command) string {
 Commands:
   desktop       Run the Wails desktop application
   serve         Run the HTTP server (default for nexterm-server)
-  token         Print the current sync token to stdout
-  rotate-token  Rotate and print the sync token to stdout
 
 Flags:
   --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
@@ -241,7 +237,7 @@ func isStringFlag(name string) bool {
 
 func validCommand(command Command) bool {
 	switch command {
-	case CommandDesktop, CommandServe, CommandToken, CommandRotateToken:
+	case CommandDesktop, CommandServe:
 		return true
 	default:
 		return false

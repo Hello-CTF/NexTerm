@@ -27,7 +27,6 @@ type Config = core.Config
 type Module = core.Module
 type Component = core.Component
 type ComponentFuncs = core.ComponentFuncs
-type TokenStore = core.TokenStore
 type RetentionRunner = core.RetentionRunner
 type RetentionConfig = core.RetentionConfig
 
@@ -92,18 +91,11 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	return &Production{Application: application, Services: services}, nil
 }
 
-func (p *Production) TokenStore() TokenStore {
+func (p *Production) SyncObjectHandler() http.Handler {
 	if p.Services.Sync == nil {
 		return nil
 	}
-	return p.Services.Sync
-}
-
-func (p *Production) SyncRPCHandler() http.Handler {
-	if p.Services.Sync == nil {
-		return nil
-	}
-	return p.Services.Sync.PeerHandler()
+	return p.Services.Sync.ObjectHandler()
 }
 
 func productionModules(services ProductionServices) []Module {
