@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -101,7 +102,7 @@ func TestUpdateSettingsConcurrentCASHasSingleWinner(t *testing.T) {
 	}
 }
 
-func TestMigrationV1ToV2(t *testing.T) {
+func TestMigrationV1IsRejected(t *testing.T) {
 	ctx := context.Background()
 	path := t.TempDir() + "/memory-v1.db"
 	legacy, err := sql.Open("sqlite", sqliteDSN(path))
@@ -128,8 +129,6 @@ func TestMigrationV1ToV2(t *testing.T) {
 			updated_at INTEGER NOT NULL,
 			PRIMARY KEY(tenant, subject)
 		)`,
-		`INSERT INTO memory_settings (tenant, subject, injection_enabled, version, updated_at)
-			VALUES('tenant-a', 'subject-a', 1, 3, 1)`,
 		"PRAGMA user_version = 1",
 	}
 	for _, statement := range statements {
@@ -141,20 +140,7 @@ func TestMigrationV1ToV2(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := openMemoryStore(t, path)
-	settings, err := store.Settings(ctx, testScope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !settings.InjectionEnabled || settings.ToolsEnabled || settings.Version != 3 {
-		t.Fatalf("migrated settings = %+v", settings)
-	}
-	enabled := true
-	settings, err = store.UpdateSettings(ctx, testScope, SettingsInput{ToolsEnabled: &enabled}, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !settings.InjectionEnabled || !settings.ToolsEnabled || settings.Version != 4 {
-		t.Fatalf("post-migration update = %+v", settings)
+	if _, err := Open(ctx, path); err == nil || !strings.Contains(err.Error(), "unsupported semantic memory schema version 1") {
+		t.Fatalf("v1 schema open err = %v", err)
 	}
 }

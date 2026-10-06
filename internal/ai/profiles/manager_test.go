@@ -2,7 +2,6 @@ package profiles_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -24,11 +23,11 @@ func openStore(t *testing.T) *store.Store {
 	return database
 }
 
-func TestLegacyMigrationPersistsStableActiveProfile(t *testing.T) {
+func TestLegacyProviderKeyIsIgnored(t *testing.T) {
 	ctx := context.Background()
 	database := openStore(t)
-	legacy := `{"baseUrl":" https://example.test/v1/// ","apiKey":" secret ","model":" legacy-model ","fallbackModel":" legacy-fallback ","contextWindow":100}`
-	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"legacy-secret","model":"legacy-model"}`
+	if err := database.SettingSet(ctx, "ai.provider", legacy); err != nil {
 		t.Fatal(err)
 	}
 	manager, err := profiles.NewManager(ctx, database)
@@ -36,47 +35,21 @@ func TestLegacyMigrationPersistsStableActiveProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	overview := manager.Overview()
-	if len(overview.Profiles) != 1 || overview.ActiveID == nil {
-		t.Fatalf("unexpected migrated overview: %+v", overview)
+	if len(overview.Profiles) != 0 || overview.ActiveID != nil {
+		t.Fatalf("legacy ai.provider row must not be imported: %+v", overview)
 	}
-	profile := overview.Profiles[0]
-	if !ids.Valid(profile.ID) || *overview.ActiveID != profile.ID {
-		t.Fatalf("migration did not allocate a stable active ID: %+v", overview)
+	if raw, found, err := database.SettingGet(ctx, "ai.provider"); err != nil || !found || raw != legacy {
+		t.Fatalf("legacy row must be left untouched: found=%v err=%v", found, err)
 	}
-	if profile.Name != "legacy-model" || profile.BaseURL != "https://example.test/v1" || profile.APIKey != profiles.MaskedAPIKey || profile.FallbackModel != "legacy-fallback" {
-		t.Fatalf("migration did not sanitize profile: %+v", profile)
-	}
-	if profile.Temperature != provider.DefaultTemperature || !profile.Stream || profile.ContextWindow != 1000 {
-		t.Fatalf("migration defaults were not applied: %+v", profile)
-	}
-
-	reloaded, err := profiles.NewManager(ctx, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := reloaded.Overview().Profiles[0].ID; got != profile.ID {
-		t.Fatalf("reloaded ID = %s, want %s", got, profile.ID)
-	}
-	raw, found, err := database.SettingGet(ctx, profiles.SettingKey)
-	if err != nil || !found {
-		t.Fatalf("migrated setting missing: found=%v err=%v", found, err)
-	}
-	var persisted map[string]any
-	if err := json.Unmarshal([]byte(raw), &persisted); err != nil {
-		t.Fatal(err)
-	}
-	if persisted["version"] != float64(profiles.StoreVersion) {
-		t.Fatalf("stored version = %v", persisted["version"])
+	if _, found, err := database.SettingGet(ctx, profiles.SettingKey); err != nil || found {
+		t.Fatalf("ignored legacy row must not materialize ai.models: found=%v err=%v", found, err)
 	}
 }
 
-func TestMalformedCurrentStoreDoesNotMigrateLegacy(t *testing.T) {
+func TestMalformedCurrentStoreOpensEmpty(t *testing.T) {
 	ctx := context.Background()
 	database := openStore(t)
 	if err := database.SettingSet(ctx, profiles.SettingKey, `{broken`); err != nil {
-		t.Fatal(err)
-	}
-	if err := database.SettingSet(ctx, profiles.LegacySettingKey, `{"model":"must-not-return"}`); err != nil {
 		t.Fatal(err)
 	}
 	manager, err := profiles.NewManager(ctx, database)
