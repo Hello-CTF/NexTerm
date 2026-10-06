@@ -173,6 +173,14 @@ export type SyncReport = {
   warnings?: string[],
 };
 
+export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript";
+
+export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
+
+export type SyncApplyObjectResult = { id: string, kind: string, result: "applied" | "identical" | "skipped", warning?: string, };
+
+export type SyncApplyResult = { applied: number, identical: number, skipped: number, objects: SyncApplyObjectResult[], };
+
 export type AuditCountDto = { total: number, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };
