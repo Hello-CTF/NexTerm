@@ -102,6 +102,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if version == SchemaVersion {
 		return nil
 	}
+	if version != 0 {
+		return fmt.Errorf("unsupported semantic memory schema version %d", version)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin semantic memory migration: %w", err)
@@ -112,43 +115,31 @@ func (s *Store) migrate(ctx context.Context) error {
 			_ = tx.Rollback()
 		}
 	}()
-	var statements []string
-	switch version {
-	case 0:
-		statements = []string{
-			`CREATE TABLE IF NOT EXISTS memory_entry (
-				id TEXT PRIMARY KEY,
-				tenant TEXT NOT NULL,
-				subject TEXT NOT NULL,
-				topic TEXT NOT NULL,
-				content TEXT NOT NULL,
-				version INTEGER NOT NULL CHECK(version > 0),
-				redacted INTEGER NOT NULL CHECK(redacted IN (0, 1)),
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL
-			)`,
-			`CREATE INDEX IF NOT EXISTS memory_entry_scope_topic
-				ON memory_entry(tenant, subject, topic, id)`,
-			`CREATE TABLE IF NOT EXISTS memory_settings (
-				tenant TEXT NOT NULL,
-				subject TEXT NOT NULL,
-				injection_enabled INTEGER NOT NULL CHECK(injection_enabled IN (0, 1)),
-				tools_enabled INTEGER NOT NULL DEFAULT 0 CHECK(tools_enabled IN (0, 1)),
-				version INTEGER NOT NULL CHECK(version > 0),
-				updated_at INTEGER NOT NULL,
-				PRIMARY KEY(tenant, subject)
-			)`,
-		}
-	case 1:
-
-		statements = []string{
-			`ALTER TABLE memory_settings
-				ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 0 CHECK(tools_enabled IN (0, 1))`,
-		}
-	default:
-		return fmt.Errorf("unsupported semantic memory schema version %d", version)
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS memory_entry (
+			id TEXT PRIMARY KEY,
+			tenant TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			topic TEXT NOT NULL,
+			content TEXT NOT NULL,
+			version INTEGER NOT NULL CHECK(version > 0),
+			redacted INTEGER NOT NULL CHECK(redacted IN (0, 1)),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS memory_entry_scope_topic
+			ON memory_entry(tenant, subject, topic, id)`,
+		`CREATE TABLE IF NOT EXISTS memory_settings (
+			tenant TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			injection_enabled INTEGER NOT NULL CHECK(injection_enabled IN (0, 1)),
+			tools_enabled INTEGER NOT NULL DEFAULT 0 CHECK(tools_enabled IN (0, 1)),
+			version INTEGER NOT NULL CHECK(version > 0),
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(tenant, subject)
+		)`,
+		fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion),
 	}
-	statements = append(statements, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion))
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate semantic memory schema: %w", err)

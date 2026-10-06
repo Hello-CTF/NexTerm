@@ -46,8 +46,8 @@ func TestInjectionDefaultsOffAndNeverMutatesHistory(t *testing.T) {
 	if injection.Messages[0] != leadingSystem || injection.Messages[1] != injection.Memory || injection.Messages[2] != user {
 		t.Fatalf("message order = %+v", injection.Messages)
 	}
-	if !IsEphemeral(injection.Memory) || IsEphemeral(user) {
-		t.Fatal("ephemeral marker missing or present on conversation message")
+	if injection.Memory.Role != schema.System || !strings.HasPrefix(injection.Memory.Content, promptHeader) {
+		t.Fatalf("memory message = %+v", injection.Memory)
 	}
 	if len(history) != 2 || history[0] != leadingSystem || history[1] != user || backing[2] != unusedCapacity {
 		t.Fatalf("caller history changed: %+v", backing)

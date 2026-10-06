@@ -11,6 +11,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/profiles"
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/provider"
+	"github.com/cloudwego/eino/schema"
 )
 
 func intPointer(value int) *int { return &value }
@@ -157,12 +158,26 @@ func TestActiveClientAppliesProfileIdleTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	chatModel, err := client.ChatModel(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	backstop, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	started := time.Now()
-	_, err = client.Chat(backstop, provider.ChatRequest{Messages: []provider.ChatMessage{provider.UserMessage("ping")}}, nil)
-	if err == nil || !strings.Contains(err.Error(), "stalled") {
-		t.Fatalf("idle error = %v", err)
+	reader, err := chatModel.Stream(backstop, []*schema.Message{schema.UserMessage("ping")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var recvErr error
+	for {
+		if _, recvErr = reader.Recv(); recvErr != nil {
+			break
+		}
+	}
+	if !strings.Contains(recvErr.Error(), "stalled") {
+		t.Fatalf("idle error = %v", recvErr)
 	}
 	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
 		t.Fatalf("profile idle timeout not applied, took %v", elapsed)
