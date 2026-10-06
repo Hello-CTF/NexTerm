@@ -112,6 +112,9 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "store",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+				if err := registerFilesCommands(dispatcher, services.Store); err != nil {
+					return err
+				}
 				return registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir)
 			},
 			Component: closeStoreComponent(services.Store, services.Agent),

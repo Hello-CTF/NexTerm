@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
+	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
@@ -542,7 +543,14 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 }
 
 type accountAdminSettingsView struct {
-	RegistrationOpen bool `json:"registration_open"`
+	RegistrationOpen bool   `json:"registration_open"`
+	PublicBaseURL    string `json:"public_base_url"`
+}
+
+// accountAdminSettingsPutRequest 用指针区分「未携带」(保持不变)与「空串」(清除)。
+type accountAdminSettingsPutRequest struct {
+	RegistrationOpen bool    `json:"registration_open"`
+	PublicBaseURL    *string `json:"public_base_url"`
 }
 
 func (s *Server) serveAdminSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -551,18 +559,40 @@ func (s *Server) serveAdminSettingsGet(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	writeAccountJSON(w, http.StatusOK, accountAdminSettingsView{RegistrationOpen: registration})
+	view := accountAdminSettingsView{RegistrationOpen: registration}
+	if s.settings != nil {
+		if value, ok, err := s.settings.SettingGet(r.Context(), core.FilePublicBaseURLSettingKey); err == nil && ok {
+			view.PublicBaseURL = value
+		}
+	}
+	writeAccountJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) serveAdminSettingsPut(w http.ResponseWriter, r *http.Request) {
-	var request accountAdminSettingsView
+	var request accountAdminSettingsPutRequest
 	if err := decodeAccountJSON(w, r, &request); err != nil {
 		writeAccountFailure(w, err)
 		return
+	}
+	if request.PublicBaseURL != nil {
+		base, err := core.ParsePublicBaseURL(*request.PublicBaseURL)
+		if err != nil {
+			writeAccountError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, err.Error()))
+			return
+		}
+		if s.settings == nil {
+			if base != "" {
+				writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "设置存储不可用"))
+				return
+			}
+		} else if err := s.settings.SettingSet(r.Context(), core.FilePublicBaseURLSettingKey, base); err != nil {
+			writeAccountFailure(w, err)
+			return
+		}
 	}
 	if err := s.accounts.SetRegistrationEnabled(r.Context(), request.RegistrationOpen); err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
-	writeAccountJSON(w, http.StatusOK, accountAdminSettingsView{RegistrationOpen: request.RegistrationOpen})
+	s.serveAdminSettingsGet(w, r)
 }

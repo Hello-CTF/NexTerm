@@ -33,6 +33,15 @@ func (f TokenVerifierFunc) VerifyToken(ctx context.Context, token string) (bool,
 	return f(ctx, token)
 }
 
+// SettingStore 是 setting 表的最小读写子集, 由装配层以 *store.Store 注入。
+type SettingStore interface {
+	SettingGet(ctx context.Context, key string) (string, bool, error)
+	SettingSet(ctx context.Context, key, value string) error
+}
+
+// AuditFunc 写审计记录; 由装配层桥接到 store.AuditInsert。
+type AuditFunc func(ctx context.Context, source, kind string, payload map[string]any) error
+
 type Config struct {
 	Options        Options
 	Dispatcher     *ipc.Dispatcher
@@ -45,6 +54,9 @@ type Config struct {
 	Channels       ChannelBinder
 	ChannelStats   ChannelStatsFunc
 	Blobs          *BlobStore
+	Images         *ImageStore
+	Settings       SettingStore
+	AuditFunc      AuditFunc
 	Static         http.Handler
 	Vault          Vault
 	VaultStatus    func(context.Context) (any, error)
@@ -77,6 +89,9 @@ type Server struct {
 	closeOnce       sync.Once
 	closeErr        error
 	webSocket       WebSocketConfig
+	images          *ImageStore
+	settings        SettingStore
+	audit           AuditFunc
 
 	readGate func()
 }
@@ -101,6 +116,15 @@ type Health struct {
 	WebRoot          *string          `json:"webRoot"`
 	Vault            any              `json:"vault"`
 	Retention        *RetentionHealth `json:"retention"`
+	ImageLinks       *ImageLinkHealth `json:"imageLinks,omitempty"`
+}
+
+// ImageLinkHealth 是 /healthz 暴露的非秘密图片链接元数据。
+type ImageLinkHealth struct {
+	PublicBaseURLConfigured bool  `json:"publicBaseURLConfigured"`
+	MaxBytes                int64 `json:"maxBytes"`
+	OwnerQuotaBytes         int64 `json:"ownerQuotaBytes"`
+	TTLSeconds              int64 `json:"ttlSeconds"`
 }
 
 func New(config Config) (*Server, error) {
@@ -148,6 +172,13 @@ func New(config Config) (*Server, error) {
 	if err := core.ValidateListenAddress(config.Options.Listen); config.Options.Listen != "" && err != nil {
 		return nil, err
 	}
+	if config.Options.PublicBaseURL != "" {
+		base, err := core.ParsePublicBaseURL(config.Options.PublicBaseURL)
+		if err != nil {
+			return nil, err
+		}
+		config.Options.PublicBaseURL = base
+	}
 	if !config.Options.SyncOnly && config.Channels == nil {
 		return nil, fmt.Errorf("channel binder is required in full server mode")
 	}
@@ -193,6 +224,7 @@ func New(config Config) (*Server, error) {
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
+		images: config.Images, settings: config.Settings, audit: config.AuditFunc,
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
@@ -272,6 +304,17 @@ func (s *Server) routes(config Config) http.Handler {
 		mux.Handle("DELETE /files/blob", s.requireAuth(http.HandlerFunc(blobs.Delete)))
 		mux.Handle("POST /files/blob/reserve", s.requireAuth(http.HandlerFunc(blobs.Reserve)))
 	}
+	images := config.Images
+	if images == nil && s.options.DataDir != "" {
+		images = NewImageStore(s.options.DataDir, s.logger)
+	}
+	if images != nil {
+		s.images = images
+		images.onExpire = s.auditImageExpire
+		mux.Handle("POST /files/image", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageUpload))))
+		mux.Handle("GET /files/image/{id}", http.HandlerFunc(s.serveImageDownload))
+		mux.Handle("DELETE /files/image/{id}", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageDelete))))
+	}
 	staticHandler := config.Static
 	if staticHandler == nil && s.options.WebRoot != "" {
 		staticHandler = NewStaticHandler(s.options.WebRoot)
@@ -340,17 +383,29 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 	if s.options.SyncOnly {
 		commands = s.syncDispatcher.Len()
 	}
+	var imageLinks *ImageLinkHealth
+	if s.images != nil {
+		imageLinks = &ImageLinkHealth{
+			PublicBaseURLConfigured: s.publicBaseURL(r.Context()) != "",
+			MaxBytes:                s.images.imageMaxBytes(),
+			OwnerQuotaBytes:         s.images.ownerQuotaBytes(),
+			TTLSeconds:              int64(s.images.ttlDuration().Seconds()),
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(Health{
 		OK: true, Service: "nexterm-server", Version: s.version, SyncOnly: s.options.SyncOnly,
 		Commands: commands, EventSubscribers: s.events.SubscriberCount(),
 		LiveChannels: channelStats.LiveChannels, PendingChannels: channelStats.PendingChannels,
-		WebRoot: webRoot, Vault: vaultStatus, Retention: retention,
+		WebRoot: webRoot, Vault: vaultStatus, Retention: retention, ImageLinks: imageLinks,
 	})
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// Images 返回图片暂存(nil 表示未启用, 如同步模式或无数据目录)。
+func (s *Server) Images() *ImageStore { return s.images }
 
 func (s *Server) Events() *EventBroker { return s.events }
 

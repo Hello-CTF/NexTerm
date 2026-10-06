@@ -95,12 +95,22 @@ rc4 把完整版访问控制的默认值从 "仅非回环监听强制" 翻转为
 | `--master-key-file` | `NEXTERM_MASTER_KEY_FILE` | 从文件读取凭据库根密钥（推荐；与 `--master-key` 互斥）。 |
 | `--require-vault` | — | 启动时凭据库未能解锁则以非零状态退出。 |
 | `--sync-only` | — | 只启动资产同步接口。 |
+| `--public-base-url` | `NEXTERM_PUBLIC_BASE_URL` | 仅完整模式。生成图片公开链接时使用的外部基础 URL，如 `https://term.example.com/nexterm`（反代带路径前缀时）。仅接受 http/https，拒绝 userinfo/query/fragment；未设置时生成同源相对链接。运行时可在「管理设置」中覆盖（数据库存储优先于此默认值）。与同步地址、AI 模型地址互不影响。 |
 | — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免同步令牌（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
 | — | `NEXTERM_BLOB_MAX_BYTES` | 仅完整模式。单个文件上传的大小上限（字节），默认 268435456（256 MiB）。 |
 | — | `NEXTERM_BLOB_PERSIST_MAX_BYTES` | 仅完整模式。持久保存文件的总配额（字节），默认 1073741824（1 GiB）。 |
 | — | `NEXTERM_BLOB_DISK_MAX_PERCENT` | 仅完整模式。数据目录所在磁盘的使用率阈值（取值 (0, 100]），达到后拒绝新的持久化上传，默认 90。 |
+| — | `NEXTERM_IMAGE_MAX_BYTES` | 仅完整模式。单张图片的大小上限（字节），默认 20971520（20 MiB）。 |
+| — | `NEXTERM_IMAGE_OWNER_MAX_BYTES` | 仅完整模式。每个归属者的图片总配额（字节），默认 209715200（200 MiB）。 |
+| — | `NEXTERM_IMAGE_TTL` | 仅完整模式。图片公开链接的有效期（Go 时长，如 `24h`），默认 24h，上限 7d。 |
 
-`NEXTERM_BLOB_*` 在启动时读取，无效值会被忽略并记录警告，回退到默认值。
+`NEXTERM_BLOB_*` 与 `NEXTERM_IMAGE_*` 在启动时读取，无效值会被忽略并记录警告，回退到默认值。
+
+### 图片限时公开链接
+
+完整模式提供 `/files/image` 路由族，用于把终端里的图片以限时公开链接分享：上传（`POST /files/image`，要求登录会话与 CSRF 头）后返回不可猜测的链接 ID，默认 24 小时后自动过期清理（上限 7 天）。下载（`GET /files/image/{id}`）无需任何凭据即可在 `<img>` 或浏览器中直接打开，但只接受 png/jpeg/gif/webp（按内容嗅探，响应带 `X-Content-Type-Options: nosniff`，仅 inline 展示），且不会读取持久化文件区（`dataDir/files`）中的任何内容。删除（`DELETE /files/image/{id}`）仅限上传者本人或超管。上传、下载、删除与过期清理都会写审计（不含任何令牌）。
+
+`--auth loopback` 下 Host 被限制为回环地址，公开链接经域名访问会收到 421，因此该模式只适合本机使用；对外分享请使用默认 `--auth on` 并配置 `--public-base-url`（或管理设置中的同名项）指向你的 HTTPS 反代入口。`--auth off` 时图片归属共享本地工作区身份，不因此获得任何账号管理能力。
 
 安装包中的 `nexterm-server.service` 与 `nexterm-onlyserver.service` 二选一，不要同时启用。完整版密钥放在 `/etc/nexterm/nexterm.env`，仅同步运行的密钥放在 `/etc/nexterm/onlyserver.env`，权限均设为 `0600`；不要把密钥直接写进可公开读取的 unit 文件。
 
