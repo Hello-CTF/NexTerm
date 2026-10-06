@@ -1,11 +1,12 @@
-// Package shellintegr injects a cwd-reporting wrapper into interactive zsh,
-// bash, and fish sessions, and parses the resulting OSC 7 reports back out of
-// the terminal byte stream.
+// Package shellintegr injects a cwd-reporting and command-boundary wrapper
+// into interactive zsh, bash, and fish sessions, and parses the resulting
+// OSC 7 cwd reports and OSC 133 command lifecycle sequences back out of the
+// terminal byte stream.
 //
 // The wrapper only adds escape-sequence output on top of what the shell
-// already writes; it never rewrites or suppresses shell output. Tracker reads
-// the stream without consuming or mutating it, so recording and replay see
-// exactly the bytes the shell produced.
+// already writes; it never rewrites or suppresses shell output. Tracker and
+// CommandTracker read the stream without consuming or mutating it, so
+// recording and replay see exactly the bytes the shell produced.
 package shellintegr
 
 import (
@@ -110,10 +111,38 @@ __nexterm_osc7() {
     out=${out// /%20}
     printf '\033]7;file://%s%s\033\\' "$__nexterm_host" "$out"
 }
+__nexterm_armed=0
+__nexterm_preexec() {
+    [ "$__nexterm_armed" = 1 ] || return 0
+    __nexterm_armed=0
+    printf '\033]133;B\033\\'
+    printf '\033]133;C\033\\'
+}
+__nexterm_precmd() {
+    local exit_code=$?
+    printf '\033]133;D;%d\033\\' "$exit_code"
+    printf '\033]133;A\033\\'
+    __nexterm_osc7
+}
+__nexterm_arm() {
+    __nexterm_armed=1
+}
+__nexterm_prev_debug=$(trap -p DEBUG)
+if [ -n "$__nexterm_prev_debug" ]; then
+    __nexterm_prev_debug=${__nexterm_prev_debug#trap -- \'}
+    __nexterm_prev_debug=${__nexterm_prev_debug%\' DEBUG}
+fi
+__nexterm_debug_trap() {
+    __nexterm_preexec
+    if [ -n "$__nexterm_prev_debug" ]; then
+        eval "$__nexterm_prev_debug"
+    fi
+}
+trap '__nexterm_debug_trap' DEBUG
 if ((BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1))); then
-    PROMPT_COMMAND=(__nexterm_osc7 ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"})
+    PROMPT_COMMAND=(__nexterm_precmd ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"} __nexterm_arm)
 else
-    PROMPT_COMMAND="__nexterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+    PROMPT_COMMAND="__nexterm_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND};__nexterm_arm"
 fi
 `
 
@@ -126,7 +155,17 @@ __nexterm_osc7() {
     out=${out// /%20}
     printf '\033]7;file://%s%s\033\\' "$__nexterm_host" "$out"
 }
-precmd_functions+=(__nexterm_osc7)
+__nexterm_osc133_precmd() {
+    printf '\033]133;D;%d\033\\' $?
+    printf '\033]133;A\033\\'
+    __nexterm_osc7
+}
+__nexterm_osc133_preexec() {
+    printf '\033]133;B\033\\'
+    printf '\033]133;C\033\\'
+}
+precmd_functions+=(__nexterm_osc133_precmd)
+preexec_functions+=(__nexterm_osc133_preexec)
 chpwd_functions+=(__nexterm_osc7)
 `
 
@@ -134,5 +173,15 @@ const fishIntegration = `set -g __nexterm_host (hostname)
 function __nexterm_osc7 --on-event fish_prompt --on-variable PWD
     set -l out (string escape --style=url $PWD)
     printf '\033]7;file://%s%s\033\\' $__nexterm_host $out
+end
+function __nexterm_osc133_prompt --on-event fish_prompt
+    printf '\033]133;A\033\\'
+end
+function __nexterm_osc133_preexec --on-event fish_preexec
+    printf '\033]133;B\033\\'
+    printf '\033]133;C\033\\'
+end
+function __nexterm_osc133_postexec --on-event fish_postexec
+    printf '\033]133;D;%d\033\\' $status
 end
 `

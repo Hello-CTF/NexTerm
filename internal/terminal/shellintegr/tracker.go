@@ -31,24 +31,43 @@ func (t *Tracker) CWD() string { return t.cwd }
 // cwd reported within p, if any; reports split across chunk boundaries are
 // picked up once the completing chunk arrives.
 func (t *Tracker) Observe(p []byte) (string, bool) {
-	data := p
-	if len(t.pending) > 0 {
-		data = make([]byte, 0, len(t.pending)+len(p))
-		data = append(data, t.pending...)
-		data = append(data, p...)
-		t.pending = nil
-	}
 	latest := ""
 	found := false
+	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte) {
+		if cwd, ok := parseOSC7(payload); ok {
+			t.cwd = cwd
+			latest, found = cwd, true
+		}
+	})
+	t.pending = append(t.pending[:0], tail...)
+	return latest, found
+}
+
+// pendingJoin prepends any buffered incomplete sequence to p so a split
+// sequence can be rescanned as a whole.
+func pendingJoin(pending, p []byte) []byte {
+	if len(pending) == 0 {
+		return p
+	}
+	data := make([]byte, 0, len(pending)+len(p))
+	data = append(data, pending...)
+	data = append(data, p...)
+	return data
+}
+
+// scanOSC consumes data, invoking handle with the payload of each complete
+// OSC sequence. It returns the trailing bytes of an incomplete sequence for
+// the caller to buffer, or nil when the tail is dropped because an overlong
+// sequence overflowed maxPending.
+func scanOSC(data []byte, handle func(payload []byte)) []byte {
 	for len(data) > 0 {
 		i := bytes.IndexByte(data, 0x1b)
 		if i < 0 {
-			break
+			return nil
 		}
 		seq := data[i:]
 		if len(seq) < 2 {
-			t.pending = append(t.pending[:0], seq...)
-			break
+			return seq
 		}
 		if seq[1] != ']' {
 			data = seq[2:]
@@ -57,18 +76,14 @@ func (t *Tracker) Observe(p []byte) (string, bool) {
 		end, next := oscSequenceEnd(seq[2:])
 		if end < 0 {
 			if len(seq) > maxPending {
-				break
+				return nil
 			}
-			t.pending = append(t.pending[:0], seq...)
-			break
+			return seq
 		}
-		if cwd, ok := parseOSC7(seq[2 : 2+end]); ok {
-			t.cwd = cwd
-			latest, found = cwd, true
-		}
+		handle(seq[2 : 2+end])
 		data = seq[next:]
 	}
-	return latest, found
+	return nil
 }
 
 // oscSequenceEnd scans an OSC payload for BEL or ST, returning the payload

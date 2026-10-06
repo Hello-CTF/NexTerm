@@ -64,11 +64,13 @@ func TestWrapBash(t *testing.T) {
 // TestBashWrapperPromptCommandBranches pins the two-branch PROMPT_COMMAND
 // injection: bash >= 5.1 executes PROMPT_COMMAND as an array, older releases
 // only run element 0, so the legacy branch must keep scalar concatenation.
+// Both branches wrap the user's command between our precmd and the arming
+// hook so the DEBUG trap only marks real command starts.
 func TestBashWrapperPromptCommandBranches(t *testing.T) {
 	for _, want := range []string{
 		`BASH_VERSINFO[0] > 5`,
-		`PROMPT_COMMAND=(__nexterm_osc7 ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"})`,
-		`PROMPT_COMMAND="__nexterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"`,
+		`PROMPT_COMMAND=(__nexterm_precmd ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"} __nexterm_arm)`,
+		`PROMPT_COMMAND="__nexterm_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND};__nexterm_arm"`,
 	} {
 		if !strings.Contains(bashWrapper, want) {
 			t.Errorf("bash wrapper missing branch line %q:\n%s", want, bashWrapper)
