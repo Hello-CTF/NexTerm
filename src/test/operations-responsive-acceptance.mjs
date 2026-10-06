@@ -286,8 +286,16 @@ async function openAssetTree(page) {
 
 async function connectAsset(page, name) {
   await openAssetTree(page);
-  await page.waitFor(`Boolean(document.querySelector('button[aria-label="连接 ${name}"]'))`);
-  await page.evaluate(`document.querySelector('button[aria-label="连接 ${name}"]').click()`);
+  const inline = `button[aria-label="连接 ${name}"]`;
+  const more = `button[aria-label="更多操作 ${name}"]`;
+  await page.waitFor(`Boolean(document.querySelector('${inline}') || document.querySelector('${more}'))`);
+  if (await page.evaluate(`Boolean(document.querySelector('${inline}'))`)) {
+    await page.evaluate(`document.querySelector('${inline}').click()`);
+  } else {
+    await page.evaluate(`document.querySelector('${more}').click()`);
+    await page.waitFor(`Boolean(document.querySelector('.nx-menu'))`);
+    await page.evaluate(`[...document.querySelectorAll('.nx-menu-item')].find((b) => b.textContent?.includes('连接'))?.click()`);
+  }
   await sleep(250);
   await page.evaluate(`(() => {
     const backdrop = document.querySelector(".nx-dock-backdrop");
@@ -317,7 +325,7 @@ async function checkRedis(page, vp, label) {
     ${RECT_HELPER}
     const pane = [...document.querySelectorAll(".nx-pane")].find((p) => p.textContent.includes("命令台"));
     const pre = pane ? pane.querySelector("pre.nx-pre") : null;
-    const cmdInput = pane ? [...pane.querySelectorAll("input")].find((el) => !el.getAttribute("aria-label")) : null;
+    const cmdInput = pane ? pane.querySelector('input[aria-label="Redis 命令"]') : null;
     return {
       innerWidth: window.innerWidth,
       detail: __nxRect(pre),

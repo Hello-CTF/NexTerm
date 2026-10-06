@@ -533,7 +533,12 @@ async function statesFormsAcceptance(page) {
 
     await setSwitches(page, { fail: [] });
     await page.evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "重试").click()`);
-    await page.waitFor(`document.body.textContent.includes("共 ") && !document.body.textContent.includes("审计记录加载失败")`);
+    await page.waitFor(`(() => {
+      const pane = [...document.querySelectorAll(".nx-pane")].find((p) => p.textContent.includes("审计日志"));
+      if (!pane || pane.querySelector(".nx-skeleton")) return false;
+      if (pane.querySelectorAll("tbody tr").length === 0) return false;
+      return /共 [1-9]\\d* 条/.test(pane.textContent) && !pane.textContent.includes("审计记录加载失败");
+    })()`);
     const recoveredRows = await page.evaluate(`document.body.textContent.match(/共 (\\d+) 条/)?.[1] ?? null`);
     assert.ok(recoveredRows && Number(recoveredRows) > 0, `retry should render audit rows: ${recoveredRows}`);
 
