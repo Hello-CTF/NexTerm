@@ -76,6 +76,12 @@ func bridgeIDs(r *Registry) int {
 	return len(r.bridges)
 }
 
+func pendingIDs(r *Registry) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.pending)
+}
+
 // 放弃先于配对: 等待方取消后, 同一 bridgeID 的配对必须被拒绝, 且不登记 conn。
 func TestRegistryAbandonBeforePair(t *testing.T) {
 	r := NewRegistry()
@@ -90,6 +96,9 @@ func TestRegistryAbandonBeforePair(t *testing.T) {
 	}
 	if count := bridgeIDs(r); count != 0 {
 		t.Fatalf("bridges = %d, want 0", count)
+	}
+	if count := pendingIDs(r); count != 0 {
+		t.Fatalf("pending = %d, want 0", count)
 	}
 }
 
@@ -110,6 +119,9 @@ func TestRegistryAbandonBeforeDeliverClosesConn(t *testing.T) {
 	deliver()
 	if count := bridgeIDs(r); count != 0 {
 		t.Fatalf("bridges = %d, want 0", count)
+	}
+	if count := pendingIDs(r); count != 0 {
+		t.Fatalf("pending = %d, want 0", count)
 	}
 	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer readCancel()
@@ -143,6 +155,9 @@ func TestRegistryDeliverBeforeAbandon(t *testing.T) {
 	if count := bridgeIDs(r); count != 0 {
 		t.Fatalf("bridges = %d, want 0", count)
 	}
+	if count := pendingIDs(r); count != 0 {
+		t.Fatalf("pending = %d, want 0", count)
+	}
 	readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer readCancel()
 	if _, _, err := agentClient.Read(readCtx); err == nil {
@@ -175,6 +190,9 @@ func TestRegistryDeliverAbandonDoubleReadyNoLeak(t *testing.T) {
 		r.UnregisterBridge(conn)
 		if count := bridgeIDs(r); count != 0 {
 			t.Fatalf("iteration %d: bridges = %d, want 0", iteration, count)
+		}
+		if count := pendingIDs(r); count != 0 {
+			t.Fatalf("iteration %d: pending = %d, want 0", iteration, count)
 		}
 		readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if _, _, readErr := agentClient.Read(readCtx); readErr == nil {

@@ -138,13 +138,17 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 	r.mu.Lock()
 	r.pending[bridgeID] = request
 	r.mu.Unlock()
+	// pending 表项必须全路径清理: 成功交付与"已交付后放弃"的 drain 路径
+	// 不会显式删除, 靠这个 defer 兜底 (abandon 路径的重复删除无害)。
+	defer func() {
+		r.mu.Lock()
+		delete(r.pending, bridgeID)
+		r.mu.Unlock()
+	}()
 	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err := writeControlJSON(writeCtx, conn, controlMessage{Type: "bridge", BridgeID: bridgeID})
 	cancel()
 	if err != nil {
-		r.mu.Lock()
-		delete(r.pending, bridgeID)
-		r.mu.Unlock()
 		return nil, errDeviceOffline
 	}
 	waitCtx, waitCancel := context.WithTimeout(ctx, bridgeWaitTimeout)
@@ -170,7 +174,6 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 		return nil, errDeviceOffline
 	}
 	request.abandoned = true
-	delete(r.pending, bridgeID)
 	r.mu.Unlock()
 	return nil, errDeviceOffline
 }
