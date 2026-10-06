@@ -789,7 +789,8 @@
       "go_name": "ai_test_provider",
       "status": "implemented-unverified",
       "frontend_accessors": [
-        "aiApi.testProvider"
+        "aiApi.testProvider",
+        "modelApi.test"
       ],
       "sync_only_feature": false,
       "evidence": "registered in Go runtime; no passing feature-specific evidence supplied"
