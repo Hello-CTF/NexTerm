@@ -645,20 +645,6 @@ func (m *Manager) Done(runID string) (<-chan struct{}, error) {
 	return run.ctx.Done(), nil
 }
 
-func (m *Manager) NextSequence(runID string) (uint64, error) {
-	run, err := m.run(runID)
-	if err != nil {
-		return 0, err
-	}
-	run.mu.Lock()
-	defer run.mu.Unlock()
-	if run.terminal != nil {
-		return 0, ErrRunFinished
-	}
-	run.sequence++
-	return run.sequence, nil
-}
-
 func (run *runState) appendEventLocked(kind EventKind, reason TerminalReason, requestID, message string) Event {
 	run.sequence++
 	event := Event{

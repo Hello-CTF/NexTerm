@@ -17,7 +17,7 @@ func TestR1ExecutionRejectsBufferedDangerousSubmission(t *testing.T) {
 		Permission: guard.Config{Mode: guard.ReadOnly},
 		Memory:     guard.NewMemory(),
 	}
-	if got := TerminalInputBuffer(terminal.screen); got != "rm -rf /tmp/victim" {
+	if got, _ := TerminalInputCursor(terminal.screen); got != "rm -rf /tmp/victim" {
 		t.Fatalf("terminal input buffer = %q", got)
 	}
 	result, err := execution.initial(context.Background(), Call{ID: "keys", Name: "send_keys", Args: json.RawMessage(`{"keys":"; ls","enter":true}`)})

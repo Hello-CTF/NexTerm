@@ -2,11 +2,6 @@ package tools
 
 import "strings"
 
-func TerminalInputBuffer(screen Screen) string {
-	buffered, _ := TerminalInputCursor(screen)
-	return buffered
-}
-
 func TerminalInputCursor(screen Screen) (string, int) {
 	if screen.Text == "" {
 		return "", 0

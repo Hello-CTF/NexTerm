@@ -337,20 +337,6 @@ func (m *Manager) statesForOwner(owner *ownership) []*runState {
 	return result
 }
 
-func (m *Manager) UserWrite(ctx context.Context, tabID string, data []byte) error {
-	if m.deps.WriteUser == nil {
-		return errors.New("用户终端写入未配置")
-	}
-	operation := m.operationLock(tabID)
-	operation.Lock()
-	defer operation.Unlock()
-	m.preemptOwnershipLocked(tabID, "用户夺回")
-	lock := m.tabLock(tabID)
-	lock.Lock()
-	defer lock.Unlock()
-	return m.deps.WriteUser(ctx, tabID, data)
-}
-
 func (m *Manager) Preempt(tabID string) {
 	m.preemptOwnership(tabID, "用户夺回")
 }

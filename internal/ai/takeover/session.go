@@ -1,19 +1,14 @@
 package takeover
 
 import (
-	"context"
-
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 )
 
-func WithSession(deps Dependencies, manager *session.Manager, userClientID string) Dependencies {
+func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	terminal := tools.SessionTerminal(manager)
 	deps.Snapshot = terminal.Snapshot
 	deps.WriteAI = manager.WriteInternal
-	deps.WriteUser = func(ctx context.Context, tabID string, data []byte) error {
-		return manager.Write(ctx, tabID, userClientID, data)
-	}
 	deps.Inject = manager.InjectInternal
 	deps.TabSession = func(tabID string) string {
 		tab, err := manager.Tab(tabID)

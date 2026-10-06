@@ -9,7 +9,7 @@ import (
 
 func TestR1TerminalInputBufferReconstructsWrappedCommand(t *testing.T) {
 	screen := Screen{Text: "$ rm -rf /home/user\n; ls", CursorRow: 1}
-	buffered := TerminalInputBuffer(screen)
+	buffered, _ := TerminalInputCursor(screen)
 	if buffered != "rm -rf /home/user; ls" {
 		t.Fatalf("wrapped buffer = %q", buffered)
 	}

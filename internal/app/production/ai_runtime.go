@@ -94,7 +94,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices, userCli
 		Permission: guardManager.Snapshot,
 		Audit:      toolsDeps.Audit,
 	}
-	takeoverDeps = takeover.WithSession(takeoverDeps, services.Sessions, userClientID)
+	takeoverDeps = takeover.WithSession(takeoverDeps, services.Sessions)
 	takeoverManager := takeover.NewManager(takeoverDeps)
 
 	services.Guard = guardManager

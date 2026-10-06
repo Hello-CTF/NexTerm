@@ -10,13 +10,14 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 )
 
-func TestR4UserWriteAndEnterAreAtomic(t *testing.T) {
+func TestR4PreemptAndEnterAreAtomic(t *testing.T) {
 	var mu sync.Mutex
 	var events []string
 	aiWrites := 0
 	enterStarted := make(chan struct{}, 2)
-	writeStarted := make(chan struct{})
-	releaseWrite := make(chan struct{})
+	exitStarted := make(chan struct{})
+	releaseExit := make(chan struct{})
+	var exitOnce sync.Once
 	deps := Dependencies{
 		Snapshot: func(context.Context, string) (tools.Screen, error) {
 			enterStarted <- struct{}{}
@@ -28,15 +29,11 @@ func TestR4UserWriteAndEnterAreAtomic(t *testing.T) {
 			mu.Unlock()
 			return nil
 		},
-		WriteUser: func(context.Context, string, []byte) error {
-			close(writeStarted)
-			<-releaseWrite
-			mu.Lock()
-			events = append(events, "user")
-			mu.Unlock()
-			return nil
-		},
 		Inject: func(_ context.Context, _ string, data []byte) error {
+			if strings.Contains(string(data), "接管结束") {
+				exitOnce.Do(func() { close(exitStarted) })
+				<-releaseExit
+			}
 			mu.Lock()
 			if strings.Contains(string(data), "接管结束") {
 				events = append(events, "exit")
@@ -56,9 +53,12 @@ func TestR4UserWriteAndEnterAreAtomic(t *testing.T) {
 	mu.Lock()
 	events = nil
 	mu.Unlock()
-	userDone := make(chan error, 1)
-	go func() { userDone <- manager.UserWrite(context.Background(), "tab", []byte("x")) }()
-	<-writeStarted
+	preemptDone := make(chan struct{})
+	go func() {
+		manager.Preempt("tab")
+		close(preemptDone)
+	}()
+	<-exitStarted
 	enterDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Enter(context.Background(), "tab")
@@ -67,30 +67,29 @@ func TestR4UserWriteAndEnterAreAtomic(t *testing.T) {
 	<-enterStarted
 	select {
 	case err := <-enterDone:
-		t.Fatalf("Enter completed before the user write: %v", err)
+		t.Fatalf("Enter completed before the preempt exit injection: %v", err)
 	default:
 	}
 	mu.Lock()
 	for _, event := range events {
 		if event == "enter" {
-			t.Fatalf("new ownership/banner appeared before user write: %v", events)
+			t.Fatalf("new ownership/banner appeared before preempt finished: %v", events)
 		}
 	}
 	mu.Unlock()
-	close(releaseWrite)
-	for _, done := range []chan error{userDone, enterDone} {
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatal(err)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("concurrent Enter/UserWrite deadlocked")
+	close(releaseExit)
+	select {
+	case err := <-enterDone:
+		if err != nil {
+			t.Fatal(err)
 		}
+	case <-time.After(time.Second):
+		t.Fatal("concurrent Enter/Preempt deadlocked")
 	}
+	<-preemptDone
 	mu.Lock()
 	defer mu.Unlock()
-	if len(events) != 3 || events[0] != "exit" || events[1] != "user" || events[2] != "enter" || aiWrites != 0 {
+	if len(events) != 2 || events[0] != "exit" || events[1] != "enter" || aiWrites != 0 {
 		t.Fatalf("ownership operation ordering = %v, AI writes = %d", events, aiWrites)
 	}
 }
