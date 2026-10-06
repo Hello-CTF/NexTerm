@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestLargeStreamAggregationPreservesOrderingAndUTF8Progress(t *testing.T) {
@@ -26,39 +28,30 @@ func TestLargeStreamAggregationPreservesOrderingAndUTF8Progress(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events := 0
-	toolFragments := 0
-	completion, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) {
-		expectedKinds := []StreamKind{StreamReasoning, StreamDelta, StreamToolArgs}
-		if item.Kind != expectedKinds[events%len(expectedKinds)] {
-			t.Errorf("event %d kind = %s, want %s", events, item.Kind, expectedKinds[events%len(expectedKinds)])
+	frames := 0
+	result, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+		if message.ReasoningContent != "r" {
+			t.Errorf("reasoning fragment = %q", message.ReasoningContent)
 		}
-		events++
-		switch item.Kind {
-		case StreamReasoning:
-			if item.Text != "r" {
-				t.Errorf("reasoning fragment = %q", item.Text)
-			}
-		case StreamDelta:
-			if item.Text != "x" {
-				t.Errorf("content fragment = %q", item.Text)
-			}
-		case StreamToolArgs:
-			toolFragments++
-			if item.Chars != toolFragments*len("你") {
-				t.Errorf("tool fragment %d bytes = %d", toolFragments, item.Chars)
-			}
-			if len(item.Name) != toolFragments {
-				t.Errorf("tool fragment %d name length = %d", toolFragments, len(item.Name))
-			}
+		if message.Content != "x" {
+			t.Errorf("content fragment = %q", message.Content)
 		}
+		if len(message.ToolCalls) != 1 {
+			t.Fatalf("tool fragments = %+v", message.ToolCalls)
+		}
+		if message.ToolCalls[0].Function.Name != "n" || message.ToolCalls[0].Function.Arguments != "你" {
+			t.Errorf("tool fragment = %+v", message.ToolCalls[0].Function)
+		}
+		frames++
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if events != fragments*3 || toolFragments != fragments {
-		t.Fatalf("events = %d, tool fragments = %d", events, toolFragments)
+	if frames != fragments {
+		t.Fatalf("frames = %d, want %d", frames, fragments)
 	}
+	completion := result.completion
 	if completion.Content != strings.Repeat("x", fragments) || completion.Reasoning != strings.Repeat("r", fragments) {
 		t.Fatal("large content or reasoning aggregation mismatch")
 	}
@@ -76,7 +69,7 @@ var allocationCompletionSink Completion
 func TestStreamAggregationAllocationsDoNotGrowPerFragment(t *testing.T) {
 	const fragments = 512
 	allocations := testing.AllocsPerRun(20, func() {
-		state := streamState{pending: make(map[uint64]*pendingToolCall), handler: func(StreamItem) {}}
+		state := streamState{pending: make(map[uint64]*pendingToolCall)}
 		pending := &pendingToolCall{}
 		state.pending[0] = pending
 		for range fragments {

@@ -22,25 +22,6 @@ const (
 	MessageExtraCacheCreation = "cache_creation_tokens"
 )
 
-type ExecutionMetadata struct {
-	RunID         string
-	CallID        string
-	Model         string
-	ContextWindow uint64
-}
-
-func MetadataFromMessage(message *schema.Message) ExecutionMetadata {
-	if message == nil {
-		return ExecutionMetadata{}
-	}
-	return ExecutionMetadata{
-		RunID:         extraString(message.Extra, MessageExtraRunID),
-		CallID:        extraString(message.Extra, MessageExtraCallID),
-		Model:         extraString(message.Extra, MessageExtraServingModel),
-		ContextWindow: extraUint64(message.Extra, MessageExtraContextWindow),
-	}
-}
-
 func extraString(extra map[string]any, key string) string {
 	value, _ := extra[key].(string)
 	return value
@@ -66,12 +47,9 @@ type nativeResult struct {
 
 type nativeFrameHandler func(*schema.Message) error
 
-func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler, onItem StreamHandler) (nativeResult, error) {
+func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler) (nativeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nativeResult{}, err
-	}
-	if onItem == nil {
-		onItem = func(StreamItem) {}
 	}
 	primaryModel := c.config.Model
 	if configured := model.GetCommonOptions(nil, options...).Model; configured != nil {
@@ -90,12 +68,12 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 				return nativeResult{}, c.circuitOpenError()
 			}
 			state := &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
-			result, err := c.invokeNative(ctx, input, options, servingModel, useBlock, state, onFrame, onItem)
+			result, err := c.invokeNative(ctx, input, options, servingModel, useBlock, state, onFrame)
 			c.recordCircuitOutcome(err)
-			if err != nil && !useBlock && ctx.Err() == nil && !state.frameSeen.Load() && !state.emitted && safeStreamFallback(err) {
+			if err != nil && !useBlock && ctx.Err() == nil && !state.frameSeen.Load() && safeStreamFallback(err) {
 				useBlock = true
 				state = &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
-				result, err = c.invokeNative(ctx, input, options, servingModel, true, state, onFrame, onItem)
+				result, err = c.invokeNative(ctx, input, options, servingModel, true, state, onFrame)
 				c.recordCircuitOutcome(err)
 			}
 			if err == nil {
@@ -129,7 +107,7 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	return nativeResult{}, lastErr
 }
 
-func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, options []model.Option, servingModel string, block bool, state *attemptState, onFrame nativeFrameHandler, onItem StreamHandler) (nativeResult, error) {
+func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, options []model.Option, servingModel string, block bool, state *attemptState, onFrame nativeFrameHandler) (nativeResult, error) {
 	timeout := c.timeouts.Stream
 	if block {
 		timeout = c.timeouts.Block
@@ -145,10 +123,6 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 	attemptOptions := make([]model.Option, len(options), len(options)+1)
 	copy(attemptOptions, options)
 	attemptOptions = append(attemptOptions, model.WithModel(servingModel))
-	trackedItems := func(item StreamItem) {
-		state.emitted = true
-		onItem(item)
-	}
 	if block {
 		message, err := chatModel.Generate(attemptContext, input, attemptOptions...)
 		if err != nil {
@@ -164,9 +138,6 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 				return nativeResult{}, err
 			}
 		}
-		if err := emitBlockItems(ctx, completion, trackedItems); err != nil {
-			return nativeResult{}, err
-		}
 		return nativeResult{completion: completion, message: message}, nil
 	}
 
@@ -178,7 +149,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 		return nativeResult{}, errors.New("AI stream returned no reader")
 	}
 	defer reader.Close()
-	aggregate := streamState{pending: make(map[uint64]*pendingToolCall), handler: trackedItems}
+	aggregate := streamState{pending: make(map[uint64]*pendingToolCall)}
 	partial := func(err error) (nativeResult, error) {
 		return nativeResult{completion: c.finishCompletion(aggregate.partialCompletion(), state)}, err
 	}
@@ -195,9 +166,7 @@ func (c *Client) invokeNative(ctx context.Context, input []*schema.Message, opti
 			return partial(errors.New("AI stream returned a nil message"))
 		}
 		message = c.decorateMessage(message, state)
-		if err := aggregate.consumeMessage(attemptContext, message); err != nil {
-			return partial(err)
-		}
+		aggregate.consumeMessage(message)
 		if onFrame != nil {
 			if err := onFrame(message); err != nil {
 				return nativeResult{}, err

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -99,15 +101,13 @@ func newFakeClient(t *testing.T, transport http.RoundTripper, config Config, max
 	if random == nil {
 		random = func() float64 { return 0.5 }
 	}
-	client, err := NewClient(config,
-		WithRetryPolicy(RetryPolicy{
-			MaxRetries: maxRetries, InitialBackoff: 100 * time.Millisecond,
-			MaxBackoff: 250 * time.Millisecond, Jitter: 0.5,
-		}),
-		withRetryHooks(sleep, random),
-	)
+	client, err := NewClient(config, withRetryHooks(sleep, random))
 	if err != nil {
 		t.Fatal(err)
+	}
+	client.retry = RetryPolicy{
+		MaxRetries: maxRetries, InitialBackoff: 100 * time.Millisecond,
+		MaxBackoff: 250 * time.Millisecond, Jitter: 0.5,
 	}
 	client.http.Transport = &wireTransport{base: transport}
 	return client
@@ -299,9 +299,16 @@ func TestBadRequestDoesNotSelectFallbackModel(t *testing.T) {
 	t.Run("stream compatibility stays on primary", func(t *testing.T) {
 		provider := &fakeProvider{steps: []fakeStep{errorStep(http.StatusBadRequest), blockStep("primary", "block-ok")}}
 		client := newFakeClient(t, provider, Config{Model: "primary", FallbackModel: "backup", Stream: true}, 0, nil, nil)
-		completion, err := client.Chat(context.Background(), ChatRequest{}, nil)
-		if err != nil || completion.Content != "block-ok" {
-			t.Fatalf("stream compatibility fallback = %+v, %v", completion, err)
+		var frames []*schema.Message
+		result, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+			frames = append(frames, message)
+			return nil
+		})
+		if err != nil || result.completion.Content != "block-ok" {
+			t.Fatalf("stream compatibility fallback = %+v, %v", result.completion, err)
+		}
+		if len(frames) != 1 || frames[0].Content != "block-ok" {
+			t.Fatalf("compatibility frames = %+v", frames)
 		}
 		requests := provider.Requests()
 		if !reflect.DeepEqual(requestModels(requests), []string{"primary", "primary"}) || !requests[0].stream || requests[1].stream {
@@ -312,34 +319,41 @@ func TestBadRequestDoesNotSelectFallbackModel(t *testing.T) {
 
 func TestFirstStreamFramePreventsReplay(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		body string
-		want []StreamItem
+		name       string
+		body       string
+		wantFrames []string
 	}{
 		{
-			name: "visible output",
-			body: "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\ndata: invalid\n\n",
-			want: []StreamItem{{Kind: StreamDelta, Text: "partial"}},
+			name:       "visible output",
+			body:       "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\ndata: invalid\n\n",
+			wantFrames: []string{"partial"},
 		},
 		{
-			name: "usage-only frame",
-			body: "data: {\"usage\":{\"prompt_tokens\":1}}\n\ndata: invalid\n\n",
-			want: nil,
+			name:       "usage-only frame",
+			body:       "data: {\"usage\":{\"prompt_tokens\":1}}\n\ndata: invalid\n\n",
+			wantFrames: []string{},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &fakeProvider{steps: []fakeStep{{status: http.StatusOK, body: test.body}, streamStep("backup", "must-not-run")}}
 			client := newFakeClient(t, provider, Config{Model: "primary", FallbackModel: "backup", Stream: true}, 3, nil, nil)
-			var items []StreamItem
-			_, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) { items = append(items, item) })
+			var frames []*schema.Message
+			_, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+				frames = append(frames, message)
+				return nil
+			})
 			if err == nil {
 				t.Fatal("malformed stream succeeded")
 			}
 			if got := requestModels(provider.Requests()); !reflect.DeepEqual(got, []string{"primary"}) {
 				t.Fatalf("post-frame requests = %v", got)
 			}
-			if !reflect.DeepEqual(items, test.want) {
-				t.Fatalf("replayed stream items = %#v, want %#v", items, test.want)
+			contents := make([]string, len(frames))
+			for index, frame := range frames {
+				contents[index] = frame.Content
+			}
+			if !reflect.DeepEqual(contents, test.wantFrames) {
+				t.Fatalf("post-frame stream contents = %#v, want %#v", contents, test.wantFrames)
 			}
 		})
 	}
@@ -348,17 +362,20 @@ func TestFirstStreamFramePreventsReplay(t *testing.T) {
 func TestFallbackBeforeFirstStreamFrameEmitsOnlyFallback(t *testing.T) {
 	provider := &fakeProvider{steps: []fakeStep{errorStep(http.StatusInternalServerError), streamStep("served-backup", "backup")}}
 	client := newFakeClient(t, provider, Config{Model: "primary", FallbackModel: "backup", Stream: true}, 0, nil, nil)
-	var items []StreamItem
-	completion, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) { items = append(items, item) })
+	var frames []*schema.Message
+	result, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+		frames = append(frames, message)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := requestModels(provider.Requests()); !reflect.DeepEqual(got, []string{"primary", "backup"}) {
 		t.Fatalf("fallback requests = %v", got)
 	}
-	want := []StreamItem{{Kind: StreamDelta, Text: "backup"}}
-	if !reflect.DeepEqual(items, want) || completion.Content != "backup" || completion.Model != "served-backup" || completion.Usage.Model != "served-backup" {
-		t.Fatalf("fallback output = %+v, items=%#v", completion, items)
+	if len(frames) != 1 || frames[0].Content != "backup" ||
+		result.completion.Content != "backup" || result.completion.Model != "served-backup" || result.completion.Usage.Model != "served-backup" {
+		t.Fatalf("fallback output = %+v, frames=%+v", result.completion, frames)
 	}
 }
 

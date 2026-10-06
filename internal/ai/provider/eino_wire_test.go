@@ -35,8 +35,8 @@ func TestAssistantToolHistoryWireCompatibility(t *testing.T) {
 	})
 	client := newFakeClient(t, transport, Config{Model: "m"}, 0, nil, nil)
 	_, err := client.ChatBlock(context.Background(), ChatRequest{Messages: []ChatMessage{
-		AssistantToolCallsMessage("", []ToolCall{{ID: "call-1", Function: FunctionCall{Name: "write", Arguments: `{}`}}}),
-		ToolResultMessage("call-1", "done"),
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call-1", Function: FunctionCall{Name: "write", Arguments: `{}`}}}},
+		{Role: "tool", Content: "done", ToolCallID: "call-1"},
 	}})
 	if err != nil {
 		t.Fatal(err)

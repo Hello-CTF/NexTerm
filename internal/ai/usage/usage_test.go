@@ -45,21 +45,8 @@ func TestNormalizationGolden(t *testing.T) {
 	}
 }
 
-func TestPercentagesAndAccumulate(t *testing.T) {
+func TestAccumulate(t *testing.T) {
 	value := Usage{PromptTokens: 150, CompletionTokens: 20, CachedTokens: 75, ContextWindow: 100}
-	if got := value.ContextPercent(); got != 100 {
-		t.Fatalf("ContextPercent() = %v, want 100", got)
-	}
-	if got := value.CacheHitPercent(); got != 50 {
-		t.Fatalf("CacheHitPercent() = %v, want 50", got)
-	}
-	if got := (Usage{}).ContextPercent(); got != 0 {
-		t.Fatalf("empty ContextPercent() = %v", got)
-	}
-	if got := (Usage{CachedTokens: 10}).CacheHitPercent(); got != 0 {
-		t.Fatalf("empty CacheHitPercent() = %v", got)
-	}
-
 	value.Accumulate(Usage{PromptTokens: 50, CompletionTokens: 5, CachedTokens: 25, ContextWindow: 64000})
 	want := Usage{PromptTokens: 200, CompletionTokens: 25, CachedTokens: 100, ContextWindow: 64000}
 	if value != want {

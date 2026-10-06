@@ -25,11 +25,11 @@ func TestStreamChatFinalizesCacheCreationUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := client.Chat(context.Background(), ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "hi"}}}, nil)
+	result, err := client.runNative(context.Background(), nil, nil, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completion.Usage.CacheCreationTokens != 25 || completion.Usage.CachedTokens != 40 || completion.Usage.PromptTokens != 100 || completion.Usage.CompletionTokens != 10 {
-		t.Fatalf("streamed final usage = %+v", completion.Usage)
+	if result.completion.Usage.CacheCreationTokens != 25 || result.completion.Usage.CachedTokens != 40 || result.completion.Usage.PromptTokens != 100 || result.completion.Usage.CompletionTokens != 10 {
+		t.Fatalf("streamed final usage = %+v", result.completion.Usage)
 	}
 }

@@ -28,11 +28,11 @@ func TestResponseHeaderTimeoutClassifiedTransport(t *testing.T) {
 	defer server.Close()
 	client, err := NewClient(Config{BaseURL: server.URL, Model: "m"},
 		WithTimeouts(Timeouts{ResponseHeader: 50 * time.Millisecond, Block: 5 * time.Second}),
-		WithRetryPolicy(RetryPolicy{MaxRetries: 3}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.retry.MaxRetries = 3
 	started := time.Now()
 	_, err = client.ChatBlock(context.Background(), ChatRequest{})
 	if err == nil {
@@ -215,11 +215,11 @@ func TestClientCircuitBreakerFailFast(t *testing.T) {
 	breaker.now = func() time.Time { return now }
 	client, err := NewClient(Config{BaseURL: server.URL, Model: "m"},
 		WithCircuitBreaker(breaker),
-		WithRetryPolicy(RetryPolicy{MaxRetries: 0}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	client.retry.MaxRetries = 0
 	for round := 0; round < 2; round++ {
 		if _, err := client.ChatBlock(context.Background(), ChatRequest{}); err == nil {
 			t.Fatal("failing server succeeded")
