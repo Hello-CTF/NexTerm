@@ -23,7 +23,7 @@ import {
 } from "./conversation";
 import { createConversationStream, type ConversationStream } from "./conversationStream";
 import { useConversationFollow } from "./conversationFollow";
-import { findResumableRun, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
+import { fetchRunEventsAfter, findResumableRun, pendingDeadline, replayableJobIds, replayableRuns } from "./runRestore";
 import { findItemMatches, stepMatch } from "./conversationSearch";
 import { useVirtualWindow } from "./conversationVirtual";
 import {
@@ -369,21 +369,20 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     generation: number,
     jobId: string,
   ): Promise<{ applied: number; failed: boolean }> => {
-    try {
-      const events = await aiApi.runEvents(jobId, stream.lastSeq(generation));
-      let applied = 0;
-      for (const event of events) {
-        const result = stream.pushEvent(generation, event as Record<string, unknown>);
-        if (result.accepted) applied += 1;
-        if (result.terminal) {
-          settleRestoredRun(generation);
-        }
+    const { events, failed } = await fetchRunEventsAfter(
+      (afterSeq, limit) => aiApi.runEvents(jobId, afterSeq, limit),
+      stream.lastSeq(generation),
+    );
+    let applied = 0;
+    for (const event of events) {
+      const result = stream.pushEvent(generation, event as Record<string, unknown>);
+      if (result.accepted) applied += 1;
+      if (result.terminal) {
+        settleRestoredRun(generation);
       }
-      stream.flush();
-      return { applied, failed: false };
-    } catch {
-      return { applied: 0, failed: true };
     }
+    stream.flush();
+    return { applied, failed };
   };
 
   const catchUpRunEvents = (
@@ -480,16 +479,16 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       generations.set(run.id, generation);
       stream.beginRun(generation, "chat");
       stream.bindJob(generation, run.id);
-      try {
-        const events = await aiApi.runEvents(run.id, 0);
-        if (conversationIdRef.current !== id) return;
-        for (const event of events) {
-          stream.pushEvent(generation, event as Record<string, unknown>);
-        }
-        stream.flush();
-      } catch {
-        continue;
+      const { events, failed } = await fetchRunEventsAfter(
+        (afterSeq, limit) => aiApi.runEvents(run.id, afterSeq, limit),
+        0,
+      );
+      if (conversationIdRef.current !== id) return;
+      if (failed) continue;
+      for (const event of events) {
+        stream.pushEvent(generation, event as Record<string, unknown>);
       }
+      stream.flush();
     }
     const resumable = await findResumableRun(runs, async (jobId) => {
       try {
@@ -1175,7 +1174,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         )}
         <div className="nx-spacer" />
         <button
-          className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${searchOpen ? "is-active" : ""}`}
+          className={`nx-icon-btn nx-icon-btn-sm ${searchOpen ? "is-active" : ""}`}
           title="搜索对话内容"
           aria-expanded={searchOpen}
           onClick={() => setSearchOpen((v) => !v)}
@@ -1183,17 +1182,17 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           <IconSearch size={14} />
         </button>
         <button
-          className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${historyOpen ? "is-active" : ""}`}
+          className={`nx-icon-btn nx-icon-btn-sm ${historyOpen ? "is-active" : ""}`}
           title="历史会话"
           onClick={toggleHistory}
         >
           <IconHistory size={14} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="新建会话" onClick={newConversation}>
+        <button className="nx-icon-btn nx-icon-btn-sm" title="新建会话" onClick={newConversation}>
           <IconPlus size={14} />
         </button>
         <button
-          className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
+          className="nx-icon-btn nx-icon-btn-sm"
           title={`收起 AI 侧栏${bindings.toggleAiSidebar ? ` (${aiSidebarKeyLabel})` : ""}`}
           aria-keyshortcuts={formatBindingAria(bindings.toggleAiSidebar) ?? undefined}
           onClick={() => setRightOpen(false)}
@@ -1227,7 +1226,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               : "0/0"}
           </span>
           <button
-            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+            className="nx-icon-btn nx-icon-btn-sm shrink-0"
             title="上一个匹配（Shift+Enter）"
             aria-label="上一个匹配"
             disabled={searchMatches.length === 0}
@@ -1236,7 +1235,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <IconChevronUp size={12} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+            className="nx-icon-btn nx-icon-btn-sm shrink-0"
             title="下一个匹配（Enter）"
             aria-label="下一个匹配"
             disabled={searchMatches.length === 0}
@@ -1245,7 +1244,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <IconChevronDown size={12} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+            className="nx-icon-btn nx-icon-btn-sm shrink-0"
             title="关闭搜索"
             aria-label="关闭搜索"
             onClick={() => setSearchOpen(false)}
@@ -1294,7 +1293,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                   </span>
                 )}
                 <button
-                  className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
+                  className="nx-icon-btn nx-icon-btn-sm shrink-0"
                   title={`删除「${c.title || "(未命名会话)"}」`}
                   aria-label={`删除会话「${c.title || "(未命名会话)"}」`}
                   onClick={() => void deleteConversation(c)}
@@ -1314,7 +1313,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             AI 权限
             <span className="nx-spacer" />
             <button
-              className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
+              className="nx-icon-btn nx-icon-btn-sm"
               title="关闭"
               onClick={() => setPermOpen(false)}
             >
@@ -1442,28 +1441,28 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
-                  className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6"
+                  className="nx-btn nx-btn-primary nx-btn-xs"
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("allow")}
                 >
                   允许一次
                 </button>
                 <button
-                  className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
+                  className="nx-btn nx-btn-outline nx-btn-xs"
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("allow_session")}
                 >
                   本会话允许此类
                 </button>
                 <button
-                  className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:min-h-6"
+                  className="nx-btn nx-btn-ghost nx-btn-xs"
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >
                   拒绝
                 </button>
                 <button
-                  className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
+                  className="nx-btn nx-btn-outline nx-btn-xs"
                   title="打开设置的拦截规则，并把这条命令预填成一条新规则"
                   onClick={() => {
                     const ui = useUi.getState();
@@ -1498,7 +1497,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                     <button
                       key={option}
                       type="button"
-                      className="nx-btn nx-btn-outline nx-btn-xs pointer-coarse:min-h-6"
+                      className="nx-btn nx-btn-outline nx-btn-xs"
                       disabled={submittingCardId === questionCard.id}
                       onClick={() => void answer(option)}
                     >
@@ -1518,7 +1517,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 />
                 <button
                   type="submit"
-                  className="nx-btn nx-btn-primary nx-btn-xs pointer-coarse:min-h-6 shrink-0"
+                  className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
                   disabled={!questionInput.trim() || submittingCardId === questionCard.id}
                 >
                   回答
@@ -1664,7 +1663,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <span key={r.id} className="nx-chip nx-chip-accent" title={r.detail}>
                 <span className="truncate">{r.label}</span>
                 <button
-                  className="nx-chip-x pointer-coarse:min-h-6 pointer-coarse:min-w-6"
+                  className="nx-chip-x"
                   title="移除引用"
                   onClick={() => setRefs((prev) => prev.filter((x) => x.id !== r.id))}
                 >
@@ -1681,7 +1680,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               <span key={i} className="nx-attach" title="粘贴的图片">
                 <img src={src} alt="" />
                 <button
-                  className="nx-attach-x pointer-coarse:min-h-6 pointer-coarse:min-w-6"
+                  className="nx-attach-x"
                   title="移除图片"
                   onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
                 >
@@ -1747,7 +1746,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             loadSummary={() => modelApi.usageSummary()}
           />
           <button
-            className={`nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${
+            className={`nx-icon-btn nx-icon-btn-sm ${
               perm?.mode === "silent" ? "is-active" : ""
             } ${permOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
             title={`AI 权限：${MODE_LABEL[perm?.mode ?? "read_write"]}（点击设置）`}
@@ -1756,7 +1755,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             <IconShield size={13} />
           </button>
           <button
-            className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 text-red-400 hover:text-red-300"
+            className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"
             title={
               tabId
                 ? bindings.reclaimTakeover

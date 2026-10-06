@@ -1,8 +1,48 @@
-import type { AiHitlSnapshotDto, AiRunDto } from "../../ipc/types";
+import type { AiHitlSnapshotDto, AiRunDto, AiRunEventDto } from "../../ipc/types";
 
 export interface ResumableRun {
   run: AiRunDto;
   snapshot: AiHitlSnapshotDto;
+}
+
+export const RUN_EVENTS_PAGE_SIZE = 200;
+
+export interface RunEventsFetch {
+  events: AiRunEventDto[];
+  failed: boolean;
+}
+
+function eventSeqOrNull(event: AiRunEventDto): number | null {
+  const seq = event.seq;
+  return typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 1 ? seq : null;
+}
+
+export async function fetchRunEventsAfter(
+  fetchPage: (afterSeq: number, limit: number) => Promise<AiRunEventDto[]>,
+  afterSeq: number,
+  pageSize: number = RUN_EVENTS_PAGE_SIZE,
+): Promise<RunEventsFetch> {
+  const events: AiRunEventDto[] = [];
+  let cursor = afterSeq;
+  for (;;) {
+    let page: AiRunEventDto[];
+    try {
+      page = await fetchPage(cursor, pageSize);
+    } catch {
+      return { events, failed: true };
+    }
+    const pageStart = cursor;
+    for (const event of page) {
+      const seq = eventSeqOrNull(event);
+      if (seq === null) return { events, failed: true };
+      if (seq <= cursor) continue;
+      if (seq !== cursor + 1) return { events, failed: true };
+      events.push(event);
+      cursor = seq;
+    }
+    if (page.length < pageSize) return { events, failed: false };
+    if (cursor === pageStart) return { events, failed: true };
+  }
 }
 
 export function replayableRuns(runs: AiRunDto[]): AiRunDto[] {
