@@ -102,7 +102,7 @@ func (s *Server) serveImageUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveImageDownload(w http.ResponseWriter, r *http.Request) {
-	meta, file, err := s.images.Open(r.PathValue("id"))
+	meta, file, err := s.images.Open(r.Context(), r.PathValue("id"))
 	if err != nil {
 		http.Error(w, "image not found or expired", http.StatusNotFound)
 		return
@@ -199,4 +199,9 @@ func (s *Server) auditImage(ctx context.Context, kind string, meta *ImageMeta, b
 	if err := s.audit(ctx, imageAuditSource, kind, payload); err != nil {
 		s.logger.Warn("image audit write failed", "kind", kind, "error", err)
 	}
+}
+
+// auditImageExpire 上报过期清理审计(惰性删除与清扫器共用)。
+func (s *Server) auditImageExpire(ctx context.Context, meta *ImageMeta) {
+	s.auditImage(ctx, "image_expire", meta, "expiry")
 }

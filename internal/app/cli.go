@@ -63,7 +63,7 @@ func ParsePublicBaseURL(raw string) (string, error) {
 	if parsed.User != nil {
 		return "", fmt.Errorf("invalid public base URL %q: userinfo is not allowed", raw)
 	}
-	if parsed.RawQuery != "" {
+	if parsed.RawQuery != "" || parsed.ForceQuery {
 		return "", fmt.Errorf("invalid public base URL %q: query is not allowed", raw)
 	}
 	if parsed.Fragment != "" {

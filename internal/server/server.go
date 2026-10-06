@@ -310,6 +310,7 @@ func (s *Server) routes(config Config) http.Handler {
 	}
 	if images != nil {
 		s.images = images
+		images.onExpire = s.auditImageExpire
 		mux.Handle("POST /files/image", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageUpload))))
 		mux.Handle("GET /files/image/{id}", http.HandlerFunc(s.serveImageDownload))
 		mux.Handle("DELETE /files/image/{id}", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageDelete))))

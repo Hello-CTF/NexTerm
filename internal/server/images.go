@@ -62,6 +62,7 @@ type ImageStore struct {
 	newID      func() string
 	now        func() time.Time
 	logger     *slog.Logger
+	onExpire   func(ctx context.Context, meta *ImageMeta)
 	mu         sync.Mutex
 }
 
@@ -144,50 +145,47 @@ func (s *ImageStore) root() string { return filepath.Join(s.dataDir, "images") }
 const (
 	imageDataName = "content"
 	imageMetaName = "meta.json"
+	// imageStagingName 是在途上传的暂存目录, 不参与公开读取;
+	// 提交以 rename 原子发布, 清扫只回收超龄暂存。
+	imageStagingName = ".staging"
+	stagingMaxAge    = time.Hour
 )
 
 // Put 校验并落盘一张图片: 大小上限、按 owner 配额、内容嗅探 MIME 白名单。
-// 任何一步失败都会清理半成品目录。
+// 请求体在锁外写入暂存目录(慢客户端不阻塞其他写操作), 提交时在锁内
+// 以实际字节重新校验配额, 再原子发布; 任何失败都会清理暂存。
 func (s *ImageStore) Put(owner string, src io.Reader, declared int64, name string) (*ImageMeta, error) {
 	limit := s.imageMaxBytes()
 	if declared > limit {
 		return nil, errImageTooLarge
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	usage, err := s.ownerUsage(owner)
+	if declared > 0 {
+		if usage, err := s.ownerUsage(owner); err == nil && usage+declared > s.ownerQuotaBytes() {
+			return nil, errImageQuota
+		}
+	}
+	dir, id, err := s.createStagingDir()
 	if err != nil {
 		return nil, err
 	}
-	if usage >= s.ownerQuotaBytes() || declared > 0 && usage+declared > s.ownerQuotaBytes() {
-		return nil, errImageQuota
-	}
-	dir, id, err := s.createDir()
+	discard := func() { _ = os.RemoveAll(dir) }
+	file, err := os.OpenFile(filepath.Join(dir, imageDataName), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, imageDataName)
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		_ = os.RemoveAll(dir)
+		discard()
 		return nil, err
 	}
 	written, mime, copyErr := s.writeSniffed(file, src, limit)
 	closeErr := file.Close()
 	if copyErr != nil || closeErr != nil {
-		_ = os.RemoveAll(dir)
+		discard()
 		if errors.Is(copyErr, errImageTooLarge) {
 			return nil, errImageTooLarge
 		}
 		return nil, errors.Join(copyErr, closeErr)
 	}
 	if _, allowed := imageAllowedMIME[mime]; !allowed {
-		_ = os.RemoveAll(dir)
+		discard()
 		return nil, errImageMIME
-	}
-	if usage+written > s.ownerQuotaBytes() {
-		_ = os.RemoveAll(dir)
-		return nil, errImageQuota
 	}
 	now := s.now()
 	if name == "" {
@@ -199,11 +197,26 @@ func (s *ImageStore) Put(owner string, src io.Reader, declared int64, name strin
 	}
 	encoded, err := json.Marshal(meta)
 	if err != nil {
-		_ = os.RemoveAll(dir)
+		discard()
 		return nil, err
 	}
 	if err := os.WriteFile(filepath.Join(dir, imageMetaName), encoded, 0o600); err != nil {
-		_ = os.RemoveAll(dir)
+		discard()
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	usage, err := s.ownerUsage(owner)
+	if err != nil {
+		discard()
+		return nil, err
+	}
+	if usage+written > s.ownerQuotaBytes() {
+		discard()
+		return nil, errImageQuota
+	}
+	if err := os.Rename(dir, filepath.Join(s.root(), id)); err != nil {
+		discard()
 		return nil, err
 	}
 	return meta, nil
@@ -235,8 +248,8 @@ func (s *ImageStore) writeSniffed(file *os.File, src io.Reader, limit int64) (in
 	return written, mime, nil
 }
 
-// Open 返回未过期图片的 meta 与内容读取器; 过期视为不存在并顺手清理。
-func (s *ImageStore) Open(id string) (*ImageMeta, *os.File, error) {
+// Open 返回未过期图片的 meta 与内容读取器; 过期视为不存在, 删除并写过期审计。
+func (s *ImageStore) Open(ctx context.Context, id string) (*ImageMeta, *os.File, error) {
 	if !ids.Valid(id) {
 		return nil, nil, os.ErrNotExist
 	}
@@ -245,7 +258,9 @@ func (s *ImageStore) Open(id string) (*ImageMeta, *os.File, error) {
 		return nil, nil, err
 	}
 	if s.now().UnixMilli() >= meta.ExpiresAt {
-		_ = os.RemoveAll(filepath.Join(s.root(), id))
+		if err := os.RemoveAll(filepath.Join(s.root(), id)); err == nil {
+			s.auditExpire(ctx, meta)
+		}
 		return nil, nil, os.ErrNotExist
 	}
 	if _, allowed := imageAllowedMIME[meta.MIME]; !allowed {
@@ -256,6 +271,14 @@ func (s *ImageStore) Open(id string) (*ImageMeta, *os.File, error) {
 		return nil, nil, os.ErrNotExist
 	}
 	return meta, file, nil
+}
+
+// auditExpire 上报过期清理审计(不含 URL/令牌); 未注入时跳过。
+func (s *ImageStore) auditExpire(ctx context.Context, meta *ImageMeta) {
+	if s.onExpire == nil {
+		return
+	}
+	s.onExpire(ctx, meta)
 }
 
 // Remove 删除图片并返回原 meta(供删除授权与审计使用); 不存在返回 os.ErrNotExist。
@@ -313,8 +336,8 @@ func (s *ImageStore) ownerUsage(owner string) (int64, error) {
 	return usage, nil
 }
 
-func (s *ImageStore) createDir() (string, string, error) {
-	if err := os.MkdirAll(s.root(), 0o700); err != nil {
+func (s *ImageStore) createStagingDir() (string, string, error) {
+	if err := os.MkdirAll(filepath.Join(s.root(), imageStagingName), 0o700); err != nil {
 		return "", "", err
 	}
 	for range 3 {
@@ -322,7 +345,7 @@ func (s *ImageStore) createDir() (string, string, error) {
 		if !ids.Valid(id) {
 			return "", "", fmt.Errorf("invalid generated image id")
 		}
-		dir := filepath.Join(s.root(), id)
+		dir := filepath.Join(s.root(), imageStagingName, id)
 		err := os.Mkdir(dir, 0o700)
 		if errors.Is(err, os.ErrExist) {
 			continue
@@ -333,6 +356,7 @@ func (s *ImageStore) createDir() (string, string, error) {
 }
 
 // SweepOnce 清理所有过期图片目录, 返回清理数量。
+// 在途上传的暂存目录不参与过期判定, 只回收超过 stagingMaxAge 的孤儿暂存。
 func (s *ImageStore) SweepOnce(ctx context.Context) (int, error) {
 	entries, err := os.ReadDir(s.root())
 	if errors.Is(err, os.ErrNotExist) {
@@ -341,14 +365,25 @@ func (s *ImageStore) SweepOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	now := s.now().UnixMilli()
+	now := s.now()
 	removed := 0
 	var errs []error
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return removed, err
 		}
-		if !entry.IsDir() || !ids.Valid(entry.Name()) {
+		if !entry.IsDir() {
+			continue
+		}
+		if entry.Name() == imageStagingName {
+			stagingRemoved, err := s.sweepStaging(ctx, now)
+			removed += stagingRemoved
+			if err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if !ids.Valid(entry.Name()) {
 			continue
 		}
 		meta, err := s.readMeta(entry.Name())
@@ -360,10 +395,45 @@ func (s *ImageStore) SweepOnce(ctx context.Context) (int, error) {
 			removed++
 			continue
 		}
-		if now < meta.ExpiresAt {
+		if now.UnixMilli() < meta.ExpiresAt {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(s.root(), entry.Name())); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		removed++
+		s.auditExpire(ctx, meta)
+	}
+	return removed, errors.Join(errs...)
+}
+
+func (s *ImageStore) sweepStaging(ctx context.Context, now time.Time) (int, error) {
+	entries, err := os.ReadDir(filepath.Join(s.root(), imageStagingName))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	var errs []error
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if now.Sub(info.ModTime()) <= stagingMaxAge {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(s.root(), imageStagingName, entry.Name())); err != nil {
 			errs = append(errs, err)
 			continue
 		}

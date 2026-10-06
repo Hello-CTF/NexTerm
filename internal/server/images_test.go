@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -125,6 +126,18 @@ func (f *imageFixture) findAudit(kind string) *imageAuditRecord {
 	return nil
 }
 
+func (f *imageFixture) countAudit(kind string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, record := range f.audits {
+		if record.kind == kind {
+			count++
+		}
+	}
+	return count
+}
+
 func uploadImageOK(t *testing.T, f *imageFixture, session *accountTestSession) map[string]any {
 	t.Helper()
 	status, body := f.upload(t, testPNGBytes, session, session.csrf)
@@ -132,6 +145,158 @@ func uploadImageOK(t *testing.T, f *imageFixture, session *accountTestSession) m
 		t.Fatalf("upload status=%d body=%v", status, body)
 	}
 	return body
+}
+
+func newTestImageStore(t *testing.T, maxBytes, quota int64) *ImageStore {
+	t.Helper()
+	return &ImageStore{
+		dataDir: t.TempDir(), ttl: DefaultImageTTL, sweepEvery: DefaultImageSweepInterval,
+		maxBytes: maxBytes, ownerQuota: quota, newID: ids.New, now: time.Now, logger: testLogger(),
+	}
+}
+
+// gatedReader 先吐出 8 字节嗅探数据, 随后阻塞到 gate 关闭, 用于模拟慢客户端。
+type gatedReader struct {
+	data    []byte
+	gate    chan struct{}
+	started chan struct{}
+	once    sync.Once
+	sent    int
+}
+
+func (g *gatedReader) Read(p []byte) (int, error) {
+	if g.sent < 8 {
+		n := copy(p, g.data[g.sent:8])
+		g.sent += n
+		return n, nil
+	}
+	g.once.Do(func() { close(g.started) })
+	<-g.gate
+	if g.sent >= len(g.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, g.data[g.sent:])
+	g.sent += n
+	return n, nil
+}
+
+func TestImagePutSlowBodyDoesNotBlockOthers(t *testing.T) {
+	images := newTestImageStore(t, DefaultImageMaxBytes, DefaultImageOwnerQuota)
+	first, err := images.Put("owner-a", bytes.NewReader(testPNGBytes), int64(len(testPNGBytes)), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader := &gatedReader{data: testPNGBytes, gate: make(chan struct{}), started: make(chan struct{})}
+	slowResult := make(chan error, 1)
+	go func() {
+		_, err := images.Put("owner-a", reader, int64(len(testPNGBytes)), "")
+		slowResult <- err
+	}()
+	<-reader.started
+
+	fastDone := make(chan error, 1)
+	go func() {
+		_, err := images.Put("owner-b", bytes.NewReader(testJPEGBytes), int64(len(testJPEGBytes)), "")
+		fastDone <- err
+	}()
+	select {
+	case err := <-fastDone:
+		if err != nil {
+			t.Fatalf("concurrent fast upload: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("fast upload blocked by slow request body")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		_, err := images.Remove(first.ID)
+		deleteDone <- err
+	}()
+	select {
+	case err := <-deleteDone:
+		if err != nil {
+			t.Fatalf("concurrent delete: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("delete blocked by slow request body")
+	}
+
+	close(reader.gate)
+	if err := <-slowResult; err != nil {
+		t.Fatalf("slow upload: %v", err)
+	}
+}
+
+func TestImagePutConcurrentQuotaNotBreached(t *testing.T) {
+	images := newTestImageStore(t, DefaultImageMaxBytes, 150)
+	var wg sync.WaitGroup
+	results := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := images.Put("owner", bytes.NewReader(testPNGBytes), int64(len(testPNGBytes)), "")
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	succeeded, rejected := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, errImageQuota):
+			rejected++
+		default:
+			t.Fatalf("unexpected put error: %v", err)
+		}
+	}
+	if succeeded != 2 || rejected != 6 {
+		t.Fatalf("succeeded=%d rejected=%d, want 2/6", succeeded, rejected)
+	}
+	usage, err := images.ownerUsage("owner")
+	if err != nil || usage != int64(succeeded*len(testPNGBytes)) {
+		t.Fatalf("usage=%d err=%v", usage, err)
+	}
+}
+
+func TestImageSweepDoesNotDeleteActiveUpload(t *testing.T) {
+	images := newTestImageStore(t, DefaultImageMaxBytes, DefaultImageOwnerQuota)
+	reader := &gatedReader{data: testPNGBytes, gate: make(chan struct{}), started: make(chan struct{})}
+	type putResult struct {
+		meta *ImageMeta
+		err  error
+	}
+	done := make(chan putResult, 1)
+	go func() {
+		meta, err := images.Put("owner", reader, int64(len(testPNGBytes)), "")
+		done <- putResult{meta: meta, err: err}
+	}()
+	<-reader.started
+
+	removed, err := images.SweepOnce(context.Background())
+	if err != nil || removed != 0 {
+		t.Fatalf("SweepOnce during upload removed=%d err=%v, want 0", removed, err)
+	}
+	close(reader.gate)
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("upload after sweep: %v", result.err)
+	}
+	if _, err := os.Stat(filepath.Join(images.root(), result.meta.ID, imageMetaName)); err != nil {
+		t.Fatalf("committed meta missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(images.root(), imageStagingName, result.meta.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging dir still present: %v", err)
+	}
+	meta, file, err := images.Open(context.Background(), result.meta.ID)
+	if err != nil || meta.ID != result.meta.ID {
+		t.Fatalf("Open after commit: meta=%+v err=%v", meta, err)
+	}
+	_ = file.Close()
 }
 
 func TestImageUploadAuthAndCSRF(t *testing.T) {
@@ -388,6 +553,9 @@ func TestImageTTLExpiryAndSweep(t *testing.T) {
 	if status, _, _ := fixture.callRaw(t, http.MethodGet, "/files/image/"+expired["id"].(string), nil, nil, ""); status != http.StatusNotFound {
 		t.Fatalf("expired GET status=%d, want 404", status)
 	}
+	if record := fixture.findAudit("image_expire"); record == nil || record.payload["owner"] != admin.user["id"] || record.payload["by"] != "expiry" {
+		t.Fatalf("lazy expire audit=%+v", record)
+	}
 	if status, _, _ := fixture.callRaw(t, http.MethodGet, "/files/image/"+fresh["id"].(string), nil, nil, ""); status != http.StatusOK {
 		t.Fatalf("fresh GET status=%d, want 200", status)
 	}
@@ -407,6 +575,9 @@ func TestImageTTLExpiryAndSweep(t *testing.T) {
 	removed, err := images.SweepOnce(context.Background())
 	if err != nil || removed != 2 {
 		t.Fatalf("SweepOnce removed=%d err=%v, want 2 (expired + corrupt dir)", removed, err)
+	}
+	if count := fixture.countAudit("image_expire"); count != 2 {
+		t.Fatalf("expire audit count=%d, want 2 (lazy GET + sweeper)", count)
 	}
 	if status, _, _ := fixture.callRaw(t, http.MethodGet, "/files/image/"+fresh["id"].(string), nil, nil, ""); status != http.StatusOK {
 		t.Fatalf("fresh GET after sweep status=%d", status)
@@ -434,6 +605,8 @@ func TestParsePublicBaseURL(t *testing.T) {
 		"https://user:pass@example.com",
 		"https://example.com/?q=1",
 		"https://example.com/#frag",
+		"https://files.example.com?",
+		"https://example.com/nexterm?",
 		"ftp://example.com",
 		"example.com",
 		"https://",
