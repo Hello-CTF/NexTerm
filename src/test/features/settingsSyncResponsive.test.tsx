@@ -2,15 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
-    digest: vi.fn(),
     linkGet: vi.fn(),
     linkSet: vi.fn(),
-    remoteDigest: vi.fn(),
+    status: vi.fn(),
+    syncNow: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -21,14 +21,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     syncApi: {
-      digest: mocks.digest,
       linkGet: mocks.linkGet,
       linkSet: mocks.linkSet,
-      remoteDigest: mocks.remoteDigest,
-      push: vi.fn(),
-      pull: vi.fn(),
-      token: vi.fn(),
-      rotateToken: vi.fn(),
+      status: mocks.status,
+      syncNow: mocks.syncNow,
     },
   };
 });
@@ -37,26 +33,11 @@ vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 import { SyncCard } from "../../features/settings/SyncCard";
 import { useUi } from "../../app/store";
 
-const LONG_HOST = "r120-sync-host-with-a-very-long-hostname.example-internal.company.com";
-const LOCAL_DIGEST = {
-  origin: "local",
-  assets: [
-    {
-      id: "a1",
-      name: "web-01",
-      kind: "ssh",
-      host: LONG_HOST,
-      updatedAt: 2,
-      deletedAt: null,
-      hasCred: true,
-    },
-  ],
-};
 const SAVED_LINK = {
   url: "https://sync.example.com",
-  tokenKind: "server",
-  token: "saved-token",
+  username: "alice",
   insecure: false,
+  hasPassword: true,
   verifiedAt: 1,
   lastError: null as string | null,
 };
@@ -67,10 +48,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast });
-  mocks.digest.mockResolvedValue(LOCAL_DIGEST);
-  mocks.linkGet.mockResolvedValue(null);
-  mocks.linkSet.mockResolvedValue(SAVED_LINK);
-  mocks.remoteDigest.mockResolvedValue({ origin: "remote", assets: [] });
+  mocks.linkGet.mockResolvedValue(SAVED_LINK);
+  mocks.status.mockResolvedValue({
+    configured: true,
+    loggedIn: true,
+    username: "alice",
+    seq: 7,
+    verifiedAt: 1,
+    lastError: "",
+  });
   mocks.ask.mockResolvedValue(true);
 });
 
@@ -84,49 +70,39 @@ function withClient(node: React.ReactElement): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
-describe("SyncCard 客户端变体窄屏结构", () => {
-  it("部署位置行可换行、select 窄屏全宽 ≥560px 定宽", async () => {
-    mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => mounted!.container.querySelector("#sync-token-kind") !== null);
-    const select = mounted.container.querySelector("#sync-token-kind")!;
-    expect(select.className).toContain("min-w-0");
-    expect(select.className).toContain("min-[560px]:w-[250px]");
-    expect(select.parentElement?.className).toContain("flex-wrap");
-  });
-
-  it("对照表长主机截断且 title 带完整值，带凭据行窄屏可换行收缩", async () => {
+describe("SyncCard 桌面端链接表单窄屏结构", () => {
+  it("链接表单输入框可收缩(min-w-0 flex-1),标签固定宽", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
-    const urlInput = mounted.container.querySelector<HTMLInputElement>('input[id="sync-url"]')!;
-    const tokenInput = mounted.container.querySelector<HTMLInputElement>('input[id="sync-token"]')!;
-    setInputValue(urlInput, "https://sync.example.com");
-    setInputValue(tokenInput, "fresh-token");
-    await flushUntil(() => {
-      const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "保存并测试连接",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
+    for (const id of ["sync-url", "sync-user", "sync-pass"]) {
+      const input = mounted.container.querySelector<HTMLInputElement>(`#${id}`)!;
+      expect(input.className).toContain("min-w-0");
+      expect(input.className).toContain("flex-1");
+    }
+    const label = mounted.container.querySelector('label[for="sync-url"]')!;
+    expect(label.className).toContain("shrink-0");
+  });
+
+  it("操作按钮行可换行,长错误文本可断词", async () => {
+    const longError = "同步头不一致:" + "很长的对端原因".repeat(20);
+    mocks.status.mockResolvedValue({
+      configured: true,
+      loggedIn: false,
+      seq: 0,
+      verifiedAt: 0,
+      lastError: longError,
     });
-    clickButton(mounted.container, "保存并测试连接");
-    await flushUntil(() => mocks.remoteDigest.mock.calls.length > 0);
-    await flushUntil(() =>
-      [...mounted!.container.querySelectorAll("span")].some((s) => s.textContent === LONG_HOST),
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => mounted!.container.textContent?.includes(longError.slice(0, 20)));
+
+    const buttonRow = [...mounted.container.querySelectorAll("div")].find(
+      (d) => d.className.includes("flex-wrap") && d.querySelector("button"),
     );
-    const hostSpan = [...mounted.container.querySelectorAll("span")].find(
-      (s) => s.textContent === LONG_HOST,
+    expect(buttonRow).not.toBeNull();
+
+    const errorSpan = [...mounted.container.querySelectorAll("span")].find(
+      (s) => (s.textContent ?? "").includes(longError.slice(0, 20)),
     );
-    expect(hostSpan?.className).toContain("truncate");
-    expect(hostSpan?.className).toContain("shrink");
-    expect(hostSpan?.getAttribute("title")).toBe(LONG_HOST);
-    const row = hostSpan!.closest("label")!;
-    expect(row.className).toContain("flex-wrap");
-    expect(row.textContent).toContain("带凭据");
-    const badge = row.querySelector(".nx-badge");
-    expect(badge?.className).toContain("shrink-0");
-    expect(badge?.textContent).toBe("仅本机");
-    const nameSpan = [...mounted.container.querySelectorAll("span")].find(
-      (s) => s.textContent === "web-01",
-    );
-    expect(nameSpan?.className).toContain("truncate");
+    expect(errorSpan?.className).toContain("text-amber-300");
   });
 });

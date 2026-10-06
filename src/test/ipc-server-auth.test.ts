@@ -6,6 +6,7 @@ function webWindow() {
     location: { search: "", protocol: "http:", host: "127.0.0.1:9" },
     setTimeout: (...args: Parameters<typeof setTimeout>) => globalThis.setTimeout(...args),
     addEventListener: () => {},
+    dispatchEvent: () => true,
   };
 }
 
@@ -60,93 +61,63 @@ describe("serverAuth 令牌持有", () => {
 });
 
 describe("authedFetch 401 处理", () => {
-  it("无 401 时原样返回，不弹窗", async () => {
+  it("无 401 时原样返回", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
     vi.stubGlobal("fetch", fetchMock);
     const auth = await import("../ipc/serverAuth");
-    const prompter = vi.fn().mockResolvedValue("unused");
-    auth.registerServerTokenPrompter(prompter);
 
     const response = await auth.authedFetch("/rpc", { method: "POST" });
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(prompter).not.toHaveBeenCalled();
   });
 
-  it("401 后弹窗索取令牌并用新令牌重试一次", async () => {
+  it("401 时清空令牌、派发重新登录事件并返回 401(不再弹令牌框重试)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "访问令牌无效或缺失" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const auth = await import("../ipc/serverAuth");
+    auth.setServerToken("stale-token");
+
+    const events: string[] = [];
+    vi.stubGlobal("window", {
+      ...webWindow(),
+      dispatchEvent: (event: Event) => {
+        events.push(event.type);
+        return true;
+      },
+    });
+
+    const response = await auth.authedFetch("/rpc", { method: "POST" });
+    expect(response.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(auth.getServerToken()).toBeNull();
+    expect(events).toContain("nexterm:session-expired");
+  });
+
+  it("401 后不再以新令牌重试", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "访问令牌无效或缺失" } }))
+      .mockResolvedValueOnce(jsonResponse(401, { ok: false }))
       .mockResolvedValueOnce(jsonResponse(200, { ok: true, data: "linux" }));
     vi.stubGlobal("fetch", fetchMock);
     const auth = await import("../ipc/serverAuth");
-    auth.registerServerTokenPrompter(vi.fn().mockResolvedValue("fresh-token"));
-
-    const response = await auth.authedFetch("/rpc", { method: "POST" });
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const retryHeaders = (fetchMock.mock.calls[1] as [string, RequestInit])[1].headers as Record<string, string>;
-    expect(retryHeaders["X-NexTerm-Sync-Token"]).toBe("fresh-token");
-    expect(auth.getServerToken()).toBe("fresh-token");
-  });
-
-  it("重试仍 401 时清空令牌并返回 401", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { ok: false }));
-    vi.stubGlobal("fetch", fetchMock);
-    const auth = await import("../ipc/serverAuth");
-    auth.registerServerTokenPrompter(vi.fn().mockResolvedValue("wrong-token"));
-
-    const response = await auth.authedFetch("/rpc", { method: "POST" });
-    expect(response.status).toBe(401);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(auth.getServerToken()).toBeNull();
-  });
-
-  it("弹窗取消时返回原 401 响应", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { ok: false }));
-    vi.stubGlobal("fetch", fetchMock);
-    const auth = await import("../ipc/serverAuth");
-    auth.registerServerTokenPrompter(vi.fn().mockResolvedValue(null));
 
     const response = await auth.authedFetch("/rpc", { method: "POST" });
     expect(response.status).toBe(401);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("并发 401 共用同一次弹窗", async () => {
-    const promptGate: { resolve: ((value: string | null) => void) | null } = { resolve: null };
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { ok: false }));
-    vi.stubGlobal("fetch", fetchMock);
-    const auth = await import("../ipc/serverAuth");
-    const prompter = vi.fn().mockImplementation(
-      () => new Promise<string | null>((resolve) => { promptGate.resolve = resolve; }),
-    );
-    auth.registerServerTokenPrompter(prompter);
-
-    const first = auth.authedFetch("/rpc-a", { method: "POST" });
-    const second = auth.authedFetch("/rpc-b", { method: "POST" });
-    await vi.waitFor(() => expect(prompter).toHaveBeenCalledTimes(1));
-    promptGate.resolve?.("shared-token");
-    await Promise.all([first, second]);
-    expect(prompter).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
 
-describe("callWeb 经 401 完成登录", () => {
-  it("首个调用 401 时索取令牌并成功重放", async () => {
+describe("callWeb 经 401 不再索取令牌", () => {
+  it("首个调用 401 时直接失败,不重放", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { ok: false, error: { code: "forbidden", message: "访问令牌无效或缺失" } }))
       .mockResolvedValueOnce(jsonResponse(200, { ok: true, data: "linux" }));
     vi.stubGlobal("fetch", fetchMock);
-    const auth = await import("../ipc/serverAuth");
-    auth.registerServerTokenPrompter(vi.fn().mockResolvedValue("server-token"));
     const { systemApi } = await import("../ipc/commands");
 
-    await expect(systemApi.platform()).resolves.toBe("linux");
-    const [, retryInit] = fetchMock.mock.calls[1] as [string, { headers: Record<string, string> }];
-    expect(retryInit.headers["X-NexTerm-Sync-Token"]).toBe("server-token");
+    await expect(systemApi.platform()).rejects.toMatchObject({ code: "forbidden" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

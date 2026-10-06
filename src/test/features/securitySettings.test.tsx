@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, deferred, flush, mount, type MountedView } from "./reactTestUtils";
+import { clickButton, deferred, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 import type { KnownHostDto } from "../../ipc/types";
 
 const mocks = vi.hoisted(() => {
@@ -12,9 +12,18 @@ const mocks = vi.hoisted(() => {
     knownHostRemove: vi.fn(),
     knownHostAccept: vi.fn(),
     sessionConnect: vi.fn(),
-    syncDigest: vi.fn(),
-    syncToken: vi.fn(),
-    rotateToken: vi.fn(),
+    assetList: vi.fn(),
+    groupList: vi.fn(),
+    snippetList: vi.fn(),
+    syncIds: vi.fn(),
+    syncPull: vi.fn(),
+    syncPush: vi.fn(),
+    authStatus: vi.fn(),
+    authMe: vi.fn(),
+    authDekGet: vi.fn(),
+    authDevices: vi.fn(),
+    adminUsers: vi.fn(),
+    adminSettingsGet: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -25,11 +34,9 @@ vi.mock("../../ipc/commands", () => ({
     knownHostList: mocks.knownHostList,
     knownHostRemove: mocks.knownHostRemove,
     knownHostAccept: mocks.knownHostAccept,
-  },
-  syncApi: {
-    digest: mocks.syncDigest,
-    token: mocks.syncToken,
-    rotateToken: mocks.rotateToken,
+    list: mocks.assetList,
+    groupList: mocks.groupList,
+    snippetList: mocks.snippetList,
   },
   dbApi: {},
   sessionApi: { connect: mocks.sessionConnect },
@@ -38,8 +45,48 @@ vi.mock("../../ipc/commands", () => ({
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
+vi.mock("../../ipc/authApi", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../ipc/authApi")>();
+  return {
+    ...original,
+    authApi: {
+      status: mocks.authStatus,
+      me: mocks.authMe,
+      dekGet: mocks.authDekGet,
+      devices: mocks.authDevices,
+      logout: vi.fn().mockResolvedValue({ ok: true }),
+      logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
+      deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
+      enrollCode: vi.fn().mockResolvedValue({ code: "enroll-1", expires_at: 1 }),
+    },
+    adminApi: {
+      users: mocks.adminUsers,
+      settingsGet: mocks.adminSettingsGet,
+      settingsPut: vi.fn().mockResolvedValue({ registration_open: true, public_base_url: "" }),
+      createUser: vi.fn(),
+      disableUser: vi.fn(),
+      resetUser: vi.fn(),
+    },
+    syncV2Api: {
+      ids: mocks.syncIds,
+      pull: mocks.syncPull,
+      push: mocks.syncPush,
+    },
+  };
+});
+
+// 解锁路径避免真实 argon2id(生产参数一次数秒),只替换 unwrap;其余加解密保持真实。
+vi.mock("../../features/auth/crypto", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../features/auth/crypto")>();
+  return {
+    ...original,
+    unwrapDEKWithPassword: vi.fn().mockResolvedValue(new Uint8Array(32).fill(7)),
+  };
+});
+
 import { KnownHostsCard } from "../../features/settings/KnownHostsCard";
 import { SyncCard } from "../../features/settings/SyncCard";
+import { useAuth } from "../../features/auth/store";
 import { connectAsset, useUi } from "../../app/store";
 
 const KH1: KnownHostDto = {
@@ -63,6 +110,67 @@ function mountSyncCard(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
 }
+
+const DEMO_USER = {
+  id: "u-1",
+  username: "alice",
+  display_name: "Alice",
+  role: "user" as const,
+  state: "active" as const,
+  must_change_password: false,
+  created_at: 1,
+  updated_at: 1,
+  last_login_at: 1,
+};
+
+function seedAuthed(dek: boolean) {
+  useAuth.setState({
+    status: { initialized: true, registration_open: false, auth: "on" },
+    user: DEMO_USER,
+    dek: dek ? new Uint8Array(32).fill(7) : null,
+    gate: "ready",
+    pendingRecoveryKey: null,
+    error: null,
+  });
+}
+
+function seedLoggedOut() {
+  useAuth.setState({
+    status: { initialized: true, registration_open: false, auth: "on" },
+    user: null,
+    dek: null,
+    gate: "ready",
+    pendingRecoveryKey: null,
+    error: null,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  document.body.replaceChildren();
+  useUi.setState({ pushToast: mocks.toast });
+  mocks.assetList.mockResolvedValue([]);
+  mocks.groupList.mockResolvedValue([]);
+  mocks.snippetList.mockResolvedValue([]);
+  mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
+  mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
+  mocks.authStatus.mockResolvedValue({ initialized: true, registration_open: false, auth: "on" });
+  mocks.authMe.mockResolvedValue({ user: DEMO_USER, csrf_token: "csrf-1" });
+  mocks.authDekGet.mockResolvedValue({
+    dek_envelope: "",
+    kdf_salt: "",
+    kdf_params: '{"t":3,"m":65536,"p":4}',
+    recovery_envelope: "",
+    recovery_hash: "",
+  });
+  mocks.authDevices.mockResolvedValue({ devices: [] });
+  mocks.adminUsers.mockResolvedValue({ users: [DEMO_USER] });
+  mocks.adminSettingsGet.mockResolvedValue({ registration_open: false, public_base_url: "" });
+});
+
+afterEach(() => {
+  useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
+});
 
 describe("KnownHostsCard", () => {
   let mounted: MountedView | undefined;
@@ -176,75 +284,121 @@ describe("KnownHostsCard", () => {
   });
 });
 
-describe("SyncCard（服务端一面）", () => {
+describe("SyncCard（Web 同步台）", () => {
   let mounted: MountedView | undefined;
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    document.body.replaceChildren();
-    useUi.setState({ pushToast: mocks.toast });
-    mocks.syncDigest.mockResolvedValue({ origin: "local", assets: [] });
-    mocks.syncToken.mockResolvedValue("sync-token-secret-xyz");
-    mocks.rotateToken.mockResolvedValue("sync-token-rotated");
-  });
   afterEach(() => {
     mounted?.unmount();
     mounted = undefined;
   });
 
-  it("keeps the sync token masked until explicitly revealed", async () => {
-    mounted = mountSyncCard();
-    await flush();
-    expect(mounted.container.textContent).toContain("这台是同步目标");
-    expect(mounted.container.textContent).toContain("•••");
-    expect(mounted.container.textContent).not.toContain("sync-token-secret-xyz");
-
-    clickButton(mounted.container, "显示");
-    expect(mounted.container.textContent).toContain("sync-token-secret-xyz");
-
-    clickButton(mounted.container, "隐藏");
-    expect(mounted.container.textContent).not.toContain("sync-token-secret-xyz");
-  });
-
-  it("describes the token as the full-access key and keeps the exposure warning", async () => {
+  it("未登录时提示登录而不是同步内容", async () => {
+    seedLoggedOut();
     mounted = mountSyncCard();
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("访问令牌");
-    expect(text).toContain("/rpc");
-    expect(text).toContain("/files/blob");
-    expect(text).toContain("终端、文件与容器");
-    expect(text).toContain("/sync/rpc");
-    expect(text).not.toContain("只能用于资产同步");
-    expect(text).not.toContain("没有内置登录鉴权");
-    expect(text).toContain("反向代理");
+    expect(text).toContain("登录以启用同步");
+    expect(text).not.toContain("解锁数据密钥");
   });
 
-  it("重置令牌前先确认，取消时不轮换", async () => {
-    mocks.ask.mockResolvedValue(false);
+  it("已登录未解锁时显示解锁表单,输入密码解锁", async () => {
+    seedAuthed(false);
     mounted = mountSyncCard();
     await flush();
+    expect(mounted.container.textContent).toContain("解锁数据密钥");
 
-    clickButton(mounted.container, "重置令牌");
+    setInputValue(
+      mounted.container.querySelector<HTMLInputElement>('input[placeholder="账号密码"]')!,
+      "correct horse battery staple",
+    );
     await flush();
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
-    expect(question).toContain("旧令牌会立即失效");
-    expect(mocks.rotateToken).not.toHaveBeenCalled();
-    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.any(String));
+    clickButton(mounted.container, "解锁");
+    await flushUntil(() => useAuth.getState().dek !== null);
+    expect(mocks.authDekGet).toHaveBeenCalled();
   });
 
-  it("确认后轮换令牌，展示新令牌并提示旧令牌失效", async () => {
-    mocks.ask.mockResolvedValue(true);
-    mounted = mountSyncCard();
-    await flush();
+  it("解锁后显示本机与云端的对比状态", async () => {
+    seedAuthed(true);
+    mocks.groupList.mockResolvedValue([
+      { id: "g1", parentId: null, name: "生产环境", sort: 0, createdAt: 1, updatedAt: 100 },
+    ]);
+    mocks.assetList.mockResolvedValue([
+      {
+        id: "a1", groupId: "g1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
+      },
+      {
+        id: "a2", groupId: null, kind: "ssh", name: "db-02", host: "10.0.0.9", port: 22,
+        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300, deletedAt: null, builtin: false,
+      },
+    ]);
+    // 远端:a1 较新(修订 250 > 200),另有一个云端独有的 a3
+    const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
+    const dek = new Uint8Array(32).fill(7);
+    const blobA1 = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "a1", groupId: "g1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 250 })),
+      "a1",
+      "asset",
+    );
+    const blobA3 = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "a3", groupId: null, kind: "ssh", name: "cache-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 400 })),
+      "a3",
+      "asset",
+    );
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2,
+      entries: [
+        { id: "a1", seq: 1, blob_hash: "h1" },
+        { id: "a3", seq: 2, blob_hash: "h3" },
+      ],
+      head: "head-2",
+      max_seq: 2,
+    });
+    mocks.syncPull.mockImplementation(async (_seq: number, ids?: string[]) => {
+      const want = ids?.[0];
+      const objects = [
+        { id: "a1", seq: 1, blob: bytesToBase64(blobA1) },
+        { id: "a3", seq: 2, blob: bytesToBase64(blobA3) },
+      ].filter((o) => !want || o.id === want);
+      return { protocol: 2, objects, head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true };
+    });
 
-    clickButton(mounted.container, "重置令牌");
-    await flush();
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(mocks.rotateToken).toHaveBeenCalledTimes(1);
-    expect(mounted.container.textContent).toContain("sync-token-rotated");
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已换新令牌，旧的立刻失效");
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("云端较新"); // a1 云端修订更新
+    expect(text).toContain("仅云端"); // a3 仅云端
+    expect(text).toContain("仅本机"); // g1/db-02 仅本机
+  });
+
+  it("推送调用 /sync/v2/push 并更新本地游标", async () => {
+    seedAuthed(true);
+    mocks.assetList.mockResolvedValue([
+      {
+        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
+      },
+    ]);
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-9", max_seq: 9, applied: 1, skipped: 0 });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
+
+    clickButton(mounted.container, "推送到云端 (1)");
+    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    expect(mocks.syncPush).toHaveBeenCalledWith(
+      "",
+      expect.arrayContaining([
+        expect.objectContaining({ id: "a1", blob: expect.any(String) }),
+      ]),
+    );
+    await flushUntil(() => window.localStorage.getItem("sync.cursor.u-1") !== null);
+    expect(window.localStorage.getItem("sync.cursor.u-1")).toContain("head-9");
   });
 });
 

@@ -11,8 +11,8 @@ const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
   syncLinkGet: vi.fn(),
   syncLinkSet: vi.fn(),
-  syncRemoteDigest: vi.fn(),
-  syncDigest: vi.fn(),
+  syncStatus: vi.fn(),
+  syncNow: vi.fn(),
 }));
 
 const demoState = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ const demoState = vi.hoisted(() => ({
 vi.mock("../demo", () => demoState);
 
 vi.mock("../ipc/commands", () => ({
-  assetApi: { list: mocks.assetList, search: vi.fn() },
+  assetApi: { list: mocks.assetList, search: vi.fn(), groupList: vi.fn(), snippetList: vi.fn() },
   sessionApi: {
     list: mocks.sessionList,
     connectLocal: vi.fn(),
@@ -36,8 +36,8 @@ vi.mock("../ipc/commands", () => ({
   syncApi: {
     linkGet: mocks.syncLinkGet,
     linkSet: mocks.syncLinkSet,
-    remoteDigest: mocks.syncRemoteDigest,
-    digest: mocks.syncDigest,
+    status: mocks.syncStatus,
+    syncNow: mocks.syncNow,
   },
   terminalApi: {},
   dbApi: {},
@@ -113,9 +113,9 @@ describe("状态栏同步状态", () => {
   it("未配置同步链接时显示本地模式", async () => {
     mocks.syncLinkGet.mockResolvedValue({
       url: "",
-      tokenKind: "server",
-      token: "",
+      username: "",
       insecure: false,
+      hasPassword: false,
       verifiedAt: 0,
       lastError: null,
     });
@@ -128,9 +128,9 @@ describe("状态栏同步状态", () => {
   it("已配置同步链接时显示已配置", async () => {
     mocks.syncLinkGet.mockResolvedValue({
       url: "https://sync.example.com",
-      tokenKind: "server",
-      token: "",
+      username: "alice",
       insecure: false,
+      hasPassword: true,
       verifiedAt: 1,
       lastError: null,
     });
@@ -153,17 +153,17 @@ describe("状态栏同步状态", () => {
 
 const EMPTY_LINK = {
   url: "",
-  tokenKind: "server",
-  token: "",
+  username: "",
   insecure: false,
+  hasPassword: false,
   verifiedAt: 0,
   lastError: null,
 };
 const SAVED_LINK = {
   url: "https://sync.example.com",
-  tokenKind: "server",
-  token: "saved-token",
+  username: "alice",
   insecure: false,
+  hasPassword: true,
   verifiedAt: 1,
   lastError: null,
 };
@@ -186,27 +186,44 @@ async function saveSyncLink(): Promise<void> {
     document.querySelector<HTMLInputElement>("#sync-url")!,
     "https://sync.example.com",
   );
-  setInputValue(document.querySelector<HTMLInputElement>("#sync-token")!, "new-token");
+  setInputValue(document.querySelector<HTMLInputElement>("#sync-user")!, "alice");
+  setInputValue(document.querySelector<HTMLInputElement>("#sync-pass")!, "correct horse battery staple");
   await flushUntil(() => {
     const btn = [...document.querySelectorAll("button")].find(
-      (b) => b.textContent?.trim() === "保存并测试连接",
+      (b) => b.textContent?.trim() === "保存链接",
     ) as HTMLButtonElement | undefined;
     return !!btn && !btn.disabled;
   });
-  clickButton(document.body, "保存并测试连接");
+  clickButton(document.body, "保存链接");
 }
 
-describe("状态栏同步状态（保存后刷新）", () => {
+describe("账号同步卡（桌面端）", () => {
   beforeEach(() => {
-    mocks.syncDigest.mockResolvedValue({ origin: "local", assets: [] });
+    mocks.syncStatus.mockResolvedValue({
+      configured: false,
+      loggedIn: false,
+      seq: 0,
+      verifiedAt: 0,
+      lastError: "",
+    });
     mocks.syncLinkGet.mockImplementation(async () =>
       mocks.syncLinkSet.mock.calls.length > 0 ? SAVED_LINK : EMPTY_LINK,
     );
     mocks.syncLinkSet.mockResolvedValue(SAVED_LINK);
+    mocks.syncNow.mockResolvedValue({
+      pulled: 2,
+      applied: 1,
+      pullSkipped: 1,
+      decryptFailed: 0,
+      pushed: 3,
+      conflicts: 0,
+      head: "head-1",
+      seq: 7,
+      warnings: [],
+    });
   });
 
-  it("保存成功但连接测试失败时，状态栏仍刷新为已配置", async () => {
-    mocks.syncRemoteDigest.mockRejectedValue(new Error("对端不可达"));
+  it("保存链接时以账号+密码调用 linkSet,并刷新为已配置", async () => {
     mounted = mountAppWithSyncCard();
     await flush();
     expect(syncStatusText()).toBe("同步：本地模式");
@@ -215,23 +232,61 @@ describe("状态栏同步状态（保存后刷新）", () => {
 
     await flushUntil(() => syncStatusText() === "同步：已配置");
     expect(mocks.syncLinkSet).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://sync.example.com" }),
+      expect.objectContaining({
+        url: "https://sync.example.com",
+        username: "alice",
+        password: "correct horse battery staple",
+      }),
     );
-    expect(document.body.textContent).toContain("对端不可达");
   });
 
-  it("保存并连接成功时，状态栏刷新为已配置并提示已连接", async () => {
-    mocks.syncRemoteDigest.mockResolvedValue({
-      origin: "https://sync.example.com",
-      assets: [],
+  it("立即同步调用 syncNow 并展示报告", async () => {
+    mocks.syncStatus.mockResolvedValue({
+      configured: true,
+      loggedIn: true,
+      username: "alice",
+      seq: 7,
+      verifiedAt: 1,
+      lastError: "",
     });
     mounted = mountAppWithSyncCard();
     await flush();
-    expect(syncStatusText()).toBe("同步：本地模式");
 
-    await saveSyncLink();
+    await flushUntil(() => {
+      const btn = [...document.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "立即同步",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(document.body, "立即同步");
 
-    await flushUntil(() => syncStatusText() === "同步：已配置");
-    expect(document.body.textContent).toContain("已连接（对端标识");
+    await flushUntil(() => document.body.textContent?.includes("同步结果"));
+    expect(mocks.syncNow).toHaveBeenCalled();
+    expect(document.body.textContent).toContain("拉取 2");
+    expect(document.body.textContent).toContain("推送 3");
+  });
+
+  it("同步失败时展示错误而不是报告", async () => {
+    mocks.syncStatus.mockResolvedValue({
+      configured: true,
+      loggedIn: false,
+      seq: 0,
+      verifiedAt: 0,
+      lastError: "会话已过期",
+    });
+    mocks.syncNow.mockRejectedValue(new Error("同步头不一致"));
+    mounted = mountAppWithSyncCard();
+    await flush();
+
+    await flushUntil(() => {
+      const btn = [...document.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "立即同步",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(document.body, "立即同步");
+
+    await flushUntil(() => document.body.textContent?.includes("同步头不一致"));
+    expect(document.body.textContent).not.toContain("同步结果");
   });
 });

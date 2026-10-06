@@ -88,6 +88,8 @@ import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
+import { AuthGate } from "../features/auth/AuthGate";
+import { useAuth } from "../features/auth/store";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
@@ -433,6 +435,9 @@ export default function App() {
     queryFn: () => syncApi.linkGet(),
     enabled: !WEB,
   });
+  useEffect(() => {
+    if (WEB || DEMO) void useAuth.getState().refresh();
+  }, []);
   const syncStatusText = WEB
     ? "服务端：浏览器模式"
     : syncLink.isError
@@ -702,6 +707,22 @@ export default function App() {
     [closeWorkspace],
   );
 
+  const runSyncNow = useCallback(async () => {
+    const { pushToast: toast } = useUi.getState();
+    if (WEB || DEMO) {
+      toast("info", "浏览器模式的同步在「设置 → 账号同步」里进行");
+      return;
+    }
+    try {
+      const r = (await syncApi.syncNow()) as unknown as { applied: number; pushed: number };
+      const moved = r.applied + r.pushed;
+      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成:应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
+      void queryClient.invalidateQueries();
+    } catch (e) {
+      toast("error", `同步失败:${describeError(e)}`);
+    }
+  }, [queryClient]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const hit = matchAppKeybinding(e);
@@ -755,6 +776,11 @@ export default function App() {
           st.setActiveTab(target.id);
           return;
         }
+        case "syncNow": {
+          e.preventDefault();
+          void runSyncNow();
+          return;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -766,6 +792,7 @@ export default function App() {
     setLeftOpen,
     setRightOpen,
     openLocalTerminal,
+    runSyncNow,
     viewport.splitAllowed,
   ]);
 
@@ -1432,6 +1459,7 @@ export default function App() {
         />
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
+      <AuthGate />
       <PromptModal />
       <DialogHost />
     </div>

@@ -12,7 +12,8 @@ export type KeybindingActionId =
   | "toggleSplit"
   | "switchTab"
   | "terminalSearch"
-  | "reclaimTakeover";
+  | "reclaimTakeover"
+  | "syncNow";
 
 export interface KeybindingAction {
   id: KeybindingActionId;
@@ -32,6 +33,7 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "switchTab", label: "跳到第 1-9 个标签", defaultBinding: "Mod+1-9" },
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Primary+f" },
   { id: "reclaimTakeover", label: "AI 接管中一键夺回", defaultBinding: "Escape" },
+  { id: "syncNow", label: "立即同步账号数据", defaultBinding: "Mod+Shift+s" },
 ];
 
 const APP_ACTION_ORDER: KeybindingActionId[] = [
@@ -44,6 +46,7 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "closeTab",
   "toggleSplit",
   "switchTab",
+  "syncNow",
 ];
 
 export interface KeyEventLike {
