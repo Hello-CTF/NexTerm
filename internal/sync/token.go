@@ -271,22 +271,9 @@ func (s *Service) VerifyTokenIdentity(ctx context.Context, presented string) (To
 	return s.verifyTokenIdentity(ctx, presented, PurposeSync)
 }
 
-func (s *Service) verifyToken(ctx context.Context, presented, purpose string) (bool, error) {
-	_, valid, err := s.verifyTokenIdentity(ctx, presented, purpose)
-	return valid, err
-}
-
 func (s *Service) verifyTokenIdentity(ctx context.Context, presented, purpose string) (TokenIdentity, bool, error) {
 	if presented == "" {
 		return TokenIdentity{}, false, nil
-	}
-	identity, valid, err := s.matchToken(ctx, presented, purpose)
-	if err != nil || valid {
-		return identity, valid, err
-	}
-	migrated, err := s.migrateLegacyToken(ctx)
-	if err != nil || !migrated {
-		return TokenIdentity{}, false, err
 	}
 	return s.matchToken(ctx, presented, purpose)
 }
@@ -306,55 +293,11 @@ func (s *Service) matchToken(ctx context.Context, presented, purpose string) (To
 	return TokenIdentity{TokenID: token.ID, ClientID: token.ClientID, Purpose: token.Purpose, Admin: token.ID == adminTokenID}, true, nil
 }
 
-func (s *Service) migrateLegacyToken(ctx context.Context) (bool, error) {
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	return s.migrateLegacyTokenLocked(ctx)
-}
-
-func (s *Service) migrateLegacyTokenLocked(ctx context.Context) (bool, error) {
-	if _, err := s.tokenByID(ctx, adminTokenID); err == nil {
-		return false, nil
-	} else if !isNotFound(err) {
-		return false, err
-	}
-	stored, found, err := s.store.SettingGet(ctx, settingToken)
-	if err != nil {
-		return false, err
-	}
-	if !found || stored == "" {
-		return false, nil
-	}
-	plaintext, err := s.adminTokenPlaintextFromStored(ctx, stored)
-	if err != nil {
-		return false, err
-	}
-	now := ids.NowMS()
-	token := Token{ID: adminTokenID, ClientID: adminClientID, Purpose: PurposeSync, CreatedAt: now}
-	err = s.withTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tokens(id, client_id, purpose, secret_hash, created_at, expires_at)
-VALUES(?,?,?,?,?,0)`, token.ID, token.ClientID, token.Purpose, tokenSecretHash(plaintext), token.CreatedAt); err != nil {
-			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-		}
-		return s.persistAdminTokenTx(ctx, tx, plaintext)
-	})
-	if err != nil {
-		return false, err
-	}
-	s.auditToken(ctx, "migrate", token)
-	return true, nil
-}
-
 func (s *Service) ensureAdminRowLocked(ctx context.Context) (Token, error) {
 	if token, err := s.tokenByID(ctx, adminTokenID); err == nil {
 		return token, nil
 	} else if !isNotFound(err) {
 		return Token{}, err
-	}
-	if migrated, err := s.migrateLegacyTokenLocked(ctx); err != nil {
-		return Token{}, err
-	} else if migrated {
-		return s.tokenByID(ctx, adminTokenID)
 	}
 	secret, err := generateTokenSecret()
 	if err != nil {

@@ -10,52 +10,27 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
-func TestDetectBundleFormatReadsHeaderOnly(t *testing.T) {
-	legacy := []byte(`{"protocol":1,"groups":[],"assets":[],"creds":[]}`)
-	if got := DetectBundleFormat(legacy); got != BundleFormatLegacyJSON {
-		t.Fatalf("legacy json detected as %v", got)
-	}
-
-	plaintext, err := encodeBundleContainer(legacy, "")
+func TestBundleContainerRejectsInvalidHeader(t *testing.T) {
+	encoded, err := encodeBundleContainer([]byte(`{"protocol":1,"groups":[],"assets":[],"creds":[]}`), "correct horse")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := DetectBundleFormat(plaintext); got != BundleFormatPlaintext {
-		t.Fatalf("plaintext container detected as %v", got)
-	}
 
-	encrypted, err := encodeBundleContainer(legacy, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := DetectBundleFormat(encrypted); got != BundleFormatEncrypted {
-		t.Fatalf("encrypted container detected as %v", got)
-	}
-
-	headerOnly := encrypted[:bundleHeaderSize]
-	if got := DetectBundleFormat(headerOnly); got != BundleFormatEncrypted {
-		t.Fatalf("header-only detection failed: %v", got)
-	}
-	if got := DetectBundleFormat(plaintext[:bundleHeaderSize]); got != BundleFormatPlaintext {
-		t.Fatalf("header-only detection failed: %v", got)
-	}
-
-	badMagic := append([]byte(nil), encrypted...)
+	badMagic := append([]byte(nil), encoded...)
 	badMagic[0] = 'X'
-	if got := DetectBundleFormat(badMagic); got != BundleFormatLegacyJSON {
-		t.Fatalf("bad magic must fall back to legacy, got %v", got)
+	if _, err := decodeBundleContainer(badMagic, "correct horse"); err == nil {
+		t.Fatal("bad magic accepted")
 	}
-	badVersion := append([]byte(nil), encrypted...)
+	badVersion := append([]byte(nil), encoded...)
 	badVersion[4] = 99
-	if got := DetectBundleFormat(badVersion); got != BundleFormatLegacyJSON {
-		t.Fatalf("unknown version must fall back to legacy, got %v", got)
+	if _, err := decodeBundleContainer(badVersion, "correct horse"); err == nil {
+		t.Fatal("unknown version accepted")
 	}
-	short := []byte("NXBM")
-	if got := DetectBundleFormat(short); got != BundleFormatLegacyJSON {
-		t.Fatalf("truncated header must fall back to legacy, got %v", got)
+	if _, err := decodeBundleContainer([]byte("NXBM"), "correct horse"); err == nil {
+		t.Fatal("truncated header accepted")
 	}
-	if got := DetectBundleFormat(nil); got != BundleFormatLegacyJSON {
-		t.Fatalf("empty data must fall back to legacy, got %v", got)
+	if _, err := decodeBundleContainer([]byte(`{"protocol":1,"groups":[],"assets":[],"creds":[]}`), ""); err == nil {
+		t.Fatal("legacy plaintext JSON accepted as container")
 	}
 }
 
@@ -65,8 +40,8 @@ func TestBundleContainerEncryptedRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if DetectBundleFormat(encoded) != BundleFormatEncrypted {
-		t.Fatal("encrypted container not detected")
+	if len(encoded) < bundleHeaderSize || encoded[5]&bundleFlagEncrypted == 0 {
+		t.Fatal("container is not marked encrypted")
 	}
 	if strings.Contains(string(encoded), "g1") {
 		t.Fatal("ciphertext leaks plaintext")
@@ -137,8 +112,8 @@ func TestBundleContainerPlaintextRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if DetectBundleFormat(encoded) != BundleFormatPlaintext {
-		t.Fatal("plaintext container not detected")
+	if len(encoded) < bundleHeaderSize || encoded[5]&bundleFlagEncrypted != 0 {
+		t.Fatal("plaintext container marked encrypted")
 	}
 	decoded, err := decodeBundleContainer(encoded, "")
 	if err != nil {
@@ -253,25 +228,25 @@ func TestBundleFileOverwriteTightensPermissions(t *testing.T) {
 	}
 }
 
-func TestBundleFileLegacyJSONStillReadable(t *testing.T) {
+func TestBundleFileRejectsLegacyJSON(t *testing.T) {
 	desktop := newTestInstance(t, true)
 	path := filepath.Join(t.TempDir(), "nexterm-assets.json")
 	legacy := `{"protocol":1,"groups":[],"assets":[],"creds":[]}`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	read, err := desktop.service.ReadBundleFileWithOptions(context.Background(), path, BundleReadOptions{Password: "ignored"})
-	if err != nil {
+	if _, err := desktop.service.ReadBundleFileWithOptions(context.Background(), path, BundleReadOptions{Password: "ignored"}); err == nil {
+		t.Fatal("legacy JSON accepted")
+	} else {
+		requireCode(t, err, ipc.CodeBadParam)
+	}
+
+	dispatcher := ipc.NewDispatcher()
+	if err := desktop.service.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	if read != legacy {
-		t.Fatalf("legacy read mismatch: %q", read)
-	}
-	read, err = desktop.service.ReadBundleFile(context.Background(), path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if read != legacy {
-		t.Fatalf("legacy wrapper read mismatch: %q", read)
+	response := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(path)+`}}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("legacy JSON read through IPC response=%+v", response)
 	}
 }

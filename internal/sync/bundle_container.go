@@ -33,14 +33,6 @@ type bundleKDFParams struct {
 
 var bundleKDFDefaults = bundleKDFParams{Time: 3, MemoryKiB: 64 * 1024, Threads: 4}
 
-type BundleFormat int
-
-const (
-	BundleFormatLegacyJSON BundleFormat = iota
-	BundleFormatPlaintext
-	BundleFormatEncrypted
-)
-
 type bundleHeader struct {
 	encrypted bool
 	kdf       bundleKDFParams
@@ -99,16 +91,6 @@ func parseBundleHeader(data []byte) (*bundleHeader, error) {
 		}
 	}
 	return h, nil
-}
-
-func DetectBundleFormat(data []byte) BundleFormat {
-	if len(data) < bundleHeaderSize || string(data[0:4]) != bundleMagic || data[4] != bundleVersion {
-		return BundleFormatLegacyJSON
-	}
-	if data[5]&bundleFlagEncrypted != 0 {
-		return BundleFormatEncrypted
-	}
-	return BundleFormatPlaintext
 }
 
 func deriveBundleKey(password string, salt []byte, kdf bundleKDFParams) []byte {

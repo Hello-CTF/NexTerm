@@ -32,10 +32,6 @@ type BundleWriteResult struct {
 	Warning   string `json:"warning,omitempty"`
 }
 
-func (s *Service) ReadBundleFile(ctx context.Context, path string) (string, error) {
-	return s.ReadBundleFileWithOptions(ctx, path, BundleReadOptions{})
-}
-
 func (s *Service) ReadBundleFileWithOptions(_ context.Context, path string, opts BundleReadOptions) (string, error) {
 	if err := s.requireDesktop(); err != nil {
 		return "", err
@@ -51,9 +47,6 @@ func (s *Service) ReadBundleFileWithOptions(_ context.Context, path string, opts
 	if len(data) > maxBundleFileBytes+bundleHeaderSize+bundleGCMTagSize {
 		return "", ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("资产包文件超过 %d MiB，拒绝读取", maxBundleFileBytes>>20))
 	}
-	if DetectBundleFormat(data) == BundleFormatLegacyJSON {
-		return string(data), nil
-	}
 	plaintext, err := decodeBundleContainer(data, opts.Password)
 	if err != nil {
 		return "", err
@@ -62,11 +55,6 @@ func (s *Service) ReadBundleFileWithOptions(_ context.Context, path string, opts
 		return "", ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("资产包内容超过 %d MiB，拒绝读取", maxBundleFileBytes>>20))
 	}
 	return string(plaintext), nil
-}
-
-func (s *Service) WriteBundleFile(ctx context.Context, path string, content string) error {
-	_, err := s.WriteBundleFileWithOptions(ctx, path, content, BundleWriteOptions{})
-	return err
 }
 
 func (s *Service) WriteBundleFileWithOptions(_ context.Context, path string, content string, opts BundleWriteOptions) (*BundleWriteResult, error) {
