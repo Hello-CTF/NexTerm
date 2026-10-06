@@ -86,7 +86,9 @@ export function CredentialsView({
 
       <div className="min-h-0 flex-1 overflow-auto bg-neutral-950/40">
         {loading ? (
-          <div className="nx-hint p-5">凭据视图加载中…</div>
+          <div className="nx-hint p-5" role="status">
+            凭据视图加载中…
+          </div>
         ) : failedError ? (
           <div className="p-5">
             <div className="nx-hint text-red-300">加载失败 · {describeError(failedError)}</div>

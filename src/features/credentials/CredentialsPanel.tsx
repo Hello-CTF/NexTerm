@@ -82,7 +82,9 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
       )}
 
       {credentials.isLoading ? (
-        <div className="nx-empty">凭据加载中…</div>
+        <div className="nx-empty" role="status">
+          凭据加载中…
+        </div>
       ) : credentials.isError && !credentials.data ? (
         <div className="nx-empty">
           <div className="nx-empty-icon">

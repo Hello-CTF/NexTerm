@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { readFileSync } from "node:fs";
 import { act } from "react";
-import { clickButton, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
@@ -81,20 +81,20 @@ function text(): string {
 }
 
 describe("CredentialsSidebar 状态", () => {
-  it("列表失败时给出真实错误与重试，而不是「暂无凭据」", async () => {
+  it("列表失败时给出真实错误与重试，而不是「还没有任何凭据」", async () => {
     mocks.listCredentials.mockRejectedValue(new Error("保险库打不开"));
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => text().includes("凭据列表加载失败"));
     expect(text()).toContain("保险库打不开");
-    expect(text()).not.toContain("暂无凭据");
+    expect(text()).not.toContain("还没有任何凭据");
   });
 
-  it("重试后恢复，真空才显示「暂无凭据」", async () => {
+  it("重试后恢复，真空才显示「还没有任何凭据」", async () => {
     mocks.listCredentials.mockRejectedValueOnce(new Error("保险库打不开"));
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => text().includes("凭据列表加载失败"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("暂无凭据"));
+    await flushUntil(() => text().includes("还没有任何凭据"));
   });
 
   it("「未使用」使用语义 warning 前景", async () => {
@@ -105,6 +105,63 @@ describe("CredentialsSidebar 状态", () => {
       (s) => s.textContent === "未使用",
     );
     expect(badge?.className).toContain("var(--nx-fg-warning)");
+  });
+
+  it("筛选 chip 选中态用 accent 色板，未选中 hover 用中性色反馈", async () => {
+    mocks.listCredentials.mockResolvedValue([
+      UNUSED_CRED,
+      { id: "c2", name: "deploy-key", kind: "private_key", usedBy: [], createdAt: 1, updatedAt: 1 },
+    ]);
+    mounted = withClient(createElement(CredentialsSidebar));
+    await flushUntil(() => text().includes("deploy-key"));
+    const chips = [...mounted!.container.querySelectorAll("button[aria-pressed]")];
+    expect(chips.length).toBe(3);
+    const all = chips.find((b) => b.textContent?.includes("全部"))!;
+    const key = chips.find((b) => b.textContent?.includes("私钥"))!;
+    expect(all.getAttribute("aria-pressed")).toBe("true");
+    expect(all.className).toContain("var(--color-accent)");
+    expect(all.className).not.toContain("bg-white/");
+    expect(key.getAttribute("aria-pressed")).toBe("false");
+    expect(key.className).toContain("hover:bg-neutral-800/70");
+    expect(key.className).not.toContain("var(--color-accent)");
+  });
+
+  it("点击筛选 chip 切换 aria-pressed，再次点击恢复全部", async () => {
+    mocks.listCredentials.mockResolvedValue([
+      UNUSED_CRED,
+      { id: "c2", name: "deploy-key", kind: "private_key", usedBy: [], createdAt: 1, updatedAt: 1 },
+    ]);
+    mounted = withClient(createElement(CredentialsSidebar));
+    await flushUntil(() => text().includes("deploy-key"));
+    const chip = (label: string) =>
+      [...mounted!.container.querySelectorAll("button[aria-pressed]")].find((b) =>
+        b.textContent?.includes(label),
+      )!;
+    expect(chip("全部").getAttribute("aria-pressed")).toBe("true");
+    click(chip("私钥"));
+    await flushUntil(() => !text().includes("db-prod"));
+    expect(chip("私钥").getAttribute("aria-pressed")).toBe("true");
+    expect(chip("私钥").className).toContain("var(--color-accent)");
+    expect(chip("全部").getAttribute("aria-pressed")).toBe("false");
+    click(chip("私钥"));
+    await flushUntil(() => text().includes("db-prod"));
+    expect(chip("私钥").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("加载中带 role=status 语义，而不是静默纯文本", async () => {
+    mocks.listCredentials.mockReturnValue(new Promise(() => {}));
+    mounted = withClient(createElement(CredentialsSidebar));
+    await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
+    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("加载中");
+  });
+
+  it("真空态 sidebar 与 panel 统一为「还没有任何凭据」", async () => {
+    mocks.listCredentials.mockResolvedValue([]);
+    mounted = withClient(createElement(CredentialsSidebar));
+    await flushUntil(() => text().includes("还没有任何凭据"));
+    mounted.unmount();
+    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
+    await flushUntil(() => text().includes("还没有任何凭据"));
   });
 });
 
@@ -123,6 +180,13 @@ describe("CredentialsPanel 状态", () => {
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("还没有任何凭据"));
   });
+
+  it("加载中带 role=status 语义", async () => {
+    mocks.listCredentials.mockReturnValue(new Promise(() => {}));
+    mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
+    await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
+    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("凭据加载中");
+  });
 });
 
 describe("CredentialsView 状态", () => {
@@ -139,6 +203,16 @@ describe("CredentialsView 状态", () => {
     await flushUntil(() => text().includes("加载失败"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("# NexTerm 凭据视图"));
+  });
+
+  it("加载中带 role=status 语义", async () => {
+    mocks.listCredentials.mockReturnValue(new Promise(() => {}));
+    mocks.assetList.mockReturnValue(new Promise(() => {}));
+    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
+    await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
+    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain(
+      "凭据视图加载中",
+    );
   });
 });
 

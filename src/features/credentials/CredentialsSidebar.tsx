@@ -132,7 +132,9 @@ export function CredentialsSidebar() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {credentials.isLoading ? (
-          <div className="nx-hint px-2 py-6 text-center">加载中…</div>
+          <div className="nx-hint px-2 py-6 text-center" role="status">
+            加载中…
+          </div>
         ) : credentials.isError && !credentials.data ? (
           <div className="px-2 py-6 text-center">
             <div className="nx-hint">
@@ -152,7 +154,7 @@ export function CredentialsSidebar() {
           <div className="nx-hint px-2 py-8 text-center">
             {all.length === 0 ? (
               <>
-                暂无凭据
+                还没有任何凭据
                 <br />
                 新建资产时填的密码会自动存进来
               </>
@@ -263,10 +265,11 @@ function FilterChip({
 }) {
   return (
     <button
+      aria-pressed={active}
       className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-[3px] text-[11px] ${
         active
-          ? "bg-blue-500/15 text-blue-300"
-          : "text-neutral-500 hover:bg-white/[.05] hover:text-neutral-300"
+          ? "bg-[color-mix(in_srgb,var(--color-accent)_16%,transparent)] text-blue-300"
+          : "text-neutral-500 hover:bg-neutral-800/70 hover:text-neutral-300"
       }`}
       onClick={onClick}
     >
