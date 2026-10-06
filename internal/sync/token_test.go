@@ -116,8 +116,8 @@ func TestTokenPurposeAndExpiryEnforced(t *testing.T) {
 	if valid, _ := instance.service.VerifyToken(ctx, metrics.Secret); valid {
 		t.Fatal("token of a foreign purpose must not pass sync verification")
 	}
-	if valid, err := instance.service.verifyToken(ctx, metrics.Secret, "metrics"); err != nil || !valid {
-		t.Fatalf("purpose-scoped verification valid=%v err=%v", valid, err)
+	if identity, valid, err := instance.service.verifyTokenIdentity(ctx, metrics.Secret, "metrics"); err != nil || !valid || identity.Purpose != "metrics" {
+		t.Fatalf("purpose-scoped verification identity=%+v valid=%v err=%v", identity, valid, err)
 	}
 
 	short, err := instance.service.TokenIssue(ctx, TokenIssueRequest{ClientID: "short-lived", TTLMs: 200})
@@ -145,50 +145,48 @@ func TestTokenPurposeAndExpiryEnforced(t *testing.T) {
 	}
 }
 
-func TestLegacySharedTokenMigratesToAdminToken(t *testing.T) {
+func TestStaleTokenSettingDoesNotRestoreAdminToken(t *testing.T) {
 	ctx := context.Background()
 	instance := newTestInstance(t, false)
-	const legacy = "legacy-shared-token-value"
-	if err := instance.db.SettingSet(ctx, settingToken, legacy); err != nil {
+	const stale = "stale-shared-token-value"
+	if err := instance.db.SettingSet(ctx, settingToken, stale); err != nil {
 		t.Fatal(err)
 	}
 
-	if valid, err := instance.service.VerifyToken(ctx, legacy); err != nil || !valid {
-		t.Fatalf("legacy token must keep verifying after migration: valid=%v err=%v", valid, err)
+	if valid, err := instance.service.VerifyToken(ctx, stale); err != nil || valid {
+		t.Fatalf("stale setting value must not verify: valid=%v err=%v", valid, err)
 	}
 	if valid, _ := instance.service.VerifyToken(ctx, "wrong"); valid {
 		t.Fatal("wrong token accepted")
 	}
-	tokens, err := instance.service.TokenList(ctx)
-	if err != nil || len(tokens) != 1 {
-		t.Fatalf("migrated tokens=%+v err=%v", tokens, err)
-	}
-	migrated := tokens[0]
-	if migrated.ID != adminTokenID || migrated.ClientID != adminClientID || migrated.Purpose != PurposeSync {
-		t.Fatalf("legacy token did not become the administrator token: %+v", migrated)
-	}
-	plaintext, err := instance.service.Token(ctx)
-	if err != nil || plaintext != legacy {
-		t.Fatalf("migration must preserve the existing token value: %q err=%v", plaintext, err)
-	}
-	backup, found, err := instance.db.SettingGet(ctx, settingTokenBackup)
-	if err != nil || !found || backup != legacy {
-		t.Fatalf("plaintext backup=%q found=%v err=%v", backup, found, err)
+	if tokens, _ := instance.service.TokenList(ctx); len(tokens) != 0 {
+		t.Fatalf("verification created a token row: %+v", tokens)
 	}
 
-	rotated, err := instance.service.RotateToken(ctx)
-	if err != nil || rotated == legacy {
-		t.Fatalf("rotation=%q err=%v", rotated, err)
+	fresh, err := instance.service.Token(ctx)
+	if err != nil || fresh == "" || fresh == stale {
+		t.Fatalf("Token() must issue a fresh admin token: %q err=%v", fresh, err)
 	}
-	if valid, _ := instance.service.VerifyToken(ctx, legacy); valid {
-		t.Fatal("legacy token survived rotation")
+	if valid, _ := instance.service.VerifyToken(ctx, fresh); !valid {
+		t.Fatal("fresh admin token rejected")
 	}
-	if valid, _ := instance.service.VerifyToken(ctx, rotated); !valid {
-		t.Fatal("rotated admin token rejected")
+	if valid, _ := instance.service.VerifyToken(ctx, stale); valid {
+		t.Fatal("stale value survived fresh issuance")
 	}
-	backup, _, _ = instance.db.SettingGet(ctx, settingTokenBackup)
-	if backup != rotated {
-		t.Fatalf("backup did not follow rotation: %q", backup)
+	tokens, err := instance.service.TokenList(ctx)
+	if err != nil || len(tokens) != 1 {
+		t.Fatalf("tokens=%+v err=%v", tokens, err)
+	}
+	if tokens[0].ID != adminTokenID || tokens[0].ClientID != adminClientID || tokens[0].Purpose != PurposeSync {
+		t.Fatalf("fresh issuance did not create the administrator token: %+v", tokens[0])
+	}
+	stored, _, _ := instance.db.SettingGet(ctx, settingToken)
+	if stored != fresh {
+		t.Fatalf("sync.token=%q, want the fresh token", stored)
+	}
+	backup, found, err := instance.db.SettingGet(ctx, settingTokenBackup)
+	if err != nil || !found || backup != fresh {
+		t.Fatalf("plaintext backup=%q found=%v err=%v", backup, found, err)
 	}
 }
 

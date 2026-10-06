@@ -128,8 +128,8 @@ func TestBundlePasswordAndPlaintextWarningFlowThroughIPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if DetectBundleFormat(data) != BundleFormatEncrypted {
-		t.Fatalf("bundle file is not an encrypted container: %q", data[:16])
+	if len(data) < bundleHeaderSize || data[5]&bundleFlagEncrypted == 0 {
+		t.Fatalf("bundle file is not an encrypted container: %q", data)
 	}
 
 	read := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(path)+`,"password":"bundle-pass-中文"}}`)
@@ -157,8 +157,12 @@ func TestBundlePasswordAndPlaintextWarningFlowThroughIPC(t *testing.T) {
 	if plainResult.Encrypted || plainResult.Warning == "" {
 		t.Fatalf("plaintext write must warn explicitly: %+v", plainResult)
 	}
-	legacy := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(plainPath)+`}}`)
-	if !legacy.OK {
-		t.Fatalf("old-format read must stay available: %+v", legacy)
+	plainRead := dispatchJSON(t, dispatcher, CommandBundleRead, `{"args":{"path":`+jsonString(plainPath)+`}}`)
+	if !plainRead.OK {
+		t.Fatalf("plaintext container read response=%+v", plainRead)
+	}
+	var plainText string
+	if err := json.Unmarshal(plainRead.Data, &plainText); err != nil || plainText != `{"protocol":1}` {
+		t.Fatalf("plaintext container read text=%q err=%v", plainText, err)
 	}
 }
