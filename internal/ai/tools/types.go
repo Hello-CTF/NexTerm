@@ -170,6 +170,13 @@ type OutputSinceTerminal interface {
 	OutputSince(context.Context, string, uint64, int) ([]byte, uint64, uint64, error)
 }
 
+// AssetKindTerminal is the optional Terminal extension resolving the asset
+// kind of a session on the server side, so privacy decisions never depend on
+// client-supplied scope fields.
+type AssetKindTerminal interface {
+	SessionAssetKind(context.Context, string) (string, error)
+}
+
 type Database interface {
 	Tables(context.Context, string, string) ([]string, error)
 	Describe(context.Context, string, string, string) (db.TableDescribe, error)

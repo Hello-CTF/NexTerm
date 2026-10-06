@@ -139,7 +139,7 @@ export class CommandBlockManager {
         this.closeLast(now);
         const command = this.submitted || this.echoLine() || "（命令）";
         this.submitted = "";
-        const marker = this.term.registerMarker(0);
+        const marker = this.term.registerMarker(this.commandLineOffset()) ?? this.term.registerMarker(0);
         if (!marker) {
           this.emit();
           return;
@@ -208,6 +208,20 @@ export class CommandBlockManager {
       if (text) return text;
     }
     return "";
+  }
+
+  // commandLineOffset is the marker offset from the cursor at command start:
+  // the shell has echoed the command and its newline by the time C arrives,
+  // so the command's line is usually one above the cursor. It falls back to
+  // the cursor line when the line above is blank.
+  private commandLineOffset(): number {
+    const buf = this.term.buffer.active;
+    const cursorLine = buf.baseY + buf.cursorY;
+    if (cursorLine > 0) {
+      const prev = buf.getLine(cursorLine - 1);
+      if (prev && prev.translateToString(true).trim() !== "") return -1;
+    }
+    return 0;
   }
 
   private closeLast(now: number): void {

@@ -9,12 +9,14 @@ const dec = new TextDecoder();
 
 function harness() {
   const events: OscStreamEvent[] = [];
-  const filter = createOscStreamFilter((e) => events.push(e));
+  const filter = createOscStreamFilter();
   const fed: Uint8Array[] = [];
   const feed = (chunk: Uint8Array | string) => {
     const bytes = typeof chunk === "string" ? enc.encode(chunk) : chunk;
-    const out = filter.push(bytes);
-    if (out.length > 0) fed.push(out);
+    for (const segment of filter.push(bytes)) {
+      if (segment.kind === "event") events.push(segment.event);
+      else if (segment.data.length > 0) fed.push(segment.data);
+    }
   };
   const output = () => {
     const total = fed.reduce((n, part) => n + part.length, 0);

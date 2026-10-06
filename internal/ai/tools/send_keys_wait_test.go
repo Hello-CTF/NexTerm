@@ -19,7 +19,7 @@ func TestSendKeysWaitReturnsExitCodeAndTail(t *testing.T) {
 		terminal.setCommandState(CommandState{Sequence: 4, Running: true})
 		go func() {
 			time.Sleep(5 * time.Millisecond)
-			terminal.setCommandState(CommandState{Sequence: 4, LastExitCode: 2, HasLastExitCode: true})
+			terminal.setCommandState(CommandState{Sequence: 4, LastExitCode: 2, HasLastExitCode: true, ExitCodeSequence: 4})
 		}()
 	}
 	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})
@@ -37,22 +37,104 @@ func TestSendKeysWaitReturnsExitCodeAndTail(t *testing.T) {
 	}
 }
 
-func TestSendKeysWaitWithoutOSC133FallsBackWithoutFalseSuccess(t *testing.T) {
+func TestSendKeysWaitWithoutOSC133ReportsUnverified(t *testing.T) {
 	terminal := &fakeTerminal{screen: Screen{Text: "$ "}}
-	started := time.Now()
 	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})
+	started := time.Now()
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, sendKeysCall(`{"keys":"ls","enter":true,"wait_ms":120}`), nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if elapsed := time.Since(started); elapsed < 100*time.Millisecond {
+		t.Fatalf("capability present but no 133 seen: wait budget should be honored, returned after %v", elapsed)
+	}
+	if !strings.Contains(result.Text, "未观察到新命令开始") || !strings.Contains(result.Text, "结果未验证") {
+		t.Fatalf("text missing unverified note: %q", result.Text)
+	}
+	if len(terminal.writes) != 1 {
+		t.Fatalf("writes=%q", terminal.writes)
+	}
+}
+
+func TestSendKeysWaitWithoutCommandStateCapabilityReturnsImmediately(t *testing.T) {
+	registry := NewRegistry(Dependencies{Terminal: legacyTerminal{}, PollInterval: time.Millisecond})
+	started := time.Now()
 	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, sendKeysCall(`{"keys":"ls","enter":true,"wait_ms":4000}`), nil)
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("no-133 fallback waited %v, want immediate return", elapsed)
+		t.Fatalf("no capability should return immediately, waited %v", elapsed)
 	}
-	if !strings.Contains(result.Text, "无法确认命令是否完成") || !strings.Contains(result.Text, "wait_for") {
+	if !strings.Contains(result.Text, "不支持 OSC 133 命令跟踪") || !strings.Contains(result.Text, "wait_for") {
 		t.Fatalf("fallback text missing explicit unverified note: %q", result.Text)
 	}
-	if len(terminal.writes) != 1 {
-		t.Fatalf("writes=%q", terminal.writes)
+}
+
+func TestSendKeysWaitFirstCommandWithZeroSequence(t *testing.T) {
+	// A fresh 133-capable shell has Sequence 0 until its first command; the
+	// wait must still track that command to completion (M115 CommandState).
+	terminal := &fakeTerminal{screen: Screen{Text: "$ "}}
+	terminal.onWrite = func() {
+		terminal.setCommandState(CommandState{Sequence: 1, Running: true})
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			terminal.setCommandState(CommandState{Sequence: 1, LastExitCode: 3, HasLastExitCode: true, ExitCodeSequence: 1})
+		}()
+	}
+	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, sendKeysCall(`{"keys":"ls","enter":true,"wait_ms":2000}`), nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if !strings.Contains(result.Text, "命令已完成") || !strings.Contains(result.Text, "退出码 3") || result.ExitCode != 3 {
+		t.Fatalf("first command not tracked: %+v", result)
+	}
+}
+
+func TestSendKeysWaitTimeoutDoesNotBorrowPreviousExitCode(t *testing.T) {
+	// 上一命令 exit 7；本次命令仍在运行即截止：不能冒用旧码。
+	terminal := &fakeTerminal{screen: Screen{Text: "$ sleep 9\r\n"}}
+	terminal.commandState = CommandState{Sequence: 3, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3}
+	terminal.onWrite = func() {
+		// tracker 语义：退出码仍绑定在序号 3 上，与正在运行的序号 4 无关
+		terminal.setCommandState(CommandState{Sequence: 4, Running: true, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3})
+	}
+	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, sendKeysCall(`{"keys":"sleep 9","enter":true,"wait_ms":120}`), nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if !strings.Contains(result.Text, "命令仍在运行") {
+		t.Fatalf("text=%q", result.Text)
+	}
+	if strings.Contains(result.Text, "退出码") || result.ExitCode != 0 {
+		t.Fatalf("stale exit code leaked into running timeout: %+v", result)
+	}
+}
+
+func TestSendKeysWaitBareFinishDoesNotBorrowPreviousExitCode(t *testing.T) {
+	// 上一命令 exit 7；本次命令 bare D（无退出码）：不能冒用旧码。
+	terminal := &fakeTerminal{screen: Screen{Text: "$ true\r\n$ "}}
+	terminal.commandState = CommandState{Sequence: 3, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3}
+	terminal.onWrite = func() {
+		terminal.setCommandState(CommandState{Sequence: 4, Running: true, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3})
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			// bare D：退出码保持绑定在序号 3，不借给序号 4
+			terminal.setCommandState(CommandState{Sequence: 4, LastExitCode: 7, HasLastExitCode: true, ExitCodeSequence: 3})
+		}()
+	}
+	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, sendKeysCall(`{"keys":"true","enter":true,"wait_ms":2000}`), nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if !strings.Contains(result.Text, "命令已完成") {
+		t.Fatalf("text=%q", result.Text)
+	}
+	if strings.Contains(result.Text, "退出码") || result.ExitCode != 0 {
+		t.Fatalf("bare D borrowed the previous exit code: %+v", result)
 	}
 }
 
@@ -80,7 +162,7 @@ func TestSendKeysWaitBusyClearsWhenRunningCommandFinishes(t *testing.T) {
 	terminal.onWrite = func() {
 		go func() {
 			time.Sleep(5 * time.Millisecond)
-			terminal.setCommandState(CommandState{Sequence: 5, LastExitCode: 130, HasLastExitCode: true})
+			terminal.setCommandState(CommandState{Sequence: 5, LastExitCode: 130, HasLastExitCode: true, ExitCodeSequence: 5})
 		}()
 	}
 	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond})

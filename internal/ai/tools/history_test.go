@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,46 @@ func TestShellHistoryParsesZshNewestFirst(t *testing.T) {
 	oldest := strings.Index(result.Text, "ls -la")
 	if newest < 0 || middle < 0 || oldest < 0 || !(newest < middle && middle < oldest) {
 		t.Fatalf("entries not newest-first: %q", result.Text)
+	}
+}
+
+func TestShellHistoryParsesPlainZshLines(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeHistoryFile(t, home, ".zsh_history", "ls -la\ngit status\nmake test\n")
+	registry := NewRegistry(Dependencies{})
+	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if !strings.Contains(result.Text, "[本机 zsh shell 历史，最新 3 条]") {
+		t.Fatalf("text=%q", result.Text)
+	}
+	newest := strings.Index(result.Text, "make test")
+	oldest := strings.Index(result.Text, "ls -la")
+	if newest < 0 || oldest < 0 || newest > oldest {
+		t.Fatalf("plain zsh entries wrong: %q", result.Text)
+	}
+	limited := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(2), nil)
+	if !strings.Contains(limited.Text, "最新 2 条") || strings.Contains(limited.Text, "ls -la") {
+		t.Fatalf("plain zsh limit wrong: %q", limited.Text)
+	}
+}
+
+func TestShellHistoryZshExtendedSkipsContinuationLines(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeHistoryFile(t, home, ".zsh_history", ": 1700000000:0;for i in 1 2; do\nplain-continuation\n: 1700000001:0;done\n")
+	registry := NewRegistry(Dependencies{})
+	result := registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
+	if !result.OK {
+		t.Fatalf("result=%+v", result)
+	}
+	if strings.Contains(result.Text, "plain-continuation") {
+		t.Fatalf("continuation line treated as a command: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "for i in 1 2; do") || !strings.Contains(result.Text, "done") {
+		t.Fatalf("extended entries missing: %q", result.Text)
 	}
 }
 
@@ -170,7 +211,7 @@ func TestShellHistoryLabelsRemoteScope(t *testing.T) {
 	t.Setenv("HOME", home)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
 	registry := NewRegistry(Dependencies{ListAssets: func(context.Context) ([]Asset, error) {
-		return []Asset{{ID: "a1", Kind: "ssh"}}, nil
+		return []Asset{{ID: "a1", Kind: "ssh"}, {ID: "local-1", Kind: "local"}}, nil
 	}})
 	result := registry.Execute(context.Background(), "job", Scope{AssetID: "a1"}, shellHistoryCall(0), nil)
 	if !result.OK || !strings.Contains(result.Text, "远端资产") || !strings.Contains(result.Text, "本机") {
@@ -180,13 +221,18 @@ func TestShellHistoryLabelsRemoteScope(t *testing.T) {
 	if !local.OK || strings.Contains(local.Text, "远端资产") {
 		t.Fatalf("local text=%q", local.Text)
 	}
+	// 找不到的 AssetID fail closed 按远端处理
+	unknown := registry.Execute(context.Background(), "job", Scope{AssetID: "missing"}, shellHistoryCall(0), nil)
+	if !unknown.OK || !strings.Contains(unknown.Text, "远端资产") {
+		t.Fatalf("unknown asset must fail closed: %q", unknown.Text)
+	}
 }
 
 func TestShellHistoryRequiresConfirmation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeHistoryFile(t, home, ".bash_history", "ls\n")
-	registry := NewRegistry(Dependencies{})
+	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{}})
 	readWrite := &Execution{
 		Registry:   registry,
 		Scope:      Scope{SessionID: "s"},
@@ -229,5 +275,89 @@ func TestShellHistoryRemoteScopeForcesConfirmEvenWhenRemembered(t *testing.T) {
 	execution.Memory.Add(guard.Kind(shellHistoryKind))
 	if _, err := execution.initial(context.Background(), shellHistoryCall(0)); err == nil {
 		t.Fatal("remote scope must confirm shell_history even with remembered approval")
+	}
+}
+
+func TestShellHistoryRemoteSessionForcesConfirmWithoutAssetID(t *testing.T) {
+	// 真实侧边栏只传 sessionId/tabId：远端判定必须走服务端 session asset kind。
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeHistoryFile(t, home, ".bash_history", "ls\n")
+	terminal := &fakeTerminal{assetKind: "ssh"}
+	registry := NewRegistry(Dependencies{Terminal: terminal})
+	scope := Scope{SessionID: "s", TabID: "tab"}
+
+	readWrite := &Execution{
+		Registry:   registry,
+		Scope:      scope,
+		Permission: guard.Config{Mode: guard.ReadWrite},
+		Memory:     guard.NewMemory(),
+	}
+	if _, err := readWrite.initial(context.Background(), shellHistoryCall(0)); err == nil {
+		t.Fatal("remote session must ask before shell_history")
+	}
+	readWrite.Memory.Add(guard.Kind(shellHistoryKind))
+	if _, err := readWrite.initial(context.Background(), shellHistoryCall(0)); err == nil {
+		t.Fatal("remote session must re-ask shell_history even with remembered approval")
+	}
+	silent := &Execution{
+		Registry:   registry,
+		Scope:      scope,
+		Permission: guard.Config{Mode: guard.Silent},
+		Memory:     guard.NewMemory(),
+	}
+	if _, err := silent.initial(context.Background(), shellHistoryCall(0)); err == nil {
+		t.Fatal("remote session must ask shell_history even in silent mode")
+	}
+	result := registry.Execute(context.Background(), "job", scope, shellHistoryCall(0), nil)
+	if !result.OK || !strings.Contains(result.Text, "远端资产") {
+		t.Fatalf("remote label missing: %+v", result)
+	}
+}
+
+func TestShellHistoryKindResolutionFailsClosed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeHistoryFile(t, home, ".bash_history", "ls\n")
+	// kind 解析失败按远端处理
+	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKindErr: errors.New("boom")}})
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
+	if !result.OK || !strings.Contains(result.Text, "远端资产") {
+		t.Fatalf("resolution failure must fail closed: %+v", result)
+	}
+	// 有会话但终端不支持 kind 解析：同样按远端处理
+	registry = NewRegistry(Dependencies{Terminal: legacyTerminal{}})
+	result = registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, shellHistoryCall(0), nil)
+	if !result.OK || !strings.Contains(result.Text, "远端资产") {
+		t.Fatalf("missing kind capability must fail closed: %+v", result)
+	}
+	// 无会话上下文的纯本机对话：本机标注，无远端警告
+	result = registry.Execute(context.Background(), "job", Scope{}, shellHistoryCall(0), nil)
+	if !result.OK || strings.Contains(result.Text, "远端资产") {
+		t.Fatalf("session-less scope should stay local: %+v", result)
+	}
+}
+
+func TestShellHistoryLocalSessionUsesRememberedApproval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeHistoryFile(t, home, ".bash_history", "ls\n")
+	registry := NewRegistry(Dependencies{Terminal: &fakeTerminal{assetKind: "local"}})
+	execution := &Execution{
+		Registry:   registry,
+		Scope:      Scope{SessionID: "s", TabID: "tab"},
+		Permission: guard.Config{Mode: guard.ReadWrite},
+		Memory:     guard.NewMemory(),
+	}
+	if _, err := execution.initial(context.Background(), shellHistoryCall(0)); err == nil {
+		t.Fatal("first local call must ask")
+	}
+	execution.Memory.Add(guard.Kind(shellHistoryKind))
+	result, err := execution.initial(context.Background(), shellHistoryCall(0))
+	if err != nil || !result.OK {
+		t.Fatalf("remembered local approval should execute: result=%+v err=%v", result, err)
+	}
+	if strings.Contains(result.Text, "远端资产") {
+		t.Fatalf("local session mislabeled: %q", result.Text)
 	}
 }

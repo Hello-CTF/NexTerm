@@ -59,7 +59,7 @@ func TestReadScreenSinceReturnsOnlyNewOutput(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
 	}
-	if !strings.Contains(result.Text, "新输出（序号 5 → 11）") {
+	if !strings.Contains(result.Text, "新输出（序号 5 → 11，最新 11）") {
 		t.Fatalf("header=%q", result.Text)
 	}
 	if !strings.Contains(result.Text, "world") || strings.Contains(result.Text, "hello") {
@@ -78,11 +78,46 @@ func TestReadScreenSincePagesAndFlagsMoreOutput(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
 	}
-	if !strings.Contains(result.Text, "输出未读完") || !result.Truncated {
+	if !strings.Contains(result.Text, "新输出（序号 3 → 7，最新 11）") ||
+		!strings.Contains(result.Text, "下一页 since_seq=7") || !result.Truncated {
 		t.Fatalf("paging hint missing: %+v", result)
 	}
 	if !strings.Contains(result.Text, "lo w") {
 		t.Fatalf("paged diff=%q", result.Text)
+	}
+}
+
+func TestReadScreenSinceContinuationAnchorsStitchPages(t *testing.T) {
+	ring := newFakeRing(0, "hello world")
+	registry := NewRegistry(Dependencies{Terminal: anchoredTerminal(ring)})
+	body := func(result Output) string {
+		_, rest, found := strings.Cut(result.Text, "\n")
+		if !found {
+			t.Fatalf("no header/body split: %q", result.Text)
+		}
+		return rest
+	}
+	page := func(since int) Output {
+		args, _ := json.Marshal(map[string]any{"since_seq": since, "max_bytes": 4})
+		result := registry.Execute(context.Background(), "job", Scope{TabID: "tab"},
+			Call{ID: "r", Name: "read_screen", Args: args}, nil)
+		if !result.OK {
+			t.Fatalf("since=%d result=%+v", since, result)
+		}
+		return result
+	}
+	first := page(1)
+	if !strings.Contains(first.Text, "下一页 since_seq=5") {
+		t.Fatalf("page1 header=%q", first.Text)
+	}
+	second := page(5)
+	third := page(9)
+	if !strings.Contains(third.Text, "序号 9 → 11，最新 11") || strings.Contains(third.Text, "还有未读输出") {
+		t.Fatalf("page3 header=%q", third.Text)
+	}
+	stitched := body(first) + body(second) + body(third)
+	if stitched != "ello world" {
+		t.Fatalf("stitched pages = %q; want %q (no repeat, no skip)", stitched, "ello world")
 	}
 }
 
@@ -94,7 +129,7 @@ func TestReadScreenSinceFlagsExpiredAnchor(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("result=%+v", result)
 	}
-	if !strings.Contains(result.Text, "锚点已过期") || !strings.Contains(result.Text, "序号 8 → 13") {
+	if !strings.Contains(result.Text, "锚点已过期") || !strings.Contains(result.Text, "序号 8 → 13，最新 13") {
 		t.Fatalf("expired anchor note missing: %q", result.Text)
 	}
 }
@@ -168,6 +203,27 @@ func TestWaitForSinceSeqCancellation(t *testing.T) {
 		Call{ID: "w", Name: "wait_for", Args: json.RawMessage(`{"pattern":"never","timeout_ms":60000,"since_seq":4}`)}, nil)
 	if result.OK || !strings.Contains(result.Text, context.Canceled.Error()) {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestWaitForSinceSeqScansBeyondFirstWindow(t *testing.T) {
+	// 超过一个扫描窗口 (64 KiB) 的噪声之后再出现目标：扫描游标必须推进，
+	// 否则每轮只重读锚点后同一前缀，目标永远不会命中。
+	ring := newFakeRing(0, "a")
+	registry := NewRegistry(Dependencies{Terminal: anchoredTerminal(ring), PollInterval: time.Millisecond})
+	noise := strings.Repeat("x", (70<<10)+512)
+	ring.append(noise + "\r\n")
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		ring.append("TARGET\r\n")
+	}()
+	result := registry.Execute(context.Background(), "job", Scope{TabID: "tab"},
+		Call{ID: "w", Name: "wait_for", Args: json.RawMessage(`{"pattern":"TARGET","timeout_ms":5000,"since_seq":1}`)}, nil)
+	if !result.OK {
+		t.Fatalf("pattern after >64KiB noise never matched: %+v", result)
+	}
+	if !strings.Contains(result.Text, "模式已出现（新输出，屏幕序号 ") {
+		t.Fatalf("text=%q", result.Text)
 	}
 }
 

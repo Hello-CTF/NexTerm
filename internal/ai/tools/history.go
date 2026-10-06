@@ -77,28 +77,48 @@ func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Ou
 	}
 	text, truncated := capText(text)
 	prefix := fmt.Sprintf("[本机 %s shell 历史，最新 %d 条]\n", shell, len(entries))
-	if r.scopeRemoteAsset(ctx, scope) {
+	if r.remoteAsset(ctx, scope) {
 		prefix = "[注意] 当前会话是远端资产；以下为 NexTerm 所在本机的 shell 历史，不是远端机器的历史。\n" + prefix
 	}
 	return Output{OK: true, Text: prefix + text, Truncated: truncated}
 }
 
-// scopeRemoteAsset reports whether the scope's asset is a remote one; local
-// shell history must be labeled explicitly in that case.
-func (r *Registry) scopeRemoteAsset(ctx context.Context, scope Scope) bool {
-	if scope.AssetID == "" || r.deps.ListAssets == nil {
+// remoteAsset reports whether the scope's session is remote. The asset kind
+// is resolved on the server from the tab/session, never from the
+// client-supplied AssetID alone, and it fails closed: a session or tab whose
+// kind cannot be determined counts as remote. Only a scope without any
+// session context (a plain local chat) is treated as local.
+func (r *Registry) remoteAsset(ctx context.Context, scope Scope) bool {
+	sessionID := scope.SessionID
+	if sessionID == "" && scope.TabID != "" && r.deps.TabSession != nil {
+		sessionID = r.deps.TabSession(scope.TabID)
+	}
+	if sessionID != "" {
+		if terminal, ok := r.deps.Terminal.(AssetKindTerminal); ok {
+			kind, err := terminal.SessionAssetKind(ctx, sessionID)
+			if err != nil || kind == "" {
+				return true
+			}
+			return kind != "local"
+		}
+		return true
+	}
+	if scope.AssetID == "" {
 		return false
+	}
+	if r.deps.ListAssets == nil {
+		return true
 	}
 	assets, err := r.deps.ListAssets(ctx)
 	if err != nil {
-		return false
+		return true
 	}
 	for _, asset := range assets {
 		if asset.ID == scope.AssetID {
 			return asset.Kind != "local"
 		}
 	}
-	return false
+	return true
 }
 
 // readLocalShellHistory reads the newest limit entries from the first existing
@@ -167,26 +187,42 @@ func readFileTail(path string, max int64) ([]byte, error) {
 	return data, nil
 }
 
-// parseShellHistory extracts command entries from a history file body,
-// following the per-shell on-disk formats: zsh extended ": <ts>:<ts>;" lines,
-// bash plain lines with optional "#<ts>" timestamp comments, and fish
-// "- cmd: <command>" yaml lines.
+// parseShellHistory extracts command entries from a history file body.
+// zsh files are detected per file: when any extended ": <ts>:<ts>;" line is
+// present only those lines count (continuation lines are skipped); a plain
+// zsh file yields every non-empty line. bash skips "#<ts>" timestamp
+// comments; fish takes "- cmd: <command>" yaml lines.
 func parseShellHistory(shell string, data []byte) []string {
+	lines := strings.Split(string(data), "\n")
 	entries := make([]string, 0, 256)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimRight(line, "\r")
-		switch shell {
-		case "zsh":
+	switch shell {
+	case "zsh":
+		extended := false
+		for _, line := range lines {
+			if zshHistoryLine.MatchString(strings.TrimRight(line, "\r")) {
+				extended = true
+				break
+			}
+		}
+		for _, line := range lines {
+			line = strings.TrimRight(line, "\r")
 			if loc := zshHistoryLine.FindStringIndex(line); loc != nil {
 				entries = append(entries, line[loc[1]:])
+			} else if !extended && strings.TrimSpace(line) != "" {
+				entries = append(entries, line)
 			}
-		case "bash":
+		}
+	case "bash":
+		for _, line := range lines {
+			line = strings.TrimRight(line, "\r")
 			if line == "" || bashHistoryStamp.MatchString(line) {
 				continue
 			}
 			entries = append(entries, line)
-		case "fish":
-			if match := fishHistoryCmd.FindStringSubmatch(line); match != nil {
+		}
+	case "fish":
+		for _, line := range lines {
+			if match := fishHistoryCmd.FindStringSubmatch(strings.TrimRight(line, "\r")); match != nil {
 				entries = append(entries, match[1])
 			}
 		}

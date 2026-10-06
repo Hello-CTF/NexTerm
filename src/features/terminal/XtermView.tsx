@@ -19,7 +19,7 @@ import {
   type ResolvedTerminalTheme,
 } from "../../app/preferences";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
-import { createOscStreamFilter } from "./oscStream";
+import { createOscSegmentWriter, createOscStreamFilter } from "./oscStream";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
@@ -233,14 +233,18 @@ export function XtermView(props: XtermViewProps) {
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
     });
 
-    const oscFilter = createOscStreamFilter((event) => {
-      if (event.kind === "notification") onNotificationRef.current?.(event.body);
-      else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
-      else onClipboardRef.current?.(event.payload);
-    });
+    const oscFilter = createOscStreamFilter();
+    const writeOscSegments = createOscSegmentWriter(
+      term,
+      (event) => {
+        if (event.kind === "notification") onNotificationRef.current?.(event.body);
+        else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
+        else onClipboardRef.current?.(event.payload);
+      },
+      updateLinesBelow,
+    );
     const channel = createBinaryChannel((bytes) => {
-      const out = oscFilter.push(bytes);
-      if (out.length > 0) term.write(out, updateLinesBelow);
+      writeOscSegments(oscFilter.push(bytes));
     });
     const applyRemoteDimensions = (cols: number, rows: number) => {
       applyGrid({ cols, rows });

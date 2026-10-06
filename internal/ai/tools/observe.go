@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	defaultDiffBytes = 32 << 10
+	defaultDiffBytes = 8 << 10
 	waitScanBytes    = 64 << 10
+	waitScanOverlap  = 8 << 10
 	diffHistoryLines = 400
 )
 

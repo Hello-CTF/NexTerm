@@ -685,7 +685,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		ruling = guard.Worst(ruling, guard.ClassifySendKeysWithCursor(input.Keys, terminalInput, cursor, input.Enter, e.Permission.DangerRules))
 	}
 	memory := e.Memory
-	forcedConfirm := call.Name == "shell_history" && e.Registry.scopeRemoteAsset(ctx, e.Scope)
+	forcedConfirm := call.Name == "shell_history" && e.Registry.remoteAsset(ctx, e.Scope)
 	if forcedConfirm {
 		memory = guard.NewMemory()
 	}

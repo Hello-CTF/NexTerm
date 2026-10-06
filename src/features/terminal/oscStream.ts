@@ -3,8 +3,16 @@ export type OscStreamEvent =
   | { kind: "clipboard"; payload: string }
   | { kind: "command"; phase: "A" | "B" | "C" | "D"; exitCode: number | null };
 
+// OscStreamSegment is one ordered piece of a pushed chunk: either terminal
+// text (with intercepted sequences stripped) or an event raised by a stripped
+// sequence. Segments preserve stream order so callers can apply text and
+// events to the terminal in the order the shell produced them.
+export type OscStreamSegment =
+  | { kind: "text"; data: Uint8Array }
+  | { kind: "event"; event: OscStreamEvent };
+
 export interface OscStreamFilter {
-  push: (bytes: Uint8Array) => Uint8Array;
+  push: (bytes: Uint8Array) => OscStreamSegment[];
   flush: () => Uint8Array;
 }
 
@@ -46,18 +54,6 @@ function findSequenceEnd(data: Uint8Array, from: number): SequenceEnd | null {
   return null;
 }
 
-function joinParts(parts: Uint8Array[], length: number): Uint8Array {
-  if (parts.length === 0) return new Uint8Array(0);
-  if (parts.length === 1) return parts[0];
-  const out = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
-
 // parseOSC133 parses an OSC 133 payload ("A", "B", "C", "D" or "D;<exit>").
 // It returns null for anything else so the sequence stays in the stream.
 // A trailing empty parameter ("D;") means no exit code, matching the backend
@@ -79,10 +75,10 @@ function parseOSC133(payload: Uint8Array): OscStreamEvent | null {
   return { kind: "command", phase: letter, exitCode };
 }
 
-export function createOscStreamFilter(emit: (event: OscStreamEvent) => void): OscStreamFilter {
+export function createOscStreamFilter(): OscStreamFilter {
   let pending: Uint8Array | null = null;
 
-  const push = (bytes: Uint8Array): Uint8Array => {
+  const push = (bytes: Uint8Array): OscStreamSegment[] => {
     let data = bytes;
     if (pending) {
       const merged = new Uint8Array(pending.length + bytes.length);
@@ -91,14 +87,7 @@ export function createOscStreamFilter(emit: (event: OscStreamEvent) => void): Os
       data = merged;
       pending = null;
     }
-    const parts: Uint8Array[] = [];
-    let partsLength = 0;
-    const pass = (from: number, to: number) => {
-      if (to <= from) return;
-      parts.push(data.subarray(from, to));
-      partsLength += to - from;
-    };
-
+    const segments: OscStreamSegment[] = [];
     let segmentStart = 0;
     let stop = data.length;
     let i = 0;
@@ -129,23 +118,22 @@ export function createOscStreamFilter(emit: (event: OscStreamEvent) => void): Os
         while (digits < semi && content[digits] >= 0x30 && content[digits] <= 0x39) digits++;
         if (digits === semi) code = Number(asciiOf(content.subarray(0, digits)));
       }
+      let event: OscStreamEvent | null = null;
       if (code === 9 || code === 52) {
         const payload = utf8Decoder.decode(content.subarray(semi + 1));
-        emit(code === 9 ? { kind: "notification", body: payload } : { kind: "clipboard", payload });
-        pass(segmentStart, esc);
-        segmentStart = found.end;
+        event = code === 9 ? { kind: "notification", body: payload } : { kind: "clipboard", payload };
       } else if (code === 133) {
-        const event = parseOSC133(content.subarray(semi + 1));
-        if (event) {
-          emit(event);
-          pass(segmentStart, esc);
-          segmentStart = found.end;
-        }
+        event = parseOSC133(content.subarray(semi + 1));
+      }
+      if (event) {
+        if (esc > segmentStart) segments.push({ kind: "text", data: data.subarray(segmentStart, esc) });
+        segments.push({ kind: "event", event });
+        segmentStart = found.end;
       }
       i = found.end;
     }
-    pass(segmentStart, stop);
-    return joinParts(parts, partsLength);
+    if (stop > segmentStart) segments.push({ kind: "text", data: data.subarray(segmentStart, stop) });
+    return segments;
   };
 
   const flush = (): Uint8Array => {
@@ -155,4 +143,48 @@ export function createOscStreamFilter(emit: (event: OscStreamEvent) => void): Os
   };
 
   return { push, flush };
+}
+
+// createOscSegmentWriter returns a segment consumer that keeps OSC events in
+// stream order relative to terminal text: an event dispatches after the text
+// preceding it has been parsed and before the text following it is parsed, so
+// command-block markers and echo reads see the buffer the shell produced.
+// State spans chunks; an event is dispatched synchronously when the preceding
+// text is already parsed, otherwise from that text's write callback, and
+// events trailing a chunk flush through an ordered empty write (xterm fires
+// write callbacks in FIFO order).
+export function createOscSegmentWriter(
+  term: { write: (data: string | Uint8Array, callback?: () => void) => void },
+  dispatch: (event: OscStreamEvent) => void,
+  onWritten?: () => void,
+): (segments: OscStreamSegment[]) => void {
+  let inFlight = 0;
+  let tail: OscStreamEvent[] = [];
+  const flush = () => {
+    const events = tail;
+    tail = [];
+    for (const event of events) dispatch(event);
+  };
+  return (segments) => {
+    for (const segment of segments) {
+      if (segment.kind === "event") {
+        tail.push(segment.event);
+        continue;
+      }
+      if (inFlight === 0 && tail.length > 0) flush();
+      inFlight += 1;
+      term.write(segment.data, () => {
+        inFlight -= 1;
+        flush();
+        onWritten?.();
+      });
+    }
+    if (tail.length > 0) {
+      inFlight += 1;
+      term.write("", () => {
+        inFlight -= 1;
+        flush();
+      });
+    }
+  };
 }

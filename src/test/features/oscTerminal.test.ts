@@ -13,10 +13,12 @@ function wire() {
   const events: OscStreamEvent[] = [];
   const titles: string[] = [];
   term.onTitleChange((t) => titles.push(t));
-  const filter = createOscStreamFilter((e) => events.push(e));
+  const filter = createOscStreamFilter();
   const feed = (bytes: Uint8Array) => {
-    const out = filter.push(bytes);
-    if (out.length > 0) term.write(out);
+    for (const segment of filter.push(bytes)) {
+      if (segment.kind === "event") events.push(segment.event);
+      else if (segment.data.length > 0) term.write(segment.data);
+    }
   };
   const settle = () => new Promise<void>((r) => setTimeout(r, 40));
   const line = (n: number) => term.buffer.active.getLine(n)?.translateToString(true) ?? "";

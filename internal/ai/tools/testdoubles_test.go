@@ -175,6 +175,8 @@ type fakeTerminal struct {
 	commandState    CommandState
 	onWrite         func()
 	outputSinceFunc func(seq uint64, maxBytes int) ([]byte, uint64, uint64, error)
+	assetKind       string
+	assetKindErr    error
 }
 
 func (f *fakeTerminal) Snapshot(context.Context, string) (Screen, error) {
@@ -215,6 +217,17 @@ func (f *fakeTerminal) OutputSince(_ context.Context, _ string, seq uint64, maxB
 		return nil, seq, latest, nil
 	}
 	return hook(seq, maxBytes)
+}
+func (f *fakeTerminal) SessionAssetKind(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.assetKindErr != nil {
+		return "", f.assetKindErr
+	}
+	if f.assetKind == "" {
+		return "local", nil
+	}
+	return f.assetKind, nil
 }
 
 type fakeDatabase struct {

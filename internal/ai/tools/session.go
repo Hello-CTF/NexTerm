@@ -51,6 +51,14 @@ func (s *sessionTerminal) OutputSince(_ context.Context, tabID string, seq uint6
 	return s.manager.OutputSince(tabID, seq, maxBytes)
 }
 
+func (s *sessionTerminal) SessionAssetKind(_ context.Context, sessionID string) (string, error) {
+	session, err := s.manager.Session(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return session.Asset().Kind, nil
+}
+
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	deps.Transport = manager.Transport
 	deps.Terminal = SessionTerminal(manager)
