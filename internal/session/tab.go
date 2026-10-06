@@ -128,7 +128,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if tabID == "" && options.Durable != nil {
 		tabID = ids.New()
 	} else if tabID == "" {
-		tabID = m.newID()
+		tabID = newID()
 	}
 
 	m.mu.Lock()

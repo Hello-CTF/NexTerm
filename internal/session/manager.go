@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/hub"
@@ -34,7 +33,6 @@ type Manager struct {
 	ownsBus     bool
 	emitter     Emitter
 	transcripts TranscriptSink
-	newID       func() string
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
@@ -67,7 +65,6 @@ func NewManager(config Config) *Manager {
 		resolver:         config.DurableResolver,
 		emitter:          config.Emitter,
 		transcripts:      config.Transcripts,
-		newID:            config.NewID,
 		idleTimeout:      config.IdleTimeout,
 		sweepInterval:    config.SweepInterval,
 		reconnectMax:     config.ReconnectMax,
@@ -76,9 +73,6 @@ func NewManager(config Config) *Manager {
 		ctx:              ctx,
 		cancel:           cancel,
 		closeDone:        make(chan struct{}),
-	}
-	if manager.newID == nil {
-		manager.newID = newID
 	}
 	if manager.terminals == nil {
 		manager.terminals = terminalFactory{}
@@ -191,7 +185,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	generation := uint64(1)
 	sessionCtx, cancel := context.WithCancel(m.ctx)
 	session := &Session{
-		ID:          m.newID(),
+		ID:          newID(),
 		CreatedAt:   time.Now(),
 		asset:       asset,
 		status:      StatusConnecting,
@@ -608,12 +602,8 @@ func (m *Manager) emit(ctx context.Context, topic string, payload any) {
 	_ = m.emitter.EmitSessionEvent(ctx, Event{Topic: topic, Payload: payload})
 }
 
-var fallbackID atomic.Uint64
-
 func newID() string {
 	var data [16]byte
-	if _, err := rand.Read(data[:]); err == nil {
-		return hex.EncodeToString(data[:])
-	}
-	return fmt.Sprintf("session-%d", fallbackID.Add(1))
+	rand.Read(data[:])
+	return hex.EncodeToString(data[:])
 }
