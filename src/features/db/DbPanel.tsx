@@ -3,7 +3,7 @@ import { EditorView, placeholder } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { sql as sqlLang } from "@codemirror/lang-sql";
-import { promptText } from "../../ui/dialogs";
+import { ask, promptText } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { nxHighlight } from "../../ui/editorTheme";
 import { DEMO } from "../../demo";
@@ -94,6 +94,7 @@ function MysqlView({ connId }: { connId: string }) {
           basicSetup,
           sqlLang(),
           nxHighlight,
+          EditorView.contentAttributes.of({ "aria-label": "SQL 编辑器" }),
           placeholder("在这里写 SQL，然后点右上角「运行」"),
         ],
       }),
@@ -211,7 +212,7 @@ function MysqlView({ connId }: { connId: string }) {
         }}
       />
 
-      <div className="min-h-[48px] flex-1 overflow-auto">
+      <div className="min-h-[48px] flex-1 overflow-auto" role="status">
         {result ? <ResultTable result={result} /> : <div className="nx-empty">写一条 SQL，Ctrl+Enter 运行</div>}
       </div>
 
@@ -349,6 +350,8 @@ async function copyAsCsv(result: QueryResult) {
   await navigator.clipboard.writeText(lines.join("\n"));
 }
 
+const DESTRUCTIVE_REDIS_COMMANDS = new Set(["FLUSHALL", "FLUSHDB", "SHUTDOWN"]);
+
 function RedisView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
   const [pattern, setPattern] = useState("*");
@@ -404,9 +407,18 @@ function RedisView({ connId }: { connId: string }) {
   };
 
   const runCmd = async () => {
-    if (!cmdText.trim()) return;
+    const text = cmdText.trim();
+    if (!text) return;
+    const args = text.split(/\s+/);
+    const command = args[0].toUpperCase();
+    if (DESTRUCTIVE_REDIS_COMMANDS.has(command)) {
+      const go = await ask(`执行 Redis ${command}？\n\n该操作会永久删除数据或停止服务，不可恢复。`, {
+        kind: "warning",
+      });
+      if (!go) return;
+    }
     try {
-      setCmdOut(await dbApi.redisCommand(connId, cmdText.trim().split(/\s+/)));
+      setCmdOut(await dbApi.redisCommand(connId, args));
     } catch (e) {
       setCmdOut(`(error) ${describeError(e)}`);
     }
@@ -546,7 +558,7 @@ function RedisView({ connId }: { connId: string }) {
 
         <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
           <div className="mb-1.5 text-[11px] text-neutral-500">
-            命令台 · 命令会直接执行，没有确认步骤
+            命令台 · FLUSHALL / FLUSHDB / SHUTDOWN 执行前会要求确认
           </div>
           <div className="flex items-center gap-1.5">
             <input
@@ -557,13 +569,16 @@ function RedisView({ connId }: { connId: string }) {
                 if (isImeKeyEvent(e)) return;
                 if (e.key === "Enter") void runCmd();
               }}
+              aria-label="Redis 命令"
             />
             <button className="nx-btn nx-btn-sm" onClick={() => void runCmd()}>
               执行
             </button>
           </div>
           {cmdOut && (
-            <pre className="nx-pre mt-1.5 max-h-40 overflow-auto text-[11px]">{cmdOut}</pre>
+            <pre className="nx-pre mt-1.5 max-h-40 overflow-auto text-[11px]" role="status">
+              {cmdOut}
+            </pre>
           )}
         </div>
       </div>
