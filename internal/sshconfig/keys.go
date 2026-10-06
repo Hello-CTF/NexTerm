@@ -2,6 +2,7 @@ package sshconfig
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -18,12 +19,9 @@ type KeyInfo struct {
 }
 
 func InspectKeyFile(path string) (KeyInfo, error) {
-	data, err := os.ReadFile(path)
+	data, err := readKeyFileBounded(path)
 	if err != nil {
 		return KeyInfo{}, err
-	}
-	if len(data) > maxKeyFileBytes {
-		return KeyInfo{}, fmt.Errorf("sshconfig: key file %s exceeds size limit %d", path, maxKeyFileBytes)
 	}
 	info := KeyInfo{Path: path, Name: filepath.Base(path)}
 	signer, parseErr := ssh.ParsePrivateKey(data)
@@ -33,7 +31,7 @@ func InspectKeyFile(path string) (KeyInfo, error) {
 		info.KeyType = pub.Type()
 		return info, nil
 	}
-	pubData, err := os.ReadFile(path + ".pub")
+	pubData, err := readKeyFileBounded(path + ".pub")
 	if err != nil {
 		return KeyInfo{}, fmt.Errorf("sshconfig: parse private key %s: %w", path, parseErr)
 	}
@@ -70,4 +68,30 @@ func DedupeIdentityFiles(paths []string) []string {
 		out = append(out, cleaned)
 	}
 	return out
+}
+
+func readKeyFileBounded(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("sshconfig: key file %s is not a regular file", path)
+	}
+	if info.Size() > maxKeyFileBytes {
+		return nil, fmt.Errorf("sshconfig: key file %s exceeds size limit %d", path, maxKeyFileBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxKeyFileBytes {
+		return nil, fmt.Errorf("sshconfig: key file %s exceeds size limit %d", path, maxKeyFileBytes)
+	}
+	return data, nil
 }

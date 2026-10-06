@@ -13,6 +13,7 @@ const (
 	PlanSkipDuplicate    PlanAction = "skip-duplicate"
 	PlanConflictAlias    PlanAction = "conflict-alias"
 	PlanConflictEndpoint PlanAction = "conflict-endpoint"
+	PlanBlockedJump      PlanAction = "blocked-jump"
 )
 
 type ExistingAsset struct {
@@ -66,9 +67,12 @@ type endpoint struct {
 	username string
 }
 
-func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []ExistingKey) *ImportPreview {
+func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []ExistingKey, limits Limits) *ImportPreview {
+	limits = withDefaultLimits(limits)
 	preview := &ImportPreview{Source: "ssh-config", Diagnostics: result.Diagnostics}
 	existingByName, existingByEndpoint := indexExistingAssets(existing)
+	batchNames := map[string]bool{}
+	batchEndpoints := map[endpoint]bool{}
 	hosts := make([]HostPreview, 0, len(result.Hosts))
 	for _, host := range result.Hosts {
 		item := HostPreview{
@@ -84,17 +88,21 @@ func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []E
 		if len(item.IdentityFiles) > 0 {
 			item.AuthMethod = "key"
 		}
-		planHostAction(&item, existingByName, existingByEndpoint)
+		planHostAction(&item, existingByName, existingByEndpoint, batchNames, batchEndpoints)
+		batchNames[strings.ToLower(item.Alias)] = true
+		batchEndpoints[endpointOf(item.Hostname, item.Port, item.Username)] = true
 		hosts = append(hosts, item)
 	}
 	validateProxyJumps(hosts, existing)
 	preview.Hosts = hosts
-	preview.Keys = planConfigKeys(preview, hosts, existingKeys)
+	preview.Keys = planConfigKeys(preview, hosts, existingKeys, limits)
 	return preview
 }
 
-func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, existingByEndpoint map[endpoint]ExistingAsset) {
-	if conflict, ok := existingByName[strings.ToLower(item.Alias)]; ok {
+func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, existingByEndpoint map[endpoint]ExistingAsset, batchNames map[string]bool, batchEndpoints map[endpoint]bool) {
+	lower := strings.ToLower(item.Alias)
+	ep := endpointOf(item.Hostname, item.Port, item.Username)
+	if conflict, ok := existingByName[lower]; ok {
 		if sameEndpoint(conflict, item.Hostname, item.Port, item.Username) {
 			item.Action = PlanSkipDuplicate
 		} else {
@@ -103,13 +111,28 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 		}
 		return
 	}
-	if conflict, ok := existingByEndpoint[endpointOf(item.Hostname, item.Port, item.Username)]; ok {
+	if conflict, ok := existingByEndpoint[ep]; ok {
 		item.Action = PlanConflictEndpoint
 		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d already imported as %q", item.Hostname, item.Port, conflict.Name))
+		return
+	}
+	if batchNames[lower] {
+		if batchEndpoints[ep] {
+			item.Action = PlanSkipDuplicate
+			item.Warnings = append(item.Warnings, fmt.Sprintf("alias %q duplicates an earlier entry in this import", item.Alias))
+		} else {
+			item.Action = PlanConflictAlias
+			item.Warnings = append(item.Warnings, fmt.Sprintf("alias %q is also used by a different host in this import", item.Alias))
+		}
+		return
+	}
+	if batchEndpoints[ep] {
+		item.Action = PlanConflictEndpoint
+		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d appears more than once in this import", item.Hostname, item.Port))
 	}
 }
 
-func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []ExistingKey) []KeyPreview {
+func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []ExistingKey, limits Limits) []KeyPreview {
 	byPath := map[string]bool{}
 	for _, host := range hosts {
 		for _, path := range host.IdentityFiles {
@@ -122,10 +145,17 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 	}
 	slices.Sort(paths)
 
-	existingByName, existingByFP := indexExistingKeys(existingKeys)
+	existingByName, existingFPNames := indexExistingKeys(existingKeys)
 	seenFingerprints := map[string]bool{}
+	batchNames := map[string]bool{}
 	keys := make([]KeyPreview, 0, len(paths))
+	inspected := 0
 	for _, path := range paths {
+		if inspected >= limits.MaxKeys {
+			truncate(preview, "key count exceeds %d", limits.MaxKeys)
+			break
+		}
+		inspected++
 		info, err := InspectKeyFile(path)
 		if err != nil {
 			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
@@ -140,21 +170,20 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 			Fingerprint: info.Fingerprint,
 			KeyType:     info.KeyType,
 			Path:        path,
+			Source:      "ssh-config",
 			Action:      PlanAdd,
 		}
-		decideKeyAction(&item, seenFingerprints, existingByName, existingByFP)
+		decideKeyAction(&item, seenFingerprints, existingByName, existingFPNames, batchNames)
 		seenFingerprints[info.Fingerprint] = true
+		if len(item.Aliases) > 0 {
+			batchNames[strings.ToLower(item.Aliases[0])] = true
+		}
 		keys = append(keys, item)
 	}
 	return keys
 }
 
-func hasKeyName(byName map[string]ExistingKey, name string) bool {
-	_, ok := byName[strings.ToLower(name)]
-	return ok
-}
-
-func decideKeyAction(item *KeyPreview, seenFingerprints map[string]bool, existingByName map[string]ExistingKey, existingByFingerprint map[string]bool) {
+func decideKeyAction(item *KeyPreview, seenFingerprints map[string]bool, existingByName map[string]ExistingKey, existingFPNames map[string]string, batchNames map[string]bool) {
 	name := ""
 	if len(item.Aliases) > 0 {
 		name = item.Aliases[0]
@@ -162,12 +191,20 @@ func decideKeyAction(item *KeyPreview, seenFingerprints map[string]bool, existin
 	switch {
 	case seenFingerprints[item.Fingerprint]:
 		item.Action = PlanSkipDuplicate
-	case item.Fingerprint != "" && existingByFingerprint[item.Fingerprint]:
+	case item.Fingerprint != "" && existingFPNames[item.Fingerprint] != "":
 		item.Action = PlanSkipDuplicate
 	case hasKeyName(existingByName, name):
 		item.Action = PlanConflictAlias
 		item.Warnings = append(item.Warnings, fmt.Sprintf("key name %q already used by a key with a different fingerprint", name))
+	case batchNames[strings.ToLower(name)]:
+		item.Action = PlanConflictAlias
+		item.Warnings = append(item.Warnings, fmt.Sprintf("key name %q is also used by a different key in this import", name))
 	}
+}
+
+func hasKeyName(byName map[string]ExistingKey, name string) bool {
+	_, ok := byName[strings.ToLower(name)]
+	return ok
 }
 
 func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
@@ -180,10 +217,12 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 		existingNames[strings.ToLower(asset.Name)] = true
 	}
 	edges := make([][]int, len(hosts))
+	blocked := make([]bool, len(hosts))
 	for i := range hosts {
 		for _, hop := range jumpHops(hosts[i].ProxyJump) {
 			if strings.EqualFold(hop, hosts[i].Alias) {
 				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q is the host itself", hop))
+				blocked[i] = true
 				continue
 			}
 			if target, ok := byAlias[strings.ToLower(hop)]; ok {
@@ -194,6 +233,7 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 				continue
 			}
 			hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q matches no imported or existing host", hop))
+			blocked[i] = true
 		}
 	}
 	const (
@@ -221,6 +261,7 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 					if !containsString(hosts[n].Warnings, warning) {
 						hosts[n].Warnings = append(hosts[n].Warnings, warning)
 					}
+					blocked[n] = true
 				}
 				continue
 			}
@@ -236,6 +277,11 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 			visit(i)
 		}
 	}
+	for i := range hosts {
+		if blocked[i] && hosts[i].Action == PlanAdd {
+			hosts[i].Action = PlanBlockedJump
+		}
+	}
 }
 
 func jumpHops(raw string) []string {
@@ -246,8 +292,7 @@ func jumpHops(raw string) []string {
 	fields := strings.Split(raw, ",")
 	hops := make([]string, 0, len(fields))
 	for _, field := range fields {
-		hop := jumpHostPart(field)
-		if hop != "" {
+		if hop := jumpHostPart(field); hop != "" {
 			hops = append(hops, hop)
 		}
 	}

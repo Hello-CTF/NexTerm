@@ -62,7 +62,7 @@ func TestPreviewConflicts(t *testing.T) {
 		{Name: "db", Host: "old-db.example.com", Port: 3306, Username: "old"},
 		{Name: "api-old", Host: "api.example.com", Port: 8080, Username: "svc"},
 	}
-	preview := PreviewSSHConfig(result, existing, nil)
+	preview := PreviewSSHConfig(result, existing, nil, DefaultLimits)
 	actions := map[string]PlanAction{}
 	for _, host := range preview.Hosts {
 		actions[host.Alias] = host.Action
@@ -87,14 +87,19 @@ func TestPreviewProxyJump(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 	existing := []ExistingAsset{{Name: "asset1", Host: "asset1.example.com", Port: 22}}
-	preview := PreviewSSHConfig(result, existing, nil)
+	preview := PreviewSSHConfig(result, existing, nil, DefaultLimits)
 	warnings := map[string][]string{}
+	actions := map[string]PlanAction{}
 	for _, host := range preview.Hosts {
 		warnings[host.Alias] = host.Warnings
+		actions[host.Alias] = host.Action
 	}
 	for _, alias := range []string{"bastion", "app", "db", "nonejump", "external"} {
 		if len(warnings[alias]) != 0 {
 			t.Errorf("%s unexpected warnings: %v", alias, warnings[alias])
+		}
+		if actions[alias] != PlanAdd {
+			t.Errorf("%s action = %q, want add", alias, actions[alias])
 		}
 	}
 	if !hasWarning(warnings["loop1"], "cycle") || !hasWarning(warnings["loop2"], "cycle") {
@@ -108,6 +113,68 @@ func TestPreviewProxyJump(t *testing.T) {
 	}
 	if !hasWarning(warnings["ipv6"], "2001:db8::1") {
 		t.Errorf("ipv6 dangling jump not detected: %v", warnings["ipv6"])
+	}
+	for _, alias := range []string{"loop1", "loop2", "selfy", "dangling", "ipv6"} {
+		if actions[alias] != PlanBlockedJump {
+			t.Errorf("%s action = %q, want blocked-jump", alias, actions[alias])
+		}
+	}
+}
+
+func TestPreviewBatchConflicts(t *testing.T) {
+	result, err := Parse(filepath.Join("..", "..", "testdata", "sshconfig", "conflicts"), DefaultLimits)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	preview := PreviewSSHConfig(result, nil, nil, DefaultLimits)
+	actions := map[string]PlanAction{}
+	for _, host := range preview.Hosts {
+		actions[host.Alias] = host.Action
+	}
+	if actions["api"] != PlanAdd {
+		t.Errorf("api action = %q, want add", actions["api"])
+	}
+	if actions["dupendpoint"] != PlanConflictEndpoint {
+		t.Errorf("dupendpoint action = %q, want conflict-endpoint", actions["dupendpoint"])
+	}
+	if actions["web"] != PlanAdd || actions["db"] != PlanAdd {
+		t.Errorf("unexpected batch actions: %v", actions)
+	}
+}
+
+func TestPreviewSSHConfigMaxKeys(t *testing.T) {
+	dir := t.TempDir()
+	keyPath1, _ := writeTestKey(t, dir, "key_one", false)
+	keyPath2, _ := writeTestKey(t, dir, "key_two", false)
+	configPath := filepath.Join(dir, "config")
+	config := "Host a\n    HostName a.example.com\n    IdentityFile " + keyPath1 + "\n\nHost b\n    HostName b.example.com\n    IdentityFile " + keyPath2 + "\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	result, err := Parse(configPath, DefaultLimits)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	preview := PreviewSSHConfig(result, nil, nil, Limits{MaxKeys: 1})
+	if len(preview.Keys) != 1 || !preview.Truncated {
+		t.Errorf("got %d keys truncated=%v, want 1 true: %+v", len(preview.Keys), preview.Truncated, preview.Keys)
+	}
+	if !hasDiagnostic(preview.Diagnostics, "limit-truncated") {
+		t.Errorf("missing limit-truncated diagnostic: %+v", preview.Diagnostics)
+	}
+}
+
+func TestInspectKeyFileOversized(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge_key")
+	if err := os.WriteFile(path, make([]byte, maxKeyFileBytes+1), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	if _, err := InspectKeyFile(path); err == nil {
+		t.Fatal("expected error for oversized key file")
+	}
+	if _, err := InspectKeyFile(dir); err == nil {
+		t.Fatal("expected error for non-regular key path")
 	}
 }
 
@@ -153,7 +220,7 @@ func TestPlanConfigKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	preview := PreviewSSHConfig(result, nil, nil)
+	preview := PreviewSSHConfig(result, nil, nil, DefaultLimits)
 	if len(preview.Keys) != 1 || preview.Keys[0].Fingerprint != fingerprint {
 		t.Fatalf("unexpected keys: %+v", preview.Keys)
 	}
@@ -161,12 +228,12 @@ func TestPlanConfigKeys(t *testing.T) {
 		t.Errorf("action = %q, want add", preview.Keys[0].Action)
 	}
 
-	preview = PreviewSSHConfig(result, nil, []ExistingKey{{Name: "other", Fingerprint: fingerprint}})
+	preview = PreviewSSHConfig(result, nil, []ExistingKey{{Name: "other", Fingerprint: fingerprint}}, DefaultLimits)
 	if len(preview.Keys) != 1 || preview.Keys[0].Action != PlanSkipDuplicate {
 		t.Errorf("existing fingerprint not deduped: %+v", preview.Keys)
 	}
 
-	preview = PreviewSSHConfig(result, nil, []ExistingKey{{Name: "shared_key", Fingerprint: "SHA256:other"}})
+	preview = PreviewSSHConfig(result, nil, []ExistingKey{{Name: "shared_key", Fingerprint: "SHA256:other"}}, DefaultLimits)
 	if len(preview.Keys) != 1 || preview.Keys[0].Action != PlanConflictAlias {
 		t.Errorf("name conflict not planned: %+v", preview.Keys)
 	}
@@ -177,7 +244,7 @@ func TestPreviewMissingKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	preview := PreviewSSHConfig(result, nil, nil)
+	preview := PreviewSSHConfig(result, nil, nil, DefaultLimits)
 	if len(preview.Keys) != 0 {
 		t.Errorf("unexpected keys: %+v", preview.Keys)
 	}
