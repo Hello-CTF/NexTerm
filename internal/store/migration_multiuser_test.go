@@ -50,7 +50,7 @@ func TestMigration0014FreshInstall(t *testing.T) {
 		t.Errorf("sync_tokens must be dropped by migration 0020")
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 17 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 18 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -124,7 +124,7 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 17 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 18 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	var groupName, assetHost, credHint, snippetBody string
@@ -281,7 +281,7 @@ VALUES('c1', 'u1', 'd1', 'sync', 'sh1', 1)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 17 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 18 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	var username string
