@@ -1421,8 +1421,9 @@ function PaneForTab({
     case "credentialsText":
       // 形态由标签上的 credView 决定：点左栏「文本 / JSON」= 写回它再激活，
       // 所以标签已经开着时再点入口也会真的切过去。
+      // 兜底默认 JSON —— 与左栏卡片一致（旧布局存下来的标签没有 credView）。
       return (
-        <CredentialsView view={tab.credView ?? "text"} onChange={openCredentialsViewTab} />
+        <CredentialsView view={tab.credView ?? "json"} onChange={openCredentialsViewTab} />
       );
     default:
       return <EmptyState />;

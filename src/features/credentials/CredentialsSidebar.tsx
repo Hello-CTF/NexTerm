@@ -115,6 +115,28 @@ export function CredentialsSidebar() {
         </div>
       )}
 
+      {/* 凭据视图入口：**置顶卡片**。
+          原先挂在左栏最底部，下面就是列表滚动区 —— 凭据一多它就被顶出视野，
+          用户明确要求提到「全部凭据」上方（唯一例外：锁定横幅是告警，压在它上面）。
+          整卡一个 button：不再挂「文本 / JSON」分段 —— 卡片已经固定开 JSON，
+          旁边再摆一个写着 JSON 的分段就是同义反复，而「文本」这条路径在视图自己的
+          工具栏里就有（同样是写回 tab.credView），不必占侧栏宽度。
+          右侧角标只用来告知「点进去是哪种形态」。 */}
+      <button
+        className="mx-2 mb-2 flex shrink-0 items-center gap-2 rounded-lg border border-neutral-800/70 bg-neutral-900/60 px-2 py-1.5 text-left transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
+        title="打开凭据视图（默认 JSON）"
+        onClick={() => openCredentialsViewTab("json")}
+      >
+        <IconCode size={14} className="shrink-0 text-blue-300/80" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12px] text-neutral-200">凭据视图</span>
+          <span className="block truncate text-[10.5px] text-neutral-500">
+            ssh config / JSON 快照
+          </span>
+        </span>
+        <span className="nx-badge shrink-0">JSON</span>
+      </button>
+
       {/* 搜索 */}
       <div className="px-2 pb-2">
         <div className="nx-field">
@@ -202,37 +224,17 @@ export function CredentialsSidebar() {
         )}
       </div>
 
-      {/* 概览 + 视图入口 */}
-      <div className="shrink-0 border-t border-neutral-800/60 px-2.5 py-2">
-        {all.length > 0 && (
-          <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
-            <span>{all.length} 条凭据</span>
-            {unused > 0 && <span className="text-amber-500/80">{unused} 条未被使用</span>}
-            <div className="nx-spacer" />
-            <span className="truncate">{protectionOn ? (locked ? "已锁定" : "已解锁") : "未启用密码保护"}</span>
-          </div>
-        )}
-        <div className="flex items-center gap-1.5">
-          <IconCode size={13} className="shrink-0 text-neutral-500" />
-          <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-400">凭据视图</span>
-          <div className="nx-segment shrink-0">
-            <button
-              className="nx-segment-item"
-              title="以 ssh config 风格文本查看"
-              onClick={() => openCredentialsViewTab("text")}
-            >
-              文本
-            </button>
-            <button
-              className="nx-segment-item"
-              title="以 JSON 查看"
-              onClick={() => openCredentialsViewTab("json")}
-            >
-              JSON
-            </button>
-          </div>
+      {/* 概览：条数 / 未使用 / 保护状态。
+          ⚠️ 这里原先也挂着「凭据视图」入口，现已提到顶部卡片 —— 不要再放回来，
+          否则同一个功能出现两个入口，且底部那个又会被长列表顶出视野。 */}
+      {all.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 py-2 text-[11px] text-neutral-500">
+          <span>{all.length} 条凭据</span>
+          {unused > 0 && <span className="text-amber-500/80">{unused} 条未被使用</span>}
+          <div className="nx-spacer" />
+          <span className="truncate">{protectionOn ? (locked ? "已锁定" : "已解锁") : "未启用密码保护"}</span>
         </div>
-      </div>
+      )}
 
       {creating && (
         <NewCredentialModal

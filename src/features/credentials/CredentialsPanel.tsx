@@ -66,8 +66,8 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
-          title="以文本 / JSON 查看全部凭据"
-          onClick={() => openCredentialsViewTab("text")}
+          title="以文本 / JSON 查看全部凭据（默认 JSON）"
+          onClick={() => openCredentialsViewTab("json")}
         >
           <IconCode size={12} />
           凭据视图

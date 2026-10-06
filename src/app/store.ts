@@ -1389,10 +1389,14 @@ export function openCredentialsTab(credId?: string) {
 }
 
 /**
- * 打开「凭据视图」标签页（左栏底部入口调用）：把库里的东西渲染成
+ * 打开「凭据视图」标签页（左栏顶部的入口卡片调用）：把库里的东西渲染成
  * ssh config 风格文本或 JSON，替代"为了看一眼凭据去开 VSCode"。
+ *
+ * 默认 JSON：这张视图的实际用途是**被别处消费**（贴进工单、喂给脚本、
+ * 拷到另一台机器），JSON 可以直接解析，ssh config 文本不行。想看人读的
+ * 那份，卡片上的「文本」或视图内的分段控件随时能切。
  */
-export function openCredentialsViewTab(view: "text" | "json" = "text") {
+export function openCredentialsViewTab(view: "text" | "json" = "json") {
   useUi.getState().addTab({
     id: "tab-credentials-view",
     kind: "credentialsText",
