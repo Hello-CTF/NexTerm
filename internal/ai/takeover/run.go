@@ -41,11 +41,13 @@ func (m *Manager) runJob(state *runState) {
 	result := runResult{}
 	paused := false
 	userPaused := false
+	pauseEscalated := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result.err = fmt.Errorf("接管任务内部错误: %v", recovered)
 			paused = false
 			userPaused = false
+			pauseEscalated = false
 		}
 		resumePaused := false
 		state.pendingMu.Lock()
@@ -68,7 +70,33 @@ func (m *Manager) runJob(state *runState) {
 		if paused {
 			return
 		}
+		if pauseEscalated {
+			m.complete(state, runResult{err: errors.New("暂停超时：模型未在安全点内响应，任务已停止")})
+			return
+		}
 		if userPaused && state.stopReason() == "" {
+			m.mu.Lock()
+			current := m.jobs[state.id] == state
+			m.mu.Unlock()
+			if !current {
+				return
+			}
+			state.pendingMu.Lock()
+			outcomeCh := state.cancelOutcome
+			state.pendingMu.Unlock()
+			escalated := false
+			if outcomeCh != nil {
+				select {
+				case outcome := <-outcomeCh:
+					escalated = errors.Is(outcome, adk.ErrCancelTimeout)
+				case <-time.After(3 * time.Second):
+					escalated = true
+				}
+			}
+			if escalated {
+				m.complete(state, runResult{err: errors.New("暂停超时：模型未在安全点内响应，任务已停止")})
+				return
+			}
 			if !m.checkpointExists(state) && state.eino != nil && state.eino.steps == 0 && state.eino.answer == "" {
 				m.complete(state, runResult{answer: "用户暂停", reason: "用户暂停"})
 				return
@@ -108,6 +136,10 @@ func (m *Manager) runJob(state *runState) {
 		userPaused = true
 		result.err = nil
 	}
+	if errors.Is(result.err, errPauseEscalated) {
+		pauseEscalated = true
+		result.err = nil
+	}
 }
 
 func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
@@ -120,6 +152,7 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 	cancelOption, cancelFn := adk.WithCancel()
 	state.pendingMu.Lock()
 	state.cancelFn = cancelFn
+	state.cancelOutcome = make(chan error, 1)
 	paused := state.userPaused
 	state.pendingMu.Unlock()
 	if paused {
@@ -149,6 +182,9 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 			userPaused := state.userPaused
 			state.pendingMu.Unlock()
 			if userPaused && state.ctx.Err() == nil {
+				if isTimeoutEscalation(result.err) {
+					return runResult{err: errPauseEscalated}
+				}
 				return runResult{err: errRunUserPaused}
 			}
 			return controlledResult(state, runtime.steps)
@@ -160,6 +196,9 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 		userPaused := state.userPaused
 		state.pendingMu.Unlock()
 		if userPaused && state.ctx.Err() == nil {
+			if isTimeoutEscalation(err) {
+				return runResult{err: errPauseEscalated}
+			}
 			return runResult{err: errRunUserPaused}
 		}
 		return controlledResult(state, runtime.steps)
@@ -170,6 +209,11 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 func isCancelKind(err error) bool {
 	var cancelErr *adk.CancelError
 	return errors.Is(err, context.Canceled) || errors.Is(err, adk.ErrStreamCanceled) || errors.As(err, &cancelErr)
+}
+
+func isTimeoutEscalation(err error) bool {
+	var cancelErr *adk.CancelError
+	return errors.As(err, &cancelErr) && cancelErr.Info != nil && cancelErr.Info.Escalated && cancelErr.Info.Timeout
 }
 
 func (m *Manager) initializeEino(state *runState) error {
@@ -249,6 +293,9 @@ func (m *Manager) consume(iterCtx context.Context, state *runState, iterator *ad
 		variant := event.Output.MessageOutput
 		message, err := m.consumeMessageVariant(iterCtx, state, variant)
 		if err != nil {
+			if isCancelKind(err) {
+				continue
+			}
 			return runResult{err: err}
 		}
 		if message == nil {

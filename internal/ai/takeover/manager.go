@@ -277,8 +277,21 @@ func (m *Manager) pauseState(state *runState) {
 	state.pauseReady = false
 	cancelFn := state.cancelFn
 	state.pendingMu.Unlock()
+	go m.pauseWatchdog(state)
 	if cancelFn != nil {
 		m.cancelIteration(cancelFn, state, false)
+	}
+}
+
+func (m *Manager) pauseWatchdog(state *runState) {
+	timer := time.NewTimer(m.deps.PauseEscalationTimeout + 3*time.Second)
+	defer timer.Stop()
+	<-timer.C
+	state.pendingMu.Lock()
+	stuck := state.running && state.userPaused
+	state.pendingMu.Unlock()
+	if stuck {
+		m.complete(state, runResult{err: errors.New("暂停超时：模型未在安全点内响应，任务已停止")})
 	}
 }
 
@@ -292,12 +305,17 @@ func (m *Manager) cancelIteration(cancelFn adk.AgentCancelFunc, state *runState,
 	}
 	handle, _ := cancelFn(options...)
 	go func() {
+		var outcome error
 		if handle != nil {
-			_ = handle.Wait()
+			outcome = handle.Wait()
 		}
 		state.pendingMu.Lock()
+		outcomeCh := state.cancelOutcome
 		iterCancel := state.iterCancel
 		state.pendingMu.Unlock()
+		if outcomeCh != nil {
+			outcomeCh <- outcome
+		}
 		if iterCancel != nil {
 			iterCancel()
 		}

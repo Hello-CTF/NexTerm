@@ -158,11 +158,16 @@ func TestPauseResumeAcrossRestart(t *testing.T) {
 
 func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 	entered := make(chan struct{})
+	release := make(chan struct{})
 	var once sync.Once
 	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 		once.Do(func() { close(entered) })
-		<-ctx.Done()
-		return nil, ctx.Err()
+		select {
+		case <-release:
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}}
 	store := agent.NewMemoryCheckpoints()
 	deps := Dependencies{
@@ -172,10 +177,9 @@ func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 		Snapshot: func(context.Context, string) (tools.Screen, error) {
 			return tools.Screen{Text: "$ ", Tail: []string{"$ "}, IdleMS: 301, CursorCol: 2}, nil
 		},
-		WriteAI:                func(context.Context, string, []byte) error { return nil },
-		TabAsset:               func(context.Context, string) (string, error) { return "asset-a", nil },
-		PollInterval:           time.Millisecond,
-		PauseEscalationTimeout: 50 * time.Millisecond,
+		WriteAI:      func(context.Context, string, []byte) error { return nil },
+		TabAsset:     func(context.Context, string) (string, error) { return "asset-a", nil },
+		PollInterval: time.Millisecond,
 	}
 	first := NewManager(deps)
 	stream := &agent.SliceStream{}
@@ -186,6 +190,10 @@ func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 	<-entered
 	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		close(release)
+	}()
 	if err := first.CloseContext(closeCtx); err != nil {
 		t.Fatal(err)
 	}

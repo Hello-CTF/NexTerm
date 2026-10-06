@@ -20,6 +20,7 @@ var (
 	ErrResumeMismatch  = errors.New("接管恢复范围与终端当前资产不一致")
 	errRunPaused       = errors.New("接管等待用户确认")
 	errRunUserPaused   = errors.New("接管已被用户暂停")
+	errPauseEscalated  = errors.New("接管暂停超时升级")
 )
 
 const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 — 按 Esc 或任意键暂停]\x1b[0m\r\n"
@@ -69,32 +70,33 @@ type pending struct {
 }
 
 type runState struct {
-	id           string
-	args         RunArgs
-	ctx          context.Context
-	cancel       context.CancelFunc
-	deliveryCtx  context.Context
-	forceCancel  context.CancelFunc
-	owner        *ownership
-	stream       agent.Stream
-	memory       *guard.Memory
-	eino         *takeoverRuntime
-	cancelFn     adk.AgentCancelFunc
-	eventMu      sync.Mutex
-	finished     bool
-	finalOnce    sync.Once
-	completeOnce sync.Once
-	pendingMu    sync.Mutex
-	pending      *pending
-	running      bool
-	userPaused   bool
-	pauseReady   bool
-	started      bool
-	assetID      string
-	iterCtx      context.Context
-	iterCancel   context.CancelFunc
-	reasonMu     sync.Mutex
-	reason       string
+	id            string
+	args          RunArgs
+	ctx           context.Context
+	cancel        context.CancelFunc
+	deliveryCtx   context.Context
+	forceCancel   context.CancelFunc
+	owner         *ownership
+	stream        agent.Stream
+	memory        *guard.Memory
+	eino          *takeoverRuntime
+	cancelFn      adk.AgentCancelFunc
+	eventMu       sync.Mutex
+	finished      bool
+	finalOnce     sync.Once
+	completeOnce  sync.Once
+	pendingMu     sync.Mutex
+	pending       *pending
+	running       bool
+	userPaused    bool
+	pauseReady    bool
+	started       bool
+	assetID       string
+	iterCtx       context.Context
+	iterCancel    context.CancelFunc
+	cancelOutcome chan error
+	reasonMu      sync.Mutex
+	reason        string
 }
 
 func (s *runState) setReason(reason string) {

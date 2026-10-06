@@ -107,52 +107,27 @@ func execSetFailer(failCall int) func(string, int) error {
 }
 
 func TestWriteDoneSaveFailureLeavesUncertainAttempt(t *testing.T) {
-	var calls atomic.Int32
-	release := make(chan struct{})
-	writeEntered := make(chan struct{})
-	var writeOnce sync.Once
-	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-		if calls.Add(1) == 1 {
-			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
-		}
-		select {
-		case <-release:
-			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}}
+	chat := sequence(
+		toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`)),
+		toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`)),
+		toolCallMessage(doneCall("finished")),
+	)
 	store := newCtxCheckpointStore()
 	store.setErr = execSetFailer(2)
 	h := newHarnessWith(t, chat, func(deps *Dependencies) {
 		deps.Checkpoints = store
-		deps.PauseEscalationTimeout = 50 * time.Millisecond
 	})
-	h.writeAI = func([]byte) error {
-		writeOnce.Do(func() { close(writeEntered) })
-		<-release
-		return nil
-	}
 	stream := &agent.SliceStream{}
-	response := h.run(t, stream, RunArgs{})
-	<-writeEntered
-	h.manager.Pause("tab")
-	time.Sleep(100 * time.Millisecond)
-	close(release)
-	waitEvent(t, stream, "paused")
-	resumed := &agent.SliceStream{}
-	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
-		t.Fatal(err)
-	}
-	final := waitClosed(t, resumed)
-	var replayResult string
+	h.run(t, stream, RunArgs{})
+	final := waitClosed(t, stream)
+	var results []string
 	for _, event := range final {
 		if event.Type == "toolResult" && event.ID == "keys" {
-			replayResult = event.Text
+			results = append(results, event.Text)
 		}
 	}
-	if !strings.Contains(replayResult, "结果未知") {
-		t.Fatalf("uncertain replay result = %q", replayResult)
+	if len(results) != 2 || !strings.Contains(results[0], "记录失败") || !strings.Contains(results[1], "结果未知") {
+		t.Fatalf("results = %q", results)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -162,51 +137,29 @@ func TestWriteDoneSaveFailureLeavesUncertainAttempt(t *testing.T) {
 }
 
 func TestWriteErrorLeavesUncertainAttempt(t *testing.T) {
-	var calls atomic.Int32
-	release := make(chan struct{})
-	writeEntered := make(chan struct{})
-	var writeOnce sync.Once
-	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-		if calls.Add(1) == 1 {
-			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
-		}
-		select {
-		case <-release:
-			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}}
+	chat := sequence(
+		toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`)),
+		toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`)),
+		toolCallMessage(doneCall("finished")),
+	)
 	store := newCtxCheckpointStore()
 	h := newHarnessWith(t, chat, func(deps *Dependencies) {
 		deps.Checkpoints = store
-		deps.PauseEscalationTimeout = 50 * time.Millisecond
 	})
 	h.writeAI = func([]byte) error {
-		writeOnce.Do(func() { close(writeEntered) })
-		<-release
 		return errors.New("connection reset after partial write")
 	}
 	stream := &agent.SliceStream{}
-	response := h.run(t, stream, RunArgs{})
-	<-writeEntered
-	h.manager.Pause("tab")
-	time.Sleep(100 * time.Millisecond)
-	close(release)
-	waitEvent(t, stream, "paused")
-	resumed := &agent.SliceStream{}
-	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
-		t.Fatal(err)
-	}
-	final := waitClosed(t, resumed)
-	var replayResult string
+	h.run(t, stream, RunArgs{})
+	final := waitClosed(t, stream)
+	var results []string
 	for _, event := range final {
 		if event.Type == "toolResult" && event.ID == "keys" {
-			replayResult = event.Text
+			results = append(results, event.Text)
 		}
 	}
-	if !strings.Contains(replayResult, "结果未知") {
-		t.Fatalf("uncertain replay result = %q", replayResult)
+	if len(results) != 2 || !strings.Contains(results[0], "connection reset") || !strings.Contains(results[1], "结果未知") {
+		t.Fatalf("results = %q", results)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -216,51 +169,30 @@ func TestWriteErrorLeavesUncertainAttempt(t *testing.T) {
 }
 
 func TestSlowWriteKeepsRecordContext(t *testing.T) {
-	var calls atomic.Int32
-	release := make(chan struct{})
-	writeEntered := make(chan struct{})
-	var writeOnce sync.Once
-	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-		if calls.Add(1) == 1 {
-			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
-		}
-		select {
-		case <-release:
-			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}}
+	chat := sequence(
+		toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`)),
+		toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`)),
+		toolCallMessage(doneCall("finished")),
+	)
 	store := newCtxCheckpointStore()
 	h := newHarnessWith(t, chat, func(deps *Dependencies) {
 		deps.Checkpoints = store
-		deps.PauseEscalationTimeout = 50 * time.Millisecond
 	})
 	h.writeAI = func([]byte) error {
-		writeOnce.Do(func() { close(writeEntered) })
-		<-release
+		time.Sleep(100 * time.Millisecond)
 		return nil
 	}
 	stream := &agent.SliceStream{}
-	response := h.run(t, stream, RunArgs{})
-	<-writeEntered
-	h.manager.Pause("tab")
-	time.Sleep(100 * time.Millisecond)
-	close(release)
-	waitEvent(t, stream, "paused")
-	resumed := &agent.SliceStream{}
-	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
-		t.Fatal(err)
-	}
-	final := waitClosed(t, resumed)
-	var replayResult string
+	h.run(t, stream, RunArgs{})
+	final := waitClosed(t, stream)
+	var results []string
 	for _, event := range final {
 		if event.Type == "toolResult" && event.ID == "keys" {
-			replayResult = event.Text
+			results = append(results, event.Text)
 		}
 	}
-	if replayResult != "已发送" {
-		t.Fatalf("done replay result = %q", replayResult)
+	if len(results) != 2 || results[0] != "已发送" || results[1] != "已发送" {
+		t.Fatalf("results = %q", results)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -473,5 +405,69 @@ func TestPauseWaitsForCheckpointPersistence(t *testing.T) {
 	final := waitClosed(t, resumed)
 	if done, failed := counts(final); done != 1 || failed != 0 {
 		t.Fatalf("resumed events = %+v", final)
+	}
+}
+
+func TestPauseEscalationFailsClosed(t *testing.T) {
+	stuck := make(chan struct{})
+	secondCallStarted := make(chan struct{})
+	var calls atomic.Int32
+	var secondOnce sync.Once
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
+		}
+		secondOnce.Do(func() { close(secondCallStarted) })
+		<-stuck
+		return nil, errors.New("unreachable")
+	}}
+	store := agent.NewMemoryCheckpoints()
+	h := newHarnessWith(t, chat, func(deps *Dependencies) {
+		deps.Checkpoints = store
+		deps.PauseEscalationTimeout = 50 * time.Millisecond
+	})
+	stream := &agent.SliceStream{}
+	response := h.run(t, stream, RunArgs{})
+	_ = waitEvent(t, stream, "toolResult")
+	<-secondCallStarted
+	h.manager.Pause("tab")
+	events := waitClosed(t, stream)
+	var terminal *agent.Event
+	for i := range events {
+		if events[i].Type == "paused" {
+			t.Fatal("paused published on timeout escalation")
+		}
+		if events[i].Type == "error" || events[i].Type == "done" {
+			terminal = &events[i]
+		}
+	}
+	if terminal == nil || terminal.Type != "error" || !strings.Contains(terminal.Message, "暂停超时") {
+		t.Fatalf("escalation terminal = %+v", events)
+	}
+	if _, found, _ := store.Get(context.Background(), recoveryKey(response.JobID)); found {
+		t.Fatal("recovery record written on escalation")
+	}
+	if _, found, _ := store.Get(context.Background(), response.JobID); found {
+		t.Fatal("checkpoint kept after fail-closed escalation")
+	}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrStaleOwnership) {
+		t.Fatalf("resume after escalation error = %v", err)
+	}
+	reentered, err := h.manager.Enter(context.Background(), "tab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: reentered, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("resume after re-enter error = %v", err)
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.manager.CloseContext(closeCtx); err != nil {
+		t.Fatalf("close after escalation: %v", err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.aiWrites) != 1 {
+		t.Fatalf("writes = %q", h.aiWrites)
 	}
 }
