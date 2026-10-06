@@ -150,6 +150,29 @@ export type SyncTokenIssueResult = { token: SyncTokenDto, secret: string, };
 
 export type SyncBundleWriteResult = { encrypted: boolean, warning?: string, };
 
+export type SyncStatus = {
+  configured: boolean,
+  loggedIn: boolean,
+  username?: string,
+  userId?: string,
+  head?: string,
+  seq: number,
+  verifiedAt: number,
+  lastError: string,
+};
+
+export type SyncReport = {
+  pulled: number,
+  applied: number,
+  pullSkipped: number,
+  decryptFailed: number,
+  pushed: number,
+  conflicts: number,
+  head: string,
+  seq: number,
+  warnings?: string[],
+};
+
 export type AuditCountDto = { total: number, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };

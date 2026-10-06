@@ -187,6 +187,8 @@ export interface TranscriptSummary {
   chunks: number;
   truncated: boolean;
   active: boolean;
+  syncOptIn?: boolean;
+  contentOmitted?: boolean;
 }
 
 export interface TranscriptChunk {
@@ -732,29 +734,6 @@ export const forwardApi = {
   remove: (id: string) => call<void>("forward_remove", { id }),
 };
 
-export interface SyncStatus {
-  configured: boolean;
-  loggedIn: boolean;
-  username?: string;
-  userId?: string;
-  head?: string;
-  seq: number;
-  verifiedAt: number;
-  lastError: string;
-}
-
-export interface SyncReport {
-  pulled: number;
-  applied: number;
-  pullSkipped: number;
-  decryptFailed: number;
-  pushed: number;
-  conflicts: number;
-  head: string;
-  seq: number;
-  warnings?: string[];
-}
-
 export const syncApi = {
   digest: () => call<import("./types").SyncDigest>("sync_digest"),
   origin: () => call<string>("sync_origin"),
@@ -784,8 +763,8 @@ export const syncApi = {
   pull: (assetIds: string[], withCreds: boolean, force: boolean) =>
     call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
 
-  status: () => call<SyncStatus>("sync_status"),
-  syncNow: () => call<SyncReport>("sync_now"),
+  status: () => call<import("./types").SyncStatus>("sync_status"),
+  syncNow: () => call<import("./types").SyncReport>("sync_now"),
 
   token: () => call<string | null>("sync_token"),
   rotateToken: (id?: string) =>

@@ -30,11 +30,6 @@ const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
 const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm"]);
 
-type TranscriptSummaryEx = TranscriptSummary & {
-  syncOptIn?: boolean;
-  contentOmitted?: boolean;
-};
-
 interface LoadedChunk {
   seq: number;
   ts: number;
@@ -83,7 +78,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
   const [hostsError, setHostsError] = useState<string | null>(null);
   const [assetId, setAssetId] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<TranscriptSummaryEx[] | null>(null);
+  const [sessions, setSessions] = useState<TranscriptSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chunks, setChunks] = useState<LoadedChunk[]>([]);
@@ -310,7 +305,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     }
   };
 
-  const toggleTranscriptSync = async (summary: TranscriptSummaryEx) => {
+  const toggleTranscriptSync = async (summary: TranscriptSummary) => {
     const optIn = !summary.syncOptIn;
     try {
       await transcriptApi.syncOptIn(summary.id, optIn);
