@@ -8,6 +8,7 @@ export interface CommandBlock {
   endedAt: number | null;
   startLine: number;
   endLine: number;
+  exitCode: number | null;
 }
 
 const OVERVIEW_RULER_COLOR = "#4f9cf9";
@@ -25,6 +26,8 @@ export class CommandBlockManager {
   private slots: MarkerSlot[] = [];
   private pending = "";
   private pendingReliable = true;
+  private osc133 = false;
+  private submitted = "";
   private disposed = false;
 
   constructor(term: Terminal, onUpdate: (blocks: CommandBlock[]) => void) {
@@ -77,6 +80,12 @@ export class CommandBlockManager {
     this.pendingReliable = true;
 
     const now = Date.now();
+    if (this.osc133) {
+      if (command) {
+        this.submitted = command;
+      }
+      return;
+    }
     this.closeLast(now);
 
     if (!command) {
@@ -111,9 +120,94 @@ export class CommandBlockManager {
       endedAt: null,
       startLine: marker.line,
       endLine: marker.line,
+      exitCode: null,
     });
     this.syncEndLines();
     this.emit();
+  }
+
+  // feedOSC133 consumes OSC 133 command lifecycle reports. Once any report
+  // arrives the tab is shell-integrated: blocks open on C (command start) and
+  // close on D (command end) with the real exit code, and the keystroke
+  // heuristic stops creating blocks so no duplicates appear.
+  feedOSC133(phase: "A" | "B" | "C" | "D", exitCode: number | null): void {
+    if (this.disposed) return;
+    this.osc133 = true;
+    const now = Date.now();
+    switch (phase) {
+      case "C": {
+        this.closeLast(now);
+        const command = this.submitted || this.echoLine() || "（命令）";
+        this.submitted = "";
+        const marker = this.term.registerMarker(0);
+        if (!marker) {
+          this.emit();
+          return;
+        }
+        const slot: MarkerSlot = { marker };
+        try {
+          slot.decoration = this.term.registerDecoration({
+            marker,
+            width: 1,
+            height: 1,
+            overviewRulerOptions: { color: OVERVIEW_RULER_COLOR, position: "full" },
+          });
+        } catch {
+          slot.decoration = undefined;
+        }
+        this.slots.push(slot);
+        this.blocks.push({
+          index: this.blocks.length + 1,
+          command,
+          reliable: true,
+          startedAt: now,
+          endedAt: null,
+          startLine: marker.line,
+          endLine: marker.line,
+          exitCode: null,
+        });
+        this.syncEndLines();
+        this.emit();
+        break;
+      }
+      case "D": {
+        const last = this.blocks[this.blocks.length - 1];
+        if (last && last.endedAt === null) {
+          last.endedAt = now;
+          last.exitCode = exitCode;
+          this.syncEndLines();
+          this.emit();
+        }
+        break;
+      }
+      case "A": {
+        this.submitted = "";
+        const last = this.blocks[this.blocks.length - 1];
+        if (last && last.endedAt === null) {
+          last.endedAt = now;
+          this.syncEndLines();
+          this.emit();
+        }
+        break;
+      }
+      case "B":
+        break;
+    }
+  }
+
+  // echoLine reads the most recent non-empty buffer line near the cursor as a
+  // best-effort command label when no keystroke text was captured (e.g. keys
+  // injected by the AI rather than typed locally).
+  private echoLine(): string {
+    const buf = this.term.buffer.active;
+    const cursorLine = buf.baseY + buf.cursorY;
+    for (let i = 0; i < 4; i++) {
+      const line = buf.getLine(cursorLine - i);
+      if (!line) continue;
+      const text = line.translateToString(true).trim();
+      if (text) return text;
+    }
+    return "";
   }
 
   private closeLast(now: number): void {
@@ -187,6 +281,7 @@ export class CommandBlockManager {
     this.blocks = [];
     this.pending = "";
     this.pendingReliable = true;
+    this.submitted = "";
     this.emit();
   }
 

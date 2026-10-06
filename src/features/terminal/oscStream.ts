@@ -1,6 +1,7 @@
 export type OscStreamEvent =
   | { kind: "notification"; body: string }
-  | { kind: "clipboard"; payload: string };
+  | { kind: "clipboard"; payload: string }
+  | { kind: "command"; phase: "A" | "B" | "C" | "D"; exitCode: number | null };
 
 export interface OscStreamFilter {
   push: (bytes: Uint8Array) => Uint8Array;
@@ -55,6 +56,27 @@ function joinParts(parts: Uint8Array[], length: number): Uint8Array {
     offset += part.length;
   }
   return out;
+}
+
+// parseOSC133 parses an OSC 133 payload ("A", "B", "C", "D" or "D;<exit>").
+// It returns null for anything else so the sequence stays in the stream.
+// A trailing empty parameter ("D;") means no exit code, matching the backend
+// tracker.
+function parseOSC133(payload: Uint8Array): OscStreamEvent | null {
+  if (payload.length < 1) return null;
+  const letter = String.fromCharCode(payload[0]);
+  if (letter !== "A" && letter !== "B" && letter !== "C" && letter !== "D") return null;
+  if (payload.length === 1) return { kind: "command", phase: letter, exitCode: null };
+  if (payload[1] !== SEMICOLON) return null;
+  if (payload.length === 2) return { kind: "command", phase: letter, exitCode: null };
+  let exitCode = 0;
+  for (let i = 2; i < payload.length; i++) {
+    const digit = payload[i] - 0x30;
+    if (digit < 0 || digit > 9) return null;
+    exitCode = exitCode * 10 + digit;
+    if (exitCode > 0x7fffffff) return null;
+  }
+  return { kind: "command", phase: letter, exitCode };
 }
 
 export function createOscStreamFilter(emit: (event: OscStreamEvent) => void): OscStreamFilter {
@@ -112,6 +134,13 @@ export function createOscStreamFilter(emit: (event: OscStreamEvent) => void): Os
         emit(code === 9 ? { kind: "notification", body: payload } : { kind: "clipboard", payload });
         pass(segmentStart, esc);
         segmentStart = found.end;
+      } else if (code === 133) {
+        const event = parseOSC133(content.subarray(semi + 1));
+        if (event) {
+          emit(event);
+          pass(segmentStart, esc);
+          segmentStart = found.end;
+        }
       }
       i = found.end;
     }

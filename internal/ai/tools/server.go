@@ -307,6 +307,15 @@ func (r *Registry) resolveTab(scope Scope, requested string) (string, error) {
 	return scope.TabID, nil
 }
 
+// commandState reads the tab's OSC 133 command lifecycle snapshot when the
+// terminal tracks it, and the zero state otherwise.
+func (r *Registry) commandState(ctx context.Context, tabID string) (CommandState, error) {
+	if terminal, ok := r.deps.Terminal.(CommandStateTerminal); ok {
+		return terminal.CommandState(ctx, tabID)
+	}
+	return CommandState{}, nil
+}
+
 func (r *Registry) readScreen(ctx context.Context, scope Scope, raw []byte) Output {
 	var args struct {
 		TabID string `json:"tab_id"`
@@ -322,16 +331,32 @@ func (r *Registry) readScreen(ctx context.Context, scope Scope, raw []byte) Outp
 	if err != nil {
 		return Fail(err)
 	}
-	return OK(fmt.Sprintf("光标 (%d, %d)，空闲 %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text))
+	header := fmt.Sprintf("光标 (%d, %d)，空闲 %dms", screen.CursorRow, screen.CursorCol, screen.IdleMS)
+	if state, stateErr := r.commandState(ctx, tabID); stateErr == nil && state.Sequence > 0 {
+		status := "空闲"
+		if state.Running {
+			status = "运行中"
+		}
+		line := fmt.Sprintf("命令状态：%s，序号 %d", status, state.Sequence)
+		if state.HasLastExitCode {
+			line += fmt.Sprintf("，上次退出码 %d", state.LastExitCode)
+		}
+		header += "\n" + line
+	}
+	return OK(header + "\n" + screen.Text)
 }
 
 func (r *Registry) sendKeys(ctx context.Context, scope Scope, raw []byte) Output {
 	var args struct {
-		Keys  string `json:"keys"`
-		Enter bool   `json:"enter"`
+		Keys   string `json:"keys"`
+		Enter  bool   `json:"enter"`
+		WaitMS int    `json:"wait_ms"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
+	}
+	if args.WaitMS < 0 || args.WaitMS > maxSendKeysWaitMS {
+		return Fail(invalid("wait_ms 必须在 0-%d 毫秒之间", maxSendKeysWaitMS))
 	}
 	tabID, err := r.resolveTab(scope, "")
 	if err != nil {
@@ -341,13 +366,116 @@ func (r *Registry) sendKeys(ctx context.Context, scope Scope, raw []byte) Output
 	if err != nil {
 		return Fail(err)
 	}
+	before, err := r.commandState(ctx, tabID)
+	if err != nil {
+		return Fail(err)
+	}
 	if err := r.deps.Terminal.Write(ctx, tabID, encoded); err != nil {
 		return Fail(err)
 	}
 	if r.deps.Audit != nil {
 		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "tab": tabID}})
 	}
-	return OK("已发送")
+	if args.WaitMS == 0 {
+		return OK("已发送")
+	}
+	return r.waitCommandFinish(ctx, tabID, before, args.WaitMS)
+}
+
+const (
+	maxSendKeysWaitMS = 10_000
+	busyReturnGraceMS = 1_500
+	commandTailLines  = 10
+)
+
+// waitCommandFinish polls the tab command state after a send_keys write until
+// the newly started command finishes, the wait budget expires, or the
+// pre-existing busy state resolves. It returns the final screen tail and the
+// OSC 133 reported exit code.
+func (r *Registry) waitCommandFinish(ctx context.Context, tabID string, before CommandState, waitMS int) Output {
+	if before.Sequence == 0 {
+		return OK("已发送；该终端未上报 OSC 133 命令跟踪（序号 0），无法确认命令是否完成，请用 wait_for 校验新输出")
+	}
+	waitContext, cancel := context.WithTimeout(ctx, time.Duration(waitMS)*time.Millisecond)
+	defer cancel()
+	if before.Running {
+		return r.waitBusyClear(ctx, waitContext, tabID)
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		state, err := r.commandState(waitContext, tabID)
+		if err != nil {
+			return Fail(err)
+		}
+		if state.Sequence > before.Sequence && !state.Running {
+			return r.commandFinishOutput(ctx, tabID, state, "命令已完成")
+		}
+		if waitContext.Err() != nil {
+			if state.Running || state.Sequence > before.Sequence {
+				return r.commandFinishOutput(ctx, tabID, state, "等待结束，命令仍在运行")
+			}
+			return r.commandFinishOutput(ctx, tabID, state, "等待结束，未观察到新命令开始（若仅发送文本未回车，属预期）")
+		}
+		select {
+		case <-waitContext.Done():
+		case <-time.After(r.deps.pollInterval()):
+		}
+	}
+}
+
+// waitBusyClear handles a write that landed while a command was already
+// running: it returns as soon as that command finishes, or after a short
+// grace period with an explicit busy note instead of burning the full wait.
+func (r *Registry) waitBusyClear(ctx, waitContext context.Context, tabID string) Output {
+	grace, cancel := context.WithTimeout(waitContext, busyReturnGraceMS*time.Millisecond)
+	defer cancel()
+	for {
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		state, err := r.commandState(grace, tabID)
+		if err != nil {
+			return Fail(err)
+		}
+		if !state.Running {
+			return r.commandFinishOutput(ctx, tabID, state, "发送时已有命令在运行，该命令已结束")
+		}
+		if grace.Err() != nil {
+			return r.commandFinishOutput(ctx, tabID, state, "发送时已有命令在运行，仍在运行（本次按键已送入该程序）")
+		}
+		select {
+		case <-grace.Done():
+		case <-time.After(r.deps.pollInterval()):
+		}
+	}
+}
+
+func (r *Registry) commandFinishOutput(ctx context.Context, tabID string, state CommandState, headline string) Output {
+	screen, err := r.deps.Terminal.Snapshot(ctx, tabID)
+	if err != nil {
+		return Fail(err)
+	}
+	text := headline
+	exitCode := 0
+	if state.HasLastExitCode {
+		text += fmt.Sprintf("，退出码 %d", state.LastExitCode)
+		exitCode = state.LastExitCode
+	}
+	text += fmt.Sprintf("\n命令序号 %d\n屏幕尾部：\n%s", state.Sequence, tailText(screen, commandTailLines))
+	return Output{OK: true, Text: text, ExitCode: exitCode}
+}
+
+func tailText(screen Screen, maxLines int) string {
+	lines := screen.Tail
+	if len(lines) == 0 {
+		lines = strings.Split(screen.Text, "\n")
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (r *Registry) waitFor(ctx context.Context, scope Scope, raw []byte, maximumSeconds int) Output {

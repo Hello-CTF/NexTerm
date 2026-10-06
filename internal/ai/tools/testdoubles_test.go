@@ -168,10 +168,12 @@ func (f *fakeTransport) calls() int {
 }
 
 type fakeTerminal struct {
-	mu       sync.Mutex
-	screen   Screen
-	writes   [][]byte
-	writeErr error
+	mu           sync.Mutex
+	screen       Screen
+	writes       [][]byte
+	writeErr     error
+	commandState CommandState
+	onWrite      func()
 }
 
 func (f *fakeTerminal) Snapshot(context.Context, string) (Screen, error) {
@@ -181,12 +183,27 @@ func (f *fakeTerminal) Snapshot(context.Context, string) (Screen, error) {
 }
 func (f *fakeTerminal) Write(_ context.Context, _ string, data []byte) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.writeErr != nil {
+		f.mu.Unlock()
 		return f.writeErr
 	}
 	f.writes = append(f.writes, append([]byte(nil), data...))
+	hook := f.onWrite
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return nil
+}
+func (f *fakeTerminal) CommandState(context.Context, string) (CommandState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.commandState, nil
+}
+func (f *fakeTerminal) setCommandState(state CommandState) {
+	f.mu.Lock()
+	f.commandState = state
+	f.mu.Unlock()
 }
 
 type fakeDatabase struct {

@@ -235,6 +235,7 @@ export function XtermView(props: XtermViewProps) {
 
     const oscFilter = createOscStreamFilter((event) => {
       if (event.kind === "notification") onNotificationRef.current?.(event.body);
+      else if (event.kind === "command") blocks.feedOSC133(event.phase, event.exitCode);
       else onClipboardRef.current?.(event.payload);
     });
     const channel = createBinaryChannel((bytes) => {

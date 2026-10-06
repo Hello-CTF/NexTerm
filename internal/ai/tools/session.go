@@ -35,6 +35,14 @@ func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) 
 	return s.manager.WriteInternal(ctx, tabID, data)
 }
 
+func (s *sessionTerminal) CommandState(_ context.Context, tabID string) (CommandState, error) {
+	tab, err := s.manager.Tab(tabID)
+	if err != nil {
+		return CommandState{}, err
+	}
+	return tab.CommandState(), nil
+}
+
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	deps.Transport = manager.Transport
 	deps.Terminal = SessionTerminal(manager)

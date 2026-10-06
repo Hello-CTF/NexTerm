@@ -326,6 +326,8 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.sendKeys(ctx, scope, call.Args)
 	case "wait_for":
 		return r.waitFor(ctx, scope, call.Args, 120)
+	case "shell_history":
+		return r.shellHistory(ctx, scope, call.Args)
 	case "docker_ps":
 		return r.dockerPS(ctx, scope)
 	case "docker_logs":

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -141,9 +142,21 @@ type AuditEntry struct {
 
 type TransportResolver func(context.Context, string) (base.Transport, error)
 
+// CommandState is the OSC 133 command lifecycle snapshot of a terminal tab,
+// as tracked by the session layer.
+type CommandState = shellintegr.CommandState
+
 type Terminal interface {
 	Snapshot(context.Context, string) (Screen, error)
 	Write(context.Context, string, []byte) error
+}
+
+// CommandStateTerminal is the optional Terminal extension exposing OSC 133
+// command lifecycle state. The session terminal implements it; terminals
+// without command tracking simply do not, and callers fall back to
+// fire-and-forget semantics.
+type CommandStateTerminal interface {
+	CommandState(context.Context, string) (CommandState, error)
 }
 
 type Database interface {
