@@ -12,6 +12,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -114,6 +115,18 @@ func validatePassword(password string) error {
 }
 
 func (a *Accounts) CreateUser(ctx context.Context, username, displayName, password string) (*User, error) {
+	return a.createUser(ctx, username, displayName, password, nil)
+}
+
+// CreateUserWithEnvelopes 在同一个事务里创建用户并写入初始 DEK 信封, 不留半初始化账号。
+func (a *Accounts) CreateUserWithEnvelopes(ctx context.Context, username, displayName, password string, envelopes *vault.UserDEKEnvelopes) (*User, error) {
+	if err := validateEnvelopes(envelopes); err != nil {
+		return nil, err
+	}
+	return a.createUser(ctx, username, displayName, password, envelopes)
+}
+
+func (a *Accounts) createUser(ctx context.Context, username, displayName, password string, envelopes *vault.UserDEKEnvelopes) (*User, error) {
 	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
@@ -138,9 +151,29 @@ func (a *Accounts) CreateUser(ctx context.Context, username, displayName, passwo
 		UpdatedAt:    now,
 		passwordHash: hash,
 	}
-	if _, err := a.db.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
+	if envelopes == nil {
+		if _, err := a.db.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
+VALUES(?,?,?,?,?,?,0,?,?)`, user.ID, user.Username, user.DisplayName, string(user.Role), hash, string(user.State), now, now); err != nil {
+			return nil, translateUserWriteError(err)
+		}
+		return user, nil
+	}
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
 VALUES(?,?,?,?,?,?,0,?,?)`, user.ID, user.Username, user.DisplayName, string(user.Role), hash, string(user.State), now, now); err != nil {
 		return nil, translateUserWriteError(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?)`, user.ID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
+		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, now); err != nil {
+		return nil, dbError(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, dbError(err)
 	}
 	return user, nil
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -208,12 +209,8 @@ func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
-	user, err := s.accounts.InitSuperadmin(r.Context(), request.Code, request.Username, request.Password)
+	user, err := s.accounts.InitSuperadminWithEnvelopes(r.Context(), request.Code, request.Username, request.Password, request.toEnvelopes())
 	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	if err := s.accounts.SetUserDEKEnvelopes(r.Context(), user.ID, request.toEnvelopes()); err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
@@ -279,12 +276,8 @@ func (s *Server) serveAccountRegister(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "注册已关闭，请联系管理员添加账号"))
 		return
 	}
-	user, err := s.accounts.CreateUser(r.Context(), request.Username, request.DisplayName, request.Password)
+	user, err := s.accounts.CreateUserWithEnvelopes(r.Context(), request.Username, request.DisplayName, request.Password, request.toEnvelopes())
 	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	if err := s.accounts.SetUserDEKEnvelopes(r.Context(), user.ID, request.toEnvelopes()); err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
@@ -443,14 +436,12 @@ func (s *Server) serveAccountDEKUpload(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	if _, err := s.accounts.GetUserDEKEnvelopes(r.Context(), identity.UserID); err == nil {
-		writeAccountError(w, http.StatusConflict, ipc.NewError(ipc.CodeBadParam, "DEK 信封已存在"))
-		return
-	} else if ipc.NormalizeError(err).Code != ipc.CodeNotFound {
-		writeAccountFailure(w, err)
-		return
-	}
-	if err := s.accounts.SetUserDEKEnvelopes(r.Context(), identity.UserID, request.toEnvelopes()); err != nil {
+	err := s.accounts.InsertUserDEKEnvelopes(r.Context(), identity.UserID, request.toEnvelopes())
+	if err != nil {
+		if errors.Is(err, account.ErrDEKEnvelopesExist) {
+			writeAccountError(w, http.StatusConflict, ipc.NormalizeError(err))
+			return
+		}
 		writeAccountFailure(w, err)
 		return
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
 const initCodeSettingKey = "auth.init_code"
@@ -82,6 +83,19 @@ func (a *Accounts) consumeInitCode(ctx context.Context, tx *sql.Tx, code string)
 }
 
 func (a *Accounts) InitSuperadmin(ctx context.Context, code, username, password string) (*User, error) {
+	return a.initSuperadmin(ctx, code, username, password, nil)
+}
+
+// InitSuperadminWithEnvelopes 在同一个事务里消费初始化码、创建超管并写入初始 DEK 信封;
+// 信封写入失败时初始化码保持未消费, 可重试。
+func (a *Accounts) InitSuperadminWithEnvelopes(ctx context.Context, code, username, password string, envelopes *vault.UserDEKEnvelopes) (*User, error) {
+	if err := validateEnvelopes(envelopes); err != nil {
+		return nil, err
+	}
+	return a.initSuperadmin(ctx, code, username, password, envelopes)
+}
+
+func (a *Accounts) initSuperadmin(ctx context.Context, code, username, password string, envelopes *vault.UserDEKEnvelopes) (*User, error) {
 	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
@@ -120,6 +134,13 @@ func (a *Accounts) InitSuperadmin(ctx context.Context, code, username, password 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
 VALUES(?,?,?,?,?,?,0,?,?)`, user.ID, user.Username, "", string(user.Role), hash, string(user.State), now, now); err != nil {
 		return nil, translateUserWriteError(err)
+	}
+	if envelopes != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?)`, user.ID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
+			envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, now); err != nil {
+			return nil, dbError(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, dbError(err)

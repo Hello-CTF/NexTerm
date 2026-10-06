@@ -28,6 +28,7 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Vary", "Origin")
 		}
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
@@ -35,8 +36,8 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 				http.NotFound(w, r)
 				return
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-NexTerm-Client-Id, X-NexTerm-Sync-Token")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-NexTerm-Client-Id, X-NexTerm-Sync-Token, X-NexTerm-CSRF")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

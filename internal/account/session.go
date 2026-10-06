@@ -35,6 +35,7 @@ type Identity struct {
 	UserID    string
 	SessionID string
 	Role      Role
+	State     State
 	DeviceID  string
 }
 
@@ -132,8 +133,8 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期")
 	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期")
-	case State(state) != StateActive:
-		return nil, ipc.NewError(ipc.CodeForbidden, "账号不可用")
+	case State(state) == StateDisabled:
+		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
 	if now-session.TouchedAt >= sessionSlidePersist.Milliseconds() {
 		expiresAt := now + SessionSlidingTTL.Milliseconds()
@@ -145,7 +146,7 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 			return nil, dbError(err)
 		}
 	}
-	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), DeviceID: session.DeviceID}, nil
+	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), State: State(state), DeviceID: session.DeviceID}, nil
 }
 
 func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {

@@ -36,6 +36,27 @@ ON CONFLICT(user_id) DO UPDATE SET dek_envelope = excluded.dek_envelope, kdf_sal
 	return nil
 }
 
+// InsertUserDEKEnvelopes 仅在该用户尚无信封时写入; 已存在时返回 ErrDEKEnvelopesExist, 不会覆盖。
+var ErrDEKEnvelopesExist = errors.New("DEK 信封已存在")
+
+func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, envelopes *vault.UserDEKEnvelopes) error {
+	if err := validateEnvelopes(envelopes); err != nil {
+		return err
+	}
+	result, err := a.db.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(user_id) DO NOTHING`,
+		userID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
+		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, a.now(), a.now())
+	if err != nil {
+		return dbError(err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
+	}
+	return nil
+}
+
 func (a *Accounts) GetUserDEKEnvelopes(ctx context.Context, userID string) (*vault.UserDEKEnvelopes, error) {
 	var envelopes vault.UserDEKEnvelopes
 	err := a.db.QueryRowContext(ctx, `SELECT dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash

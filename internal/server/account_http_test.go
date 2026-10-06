@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
@@ -18,6 +20,7 @@ type accountFixture struct {
 	server   *Server
 	http     *httptest.Server
 	accounts *account.Accounts
+	db       *sql.DB
 	client   *http.Client
 }
 
@@ -34,7 +37,7 @@ func newAccountFixture(t *testing.T, auth string) *accountFixture {
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{
-		server: server, http: httpServer, accounts: accounts,
+		server: server, http: httpServer, accounts: accounts, db: database.DB(),
 		client: &http.Client{},
 	}
 }
@@ -643,19 +646,33 @@ func TestAccountHTTPSessionAcceptedOnLegacyRPC(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	session, _ := fixture.initSuperadmin(t, "root", "password-j1")
 
-	request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
-	if err != nil {
-		t.Fatal(err)
+	postRPCWithCookie := func(csrf string) int {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(session.cookie)
+		if csrf != "" {
+			request.Header.Set(csrfHeaderName, csrf)
+		}
+		response, err := fixture.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
 	}
-	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(session.cookie)
-	response, err := fixture.client.Do(request)
-	if err != nil {
-		t.Fatal(err)
+
+	if status := postRPCWithCookie(""); status != http.StatusForbidden {
+		t.Fatalf("cookie write without csrf status=%d", status)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("session on legacy rpc status=%d", response.StatusCode)
+	if status := postRPCWithCookie("garbage"); status != http.StatusForbidden {
+		t.Fatalf("cookie write with bad csrf status=%d", status)
+	}
+	if status := postRPCWithCookie(session.csrf); status != http.StatusOK {
+		t.Fatalf("cookie write with csrf status=%d", status)
 	}
 
 	status, _ := postRPC(t, fixture.client, fixture.http.URL+"/rpc", "app_info", nil)
@@ -748,4 +765,301 @@ func TestAccountHTTPConfigValidation(t *testing.T) {
 		t.Fatalf("auth=on with accounts only must start: %v", err)
 	}
 	_ = server.Close()
+}
+
+func TestAccountHTTPResetRecoveryFlow(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	adminSession, _ := fixture.initSuperadmin(t, "root", "password-m1")
+
+	if call := fixture.call(t, http.MethodPost, "/admin/users", map[string]any{"username": "dave", "password": "password-m2"}, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("create dave status=%d body=%v", call.status, call.body)
+	}
+	dave := fixture.login(t, "dave", "password-m2")
+	daveID := dave.user["id"].(string)
+
+	if call := fixture.call(t, http.MethodPost, "/admin/users/"+daveID+"/reset", nil, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("reset status=%d", call.status)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, dave, "", nil); call.status != http.StatusUnauthorized {
+		t.Fatalf("pre-reset session must be revoked, status=%d", call.status)
+	}
+
+	call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "dave", "password": "password-m2"}, nil, "", nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("reset login status=%d body=%v", call.status, call.body)
+	}
+	dave = captureSession(t, call)
+	if dave.user["must_change_password"] != true || dave.user["state"] != string(account.StateResetRequired) {
+		t.Fatalf("reset login user=%v", dave.user)
+	}
+
+	call = fixture.call(t, http.MethodGet, "/auth/me", nil, dave, "", nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("reset session me status=%d body=%v", call.status, call.body)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/devices", nil, dave, "", nil); call.status != http.StatusForbidden {
+		t.Fatalf("reset session devices must be locked, status=%d", call.status)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/dek", nil, dave, "", nil); call.status != http.StatusNotFound {
+		t.Fatalf("reset session dek must be gone, status=%d", call.status)
+	}
+
+	resetBody, _, _ := envelopeBody(t, "password-m3")
+	resetBody = mergeBody(resetBody, map[string]any{"old_password": "password-m2", "new_password": "password-m3"})
+	if call := fixture.call(t, http.MethodPost, "/auth/password", resetBody, dave, dave.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("reset password change status=%d body=%v", call.status, call.body)
+	}
+
+	call = fixture.call(t, http.MethodGet, "/auth/me", nil, dave, "", nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("post-reset me status=%d body=%v", call.status, call.body)
+	}
+	if user := call.body["user"].(map[string]any); user["state"] != string(account.StateActive) || user["must_change_password"] != false {
+		t.Fatalf("post-reset user=%v", user)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/dek", nil, dave, "", nil); call.status != http.StatusOK {
+		t.Fatalf("post-reset dek status=%d", call.status)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/devices", nil, dave, "", nil); call.status != http.StatusOK {
+		t.Fatalf("post-reset devices status=%d", call.status)
+	}
+
+	if call := fixture.call(t, http.MethodPost, "/admin/users", map[string]any{"username": "erin", "password": "password-m5"}, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("create erin status=%d", call.status)
+	}
+	erin := fixture.login(t, "erin", "password-m5")
+	erinID := erin.user["id"].(string)
+	if call := fixture.call(t, http.MethodPost, "/admin/users/"+erinID+"/disable", nil, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("disable status=%d", call.status)
+	}
+	if call := fixture.call(t, http.MethodPost, "/admin/users/"+erinID+"/reset", nil, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("reset disabled user status=%d", call.status)
+	}
+	call = fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "erin", "password": "password-m5"}, nil, "", nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("disabled-via-reset login status=%d body=%v", call.status, call.body)
+	}
+	erin = captureSession(t, call)
+	rebody, _, _ := envelopeBody(t, "password-m6")
+	rebody = mergeBody(rebody, map[string]any{"old_password": "password-m5", "new_password": "password-m6"})
+	if call := fixture.call(t, http.MethodPost, "/auth/password", rebody, erin, erin.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("disabled-via-reset password change status=%d body=%v", call.status, call.body)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, erin, "", nil); call.status != http.StatusOK {
+		t.Fatalf("recovered me status=%d", call.status)
+	}
+	fixture.login(t, "erin", "password-m6")
+
+	if call := fixture.call(t, http.MethodPost, "/admin/users/"+erinID+"/disable", nil, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("re-disable status=%d", call.status)
+	}
+	if call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "erin", "password": "password-m6"}, nil, "", nil); call.status != http.StatusForbidden {
+		t.Fatalf("re-disabled login status=%d", call.status)
+	}
+}
+
+func TestAccountHTTPCSRFLegacyBlobWrites(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	session, _ := fixture.initSuperadmin(t, "root", "password-n1")
+
+	postBlob := func(csrf string) int {
+		t.Helper()
+		request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/files/blob", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(session.cookie)
+		if csrf != "" {
+			request.Header.Set(csrfHeaderName, csrf)
+		}
+		response, err := fixture.client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		return response.StatusCode
+	}
+
+	if status := postBlob(""); status != http.StatusForbidden {
+		t.Fatalf("blob write without csrf status=%d", status)
+	}
+	if status := postBlob("garbage"); status != http.StatusForbidden {
+		t.Fatalf("blob write with bad csrf status=%d", status)
+	}
+	if status := postBlob(session.csrf); status == http.StatusForbidden {
+		t.Fatalf("blob write with csrf must pass auth gate, status=%d", status)
+	}
+}
+
+func TestAccountHTTPCORSDevFrontend(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.initSuperadmin(t, "root", "password-o1")
+	const devOrigin = "http://localhost:1420"
+
+	preflight, err := http.NewRequest(http.MethodOptions, fixture.http.URL+"/admin/settings", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight.Header.Set("Origin", devOrigin)
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	preflight.Header.Set("Access-Control-Request-Headers", "x-nexterm-csrf")
+	response, err := fixture.client.Do(preflight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status=%d", response.StatusCode)
+	}
+	if methods := response.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(methods, http.MethodPut) {
+		t.Fatalf("preflight methods=%q", methods)
+	}
+	if headers := response.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(strings.ToLower(headers), strings.ToLower(csrfHeaderName)) {
+		t.Fatalf("preflight headers=%q", headers)
+	}
+	if response.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatal("预检必须允许 credentials")
+	}
+	if response.Header.Get("Access-Control-Allow-Origin") != devOrigin {
+		t.Fatalf("preflight origin=%q", response.Header.Get("Access-Control-Allow-Origin"))
+	}
+
+	evil, err := http.NewRequest(http.MethodOptions, fixture.http.URL+"/admin/settings", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evil.Header.Set("Origin", "http://evil.example")
+	evil.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	evilResponse, err := fixture.client.Do(evil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evilResponse.Body.Close()
+	if evilResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("evil preflight status=%d", evilResponse.StatusCode)
+	}
+
+	session := fixture.login(t, "root", "password-o1")
+	call := fixture.call(t, http.MethodPost, "/auth/logout", nil, session, session.csrf, map[string]string{"Origin": devOrigin})
+	if call.status != http.StatusOK {
+		t.Fatalf("dev-origin csrf write status=%d body=%v", call.status, call.body)
+	}
+}
+
+func TestAccountHTTPDEKUploadConcurrent(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	adminSession, _ := fixture.initSuperadmin(t, "root", "password-p1")
+
+	if call := fixture.call(t, http.MethodPost, "/admin/users", map[string]any{"username": "erin", "password": "password-p2"}, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("create erin status=%d body=%v", call.status, call.body)
+	}
+	erin := fixture.login(t, "erin", "password-p2")
+
+	first, _, _ := envelopeBody(t, "password-p2")
+	second, _, _ := envelopeBody(t, "password-p2")
+	statuses := make(chan int, 2)
+	var wait sync.WaitGroup
+	for _, body := range []map[string]any{first, second} {
+		wait.Add(1)
+		go func(body map[string]any) {
+			defer wait.Done()
+			request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/auth/dek", strings.NewReader(mustAccountJSON(t, body)))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			request.Header.Set("Content-Type", "application/json")
+			request.AddCookie(erin.cookie)
+			request.Header.Set(csrfHeaderName, erin.csrf)
+			response, err := fixture.client.Do(request)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer response.Body.Close()
+			statuses <- response.StatusCode
+		}(body)
+	}
+	wait.Wait()
+	close(statuses)
+	oks, conflicts := 0, 0
+	for status := range statuses {
+		switch status {
+		case http.StatusOK:
+			oks++
+		case http.StatusConflict:
+			conflicts++
+		}
+	}
+	if oks != 1 || conflicts != 1 {
+		t.Fatalf("并发上传必须恰好一个成功一个冲突: ok=%d conflict=%d", oks, conflicts)
+	}
+}
+
+func mustAccountJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func TestAccountHTTPInitAtomicFailure(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	code, err := fixture.accounts.GenerateInitCode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.db.Exec(`CREATE TRIGGER fail_dek_insert BEFORE INSERT ON user_dek
+BEGIN
+	SELECT RAISE(ABORT, 'injected dek failure');
+END`); err != nil {
+		t.Fatal(err)
+	}
+
+	envelopes, _, _ := envelopeBody(t, "password-q1")
+	initBody := mergeBody(envelopes, map[string]any{"code": code, "username": "root", "password": "password-q1"})
+	if call := fixture.call(t, http.MethodPost, "/auth/init", initBody, nil, "", nil); call.status != http.StatusInternalServerError {
+		t.Fatalf("init with failing dek insert status=%d body=%v", call.status, call.body)
+	}
+	if _, err := fixture.db.Exec("DROP TRIGGER fail_dek_insert"); err != nil {
+		t.Fatal(err)
+	}
+
+	call := fixture.call(t, http.MethodGet, "/auth/status", nil, nil, "", nil)
+	if call.status != http.StatusOK || call.body["initialized"] != false {
+		t.Fatalf("失败不得留下部分账号: status=%d body=%v", call.status, call.body)
+	}
+	call = fixture.call(t, http.MethodPost, "/auth/init", initBody, nil, "", nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("初始化码必须可重试: status=%d body=%v", call.status, call.body)
+	}
+	adminSession := captureSession(t, call)
+
+	if _, err := fixture.db.Exec(`CREATE TRIGGER fail_dek_insert BEFORE INSERT ON user_dek
+BEGIN
+	SELECT RAISE(ABORT, 'injected dek failure');
+END`); err != nil {
+		t.Fatal(err)
+	}
+	if call := fixture.call(t, http.MethodPut, "/admin/settings", map[string]any{"registration_open": true}, adminSession, adminSession.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("open registration status=%d", call.status)
+	}
+	registerBody, _, _ := envelopeBody(t, "password-q2")
+	registerBody = mergeBody(registerBody, map[string]any{"username": "alice", "password": "password-q2"})
+	if call := fixture.call(t, http.MethodPost, "/auth/register", registerBody, nil, "", nil); call.status != http.StatusInternalServerError {
+		t.Fatalf("register with failing dek insert status=%d body=%v", call.status, call.body)
+	}
+	if _, err := fixture.db.Exec("DROP TRIGGER fail_dek_insert"); err != nil {
+		t.Fatal(err)
+	}
+	if call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "alice", "password": "password-q2"}, nil, "", nil); call.status != http.StatusForbidden {
+		t.Fatalf("失败不得留下可登录账号: status=%d", call.status)
+	}
+	call = fixture.call(t, http.MethodPost, "/auth/register", registerBody, nil, "", nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("register retry status=%d body=%v", call.status, call.body)
+	}
 }

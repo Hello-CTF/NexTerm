@@ -127,11 +127,30 @@ func (s *Server) accountGuard(next http.Handler) http.Handler {
 	})
 }
 
+// resetRequiredAllowedPaths 列出 reset_required 会话在完成密码重置前唯一可用的路由。
+var resetRequiredAllowedPaths = map[string]bool{
+	"/auth/me":         true,
+	"/auth/password":   true,
+	"/auth/dek":        true,
+	"/auth/logout":     true,
+	"/auth/logout-all": true,
+}
+
+func resetRequiredLocked(r *http.Request) bool {
+	identity := accountIdentityFrom(r.Context())
+	return identity != nil && identity.State == account.StateResetRequired && !resetRequiredAllowedPaths[r.URL.Path]
+}
+
 // requireAccountSession 要求已通过 accountGuard 解析出会话身份。
+// reset_required 会话仅限完成重置所需路由, 其余一律 403。
 func (s *Server) requireAccountSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if accountIdentityFrom(r.Context()) == nil {
 			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "会话无效或缺失"))
+			return
+		}
+		if resetRequiredLocked(r) {
+			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置"))
 			return
 		}
 		next.ServeHTTP(w, r)

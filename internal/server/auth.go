@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 )
@@ -53,6 +54,14 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			if cookieToken, ok := sessionCookie(r); ok {
 				identity, err := s.accounts.ValidateSession(r.Context(), cookieToken)
 				if err == nil {
+					if identity.State == account.StateResetRequired {
+						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "必须先完成密码重置"))
+						return
+					}
+					if unsafeAccountMethod(r) && !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
+						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败"))
+						return
+					}
 					next.ServeHTTP(w, r.WithContext(withAccountIdentity(r.Context(), identity)))
 					return
 				}
@@ -60,6 +69,15 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		}
 		writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "访问令牌无效或缺失"))
 	})
+}
+
+func unsafeAccountMethod(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) verifyTokenIdentity(ctx context.Context, token string) (syncservice.TokenIdentity, bool, error) {
@@ -85,8 +103,9 @@ func (s *Server) authorizeWebSocket(r *http.Request) (bool, error) {
 	}
 	if s.accounts != nil {
 		if cookieToken, ok := sessionCookie(r); ok {
-			if _, err := s.accounts.ValidateSession(r.Context(), cookieToken); err == nil {
-				return true, nil
+			identity, err := s.accounts.ValidateSession(r.Context(), cookieToken)
+			if err == nil {
+				return identity.State != account.StateResetRequired, nil
 			}
 		}
 	}
