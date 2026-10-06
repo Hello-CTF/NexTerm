@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime"
 
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
@@ -39,10 +38,6 @@ func run(args []string) int {
 	if invocation.Command != core.CommandDesktop {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop: use the nexterm-server binary for", invocation.Command)
 		return 2
-	}
-
-	if desktopSmokeEnabled() && runtime.GOOS == "linux" {
-		os.Setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1")
 	}
 
 	paths, err := platform.DesktopPaths(invocation.DataDir)
@@ -86,12 +81,10 @@ func run(args []string) int {
 			Logger:  logger.Logger,
 			Events:  events,
 			Streams: streams,
-			Modules: desktopSmokeModules,
 		},
 		DataDir:                 paths.DataDir,
 		Desktop:                 true,
-		DesktopSmoke:            desktopSmokeEnabled(),
-		DesktopSupervisorHelper: !desktopSmokeEnabled(),
+		DesktopSupervisorHelper: true,
 		ForwardPlatform:         os.Getenv("NEXTERM_PLATFORM"),
 	})
 	if err != nil {
@@ -112,7 +105,7 @@ func run(args []string) int {
 		Services: []application.Service{
 			application.NewService(service),
 		},
-		Assets: application.AssetOptions{Handler: desktopSmokeAssetHandler(assets)},
+		Assets: application.AssetOptions{Handler: assets},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
@@ -128,9 +121,6 @@ func run(args []string) int {
 	})
 	streams.SetWindow(window)
 	window.Show()
-	if desktopSmokeEnabled() {
-		return runDesktopSmoke(wailsApp, window)
-	}
 	if err := wailsApp.Run(); err != nil {
 		logger.Error("desktop stopped", "error", err)
 		return 1

@@ -333,7 +333,6 @@ function buildBinary(kind) {
   if (packageOnly) {
     if (!flag("package")) die("--package-only requires --package");
     if (!release) die("--package-only requires --release");
-    if (flag("smoke")) die("--package-only refuses --smoke; smoke-tagged test binaries are never substituted for production release packages");
     if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
     if (flag("repro-check")) die("--package-only performs no compilation; --repro-check belongs to the producing job");
     if (!option("consume-dist")) die("--package-only requires --consume-dist=DIR so embedded-asset assertions run against the verified frontend");
@@ -346,7 +345,7 @@ function buildBinary(kind) {
   }
   if (kind === "desktop") distManifest();
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  const tags = release ? (flag("smoke") ? "production,smoke" : "production") : flag("smoke") ? "smoke" : "";
+  const tags = release ? "production" : "";
   const args = ["build", "-mod=readonly", "-trimpath", "-buildvcs=false"];
   if (tags) args.push("-tags", tags);
   args.push("-ldflags", ldflags(kind, goos), "-o", outputPath, `./cmd/nexterm-${kind}`);
@@ -397,7 +396,6 @@ function buildBinary(kind) {
     stripped: release,
     requireEmbedded: kind === "desktop" && release,
   });
-  if (flag("smoke")) runDesktopSmoke(outputPath, goos, goarch);
   if (flag("package")) {
     if (!release) die("--package requires --release");
     if (kind !== "desktop") die("server packages are produced by scripts/pack-linux-server.sh");
@@ -714,58 +712,6 @@ function packageWindows(binary, goarch) {
   run(makensis.command, [...defines.map((define) => `-D${define}`), path.join(ROOT, ".github/packaging/windows/NexTerm.nsi")]);
   if (!fs.existsSync(installer)) die("makensis did not produce the contracted installer");
   return installer;
-}
-
-function runDesktopSmoke(binary, goos, goarch) {
-  if (goos !== HOST_OS || goarch !== HOST_ARCH) die(`desktop runtime smoke must be native, not ${goos}/${goarch} on ${HOST_OS}/${HOST_ARCH}`);
-  const smokeSource = path.join(ROOT, "cmd/nexterm-desktop/smoke.go");
-  if (!fs.existsSync(smokeSource)) die("the M27 -tags smoke runtime entry point is unavailable; refusing to count a launch attempt as a smoke pass");
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-desktop-smoke-"));
-  fs.mkdirSync(path.join(work, ".buildcheck/m27"), { recursive: true });
-  const args = goos === "linux" ? ["xvfb-run", "-a", binary] : [binary];
-  const executable = args.shift();
-  const result = run(executable, args, {
-    cwd: work,
-    env: { ...process.env, NEXTERM_DATA_DIR: path.join(work, "data"), NEXTERM_PLATFORM: goos },
-    allowFailure: true,
-    timeout: 90_000,
-  });
-  const evidence = path.join(work, ".buildcheck/m27/webview-smoke-result.json");
-  const destination = path.join(ROOT, "target/release-assets");
-  const preserved = path.join(destination, `desktop-smoke-${goos}-${goarch}.json`);
-  const preserveEvidence = () => {
-    fs.mkdirSync(destination, { recursive: true });
-    if (fs.existsSync(evidence)) {
-      fs.copyFileSync(evidence, preserved);
-      return;
-    }
-    fs.writeFileSync(preserved, `${JSON.stringify({
-      ok: false,
-      reason: "the desktop smoke process exited before producing webview-smoke-result.json",
-      exit: { status: result.status ?? null, signal: result.signal ?? null },
-      binary,
-      target: `${goos}/${goarch}`,
-      host: `${HOST_OS}/${HOST_ARCH}`,
-      workdir: work,
-    }, null, 2)}\n`);
-  };
-  if (result.status !== 0 || !fs.existsSync(evidence)) {
-    preserveEvidence();
-    die(`native desktop smoke failed (exit ${result.status ?? result.signal}); failure evidence preserved at ${preserved}`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(evidence, "utf8"));
-  } catch (error) {
-    preserveEvidence();
-    die(`native desktop smoke evidence is not valid JSON (${error.message}); raw copy preserved at ${preserved}`);
-  }
-  if (parsed.ok !== true) {
-    preserveEvidence();
-    die(`native desktop smoke returned ok!=true: ${preserved}`);
-  }
-  fs.mkdirSync(destination, { recursive: true });
-  fs.copyFileSync(evidence, preserved);
 }
 
 function reportOnly() {

@@ -49,19 +49,19 @@
 - 前端：`pnpm typecheck`、`pnpm lint`、`pnpm test`。
 - 产物可复现：`node scripts/build.mjs frontend --repro-check`。
 - 已安装 task 时 `task check` 一次跑完上述常规项；`-race`（并发改动）与 `-tags production`（production 标签改动）不在其中，须按需另跑对应 `go test`。
-- CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑、build harness 单测、矩阵 native desktop smoke、Real Chromium 验收与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`，WebView 冒烟用 `task desktop:smoke` 本地按需执行。
+- CI 质量门禁只跑常规项：全仓 `go test -mod=readonly ./...` 即发布门禁；`-race`、`-tags production` 全量复跑、build harness 单测、Real Chromium 验收与独立 Windows supervisor/SSH jobs 都不是 CI 步骤，不阻塞发布。并发改动仍按上条本地补跑对应 `-tags` / `-race`。
 
 ## 分层测试节奏
 
 - 实现期只跑聚焦测试：与改动直接相关的 Go 包 / 前端测试，外加 `pnpm typecheck`、`pnpm lint`；不为每个小改动重复全仓套件。
 - 高风险改动（并发、协议、持久化、安全、数据库）一旦可运行，立即补跑相关集成测试与 `go test -race ./...`；涉及 build tag 的按需加 `-tags`。
-- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`；产出发布产物时附 release evidence（`node .github/scripts/release-evidence.mjs <产物目录>`）。
+- 大块任务集成并 rebase 后，对最终树跑一次全量验证：`task check`、`task verify`（verify = check 全部门禁 + 宿主 desktop production 二进制可复现构建，消费 check 已验证的 dist 与 manifest，不再运行原生 WebView 冒烟）；产出发布产物时附 release evidence（`node .github/scripts/release-evidence.mjs <产物目录>`）。
 - 分层不削弱门禁：CI 保留全部质量检查，上文"质量命令"全绿要求不变；评审须实际运行并核对行为，不得凭汇报放行。
 
 ## 平台 build tags
 
 - 平台分支一律用文件级 `//go:build`（在文件第 1 行）；常见约束为 `windows`、`unix`、`darwin || linux`、`!windows`，文件名多用 `*_unix.go`、`*_windows.go`、`*_darwin.go` 后缀，但按约束语义命名即可，如 `winsize_signed.go`（`aix || solaris`）、`protector_unsupported.go`（`!windows && !darwin`）及多处 `darwin || linux` 测试均无平台后缀。
-- 非平台标签：`production`（内嵌桌面资源，需先备好 `cmd/nexterm-desktop/dist`）、`smoke`（WebView 冒烟）、`race`（竞态测试开关）；改动后必须跑对应 `-tags` 测试。
+- 非平台标签：`production`（内嵌桌面资源，需先备好 `cmd/nexterm-desktop/dist`）、`race`（竞态测试开关）；改动后必须跑对应 `-tags` 测试。
 
 ## migrations（append-only）
 

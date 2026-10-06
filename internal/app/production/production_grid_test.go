@@ -99,16 +99,6 @@ func dispatchProduction(t *testing.T, production *Production, command, args, env
 	}, production.Environment(environmentClient))
 }
 
-func requireProductionNull(t *testing.T, response ipc.Response) {
-	t.Helper()
-	if !response.OK {
-		t.Fatalf("dispatch failed: %+v", response.Error)
-	}
-	if string(response.Data) != "null" {
-		t.Fatalf("dispatch data = %s, want null", response.Data)
-	}
-}
-
 func assertProductionGrid(t *testing.T, manager *session.Manager, tabID string, want terminalgrid.Grid) {
 	t.Helper()
 	snapshot, err := manager.GridSnapshot(tabID)

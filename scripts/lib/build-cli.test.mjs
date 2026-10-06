@@ -154,11 +154,8 @@ test("desktop --package-only requires --package and --release", (t) => {
   assert.match(withoutRelease.stderr, /--package-only requires --release/);
 });
 
-test("desktop --package-only refuses --smoke and --repro-check", (t) => {
+test("desktop --package-only refuses --repro-check", (t) => {
   if (!requireIdentity(t)) return;
-  const withSmoke = runBuild(["desktop", "--release", "--package", "--package-only", "--smoke", "--consume-dist=unused", "--os=darwin", "--arch=arm64"]);
-  assert.equal(withSmoke.status, 1);
-  assert.match(withSmoke.stderr, /--package-only refuses --smoke/);
   const withRepro = runBuild(["desktop", "--release", "--package", "--package-only", "--repro-check", "--consume-dist=unused", "--os=darwin", "--arch=arm64"]);
   assert.equal(withRepro.status, 1);
   assert.match(withRepro.stderr, /--repro-check belongs to the producing job/);

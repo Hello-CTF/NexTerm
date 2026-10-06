@@ -28,7 +28,6 @@ type ProductionConfig struct {
 	Config                  Config
 	DataDir                 string
 	Desktop                 bool
-	DesktopSmoke            bool
 	DesktopSupervisorHelper bool
 	ForwardPlatform         string
 	Connector               session.Connector
@@ -193,7 +192,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
 		Docker:   dockerService, Retention: retention, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
-		smokeAttach: config.DesktopSmoke,
 		Transcripts: transcriptWriter,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,

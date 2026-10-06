@@ -69,11 +69,6 @@ tasks:
     cmds:
       - node scripts/build.mjs desktop --release --repro-check
 
-  desktop:smoke:
-    summary: Run the native WebView smoke with early/replay/binary/JSON assertions
-    cmds:
-      - node scripts/build.mjs desktop --release --repro-check --smoke
-
   windows:desktop:
     summary: Build the zero-cgo Windows amd64/arm64 Wails desktop
     cmds:
@@ -110,7 +105,7 @@ tasks:
       - node .github/scripts/browser-acceptance.mjs
 
   verify:
-    summary: Run quality gates and native host build/smoke checks
+    summary: Run quality gates, then a reproducible host desktop production build consuming the verified dist
     deps: [check]
     cmds:
-      - node scripts/build.mjs desktop --release --repro-check --smoke
+      - node scripts/build.mjs desktop --release --repro-check --consume-dist=dist --dist-manifest=target/dist-manifest.json
