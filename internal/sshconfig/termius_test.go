@@ -214,6 +214,27 @@ func TestBuildTermiusPreviewBatchAliasConflict(t *testing.T) {
 	}
 }
 
+func TestBuildTermiusPreviewBatchPairConflict(t *testing.T) {
+	hosts := []termiusdb.HostRecord{
+		{Aliases: []string{"a"}, Host: "e1.example.com", Port: 22, Username: "root"},
+		{Aliases: []string{"b"}, Host: "e2.example.com", Port: 22, Username: "root"},
+		{Aliases: []string{"a"}, Host: "e2.example.com", Port: 22, Username: "root"},
+		{Aliases: []string{"c"}, Host: "e3.example.com", Port: 22, Username: "root"},
+		{Aliases: []string{"c"}, Host: "e3.example.com", Port: 22, Username: "root"},
+	}
+	preview := buildTermiusPreview(hosts, nil, nil, nil, DefaultLimits)
+	if len(preview.Hosts) != 5 {
+		t.Fatalf("got %d hosts, want 5", len(preview.Hosts))
+	}
+	if preview.Hosts[2].Action != PlanConflictAlias {
+		t.Errorf("alias a with new endpoint action = %q, want conflict-alias (not skip-duplicate): %v",
+			preview.Hosts[2].Action, preview.Hosts[2].Warnings)
+	}
+	if preview.Hosts[4].Action != PlanSkipDuplicate {
+		t.Errorf("identical alias+endpoint action = %q, want skip-duplicate", preview.Hosts[4].Action)
+	}
+}
+
 func TestBuildTermiusPreviewKeyReconciliation(t *testing.T) {
 	keyPEM, fingerprint := fixtureKeyPEM(t)
 	keys := []termiusdb.KeyRecord{

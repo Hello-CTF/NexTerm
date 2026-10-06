@@ -36,3 +36,19 @@ Host external
 Host ipv6
     HostName ipv6.example.com
     ProxyJump [2001:db8::1]:22
+
+Host upstream-dangling
+    HostName upstream-dangling.example.com
+    ProxyJump dangling
+
+Host upstream-cycle
+    HostName upstream-cycle.example.com
+    ProxyJump loop1
+
+Host chainmid
+    HostName chainmid.example.com
+    ProxyJump ghost2
+
+Host chainapp
+    HostName chainapp.example.com
+    ProxyJump chainmid

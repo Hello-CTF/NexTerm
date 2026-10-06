@@ -71,8 +71,8 @@ func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []E
 	limits = withDefaultLimits(limits)
 	preview := &ImportPreview{Source: "ssh-config", Diagnostics: result.Diagnostics}
 	existingByName, existingByEndpoint := indexExistingAssets(existing)
-	batchNames := map[string]bool{}
-	batchEndpoints := map[endpoint]bool{}
+	batchNames := map[string]endpoint{}
+	batchEndpoints := map[endpoint]string{}
 	hosts := make([]HostPreview, 0, len(result.Hosts))
 	for _, host := range result.Hosts {
 		item := HostPreview{
@@ -89,8 +89,13 @@ func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []E
 			item.AuthMethod = "key"
 		}
 		planHostAction(&item, existingByName, existingByEndpoint, batchNames, batchEndpoints)
-		batchNames[strings.ToLower(item.Alias)] = true
-		batchEndpoints[endpointOf(item.Hostname, item.Port, item.Username)] = true
+		ep := endpointOf(item.Hostname, item.Port, item.Username)
+		if _, ok := batchNames[strings.ToLower(item.Alias)]; !ok {
+			batchNames[strings.ToLower(item.Alias)] = ep
+		}
+		if _, ok := batchEndpoints[ep]; !ok {
+			batchEndpoints[ep] = item.Alias
+		}
 		hosts = append(hosts, item)
 	}
 	validateProxyJumps(hosts, existing)
@@ -99,7 +104,7 @@ func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []E
 	return preview
 }
 
-func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, existingByEndpoint map[endpoint]ExistingAsset, batchNames map[string]bool, batchEndpoints map[endpoint]bool) {
+func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, existingByEndpoint map[endpoint]ExistingAsset, batchNames map[string]endpoint, batchEndpoints map[endpoint]string) {
 	lower := strings.ToLower(item.Alias)
 	ep := endpointOf(item.Hostname, item.Port, item.Username)
 	if conflict, ok := existingByName[lower]; ok {
@@ -116,8 +121,8 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d already imported as %q", item.Hostname, item.Port, conflict.Name))
 		return
 	}
-	if batchNames[lower] {
-		if batchEndpoints[ep] {
+	if prevEp, ok := batchNames[lower]; ok {
+		if prevEp == ep {
 			item.Action = PlanSkipDuplicate
 			item.Warnings = append(item.Warnings, fmt.Sprintf("alias %q duplicates an earlier entry in this import", item.Alias))
 		} else {
@@ -126,7 +131,7 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 		}
 		return
 	}
-	if batchEndpoints[ep] {
+	if _, ok := batchEndpoints[ep]; ok {
 		item.Action = PlanConflictEndpoint
 		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d appears more than once in this import", item.Hostname, item.Port))
 	}
@@ -277,11 +282,35 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 			visit(i)
 		}
 	}
+	for {
+		changed := false
+		for i := range hosts {
+			if blocked[i] {
+				continue
+			}
+			for _, target := range edges[i] {
+				if !blocked[target] && importableAction(hosts[target].Action) {
+					continue
+				}
+				blocked[i] = true
+				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q is not importable", hosts[target].Alias))
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			break
+		}
+	}
 	for i := range hosts {
 		if blocked[i] && hosts[i].Action == PlanAdd {
 			hosts[i].Action = PlanBlockedJump
 		}
 	}
+}
+
+func importableAction(action PlanAction) bool {
+	return action == PlanAdd || action == PlanSkipDuplicate
 }
 
 func jumpHops(raw string) []string {

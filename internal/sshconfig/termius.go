@@ -96,8 +96,8 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 	}
 
 	existingByName, existingByEndpoint := indexExistingAssets(existing)
-	batchNames := map[string]bool{}
-	batchEndpoints := map[endpoint]bool{}
+	batchNames := map[string]endpoint{}
+	batchEndpoints := map[endpoint]string{}
 	for _, rec := range hostRecords {
 		if len(preview.Hosts) >= limits.MaxHosts {
 			truncate(preview, "host count exceeds %d", limits.MaxHosts)
@@ -132,8 +132,13 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 			item.AuthMethod = "agent"
 		}
 		planHostAction(&item, existingByName, existingByEndpoint, batchNames, batchEndpoints)
-		batchNames[strings.ToLower(item.Alias)] = true
-		batchEndpoints[endpointOf(item.Hostname, item.Port, item.Username)] = true
+		ep := endpointOf(item.Hostname, item.Port, item.Username)
+		if _, ok := batchNames[strings.ToLower(item.Alias)]; !ok {
+			batchNames[strings.ToLower(item.Alias)] = ep
+		}
+		if _, ok := batchEndpoints[ep]; !ok {
+			batchEndpoints[ep] = item.Alias
+		}
 		reconcileTermiusKey(&item, rec, canonicalByAlias, existingKeyNames, existingFPNames)
 		preview.Hosts = append(preview.Hosts, item)
 	}

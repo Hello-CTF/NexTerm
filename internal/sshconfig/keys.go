@@ -71,6 +71,9 @@ func DedupeIdentityFiles(paths []string) []string {
 }
 
 func readKeyFileBounded(path string) ([]byte, error) {
+	if err := rejectNonRegular(path); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -94,4 +97,26 @@ func readKeyFileBounded(path string) ([]byte, error) {
 		return nil, fmt.Errorf("sshconfig: key file %s exceeds size limit %d", path, maxKeyFileBytes)
 	}
 	return data, nil
+}
+
+func rejectNonRegular(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	mode := info.Mode()
+	if mode&os.ModeSymlink != 0 {
+		target, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if !target.Mode().IsRegular() {
+			return fmt.Errorf("sshconfig: key file %s is not a regular file", path)
+		}
+		return nil
+	}
+	if !mode.IsRegular() {
+		return fmt.Errorf("sshconfig: key file %s is not a regular file", path)
+	}
+	return nil
 }

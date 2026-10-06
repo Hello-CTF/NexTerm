@@ -119,6 +119,14 @@ func TestPreviewProxyJump(t *testing.T) {
 			t.Errorf("%s action = %q, want blocked-jump", alias, actions[alias])
 		}
 	}
+	for _, alias := range []string{"upstream-dangling", "upstream-cycle", "chainmid", "chainapp"} {
+		if actions[alias] != PlanBlockedJump {
+			t.Errorf("%s action = %q, want blocked-jump (propagated): %v", alias, actions[alias], warnings[alias])
+		}
+	}
+	if !hasWarning(warnings["chainapp"], "not importable") {
+		t.Errorf("chainapp missing propagation warning: %v", warnings["chainapp"])
+	}
 }
 
 func TestPreviewBatchConflicts(t *testing.T) {
