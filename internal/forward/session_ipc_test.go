@@ -30,13 +30,16 @@ func TestSessionManagerCreationIPCErrorCodes(t *testing.T) {
 	}
 	assertCreationError := func(sessionID string, want ipc.Code) {
 		t.Helper()
-		for _, command := range []string{"forward_create", "forward_create_socks"} {
+		for _, command := range []string{"forward_create", "forward_create_socks", "forward_create_remote"} {
 			var args []byte
 			var err error
-			if command == "forward_create" {
+			switch command {
+			case "forward_create":
 				args, err = json.Marshal(CreateLocalArgs{SessionID: sessionID, TargetHost: "host", TargetPort: 22})
-			} else {
+			case "forward_create_socks":
 				args, err = json.Marshal(CreateSocksArgs{SessionID: sessionID})
+			default:
+				args, err = json.Marshal(CreateRemoteArgs{SessionID: sessionID, TargetHost: "127.0.0.1", TargetPort: 8080})
 			}
 			if err != nil {
 				t.Fatal(err)

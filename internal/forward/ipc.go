@@ -26,6 +26,11 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := ipc.Register(dispatcher, "forward_create_remote", func(ctx context.Context, _ *ipc.Call, input CreateRemoteArgs) (Spec, error) {
+		return s.CreateRemote(ctx, input)
+	}); err != nil {
+		return err
+	}
 	if err := ipc.Register(dispatcher, "forward_list", func(context.Context, *ipc.Call, struct{}) ([]Spec, error) {
 		return s.List(), nil
 	}); err != nil {

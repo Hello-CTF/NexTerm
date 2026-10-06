@@ -693,22 +693,40 @@ export const vaultApi = {
   ) => call<void>("credential_update", { args: { id, ...patch } }),
 };
 
+export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string };
+
 export const forwardApi = {
   env: () => call<import("./types").ForwardEnvDto>("forward_env"),
   create: (sessionId: string, listenPort: number, targetHost: string, targetPort: number) =>
-    call<import("./types").ForwardSpecDto>("forward_create", {
+    call<ForwardSpec>("forward_create", {
       sessionId,
       listenPort,
       targetHost,
       targetPort,
     }),
   createSocks: (sessionId: string, listenPort: number, acknowledgeRisk = false) =>
-    call<import("./types").ForwardSpecDto>("forward_create_socks", {
+    call<ForwardSpec>("forward_create_socks", {
       sessionId,
       listenPort,
       ...(acknowledgeRisk ? { acknowledgeRisk: true } : {}),
     }),
-  list: () => call<import("./types").ForwardSpecDto[]>("forward_list"),
+  createRemote: (
+    sessionId: string,
+    bindHost: string,
+    bindPort: number,
+    targetHost: string,
+    targetPort: number,
+    acknowledgeRisk = false,
+  ) =>
+    call<ForwardSpec>("forward_create_remote", {
+      sessionId,
+      bindHost,
+      bindPort,
+      targetHost,
+      targetPort,
+      ...(acknowledgeRisk ? { acknowledgeRisk: true } : {}),
+    }),
+  list: () => call<ForwardSpec[]>("forward_list"),
   remove: (id: string) => call<void>("forward_remove", { id }),
 };
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,20 +18,22 @@ import (
 )
 
 type testSSHServer struct {
-	listener    net.Listener
-	config      *gossh.ServerConfig
-	hostKey     gossh.PublicKey
-	root        string
-	blockExec   chan struct{}
-	blockOnce   sync.Once
-	cols        atomic.Uint32
-	rows        atomic.Uint32
-	keepalives  atomic.Uint32
-	stallSFTP   atomic.Bool
-	sftpStarted chan struct{}
-	active      atomic.Int32
-	agentResult chan error
-	agentKey    gossh.PublicKey
+	listener     net.Listener
+	config       *gossh.ServerConfig
+	hostKey      gossh.PublicKey
+	root         string
+	blockExec    chan struct{}
+	blockOnce    sync.Once
+	cols         atomic.Uint32
+	rows         atomic.Uint32
+	keepalives   atomic.Uint32
+	stallSFTP    atomic.Bool
+	stallCancel  atomic.Bool
+	rejectCancel atomic.Bool
+	sftpStarted  chan struct{}
+	active       atomic.Int32
+	agentResult  chan error
+	agentKey     gossh.PublicKey
 }
 
 func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServer {
@@ -101,16 +104,9 @@ func (s *testSSHServer) handleConn(conn net.Conn) {
 		return
 	}
 	defer serverConn.Close()
-	go func() {
-		for request := range requests {
-			if request.Type == "keepalive@openssh.com" {
-				s.keepalives.Add(1)
-				request.Reply(true, nil)
-			} else {
-				request.Reply(false, nil)
-			}
-		}
-	}()
+	forwards := &remoteForwardSet{listeners: make(map[string]net.Listener)}
+	go s.handleGlobalRequests(serverConn, requests, forwards)
+	defer forwards.closeAll()
 	for newChannel := range channels {
 		switch newChannel.ChannelType() {
 		case "session":
@@ -309,6 +305,156 @@ func (s *testSSHServer) execute(channel gossh.Channel, command string) {
 
 func sendExitStatus(channel gossh.Channel, status uint32) {
 	_, _ = channel.SendRequest("exit-status", false, gossh.Marshal(struct{ Status uint32 }{status}))
+}
+
+type remoteForwardSet struct {
+	mu        sync.Mutex
+	listeners map[string]net.Listener
+}
+
+func (s *testSSHServer) handleGlobalRequests(conn *gossh.ServerConn, requests <-chan *gossh.Request, forwards *remoteForwardSet) {
+	for request := range requests {
+		switch request.Type {
+		case "keepalive@openssh.com":
+			s.keepalives.Add(1)
+			request.Reply(true, nil)
+		case "tcpip-forward":
+			s.handleTCPIPForward(conn, request, forwards)
+		case "cancel-tcpip-forward":
+			s.handleCancelTCPIPForward(request, forwards)
+		default:
+			request.Reply(false, nil)
+		}
+	}
+}
+
+func (s *testSSHServer) handleTCPIPForward(conn *gossh.ServerConn, request *gossh.Request, forwards *remoteForwardSet) {
+	var payload struct {
+		Addr string
+		Port uint32
+	}
+	if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+		request.Reply(false, nil)
+		return
+	}
+	host := payload.Addr
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(int(payload.Port))))
+	if err != nil {
+		request.Reply(false, nil)
+		return
+	}
+	_, portText, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		_ = listener.Close()
+		request.Reply(false, nil)
+		return
+	}
+	port, err := strconv.ParseUint(portText, 10, 32)
+	if err != nil {
+		_ = listener.Close()
+		request.Reply(false, nil)
+		return
+	}
+	key := net.JoinHostPort(payload.Addr, strconv.Itoa(int(port)))
+	forwards.mu.Lock()
+	if _, exists := forwards.listeners[key]; exists {
+		forwards.mu.Unlock()
+		_ = listener.Close()
+		request.Reply(false, nil)
+		return
+	}
+	forwards.listeners[key] = listener
+	forwards.mu.Unlock()
+	request.Reply(true, gossh.Marshal(struct{ Port uint32 }{uint32(port)}))
+	go s.acceptRemoteForward(conn, payload.Addr, uint32(port), listener)
+}
+
+func (s *testSSHServer) handleCancelTCPIPForward(request *gossh.Request, forwards *remoteForwardSet) {
+	var payload struct {
+		Addr string
+		Port uint32
+	}
+	if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+		request.Reply(false, nil)
+		return
+	}
+	if s.stallCancel.Load() {
+		return
+	}
+	if s.rejectCancel.Load() {
+		request.Reply(false, nil)
+		return
+	}
+	key := net.JoinHostPort(payload.Addr, strconv.Itoa(int(payload.Port)))
+	forwards.mu.Lock()
+	listener := forwards.listeners[key]
+	delete(forwards.listeners, key)
+	forwards.mu.Unlock()
+	if listener == nil {
+		request.Reply(false, nil)
+		return
+	}
+	_ = listener.Close()
+	request.Reply(true, nil)
+}
+
+func (s *testSSHServer) acceptRemoteForward(conn *gossh.ServerConn, addr string, port uint32, listener net.Listener) {
+	for {
+		origin, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go s.proxyRemoteForward(conn, addr, port, origin)
+	}
+}
+
+func (s *testSSHServer) proxyRemoteForward(conn *gossh.ServerConn, addr string, port uint32, origin net.Conn) {
+	originHost, originPortText, err := net.SplitHostPort(origin.RemoteAddr().String())
+	if err != nil {
+		_ = origin.Close()
+		return
+	}
+	originPort, err := strconv.ParseUint(originPortText, 10, 32)
+	if err != nil {
+		_ = origin.Close()
+		return
+	}
+	payload := struct {
+		Addr       string
+		Port       uint32
+		OriginAddr string
+		OriginPort uint32
+	}{Addr: addr, Port: port, OriginAddr: originHost, OriginPort: uint32(originPort)}
+	channel, requests, err := conn.OpenChannel("forwarded-tcpip", gossh.Marshal(&payload))
+	if err != nil {
+		_ = origin.Close()
+		return
+	}
+	go gossh.DiscardRequests(requests)
+	go func() {
+		_, _ = io.Copy(channel, origin)
+		channel.CloseWrite()
+	}()
+	go func() {
+		_, _ = io.Copy(origin, channel)
+		if tcp, ok := origin.(*net.TCPConn); ok {
+			tcp.CloseWrite()
+		}
+		channel.Close()
+		origin.Close()
+	}()
+}
+
+func (f *remoteForwardSet) closeAll() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key, listener := range f.listeners {
+		delete(f.listeners, key)
+		_ = listener.Close()
+	}
 }
 
 func (s *testSSHServer) handleDirectTCPIP(newChannel gossh.NewChannel) {
