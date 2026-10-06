@@ -51,7 +51,6 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Docker != nil {
 		toolsDeps = tools.WithDocker(toolsDeps, services.Docker, "")
 	}
-	registry := tools.NewRegistry(toolsDeps)
 
 	grantsManager, err := guard.NewGrants(ctx, services.Store, func(ctx context.Context, event guard.GrantAuditEvent) error {
 		return toolsDeps.Audit(ctx, tools.AuditEntry{AssetID: event.DeviceID, Kind: "ai_grant", Payload: map[string]any{
@@ -61,6 +60,9 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if err != nil {
 		return err
 	}
+	toolsDeps.Grants = grantsManager
+
+	registry := tools.NewRegistry(toolsDeps)
 
 	contextDeps := aicontext.WithSession(aicontext.Dependencies{}, services.Sessions, services.Store, services.Database)
 	if services.Docker != nil {

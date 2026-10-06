@@ -59,6 +59,14 @@ func (s *sessionTerminal) SessionAssetKind(_ context.Context, sessionID string) 
 	return session.Asset().Kind, nil
 }
 
+func (s *sessionTerminal) SessionAssetID(_ context.Context, sessionID string) (string, error) {
+	session, err := s.manager.Session(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return session.Asset().ID, nil
+}
+
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	deps.Transport = manager.Transport
 	deps.Terminal = SessionTerminal(manager)

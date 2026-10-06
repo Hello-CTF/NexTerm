@@ -689,7 +689,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	if forcedConfirm {
 		memory = guard.NewMemory()
 	}
-	decision := guard.Decide(e.Permission, ruling, memory)
+	decision := e.decide(ctx, call, ruling, memory)
 	if forcedConfirm && decision.Action == guard.ActionAllow {
 		decision.Action = guard.ActionAsk
 	}
