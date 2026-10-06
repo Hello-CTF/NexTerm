@@ -186,6 +186,69 @@ func TestInspectKeyFileOversized(t *testing.T) {
 	}
 }
 
+func TestPreviewJumpDupCanonical(t *testing.T) {
+	result, err := Parse(filepath.Join("..", "..", "testdata", "sshconfig", "jumpdup"), DefaultLimits)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	existing := []ExistingAsset{{Name: "known", Host: "known.example.com", Port: 22}}
+	preview := PreviewSSHConfig(result, existing, nil, DefaultLimits)
+	actions := map[string]PlanAction{}
+	for _, host := range preview.Hosts {
+		actions[host.Alias] = host.Action
+	}
+	if actions["Dup"] != PlanBlockedJump {
+		t.Errorf("Dup action = %q, want blocked-jump", actions["Dup"])
+	}
+	if actions["dup"] != PlanSkipDuplicate {
+		t.Errorf("dup action = %q, want skip-duplicate", actions["dup"])
+	}
+	if actions["app"] != PlanBlockedJump {
+		t.Errorf("app action = %q, want blocked-jump (canonical dup target blocked)", actions["app"])
+	}
+	if actions["known"] != PlanSkipDuplicate {
+		t.Errorf("known action = %q, want skip-duplicate", actions["known"])
+	}
+	if actions["user-of-known"] != PlanAdd {
+		t.Errorf("user-of-known action = %q, want add (hop resolves to existing asset)", actions["user-of-known"])
+	}
+}
+
+func TestPreviewAddHopsResolvable(t *testing.T) {
+	existing := []ExistingAsset{
+		{Name: "asset1", Host: "asset1.example.com", Port: 22},
+		{Name: "known", Host: "known.example.com", Port: 22},
+	}
+	for _, fixture := range []string{"proxyjump", "jumpdup"} {
+		result, err := Parse(filepath.Join("..", "..", "testdata", "sshconfig", fixture), DefaultLimits)
+		if err != nil {
+			t.Fatalf("Parse %s: %v", fixture, err)
+		}
+		preview := PreviewSSHConfig(result, existing, nil, DefaultLimits)
+		existingNames := map[string]bool{}
+		for _, asset := range existing {
+			existingNames[strings.ToLower(asset.Name)] = true
+		}
+		addAliases := map[string]bool{}
+		for _, host := range preview.Hosts {
+			if host.Action == PlanAdd {
+				addAliases[strings.ToLower(host.Alias)] = true
+			}
+		}
+		for _, host := range preview.Hosts {
+			if host.Action != PlanAdd {
+				continue
+			}
+			for _, hop := range jumpHops(host.ProxyJump) {
+				lower := strings.ToLower(hop)
+				if !existingNames[lower] && !addAliases[lower] {
+					t.Errorf("%s: add host %q has unresolvable hop %q", fixture, host.Alias, hop)
+				}
+			}
+		}
+	}
+}
+
 func TestInspectKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	path, fingerprint := writeTestKey(t, dir, "id_ed25519", false)

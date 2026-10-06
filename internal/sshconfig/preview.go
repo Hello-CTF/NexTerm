@@ -213,32 +213,43 @@ func hasKeyName(byName map[string]ExistingKey, name string) bool {
 }
 
 func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
-	byAlias := map[string]int{}
-	for i := range hosts {
-		byAlias[strings.ToLower(hosts[i].Alias)] = i
-	}
 	existingNames := map[string]bool{}
 	for _, asset := range existing {
 		existingNames[strings.ToLower(asset.Name)] = true
 	}
+	canonicalAdd := map[string]int{}
+	for i := range hosts {
+		if hosts[i].Action != PlanAdd {
+			continue
+		}
+		lower := strings.ToLower(hosts[i].Alias)
+		if _, ok := canonicalAdd[lower]; !ok {
+			canonicalAdd[lower] = i
+		}
+	}
 	edges := make([][]int, len(hosts))
 	blocked := make([]bool, len(hosts))
 	for i := range hosts {
+		imported := hosts[i].Action == PlanAdd
 		for _, hop := range jumpHops(hosts[i].ProxyJump) {
 			if strings.EqualFold(hop, hosts[i].Alias) {
 				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q is the host itself", hop))
 				blocked[i] = true
 				continue
 			}
-			if target, ok := byAlias[strings.ToLower(hop)]; ok {
+			lower := strings.ToLower(hop)
+			if existingNames[lower] {
+				continue
+			}
+			target, ok := canonicalAdd[lower]
+			if !ok {
+				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q matches no imported or existing host", hop))
+				blocked[i] = true
+				continue
+			}
+			if imported {
 				edges[i] = append(edges[i], target)
-				continue
 			}
-			if existingNames[strings.ToLower(hop)] {
-				continue
-			}
-			hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q matches no imported or existing host", hop))
-			blocked[i] = true
 		}
 	}
 	const (
