@@ -107,12 +107,6 @@ func (m *Manager) Spawn(ctx context.Context, request Request) (Handle, error) {
 	if err != nil {
 		return Handle{}, err
 	}
-	if request.ID == "" && m.config.NewID != nil {
-		request.ID = m.config.NewID()
-		if strings.TrimSpace(request.ID) == "" {
-			return Handle{}, errors.New("subagent ID factory returned an empty ID")
-		}
-	}
 	if err := ctx.Err(); err != nil {
 		return Handle{}, err
 	}

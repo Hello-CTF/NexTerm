@@ -23,7 +23,6 @@ type Service struct {
 	reconnect        ReconnectPolicy
 	dialTimeout      time.Duration
 	handshakeTimeout time.Duration
-	newID            func() string
 	now              func() time.Time
 	onError          func(error)
 	listen           func(string, string) (net.Listener, error)
@@ -53,9 +52,6 @@ func NewService(config Config) *Service {
 	if config.HandshakeTimeout <= 0 {
 		config.HandshakeTimeout = 10 * time.Second
 	}
-	if config.NewID == nil {
-		config.NewID = ids.New
-	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -66,7 +62,6 @@ func NewService(config Config) *Service {
 		reconnect:        reconnect,
 		dialTimeout:      config.DialTimeout,
 		handshakeTimeout: config.HandshakeTimeout,
-		newID:            config.NewID,
 		now:              config.Now,
 		onError:          config.OnError,
 		listen:           net.Listen,
@@ -186,7 +181,7 @@ func (s *Service) create(_ context.Context, sessionID, kind string, listenPort u
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "转发监听端口无效", err)
 	}
 
-	id := s.newID()
+	id := ids.New()
 	ctx, cancel := context.WithCancel(s.ctx)
 	f := &forwarder{
 		id:        id,

@@ -21,7 +21,7 @@ import (
 
 var productionMemoryScope = memory.Scope{Tenant: "local", Subject: "default"}
 
-func composeAIRuntime(ctx context.Context, services *ProductionServices, userClientID string) error {
+func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	if services.Store == nil || services.Sessions == nil || services.Profiles == nil {
 		return errors.New("AI runtime requires store, sessions and profiles services")
 	}

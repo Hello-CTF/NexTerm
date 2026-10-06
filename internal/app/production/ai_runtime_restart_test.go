@@ -75,7 +75,7 @@ func composeRestartRuntime(t *testing.T, database *store.Store, providerURL stri
 		t.Fatal(err)
 	}
 	services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
-	if err := composeAIRuntime(ctx, services, "test-client"); err != nil {
+	if err := composeAIRuntime(ctx, services); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

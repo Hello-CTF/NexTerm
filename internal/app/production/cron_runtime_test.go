@@ -158,7 +158,7 @@ func TestComposedCronRuntimeSurvivesRestart(t *testing.T) {
 			}),
 		})
 		services := &ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
-		if err := composeAIRuntime(ctx, services, "test-client"); err != nil {
+		if err := composeAIRuntime(ctx, services); err != nil {
 			t.Fatal(err)
 		}
 		return services, database

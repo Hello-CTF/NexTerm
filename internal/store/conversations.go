@@ -75,14 +75,6 @@ func (s *Store) ConvRename(ctx context.Context, id, title string) error {
 	return nil
 }
 
-func (s *Store) ConvTouch(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE ai_conversation SET updated_at=? WHERE id=?", ids.NowMS(), id)
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
 func (s *Store) ConvDelete(ctx context.Context, id string) (returnErr error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
