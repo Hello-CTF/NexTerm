@@ -5,7 +5,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 )
 
-func WithSession(deps Dependencies, manager *session.Manager, userClientID string) Dependencies {
+func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	terminal := tools.SessionTerminal(manager)
 	deps.Snapshot = terminal.Snapshot
 	deps.WriteAI = manager.WriteInternal
