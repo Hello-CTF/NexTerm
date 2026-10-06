@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 )
@@ -98,6 +99,39 @@ func (s *Store) SettingDelete(ctx context.Context, key string) error {
 		return dbError(err)
 	}
 	return nil
+}
+
+func (s *Store) SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM setting WHERE key LIKE ? ESCAPE '\'`, escapeLikePrefix(prefix)+"%")
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	values := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, dbError(err)
+		}
+		values[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, dbError(err)
+	}
+	return values, nil
+}
+
+func escapeLikePrefix(prefix string) string {
+	var out strings.Builder
+	out.Grow(len(prefix))
+	for _, r := range prefix {
+		switch r {
+		case '\\', '%', '_':
+			out.WriteByte('\\')
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 type SettingTx interface {
