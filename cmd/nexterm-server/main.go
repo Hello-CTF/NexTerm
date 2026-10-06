@@ -7,10 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
+	fleetagent "github.com/ProbiusOfficial/NexTerm/internal/fleet/agent"
+	fleetserver "github.com/ProbiusOfficial/NexTerm/internal/fleet/server"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
 	"github.com/ProbiusOfficial/NexTerm/internal/server"
@@ -26,6 +29,9 @@ func main() {
 func run(args []string) int {
 	if len(args) > 0 && args[0] == supervisor.HelperCommand {
 		return supervisor.RunHelperCLI(args[1:])
+	}
+	if len(args) > 0 && args[0] == "agent" {
+		return fleetagent.RunCLI(args[1:], os.Getenv, os.Stdout, os.Stderr)
 	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
@@ -139,6 +145,18 @@ func run(args []string) int {
 			return 1
 		}
 	}
+	var fleetService *fleetserver.Service
+	if application.Services.Store != nil && accounts != nil && !invocation.SyncOnly {
+		fleetService, err = fleetserver.New(fleetserver.Config{
+			DB:       application.Services.Store.DB(),
+			Accounts: accounts,
+			AuthOff:  invocation.Auth == core.AuthOff,
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 1
+		}
+	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
 	var settings server.SettingStore
 	var audit server.AuditFunc
@@ -167,6 +185,7 @@ func run(args []string) int {
 		ChannelStats:   hubAdapter.Stats,
 		Vault:          application.Services.Vault,
 		Retention:      serverRetentionConfig(application.Services.Retention),
+		Fleet:          fleetService,
 		Settings:       settings,
 		AuditFunc:      audit,
 		Logger:         logger.Logger,
@@ -178,6 +197,18 @@ func run(args []string) int {
 	}
 	if images := transport.Images(); images != nil && !invocation.SyncOnly {
 		go images.RunSweeper(ctx)
+	}
+	if fleetService != nil {
+		rollupRunner := fleetserver.NewRollupRunner(fleetService, 0, logger.Logger)
+		if err := rollupRunner.Start(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 1
+		}
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			_ = rollupRunner.Shutdown(shutdownCtx)
+		}()
 	}
 	switch {
 	case invocation.RequireVault:

@@ -50,6 +50,7 @@ const (
 	auditKindDeviceRevoke    = "device_revoke"
 	auditKindDeviceAutostart = "device_autostart"
 	auditKindDeviceFailover  = "device_failover"
+	auditKindDeviceTerminal  = "device_terminal"
 )
 
 type Config struct {
@@ -64,6 +65,7 @@ type Service struct {
 	authOff    bool
 	now        func() int64
 	enrollGate *account.LoginThrottle
+	registry   *Registry
 }
 
 type Option func(*Service)
@@ -89,6 +91,7 @@ func New(config Config, options ...Option) (*Service, error) {
 		authOff:    config.AuthOff,
 		now:        ids.NowMS,
 		enrollGate: account.NewLoginThrottle(),
+		registry:   NewRegistry(),
 	}
 	for _, option := range options {
 		option(s)
@@ -474,7 +477,34 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 	if err := tx.Commit(); err != nil {
 		return dbError(err)
 	}
+	s.registry.KickDevice(deviceID)
 	return nil
+}
+
+// AgentDesiredConfig 返回服务端期望的 agent 配置; metrics 间隔是产品固定值
+// (schema 无按设备列), 与 enroll 下发保持一致。
+func (s *Service) AgentDesiredConfig(ctx context.Context, deviceID string) (AgentConfig, error) {
+	var desiredAutostart, terminalEnabled int64
+	err := s.db.QueryRowContext(ctx, "SELECT desired_autostart, terminal_enabled FROM device_agent WHERE device_id = ?", deviceID).
+		Scan(&desiredAutostart, &terminalEnabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentConfig{}, ipc.NewError(ipc.CodeNotFound, "未找到: 设备代理")
+	}
+	if err != nil {
+		return AgentConfig{}, dbError(err)
+	}
+	return AgentConfig{
+		DesiredAutostart:  desiredAutostart != 0,
+		MetricsIntervalMS: DefaultMetricsIntervalMS,
+		TerminalEnabled:   terminalEnabled != 0,
+	}, nil
+}
+
+// AgentConfig 是服务端期望的 agent 运行配置。
+type AgentConfig struct {
+	DesiredAutostart  bool
+	MetricsIntervalMS int64
+	TerminalEnabled   bool
 }
 
 func (s *Service) SetDesiredAutostart(ctx context.Context, identity *account.Identity, deviceID string, desired bool) error {
@@ -491,6 +521,14 @@ func (s *Service) SetDesiredAutostart(ctx context.Context, identity *account.Ide
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "未找到: 设备代理")
+	}
+	if updated, err := s.AgentDesiredConfig(ctx, deviceID); err == nil {
+		s.registry.PushControl(deviceID, controlMessage{
+			Type:              "config",
+			DesiredAutostart:  &updated.DesiredAutostart,
+			MetricsIntervalMS: &updated.MetricsIntervalMS,
+			TerminalEnabled:   &updated.TerminalEnabled,
+		})
 	}
 	return nil
 }
@@ -709,5 +747,11 @@ VALUES(?,NULL,NULL,?,?,?,NULL,NULL)`, s.now(), auditSourceFleet, auditKindDevice
 	if err := tx.Commit(); err != nil {
 		return dbError(err)
 	}
+	return nil
+}
+
+// Close 断开全部设备控制通道与桥接 (服务关停)。
+func (s *Service) Close() error {
+	s.registry.Close()
 	return nil
 }

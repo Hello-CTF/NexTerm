@@ -11,6 +11,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
+	fleetserver "github.com/ProbiusOfficial/NexTerm/internal/fleet/server"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
@@ -61,6 +62,7 @@ type Config struct {
 	Vault          Vault
 	VaultStatus    func(context.Context) (any, error)
 	Retention      *RetentionConfig
+	Fleet          *fleetserver.Service
 	Version        string
 	MaxRPCBytes    int64
 	Logger         *slog.Logger
@@ -91,6 +93,7 @@ type Server struct {
 	images          *ImageStore
 	settings        SettingStore
 	audit           AuditFunc
+	fleet           *fleetserver.Service
 
 	readGate func()
 }
@@ -213,7 +216,7 @@ func New(config Config) (*Server, error) {
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
-		images: config.Images, settings: config.Settings, audit: config.AuditFunc,
+		images: config.Images, settings: config.Settings, audit: config.AuditFunc, fleet: config.Fleet,
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
@@ -244,6 +247,10 @@ func (s *Server) routes(config Config) http.Handler {
 	}
 	if s.options.SyncOnly {
 		return mux
+	}
+
+	if s.fleet != nil {
+		s.fleet.Mount(mux)
 	}
 
 	rpcHandler := ipc.NewRPCHandler(s.dispatcher, s.environment)
@@ -351,7 +358,11 @@ func (s *Server) Close() error {
 
 func (s *Server) CloseContext(ctx context.Context) error {
 	s.closeOnce.Do(func() {
-		s.closeErr = errors.Join(s.events.Close(), s.sockets.closeAndWait(ctx))
+		var fleetErr error
+		if s.fleet != nil {
+			fleetErr = s.fleet.Close()
+		}
+		s.closeErr = errors.Join(s.events.Close(), s.sockets.closeAndWait(ctx), fleetErr)
 	})
 	return s.closeErr
 }

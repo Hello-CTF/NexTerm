@@ -36,6 +36,11 @@ CHOOSER_ID = "open-save-chooser"
 GATEWAY_ID = "gateway-auth"
 CONTENT_PREFIX = "file:///lzcapp/pkg/content/"
 
+# 匿名可达的最小集合: v2 同步对端 + 设备 agent 合同 (enroll/sync/current-url/WS)。
+# 设备身份由设备凭证把关, 不经平台 gateway auth; 任何 widening 都会让匿名请求
+# 也拿到网关头, 任何收窄都会让设备 agent 在平台上够不到服务器。
+EXPECTED_PUBLIC_PATH = ["/sync/rpc", "/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device"]
+
 DIRECTIVE = re.compile(r"^\s*#@build\s+(.*?)\s*$")
 
 
@@ -134,10 +139,11 @@ def assert_profile(document, want_subdomain):
     print("    routes = 1 条短服务名路由")
 
     public_path = app.get("public_path")
-    assert public_path == ["/sync/rpc"], (
-        f"public_path 应当只有 /sync/rpc（匿名同步对端依赖它；被改宽会让匿名请求也拿到网关头）：{public_path!r}"
+    assert public_path == EXPECTED_PUBLIC_PATH, (
+        f"public_path 应当恰好是匿名同步 + 设备 agent 合同（被改宽会让匿名请求也拿到网关头，"
+        f"被收窄会让设备 agent 够不到服务器）：{public_path!r}"
     )
-    print("    public_path = ['/sync/rpc']")
+    print(f"    public_path = {EXPECTED_PUBLIC_PATH}")
 
     injects = app.get("injects")
     assert isinstance(injects, list) and len(injects) == 3, (
@@ -207,7 +213,7 @@ def selftest(yaml, Loader, raw) -> None:
     )
 
     def drift_public_path(doc):
-        doc["application"]["public_path"] = ["/sync/rpc", "/rpc"]
+        doc["application"]["public_path"] = EXPECTED_PUBLIC_PATH + ["/rpc"]
 
     def drop_public_path(doc):
         doc["application"]["public_path"] = []
