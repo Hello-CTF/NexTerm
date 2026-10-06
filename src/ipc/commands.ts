@@ -535,8 +535,6 @@ export interface TakeoverRunResult {
   token: string;
 }
 
-const DEMO_TAKEOVER_TOKEN = "demo-takeover";
-
 export const aiApi = {
   chat: (
     args: {
@@ -577,15 +575,10 @@ export const aiApi = {
     call<void>("ai_set_provider", { config }),
   getProvider: () => call<ProviderConfig>("ai_get_provider"),
   presets: () => call<string[]>("ai_presets"),
-  takeoverEnter: async (tabId: string): Promise<{ token: string }> => {
-    const res = await call<{ token: string } | null>("ai_takeover_enter", { tabId });
-    if (res?.token) return res;
-    if (DEMO) return { token: DEMO_TAKEOVER_TOKEN };
-    throw new Error("接管令牌响应无效");
-  },
+  takeoverEnter: (tabId: string) => call<{ token: string }>("ai_takeover_enter", { tabId }),
   takeoverExit: (tabId: string, token: string, reason?: string) =>
     call<void>("ai_takeover_exit", { tabId, token, reason }),
-  takeoverRun: async (args: {
+  takeoverRun: (args: {
     tabId: string;
     token: string;
     instruction: string;
@@ -593,10 +586,7 @@ export const aiApi = {
     channel: unknown;
   }): Promise<TakeoverRunResult> => {
     const { channel, ...body } = args;
-    const res = await call<TakeoverRunResult | string>("ai_takeover_run", { ...body, channel });
-    if (res && typeof res === "object" && res.jobId && res.token) return res;
-    if (DEMO && typeof res === "string") return { jobId: res, token: DEMO_TAKEOVER_TOKEN };
-    throw new Error("接管任务响应无效");
+    return call<TakeoverRunResult>("ai_takeover_run", { ...body, channel });
   },
   conversationList: () =>
     call<import("./types").ConversationDto[]>("ai_conversation_list"),

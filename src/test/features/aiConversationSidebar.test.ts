@@ -401,8 +401,8 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([
-      { role: "user", content: "旧问题" },
-      { role: "assistant", content: "旧回答" },
+      { role: "user", content: { role: "user", content: "旧问题" } },
+      { role: "assistant", content: { role: "assistant", content: "旧回答" } },
     ]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
@@ -450,7 +450,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "当前回答" });
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
@@ -941,7 +941,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("does not bind a finished interrupted run or leave the sidebar busy", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     mocks.runs.mockResolvedValue([
       {
         id: "job-dead", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 2,
@@ -969,7 +969,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("binds the older interrupted run when only it still has a pending question", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     const interruptedRun = (id: string, createdAt: number) => ({
       id, conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
       planMode: false, source: "chat", answer: "", turns: 0, tokensIn: 0, tokensOut: 0,
@@ -1006,7 +1006,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("settles the restored run when a reconnect replays its terminal event", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     mocks.runs.mockResolvedValue([
       {
         id: "job-old", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
@@ -1053,7 +1053,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("clears busy and disposes the restored channel when the bound run expired and the answer fails", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     mocks.runs.mockResolvedValue([
       {
         id: "job-old", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,
@@ -1107,7 +1107,7 @@ describe("AiSidebar conversation stream UX", () => {
 
   it("settles the bound restored run by itself when it expires while viewing", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     mocks.runs.mockResolvedValue([
       {
         id: "job-old", conversationId: "c-9", status: "interrupted", attempt: 1, seq: 1,

@@ -623,7 +623,7 @@ describe("AiSidebar stream recovery", () => {
 
   it("replays an interrupted run's canceled terminal without error styling", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     mocks.runs.mockResolvedValue([
       {
         id: "job-old", conversationId: "c-9", status: "canceled", attempt: 1, seq: 2,

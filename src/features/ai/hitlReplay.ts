@@ -58,11 +58,10 @@ function isOpenInteraction(
 }
 
 function matchesRequest(
-  card: { requestId?: string; nonce: string; callId: string },
-  request: { id: string; nonce: string; callId: string },
+  card: { requestId?: string },
+  request: { id: string },
 ): boolean {
-  if (card.requestId) return card.requestId === request.id;
-  return card.nonce === request.nonce && card.callId === request.callId;
+  return card.requestId !== undefined && card.requestId === request.id;
 }
 
 function openInteractions(state: ConversationState, generation: number): InteractionItem[] {

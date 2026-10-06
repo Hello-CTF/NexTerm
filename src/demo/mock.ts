@@ -252,6 +252,7 @@ function throwAppError(code: string, message: string, detail?: Record<string, un
 }
 
 const DEMO_NGINX_PATH = "/etc/nginx/nginx.conf";
+const DEMO_TAKEOVER_TOKEN = "demo-takeover";
 const DEMO_NGINX_BEFORE = "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;";
 const DEMO_NGINX_AFTER =
   "worker_processes auto;\nkeepalive_timeout 65;\nserver_tokens off;\nclient_max_body_size 64m;";
@@ -539,6 +540,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         rendered: `write_file {"path":"${path}","content":"…"}\n这是本会话第 1 次请求写权限。`,
         reason: "这是本会话第 1 次请求写权限。",
         preview: { path, kind: creating ? "create" : "modify", before, after },
+        confirmationNonce: `nonce-${uid("n")}`,
       }),
     );
     pendingAi.set(jobId, (decision) => {
@@ -600,6 +602,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5–15 秒。\n这是本会话第 1 次请求写权限。`,
         reason: "这是本会话第 1 次请求写权限。",
         preview: null,
+        confirmationNonce: `nonce-${uid("n")}`,
       });
       pendingAi.set(jobId, (decision) => {
         const head = decision === "deny" ? "" : "已按你的授权执行 `docker restart mysql-prod`，容器已重启：\n\n";
@@ -1728,6 +1731,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       ];
 
     case "ai_takeover_enter":
+      return { token: DEMO_TAKEOVER_TOKEN };
+
     case "ai_takeover_exit":
       return null;
 
@@ -1756,7 +1761,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
             "先被 unattended-upgrades 占着 dpkg 锁，停掉它之后 nginx 装上了；`systemctl is-active` 返回 active，本机 80 端口返回 200。全程 4 步都在你面前的终端里，可逐屏回放。",
         }),
       );
-      return jobId;
+      return { jobId, token: DEMO_TAKEOVER_TOKEN };
     }
 
     case "memory_create": {
