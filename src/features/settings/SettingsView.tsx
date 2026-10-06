@@ -361,6 +361,8 @@ export function SettingsView() {
             {vault &&
               (vault.mode === "master" ? (
                 <span className="nx-badge nx-badge-green">已开启</span>
+              ) : vault.mode === "not_init" ? (
+                <span className="nx-badge nx-badge-amber">未初始化</span>
               ) : (
                 <span className="nx-badge">未开启</span>
               ))}
@@ -372,7 +374,9 @@ export function SettingsView() {
               <p className="nx-hint mt-0.5">
                 {vault?.mode === "master"
                   ? "开启：每次启动需输入密码后方可使用凭据。"
-                  : "关闭：无需密码，启动后凭据直接可用。"}
+                  : vault?.mode === "not_init"
+                    ? "尚未初始化：勾选下方开关并设置保护密码即可完成初始化；初始化前无法保存任何密码或私钥。"
+                    : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
               </p>
             </div>
             <input
@@ -428,6 +432,9 @@ export function SettingsView() {
               <button className="nx-btn nx-btn-ghost" onClick={() => setPendingEnable(false)}>
                 取消
               </button>
+              <p className="nx-hint w-full text-[11px]">
+                保护密码只在本机使用，不会上传；忘记后无法找回，已保存的凭据将永远无法解密。
+              </p>
             </div>
           )}
 
