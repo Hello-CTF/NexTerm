@@ -280,7 +280,7 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 					t.Fatalf("subagent request leaked parent or grandchild content: %s", spawnMessageText(message.Content))
 				}
 			}
-			if seen["list_assets"] != 1 || seen["todo_write"] != 1 || len(names) != 2 {
+			if seen["shell_history"] != 1 || seen["list_assets"] != 1 || seen["todo_write"] != 1 || len(names) != 3 {
 				t.Fatalf("subagent scope must advertise exactly the intersected enabled tools: %v", names)
 			}
 		default:
