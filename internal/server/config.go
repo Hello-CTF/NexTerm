@@ -36,6 +36,7 @@ type Options struct {
 	MasterKey      string
 	SyncOnly       bool
 	Auth           string
+	PublicBaseURL  string
 	AllowedOrigins []string
 }
 
@@ -81,6 +82,7 @@ func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
 		Options: Options{
 			Listen: parsed.Listen, DataDir: dataDir, WebRoot: webRoot,
 			MasterKey: masterKey, SyncOnly: parsed.SyncOnly, Auth: parsed.Auth,
+			PublicBaseURL: parsed.PublicBaseURL,
 		},
 		Help: parsed.Help, Version: parsed.Version,
 	}, nil
@@ -123,6 +125,9 @@ Flags:
                       on = account sessions; loopback = no auth on a loopback listener;
                       off = local shared workspace only: account/admin/device routes stay
                       closed (no implicit superadmin) and startup refuses if any user exists
+  --public-base-url URL  Default file access base URL for public image links
+                      (env NEXTERM_PUBLIC_BASE_URL); http/https only, path prefix allowed,
+                      userinfo/query/fragment rejected; unset = same-origin relative links
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --version           Print the version

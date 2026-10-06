@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -30,10 +31,46 @@ type Invocation struct {
 	MasterKey     string
 	MasterKeyFile string
 	Auth          string
+	PublicBaseURL string
 	SyncOnly      bool
 	RequireVault  bool
 	Help          bool
 	Version       bool
+}
+
+// FilePublicBaseURLSettingKey 是持久化在 setting 表的文件访问基础 URL 键,
+// 服务端 admin settings API 与桌面 files IPC 共用。
+const FilePublicBaseURLSettingKey = "files.public_base_url"
+
+// ParsePublicBaseURL 校验文件访问基础 URL: 仅接受 http/https, 必须有 host,
+// 允许路径前缀, 拒绝 userinfo/query/fragment; 返回去掉尾斜杠的规范形式。
+// 空串表示未设置(调用方据此回退为同源相对链接)。
+func ParsePublicBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid public base URL %q: %w", raw, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("invalid public base URL %q: scheme must be http or https", raw)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("invalid public base URL %q: host is required", raw)
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("invalid public base URL %q: userinfo is not allowed", raw)
+	}
+	if parsed.RawQuery != "" {
+		return "", fmt.Errorf("invalid public base URL %q: query is not allowed", raw)
+	}
+	if parsed.Fragment != "" {
+		return "", fmt.Errorf("invalid public base URL %q: fragment is not allowed", raw)
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String(), nil
 }
 
 func ParseCLI(args []string, defaultCommand Command, getenv func(string) string) (Invocation, error) {
@@ -47,6 +84,7 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		MasterKey:     getenv("NEXTERM_MASTER_KEY"),
 		MasterKeyFile: getenv("NEXTERM_MASTER_KEY_FILE"),
 		Auth:          valueOr(getenv("NEXTERM_AUTH"), AuthOn),
+		PublicBaseURL: getenv("NEXTERM_PUBLIC_BASE_URL"),
 	}
 	commandSeen := false
 
@@ -109,6 +147,8 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 				invocation.MasterKeyFile = value
 			case "--auth":
 				invocation.Auth = value
+			case "--public-base-url":
+				invocation.PublicBaseURL = value
 			}
 			continue
 		}
@@ -139,6 +179,11 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		default:
 			return Invocation{}, fmt.Errorf("invalid --auth value %q (want %q, %q, or %q)", invocation.Auth, AuthOn, AuthLoopback, AuthOff)
 		}
+		base, err := ParsePublicBaseURL(invocation.PublicBaseURL)
+		if err != nil {
+			return Invocation{}, err
+		}
+		invocation.PublicBaseURL = base
 	}
 	return invocation, nil
 }
@@ -175,6 +220,9 @@ Flags:
                       on = account sessions; loopback = no auth on a loopback listener;
                       off = local shared workspace only: account/admin/device routes stay
                       closed (no implicit superadmin) and startup refuses if any user exists
+  --public-base-url URL  Default file access base URL for public image links
+                      (env NEXTERM_PUBLIC_BASE_URL); http/https only, path prefix allowed,
+                      userinfo/query/fragment rejected; unset = same-origin relative links
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --version           Print the version
@@ -184,7 +232,7 @@ Flags:
 
 func isStringFlag(name string) bool {
 	switch name {
-	case "--listen", "--data-dir", "--web-root", "--master-key", "--master-key-file", "--auth":
+	case "--listen", "--data-dir", "--web-root", "--master-key", "--master-key-file", "--auth", "--public-base-url":
 		return true
 	default:
 		return false

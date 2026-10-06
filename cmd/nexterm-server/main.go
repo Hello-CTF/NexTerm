@@ -14,6 +14,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
 	"github.com/ProbiusOfficial/NexTerm/internal/server"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
@@ -150,13 +151,22 @@ func run(args []string) int {
 		return 1
 	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
+	var settings server.SettingStore
+	var audit server.AuditFunc
+	if application.Services.Store != nil {
+		settings = application.Services.Store
+		audit = func(ctx context.Context, source, kind string, payload map[string]any) error {
+			return application.Services.Store.AuditInsert(ctx, store.AuditInput{Source: source, Kind: kind, Payload: payload})
+		}
+	}
 	transport, err := server.New(server.Config{
 		Options: server.Options{
-			Listen:   invocation.Listen,
-			DataDir:  paths.DataDir,
-			WebRoot:  invocation.WebRoot,
-			SyncOnly: invocation.SyncOnly,
-			Auth:     invocation.Auth,
+			Listen:        invocation.Listen,
+			DataDir:       paths.DataDir,
+			WebRoot:       invocation.WebRoot,
+			SyncOnly:      invocation.SyncOnly,
+			Auth:          invocation.Auth,
+			PublicBaseURL: invocation.PublicBaseURL,
 		},
 		Dispatcher:   application.Dispatcher,
 		Environment:  application.Environment(""),
@@ -167,12 +177,17 @@ func run(args []string) int {
 		ChannelStats: hubAdapter.Stats,
 		Vault:        application.Services.Vault,
 		Retention:    serverRetentionConfig(application.Services.Retention),
+		Settings:     settings,
+		AuditFunc:    audit,
 		Logger:       logger.Logger,
 		WebSocket:    webSocket,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 1
+	}
+	if images := transport.Images(); images != nil && !invocation.SyncOnly {
+		go images.RunSweeper(ctx)
 	}
 	switch {
 	case invocation.RequireVault:
