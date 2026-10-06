@@ -9,6 +9,11 @@
 // passwords, private keys or sync payloads: the package touches no
 // credential, asset or sync table, and only SHA-256 token hashes are stored.
 //
+// Grants are snapshots, not authority: input paths and agent rechecks must
+// revalidate against current rows via RevalidateLinkInput (links) or
+// RevalidateHostAccess (host shares), and the agent-side Gate rechecks
+// expiry and revocation around every copied chunk.
+//
 // Server-side HTTP mounting and fleet route integration are a separate
 // slice; this package is verified with explicit fakes. Relay-capable hosts
 // are not modeled yet, so both share kinds currently require a
@@ -194,20 +199,24 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 	return &grant, nil
 }
 
-// authorize 是分享设备动作的唯一授权点: superadmin 或设备 owner 放行,
-// 已吊销设备一律拒绝; 每次判定 (放行或拒绝) 都写审计。
-func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
+// authorizeDevice 判定 owner-or-superadmin 并给出 outcome/reason, 不写审计。
+func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identity, deviceID string) (*deviceGrant, string, string, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
-	outcome, reason := "allow", ""
-	var decision error
 	switch {
 	case err != nil:
-		outcome, reason, decision = "deny", "not_found", err
+		return nil, "deny", "not_found", err
 	case grant.revoked:
-		outcome, reason, decision = "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return nil, "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	case identity.Role != account.RoleSuperadmin && grant.userID != identity.UserID:
-		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
+		return nil, "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
+	return grant, "allow", "", nil
+}
+
+// authorize 是分享设备动作的授权点: superadmin 或设备 owner 放行, 已吊销设备
+// 一律拒绝; 每次判定 (放行或拒绝) 都写审计。
+func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
+	grant, outcome, reason, decision := s.authorizeDevice(ctx, identity, deviceID)
 	auditErr := s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason})
 	if decision != nil {
 		return nil, decision

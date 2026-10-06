@@ -156,6 +156,7 @@ WHERE l.token_hash = ?`, hashSecret(token)).
 }
 
 // RevokeLink 吊销公开链接; owner 或 superadmin 可执行, 重复吊销不报错。
+// 每次判定都写含 share_id 的审计。
 func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, linkID string) error {
 	var link Link
 	var revokedAt sql.NullInt64
@@ -167,8 +168,16 @@ func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, li
 	if err != nil {
 		return dbError(err)
 	}
-	if _, err := s.authorize(ctx, identity, link.DeviceID, "revoke", auditKindLinkRevoke); err != nil {
-		return err
+	_, outcome, reason, decision := s.authorizeDevice(ctx, identity, link.DeviceID)
+	auditErr := s.audit(ctx, auditKindLinkRevoke, auditPayload{
+		Action: "revoke", ShareID: link.ID, DeviceID: link.DeviceID, SessionID: link.SessionID,
+		OwnerID: link.OwnerID, Requester: identity.UserID, Outcome: outcome, Reason: reason,
+	})
+	if decision != nil {
+		return decision
+	}
+	if auditErr != nil {
+		return auditErr
 	}
 	if _, err := s.db.ExecContext(ctx, "UPDATE share_link SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", s.now(), linkID); err != nil {
 		return dbError(err)
@@ -208,16 +217,84 @@ func (s *Service) ListLinks(ctx context.Context, identity *account.Identity) ([]
 	return links, rows.Err()
 }
 
-// CheckLinkInput 在服务端强制链接的读写范围: 只读链接的输入一律拒绝并写
-// 审计; 读写链接放行并记录。过期授权在此同样被拒。
-func (s *Service) CheckLinkInput(ctx context.Context, grant *Grant) error {
-	allowed := grant != nil && grant.Permission.AllowsWrite() && s.now() < grant.ExpiresAt
-	reason := ""
-	if !allowed {
-		reason = "read_only"
-		if grant != nil && s.now() >= grant.ExpiresAt {
-			reason = "expired"
+// revalidateLink 是 RevalidateLink 的内部实现, 额外返回机器可读的拒绝原因
+// ("revoked"/"expired"/"not_found"), 供输入路径写审计。
+func (s *Service) revalidateLink(ctx context.Context, grant *Grant) (*Grant, string, error) {
+	if grant == nil || len(grant.ShareIDs) == 0 {
+		return nil, "not_found", ipc.NewError(ipc.CodeForbidden, "分享链接无效")
+	}
+	now := s.now()
+	reason := "not_found"
+	permission := PermissionRead
+	var expiresAt int64
+	var validIDs []string
+	for _, id := range grant.ShareIDs {
+		var deviceID, sessionID, rowPermission string
+		var rowExpiresAt int64
+		var revokedAt sql.NullInt64
+		err := s.db.QueryRowContext(ctx, `SELECT device_id, session_id, permission, expires_at, revoked_at FROM share_link WHERE id = ?`, id).
+			Scan(&deviceID, &sessionID, &rowPermission, &rowExpiresAt, &revokedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
 		}
+		if err != nil {
+			return nil, "", dbError(err)
+		}
+		if deviceID != grant.DeviceID || sessionID != grant.SessionID {
+			continue
+		}
+		switch {
+		case revokedAt.Valid:
+			reason = "revoked"
+		case now >= rowExpiresAt:
+			reason = "expired"
+		default:
+			validIDs = append(validIDs, id)
+			if Permission(rowPermission).AllowsWrite() {
+				permission = PermissionReadWrite
+			}
+			if rowExpiresAt > expiresAt {
+				expiresAt = rowExpiresAt
+			}
+		}
+	}
+	if len(validIDs) == 0 {
+		return nil, reason, ipc.NewError(ipc.CodeForbidden, linkDenyMessage(reason))
+	}
+	refreshed := *grant
+	refreshed.ShareIDs = validIDs
+	refreshed.Permission = permission
+	refreshed.ExpiresAt = expiresAt
+	return &refreshed, "", nil
+}
+
+// RevalidateLink 按 ShareIDs 重查链接行并校验设备/会话绑定: 吊销、过期或
+// 绑定不一致的行一律剔除; 全部失效则拒绝。返回刷新后的 Grant (权限与过期
+// 时间以当前行为准), 供连接路径与 agent recheck 使用, 不信任签发时快照。
+func (s *Service) RevalidateLink(ctx context.Context, grant *Grant) (*Grant, error) {
+	refreshed, _, err := s.revalidateLink(ctx, grant)
+	return refreshed, err
+}
+
+func linkDenyMessage(reason string) string {
+	switch reason {
+	case "revoked":
+		return "分享链接已吊销"
+	case "expired":
+		return "分享链接已过期"
+	default:
+		return "分享链接无效"
+	}
+}
+
+// RevalidateLinkInput 是公开链接输入路径的服务端强制点: 每次输入都按当前
+// 行重查 (吊销/过期/绑定) 并要求 read_write, 不信任签发时的 Grant 快照;
+// 每次判定都写审计。
+func (s *Service) RevalidateLinkInput(ctx context.Context, grant *Grant) (*Grant, error) {
+	refreshed, reason, err := s.revalidateLink(ctx, grant)
+	if err == nil && !refreshed.Permission.AllowsWrite() {
+		reason = "read_only"
+		err = ipc.NewError(ipc.CodeForbidden, "分享链接为只读")
 	}
 	payload := auditPayload{Action: "input", Requester: "", Outcome: "deny", Reason: reason}
 	if grant != nil {
@@ -228,19 +305,17 @@ func (s *Service) CheckLinkInput(ctx context.Context, grant *Grant) error {
 		payload.SessionID = grant.SessionID
 		payload.OwnerID = grant.OwnerID
 		payload.Permission = string(grant.Permission)
-		if allowed {
-			payload.Outcome = "allow"
-			payload.Reason = ""
-		}
 	}
-	if err := s.audit(ctx, auditKindLinkInput, payload); err != nil {
-		return err
+	if err == nil {
+		payload.Outcome = "allow"
+		payload.Reason = ""
+		payload.Permission = string(refreshed.Permission)
 	}
-	if !allowed {
-		if reason == "expired" {
-			return ipc.NewError(ipc.CodeForbidden, "分享链接已过期")
-		}
-		return ipc.NewError(ipc.CodeForbidden, "分享链接为只读")
+	if auditErr := s.audit(ctx, auditKindLinkInput, payload); auditErr != nil {
+		return nil, auditErr
 	}
-	return nil
+	if err != nil {
+		return nil, err
+	}
+	return refreshed, nil
 }

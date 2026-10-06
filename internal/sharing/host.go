@@ -154,9 +154,60 @@ FROM host_share h JOIN user_device d ON d.id = h.device_id WHERE h.id = ?`, shar
 	return nil
 }
 
+type hostShareRow struct {
+	id         string
+	permission Permission
+	expiresAt  int64
+}
+
+// unionHostShares 在有效分享行上按权限级别计算并集: read_write 只由仍提供
+// read_write 的行支撑, 有效期取这些行的最大 expires_at; 无有效 read_write
+// 行时回退 read (同样取 read 行的最大有效期)。短权限行不会提前终止更长的高
+// 权限授权, 不同授予者的分享互不影响。
+func unionHostShares(rows []hostShareRow) (Permission, int64, []string) {
+	permission := PermissionRead
+	for _, row := range rows {
+		if row.permission.AllowsWrite() {
+			permission = PermissionReadWrite
+			break
+		}
+	}
+	var expiresAt int64
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.id)
+		if row.permission == permission && row.expiresAt > expiresAt {
+			expiresAt = row.expiresAt
+		}
+	}
+	return permission, expiresAt, ids
+}
+
+// loadValidHostShares 读取 (device, recipient) 下全部未吊销未过期的分享行。
+func (s *Service) loadValidHostShares(ctx context.Context, deviceID, recipientID string) ([]hostShareRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, permission, expires_at FROM host_share
+WHERE device_id = ? AND recipient_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY id`, deviceID, recipientID, s.now())
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+	var shares []hostShareRow
+	for rows.Next() {
+		var share hostShareRow
+		var permission string
+		if err := rows.Scan(&share.id, &permission, &share.expiresAt); err != nil {
+			return nil, dbError(err)
+		}
+		share.permission = Permission(permission)
+		shares = append(shares, share)
+	}
+	return shares, rows.Err()
+}
+
 // AuthorizeTerminalOpen 校验注册用户能否通过 host agent 在设备上新建终端:
 // 设备未吊销、存在至少一个未过期未吊销的分享、daemon 在线, 全部满足才
-// 返回授权快照并写审计; 多个有效分享叠加时取最宽权限与最早过期时间。
+// 返回授权快照并写审计; 多个有效分享叠加时按 unionHostShares 的级别并集
+// 计算权限与有效期。
 func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.Identity, deviceID string) (*Grant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	deny := func(reason string, decision error) (*Grant, error) {
@@ -179,35 +230,11 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 	if grant.revoked {
 		return deny("device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销"))
 	}
-	now := s.now()
-	rows, err := s.db.QueryContext(ctx, `SELECT id, permission, expires_at FROM host_share
-WHERE device_id = ? AND recipient_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY id`, deviceID, identity.UserID, now)
+	shares, err := s.loadValidHostShares(ctx, deviceID, identity.UserID)
 	if err != nil {
-		return nil, dbError(err)
+		return nil, err
 	}
-	defer rows.Close()
-	var shareIDs []string
-	permission := PermissionRead
-	var expiresAt int64
-	for rows.Next() {
-		var id string
-		var rowPermission string
-		var rowExpiresAt int64
-		if err := rows.Scan(&id, &rowPermission, &rowExpiresAt); err != nil {
-			return nil, dbError(err)
-		}
-		shareIDs = append(shareIDs, id)
-		if Permission(rowPermission).AllowsWrite() {
-			permission = PermissionReadWrite
-		}
-		if expiresAt == 0 || rowExpiresAt < expiresAt {
-			expiresAt = rowExpiresAt
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, dbError(err)
-	}
-	if len(shareIDs) == 0 {
+	if len(shares) == 0 {
 		return deny("no_share", ipc.NewError(ipc.CodeForbidden, "没有该设备的有效分享"))
 	}
 	if err := s.requireDaemon(ctx, deviceID); err != nil {
@@ -218,6 +245,7 @@ WHERE device_id = ? AND recipient_id = ? AND revoked_at IS NULL AND expires_at >
 		}
 		return deny(reason, err)
 	}
+	permission, expiresAt, shareIDs := unionHostShares(shares)
 	if err := s.audit(ctx, auditKindHostTerminal, auditPayload{
 		Action: "open_terminal", DeviceID: deviceID, OwnerID: grant.userID, Recipient: identity.UserID,
 		Requester: identity.UserID, Outcome: "allow", Permission: string(permission),
@@ -232,4 +260,62 @@ WHERE device_id = ? AND recipient_id = ? AND revoked_at IS NULL AND expires_at >
 		Permission: permission,
 		ExpiresAt:  expiresAt,
 	}, nil
+}
+
+// RevalidateHostAccess 按 ShareIDs 重查 host 分享行并校验设备/接收者绑定:
+// 吊销或过期的行剔除后对剩余行重算并集 (权限可能收缩为 read, 有效期以仍
+// 支撑该权限级别的行为准); 全部失效则拒绝。返回刷新后的 Grant, 供服务端
+// 输入检查与 agent recheck 共用, 不信任签发时快照。
+func (s *Service) RevalidateHostAccess(ctx context.Context, grant *Grant) (*Grant, error) {
+	if grant == nil || len(grant.ShareIDs) == 0 || grant.Recipient == "" {
+		return nil, ipc.NewError(ipc.CodeForbidden, "没有该设备的有效分享")
+	}
+	now := s.now()
+	var valid []hostShareRow
+	reason := "no_share"
+	for _, id := range grant.ShareIDs {
+		var deviceID, recipientID, permission string
+		var expiresAt int64
+		var revokedAt sql.NullInt64
+		err := s.db.QueryRowContext(ctx, `SELECT device_id, recipient_id, permission, expires_at, revoked_at FROM host_share WHERE id = ?`, id).
+			Scan(&deviceID, &recipientID, &permission, &expiresAt, &revokedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, dbError(err)
+		}
+		if deviceID != grant.DeviceID || recipientID != grant.Recipient {
+			continue
+		}
+		if revokedAt.Valid {
+			reason = "revoked"
+			continue
+		}
+		if now >= expiresAt {
+			reason = "expired"
+			continue
+		}
+		valid = append(valid, hostShareRow{id: id, permission: Permission(permission), expiresAt: expiresAt})
+	}
+	if len(valid) == 0 {
+		return nil, ipc.NewError(ipc.CodeForbidden, hostShareDenyMessage(reason))
+	}
+	permission, expiresAt, ids := unionHostShares(valid)
+	refreshed := *grant
+	refreshed.ShareIDs = ids
+	refreshed.Permission = permission
+	refreshed.ExpiresAt = expiresAt
+	return &refreshed, nil
+}
+
+func hostShareDenyMessage(reason string) string {
+	switch reason {
+	case "revoked":
+		return "主机分享已吊销"
+	case "expired":
+		return "主机分享已过期"
+	default:
+		return "没有该设备的有效分享"
+	}
 }

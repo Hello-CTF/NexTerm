@@ -203,7 +203,7 @@ func TestLinkRevocationStopsAccess(t *testing.T) {
 	}
 }
 
-func TestLinkInputEnforcement(t *testing.T) {
+func TestLinkInputRevalidation(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "alice")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
@@ -216,7 +216,7 @@ func TestLinkInputEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.service.CheckLinkInput(context.Background(), readGrant); err == nil {
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), readGrant); err == nil {
 		t.Fatal("read-only grant must reject input")
 	} else {
 		requireIPCCode(t, err, ipc.CodeForbidden)
@@ -230,12 +230,16 @@ func TestLinkInputEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.service.CheckLinkInput(context.Background(), writeGrant); err != nil {
+	refreshed, err := fixture.service.RevalidateLinkInput(context.Background(), writeGrant)
+	if err != nil {
 		t.Fatalf("read-write grant must allow input: %v", err)
+	}
+	if refreshed.Permission != PermissionReadWrite || refreshed.ExpiresAt != writeGrant.ExpiresAt {
+		t.Fatalf("refreshed grant = %+v", refreshed)
 	}
 
 	fixture.now = writeGrant.ExpiresAt
-	if err := fixture.service.CheckLinkInput(context.Background(), writeGrant); err == nil {
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), writeGrant); err == nil {
 		t.Fatal("expired grant must reject input")
 	} else {
 		requireIPCCode(t, err, ipc.CodeForbidden)
@@ -253,6 +257,67 @@ func TestLinkInputEnforcement(t *testing.T) {
 	}
 	if rows[2]["outcome"] != "deny" || rows[2]["reason"] != "expired" {
 		t.Fatalf("expired input audit = %+v", rows[2])
+	}
+}
+
+func TestLinkInputStopsAfterRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err != nil {
+		t.Fatalf("input must flow before revocation: %v", err)
+	}
+
+	if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err == nil {
+		t.Fatal("revoked link must reject input even with a pre-revocation grant")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	rows := fixture.auditRows(t, auditKindLinkInput)
+	last := rows[len(rows)-1]
+	if last["outcome"] != "deny" || last["reason"] != "revoked" || last["share_id"] != link.ID {
+		t.Fatalf("input audits = %+v", rows)
+	}
+}
+
+func TestLinkRevokeAuditContainsShareID(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	other := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, _, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.service.RevokeLink(context.Background(), fixture.identity(other), link.ID); err == nil {
+		t.Fatal("non-owner revoke must fail")
+	}
+	if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := fixture.auditRows(t, auditKindLinkRevoke)
+	if len(rows) != 2 {
+		t.Fatalf("revoke audits = %+v", rows)
+	}
+	if rows[0]["outcome"] != "deny" || rows[0]["reason"] != "not_owner" || rows[0]["share_id"] != link.ID || rows[0]["session_id"] == "" {
+		t.Fatalf("deny revoke audit = %+v", rows[0])
+	}
+	if rows[1]["outcome"] != "allow" || rows[1]["share_id"] != link.ID || rows[1]["owner_id"] != owner.ID {
+		t.Fatalf("allow revoke audit = %+v", rows[1])
 	}
 }
 

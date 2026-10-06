@@ -151,18 +151,18 @@ func TestHostShareRecipientIsolation(t *testing.T) {
 	}
 }
 
-func TestHostShareUnionPermissionAndEarliestExpiry(t *testing.T) {
+func TestHostShareUnionPermissionPerLevelExpiry(t *testing.T) {
 	fixture := newServiceFixture(t)
 	admin := fixture.createSuperadmin(t, "root")
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, time.Hour)
+	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 2*time.Hour)
+	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,8 +174,8 @@ func TestHostShareUnionPermissionAndEarliestExpiry(t *testing.T) {
 	if grant.Permission != PermissionReadWrite {
 		t.Fatalf("union permission = %q, want %q", grant.Permission, PermissionReadWrite)
 	}
-	if grant.ExpiresAt != share.ExpiresAt {
-		t.Fatalf("expiry = %d, want earliest %d", grant.ExpiresAt, share.ExpiresAt)
+	if grant.ExpiresAt != writeShare.ExpiresAt {
+		t.Fatalf("read_write expiry = %d, want the read_write row's %d (not the shorter read row %d)", grant.ExpiresAt, writeShare.ExpiresAt, readShare.ExpiresAt)
 	}
 	if len(grant.ShareIDs) != 2 {
 		t.Fatalf("grant share ids = %v", grant.ShareIDs)
@@ -184,8 +184,94 @@ func TestHostShareUnionPermissionAndEarliestExpiry(t *testing.T) {
 	for _, id := range grant.ShareIDs {
 		seen[id] = true
 	}
-	if !seen[share.ID] || !seen[adminShare.ID] {
+	if !seen[readShare.ID] || !seen[writeShare.ID] {
 		t.Fatalf("grant share ids = %v", grant.ShareIDs)
+	}
+
+	fixture.now = readShare.ExpiresAt + 1
+	refreshed, err := fixture.service.RevalidateHostAccess(context.Background(), grant)
+	if err != nil {
+		t.Fatalf("shorter read row expiring must not terminate the read_write grant: %v", err)
+	}
+	if refreshed.Permission != PermissionReadWrite || refreshed.ExpiresAt != writeShare.ExpiresAt {
+		t.Fatalf("refreshed = %+v", refreshed)
+	}
+	if len(refreshed.ShareIDs) != 1 || refreshed.ShareIDs[0] != writeShare.ID {
+		t.Fatalf("refreshed share ids = %v", refreshed.ShareIDs)
+	}
+}
+
+func TestHostShareRevalidateShrinksAndStops(t *testing.T) {
+	fixture := newServiceFixture(t)
+	admin := fixture.createSuperadmin(t, "root")
+	owner := fixture.createUser(t, "alice")
+	bob := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+
+	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 2*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.AuthorizeTerminalOpen(context.Background(), fixture.identity(bob), deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(admin), writeShare.ID); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := fixture.service.RevalidateHostAccess(context.Background(), grant)
+	if err != nil {
+		t.Fatalf("revoking the read_write share must fall back to the surviving read share: %v", err)
+	}
+	if refreshed.Permission != PermissionRead {
+		t.Fatalf("refreshed permission = %q, want %q", refreshed.Permission, PermissionRead)
+	}
+	if refreshed.ExpiresAt != readShare.ExpiresAt {
+		t.Fatalf("refreshed expiry = %d, want %d", refreshed.ExpiresAt, readShare.ExpiresAt)
+	}
+	if len(refreshed.ShareIDs) != 1 || refreshed.ShareIDs[0] != readShare.ID {
+		t.Fatalf("refreshed share ids = %v", refreshed.ShareIDs)
+	}
+
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), readShare.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateHostAccess(context.Background(), grant); err == nil {
+		t.Fatal("all shares revoked must stop the session")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+}
+
+func TestHostShareInputStopsAfterRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	bob := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.AuthorizeTerminalOpen(context.Background(), fixture.identity(bob), deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateHostAccess(context.Background(), grant); err != nil {
+		t.Fatalf("access must flow before revocation: %v", err)
+	}
+
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), share.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateHostAccess(context.Background(), grant); err == nil {
+		t.Fatal("revoked share must reject revalidation even with a pre-revocation grant")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
 	}
 }
 

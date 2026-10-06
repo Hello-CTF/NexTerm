@@ -75,6 +75,8 @@ func (g *Gate) Check(ctx context.Context) error {
 }
 
 // PipeOutput 把终端输出拷贝给 viewer, 直到源结束、上下文结束或授权失效。
+// 阻塞的 Read 由集成层在取消时关闭 source 唤醒; 取消/吊销期间读到的块
+// 在 Write 前的复查中被丢弃。
 func (g *Gate) PipeOutput(ctx context.Context, dst io.Writer, src io.Reader) error {
 	return g.pipe(ctx, dst, src)
 }
@@ -90,20 +92,26 @@ func (g *Gate) PipeInput(ctx context.Context, dst io.Writer, src io.Reader) erro
 func (g *Gate) pipe(ctx context.Context, dst io.Writer, src io.Reader) error {
 	buffer := make([]byte, 32*1024)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := g.Check(ctx); err != nil {
 			return err
 		}
-		count, err := src.Read(buffer)
+		count, readErr := src.Read(buffer)
 		if count > 0 {
-			if _, writeErr := dst.Write(buffer[:count]); writeErr != nil {
-				return writeErr
+			if err := g.Check(ctx); err != nil {
+				return err
+			}
+			if _, err := dst.Write(buffer[:count]); err != nil {
+				return err
 			}
 		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
 				return nil
 			}
-			return err
+			return readErr
 		}
 	}
 }
