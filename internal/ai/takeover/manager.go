@@ -24,7 +24,6 @@ type Manager struct {
 	locks          map[string]*sync.Mutex
 	operationLocks map[string]*sync.Mutex
 	closed         bool
-	wg             sync.WaitGroup
 }
 
 func NewManager(deps Dependencies) *Manager {
@@ -203,7 +202,13 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 		return RunResponse{}, errors.New("接管事件流为空")
 	}
 	stream = agent.WithEventSequence(stream)
-	state := &runState{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, owner: owner, stream: stream, memory: guard.NewMemory(), running: true}
+	assetID := ""
+	if m.deps.TabAsset != nil {
+		if id, err := m.deps.TabAsset(ctx, args.TabID); err == nil {
+			assetID = id
+		}
+	}
+	state := &runState{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, owner: owner, stream: stream, memory: guard.NewMemory(), running: true, assetID: assetID}
 	m.mu.Lock()
 	if m.closed || m.owners[args.TabID] != owner || m.jobs[jobID] != nil {
 		m.mu.Unlock()
@@ -224,7 +229,6 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 		}
 	}
 	m.jobs[jobID] = state
-	m.wg.Add(1)
 	m.mu.Unlock()
 	go m.runJob(state)
 	return RunResponse{JobID: jobID, Token: owner.token}, nil
@@ -239,6 +243,164 @@ func (m *Manager) Cancel(jobID string) error {
 	}
 	m.cancelState(state, "用户取消")
 	return nil
+}
+
+func (m *Manager) Pause(tabID string) {
+	m.mu.Lock()
+	owner := m.owners[tabID]
+	m.mu.Unlock()
+	if owner == nil {
+		return
+	}
+	for _, state := range m.statesForOwner(owner) {
+		m.pauseState(state)
+	}
+}
+
+func (m *Manager) pauseState(state *runState) {
+	state.pendingMu.Lock()
+	if !state.running {
+		state.pendingMu.Unlock()
+		return
+	}
+	state.userPaused = true
+	cancelFn := state.cancelFn
+	iterCancel := state.iterCancel
+	state.pendingMu.Unlock()
+	if cancelFn != nil {
+		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
+	}
+	if iterCancel != nil {
+		iterCancel()
+	}
+}
+
+type ResumeArgs struct {
+	TabID     string `json:"tabId"`
+	Token     string `json:"token"`
+	JobID     string `json:"jobId"`
+	ChannelID string `json:"-"`
+}
+
+func (m *Manager) Resume(ctx context.Context, args ResumeArgs, factory agent.StreamFactory) (RunResponse, error) {
+	if factory == nil || m.deps.Model == nil || m.deps.Snapshot == nil || m.deps.WriteAI == nil {
+		return RunResponse{}, errors.New("接管 Eino ChatModel、终端或事件流未配置")
+	}
+	if args.TabID == "" || args.Token == "" || args.JobID == "" {
+		return RunResponse{}, errors.New("tabId、token 和 jobId 不能为空")
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return RunResponse{}, errors.New("接管服务已关闭")
+	}
+	owner := m.owners[args.TabID]
+	existing := m.jobs[args.JobID]
+	m.mu.Unlock()
+	if owner == nil || owner.token != args.Token || owner.ctx.Err() != nil {
+		return RunResponse{}, ErrStaleOwnership
+	}
+	if existing != nil {
+		return m.resumePaused(ctx, owner, existing, args, factory)
+	}
+	return m.recoverJob(ctx, owner, args, factory)
+}
+
+func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *runState, args ResumeArgs, factory agent.StreamFactory) (RunResponse, error) {
+	if state.owner != owner {
+		return RunResponse{}, ErrStaleOwnership
+	}
+	state.pendingMu.Lock()
+	if !(state.userPaused && !state.running) {
+		state.pendingMu.Unlock()
+		return RunResponse{}, ErrOwnershipActive
+	}
+	state.userPaused = false
+	state.running = true
+	state.pendingMu.Unlock()
+	stream, err := factory(ctx, args.ChannelID, state.id)
+	if err != nil {
+		state.pendingMu.Lock()
+		state.running = false
+		state.userPaused = true
+		state.pendingMu.Unlock()
+		return RunResponse{}, err
+	}
+	if stream == nil {
+		state.pendingMu.Lock()
+		state.running = false
+		state.userPaused = true
+		state.pendingMu.Unlock()
+		return RunResponse{}, errors.New("接管事件流为空")
+	}
+	stream = agent.WithEventSequence(stream)
+	state.pendingMu.Lock()
+	previous := state.stream
+	state.stream = stream
+	state.pendingMu.Unlock()
+	if previous != stream {
+		_ = previous.Close()
+	}
+	go m.runJob(state)
+	return RunResponse{JobID: state.id, Token: owner.token}, nil
+}
+
+func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeArgs, factory agent.StreamFactory) (RunResponse, error) {
+	record, err := m.loadRecovery(ctx, args.JobID)
+	if err != nil {
+		return RunResponse{}, err
+	}
+	if record.TabID != args.TabID {
+		return RunResponse{}, ErrResumeMismatch
+	}
+	if _, found, err := m.checkpoints.Get(ctx, args.JobID); err != nil {
+		return RunResponse{}, err
+	} else if !found {
+		m.deleteRecovery(context.WithoutCancel(ctx), args.JobID)
+		return RunResponse{}, ErrNotFound
+	}
+	assetID := ""
+	if m.deps.TabAsset != nil {
+		if assetID, err = m.deps.TabAsset(ctx, args.TabID); err != nil {
+			return RunResponse{}, err
+		}
+	}
+	if record.AssetID != "" && assetID != record.AssetID {
+		return RunResponse{}, ErrResumeMismatch
+	}
+	if err := m.reserveJob(owner, args.JobID); err != nil {
+		return RunResponse{}, err
+	}
+	stream, err := factory(ctx, args.ChannelID, args.JobID)
+	if err != nil {
+		m.releaseJob(owner, args.JobID)
+		return RunResponse{}, err
+	}
+	if stream == nil {
+		m.releaseJob(owner, args.JobID)
+		return RunResponse{}, errors.New("接管事件流为空")
+	}
+	stream = agent.WithEventSequence(stream)
+	jobContext, cancel := context.WithCancel(owner.ctx)
+	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
+	state := &runState{
+		id: args.JobID, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel,
+		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, assetID: assetID,
+		args: RunArgs{TabID: args.TabID, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps},
+	}
+	m.mu.Lock()
+	if m.closed || m.owners[args.TabID] != owner || m.jobs[args.JobID] != nil {
+		m.mu.Unlock()
+		m.releaseJob(owner, args.JobID)
+		cancel()
+		forceCancel()
+		_ = stream.Close()
+		return RunResponse{}, ErrStaleOwnership
+	}
+	m.jobs[args.JobID] = state
+	m.mu.Unlock()
+	go m.runJob(state)
+	return RunResponse{JobID: args.JobID, Token: owner.token}, nil
 }
 
 func (m *Manager) cancelState(state *runState, reason string) {
@@ -407,8 +569,9 @@ func (m *Manager) cleanup(state *runState, reason string) {
 	}
 	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.Background(), state.id)
+		_ = deleter.Delete(context.Background(), recoveryKey(state.id))
+		_ = deleter.Delete(context.Background(), execKey(state.id))
 	}
-	m.wg.Done()
 }
 
 func (m *Manager) Close() error {
@@ -428,20 +591,38 @@ func (m *Manager) CloseContext(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	for _, state := range states {
+		m.pauseState(state)
+		m.persistRecovery(state)
 		if state.forceCancel != nil {
 			state.forceCancel()
 		}
-		m.cancelState(state, "服务关闭")
 	}
-	done := make(chan struct{})
-	go func() {
-		m.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	for {
+		running := false
+		m.mu.Lock()
+		for _, state := range m.jobs {
+			state.pendingMu.Lock()
+			running = running || state.running
+			state.pendingMu.Unlock()
+		}
+		m.mu.Unlock()
+		if !running {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
 	}
+	m.mu.Lock()
+	for id, state := range m.jobs {
+		delete(m.jobs, id)
+		state.cancel()
+	}
+	m.mu.Unlock()
+	for _, state := range states {
+		_ = state.stream.Close()
+	}
+	return nil
 }

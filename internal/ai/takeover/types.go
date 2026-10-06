@@ -17,15 +17,19 @@ var (
 	ErrStaleOwnership  = errors.New("接管令牌已过期")
 	ErrOwnershipActive = errors.New("当前接管已有活动任务")
 	ErrWriteDisabled   = errors.New("本次接管禁止终端写入")
+	ErrResumeMismatch  = errors.New("接管恢复范围与终端当前资产不一致")
 	errRunPaused       = errors.New("接管等待用户确认")
+	errRunUserPaused   = errors.New("接管已被用户暂停")
 )
 
-const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 — 按 Esc 或任意键夺回]\x1b[0m\r\n"
+const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 — 按 Esc 或任意键暂停]\x1b[0m\r\n"
 
 type Dependencies struct {
 	Model        agent.ModelFactory
 	Checkpoints  adk.CheckPointStore
 	Permission   func(context.Context) (guard.Config, error)
+	Grants       *guard.Grants
+	TabAsset     func(context.Context, string) (string, error)
 	Snapshot     func(context.Context, string) (tools.Screen, error)
 	WriteAI      func(context.Context, string, []byte) error
 	Inject       func(context.Context, string, []byte) error
@@ -82,6 +86,11 @@ type runState struct {
 	pendingMu    sync.Mutex
 	pending      *pending
 	running      bool
+	userPaused   bool
+	started      bool
+	assetID      string
+	iterCtx      context.Context
+	iterCancel   context.CancelFunc
 	reasonMu     sync.Mutex
 	reason       string
 }

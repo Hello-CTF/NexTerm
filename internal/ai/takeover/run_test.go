@@ -21,11 +21,16 @@ type harness struct {
 	screen   tools.Screen
 	aiWrites [][]byte
 	banners  []string
+	audits   []tools.AuditEntry
 	writeAI  func([]byte) error
 	snapshot func(context.Context, string) (tools.Screen, error)
 }
 
 func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
+	return newHarnessWith(t, chat, nil)
+}
+
+func newHarnessWith(t *testing.T, chat model.BaseChatModel, configure func(*Dependencies)) *harness {
 	h := &harness{screen: tools.Screen{Text: "$ ", Tail: []string{"$ "}, IdleMS: 301, CursorCol: 2}}
 	deps := Dependencies{
 		Model:      func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
@@ -57,6 +62,15 @@ func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
 		h.banners = append(h.banners, string(data))
 		h.mu.Unlock()
 		return nil
+	}
+	deps.Audit = func(_ context.Context, entry tools.AuditEntry) error {
+		h.mu.Lock()
+		h.audits = append(h.audits, entry)
+		h.mu.Unlock()
+		return nil
+	}
+	if configure != nil {
+		configure(&deps)
 	}
 	h.manager = NewManager(deps)
 	t.Cleanup(func() { _ = h.manager.Close() })
