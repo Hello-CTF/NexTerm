@@ -62,3 +62,36 @@ func TestIPCCommands(t *testing.T) {
 		t.Fatalf("empty list = %+v", listResponse)
 	}
 }
+
+func TestIPCRemoteCommand(t *testing.T) {
+	service := NewService(Config{
+		Provider: &switchProvider{dialer: &fakeRemoteDialer{recordingDialer: &recordingDialer{}}},
+		Policy:   Policy{Desktop: true},
+	})
+	t.Cleanup(func() { _ = service.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := service.RegisterCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	dispatch := func(command string, args string) ipc.Response {
+		return dispatcher.Dispatch(context.Background(), ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
+	}
+	response := dispatch("forward_create_remote", `{"sessionId":"s","bindHost":"0.0.0.0","targetHost":"127.0.0.1","targetPort":8080}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
+		t.Fatalf("risk response = %+v", response)
+	}
+	response = dispatch("forward_create_remote", `{"sessionId":"s","bindHost":"0.0.0.0","targetHost":"127.0.0.1","targetPort":8080,"acknowledgeRisk":true}`)
+	if !response.OK {
+		t.Fatalf("create = %+v", response.Error)
+	}
+	var spec Spec
+	if err := json.Unmarshal(response.Data, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Kind != KindRemote || spec.ListenHost != "0.0.0.0" {
+		t.Fatalf("spec = %+v", spec)
+	}
+	if response := dispatch("forward_remove", `{"id":"`+spec.ID+`"}`); !response.OK {
+		t.Fatalf("remove = %+v", response)
+	}
+}

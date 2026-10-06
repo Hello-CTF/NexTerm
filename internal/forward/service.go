@@ -15,6 +15,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
+	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 type Service struct {
@@ -102,7 +103,7 @@ func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, 
 	if args.TargetPort == 0 {
 		return Spec{}, ipc.BadParam(errors.New("目标端口必须在 1–65535 之间"))
 	}
-	if err := s.validateSession(ctx, args.SessionID); err != nil {
+	if _, err := s.validateSession(ctx, args.SessionID); err != nil {
 		return Spec{}, err
 	}
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
@@ -124,10 +125,48 @@ func (s *Service) CreateSocks(ctx context.Context, args CreateSocksArgs) (Spec, 
 			Authentication: "none",
 		})
 	}
-	if err := s.validateSession(ctx, args.SessionID); err != nil {
+	if _, err := s.validateSession(ctx, args.SessionID); err != nil {
 		return Spec{}, err
 	}
 	return s.create(ctx, args.SessionID, KindSOCKS, args.ListenPort, "", nil, nil)
+}
+
+func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec, error) {
+	if err := s.available(); err != nil {
+		return Spec{}, err
+	}
+	if strings.TrimSpace(args.SessionID) == "" {
+		return Spec{}, ipc.BadParam(errors.New("sessionId 不能为空"))
+	}
+	host := strings.TrimSpace(args.TargetHost)
+	if host == "" {
+		return Spec{}, ipc.BadParam(errors.New("目标主机不能为空"))
+	}
+	if args.TargetPort == 0 {
+		return Spec{}, ipc.BadParam(errors.New("目标端口必须在 1–65535 之间"))
+	}
+	bindHost := strings.TrimSpace(args.BindHost)
+	if bindHost == "" {
+		bindHost = "127.0.0.1"
+	}
+	bindHost = strings.TrimPrefix(strings.TrimSuffix(bindHost, "]"), "[")
+	if !isLoopbackHost(bindHost) && !args.AcknowledgeRisk {
+		return Spec{}, ipc.NewError(ipc.CodeNeedsConfirm, "远程转发没有认证，远端监听非回环地址会把本地服务暴露给远端网络，必须确认开放风险").WithDetail(ExposureRisk{
+			Risk:           "unauthenticated_exposed_remote_forward",
+			ListenHost:     bindHost,
+			Authentication: "none",
+		})
+	}
+	dialer, err := s.validateSession(ctx, args.SessionID)
+	if err != nil {
+		return Spec{}, err
+	}
+	if _, ok := dialer.(RemoteListener); !ok {
+		return Spec{}, ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH 远程监听的会话")
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	target := net.JoinHostPort(host, strconv.Itoa(int(args.TargetPort)))
+	return s.createRemote(ctx, dialer, args.SessionID, bindHost, args.BindPort, target, &host, &args.TargetPort)
 }
 
 func (s *Service) available() error {
@@ -137,24 +176,39 @@ func (s *Service) available() error {
 	return ipc.NewError(ipc.CodeUnsupported, s.env.Reason)
 }
 
-func (s *Service) validateSession(ctx context.Context, sessionID string) error {
+func (s *Service) validateSession(ctx context.Context, sessionID string) (base.Dialer, error) {
 	s.mu.Lock()
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return ErrClosed
+		return nil, ErrClosed
 	}
 	if s.provider == nil {
-		return ipc.NewError(ipc.CodeUnsupported, "SSH 会话转发接口未配置")
+		return nil, ipc.NewError(ipc.CodeUnsupported, "SSH 会话转发接口未配置")
 	}
 	dialer, err := s.provider.CurrentDialer(ctx, sessionID)
 	if err != nil {
-		return session.IPCError(err)
+		return nil, session.IPCError(err)
 	}
 	if dialer == nil {
-		return ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH direct-tcpip 的会话")
+		return nil, ipc.NewError(ipc.CodeUnsupported, "端口转发需要支持 SSH direct-tcpip 的会话")
 	}
-	return nil
+	return dialer, nil
+}
+
+func (s *Service) createRemote(ctx context.Context, dialer base.Dialer, sessionID, bindHost string, bindPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return Spec{}, ErrClosed
+	}
+	s.mu.Unlock()
+
+	listener, err := dialer.(RemoteListener).ListenRemote(ctx, "tcp", net.JoinHostPort(bindHost, strconv.Itoa(int(bindPort))))
+	if err != nil {
+		return Spec{}, ipc.WrapError(ipc.CodeIO, "远端监听端口失败: "+err.Error(), err)
+	}
+	return s.start(sessionID, KindRemote, listener, bindHost, target, targetHost, targetPort)
 }
 
 func (s *Service) create(_ context.Context, sessionID, kind string, listenPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
@@ -170,6 +224,10 @@ func (s *Service) create(_ context.Context, sessionID, kind string, listenPort u
 	if err != nil {
 		return Spec{}, ipc.WrapError(ipc.CodeIO, "监听转发端口失败: "+err.Error(), err)
 	}
+	return s.start(sessionID, kind, listener, s.env.ListenHost, target, targetHost, targetPort)
+}
+
+func (s *Service) start(sessionID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	_, portText, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		_ = listener.Close()
@@ -197,7 +255,7 @@ func (s *Service) create(_ context.Context, sessionID, kind string, listenPort u
 	f.spec = Spec{
 		ID:         id,
 		SessionID:  sessionID,
-		ListenHost: s.env.ListenHost,
+		ListenHost: listenHost,
 		ListenPort: uint16(port),
 		TargetHost: targetHost,
 		TargetPort: targetPort,
@@ -378,10 +436,25 @@ func (f *forwarder) handle(client net.Conn) {
 		}
 	case KindSOCKS:
 		err = f.service.serveSOCKS(f, client)
+	case KindRemote:
+		var upstream net.Conn
+		upstream, err = f.dialLocal()
+		if err == nil {
+			err = f.relayTracked(client, upstream)
+		}
 	}
 	if err != nil && f.ctx.Err() == nil {
 		f.service.report(fmt.Errorf("转发 %s 连接失败: %w", f.id, err))
 	}
+}
+
+func (f *forwarder) dialLocal() (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: f.service.dialTimeout}
+	conn, err := dialer.DialContext(f.ctx, "tcp", f.target)
+	if err != nil {
+		return nil, fmt.Errorf("连接本地目标 %s 失败: %w", f.target, err)
+	}
+	return conn, nil
 }
 
 func (f *forwarder) relayTracked(client, upstream net.Conn) error {

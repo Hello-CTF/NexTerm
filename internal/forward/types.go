@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	KindLocal = "local"
-	KindSOCKS = "socks"
+	KindLocal  = "local"
+	KindSOCKS  = "socks"
+	KindRemote = "remote"
 )
 
 var ErrClosed = errors.New("forward service closed")
@@ -96,6 +97,27 @@ type CreateSocksArgs struct {
 	SessionID       string `json:"sessionId"`
 	ListenPort      uint16 `json:"listenPort"`
 	AcknowledgeRisk bool   `json:"acknowledgeRisk,omitempty"`
+}
+
+type CreateRemoteArgs struct {
+	SessionID       string `json:"sessionId"`
+	BindHost        string `json:"bindHost"`
+	BindPort        uint16 `json:"bindPort"`
+	TargetHost      string `json:"targetHost"`
+	TargetPort      uint16 `json:"targetPort"`
+	AcknowledgeRisk bool   `json:"acknowledgeRisk,omitempty"`
+}
+
+type RemoteListener interface {
+	ListenRemote(ctx context.Context, network, address string) (net.Listener, error)
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type ExposureRisk struct {
