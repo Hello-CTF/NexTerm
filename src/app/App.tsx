@@ -88,8 +88,6 @@ import { AuditView } from "../features/settings/AuditView";
 import { CommandPalette } from "./CommandPalette";
 import { QuickConnect } from "./QuickConnect";
 import { TakeoverBanner } from "./TakeoverBanner";
-import { AuthGate } from "../features/auth/AuthGate";
-import { useAuth } from "../features/auth/store";
 import { PromptModal } from "../ui/PromptModal";
 import { DialogHost, isEditableTarget } from "../ui/DialogHost";
 import { ResizeHandle } from "../ui/ResizeHandle";
@@ -389,6 +387,24 @@ function useAiToastInset(active: boolean): void {
   }, [active]);
 }
 
+// LazyAuthGate 仅在 WEB/DEMO 下加载账号门,避免桌面端把 auth store(经 demo 引 env)拉进终端等测试的 env mock。
+function LazyAuthGate() {
+  const [gate, setGate] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    if (!WEB && !DEMO) return;
+    let alive = true;
+    void import("../features/auth/AuthGate").then((m) => {
+      if (alive) setGate(() => m.AuthGate);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!gate) return null;
+  const Gate = gate;
+  return <Gate />;
+}
+
 export default function App() {
   const {
     workspaces,
@@ -436,7 +452,9 @@ export default function App() {
     enabled: !WEB,
   });
   useEffect(() => {
-    if (WEB || DEMO) void useAuth.getState().refresh();
+    if (WEB || DEMO) {
+      void import("../features/auth/store").then((m) => m.useAuth.getState().refresh());
+    }
   }, []);
   const syncStatusText = WEB
     ? "服务端：浏览器模式"
@@ -1459,7 +1477,7 @@ export default function App() {
         />
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
-      <AuthGate />
+      <LazyAuthGate />
       <PromptModal />
       <DialogHost />
     </div>

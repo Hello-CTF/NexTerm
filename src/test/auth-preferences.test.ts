@@ -136,7 +136,7 @@ describe("生产链路:登录注册偏好存储并加载快照", () => {
   });
 
   it("写回持久化到账号存储,清除覆盖回默认", async () => {
-    const { getInputPrefs, setSelectionAutoCopy } = await import("../app/preferences");
+    const { setSelectionAutoCopy } = await import("../app/preferences");
     prefsMocks.get.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
     prefsMocks.put.mockResolvedValue({ defaults: {}, overrides: {}, effective: {} });
 

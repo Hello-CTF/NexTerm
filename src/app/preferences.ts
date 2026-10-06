@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
 import { getResolvedTheme, subscribeTheme } from "./theme";
-import { preferencesApi } from "../ipc/authApi";
 
 // 账号级偏好覆盖的存储接口;生产实现走 /auth/preferences(M140 user_setting 后端)。
 // 注册前只有设备本地值,不冒充账号级覆盖。
@@ -11,16 +10,20 @@ export interface AccountPreferenceStore {
 }
 
 // createHttpPreferenceStore 是生产用的账号偏好存储:读取/写回/清除都走 /auth/preferences。
+// 动态引入 authApi,避免 keybindings→preferences→authApi→demo 的静态链把 demo 拉进无关测试的 env mock。
 export function createHttpPreferenceStore(): AccountPreferenceStore {
   return {
     async getOverrides() {
+      const { preferencesApi } = await import("../ipc/authApi");
       const view = await preferencesApi.get();
       return view.overrides;
     },
     async putOverride(key, value) {
+      const { preferencesApi } = await import("../ipc/authApi");
       await preferencesApi.put({ set: { [key]: value } });
     },
     async deleteOverride(key) {
+      const { preferencesApi } = await import("../ipc/authApi");
       await preferencesApi.put({ clear: [key] });
     },
   };
