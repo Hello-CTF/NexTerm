@@ -146,6 +146,7 @@ func TestR35CancelStopsExecutionBeforeCheckpointCleanup(t *testing.T) {
 		Model:       func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
 		Tools:       tools.NewRegistry(tools.Dependencies{}),
 		Store:       storage,
+		Runs:        storage,
 		Checkpoints: checkpoints,
 	})
 	t.Cleanup(func() { _ = runner.Close() })
@@ -168,6 +169,14 @@ func TestR35CancelStopsExecutionBeforeCheckpointCleanup(t *testing.T) {
 	case <-modelCanceled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("execution was not canceled while checkpoint cleanup was blocked")
+	}
+	waitEvent(t, stream, "canceled")
+	row, err := storage.RunGet(context.Background(), response.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusCanceled {
+		t.Fatalf("run row status = %q while checkpoint cleanup was blocked", row.Status)
 	}
 	select {
 	case err := <-canceled:

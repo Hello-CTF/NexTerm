@@ -260,8 +260,15 @@ func (r *Runner) Cancel(jobID string) error {
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
+	if done, err := r.hitl.Done(jobID); err == nil {
+		go func() {
+			<-done
+			current.cancelSync.markRecorded()
+		}()
+	} else {
+		defer current.cancelSync.markRecorded()
+	}
 	err := r.cancelRun(jobID)
-	current.cancelSync.markRecorded()
 	if cancelTestHook != nil {
 		cancelTestHook()
 	}
@@ -627,9 +634,15 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		if cancelFn != nil {
 			_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 		}
-
+		if done, err := r.hitl.Done(current.id); err == nil {
+			go func() {
+				<-done
+				current.cancelSync.markRecorded()
+			}()
+		} else {
+			current.cancelSync.markRecorded()
+		}
 		_, _ = r.hitl.Cancel(current.id)
-		current.cancelSync.markRecorded()
 	}
 	if err := r.hitl.Close(); err != nil {
 		r.appendShutdownErr(err)
