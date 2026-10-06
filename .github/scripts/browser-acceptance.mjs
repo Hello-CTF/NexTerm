@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetchServerSyncToken } from "./server-token.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-browser");
@@ -258,10 +259,7 @@ async function startServer() {
   const port = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-browser-server-"));
   const env = { ...globalThis.process.env, NEXTERM_MASTER_KEY: "real-browser-e2e-master" };
-  const token = spawnSync(binary, ["token", "--data-dir", data], { cwd: ROOT, env, encoding: "utf8" });
-  if (token.status !== 0) throw new Error(`nexterm-server token failed: ${(token.stderr || token.stdout || "").slice(-400)}`);
-  const syncToken = (token.stdout || "").trim();
-  if (!syncToken || syncToken.includes("\n")) throw new Error(`nexterm-server token returned malformed stdout: ${JSON.stringify(token.stdout)}`);
+  const syncToken = fetchServerSyncToken(binary, data, env);
   const log = fs.openSync(path.join(OUT, "server.log"), "w");
   const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data], {
     cwd: ROOT,
