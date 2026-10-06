@@ -15,15 +15,9 @@ func TestQueueFIFOAndDrain(t *testing.T) {
 			t.Fatalf("Push(%q): %v", text, err)
 		}
 	}
-	if queue.Len() != 3 {
-		t.Fatalf("Len = %d, want 3", queue.Len())
-	}
 	drained := queue.Drain()
 	if len(drained) != 3 || drained[0].Content != "first" || drained[1].Content != "second" || drained[2].Content != "third" {
 		t.Fatalf("Drain order = %#v", drained)
-	}
-	if queue.Len() != 0 {
-		t.Fatalf("Len after Drain = %d, want 0", queue.Len())
 	}
 	if again := queue.Drain(); len(again) != 0 {
 		t.Fatalf("second Drain = %#v, want empty", again)
@@ -78,11 +72,10 @@ func TestQueueConcurrentPushAndDrain(t *testing.T) {
 	}
 	wg.Wait()
 
-	if queue.Len() > 32 {
-		t.Fatalf("Len = %d exceeds limit", queue.Len())
+	if drained := len(queue.Drain()); drained > 32 {
+		t.Fatalf("Drain returned %d, exceeds limit", drained)
 	}
-	remaining := queue.Len()
-	if drained := len(queue.Drain()); drained != remaining || queue.Len() != 0 {
-		t.Fatalf("Drain returned %d (Len was %d), Len after = %d", drained, remaining, queue.Len())
+	if again := queue.Drain(); len(again) != 0 {
+		t.Fatalf("second Drain = %#v, want empty", again)
 	}
 }

@@ -249,9 +249,6 @@ func (r *Runner) Cancel(jobID string) error {
 			_, err := r.hitl.Cancel(jobID)
 			return err
 		}
-		if r.config.FallbackCancel != nil {
-			return r.config.FallbackCancel(jobID)
-		}
 		return ErrJobNotFound
 	}
 	current.cancel()
@@ -324,9 +321,6 @@ func (r *Runner) ConfirmStream(ctx context.Context, confirmation Confirmation, f
 	if current == nil {
 		restored, err := r.restoreJob(ctx, confirmation.JobID, factory)
 		if err != nil {
-			if r.config.FallbackConfirm != nil {
-				return r.config.FallbackConfirm(confirmation)
-			}
 			return ErrJobNotFound
 		}
 		current = restored

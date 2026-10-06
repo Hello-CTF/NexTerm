@@ -206,22 +206,6 @@ func (r *Runner) CreateConversation(ctx context.Context, title string, scope any
 	return conversationDTO(row), err
 }
 
-func (r *Runner) Conversations(ctx context.Context) ([]ConversationDTO, error) {
-	rows, err := r.store.ConvList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]ConversationDTO, len(rows))
-	for i, row := range rows {
-		result[i] = conversationDTO(row)
-	}
-	return result, nil
-}
-
-func (r *Runner) DeleteConversation(ctx context.Context, id string) error {
-	return r.store.ConvDelete(ctx, id)
-}
-
 func (r *Runner) Messages(ctx context.Context, conversationID string) ([]MessageDTO, error) {
 	rows, err := r.store.MsgList(ctx, conversationID)
 	if err != nil {

@@ -25,10 +25,6 @@ func CloneHistory(messages []*schema.Message) []*schema.Message {
 	return cloned
 }
 
-func stableHistory(messages []*schema.Message) []*schema.Message {
-	return CloneHistory(validPrefix(messages))
-}
-
 func validPrefix(messages []*schema.Message) []*schema.Message {
 	valid := make([]*schema.Message, 0, len(messages))
 	for i := 0; i < len(messages); {
