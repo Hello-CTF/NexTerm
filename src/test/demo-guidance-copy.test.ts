@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { fakeQuery } from "../demo/data";
 
@@ -24,5 +25,18 @@ describe("demo SQL 引导文案", () => {
     expect(fakeQuery("select created_at from users").error).toBeNull();
     expect(fakeQuery("UPDATE orders SET status = 'paid' WHERE id = 1").error).toBeNull();
     expect(fakeQuery("DELETE FROM orders WHERE id = 1").error).toBeNull();
+  });
+});
+
+describe("website 命令数表述", () => {
+  it("不硬编码具体命令条数，只保留同一命令清单语义", () => {
+    const files = [
+      new URL("../../website/index.html", import.meta.url),
+      new URL("../../website/diagrams/01-dual-form.svg", import.meta.url),
+    ];
+    for (const file of files) {
+      const content = readFileSync(file, "utf8");
+      expect(content, file.pathname).not.toMatch(/\d+\s*条命令/);
+    }
   });
 });

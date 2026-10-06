@@ -76,7 +76,7 @@
   <!-- ═══ 底座：同一份内核 ═══ -->
   <rect x="84" y="676" width="1432" height="180" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
   <text class="t-kernel" x="120" y="730">同一份 Go 内核</text>
-  <text class="t-desc" x="120" y="764">140 条命令、一份清单 —— 两端共用，不分叉（桌面行为逐字节不变，由双平台 CI 守着）</text>
+  <text class="t-desc" x="120" y="764">同一份命令清单 —— 两端共用，不分叉（桌面行为逐字节不变，由双平台 CI 守着）</text>
 
   <rect x="120" y="792" width="140" height="44" rx="10" fill="#1b2130" stroke="#2b3446"/>
   <text class="t-chip mono" x="190" y="820" text-anchor="middle">session</text>
