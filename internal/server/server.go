@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
@@ -37,6 +38,7 @@ type Config struct {
 	Dispatcher     *ipc.Dispatcher
 	Environment    ipc.Environment
 	Tokens         TokenVerifier
+	Accounts       *account.Accounts
 	SyncRPC        http.Handler
 	GatewayAuthKey string
 	Events         *EventBroker
@@ -54,27 +56,37 @@ type Config struct {
 }
 
 type Server struct {
-	options        Options
-	dispatcher     *ipc.Dispatcher
-	syncDispatcher *ipc.Dispatcher
-	environment    ipc.Environment
-	tokens         TokenVerifier
-	gatewayAuthKey string
-	authRequired   bool
-	events         *EventBroker
-	channels       ChannelBinder
-	channelStats   ChannelStatsFunc
-	version        string
-	vaultStatus    func(context.Context) (any, error)
-	retention      *RetentionConfig
-	handler        http.Handler
-	logger         *slog.Logger
-	sockets        socketTracker
-	closeOnce      sync.Once
-	closeErr       error
-	webSocket      WebSocketConfig
+	options         Options
+	dispatcher      *ipc.Dispatcher
+	syncDispatcher  *ipc.Dispatcher
+	environment     ipc.Environment
+	tokens          TokenVerifier
+	accounts        *account.Accounts
+	accountThrottle accountThrottles
+	gatewayAuthKey  string
+	authRequired    bool
+	events          *EventBroker
+	channels        ChannelBinder
+	channelStats    ChannelStatsFunc
+	version         string
+	vaultStatus     func(context.Context) (any, error)
+	retention       *RetentionConfig
+	handler         http.Handler
+	logger          *slog.Logger
+	sockets         socketTracker
+	closeOnce       sync.Once
+	closeErr        error
+	webSocket       WebSocketConfig
 
 	readGate func()
+}
+
+type accountThrottles struct {
+	login    *account.LoginThrottle
+	recovery *account.LoginThrottle
+	init     *account.LoginThrottle
+	register *account.LoginThrottle
+	enroll   *account.LoginThrottle
 }
 
 type Health struct {
@@ -95,8 +107,8 @@ func New(config Config) (*Server, error) {
 	if config.Dispatcher == nil {
 		return nil, fmt.Errorf("RPC dispatcher is required")
 	}
-	if config.SyncRPC == nil && config.Tokens == nil {
-		return nil, fmt.Errorf("sync RPC handler or token verifier is required")
+	if config.SyncRPC == nil && config.Tokens == nil && config.Accounts == nil {
+		return nil, fmt.Errorf("sync RPC handler, token verifier, or account service is required")
 	}
 	if config.Tokens == nil && config.SyncRPC != nil {
 		if verifier, ok := config.SyncRPC.(TokenVerifier); ok {
@@ -127,11 +139,11 @@ func New(config Config) (*Server, error) {
 			authRequired = !core.LoopbackListen(config.Options.Listen)
 		}
 	}
-	if authRequired && config.Tokens == nil {
+	if authRequired && config.Tokens == nil && config.Accounts == nil {
 		if authMode == AuthOn {
-			return nil, fmt.Errorf("token verifier is required when auth mode is %q", AuthOn)
+			return nil, fmt.Errorf("token verifier or account service is required when auth mode is %q", AuthOn)
 		}
-		return nil, fmt.Errorf("token verifier is required when listening on a non-loopback address")
+		return nil, fmt.Errorf("token verifier or account service is required when listening on a non-loopback address")
 	}
 	if err := core.ValidateListenAddress(config.Options.Listen); config.Options.Listen != "" && err != nil {
 		return nil, err
@@ -172,7 +184,12 @@ func New(config Config) (*Server, error) {
 
 	s := &Server{
 		options: config.Options, dispatcher: config.Dispatcher, environment: config.Environment,
-		tokens: config.Tokens, gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
+		tokens: config.Tokens, accounts: config.Accounts,
+		accountThrottle: accountThrottles{
+			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
+			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(), enroll: account.NewLoginThrottle(),
+		},
+		gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
@@ -243,6 +260,7 @@ func (s *Server) routes(config Config) http.Handler {
 	mux.Handle("POST /rpc", s.requireAuth(rpcHandler))
 	mux.HandleFunc("GET /ws/events", s.serveEvents)
 	mux.HandleFunc("GET /ws/channel/{id}", s.serveChannel)
+	s.mountAccountRoutes(mux)
 
 	blobs := config.Blobs
 	if blobs == nil && s.options.DataDir != "" {
@@ -268,6 +286,10 @@ func (s *Server) authenticatedSync(next *ipc.RPCHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if !syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
+			if s.tokens == nil {
+				writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "同步令牌无效或缺失"))
+				return
+			}
 			valid, err := s.tokens.VerifyToken(r.Context(), r.Header.Get(TokenHeader))
 			if err != nil {
 				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))

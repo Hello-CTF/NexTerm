@@ -10,7 +10,7 @@ import (
 )
 
 var multiUserTables = []string{
-	"user", "user_dek", "user_session", "user_device", "sync_credential",
+	"app_user", "user_dek", "user_session", "user_device", "sync_credential",
 	"user_setting", "device_enroll_code", "user_sync_object", "user_sync_head",
 }
 
@@ -46,7 +46,7 @@ func TestMigration0014FreshInstall(t *testing.T) {
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 14 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 15 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -120,7 +120,7 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 14 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 15 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	var groupName, assetHost, credHint, snippetBody, tokenValue, tokenHash string
@@ -152,19 +152,19 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 
 func TestMigration0014RoleAndStateConstraints(t *testing.T) {
 	db := testStore(t)
-	if _, err := db.DB().Exec(`INSERT INTO user(id, username, role, password_hash, state, created_at, updated_at)
+	if _, err := db.DB().Exec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u1', 'alice', 'admin', 'x', 'active', 1, 1)`); err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("role CHECK not enforced: %v", err)
 	}
-	if _, err := db.DB().Exec(`INSERT INTO user(id, username, role, password_hash, state, created_at, updated_at)
+	if _, err := db.DB().Exec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u1', 'alice', 'user', 'x', 'bogus', 1, 1)`); err == nil || !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("state CHECK not enforced: %v", err)
 	}
-	if _, err := db.DB().Exec(`INSERT INTO user(id, username, role, password_hash, state, created_at, updated_at)
+	if _, err := db.DB().Exec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u1', 'alice', 'user', 'x', 'active', 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.DB().Exec(`INSERT INTO user(id, username, role, password_hash, state, created_at, updated_at)
+	if _, err := db.DB().Exec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u2', 'Alice', 'user', 'x', 'active', 1, 1)`); err == nil {
 		t.Errorf("username NOCASE uniqueness not enforced")
 	}
@@ -179,7 +179,7 @@ func TestMigration0014ForeignKeyCascade(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mustExec(`INSERT INTO user(id, username, role, password_hash, state, created_at, updated_at)
+	mustExec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u1', 'alice', 'superadmin', 'x', 'active', 1, 1)`)
 	mustExec(`INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
 VALUES('u1', X'01', X'02', '{}', X'03', 'h', 1, 1)`)
@@ -193,7 +193,7 @@ VALUES('c1', 'u1', 'd1', 'sync', 'sh1', 1)`)
 	mustExec(`INSERT INTO user_sync_object(user_id, id, seq, blob) VALUES('u1', 'obj1', 1, X'04')`)
 	mustExec(`INSERT INTO user_sync_head(user_id, head_hash) VALUES('u1', 'hh')`)
 
-	mustExec(`DELETE FROM user WHERE id = 'u1'`)
+	mustExec(`DELETE FROM app_user WHERE id = 'u1'`)
 	for table, column := range map[string]string{
 		"user_dek": "user_id", "user_session": "user_id", "user_device": "user_id",
 		"sync_credential": "user_id", "user_setting": "user_id",
@@ -208,7 +208,7 @@ VALUES('c1', 'u1', 'd1', 'sync', 'sh1', 1)`)
 		}
 	}
 
-	mustExec(`INSERT INTO user(id, username, role, password_hash, state, created_at, updated_at)
+	mustExec(`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
 VALUES('u2', 'bob', 'user', 'x', 'active', 1, 1)`)
 	mustExec(`INSERT INTO user_device(id, user_id, name, kind, created_at) VALUES('d2', 'u2', 'phone', 'mobile', 1)`)
 	mustExec(`INSERT INTO user_session(id, user_id, device_id, token_hash, created_at, touched_at, expires_at)

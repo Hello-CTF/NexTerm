@@ -109,7 +109,7 @@ func TestSessionRevokeOthersAndDisabledUser(t *testing.T) {
 	}
 	requireCode(t, validateErr(a, ctx, token2), ipc.CodeForbidden)
 
-	if _, err := a.db.ExecContext(ctx, "UPDATE user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
+	if _, err := a.db.ExecContext(ctx, "UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
 		t.Fatal(err)
 	}
 	requireCode(t, validateErr(a, ctx, token1), ipc.CodeForbidden)

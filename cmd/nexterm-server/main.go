@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	production "github.com/ProbiusOfficial/NexTerm/internal/app/production"
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/platform"
 	"github.com/ProbiusOfficial/NexTerm/internal/server"
 	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
@@ -124,6 +128,22 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 1
 	}
+	var accounts *account.Accounts
+	if application.Services.Store != nil {
+		accounts = account.New(application.Services.Store.DB())
+	}
+	if invocation.Auth == core.AuthOff && accounts != nil {
+		if err := server.ValidateAuthOffBounds(ctx, accounts); err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 1
+		}
+	}
+	if accounts != nil && !invocation.SyncOnly && invocation.Auth != core.AuthOff {
+		if err := printAccountInitCode(ctx, accounts, os.Stderr, logger.Logger); err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+			return 1
+		}
+	}
 	syncDispatcher, err := application.Services.Sync.PeerDispatcher()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
@@ -141,6 +161,7 @@ func run(args []string) int {
 		Dispatcher:   application.Dispatcher,
 		Environment:  application.Environment(""),
 		SyncRPC:      application.SyncRPCHandler(),
+		Accounts:     accounts,
 		Events:       broker,
 		Channels:     hubAdapter,
 		ChannelStats: hubAdapter.Stats,
@@ -200,6 +221,28 @@ func serverRetentionConfig(runner *core.RetentionRunner) *server.RetentionConfig
 			return status, err
 		}),
 	}
+}
+
+// printAccountInitCode 在账号系统未初始化时于控制台输出一次性初始化码。
+// 码只在首次生成时打印; 重启后若码遗失, 需清除 setting 表 auth.init_code 后重启重新生成。
+func printAccountInitCode(ctx context.Context, accounts *account.Accounts, stderr io.Writer, logger *slog.Logger) error {
+	count, err := accounts.CountUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	code, err := accounts.GenerateInitCode(ctx)
+	if err != nil {
+		if ipc.NormalizeError(err).Code == ipc.CodeForbidden {
+			logger.Warn("初始化码此前已生成; 若遗失, 请清除 setting 表 auth.init_code 后重启以重新生成")
+			return nil
+		}
+		return err
+	}
+	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超管账号初始化(初始化码仅可使用一次)\n\n", code)
+	return nil
 }
 
 func runServerTokenCommand(invocation core.Invocation) error {

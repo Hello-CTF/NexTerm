@@ -36,6 +36,27 @@ ON CONFLICT(user_id) DO UPDATE SET dek_envelope = excluded.dek_envelope, kdf_sal
 	return nil
 }
 
+// InsertUserDEKEnvelopes 仅在该用户尚无信封时写入; 已存在时返回 ErrDEKEnvelopesExist, 不会覆盖。
+var ErrDEKEnvelopesExist = errors.New("DEK 信封已存在")
+
+func (a *Accounts) InsertUserDEKEnvelopes(ctx context.Context, userID string, envelopes *vault.UserDEKEnvelopes) error {
+	if err := validateEnvelopes(envelopes); err != nil {
+		return err
+	}
+	result, err := a.db.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
+VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(user_id) DO NOTHING`,
+		userID, envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
+		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, a.now(), a.now())
+	if err != nil {
+		return dbError(err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return ipc.WrapError(ipc.CodeBadParam, ErrDEKEnvelopesExist.Error(), ErrDEKEnvelopesExist)
+	}
+	return nil
+}
+
 func (a *Accounts) GetUserDEKEnvelopes(ctx context.Context, userID string) (*vault.UserDEKEnvelopes, error) {
 	var envelopes vault.UserDEKEnvelopes
 	err := a.db.QueryRowContext(ctx, `SELECT dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash
@@ -63,7 +84,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 	}
 	defer func() { _ = tx.Rollback() }()
 	var hash string
-	if err := tx.QueryRowContext(ctx, "SELECT password_hash FROM user WHERE id = ?", userID).Scan(&hash); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT password_hash FROM "+userTable+" WHERE id = ?", userID).Scan(&hash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
 		}
@@ -77,7 +98,7 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		return err
 	}
 	now := a.now()
-	if _, err := tx.ExecContext(ctx, `UPDATE user SET password_hash = ?, must_change_password = 0,
+	if _, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET password_hash = ?, must_change_password = 0,
 	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ?`,
 		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
 		return dbError(err)
@@ -114,7 +135,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 	}
 	defer func() { _ = tx.Rollback() }()
 	var userID, state string
-	if err := tx.QueryRowContext(ctx, "SELECT id, state FROM user WHERE username = ? COLLATE NOCASE", username).Scan(&userID, &state); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT id, state FROM "+userTable+" WHERE username = ? COLLATE NOCASE", username).Scan(&userID, &state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
 		}
@@ -138,7 +159,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		return err
 	}
 	now := a.now()
-	if _, err := tx.ExecContext(ctx, `UPDATE user SET password_hash = ?, must_change_password = 0,
+	if _, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET password_hash = ?, must_change_password = 0,
 	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ?`,
 		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
 		return dbError(err)
@@ -164,7 +185,7 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 		return dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE user SET state = ?, must_change_password = 1, updated_at = ? WHERE id = ?`,
+	result, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET state = ?, must_change_password = 1, updated_at = ? WHERE id = ?`,
 		string(StateResetRequired), a.now(), userID)
 	if err != nil {
 		return dbError(err)

@@ -120,6 +120,9 @@ Flags:
   --master-key KEY    Vault master key (env NEXTERM_MASTER_KEY, deprecated; use --master-key-file)
   --master-key-file PATH  Read the vault master key from a file (env NEXTERM_MASTER_KEY_FILE)
   --auth MODE         Access control: on, loopback, or off (env NEXTERM_AUTH, default on)
+                      on = account sessions; loopback = no auth on a loopback listener;
+                      off = local shared workspace only: account/admin/device routes stay
+                      closed (no implicit superadmin) and startup refuses if any user exists
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --version           Print the version

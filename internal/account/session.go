@@ -35,6 +35,7 @@ type Identity struct {
 	UserID    string
 	SessionID string
 	Role      Role
+	State     State
 	DeviceID  string
 }
 
@@ -64,7 +65,7 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 	}
 	defer func() { _ = tx.Rollback() }()
 	var state string
-	if err := tx.QueryRowContext(ctx, "SELECT state FROM user WHERE id = ?", userID).Scan(&state); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT state FROM "+userTable+" WHERE id = ?", userID).Scan(&state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil, ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
 		}
@@ -103,7 +104,7 @@ VALUES(?,?,?,?,?,?,?)`, session.ID, session.UserID, nullableID(session.DeviceID)
 
 func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity, error) {
 	row := a.db.QueryRowContext(ctx, `SELECT s.id, s.user_id, s.device_id, s.created_at, s.touched_at, s.expires_at, s.revoked_at, u.role, u.state, d.revoked_at
-FROM user_session s JOIN user u ON u.id = s.user_id LEFT JOIN user_device d ON d.id = s.device_id
+FROM user_session s JOIN `+userTable+` u ON u.id = s.user_id LEFT JOIN user_device d ON d.id = s.device_id
 WHERE s.token_hash = ?`, sessionTokenHash(token))
 	var session Session
 	var role, state string
@@ -132,8 +133,8 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期")
 	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():
 		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期")
-	case State(state) != StateActive:
-		return nil, ipc.NewError(ipc.CodeForbidden, "账号不可用")
+	case State(state) == StateDisabled:
+		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
 	if now-session.TouchedAt >= sessionSlidePersist.Milliseconds() {
 		expiresAt := now + SessionSlidingTTL.Milliseconds()
@@ -145,7 +146,7 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 			return nil, dbError(err)
 		}
 	}
-	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), DeviceID: session.DeviceID}, nil
+	return &Identity{UserID: session.UserID, SessionID: session.ID, Role: Role(role), State: State(state), DeviceID: session.DeviceID}, nil
 }
 
 func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
