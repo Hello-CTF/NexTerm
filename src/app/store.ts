@@ -873,19 +873,22 @@ function detachBlockOf(
   t: AppTab,
   sessions: SessionInfo[],
   assetKind?: string,
-): "exec" | "winrm" | "unknown" | null {
+): "exec" | "winrm" | "local" | "unknown" | null {
   if (t.containerId) return "exec";
   const kind = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.kind : undefined;
   if (kind === "winrm") return "winrm";
+  if (kind === "local") return "local";
   if (kind) return null;
   if (assetKind === "winrm") return "winrm";
+  if (assetKind === "local") return "local";
   if (assetKind) return null;
   return "unknown";
 }
 
-function detachBlockLabel(block: "exec" | "winrm" | "unknown"): string {
+function detachBlockLabel(block: "exec" | "winrm" | "local" | "unknown"): string {
   if (block === "exec") return "容器 exec";
   if (block === "winrm") return "WinRM 非交互";
+  if (block === "local") return "本地";
   return "类型未知";
 }
 
@@ -924,7 +927,7 @@ async function reclaimTerminals(
       ...new Set(
         blocked
           .map((t) => detachBlockOf(t, st.sessions, assetKind))
-          .filter((b): b is "exec" | "winrm" | "unknown" => b !== null),
+          .filter((b): b is "exec" | "winrm" | "local" | "unknown" => b !== null),
       ),
     ].map(detachBlockLabel).join("、");
     const ok = await ask(
@@ -982,6 +985,7 @@ export function closeActionHint(t: AppTab): string | undefined {
   const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
   if (block === "exec") return "结束容器 exec 进程";
   if (block === "winrm") return "结束 WinRM 非交互进程";
+  if (block === "local") return "结束本地进程";
   if (block === "unknown") return "结束进程（类型未知）";
   return "转入后台运行";
 }

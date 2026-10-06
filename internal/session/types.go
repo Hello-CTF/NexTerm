@@ -129,18 +129,19 @@ func (f EmitterFunc) EmitSessionEvent(ctx context.Context, event Event) error {
 }
 
 type Config struct {
-	Connector        Connector
-	Terminals        TerminalFactory
-	Durable          base.DurableProvider
-	DurableResolver  DurableResolver
-	Hub              *hub.Hub
-	Emitter          Emitter
-	Transcripts      TranscriptSink
-	IdleTimeout      time.Duration
-	SweepInterval    time.Duration
-	ReconnectMax     int
-	ReconnectBackoff []time.Duration
-	DefaultReplay    int
+	Connector         Connector
+	Terminals         TerminalFactory
+	Durable           base.DurableProvider
+	DurableResolver   DurableResolver
+	TranscriptOffsets DurableTranscriptOffsetStore
+	Hub               *hub.Hub
+	Emitter           Emitter
+	Transcripts       TranscriptSink
+	IdleTimeout       time.Duration
+	SweepInterval     time.Duration
+	ReconnectMax      int
+	ReconnectBackoff  []time.Duration
+	DefaultReplay     int
 }
 
 type SessionInfo struct {

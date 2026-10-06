@@ -53,19 +53,9 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 		}()
 		return stop, &wg
 	}
-	waitThrottle := func() ThrottleEvent {
-		t.Helper()
-		select {
-		case event := <-events:
-			return event
-		case <-time.After(5 * time.Second):
-			t.Fatal("missing terminal://throttled event")
-			return ThrottleEvent{}
-		}
-	}
 
 	stop, wg := flood()
-	entry := waitThrottle()
+	entry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
 	if entry.Recovered || entry.TabID != tab.ID || entry.ChannelID != "a-1" || entry.InflightBytes <= 0 || entry.Version != 1 {
 		t.Fatalf("entry event = %+v", entry)
 	}
@@ -85,7 +75,9 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 	for {
 		select {
 		case event := <-events:
-			recovery = event
+			if event.ChannelID == "a-1" && event.Recovered {
+				recovery = event
+			}
 		default:
 		}
 		if recovery.Version != 0 {
@@ -113,7 +105,7 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 	}
 
 	stop, wg = flood()
-	reentry := waitThrottle()
+	reentry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
 	if reentry.Recovered || reentry.ChannelID != "a-1" || reentry.Version != 3 {
 		t.Fatalf("re-entry event = %+v", reentry)
 	}
@@ -123,7 +115,7 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 	if err := manager.DetachChannel("a-1"); err != nil {
 		t.Fatal(err)
 	}
-	detachRecovery := waitThrottle()
+	detachRecovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
 	if !detachRecovery.Recovered || detachRecovery.ChannelID != "a-1" || detachRecovery.Version != 4 {
 		t.Fatalf("detach recovery event = %+v", detachRecovery)
 	}
@@ -131,7 +123,7 @@ func TestThrottleEventPairsEntryWithRealDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	stop, wg = flood()
-	reattached := waitThrottle()
+	reattached := waitThrottleEventMatching(t, events, throttleChannelEvent("a-2", false))
 	if reattached.Recovered || reattached.TabID != tab.ID || reattached.ChannelID != "a-2" || reattached.Version != 5 {
 		t.Fatalf("re-attached entry event = %+v", reattached)
 	}
@@ -156,14 +148,26 @@ func throttleCollector() (Emitter, chan ThrottleEvent) {
 	return emitter, events
 }
 
-func waitThrottleEvent(t *testing.T, events chan ThrottleEvent) ThrottleEvent {
+func waitThrottleEventMatching(t *testing.T, events chan ThrottleEvent, match func(ThrottleEvent) bool) ThrottleEvent {
 	t.Helper()
-	select {
-	case event := <-events:
-		return event
-	case <-time.After(5 * time.Second):
-		t.Fatal("missing terminal://throttled event")
-		return ThrottleEvent{}
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			if match(event) {
+				return event
+			}
+		case <-timer.C:
+			t.Fatal("missing terminal://throttled event")
+			return ThrottleEvent{}
+		}
+	}
+}
+
+func throttleChannelEvent(channelID string, recovered bool) func(ThrottleEvent) bool {
+	return func(event ThrottleEvent) bool {
+		return event.ChannelID == channelID && event.Recovered == recovered
 	}
 }
 
@@ -221,13 +225,13 @@ func TestThrottleRecoveryAggregatesAcrossChannels(t *testing.T) {
 	}
 
 	cancelA := fill("a-1")
-	entryA := waitThrottleEvent(t, events)
+	entryA := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
 	cancelA()
 	if entryA.Recovered || entryA.ChannelID != "a-1" || entryA.Version != 1 {
 		t.Fatalf("entry A = %+v", entryA)
 	}
 	cancelB := fill("b-1")
-	entryB := waitThrottleEvent(t, events)
+	entryB := waitThrottleEventMatching(t, events, throttleChannelEvent("b-1", false))
 	cancelB()
 	if entryB.Recovered || entryB.ChannelID != "b-1" || entryB.Version != 2 {
 		t.Fatalf("entry B = %+v", entryB)
@@ -237,7 +241,7 @@ func TestThrottleRecoveryAggregatesAcrossChannels(t *testing.T) {
 	assertNoThrottleEvent(t, events, 300*time.Millisecond)
 
 	drainChannel("b-1")
-	recovery := waitThrottleEvent(t, events)
+	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("b-1", true))
 	if !recovery.Recovered || recovery.TabID != tab.ID || recovery.ChannelID != "b-1" || recovery.Version != 3 {
 		t.Fatalf("recovery = %+v", recovery)
 	}
@@ -263,7 +267,7 @@ func TestThrottleDiscardPendingPairsRecovery(t *testing.T) {
 			sends <- manager.bus.SendBinary(fillCtx, "a-1", frame)
 		}
 	}()
-	entry := waitThrottleEvent(t, events)
+	entry := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", false))
 	if entry.Recovered || entry.TabID != tab.ID || entry.ChannelID != "a-1" || entry.Version != 1 {
 		t.Fatalf("entry = %+v", entry)
 	}
@@ -274,7 +278,7 @@ func TestThrottleDiscardPendingPairsRecovery(t *testing.T) {
 	if err := manager.bus.DiscardPending("a-1"); err != nil {
 		t.Fatal(err)
 	}
-	recovery := waitThrottleEvent(t, events)
+	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("a-1", true))
 	if !recovery.Recovered || recovery.ChannelID != "a-1" || recovery.InflightBytes != 0 || recovery.Version != 2 {
 		t.Fatalf("discard recovery = %+v", recovery)
 	}
@@ -361,7 +365,7 @@ func TestThrottleFailedAttachPairsRecovery(t *testing.T) {
 		_, err := manager.AttachTab(attachCtx, tab.ID, AttachOptions{ClientID: "client-b", ChannelID: "b-1", ReplayBytes: 20 << 20})
 		attachDone <- err
 	}()
-	entry := waitThrottleEvent(t, events)
+	entry := waitThrottleEventMatching(t, events, throttleChannelEvent("b-1", false))
 	if entry.Recovered || entry.TabID != tab.ID || entry.ChannelID != "b-1" || entry.InflightBytes <= 0 {
 		t.Fatalf("attach entry = %+v", entry)
 	}
@@ -369,7 +373,7 @@ func TestThrottleFailedAttachPairsRecovery(t *testing.T) {
 	if err := <-attachDone; err == nil {
 		t.Fatal("canceled attach succeeded")
 	}
-	recovery := waitThrottleEvent(t, events)
+	recovery := waitThrottleEventMatching(t, events, throttleChannelEvent("b-1", true))
 	if !recovery.Recovered || recovery.TabID != tab.ID || recovery.ChannelID != "b-1" || recovery.Version <= entry.Version {
 		t.Fatalf("attach recovery = %+v", recovery)
 	}
@@ -387,7 +391,7 @@ func TestThrottleFailedAttachPairsRecovery(t *testing.T) {
 			sends <- manager.bus.SendBinary(fillCtx, "b-2", frame)
 		}
 	}()
-	reentry := waitThrottleEvent(t, events)
+	reentry := waitThrottleEventMatching(t, events, throttleChannelEvent("b-2", false))
 	if reentry.Recovered || reentry.ChannelID != "b-2" || reentry.Version <= recovery.Version {
 		t.Fatalf("re-entry = %+v", reentry)
 	}
@@ -407,7 +411,7 @@ func TestThrottleFailedAttachPairsRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	finalRecovery := waitThrottleEvent(t, events)
+	finalRecovery := waitThrottleEventMatching(t, events, throttleChannelEvent("b-2", true))
 	if !finalRecovery.Recovered || finalRecovery.TabID != tab.ID || finalRecovery.ChannelID != "b-2" || finalRecovery.Version <= reentry.Version {
 		t.Fatalf("final recovery = %+v", finalRecovery)
 	}

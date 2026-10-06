@@ -64,23 +64,19 @@ func (c *fakePTYChannel) CloseWrite() error                            { return 
 func (c *fakePTYChannel) ID() string                                   { return c.id }
 func (c *fakePTYChannel) Generation() uint64                           { return c.generation }
 
-func TestProductionMissingSupervisorDoesNotBlockNonLocalTerminal(t *testing.T) {
+func TestProductionTerminalAttachStaysVolatile(t *testing.T) {
 	factory := &bridgeTestFactory{}
 	production, err := NewProduction(t.Context(), ProductionConfig{
 		Config: Config{
 			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
 		},
-		DataDir:            t.TempDir(),
-		Desktop:            true,
-		SupervisorStateDir: blockedSupervisorStateDir(t),
-		Connector:          fakeSSHConnector{},
+		DataDir:   t.TempDir(),
+		Desktop:   true,
+		Connector: fakeSSHConnector{},
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if production.Services.DurableErr == nil {
-		t.Fatal("durable composition error is nil despite the blocked supervisor state directory")
 	}
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -91,7 +87,7 @@ func TestProductionMissingSupervisorDoesNotBlockNonLocalTerminal(t *testing.T) {
 	port := int32(22)
 	username := "root"
 	assetRow, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
-		Kind: "ssh", Name: "non-local", Host: &host, Port: &port, Username: &username,
+		Kind: "ssh", Name: "volatile-ssh", Host: &host, Port: &port, Username: &username,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -104,10 +100,7 @@ func TestProductionMissingSupervisorDoesNotBlockNonLocalTerminal(t *testing.T) {
 	var tabID string
 	requireStoreTestResponse(t, attachResponse, &tabID)
 	if tabID == "" {
-		t.Fatal("non-local terminal_attach returned no tab with a missing local supervisor")
-	}
-	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 1 {
-		t.Fatalf("tabs = %+v", tabs)
+		t.Fatal("ssh terminal_attach returned no tab")
 	}
 
 	localResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "local-channel", "client-a")
@@ -117,13 +110,19 @@ func TestProductionMissingSupervisorDoesNotBlockNonLocalTerminal(t *testing.T) {
 	var localTabID string
 	requireStoreTestResponse(t, localAttach, &localTabID)
 	if localTabID == "" {
-		t.Fatal("local attach with a missing supervisor returned no volatile tab")
+		t.Fatal("local attach returned no tab")
 	}
 	if streams := factory.streams["local-channel"]; len(streams) != 1 {
-		t.Fatalf("volatile fallback did not bridge the local channel: %+v", streams)
+		t.Fatalf("local attach did not bridge the channel: %+v", streams)
 	}
-	if tabs := production.Services.Sessions.ListTabs(); len(tabs) != 2 {
-		t.Fatalf("volatile fallback tabs = %+v", tabs)
+	tabs := production.Services.Sessions.ListTabs()
+	if len(tabs) != 2 {
+		t.Fatalf("tabs = %+v", tabs)
+	}
+	for _, tab := range tabs {
+		if tab.Durable {
+			t.Fatalf("tab %s is durable, want volatile", tab.ID)
+		}
 	}
 }
 
@@ -182,51 +181,5 @@ func (s *fakeExecSession) Wait(ctx context.Context) (int, error) {
 		return 0, nil
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	}
-}
-
-func TestProductionMissingSupervisorKeepsDockerReattachFallback(t *testing.T) {
-	factory := &bridgeTestFactory{}
-	dockerService := docker.NewService(docker.StaticBackends{
-		SDKBackend:     fakeDockerBackend{},
-		CommandBackend: fakeDockerBackend{},
-	})
-	production, err := NewProduction(t.Context(), ProductionConfig{
-		Config: Config{
-			Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-			Streams: ipc.StreamFactoryFuncs{Binary: factory.open},
-		},
-		DataDir:            t.TempDir(),
-		Desktop:            true,
-		SupervisorStateDir: blockedSupervisorStateDir(t),
-		Docker:             dockerService,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if production.Services.DurableErr == nil {
-		t.Fatal("durable composition error is nil despite the blocked supervisor state directory")
-	}
-	if err := production.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
-
-	connectedResponse := dispatchDurableTest(t, production, "session_connect_local", `null`, "docker-channel", "client-a")
-	var connected sessionInfoDTO
-	requireStoreTestResponse(t, connectedResponse, &connected)
-
-	execResponse := dispatchDurableTest(t, production, "docker_exec_attach", `{"args":{"sessionId":"`+connected.ID+`","containerId":"container-1","cols":80,"rows":24}}`, "docker-channel", "client-a")
-	var streamID string
-	requireStoreTestResponse(t, execResponse, &streamID)
-
-	detachResponse := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+streamID+`","mode":"detach"}`, "docker-channel", "client-a")
-	requireProductionNull(t, detachResponse)
-
-	attachResponse := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+streamID+`","replayBytes":1024}`, "docker-channel-2", "client-a")
-	var attached attachedTabDTO
-	requireStoreTestResponse(t, attachResponse, &attached)
-	if attached.TabID != streamID {
-		t.Fatalf("docker reattach masked by the missing supervisor: %+v", attached)
 	}
 }

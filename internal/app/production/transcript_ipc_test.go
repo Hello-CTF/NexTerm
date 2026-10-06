@@ -33,7 +33,7 @@ func seedTranscript(t *testing.T, database *store.Store, assetID string, started
 
 func transcriptDispatcher(t *testing.T, database *store.Store, sessions *session.Manager) *ipc.Dispatcher {
 	t.Helper()
-	service := newTerminalCommandService(database, sessions, nil, false, nil, nil, nil, nil)
+	service := newTerminalCommandService(database, sessions, nil, nil, nil, nil)
 	dispatcher := ipc.NewDispatcher()
 	if err := service.registerTranscripts(dispatcher); err != nil {
 		t.Fatal(err)
