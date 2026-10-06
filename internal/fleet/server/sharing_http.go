@@ -1,0 +1,414 @@
+package fleetserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/sharing"
+	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
+	"github.com/coder/websocket"
+)
+
+// maxShareViewerMessage 是 viewer WS 的读上限; 输入帧经 supervisor 协议
+// 分片 (单帧上限 256KiB), 这里只兜住异常大消息。
+const maxShareViewerMessage = 1 << 20
+
+// defaultShareRevalidateInterval 是空闲分享连接的周期复查间隔: 数据流停止时
+// 吊销/过期/设备变化最迟在该间隔内生效。
+const defaultShareRevalidateInterval = 10 * time.Second
+
+type shareLinkView struct {
+	ID             string `json:"id"`
+	OwnerID        string `json:"owner_id"`
+	DeviceID       string `json:"device_id"`
+	SessionID      string `json:"session_id"`
+	Permission     string `json:"permission"`
+	CreatedAt      int64  `json:"created_at"`
+	ExpiresAt      int64  `json:"expires_at"`
+	RevokedAt      int64  `json:"revoked_at,omitempty"`
+	LastAccessedAt int64  `json:"last_accessed_at,omitempty"`
+}
+
+func newShareLinkView(link *sharing.Link) shareLinkView {
+	return shareLinkView{
+		ID: link.ID, OwnerID: link.OwnerID, DeviceID: link.DeviceID, SessionID: link.SessionID,
+		Permission: string(link.Permission), CreatedAt: link.CreatedAt, ExpiresAt: link.ExpiresAt,
+		RevokedAt: link.RevokedAt, LastAccessedAt: link.LastAccessedAt,
+	}
+}
+
+type hostShareView struct {
+	ID                string `json:"id"`
+	OwnerID           string `json:"owner_id"`
+	OwnerUsername     string `json:"owner_username"`
+	DeviceID          string `json:"device_id"`
+	RecipientID       string `json:"recipient_id"`
+	RecipientUsername string `json:"recipient_username"`
+	Permission        string `json:"permission"`
+	CreatedAt         int64  `json:"created_at"`
+	ExpiresAt         int64  `json:"expires_at"`
+	RevokedAt         int64  `json:"revoked_at,omitempty"`
+}
+
+func newHostShareView(share *sharing.HostShare) hostShareView {
+	return hostShareView{
+		ID: share.ID, OwnerID: share.OwnerID, OwnerUsername: share.OwnerUsername,
+		DeviceID: share.DeviceID, RecipientID: share.RecipientID, RecipientUsername: share.RecipientUsername,
+		Permission: string(share.Permission), CreatedAt: share.CreatedAt, ExpiresAt: share.ExpiresAt, RevokedAt: share.RevokedAt,
+	}
+}
+
+type shareLinkCreateRequest struct {
+	DeviceID  string `json:"device_id"`
+	SessionID string `json:"session_id"`
+	Write     bool   `json:"write"`
+	TTLMS     int64  `json:"ttl_ms"`
+}
+
+type hostShareCreateRequest struct {
+	DeviceID    string `json:"device_id"`
+	RecipientID string `json:"recipient_id"`
+	Write       bool   `json:"write"`
+	TTLMS       int64  `json:"ttl_ms"`
+}
+
+func (s *Service) serveShareLinkCreate(w http.ResponseWriter, r *http.Request) {
+	var request shareLinkCreateRequest
+	if err := decodeFleetJSON(w, r, &request); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	link, token, err := s.sharing.CreateLink(r.Context(), identityFrom(r), request.DeviceID, request.SessionID, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	view := newShareLinkView(link)
+	writeFleetJSON(w, http.StatusOK, struct {
+		shareLinkView
+		Token string `json:"token"`
+	}{shareLinkView: view, Token: token})
+}
+
+func (s *Service) serveShareLinkList(w http.ResponseWriter, r *http.Request) {
+	links, err := s.sharing.ListLinks(r.Context(), identityFrom(r))
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	views := make([]shareLinkView, 0, len(links))
+	for _, link := range links {
+		views = append(views, newShareLinkView(link))
+	}
+	writeFleetJSON(w, http.StatusOK, map[string][]shareLinkView{"links": views})
+}
+
+func (s *Service) serveShareLinkRevoke(w http.ResponseWriter, r *http.Request) {
+	if err := s.sharing.RevokeLink(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Service) serveHostShareCreate(w http.ResponseWriter, r *http.Request) {
+	var request hostShareCreateRequest
+	if err := decodeFleetJSON(w, r, &request); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	share, err := s.sharing.CreateHostShare(r.Context(), identityFrom(r), request.DeviceID, request.RecipientID, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, newHostShareView(share))
+}
+
+func (s *Service) serveHostShareList(w http.ResponseWriter, r *http.Request) {
+	shares, err := s.sharing.ListHostShares(r.Context(), identityFrom(r))
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	views := make([]hostShareView, 0, len(shares))
+	for _, share := range shares {
+		views = append(views, newHostShareView(share))
+	}
+	writeFleetJSON(w, http.StatusOK, map[string][]hostShareView{"shares": views})
+}
+
+func (s *Service) serveHostShareRevoke(w http.ResponseWriter, r *http.Request) {
+	if err := s.sharing.RevokeHostShare(r.Context(), identityFrom(r), r.PathValue("id")); err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	writeFleetJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// dialShareSupervisor 返回设备代管数据通路专用的 supervisor 客户端: 每次
+// 拨号经 registry 请求一条出站桥接 (supervisor 协议字节透传), hello 摘要取
+// 自设备控制通道上报的 state_digest。设备离线或未上报时拒绝。
+func (s *Service) dialShareSupervisor(deviceID string) (*supervisor.Client, error) {
+	digest, ok := s.registry.StateDigest(deviceID)
+	if !ok {
+		return nil, ipc.NewError(ipc.CodeDisconnected, "设备代理未上报状态摘要")
+	}
+	return supervisor.NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
+		return s.registry.RequestBridge(ctx, deviceID)
+	}, digest), nil
+}
+
+type shareReadyFrame struct {
+	Type       string `json:"type"`
+	SessionID  string `json:"session_id"`
+	Permission string `json:"permission"`
+	ExpiresAt  int64  `json:"expires_at"`
+}
+
+type shareErrorFrame struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// shareTerminalWS 串行化 viewer WS 的全部写 (二进制输出与文本控制帧共用
+// 一条连接, coder/websocket 只允许一个并发写者); 读只有一个方向, 无需加锁。
+type shareTerminalWS struct {
+	conn *websocket.Conn
+
+	writeMu sync.Mutex
+}
+
+func (v *shareTerminalWS) writeMessage(ctx context.Context, kind websocket.MessageType, payload []byte) error {
+	v.writeMu.Lock()
+	defer v.writeMu.Unlock()
+	return v.conn.Write(ctx, kind, payload)
+}
+
+func (v *shareTerminalWS) writeJSON(ctx context.Context, frame any) error {
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	v.writeMu.Lock()
+	defer v.writeMu.Unlock()
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return v.conn.Write(writeCtx, websocket.MessageText, payload)
+}
+
+type shareWSReader struct {
+	conn *websocket.Conn
+	buf  []byte
+}
+
+func (r *shareWSReader) Read(p []byte) (int, error) {
+	for {
+		if len(r.buf) > 0 {
+			count := copy(p, r.buf)
+			r.buf = r.buf[count:]
+			return count, nil
+		}
+		kind, payload, err := r.conn.Read(context.Background())
+		if err != nil {
+			return 0, err
+		}
+		// viewer 输入只认二进制帧; 文本控制帧不进入终端字节流。
+		if kind != websocket.MessageBinary {
+			continue
+		}
+		r.buf = payload
+	}
+}
+
+type shareWSWriter struct {
+	viewer *shareTerminalWS
+}
+
+func (w shareWSWriter) Write(p []byte) (int, error) {
+	if err := w.viewer.writeMessage(context.Background(), websocket.MessageBinary, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// discardInput 在输入方向被 Gate 拒绝后持续读并丢弃 viewer 消息: 只读或
+// 权限收缩后会话保持 (输出继续), 控制帧 (ping/close) 也需要持续读取来应答。
+// 读用 background ctx — coder/websocket 会在读 ctx 取消时直接拆连接, 那会
+// 抢在终止错误帧写出之前把 viewer 连接杀掉。
+func (v *shareTerminalWS) discardInput() error {
+	for {
+		if _, _, err := v.conn.Read(context.Background()); err != nil {
+			return err
+		}
+	}
+}
+
+// serveSharePublicTerminal 处理 GET /share/public/{token}: 匿名 viewer 用
+// 公开 token 换取一次性授权 (ResolveLink 已审计), 随后经出站桥接 attach 到
+// 分享会话, 双向字节流过 sharing Gate: 输出始终放行, 输入仅 read_write,
+// 吊销/过期/设备变化逐块复查即时双向停止。
+func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Request) {
+	grant, err := s.sharing.ResolveLink(r.Context(), r.PathValue("token"))
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	s.serveShareTerminal(w, r, grant, s.sharing.NewLinkGate(grant))
+}
+
+// serveShareTerminalOpen 处理 GET /share/devices/{id}/terminal: 注册用户
+// (AuthorizeTerminalOpen 已审计) 经 host agent 新建终端, 双向字节流过
+// sharing Gate, 权限收缩即时生效。
+func (s *Service) serveShareTerminalOpen(w http.ResponseWriter, r *http.Request) {
+	grant, err := s.sharing.AuthorizeTerminalOpen(r.Context(), identityFrom(r), r.PathValue("id"))
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	s.serveShareTerminal(w, r, grant, s.sharing.NewHostGate(grant))
+}
+
+// serveShareTerminal 升级 viewer WS 并建立 gated 数据通路。grant 带
+// SessionID 时 attach 既有会话 (公开链接), 否则经 host agent 新建终端
+// (注册分享); 两条路径的泵与 Gate 语义完全一致。
+func (s *Service) serveShareTerminal(w http.ResponseWriter, r *http.Request, grant *sharing.Grant, gate *sharing.Gate) {
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+	conn.SetReadLimit(maxShareViewerMessage)
+	viewer := &shareTerminalWS{conn: conn}
+
+	client, err := s.dialShareSupervisor(grant.DeviceID)
+	if err != nil {
+		s.failShareTerminal(viewer, err)
+		return
+	}
+	sessionID, stream, err := s.openShareStream(r, client, grant)
+	if err != nil {
+		s.failShareTerminal(viewer, err)
+		return
+	}
+	if err := viewer.writeJSON(r.Context(), shareReadyFrame{
+		Type: "ready", SessionID: sessionID, Permission: string(grant.Permission), ExpiresAt: grant.ExpiresAt,
+	}); err != nil {
+		_ = stream.Close()
+		_ = conn.Close(websocket.StatusInternalError, "ready failed")
+		return
+	}
+	s.pumpShareTerminal(viewer, stream, gate)
+}
+
+func (s *Service) openShareStream(r *http.Request, client *supervisor.Client, grant *sharing.Grant) (string, *supervisor.Stream, error) {
+	if grant.SessionID != "" {
+		stream, err := client.Attach(r.Context(), grant.SessionID, nil)
+		return grant.SessionID, stream, err
+	}
+	info, err := client.Create(r.Context(), supervisor.CreateOptions{})
+	if err != nil {
+		return "", nil, err
+	}
+	expect := &supervisor.Identity{CreatedAt: info.CreatedAt, Incarnation: info.Incarnation}
+	stream, err := client.Attach(r.Context(), info.ID, expect)
+	if err != nil {
+		// attach 失败时回收刚创建的会话, 不在宿主上留下孤儿终端。
+		killCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = client.Kill(killCtx, info.ID, expect)
+		return "", nil, err
+	}
+	return info.ID, stream, nil
+}
+
+// pumpShareTerminal 双向泵送直到任一侧结束或授权失效: 输出 Gate.PipeOutput
+// (终端到 viewer), 输入 Gate.PipeInput (viewer 到终端), 另有一个周期复查
+// goroutine 兜住空闲连接 (无数据流时吊销/过期同样生效)。授权失效时任一
+// goroutine 都会带着错误返回, 随后 best-effort 发错误帧并关闭; 阻塞的读
+// 由 stream.Close 与 viewer 关闭唤醒。
+func (s *Service) pumpShareTerminal(viewer *shareTerminalWS, stream *supervisor.Stream, gate *sharing.Gate) {
+	pumpCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 3)
+	go func() {
+		done <- gate.PipeOutput(pumpCtx, shareWSWriter{viewer: viewer}, stream)
+	}()
+	go func() {
+		err := gate.PipeInput(pumpCtx, stream, &shareWSReader{conn: viewer.conn})
+		if errors.Is(err, sharing.ErrInputNotAllowed) {
+			err = viewer.discardInput()
+		}
+		done <- err
+	}()
+	go func() {
+		ticker := time.NewTicker(s.shareRevalidateInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pumpCtx.Done():
+				done <- pumpCtx.Err()
+				return
+			case <-ticker.C:
+				if err := gate.Check(pumpCtx); err != nil {
+					done <- err
+					return
+				}
+			}
+		}
+	}()
+	err := <-done
+	cancel()
+	_ = stream.Close()
+	if code, message, ok := shareTermination(err); ok {
+		_ = viewer.writeJSON(context.Background(), shareErrorFrame{Type: "error", Code: code, Message: message})
+	}
+	status := websocket.StatusNormalClosure
+	reason := "share ended"
+	if err != nil {
+		status = websocket.StatusPolicyViolation
+		reason = "share terminated"
+	}
+	_ = viewer.conn.Close(status, reason)
+	<-done
+	<-done
+}
+
+func (s *Service) failShareTerminal(viewer *shareTerminalWS, err error) {
+	code, message, ok := shareTermination(err)
+	if !ok {
+		code, message = "internal", "分享数据通路建立失败"
+	}
+	_ = viewer.writeJSON(context.Background(), shareErrorFrame{Type: "error", Code: code, Message: message})
+	_ = viewer.conn.Close(websocket.StatusPolicyViolation, "share failed")
+}
+
+// shareTermination 把泵错误映射为可安全下发给 viewer 的终止码; 传输层
+// 断开与内部错误不携带细节 (避免泄露数据库/内部状态)。
+func shareTermination(err error) (string, string, bool) {
+	switch {
+	case err == nil:
+		return "", "", false
+	case errors.Is(err, sharing.ErrGrantExpired):
+		return "expired", "分享授权已过期", true
+	case errors.Is(err, sharing.ErrInputNotAllowed):
+		return "read_only", "分享授权为只读", true
+	case errors.Is(err, supervisor.ErrNotFound):
+		return "not_found", "分享会话不存在", true
+	case errors.Is(err, supervisor.ErrUnavailable):
+		return "disconnected", "设备代理离线", true
+	}
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		switch appErr.Code {
+		case ipc.CodeForbidden, ipc.CodeDisconnected, ipc.CodeNotFound:
+			return string(appErr.Code), appErr.Message, true
+		}
+	}
+	return "", "", false
+}

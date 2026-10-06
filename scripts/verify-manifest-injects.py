@@ -36,11 +36,13 @@ CHOOSER_ID = "open-save-chooser"
 GATEWAY_ID = "gateway-auth"
 CONTENT_PREFIX = "file:///lzcapp/pkg/content/"
 
-# 匿名可达的最小集合: 设备 agent 合同 (enroll/sync/current-url/WS)。
-# 设备身份由设备凭证把关, 不经平台 gateway auth; 任何 widening 都会让匿名请求
-# 也拿到网关头, 任何收窄都会让设备 agent 在平台上够不到服务器。/sync/v2/*
-# 走账号会话 (push 还要 CSRF), 不得加入。
-EXPECTED_PUBLIC_PATH = ["/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device"]
+# 匿名可达的最小集合: 设备 agent 合同 (enroll/sync/current-url/WS) 与公开
+# 分享链接数据面 (/share/public/{token}, token 即凭据)。
+# 设备身份由设备凭证把关, 分享访问由 token 哈希把关, 均不经平台 gateway auth;
+# 任何 widening 都会让匿名请求也拿到网关头, 任何收窄都会让设备 agent 或公开
+# 分享在平台上够不到服务器。/sync/v2/* 与分享管理 /share/links、
+# /share/host-shares 走账号会话 (push 还要 CSRF), 不得加入。
+EXPECTED_PUBLIC_PATH = ["/device/enroll", "/agent/sync", "/agent/current-url", "/ws/device", "/share/public"]
 
 DIRECTIVE = re.compile(r"^\s*#@build\s+(.*?)\s*$")
 

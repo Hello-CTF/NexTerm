@@ -77,6 +77,8 @@ func writeFleetFailure(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case ipc.CodeNotFound:
 		status = http.StatusNotFound
+	case ipc.CodeDisconnected:
+		status = http.StatusServiceUnavailable
 	}
 	writeFleetJSON(w, status, ipc.Failure(normalized))
 }
@@ -91,8 +93,8 @@ func decodeFleetJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
-// fleetRoutePatterns 是 fleet 处理器认领的全部路由模式; Handler 内部 mux 与
-// 挂载到共享 mux 时共用同一张表, 保证两条路径不会漂移。
+// fleetRoutePatterns 是 fleet 处理器认领的全部路由模式 (设备管理 + 分享);
+// Handler 内部 mux 与挂载到共享 mux 时共用同一张表, 保证两条路径不会漂移。
 var fleetRoutePatterns = []string{
 	"POST /device/enroll",
 	"POST /device/enroll-codes",
@@ -106,6 +108,14 @@ var fleetRoutePatterns = []string{
 	"POST /agent/sync",
 	"POST /agent/current-url",
 	"GET /ws/device",
+	"POST /share/links",
+	"GET /share/links",
+	"POST /share/links/{id}/revoke",
+	"POST /share/host-shares",
+	"GET /share/host-shares",
+	"POST /share/host-shares/{id}/revoke",
+	"GET /share/public/{token}",
+	"GET /share/devices/{id}/terminal",
 }
 
 // Handler 返回 fleet 设备管理的独立 HTTP 入口; --auth=off 下所有路由一律 403。
@@ -152,6 +162,20 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /agent/sync", s.serveAgentSync)
 	mux.HandleFunc("POST /agent/current-url", s.serveAgentCurrentURL)
 	mux.HandleFunc("GET /ws/device", s.serveDeviceWS)
+
+	// 分享管理路由: 账号会话把关, 写操作另需 CSRF。
+	sessionCSRF("POST /share/links", s.serveShareLinkCreate)
+	session("GET /share/links", s.serveShareLinkList)
+	sessionCSRF("POST /share/links/{id}/revoke", s.serveShareLinkRevoke)
+	sessionCSRF("POST /share/host-shares", s.serveHostShareCreate)
+	session("GET /share/host-shares", s.serveHostShareList)
+	sessionCSRF("POST /share/host-shares/{id}/revoke", s.serveHostShareRevoke)
+
+	// 分享数据面: 公开链接以 token 为凭据 (匿名可达, 等同 /device/enroll),
+	// 注册分享终端要求账号会话; 二者都是 GET 升级, 与其他 session 路由一样
+	// 不要求 CSRF。
+	mux.HandleFunc("GET /share/public/{token}", s.serveSharePublicTerminal)
+	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 }
 
 // fleetGuard 落实 --auth=off 硬边界 (fleet 依赖可归因身份, off 下一律关闭),

@@ -44,6 +44,10 @@ type HelloMessage struct {
 	Platform   string `json:"platform"`
 	AppVersion string `json:"app_version"`
 	BridgeID   string `json:"bridge_id,omitempty"`
+	// StateDigest 是设备端 supervisor 状态目录摘要 (sha256(identity\x00dir)),
+	// 服务端代管 attach/create 会话时以此通过 helper 的 hello 校验; 摘要本身
+	// 不是凭据, 只标识设备上的状态目录。
+	StateDigest string `json:"state_digest,omitempty"`
 }
 
 type serverMessage struct {

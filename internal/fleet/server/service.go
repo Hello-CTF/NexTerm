@@ -18,6 +18,7 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/sharing"
 )
 
 const (
@@ -66,6 +67,9 @@ type Service struct {
 	now        func() int64
 	enrollGate *account.LoginThrottle
 	registry   *Registry
+	sharing    *sharing.Service
+
+	shareRevalidateInterval time.Duration
 }
 
 type Option func(*Service)
@@ -74,6 +78,16 @@ func WithNow(now func() int64) Option {
 	return func(s *Service) {
 		if now != nil {
 			s.now = now
+		}
+	}
+}
+
+// WithShareRevalidateInterval 覆盖空闲分享连接的周期复查间隔 (测试用小间隔
+// 加速吊销/过期生效; 生产默认 defaultShareRevalidateInterval)。
+func WithShareRevalidateInterval(interval time.Duration) Option {
+	return func(s *Service) {
+		if interval > 0 {
+			s.shareRevalidateInterval = interval
 		}
 	}
 }
@@ -92,7 +106,20 @@ func New(config Config, options ...Option) (*Service, error) {
 		now:        ids.NowMS,
 		enrollGate: account.NewLoginThrottle(),
 		registry:   NewRegistry(),
+
+		shareRevalidateInterval: defaultShareRevalidateInterval,
 	}
+	sharingService, err := sharing.New(sharing.Config{DB: config.DB, Accounts: config.Accounts},
+		sharing.WithAgentProbe(func(ctx context.Context, deviceID string) error {
+			if !s.registry.AgentOnline(deviceID) {
+				return ipc.NewError(ipc.CodeDisconnected, "设备代理离线")
+			}
+			return nil
+		}))
+	if err != nil {
+		return nil, err
+	}
+	s.sharing = sharingService
 	for _, option := range options {
 		option(s)
 	}

@@ -83,11 +83,17 @@ type Config struct {
 	Accounts *account.Accounts
 }
 
+// AgentProbeFunc 探测设备守护代理当前是否在线 (例如控制通道是否已注册);
+// 返回错误即视为离线。requireDaemon 在数据库 last_seen 检查通过后调用,
+// 用于把 "进程已断开但 last_seen 未过 staleness 窗口" 的设备即时判离线。
+type AgentProbeFunc func(ctx context.Context, deviceID string) error
+
 type Service struct {
 	db             *sql.DB
 	accounts       *account.Accounts
 	now            func() int64
 	agentStaleness time.Duration
+	agentProbe     AgentProbeFunc
 }
 
 type Option func(*Service)
@@ -105,6 +111,12 @@ func WithAgentStaleness(staleness time.Duration) Option {
 		if staleness > 0 {
 			s.agentStaleness = staleness
 		}
+	}
+}
+
+func WithAgentProbe(probe AgentProbeFunc) Option {
+	return func(s *Service) {
+		s.agentProbe = probe
 	}
 }
 
@@ -270,6 +282,11 @@ func (s *Service) requireDaemon(ctx context.Context, deviceID string) error {
 	}
 	if !lastSeenAt.Valid || s.now()-lastSeenAt.Int64 > s.agentStaleness.Milliseconds() {
 		return ipc.NewError(ipc.CodeDisconnected, "设备代理离线")
+	}
+	if s.agentProbe != nil {
+		if err := s.agentProbe(ctx, deviceID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

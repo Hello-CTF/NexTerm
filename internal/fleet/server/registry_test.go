@@ -47,7 +47,7 @@ type bridgeOutcome struct {
 func startBridgeRequest(t *testing.T, r *Registry, deviceID string) (context.CancelFunc, chan bridgeOutcome, string) {
 	t.Helper()
 	controlClient, controlServer := wsPair(t)
-	r.RegisterControl(deviceID, controlServer)
+	r.RegisterControl(deviceID, controlServer, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan bridgeOutcome, 1)
 	go func() {
