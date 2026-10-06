@@ -516,6 +516,10 @@ func (f *forwarder) initiateStop() {
 			f.closeErr = err
 		case <-time.After(f.service.closeTimeout):
 			f.closeErr = errListenerCloseTimeout
+			if aborter, ok := f.listener.(interface{ AbortClose() }); ok {
+				aborter.AbortClose()
+				<-closed
+			}
 		}
 	})
 }

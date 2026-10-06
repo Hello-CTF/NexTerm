@@ -143,6 +143,43 @@ func TestListenRemoteCloseSurfacesRejectedCancellation(t *testing.T) {
 	conn.Close()
 }
 
+func TestListenRemoteStalledCancelAbortedByTeardown(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	server.stallCancel.Store(true)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+
+	listener, err := client.ListenRemote(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborter, ok := listener.(interface{ AbortClose() })
+	if !ok {
+		t.Fatal("remote listener does not support AbortClose")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- listener.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before abort: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	aborter.AbortClose()
+	select {
+	case err := <-closed:
+		if err == nil {
+			t.Fatal("Close returned nil after aborted cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close goroutine did not exit after AbortClose")
+	}
+	if client.IsAlive() {
+		t.Fatal("AbortClose did not tear down the SSH transport")
+	}
+	if _, err := client.ListenRemote(context.Background(), "tcp", "127.0.0.1:0"); !errors.Is(err, base.ErrDisconnected) {
+		t.Fatalf("listen after abort = %v", err)
+	}
+}
+
 func TestListenRemoteValidationAndLifecycle(t *testing.T) {
 	server := newTestSSHServer(t, nil)
 	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})

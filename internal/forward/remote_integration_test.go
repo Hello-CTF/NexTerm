@@ -445,6 +445,9 @@ func TestRemoteForwardRemoveBoundedWhenCancellationStalls(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("Remove blocked for %v", elapsed)
 	}
+	if client.IsAlive() {
+		t.Fatal("stalled cancellation did not tear down the SSH transport, close goroutine cannot exit")
+	}
 	if got := len(service.List()); got != 0 {
 		t.Fatalf("List length = %d", got)
 	}
@@ -493,6 +496,9 @@ func TestRemoteForwardServiceCloseBoundedWhenCancellationStalls(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("Close blocked for %v", elapsed)
+	}
+	if client.IsAlive() {
+		t.Fatal("stalled cancellation did not tear down the SSH transport, close goroutine cannot exit")
 	}
 	select {
 	case err := <-reported:
