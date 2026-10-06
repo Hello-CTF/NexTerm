@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { assetApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { insertSnippet, type Snippet } from "./snippetInsert";
+import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
   IconCommand,
   IconEdit,
@@ -20,6 +21,9 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
   const [editing, setEditing] = useState<Snippet | "new" | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const layer = useOverlayFocus(true, modalRef);
 
   const snippets = useQuery({
     queryKey: ["snippets"],
@@ -49,11 +53,31 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const onModalKeyDown = (event: ReactKeyboardEvent) => {
+    event.stopPropagation();
+    if (!layer.isTopmost()) return;
+    if (event.key === "Escape" && !event.repeat && !isImeKeyEvent(event)) {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    trapOverlayTab(event, modalRef.current);
+  };
+
   return (
     <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal flex max-w-[420px] flex-col" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="nx-modal flex max-w-[420px] flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={onModalKeyDown}
+      >
         <div className="nx-modal-header shrink-0">
-          <span className="text-[13px] font-semibold text-neutral-100">命令片段</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">命令片段</span>
           <div className="nx-spacer" />
           <button
             className="nx-icon-btn nx-icon-btn-sm"
@@ -165,6 +189,31 @@ function SnippetEditor({
   const [body, setBody] = useState(initial?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
+  const nameId = useId();
+  const bodyId = useId();
+  const hintId = useId();
+  const layer = useOverlayFocus(true, modalRef, {
+    initialFocus: () => nameInputRef.current,
+  });
+
+  const dirty = name !== (initial?.name ?? "") || body !== (initial?.body ?? "");
+
+  const requestClose = async () => {
+    if (saving) return;
+    if (
+      dirty &&
+      !(await ask("当前修改还没保存，关闭编辑器会丢掉这些改动，继续？", {
+        title: "放弃未保存的修改",
+        kind: "warning",
+      }))
+    ) {
+      return;
+    }
+    onClose();
+  };
 
   const save = async () => {
     if (saving) return;
@@ -190,18 +239,46 @@ function SnippetEditor({
     }
   };
 
+  const onModalKeyDown = (event: ReactKeyboardEvent) => {
+    event.stopPropagation();
+    if (!layer.isTopmost()) return;
+    if (event.key === "Escape" && !event.repeat && !isImeKeyEvent(event)) {
+      event.preventDefault();
+      void requestClose();
+      return;
+    }
+    trapOverlayTab(event, modalRef.current);
+  };
+
   return (
-    <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal flex max-w-[420px] flex-col" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="nx-overlay"
+      onClick={(e) => {
+        e.stopPropagation();
+        void requestClose();
+      }}
+    >
+      <div
+        ref={modalRef}
+        className="nx-modal flex max-w-[420px] flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={onModalKeyDown}
+      >
         <div className="nx-modal-header shrink-0">
-          <span className="text-[13px] font-semibold text-neutral-100">
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
             {initial ? "编辑片段" : "新建片段"}
           </span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
-            <label className="nx-label">名称</label>
+            <label className="nx-label" htmlFor={nameId}>名称</label>
             <input
+              id={nameId}
+              ref={nameInputRef}
               className="nx-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -209,15 +286,17 @@ function SnippetEditor({
             />
           </div>
           <div className="nx-form-row">
-            <label className="nx-label">内容</label>
+            <label className="nx-label" htmlFor={bodyId}>内容</label>
             <textarea
+              id={bodyId}
               className="nx-textarea font-mono text-[11.5px]"
               rows={4}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="docker ps --format '{{.Names}}'"
+              aria-describedby={hintId}
             />
-            <div className="nx-hint mt-1.5">
+            <div id={hintId} className="nx-hint mt-1.5">
               ↳ 插入终端时只写入输入行，不会自动执行；含回车/换行或控制字符的片段插入前会再确认一次。
             </div>
           </div>
@@ -228,7 +307,7 @@ function SnippetEditor({
           )}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
+          <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
             取消
           </button>
           <button
