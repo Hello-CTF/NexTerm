@@ -327,6 +327,201 @@ const vaultState = {
   autoLockMinutes: 30,
 };
 
+const demoInlinePem =
+  "-----BEGIN OPENSSH PRIVATE KEY-----\n（演示模式：这是一段假私钥，仅用于展示流程）\n-----END OPENSSH PRIVATE KEY-----";
+
+interface DemoSshImportHost {
+  id: string;
+  alias: string;
+  hostname: string;
+  port: number;
+  username: string;
+  identityFiles: string[];
+  keyName: string;
+  proxyJump: string;
+  authMethod: string;
+  source: string;
+  action: string;
+  warnings: string[];
+}
+
+interface DemoSshImportKey {
+  id: string;
+  aliases: string[];
+  fingerprint: string;
+  keyType: string;
+  path: string;
+  source: string;
+  action: string;
+  warnings: string[];
+}
+
+interface DemoSshImportPreview {
+  source: string;
+  path: string;
+  hosts: DemoSshImportHost[];
+  keys: DemoSshImportKey[];
+  diagnostics: { code: string; source: string; message: string }[];
+  truncated: boolean;
+}
+
+const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
+  "ssh-config": {
+    source: "ssh-config",
+    path: "~/.ssh/config",
+    hosts: [
+      {
+        id: "h0",
+        alias: "bastion",
+        hostname: "bastion.demo.internal",
+        port: 22,
+        username: "admin",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "agent",
+        source: "ssh-config",
+        action: "add",
+        warnings: [],
+      },
+      {
+        id: "h1",
+        alias: "web-02",
+        hostname: "web-02.demo.internal",
+        port: 22,
+        username: "deploy",
+        identityFiles: ["/home/demo/.ssh/id_rsa_demo"],
+        keyName: "",
+        proxyJump: "bastion",
+        authMethod: "key",
+        source: "ssh-config",
+        action: "add",
+        warnings: [],
+      },
+      {
+        id: "h2",
+        alias: "web-01",
+        hostname: "127.0.0.1",
+        port: 22,
+        username: "deploy",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "agent",
+        source: "ssh-config",
+        action: "skip-duplicate",
+        warnings: ["别名 web-01 已存在且端点相同，将跳过"],
+      },
+      {
+        id: "h3",
+        alias: "nat-01",
+        hostname: "nat-new.demo.internal",
+        port: 22,
+        username: "root",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "agent",
+        source: "ssh-config",
+        action: "conflict-alias",
+        warnings: ["别名 nat-01 已被一台端点不同的资产使用"],
+      },
+    ],
+    keys: [
+      {
+        id: "k0",
+        aliases: ["id_rsa_demo"],
+        fingerprint: "SHA256:demoRsaFingerprint0000000000000000000000000",
+        keyType: "ssh-rsa",
+        path: "/home/demo/.ssh/id_rsa_demo",
+        source: "ssh-config",
+        action: "add",
+        warnings: [],
+      },
+      {
+        id: "k1",
+        aliases: ["id_ed25519"],
+        fingerprint: "SHA256:demoOtherFingerprint000000000000000000000000",
+        keyType: "ssh-ed25519",
+        path: "/home/demo/.ssh/id_ed25519",
+        source: "ssh-config",
+        action: "conflict-alias",
+        warnings: ["密钥名 id_ed25519 已被一个指纹不同的密钥使用"],
+      },
+    ],
+    diagnostics: [
+      {
+        code: "host-pattern-skipped",
+        source: "~/.ssh/config:12",
+        message: "通配 Host 模式已跳过（不支持导入）",
+      },
+    ],
+    truncated: false,
+  },
+  termius: {
+    source: "termius",
+    path: "~/Library/Application Support/Termius/IndexedDB/file__0.indexeddb.leveldb",
+    hosts: [
+      {
+        id: "h0",
+        alias: "termius-prod",
+        hostname: "prod.demo.internal",
+        port: 22,
+        username: "ubuntu",
+        identityFiles: [],
+        keyName: "termius-key",
+        proxyJump: "",
+        authMethod: "key",
+        source: "termius",
+        action: "add",
+        warnings: [],
+      },
+      {
+        id: "h1",
+        alias: "termius-staging",
+        hostname: "staging.demo.internal",
+        port: 22,
+        username: "ubuntu",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "password",
+        source: "termius",
+        action: "add",
+        warnings: ["密码不会导入，导入后请手动绑定凭据"],
+      },
+      {
+        id: "h2",
+        alias: "termius-prod",
+        hostname: "prod-old.demo.internal",
+        port: 22,
+        username: "ubuntu",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "agent",
+        source: "termius",
+        action: "conflict-alias",
+        warnings: ["别名 termius-prod 与本次导入内的另一台主机冲突"],
+      },
+    ],
+    keys: [
+      {
+        id: "k0",
+        aliases: ["termius-key"],
+        fingerprint: "SHA256:demoTermiusFingerprint00000000000000000000",
+        keyType: "ssh-ed25519",
+        path: "",
+        source: "termius",
+        action: "add",
+        warnings: [],
+      },
+    ],
+    diagnostics: [],
+    truncated: false,
+  },
+};
+
 interface DemoSnippet {
   id: string;
   groupId: string | null;
@@ -2488,6 +2683,182 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "sync_token_issue":
     case "sync_token_revoke":
       throwAppError("unsupported", "该同步操作只在服务端可用");
+
+    case "ssh_import_preview": {
+      const source = str(a.source) === "termius" ? "termius" : "ssh-config";
+      if (source === "termius" && a.confirmed !== true) {
+        throwAppError("bad_param", "参数错误: 读取本机 Termius 数据需要显式确认");
+      }
+      const canned = demoSshImportPreviews[source];
+      return {
+        ...canned,
+        hosts: canned.hosts.map((h) => ({ ...h, identityFiles: [...h.identityFiles], warnings: [...h.warnings] })),
+        keys: canned.keys.map((k) => ({ ...k, aliases: [...k.aliases], warnings: [...k.warnings] })),
+        diagnostics: [...canned.diagnostics],
+      };
+    }
+
+    case "ssh_import_apply": {
+      const source = str(a.source) === "termius" ? "termius" : "ssh-config";
+      if (source === "termius" && a.confirmed !== true) {
+        throwAppError("bad_param", "参数错误: 读取本机 Termius 数据需要显式确认");
+      }
+      if (!vaultState.unlocked) throwAppError("vault_locked", "凭据库已锁定，请先解锁再导入");
+      const canned = demoSshImportPreviews[source];
+      const hostActions = new Map(
+        (Array.isArray(a.hosts) ? a.hosts : []).map((h) => {
+          const item = (h ?? {}) as Record<string, unknown>;
+          return [str(item.id), str(item.action) || "skip"];
+        }),
+      );
+      const keyActions = new Map(
+        (Array.isArray(a.keys) ? a.keys : []).map((k) => {
+          const item = (k ?? {}) as Record<string, unknown>;
+          return [str(item.id), str(item.action) || "skip"];
+        }),
+      );
+      const result = {
+        assetsCreated: 0,
+        assetsUpdated: 0,
+        credentialsCreated: 0,
+        credentialsUpdated: 0,
+        skipped: 0,
+        warnings: [] as string[],
+      };
+      const credIDByKeyID = new Map<string, string>();
+      const overwrittenCredIDs = new Set<string>();
+      for (const key of canned.keys) {
+        const action = keyActions.get(key.id) ?? "skip";
+        const name = key.aliases[0] ?? key.id;
+        if (action === "import" && key.action === "add") {
+          const cred: DemoCredential = {
+            id: uid("cred"),
+            name,
+            kind: "private_key",
+            source: key.source === "termius" ? "inline" : "file",
+            secret: key.source === "termius" ? demoInlinePem : key.path,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          demoCredentials.push(cred);
+          credIDByKeyID.set(key.id, cred.id);
+          result.credentialsCreated += 1;
+        } else if (action === "overwrite" && key.action === "conflict-alias") {
+          const existing = demoCredentials.find((c) => c.name.toLowerCase() === name.toLowerCase());
+          if (existing && overwrittenCredIDs.has(existing.id)) {
+            result.warnings.push(`凭据 "${name}" 已在本次导入中被覆盖，跳过重复的覆盖`);
+            result.skipped += 1;
+          } else if (existing) {
+            existing.secret = key.source === "termius" ? demoInlinePem : key.path;
+            if (existing.kind === "private_key") {
+              existing.source = key.source === "termius" ? "inline" : "file";
+            }
+            existing.updatedAt = Date.now();
+            for (const [keyID, credID] of credIDByKeyID) {
+              if (credID === existing.id) credIDByKeyID.delete(keyID);
+            }
+            credIDByKeyID.set(key.id, existing.id);
+            overwrittenCredIDs.add(existing.id);
+            result.credentialsUpdated += 1;
+          } else {
+            result.skipped += 1;
+          }
+        } else {
+          result.skipped += 1;
+        }
+      }
+      for (const host of canned.hosts) {
+        const action = hostActions.get(host.id) ?? "skip";
+        if (action === "import" && host.action === "add") {
+          const candidateKeyIDs: string[] = [];
+          if (host.keyName) {
+            const named = canned.keys.find(
+              (k) => k.aliases.length > 0 && k.aliases[0].toLowerCase() === host.keyName.toLowerCase(),
+            );
+            if (named) candidateKeyIDs.push(named.id);
+          }
+          for (const path of host.identityFiles) {
+            const byPath = canned.keys.find((k) => k.path === path);
+            if (byPath) candidateKeyIDs.push(byPath.id);
+          }
+          let credId: string | null = null;
+          for (const keyID of candidateKeyIDs) {
+            if (credIDByKeyID.has(keyID)) {
+              credId = credIDByKeyID.get(keyID)!;
+              break;
+            }
+          }
+          const wantsKey = candidateKeyIDs.length > 0 || host.identityFiles.length > 0;
+          assets.push({
+            id: uid("a"),
+            groupId: null,
+            kind: "ssh",
+            name: host.alias,
+            host: host.hostname,
+            port: host.port,
+            username: host.username,
+            authKind: wantsKey ? "key" : host.authMethod === "password" ? "password" : "agent",
+            keyPath: credId === null && host.identityFiles.length > 0 ? host.identityFiles[0]! : null,
+            credId,
+            options: {},
+            tags: "",
+            note: "",
+            sort: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            deletedAt: null,
+            builtin: false,
+          });
+          result.assetsCreated += 1;
+        } else if (action === "overwrite" && host.action === "conflict-alias") {
+          const existing = assets.find(
+            (x) => x.name.toLowerCase() === host.alias.toLowerCase() && x.deletedAt === null,
+          );
+          if (existing) {
+            existing.host = host.hostname;
+            existing.port = host.port;
+            existing.username = host.username;
+            existing.updatedAt = Date.now();
+            result.assetsUpdated += 1;
+          } else {
+            result.skipped += 1;
+          }
+        } else {
+          result.skipped += 1;
+        }
+      }
+      return result;
+    }
+
+    case "vault_generate_key": {
+      const name = str(a.name).trim();
+      if (!name) throwAppError("bad_param", "参数错误: 密钥名称不能为空");
+      if (demoCredentials.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+        throwAppError("bad_param", `参数错误: 已存在同名凭据 "${name}"`);
+      }
+      if (!vaultState.unlocked) throwAppError("vault_locked", "凭据库已锁定，请先解锁");
+      const algorithm = str(a.algorithm, "ed25519") === "rsa" ? "rsa" : "ed25519";
+      const cred: DemoCredential = {
+        id: uid("cred"),
+        name,
+        kind: "private_key",
+        source: "inline",
+        secret: demoInlinePem,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      if (typeof a.passphrase === "string" && a.passphrase.trim()) {
+        cred.passphrase = a.passphrase;
+      }
+      demoCredentials.push(cred);
+      return {
+        id: cred.id,
+        name,
+        algorithm,
+        fingerprint: `SHA256:demo${algorithm === "rsa" ? "Rsa" : "Ed25519"}Fingerprint0000000000`,
+        publicKey: `${algorithm === "rsa" ? "ssh-rsa" : "ssh-ed25519"} AAAAC3NzaC1lZDI1NTE5AAAAIDemoOnlyNotARealKey000000000000 demo@${name}`,
+      };
+    }
 
     default:
       return null;

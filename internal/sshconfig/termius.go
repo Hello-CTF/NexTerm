@@ -48,6 +48,7 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 	batchKeyNames := map[string]bool{}
 	canonicalByFP := map[string]*KeyPreview{}
 	canonicalByAlias := map[string]*KeyPreview{}
+	fingerprintByPK := map[string]string{}
 	for _, rec := range keyRecords {
 		if len(preview.Keys) >= limits.MaxKeys {
 			truncate(preview, "key count exceeds %d", limits.MaxKeys)
@@ -62,6 +63,7 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 			})
 			continue
 		}
+		fingerprintByPK[rec.PrivateKey] = fingerprint
 		aliases := make([]string, 0, len(rec.Aliases))
 		for _, alias := range rec.Aliases {
 			if alias = sanitizeValue(alias); alias != "" {
@@ -122,6 +124,9 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 			KeyName:  sanitizeValue(rec.KeyName),
 			Source:   "termius",
 			Action:   PlanAdd,
+		}
+		if rec.KeyPK != "" {
+			item.KeyFingerprint = fingerprintByPK[rec.KeyPK]
 		}
 		switch {
 		case item.KeyName != "":

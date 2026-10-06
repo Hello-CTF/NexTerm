@@ -33,6 +33,7 @@ type HostRecord struct {
 	Password string
 	KeyName  string
 	KeyID    int
+	KeyPK    string
 }
 
 type KeyRecord struct {
@@ -277,6 +278,8 @@ func parseEntries(entries []decryptedEntry) ([]HostRecord, []KeyRecord) {
 	keyLabelByStringID := map[string]string{}
 	keyAliases := map[string][]string{}
 	keyIDByPK := map[string]int{}
+	pkByKeyID := map[int]string{}
+	pkByStringID := map[string]string{}
 	var keyOrder []string
 
 	for _, entry := range entries {
@@ -308,10 +311,12 @@ func parseEntries(entries []decryptedEntry) ([]HostRecord, []KeyRecord) {
 			}
 			if id, _ := obj["id"].(string); id != "" {
 				keyLabelByStringID[id] = label
+				pkByStringID[id] = pk
 			}
 			if entry.id != 0 {
 				keyLabelByID[entry.id] = label
 				keyIDByPK[pk] = entry.id
+				pkByKeyID[entry.id] = pk
 			}
 			keyAliases[pk] = appendUnique(keyAliases[pk], label)
 		}
@@ -364,9 +369,11 @@ func parseEntries(entries []decryptedEntry) ([]HostRecord, []KeyRecord) {
 			keyID = int(kidF)
 		}
 		keyName := keyLabelByID[keyID]
+		keyPK := pkByKeyID[keyID]
 		if keyName == "" {
 			if kidS, ok := conn["key_id"].(string); ok && kidS != "" {
 				keyName = keyLabelByStringID[kidS]
+				keyPK = pkByStringID[kidS]
 			}
 		}
 
@@ -378,6 +385,7 @@ func parseEntries(entries []decryptedEntry) ([]HostRecord, []KeyRecord) {
 			Password: password,
 			KeyName:  keyName,
 			KeyID:    keyID,
+			KeyPK:    keyPK,
 		}
 		order = append(order, k)
 	}

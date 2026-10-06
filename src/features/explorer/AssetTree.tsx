@@ -17,6 +17,7 @@ import {
   IconClose,
   IconCommand,
   IconCopy,
+  IconDownload,
   IconEdit,
   IconEye,
   IconEyeOff,
@@ -31,6 +32,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import { SnippetsPanel } from "./SnippetsPanel";
+import { SshImportDialog } from "./SshImportDialog";
 
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH (Linux)",
@@ -103,6 +105,7 @@ export function AssetTree() {
   const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
   const [assetError, setAssetError] = useState<{ id: string; message: string } | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
   const { hiddenIds, showHidden, setShowHidden, hide, unhide } = useAssetVisibility();
 
@@ -326,6 +329,14 @@ export function AssetTree() {
         >
           <IconFolder size={14} />
         </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="从 SSH 配置或 Termius 导入"
+          aria-label="导入 SSH 主机"
+          onClick={() => setImporting(true)}
+        >
+          <IconDownload size={14} />
+        </button>
       </div>
 
       <div className="px-2 pb-2">
@@ -485,6 +496,7 @@ export function AssetTree() {
         />
       )}
       {snippetsOpen && <SnippetsPanel onClose={() => setSnippetsOpen(false)} />}
+      {importing && <SshImportDialog onClose={() => setImporting(false)} />}
       <ContextMenu
         state={
           rowMenu

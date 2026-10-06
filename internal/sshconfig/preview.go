@@ -30,17 +30,18 @@ type ExistingKey struct {
 }
 
 type HostPreview struct {
-	Alias         string
-	Hostname      string
-	Port          int
-	Username      string
-	IdentityFiles []string
-	KeyName       string
-	ProxyJump     string
-	AuthMethod    string
-	Source        string
-	Action        PlanAction
-	Warnings      []string
+	Alias          string
+	Hostname       string
+	Port           int
+	Username       string
+	IdentityFiles  []string
+	KeyName        string
+	KeyFingerprint string
+	ProxyJump      string
+	AuthMethod     string
+	Source         string
+	Action         PlanAction
+	Warnings       []string
 }
 
 type KeyPreview struct {
