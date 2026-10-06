@@ -16,10 +16,8 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	sshdaemon "github.com/ProbiusOfficial/NexTerm/internal/ssh"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
@@ -28,13 +26,11 @@ type ProductionConfig struct {
 	Config                  Config
 	DataDir                 string
 	Desktop                 bool
-	DesktopSupervisorHelper bool
 	ForwardPlatform         string
 	Connector               session.Connector
 	Terminals               session.TerminalFactory
 	TaskOptions             tasks.Options
 	Docker                  *docker.Service
-	SupervisorStateDir      string
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
 }
@@ -63,7 +59,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	var taskManager *tasks.Manager
 	var sessionManager *session.Manager
-	var supervisorInstance *supervisor.Supervisor
 	var services ProductionServices
 	defer func() {
 		if returnErr == nil {
@@ -77,9 +72,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}
 		if sessionManager != nil {
 			_ = sessionManager.Close()
-		}
-		if supervisorInstance != nil {
-			_ = supervisorInstance.Close()
 		}
 		if services.Database != nil {
 			_ = services.Database.Close()
@@ -113,36 +105,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		hostKeys = defaultConnector.hostKeys
 		sshConnector = defaultConnector
 	}
-	supervisorStateDir := config.SupervisorStateDir
-	if supervisorStateDir == "" {
-		supervisorStateDir = filepath.Join(config.DataDir, "durable", "supervisor")
-	}
-	var (
-		durableProvider  base.DurableProvider
-		durableErr       error
-		supervisorHelper *supervisor.Helper
-	)
-	if config.DesktopSupervisorHelper {
-		supervisorHelper, durableErr = supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: supervisorStateDir})
-		if durableErr != nil {
-			config.Config.Logger.Warn("desktop supervisor helper unavailable, local durable tabs are disabled", "error", durableErr)
-		} else {
-			durableProvider = &catchUpProvider{
-				DurableProvider: supervisor.NewRemoteProvider(supervisorHelper.Client()),
-				database:        database,
-			}
-		}
-	} else {
-		supervisorInstance, durableErr = supervisor.New(supervisor.Config{StateDir: supervisorStateDir})
-		if durableErr != nil {
-			config.Config.Logger.Warn("embedded session supervisor unavailable, local durable tabs are disabled", "error", durableErr)
-		} else {
-			durableProvider = &catchUpProvider{
-				DurableProvider: supervisor.NewProvider(supervisorInstance),
-				database:        database,
-			}
-		}
-	}
 	dockerService := config.Docker
 	emitter := session.AdaptEmitter(config.Config.Events)
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
@@ -155,11 +117,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		config.Config.Logger.Warn("resolve executable for the remote session daemon; SSH durable tabs are disabled", "error", err)
 	}
 	sessionManager = session.NewManager(session.Config{
-		Connector:       connector,
-		Terminals:       config.Terminals,
-		Durable:         durableProvider,
-		DurableResolver: durableResolver,
-		Transcripts:     transcriptWriter,
+		Connector:         connector,
+		Terminals:         config.Terminals,
+		DurableResolver:   durableResolver,
+		TranscriptOffsets: durableTranscriptOffsets{database: database},
+		Transcripts:       transcriptWriter,
 		Emitter: session.EmitterFunc(func(ctx context.Context, event session.Event) error {
 			if dockerService != nil && event.Topic == session.TopicSessionStatus {
 				if status, ok := event.Payload.(session.StatusEvent); ok && status.Status != session.StatusConnected && status.Status != session.StatusConnecting {
@@ -187,7 +149,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Mount:    mount.NewService(mount.Config{Auditor: database}),
 		Sessions: sessionManager,
 		Forward:  forward.NewService(forward.Config{Provider: sessionManager, Policy: forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform}}),
-		Docker:   dockerService, Retention: retention, DurableErr: durableErr, Supervisor: supervisorInstance, SupervisorHelper: supervisorHelper, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
+		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		Transcripts: transcriptWriter,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,

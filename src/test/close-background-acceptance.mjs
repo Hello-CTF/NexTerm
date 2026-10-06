@@ -313,6 +313,19 @@ async function activateBackgroundTab(page) {
   })()`);
 }
 
+async function connectLocalDevice(page) {
+  await pressCtrl(page, "k", 75);
+  await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
+  await page.send("Input.insertText", { text: "当前设备" });
+  await page.waitFor(`[...document.querySelectorAll('[role="option"]')].some((el) => el.textContent.includes("当前设备"))`);
+  await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+  await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await page.waitFor(`document.querySelectorAll('[role="tablist"][aria-label="工作区"] [role="tab"]').length === 2`);
+  await page.waitFor(`${paneTabCount} === 1`);
+  await page.waitFor("document.querySelectorAll('.xterm').length >= 1");
+  await sleep(600);
+}
+
 async function killSeedBackgroundTab(page) {
   await openBackgroundPanel(page);
   await page.waitFor(`${bgCount} === 1`);
@@ -324,6 +337,34 @@ async function killSeedBackgroundTab(page) {
 }
 
 async function closeBackgroundAcceptance(page) {
+  await pass("local-close-kills-without-background-entry", async () => {
+    await boot(page);
+    await killSeedBackgroundTab(page);
+    await connectLocalDevice(page);
+    await rightClickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab']`);
+    const menuCopy = await page.evaluate(`(() => {
+      const item = [...document.querySelectorAll(".nx-menu .nx-menu-item")].find((b) => b.textContent.includes("关闭标签"));
+      return item?.textContent ?? "";
+    })()`);
+    assert.ok(
+      menuCopy.includes("结束本地进程") && !menuCopy.includes("转入后台"),
+      `local tab menu must promise process termination, not a background entry: ${menuCopy}`,
+    );
+    await clickSelector(page, `${VISIBLE} [role='tablist'][aria-label='标签页'] [role='tab'] button[aria-label^="关闭标签"]`);
+    await page.waitFor(`Boolean(document.querySelector('[role="alertdialog"]'))`);
+    const message = await page.evaluate(dialogText);
+    assert.ok(
+      message.includes("本地") && message.includes("不支持转入后台") && message.includes("关闭会结束这个进程"),
+      `local close must confirm process termination instead of faking a background entry: ${message}`,
+    );
+    await page.evaluate(clickDialogButton("确定"));
+    await page.waitFor(`${paneTabCount} === 0`);
+    assert.ok(!(await page.evaluate(toastText)).includes("已转入后台"), "local close must not toast a background entry");
+    await openBackgroundPanel(page);
+    await page.waitFor(`${bgCount} === 0`);
+    return { evidence: { message } };
+  });
+
   await pass("close-x-detach-takeover", async () => {
     await boot(page);
     await killSeedBackgroundTab(page);
@@ -594,7 +635,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    note: "demo 传输层下驱动真实 Chromium：关闭=detach 无确认、结束进程/断开连接/exec 关闭=二次确认、exec 无假后台入口",
+    note: "demo 传输层下驱动真实 Chromium：本机终端关闭=确认后结束进程且无后台条目；SSH 远端终端关闭=分离进入后台可接管（对端持久化）；结束进程/断开连接/exec 关闭=二次确认、exec 无假后台入口",
   },
   checks,
   harness_errors: harnessErrors,

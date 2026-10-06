@@ -9,7 +9,9 @@ type durableGridSource interface {
 	DurableGrid() (cols, rows uint32, ok bool)
 }
 
-type durableTranscriptOffsetSource interface {
+type DurableTranscriptOffsetStore interface {
 	DurableTranscriptCatchUpBytes(tabID string) int64
 	PersistDurableTranscriptOffset(tabID string, offset int64)
 }
+
+type durableTranscriptOffsetSource = DurableTranscriptOffsetStore

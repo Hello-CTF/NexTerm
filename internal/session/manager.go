@@ -29,6 +29,7 @@ type Manager struct {
 	terminals   TerminalFactory
 	durable     base.DurableProvider
 	resolver    DurableResolver
+	offsets     DurableTranscriptOffsetStore
 	bus         *hub.Hub
 	ownsBus     bool
 	emitter     Emitter
@@ -102,12 +103,16 @@ func NewManager(config Config) *Manager {
 	} else {
 		manager.bus = config.Hub
 	}
+	manager.offsets = config.TranscriptOffsets
+	if manager.offsets == nil {
+		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
+			manager.offsets = source
+		}
+	}
 	if binder, ok := config.Transcripts.(interface {
 		BindTranscriptOffsetSource(durableTranscriptOffsetSource)
-	}); ok {
-		if source, ok := config.Durable.(durableTranscriptOffsetSource); ok {
-			binder.BindTranscriptOffsetSource(source)
-		}
+	}); ok && manager.offsets != nil {
+		binder.BindTranscriptOffsetSource(manager.offsets)
 	}
 	return manager
 }

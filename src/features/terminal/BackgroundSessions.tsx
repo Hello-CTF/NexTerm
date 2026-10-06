@@ -20,14 +20,14 @@ function persistenceFootnote(): string {
     return "这里的终端进程都跑在服务端：关掉本页面、换一台设备打开，它们都还在。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
   }
   if (TRANSPORT === "desktop") {
-    return "这里的终端进程都跑在本机。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
+    return "SSH 持久终端由对端 helper 保持，其他已分离终端随本应用退出而结束。「接管」不会新开 shell，会把你离开期间产生的输出一起回放回来。";
   }
   return "演示模式：这里的后台终端都是内存里的模拟数据，刷新页面就会消失。「接管」不会新开 shell。";
 }
 
 function runningCopy(count: number): string {
   if (TRANSPORT === "web") return `${count} 个终端在服务端运行 · 5 秒自动刷新`;
-  if (TRANSPORT === "desktop") return `${count} 个终端在本机运行 · 5 秒自动刷新`;
+  if (TRANSPORT === "desktop") return `${count} 个终端在后台运行 · 5 秒自动刷新`;
   return `${count} 个模拟终端在内存中 · 5 秒自动刷新`;
 }
 
@@ -53,7 +53,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
     setLoading(true);
     try {
       const list = await terminalApi.listLive();
-      setItems(list.filter((t) => t.subscribers === 0 && !t.exited));
+      setItems(list.filter((t) => t.sessionKind !== "local" && t.subscribers === 0 && !t.exited));
       setError(null);
     } catch (e) {
       setError(describeError(e));
@@ -237,7 +237,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                 <td colSpan={5} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭运行中的 SSH / 本地终端标签时，进程会自动留在这里，随时可以接管。
+                    关闭运行中的 SSH 终端标签时，进程会留在这里，随时可以接管。
                   </div>
                 </td>
               </tr>

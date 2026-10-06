@@ -12,7 +12,6 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
 func discardTranscriptLogger() *slog.Logger {
@@ -730,69 +729,6 @@ func TestTranscriptWriterEnqueueHonorsCancelledContext(t *testing.T) {
 		t.Fatalf("the cancelled output must be dropped while the rest completes: %+v", rows)
 	}
 }
-
-func TestCatchUpProviderPersistsOffsets(t *testing.T) {
-	ctx := context.Background()
-	database, err := store.OpenInMemory(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	inner := &fakeCatchUpInner{attachment: &fakeCatchUpAttachment{}}
-	provider := &catchUpProvider{DurableProvider: inner, database: database}
-
-	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 0 {
-		t.Fatalf("unknown offset = %d, want 0", got)
-	}
-	if err := database.DurableTranscriptOffsetSet(ctx, "tab-1", 4096); err != nil {
-		t.Fatal(err)
-	}
-	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 4096 {
-		t.Fatalf("persisted offset = %d, want 4096", got)
-	}
-	provider.PersistDurableTranscriptOffset("tab-1", 8192)
-	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 8192 {
-		t.Fatalf("updated offset = %d, want 8192", got)
-	}
-
-	if _, err := provider.Create(ctx, base.DurableCreateOptions{ID: "tab-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := provider.DurableTranscriptCatchUpBytes("tab-1"); got != 0 {
-		t.Fatalf("create must reset the offset, got %d", got)
-	}
-
-	broken := &catchUpProvider{DurableProvider: inner}
-	if got := broken.DurableTranscriptCatchUpBytes("tab-1"); got != 0 {
-		t.Fatal("nil database must fall back to a zero boundary")
-	}
-	broken.PersistDurableTranscriptOffset("tab-1", 1)
-}
-
-type fakeCatchUpInner struct {
-	attachment base.DurableAttachment
-}
-
-func (f *fakeCatchUpInner) Create(context.Context, base.DurableCreateOptions) (base.DurableAttachment, error) {
-	return f.attachment, nil
-}
-
-func (f *fakeCatchUpInner) Attach(context.Context, string) (base.DurableAttachment, error) {
-	return f.attachment, nil
-}
-
-type fakeCatchUpAttachment struct{}
-
-func (a *fakeCatchUpAttachment) Read([]byte) (int, error)                     { return 0, io.EOF }
-func (a *fakeCatchUpAttachment) Write(data []byte) (int, error)               { return len(data), nil }
-func (a *fakeCatchUpAttachment) Close() error                                 { return nil }
-func (a *fakeCatchUpAttachment) ID() string                                   { return "tab-1" }
-func (a *fakeCatchUpAttachment) Generation() uint64                           { return 0 }
-func (a *fakeCatchUpAttachment) Resize(context.Context, uint32, uint32) error { return nil }
-func (a *fakeCatchUpAttachment) Wait(context.Context) error                   { return nil }
-func (a *fakeCatchUpAttachment) Kill(context.Context) error                   { return nil }
-func (a *fakeCatchUpAttachment) Stderr() io.Reader                            { return nil }
-func (a *fakeCatchUpAttachment) CloseWrite() error                            { return nil }
 
 func TestTranscriptWriterCrashBeforeFlushDoesNotSuppressUnflushed(t *testing.T) {
 	ctx := context.Background()

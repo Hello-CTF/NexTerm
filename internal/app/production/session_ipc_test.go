@@ -15,16 +15,16 @@ import (
 
 func TestProductionAttachTabMissingTabReturnsNotFoundAndInvalidTabBadParam(t *testing.T) {
 	dataDir := durableTestDataDir(t)
-	production := newSupervisorTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
-	connectLocalDurableTest(t, production)
+	production := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
+	connectLocalTerminalTest(t, production)
 
 	cases := []struct {
 		name string
 		id   string
 		want ipc.Code
 	}{
-		{"missing durable tab", ids.New(), ipc.CodeNotFound},
-		{"missing nondurable tab", strings.Repeat("a1b2", 8), ipc.CodeNotFound},
+		{"missing daemon tab", ids.New(), ipc.CodeNotFound},
+		{"missing volatile tab", strings.Repeat("a1b2", 8), ipc.CodeNotFound},
 		{"malformed tab id", "not-a-supervisor-id", ipc.CodeBadParam},
 		{"empty tab id", "", ipc.CodeBadParam},
 	}
@@ -39,25 +39,22 @@ func TestProductionAttachTabMissingTabReturnsNotFoundAndInvalidTabBadParam(t *te
 	}
 }
 
-func TestProductionAttachTabRecoversDurableTabAfterRestart(t *testing.T) {
+func TestProductionAttachTabLocalTabEndsWithAppRestart(t *testing.T) {
 	dataDir := durableTestDataDir(t)
-	first := newSupervisorTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
-	connected := connectLocalDurableTest(t, first)
-	attachResponse := dispatchDurableTest(t, first, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "attach-tab-recovery-channel", "client-a")
+	first := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
+	connected := connectLocalTerminalTest(t, first)
+	attachResponse := dispatchDurableTest(t, first, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24}`, "attach-tab-restart-channel", "client-a")
 	var tabID string
 	requireStoreTestResponse(t, attachResponse, &tabID)
 	if err := first.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	second := newSupervisorTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
-	recoveredResponse := dispatchDurableTest(t, second, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":65536}`, "attach-tab-recovery-channel", "client-a")
-	var recovered attachedTabDTO
-	requireStoreTestResponse(t, recoveredResponse, &recovered)
-	if recovered.TabID != tabID || recovered.SessionID == "" {
-		t.Fatalf("recovered tab = %+v, want tab %s reattached", recovered, tabID)
+	second := newTerminalTestProduction(t, dataDir, &bridgeTestFactory{}, nil)
+	recoveredResponse := dispatchDurableTest(t, second, "terminal_attach_tab", `{"tabId":"`+tabID+`","replayBytes":65536}`, "attach-tab-restart-channel", "client-a")
+	if recoveredResponse.OK || recoveredResponse.Error == nil || recoveredResponse.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("attach tab %s after restart = %+v, want not_found", tabID, recoveredResponse)
 	}
-	requireProductionNull(t, dispatchDurableTest(t, second, "terminal_close_tab", `{"tabId":"`+tabID+`","clientId":"client-a"}`, "", "client-a"))
 }
 
 func TestProductionSessionReconnectDoesNotAutoTrustChangedHostKey(t *testing.T) {

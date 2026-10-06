@@ -20,15 +20,13 @@ import (
 )
 
 type terminalCommandService struct {
-	database         *store.Store
-	sessions         *session.Manager
-	docker           *docker.Service
-	durableAvailable bool
-	durableErr       error
-	bridge           *terminalBridge
-	grid             *ipc.Dispatcher
-	hostKeys         *productionHostKeyStore
-	sshConnector     *productionConnector
+	database     *store.Store
+	sessions     *session.Manager
+	docker       *docker.Service
+	bridge       *terminalBridge
+	grid         *ipc.Dispatcher
+	hostKeys     *productionHostKeyStore
+	sshConnector *productionConnector
 
 	mu         sync.Mutex
 	dockerTabs map[string]*dockerTabInfo
@@ -127,9 +125,9 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 }
 
-func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, durableAvailable bool, durableErr error, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector) *terminalCommandService {
+func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector) *terminalCommandService {
 	return &terminalCommandService{
-		database: database, sessions: sessions, docker: dockerService, durableAvailable: durableAvailable, durableErr: durableErr, bridge: bridge,
+		database: database, sessions: sessions, docker: dockerService, bridge: bridge,
 		dockerTabs: make(map[string]*dockerTabInfo), sinks: make(map[string]ipc.BinaryStream), hostKeys: hostKeys, sshConnector: sshConnector,
 	}
 }
@@ -246,16 +244,16 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		},
 		func() error {
 			return ipc.Register(dispatcher, "terminal_attach", func(ctx context.Context, call *ipc.Call, input openTerminalRequest) (string, error) {
-				durableOptions, err := s.createDurableOptions(input.SessionID)
-				if err != nil {
-					return "", terminalIPCError(err)
+				ephemeral := false
+				if connected, err := s.sessions.Session(input.SessionID); err == nil {
+					ephemeral = connected.Asset().Kind == session.KindLocal
 				}
 				if err := s.bridge.Bridge(call.Channel.ID); err != nil {
 					return "", terminalIPCError(err)
 				}
 				info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
 					SessionID: input.SessionID, ClientID: call.ClientID, ChannelID: call.Channel.ID, Cols: input.Cols, Rows: input.Rows,
-					Durable: durableOptions,
+					Ephemeral: ephemeral,
 				})
 				if err != nil {
 					s.bridge.Unbridge(call.Channel.ID)
@@ -284,19 +282,8 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return s.attachDocker(ctx, call, input.TabID)
 					}
 				}
-				if s.durableErr != nil {
-					return attachedTabDTO{}, terminalIPCError(s.durableErr)
-				}
-				if s.durableAvailable && ids.Valid(input.TabID) {
-					recovered, recoveryErr := s.recoverDurable(ctx, call, input.TabID)
-					if recoveryErr == nil {
-						return recovered, nil
-					}
-					s.bridge.Unbridge(call.Channel.ID)
-					if !errors.Is(recoveryErr, durable.ErrNotFound) {
-						return attachedTabDTO{}, terminalIPCError(recoveryErr)
-					}
-					recovered, recoveryErr = s.recoverRemoteDurable(ctx, call, input.TabID)
+				if ids.Valid(input.TabID) {
+					recovered, recoveryErr := s.recoverRemoteDurable(ctx, call, input.TabID)
 					if recoveryErr == nil {
 						return recovered, nil
 					}
@@ -465,51 +452,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		return err
 	}
 	return registerFSCommands(dispatcher, s.sessions)
-}
-
-func (s *terminalCommandService) createDurableOptions(sessionID string) (*session.DurableTabOptions, error) {
-	connected, err := s.sessions.Session(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	if connected.Asset().Kind != session.KindLocal {
-		return nil, nil
-	}
-	if s.durableErr != nil || !s.durableAvailable {
-		return nil, nil
-	}
-	return &session.DurableTabOptions{}, nil
-}
-
-func (s *terminalCommandService) recoverDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {
-	var connected *session.Session
-	for _, info := range s.sessions.ListSessions() {
-		if info.Kind == session.KindLocal && info.Status == session.StatusConnected {
-			current, err := s.sessions.Session(info.ID)
-			if err == nil {
-				connected = current
-				break
-			}
-		}
-	}
-	var err error
-	if connected == nil {
-		connected, err = s.connectLocal(ctx)
-		if err != nil {
-			return attachedTabDTO{}, err
-		}
-	}
-	if err := s.bridge.Bridge(call.Channel.ID); err != nil {
-		return attachedTabDTO{}, err
-	}
-	info, err := s.sessions.OpenTab(context.WithoutCancel(ctx), session.OpenTabOptions{
-		TabID: tabID, SessionID: connected.ID, ClientID: call.ClientID, ChannelID: call.Channel.ID,
-		Cols: 80, Rows: 24, Durable: &session.DurableTabOptions{Recover: true},
-	})
-	if err != nil {
-		return attachedTabDTO{}, err
-	}
-	return attachedSessionTab(info), nil
 }
 
 func (s *terminalCommandService) recoverRemoteDurable(ctx context.Context, call *ipc.Call, tabID string) (attachedTabDTO, error) {

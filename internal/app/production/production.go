@@ -17,7 +17,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/mount"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
-	"github.com/ProbiusOfficial/NexTerm/internal/supervisor"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/tasks"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
@@ -46,9 +45,6 @@ type ProductionServices struct {
 	Sessions         *session.Manager
 	Forward          *forward.Service
 	Docker           *docker.Service
-	DurableErr       error
-	Supervisor       *supervisor.Supervisor
-	SupervisorHelper *supervisor.Helper
 	Retention        *RetentionRunner
 	Guard            *guard.Manager
 	Agent            *agent.Runner
@@ -83,7 +79,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 		services.channelBridge = newTerminalBridge(services.Sessions, config.Streams)
 	}
 	if services.terminalCommands == nil {
-		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.Supervisor != nil || services.SupervisorHelper != nil, services.DurableErr, services.channelBridge, services.hostKeys, services.sshConnector)
+		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector)
 	}
 	if config.RetentionStatus == nil && services.Retention != nil {
 		config.RetentionStatus = services.Retention.Status
@@ -149,9 +145,6 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Mount != nil {
 		modules = append(modules, Module{Name: "mount", RegisterCommands: services.Mount.RegisterCommands, Component: services.Mount})
-	}
-	if services.Supervisor != nil {
-		modules = append(modules, Module{Name: "durable-supervisor", Component: closeSupervisorComponent(services.Supervisor)})
 	}
 	if services.Transcripts != nil {
 		modules = append(modules, Module{Name: "transcript-writer", Component: services.Transcripts})

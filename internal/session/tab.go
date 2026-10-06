@@ -257,11 +257,11 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 	}
 	if options.Durable != nil {
-		if source, ok := m.durable.(durableTranscriptOffsetSource); ok {
+		if m.offsets != nil {
 			if options.Durable.Recover {
-				tab.catchUpRemaining = source.DurableTranscriptCatchUpBytes(tabID)
+				tab.catchUpRemaining = m.offsets.DurableTranscriptCatchUpBytes(tabID)
 			} else {
-				source.PersistDurableTranscriptOffset(tabID, 0)
+				m.offsets.PersistDurableTranscriptOffset(tabID, 0)
 			}
 		}
 	}
