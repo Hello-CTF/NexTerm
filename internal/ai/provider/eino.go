@@ -29,7 +29,7 @@ type resilientChatModel struct {
 }
 
 func (m *resilientChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	result, err := m.client.runNative(ctx, input, m.withBoundTools(opts), false, nil, nil)
+	result, err := m.client.runNative(ctx, input, m.withBoundTools(opts), false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (m *resilientChatModel) Stream(ctx context.Context, input []*schema.Message
 			}
 			return nil
 		}
-		_, err := m.client.runNative(ctx, input, options, true, onFrame, nil)
+		_, err := m.client.runNative(ctx, input, options, true, onFrame)
 		if err != nil && !errors.Is(err, errStreamClosed) {
 			writer.Send(nil, err)
 		}

@@ -12,21 +12,15 @@ import (
 const textPartsBlock = `{"model":"served-parts","choices":[{"message":{"content":[{"type":"text","text":"Hel"},{"type":"text","text":"lo"}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`
 
 func TestBlockTextPartContentRegression(t *testing.T) {
-	t.Run("block Chat adapter", func(t *testing.T) {
+	t.Run("block ChatBlock", func(t *testing.T) {
 		provider := &fakeProvider{steps: []fakeStep{{status: http.StatusOK, body: textPartsBlock}}}
 		client := newFakeClient(t, provider, Config{Model: "m"}, 0, nil, nil)
-		var items []StreamItem
-		completion, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) {
-			items = append(items, item)
-		})
+		completion, err := client.ChatBlock(context.Background(), ChatRequest{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if completion.Content != "Hello" || completion.Model != "served-parts" {
 			t.Fatalf("completion = %+v", completion)
-		}
-		if !reflect.DeepEqual(items, []StreamItem{{Kind: StreamDelta, Text: "Hello"}}) {
-			t.Fatalf("block items = %#v", items)
 		}
 	})
 	t.Run("native Generate", func(t *testing.T) {

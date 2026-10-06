@@ -7,10 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestStreamFragmentedCRLFReasoningToolsAndUsage(t *testing.T) {
@@ -48,14 +49,22 @@ func TestStreamFragmentedCRLFReasoningToolsAndUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var items []StreamItem
-	completion, err := client.Chat(context.Background(), ChatRequest{
+	messages, options, err := toNativeRequest(ChatRequest{
 		Messages: []ChatMessage{UserMessage("hello")},
 		Tools:    []ToolSchema{{Name: "write", Parameters: map[string]any{"type": "object"}}},
-	}, func(item StreamItem) { items = append(items, item) })
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	var frames []*schema.Message
+	result, err := client.runNative(context.Background(), messages, options, true, func(message *schema.Message) error {
+		frames = append(frames, message)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion := result.completion
 	if completion.Content != "Hello" || completion.Reasoning != "thinking" || completion.FinishReason != "tool_calls" {
 		t.Fatalf("completion = %+v", completion)
 	}
@@ -70,16 +79,28 @@ func TestStreamFragmentedCRLFReasoningToolsAndUsage(t *testing.T) {
 	if !reflect.DeepEqual(completion.ToolCalls, wantCalls) {
 		t.Fatalf("tool calls = %#v, want %#v", completion.ToolCalls, wantCalls)
 	}
-	wantItems := []StreamItem{
-		{Kind: StreamReasoning, Text: "thinking"},
-		{Kind: StreamDelta, Text: "Hel"},
-		{Kind: StreamDelta, Text: "lo"},
-		{Kind: StreamToolArgs, Name: "second", Chars: 2},
-		{Kind: StreamToolArgs, Name: "wr", Chars: 8},
-		{Kind: StreamToolArgs, Name: "write", Chars: 12},
+	if len(frames) != 5 {
+		t.Fatalf("stream frames = %+v", frames)
 	}
-	if !reflect.DeepEqual(items, wantItems) {
-		t.Fatalf("stream items = %#v, want %#v", items, wantItems)
+	if frames[0].ReasoningContent != "thinking" || frames[0].Content != "Hel" {
+		t.Fatalf("reasoning frame = %+v", frames[0])
+	}
+	if frames[1].Content != "lo" {
+		t.Fatalf("content frame = %+v", frames[1])
+	}
+	fragments := frames[2].ToolCalls
+	if len(fragments) != 2 ||
+		fragments[0].Function.Name != "second" || fragments[0].Function.Arguments != `{}` ||
+		fragments[1].Function.Name != "wr" || fragments[1].Function.Arguments != `{"path":` {
+		t.Fatalf("tool fragments = %+v", fragments)
+	}
+	final := frames[3]
+	if len(final.ToolCalls) != 1 || final.ToolCalls[0].Function.Name != "ite" || final.ToolCalls[0].Function.Arguments != `"a"}` ||
+		final.ResponseMeta == nil || final.ResponseMeta.FinishReason != "tool_calls" {
+		t.Fatalf("final tool frame = %+v", final)
+	}
+	if frames[4].ResponseMeta == nil || frames[4].ResponseMeta.Usage == nil {
+		t.Fatalf("usage frame = %+v", frames[4])
 	}
 }
 
@@ -89,14 +110,13 @@ func TestStreamProcessesFinalDataAtEOFWithoutDone(t *testing.T) {
 	}))
 	defer server.Close()
 	client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
-	var deltas []string
-	completion, err := client.Chat(context.Background(), ChatRequest{Messages: []ChatMessage{UserMessage("hi")}}, func(item StreamItem) {
-		if item.Kind == StreamDelta {
-			deltas = append(deltas, item.Text)
-		}
+	var frames []*schema.Message
+	result, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+		frames = append(frames, message)
+		return nil
 	})
-	if err != nil || completion.Content != "end" || !reflect.DeepEqual(deltas, []string{"end"}) {
-		t.Fatalf("Chat() = %+v, %v, deltas=%v", completion, err, deltas)
+	if err != nil || result.completion.Content != "end" || len(frames) != 1 || frames[0].Content != "end" {
+		t.Fatalf("runNative() = %+v, %v, frames=%+v", result.completion, err, frames)
 	}
 }
 
@@ -112,14 +132,23 @@ func TestStreamRejectsEmptyOrMalformedPayloads(t *testing.T) {
 			}))
 			defer server.Close()
 			client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
-			if _, err := client.Chat(context.Background(), ChatRequest{}, nil); err == nil {
+			chatModel, err := client.ChatModel(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, err := chatModel.Stream(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			if _, err := reader.Recv(); err == nil {
 				t.Fatal("invalid stream succeeded")
 			}
 		})
 	}
 }
 
-func TestBlockChatWithReasoningImagesToolsAndEvents(t *testing.T) {
+func TestBlockChatWithReasoningImagesAndTools(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -139,14 +168,13 @@ func TestBlockChatWithReasoningImagesToolsAndEvents(t *testing.T) {
 	}))
 	defer server.Close()
 	client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: false})
-	var items []StreamItem
-	completion, err := client.Chat(context.Background(), ChatRequest{
+	completion, err := client.ChatBlock(context.Background(), ChatRequest{
 		Messages: []ChatMessage{{Role: "user", Content: []any{
 			map[string]any{"type": "text", "text": "look"},
 			map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:image/png;base64,AA=="}},
 		}}},
 		Tools: []ToolSchema{{Name: "write"}},
-	}, func(item StreamItem) { items = append(items, item) })
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,14 +183,6 @@ func TestBlockChatWithReasoningImagesToolsAndEvents(t *testing.T) {
 	}
 	if len(completion.ToolCalls) != 1 || completion.ToolCalls[0].Type != "function" {
 		t.Fatalf("tool calls = %+v", completion.ToolCalls)
-	}
-	wantItems := []StreamItem{
-		{Kind: StreamReasoning, Text: "because"},
-		{Kind: StreamDelta, Text: "answer"},
-		{Kind: StreamToolArgs, Name: "write", Chars: 7},
-	}
-	if !reflect.DeepEqual(items, wantItems) {
-		t.Fatalf("block items = %#v, want %#v", items, wantItems)
 	}
 }
 
@@ -187,16 +207,16 @@ func TestSafeStreamFallbackEmitsOnlyBlockOutput(t *testing.T) {
 	}))
 	defer server.Close()
 	client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
-	var items []StreamItem
-	completion, err := client.Chat(context.Background(), ChatRequest{Messages: []ChatMessage{UserMessage("hi")}}, func(item StreamItem) {
-		items = append(items, item)
+	var frames []*schema.Message
+	result, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+		frames = append(frames, message)
+		return nil
 	})
-	if err != nil || completion.Content != "fallback" || calls.Load() != 2 {
-		t.Fatalf("Chat() = %+v, %v, calls=%d", completion, err, calls.Load())
+	if err != nil || result.completion.Content != "fallback" || calls.Load() != 2 {
+		t.Fatalf("runNative() = %+v, %v, calls=%d", result.completion, err, calls.Load())
 	}
-	want := []StreamItem{{Kind: StreamReasoning, Text: "block reason"}, {Kind: StreamDelta, Text: "fallback"}}
-	if !reflect.DeepEqual(items, want) {
-		t.Fatalf("fallback items = %#v, want %#v", items, want)
+	if len(frames) != 1 || frames[0].Content != "fallback" || frames[0].ReasoningContent != "block reason" {
+		t.Fatalf("fallback frames = %+v", frames)
 	}
 }
 
@@ -212,7 +232,7 @@ func TestServerRetryAndAmbiguousStreamSafety(t *testing.T) {
 		client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true}, withRetryHooks(
 			func(context.Context, time.Duration) error { return nil }, func() float64 { return 0.5 },
 		))
-		_, err := client.Chat(context.Background(), ChatRequest{}, nil)
+		_, err := client.runNative(context.Background(), nil, nil, true, nil)
 		if status, ok := statusCodeForError(err); !ok || status != 500 || calls.Load() != 3 {
 			t.Fatalf("error = %v (status=%d, ok=%v), calls = %d", err, status, ok, calls.Load())
 		}
@@ -225,13 +245,16 @@ func TestServerRetryAndAmbiguousStreamSafety(t *testing.T) {
 		}))
 		defer server.Close()
 		client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
-		var items []StreamItem
-		_, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) { items = append(items, item) })
+		var frames []*schema.Message
+		_, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+			frames = append(frames, message)
+			return nil
+		})
 		if err == nil || calls.Load() != 1 {
 			t.Fatalf("error = %v, calls = %d", err, calls.Load())
 		}
-		if !reflect.DeepEqual(items, []StreamItem{{Kind: StreamDelta, Text: "partial"}}) {
-			t.Fatalf("partial items were duplicated: %#v", items)
+		if len(frames) != 1 || frames[0].Content != "partial" {
+			t.Fatalf("partial frames were duplicated: %+v", frames)
 		}
 	})
 }
@@ -252,10 +275,11 @@ func TestStreamCancellationStopsRequestWithoutFallback(t *testing.T) {
 	client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var items []StreamItem
-	_, err := client.Chat(ctx, ChatRequest{}, func(item StreamItem) {
-		items = append(items, item)
+	var frames []*schema.Message
+	_, err := client.runNative(ctx, nil, nil, true, func(message *schema.Message) error {
+		frames = append(frames, message)
 		cancel()
+		return nil
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error = %v", err)
@@ -263,36 +287,7 @@ func TestStreamCancellationStopsRequestWithoutFallback(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("cancellation triggered %d requests", calls.Load())
 	}
-	if !reflect.DeepEqual(items, []StreamItem{{Kind: StreamDelta, Text: "partial"}}) {
-		t.Fatalf("items after cancellation = %#v", items)
+	if len(frames) != 1 || frames[0].Content != "partial" {
+		t.Fatalf("frames after cancellation = %+v", frames)
 	}
-}
-
-func TestStreamToolArgumentSizeUsesUTF8Bytes(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"write\",\"arguments\":\"{\\\"text\\\":\\\"你\"}}]}}]}\n\ndata: [DONE]\n\n"))
-	}))
-	defer server.Close()
-	client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: true})
-	var progress []StreamItem
-	_, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) {
-		if item.Kind == StreamToolArgs {
-			progress = append(progress, item)
-		}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantBytes := len(`{"text":"你`)
-	if len(progress) != 1 || progress[0].Chars != wantBytes {
-		t.Fatalf("tool progress = %+v, want %d bytes", progress, wantBytes)
-	}
-	if !strings.Contains(string(mustJSON(progress[0].Name)), "write") {
-		t.Fatal("missing tool name")
-	}
-}
-
-func mustJSON(value any) []byte {
-	encoded, _ := json.Marshal(value)
-	return encoded
 }

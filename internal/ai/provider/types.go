@@ -49,23 +49,6 @@ type Completion struct {
 	Usage        usage.Usage
 }
 
-type StreamKind string
-
-const (
-	StreamDelta     StreamKind = "delta"
-	StreamReasoning StreamKind = "reasoning"
-	StreamToolArgs  StreamKind = "toolArgs"
-)
-
-type StreamItem struct {
-	Kind  StreamKind
-	Text  string
-	Name  string
-	Chars int
-}
-
-type StreamHandler func(StreamItem)
-
 type TestResult struct {
 	ModelsOK    bool    `json:"modelsOk"`
 	ModelsError *string `json:"modelsError"`

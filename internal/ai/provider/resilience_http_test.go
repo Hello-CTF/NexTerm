@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 type sleepRecorder struct {
@@ -161,8 +163,11 @@ func TestStreamIdleTimeoutCutsStalledStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	var items []StreamItem
-	completion, err := client.Chat(context.Background(), ChatRequest{}, func(item StreamItem) { items = append(items, item) })
+	var frames []*schema.Message
+	result, err := client.runNative(context.Background(), nil, nil, true, func(message *schema.Message) error {
+		frames = append(frames, message)
+		return nil
+	})
 	if err == nil || !strings.Contains(err.Error(), "stalled") {
 		t.Fatalf("idle error = %v", err)
 	}
@@ -172,11 +177,11 @@ func TestStreamIdleTimeoutCutsStalledStream(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("stalled stream was replayed: calls = %d", calls.Load())
 	}
-	if len(items) != 1 || items[0].Text != "partial" {
-		t.Fatalf("items = %#v", items)
+	if len(frames) != 1 || frames[0].Content != "partial" {
+		t.Fatalf("frames = %+v", frames)
 	}
-	if completion.Content != "partial" {
-		t.Fatalf("partial completion = %+v", completion)
+	if result.completion.Content != "partial" {
+		t.Fatalf("partial completion = %+v", result.completion)
 	}
 }
 
@@ -194,9 +199,9 @@ func TestStreamIdleTimeoutDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := client.Chat(context.Background(), ChatRequest{}, nil)
-	if err != nil || completion.Content != "ab" {
-		t.Fatalf("Chat() = %+v, %v", completion, err)
+	result, err := client.runNative(context.Background(), nil, nil, true, nil)
+	if err != nil || result.completion.Content != "ab" {
+		t.Fatalf("runNative() = %+v, %v", result.completion, err)
 	}
 }
 
@@ -233,10 +238,11 @@ func TestStreamErrorFinalizesPartialUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := client.Chat(context.Background(), ChatRequest{}, nil)
+	result, err := client.runNative(context.Background(), nil, nil, true, nil)
 	if err == nil {
 		t.Fatal("malformed stream succeeded")
 	}
+	completion := result.completion
 	if completion.Content != "partial" {
 		t.Fatalf("partial content = %q", completion.Content)
 	}

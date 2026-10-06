@@ -173,7 +173,6 @@ type requestSafety struct {
 type attemptState struct {
 	request        *requestSafety
 	frameSeen      atomic.Bool
-	emitted        bool
 	streaming      bool
 	runID          string
 	callID         string
@@ -255,7 +254,7 @@ func attemptFromContext(ctx context.Context) *attemptState {
 }
 
 func replayAllowed(err error, state *attemptState) bool {
-	if err == nil || state == nil || state.frameSeen.Load() || state.emitted {
+	if err == nil || state == nil || state.frameSeen.Load() {
 		return false
 	}
 	switch ClassifyError(err) {

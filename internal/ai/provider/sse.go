@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"context"
 	"sort"
 	"strings"
 
@@ -19,11 +18,10 @@ type streamState struct {
 	content    strings.Builder
 	reasoning  strings.Builder
 	pending    map[uint64]*pendingToolCall
-	handler    StreamHandler
 	sawPayload bool
 }
 
-func (s *streamState) consumeMessage(ctx context.Context, message *schema.Message) error {
+func (s *streamState) consumeMessage(message *schema.Message) {
 	s.sawPayload = true
 	if message.ResponseMeta != nil {
 		if message.ResponseMeta.FinishReason != "" {
@@ -34,18 +32,10 @@ func (s *streamState) consumeMessage(ctx context.Context, message *schema.Messag
 		}
 	}
 	if message.ReasoningContent != "" {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		s.reasoning.WriteString(message.ReasoningContent)
-		s.handler(StreamItem{Kind: StreamReasoning, Text: message.ReasoningContent})
 	}
 	if message.Content != "" {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		s.content.WriteString(message.Content)
-		s.handler(StreamItem{Kind: StreamDelta, Text: message.Content})
 	}
 	for _, fragment := range message.ToolCalls {
 		index := uint64(0)
@@ -61,15 +51,8 @@ func (s *streamState) consumeMessage(ctx context.Context, message *schema.Messag
 			pending.id = fragment.ID
 		}
 		pending.name.WriteString(fragment.Function.Name)
-		if fragment.Function.Arguments != "" {
-			pending.arguments.WriteString(fragment.Function.Arguments)
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			s.handler(StreamItem{Kind: StreamToolArgs, Name: pending.name.String(), Chars: pending.arguments.Len()})
-		}
+		pending.arguments.WriteString(fragment.Function.Arguments)
 	}
-	return nil
 }
 
 func (s *streamState) partialCompletion() Completion {
