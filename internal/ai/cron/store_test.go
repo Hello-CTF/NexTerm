@@ -165,6 +165,12 @@ func testRegistration(sessionID string) Registration {
 	}
 }
 
+type executorFunc func(context.Context, Trigger) error
+
+func (f executorFunc) Execute(ctx context.Context, trigger Trigger) error {
+	return f(ctx, trigger)
+}
+
 func testScheduler(t *testing.T, store Store, executor Executor, clock *fakeClock, change ...func(*Options)) *Scheduler {
 	t.Helper()
 	options := Options{Now: clock.Now, LeaseDuration: time.Hour, FailureBackoff: time.Minute, MaxFailureBackoff: 2 * time.Minute}

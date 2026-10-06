@@ -41,7 +41,7 @@ func TestOneShotJobDisablesAfterDelivery(t *testing.T) {
 	start := time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
 	clock := newFakeClock(start)
 	triggers := make(chan Trigger, 2)
-	scheduler := testScheduler(t, store, ExecutorFunc(func(_ context.Context, trigger Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(_ context.Context, trigger Trigger) error {
 		triggers <- trigger
 		return nil
 	}), clock)
@@ -85,7 +85,7 @@ func TestOneShotJobRetriesFailureThenDisables(t *testing.T) {
 	start := time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
 	clock := newFakeClock(start)
 	var attempts int
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error {
 		attempts++
 		if attempts == 1 {
 			return errors.New("投递失败")
@@ -128,7 +128,7 @@ func TestOneShotRegistrationRejectsPastTime(t *testing.T) {
 	t.Parallel()
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	_, err := scheduler.Register(context.Background(), Registration{
 		SessionID: "session", Prompt: "过期提醒", Schedule: AtExpression(clock.Now().Add(-time.Minute)),
 	})

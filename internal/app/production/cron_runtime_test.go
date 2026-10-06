@@ -385,6 +385,18 @@ func TestComposedCronInteractiveControlKeepsCustomDangerRules(t *testing.T) {
 	}
 }
 
+type blockingCronAgentRunner struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingCronAgentRunner) Start(context.Context, agent.ChatArgs, agent.StreamFactory) (agent.StartResponse, error) {
+	r.once.Do(func() { close(r.started) })
+	return agent.StartResponse{JobID: "cron-bounded-shutdown"}, nil
+}
+
+func (r *blockingCronAgentRunner) Cancel(string) error { return nil }
+
 func TestCronRuntimeBoundedShutdown(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -398,12 +410,7 @@ func TestCronRuntimeBoundedShutdown(t *testing.T) {
 	}
 
 	started := make(chan struct{})
-	var once sync.Once
-	executor := cron.ExecutorFunc(func(ctx context.Context, _ cron.Trigger) error {
-		once.Do(func() { close(started) })
-		<-ctx.Done()
-		return ctx.Err()
-	})
+	executor := &cron.AgentExecutor{Runner: &blockingCronAgentRunner{started: started}}
 	scheduler, err := cron.NewScheduler(cronStore, executor, cron.Options{PollInterval: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

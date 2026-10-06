@@ -545,10 +545,8 @@ func (r *Runner) emitUsage(current *job, message *schema.Message, latency time.D
 	}
 	value := message.ResponseMeta.Usage
 	window := runtime.contextWindow
-	if configured, ok := message.Extra["context_window"].(uint64); ok && configured > 0 {
+	if configured, ok := message.Extra[provider.MessageExtraContextWindow].(uint64); ok && configured > 0 {
 		window = configured
-	} else if configured, ok := message.Extra["context_window"].(float64); ok && configured > 0 {
-		window = uint64(configured)
 	}
 	currentUsage := usage.Usage{
 		PromptTokens:     uint64(max(value.PromptTokens, 0)),

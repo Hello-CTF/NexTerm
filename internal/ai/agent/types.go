@@ -36,14 +36,9 @@ type baseChatModelClient interface {
 	BaseChatModel(context.Context) (model.BaseChatModel, uint64, error)
 }
 
-type toolCallingChatModelClient interface {
-	ChatModel(context.Context) (model.ToolCallingChatModel, error)
-}
-
 func activeProfileModel(manager *profiles.Manager) ModelFactory {
 	return func(ctx context.Context) (model.BaseChatModel, uint64, error) {
-		profile, ok := manager.ActiveProfile()
-		if !ok {
+		if _, ok := manager.ActiveProfile(); !ok {
 			return nil, 0, errors.New("未配置活动 AI 模型")
 		}
 		client, err := manager.ActiveClient()
@@ -53,10 +48,6 @@ func activeProfileModel(manager *profiles.Manager) ModelFactory {
 		if adapter, ok := any(client).(baseChatModelClient); ok {
 			return adapter.BaseChatModel(ctx)
 		}
-		if adapter, ok := any(client).(toolCallingChatModelClient); ok {
-			chatModel, err := adapter.ChatModel(ctx)
-			return chatModel, profile.ContextWindow, err
-		}
 		return nil, 0, errors.New("当前 provider 未提供 Eino ChatModel 适配")
 	}
 }
@@ -64,10 +55,7 @@ func activeProfileModel(manager *profiles.Manager) ModelFactory {
 type ConversationStore interface {
 	ConvCreate(context.Context, string, any) (store.ConversationRow, error)
 	ConvGet(context.Context, string) (store.ConversationRow, error)
-	ConvList(context.Context) ([]store.ConversationRow, error)
 	ConvRename(context.Context, string, string) error
-	ConvTouch(context.Context, string) error
-	ConvDelete(context.Context, string) error
 	MsgInsert(context.Context, string, string, any, *int64, *int64) error
 	MsgList(context.Context, string) ([]store.MessageRow, error)
 }
@@ -82,8 +70,6 @@ type Config struct {
 	Store                 ConversationStore
 	Runs                  RunStore
 	Permission            func(context.Context) (guard.Config, error)
-	FallbackCancel        func(string) error
-	FallbackConfirm       func(Confirmation) error
 	Checkpoints           adk.CheckPointStore
 	HITL                  *hitl.Manager
 	HITLTTL               time.Duration

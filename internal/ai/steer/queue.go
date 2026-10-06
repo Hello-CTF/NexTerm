@@ -7,6 +7,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+var ErrQueueFull = errors.New("steering queue is full")
+
 type Queue struct {
 	mu      sync.Mutex
 	limit   int
@@ -39,10 +41,4 @@ func (q *Queue) Drain() []*schema.Message {
 	pending := q.pending
 	q.pending = nil
 	return pending
-}
-
-func (q *Queue) Len() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return len(q.pending)
 }

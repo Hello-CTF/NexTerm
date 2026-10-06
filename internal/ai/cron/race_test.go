@@ -13,7 +13,7 @@ import (
 func TestConcurrentRegistrationEnforcesSessionBound(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock, func(options *Options) {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock, func(options *Options) {
 		options.MaxJobsPerSession = 4
 	})
 	const registrations = 24

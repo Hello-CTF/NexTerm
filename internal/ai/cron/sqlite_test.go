@@ -257,7 +257,7 @@ func TestSQLiteStoreRestartReconcilesWithoutReexecuting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cron.db")
 	store := openSQLiteStore(t, path)
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	old := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock, func(options *Options) { options.OwnerID = "old-owner" })
+	old := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock, func(options *Options) { options.OwnerID = "old-owner" })
 	registerTestJob(t, old, "job", "session")
 
 	claimedAt := clock.Add(time.Minute)
@@ -272,7 +272,7 @@ func TestSQLiteStoreRestartReconcilesWithoutReexecuting(t *testing.T) {
 
 	reopened := openSQLiteStore(t, path)
 	var calls atomic.Int32
-	restarted := testScheduler(t, reopened, ExecutorFunc(func(context.Context, Trigger) error {
+	restarted := testScheduler(t, reopened, executorFunc(func(context.Context, Trigger) error {
 		calls.Add(1)
 		return nil
 	}), clock, func(options *Options) { options.OwnerID = "new-owner" })
@@ -389,7 +389,7 @@ func TestSQLiteStoreSurfacesExplicitStorageErrors(t *testing.T) {
 	if _, err := store.List(ctx); err == nil {
 		t.Fatal("list on a closed database reported success")
 	}
-	scheduler, err := NewScheduler(store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), Options{})
+	scheduler, err := NewScheduler(store, executorFunc(func(context.Context, Trigger) error { return nil }), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

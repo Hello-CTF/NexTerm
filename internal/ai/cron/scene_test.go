@@ -13,7 +13,7 @@ func TestSchedulerPassesModelProfileToExecutor(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	triggers := make(chan Trigger, 1)
-	scheduler := testScheduler(t, store, ExecutorFunc(func(_ context.Context, trigger Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(_ context.Context, trigger Trigger) error {
 		triggers <- trigger
 		return nil
 	}), clock)

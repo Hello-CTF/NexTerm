@@ -11,7 +11,7 @@ func TestRegistrationAndReadStorageFailuresAreExplicit(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	cause := errors.New("injected durable write failure")
 	store.fail("create", cause)
 	registration := testRegistration("session")
@@ -42,7 +42,7 @@ func TestClaimPersistenceFailureDoesNotExecute(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	calls := 0
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error {
 		calls++
 		return nil
 	}), clock)
@@ -63,7 +63,7 @@ func TestRunReturnsCompletionPersistenceFailure(t *testing.T) {
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	cause := errors.New("injected completion write failure")
 	notified := make(chan error, 1)
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error {
 		store.fail("cas", cause)
 		return nil
 	}), clock, func(options *Options) {
@@ -93,7 +93,7 @@ func TestRunReturnsLeaseRenewalFailureAndCancelsExecution(t *testing.T) {
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	cause := errors.New("injected lease renewal failure")
 	executorReturned := make(chan struct{})
-	scheduler := testScheduler(t, store, ExecutorFunc(func(ctx context.Context, _ Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(ctx context.Context, _ Trigger) error {
 		store.fail("cas", cause)
 		<-ctx.Done()
 		close(executorReturned)
@@ -119,7 +119,7 @@ func TestRunReturnsLeaseRenewalFailureAndCancelsExecution(t *testing.T) {
 func TestRunCancellationDoesNotDeadlock(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- scheduler.Run(ctx) }()
