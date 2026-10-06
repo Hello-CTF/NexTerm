@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   forwardCreate: vi.fn(),
   forwardCreateSocks: vi.fn(),
   forwardCreateRemote: vi.fn(),
+  forwardRemove: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
 }));
@@ -24,7 +25,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
       create: mocks.forwardCreate,
       createSocks: mocks.forwardCreateSocks,
       createRemote: mocks.forwardCreateRemote,
-      remove: vi.fn(),
+      remove: mocks.forwardRemove,
     },
   };
 });
@@ -41,6 +42,7 @@ beforeEach(() => {
   mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   mocks.forwardCreateRemote.mockResolvedValue({ id: "f1", kind: "remote" });
+  mocks.forwardRemove.mockResolvedValue(null);
   mocks.ask.mockResolvedValue(true);
   useUi.setState({ pushToast: mocks.toast, sessions: [] });
 });
@@ -203,5 +205,32 @@ describe("ForwardPanel 远程转发（-R）", () => {
     expect(row?.textContent).toContain("127.0.0.1:18080");
     expect(row?.textContent).toContain("本地");
     expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5");
+  });
+
+  it("停止失败时如实报错，不虚报成功", async () => {
+    mocks.forwardList.mockResolvedValue([
+      {
+        id: "f1",
+        sessionId: "s",
+        listenHost: "127.0.0.1",
+        listenPort: 18080,
+        targetHost: "127.0.0.1",
+        targetPort: 3306,
+        kind: "remote",
+        createdAt: 1,
+      },
+    ]);
+    mocks.forwardRemove.mockRejectedValue({
+      code: "io",
+      message: "转发监听关闭失败（远端端口可能仍在监听）: ssh: cancel-tcpip-forward failed",
+    });
+    mountForward();
+    await flush();
+    clickButton(mounted!.container, "停止");
+    await flush();
+    expect(mocks.ask).toHaveBeenCalled();
+    expect(mocks.forwardRemove).toHaveBeenCalledWith("f1");
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("停止失败"));
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
   });
 });

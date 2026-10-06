@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,30 @@ func TestListenRemotePortReleasedWhenClientDisconnects(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func TestListenRemoteCloseSurfacesRejectedCancellation(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	server.rejectCancel.Store(true)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+
+	listener, err := client.ListenRemote(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	err = listener.Close()
+	if err == nil || !strings.Contains(err.Error(), "cancel-tcpip-forward") {
+		t.Fatalf("Close error = %v, want cancel-tcpip-forward failure", err)
+	}
+	if _, err := listener.Accept(); err == nil {
+		t.Fatal("Accept succeeded after Close")
+	}
+	conn, err := net.DialTimeout("tcp", address, time.Second)
+	if err != nil {
+		t.Fatalf("non-compliant peer should still hold the port: %v", err)
+	}
+	conn.Close()
 }
 
 func TestListenRemoteValidationAndLifecycle(t *testing.T) {

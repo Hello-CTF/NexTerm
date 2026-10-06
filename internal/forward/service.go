@@ -24,6 +24,7 @@ type Service struct {
 	reconnect        ReconnectPolicy
 	dialTimeout      time.Duration
 	handshakeTimeout time.Duration
+	closeTimeout     time.Duration
 	now              func() time.Time
 	onError          func(error)
 	listen           func(string, string) (net.Listener, error)
@@ -53,6 +54,9 @@ func NewService(config Config) *Service {
 	if config.HandshakeTimeout <= 0 {
 		config.HandshakeTimeout = 10 * time.Second
 	}
+	if config.CloseTimeout <= 0 {
+		config.CloseTimeout = 5 * time.Second
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -63,6 +67,7 @@ func NewService(config Config) *Service {
 		reconnect:        reconnect,
 		dialTimeout:      config.DialTimeout,
 		handshakeTimeout: config.HandshakeTimeout,
+		closeTimeout:     config.CloseTimeout,
 		now:              config.Now,
 		onError:          config.OnError,
 		listen:           net.Listen,
@@ -297,7 +302,9 @@ func (s *Service) Remove(id string) error {
 	if f == nil {
 		return nil
 	}
-	f.stopAndWait()
+	if err := f.stopAndWait(); err != nil {
+		return ipc.WrapError(ipc.CodeIO, "转发监听关闭失败（远端端口可能仍在监听）: "+err.Error(), err)
+	}
 	return nil
 }
 
@@ -313,7 +320,9 @@ func (s *Service) Close() error {
 		s.mu.Unlock()
 		s.cancel()
 		for _, f := range forwards {
-			f.stopAndWait()
+			if err := f.stopAndWait(); err != nil {
+				s.report(fmt.Errorf("转发 %s 监听关闭失败: %w", f.id, err))
+			}
 		}
 	})
 	return nil
@@ -384,6 +393,7 @@ type forwarder struct {
 	wg       sync.WaitGroup
 	mu       sync.Mutex
 	stopped  bool
+	closeErr error
 	conns    map[net.Conn]struct{}
 }
 
@@ -496,16 +506,24 @@ func (f *forwarder) initiateStop() {
 		}
 		f.mu.Unlock()
 		f.cancel()
-		_ = f.listener.Close()
+		closed := make(chan error, 1)
+		go func() { closed <- f.listener.Close() }()
 		for _, conn := range connections {
 			_ = conn.Close()
+		}
+		select {
+		case err := <-closed:
+			f.closeErr = err
+		case <-time.After(f.service.closeTimeout):
+			f.closeErr = errListenerCloseTimeout
 		}
 	})
 }
 
-func (f *forwarder) stopAndWait() {
+func (f *forwarder) stopAndWait() error {
 	f.initiateStop()
 	f.wg.Wait()
+	return f.closeErr
 }
 
 func relay(left, right net.Conn) {

@@ -18,20 +18,22 @@ import (
 )
 
 type testSSHServer struct {
-	listener    net.Listener
-	config      *gossh.ServerConfig
-	hostKey     gossh.PublicKey
-	root        string
-	blockExec   chan struct{}
-	blockOnce   sync.Once
-	cols        atomic.Uint32
-	rows        atomic.Uint32
-	keepalives  atomic.Uint32
-	stallSFTP   atomic.Bool
-	sftpStarted chan struct{}
-	active      atomic.Int32
-	agentResult chan error
-	agentKey    gossh.PublicKey
+	listener     net.Listener
+	config       *gossh.ServerConfig
+	hostKey      gossh.PublicKey
+	root         string
+	blockExec    chan struct{}
+	blockOnce    sync.Once
+	cols         atomic.Uint32
+	rows         atomic.Uint32
+	keepalives   atomic.Uint32
+	stallSFTP    atomic.Bool
+	stallCancel  atomic.Bool
+	rejectCancel atomic.Bool
+	sftpStarted  chan struct{}
+	active       atomic.Int32
+	agentResult  chan error
+	agentKey     gossh.PublicKey
 }
 
 func newTestSSHServer(t *testing.T, authorizedKey gossh.PublicKey) *testSSHServer {
@@ -376,6 +378,13 @@ func (s *testSSHServer) handleCancelTCPIPForward(request *gossh.Request, forward
 		Port uint32
 	}
 	if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+		request.Reply(false, nil)
+		return
+	}
+	if s.stallCancel.Load() {
+		return
+	}
+	if s.rejectCancel.Load() {
 		request.Reply(false, nil)
 		return
 	}

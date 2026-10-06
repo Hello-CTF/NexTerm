@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,8 +21,10 @@ import (
 )
 
 type remoteForwardSSHServer struct {
-	listener net.Listener
-	config   *gossh.ServerConfig
+	listener     net.Listener
+	config       *gossh.ServerConfig
+	stallCancel  atomic.Bool
+	rejectCancel atomic.Bool
 }
 
 func newRemoteForwardSSHServer(t *testing.T) *remoteForwardSSHServer {
@@ -146,6 +150,13 @@ func (s *remoteForwardSSHServer) handleCancelTCPIPForward(request *gossh.Request
 		Port uint32
 	}
 	if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
+		request.Reply(false, nil)
+		return
+	}
+	if s.stallCancel.Load() {
+		return
+	}
+	if s.rejectCancel.Load() {
 		request.Reply(false, nil)
 		return
 	}
@@ -339,5 +350,162 @@ func TestRemoteForwardEvictedWhenSSHConnectionDrops(t *testing.T) {
 			t.Fatal("server-side remote port survived SSH drop")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestRemoteForwardRemoveReportsRejectedCancellation(t *testing.T) {
+	server := newRemoteForwardSSHServer(t)
+	client := connectRemoteForwardClient(t, server)
+	targetPort := echoTargetPort(t)
+
+	service := NewService(Config{
+		Provider: DialerProviderFunc(func(context.Context, string) (base.Dialer, error) {
+			return client, nil
+		}),
+		Policy:      Policy{Desktop: true},
+		DialTimeout: 2 * time.Second,
+	})
+	t.Cleanup(func() { _ = service.Close() })
+
+	spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+		SessionID:  "ssh-session",
+		BindHost:   "127.0.0.1",
+		BindPort:   0,
+		TargetHost: "127.0.0.1",
+		TargetPort: targetPort,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialForward(t, spec)
+	assertEcho(t, conn, "before-rejected-cancel")
+
+	server.rejectCancel.Store(true)
+	err = service.Remove(spec.ID)
+	if err == nil {
+		t.Fatal("Remove reported success after rejected cancellation")
+	}
+	if !strings.Contains(err.Error(), "cancel-tcpip-forward") {
+		t.Fatalf("Remove error = %v, want cancel-tcpip-forward failure", err)
+	}
+	if got := len(service.List()); got != 0 {
+		t.Fatalf("List length = %d", got)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("established connection survived Remove")
+	}
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(spec.ListenPort)))
+	if probe, err := net.DialTimeout("tcp", address, time.Second); err != nil {
+		t.Fatalf("non-compliant peer should still hold the remote port: %v", err)
+	} else {
+		probe.Close()
+	}
+}
+
+func TestRemoteForwardRemoveBoundedWhenCancellationStalls(t *testing.T) {
+	server := newRemoteForwardSSHServer(t)
+	client := connectRemoteForwardClient(t, server)
+	targetPort := echoTargetPort(t)
+
+	service := NewService(Config{
+		Provider: DialerProviderFunc(func(context.Context, string) (base.Dialer, error) {
+			return client, nil
+		}),
+		Policy:       Policy{Desktop: true},
+		DialTimeout:  2 * time.Second,
+		CloseTimeout: 50 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = service.Close() })
+
+	spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+		SessionID:  "ssh-session",
+		BindHost:   "127.0.0.1",
+		BindPort:   0,
+		TargetHost: "127.0.0.1",
+		TargetPort: targetPort,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialForward(t, spec)
+	assertEcho(t, conn, "before-stalled-cancel")
+
+	server.stallCancel.Store(true)
+	started := time.Now()
+	err = service.Remove(spec.ID)
+	if err == nil {
+		t.Fatal("Remove reported success after stalled cancellation")
+	}
+	if !errors.Is(err, errListenerCloseTimeout) {
+		t.Fatalf("Remove error = %v, want errListenerCloseTimeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Remove blocked for %v", elapsed)
+	}
+	if got := len(service.List()); got != 0 {
+		t.Fatalf("List length = %d", got)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("established connection survived stalled Remove")
+	}
+}
+
+func TestRemoteForwardServiceCloseBoundedWhenCancellationStalls(t *testing.T) {
+	server := newRemoteForwardSSHServer(t)
+	client := connectRemoteForwardClient(t, server)
+	targetPort := echoTargetPort(t)
+
+	reported := make(chan error, 8)
+	service := NewService(Config{
+		Provider: DialerProviderFunc(func(context.Context, string) (base.Dialer, error) {
+			return client, nil
+		}),
+		Policy:       Policy{Desktop: true},
+		DialTimeout:  2 * time.Second,
+		CloseTimeout: 50 * time.Millisecond,
+		OnError:      func(err error) { reported <- err },
+	})
+	t.Cleanup(func() { _ = service.Close() })
+
+	spec, err := service.CreateRemote(t.Context(), CreateRemoteArgs{
+		SessionID:  "ssh-session",
+		BindHost:   "127.0.0.1",
+		BindPort:   0,
+		TargetHost: "127.0.0.1",
+		TargetPort: targetPort,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialForward(t, spec)
+	assertEcho(t, conn, "before-close")
+
+	server.stallCancel.Store(true)
+	started := time.Now()
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Close blocked for %v", elapsed)
+	}
+	select {
+	case err := <-reported:
+		if !errors.Is(err, errListenerCloseTimeout) {
+			t.Fatalf("reported error = %v, want errListenerCloseTimeout", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stalled listener close was not reported")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("established connection survived Close")
 	}
 }

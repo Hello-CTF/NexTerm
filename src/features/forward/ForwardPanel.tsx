@@ -291,6 +291,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       refresh();
       pushToast("success", "已停止");
     } catch (e) {
+      refresh();
       pushToast("error", `停止失败：${describeError(e)}`);
     }
   };
