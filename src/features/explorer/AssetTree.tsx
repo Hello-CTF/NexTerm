@@ -9,16 +9,28 @@ import { assetApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/comma
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import {
+  ContextMenu,
+  type ContextMenuState,
+  type MenuItem,
+} from "../../ui/ContextMenu";
+import { buildExportLine } from "../credentials/ExportAssetsModal";
+import { useVaultUnlock } from "../credentials/useVaultUnlock";
+import { BatchImportModal } from "./BatchImportModal";
+import { BatchExecModal } from "./BatchExecModal";
+import {
   assetIcon,
   IconChevronDown,
   IconChevronRight,
   IconClose,
+  IconCommand,
+  IconCopy,
   IconEdit,
   IconFolder,
   IconKey,
   IconPlay,
   IconPlus,
   IconSearch,
+  IconUpload,
 } from "../../ui/icons";
 
 /** 资产类型 → 中文名（新建弹窗与提示里用）。 */
@@ -42,6 +54,10 @@ export function AssetTree() {
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   /** 从分组行上的 + 新建时 preset 为该分组；顶栏 + = 不分组。 */
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
+  /** 资产行右键菜单（首次在资产树引入 ContextMenu）。 */
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [batchImport, setBatchImport] = useState(false);
+  const [batchExec, setBatchExec] = useState(false);
 
   const assets = useQuery({
     queryKey: ["assets"],
@@ -97,6 +113,179 @@ export function AssetTree() {
     }
   };
 
+  /* ── 复制连接信息 ────────────────────────────────────────────────────
+   *
+   * 明文密码的取用与「导出到剪贴板」同源：只在点的那一刻 reveal，不进 state、
+   * 不留缓存；锁定态先走既有解锁流程，**用户取消就整条中止**，
+   * 绝不"静默降级成不含密码"（那会让用户以为复制到的是完整信息）。
+   */
+  const credsById = useMemo(
+    () => new Map((credentials.data ?? []).map((c) => [c.id, c])),
+    [credentials.data],
+  );
+  const unlock = useVaultUnlock();
+
+  const copyText = async (text: string, okText: string) => {
+    if (!text) {
+      pushToast("error", "没有可复制的内容");
+      return false;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      pushToast("success", okText);
+      return true;
+    } catch (e) {
+      pushToast("error", `复制失败：${describeError(e)}`);
+      return false;
+    }
+  };
+
+  const endpointOf = (a: Asset) => (a.host ? `${a.host}${a.port ? `:${a.port}` : ""}` : "");
+  const userEndpointOf = (a: Asset) =>
+    a.host ? `${a.username ? `${a.username}@` : ""}${a.host}${a.port ? `:${a.port}` : ""}` : "";
+  const sshCommandOf = (a: Asset) => {
+    if (!a.host) return "";
+    const parts = ["ssh"];
+    if (a.port) parts.push("-p", String(a.port));
+    parts.push(a.username ? `${a.username}@${a.host}` : a.host);
+    return parts.join(" ");
+  };
+  const sshConfigOf = (a: Asset) =>
+    [
+      `Host ${a.name}`,
+      a.host ? `    HostName ${a.host}` : "",
+      a.username ? `    User ${a.username}` : "",
+      a.port ? `    Port ${a.port}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+  /**
+   * 取该资产绑定的明文密码。
+   * · `undefined` = 这条资产本来就没有密码（不是失败）；
+   * · `null`      = 用户取消解锁 / 读取失败（调用方**必须中止**，不得静默降级）。
+   */
+  const revealPassword = async (a: Asset): Promise<string | null | undefined> => {
+    const cred = a.credId ? credsById.get(a.credId) : undefined;
+    if (!cred || cred.kind !== "password") return undefined;
+    const st = await vaultApi.status();
+    if (st.initialized && !st.unlocked) {
+      const ok = await unlock("复制包含明文密码，请先解锁凭据库：");
+      if (!ok) return null;
+    }
+    try {
+      const r = await vaultApi.revealCredential(cred.id);
+      return r.value;
+    } catch (e) {
+      pushToast("error", `读取密码失败：${describeError(e)}`);
+      return null;
+    }
+  };
+
+  /** hover 复制按钮 / 菜单「连接信息（含密码）」：导出格式行 + 明文密码。 */
+  const copyWithPassword = async (a: Asset) => {
+    if (!a.host) {
+      pushToast("error", `「${a.name}」没有主机地址，无法复制连接信息`);
+      return;
+    }
+    const pwd = await revealPassword(a);
+    if (pwd === null) return; // 已提示，中止
+    const cred = a.credId ? credsById.get(a.credId) : undefined;
+    await copyText(
+      buildExportLine(a, cred, pwd ?? undefined),
+      "已复制连接信息（含密码）—— 粘贴到聊天窗口前请三思",
+    );
+  };
+
+  /** 菜单「导出格式行」：同格式但**不含密码**，无需解锁。 */
+  const copyExportLineNoPwd = async (a: Asset) => {
+    const cred = a.credId ? credsById.get(a.credId) : undefined;
+    await copyText(buildExportLine(a, cred, undefined), "已复制导出格式行（不含密码）");
+  };
+
+  /** 资产行右键菜单。 */
+  const openAssetMenu = (e: React.MouseEvent, a: Asset) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ep = endpointOf(a);
+    const uep = userEndpointOf(a);
+    const items: MenuItem[] = [
+      { kind: "item", label: "连接", icon: <IconPlay size={13} />, onSelect: () => void connectAsset(a) },
+      { kind: "item", label: "编辑", icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(a) },
+    ];
+    if (!a.builtin) {
+      items.push({
+        kind: "item",
+        label: "删除",
+        icon: <IconClose size={13} />,
+        danger: true,
+        onSelect: () => void onDelete(a),
+      });
+    }
+    items.push(
+      { kind: "separator" },
+      {
+        kind: "item",
+        label: "复制",
+        icon: <IconCopy size={13} />,
+        submenu: [
+          {
+            kind: "item",
+            label: "IP:端口",
+            accel: ep || undefined,
+            disabled: !ep,
+            onSelect: () => void copyText(ep, `已复制 ${ep}`),
+          },
+          {
+            kind: "item",
+            label: "用户名@IP:端口",
+            accel: uep || undefined,
+            disabled: !uep,
+            onSelect: () => void copyText(uep, `已复制 ${uep}`),
+          },
+          {
+            kind: "item",
+            label: "ssh 命令",
+            disabled: !a.host,
+            onSelect: () => void copyText(sshCommandOf(a), "已复制 ssh 命令"),
+          },
+          {
+            kind: "item",
+            label: "SSH 配置块",
+            disabled: !a.host,
+            onSelect: () => void copyText(sshConfigOf(a), "已复制 SSH 配置块"),
+          },
+          { kind: "separator" },
+          {
+            kind: "item",
+            label: "连接信息（含密码）",
+            disabled: !a.host,
+            onSelect: () => void copyWithPassword(a),
+          },
+          {
+            kind: "item",
+            label: "导出格式行（不含密码）",
+            onSelect: () => void copyExportLineNoPwd(a),
+          },
+        ],
+      },
+      { kind: "separator" },
+      {
+        kind: "item",
+        label: "批量导入…",
+        icon: <IconUpload size={13} />,
+        onSelect: () => setBatchImport(true),
+      },
+      {
+        kind: "item",
+        label: "批量执行命令…",
+        icon: <IconCommand size={13} />,
+        onSelect: () => setBatchExec(true),
+      },
+    );
+    setMenu({ x: e.clientX, y: e.clientY, title: a.name, items });
+  };
+
   if (!leftOpen) return null;
 
   return (
@@ -123,6 +312,20 @@ export function AssetTree() {
           onClick={() => setEditing("group")}
         >
           <IconFolder size={14} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="批量导入资产"
+          onClick={() => setBatchImport(true)}
+        >
+          <IconUpload size={14} />
+        </button>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="批量执行命令"
+          onClick={() => setBatchExec(true)}
+        >
+          <IconCommand size={14} />
         </button>
       </div>
 
@@ -157,6 +360,8 @@ export function AssetTree() {
             asset={a}
             onDelete={() => void onDelete(a)}
             onEdit={() => setEditingAsset(a)}
+            onCopy={() => void copyWithPassword(a)}
+            onMenu={(e) => openAssetMenu(e, a)}
           />
         ))}
         {(groups.data ?? []).map((g: AssetGroup) => (
@@ -166,6 +371,8 @@ export function AssetTree() {
             assets={byGroup.get(g.id) ?? []}
             onDelete={(a) => void onDelete(a)}
             onEdit={(a) => setEditingAsset(a)}
+            onCopy={(a) => void copyWithPassword(a)}
+            onMenu={(e, a) => openAssetMenu(e, a)}
             onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
             onCreateIn={() => {
               setPresetGroup(g.id);
@@ -222,6 +429,19 @@ export function AssetTree() {
           }}
         />
       )}
+
+      {batchImport && (
+        <BatchImportModal
+          assets={assets.data ?? []}
+          credentials={credentials.data ?? []}
+          onClose={() => setBatchImport(false)}
+        />
+      )}
+      {batchExec && (
+        <BatchExecModal assets={assets.data ?? []} onClose={() => setBatchExec(false)} />
+      )}
+
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
@@ -230,10 +450,15 @@ function AssetRow({
   asset,
   onDelete,
   onEdit,
+  onCopy,
+  onMenu,
 }: {
   asset: Asset;
   onDelete: () => void;
   onEdit: () => void;
+  /** 复制完整连接信息（含明文密码，走 reveal + 解锁）。 */
+  onCopy: () => void;
+  onMenu: (e: React.MouseEvent) => void;
 }) {
   const Icon = assetIcon(asset.kind);
   const label = asset.name;
@@ -242,7 +467,7 @@ function AssetRow({
     asset.name,
     target || (asset.builtin ? "本机" : ""),
     asset.builtin ? "内置资产 · 不可删除" : "",
-    "双击连接 · 可拖入分组",
+    "双击连接 · 右键更多操作 · 可拖入分组",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -255,6 +480,7 @@ function AssetRow({
         e.dataTransfer.effectAllowed = "move";
       }}
       onDoubleClick={() => void connectAsset(asset)}
+      onContextMenu={onMenu}
       title={tip}
     >
       <Icon size={14} className="shrink-0 text-neutral-500" />
@@ -265,6 +491,16 @@ function AssetRow({
           内核同样拒绝删除（命令层能被脚本直接调），这里只是不给点。 */}
       {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
       <span className="nx-row-actions">
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title="复制连接信息（含密码）"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCopy();
+          }}
+        >
+          <IconCopy size={12} />
+        </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="连接"
@@ -307,6 +543,8 @@ function GroupNode({
   assets,
   onDelete,
   onEdit,
+  onCopy,
+  onMenu,
   onMoveAsset,
   onCreateIn,
 }: {
@@ -314,6 +552,8 @@ function GroupNode({
   assets: Asset[];
   onDelete: (a: Asset) => void;
   onEdit: (a: Asset) => void;
+  onCopy: (a: Asset) => void;
+  onMenu: (e: React.MouseEvent, a: Asset) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
   onCreateIn: () => void;
 }) {
@@ -373,7 +613,14 @@ function GroupNode({
       {open && (
         <div className="ml-3.5">
           {assets.map((a) => (
-            <AssetRow key={a.id} asset={a} onDelete={() => onDelete(a)} onEdit={() => onEdit(a)} />
+            <AssetRow
+              key={a.id}
+              asset={a}
+              onDelete={() => onDelete(a)}
+              onEdit={() => onEdit(a)}
+              onCopy={() => onCopy(a)}
+              onMenu={(e) => onMenu(e, a)}
+            />
           ))}
           {assets.length === 0 && (
             <div className="px-2 py-1.5 text-[11px] text-neutral-600">（空分组 · 可拖资产进来）</div>

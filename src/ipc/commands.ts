@@ -376,6 +376,32 @@ export const assetApi = {
     ),
 };
 
+// ───────── batch（批量执行命令）─────────
+
+/** 一台主机上执行一条命令的结果（`batch_exec` 的返回项）。 */
+export interface BatchExecRow {
+  assetId: string;
+  name: string;
+  host: string;
+  ok: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  error: string | null;
+  durationMs: number;
+}
+
+/**
+ * 批量执行：把同一条命令并行投放到多台资产上。
+ *
+ * 前端只负责选资产 + 起参数，并发调度与超时在**内核**里做 ——
+ * 前端并发跑 N 个 IPC 既难统一超时，也会把每台的错误分片成互相独立的 toast。
+ */
+export const batchApi = {
+  exec: (args: { assetIds: string[]; command: string; timeoutMs?: number; concurrency?: number }) =>
+    call<BatchExecRow[]>("batch_exec", { args }),
+};
+
 // ───────── fs ─────────
 
 /**

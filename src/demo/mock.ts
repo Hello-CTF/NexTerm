@@ -1763,6 +1763,31 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       return null;
     }
 
+    /* ─────────────── batch（多资产并发执行同一条命令） ─────────────── */
+    case "batch_exec": {
+      // 演示模式：对每个选中资产生成一条结果，让矩阵表有内容可看。
+      // 末台**故意失败一次** —— 真实内核里失败由建连 / 超时决定，这里固定留一行
+      // 失败，好让「失败行高亮 + 展开 stdout/stderr」在演示模式下也看得见。
+      const ids = (a.assetIds as string[] | undefined) ?? [];
+      const command = str(a.command);
+      return ids.map((id, i) => {
+        const asset = assets.find((x) => x.id === id);
+        const host = asset?.host ?? "";
+        const failed = ids.length > 1 && i === ids.length - 1;
+        return {
+          assetId: id,
+          name: asset?.name ?? id,
+          host,
+          ok: !failed,
+          exitCode: failed ? 1 : 0,
+          stdout: failed ? "" : `(演示) ${host || id} 已执行：${command}\n`,
+          stderr: "",
+          error: failed ? "(演示) 连接超时" : null,
+          durationMs: 30 + Math.floor(Math.random() * 90),
+        };
+      });
+    }
+
     default:
       // 演示模式下未覆盖的命令一律静默成功，避免面板卡在 loading
       return null;
