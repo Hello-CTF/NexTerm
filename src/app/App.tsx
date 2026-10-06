@@ -366,7 +366,8 @@ function useAiToastInset(active: boolean): void {
       if (!input) return;
       const top = input.getBoundingClientRect().top;
       if (top <= 0) return;
-      root.style.setProperty("--nx-ai-toast-max", `${Math.max(140, Math.round(top - 12 - 78))}px`);
+      const stack = parseFloat(getComputedStyle(root).getPropertyValue("--nx-header-stack")) || 70;
+      root.style.setProperty("--nx-ai-toast-max", `${Math.max(140, Math.round(top - 12 - stack - 8))}px`);
     };
     measure();
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;

@@ -138,12 +138,23 @@ describe("toast placement rules", () => {
     }
   });
 
+  it("toast top offset follows the shared header stack variable", () => {
+    expect(css).toMatch(/--nx-keys-h:\s*46px;\s*--nx-header-stack:\s*70px;/);
+    expect(rule(coarse, ":root")).toMatch(/--nx-header-stack:\s*81px/);
+    for (const body of [
+      rule(css, '.nx-app[data-nx-ai="left"] .nx-toasts'),
+      rule(narrow, ".nx-app[data-nx-ai] .nx-toasts"),
+    ]) {
+      expect(body).toMatch(/top:\s*calc\(var\(--nx-header-stack\) \+ 8px\)/);
+    }
+  });
+
   it("on narrow screens toasts move to the top-left so the AI input stays reachable", () => {
     const body = rule(narrow, ".nx-app[data-nx-ai] .nx-toasts");
     expect(body).toMatch(/left:\s*8px/);
     expect(body).toMatch(/right:\s*auto/);
     expect(body).toMatch(/bottom:\s*auto/);
-    expect(body).toMatch(/top:\s*calc\(70px \+ 8px\)/);
+    expect(body).toMatch(/top:\s*calc\(var\(--nx-header-stack\) \+ 8px\)/);
   });
 
   it("toast stack is constrained in height and keeps the newest toasts", () => {
