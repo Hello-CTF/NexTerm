@@ -98,10 +98,25 @@ func launchdState(output string) string {
 	return ""
 }
 
+// launchdDisabled reports whether the print-disabled override database
+// disables the agent label. It accepts both the macOS 13+ form
+// ("label" => disabled|enabled) and the macOS 12 Monterey form
+// ("label" => true|false), matching the full quoted label exactly.
 func launchdDisabled(output string) bool {
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, launchdLabel) && strings.Contains(line, "=> disabled") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "\""+launchdLabel+"\"") {
+			continue
+		}
+		_, value, found := strings.Cut(line, "=>")
+		if !found {
+			continue
+		}
+		switch strings.TrimSpace(value) {
+		case "disabled", "true":
 			return true
+		case "enabled", "false":
+			return false
 		}
 	}
 	return false

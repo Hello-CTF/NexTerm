@@ -254,6 +254,55 @@ func TestLaunchdManagerReportsFailuresHonestly(t *testing.T) {
 	}
 }
 
+func TestLaunchdDisabledParsesBothFormats(t *testing.T) {
+	cases := map[string]bool{
+		"disabled services = {\n\t\"com.nexterm.agent\" => disabled\n}":        true,
+		"disabled services = {\n\t\"com.nexterm.agent\" => enabled\n}":         false,
+		"disabled services = {\n\t\"com.nexterm.agent\" => true\n}":            true,
+		"disabled services = {\n\t\"com.nexterm.agent\" => false\n}":           false,
+		"disabled services = {\n\t\"com.apple.mdm.agent\" => disabled\n}":      false,
+		"disabled services = {\n\t\"com.nexterm.agent.helper\" => disabled\n}": false,
+		"disabled services = {\n}":                                             false,
+	}
+	for output, expected := range cases {
+		if got := launchdDisabled(output); got != expected {
+			t.Errorf("launchdDisabled(%q) = %v, want %v", output, got, expected)
+		}
+	}
+}
+
+func TestLaunchdManagerMontereyDisabledFormat(t *testing.T) {
+	home := t.TempDir()
+	runner := &fakeRunner{responses: map[string]string{
+		"launchctl bootout gui/501/" + launchdLabel: "",
+	}}
+	manager := newLaunchdManager(runner, home, "501")
+	ctx := context.Background()
+	bootstrapKey := "launchctl bootstrap gui/501 " + filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
+	runner.responses[bootstrapKey] = ""
+	runner.responses["launchctl enable gui/501/"+launchdLabel] = ""
+	if err := manager.Install(ctx, "/Applications/NexTerm.app/nexterm", "/Users/dev/nexterm"); err != nil {
+		t.Fatal(err)
+	}
+	runner.responses["launchctl print gui/501/"+launchdLabel] = "com.nexterm.agent = {\n\tstate = running\n}\n"
+	runner.responses["launchctl print-disabled gui/501"] = "disabled services = {\n\t\"com.nexterm.agent\" => true\n}\n"
+	status := manager.Status(ctx)
+	if !status.Active || status.Enabled {
+		t.Fatalf("Monterey `=> true` override must report disabled: %+v", status)
+	}
+	if err := manager.Install(ctx, "/Applications/NexTerm.app/nexterm", "/Users/dev/nexterm"); err != nil {
+		t.Fatal(err)
+	}
+	if !runner.ran("launchctl enable gui/501/" + launchdLabel) {
+		t.Fatal("autostart repair must re-enable the service")
+	}
+	runner.responses["launchctl print-disabled gui/501"] = "disabled services = {\n\t\"com.nexterm.agent\" => false\n}\n"
+	status = manager.Status(ctx)
+	if !status.Enabled || !status.Active {
+		t.Fatalf("Monterey `=> false` override must report enabled after repair: %+v", status)
+	}
+}
+
 func TestLaunchdPlistKeepsFatalExitsDead(t *testing.T) {
 	plist := renderLaunchdPlist("/Applications/NexTerm.app/nexterm", "/Users/dev/nexterm")
 	if strings.Contains(plist, "<key>KeepAlive</key>\n  <true/>") {
