@@ -293,3 +293,88 @@ func TestApplyObjectsConcurrent(t *testing.T) {
 		t.Fatalf("groups=%d want %d", len(groups), len(objectIDs))
 	}
 }
+
+// 浏览器 JSON.stringify 不是 Go 规范编码(键序/空白/<>& 转义差异);
+// 同一逻辑对象的非规范载荷重复应用必须 identical, 不得反复 applied 或 skipped。
+func TestApplyObjectsNonCanonicalDuplicateIdentical(t *testing.T) {
+	instance := newTestInstance(t, false)
+	groupID := ids.New()
+	nonCanonical := json.RawMessage(`{ "name" : "a>b<c&d" , "id" : "` + groupID + `" , "updatedAt" : 100 , "createdAt" : 1 , "sort" : 0 }`)
+	object := ApplyObject{ID: groupID, Kind: KindGroup, Payload: nonCanonical}
+
+	first := mustApplyObjects(t, instance, object)
+	requireApplyResult(t, first.Objects[0], ApplyResultApplied)
+	second := mustApplyObjects(t, instance, object)
+	requireApplyResult(t, second.Objects[0], ApplyResultIdentical)
+	third := mustApplyObjects(t, instance, applyGroupObject(t, groupID, "a>b<c&d", 100))
+	requireApplyResult(t, third.Objects[0], ApplyResultIdentical)
+
+	group, err := instance.db.GroupGet(context.Background(), groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Name != "a>b<c&d" || group.UpdatedAt != 100 {
+		t.Fatalf("group=%+v", group)
+	}
+}
+
+// 同修订不同内容的 equal-revision LWW 必须以规范载荷哈希决胜:
+// 两种编码、两种应用顺序收敛到同一终态, 与编码和顺序无关。
+func TestApplyObjectsEqualRevisionEncodingIndependentConvergence(t *testing.T) {
+	groupID := ids.New()
+	canonicalX := applyGroupObject(t, groupID, "内容X", 100)
+	nonCanonicalY := ApplyObject{ID: groupID, Kind: KindGroup, Payload: json.RawMessage(`{"updatedAt":100,"createdAt":1,"sort":0,"name":"内容Y","id":"` + groupID + `"}`)}
+
+	finalName := func(objects ...ApplyObject) string {
+		t.Helper()
+		instance := newTestInstance(t, false)
+		mustApplyObjects(t, instance, objects...)
+		group, err := instance.db.GroupGet(context.Background(), groupID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return group.Name
+	}
+
+	nameXY := finalName(canonicalX, nonCanonicalY)
+	nameYX := finalName(nonCanonicalY, canonicalX)
+	if nameXY != nameYX {
+		t.Fatalf("equal-revision LWW depends on encoding or order: XY=%q YX=%q", nameXY, nameYX)
+	}
+
+	instance := newTestInstance(t, false)
+	mustApplyObjects(t, instance, canonicalX)
+	mustApplyObjects(t, instance, nonCanonicalY)
+	group, err := instance.db.GroupGet(context.Background(), groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Name != nameXY {
+		t.Fatalf("converged name=%q, want %q", group.Name, nameXY)
+	}
+	// 胜者重放 identical, 败者重放 skipped, 已收敛终态不得再被改写。
+	winner, loser := canonicalX, nonCanonicalY
+	if nameXY == "内容Y" {
+		winner, loser = nonCanonicalY, canonicalX
+	}
+	requireApplyResult(t, mustApplyObjects(t, instance, winner).Objects[0], ApplyResultIdentical)
+	requireApplyResult(t, mustApplyObjects(t, instance, loser).Objects[0], ApplyResultSkipped)
+}
+
+func TestApplyObjectsNonCanonicalTombstone(t *testing.T) {
+	instance := newTestInstance(t, false)
+	ctx := context.Background()
+	groupID := ids.New()
+	mustApplyObjects(t, instance, applyGroupObject(t, groupID, "原始分组", 100))
+
+	nonCanonical := json.RawMessage(`{ "deletedAt" : 200 , "targetKind" : "group" }`)
+	result := mustApplyObjects(t, instance, ApplyObject{ID: groupID, Kind: KindTombstone, Payload: nonCanonical})
+	requireApplyResult(t, result.Objects[0], ApplyResultApplied)
+	if _, err := instance.db.GroupGet(ctx, groupID); !isNotFound(err) {
+		t.Fatalf("group must be deleted: %v", err)
+	}
+	var deletedAt int64
+	if err := instance.db.DB().QueryRowContext(ctx, "SELECT deleted_at FROM sync_tombstone WHERE id=?", groupID).Scan(&deletedAt); err != nil || deletedAt != 200 {
+		t.Fatalf("tombstone deleted_at=%d err=%v", deletedAt, err)
+	}
+}

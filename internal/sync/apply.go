@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -96,19 +97,12 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject) Apply
 	if len(object.Payload) > maxApplyObjectBytes {
 		return reject("对象载荷超过大小上限 %d 字节", int64(maxApplyObjectBytes))
 	}
-	if object.Kind != KindTombstone {
-		var header struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(object.Payload, &header); err != nil {
-			return reject("对象载荷不是合法 JSON")
-		}
-		if header.ID != object.ID {
-			return reject("对象载荷 ID 与对象 ID 不一致")
-		}
+	canonical, err := canonicalApplyPayload(object)
+	if err != nil {
+		return reject("%v", err)
 	}
 	report := &SyncReport{}
-	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, object.Payload, report)
+	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, canonical, report)
 	entry.Warning = strings.Join(report.Warnings, "; ")
 	if applied {
 		entry.Result = ApplyResultApplied
@@ -116,6 +110,56 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject) Apply
 		entry.Result = ApplyResultIdentical
 	}
 	return entry
+}
+
+// canonicalApplyPayload 把传输载荷严格解码到对应协议结构并重新编码为规范 JSON:
+// identical 字节判定与 equal-revision LWW 哈希都以规范载荷为准, 与来源设备的编码无关。
+func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
+	var decoded any
+	switch object.Kind {
+	case KindGroup:
+		decoded = &groupObject{}
+	case KindAsset:
+		decoded = &assetObject{}
+	case KindCredential:
+		decoded = &credentialObject{}
+	case KindSnippet:
+		decoded = &snippetObject{}
+	case KindTombstone:
+		decoded = &tombstoneObject{}
+	case KindTranscript:
+		decoded = &transcriptObject{}
+	default:
+		return nil, ipc.NewError(ipc.CodeBadParam, "不支持的同步对象种类")
+	}
+	if !json.Valid(object.Payload) {
+		return nil, ipc.NewError(ipc.CodeBadParam, "对象载荷不是合法 JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(object.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(decoded); err != nil {
+		return nil, ipc.WrapError(ipc.CodeBadParam, "对象载荷与对象种类不匹配", err)
+	}
+	if object.Kind != KindTombstone && applyPayloadID(decoded) != object.ID {
+		return nil, ipc.NewError(ipc.CodeBadParam, "对象载荷 ID 与对象 ID 不一致")
+	}
+	return marshalObject(decoded)
+}
+
+func applyPayloadID(decoded any) string {
+	switch payload := decoded.(type) {
+	case *groupObject:
+		return payload.ID
+	case *assetObject:
+		return payload.ID
+	case *credentialObject:
+		return payload.ID
+	case *snippetObject:
+		return payload.ID
+	case *transcriptObject:
+		return payload.ID
+	}
+	return ""
 }
 
 // applyDecryptedObject 按种类应用一个已解密对象, 拉取合并与浏览器明文应用共用同一套 apply 语义。
