@@ -114,6 +114,54 @@ func TestProductionFSCommandsUseLiveTransportAndEmitProgress(t *testing.T) {
 	requireProductionNull(t, response)
 }
 
+func TestProductionFSReadWithoutMaxBytesAppliesDefaultLimit(t *testing.T) {
+	events := &fsEventRecorder{}
+	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
+		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector})
+	production, err := NewProductionWithServices(Config{Events: events}, ProductionServices{Sessions: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := production.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-read-default", Kind: session.KindLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.txt")
+	if err := os.WriteFile(remote, []byte("hello without limit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read := func(args string) ipc.Response {
+		return production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_read", Args: json.RawMessage(args)}, production.Environment(""))
+	}
+	response := read(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `}`)
+	var result fsReadDTO
+	requireStoreTestResponse(t, response, &result)
+	decoded, err := base64.StdEncoding.DecodeString(result.ContentBase64)
+	if err != nil || string(decoded) != "hello without limit" || result.Size != len("hello without limit") {
+		t.Fatalf("fs_read without maxBytes = %+v, %q, %v", result, decoded, err)
+	}
+	if response = read(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"maxBytes":4}`); response.OK || response.Error == nil {
+		t.Fatalf("explicit small limit must fail: %+v", response)
+	}
+	if response = read(`{"sessionId":"` + connected.ID + `","path":` + jsonString(remote) + `,"maxBytes":-1}`); response.OK || response.Error == nil {
+		t.Fatalf("negative maxBytes must fail: %+v", response)
+	}
+	oversized := filepath.Join(root, "oversized.bin")
+	if err := os.WriteFile(oversized, make([]byte, fsReadDefaultMaxBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if response = read(`{"sessionId":"` + connected.ID + `","path":` + jsonString(oversized) + `}`); response.OK || response.Error == nil {
+		t.Fatalf("default limit must stay bounded: %+v", response)
+	}
+}
+
 func TestProductionFSUploadFailureEmitsErrorProgress(t *testing.T) {
 	events := &fsEventRecorder{}
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {

@@ -15,6 +15,8 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
+const fsReadDefaultMaxBytes = 8 << 20
+
 type fsRequest struct {
 	SessionID     string `json:"sessionId"`
 	Path          string `json:"path"`
@@ -94,7 +96,11 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager) e
 				if err != nil {
 					return fsReadDTO{}, fsIPCError(kind, err)
 				}
-				data, err := filesystem.ReadFile(ctx, input.Path, input.MaxBytes)
+				maxBytes := input.MaxBytes
+				if maxBytes == 0 {
+					maxBytes = fsReadDefaultMaxBytes
+				}
+				data, err := filesystem.ReadFile(ctx, input.Path, maxBytes)
 				return fsReadDTO{Path: input.Path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, fsIPCError(kind, err)
 			})
 		},
