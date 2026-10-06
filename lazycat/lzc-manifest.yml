@@ -25,10 +25,10 @@ application:
     - /=http://nexterm-server:8080/
 
   public_path:
-    # 匿名同步对端 (/sync/rpc) 与设备 agent 合同 (/device/enroll, /agent/sync,
-    # /agent/current-url, /ws/device) 依赖 public_path 免平台会话到达; 设备身份
-    # 由设备凭证把关, 不依赖平台 gateway auth。其余路由一律留在平台认证之后。
-    - /sync/rpc
+    # 设备 agent 合同 (/device/enroll, /agent/sync, /agent/current-url,
+    # /ws/device) 依赖 public_path 免平台会话到达; 设备身份由设备凭证把关,
+    # 不依赖平台 gateway auth。其余路由 (含需要账号会话的 /sync/v2/*) 一律
+    # 留在平台认证之后。
     - /device/enroll
     - /agent/sync
     - /agent/current-url

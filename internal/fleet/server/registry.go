@@ -27,6 +27,11 @@ type controlChannel struct {
 type pendingBridge struct {
 	deviceID string
 	result   chan bridgeResult
+
+	// delivered 与 abandoned 由 Registry.mu 保护: "放弃等待"与"交付连接"
+	// 必须互斥, 否则等待方离开后 conn 会进无人消费的 channel 而泄漏。
+	delivered bool
+	abandoned bool
 }
 
 type bridgeResult struct {
@@ -120,6 +125,9 @@ func (r *Registry) KickDevice(deviceID string) {
 
 // RequestBridge 通过设备控制通道请求一条桥接并等待 agent 出站拨号配对,
 // 返回的 net.Conn 承载 supervisor 协议字节流 (二进制帧, 字节透明)。
+// 等待方 ctx 取消或超时即放弃: 在同一锁下与 deliver 互斥决定 conn 归属,
+// 已交付的 conn 会被取走并关闭, 未交付的标记放弃后 deliver 改为关闭连接,
+// 保证 conn/goroutine/agent 侧 WS 与 helper 子进程都不会泄漏。
 func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn, error) {
 	conn := r.control(deviceID)
 	if conn == nil {
@@ -130,15 +138,13 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 	r.mu.Lock()
 	r.pending[bridgeID] = request
 	r.mu.Unlock()
-	defer func() {
-		r.mu.Lock()
-		delete(r.pending, bridgeID)
-		r.mu.Unlock()
-	}()
 	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	err := writeControlJSON(writeCtx, conn, controlMessage{Type: "bridge", BridgeID: bridgeID})
 	cancel()
 	if err != nil {
+		r.mu.Lock()
+		delete(r.pending, bridgeID)
+		r.mu.Unlock()
 		return nil, errDeviceOffline
 	}
 	waitCtx, waitCancel := context.WithTimeout(ctx, bridgeWaitTimeout)
@@ -150,8 +156,23 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID string) (net.Conn
 		}
 		return result.conn, nil
 	case <-waitCtx.Done():
+	}
+	// 放弃路径: 与 deliver 在同一锁下竞争。deliver 已发生 (conn 在 channel
+	// 里, 其发送在置位后必然完成) -> 取走并关闭; 否则标记放弃, 之后的
+	// deliver 会改为关闭连接。
+	r.mu.Lock()
+	if request.delivered {
+		r.mu.Unlock()
+		result := <-request.result
+		if result.conn != nil {
+			_ = result.conn.Close()
+		}
 		return nil, errDeviceOffline
 	}
+	request.abandoned = true
+	delete(r.pending, bridgeID)
+	r.mu.Unlock()
+	return nil, errDeviceOffline
 }
 
 // PairBridge 校验并登记 agent 出站桥接, 返回交付函数; 调用方写出 hello_ok
@@ -164,28 +185,38 @@ func (r *Registry) PairBridge(deviceID, bridgeID string, conn *wsConn) (func(), 
 	if request != nil && request.deviceID != deviceID {
 		request = nil
 	}
-	if request != nil {
-		conn.deviceID = deviceID
-		conn.bridgeID = bridgeID
-		r.bridges[bridgeID] = conn
-	}
-	r.mu.Unlock()
-	if request == nil {
+	if request == nil || request.abandoned {
+		r.mu.Unlock()
 		return nil, errBridgeNotPending
 	}
+	conn.deviceID = deviceID
+	conn.bridgeID = bridgeID
+	r.bridges[bridgeID] = conn
+	r.mu.Unlock()
 	deliver := func() {
-		select {
-		case request.result <- bridgeResult{conn: conn}:
-		default:
-			r.mu.Lock()
-			if current := r.bridges[bridgeID]; current == conn {
-				delete(r.bridges, bridgeID)
-			}
+		r.mu.Lock()
+		if request.abandoned {
 			r.mu.Unlock()
-			_ = conn.Close()
+			r.unregisterAndClose(conn)
+			return
 		}
+		request.delivered = true
+		r.mu.Unlock()
+		// 容量 1 且只交付一次, 发送不会阻塞; 放弃方的 drain 必然收到。
+		request.result <- bridgeResult{conn: conn}
 	}
 	return deliver, nil
+}
+
+// unregisterAndClose 把桥接从活动表移除并关闭, 用于交付前发现等待方已放弃
+// 的清理路径。
+func (r *Registry) unregisterAndClose(conn *wsConn) {
+	r.mu.Lock()
+	if current := r.bridges[conn.bridgeID]; current == conn {
+		delete(r.bridges, conn.bridgeID)
+	}
+	r.mu.Unlock()
+	_ = conn.Close()
 }
 
 // UnregisterBridge 桥接关闭时从活动表中移除。

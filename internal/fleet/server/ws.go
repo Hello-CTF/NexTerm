@@ -124,12 +124,14 @@ func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessa
 		_ = conn.Close(websocket.StatusPolicyViolation, "unknown bridge")
 		return
 	}
+	// 登记后立即挂注销: hello_ok 写失败时 deliver 不会被调用, 注销必须
+	// 仍然发生, 否则 conn 永久留在 bridges 表里。
+	defer s.registry.UnregisterBridge(bridge)
 	if err := writeControlJSON(context.Background(), conn, controlMessage{Type: "hello_ok"}); err != nil {
 		_ = bridge.Close()
 		return
 	}
 	deliver()
-	defer s.registry.UnregisterBridge(bridge)
 	<-bridge.closed
 }
 
@@ -243,5 +245,3 @@ func pipeBridge(user *websocket.Conn, bridge *wsConn) {
 	_ = bridge.Close()
 	_ = user.Close(websocket.StatusNormalClosure, "bridge closed")
 }
-
-var _ net.Conn = (*wsConn)(nil)
