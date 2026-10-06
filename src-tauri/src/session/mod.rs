@@ -159,6 +159,69 @@ impl SessionManager {
     }
 }
 
+/// 建一条**不注册**的底层传输（[`connect_asset`] 与 [`exec_once`] 共用建法）。
+///
+/// `session_id` 只被 SSH 传输存进自身字段 —— 它**既不用于 known_hosts 归属**
+/// （那是按 host/port/key_type 查库），**也不参与通道命名**，所以一次性执行
+/// 传一个临时 id 是安全的。
+///
+/// `accept_unknown`：首连指纹确认后重试时放行未知主机（内核写入 known_host）。
+async fn build_transport_once(
+    state: &AppState,
+    asset: &AssetRow,
+    options: &HashMap<String, serde_json::Value>,
+    accept_unknown: bool,
+    session_id: String,
+) -> AppResult<Arc<dyn Transport>> {
+    let transport: Arc<dyn Transport> = match asset.kind.as_str() {
+        "local" => Arc::new(local_transport_from(options)),
+        // docker 主机 = 一台跑着 Docker 的 SSH 机器（前端连上后直接开容器面板）。
+        // 以前 docker 落到下面的 `other` 分支 → 建得出资产、点连接必报
+        // 「资产类型 docker 不支持会话」，属于半成品入口。
+        "ssh" | "docker" => {
+            let mut params = build_ssh_params(state, asset, options).await?;
+            if accept_unknown {
+                params.auto_accept_unknown = true;
+            }
+            let t: Arc<dyn Transport> =
+                SshTransport::connect(params, Arc::clone(&state.store), session_id).await?;
+            t
+        }
+        "winrm" => {
+            let params = build_winrm_params(state, asset, options).await?;
+            let t: Arc<dyn Transport> = WinRmTransport::connect(params).await?;
+            t
+        }
+        other => return Err(AppError::param(format!("资产类型 {other} 不支持会话"))),
+    };
+    Ok(transport)
+}
+
+/// 一次性执行：按资产建**临时**传输 → 跑一条命令 → 立刻关闭。**不注册会话**。
+///
+/// # 为什么不复用 [`connect_asset`] + `disconnect`
+///
+/// `connect_asset` 会把会话 `insert` 进会话池，而 `disconnect` 对 ssh/docker/winrm
+/// **只关传输、保留对象**（只有 local/mysql/redis 走私有 `reap` 真正删对象）。
+/// 批量执行若走那条路，每跑一台就往池子里留一个 Disconnected 孤儿对象 ——
+/// 界面上凭空多出 N 个死会话，且它们永远不会被清理。所以这里只借建连的「配方」，
+/// 完全不碰会话池：不 insert、不发状态事件、不建标签。
+///
+/// 立即执行的命令**不跑**资产的 `initialCommand`：那是一次性执行，不是连接会话。
+pub async fn exec_once(
+    state: &AppState,
+    asset: &AssetRow,
+    cmd: &str,
+    timeout: Duration,
+) -> AppResult<crate::transport::ExecResult> {
+    let options = crate::transport::parse_options(&asset.options_json);
+    let transport = build_transport_once(state, asset, &options, false, new_id()).await?;
+    let result = transport.exec(cmd, timeout).await;
+    // 即使 exec 失败也要关：这条临时传输没有别的持有者，不关就是泄漏。
+    transport.close().await;
+    result
+}
+
 /// 依据资产建立会话（§7：一资产一连接）。
 /// `accept_unknown`：首连指纹确认后重试时放行未知主机（内核写入 known_host）。
 pub async fn connect_asset(
@@ -182,24 +245,8 @@ pub async fn connect_asset(
         .unwrap_or_default();
     let session_id = new_id();
 
-    let transport: Arc<dyn Transport> = match asset.kind.as_str() {
-        "local" => Arc::new(local_transport_from(&options)),
-        // docker 主机 = 一台跑着 Docker 的 SSH 机器（前端连上后直接开容器面板）。
-        // 以前 docker 落到下面的 `other` 分支 → 建得出资产、点连接必报
-        // 「资产类型 docker 不支持会话」，属于半成品入口。
-        "ssh" | "docker" => {
-            let mut params = build_ssh_params(state, asset, &options).await?;
-            if accept_unknown {
-                params.auto_accept_unknown = true;
-            }
-            SshTransport::connect(params, Arc::clone(&state.store), session_id.clone()).await?
-        }
-        "winrm" => {
-            let params = build_winrm_params(state, asset, &options).await?;
-            WinRmTransport::connect(params).await?
-        }
-        other => return Err(AppError::param(format!("资产类型 {other} 不支持会话"))),
-    };
+    let transport =
+        build_transport_once(state, asset, &options, accept_unknown, session_id.clone()).await?;
 
     // 初始命令（§5.2 连接配置项：连接后自动执行）
     if let Some(init_cmd) = options.get("initialCommand").and_then(|v| v.as_str()) {

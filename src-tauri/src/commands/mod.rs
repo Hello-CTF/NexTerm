@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod asset;
+pub mod batch;
 pub mod db;
 pub mod docker;
 pub mod forward;
@@ -57,6 +58,8 @@ macro_rules! nexterm_commands {
             session::session_line_exec,
             session::session_cwd,
             session::session_reconnect,
+            // batch（多资产并发执行同一条命令）
+            batch::batch_exec,
             // terminal
             terminal::terminal_attach,
             terminal::terminal_attach_tab,
