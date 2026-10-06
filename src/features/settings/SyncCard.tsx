@@ -170,10 +170,10 @@ export function SyncCard() {
       });
       setLink(saved);
       setDraft((d) => ({ ...d, token: "" }));
+      void qc.invalidateQueries({ queryKey: ["sync-link"] });
       const d = await syncApi.remoteDigest();
       setRemote(d);
       pushToast("success", `已连接（对端标识 ${d.origin}，${d.assets.length} 条资产）`);
-      void qc.invalidateQueries({ queryKey: ["sync-link"] });
     } catch (e) {
       setError(describeError(e));
       setRemote(null);

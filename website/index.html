@@ -488,7 +488,7 @@
     function () { line('<span class="warn">── AI 请求接管终端 ──────────────────</span>'); return sleep(650); },
     function () { line('<span class="info">   docker restart api-server</span>'); return sleep(650); },
     function () { line('<span class="d">   〔允许本次〕〔本会话允许〕〔拒绝〕 → 允许本次</span>'); return sleep(950); },
-    function () { line('<span class="ok">✓ 已执行 · 退出码 0 · 2.1s · 按任意键夺回</span>'); return sleep(700); },
+    function () { line('<span class="ok">✓ 已执行 · 退出码 0 · 2.1s · 按 Esc（可改键）夺回</span>'); return sleep(700); },
     function () { line('<span class="p">deploy@web-01:~$</span> <span class="caret"></span>'); return sleep(4200); }
   ];
 
