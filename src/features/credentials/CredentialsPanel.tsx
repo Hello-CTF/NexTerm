@@ -48,20 +48,26 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
   return (
     <div className="flex h-full flex-col bg-neutral-900">
       {/* 工具条 */}
-      <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3">
-        <IconKey size={14} className="text-neutral-400" />
-        <span className="text-[13px] font-semibold text-neutral-100">凭据</span>
+      {/* 工具条 —— 与 CredentialsView 同一套窄宽度处理（理由与优先级见那边的注释）：
+          文字 `shrink-0 whitespace-nowrap` 绝不竖排；按容器宽度依次丢掉按钮文字、
+          状态角标；最后用 `overflow-x-auto` 兜底。这里比凭据视图简单：
+          只有「新建凭据」是高频动作，保留文字的时间最长。 */}
+      <div className="@container flex h-[38px] shrink-0 items-center gap-2 overflow-x-auto border-b border-neutral-800/60 px-3 nx-hide-scrollbar">
+        <IconKey size={14} className="shrink-0 text-neutral-400" />
+        <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">
+          凭据
+        </span>
         {st &&
           (protectionOn ? (
             locked ? (
-              <span className="nx-badge nx-badge-amber">
+              <span className="nx-badge nx-badge-amber shrink-0 whitespace-nowrap">
                 <IconLock size={11} /> 已锁定
               </span>
             ) : (
-              <span className="nx-badge nx-badge-green">已解锁</span>
+              <span className="nx-badge nx-badge-green shrink-0 whitespace-nowrap">已解锁</span>
             )
           ) : (
-            <span className="nx-badge">未启用密码保护</span>
+            <span className="nx-badge shrink-0 whitespace-nowrap">未启用密码保护</span>
           ))}
         <div className="nx-spacer" />
         <button
@@ -70,7 +76,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
           onClick={() => openCredentialsViewTab("json")}
         >
           <IconCode size={12} />
-          凭据视图
+          <span className="hidden @min-[420px]:inline">凭据视图</span>
         </button>
         <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setCreating(true)}>
           <IconPlus size={12} />

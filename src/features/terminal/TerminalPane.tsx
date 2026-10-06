@@ -706,11 +706,16 @@ export function TerminalPane({
           onClick={() => setSearchOpen((v) => !v)}
         >
           <IconSearch size={13} />
-          搜索
+          {/* 窄工具条下退化成纯图标（title 还在）—— 见 styles.css 里 `.nx-toolbar` 为何是容器 */}
+          <span className="hidden @min-[430px]:inline">搜索</span>
         </button>
 
+        {/* 编码下拉：窄工具条下收窄到 68px（够显示 utf-8 + 箭头），宽了回到 88px。
+            ⚠️ 刻意用「默认窄 + `@min-` 放宽」而不是 `@max-[430px]:` ——
+            Tailwind v4 对那种写法是**静默丢弃**的（构建产物里一条 max-width 容器
+            查询都没有），写了等于没写。 */}
         <select
-          className="nx-select nx-input-sm w-[88px] font-mono"
+          className="nx-select nx-input-sm w-[68px] font-mono @min-[430px]:w-[88px]"
           value={encoding}
           title="终端字符编码（右键菜单里也有）"
           onChange={(e) => void applyEncoding(e.target.value)}
@@ -728,7 +733,7 @@ export function TerminalPane({
           onClick={() => void toggleRecord()}
         >
           {recording ? <IconStop size={12} /> : <span className="nx-dot bg-current" />}
-          {recording ? "停止" : "录制"}
+          <span className="hidden @min-[430px]:inline">{recording ? "停止" : "录制"}</span>
         </button>
 
         {blocksSupported && (
@@ -761,7 +766,7 @@ export function TerminalPane({
               }}
             >
               <IconList size={13} />
-              命令块
+              <span className="hidden @min-[560px]:inline">命令块</span>
               {blocks.length > 0 && <span className="nx-count">{blocks.length}</span>}
             </button>
           </>

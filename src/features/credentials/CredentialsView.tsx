@@ -61,11 +61,36 @@ export function CredentialsView({
 
   return (
     <div className="flex h-full flex-col bg-neutral-900">
-      <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3">
-        <IconCode size={14} className="text-neutral-400" />
-        <span className="text-[13px] font-semibold text-neutral-100">凭据视图</span>
-        <span className="nx-badge">只读</span>
-        <div className="nx-segment ml-1">
+      {/*
+        工具条。⚠️ 窄宽度下这里会碎，改之前请先读这段（实测数据在下面）。
+
+        平板 / 小窗 / 或者单纯开着 AI 侧栏时，主区可能只剩 400px 出头。原先的表现：
+        「凭据视图」被压成 13×81（一个字一行）、右侧提示被压成 8 行、最右边的「复制」
+        右溢 53px 被裁掉 —— 整条工具条看着像坏了。
+
+        根因是 CJK + flex 的组合：flex 项默认 `min-width:auto`，而中文的最小内容宽度
+        **只有一个字**，所以文字会被一路压到单字宽然后逐字换行；同时 `.nx-btn` 是
+        `flex:0 0 auto` 不缩，压缩量全落在文字上，按钮反而溢出。
+
+        修法按优先级三层，缺一不可：
+          ① 文字一律 `shrink-0 whitespace-nowrap` —— 宁可横向滚，绝不竖排单字；
+          ② 用**容器查询**按本视图自己的宽度依次丢弃次要项。这里刻意不用视口断点
+             （`sm:`/`lg:`）：主区宽度取决于左栏 + AI 侧栏 + 是否分屏，跟视口宽度无关，
+             1080 宽（截图的场景）主区也只剩 422px，视口断点在这里完全判错。
+             丢的顺序 = 提示 → 按钮文字（留图标 + tooltip）→ 只读角标：
+             全量 665px / 去提示 516 / 再去文字 408 / 再去角标 367。
+          ③ 兜底 `overflow-x-auto`：真窄到 367px 以下（主区比一部手机还窄）就横滚，
+             滚动条隐藏 —— 38px 高的条里塞一条 15px 的滚动条比横滚本身更难看。
+      */}
+      <div className="@container flex h-[38px] shrink-0 items-center gap-2 overflow-x-auto border-b border-neutral-800/60 px-3 nx-hide-scrollbar">
+        <IconCode size={14} className="shrink-0 text-neutral-400" />
+        <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">
+          凭据视图
+        </span>
+        <span className="nx-badge hidden shrink-0 whitespace-nowrap @min-[420px]:inline-flex">
+          只读
+        </span>
+        <div className="nx-segment ml-1 shrink-0">
           <button
             className={`nx-segment-item ${view === "text" ? "is-active" : ""}`}
             onClick={() => onChange("text")}
@@ -82,7 +107,7 @@ export function CredentialsView({
           </button>
         </div>
         <div className="nx-spacer" />
-        <span className="nx-hint hidden sm:inline">
+        <span className="nx-hint hidden shrink-0 whitespace-nowrap @min-[680px]:inline">
           {credentials.length} 条凭据 · {list.filter((a) => SSH_KINDS.has(a.kind)).length} 台可 SSH 主机
         </span>
         <button className="nx-btn nx-btn-sm" title="重新读取" onClick={refresh}>
@@ -94,11 +119,11 @@ export function CredentialsView({
           onClick={() => setExporting(true)}
         >
           <IconDownload size={12} />
-          导出到剪贴板
+          <span className="hidden @min-[540px]:inline">导出到剪贴板</span>
         </button>
-        <button className="nx-btn nx-btn-sm" onClick={() => void copy()}>
+        <button className="nx-btn nx-btn-sm" title="复制当前视图内容" onClick={() => void copy()}>
           <IconCopy size={12} />
-          复制
+          <span className="hidden @min-[540px]:inline">复制</span>
         </button>
       </div>
 

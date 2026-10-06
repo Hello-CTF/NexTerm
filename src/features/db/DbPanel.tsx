@@ -402,7 +402,7 @@ function RedisView({ connId }: { connId: string }) {
           <>
             <div className="nx-toolbar">
               <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
-              <span className="nx-toolbar-title truncate font-mono">{String(view.key)}</span>
+              <span className="nx-toolbar-title nx-ellipsize font-mono">{String(view.key)}</span>
               <span className="nx-hint">
                 TTL {String(view.ttl) === "-1" ? "持久化" : `${String(view.ttl)}s`}
               </span>

@@ -229,7 +229,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     <div className="nx-pane bg-term">
       <div className="nx-toolbar">
         <FileIcon size={14} className={`shrink-0 ${tone}`} />
-        <span className="nx-toolbar-title truncate font-mono">{path}</span>
+        <span className="nx-toolbar-title nx-ellipsize font-mono">{path}</span>
         {dirty && (
           <span className="nx-badge nx-badge-amber shrink-0">
             <span className="nx-dot" />

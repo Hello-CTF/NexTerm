@@ -492,13 +492,58 @@
     border-bottom: 1px solid
       color-mix(in srgb, var(--color-neutral-800) 70%, transparent);
     background: color-mix(in srgb, var(--color-neutral-950) 40%, transparent);
+    /* 窄宽度下宁可整条横滚，也不要把子项压扁 —— 见下方 title / hint 的注释。
+       `overflow-x` 一旦非 visible，`overflow-y` 会跟着算成 auto，于是绝对定位的
+       弹层会被裁；实测工具条里没有内联弹层（ContextMenu 是工具条的**兄弟**节点，
+       挂在组件根部），所以这条是安全的。 */
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* 工具条自身是**容器查询的容器**：面板可以按"本工具条有多宽"决定收掉哪些文字
+       （用法见 TerminalPane 的 `@min-[...]`）。这里刻意不用视口断点 ——
+       工具条宽度取决于左栏 + AI 侧栏 + 是否分屏，和视口宽度没有稳定关系。 */
+    container-type: inline-size;
+  }
+  .nx-toolbar::-webkit-scrollbar {
+    display: none;
   }
 
+  /*
+    工具条里的标题：**绝不参与压缩**。
+
+    flex 项默认 `min-width: auto`，而中文的「最小内容宽度」只有**一个字** —— 于是
+    被压缩时它不会出省略号，而是逐字换行：平板 / 小窗 / 开着 AI 侧栏（主区只剩
+    400px 出头）时实测「凭据视图」变成 13×81 的四行竖排，看着像界面坏了。
+    `flex: 0 0 auto` + `white-space: nowrap` 把这个失效模式从根上关掉。
+
+    需要「省略号降级」的（文件路径 / 数据库键名这类**可能很长**的标题）挂
+    `.nx-ellipsize`：它显式打开「可压缩 + 省略号」，语义写在使用处，不靠猜。
+  */
   .nx-toolbar-title {
     color: var(--color-neutral-200);
     font-size: 12.5px;
     font-weight: 550;
     letter-spacing: 0.01em;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .nx-toolbar-title.nx-ellipsize {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 工具条里的说明文字同理：宁可省略号，也不要变成一列单字。 */
+  .nx-toolbar .nx-hint {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 下拉框自带固定宽度语义（`w-[88px]` / `w-[168px]`）：被压到 18px 就没法用了。 */
+  .nx-toolbar .nx-select {
+    flex: 0 0 auto;
   }
 
   /* 工具条内的竖直分隔 */
@@ -514,6 +559,16 @@
   .nx-spacer {
     flex: 1 1 auto;
     min-width: 0;
+  }
+
+  /* 把横向滚动条藏起来（用在窄工具条上）。
+     38px 高的条里塞一条 15px 的系统滚动条，比「能横滚」这件事本身更难看；
+     触控板 / 触屏仍然滑得动，只是没有那条常驻的视觉噪音。 */
+  .nx-hide-scrollbar {
+    scrollbar-width: none;
+  }
+  .nx-hide-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 
   /* ── 按钮 ────────────────────────────────────────────────────────── */

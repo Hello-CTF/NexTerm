@@ -427,13 +427,18 @@ export function SettingsView() {
         {/* 资产同步：桌面与微服之间搬资产。桌面是发起方，浏览器版是被同步的一端 */}
         <SyncCard />
 
-        {/* 快捷键速查 */}
-        <section className="nx-card">
+        {/* 快捷键速查。
+            ⚠️ `@container` 挂在这一段上、阈值给下面的网格用：窄面板里「两列」会把
+            每个单元压到 ~135px，而最长那条 `Ctrl+Shift+P / Ctrl+K` 自己就占 ~130px，
+            于是右边的中文标签被挤成**一列单字**（实测 12×64 的竖排「命令面板」）。
+            容器查询判的是这一段的宽度 = 主区宽度，跟视口无关（视口断点在这里判错：
+            1080 宽 + 开着 AI 侧栏，主区也只有 366px）。 */}
+        <section className="nx-card @container">
           <div className="mb-3 flex items-center gap-2">
             <IconSettings size={15} className="text-neutral-400" />
             <span className="nx-card-title">快捷键</span>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 @min-[400px]:grid-cols-2">
             {(
               [
                 ["Ctrl+Shift+P / Ctrl+K", "命令面板"],
@@ -447,8 +452,8 @@ export function SettingsView() {
               ] as [string, string][]
             ).map(([k, label]) => (
               <div key={k} className="flex items-center gap-2 text-xs text-neutral-400">
-                <span className="nx-kbd">{k}</span>
-                <span>{label}</span>
+                <span className="nx-kbd shrink-0">{k}</span>
+                <span className="whitespace-nowrap">{label}</span>
               </div>
             ))}
           </div>
