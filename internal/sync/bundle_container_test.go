@@ -220,6 +220,39 @@ func TestBundleFilePlaintextWriteReturnsRiskWarning(t *testing.T) {
 	}
 }
 
+func TestBundleFileOverwriteTightensPermissions(t *testing.T) {
+	desktop := newTestInstance(t, true)
+	path := filepath.Join(t.TempDir(), "nexterm-assets.nxbm")
+
+	if err := os.WriteFile(path, []byte(`{"protocol":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := desktop.service.WriteBundleFileWithOptions(context.Background(), path, `{"protocol":1}`, BundleWriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("plaintext overwrite mode=%v, want 0600", info.Mode().Perm())
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := desktop.service.WriteBundleFileWithOptions(context.Background(), path, `{"protocol":1}`, BundleWriteOptions{Password: "导出口令"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("encrypted overwrite mode=%v, want 0600", info.Mode().Perm())
+	}
+}
+
 func TestBundleFileLegacyJSONStillReadable(t *testing.T) {
 	desktop := newTestInstance(t, true)
 	path := filepath.Join(t.TempDir(), "nexterm-assets.json")

@@ -87,6 +87,9 @@ func (s *Service) WriteBundleFileWithOptions(_ context.Context, path string, con
 	if err := os.WriteFile(trimmed, data, 0o600); err != nil {
 		return nil, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("无法写入资产包文件: %v", err))
 	}
+	if err := os.Chmod(trimmed, 0o600); err != nil {
+		return nil, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("无法设置资产包文件权限: %v", err))
+	}
 	result := &BundleWriteResult{Encrypted: opts.Password != ""}
 	if !result.Encrypted {
 		result.Warning = bundlePlaintextWarning
