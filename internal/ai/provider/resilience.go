@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -99,8 +98,6 @@ func statusCodeForError(err error) (int, bool) {
 	}
 }
 
-const maxRetryLimit = 8
-
 const maxRetryAfterDelay = 30 * time.Second
 
 type RetryPolicy struct {
@@ -117,12 +114,6 @@ func DefaultRetryPolicy() RetryPolicy {
 	}
 }
 
-func WithRetryPolicy(policy RetryPolicy) Option {
-	return func(options *clientOptions) {
-		options.retry = normalizeRetryPolicy(policy)
-	}
-}
-
 func withRetryHooks(sleep func(context.Context, time.Duration) error, random func() float64) Option {
 	return func(options *clientOptions) {
 		if sleep != nil {
@@ -132,26 +123,6 @@ func withRetryHooks(sleep func(context.Context, time.Duration) error, random fun
 			options.random = random
 		}
 	}
-}
-
-func normalizeRetryPolicy(policy RetryPolicy) RetryPolicy {
-	defaults := DefaultRetryPolicy()
-	policy.MaxRetries = min(max(policy.MaxRetries, 0), maxRetryLimit)
-	if policy.InitialBackoff <= 0 {
-		policy.InitialBackoff = defaults.InitialBackoff
-	}
-	if policy.MaxBackoff <= 0 {
-		policy.MaxBackoff = defaults.MaxBackoff
-	}
-	if policy.MaxBackoff < policy.InitialBackoff {
-		policy.MaxBackoff = policy.InitialBackoff
-	}
-	if math.IsNaN(policy.Jitter) || math.IsInf(policy.Jitter, 0) {
-		policy.Jitter = defaults.Jitter
-	} else {
-		policy.Jitter = min(max(policy.Jitter, 0), 1)
-	}
-	return policy
 }
 
 func (p RetryPolicy) backoff(retry int, random func() float64) time.Duration {

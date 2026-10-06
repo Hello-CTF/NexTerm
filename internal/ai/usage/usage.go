@@ -70,22 +70,6 @@ func (u Usage) HasData() bool {
 	return u.PromptTokens > 0 || u.CompletionTokens > 0
 }
 
-func (u Usage) ContextPercent() float64 {
-	if u.ContextWindow == 0 {
-		return 0
-	}
-	percent := float64(u.PromptTokens) / float64(u.ContextWindow) * 100
-	return math.Min(100, math.Max(0, percent))
-}
-
-func (u Usage) CacheHitPercent() float64 {
-	if u.PromptTokens == 0 {
-		return 0
-	}
-	cached := min(u.CachedTokens, u.PromptTokens)
-	return float64(cached) / float64(u.PromptTokens) * 100
-}
-
 func (u *Usage) Accumulate(other Usage) {
 	u.PromptTokens = saturatingAdd(u.PromptTokens, other.PromptTokens)
 	u.CompletionTokens = saturatingAdd(u.CompletionTokens, other.CompletionTokens)

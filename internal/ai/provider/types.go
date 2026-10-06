@@ -1,8 +1,6 @@
 package provider
 
 import (
-	"strings"
-
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/usage"
 )
 
@@ -14,46 +12,8 @@ type ChatMessage struct {
 	Name       string     `json:"name,omitempty"`
 }
 
-func SystemMessage(text string) ChatMessage {
-	return ChatMessage{Role: "system", Content: text}
-}
-
 func UserMessage(text string) ChatMessage {
 	return ChatMessage{Role: "user", Content: text}
-}
-
-func UserMessageWithImages(text string, images []string) ChatMessage {
-	if len(images) == 0 {
-		return UserMessage(text)
-	}
-	parts := make([]any, 0, len(images)+1)
-	parts = append(parts, map[string]any{"type": "text", "text": text})
-	for _, image := range images {
-		url := image
-		if !strings.HasPrefix(url, "data:") {
-			url = "data:image/png;base64," + url
-		}
-		parts = append(parts, map[string]any{
-			"type": "image_url", "image_url": map[string]string{"url": url},
-		})
-	}
-	return ChatMessage{Role: "user", Content: parts}
-}
-
-func AssistantMessage(text string) ChatMessage {
-	return ChatMessage{Role: "assistant", Content: text}
-}
-
-func AssistantToolCallsMessage(content string, calls []ToolCall) ChatMessage {
-	var body any = content
-	if content == "" {
-		body = nil
-	}
-	return ChatMessage{Role: "assistant", Content: body, ToolCalls: calls}
-}
-
-func ToolResultMessage(callID, text string) ChatMessage {
-	return ChatMessage{Role: "tool", Content: text, ToolCallID: callID}
 }
 
 type FunctionCall struct {

@@ -141,8 +141,11 @@ func TestBlockChatWithReasoningImagesToolsAndEvents(t *testing.T) {
 	client, _ := NewClient(Config{BaseURL: server.URL, Model: "m", Stream: false})
 	var items []StreamItem
 	completion, err := client.Chat(context.Background(), ChatRequest{
-		Messages: []ChatMessage{UserMessageWithImages("look", []string{"AA=="})},
-		Tools:    []ToolSchema{{Name: "write"}},
+		Messages: []ChatMessage{{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "look"},
+			map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:image/png;base64,AA=="}},
+		}}},
+		Tools: []ToolSchema{{Name: "write"}},
 	}, func(item StreamItem) { items = append(items, item) })
 	if err != nil {
 		t.Fatal(err)

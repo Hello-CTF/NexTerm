@@ -34,9 +34,9 @@ func TestNativeGenerateHonorsOverrideToolsFallbackAndMetadata(t *testing.T) {
 	if message.Content != "ok" {
 		t.Fatalf("native message = %+v", message)
 	}
-	metadata := MetadataFromMessage(message)
-	if metadata.RunID == "" || metadata.CallID == "" || metadata.Model != "served-backup" || metadata.ContextWindow != 1000 {
-		t.Fatalf("native metadata = %+v", metadata)
+	if extraString(message.Extra, MessageExtraRunID) == "" || extraString(message.Extra, MessageExtraCallID) == "" ||
+		extraString(message.Extra, MessageExtraServingModel) != "served-backup" || extraUint64(message.Extra, MessageExtraContextWindow) != 1000 {
+		t.Fatalf("native metadata = %+v", message.Extra)
 	}
 }
 
@@ -70,14 +70,18 @@ func TestNativeStreamHonorsOverrideToolsFallbackAndMetadata(t *testing.T) {
 	if len(messages) == 0 || messages[0].Content != "stream-ok" {
 		t.Fatalf("native stream messages = %+v", messages)
 	}
-	metadata := MetadataFromMessage(messages[0])
+	runID := extraString(messages[0].Extra, MessageExtraRunID)
+	callID := extraString(messages[0].Extra, MessageExtraCallID)
+	servingModel := extraString(messages[0].Extra, MessageExtraServingModel)
+	contextWindow := extraUint64(messages[0].Extra, MessageExtraContextWindow)
 	for _, message := range messages[1:] {
-		if got := MetadataFromMessage(message); got != metadata {
-			t.Fatalf("frame metadata = %+v, want %+v", got, metadata)
+		if extraString(message.Extra, MessageExtraRunID) != runID || extraString(message.Extra, MessageExtraCallID) != callID ||
+			extraString(message.Extra, MessageExtraServingModel) != servingModel || extraUint64(message.Extra, MessageExtraContextWindow) != contextWindow {
+			t.Fatalf("frame metadata = %+v, want %s/%s/%s/%d", message.Extra, runID, callID, servingModel, contextWindow)
 		}
 	}
-	if metadata.RunID == "" || metadata.CallID == "" || metadata.Model != "served-backup" || metadata.ContextWindow != 1000 {
-		t.Fatalf("stream metadata = %+v", metadata)
+	if runID == "" || callID == "" || servingModel != "served-backup" || contextWindow != 1000 {
+		t.Fatalf("stream metadata = %s/%s/%s/%d", runID, callID, servingModel, contextWindow)
 	}
 	requests := provider.Requests()
 	if !reflect.DeepEqual(requestModels(requests), []string{"override", "backup"}) || !requests[1].stream || requests[1].toolCount != 1 {

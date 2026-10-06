@@ -99,15 +99,13 @@ func newFakeClient(t *testing.T, transport http.RoundTripper, config Config, max
 	if random == nil {
 		random = func() float64 { return 0.5 }
 	}
-	client, err := NewClient(config,
-		WithRetryPolicy(RetryPolicy{
-			MaxRetries: maxRetries, InitialBackoff: 100 * time.Millisecond,
-			MaxBackoff: 250 * time.Millisecond, Jitter: 0.5,
-		}),
-		withRetryHooks(sleep, random),
-	)
+	client, err := NewClient(config, withRetryHooks(sleep, random))
 	if err != nil {
 		t.Fatal(err)
+	}
+	client.retry = RetryPolicy{
+		MaxRetries: maxRetries, InitialBackoff: 100 * time.Millisecond,
+		MaxBackoff: 250 * time.Millisecond, Jitter: 0.5,
 	}
 	client.http.Transport = &wireTransport{base: transport}
 	return client

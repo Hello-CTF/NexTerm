@@ -81,8 +81,12 @@ func TestConfigNormalizationAndJSONDefaults(t *testing.T) {
 	}
 }
 
-func TestUserMessageWithImages(t *testing.T) {
-	message := UserMessageWithImages("look", []string{"aGVsbG8=", "data:image/jpeg;base64,AAAA"})
+func TestChatMessageWireContent(t *testing.T) {
+	message := ChatMessage{Role: "user", Content: []any{
+		map[string]any{"type": "text", "text": "look"},
+		map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:image/png;base64,aGVsbG8="}},
+		map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:image/jpeg;base64,AAAA"}},
+	}}
 	encoded, err := json.Marshal(message)
 	if err != nil {
 		t.Fatal(err)
@@ -102,12 +106,12 @@ func TestUserMessageWithImages(t *testing.T) {
 	if len(decoded.Content) != 3 || decoded.Content[0].Text != "look" || decoded.Content[1].ImageURL.URL != "data:image/png;base64,aGVsbG8=" || decoded.Content[2].ImageURL.URL != "data:image/jpeg;base64,AAAA" {
 		t.Fatalf("multipart message = %s", encoded)
 	}
-	plain := UserMessageWithImages("text", nil)
+	plain := UserMessage("text")
 	encoded, _ = json.Marshal(plain)
 	if string(encoded) != `{"role":"user","content":"text"}` {
 		t.Fatalf("image-free message should use string content: %s", encoded)
 	}
-	tool := AssistantToolCallsMessage("", []ToolCall{{ID: "1", Type: "function"}})
+	tool := ChatMessage{Role: "assistant", ToolCalls: []ToolCall{{ID: "1", Type: "function"}}}
 	encoded, _ = json.Marshal(tool)
 	var wire map[string]any
 	_ = json.Unmarshal(encoded, &wire)

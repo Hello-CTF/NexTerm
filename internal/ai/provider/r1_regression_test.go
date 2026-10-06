@@ -40,7 +40,7 @@ func TestBlockTextPartContentRegression(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if message.Content != "Hello" || MetadataFromMessage(message).Model != "served-parts" {
+		if message.Content != "Hello" || extraString(message.Extra, MessageExtraServingModel) != "served-parts" {
 			t.Fatalf("native message = %+v", message)
 		}
 	})

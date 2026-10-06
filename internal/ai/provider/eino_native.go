@@ -22,25 +22,6 @@ const (
 	MessageExtraCacheCreation = "cache_creation_tokens"
 )
 
-type ExecutionMetadata struct {
-	RunID         string
-	CallID        string
-	Model         string
-	ContextWindow uint64
-}
-
-func MetadataFromMessage(message *schema.Message) ExecutionMetadata {
-	if message == nil {
-		return ExecutionMetadata{}
-	}
-	return ExecutionMetadata{
-		RunID:         extraString(message.Extra, MessageExtraRunID),
-		CallID:        extraString(message.Extra, MessageExtraCallID),
-		Model:         extraString(message.Extra, MessageExtraServingModel),
-		ContextWindow: extraUint64(message.Extra, MessageExtraContextWindow),
-	}
-}
-
 func extraString(extra map[string]any, key string) string {
 	value, _ := extra[key].(string)
 	return value

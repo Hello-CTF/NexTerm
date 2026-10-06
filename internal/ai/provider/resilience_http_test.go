@@ -35,10 +35,6 @@ func (r *sleepRecorder) list() []time.Duration {
 func newRetryHookClient(t *testing.T, config Config, maxRetries int, recorder *sleepRecorder) *Client {
 	t.Helper()
 	client, err := NewClient(config,
-		WithRetryPolicy(RetryPolicy{
-			MaxRetries: maxRetries, InitialBackoff: 10 * time.Millisecond,
-			MaxBackoff: 20 * time.Millisecond, Jitter: 0,
-		}),
 		withRetryHooks(func(_ context.Context, delay time.Duration) error {
 			recorder.record(delay)
 			return nil
@@ -46,6 +42,10 @@ func newRetryHookClient(t *testing.T, config Config, maxRetries int, recorder *s
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	client.retry = RetryPolicy{
+		MaxRetries: maxRetries, InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff: 20 * time.Millisecond, Jitter: 0,
 	}
 	return client
 }
