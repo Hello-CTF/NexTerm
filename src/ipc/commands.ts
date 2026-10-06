@@ -386,6 +386,23 @@ export const mountApi = {
     call<void>("mount_remove", { localPoint, sessionId }),
 };
 
+export interface FilesSettingsView {
+  publicBaseURL: string;
+}
+
+export interface SavedImageView {
+  path: string;
+  bytes: number;
+}
+
+export const filesApi = {
+  settingsGet: () => call<FilesSettingsView>("files_settings_get"),
+  settingsSet: (publicBaseURL: string) =>
+    call<FilesSettingsView>("files_settings_set", { publicBaseURL }),
+  saveImage: (path: string, contentBase64: string) =>
+    call<SavedImageView>("files_save_image", { path, contentBase64 }),
+};
+
 export interface ContainerSummary {
   id: string;
   name: string;

@@ -1,6 +1,9 @@
 package production
 
 import (
+	"bytes"
+	"encoding/base64"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -93,10 +96,71 @@ func TestFilesCommandsWiredIntoStoreModule(t *testing.T) {
 	if err := storeModule.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"files_settings_get", "files_settings_set"} {
+	for _, command := range []string{"files_settings_get", "files_settings_set", "files_save_image"} {
 		if !slices.Contains(dispatcher.Commands(), command) {
 			t.Fatalf("missing %s in %v", command, dispatcher.Commands())
 		}
+	}
+}
+
+func TestFilesSaveImageIPCWritesLocalFile(t *testing.T) {
+	dispatcher := ipc.NewDispatcher()
+	if err := registerFilesImageCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	path := t.TempDir() + "/pasted image.png"
+	payload := []byte("\x89PNG\r\n\x1a\n fake image bytes")
+	encoded := base64.StdEncoding.EncodeToString(payload)
+
+	response := dispatchStoreTest(dispatcher, "files_save_image",
+		`{"path":`+quotedJSON(path)+`,"contentBase64":`+quotedJSON(encoded)+`}`)
+	var view filesSaveImageView
+	requireStoreTestResponse(t, response, &view)
+	if view.Path != path || view.Bytes != int64(len(payload)) {
+		t.Fatalf("save view = %+v", view)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(written, payload) {
+		t.Fatalf("written bytes = %v, want %v", written, payload)
+	}
+
+	overwrite := []byte("second paste")
+	response = dispatchStoreTest(dispatcher, "files_save_image",
+		`{"path":`+quotedJSON(path)+`,"contentBase64":`+quotedJSON(base64.StdEncoding.EncodeToString(overwrite))+`}`)
+	requireStoreTestResponse(t, response, &view)
+	written, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(written, overwrite) {
+		t.Fatalf("overwritten bytes = %q, want %q", written, overwrite)
+	}
+}
+
+func TestFilesSaveImageIPCValidation(t *testing.T) {
+	dispatcher := ipc.NewDispatcher()
+	if err := registerFilesImageCommands(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir() + "/never-written.png"
+	oversized := base64.StdEncoding.EncodeToString(make([]byte, filesImageSaveMaxBytes+1))
+
+	for name, args := range map[string]string{
+		"empty path":     `{"path":"","contentBase64":"aGk="}`,
+		"empty content":  `{"path":` + quotedJSON(target) + `,"contentBase64":""}`,
+		"bad base64":     `{"path":` + quotedJSON(target) + `,"contentBase64":"!!!not-base64!!!"}`,
+		"oversized body": `{"path":` + quotedJSON(target) + `,"contentBase64":` + quotedJSON(oversized) + `}`,
+	} {
+		response := dispatchStoreTest(dispatcher, "files_save_image", args)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("%s = %+v, want bad_param", name, response)
+		}
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("rejected writes created the target file: %v", err)
 	}
 }
 

@@ -207,3 +207,86 @@ export function baseName(path: string): string {
   const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return idx < 0 ? path : path.slice(idx + 1);
 }
+
+export interface ImageLinkHealth {
+  publicBaseURLConfigured: boolean;
+  maxBytes: number;
+  ownerQuotaBytes: number;
+  ttlSeconds: number;
+}
+
+export interface ImageUploadResult {
+  id: string;
+  url: string;
+  mime: string;
+  bytes: number;
+  created_at: number;
+  expires_at: number;
+}
+
+// ImageUploadError 携带 HTTP 状态与后端返回的可读文本, 由 imagePaste 层映射成用户可操作的提示。
+export class ImageUploadError extends Error {
+  readonly status: number;
+  readonly bodyText: string;
+
+  constructor(status: number, bodyText: string) {
+    super(`image upload failed (HTTP ${status})`);
+    this.name = "ImageUploadError";
+    this.status = status;
+    this.bodyText = bodyText;
+  }
+}
+
+// fetchImageService 探测服务端是否提供 M130 图片链接服务(/healthz 的 imageLinks 元数据)。
+// 任何失败(网络、非 JSON、字段缺失)都视为"没有兼容的 HTTP 图像服务", 由调用方走本地回退。
+export async function fetchImageService(): Promise<ImageLinkHealth | null> {
+  try {
+    const res = await authedFetch(httpUrl("/healthz"), { method: "GET" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { imageLinks?: Partial<ImageLinkHealth> } | null;
+    const links = body?.imageLinks;
+    if (
+      !links ||
+      typeof links.maxBytes !== "number" ||
+      typeof links.ownerQuotaBytes !== "number" ||
+      typeof links.ttlSeconds !== "number"
+    ) {
+      return null;
+    }
+    return {
+      publicBaseURLConfigured: links.publicBaseURLConfigured === true,
+      maxBytes: links.maxBytes,
+      ownerQuotaBytes: links.ownerQuotaBytes,
+      ttlSeconds: links.ttlSeconds,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// uploadImage 通过 M130 POST /files/image 上传剪贴板/拖入的图片, 返回限时公开链接。
+// 失败时抛 ImageUploadError(带状态码与后端文本)或原始网络错误, 不静默吞错。
+export async function uploadImage(file: File): Promise<ImageUploadResult> {
+  const q = new URLSearchParams({ name: file.name || "pasted-image" });
+  const res = await authedFetch(httpUrl(`/files/image?${q.toString()}`), {
+    method: "POST",
+    headers: { "content-type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ImageUploadError(res.status, text.slice(0, 300));
+  }
+  const body = (await res.json()) as Partial<ImageUploadResult> | null;
+  if (!body || typeof body.id !== "string" || typeof body.url !== "string") {
+    throw new ImageUploadError(res.status, "服务端返回了无效的图片上传响应");
+  }
+  return {
+    id: body.id,
+    url: body.url,
+    mime: typeof body.mime === "string" ? body.mime : file.type,
+    bytes: typeof body.bytes === "number" ? body.bytes : file.size,
+    created_at: typeof body.created_at === "number" ? body.created_at : 0,
+    expires_at: typeof body.expires_at === "number" ? body.expires_at : 0,
+  };
+}

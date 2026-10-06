@@ -7,22 +7,24 @@ import { Daemon } from "./Daemon";
 import { resolveWinrmMode } from "./terminalPolicy";
 import { splitAllowedForHeight } from "./workspaceLayout";
 import type { CommandBlock } from "./commandBlocks";
-import { sessionApi, terminalApi } from "../../ipc/commands";
+import { sessionApi, terminalApi, filesApi } from "../../ipc/commands";
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
-import { clientId } from "../../ipc/env";
+import { fetchImageService, uploadImage } from "../../ipc/webFiles";
+import { clientId, WEB } from "../../ipc/env";
 import { takePendingCommand, sessionStatusText, applyRemoteTabTitle, useUi } from "../../app/store";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc9Notifier, createOsc52Handler } from "./oscHandlers";
+import { bytesToBase64, describeImageUploadFailure, markdownImageLink } from "./imagePaste";
 import {
   THROTTLE_RECOVERED_MS,
   throttleStateFrom,
   throttleView,
   type ThrottleState,
 } from "./terminalThrottle";
-import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
+import { ask, describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -117,6 +119,10 @@ export function TerminalPane({
   const [epoch, setEpoch] = useState(0);
   const [cwd, setCwd] = useState<string | null>(null);
   const [durable, setDurable] = useState(false);
+  const [imagePaste, setImagePaste] = useState<{
+    phase: "uploading" | "saving" | "success" | "error";
+    message: string;
+  } | null>(null);
   const me = clientId();
   const resumeRef = useRef(resumeTabId);
   const observerHintAt = useRef(0);
@@ -556,6 +562,83 @@ export function TerminalPane({
     handleRef.current?.paste(selected);
   };
 
+  const handlePasteImages = useCallback(
+    async (files: File[]) => {
+      if (!kernelTabId) return;
+      if (isObserver) {
+        pushToast("info", "终端正在其他设备上操作中，点「接管控制」可接手");
+        return;
+      }
+      setImagePaste({ phase: "uploading", message: `正在上传 ${files.length} 张图片…` });
+      try {
+        const service = await fetchImageService();
+        if (service) {
+          const links: string[] = [];
+          for (const file of files) {
+            const result = await uploadImage(file);
+            links.push(markdownImageLink(file.name, result.url));
+          }
+          handleRef.current?.paste(links.join(" "));
+          setImagePaste({
+            phase: "success",
+            message: `已插入 ${links.length} 张图片的 Markdown 链接（限时公开链接，过期后失效）`,
+          });
+          return;
+        }
+        if (WEB) {
+          setImagePaste({
+            phase: "error",
+            message:
+              "服务端未提供图片上传服务（/healthz 没有 imageLinks）。图片没有被上传到任何其他服务器；可请管理员为服务端配置数据目录后重试。",
+          });
+          return;
+        }
+        const confirmed = await ask(
+          "当前连接没有可用的图片上传服务。改为把图片保存到本地文件，并在光标处插入本地路径的 Markdown 链接？",
+          { title: "图片粘贴", kind: "info" },
+        );
+        if (!confirmed) {
+          setImagePaste(null);
+          return;
+        }
+        setImagePaste({ phase: "saving", message: "正在保存到本地…" });
+        const links: string[] = [];
+        try {
+          for (const file of files) {
+            const path = await pickSavePath(file.name || "pasted-image.png");
+            if (!path) {
+              setImagePaste({
+                phase: "error",
+                message: "已取消保存：图片未上传，终端输入未改动。",
+              });
+              return;
+            }
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const saved = await filesApi.saveImage(path, bytesToBase64(bytes));
+            links.push(markdownImageLink(file.name, saved.path));
+          }
+        } catch (e) {
+          setImagePaste({ phase: "error", message: `保存图片到本地失败：${describeError(e)}` });
+          return;
+        }
+        handleRef.current?.paste(links.join(" "));
+        setImagePaste({
+          phase: "success",
+          message: `已保存到本地并插入 ${links.length} 个 Markdown 链接（未上传到任何服务器）`,
+        });
+      } catch (e) {
+        setImagePaste({ phase: "error", message: describeImageUploadFailure(e) });
+      }
+    },
+    [kernelTabId, isObserver, pushToast],
+  );
+
+  useEffect(() => {
+    if (imagePaste?.phase !== "success") return;
+    const timer = window.setTimeout(() => setImagePaste(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [imagePaste]);
+
   const inputCommand = async () => {
     if (!kernelTabId) return;
     const cmd = await promptText("要发送到终端的命令（可多行，回车换行）", "", {
@@ -948,6 +1031,7 @@ export function TerminalPane({
               onTitle={handleOscTitle}
               onNotification={osc9Notifier}
               onClipboard={osc52Handler}
+              onPasteImages={(files) => void handlePasteImages(files)}
               onHandle={(h) => {
                 handleRef.current = h;
               }}
@@ -1008,6 +1092,34 @@ export function TerminalPane({
                   </button>
                 </>
               )}
+            </div>
+          )}
+
+          {imagePaste && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`absolute left-1/2 top-3 z-30 flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-md border px-3 py-1.5 text-[12px] shadow-lg ${
+                imagePaste.phase === "error"
+                  ? "border-red-500/50 bg-neutral-900/95 text-red-300"
+                  : imagePaste.phase === "success"
+                    ? "border-green-500/50 bg-neutral-900/95 text-green-300"
+                    : "border-neutral-600/60 bg-neutral-900/95 text-neutral-200"
+              }`}
+            >
+              {(imagePaste.phase === "uploading" || imagePaste.phase === "saving") && (
+                <IconRefresh size={13} className="shrink-0 animate-spin" />
+              )}
+              <span className="min-w-0 break-all">{imagePaste.message}</span>
+              <button
+                type="button"
+                className="nx-icon-btn nx-icon-btn-sm shrink-0"
+                aria-label="关闭图片粘贴提示"
+                title="关闭"
+                onClick={() => setImagePaste(null)}
+              >
+                <IconClose size={12} />
+              </button>
             </div>
           )}
 

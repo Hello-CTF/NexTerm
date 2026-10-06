@@ -15,6 +15,7 @@ import { AppearanceCard } from "./AppearanceCard";
 import { KnownHostsCard } from "./KnownHostsCard";
 import { MemoryCard } from "./MemoryCard";
 import { CronCard } from "./CronCard";
+import { FilesCard } from "./FilesCard";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
@@ -496,6 +497,8 @@ export function SettingsView() {
         <SyncCard />
 
         <SyncBundleCard />
+
+        <FilesCard />
 
         <ShortcutsCard />
       </div>

@@ -107,6 +107,9 @@ func productionModules(services ProductionServices) []Module {
 				if err := registerFilesCommands(dispatcher, services.Store); err != nil {
 					return err
 				}
+				if err := registerFilesImageCommands(dispatcher); err != nil {
+					return err
+				}
 				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir); err != nil {
 					return err
 				}

@@ -25,6 +25,7 @@ import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { wrapBracketedPaste } from "./terminalPaste";
+import { clipboardHasPlainText, imageFilesFromDataTransfer } from "./imagePaste";
 
 export const XTERM_DARK_THEME = {
   background: "#101217",
@@ -127,6 +128,7 @@ export interface XtermViewProps {
   onNotification?: (body: string) => void;
   onClipboard?: (payload: string) => void;
   onSelectionCopy?: (text: string, error: unknown | null) => void;
+  onPasteImages?: (files: File[]) => void;
 }
 
 export function XtermView(props: XtermViewProps) {
@@ -145,6 +147,7 @@ export function XtermView(props: XtermViewProps) {
   const onNotificationRef = useRef(props.onNotification);
   const onClipboardRef = useRef(props.onClipboard);
   const onSelectionCopyRef = useRef(props.onSelectionCopy);
+  const onPasteImagesRef = useRef(props.onPasteImages);
   onBlocksRef.current = props.onBlocks;
   onHandleRef.current = props.onHandle;
   onAttachInfoRef.current = props.onAttachInfo;
@@ -154,6 +157,7 @@ export function XtermView(props: XtermViewProps) {
   onNotificationRef.current = props.onNotification;
   onClipboardRef.current = props.onClipboard;
   onSelectionCopyRef.current = props.onSelectionCopy;
+  onPasteImagesRef.current = props.onPasteImages;
 
   const fitIfSized = (afterClaim = false, final = false) => {
     const host = hostRef.current;
@@ -376,6 +380,30 @@ export function XtermView(props: XtermViewProps) {
       onError: (error) => onSelectionCopyRef.current?.("", error),
     });
     const selectionDisposable = term.onSelectionChange(() => autoCopy.notifySelectionChanged());
+    // 剪贴板图片与图片拖放: 只拦截纯图片载荷交给上传流程; 含纯文本的混合剪贴板
+    // 交还终端默认粘贴, 普通文本与 bracketed paste 不受影响, 图片字节永远不会成为按键输入。
+    const pasteHost = hostRef.current;
+    const onPasteCapture = (event: ClipboardEvent) => {
+      const files = imageFilesFromDataTransfer(event.clipboardData);
+      if (files.length === 0 || clipboardHasPlainText(event.clipboardData)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onPasteImagesRef.current?.(files);
+    };
+    const onDragOver = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+    };
+    const onDropCapture = (event: DragEvent) => {
+      const files = imageFilesFromDataTransfer(event.dataTransfer);
+      if (files.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onPasteImagesRef.current?.(files);
+    };
+    pasteHost.addEventListener("paste", onPasteCapture, true);
+    pasteHost.addEventListener("dragover", onDragOver);
+    pasteHost.addEventListener("drop", onDropCapture, true);
     props.registerSearch?.({
       findNext: (t) => search.findNext(t),
       findPrevious: (t) => search.findPrevious(t),
@@ -427,6 +455,9 @@ export function XtermView(props: XtermViewProps) {
       window.removeEventListener("resize", onWindowResize);
       window.visualViewport?.removeEventListener("resize", onWindowResize);
       ro.disconnect();
+      pasteHost.removeEventListener("paste", onPasteCapture, true);
+      pasteHost.removeEventListener("dragover", onDragOver);
+      pasteHost.removeEventListener("drop", onDropCapture, true);
       dataDisposable.dispose();
       scrollDisposable.dispose();
       titleDisposable.dispose();
