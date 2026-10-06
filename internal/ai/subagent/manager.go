@@ -330,6 +330,11 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	if finishErr != nil {
 		m.finishErrs = append(m.finishErrs, fmt.Errorf("subagent %s: %w", current.handle.ID, finishErr))
 	}
+	if current.err == nil && (m.closed || errors.Is(current.ctx.Err(), context.Canceled)) {
+		current.err = context.Canceled
+		current.result.Status = StatusCanceled
+		current.result.Error = context.Canceled.Error()
+	}
 	current.cancel()
 	close(current.done)
 	m.mu.Unlock()

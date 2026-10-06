@@ -169,6 +169,44 @@ func TestManagerCloseBoundedWithSlowOnFinish(t *testing.T) {
 	}
 }
 
+func TestManagerCloseAfterPersistenceKeepsCompleted(t *testing.T) {
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	manager, err := NewManager(Config{
+		NewModel: func(context.Context) (model.BaseChatModel, error) {
+			return &testModel{step: func(context.Context, []*schema.Message, int) (*schema.Message, error) {
+				return schema.AssistantMessage("OK", nil), nil
+			}}, nil
+		},
+		OnFinish: func(context.Context, Request, Result) error {
+			close(started)
+			<-gate
+			return nil
+		},
+		MaxRunTime: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := manager.Spawn(context.Background(), Request{Task: "slow persist", Scope: &Scope{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForSignal(t, started, "OnFinish did not start")
+	close(gate)
+	result, err := waitResult(t, manager, handle)
+	if err != nil || result.Status != StatusCompleted {
+		t.Fatalf("result = %+v err = %v", result, err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := manager.Wait(context.Background(), handle)
+	if err != nil || after.Status != StatusCompleted {
+		t.Fatalf("close rewrote a persisted task: result = %+v err = %v", after, err)
+	}
+}
+
 func TestCloseRetainsEvictedTaskPersistenceErrors(t *testing.T) {
 	manager, err := NewManager(Config{
 		NewModel: func(context.Context) (model.BaseChatModel, error) {
