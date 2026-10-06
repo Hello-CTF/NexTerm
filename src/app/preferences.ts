@@ -1,21 +1,71 @@
 import { useSyncExternalStore } from "react";
 import { getResolvedTheme, subscribeTheme } from "./theme";
 
+// 账号级偏好覆盖的存储接口;M140 提供 user_setting 后端后由其实现并注册。
+// 注册前只有设备本地值,不冒充账号级覆盖。
+export interface AccountPreferenceStore {
+  getOverrides(): Promise<Record<string, unknown>>;
+  putOverride(key: string, value: unknown): Promise<void>;
+  deleteOverride(key: string): Promise<void>;
+}
+
+let accountStore: AccountPreferenceStore | null = null;
+let accountOverrides: Record<string, unknown> = {};
+const accountListeners = new Set<() => void>();
+
+export function registerAccountPreferenceStore(store: AccountPreferenceStore | null): void {
+  accountStore = store;
+  accountOverrides = {};
+  if (store) {
+    void store
+      .getOverrides()
+      .then((overrides) => {
+        accountOverrides = overrides;
+        for (const listener of accountListeners) listener();
+      })
+      .catch(() => undefined);
+  }
+}
+
+export function getAccountPreferenceStore(): AccountPreferenceStore | null {
+  return accountStore;
+}
+
+export function subscribeAccountOverrides(listener: () => void): () => void {
+  accountListeners.add(listener);
+  return () => {
+    accountListeners.delete(listener);
+  };
+}
+
+// mergeWithDefaults 把安全全局默认与覆盖合并:账号覆盖优先于设备本地值。
+export function mergeWithDefaults<T extends object>(defaults: T, ...layers: (Partial<T> | undefined)[]): T {
+  const out = { ...defaults };
+  for (const layer of layers) {
+    if (layer) Object.assign(out, layer);
+  }
+  return out;
+}
+
+function accountOverride<T>(key: string): Partial<T> | undefined {
+  const value = accountOverrides[key];
+  return value && typeof value === "object" ? (value as Partial<T>) : undefined;
+}
+
 export interface InputPrefs {
   selectionAutoCopy: boolean;
 }
 
 const STORAGE_KEY = "nexterm.inputPrefs.v1";
+const INPUT_DEFAULTS: InputPrefs = { selectionAutoCopy: false };
 
 function load(): InputPrefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { selectionAutoCopy: false };
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { selectionAutoCopy: false };
-    return { selectionAutoCopy: (parsed as { selectionAutoCopy?: unknown }).selectionAutoCopy === true };
+    const local = raw ? (JSON.parse(raw) as Partial<InputPrefs>) : {};
+    return mergeWithDefaults(INPUT_DEFAULTS, local, accountOverride<InputPrefs>("inputPrefs"));
   } catch {
-    return { selectionAutoCopy: false };
+    return { ...INPUT_DEFAULTS };
   }
 }
 
@@ -32,6 +82,10 @@ export function setSelectionAutoCopy(value: boolean): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
   } catch {
+  }
+  // 账号级覆盖:注册后写往 user_setting 后端(M140),实现跨设备同步
+  if (accountStore) {
+    void accountStore.putOverride("inputPrefs", { selectionAutoCopy: value }).catch(() => undefined);
   }
   for (const listener of listeners) listener();
 }
@@ -106,10 +160,8 @@ function parseTerminalTheme(value: unknown): TerminalThemePref {
 function loadAppearance(): AppearancePrefs {
   try {
     const raw = localStorage.getItem(APPEARANCE_KEY);
-    if (!raw) return { ...DEFAULT_APPEARANCE };
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_APPEARANCE };
-    const o = parsed as Record<string, unknown>;
+    const local = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const o = { ...local, ...accountOverride<Record<string, unknown>>("appearancePrefs") };
     return {
       uiFontPreset: parsePreset(o.uiFontPreset),
       uiFontScale: parseScale(o.uiFontScale),
@@ -166,6 +218,10 @@ function commitAppearance(next: AppearancePrefs): void {
   try {
     localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
   } catch {
+  }
+  // 账号级覆盖:注册后写往 user_setting 后端(M140),实现跨设备同步
+  if (accountStore) {
+    void accountStore.putOverride("appearancePrefs", next).catch(() => undefined);
   }
   applyAppearance();
   if (changed) notifyAppearance();

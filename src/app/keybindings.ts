@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { isMac, modHint } from "./platform";
+import { getAccountPreferenceStore } from "./preferences";
 
 export type KeybindingActionId =
   | "commandPalette"
@@ -270,6 +271,7 @@ export function captureBindingForAction(
 }
 
 const STORAGE_KEY = "nexterm.keybindings.v1";
+const ACCOUNT_KEY = "keybindings.overrides";
 
 type Overrides = Partial<Record<KeybindingActionId, string | null>>;
 export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | null>>;
@@ -277,23 +279,10 @@ export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | nu
 const ACTION_IDS = new Set<string>(KEYBINDING_ACTIONS.map((a) => a.id));
 const DEFAULTS = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a.defaultBinding]));
 
-function loadOverrides(): Overrides {
-  let raw: string | null = null;
-  try {
-    raw = localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return {};
-  }
-  if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return {};
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+function parseOverrides(raw: unknown): Overrides {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Overrides = {};
-  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!ACTION_IDS.has(id)) continue;
     if (value === null) {
       out[id as KeybindingActionId] = null;
@@ -304,6 +293,29 @@ function loadOverrides(): Overrides {
     if (normalized !== null) out[id as KeybindingActionId] = normalized;
   }
   return out;
+}
+
+function loadOverrides(): Overrides {
+  let local: unknown = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    local = raw ? JSON.parse(raw) : null;
+  } catch {
+    local = null;
+  }
+  // 账号级覆盖(user_setting,M140 后端)优先于设备本地值;未注册后端时只有设备本地值。
+  const account = getAccountPreferenceStore() ? accountOverridesCache[ACCOUNT_KEY] : undefined;
+  return { ...parseOverrides(local), ...parseOverrides(account) };
+}
+
+const accountOverridesCache: Record<string, unknown> = {};
+
+// 供 preferences 的账号覆盖加载后回填,触发键位快照重建。
+export function applyAccountKeybindingOverrides(overrides: unknown): void {
+  accountOverridesCache[ACCOUNT_KEY] = overrides;
+  const next = loadOverrides();
+  snapshot = buildSnapshot(next);
+  for (const listener of listeners) listener();
 }
 
 function buildSnapshot(overrides: Overrides): KeybindingSnapshot {
@@ -323,6 +335,11 @@ function persist(): void {
     if (Object.keys(overrides).length === 0) localStorage.removeItem(STORAGE_KEY);
     else localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
   } catch {
+  }
+  // 账号级覆盖:注册后写往 user_setting 后端(M140),实现跨设备同步
+  const store = getAccountPreferenceStore();
+  if (store) {
+    void store.putOverride(ACCOUNT_KEY, overrides).catch(() => undefined);
   }
 }
 
