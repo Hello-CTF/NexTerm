@@ -263,7 +263,7 @@ describe("DbPanel 文案", () => {
   it("Redis 命令台说明与真实行为一致，不引用内部章节号", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("命令台"));
-    expect(text()).toContain("命令台 · 命令会直接执行，没有确认步骤");
+    expect(text()).toContain("命令台 · FLUSHALL / FLUSHDB / SHUTDOWN 执行前会要求确认");
     expect(text()).not.toContain("§");
     expect(text()).not.toContain("M3");
   });

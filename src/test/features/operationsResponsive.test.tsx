@@ -165,8 +165,8 @@ describe("Enter 提交的 IME 守卫", () => {
   it("Redis 命令台：组合中 Enter 不执行，普通 Enter 执行", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => mocks.redisScan.mock.calls.length > 0);
-    const cmdInput = [...mounted.container.querySelectorAll("input")].find(
-      (el) => !el.getAttribute("aria-label"),
+    const cmdInput = mounted.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Redis 命令"]',
     );
     if (!cmdInput) throw new Error("redis command input not found");
     keyDown(cmdInput, "Enter", { isComposing: true });
