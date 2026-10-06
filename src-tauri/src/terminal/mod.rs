@@ -436,6 +436,27 @@ impl TerminalTab {
         self.exited.store(true, Ordering::Relaxed);
     }
 
+    /// 把这个标签标记为**重新存活**，与 [`Self::mark_exited`] 对称。
+    ///
+    /// # 语义
+    ///
+    /// 清除 `exited` 标记，让「接管 / 控制权推送」重新把这个标签报成「可操作」。
+    ///
+    /// # 什么时候才允许调用
+    ///
+    /// **仅当这个标签确实拿到了新的 PTY / 新会话之后** —— 目前唯一的调用点是
+    /// `session::reconnect::reopen_pty_for_tab`，它在底层传输已重建、
+    /// 新 PTY 已 `open_pty` 成功（或 WinRM 会话已重连）之后才调。
+    ///
+    /// ⚠️ 绝不能因为「重连成功」就无条件复活：那会把**真正结束**的进程（用户
+    /// 敲了 `exit`、`close_tab` / `reap` 主动杀掉的标签）也一并唤醒。判据是
+    /// 「这个标签有没有拿到新东西」，而不是「会话有没有重连」—— 前者由调用点
+    /// 用 `open_pty` 的返回值把关。用户敲 `exit` 时连接仍活着，`pump_exit_action`
+    /// 判为 `Ignore`，根本不会走重连，因此不会误复活（见 reconnect.rs 的单测）。
+    pub fn mark_live(&self) {
+        self.exited.store(false, Ordering::Relaxed);
+    }
+
     /// 这个标签的进程还在跑吗。
     pub fn has_exited(&self) -> bool {
         self.exited.load(Ordering::Relaxed)

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::AppResult;
-use crate::session::{emit_status, SessionStatus};
+use crate::session::{emit_status, notify_control_changed, SessionStatus};
 use crate::state::AppState;
 use crate::terminal::pty;
 use crate::terminal::TerminalWriter;
@@ -199,23 +199,46 @@ pub async fn try_reconnect(state: &AppState, session_id: &str) -> AppResult<bool
 /// 重连后为标签重开 PTY：前端通道不变（tab.sink 仍在），只换底层泵。
 /// 注意：tab.stop 只在用户关标签时才取消（close_tab），
 /// 连接断开只让旧泵因 channel 关闭自然退出，令牌保持可用 —— 新泵直接复用。
+///
+/// # 为什么这里要清 `exited`
+///
+/// 旧泵退出时 `AppCallbacks::exit` 会无条件 `mark_exited()` 并把 `exited: true`
+/// 推给前端，而 `exited` 从来没有地方设回 `false` —— 用户敲 `reboot` 后重连成功、
+/// 新 shell 提示符都出来了、终端实际能操作，前端的「终端进程已结束」遮罩却一直
+/// 挂着，正是因为没人清这个标记。这里是**唯一**该清的地方：底层传输已重建
+/// （[`try_reconnect`] 里 `replace_transport` 成功），本函数的调用就是"这个标签
+/// 拿到了新会话"的判据。
+///
+/// ⚠️ **必须等真的拿到新 PTY 再清**：`open_pty` 失败就说明这个标签没复活，
+/// 标记保持 `exited` 才是对的。也正因为清标记只发生在重连路径上，用户敲 `exit`
+/// 结束 shell（连接仍活、`pump_exit_action` 判 `Ignore`、根本不会调到这里）不会被
+/// 误复活。
 async fn reopen_pty_for_tab(
     state: &AppState,
     session: &Arc<crate::session::Session>,
     tab_id: &str,
 ) {
-    if session.kind != "ssh" && session.kind != "docker" {
-        return; // WinRM 行模式标签无需 PTY
-    }
     let Ok(tab) = state.sessions.get_tab(tab_id).await else {
         return;
     };
+    // WinRM 行模式标签没有 PTY（每条命令新 shell），但 `try_reconnect` 已经把
+    // 底层传输换成功了 —— 那就是"拿到了新会话"，同样要清 `exited` 并广播，
+    // 否则 winrm 行模式标签重连后前端会一直停在"进程已结束"。
+    if session.kind != "ssh" && session.kind != "docker" {
+        tab.mark_live();
+        notify_control_changed(state, &tab).await;
+        return;
+    }
     let cols = tab.cols();
     let rows = tab.rows();
     if let Ok(crate::transport::PtyHandle::Ssh { read, write }) =
         session.transport().await.open_pty(cols, rows).await
     {
         tab.set_writer(TerminalWriter::Ssh(write)).await;
+        // 新 PTY 到手 = 这个标签真的复活了：清 `exited` 并把 `exited: false`
+        // 广播给所有观看端，让前端把遮罩摘掉。
+        tab.mark_live();
+        notify_control_changed(state, &tab).await;
         let tab2 = Arc::clone(&tab);
         let callbacks: Arc<dyn crate::terminal::TabCallbacks> =
             Arc::new(crate::session::AppCallbacks {
@@ -232,6 +255,79 @@ async fn reopen_pty_for_tab(
 mod tests {
     use super::{is_reconnectable, pump_exit_action, PumpExit};
     use crate::session::SessionStatus;
+    use crate::terminal::transcoder::TerminalEncoding;
+    use crate::terminal::TerminalTab;
+    use std::sync::Arc;
+
+    fn fresh_tab() -> Arc<TerminalTab> {
+        TerminalTab::new_arc(
+            "tab-1".into(),
+            "sess-1".into(),
+            80,
+            24,
+            TerminalEncoding::Utf8,
+        )
+    }
+
+    /// 复刻一条完整的「泵退出」路径，断言最终 `exited` 取值。
+    ///
+    /// 与生产代码一一对应：
+    /// 1. `AppCallbacks::exit` 无条件 `mark_exited()`；
+    /// 2. 由 `pump_exit_action` 判是否重连；
+    /// 3. 只有走重连（且真的拿到新 PTY）时才会 `mark_live()`。
+    ///
+    /// 这样三条语义（重连复活 / 主动关闭保持 / shell exit 保持）用同一个模型
+    /// 就能全部锁住，避免"只有重连路径会清标记"这条不变量被将来的改动破坏。
+    fn exit_flow_exited(stop_cancelled: bool, reconnectable: bool, transport_alive: bool) -> bool {
+        let tab = fresh_tab();
+        tab.mark_exited(); // AppCallbacks::exit 的第一步
+        let action = pump_exit_action(
+            stop_cancelled,
+            SessionStatus::Connected,
+            reconnectable,
+            transport_alive,
+        );
+        if action == PumpExit::Reconnect {
+            // 模拟 reopen_pty_for_tab 在拿到新 PTY 之后的动作
+            tab.mark_live();
+        }
+        tab.has_exited()
+    }
+
+    /// ① 真掉线 ⇒ 重连 ⇒ 标签复活（`exited` 被清除，前端遮罩才会消失）。
+    ///
+    /// 回归：以前 reconnect 重建了 PTY 却不清 `exited`，用户敲 `reboot` 重连成功、
+    /// 终端能操作，遮罩却一直挂着。
+    #[test]
+    fn successful_reconnect_revives_the_tab() {
+        assert!(
+            !exit_flow_exited(false, true, false),
+            "真掉线并重连成功后，标签必须复活（exited=false）"
+        );
+    }
+
+    /// ② 主动 close_tab / reap：`stop` 已被取消 ⇒ 不重连 ⇒ 保持已结束。
+    ///
+    /// 这两个动作本来就是要结束进程，绝不能把它们复活。
+    #[test]
+    fn deliberate_close_keeps_the_tab_exited() {
+        assert!(
+            exit_flow_exited(true, true, false),
+            "主动关闭的标签必须保持 exited"
+        );
+    }
+
+    /// ③ shell exit（连接仍活）⇒ 不触发重连 ⇒ 保持已结束。
+    ///
+    /// 锁死「不能因为重连就把真正结束的进程复活」：用户敲 `exit` 时连接还是好的，
+    /// `pump_exit_action` 判 `Ignore`，走不到 `mark_live`。
+    #[test]
+    fn shell_exit_keeps_the_tab_exited() {
+        assert!(
+            exit_flow_exited(false, true, true),
+            "shell 正常退出的标签不得被误复活"
+        );
+    }
 
     /// 回归：本机会话**不得**进入重连循环。
     ///

@@ -18,6 +18,7 @@ import {
   IconCopy,
   IconEdit,
   IconEye,
+  IconEyeOff,
   IconGamepad,
   IconList,
   IconMergeH,
@@ -93,6 +94,13 @@ export function TerminalPane({
     exited: boolean;
   } | null>(null);
   const [claiming, setClaiming] = useState(false);
+  /**
+   * 观察者点了「仅观看」后记住的**状态签名**（谁在持权 / 进程是否结束 / 连接状态）。
+   *
+   * 这些一旦变化（控制权易主、进程结束、重连状态变化）就说明「要看的东西变了」，
+   * 签名对不上 ⇒ 遮罩自动重新弹出；而观看人数增减不改变签名，不打扰用户。
+   */
+  const [watchDismissedKey, setWatchDismissedKey] = useState<string | null>(null);
   /**
    * 这个标签背后的连接已经失效（attach 拿到 `not_found`）：服务端重启后布局里的
    * `tabId` 全都失效，或会话已被回收。
@@ -182,6 +190,22 @@ export function TerminalPane({
   const isObserver = controlSupported && control !== null && control.controller !== me;
   /** 观察者不调 resize（会报 not_controller，而且观察者本就不该改 PTY 尺寸）。 */
   const canResize = !isObserver;
+  /**
+   * 观察者遮罩的「再提示」签名：控制权易主 / 进程结束态 / 连接状态任一变化都会变，
+   * 用来判断用户主动点的「仅观看」是否还该继续生效。
+   */
+  const controlSignal = `${control?.controller ?? ""}|${control?.exited ?? ""}|${sessionStatus ?? ""}`;
+  /** 处于用户主动「仅观看」的收起态：遮罩不弹，工具栏给一个不挡画面的再入口。 */
+  const watchHidden = watchDismissedKey !== null && watchDismissedKey === controlSignal;
+  /**
+   * 进程已结束、但会话正在重连/断开/连接中：这时还写「进程已经退出…请新建终端」是误导。
+   * 重连成功后内核会推 `control`（exited:false），遮罩随之自动消失，不必由这里关。
+   */
+  const exitedReconnecting =
+    control?.exited === true &&
+    (sessionStatus === "reconnecting" ||
+      sessionStatus === "disconnected" ||
+      sessionStatus === "connecting");
 
   /** 从内核刷新一次控制权状态（谁在持权 / 几个人在看 / 进程是否结束）。 */
   const refreshControl = useCallback(
@@ -349,7 +373,7 @@ export function TerminalPane({
       w.panes.some((p) => p.tabs.some((t) => t.id === storeTabId)),
     );
     const assetId = ws?.assetId;
-    if (!assetId) {
+    if (!assetId || !ws) {
       pushToast("error", "找不到这台主机的资产信息，请到左侧资产树里手动连接");
       return;
     }
@@ -358,9 +382,14 @@ export function TerminalPane({
       const s = await sessionApi.connect(assetId);
       const list = useUi.getState().sessions;
       useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
+      // 把**整个工作区**改挂到新会话上（不只是这个终端标签）：会话对象换了新 id，
+      // 而文件树（`ws.sessionId`）、AI 侧栏、文件标签仍拿旧 id —— 旧会话已被回收，
+      // 每个 `fs_*` 都会撞 `not_found: 会话 <旧id>`（终端却因为用新 id 而正常）。
+      // 该 action 会把本工作区所有标签的 sessionId 一起换成新值，并清空终端的失效
+      // tabId、标 dead（靠 onAttach 成功后再清回）—— 避免慢 attach 时标签被远端布局抹掉。
+      useUi.getState().retargetWorkspace(ws.id, s.id);
       // 新的会话 + 清空内核 tabId ⇒ 重挂后 XtermView 因 resumeTabId 为空走
       // `terminal_attach` 新建分支（这正是想要的），并把新 tabId 写回 store。
-      useUi.getState().updateTab(storeTabId, { sessionId: s.id, tabId: undefined, dead: false });
       resumeRef.current = undefined;
       setControl(null);
       setAttachDead(false);
@@ -655,6 +684,18 @@ export function TerminalPane({
           <span className="nx-dot" />
           {statusText}
         </span>
+        {/* 「仅观看」的再入口：收起遮罩后留一个不挡画面的小徽章，点它重新打开接管提示。
+            只在"观察者 + 进程未结束 + 已主动收起"时出现，其余情况不喧宾夺主。 */}
+        {controlSupported && isObserver && !control?.exited && watchHidden && (
+          <button
+            className="nx-badge nx-badge-amber cursor-pointer"
+            title="正在以观察者身份观看，点此重新打开接管提示"
+            onClick={() => setWatchDismissedKey(null)}
+          >
+            <IconEye size={11} />
+            观看中 · 接管控制
+          </button>
+        )}
         {winrm && <span className="nx-badge nx-badge-amber">非交互模式</span>}
         {containerId && <span className="nx-badge nx-badge-purple">容器内 exec</span>}
         <div className="nx-spacer" />
@@ -842,23 +883,40 @@ export function TerminalPane({
               实用价值恰恰在于看中间那段日志。只把需要点击的「接管控制」按钮放回
               pointer-events-auto。键盘写入不靠遮罩拦：键盘本来就走不到 xterm 的
               textarea（点击落到画布上只是聚焦），即便走到了，内核也会拒（not_controller），
-              `sendData` 里对观察者还有一道本地拦截。 */}
-          {controlSupported && control && (control.exited || isObserver) && (
+              `sendData` 里对观察者还有一道本地拦截。
+
+              ★ 观察者可点「仅观看」把遮罩收起来（`watchHidden`）：只收起视觉，不取控制权、
+              不解锁写入。控制权易主 / 进程结束 / 连接状态变化时签名对不上，遮罩会自己回来。 */}
+          {controlSupported && control && (control.exited || isObserver) && !watchHidden && (
             <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/70 px-6 text-center backdrop-blur-[1px]">
-              <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
-                <IconEye size={15} className="text-amber-300" />
-                {control.exited
-                  ? "终端进程已结束"
-                  : control.controller
-                    ? "终端正在其他设备上操作中"
-                    : "当前无人操作"}
-              </span>
-              {control.exited ? (
-                <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                  进程已经退出，这里只能查看它最后的内容。要继续操作请新建一个终端。
-                </span>
+              {exitedReconnecting ? (
+                /* 进程已结束但会话正在自动重连：语气放轻，不写"新建终端"这种把人赶走的话。
+                   重连成功后内核推 exited:false，这层遮罩会自己消失。 */
+                <>
+                  <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-neutral-300">
+                    <IconRefresh size={14} className="animate-spin text-amber-300" />
+                    连接已断开，正在自动重连…
+                  </span>
+                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-500">
+                    重连成功后终端会恢复；期间仍可滚动查看已有内容。
+                  </span>
+                </>
+              ) : control.exited ? (
+                <>
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
+                    <IconEye size={15} className="text-amber-300" />
+                    终端进程已结束
+                  </span>
+                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
+                    进程已经退出，这里只能查看它最后的内容。要继续操作请新建一个终端。
+                  </span>
+                </>
               ) : (
                 <>
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
+                    <IconEye size={15} className="text-amber-300" />
+                    {control.controller ? "终端正在其他设备上操作中" : "当前无人操作"}
+                  </span>
                   <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
                     观看可以一起看，但同一时刻只有一个设备能操作。接管后，对方将转为只读观看，
                     终端尺寸也会按你的窗口重排。
@@ -870,18 +928,28 @@ export function TerminalPane({
                   {control.subscribers > 1 && (
                     <span className="nx-badge">{control.viewers} 个设备正在观看</span>
                   )}
-                  <button
-                    className="nx-btn nx-btn-primary nx-btn-sm pointer-events-auto"
-                    disabled={claiming}
-                    onClick={() => void takeControl()}
-                  >
-                    {claiming ? (
-                      <IconRefresh size={13} className="animate-spin" />
-                    ) : (
-                      <IconGamepad size={13} />
-                    )}
-                    接管控制
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="nx-btn nx-btn-primary nx-btn-sm pointer-events-auto"
+                      disabled={claiming}
+                      onClick={() => void takeControl()}
+                    >
+                      {claiming ? (
+                        <IconRefresh size={13} className="animate-spin" />
+                      ) : (
+                        <IconGamepad size={13} />
+                      )}
+                      接管控制
+                    </button>
+                    <button
+                      className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
+                      title="收起提示，继续以观察者身份观看（不取控制权）"
+                      onClick={() => setWatchDismissedKey(controlSignal)}
+                    >
+                      <IconEyeOff size={13} />
+                      仅观看
+                    </button>
+                  </div>
                 </>
               )}
             </div>

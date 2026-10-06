@@ -312,6 +312,10 @@ export default function App() {
         const fresh = await sessionApi.connect(ws.assetId);
         const list = useUi.getState().sessions;
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
+        // 目标就是**当前工作区**：先把它改挂到新会话，否则 `openTerminalTab` 里
+        // `ensureWorkspace` 按 sessionId 找不到旧工作区，会**再建一个新工作区**，
+        // 而旧工作区继续拿旧 id —— 文件树 / 文件标签因此全部撞 `not_found`。
+        useUi.getState().retargetWorkspace(ws.id, fresh.id);
         await openTerminalTab(fresh);
       } catch (e) {
         pushToast("error", `重新连接失败：${describeError(e)}`);
@@ -319,7 +323,7 @@ export default function App() {
       return;
     }
     void openLocalTerminal();
-  }, [ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
+  }, [ws?.id, ws?.sessionId, ws?.assetId, sessions, setSessions, openLocalTerminal, pushToast]);
 
   /* ── 全局快捷键 ─────────────────────────────────────────────────────── */
 

@@ -283,6 +283,25 @@ interface UiState {
    */
   closeTab: (id: string, mode?: "kill" | "detach") => Promise<void>;
   updateTab: (id: string, patch: Partial<AppTab>) => void;
+  /**
+   * 把一个工作区**连同它绑定的所有标签**改挂到新的会话 id 上。
+   *
+   * # 为什么需要它（实机复现）
+   *
+   * 会话被内核回收后，按资产重连（`TerminalPane.reconnectNow` / `openNewTerminal`）
+   * 会拿到一个**新**会话 id。若只更新终端标签、不更新所属工作区，工作区还记着旧 id：
+   * - 左栏文件树 `<FileTree sessionId={ws.sessionId}>`、AI 侧栏、`openFiles` 等拿旧 id；
+   * - 旧会话在服务端已被回收 ⇒ 每个 `fs_*` 都报 `not_found: 会话 <旧id>`；
+   * - 而终端因为改用新 id 一切正常 —— 表现为「终端能操作，文件系统却崩了」。
+   *
+   * `tabId` 一并清空：换了会话，旧内核标签必然失效，留着只会在下次 attach 撞
+   * `not_found`（语义与 `reconnectNow` 里原有的那份 `updateTab` 一致）。
+   * 同时把这些**终端**标签置 `dead: true` —— `dead` 正是「本地存在、服务端那份不含它」
+   * 的语义，靠 `layout.ts::mergeDeadTabs` 把 600ms 回写窗口内的远端 pull 顶回去，
+   * 否则 attach 稍慢时终端标签会被一次 `applyToStore` 抹掉；attach 成功后
+   * `TerminalPane.onAttach` 会自动把它清回 false。
+   */
+  retargetWorkspace: (wsId: string, newSessionId: string) => void;
 
   setSessions: (s: SessionInfo[]) => void;
   setAiBusy: (v: boolean) => void;
@@ -728,6 +747,34 @@ export const useUi = create<UiState>((set, get) => ({
             : p,
         ),
       })),
+    })),
+
+  retargetWorkspace: (wsId, newSessionId) =>
+    set((st) => ({
+      workspaces: st.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        return {
+          ...w,
+          sessionId: newSessionId,
+          panes: w.panes.map((p) => ({
+            ...p,
+            tabs: p.tabs.map((t) => {
+              // 设置 / 审计这类全局标签的 sessionId 本就是空的，不动（硬塞一个 id
+              // 等于给它们挂上不属于自己的会话）。
+              if (t.sessionId === undefined) return t;
+              if (t.kind !== "terminal") {
+                // 文件 / 挂载 / 转发 / 容器标签：只需改挂会话，本就没有内核 tabId。
+                return { ...t, sessionId: newSessionId };
+              }
+              // 终端：旧内核 tabId 随旧会话一起失效 ⇒ 清空 + 标 dead。
+              // `dead:true` 让 `layout.ts::mergeDeadTabs` 在回写窗口内任何一次远端 pull
+              // 都把这些标签并回来（不会「终端标签莫名消失」）；attach 成功后
+              // `TerminalPane.onAttach` 会把它清回 false，无需手动善后。
+              return { ...t, sessionId: newSessionId, tabId: undefined, dead: true };
+            }),
+          })),
+        };
+      }),
     })),
 
   setSessions: (s) => set({ sessions: s }),
