@@ -28,7 +28,11 @@ func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, e
 	if tailErr != nil {
 		tail = snapshot.Lines
 	}
-	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, IdleMS: idle}, nil
+	seq, seqErr := s.manager.ScreenSeq(tabID)
+	if seqErr != nil {
+		seq = 0
+	}
+	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen}, nil
 }
 
 func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) error {
@@ -41,6 +45,10 @@ func (s *sessionTerminal) CommandState(_ context.Context, tabID string) (Command
 		return CommandState{}, err
 	}
 	return tab.CommandState(), nil
+}
+
+func (s *sessionTerminal) OutputSince(_ context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	return s.manager.OutputSince(tabID, seq, maxBytes)
 }
 
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {

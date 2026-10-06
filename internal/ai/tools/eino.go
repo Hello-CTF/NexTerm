@@ -40,7 +40,9 @@ type SearchFilesArgs struct {
 	By      string `json:"by" jsonschema:"required,enum=name,enum=content"`
 }
 type ReadScreenArgs struct {
-	TabID string `json:"tab_id,omitempty"`
+	TabID    string `json:"tab_id,omitempty"`
+	SinceSeq uint64 `json:"since_seq,omitempty"`
+	MaxBytes int64  `json:"max_bytes,omitempty"`
 }
 type SendKeysArgs struct {
 	Keys   string `json:"keys" jsonschema:"required"`
@@ -50,6 +52,7 @@ type SendKeysArgs struct {
 type WaitForArgs struct {
 	Pattern   string `json:"pattern" jsonschema:"required"`
 	TimeoutMS int64  `json:"timeout_ms,omitempty"`
+	SinceSeq  uint64 `json:"since_seq,omitempty"`
 }
 type EmptyArgs struct{}
 type DockerLogsArgs struct {
@@ -109,9 +112,9 @@ var einoDescriptions = map[string]string{
 	"write_file":     "新文件以原子 no-clobber 创建；现有文件为用户授权的非事务覆盖并保留备份，可能覆盖确认后的外部修改；写入前必须读取或确认不存在。",
 	"list_dir":       "列出目录内容，最多 500 项。",
 	"search_files":   "按文件名 glob 或文件内容正则搜索，不经过 shell。",
-	"read_screen":    "读取当前作用域终端的可见屏幕，并在终端支持时附带 OSC 133 命令状态（是否运行中、命令序号、上次退出码）。",
-	"send_keys":      "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；不支持时保持发送即返回并明确提示。",
-	"wait_for":       "等待当前终端最近 30 行匹配正则，可被任务取消。",
+	"read_screen":    "读取当前作用域终端的可见屏幕并附带屏幕序号锚点；传 since_seq（之前结果里的屏幕序号）只读该锚点之后的新输出，max_bytes 有界翻页。终端支持 OSC 133 时附带命令状态。",
+	"send_keys":      "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>，返回屏幕序号锚点。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；不支持时保持发送即返回并明确提示。",
+	"wait_for":       "等待当前终端最近 30 行匹配正则；传 since_seq 则只匹配该屏幕序号锚点之后的新输出（不会误命中旧内容）。可被任务取消。",
 	"shell_history":  "读取 NexTerm 本机的 shell 历史文件（zsh/bash/fish），返回最新 N 条（默认 50，硬顶 500）并已脱敏。只读本机、默认不同步；当前会话为远端资产时读取的仍是本机历史，结果会明确标注。需要用户确认。",
 	"docker_ps":      "列出当前会话中的 Docker 容器。",
 	"docker_logs":    "读取容器日志并在本地按子串过滤。",

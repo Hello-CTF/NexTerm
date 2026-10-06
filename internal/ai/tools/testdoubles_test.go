@@ -168,12 +168,13 @@ func (f *fakeTransport) calls() int {
 }
 
 type fakeTerminal struct {
-	mu           sync.Mutex
-	screen       Screen
-	writes       [][]byte
-	writeErr     error
-	commandState CommandState
-	onWrite      func()
+	mu              sync.Mutex
+	screen          Screen
+	writes          [][]byte
+	writeErr        error
+	commandState    CommandState
+	onWrite         func()
+	outputSinceFunc func(seq uint64, maxBytes int) ([]byte, uint64, uint64, error)
 }
 
 func (f *fakeTerminal) Snapshot(context.Context, string) (Screen, error) {
@@ -204,6 +205,16 @@ func (f *fakeTerminal) setCommandState(state CommandState) {
 	f.mu.Lock()
 	f.commandState = state
 	f.mu.Unlock()
+}
+func (f *fakeTerminal) OutputSince(_ context.Context, _ string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	f.mu.Lock()
+	hook := f.outputSinceFunc
+	latest := f.screen.Seq
+	f.mu.Unlock()
+	if hook == nil {
+		return nil, seq, latest, nil
+	}
+	return hook(seq, maxBytes)
 }
 
 type fakeDatabase struct {

@@ -106,7 +106,11 @@ type Screen struct {
 	Tail      []string
 	CursorRow int
 	CursorCol int
+	Cols      int
+	Rows      int
 	IdleMS    int64
+	Seq       uint64
+	AltScreen bool
 }
 
 type Container struct {
@@ -157,6 +161,13 @@ type Terminal interface {
 // fire-and-forget semantics.
 type CommandStateTerminal interface {
 	CommandState(context.Context, string) (CommandState, error)
+}
+
+// OutputSinceTerminal is the optional Terminal extension exposing raw output
+// bytes produced after a sequence anchor, plus the actual start and latest
+// sequences. Terminals without a sequence-tracked ring do not implement it.
+type OutputSinceTerminal interface {
+	OutputSince(context.Context, string, uint64, int) ([]byte, uint64, uint64, error)
 }
 
 type Database interface {
