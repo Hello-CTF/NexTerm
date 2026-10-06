@@ -61,15 +61,13 @@ func TestStreamFactoryReportsMissingAdapters(t *testing.T) {
 	}
 }
 
-func TestChannelRefAcceptsExistingWireShapes(t *testing.T) {
+func TestChannelRefAcceptsStringShapes(t *testing.T) {
 	for _, test := range []struct {
 		input string
 		want  string
 	}{
 		{input: `"abc"`, want: "abc"},
-		{input: `42`, want: "42"},
-		{input: `{"id":"abc"}`, want: "abc"},
-		{input: `{"channelId":42}`, want: "42"},
+		{input: `""`, want: ""},
 		{input: `null`, want: ""},
 	} {
 		var channel ChannelRef
@@ -80,8 +78,10 @@ func TestChannelRefAcceptsExistingWireShapes(t *testing.T) {
 			t.Fatalf("Unmarshal(%s) = %q, want %q", test.input, channel.ID, test.want)
 		}
 	}
-	var channel ChannelRef
-	if err := json.Unmarshal([]byte(`true`), &channel); err == nil {
-		t.Fatal("boolean channel succeeded")
+	for _, input := range []string{`42`, `{"id":"abc"}`, `{"channelId":42}`, `true`} {
+		var channel ChannelRef
+		if err := json.Unmarshal([]byte(input), &channel); err == nil {
+			t.Fatalf("Unmarshal(%s) succeeded with ID %q, want error", input, channel.ID)
+		}
 	}
 }

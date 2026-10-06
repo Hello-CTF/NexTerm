@@ -39,30 +39,9 @@ func (c *ChannelRef) UnmarshalJSON(data []byte) error {
 	}
 
 	var id string
-	if err := json.Unmarshal(data, &id); err == nil {
-		c.ID = id
-		return nil
+	if err := json.Unmarshal(data, &id); err != nil {
+		return fmt.Errorf("channel must be a string")
 	}
-
-	var number json.Number
-	if err := json.Unmarshal(data, &number); err == nil {
-		c.ID = number.String()
-		return nil
-	}
-
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(data, &object); err == nil {
-		for _, key := range []string{"id", "channelId"} {
-			if raw, ok := object[key]; ok {
-				var nested ChannelRef
-				if err := nested.UnmarshalJSON(raw); err != nil {
-					return err
-				}
-				c.ID = nested.ID
-				return nil
-			}
-		}
-	}
-
-	return fmt.Errorf("channel must be a string, number, or object with id/channelId")
+	c.ID = id
+	return nil
 }

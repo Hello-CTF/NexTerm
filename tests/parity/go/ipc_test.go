@@ -135,6 +135,63 @@ func TestHTTPCycleAndVoidResult(t *testing.T) {
 	}
 }
 
+func TestHTTPChannelDecoding(t *testing.T) {
+	dispatcher := ipc.NewDispatcher()
+	handled := make([]string, 0, 2)
+	if err := dispatcher.RegisterRaw("self.channel", func(_ context.Context, call *ipc.Call) (any, error) {
+		handled = append(handled, call.Channel.ID)
+		return map[string]any{"channel": call.Channel.ID}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(ipc.NewRPCHandler(dispatcher, ipc.Environment{}))
+	defer server.Close()
+
+	post := func(body string) map[string]any {
+		t.Helper()
+		response, err := http.Post(server.URL, "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var decoded map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+
+	body := post(`{"cmd":"self.channel","channel":"abc"}`)
+	if ok := body["ok"]; ok != true {
+		t.Fatalf("string channel rejected: %v", body)
+	}
+	data, ok := body["data"].(map[string]any)
+	if !ok || data["channel"] != "abc" {
+		t.Fatalf("string channel did not reach handler: %v", body)
+	}
+	body = post(`{"cmd":"self.channel","channel":""}`)
+	if ok := body["ok"]; ok != true {
+		t.Fatalf("empty-string channel rejected: %v", body)
+	}
+	if len(handled) != 2 || handled[0] != "abc" || handled[1] != "" {
+		t.Fatalf("handler saw channels %v, want [abc ]", handled)
+	}
+	for _, input := range []string{
+		`{"cmd":"self.channel","channel":42}`,
+		`{"cmd":"self.channel","channel":{"id":"abc"}}`,
+		`{"cmd":"self.channel","channel":{"channelId":"abc"}}`,
+	} {
+		body = post(input)
+		errorValue, ok := body["error"].(map[string]any)
+		if !ok || errorValue["code"] != string(ipc.CodeBadParam) {
+			t.Fatalf("%s must return bad_param: %v", input, body)
+		}
+	}
+	if len(handled) != 2 {
+		t.Fatalf("rejected shapes must not reach the handler: %v", handled)
+	}
+}
+
 type binaryCollector struct {
 	frames [][]byte
 	closed bool
@@ -267,9 +324,7 @@ func TestChannelRefAcceptedForms(t *testing.T) {
 		want  string
 	}{
 		{`"abc"`, "abc"},
-		{`42`, "42"},
-		{`{"id":"nested"}`, "nested"},
-		{`{"channelId":7}`, "7"},
+		{`""`, ""},
 		{`null`, ""},
 	} {
 		var ref ipc.ChannelRef
@@ -280,8 +335,10 @@ func TestChannelRefAcceptedForms(t *testing.T) {
 			t.Fatalf("%s produced %q, want %q", test.input, ref.ID, test.want)
 		}
 	}
-	var invalid ipc.ChannelRef
-	if err := json.Unmarshal([]byte(`true`), &invalid); err == nil {
-		t.Fatal("boolean channel reference must fail")
+	for _, input := range []string{`42`, `{"id":"nested"}`, `{"channelId":7}`, `true`} {
+		var invalid ipc.ChannelRef
+		if err := json.Unmarshal([]byte(input), &invalid); err == nil {
+			t.Fatalf("%s must fail, got ID %q", input, invalid.ID)
+		}
 	}
 }
