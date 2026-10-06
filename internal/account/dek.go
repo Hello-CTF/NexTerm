@@ -77,8 +77,9 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		return err
 	}
 	now := a.now()
-	if _, err := tx.ExecContext(ctx, "UPDATE user SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?",
-		newHash, now, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE user SET password_hash = ?, must_change_password = 0,
+	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ?`,
+		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
 		return dbError(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
@@ -112,12 +113,15 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		return dbError(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var userID string
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM user WHERE username = ? COLLATE NOCASE", username).Scan(&userID); err != nil {
+	var userID, state string
+	if err := tx.QueryRowContext(ctx, "SELECT id, state FROM user WHERE username = ? COLLATE NOCASE", username).Scan(&userID, &state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
 		}
 		return dbError(err)
+	}
+	if State(state) == StateDisabled {
+		return ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
 	var recoveryHash string
 	if err := tx.QueryRowContext(ctx, "SELECT recovery_hash FROM user_dek WHERE user_id = ?", userID).Scan(&recoveryHash); err != nil {
@@ -134,8 +138,9 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		return err
 	}
 	now := a.now()
-	if _, err := tx.ExecContext(ctx, "UPDATE user SET password_hash = ?, must_change_password = 0, state = ?, updated_at = ? WHERE id = ?",
-		newHash, string(StateActive), now, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE user SET password_hash = ?, must_change_password = 0,
+	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ?`,
+		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
 		return dbError(err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE user_dek SET dek_envelope = ?, kdf_salt = ?, kdf_params = ?,

@@ -278,6 +278,105 @@ func TestAdminResetUser(t *testing.T) {
 	if after.MustChangePassword {
 		t.Fatal("must_change_password not cleared")
 	}
+	if after.State != StateActive {
+		t.Fatalf("state not restored to active: %s", after.State)
+	}
+	restoredToken, _, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatalf("issue session after restore: %v", err)
+	}
+	if _, err := a.ValidateSession(ctx, restoredToken); err != nil {
+		t.Fatalf("validate session after restore: %v", err)
+	}
+}
+
+func TestResetPasswordWithRecoveryDisabledUser(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "ruth", "", "old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, envelopes, recoveryKey, err := vault.GenerateUserDEKEnvelopes("old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.ExecContext(ctx, "UPDATE user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.GetUserByUsername(ctx, "ruth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := rewrapForTest(t, "old-password-1", "new-password-2", envelopes)
+	requireCode(t, a.ResetPasswordWithRecovery(ctx, "ruth", recoveryKey, "new-password-2", updated), ipc.CodeForbidden)
+
+	after, err := a.GetUserByUsername(ctx, "ruth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PasswordHash() != before.PasswordHash() {
+		t.Fatal("disabled user password changed via recovery reset")
+	}
+	if after.State != StateDisabled {
+		t.Fatalf("disabled state lifted: %s", after.State)
+	}
+	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.DEKEnvelope, envelopes.DEKEnvelope) {
+		t.Fatal("disabled user envelopes changed via recovery reset")
+	}
+	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+	requireCode(t, issueErr(a, ctx, user.ID, ""), ipc.CodeForbidden)
+}
+
+func TestResetPasswordWithRecoveryFromResetRequired(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "seth", "", "old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, envelopes, recoveryKey, err := vault.GenerateUserDEKEnvelopes("old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.ExecContext(ctx, "UPDATE user SET state = ? WHERE id = ?", string(StateResetRequired), user.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated := rewrapForTest(t, "old-password-1", "new-password-2", envelopes)
+	if err := a.ResetPasswordWithRecovery(ctx, "seth", recoveryKey, "new-password-2", updated); err != nil {
+		t.Fatal(err)
+	}
+	after, err := a.GetUserByUsername(ctx, "seth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != StateActive {
+		t.Fatalf("state not restored: %s", after.State)
+	}
+	if _, err := a.Authenticate(ctx, "seth", "new-password-2"); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ValidateSession(ctx, token); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func getEnvErr(a *Accounts, ctx context.Context, userID string) error {

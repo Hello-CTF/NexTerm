@@ -1,6 +1,7 @@
 package account
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -72,5 +73,44 @@ func TestLoginThrottleKeysIndependentAndSuccessResets(t *testing.T) {
 	throttle.RecordSuccess("user:bob")
 	if !throttle.Allow("user:bob") {
 		t.Fatal("success did not reset guard")
+	}
+}
+
+func TestLoginThrottleCapacityBoundedAndEvicts(t *testing.T) {
+	throttle, now := testThrottle()
+	total := loginGuardMaxEntries + 512
+	for i := 0; i < total; i++ {
+		key := "user:flood-" + strconv.Itoa(i)
+		if !throttle.Allow(key) {
+			t.Fatalf("key %d blocked", i)
+		}
+	}
+	if len(throttle.entries) > loginGuardMaxEntries {
+		t.Fatalf("entries=%d exceed hard cap", len(throttle.entries))
+	}
+
+	for i := 0; i < total; i++ {
+		key := "user:flood-" + strconv.Itoa(i)
+		throttle.guard(key, *now)
+	}
+	if len(throttle.entries) > loginGuardMaxEntries {
+		t.Fatalf("entries=%d exceed hard cap after re-touch", len(throttle.entries))
+	}
+
+	*now = now.Add(loginGuardIdleTTL + time.Minute)
+	for i := 0; i < loginGuardMaxEntries; i++ {
+		throttle.Allow("user:second-wave-" + strconv.Itoa(i))
+	}
+	if len(throttle.entries) > loginGuardMaxEntries {
+		t.Fatalf("entries=%d exceed hard cap after idle expiry", len(throttle.entries))
+	}
+	idle := 0
+	for _, element := range throttle.entries {
+		if now.Sub(element.Value.(*loginGuard).lastSeen) >= loginGuardIdleTTL {
+			idle++
+		}
+	}
+	if idle != 0 {
+		t.Fatalf("idle entries linger: %d", idle)
 	}
 }

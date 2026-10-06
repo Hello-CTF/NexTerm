@@ -1,20 +1,24 @@
 package account
 
 import (
+	"container/list"
 	"sync"
 	"time"
 )
 
 const (
-	loginWindow          = time.Minute
-	loginWindowLimit     = 5
-	loginBackoffBase     = 30 * time.Second
-	loginBackoffMax      = time.Hour
-	loginGuardIdleTTL    = 10 * time.Minute
-	loginGuardSweepLimit = 1024
+	loginWindow             = time.Minute
+	loginWindowLimit        = 5
+	loginBackoffBase        = 30 * time.Second
+	loginBackoffMax         = time.Hour
+	loginGuardIdleTTL       = 10 * time.Minute
+	loginGuardMaxEntries    = 4096
+	loginGuardSweepInterval = time.Minute
+	loginGuardSweepBatch    = 256
 )
 
 type loginGuard struct {
+	key              string
 	windowStart      time.Time
 	windowCount      int
 	consecutiveFails int
@@ -23,13 +27,15 @@ type loginGuard struct {
 }
 
 type LoginThrottle struct {
-	mu      sync.Mutex
-	entries map[string]*loginGuard
-	now     func() time.Time
+	mu        sync.Mutex
+	entries   map[string]*list.Element
+	lru       list.List
+	now       func() time.Time
+	lastSweep time.Time
 }
 
 func NewLoginThrottle() *LoginThrottle {
-	return &LoginThrottle{entries: make(map[string]*loginGuard), now: time.Now}
+	return &LoginThrottle{entries: make(map[string]*list.Element), now: time.Now}
 }
 
 func (t *LoginThrottle) Allow(key string) bool {
@@ -67,22 +73,50 @@ func (t *LoginThrottle) RecordFailure(key string) {
 func (t *LoginThrottle) RecordSuccess(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.entries, key)
+	if element, ok := t.entries[key]; ok {
+		t.removeElement(element)
+	}
 }
 
 func (t *LoginThrottle) guard(key string, now time.Time) *loginGuard {
-	if len(t.entries) > loginGuardSweepLimit {
-		for existing, entry := range t.entries {
-			if now.Sub(entry.lastSeen) >= loginGuardIdleTTL {
-				delete(t.entries, existing)
-			}
-		}
+	t.sweep(now)
+	if element, ok := t.entries[key]; ok {
+		t.lru.MoveToFront(element)
+		guard := element.Value.(*loginGuard)
+		guard.lastSeen = now
+		return guard
 	}
-	guard, ok := t.entries[key]
-	if !ok {
-		guard = &loginGuard{windowStart: now}
-		t.entries[key] = guard
+	if len(t.entries) >= loginGuardMaxEntries {
+		t.evictOne()
 	}
-	guard.lastSeen = now
+	guard := &loginGuard{key: key, windowStart: now, lastSeen: now}
+	t.entries[key] = t.lru.PushFront(guard)
 	return guard
+}
+
+func (t *LoginThrottle) sweep(now time.Time) {
+	if len(t.entries) <= loginGuardMaxEntries/2 || now.Sub(t.lastSweep) < loginGuardSweepInterval {
+		return
+	}
+	t.lastSweep = now
+	for checked, element := 0, t.lru.Back(); element != nil && checked < loginGuardSweepBatch; checked++ {
+		previous := element.Prev()
+		if now.Sub(element.Value.(*loginGuard).lastSeen) >= loginGuardIdleTTL {
+			t.removeElement(element)
+		} else {
+			return
+		}
+		element = previous
+	}
+}
+
+func (t *LoginThrottle) evictOne() {
+	if back := t.lru.Back(); back != nil {
+		t.removeElement(back)
+	}
+}
+
+func (t *LoginThrottle) removeElement(element *list.Element) {
+	delete(t.entries, element.Value.(*loginGuard).key)
+	t.lru.Remove(element)
 }
