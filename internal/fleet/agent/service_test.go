@@ -27,7 +27,7 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 	f.commands = append(f.commands, recordedCommand{name: name, args: args})
 	key := name + " " + strings.Join(args, " ")
 	if err, ok := f.errors[key]; ok {
-		return "", err
+		return f.responses[key], err
 	}
 	if response, ok := f.responses[key]; ok {
 		return response, nil
@@ -71,11 +71,13 @@ func TestSystemdManagerInstallStatusUninstall(t *testing.T) {
 			"systemctl --user is-active " + systemdUnitName:  realExitError(t),
 		},
 	}
+	runner.responses["systemctl --user is-enabled "+systemdUnitName] = "Failed to get unit file state: No such file or directory\n"
+	runner.responses["systemctl --user is-active "+systemdUnitName] = "inactive\n"
 	manager := NewServiceManager("linux", runner, func(string) string { return "" }, home)
 	ctx := context.Background()
 
 	status := manager.Status(ctx)
-	if status.Installed || status.Enabled || status.Active {
+	if status.Installed || status.Enabled || status.Active || status.LastError != "" {
 		t.Fatalf("status before install = %+v", status)
 	}
 	if err := manager.Install(ctx, "/opt/nexterm/nexterm-desktop", "/var/lib/nexterm"); err != nil {
@@ -113,9 +115,14 @@ func TestSystemdManagerInstallStatusUninstall(t *testing.T) {
 
 func TestSystemdManagerReportsOfflineHonestly(t *testing.T) {
 	home := t.TempDir()
-	runner := &fakeRunner{errors: map[string]error{
-		"systemctl --user is-enabled " + systemdUnitName: errors.New("systemctl unavailable: exec: \"systemctl\": executable file not found in $PATH"),
-	}}
+	runner := &fakeRunner{
+		responses: map[string]string{
+			"systemctl --user is-enabled " + systemdUnitName: "Failed to connect to bus: No such file or directory\n",
+		},
+		errors: map[string]error{
+			"systemctl --user is-enabled " + systemdUnitName: realExitError(t),
+		},
+	}
 	manager := newSystemdManager(runner, func(string) string { return "" }, home)
 	unitPath := filepath.Join(home, ".config", "systemd", "user", systemdUnitName)
 	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
@@ -131,8 +138,36 @@ func TestSystemdManagerReportsOfflineHonestly(t *testing.T) {
 	if status.Enabled || status.Active {
 		t.Fatalf("offline manager must not claim enabled/active: %+v", status)
 	}
-	if status.LastError == "" {
-		t.Fatal("offline manager must record the error honestly")
+	if !strings.Contains(status.LastError, "Failed to connect to bus") {
+		t.Fatalf("offline manager must surface the real failure output, got %+v", status)
+	}
+}
+
+func TestSystemdManagerDisabledUnitIsNotAnError(t *testing.T) {
+	home := t.TempDir()
+	runner := &fakeRunner{
+		responses: map[string]string{
+			"systemctl --user is-enabled " + systemdUnitName: "disabled\n",
+			"systemctl --user is-active " + systemdUnitName:  "inactive\n",
+		},
+		errors: map[string]error{
+			"systemctl --user is-enabled " + systemdUnitName: realExitError(t),
+		},
+	}
+	manager := newSystemdManager(runner, func(string) string { return "" }, home)
+	unitPath := filepath.Join(home, ".config", "systemd", "user", systemdUnitName)
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitPath, []byte("unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status := manager.Status(context.Background())
+	if !status.Installed || status.Enabled || status.Active {
+		t.Fatalf("disabled unit status = %+v", status)
+	}
+	if status.LastError != "" {
+		t.Fatalf("disabled unit must not be an error: %+v", status)
 	}
 }
 
@@ -168,12 +203,18 @@ func TestLaunchdManagerInstallStatusUninstall(t *testing.T) {
 	if !runner.ran("launchctl bootstrap gui/501") || !runner.ran("launchctl enable gui/501/com.nexterm.agent") {
 		t.Fatalf("install commands = %+v", runner.commands)
 	}
-	runner.responses["launchctl print gui/501/"+launchdLabel] = "state = running\n"
-	runner.responses["launchctl print-disabled gui/501"] = ""
+	runner.responses["launchctl print gui/501/"+launchdLabel] = "com.nexterm.agent = {\n\tstate = running\n\tpid = 4242\n}\n"
+	runner.responses["launchctl print-disabled gui/501"] = "disabled services = {\n\t\"com.apple.mdm.agent\" => disabled\n}\n"
 	status := manager.Status(ctx)
-	if !status.Installed || !status.Enabled || !status.Active {
+	if !status.Installed || !status.Enabled || !status.Active || status.LastError != "" {
 		t.Fatalf("status after install = %+v", status)
 	}
+	runner.responses["launchctl print gui/501/"+launchdLabel] = "com.nexterm.agent = {\n\tstate = not running\n}\n"
+	status = manager.Status(ctx)
+	if !status.Installed || !status.Enabled || status.Active {
+		t.Fatalf("loaded but not running must not report active: %+v", status)
+	}
+	runner.responses["launchctl print gui/501/"+launchdLabel] = "com.nexterm.agent = {\n\tstate = running\n}\n"
 	runner.responses["launchctl print-disabled gui/501"] = "disabled services = {\n\t\"com.nexterm.agent\" => disabled\n}\n"
 	status = manager.Status(ctx)
 	if !status.Active || status.Enabled {
@@ -184,6 +225,47 @@ func TestLaunchdManagerInstallStatusUninstall(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("plist still present: %v", err)
+	}
+}
+
+func TestLaunchdManagerReportsFailuresHonestly(t *testing.T) {
+	home := t.TempDir()
+	runner := &fakeRunner{}
+	manager := newLaunchdManager(runner, home, "501")
+	if err := os.MkdirAll(filepath.Join(home, "Library", "LaunchAgents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist"), []byte("plist"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner.errors = map[string]error{"launchctl print gui/501/" + launchdLabel: realExitError(t)}
+	runner.responses = map[string]string{
+		"launchctl print gui/501/" + launchdLabel: "Could not find service \"com.nexterm.agent\" in domain for user gui: 501\n",
+		"launchctl print-disabled gui/501":        "disabled services = {\n}\n",
+	}
+	status := manager.Status(context.Background())
+	if !status.Installed || status.Active || status.LastError != "" {
+		t.Fatalf("missing service must be a normal inactive result: %+v", status)
+	}
+	runner.responses["launchctl print gui/501/"+launchdLabel] = "Bootstrap failed: 5: Input/output error\n"
+	status = manager.Status(context.Background())
+	if status.LastError == "" || !strings.Contains(status.LastError, "Bootstrap failed") {
+		t.Fatalf("real launchctl failure must surface in LastError: %+v", status)
+	}
+}
+
+func TestLaunchdPlistKeepsFatalExitsDead(t *testing.T) {
+	plist := renderLaunchdPlist("/Applications/NexTerm.app/nexterm", "/Users/dev/nexterm")
+	if strings.Contains(plist, "<key>KeepAlive</key>\n  <true/>") {
+		t.Fatal("unconditional KeepAlive would relaunch revoked, protocol-mismatched, and single-instance-guard exits")
+	}
+	for _, expected := range []string{
+		"<key>KeepAlive</key>\n  <dict>\n    <key>Crashed</key>\n    <true/>\n  </dict>",
+		"<key>RunAtLoad</key>\n  <true/>",
+	} {
+		if !strings.Contains(plist, expected) {
+			t.Fatalf("plist missing %q:\n%s", expected, plist)
+		}
 	}
 }
 

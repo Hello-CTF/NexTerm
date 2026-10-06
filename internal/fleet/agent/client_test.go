@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func TestHealthAcceptsGenuineNexTermPayload(t *testing.T) {
@@ -51,9 +54,6 @@ func TestHealthRejectsFakeResponses(t *testing.T) {
 		"status 500": func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		},
-		"redirect elsewhere": func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "https://example.com/", http.StatusFound)
-		},
 	}
 	for name, handler := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -70,6 +70,132 @@ func TestHealthRejectsFakeResponses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHealthRejectsRedirectWithoutForwarding(t *testing.T) {
+	var targetHits atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "nexterm-server"})
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+PathHealth, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+	client, err := NewEndpointClient(BaseURLEntry{URL: source.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Health(ctx); err == nil {
+		t.Fatal("redirected health probe must be rejected, not followed")
+	}
+	if targetHits.Load() != 0 {
+		t.Fatal("health probe must not contact the redirect target")
+	}
+}
+
+func TestEnrollRejects307WithoutForwardingCredentials(t *testing.T) {
+	var targetHits atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		_ = json.NewEncoder(w).Encode(EnrollResponse{
+			DeviceID: "01J5DEVICE0000000000000000", Secret: "device-secret",
+			BaseURLs: []BaseURLEntry{{URL: "https://fleet.example.com"}},
+		})
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+PathEnroll, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+	client, err := NewEndpointClient(BaseURLEntry{URL: source.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = client.Enroll(ctx, EnrollRequest{Code: "enroll-code", Name: "dev-box", Platform: "linux", AppVersion: "dev"})
+	var serverError *ServerError
+	if !errors.As(err, &serverError) || serverError.Status != http.StatusTemporaryRedirect {
+		t.Fatalf("Enroll = %v, want 307 *ServerError", err)
+	}
+	if targetHits.Load() != 0 {
+		t.Fatal("enroll code must not be forwarded to the redirect target")
+	}
+}
+
+func TestPublicCleartextHTTPRequiresInsecureOptIn(t *testing.T) {
+	if _, err := NewEndpointClient(BaseURLEntry{URL: "http://203.0.113.10"}); err == nil {
+		t.Fatal("public cleartext HTTP must be rejected without insecure opt-in")
+	}
+	if _, err := NewEndpointClient(BaseURLEntry{URL: "http://fleet.example.com"}); err == nil {
+		t.Fatal("public cleartext HTTP hostname must be rejected without insecure opt-in")
+	}
+	if _, err := NewEndpointClient(BaseURLEntry{URL: "http://203.0.113.10", Insecure: true}); err != nil {
+		t.Fatalf("explicit insecure opt-in must allow public HTTP: %v", err)
+	}
+	if _, err := NewEndpointClient(BaseURLEntry{URL: "http://127.0.0.1:8080"}); err != nil {
+		t.Fatalf("local cleartext HTTP must stay allowed: %v", err)
+	}
+	if _, err := NewEndpointClient(BaseURLEntry{URL: "http://10.1.2.3:8080"}); err != nil {
+		t.Fatalf("private cleartext HTTP must stay allowed: %v", err)
+	}
+}
+
+func TestEndpointTLSPolicy(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == PathDeviceWS {
+			conn, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			helloCtx, helloCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer helloCancel()
+			if _, _, err := conn.Read(helloCtx); err != nil {
+				t.Error(err)
+				return
+			}
+			_ = conn.Write(helloCtx, websocket.MessageText, []byte(`{"type":"hello_ok"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "nexterm-server"})
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	strict, err := NewEndpointClient(BaseURLEntry{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := strict.Health(ctx); err == nil {
+		t.Fatal("default TLS policy must reject the self-signed test certificate")
+	}
+	if _, err := DialChannel(ctx, strict.WSURL(), testHello(), false, time.Hour, 5*time.Second); err == nil {
+		t.Fatal("default TLS policy must reject the WSS control channel")
+	}
+
+	insecure, err := NewEndpointClient(BaseURLEntry{URL: server.URL, Insecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insecure.Health(ctx); err != nil {
+		t.Fatalf("explicit insecure must accept the test certificate: %v", err)
+	}
+	channel, err := DialChannel(ctx, insecure.WSURL(), testHello(), true, time.Hour, 5*time.Second)
+	if err != nil {
+		t.Fatalf("explicit insecure must accept the WSS control channel: %v", err)
+	}
+	_ = channel.Close()
+	conn, err := DialBridge(ctx, insecure.WSURL(), testHello(), true)
+	if err != nil {
+		t.Fatalf("explicit insecure must accept the WSS bridge: %v", err)
+	}
+	_ = conn.Close(websocket.StatusNormalClosure, "")
 }
 
 func TestEnrollSyncAndCurrentURL(t *testing.T) {

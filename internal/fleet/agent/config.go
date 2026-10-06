@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -42,23 +43,42 @@ func (c *Config) validate() error {
 		return errors.New("agent config requires at least one base URL")
 	}
 	for _, entry := range c.BaseURLs {
-		if err := validateBaseURL(entry.URL); err != nil {
+		if err := validateBaseURLEntry(entry); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateBaseURL(raw string) error {
-	parsed, err := url.Parse(raw)
+// validateBaseURLEntry mirrors the M124 transport policy: cleartext HTTP is
+// only acceptable for local/private hosts, and public HTTP requires an
+// explicit insecure opt-in.
+func validateBaseURLEntry(entry BaseURLEntry) error {
+	parsed, err := url.Parse(entry.URL)
 	if err != nil {
-		return fmt.Errorf("invalid base URL %q: %w", raw, err)
+		return fmt.Errorf("invalid base URL %q: %w", entry.URL, err)
 	}
 	scheme := strings.ToLower(parsed.Scheme)
 	if (scheme != "http" && scheme != "https") || parsed.Host == "" {
-		return fmt.Errorf("base URL %q must be an explicit http:// or https:// URL with a host", raw)
+		return fmt.Errorf("base URL %q must be an explicit http:// or https:// URL with a host", entry.URL)
+	}
+	if scheme == "http" && !entry.Insecure && !isLocalOrPrivate(parsed.Hostname()) {
+		return fmt.Errorf("base URL %q uses cleartext HTTP on a public host; explicit insecure opt-in is required", entry.URL)
 	}
 	return nil
+}
+
+func isLocalOrPrivate(hostname string) bool {
+	hostname = strings.ToLower(strings.TrimSuffix(hostname, "."))
+	if hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") || strings.HasSuffix(hostname, ".local") {
+		return true
+	}
+	address, err := netip.ParseAddr(hostname)
+	if err != nil {
+		return false
+	}
+	address = address.Unmap()
+	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
 }
 
 type Store struct {

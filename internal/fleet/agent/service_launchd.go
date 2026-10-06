@@ -52,7 +52,7 @@ func (m *launchdManager) Uninstall(ctx context.Context) error {
 	if _, err := os.Stat(m.plistPath); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	if _, err := m.runner.Run(ctx, "launchctl", "bootout", m.domain()+"/"+launchdLabel); err != nil && !isExitError(err) {
+	if output, err := m.runner.Run(ctx, "launchctl", "bootout", m.domain()+"/"+launchdLabel); err != nil && !strings.Contains(trimOutput(output), "Could not find service") {
 		return fmt.Errorf("launchctl bootout: %w", err)
 	}
 	if err := os.Remove(m.plistPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -69,27 +69,49 @@ func (m *launchdManager) Status(ctx context.Context) ServiceState {
 		status.LastError = fmt.Sprintf("stat launchd plist: %v", err)
 		return status
 	}
-	if _, err := m.runner.Run(ctx, "launchctl", "print", m.domain()+"/"+launchdLabel); err != nil {
-		if !isExitError(err) {
-			status.LastError = err.Error()
-		}
+	output, err := m.runner.Run(ctx, "launchctl", "print", m.domain()+"/"+launchdLabel)
+	trimmed := trimOutput(output)
+	switch {
+	case err == nil:
+		status.Active = launchdState(trimmed) == "running"
+	case strings.Contains(trimmed, "Could not find service"):
+	default:
+		status.LastError = launchdFailure(trimmed, err)
 		return status
 	}
-	status.Active = true
-	status.Enabled = true
-	output, err := m.runner.Run(ctx, "launchctl", "print-disabled", m.domain())
+	output, err = m.runner.Run(ctx, "launchctl", "print-disabled", m.domain())
 	if err != nil {
-		if !isExitError(err) {
-			status.LastError = err.Error()
-		}
+		status.LastError = launchdFailure(trimOutput(output), err)
 		return status
 	}
+	status.Enabled = !launchdDisabled(trimOutput(output))
+	return status
+}
+
+func launchdState(output string) string {
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, launchdLabel) && strings.Contains(line, "disabled") {
-			status.Enabled = false
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "state = ") {
+			return strings.TrimPrefix(line, "state = ")
 		}
 	}
-	return status
+	return ""
+}
+
+func launchdDisabled(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, launchdLabel) && strings.Contains(line, "=> disabled") {
+			return true
+		}
+	}
+	return false
+}
+
+func launchdFailure(output string, err error) string {
+	if output != "" {
+		return output
+	}
+	return err.Error()
 }
 
 func renderLaunchdPlist(executable, dataDir string) string {
@@ -105,7 +127,7 @@ func renderLaunchdPlist(executable, dataDir string) string {
 	}
 	builder.WriteString("  </array>\n")
 	builder.WriteString("  <key>RunAtLoad</key>\n  <true/>\n")
-	builder.WriteString("  <key>KeepAlive</key>\n  <true/>\n")
+	builder.WriteString("  <key>KeepAlive</key>\n  <dict>\n    <key>Crashed</key>\n    <true/>\n  </dict>\n")
 	builder.WriteString("</dict>\n</plist>\n")
 	return builder.String()
 }

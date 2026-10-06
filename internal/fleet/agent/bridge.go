@@ -62,7 +62,6 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 	if err != nil {
 		return err
 	}
-	defer func() { _ = pipe.Close() }()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -88,6 +87,7 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 			break
 		}
 	}
+	_ = pipe.Close()
 	_ = conn.Close(websocket.StatusNormalClosure, "bridge closed")
 	select {
 	case <-done:

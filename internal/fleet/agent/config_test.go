@@ -87,6 +87,18 @@ func TestStoreLoadRejectsTamperedConfig(t *testing.T) {
 	if _, err := store.Load(); err == nil {
 		t.Fatal("Load of non-HTTP base URL must fail")
 	}
+	if err := os.WriteFile(store.Path(), []byte(`{"version":1,"device_id":"x","secret":"y","base_urls":[{"url":"http://203.0.113.10"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("Load of public cleartext HTTP base URL without insecure opt-in must fail")
+	}
+	if err := os.WriteFile(store.Path(), []byte(`{"version":1,"device_id":"x","secret":"y","base_urls":[{"url":"http://203.0.113.10","insecure":true}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load with explicit insecure public HTTP must pass: %v", err)
+	}
 }
 
 func TestStoreRemoveIsIdempotent(t *testing.T) {

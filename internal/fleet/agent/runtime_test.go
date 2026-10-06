@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -146,19 +147,20 @@ func (f *fakeFleetServer) urlReports() []currentURLRequest {
 }
 
 type fakeManager struct {
-	mu             sync.Mutex
-	installCalls   int
-	uninstallCalls int
-	state          ServiceState
-	installErr     error
+	mu              sync.Mutex
+	installCalls    int
+	uninstallCalls  int
+	state           ServiceState
+	installFailures int
 }
 
 func (m *fakeManager) Install(context.Context, string, string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.installCalls++
-	if m.installErr != nil {
-		return m.installErr
+	if m.installFailures > 0 {
+		m.installFailures--
+		return errors.New("user service manager temporarily offline")
 	}
 	m.state = ServiceState{Installed: true, Enabled: true, Active: true}
 	return nil
@@ -182,6 +184,18 @@ func (m *fakeManager) counts() (int, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.installCalls, m.uninstallCalls
+}
+
+func (m *fakeManager) current() ServiceState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state
+}
+
+func (m *fakeManager) drift(state ServiceState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.state = state
 }
 
 type fakeCollector struct{ err error }
@@ -269,6 +283,63 @@ func TestRuntimeReconcilesAutostartFromServer(t *testing.T) {
 	waitFor(t, 10*time.Second, "uninstall after server desired_autostart=false", func() bool {
 		_, uninstalls := manager.counts()
 		return uninstalls >= 1
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want clean stop", err)
+	}
+}
+
+func TestRuntimeRetriesAutostartInstallOnLaterSyncs(t *testing.T) {
+	server := newFakeFleetServer(t)
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	manager := &fakeManager{installFailures: 1}
+	agentRuntime := newTestRuntime(t, dataDir, entries, manager)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agentRuntime.Run(ctx) }()
+
+	waitFor(t, 20*time.Second, "install retried and repaired with unchanged desired state", func() bool {
+		installs, _ := manager.counts()
+		return installs >= 2 && manager.current().Installed
+	})
+	waitFor(t, 10*time.Second, "sync carrying repaired service state", func() bool {
+		for _, request := range server.syncs() {
+			if request.ServiceState != nil && request.ServiceState.Installed {
+				return true
+			}
+		}
+		return false
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v, want clean stop", err)
+	}
+}
+
+func TestRuntimeRepairsExternalServiceDrift(t *testing.T) {
+	server := newFakeFleetServer(t)
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	manager := &fakeManager{}
+	agentRuntime := newTestRuntime(t, dataDir, entries, manager)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- agentRuntime.Run(ctx) }()
+
+	waitFor(t, 10*time.Second, "initial install", func() bool {
+		installs, _ := manager.counts()
+		return installs >= 1
+	})
+	manager.drift(ServiceState{})
+	waitFor(t, 20*time.Second, "reconcile repairs external drift", func() bool {
+		installs, _ := manager.counts()
+		return installs >= 2 && manager.current().Installed
 	})
 	cancel()
 	if err := <-done; err != nil {

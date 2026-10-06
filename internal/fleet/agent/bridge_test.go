@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -208,16 +209,35 @@ func newBridgeHarness(t *testing.T, ctx context.Context) *bridgeHarness {
 // supervisor-helper bridge subprocess; the returned stream is the server side.
 func (h *bridgeHarness) openPipe() *wsStream {
 	h.t.Helper()
+	stream, _, _ := h.openPipeTracked()
+	return stream
+}
+
+// openPipeTracked also returns a channel that closes when BridgePipe returns
+// and the spawned subprocess pipe so tests can assert cleanup.
+func (h *bridgeHarness) openPipeTracked() (*wsStream, chan struct{}, *subprocessPipe) {
+	h.t.Helper()
 	hello := testHello()
 	hello.BridgeID = fmt.Sprintf("test-bridge-%d", h.counter.Add(1))
-	agentConn, err := DialBridge(h.ctx, wsURL(h.server.server.URL), hello)
+	agentConn, err := DialBridge(h.ctx, wsURL(h.server.server.URL), hello, false)
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	spawned := make(chan *subprocessPipe, 1)
+	spawner := func(ctx context.Context, stateDir string) (io.ReadWriteCloser, error) {
+		pipe, err := testBridgeSpawner(h.t)(ctx, stateDir)
+		if err != nil {
+			return nil, err
+		}
+		spawned <- pipe.(*subprocessPipe)
+		return pipe, nil
+	}
+	done := make(chan struct{})
 	go func() {
-		_ = BridgePipe(h.ctx, agentConn, testBridgeSpawner(h.t), h.stateDir)
+		defer close(done)
+		_ = BridgePipe(h.ctx, agentConn, spawner, h.stateDir)
 	}()
-	return &wsStream{conn: <-h.accepted, ctx: h.ctx}
+	return &wsStream{conn: <-h.accepted, ctx: h.ctx}, done, <-spawned
 }
 
 func (h *bridgeHarness) client() *supervisor.Client {
@@ -252,6 +272,33 @@ func TestBridgePipeCarriesSupervisorProtocol(t *testing.T) {
 	defer killCancel()
 	if err := harness.client().Kill(killCtx, created.ID, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBridgePipeCleansUpOnRemoteClose(t *testing.T) {
+	stateDir := testStateDir(t)
+	testSupervisorServer(t, stateDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	harness := newBridgeHarness(t, ctx)
+
+	for round := 0; round < 3; round++ {
+		stream, done, pipe := harness.openPipeTracked()
+		client := supervisor.NewRemoteClient(func(context.Context) (net.Conn, error) { return stream, nil }, harness.digest)
+		if _, err := client.List(ctx); err != nil {
+			t.Fatalf("round %d: list over bridge: %v", round, err)
+		}
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("round %d: BridgePipe did not return after remote close while context is active", round)
+		}
+		if err := pipe.command.Process.Signal(syscall.Signal(0)); err == nil {
+			t.Fatalf("round %d: bridge subprocess still running after cleanup", round)
+		}
+		if _, err := pipe.stdout.Read(make([]byte, 1)); err == nil {
+			t.Fatalf("round %d: bridge pipe stdout still open", round)
+		}
 	}
 }
 

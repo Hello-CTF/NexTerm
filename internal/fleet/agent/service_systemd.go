@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -68,27 +67,45 @@ func (m *systemdManager) Status(ctx context.Context) ServiceState {
 		return status
 	}
 	output, err := m.runner.Run(ctx, "systemctl", "--user", "is-enabled", systemdUnitName)
-	if err != nil {
-		if !isExitError(err) {
-			status.LastError = err.Error()
-		}
+	if state, failure := systemdQuery(output, err); failure != "" {
+		status.LastError = failure
 		return status
+	} else {
+		status.Enabled = state == "enabled"
 	}
-	status.Enabled = trimOutput(output) == "enabled"
 	output, err = m.runner.Run(ctx, "systemctl", "--user", "is-active", systemdUnitName)
-	if err != nil {
-		if !isExitError(err) {
-			status.LastError = err.Error()
-		}
+	if state, failure := systemdQuery(output, err); failure != "" {
+		status.LastError = failure
 		return status
+	} else {
+		status.Active = state == "active"
 	}
-	status.Active = trimOutput(output) == "active"
 	return status
 }
 
-func isExitError(err error) bool {
-	var exitError *exec.ExitError
-	return errors.As(err, &exitError)
+var systemdStateWords = map[string]bool{
+	"enabled": true, "disabled": true, "static": true, "masked": true,
+	"indirect": true, "generated": true, "transient": true,
+	"active": true, "inactive": true, "failed": true, "activating": true,
+	"deactivating": true, "maintenance": true, "reloading": true,
+}
+
+// systemdQuery maps an is-enabled/is-active invocation to (state, failure).
+// A printed unit state and a missing unit file are normal results; anything
+// else, such as an unreachable user bus, is an honest failure carrying the
+// command output.
+func systemdQuery(output string, err error) (string, string) {
+	state := trimOutput(output)
+	if err == nil {
+		return state, ""
+	}
+	if systemdStateWords[state] || strings.HasPrefix(state, "Failed to get unit file state") {
+		return "", ""
+	}
+	if state == "" {
+		return "", err.Error()
+	}
+	return "", state
 }
 
 func renderSystemdUnit(executable, dataDir string) string {

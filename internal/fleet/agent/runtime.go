@@ -198,6 +198,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 				ticker.Reset(interval)
 			}
 		case <-ticker.C:
+			r.reconcileService(runCtx)
 			r.syncOnce(runCtx)
 		}
 	}
@@ -419,7 +420,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		channel, err := DialChannel(ctx, client.WSURL(), r.hello(""), defaultWSKeepAlive, defaultWSPingTimeout)
+		channel, err := DialChannel(ctx, client.WSURL(), r.hello(""), client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
 		if err != nil {
 			if isForbidden(err) {
 				r.revoke()
@@ -484,7 +485,7 @@ func (r *Runtime) handleBridge(bridgeID string) {
 			r.logger.Warn("bridge aborted: no healthy endpoint", "bridge_id", bridgeID)
 			return
 		}
-		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID))
+		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID), client.Insecure())
 		if err != nil {
 			if isForbidden(err) {
 				r.revoke()

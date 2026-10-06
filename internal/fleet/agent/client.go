@@ -37,7 +37,7 @@ type EndpointClient struct {
 }
 
 func NewEndpointClient(entry BaseURLEntry) (*EndpointClient, error) {
-	if err := validateBaseURL(entry.URL); err != nil {
+	if err := validateBaseURLEntry(entry); err != nil {
 		return nil, err
 	}
 	base := strings.TrimRight(entry.URL, "/")
@@ -49,7 +49,12 @@ func NewEndpointClient(entry BaseURLEntry) (*EndpointClient, error) {
 	return &EndpointClient{
 		entry: entry,
 		base:  base,
-		http:  &http.Client{Transport: transport},
+		http: &http.Client{
+			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 

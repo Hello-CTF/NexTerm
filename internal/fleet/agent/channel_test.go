@@ -92,7 +92,7 @@ func TestChannelHandshakeConfigAndRevoke(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	channel, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), time.Hour, 5*time.Second)
+	channel, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), false, time.Hour, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestChannelVersionMismatchIsFatal(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), time.Hour, 5*time.Second)
+	_, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), false, time.Hour, 5*time.Second)
 	var serverError *ServerError
 	if !errors.As(err, &serverError) || serverError.Code != "version_mismatch" {
 		t.Fatalf("DialChannel = %v, want version_mismatch ServerError", err)
@@ -136,7 +136,7 @@ func TestChannelMidRunVersionMismatch(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	channel, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), time.Hour, 5*time.Second)
+	channel, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), false, time.Hour, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestDialBridgeCarriesBinaryFrames(t *testing.T) {
 	defer cancel()
 	bridgeHello := testHello()
 	bridgeHello.BridgeID = "bridge-1"
-	conn, err := DialBridge(ctx, wsURL(fake.server.URL), bridgeHello)
+	conn, err := DialBridge(ctx, wsURL(fake.server.URL), bridgeHello, false)
 	if err != nil {
 		t.Fatal(err)
 	}
