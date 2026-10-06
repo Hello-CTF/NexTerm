@@ -86,7 +86,7 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &pulled); err != nil {
 		t.Fatal(err)
 	}
-	if len(pulled.Objects) != 1 || pulled.Objects[0].ID != "obj-1" || !pulled.Done {
+	if len(pulled.Objects) != 1 || pulled.Objects[0].ID != "obj-1" || !pulled.CursorDone {
 		t.Fatalf("pull response=%+v", pulled)
 	}
 

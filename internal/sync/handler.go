@@ -45,11 +45,12 @@ type PullRequest struct {
 }
 
 type PullResponse struct {
-	Protocol int             `json:"protocol"`
-	Objects  []WireObjectSeq `json:"objects"`
-	Head     string          `json:"head"`
-	MaxSeq   int64           `json:"max_seq"`
-	Done     bool            `json:"done"`
+	Protocol   int             `json:"protocol"`
+	Objects    []WireObjectSeq `json:"objects"`
+	Head       string          `json:"head"`
+	MaxSeq     int64           `json:"max_seq"`
+	NextSeq    int64           `json:"next_seq"`
+	CursorDone bool            `json:"cursor_done"`
 }
 
 type IDsRequest struct {
@@ -126,13 +127,13 @@ func (h *ObjectHandler) servePull(w http.ResponseWriter, r *http.Request, userID
 			fmt.Sprintf("不支持的同步协议版本 %d（当前支持 %d）", request.Protocol, ProtocolVersion)))
 		return
 	}
-	objects, head, maxSeq, done, err := h.store.pull(r.Context(), userID, request.SinceSeq, request.IDs, request.MaxBytes)
+	objects, head, maxSeq, nextSeq, cursorDone, err := h.store.pull(r.Context(), userID, request.SinceSeq, request.IDs, request.MaxBytes)
 	if err != nil {
 		writeSyncError(w, syncErrorStatus(err), err)
 		return
 	}
 	writeSyncJSON(w, http.StatusOK, PullResponse{
-		Protocol: ProtocolVersion, Objects: objects, Head: head, MaxSeq: maxSeq, Done: done,
+		Protocol: ProtocolVersion, Objects: objects, Head: head, MaxSeq: maxSeq, NextSeq: nextSeq, CursorDone: cursorDone,
 	})
 }
 

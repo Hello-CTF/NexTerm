@@ -15,10 +15,13 @@ import (
 )
 
 const (
-	maxPullBytes      = maxPullWireBytes
 	maxPushBatchBytes = 32 << 20
 	maxSyncAttempts   = 3
+	maxPullPages      = 10000
 )
+
+// maxPullBytes 是客户端单页拉取预算; 测试可临时调小以构造分页场景。
+var maxPullBytes int64 = maxPullWireBytes
 
 type SyncReport struct {
 	Pulled        int      `json:"pulled"`
@@ -145,11 +148,16 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 			unreconciled = append(unreconciled, entry.ID)
 		}
 	}
-	if len(unreconciled) > maxPullIDLookup {
-		unreconciled = unreconciled[:maxPullIDLookup]
-	}
-	if err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report); err != nil {
+	completed, err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report)
+	if err != nil {
 		return false, err
+	}
+	if !completed {
+		// 对账未完成(stall): 持久化进度但本轮不得 collect/push, 不得采用最新 head 继续。
+		if err := e.saveCursor(ctx, userID, cursor); err != nil {
+			return false, err
+		}
+		return false, ipc.NewError(ipc.CodeDisconnected, "同步对账未完成(部分对象未返回), 请稍后重试")
 	}
 	objects, err := e.collectLocalObjects(ctx, report)
 	if err != nil {
@@ -195,8 +203,11 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		pending, pendingHashes = rest, restHashes
 	}
 	// 收尾拉取: 把游标推进到推送时点, 使空闲同步保持静默, 并立即看到推送期间其他设备的变更。
-	if err := e.pullAllAndApply(ctx, session, &cursor, nil, report); err != nil {
+	// 收尾无补拉 ID, 空页即自然完成; 若超出有界页数仍未完成, 记警告但不影响已完成的推送。
+	if completed, err := e.pullAllAndApply(ctx, session, &cursor, nil, report); err != nil {
 		return false, err
+	} else if !completed {
+		report.warnf("收尾拉取未能在有界页数内完成, 剩余对象留待下一轮")
 	}
 	if err := e.saveCursor(ctx, userID, cursor); err != nil {
 		return false, err
@@ -207,16 +218,16 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 }
 
 // pullAllAndApply 耗尽所有游标分页, 并确认全部 unreconciled ID 已返回或已不存在,
-// 然后才允许进入推送。任何 push 前不得采用最新 head 跳过后续对象:
-// 未拉取页的远端新 revision 可能被本地旧对象覆盖。
+// 然后才允许进入推送。游标进度只由 next_seq 推进(补拉 ID 的 seq 不得推进游标或伪造完成);
 // 首个对象必完整返回的预算规则保证每页至少消化一个对象, 循环必然收敛。
-func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport) error {
+// 返回 completed=false 表示 stall(对账未完成), 调用方不得在本轮 collect/push。
+func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport) (bool, error) {
 	remaining := make(map[string]bool, len(unreconciled))
 	for _, id := range unreconciled {
 		remaining[id] = true
 	}
 	stalls := 0
-	for {
+	for page := 0; page < maxPullPages; page++ {
 		lookup := make([]string, 0, len(remaining))
 		for id := range remaining {
 			lookup = append(lookup, id)
@@ -226,31 +237,32 @@ func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cu
 		}
 		pullResponse, err := session.client.pull(ctx, cursor.Seq, lookup, maxPullBytes)
 		if err != nil {
-			return err
+			return false, err
 		}
 		returned := 0
 		for _, object := range pullResponse.Objects {
 			e.applyRemoteObject(ctx, session.userID, object, session.dek, report)
-			if object.Seq > cursor.Seq {
-				cursor.Seq = object.Seq
-			}
 			delete(remaining, object.ID)
 			returned++
 		}
+		// 游标只由 next_seq(游标对象)推进; 补拉 ID 不影响游标位置与完成判定。
+		cursor.Seq = pullResponse.NextSeq
 		cursor.Head = pullResponse.Head
-		if pullResponse.Done && len(remaining) == 0 {
-			return nil
+		if pullResponse.CursorDone && len(remaining) == 0 {
+			return true, nil
 		}
-		if returned == 0 && len(remaining) > 0 {
+		if returned == 0 && len(remaining) > 0 && pullResponse.CursorDone {
 			stalls++
 			if stalls >= 3 {
 				e.logger.Warn("sync pull stalled on missing objects; deferring to next round", "remaining", len(remaining))
-				return nil
+				return false, nil
 			}
 		} else {
 			stalls = 0
 		}
 	}
+	e.logger.Warn("sync pull exceeded page bound; deferring to next round", "remaining", len(remaining))
+	return false, nil
 }
 
 func takePushBatch(objects []WireObject, hashes []string) (batch []WireObject, batchHashes []string, rest []WireObject, restHashes []string) {

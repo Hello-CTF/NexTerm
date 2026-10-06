@@ -184,32 +184,34 @@ ON CONFLICT(user_id) DO UPDATE SET head_hash = excluded.head_hash`, userID, curr
 }
 
 // pull 按 seq 游标升序返回密文对象, 另可按 id 清单补拉; 受字节预算约束, 单对象必完整返回。
-func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, ids []string, maxBytes int64) (objects []WireObjectSeq, head string, maxSeq int64, done bool, returnErr error) {
+// nextSeq/cursorDone 仅由游标对象计算: 补拉 ID 的 seq 不得推进游标或伪造游标完成状态。
+func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, ids []string, maxBytes int64) (objects []WireObjectSeq, head string, maxSeq, nextSeq int64, cursorDone bool, returnErr error) {
 	if len(ids) > maxPullIDLookup {
-		return nil, "", 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 补拉数量超过 %d", maxPullIDLookup))
+		return nil, "", 0, 0, false, ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("按 ID 补拉数量超过 %d", maxPullIDLookup))
 	}
 	if maxBytes <= 0 || maxBytes > maxPullWireBytes {
 		maxBytes = maxPullWireBytes
 	}
 	head, err := o.currentHead(ctx, userID)
 	if err != nil {
-		return nil, "", 0, false, err
+		return nil, "", 0, 0, false, err
 	}
 	if maxSeq, err = o.maxSeq(ctx, userID); err != nil {
-		return nil, "", 0, false, err
+		return nil, "", 0, 0, false, err
 	}
 	objects = []WireObjectSeq{}
 	seen := map[string]bool{}
 	budget := maxBytes
+	nextSeq = sinceSeq
 	rows, err := o.db.QueryContext(ctx, "SELECT id, seq, blob FROM user_sync_object WHERE user_id = ? AND seq > ? ORDER BY seq", userID, sinceSeq)
 	if err != nil {
-		return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var object WireObjectSeq
 		if err := rows.Scan(&object.ID, &object.Seq, &object.Blob); err != nil {
-			return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 		// 追加前按线上成本判断预算(首个对象除外): 保证响应整体不超过上限。
 		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
@@ -219,12 +221,15 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 		}
 		objects = append(objects, object)
 		seen[object.ID] = true
+		if object.Seq > nextSeq {
+			nextSeq = object.Seq
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	if err := rows.Close(); err != nil {
-		return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	for _, id := range ids {
 		if seen[id] {
@@ -237,7 +242,7 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 			continue
 		}
 		if err != nil {
-			return nil, "", 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+			return nil, "", 0, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 		if cost := wireObjectCost(object.Blob); len(objects) > 0 && cost > budget {
 			continue
@@ -246,14 +251,8 @@ func (o *objectStore) pull(ctx context.Context, userID string, sinceSeq int64, i
 		}
 		objects = append(objects, object)
 	}
-	highest := sinceSeq
-	for _, object := range objects {
-		if object.Seq > highest {
-			highest = object.Seq
-		}
-	}
-	done = highest >= maxSeq
-	return objects, head, maxSeq, done, nil
+	cursorDone = nextSeq >= maxSeq
+	return objects, head, maxSeq, nextSeq, cursorDone, nil
 }
 
 // idList 返回每用户对象清单 (id, seq, blob 哈希), 供客户端不回拉密文即可对账。

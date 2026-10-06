@@ -25,6 +25,8 @@ type testSyncServer struct {
 	accounts *account.Accounts
 
 	failNextPushWith409 bool
+	dropObjectID        string
+	afterIDs            func()
 }
 
 func testCSRFToken(sessionID string) string {
@@ -48,10 +50,27 @@ func newTestSyncServer(t *testing.T) *testSyncServer {
 	mux.Handle("GET /auth/dek", server.requireSession(http.HandlerFunc(server.serveDEK)))
 	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.DB())))))
 	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.DB())))
-	mux.Handle("POST /sync/v2/ids", server.requireSession(NewObjectHandler(db.DB())))
+	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.DB()))))
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Server.Close)
 	return server
+}
+
+// maybePostIDs 在 ids 服务后执行一次性动作(丢弃对象行/并发更新), 用于构造对账边界场景。
+func (s *testSyncServer) maybePostIDs(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		if s.dropObjectID != "" {
+			id := s.dropObjectID
+			s.dropObjectID = ""
+			_, _ = s.db.DB().ExecContext(r.Context(), "DELETE FROM user_sync_object WHERE id = ?", id)
+		}
+		if s.afterIDs != nil {
+			callback := s.afterIDs
+			s.afterIDs = nil
+			callback()
+		}
+	})
 }
 
 // maybeFailPush 让下一次推送返回 409, 用于验证引擎的真实冲突重试路径。

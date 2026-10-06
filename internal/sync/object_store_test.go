@@ -90,7 +90,7 @@ func TestObjectStorePullCursorAndIDLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pulled, _, maxSeq, done, err := store.pull(ctx, userID, 1, nil, 0)
+	pulled, _, maxSeq, _, done, err := store.pull(ctx, userID, 1, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestObjectStorePullCursorAndIDLookup(t *testing.T) {
 		t.Fatalf("pulled=%+v done=%v maxSeq=%d", pulled, done, maxSeq)
 	}
 	// 按 id 补拉返回游标之外的对象。
-	pulled, _, _, _, err = store.pull(ctx, userID, 3, []string{"obj-a"}, 0)
+	pulled, _, _, _, _, err = store.pull(ctx, userID, 3, []string{"obj-a"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestObjectStorePullCursorAndIDLookup(t *testing.T) {
 		t.Fatalf("id lookup pulled=%+v", pulled)
 	}
 	// 字节预算: 单对象必完整返回。
-	pulled, _, _, done, err = store.pull(ctx, userID, 0, nil, 1)
+	pulled, _, _, _, done, err = store.pull(ctx, userID, 0, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestObjectStoreMultiUserIsolation(t *testing.T) {
 	if len(entriesB) != 1 || entriesB[0].BlobHash != hashBlobHex([]byte("bob")) {
 		t.Fatalf("userB entries=%+v", entriesB)
 	}
-	pulled, _, _, _, err := store.pull(ctx, userA, 0, []string{"obj-a"}, 0)
+	pulled, _, _, _, _, err := store.pull(ctx, userA, 0, []string{"obj-a"}, 0)
 	if err != nil || len(pulled) != 1 || string(pulled[0].Blob) != "alice" {
 		t.Fatalf("userA pulled=%+v err=%v", pulled, err)
 	}
@@ -160,7 +160,7 @@ func TestObjectStorePullWireBudgetPaginatesLargeObjects(t *testing.T) {
 		t.Fatalf("wireObjectCost(%d MiB)=%d, 期望介于半数与满额预算之间", len(big)>>20, cost)
 	}
 
-	pulled, _, maxSeq, done, err := store.pull(ctx, userID, 0, nil, maxPullWireBytes)
+	pulled, _, maxSeq, _, done, err := store.pull(ctx, userID, 0, nil, maxPullWireBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestObjectStorePullWireBudgetPaginatesLargeObjects(t *testing.T) {
 	if wireObjectCost(pulled[0].Blob) > maxPullWireBytes {
 		t.Fatalf("first page wire cost %d exceeds budget", wireObjectCost(pulled[0].Blob))
 	}
-	pulled, _, maxSeq, done, err = store.pull(ctx, userID, pulled[0].Seq, nil, maxPullWireBytes)
+	pulled, _, maxSeq, _, done, err = store.pull(ctx, userID, pulled[0].Seq, nil, maxPullWireBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
