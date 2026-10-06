@@ -372,6 +372,24 @@ func TestSSHExecConnOrderedOutput(t *testing.T) {
 	}
 }
 
+func TestSSHExecConnCloseWriteAfterRemoteClose(t *testing.T) {
+	server := newTestSSHServer(t, nil)
+	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	execConn, err := client.OpenExecConn(ctx, "basic", base.ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer execConn.Close()
+	if err := execConn.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := execConn.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite after remote close = %v", err)
+	}
+}
+
 func TestSSHWaitDrainsFullRawQueues(t *testing.T) {
 	server := newTestSSHServer(t, nil)
 	client := connectTestClient(t, server, AuthConfig{Method: AuthPassword, Password: "secret"})
