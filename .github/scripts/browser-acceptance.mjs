@@ -23,6 +23,8 @@ const REAL_TARGET_GAPS = [
   { id: "android-soft-keyboard", status: "evidence-gap", reason: "a physical Android device and its native soft keyboard are not available to headless Chromium" },
   { id: "mobile-safari", status: "evidence-gap", reason: "Chromium is real-browser evidence, not Mobile Safari evidence" },
   { id: "lazycat-pages-real-targets", status: "evidence-gap", reason: "LazyCat box and deployed Pages target acceptance belong to M47; desktop/server builds do not cover them" },
+  { id: "linux-server-real-deployment", status: "evidence-gap", reason: "a real always-on Linux host with domain, TLS and a reverse proxy is not available to a local headless run" },
+  { id: "lazycat-arm64-real-box", status: "evidence-gap", reason: "ARM64 LazyCat hardware and the LZC_ARCH=arm64 real-box installation belong to M47; local desktop/server builds do not cover them" },
 ];
 
 fs.mkdirSync(OUT, { recursive: true });

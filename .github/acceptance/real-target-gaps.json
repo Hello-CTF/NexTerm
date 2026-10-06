@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "policy": "Unavailable real targets are evidence gaps, never skipped passes. Desktop/server artifacts alone do not cover LazyCat, deployed Pages, mobile devices, or native soft keyboards.",
+  "policy": "Unavailable real targets are evidence gaps, never skipped passes. Desktop/server artifacts alone do not cover LazyCat, deployed Pages, real Linux host deployment, mobile devices, or native soft keyboards.",
   "gaps": [
     {
       "id": "physical-mobile-and-soft-keyboard",
@@ -25,6 +25,18 @@
       "status": "evidence-gap",
       "owner": "release-acceptance",
       "required": "Install the produced NSIS/DMG on their real target OS versions and document signing/notarization and WebView2/WKWebView runtime results."
+    },
+    {
+      "id": "linux-server-real-deployment",
+      "status": "evidence-gap",
+      "owner": "release-acceptance",
+      "required": "Install the server on a real always-on Linux host with a public domain and TLS certificate terminated at a reverse proxy, verify loopback health, browser sign-in and token/rotate-token flows, and archive the reverse proxy 401 matrix; local e2e pairs and desktop/server artifacts are not deployment evidence."
+    },
+    {
+      "id": "lazycat-arm64-real-box",
+      "status": "evidence-gap",
+      "owner": "M47",
+      "required": "Build the LazyCat package with LZC_ARCH=arm64 and run the real-box installation checklist on ARM64 LazyCat hardware, recording architecture-specific evidence; x86_64 box runs and desktop/server builds do not cover it."
     }
   ]
 }
