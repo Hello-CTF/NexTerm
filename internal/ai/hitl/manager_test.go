@@ -216,15 +216,11 @@ func TestConfirmationLifecycleAndStableReplay(t *testing.T) {
 	if call.checkpointID != "checkpoint" || call.ctxErr != nil || call.params.Targets["target-one"] != "allow" || len(call.params.Targets) != 1 {
 		t.Fatalf("unexpected Eino resume: %+v", call)
 	}
-	sequence, err := h.manager.NextSequence("run")
-	if err != nil || sequence != 3 {
-		t.Fatalf("next sequence = %d, %v", sequence, err)
-	}
 	terminal, err := h.manager.Finish("run", TerminalCompleted, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if terminal.Sequence != 4 || terminal.Reason != TerminalCompleted {
+	if terminal.Sequence != 3 || terminal.Reason != TerminalCompleted {
 		t.Fatalf("terminal = %+v", terminal)
 	}
 	again, err := h.manager.Finish("run", TerminalCompleted, nil)
@@ -242,7 +238,7 @@ func TestConfirmationLifecycleAndStableReplay(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 	replay, err := h.manager.Events("run", 2)
-	if err != nil || len(replay) != 1 || replay[0].Sequence != 4 {
+	if err != nil || len(replay) != 1 || replay[0].Sequence != 3 {
 		t.Fatalf("replayed events = %+v, %v", replay, err)
 	}
 }

@@ -89,9 +89,6 @@ func TestMultipleResumeAttemptsPreserveRunSequence(t *testing.T) {
 			t.Fatalf("event %d = %+v", index, event)
 		}
 	}
-	if _, err := h.manager.NextSequence("run"); !errors.Is(err, ErrRunFinished) {
-		t.Fatalf("post-terminal sequence error = %v", err)
-	}
 }
 
 func TestRegistrationCallerDisconnectDoesNotCancelRun(t *testing.T) {

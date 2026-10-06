@@ -28,7 +28,6 @@ type Dependencies struct {
 	Permission   func(context.Context) (guard.Config, error)
 	Snapshot     func(context.Context, string) (tools.Screen, error)
 	WriteAI      func(context.Context, string, []byte) error
-	WriteUser    func(context.Context, string, []byte) error
 	Inject       func(context.Context, string, []byte) error
 	TabSession   func(string) string
 	Audit        func(context.Context, tools.AuditEntry) error
@@ -131,16 +130,4 @@ func (s *runState) finish(event agent.Event) {
 		s.pending = nil
 		s.pendingMu.Unlock()
 	})
-}
-
-func (s *runState) setRunning(value bool) {
-	s.pendingMu.Lock()
-	s.running = value
-	s.pendingMu.Unlock()
-}
-
-func (s *runState) state() (*pending, bool, adk.AgentCancelFunc) {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	return s.pending, s.running, s.cancelFn
 }

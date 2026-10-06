@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,21 +27,6 @@ func NewRegistry(deps Dependencies) *Registry {
 	return &Registry{deps: deps, jobs: make(map[string]*jobState), schemas: toolSchemas()}
 }
 
-func (r *Registry) Schemas() []Schema {
-	result := make([]Schema, len(r.schemas))
-	copy(result, r.schemas)
-	return result
-}
-
-func Names() []string {
-	schemas := toolSchemas()
-	result := make([]string, len(schemas))
-	for i, schema := range schemas {
-		result[i] = schema.Name
-	}
-	return result
-}
-
 func PlanAllowed(name string) bool {
 	switch name {
 	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode":
@@ -50,15 +34,6 @@ func PlanAllowed(name string) bool {
 	default:
 		return false
 	}
-}
-
-func (r *Registry) Known(name string) bool {
-	for _, schema := range r.schemas {
-		if schema.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Registry) Release(jobID string) {
@@ -394,14 +369,4 @@ func decode(args json.RawMessage, target any) error {
 
 func toolSchemas() []Schema {
 	return buildSchemas()
-}
-
-func SortedNames() []string {
-	result := Names()
-	sort.Strings(result)
-	return result
-}
-
-func IsCancellation(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

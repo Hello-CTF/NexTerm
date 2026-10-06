@@ -16,14 +16,13 @@ import (
 )
 
 type harness struct {
-	manager    *Manager
-	mu         sync.Mutex
-	screen     tools.Screen
-	aiWrites   [][]byte
-	userWrites [][]byte
-	banners    []string
-	writeAI    func([]byte) error
-	snapshot   func(context.Context, string) (tools.Screen, error)
+	manager  *Manager
+	mu       sync.Mutex
+	screen   tools.Screen
+	aiWrites [][]byte
+	banners  []string
+	writeAI  func([]byte) error
+	snapshot func(context.Context, string) (tools.Screen, error)
 }
 
 func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
@@ -51,12 +50,6 @@ func newHarness(t *testing.T, chat model.BaseChatModel) *harness {
 		if custom != nil {
 			return custom(data)
 		}
-		return nil
-	}
-	deps.WriteUser = func(_ context.Context, _ string, data []byte) error {
-		h.mu.Lock()
-		h.userWrites = append(h.userWrites, append([]byte(nil), data...))
-		h.mu.Unlock()
 		return nil
 	}
 	deps.Inject = func(_ context.Context, _ string, data []byte) error {
@@ -175,13 +168,14 @@ func TestUserPreemptionPreventsSubsequentAIWrite(t *testing.T) {
 	stream := &agent.SliceStream{}
 	h.run(t, stream, RunArgs{})
 	<-entered
-	userDone := make(chan error, 1)
-	go func() { userDone <- h.manager.UserWrite(context.Background(), "tab", []byte("x")) }()
+	userDone := make(chan struct{})
+	go func() {
+		h.manager.Preempt("tab")
+		close(userDone)
+	}()
 	time.Sleep(5 * time.Millisecond)
 	close(release)
-	if err := <-userDone; err != nil {
-		t.Fatal(err)
-	}
+	<-userDone
 	events := waitClosed(t, stream)
 	done, failed := counts(events)
 	if done != 1 || failed != 0 {
@@ -189,8 +183,8 @@ func TestUserPreemptionPreventsSubsequentAIWrite(t *testing.T) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.aiWrites) != 1 || len(h.userWrites) != 1 {
-		t.Fatalf("ai writes=%d user writes=%d", len(h.aiWrites), len(h.userWrites))
+	if len(h.aiWrites) != 1 {
+		t.Fatalf("ai writes=%d", len(h.aiWrites))
 	}
 }
 

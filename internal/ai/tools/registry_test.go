@@ -2,26 +2,25 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 func TestRegistryExactly22Tools(t *testing.T) {
 	t.Parallel()
-	names := Names()
-	if len(names) != 22 {
-		t.Fatalf("tool count=%d: %v", len(names), names)
+	schemas := toolSchemas()
+	if len(schemas) != 22 {
+		t.Fatalf("tool count=%d: %v", len(schemas), schemas)
 	}
 	seen := map[string]bool{}
-	for _, name := range names {
-		if seen[name] {
-			t.Fatalf("duplicate %s", name)
-		}
-		seen[name] = true
-	}
 	registry := NewRegistry(Dependencies{})
-	for _, name := range names {
-		if !registry.Known(name) {
-			t.Errorf("%s not dispatchable", name)
+	for _, schema := range schemas {
+		if seen[schema.Name] {
+			t.Fatalf("duplicate %s", schema.Name)
+		}
+		seen[schema.Name] = true
+		if err := registry.Validate(Call{Name: schema.Name}); err != nil && strings.Contains(err.Error(), "未知工具") {
+			t.Errorf("%s not dispatchable", schema.Name)
 		}
 	}
 	if !PlanAllowed("redis_scan") || PlanAllowed("exec_commands") || PlanAllowed("write_file") || PlanAllowed(ReminderTool) {
