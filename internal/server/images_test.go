@@ -299,6 +299,67 @@ func TestImageSweepDoesNotDeleteActiveUpload(t *testing.T) {
 	_ = file.Close()
 }
 
+func TestImageSweepPreservesStaleActiveStaging(t *testing.T) {
+	images := newTestImageStore(t, DefaultImageMaxBytes, DefaultImageOwnerQuota)
+	reader := &gatedReader{data: testPNGBytes, gate: make(chan struct{}), started: make(chan struct{})}
+	type putResult struct {
+		meta *ImageMeta
+		err  error
+	}
+	done := make(chan putResult, 1)
+	go func() {
+		meta, err := images.Put("owner", reader, int64(len(testPNGBytes)), "")
+		done <- putResult{meta: meta, err: err}
+	}()
+	<-reader.started
+
+	stagingEntries, err := os.ReadDir(filepath.Join(images.root(), imageStagingName))
+	if err != nil || len(stagingEntries) != 1 {
+		t.Fatalf("staging entries=%v err=%v, want 1 active upload", stagingEntries, err)
+	}
+	stale := time.Now().Add(-2 * stagingMaxAge)
+	if err := os.Chtimes(filepath.Join(images.root(), imageStagingName, stagingEntries[0].Name()), stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := images.SweepOnce(context.Background())
+	if err != nil || removed != 0 {
+		t.Fatalf("SweepOnce with stale active staging removed=%d err=%v, want 0", removed, err)
+	}
+	if _, err := os.Stat(filepath.Join(images.root(), imageStagingName, stagingEntries[0].Name())); err != nil {
+		t.Fatalf("active staging deleted by age: %v", err)
+	}
+
+	close(reader.gate)
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("stale active upload must still publish: %v", result.err)
+	}
+	if _, err := os.Stat(filepath.Join(images.root(), result.meta.ID, imageMetaName)); err != nil {
+		t.Fatalf("committed meta missing: %v", err)
+	}
+}
+
+func TestImageSweepReclaimsStaleOrphanStaging(t *testing.T) {
+	images := newTestImageStore(t, DefaultImageMaxBytes, DefaultImageOwnerQuota)
+	orphan := filepath.Join(images.root(), imageStagingName, ids.New())
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-2 * stagingMaxAge)
+	if err := os.Chtimes(orphan, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := images.SweepOnce(context.Background())
+	if err != nil || removed != 1 {
+		t.Fatalf("SweepOnce removed=%d err=%v, want 1 stale orphan", removed, err)
+	}
+	if _, err := os.Stat(orphan); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale orphan staging still present: %v", err)
+	}
+}
+
 func TestImageUploadAuthAndCSRF(t *testing.T) {
 	fixture := newImageFixture(t, AuthOn, "", nil)
 	admin, _ := fixture.initSuperadmin(t, "root", "root-password-1")

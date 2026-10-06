@@ -64,6 +64,9 @@ type ImageStore struct {
 	logger     *slog.Logger
 	onExpire   func(ctx context.Context, meta *ImageMeta)
 	mu         sync.Mutex
+
+	stagingMu     sync.Mutex
+	activeStaging map[string]struct{}
 }
 
 func NewImageStore(dataDir string, logger *slog.Logger) *ImageStore {
@@ -168,6 +171,8 @@ func (s *ImageStore) Put(owner string, src io.Reader, declared int64, name strin
 	if err != nil {
 		return nil, err
 	}
+	untrack := s.trackStaging(id)
+	defer untrack()
 	discard := func() { _ = os.RemoveAll(dir) }
 	file, err := os.OpenFile(filepath.Join(dir, imageDataName), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -355,6 +360,29 @@ func (s *ImageStore) createStagingDir() (string, string, error) {
 	return "", "", fmt.Errorf("image id collision")
 }
 
+// trackStaging 登记在途上传; 返回的注销函数覆盖完成/失败/panic 路径。
+// 进程重启后残留的暂存没有登记, 只能按年龄被 sweepStaging 回收。
+func (s *ImageStore) trackStaging(id string) func() {
+	s.stagingMu.Lock()
+	if s.activeStaging == nil {
+		s.activeStaging = map[string]struct{}{}
+	}
+	s.activeStaging[id] = struct{}{}
+	s.stagingMu.Unlock()
+	return func() {
+		s.stagingMu.Lock()
+		delete(s.activeStaging, id)
+		s.stagingMu.Unlock()
+	}
+}
+
+func (s *ImageStore) isStagingActive(id string) bool {
+	s.stagingMu.Lock()
+	defer s.stagingMu.Unlock()
+	_, ok := s.activeStaging[id]
+	return ok
+}
+
 // SweepOnce 清理所有过期图片目录, 返回清理数量。
 // 在途上传的暂存目录不参与过期判定, 只回收超过 stagingMaxAge 的孤儿暂存。
 func (s *ImageStore) SweepOnce(ctx context.Context) (int, error) {
@@ -423,6 +451,9 @@ func (s *ImageStore) sweepStaging(ctx context.Context, now time.Time) (int, erro
 			return removed, err
 		}
 		if !entry.IsDir() {
+			continue
+		}
+		if s.isStagingActive(entry.Name()) {
 			continue
 		}
 		info, err := entry.Info()
