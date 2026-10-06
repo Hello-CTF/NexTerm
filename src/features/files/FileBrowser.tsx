@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -60,6 +67,18 @@ function useCoarsePointer(): boolean {
     () => window.matchMedia?.("(pointer: coarse)").matches ?? false,
     () => false,
   );
+}
+
+function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const list = event.currentTarget.closest("[role='listbox']");
+  if (!list) return;
+  const rows = [...list.querySelectorAll<HTMLElement>("[role='option']")];
+  const index = rows.indexOf(event.currentTarget);
+  const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+  if (index < 0 || next < 0 || next >= rows.length) return;
+  event.preventDefault();
+  rows[next]?.focus();
 }
 
 export function FileBrowser({ sessionId }: { sessionId: string }) {
@@ -562,7 +581,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         ) : list.length === 0 ? (
           <div className="nx-empty">这个目录是空的</div>
         ) : (
-          <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
+          <div className="relative" style={{ height: virtualizer.getTotalSize() }} role="listbox" aria-label="文件">
             {virtualizer.getVirtualItems().map((vi) => {
               const e = list[vi.index];
               const isDir = e.kind === "dir";
@@ -571,14 +590,36 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
               return (
                 <div
                   key={e.path}
-                  className={`flex cursor-pointer items-center gap-2 px-3 ${
+                  role="option"
+                  aria-selected={isSel}
+                  tabIndex={0}
+                  className={`flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 focus-within:[&_.nx-row-actions]:flex ${
                     isSel ? "bg-blue-500/[0.14]" : "hover:bg-neutral-800/50"
                   }`}
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)`, position: "absolute", top: 0, left: 0, right: 0 }}
                   onClick={() => setSelected(e.path)}
                   onDoubleClick={() => openEntry(e)}
+                  onKeyDown={(ev) => {
+                    if (ev.target !== ev.currentTarget) return;
+                    if (ev.key === "Enter") {
+                      ev.preventDefault();
+                      openEntry(e);
+                      return;
+                    }
+                    if (ev.key === " ") {
+                      ev.preventDefault();
+                      setSelected(e.path);
+                      return;
+                    }
+                    if (ev.key === "Delete" || ev.key === "Backspace") {
+                      ev.preventDefault();
+                      void removePath(e.path, isDir);
+                      return;
+                    }
+                    browserRowKeyDown(ev);
+                  }}
                   onContextMenu={(ev) => openRowMenu(ev, e)}
-                  title={isDir ? e.path : `${e.path} · 双击用内置编辑器打开`}
+                  title={isDir ? e.path : `${e.path} · 双击或回车用内置编辑器打开`}
                 >
                   <Icon size={14} className={`shrink-0 ${tone}`} />
                   <span className={`nx-row-name min-w-0 flex-auto truncate font-mono text-[12px] ${isSel ? "text-neutral-100" : ""}`}>
