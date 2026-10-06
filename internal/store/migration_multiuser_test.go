@@ -46,7 +46,7 @@ func TestMigration0014FreshInstall(t *testing.T) {
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 15 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -120,7 +120,7 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 15 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	var groupName, assetHost, credHint, snippetBody, tokenValue, tokenHash string
@@ -236,4 +236,63 @@ VALUES('c2', 'u2', 'd2', 'sync', 'sh2', 1)`)
 VALUES('s3', 'missing', 'th3', 1, 1, 99)`); err == nil {
 		t.Errorf("user_session accepted dangling user_id")
 	}
+}
+
+func TestMigration0019FleetUpgradeFromPublishedBaseline(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "rwig-baseline.db")
+	raw, err := openDB(sqliteDSN(path), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationsUpTo(t, raw, 18)
+	baseline := []string{
+		`INSERT INTO app_user(id, username, role, password_hash, state, created_at, updated_at)
+VALUES('u1', 'alice', 'superadmin', 'x', 'active', 1, 1)`,
+		`INSERT INTO user_device(id, user_id, name, kind, created_at) VALUES('d1', 'u1', 'laptop', 'desktop', 1)`,
+		`INSERT INTO sync_credential(id, user_id, device_id, purpose, secret_hash, created_at)
+VALUES('c1', 'u1', 'd1', 'sync', 'sh1', 1)`,
+	}
+	for _, statement := range baseline {
+		if _, err := raw.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("upgrade open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	names := tableNames(t, db.DB())
+	for _, name := range []string{"device_agent", "device_metrics", "device_metrics_hourly"} {
+		if !names[name] {
+			t.Errorf("missing table %s after upgrade", name)
+		}
+	}
+	var count int
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
+		t.Fatalf("migration count=%d err=%v", count, err)
+	}
+	var username string
+	if err := db.DB().QueryRow("SELECT username FROM app_user WHERE id = 'u1'").Scan(&username); err != nil || username != "alice" {
+		t.Errorf("baseline user lost: %q err=%v", username, err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO device_agent(device_id, credential_id, platform, app_version, created_at)
+VALUES('d1', 'c1', 'linux', '1.0.0', 1)`); err != nil {
+		t.Fatalf("device_agent unusable after upgrade: %v", err)
+	}
+	if _, err := db.DB().Exec(`INSERT INTO device_metrics(id, device_id, ts, cpu_pct) VALUES('m1', 'd1', 1, 1.5)`); err != nil {
+		t.Fatalf("device_metrics unusable after upgrade: %v", err)
+	}
+
+	reopened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen after upgrade: %v", err)
+	}
+	_ = reopened.Close()
 }
