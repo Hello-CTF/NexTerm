@@ -21,6 +21,13 @@ type CommandState struct {
 	// HasLastExitCode reports whether any 133;D report has supplied an exit
 	// code yet.
 	HasLastExitCode bool
+	// ExitCodeSequence is the Sequence of the command whose 133;D report
+	// supplied LastExitCode. It lets consumers bind the code to a command:
+	// a code belongs to the command that just finished only when
+	// ExitCodeSequence matches that command's sequence, so a bare 133;D
+	// (no code) never lends an older code to a newer command. It is 0
+	// until a 133;D carrying a code arrives.
+	ExitCodeSequence uint64
 }
 
 // CommandTracker extracts OSC 133 command lifecycle reports from a terminal
@@ -72,6 +79,7 @@ func (t *CommandTracker) apply(letter byte, exitCode int, hasExit bool) {
 		if hasExit {
 			t.state.LastExitCode = exitCode
 			t.state.HasLastExitCode = true
+			t.state.ExitCodeSequence = t.state.Sequence
 		}
 	}
 }

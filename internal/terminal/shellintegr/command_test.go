@@ -100,6 +100,33 @@ func TestCommandTrackerConsecutiveStartDeduped(t *testing.T) {
 	}
 }
 
+func TestCommandTrackerExitCodeBoundToCommand(t *testing.T) {
+	tr := NewCommandTracker()
+	tr.Observe(osc133("B"))
+	tr.Observe(osc133("D;7"))
+	if state := tr.State(); state.ExitCodeSequence != 1 || state.LastExitCode != 7 {
+		t.Fatalf("State() = %+v; want exit 7 bound to sequence 1", state)
+	}
+	// The next command starts: the code stays bound to sequence 1 and must
+	// not be attributed to the running command.
+	tr.Observe(osc133("B"))
+	if state := tr.State(); state.ExitCodeSequence != 1 {
+		t.Fatalf("ExitCodeSequence = %d while command 2 runs; want 1", state.ExitCodeSequence)
+	}
+	// A bare D finishes command 2 without an exit code; the code remains
+	// bound to sequence 1 instead of being lent to command 2.
+	tr.Observe(osc133("D"))
+	if state := tr.State(); state.ExitCodeSequence != 1 {
+		t.Fatalf("ExitCodeSequence = %d after a bare D; want 1", state.ExitCodeSequence)
+	}
+	// Command 3 reports its own code, rebound to its sequence.
+	tr.Observe(osc133("B"))
+	tr.Observe(osc133("D;3"))
+	if state := tr.State(); state.ExitCodeSequence != 3 || state.LastExitCode != 3 {
+		t.Fatalf("State() = %+v; want exit 3 bound to sequence 3", state)
+	}
+}
+
 func TestCommandTrackerAcrossChunkBoundaries(t *testing.T) {
 	stream := append(append([]byte("prompt$ "), osc133("B")...), osc133("D;3")...)
 	for split := 0; split <= len(stream); split++ {

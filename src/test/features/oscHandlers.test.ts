@@ -167,11 +167,16 @@ describe("createOsc52Handler", () => {
       onDenied: vi.fn(),
       onError,
     });
-    const filter = createOscStreamFilter((e) => {
-      if (e.kind === "clipboard") handler(e.payload);
-    });
-    const out = filter.push(new TextEncoder().encode("A\x1b]52;c;aGVsbG8=\x07B"));
-    expect(new TextDecoder().decode(out)).toBe("AB");
+    const filter = createOscStreamFilter();
+    const fed: string[] = [];
+    for (const segment of filter.push(new TextEncoder().encode("A\x1b]52;c;aGVsbG8=\x07B"))) {
+      if (segment.kind === "event") {
+        if (segment.event.kind === "clipboard") handler(segment.event.payload);
+      } else {
+        fed.push(new TextDecoder().decode(segment.data));
+      }
+    }
+    expect(fed.join("")).toBe("AB");
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toBeInstanceOf(TypeError);
   });

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/db"
 	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
+	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
 	"github.com/ProbiusOfficial/NexTerm/internal/transport/base"
 )
 
@@ -54,15 +55,19 @@ type Call struct {
 }
 
 type Output struct {
-	OK        bool       `json:"ok"`
-	Text      string     `json:"text"`
-	ExitCode  int        `json:"exitCode"`
-	Truncated bool       `json:"truncated"`
-	Panic     bool       `json:"panic,omitempty"`
-	Change    *Change    `json:"change,omitempty"`
-	Todos     []TodoItem `json:"todos,omitempty"`
-	Plan      string     `json:"plan,omitempty"`
-	Question  *Question  `json:"question,omitempty"`
+	OK       bool   `json:"ok"`
+	Text     string `json:"text"`
+	ExitCode int    `json:"exitCode"`
+	// ExitUnknown marks a completed action whose exit code could not be
+	// determined (e.g. a waited-on command still running or a bare OSC 133;D
+	// without a code). It must never be recorded or replayed as exit 0.
+	ExitUnknown bool       `json:"exitUnknown,omitempty"`
+	Truncated   bool       `json:"truncated"`
+	Panic       bool       `json:"panic,omitempty"`
+	Change      *Change    `json:"change,omitempty"`
+	Todos       []TodoItem `json:"todos,omitempty"`
+	Plan        string     `json:"plan,omitempty"`
+	Question    *Question  `json:"question,omitempty"`
 }
 
 func OK(text string) Output {
@@ -105,7 +110,11 @@ type Screen struct {
 	Tail      []string
 	CursorRow int
 	CursorCol int
+	Cols      int
+	Rows      int
 	IdleMS    int64
+	Seq       uint64
+	AltScreen bool
 }
 
 type Container struct {
@@ -141,9 +150,35 @@ type AuditEntry struct {
 
 type TransportResolver func(context.Context, string) (base.Transport, error)
 
+// CommandState is the OSC 133 command lifecycle snapshot of a terminal tab,
+// as tracked by the session layer.
+type CommandState = shellintegr.CommandState
+
 type Terminal interface {
 	Snapshot(context.Context, string) (Screen, error)
 	Write(context.Context, string, []byte) error
+}
+
+// CommandStateTerminal is the optional Terminal extension exposing OSC 133
+// command lifecycle state. The session terminal implements it; terminals
+// without command tracking simply do not, and callers fall back to
+// fire-and-forget semantics.
+type CommandStateTerminal interface {
+	CommandState(context.Context, string) (CommandState, error)
+}
+
+// OutputSinceTerminal is the optional Terminal extension exposing raw output
+// bytes produced after a sequence anchor, plus the actual start and latest
+// sequences. Terminals without a sequence-tracked ring do not implement it.
+type OutputSinceTerminal interface {
+	OutputSince(context.Context, string, uint64, int) ([]byte, uint64, uint64, error)
+}
+
+// AssetKindTerminal is the optional Terminal extension resolving the asset
+// kind of a session on the server side, so privacy decisions never depend on
+// client-supplied scope fields.
+type AssetKindTerminal interface {
+	SessionAssetKind(context.Context, string) (string, error)
 }
 
 type Database interface {

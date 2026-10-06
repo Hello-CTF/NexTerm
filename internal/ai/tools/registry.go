@@ -272,6 +272,9 @@ func completionFromOutput(output Output) (outcome.Completion, error) {
 	if output.Truncated || strings.Contains(output.Text, execFailureMarker) {
 		return outcome.Completion{}, errors.New("执行输出被截断或传输失败，外部结果不明确")
 	}
+	if output.ExitUnknown {
+		return outcome.Completion{Outcome: outcome.OutcomeUnknown}, nil
+	}
 	code := output.ExitCode
 	if code != 0 {
 		return outcome.Completion{Outcome: outcome.OutcomeFailed, ExitCode: &code}, nil
@@ -284,6 +287,14 @@ func replayOutput(record outcome.Record) Output {
 	switch record.Outcome {
 	case outcome.OutcomeAccepted:
 		return Output{OK: true, Text: text}
+	case outcome.OutcomeUnknown:
+		// An error-derived unknown stays an explicit failure; a clean
+		// unknown (e.g. a waited-on command with no reported exit code)
+		// replays as structured exit-unknown, never as exit 0.
+		if record.Result.Error != "" {
+			return Output{Text: text + ": " + record.Result.Error, ExitCode: 1}
+		}
+		return Output{OK: true, Text: text, ExitUnknown: true}
 	case outcome.OutcomeFailed:
 		code := 1
 		if record.Result.ExitCode != nil {
@@ -326,6 +337,8 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.sendKeys(ctx, scope, call.Args)
 	case "wait_for":
 		return r.waitFor(ctx, scope, call.Args, 120)
+	case "shell_history":
+		return r.shellHistory(ctx, scope, call.Args)
 	case "docker_ps":
 		return r.dockerPS(ctx, scope)
 	case "docker_logs":

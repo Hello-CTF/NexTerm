@@ -116,6 +116,12 @@ export function CommandBlockPanel({
                     </div>
                     <div className="mt-0.5 font-mono text-[10px] text-neutral-600">
                       {clockOf(b.startedAt)} · {durationOf(b)}
+                      {b.exitCode !== null && (
+                        <span className={b.exitCode === 0 ? "text-emerald-400/80" : "text-red-400/80"}>
+                          {" "}
+                          · exit {b.exitCode}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <span className="mt-0.5 flex shrink-0 items-center gap-0.5">

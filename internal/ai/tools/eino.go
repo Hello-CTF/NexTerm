@@ -40,15 +40,19 @@ type SearchFilesArgs struct {
 	By      string `json:"by" jsonschema:"required,enum=name,enum=content"`
 }
 type ReadScreenArgs struct {
-	TabID string `json:"tab_id,omitempty"`
+	TabID    string `json:"tab_id,omitempty"`
+	SinceSeq uint64 `json:"since_seq,omitempty"`
+	MaxBytes int64  `json:"max_bytes,omitempty"`
 }
 type SendKeysArgs struct {
-	Keys  string `json:"keys" jsonschema:"required"`
-	Enter bool   `json:"enter,omitempty"`
+	Keys   string `json:"keys" jsonschema:"required"`
+	Enter  bool   `json:"enter,omitempty"`
+	WaitMS int    `json:"wait_ms,omitempty"`
 }
 type WaitForArgs struct {
 	Pattern   string `json:"pattern" jsonschema:"required"`
 	TimeoutMS int64  `json:"timeout_ms,omitempty"`
+	SinceSeq  uint64 `json:"since_seq,omitempty"`
 }
 type EmptyArgs struct{}
 type DockerLogsArgs struct {
@@ -97,6 +101,7 @@ type ExitPlanModeArgs struct {
 
 var einoNames = []string{
 	"exec_commands", "read_file", "write_file", "list_dir", "search_files", "read_screen", "send_keys", "wait_for",
+	"shell_history",
 	"docker_ps", "docker_logs", "docker_exec", "docker_control", "db_list_tables", "db_describe", "db_query", "redis_scan",
 	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool,
 }
@@ -107,9 +112,10 @@ var einoDescriptions = map[string]string{
 	"write_file":     "新文件以原子 no-clobber 创建；现有文件为用户授权的非事务覆盖并保留备份，可能覆盖确认后的外部修改；写入前必须读取或确认不存在。",
 	"list_dir":       "列出目录内容，最多 500 项。",
 	"search_files":   "按文件名 glob 或文件内容正则搜索，不经过 shell。",
-	"read_screen":    "读取当前作用域终端的可见屏幕。",
-	"send_keys":      "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>。",
-	"wait_for":       "等待当前终端最近 30 行匹配正则，可被任务取消。",
+	"read_screen":    "读取当前作用域终端的可见屏幕并附带屏幕序号锚点；传 since_seq（之前结果里的屏幕序号）只读该锚点之后的新输出，max_bytes 有界翻页。终端支持 OSC 133 时附带命令状态。",
+	"send_keys":      "向当前作用域终端发送按键，可包含 <enter> 和 <ctrl+c>，返回屏幕序号锚点。wait_ms>0 且终端支持 OSC 133 时，等待命令结束并返回退出码与屏幕尾部；不支持时保持发送即返回并明确提示。",
+	"wait_for":       "等待当前终端最近 30 行匹配正则；传 since_seq 则只匹配该屏幕序号锚点之后的新输出（不会误命中旧内容）。可被任务取消。",
+	"shell_history":  "读取 NexTerm 本机的 shell 历史文件（zsh/bash/fish），返回最新 N 条（默认 50，硬顶 500）并已脱敏。只读本机、默认不同步；当前会话为远端资产时读取的仍是本机历史，结果会明确标注。需要用户确认。",
 	"docker_ps":      "列出当前会话中的 Docker 容器。",
 	"docker_logs":    "读取容器日志并在本地按子串过滤。",
 	"docker_exec":    "在容器内使用 sh -c 执行命令。",
@@ -151,6 +157,9 @@ func einoToolSchemas() []Schema {
 		},
 		"wait_for": func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[WaitForArgs]("wait_for", einoDescriptions["wait_for"])
+		},
+		"shell_history": func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[ShellHistoryArgs]("shell_history", einoDescriptions["shell_history"])
 		},
 		"docker_ps": func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[EmptyArgs]("docker_ps", einoDescriptions["docker_ps"])
@@ -310,6 +319,11 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 			return utils.InferTool("wait_for", einoDescriptions["wait_for"], func(ctx context.Context, input WaitForArgs) (Output, error) { return e.run(ctx, "wait_for", input) })
 		},
 		func() (tool.InvokableTool, error) {
+			return utils.InferTool("shell_history", einoDescriptions["shell_history"], func(ctx context.Context, input ShellHistoryArgs) (Output, error) {
+				return e.run(ctx, "shell_history", input)
+			})
+		},
+		func() (tool.InvokableTool, error) {
 			return utils.InferTool("docker_ps", einoDescriptions["docker_ps"], func(ctx context.Context, input EmptyArgs) (Output, error) { return e.run(ctx, "docker_ps", input) })
 		},
 		func() (tool.InvokableTool, error) {
@@ -400,6 +414,8 @@ func (e *Execution) enabled(name string) bool {
 			return false
 		}
 		return e.Scope.SessionID == "" || deps.TabSession == nil || deps.TabSession(e.Scope.TabID) == e.Scope.SessionID
+	case "shell_history":
+		return true
 	case "docker_ps":
 		return deps.DockerPS != nil && e.Scope.SessionID != ""
 	case "docker_logs":
@@ -649,6 +665,9 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	terminalInput := ""
 	cursor := 0
 	ruling := guard.ClassifyTool(call.Name, call.Args, e.Permission)
+	if call.Name == "shell_history" {
+		ruling = guard.Confirm(shellHistoryKind, "读取本机 shell 历史文件（历史常包含敏感命令，需要确认）")
+	}
 	if call.Name == "send_keys" {
 		var input SendKeysArgs
 		if err := json.Unmarshal(call.Args, &input); err != nil {
@@ -665,7 +684,15 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		terminalInput, cursor = TerminalInputCursor(screen)
 		ruling = guard.Worst(ruling, guard.ClassifySendKeysWithCursor(input.Keys, terminalInput, cursor, input.Enter, e.Permission.DangerRules))
 	}
-	decision := guard.Decide(e.Permission, ruling, e.Memory)
+	memory := e.Memory
+	forcedConfirm := call.Name == "shell_history" && e.Registry.remoteAsset(ctx, e.Scope)
+	if forcedConfirm {
+		memory = guard.NewMemory()
+	}
+	decision := guard.Decide(e.Permission, ruling, memory)
+	if forcedConfirm && decision.Action == guard.ActionAllow {
+		decision.Action = guard.ActionAsk
+	}
 	if decision.Action == guard.ActionDeny {
 		return Fail(errors.New("权限策略已拒绝: " + decision.Ruling.Reason)), nil
 	}
@@ -680,6 +707,10 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		}
 		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Preview: preparation.Preview}
 		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision)}
+		if forcedConfirm {
+			state.MemoryKind = ""
+			state.MemoryKinds = nil
+		}
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	call.AuthorizationID = GuardAuthorizationID(decision)

@@ -307,31 +307,100 @@ func (r *Registry) resolveTab(scope Scope, requested string) (string, error) {
 	return scope.TabID, nil
 }
 
+// commandState reads the tab's OSC 133 command lifecycle snapshot when the
+// terminal tracks it, and the zero state otherwise.
+func (r *Registry) commandState(ctx context.Context, tabID string) (CommandState, error) {
+	if terminal, ok := r.deps.Terminal.(CommandStateTerminal); ok {
+		return terminal.CommandState(ctx, tabID)
+	}
+	return CommandState{}, nil
+}
+
 func (r *Registry) readScreen(ctx context.Context, scope Scope, raw []byte) Output {
 	var args struct {
-		TabID string `json:"tab_id"`
+		TabID    string `json:"tab_id"`
+		SinceSeq uint64 `json:"since_seq"`
+		MaxBytes int64  `json:"max_bytes"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
+	}
+	if args.MaxBytes == 0 {
+		args.MaxBytes = defaultDiffBytes
+	}
+	if args.MaxBytes < 1 || args.MaxBytes > MaxOutputBytes {
+		return Fail(invalid("max_bytes 必须在 1-%d 字节之间", MaxOutputBytes))
 	}
 	tabID, err := r.resolveTab(scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
+	if args.SinceSeq > 0 {
+		return r.readScreenSince(ctx, tabID, args.SinceSeq, int(args.MaxBytes))
+	}
 	screen, err := r.deps.Terminal.Snapshot(ctx, tabID)
 	if err != nil {
 		return Fail(err)
 	}
-	return OK(fmt.Sprintf("光标 (%d, %d)，空闲 %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text))
+	header := fmt.Sprintf("光标 (%d, %d)，空闲 %dms，屏幕序号 %d", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Seq)
+	if screen.AltScreen {
+		header += "，AltScreen"
+	}
+	if state, stateErr := r.commandState(ctx, tabID); stateErr == nil && state.Sequence > 0 {
+		status := "空闲"
+		if state.Running {
+			status = "运行中"
+		}
+		line := fmt.Sprintf("命令状态：%s，序号 %d", status, state.Sequence)
+		if state.HasLastExitCode {
+			line += fmt.Sprintf("，上次退出码 %d", state.LastExitCode)
+		}
+		header += "\n" + line
+	}
+	return OK(header + "\n" + screen.Text)
+}
+
+// readScreenSince returns only the output produced after the anchor sequence,
+// bounded by maxBytes. The header carries the exact continuation anchor
+// (start+len(data)) so the next page neither repeats nor skips output, plus
+// explicit expired-anchor and render-truncation recovery notes.
+func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int) Output {
+	data, start, latest, err := r.outputSince(ctx, tabID, sinceSeq, maxBytes)
+	if err != nil {
+		return Fail(err)
+	}
+	cols, rows := 80, 24
+	if screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID); snapshotErr == nil {
+		cols, rows = screen.Cols, screen.Rows
+	}
+	lines := renderOutputDiff(data, cols, rows)
+	next := start + uint64(len(data))
+	header := fmt.Sprintf("新输出（序号 %d → %d，最新 %d）", start, next, latest)
+	if start > sinceSeq {
+		header += "；锚点已过期，从最早保留输出开始"
+	}
+	more := next < latest
+	if more {
+		header += fmt.Sprintf("；还有未读输出，下一页 since_seq=%d", next)
+	}
+	text, truncated := capText(strings.Join(lines, "\n"))
+	if truncated {
+		header += fmt.Sprintf("；本页渲染已截断，用 since_seq=%d 配合更小 max_bytes 重读", start)
+	}
+	return Output{OK: true, Text: header + "\n" + text, Truncated: truncated || more}
 }
 
 func (r *Registry) sendKeys(ctx context.Context, scope Scope, raw []byte) Output {
 	var args struct {
-		Keys  string `json:"keys"`
-		Enter bool   `json:"enter"`
+		Keys   string `json:"keys"`
+		Enter  bool   `json:"enter"`
+		WaitMS int    `json:"wait_ms"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
+	}
+	if args.WaitMS < 0 || args.WaitMS > maxSendKeysWaitMS {
+		return Fail(invalid("wait_ms 必须在 0-%d 毫秒之间", maxSendKeysWaitMS))
 	}
 	tabID, err := r.resolveTab(scope, "")
 	if err != nil {
@@ -341,19 +410,151 @@ func (r *Registry) sendKeys(ctx context.Context, scope Scope, raw []byte) Output
 	if err != nil {
 		return Fail(err)
 	}
+	before, err := r.commandState(ctx, tabID)
+	if err != nil {
+		return Fail(err)
+	}
 	if err := r.deps.Terminal.Write(ctx, tabID, encoded); err != nil {
 		return Fail(err)
 	}
 	if r.deps.Audit != nil {
 		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "tab": tabID}})
 	}
-	return OK("已发送")
+	if args.WaitMS == 0 {
+		return OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID))
+	}
+	if _, ok := r.deps.Terminal.(CommandStateTerminal); !ok {
+		return OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID) + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
+	}
+	return r.waitCommandFinish(ctx, tabID, before, args.WaitMS)
+}
+
+// screenAnchorSuffix reports the post-write screen sequence so the caller can
+// anchor a wait_for since_seq read; it degrades to empty when unavailable.
+func screenAnchorSuffix(ctx context.Context, terminal Terminal, tabID string) string {
+	screen, err := terminal.Snapshot(ctx, tabID)
+	if err != nil || screen.Seq == 0 {
+		return ""
+	}
+	return fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
+}
+
+const (
+	maxSendKeysWaitMS = 10_000
+	busyReturnGraceMS = 1_500
+	commandTailLines  = 10
+)
+
+// waitCommandFinish polls the tab command state after a send_keys write until
+// the newly started command finishes, the wait budget expires, or the
+// pre-existing busy state resolves. A pre-write Sequence of 0 is not evidence
+// of missing OSC 133 support (a fresh shell has not run its first command
+// yet), so the wait budget is always honored and only the outcome is
+// reported. The exit code shown is always bound to the command this wait
+// observed finish, never to an earlier one.
+func (r *Registry) waitCommandFinish(ctx context.Context, tabID string, before CommandState, waitMS int) Output {
+	waitContext, cancel := context.WithTimeout(ctx, time.Duration(waitMS)*time.Millisecond)
+	defer cancel()
+	if before.Running {
+		return r.waitBusyClear(ctx, waitContext, tabID, before.Sequence)
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		state, err := r.commandState(waitContext, tabID)
+		if err != nil {
+			return Fail(err)
+		}
+		if state.Sequence > before.Sequence && !state.Running {
+			return r.commandFinishOutput(ctx, tabID, state, before.Sequence+1, "命令已完成")
+		}
+		if waitContext.Err() != nil {
+			if state.Running || state.Sequence > before.Sequence {
+				return r.commandFinishOutput(ctx, tabID, state, before.Sequence+1, "等待结束，命令仍在运行")
+			}
+			headline := "等待结束，未观察到新命令开始"
+			if before.Sequence == 0 {
+				headline += "（终端可能不支持 OSC 133，结果未验证）"
+			} else {
+				headline += "（若仅发送文本未回车，属预期）"
+			}
+			return r.commandFinishOutput(ctx, tabID, state, before.Sequence+1, headline)
+		}
+		select {
+		case <-waitContext.Done():
+		case <-time.After(r.deps.pollInterval()):
+		}
+	}
+}
+
+// waitBusyClear handles a write that landed while a command was already
+// running: it returns as soon as that command finishes, or after a short
+// grace period with an explicit busy note instead of burning the full wait.
+// The busy command's own sequence is the minimum for exit-code attribution.
+func (r *Registry) waitBusyClear(ctx, waitContext context.Context, tabID string, busySeq uint64) Output {
+	grace, cancel := context.WithTimeout(waitContext, busyReturnGraceMS*time.Millisecond)
+	defer cancel()
+	for {
+		if err := ctx.Err(); err != nil {
+			return Fail(err)
+		}
+		state, err := r.commandState(grace, tabID)
+		if err != nil {
+			return Fail(err)
+		}
+		if !state.Running {
+			return r.commandFinishOutput(ctx, tabID, state, busySeq, "发送时已有命令在运行，该命令已结束")
+		}
+		if grace.Err() != nil {
+			return r.commandFinishOutput(ctx, tabID, state, busySeq, "发送时已有命令在运行，仍在运行（本次按键已送入该程序）")
+		}
+		select {
+		case <-grace.Done():
+		case <-time.After(r.deps.pollInterval()):
+		}
+	}
+}
+
+// commandFinishOutput renders the wait outcome. The exit code is reported
+// only when the state's code is bound to a command at or after minExitSeq
+// (the tracker stamps the sequence of the command whose 133;D carried the
+// code); otherwise the result is explicitly exit-unknown and must not be
+// recorded or replayed as exit 0.
+func (r *Registry) commandFinishOutput(ctx context.Context, tabID string, state CommandState, minExitSeq uint64, headline string) Output {
+	screen, err := r.deps.Terminal.Snapshot(ctx, tabID)
+	if err != nil {
+		return Fail(err)
+	}
+	text := headline
+	output := Output{OK: true, Text: text}
+	if state.HasLastExitCode && state.ExitCodeSequence >= minExitSeq {
+		text += fmt.Sprintf("，退出码 %d", state.LastExitCode)
+		output.ExitCode = state.LastExitCode
+	} else {
+		output.ExitUnknown = true
+	}
+	text += fmt.Sprintf("\n命令序号 %d，屏幕序号 %d\n屏幕尾部：\n%s", state.Sequence, screen.Seq, tailText(screen, commandTailLines))
+	output.Text = text
+	return output
+}
+
+func tailText(screen Screen, maxLines int) string {
+	lines := screen.Tail
+	if len(lines) == 0 {
+		lines = strings.Split(screen.Text, "\n")
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (r *Registry) waitFor(ctx context.Context, scope Scope, raw []byte, maximumSeconds int) Output {
 	var args struct {
 		Pattern   string `json:"pattern"`
 		TimeoutMS int64  `json:"timeout_ms"`
+		SinceSeq  uint64 `json:"since_seq"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -374,6 +575,9 @@ func (r *Registry) waitFor(ctx context.Context, scope Scope, raw []byte, maximum
 	}
 	waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
 	defer cancel()
+	if args.SinceSeq > 0 {
+		return r.waitForNewOutput(waitContext, tabID, regex, args.SinceSeq)
+	}
 	ticker := time.NewTicker(r.deps.pollInterval())
 	defer ticker.Stop()
 	for {
@@ -400,6 +604,63 @@ func (r *Registry) waitFor(ctx context.Context, scope Scope, raw []byte, maximum
 				tail = tail[len(tail)-10:]
 			}
 			return Output{Text: "等待超时，最近输出：\n" + strings.Join(tail, "\n"), ExitCode: 1}
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitForNewOutput matches only output produced after the anchor sequence, so
+// content that was already on screen can never false-match. The scan cursor
+// advances through the new output in bounded windows, carrying an overlap so
+// patterns spanning a window seam still match; every byte after the anchor is
+// scanned at least once (evicted bytes are flagged in the timeout output).
+func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, sinceSeq uint64) Output {
+	cols, rows := 80, 24
+	if screen, err := r.deps.Terminal.Snapshot(waitContext, tabID); err == nil {
+		cols, rows = screen.Cols, screen.Rows
+	}
+	ticker := time.NewTicker(r.deps.pollInterval())
+	defer ticker.Stop()
+	scanPos := sinceSeq
+	var carry []byte
+	var recent []string
+	gap := false
+	for {
+		data, start, latest, err := r.outputSince(waitContext, tabID, scanPos, waitScanBytes)
+		if err != nil {
+			return Fail(err)
+		}
+		if start > scanPos {
+			gap = true
+		}
+		window := append(carry, data...)
+		rendered := renderOutputDiff(window, cols, rows)
+		if regex.MatchString(strings.Join(rendered, "\n")) {
+			return OK(fmt.Sprintf("模式已出现（新输出，屏幕序号 %d）", latest))
+		}
+		if len(data) > 0 {
+			recent = rendered
+			keep := waitScanOverlap
+			if keep > len(window) {
+				keep = len(window)
+			}
+			carry = append(carry[:0], window[len(window)-keep:]...)
+			scanPos = start + uint64(len(data))
+		}
+		select {
+		case <-waitContext.Done():
+			if waitContext.Err() == context.DeadlineExceeded {
+				shown := recent
+				if len(shown) > 10 {
+					shown = shown[len(shown)-10:]
+				}
+				text := fmt.Sprintf("等待超时，锚点 %d 之后的新输出", sinceSeq)
+				if gap {
+					text += "（部分输出已被淘汰）"
+				}
+				return Output{Text: text + "：\n" + strings.Join(shown, "\n"), ExitCode: 1}
+			}
+			return Fail(waitContext.Err())
 		case <-ticker.C:
 		}
 	}

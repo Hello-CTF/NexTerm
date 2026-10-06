@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestRegistryExactly22Tools(t *testing.T) {
+func TestRegistryExactly23Tools(t *testing.T) {
 	t.Parallel()
 	schemas := toolSchemas()
-	if len(schemas) != 22 {
+	if len(schemas) != 23 {
 		t.Fatalf("tool count=%d: %v", len(schemas), schemas)
 	}
 	seen := map[string]bool{}

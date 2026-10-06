@@ -472,6 +472,18 @@ func (t *Tab) unlockFeed() {
 	t.feedGate <- struct{}{}
 }
 
+// ScreenSeq returns the tab's monotonic output sequence: the total bytes ever
+// pushed into the scrollback ring. Pair it with Manager.OutputSince to read
+// only output produced after an anchor. It returns 0 for terminals without a
+// sequence-tracked ring.
+func (t *Tab) ScreenSeq() uint64 {
+	core, ok := t.terminal.(interface{ LatestSeq() uint64 })
+	if !ok {
+		return 0
+	}
+	return core.LatestSeq()
+}
+
 func (m *Manager) DetachChannel(channelID string) error {
 	m.mu.Lock()
 	tab := m.tabs[m.channelTabs[channelID]]
