@@ -196,7 +196,7 @@ func TestComposedAIRuntimeSpawnsScopedSubagent(t *testing.T) {
 
 	sessions := session.NewManager(session.Config{})
 	services := ProductionServices{Store: database, Profiles: profileManager, Sessions: sessions}
-	if err := composeAIRuntime(ctx, &services, "test-client"); err != nil {
+	if err := composeAIRuntime(ctx, &services); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

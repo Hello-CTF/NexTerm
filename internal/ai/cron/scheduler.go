@@ -59,15 +59,12 @@ func NewScheduler(store Store, executor Executor, options Options) (*Scheduler, 
 	if options.CircuitCooldown <= 0 {
 		options.CircuitCooldown = DefaultCircuitCooldown
 	}
-	if options.NewID == nil {
-		options.NewID = ids.New
-	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
 	options.OwnerID = strings.TrimSpace(options.OwnerID)
 	if options.OwnerID == "" {
-		options.OwnerID = "scheduler-" + options.NewID()
+		options.OwnerID = "scheduler-" + ids.New()
 	}
 	return &Scheduler{
 		store: store, executor: executor, options: options, ownerID: options.OwnerID,
@@ -91,7 +88,7 @@ func (s *Scheduler) Register(ctx context.Context, registration Registration) (Jo
 	}
 	registration.ID = strings.TrimSpace(registration.ID)
 	if registration.ID == "" {
-		registration.ID = s.options.NewID()
+		registration.ID = ids.New()
 	}
 	if registration.ID == "" {
 		return Job{}, errors.New("cron generated an empty job ID")
@@ -352,7 +349,7 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	}
 	following, ok := schedule.Next(scheduledFor)
 	coalesced := ok && !following.After(now)
-	runID := s.options.NewID()
+	runID := ids.New()
 	if runID == "" {
 		return false, errors.New("cron generated an empty run ID")
 	}

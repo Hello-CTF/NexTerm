@@ -138,7 +138,6 @@ type Options struct {
 	CircuitThreshold  int
 	CircuitCooldown   time.Duration
 	OwnerID           string
-	NewID             func() string
 	Now               func() time.Time
 	OnError           func(error)
 }

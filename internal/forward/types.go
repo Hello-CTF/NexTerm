@@ -70,7 +70,6 @@ type Config struct {
 	Reconnect        ReconnectPolicy
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
-	NewID            func() string
 	Now              func() time.Time
 	OnError          func(error)
 }

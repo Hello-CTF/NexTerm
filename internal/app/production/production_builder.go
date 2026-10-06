@@ -37,7 +37,6 @@ type ProductionConfig struct {
 	SupervisorStateDir      string
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
-	TakeoverUserClientID    string
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -57,9 +56,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	if config.Config.Version == "" {
 		config.Config.Version = version.Version
-	}
-	if config.TakeoverUserClientID == "" {
-		config.TakeoverUserClientID = "desktop"
 	}
 	database, err := store.OpenWithOptions(ctx, filepath.Join(config.DataDir, "data.db"), store.OpenOptions{Logger: config.Config.Logger})
 	if err != nil {
@@ -196,7 +192,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		aiRetention: newAIRetentionComponent(database, config.RetentionInterval),
 		Events:      config.Config.Events,
 	}
-	if err := composeAIRuntime(ctx, &services, config.TakeoverUserClientID); err != nil {
+	if err := composeAIRuntime(ctx, &services); err != nil {
 		services.closeAIRuntime()
 		return nil, err
 	}

@@ -74,7 +74,6 @@ type Config struct {
 	MaxOutputBytes          int
 	MaxHistoryMessages      int
 	MaxHistoryBytes         int
-	NewID                   func() string
 }
 
 type Scope struct {
