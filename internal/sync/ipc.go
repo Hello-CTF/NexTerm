@@ -77,6 +77,22 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.WriteBundleFileWithOptions(ctx, input.Path, input.Content, BundleWriteOptions{Password: input.Password})
 			})
 		},
+		// 浏览器收集读取: 离线共享工作区(无账号)保持匿名可用, 会话与 CSRF 由 /rpc 传输层在账号模式下把关。
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCollectAssets, func(ctx context.Context, _ *ipc.Call, input CollectAssetsRequest) (CollectAssetsResult, error) {
+				return s.CollectAssets(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCollectTombstones, func(ctx context.Context, _ *ipc.Call, input CollectTombstonesRequest) (CollectTombstonesResult, error) {
+				return s.CollectTombstones(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCollectCredentials, func(ctx context.Context, _ *ipc.Call, input CollectCredentialsRequest) (CollectCredentialsResult, error) {
+				return s.CollectCredentials(ctx, input)
+			})
+		},
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
