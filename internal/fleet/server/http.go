@@ -91,9 +91,40 @@ func decodeFleetJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 
+// fleetRoutePatterns 是 fleet 处理器认领的全部路由模式; Handler 内部 mux 与
+// 挂载到共享 mux 时共用同一张表, 保证两条路径不会漂移。
+var fleetRoutePatterns = []string{
+	"POST /device/enroll",
+	"POST /device/enroll-codes",
+	"GET /fleet/devices",
+	"POST /fleet/devices/{id}/revoke",
+	"POST /fleet/devices/{id}/autostart",
+	"GET /fleet/devices/{id}/metrics",
+	"GET /fleet/devices/{id}/bridge",
+	"GET /fleet/base-urls",
+	"PUT /fleet/base-urls",
+	"POST /agent/sync",
+	"POST /agent/current-url",
+	"GET /ws/device",
+}
+
 // Handler 返回 fleet 设备管理的独立 HTTP 入口; --auth=off 下所有路由一律 403。
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.mountRoutes(mux)
+	return s.fleetGuard(mux)
+}
+
+// Mount 把 fleet 全部路由注册进共享 mux; 每个模式都指向同一个带 guard 的
+// 入口, guard 的 --auth=off 硬边界与设备凭证鉴权不受挂载方式影响。
+func (s *Service) Mount(mux *http.ServeMux) {
+	handler := s.Handler()
+	for _, pattern := range fleetRoutePatterns {
+		mux.Handle(pattern, handler)
+	}
+}
+
+func (s *Service) mountRoutes(mux *http.ServeMux) {
 	session := func(pattern string, handler http.HandlerFunc) {
 		mux.Handle(pattern, s.requireFleetSession(handler))
 	}
@@ -111,11 +142,16 @@ func (s *Service) Handler() http.Handler {
 	sessionCSRF("POST /fleet/devices/{id}/revoke", s.serveDeviceRevoke)
 	sessionCSRF("POST /fleet/devices/{id}/autostart", s.serveDeviceAutostart)
 	session("GET /fleet/devices/{id}/metrics", s.serveDeviceMetrics)
+	session("GET /fleet/devices/{id}/bridge", s.serveDeviceBridgeRelay)
 
 	session("GET /fleet/base-urls", s.serveBaseURLsGet)
 	adminCSRF("PUT /fleet/base-urls", s.serveBaseURLsPut)
 
-	return s.fleetGuard(mux)
+	// agent 合同路由: 设备凭证 (device_id+secret) 鉴权写在 handler 内,
+	// 不接受会话/gateway/静态令牌, 因此不套任何用户态中间件。
+	mux.HandleFunc("POST /agent/sync", s.serveAgentSync)
+	mux.HandleFunc("POST /agent/current-url", s.serveAgentCurrentURL)
+	mux.HandleFunc("GET /ws/device", s.serveDeviceWS)
 }
 
 // fleetGuard 落实 --auth=off 硬边界 (fleet 依赖可归因身份, off 下一律关闭),
