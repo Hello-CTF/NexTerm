@@ -910,6 +910,160 @@ func TestSSHImportTermiusSecondSameNameKeyReferenced(t *testing.T) {
 	}
 }
 
+func TestSSHImportDuplicateOverwriteSameCredential(t *testing.T) {
+	ctx := t.Context()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	existingPEM, err := keys.Generate(keys.Options{Algorithm: keys.AlgorithmEd25519})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher, database, credentialVault := sshImportTermiusRig(t, key)
+	var existingID map[string]string
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "vault_set_credential",
+		`{"args":{"name":"shared","kind":"private_key","secret":`+strconvQuote(string(existingPEM.PrivateKeyPEM))+`,"source":"inline"}}`), &existingID)
+
+	pemA, _ := sshImportTermiusPEM(t)
+	pemB, _ := sshImportTermiusPEM(t)
+	dbPath := sshImportTermiusFixture(t, key, []string{
+		`{"private_key": ` + strconvQuote(pemA) + `, "label": "shared", "id": "k1"}`,
+		`{"private_key": ` + strconvQuote(pemB) + `, "label": "shared", "id": "k2"}`,
+		`{"host": "one.example.com", "user_name": "root", "port": 22, "title": "host-1", "key_id": "k1"}`,
+		`{"host": "two.example.com", "user_name": "root", "port": 22, "title": "host-2", "key_id": "k2"}`,
+	})
+
+	preview := sshImportPreview(t, dispatcher, sshImportTermiusBody(dbPath, ""))
+	key1 := preview.Keys[0]
+	key2 := preview.Keys[1]
+	if key1.Action != "conflict-alias" || key2.Action != "conflict-alias" {
+		t.Fatalf("key actions = %q / %q, want conflict-alias", key1.Action, key2.Action)
+	}
+	host1 := previewHost(t, preview, "host-1")
+	host2 := previewHost(t, preview, "host-2")
+
+	body := `{"args":{"source":"termius","confirmed":true,"path":` + strconvQuote(dbPath) + `,` +
+		`"hosts":[{"id":` + strconvQuote(host1.ID) + `,"action":"import"},{"id":` + strconvQuote(host2.ID) + `,"action":"import"}],` +
+		`"keys":[{"id":` + strconvQuote(key1.ID) + `,"action":"overwrite"},{"id":` + strconvQuote(key2.ID) + `,"action":"overwrite"}]}}`
+	result, response := sshImportApply(t, dispatcher, body)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.CredentialsUpdated != 1 || result.Skipped != 1 || result.AssetsCreated != 2 {
+		t.Fatalf("apply result = %+v", result)
+	}
+	joined := strings.Join(result.Warnings, " ")
+	if !strings.Contains(joined, "已在本次导入中被覆盖") {
+		t.Fatalf("duplicate overwrite must warn: %+v", result.Warnings)
+	}
+	if !strings.Contains(joined, "保持未绑定") {
+		t.Fatalf("host-2 must stay unbound with warning: %+v", result.Warnings)
+	}
+
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]store.AssetRow{}
+	for _, row := range assets {
+		byName[row.Name] = row
+	}
+	host1Row := byName["host-1"]
+	if host1Row.CredID == nil || *host1Row.CredID != existingID["id"] {
+		t.Fatalf("host-1 credId = %+v, want overwritten credential %q", host1Row.CredID, existingID["id"])
+	}
+	if byName["host-2"].CredID != nil {
+		t.Fatal("host-2 must stay unbound (k2 overwrite was skipped)")
+	}
+	credRow, err := database.CredentialGetRow(ctx, existingID["id"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := credentialVault.DecryptCredentialString(ctx, credRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := vault.ParsePrivateKeyPayload(plaintext)
+	if stored.Key == nil || *stored.Key != pemA {
+		t.Fatal("credential must hold the first overwrite material (k1), not k2")
+	}
+}
+
+func TestSSHImportOverwriteInvalidatesSkipDuplicate(t *testing.T) {
+	ctx := t.Context()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	pemA, _ := sshImportTermiusPEM(t)
+	pemB, fpB := sshImportTermiusPEM(t)
+	dispatcher, database, credentialVault := sshImportTermiusRig(t, key)
+	var existingID map[string]string
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "vault_set_credential",
+		`{"args":{"name":"shared","kind":"private_key","secret":`+strconvQuote(pemB)+`,"source":"inline"}}`), &existingID)
+
+	dbPath := sshImportTermiusFixture(t, key, []string{
+		`{"private_key": ` + strconvQuote(pemA) + `, "label": "shared", "id": "k1"}`,
+		`{"private_key": ` + strconvQuote(pemB) + `, "label": "shared", "id": "k2"}`,
+		`{"host": "one.example.com", "user_name": "root", "port": 22, "title": "host-1", "key_id": "k1"}`,
+		`{"host": "two.example.com", "user_name": "root", "port": 22, "title": "host-2", "key_id": "k2"}`,
+	})
+
+	preview := sshImportPreview(t, dispatcher, sshImportTermiusBody(dbPath, ""))
+	key1 := preview.Keys[0]
+	key2 := preview.Keys[1]
+	if key1.Action != "conflict-alias" || key2.Action != "skip-duplicate" {
+		t.Fatalf("key actions = %q / %q, want conflict-alias / skip-duplicate", key1.Action, key2.Action)
+	}
+	host1 := previewHost(t, preview, "host-1")
+	host2 := previewHost(t, preview, "host-2")
+	if host2.KeyFingerprint != fpB {
+		t.Fatalf("host-2 KeyFingerprint = %q, want %q", host2.KeyFingerprint, fpB)
+	}
+
+	body := `{"args":{"source":"termius","confirmed":true,"path":` + strconvQuote(dbPath) + `,` +
+		`"hosts":[{"id":` + strconvQuote(host1.ID) + `,"action":"import"},{"id":` + strconvQuote(host2.ID) + `,"action":"import"}],` +
+		`"keys":[{"id":` + strconvQuote(key1.ID) + `,"action":"overwrite"},{"id":` + strconvQuote(key2.ID) + `,"action":"skip"}]}}`
+	result, response := sshImportApply(t, dispatcher, body)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.CredentialsUpdated != 1 || result.AssetsCreated != 2 {
+		t.Fatalf("apply result = %+v", result)
+	}
+	if !strings.Contains(strings.Join(result.Warnings, " "), "保持未绑定") {
+		t.Fatalf("host-2 must stay unbound after its fingerprint mapping was invalidated: %+v", result.Warnings)
+	}
+
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]store.AssetRow{}
+	for _, row := range assets {
+		byName[row.Name] = row
+	}
+	if byName["host-1"].CredID == nil || *byName["host-1"].CredID != existingID["id"] {
+		t.Fatalf("host-1 credId = %+v, want overwritten credential", byName["host-1"].CredID)
+	}
+	if byName["host-2"].CredID != nil {
+		t.Fatal("host-2 must not bind the credential whose material was replaced (stale fingerprint index)")
+	}
+	credRow, err := database.CredentialGetRow(ctx, existingID["id"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := credentialVault.DecryptCredentialString(ctx, credRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := vault.ParsePrivateKeyPayload(plaintext)
+	if stored.Key == nil || *stored.Key != pemA {
+		t.Fatal("credential must hold the overwritten material (k1)")
+	}
+}
+
 func TestSSHImportTermiusRequiresConfirmation(t *testing.T) {
 	dispatcher, _, _, _ := sshImportTestRig(t)
 	response := dispatchStoreTest(dispatcher, "ssh_import_preview", `{"args":{"source":"termius"}}`)

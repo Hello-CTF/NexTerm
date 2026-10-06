@@ -2726,6 +2726,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         warnings: [] as string[],
       };
       const credIDByKeyID = new Map<string, string>();
+      const overwrittenCredIDs = new Set<string>();
       for (const key of canned.keys) {
         const action = keyActions.get(key.id) ?? "skip";
         const name = key.aliases[0] ?? key.id;
@@ -2744,13 +2745,20 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
           result.credentialsCreated += 1;
         } else if (action === "overwrite" && key.action === "conflict-alias") {
           const existing = demoCredentials.find((c) => c.name.toLowerCase() === name.toLowerCase());
-          if (existing) {
+          if (existing && overwrittenCredIDs.has(existing.id)) {
+            result.warnings.push(`凭据 "${name}" 已在本次导入中被覆盖，跳过重复的覆盖`);
+            result.skipped += 1;
+          } else if (existing) {
             existing.secret = key.source === "termius" ? demoInlinePem : key.path;
             if (existing.kind === "private_key") {
               existing.source = key.source === "termius" ? "inline" : "file";
             }
             existing.updatedAt = Date.now();
+            for (const [keyID, credID] of credIDByKeyID) {
+              if (credID === existing.id) credIDByKeyID.delete(keyID);
+            }
             credIDByKeyID.set(key.id, existing.id);
+            overwrittenCredIDs.add(existing.id);
             result.credentialsUpdated += 1;
           } else {
             result.skipped += 1;

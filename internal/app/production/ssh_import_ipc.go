@@ -478,6 +478,19 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 		keyByID[id] = &preview.Keys[i]
 	}
 	credIDByKeyFP := map[string]string{}
+	overwrittenCredIDs := map[string]bool{}
+	invalidateCredentialFingerprints := func(id string) {
+		for fingerprint, mapped := range credIDByKeyFP {
+			if mapped == id {
+				delete(credIDByKeyFP, fingerprint)
+			}
+		}
+		for fingerprint, mapped := range plan.existing.credIDByFP {
+			if mapped == id {
+				delete(plan.existing.credIDByFP, fingerprint)
+			}
+		}
+	}
 	type keyOutcome struct {
 		Name        string `json:"name"`
 		Fingerprint string `json:"fingerprint"`
@@ -519,6 +532,12 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 				outcome.Action = "skipped"
 				break
 			}
+			if overwrittenCredIDs[id] {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("凭据 %q 已在本次导入中被覆盖，跳过重复的覆盖（其材料以首次覆盖为准）", name))
+				result.Skipped++
+				outcome.Action = "skipped"
+				break
+			}
 			payload, err := p.importKeyPayload(plan, item)
 			if err != nil {
 				return result, err
@@ -526,9 +545,11 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 			if _, err := putProductionCredential(ctx, p.vault, p.database, id, name, vault.KindPrivateKey, payload); err != nil {
 				return result, err
 			}
+			invalidateCredentialFingerprints(id)
 			if item.Fingerprint != "" {
 				credIDByKeyFP[item.Fingerprint] = id
 			}
+			overwrittenCredIDs[id] = true
 			result.CredentialsUpdated++
 			outcome.Action = "updated"
 		default:
