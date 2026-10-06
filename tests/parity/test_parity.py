@@ -34,34 +34,62 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 144)
-        self.assertEqual(frontend["unique_command_count"], 143)
+        self.assertEqual(frontend["method_count"], 164)
+        self.assertEqual(frontend["unique_command_count"], 162)
         self.assertEqual(commands["reconciliation"]["rust_only"], ["credential_save"])
         self.assertEqual(
             commands["reconciliation"]["frontend_only"],
-            ["ai_answer", "ai_hitl_events", "ai_hitl_snapshot", "ai_steer", "terminal_resize_flush"],
+            [
+                "ai_answer",
+                "ai_circuit_status",
+                "ai_edit_resend",
+                "ai_hitl_events",
+                "ai_hitl_snapshot",
+                "ai_run_events",
+                "ai_run_list",
+                "ai_steer",
+                "ai_usage_summary",
+                "asset_probe_batch",
+                "audit_count",
+                "session_probe_host_key",
+                "sync_bundle_read",
+                "sync_bundle_write",
+                "sync_token_issue",
+                "sync_token_list",
+                "sync_token_revoke",
+                "terminal_resize_flush",
+                "transcript_delete",
+                "transcript_hosts",
+                "transcript_list",
+                "transcript_read",
+                "transcript_search",
+                "vault_set_autolock",
+            ],
         )
         steer = {entry["name"]: entry for entry in frontend["entries"] if entry["name"] == "ai_steer"}
         self.assertEqual(
             [(steer["ai_steer"]["accessor"], steer["ai_steer"]["line"])],
-            [("aiApi.steer", 657)],
+            [("aiApi.steer", 559)],
         )
         hitl = {entry["name"]: entry for entry in frontend["entries"] if "hitl" in entry["name"]}
         self.assertEqual(
             [(hitl["ai_hitl_snapshot"]["accessor"], hitl["ai_hitl_snapshot"]["line"])],
-            [("aiApi.hitlSnapshot", 665)],
+            [("aiApi.hitlSnapshot", 567)],
         )
         self.assertEqual(
             [(hitl["ai_hitl_events"]["accessor"], hitl["ai_hitl_events"]["line"])],
-            [("aiApi.hitlEvents", 668)],
+            [("aiApi.hitlEvents", 569)],
         )
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
-            [{"name": "ai_presets", "accessors": ["aiApi.presets", "modelApi.presets"]}],
+            [
+                {"name": "ai_presets", "accessors": ["aiApi.presets", "modelApi.presets"]},
+                {"name": "ai_test_provider", "accessors": ["aiApi.testProvider", "modelApi.test"]},
+            ],
         )
         self.assertEqual(commands["reconciliation"]["sync_only_commands"], ["sync_digest", "sync_export", "sync_import"])
         self.assertEqual(frontend["entries"][0]["accessor"], "systemApi.platform")
-        self.assertEqual(frontend["entries"][0]["line"], 97)
+        self.assertEqual(frontend["entries"][0]["line"], 64)
         self.assertFalse(any(entry["accessor"].startswith("unknown") for entry in frontend["entries"]))
 
     def test_events_and_streams_are_explicit(self):
