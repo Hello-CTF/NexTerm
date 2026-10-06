@@ -44,7 +44,7 @@ func NewManager(deps Dependencies) *Manager {
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = agent.NewMemoryCheckpoints()
 	}
-	return &Manager{deps: deps, checkpoints: deps.Checkpoints, owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
+	return &Manager{deps: deps, checkpoints: detachedCheckpoints{deps.Checkpoints}, owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
 }
 
 func (m *Manager) tabLock(tabID string) *sync.Mutex {
@@ -204,11 +204,18 @@ func (m *Manager) Run(ctx context.Context, args RunArgs, factory agent.StreamFac
 	stream = agent.WithEventSequence(stream)
 	assetID := ""
 	if m.deps.TabAsset != nil {
-		if id, err := m.deps.TabAsset(ctx, args.TabID); err == nil {
-			assetID = id
+		id, err := m.deps.TabAsset(ctx, args.TabID)
+		if err != nil {
+			m.releaseJob(owner, jobID)
+			cancel()
+			forceCancel()
+			_ = stream.Close()
+			return RunResponse{}, err
 		}
+		assetID = id
 	}
-	state := &runState{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, owner: owner, stream: stream, memory: guard.NewMemory(), running: true, assetID: assetID}
+	jobIterCtx, jobIterCancel := context.WithCancel(jobContext)
+	state := &runState{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, owner: owner, stream: stream, memory: guard.NewMemory(), running: true, assetID: assetID, iterCtx: jobIterCtx, iterCancel: jobIterCancel}
 	m.mu.Lock()
 	if m.closed || m.owners[args.TabID] != owner || m.jobs[jobID] != nil {
 		m.mu.Unlock()
@@ -264,6 +271,7 @@ func (m *Manager) pauseState(state *runState) {
 		return
 	}
 	state.userPaused = true
+	state.pauseReady = false
 	cancelFn := state.cancelFn
 	iterCancel := state.iterCancel
 	state.pendingMu.Unlock()
@@ -311,18 +319,21 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 		return RunResponse{}, ErrStaleOwnership
 	}
 	state.pendingMu.Lock()
-	if !(state.userPaused && !state.running) {
+	if !(state.userPaused && !state.running && state.pauseReady) {
 		state.pendingMu.Unlock()
 		return RunResponse{}, ErrOwnershipActive
 	}
 	state.userPaused = false
+	state.pauseReady = false
 	state.running = true
+	state.installIterationLocked()
 	state.pendingMu.Unlock()
 	stream, err := factory(ctx, args.ChannelID, state.id)
 	if err != nil {
 		state.pendingMu.Lock()
 		state.running = false
 		state.userPaused = true
+		state.pauseReady = true
 		state.pendingMu.Unlock()
 		return RunResponse{}, err
 	}
@@ -330,14 +341,15 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 		state.pendingMu.Lock()
 		state.running = false
 		state.userPaused = true
+		state.pauseReady = true
 		state.pendingMu.Unlock()
 		return RunResponse{}, errors.New("接管事件流为空")
 	}
 	stream = agent.WithEventSequence(stream)
-	state.pendingMu.Lock()
+	state.eventMu.Lock()
 	previous := state.stream
 	state.stream = stream
-	state.pendingMu.Unlock()
+	state.eventMu.Unlock()
 	if previous != stream {
 		_ = previous.Close()
 	}
@@ -365,7 +377,7 @@ func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeA
 			return RunResponse{}, err
 		}
 	}
-	if record.AssetID != "" && assetID != record.AssetID {
+	if record.AssetID == "" || assetID == "" || record.AssetID != assetID {
 		return RunResponse{}, ErrResumeMismatch
 	}
 	if err := m.reserveJob(owner, args.JobID); err != nil {
@@ -383,9 +395,11 @@ func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeA
 	stream = agent.WithEventSequence(stream)
 	jobContext, cancel := context.WithCancel(owner.ctx)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
+	jobIterCtx, jobIterCancel := context.WithCancel(jobContext)
 	state := &runState{
 		id: args.JobID, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel,
 		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, assetID: assetID,
+		iterCtx: jobIterCtx, iterCancel: jobIterCancel,
 		args: RunArgs{TabID: args.TabID, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps},
 	}
 	m.mu.Lock()
@@ -451,6 +465,7 @@ func (m *Manager) Confirm(confirmation agent.Confirmation) error {
 	state.eino.resume = &adk.ResumeParams{Targets: map[string]any{confirmation.Nonce: confirmation.Decision}}
 	if start {
 		state.running = true
+		state.installIterationLocked()
 	}
 	state.pendingMu.Unlock()
 	if start {

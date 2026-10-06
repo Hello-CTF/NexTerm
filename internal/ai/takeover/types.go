@@ -87,6 +87,7 @@ type runState struct {
 	pending      *pending
 	running      bool
 	userPaused   bool
+	pauseReady   bool
 	started      bool
 	assetID      string
 	iterCtx      context.Context
@@ -107,6 +108,10 @@ func (s *runState) stopReason() string {
 	s.reasonMu.Lock()
 	defer s.reasonMu.Unlock()
 	return s.reason
+}
+
+func (s *runState) installIterationLocked() {
+	s.iterCtx, s.iterCancel = context.WithCancel(s.ctx)
 }
 
 func (s *runState) emit(ctx context.Context, event agent.Event) error {

@@ -52,6 +52,7 @@ func (m *Manager) runJob(state *runState) {
 		if paused && state.ctx.Err() == nil && state.eino.resume != nil {
 			resumePaused = true
 			state.running = true
+			state.installIterationLocked()
 		} else {
 			state.running = false
 		}
@@ -72,6 +73,9 @@ func (m *Manager) runJob(state *runState) {
 			emitCtx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), time.Second)
 			defer cancel()
 			_ = state.emit(emitCtx, agent.Event{Type: "paused", Reason: "用户暂停", TabID: state.args.TabID})
+			state.pendingMu.Lock()
+			state.pauseReady = true
+			state.pendingMu.Unlock()
 			return
 		}
 		if result.reason == "" {
@@ -82,12 +86,10 @@ func (m *Manager) runJob(state *runState) {
 		}
 		m.complete(state, result)
 	}()
-	iterCtx, iterCancel := context.WithCancel(state.ctx)
-	defer iterCancel()
 	state.pendingMu.Lock()
-	state.iterCtx = iterCtx
-	state.iterCancel = iterCancel
+	iterCtx, iterCancel := state.iterCtx, state.iterCancel
 	state.pendingMu.Unlock()
+	defer iterCancel()
 	result = m.run(iterCtx, state)
 	if errors.Is(result.err, errRunPaused) {
 		paused = true
@@ -129,22 +131,18 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 	}
 	if err == nil {
 		result := m.consume(iterCtx, state, iterator)
-		if result.err != nil {
-			var cancelErr *adk.CancelError
-			if errors.Is(result.err, context.Canceled) || errors.As(result.err, &cancelErr) {
-				state.pendingMu.Lock()
-				userPaused := state.userPaused
-				state.pendingMu.Unlock()
-				if userPaused && state.ctx.Err() == nil {
-					return runResult{err: errRunUserPaused}
-				}
-				return controlledResult(state, runtime.steps)
+		if result.err != nil && isCancelKind(result.err) {
+			state.pendingMu.Lock()
+			userPaused := state.userPaused
+			state.pendingMu.Unlock()
+			if userPaused && state.ctx.Err() == nil {
+				return runResult{err: errRunUserPaused}
 			}
+			return controlledResult(state, runtime.steps)
 		}
 		return result
 	}
-	var cancelErr *adk.CancelError
-	if errors.Is(err, context.Canceled) || errors.As(err, &cancelErr) {
+	if isCancelKind(err) {
 		state.pendingMu.Lock()
 		userPaused := state.userPaused
 		state.pendingMu.Unlock()
@@ -154,6 +152,11 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 		return controlledResult(state, runtime.steps)
 	}
 	return runResult{err: err}
+}
+
+func isCancelKind(err error) bool {
+	var cancelErr *adk.CancelError
+	return errors.Is(err, context.Canceled) || errors.Is(err, adk.ErrStreamCanceled) || errors.As(err, &cancelErr)
 }
 
 func (m *Manager) initializeEino(state *runState) error {
@@ -558,23 +561,27 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input to
 	if !current {
 		return tools.Output{}, ErrStaleOwnership
 	}
-	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	records, err := e.manager.loadExecRecords(storeCtx, e.state.id)
+	records, err := e.manager.loadExecRecords(ctx, e.state.id)
 	if err != nil {
 		return tools.Fail(err), nil
 	}
 	if recorded, ok := records[callID]; ok {
 		e.auditWrite(ctx, callID, input, len(encoded), true)
-		return recorded, nil
+		if recorded.State == execStateDone {
+			return recorded.Output, nil
+		}
+		return tools.Fail(errors.New("相同调用已执行过但结果未知，为避免重复写入未再次发送；请读取屏幕确认终端状态")), nil
 	}
-	err = e.manager.deps.WriteAI(ctx, e.state.args.TabID, encoded)
-	if err != nil {
+	records[callID] = execRecord{State: execStateAttempt}
+	if err := e.manager.saveExecRecords(ctx, e.state.id, records); err != nil {
+		return tools.Fail(fmt.Errorf("无法记录执行尝试，未写入终端: %w", err)), nil
+	}
+	if err := e.manager.deps.WriteAI(ctx, e.state.args.TabID, encoded); err != nil {
 		return tools.Fail(err), nil
 	}
-	records[callID] = tools.OK("已发送")
-	if err := e.manager.saveExecRecords(storeCtx, e.state.id, records); err != nil {
-		return tools.Fail(fmt.Errorf("写入已发生但幂等记录失败: %w", err)), nil
+	records[callID] = execRecord{State: execStateDone, Output: tools.OK("已发送")}
+	if err := e.manager.saveExecRecords(ctx, e.state.id, records); err != nil {
+		return tools.Fail(fmt.Errorf("写入已发生但结果记录失败，请读取屏幕确认: %w", err)), nil
 	}
 	e.auditWrite(ctx, callID, input, len(encoded), false)
 	return tools.OK("已发送"), nil

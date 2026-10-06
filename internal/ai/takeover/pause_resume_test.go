@@ -173,6 +173,7 @@ func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 			return tools.Screen{Text: "$ ", Tail: []string{"$ "}, IdleMS: 301, CursorCol: 2}, nil
 		},
 		WriteAI:      func(context.Context, string, []byte) error { return nil },
+		TabAsset:     func(context.Context, string) (string, error) { return "asset-a", nil },
 		PollInterval: time.Millisecond,
 	}
 	first := NewManager(deps)

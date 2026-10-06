@@ -63,7 +63,40 @@ func (m *Manager) deleteRecovery(ctx context.Context, jobID string) {
 	}
 }
 
-type execRecords map[string]tools.Output
+type detachedCheckpoints struct{ adk.CheckPointStore }
+
+func (d detachedCheckpoints) Get(ctx context.Context, id string) ([]byte, bool, error) {
+	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return d.CheckPointStore.Get(storeCtx, id)
+}
+
+func (d detachedCheckpoints) Set(ctx context.Context, id string, data []byte) error {
+	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return d.CheckPointStore.Set(storeCtx, id, data)
+}
+
+func (d detachedCheckpoints) Delete(ctx context.Context, id string) error {
+	if deleter, ok := d.CheckPointStore.(adk.CheckPointDeleter); ok {
+		storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return deleter.Delete(storeCtx, id)
+	}
+	return nil
+}
+
+const (
+	execStateAttempt = "attempt"
+	execStateDone    = "done"
+)
+
+type execRecord struct {
+	State  string       `json:"state"`
+	Output tools.Output `json:"output,omitempty"`
+}
+
+type execRecords map[string]execRecord
 
 func (m *Manager) loadExecRecords(ctx context.Context, jobID string) (execRecords, error) {
 	data, found, err := m.checkpoints.Get(ctx, execKey(jobID))

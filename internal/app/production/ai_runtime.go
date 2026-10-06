@@ -99,10 +99,11 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 
 	takeoverDeps := takeover.Dependencies{
-		Model:      aiModelFactory(services.Profiles),
-		Permission: guardManager.Snapshot,
-		Grants:     grantsManager,
-		Audit:      toolsDeps.Audit,
+		Model:       aiModelFactory(services.Profiles),
+		Permission:  guardManager.Snapshot,
+		Grants:      grantsManager,
+		Checkpoints: agent.NewStoreCheckpoints(services.Store),
+		Audit:       toolsDeps.Audit,
 	}
 	takeoverDeps = takeover.WithSession(takeoverDeps, services.Sessions)
 	takeoverManager := takeover.NewManager(takeoverDeps)
