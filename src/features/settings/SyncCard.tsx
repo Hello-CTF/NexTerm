@@ -366,6 +366,22 @@ function transcriptPayload(t: TranscriptSummary, content: TranscriptChunk[] | nu
 
 const TRANSCRIPT_MAX_CONTENT_BYTES = 64 << 20;
 
+// readTranscriptAll 按 done/nextSeq 分页读完全部内容;读取失败显式抛出,不吞成空数组。
+async function readTranscriptAll(id: string): Promise<TranscriptChunk[]> {
+  const chunks: TranscriptChunk[] = [];
+  let afterSeq = 0;
+  for (let page = 0; page < 10000; page++) {
+    const read = await transcriptApi.read(id, afterSeq);
+    chunks.push(...read.chunks);
+    if (read.done) return chunks;
+    if (read.nextSeq <= afterSeq) {
+      throw new Error(`会话记录 ${id} 分页游标未推进(done=false 且 nextSeq 未前进)`);
+    }
+    afterSeq = read.nextSeq;
+  }
+  throw new Error(`会话记录 ${id} 分页读取超出上限`);
+}
+
 async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
   const hosts = await transcriptApi.hosts();
   const out: LocalEntity[] = [];
@@ -374,9 +390,11 @@ async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
     for (const t of summaries) {
       if (!t.syncOptIn || t.active || t.endedAt === null) continue;
       let content: TranscriptChunk[] | null = null;
-      if (!t.contentOmitted && t.bytes <= TRANSCRIPT_MAX_CONTENT_BYTES) {
-        const read = await transcriptApi.read(t.id);
-        content = read.chunks;
+      // contentOmitted 只按真实超限语义使用(>64MiB 仅元数据);未超限必须分页读全,不得把多页内容标成完整。
+      if (!t.contentOmitted && t.bytes > TRANSCRIPT_MAX_CONTENT_BYTES) {
+        content = null;
+      } else if (!t.contentOmitted) {
+        content = await readTranscriptAll(t.id);
       }
       const payload = transcriptPayload(t, content);
       out.push({
@@ -398,7 +416,7 @@ async function loadLocalEntities(): Promise<LocalEntity[]> {
     assetApi.groupList(),
     assetApi.list(),
     assetApi.snippetList(),
-    loadOptedInTranscripts().catch(() => [] as LocalEntity[]),
+    loadOptedInTranscripts(),
   ]);
   const out: LocalEntity[] = [];
   for (const g of groups) {
@@ -487,8 +505,41 @@ interface Row {
   remote?: RemoteObject;
 }
 
+// computeWinners 返回需要推送的本机对象集合:仅本机独占或本地胜出(含平修订号按载荷 hash 决胜)。
+function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEntity[] {
+  const remoteById = new Map(remote.map((r) => [r.id, r]));
+  return local.filter((e) => {
+    const r = remoteById.get(e.id);
+    return r === undefined || localWins(e, r);
+  });
+}
+
+// sealAll 按 kind 依赖序把 winner 对象加密成线上形态(与 objectKindRank 对齐)。
+async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: string; blob: string }[]> {
+  const rank = (k: SyncObjectKind) => {
+    switch (k) {
+      case "group": return 0;
+      case "credential": return 1;
+      case "snippet": return 2;
+      case "asset": return 3;
+      case "tombstone": return 4;
+      case "transcript": return 5;
+      default: return 6;
+    }
+  };
+  const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
+  const objects: { id: string; blob: string }[] = [];
+  for (const e of ordered) {
+    const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(e.payload)), e.id, e.kind);
+    objects.push({ id: e.id, blob: bytesToBase64(blob) });
+  }
+  return objects;
+}
+
 // localWins 复刻 M117 merge.go 的 LWW 裁决:修订号大者胜,平手按载荷 sha256 字典序决胜。
+// 载荷完全一致(同 hash)时本地无需推送(覆盖相同内容)。
 function localWins(l: LocalEntity, r: RemoteObject): boolean {
+  if (l.payloadHash === r.payloadHash) return false;
   const lr = revisionOf(l.updatedAt, l.deletedAt);
   const rr = revisionOf(r.updatedAt, r.deletedAt);
   if (lr !== rr) return lr > rr;
@@ -505,16 +556,14 @@ function buildRows(local: LocalEntity[], remote: RemoteObject[]): Row[] {
       continue;
     }
     remoteById.delete(l.id);
-    const lr = revisionOf(l.updatedAt, l.deletedAt);
-    const rr = revisionOf(r.updatedAt, r.deletedAt);
     const wins = localWins(l, r);
     let state: RowState;
-    if (r.kind === "tombstone" || r.deletedAt !== null) {
+    if (l.payloadHash === r.payloadHash) {
+      state = "same";
+    } else if (r.kind === "tombstone" || r.deletedAt !== null) {
       state = wins ? "local-newer" : "remote-deleted";
     } else if (l.deletedAt !== null) {
       state = wins ? "local-deleted" : "remote-newer";
-    } else if (lr === rr && l.payloadHash === r.payloadHash) {
-      state = "same";
     } else {
       state = wins ? "local-newer" : "remote-newer";
     }
@@ -677,11 +726,7 @@ function CompareConsole() {
   // winner 集合:仅本机独占或本地胜出(含平修订号按载荷 hash 决胜);计数与上传共用同一集合。
   const winners = useMemo(() => {
     if (!local || !remote) return [];
-    const remoteById = new Map(remote.map((r) => [r.id, r]));
-    return local.filter((e) => {
-      const r = remoteById.get(e.id);
-      return r === undefined || localWins(e, r);
-    });
+    return computeWinners(local, remote);
   }, [local, remote]);
 
   const push = async () => {
@@ -689,34 +734,42 @@ function CompareConsole() {
     setError(null);
     setPushInfo(null);
     try {
-      const rank = (k: SyncObjectKind) => {
-        switch (k) {
-          case "group": return 0;
-          case "credential": return 1;
-          case "snippet": return 2;
-          case "asset": return 3;
-          case "tombstone": return 4;
-          case "transcript": return 5;
-          default: return 6;
-        }
-      };
-      const ordered = [...winners].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
-      const objects: { id: string; blob: string }[] = [];
-      for (const e of ordered) {
-        const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(e.payload)), e.id, e.kind);
-        objects.push({ id: e.id, blob: bytesToBase64(blob) });
-      }
-      // 推送前取服务端最新 head;409(他端已更新)时刷新 head 后重试一次。
+      // 对比基线(加载时的 head)。若服务端 head 已变,先重新拉取并以同一快照重算 winner,不沿用旧 winner。
+      let head = cursor.head;
+      let winnersNow = winners;
       const fresh = await syncV2Api.ids();
-      let head = fresh.head;
-      let resp = await syncV2Api.push(head, objects);
-      if (resp.applied === 0 && resp.skipped === 0 && objects.length > 0) {
-        const again = await syncV2Api.ids();
-        if (again.head !== head) {
-          head = again.head;
-          resp = await syncV2Api.push(head, objects);
-        }
+      if (fresh.head !== head) {
+        const remoteState = await loadRemoteObjects(dek);
+        setRemote(remoteState.objects);
+        winnersNow = computeWinners(local ?? [], remoteState.objects);
+        const base = { head: remoteState.head, seq: remoteState.maxSeq };
+        saveCursor(user.id, base);
+        setCursor(base);
+        head = remoteState.head;
       }
+
+      let resp = await syncV2Api.push(head, await sealAll(dek, winnersNow));
+
+      // 空推(applied+skipped=0)或真 409(他端已更新):重新拉取并以同一快照重算 winner,再重试一次,不得只换 known_head。
+      const reconcileAndRetry = async (): Promise<typeof resp | null> => {
+        const remoteState = await loadRemoteObjects(dek);
+        const recomputed = computeWinners(local ?? [], remoteState.objects);
+        if (remoteState.head === head && recomputed.length === winnersNow.length && !recomputed.some((e, i) => e.id !== winnersNow[i]?.id)) {
+          return null;
+        }
+        setRemote(remoteState.objects);
+        winnersNow = recomputed;
+        const base = { head: remoteState.head, seq: remoteState.maxSeq };
+        saveCursor(user.id, base);
+        setCursor(base);
+        return syncV2Api.push(remoteState.head, await sealAll(dek, recomputed));
+      };
+
+      if (resp.applied === 0 && resp.skipped === 0 && winnersNow.length > 0) {
+        const retried = await reconcileAndRetry();
+        if (retried) resp = retried;
+      }
+
       const next = { head: resp.head, seq: resp.max_seq };
       saveCursor(user.id, next);
       setCursor(next);
@@ -725,10 +778,29 @@ function CompareConsole() {
       await load();
     } catch (e) {
       if (e instanceof AuthApiError && e.status === 409) {
-        setError("云端已被其他设备更新,请刷新后再推送");
-      } else {
-        setError(describeError(e));
+        // 真 409:重新对账并以新 head 重试一次;仍失败才报错。
+        try {
+          const remoteState = await loadRemoteObjects(dek);
+          const recomputed = computeWinners(local ?? [], remoteState.objects);
+          setRemote(remoteState.objects);
+          const base = { head: remoteState.head, seq: remoteState.maxSeq };
+          saveCursor(user.id, base);
+          setCursor(base);
+          const sealed = await sealAll(dek, recomputed);
+          const resp = await syncV2Api.push(remoteState.head, sealed);
+          const next = { head: resp.head, seq: resp.max_seq };
+          saveCursor(user.id, next);
+          setCursor(next);
+          setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
+          pushToast("success", `已推送 ${resp.applied} 个对象`);
+          await load();
+          return;
+        } catch (retryError) {
+          setError(describeError(retryError));
+          return;
+        }
       }
+      setError(describeError(e));
     } finally {
       setBusy(null);
     }

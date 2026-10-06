@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => {
     assetList: vi.fn(),
     groupList: vi.fn(),
     snippetList: vi.fn(),
+    transcriptHosts: vi.fn(),
+    transcriptList: vi.fn(),
+    transcriptRead: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -27,6 +30,11 @@ vi.mock("../ipc/commands", () => ({
     list: mocks.assetList,
     groupList: mocks.groupList,
     snippetList: mocks.snippetList,
+  },
+  transcriptApi: {
+    hosts: mocks.transcriptHosts,
+    list: mocks.transcriptList,
+    read: mocks.transcriptRead,
   },
   dbApi: {},
   sessionApi: {},
@@ -110,6 +118,9 @@ beforeEach(() => {
   mocks.assetList.mockResolvedValue([]);
   mocks.groupList.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([]);
+  mocks.transcriptHosts.mockResolvedValue([]);
+  mocks.transcriptList.mockResolvedValue([]);
+  mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
 });
 
 afterEach(() => {
