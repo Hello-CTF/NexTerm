@@ -54,28 +54,8 @@ func (v *fakeVault) UnlockMaster(_ context.Context, password string) error {
 }
 
 type fakeTokenStore struct {
-	mu         sync.Mutex
-	token      string
-	syncCalls  int
-	rotateCall int
-}
-
-func (s *fakeTokenStore) SyncToken(context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.syncCalls++
-	if s.token == "" {
-		s.token = "generated"
-	}
-	return s.token, nil
-}
-
-func (s *fakeTokenStore) RotateSyncToken(context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.rotateCall++
-	s.token = "rotated"
-	return s.token, nil
+	mu    sync.Mutex
+	token string
 }
 
 func (s *fakeTokenStore) VerifyToken(_ context.Context, presented string) (bool, error) {
@@ -92,11 +72,11 @@ func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 		"NEXTERM_MASTER_KEY": "env-secret",
 	}
 	getenv := func(name string) string { return environment[name] }
-	invocation, err := ParseCLI([]string{"--master-key=flag-secret", "rotate-token", "--data-dir", "/flag/data", "--sync-only=false"}, getenv)
+	invocation, err := ParseCLI([]string{"--master-key=flag-secret", "serve", "--data-dir", "/flag/data", "--sync-only=false"}, getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invocation.Command != core.CommandRotateToken || invocation.Options.DataDir != "/flag/data" || invocation.Options.Listen != "127.0.0.1:9000" || invocation.Options.WebRoot != "/env/web" || invocation.Options.MasterKey != "flag-secret" || invocation.Options.SyncOnly {
+	if invocation.Command != core.CommandServe || invocation.Options.DataDir != "/flag/data" || invocation.Options.Listen != "127.0.0.1:9000" || invocation.Options.WebRoot != "/env/web" || invocation.Options.MasterKey != "flag-secret" || invocation.Options.SyncOnly {
 		t.Fatalf("invocation = %+v", invocation)
 	}
 	if invocation.Options.Auth != AuthOn {
@@ -147,24 +127,8 @@ func TestServerCLIEnvironmentFlagAndTokenContracts(t *testing.T) {
 		t.Fatal("server accepted desktop command")
 	}
 	usage := Usage("nexterm-server")
-	if strings.Contains(usage, "desktop") || !strings.Contains(usage, "rotate-token") || !strings.Contains(usage, "NEXTERM_MASTER_KEY") {
+	if strings.Contains(usage, "desktop") || strings.Contains(usage, "rotate-token") || !strings.Contains(usage, "NEXTERM_MASTER_KEY") {
 		t.Fatalf("server usage = %q", usage)
-	}
-
-	store := &fakeTokenStore{}
-	var stdout bytes.Buffer
-	if err := RunTokenCommand(context.Background(), core.CommandToken, store, &stdout); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.String() != "generated\n" {
-		t.Fatalf("token stdout = %q", stdout.String())
-	}
-	stdout.Reset()
-	if err := RunTokenCommand(context.Background(), core.CommandRotateToken, store, &stdout); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.String() != "rotated\n" || store.rotateCall != 1 {
-		t.Fatalf("rotate stdout = %q calls=%d", stdout.String(), store.rotateCall)
 	}
 }
 

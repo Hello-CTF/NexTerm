@@ -22,14 +22,14 @@ func TestConcreteProductionCompositionAndPersistentTaskReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if production.PersistentTasks() == nil || production.TokenStore() == nil || production.SyncRPCHandler() == nil {
+	if production.PersistentTasks() == nil {
 		t.Fatal("production capabilities are not composed")
 	}
 	for _, command := range []string{
 		"app_info", "app_platform", "session_connect", "session_connect_local", "terminal_attach", "terminal_attach_tab",
 		"terminal_resize", "terminal_resize_flush", "fs_list", "fs_write", "asset_list", "asset_update", "layout_put",
 		"vault_set_credential", "credential_update", "ai_model_save", "ai_conversation_list", "docker_exec_attach",
-		"docker_action", "db_connect", "mount_create", "forward_create", "sync_digest",
+		"docker_action", "db_connect", "mount_create", "forward_create", "sync_link_get", "sync_status", "sync_now",
 	} {
 		if !slices.Contains(production.Dispatcher.Commands(), command) {
 			t.Fatalf("production is missing %s", command)

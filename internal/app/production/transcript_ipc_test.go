@@ -183,7 +183,7 @@ func TestTranscriptSummaryJSONShape(t *testing.T) {
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"id", "sessionId", "assetId", "assetName", "assetKind", "assetDeleted", "startedAt", "bytes", "chunks", "truncated", "active"} {
+	for _, key := range []string{"id", "sessionId", "assetId", "assetName", "assetKind", "assetDeleted", "startedAt", "bytes", "chunks", "truncated", "active", "syncOptIn", "contentOmitted"} {
 		if _, ok := decoded[key]; !ok {
 			t.Fatalf("missing json key %s in %s", key, payload)
 		}

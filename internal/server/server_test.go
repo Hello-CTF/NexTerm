@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -13,8 +12,8 @@ import (
 func TestRPCEnvelopesAndClientIdentity(t *testing.T) {
 	_, httpServer := newTestHTTP(t, testConfig(t, false))
 
-	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "sync_digest", nil)
-	if status != http.StatusOK || !body.OK || !strings.Contains(string(body.Data), "sync_digest") {
+	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", nil)
+	if status != http.StatusOK || !body.OK || !strings.Contains(string(body.Data), "app_info") {
 		t.Fatalf("success response = %d %+v", status, body)
 	}
 	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "null_result", nil)
@@ -31,60 +30,8 @@ func TestRPCEnvelopesAndClientIdentity(t *testing.T) {
 	}
 }
 
-func TestSyncAdmissionTokenAndGateway(t *testing.T) {
-	_, httpServer := newTestHTTP(t, testConfig(t, false))
-	url := httpServer.URL + "/sync/rpc"
-
-	status, body := postRPC(t, httpServer.Client(), url, "sync_digest", nil)
-	if status != http.StatusUnauthorized || body.OK || body.Error == nil || body.Error.Code != ipc.CodeForbidden {
-		t.Fatalf("missing token = %d %+v", status, body)
-	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{TokenHeader: "wrong"})
-	if status != http.StatusUnauthorized {
-		t.Fatalf("wrong token = %d %+v", status, body)
-	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{TokenHeader: "secret"})
-	if status != http.StatusOK || !body.OK {
-		t.Fatalf("valid token = %d %+v", status, body)
-	}
-	status, body = postRPC(t, httpServer.Client(), url, "sync_digest", map[string]string{"X-HC-User-ID": "forged"})
-	if status != http.StatusUnauthorized || body.OK {
-		t.Fatalf("forged platform identity header = %d %+v", status, body)
-	}
-
-	gateway := testConfig(t, false)
-	gateway.GatewayAuthKey = "gateway-secret"
-	_, gatewayHTTP := newTestHTTP(t, gateway)
-	status, body = postRPC(t, gatewayHTTP.Client(), gatewayHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "gateway-secret"})
-	if status != http.StatusOK || !body.OK {
-		t.Fatalf("gateway key admission = %d %+v", status, body)
-	}
-	status, body = postRPC(t, gatewayHTTP.Client(), gatewayHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{GatewayAuthHeader: "wrong"})
-	if status != http.StatusUnauthorized || body.OK {
-		t.Fatalf("wrong gateway key = %d %+v", status, body)
-	}
-	status, body = postRPC(t, gatewayHTTP.Client(), gatewayHTTP.URL+"/sync/rpc", "sync_digest", map[string]string{"X-HC-User-ID": "forged", GatewayAuthHeader: "wrong"})
-	if status != http.StatusUnauthorized || body.OK {
-		t.Fatalf("forged platform header with wrong gateway key = %d %+v", status, body)
-	}
-}
-
-func TestSyncOnlyExactlyThreeCommandsAndTwoRoutes(t *testing.T) {
+func TestSyncOnlyModeServesOnlyHealthAndAccountSurface(t *testing.T) {
 	_, httpServer := newTestHTTP(t, testConfig(t, true))
-	headers := map[string]string{TokenHeader: "secret"}
-
-	for _, command := range SyncOnlyCommands() {
-		status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/sync/rpc", command, headers)
-		if status != http.StatusOK || !body.OK {
-			t.Fatalf("%s = %d %+v", command, status, body)
-		}
-	}
-	for _, command := range []string{"sync_push", "sync_pull", "sync_link_set", "terminal_attach", "app_info"} {
-		status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/sync/rpc", command, headers)
-		if status != http.StatusOK || body.OK || body.Error == nil || body.Error.Code != ipc.CodeNotFound {
-			t.Fatalf("restricted %s = %d %+v", command, status, body)
-		}
-	}
 
 	response, err := httpServer.Client().Get(httpServer.URL + "/healthz")
 	if err != nil {
@@ -95,15 +42,16 @@ func TestSyncOnlyExactlyThreeCommandsAndTwoRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	if !health.OK || !health.SyncOnly || health.Commands != 3 || health.WebRoot != nil {
+	if !health.OK || !health.SyncOnly || health.Commands != 0 || health.WebRoot != nil {
 		t.Fatalf("health = %+v", health)
 	}
 
-	for _, path := range []string{"/rpc", "/ws/events", "/ws/channel/test", "/files/blob", "/"} {
-		request, err := http.NewRequest(http.MethodPost, httpServer.URL+path, nil)
+	for _, path := range []string{"/rpc", "/sync/rpc", "/ws/events", "/ws/channel/test", "/files/blob", "/"} {
+		request, err := http.NewRequest(http.MethodPost, httpServer.URL+path, strings.NewReader(`{}`))
 		if err != nil {
 			t.Fatal(err)
 		}
+		request.Header.Set("Content-Type", "application/json")
 		response, err := httpServer.Client().Do(request)
 		if err != nil {
 			t.Fatal(err)
@@ -115,41 +63,18 @@ func TestSyncOnlyExactlyThreeCommandsAndTwoRoutes(t *testing.T) {
 	}
 }
 
-func TestSyncRPCIsRestrictedInFullMode(t *testing.T) {
+func TestSyncRPCRouteIsGoneInFullMode(t *testing.T) {
 	_, httpServer := newTestHTTP(t, testConfig(t, false))
-	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/sync/rpc", "app_info", map[string]string{TokenHeader: "secret"})
-	if status != http.StatusOK || body.OK || body.Error == nil || body.Error.Code != ipc.CodeNotFound {
-		t.Fatalf("full sync response = %d %+v", status, body)
-	}
-	status, body = postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", nil)
-	if status != http.StatusOK || !body.OK || !strings.Contains(string(body.Data), "app_info") {
-		t.Fatalf("full RPC response = %d %+v", status, body)
-	}
-}
-
-func TestInjectedSyncRPCHandler(t *testing.T) {
-	config := testConfig(t, true)
-	config.Tokens = nil
-	config.SyncRPC = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/sync/rpc" || r.Method != http.MethodPost {
-			t.Errorf("injected handler request = %s %s", r.Method, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"data":{"source":"m20"}}`))
-	})
-	_, httpServer := newTestHTTP(t, config)
-	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/sync/rpc", "sync_digest", nil)
-	if status != http.StatusOK || !body.OK || !strings.Contains(string(body.Data), "m20") {
-		t.Fatalf("injected sync response = %d %+v", status, body)
-	}
-}
-
-func TestSyncOnlyDispatcherRequiresAllPeerCommands(t *testing.T) {
-	dispatcher := ipc.NewDispatcher()
-	if err := dispatcher.RegisterRaw("sync_digest", func(context.Context, *ipc.Call) (any, error) { return nil, nil }); err != nil {
+	response, err := httpServer.Client().Post(httpServer.URL+"/sync/rpc", "application/json", strings.NewReader(`{"cmd":"app_info","args":{}}`))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewSyncOnlyDispatcher(dispatcher); err == nil {
-		t.Fatal("expected missing command error")
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("/sync/rpc status = %d, want 404", response.StatusCode)
+	}
+	status, body := postRPC(t, httpServer.Client(), httpServer.URL+"/rpc", "app_info", nil)
+	if status != http.StatusOK || !body.OK || !strings.Contains(string(body.Data), "app_info") {
+		t.Fatalf("full RPC response = %d %+v", status, body)
 	}
 }

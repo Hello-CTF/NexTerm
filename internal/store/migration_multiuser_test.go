@@ -12,6 +12,7 @@ import (
 var multiUserTables = []string{
 	"app_user", "user_dek", "user_session", "user_device", "sync_credential",
 	"user_setting", "device_enroll_code", "user_sync_object", "user_sync_head",
+	"sync_tombstone", "sync_state",
 }
 
 func tableNames(t *testing.T, db *sql.DB) map[string]bool {
@@ -40,13 +41,16 @@ func TestMigration0014FreshInstall(t *testing.T) {
 			t.Errorf("missing table %s", name)
 		}
 	}
-	for _, name := range []string{"asset", "asset_group", "credential", "snippet", "sync_tokens"} {
+	for _, name := range []string{"asset", "asset_group", "credential", "snippet"} {
 		if !names[name] {
 			t.Errorf("additive migration dropped legacy table %s", name)
 		}
 	}
+	if names["sync_tokens"] {
+		t.Errorf("sync_tokens must be dropped by migration 0020")
+	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 17 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -120,10 +124,10 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 17 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
-	var groupName, assetHost, credHint, snippetBody, tokenValue, tokenHash string
+	var groupName, assetHost, credHint, snippetBody string
 	if err := db.DB().QueryRow("SELECT name FROM asset_group WHERE id = 'grp1'").Scan(&groupName); err != nil || groupName != "servers" {
 		t.Errorf("asset_group row lost: %q err=%v", groupName, err)
 	}
@@ -136,11 +140,13 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 	if err := db.DB().QueryRow("SELECT body FROM snippet WHERE id = 'snp1'").Scan(&snippetBody); err != nil || snippetBody != "echo hi" {
 		t.Errorf("snippet row lost: %q err=%v", snippetBody, err)
 	}
-	if err := db.DB().QueryRow("SELECT value FROM setting WHERE key = 'sync.token'").Scan(&tokenValue); err != nil || tokenValue != "legacy-token" {
-		t.Errorf("setting row lost: %q err=%v", tokenValue, err)
+	// 0020 清理令牌时代数据: sync.token 设置与 sync_tokens 表必须随之消失。
+	var tokenSettings int
+	if err := db.DB().QueryRow("SELECT count(*) FROM setting WHERE key = 'sync.token'").Scan(&tokenSettings); err != nil || tokenSettings != 0 {
+		t.Errorf("token-era setting survived migration 0020: %d err=%v", tokenSettings, err)
 	}
-	if err := db.DB().QueryRow("SELECT secret_hash FROM sync_tokens WHERE id = 'tok1'").Scan(&tokenHash); err != nil || tokenHash != "hash1" {
-		t.Errorf("sync_tokens row lost: %q err=%v", tokenHash, err)
+	if names := tableNames(t, db.DB()); names["sync_tokens"] {
+		t.Errorf("sync_tokens survived migration 0020")
 	}
 
 	reopened, err := Open(ctx, path)
@@ -275,7 +281,7 @@ VALUES('c1', 'u1', 'd1', 'sync', 'sh1', 1)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 17 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	var username string

@@ -45,7 +45,7 @@ func TestLoopbackModeRejectsNonLoopbackHost(t *testing.T) {
 
 	post := func(host string) int {
 		t.Helper()
-		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +80,7 @@ func TestHostValidationAppliesOnlyToLoopbackModeOnLoopbackListen(t *testing.T) {
 
 	post := func(host string, token bool) int {
 		t.Helper()
-		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+		request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,7 +117,7 @@ func TestHostValidationAppliesOnlyToLoopbackModeOnLoopbackListen(t *testing.T) {
 
 func TestRPCContentTypeAndOriginAdmission(t *testing.T) {
 	_, httpServer := newTestHTTP(t, testConfig(t, false))
-	request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+	request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestRPCContentTypeAndOriginAdmission(t *testing.T) {
 		t.Fatalf("text/plain RPC status = %d", response.StatusCode)
 	}
 
-	request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+	request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestRPCContentTypeAndOriginAdmission(t *testing.T) {
 		t.Fatalf("untrusted Origin status = %d", response.StatusCode)
 	}
 
-	request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+	request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,12 +211,16 @@ func TestTerminalHandshakeFailuresAreSingleShot(t *testing.T) {
 		origin   string
 		expected int
 	}{
-		{name: "unauthorized", syncOnly: true, method: http.MethodPost, path: "/sync/rpc", expected: http.StatusUnauthorized},
+		{name: "unauthorized", method: http.MethodPost, path: "/rpc", expected: http.StatusUnauthorized},
 		{name: "forbidden", method: http.MethodGet, path: "/ws/events", origin: "https://evil.example", expected: http.StatusForbidden},
 		{name: "not found", syncOnly: true, method: http.MethodGet, path: "/ws/events", expected: http.StatusNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server, err := New(testConfig(t, test.syncOnly))
+			config := testConfig(t, test.syncOnly)
+			if test.name == "unauthorized" {
+				config.Options.Listen = "0.0.0.0:0"
+			}
+			server, err := New(config)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,7 +236,7 @@ func TestTerminalHandshakeFailuresAreSingleShot(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			if test.method == http.MethodPost {
-				request, err := http.NewRequestWithContext(ctx, test.method, httpServer.URL+test.path, strings.NewReader(`{"cmd":"sync_digest","args":{}}`))
+				request, err := http.NewRequestWithContext(ctx, test.method, httpServer.URL+test.path, strings.NewReader(`{"cmd":"app_info","args":{}}`))
 				if err != nil {
 					t.Fatal(err)
 				}

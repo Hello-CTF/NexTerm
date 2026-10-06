@@ -9,18 +9,20 @@ import (
 )
 
 type transcriptSummaryDTO struct {
-	ID           string `json:"id"`
-	SessionID    string `json:"sessionId"`
-	AssetID      string `json:"assetId"`
-	AssetName    string `json:"assetName"`
-	AssetKind    string `json:"assetKind"`
-	AssetDeleted bool   `json:"assetDeleted"`
-	StartedAt    int64  `json:"startedAt"`
-	EndedAt      *int64 `json:"endedAt"`
-	Bytes        int64  `json:"bytes"`
-	Chunks       int64  `json:"chunks"`
-	Truncated    bool   `json:"truncated"`
-	Active       bool   `json:"active"`
+	ID             string `json:"id"`
+	SessionID      string `json:"sessionId"`
+	AssetID        string `json:"assetId"`
+	AssetName      string `json:"assetName"`
+	AssetKind      string `json:"assetKind"`
+	AssetDeleted   bool   `json:"assetDeleted"`
+	StartedAt      int64  `json:"startedAt"`
+	EndedAt        *int64 `json:"endedAt"`
+	Bytes          int64  `json:"bytes"`
+	Chunks         int64  `json:"chunks"`
+	Truncated      bool   `json:"truncated"`
+	Active         bool   `json:"active"`
+	SyncOptIn      bool   `json:"syncOptIn"`
+	ContentOmitted bool   `json:"contentOmitted"`
 }
 
 type transcriptListRequest struct {
@@ -204,17 +206,19 @@ func (s *terminalCommandService) transcriptSummary(ctx context.Context, row stor
 		}
 	}
 	return transcriptSummaryDTO{
-		ID:           row.ID,
-		SessionID:    row.SessionID,
-		AssetID:      row.AssetID,
-		AssetName:    row.AssetName,
-		AssetKind:    row.AssetKind,
-		AssetDeleted: assetDeleted,
-		StartedAt:    row.StartedAt,
-		EndedAt:      row.EndedAt,
-		Bytes:        row.Bytes,
-		Chunks:       row.Chunks,
-		Truncated:    row.Truncated,
-		Active:       active,
+		ID:             row.ID,
+		SessionID:      row.SessionID,
+		AssetID:        row.AssetID,
+		AssetName:      row.AssetName,
+		AssetKind:      row.AssetKind,
+		AssetDeleted:   assetDeleted,
+		StartedAt:      row.StartedAt,
+		EndedAt:        row.EndedAt,
+		Bytes:          row.Bytes,
+		Chunks:         row.Chunks,
+		Truncated:      row.Truncated,
+		Active:         active,
+		SyncOptIn:      row.SyncOptIn,
+		ContentOmitted: row.ContentOmitted,
 	}
 }

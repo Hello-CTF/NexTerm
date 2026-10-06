@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
@@ -15,19 +14,10 @@ const (
 	wsAuthHeaderMaxBytes = 256
 )
 
-// TokenIdentityVerifier 在令牌验证通过时返回令牌身份，
-// 供命令层区分管理员令牌与普通客户端令牌。
-type TokenIdentityVerifier interface {
-	VerifyTokenIdentity(ctx context.Context, presented string) (syncservice.TokenIdentity, bool, error)
-}
-
-// 过渡说明: 令牌时代路径仅为内部过渡保留, 供后续切片删除。
-// M117(全量 E2E 同步协议)与 M125(账号同步前端)落地后删除:
-//   - requireAuth / authorizeWebSocket / authenticatedSync 中的 TokenHeader 静态令牌分支
+// 过渡说明: 遗留静态令牌分支仅为内部过渡保留, 供 M125(账号同步前端)删除。
+//   - requireAuth / authorizeWebSocket 中的 TokenHeader 静态令牌分支
 //   - ws 的 "nexterm,<token>" 子协议认证(webSocketAuthToken)
-//   - token / rotate-token CLI 命令与 core.TokenStore
-//   - /rpc 上的 sync.token.* 管理命令(syncservice.CommandToken 系列)及 TokenIdentityVerifier
-// 删除条件: 会话 cookie(/auth/*)成为浏览器唯一入口, 且同步协议不再接受静态令牌。
+// 删除条件: 会话 cookie(/auth/*)成为浏览器唯一入口。v2 同步协议只认会话, 不再产生静态令牌。
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	if !s.authRequired {
@@ -40,13 +30,13 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		if token := r.Header.Get(TokenHeader); token != "" && s.tokens != nil {
-			identity, valid, err := s.verifyTokenIdentity(r.Context(), token)
+			valid, err := s.tokens.VerifyToken(r.Context(), token)
 			if err != nil {
 				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
 				return
 			}
 			if valid {
-				next.ServeHTTP(w, r.WithContext(syncservice.WithTokenIdentity(r.Context(), identity)))
+				next.ServeHTTP(w, r)
 				return
 			}
 		}
@@ -78,14 +68,6 @@ func unsafeAccountMethod(r *http.Request) bool {
 	default:
 		return false
 	}
-}
-
-func (s *Server) verifyTokenIdentity(ctx context.Context, token string) (syncservice.TokenIdentity, bool, error) {
-	if verifier, ok := s.tokens.(TokenIdentityVerifier); ok {
-		return verifier.VerifyTokenIdentity(ctx, token)
-	}
-	valid, err := s.tokens.VerifyToken(ctx, token)
-	return syncservice.TokenIdentity{}, valid, err
 }
 
 func (s *Server) authorizeWebSocket(r *http.Request) (bool, error) {

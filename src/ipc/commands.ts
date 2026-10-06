@@ -187,6 +187,8 @@ export interface TranscriptSummary {
   chunks: number;
   truncated: boolean;
   active: boolean;
+  syncOptIn?: boolean;
+  contentOmitted?: boolean;
 }
 
 export interface TranscriptChunk {
@@ -227,6 +229,8 @@ export const transcriptApi = {
   search: (id: string, query: string) =>
     call<TranscriptMatch[]>("transcript_search", { id, query }),
   remove: (id: string) => call<void>("transcript_delete", { id }),
+  syncOptIn: (id: string, optIn: boolean) =>
+    call<void>("transcript_sync_opt_in", { id, optIn }),
 };
 
 export interface LayoutDto {
@@ -758,6 +762,9 @@ export const syncApi = {
     call<import("./types").ImportReport>("sync_push", { args: { assetIds, withCreds, force } }),
   pull: (assetIds: string[], withCreds: boolean, force: boolean) =>
     call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
+
+  status: () => call<import("./types").SyncStatus>("sync_status"),
+  syncNow: () => call<import("./types").SyncReport>("sync_now"),
 
   token: () => call<string | null>("sync_token"),
   rotateToken: (id?: string) =>

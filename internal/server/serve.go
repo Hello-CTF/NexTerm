@@ -21,7 +21,6 @@ type Lifecycle interface {
 type ServeConfig struct {
 	Server          Config
 	Lifecycle       Lifecycle
-	Tokens          TokenStore
 	Stderr          io.Writer
 	Listener        net.Listener
 	ShutdownTimeout time.Duration
@@ -43,14 +42,6 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 	if config.ShutdownTimeout <= 0 {
 		config.ShutdownTimeout = 10 * time.Second
 	}
-	if config.Server.Tokens == nil && config.Tokens != nil {
-		if verifier, ok := config.Tokens.(TokenVerifier); ok {
-			config.Server.Tokens = verifier
-		}
-	}
-	if config.Tokens == nil {
-		config.Tokens, _ = config.Server.Tokens.(TokenStore)
-	}
 	if !config.Server.Options.SyncOnly && config.Server.Blobs == nil && config.Server.Options.DataDir != "" {
 		config.Server.Blobs = NewBlobStore(config.Server.Options.DataDir, config.Server.Logger)
 	}
@@ -60,11 +51,6 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 		config.Server.Logger.Warn("no vault master key provided; credential synchronization may be unavailable")
 	} else if err := BootstrapVault(ctx, config.Server.Vault, config.Server.Options.MasterKey); err != nil {
 		config.Server.Logger.Error("vault bootstrap failed", "error", err)
-	}
-	if config.Tokens != nil {
-		if _, err := config.Tokens.SyncToken(ctx); err != nil {
-			config.Server.Logger.Warn("sync token initialization failed", "error", err)
-		}
 	}
 
 	server, err := New(config.Server)

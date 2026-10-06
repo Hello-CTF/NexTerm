@@ -13,11 +13,11 @@ func TestParseCLICommandShapesAndFlagPositions(t *testing.T) {
 	}
 	getenv := func(key string) string { return environment[key] }
 
-	invocation, err := ParseCLI([]string{"--data-dir", "/flag/data", "rotate-token", "--sync-only=false"}, CommandServe, getenv)
+	invocation, err := ParseCLI([]string{"--data-dir", "/flag/data", "serve", "--sync-only=false"}, CommandServe, getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invocation.Command != CommandRotateToken || invocation.DataDir != "/flag/data" || invocation.SyncOnly {
+	if invocation.Command != CommandServe || invocation.DataDir != "/flag/data" || invocation.SyncOnly {
 		t.Fatalf("invocation = %+v", invocation)
 	}
 	if invocation.Listen != "127.0.0.1:9000" || invocation.WebRoot != "/env/web" || invocation.MasterKey != "env-secret" {
@@ -31,10 +31,6 @@ func TestParseCLICommandShapesAndFlagPositions(t *testing.T) {
 	invocation, err = ParseCLI([]string{"desktop", "--listen=127.0.0.1:0"}, CommandServe, nil)
 	if err != nil || invocation.Command != CommandDesktop {
 		t.Fatalf("desktop = %+v, %v", invocation, err)
-	}
-	invocation, err = ParseCLI([]string{"token"}, CommandServe, nil)
-	if err != nil || invocation.Command != CommandToken {
-		t.Fatalf("token = %+v, %v", invocation, err)
 	}
 }
 

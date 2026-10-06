@@ -42,12 +42,6 @@ func run(args []string) int {
 	}
 
 	switch invocation.Command {
-	case core.CommandToken, core.CommandRotateToken:
-		if err := runServerTokenCommand(invocation); err != nil {
-			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
-			return 1
-		}
-		return 0
 	case core.CommandDesktop:
 		fmt.Fprintln(os.Stderr, "nexterm-server: use the nexterm-desktop binary for the desktop command")
 		return 2
@@ -139,16 +133,11 @@ func run(args []string) int {
 			return 1
 		}
 	}
-	if accounts != nil && !invocation.SyncOnly && invocation.Auth != core.AuthOff {
+	if accounts != nil && invocation.Auth != core.AuthOff {
 		if err := printAccountInitCode(ctx, accounts, os.Stderr, logger.Logger); err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 			return 1
 		}
-	}
-	syncDispatcher, err := application.Services.Sync.PeerDispatcher()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
-		return 1
 	}
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
 	var settings server.SettingStore
@@ -168,19 +157,20 @@ func run(args []string) int {
 			Auth:          invocation.Auth,
 			PublicBaseURL: invocation.PublicBaseURL,
 		},
-		Dispatcher:   application.Dispatcher,
-		Environment:  application.Environment(""),
-		SyncRPC:      application.SyncRPCHandler(),
-		Accounts:     accounts,
-		Events:       broker,
-		Channels:     hubAdapter,
-		ChannelStats: hubAdapter.Stats,
-		Vault:        application.Services.Vault,
-		Retention:    serverRetentionConfig(application.Services.Retention),
-		Settings:     settings,
-		AuditFunc:    audit,
-		Logger:       logger.Logger,
-		WebSocket:    webSocket,
+		Dispatcher:     application.Dispatcher,
+		Environment:    application.Environment(""),
+		SyncObjects:    application.SyncObjectHandler(),
+		GatewayAuthKey: application.Services.Sync.GatewayAuthKey(),
+		Accounts:       accounts,
+		Events:         broker,
+		Channels:       hubAdapter,
+		ChannelStats:   hubAdapter.Stats,
+		Vault:          application.Services.Vault,
+		Retention:      serverRetentionConfig(application.Services.Retention),
+		Settings:       settings,
+		AuditFunc:      audit,
+		Logger:         logger.Logger,
+		WebSocket:      webSocket,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
@@ -206,8 +196,6 @@ func run(args []string) int {
 		Listen:         invocation.Listen,
 		WebRoot:        invocation.WebRoot,
 		SyncOnly:       invocation.SyncOnly,
-		SyncRPC:        application.SyncRPCHandler(),
-		SyncDispatcher: syncDispatcher,
 		Transport:      transport.Handler(),
 		CloseTransport: transport.CloseContext,
 		Stderr:         os.Stderr,
@@ -258,30 +246,4 @@ func printAccountInitCode(ctx context.Context, accounts *account.Accounts, stder
 	}
 	fmt.Fprintf(stderr, "\nnexterm-server: 账号系统尚未初始化\nnexterm-server: 一次性初始化码: %s\nnexterm-server: 请在浏览器中打开本服务完成超管账号初始化(初始化码仅可使用一次)\n\n", code)
 	return nil
-}
-
-func runServerTokenCommand(invocation core.Invocation) error {
-	paths, err := platform.ServerPaths(invocation.DataDir)
-	if err != nil {
-		return err
-	}
-	masterKey, err := server.ResolveMasterKey(invocation.MasterKey, invocation.MasterKeyFile)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	application, err := production.NewProduction(ctx, production.ProductionConfig{DataDir: paths.DataDir, Desktop: false})
-	if err != nil {
-		return err
-	}
-	if masterKey != "" {
-		if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
-			return err
-		}
-	}
-	if err := application.Start(ctx); err != nil {
-		return err
-	}
-	defer func() { _ = application.Shutdown(context.Background()) }()
-	return core.RunTokenCommand(ctx, invocation.Command, application.TokenStore(), os.Stdout)
 }

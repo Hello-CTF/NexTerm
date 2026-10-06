@@ -65,7 +65,7 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	serveResult := make(chan error, 1)
 	go func() {
 		serveResult <- Serve(ctx, ServeConfig{
-			Server: config, Lifecycle: lifecycle, Tokens: tokens,
+			Server: config, Lifecycle: lifecycle,
 			Stderr: &stderr, Listener: listener, ShutdownTimeout: 2 * time.Second,
 		})
 	}()
@@ -90,9 +90,9 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	if !health.OK || health.Vault == nil {
 		t.Fatalf("health = %+v", health)
 	}
-	status, body := postRPC(t, client, "http://"+listener.Addr().String()+"/sync/rpc", "sync_digest", map[string]string{TokenHeader: "secret"})
+	status, body := postRPC(t, client, "http://"+listener.Addr().String()+"/rpc", "app_info", map[string]string{TokenHeader: "secret"})
 	if status != http.StatusOK || !body.OK {
-		t.Fatalf("sync response = %d %+v", status, body)
+		t.Fatalf("rpc response = %d %+v", status, body)
 	}
 	dialCtx, stopDial := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopDial()
@@ -120,12 +120,6 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	lifecycle.mu.Unlock()
 	if started != 1 || shutdown != 1 {
 		t.Fatalf("lifecycle start=%d shutdown=%d", started, shutdown)
-	}
-	tokens.mu.Lock()
-	syncCalls := tokens.syncCalls
-	tokens.mu.Unlock()
-	if syncCalls == 0 {
-		t.Fatal("startup did not ensure sync token")
 	}
 	credentialVault.mu.Lock()
 	initialized := credentialVault.initialized

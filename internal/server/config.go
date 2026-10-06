@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,11 +16,7 @@ const DefaultListen = "0.0.0.0:8080"
 
 type Command = core.Command
 
-const (
-	CommandServe       = core.CommandServe
-	CommandToken       = core.CommandToken
-	CommandRotateToken = core.CommandRotateToken
-)
+const CommandServe = core.CommandServe
 
 const (
 	AuthOn       = core.AuthOn
@@ -46,8 +41,6 @@ type Invocation struct {
 	Help    bool
 	Version bool
 }
-
-type TokenStore = core.TokenStore
 
 func ParseCLI(args []string, getenv func(string) string) (Invocation, error) {
 	parsed, err := core.ParseCLI(args, core.CommandServe, getenv)
@@ -112,8 +105,6 @@ func Usage(program string) string {
 
 Commands:
   serve         Run the HTTP server (default)
-  token         Print the current sync token to stdout
-  rotate-token  Rotate and print the sync token to stdout
 
 Flags:
   --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
@@ -133,10 +124,6 @@ Flags:
   --version           Print the version
   -h, --help          Print this help
 `, program)
-}
-
-func RunTokenCommand(ctx context.Context, command Command, store TokenStore, stdout io.Writer) error {
-	return core.RunTokenCommand(ctx, command, store, stdout)
 }
 
 func ProbeWebRoot() string {

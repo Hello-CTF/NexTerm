@@ -91,6 +91,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [matches, setMatches] = useState<TranscriptMatch[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
 
@@ -304,6 +305,18 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     }
   };
 
+  const toggleTranscriptSync = async (summary: TranscriptSummary) => {
+    const optIn = !summary.syncOptIn;
+    try {
+      await transcriptApi.syncOptIn(summary.id, optIn);
+      setSyncToggleError(null);
+      pushToast("success", optIn ? "已开启这条记录的同步" : "已关闭这条记录的同步");
+      await loadSessions();
+    } catch (error) {
+      setSyncToggleError(describeError(error));
+    }
+  };
+
   const hostOptions = hosts ?? [];
   const sessionList = sessions ?? [];
 
@@ -351,6 +364,16 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
         </div>
       )}
 
+      {syncToggleError && (
+        <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
+          <IconAlert size={13} />
+          切换同步失败：{syncToggleError}
+          <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => setSyncToggleError(null)}>
+            关闭
+          </button>
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <div className="flex max-h-[38%] min-h-0 flex-col border-b border-neutral-800/60 md:max-h-none md:w-[300px] md:shrink-0 md:border-b-0 md:border-r">
           <div className="min-h-0 flex-1 overflow-auto">
@@ -381,6 +404,19 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                     </td>
                     <td className="nx-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {summary.endedAt !== null && (
+                          <button
+                            className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
+                            title={summary.syncOptIn ? "这条记录已开启同步，点击关闭" : "开启这条记录的同步"}
+                            aria-label={summary.syncOptIn ? "关闭这条记录的同步" : "开启这条记录的同步"}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void toggleTranscriptSync(summary);
+                            }}
+                          >
+                            {summary.syncOptIn ? "已同步" : "同步"}
+                          </button>
+                        )}
                         <span className={badgeClass(summary)}>
                           <span className="nx-dot" />
                           {badgeText(summary)}

@@ -13,6 +13,9 @@ import (
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
+	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
 func testLogger() *slog.Logger {
@@ -22,14 +25,6 @@ func testLogger() *slog.Logger {
 func testDispatcher(t *testing.T) *ipc.Dispatcher {
 	t.Helper()
 	dispatcher := ipc.NewDispatcher()
-	for _, command := range SyncOnlyCommands() {
-		command := command
-		if err := dispatcher.RegisterRaw(command, func(context.Context, *ipc.Call) (any, error) {
-			return map[string]string{"command": command}, nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for _, command := range []string{"app_info", "app_platform", "terminal_attach", "sync_push", "sync_pull", "sync_link_set"} {
 		command := command
 		if err := dispatcher.RegisterRaw(command, func(context.Context, *ipc.Call) (any, error) {
@@ -72,10 +67,45 @@ func testConfig(t *testing.T, syncOnly bool) Config {
 		Tokens: TokenVerifierFunc(func(_ context.Context, token string) (bool, error) {
 			return token == "secret", nil
 		}),
+		SyncObjects: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"data":{"source":"test"}}`))
+		}),
 		Channels: unavailableChannels(),
 		Version:  "test-version",
 		Logger:   testLogger(),
 	}
+}
+
+// newRealSyncService 装配一个真实的 v2 同步服务(内存库+已解锁凭据库), 供需要同步模块的集成测试使用。
+func newRealSyncService(t *testing.T) (*store.Store, *vault.Vault, *syncservice.Service) {
+	t.Helper()
+	ctx := context.Background()
+	db, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	credentialVault := vault.Load(ctx, db)
+	if err := credentialVault.InitMaster(ctx, "sync-test-master"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(credentialVault.Lock)
+	service := syncservice.New(db, credentialVault, syncservice.WithMetadata("server-test", false), syncservice.WithGatewayAuthKey("gateway-secret"))
+	if err := service.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	return db, credentialVault, service
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func newTestHTTP(t *testing.T, config Config) (*Server, *httptest.Server) {
