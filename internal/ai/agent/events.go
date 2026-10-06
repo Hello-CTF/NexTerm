@@ -123,6 +123,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		}
 	case "canceled":
 		payload["message"] = e.Message
+	case "paused":
+		payload["reason"], payload["tabId"] = e.Reason, e.TabID
 	case "subagentDelta":
 		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
 		payload["text"] = e.Text

@@ -1,6 +1,8 @@
 package takeover
 
 import (
+	"context"
+
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
 	"github.com/ProbiusOfficial/NexTerm/internal/session"
 )
@@ -17,11 +19,22 @@ func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 		}
 		return tab.SessionID
 	}
+	deps.TabAsset = func(ctx context.Context, tabID string) (string, error) {
+		tab, err := manager.Tab(tabID)
+		if err != nil {
+			return "", err
+		}
+		sess, err := manager.Session(tab.SessionID)
+		if err != nil {
+			return "", err
+		}
+		return sess.Asset().ID, nil
+	}
 	return deps
 }
 
 func InstallSessionHooks(manager *session.Manager, takeoverManager *Manager) func() {
-	manager.SetUserInputHook(takeoverManager.Preempt)
+	manager.SetUserInputHook(takeoverManager.Pause)
 	return func() {
 		manager.SetUserInputHook(nil)
 	}

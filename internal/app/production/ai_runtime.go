@@ -53,6 +53,15 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	registry := tools.NewRegistry(toolsDeps)
 
+	grantsManager, err := guard.NewGrants(ctx, services.Store, func(ctx context.Context, event guard.GrantAuditEvent) error {
+		return toolsDeps.Audit(ctx, tools.AuditEntry{AssetID: event.DeviceID, Kind: "ai_grant", Payload: map[string]any{
+			"action": event.Action, "kinds": event.Kinds, "operation": event.Operation, "runId": event.RunID,
+		}})
+	})
+	if err != nil {
+		return err
+	}
+
 	contextDeps := aicontext.WithSession(aicontext.Dependencies{}, services.Sessions, services.Store, services.Database)
 	if services.Docker != nil {
 		contextDeps = aicontext.WithDocker(contextDeps, services.Docker)
@@ -90,9 +99,11 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 
 	takeoverDeps := takeover.Dependencies{
-		Model:      aiModelFactory(services.Profiles),
-		Permission: guardManager.Snapshot,
-		Audit:      toolsDeps.Audit,
+		Model:       aiModelFactory(services.Profiles),
+		Permission:  guardManager.Snapshot,
+		Grants:      grantsManager,
+		Checkpoints: agent.NewStoreCheckpoints(services.Store),
+		Audit:       toolsDeps.Audit,
 	}
 	takeoverDeps = takeover.WithSession(takeoverDeps, services.Sessions)
 	takeoverManager := takeover.NewManager(takeoverDeps)

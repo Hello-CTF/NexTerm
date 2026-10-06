@@ -31,6 +31,12 @@ func (m *Manager) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := ipc.Register(dispatcher, "ai_takeover_resume", func(ctx context.Context, call *ipc.Call, args ResumeArgs) (RunResponse, error) {
+		args.ChannelID = call.Channel.ID
+		return m.Resume(ctx, args, agent.IPCStreamFactory(call.Streams))
+	}); err != nil {
+		return err
+	}
 	return ipc.Register(dispatcher, "ai_takeover_exit", func(ctx context.Context, _ *ipc.Call, args struct {
 		TabID  string `json:"tabId"`
 		Token  string `json:"token"`
