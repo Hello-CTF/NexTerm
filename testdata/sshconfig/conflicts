@@ -1,0 +1,21 @@
+Host web
+    HostName web.example.com
+    Port 22
+    User deploy
+
+Host web
+    HostName web2.example.com
+
+Host db
+    HostName db.example.com
+    Port 3306
+
+Host api
+    HostName api.example.com
+    Port 8080
+    User svc
+
+Host dupendpoint
+    HostName api.example.com
+    Port 8080
+    User svc

@@ -1,0 +1,7 @@
+Host withkey
+    HostName withkey.example.com
+    IdentityFile /nonexistent/sshconfig-test/id_ed25519
+
+Host withkey2
+    HostName withkey2.example.com
+    IdentityFile /nonexistent/sshconfig-test/id_rsa

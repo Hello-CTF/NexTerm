@@ -1,0 +1,21 @@
+Host *
+    User globaluser
+    Port 22
+
+Match host *.example.com exec "test 1 = 1"
+    User matched
+    Port 2222
+
+Host web-* db-?
+    HostName ignored.example.com
+
+Host !badpattern
+    HostName alsoignored.example.com
+
+Host concrete
+    HostName concrete.example.com
+
+Match all
+Host aftermatch
+    HostName aftermatch.example.com
+    User after

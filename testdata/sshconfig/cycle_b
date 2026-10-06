@@ -1,0 +1,4 @@
+Include cycle_a
+
+Host cycleb
+    HostName cycleb.example.com

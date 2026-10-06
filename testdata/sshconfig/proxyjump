@@ -1,0 +1,38 @@
+Host bastion
+    HostName bastion.example.com
+
+Host app
+    HostName app.example.com
+    ProxyJump bastion
+
+Host db
+    HostName db.example.com
+    ProxyJump app,bastion
+
+Host loop1
+    HostName loop1.example.com
+    ProxyJump loop2
+
+Host loop2
+    HostName loop2.example.com
+    ProxyJump loop1
+
+Host selfy
+    HostName selfy.example.com
+    ProxyJump selfy
+
+Host dangling
+    HostName dangling.example.com
+    ProxyJump ghost
+
+Host nonejump
+    HostName nonejump.example.com
+    ProxyJump none
+
+Host external
+    HostName external.example.com
+    ProxyJump jumpuser@asset1:2222
+
+Host ipv6
+    HostName ipv6.example.com
+    ProxyJump [2001:db8::1]:22
