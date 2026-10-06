@@ -107,7 +107,13 @@ func productionModules(services ProductionServices) []Module {
 				if err := registerFilesCommands(dispatcher, services.Store); err != nil {
 					return err
 				}
-				return registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir)
+				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir); err != nil {
+					return err
+				}
+				if services.Vault != nil {
+					return registerSSHImportCommands(dispatcher, services.Store, services.Vault)
+				}
+				return nil
 			},
 			Component: closeStoreComponent(services.Store, services.Agent),
 		})

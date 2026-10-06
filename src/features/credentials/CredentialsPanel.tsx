@@ -5,6 +5,7 @@ import { ask } from "../../ui/dialogs";
 import { connectAsset, openCredentialsSidebar, openCredentialsViewTab, useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { NewCredentialModal } from "./NewCredentialModal";
+import { GenerateKeyModal } from "./GenerateKeyModal";
 import { kindMeta, formatTime } from "./meta";
 import { resolveCredentialCopy, type CredentialCopyField } from "./credentialCopy";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
@@ -28,6 +29,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
   const refresh = useRefreshCredentials();
   const unlock = useVaultUnlock();
   const [creating, setCreating] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   const status = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status() });
   const credentials = useQuery({ queryKey: ["credentials"], queryFn: () => vaultApi.listCredentials() });
@@ -63,6 +65,10 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
         >
           <IconCode size={12} />
           凭据视图
+        </button>
+        <button className="nx-btn nx-btn-outline nx-btn-sm shrink-0" onClick={() => setGenerating(true)}>
+          <IconKey size={12} />
+          生成密钥
         </button>
         <button className="nx-btn nx-btn-primary nx-btn-sm shrink-0" onClick={() => setCreating(true)}>
           <IconPlus size={12} />
@@ -120,6 +126,12 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
             setCreating(false);
             refresh();
           }}
+        />
+      )}
+      {generating && (
+        <GenerateKeyModal
+          onClose={() => setGenerating(false)}
+          onSaved={() => refresh()}
         />
       )}
     </div>

@@ -695,6 +695,25 @@ export const vaultApi = {
       passphrase?: string;
     },
   ) => call<void>("credential_update", { args: { id, ...patch } }),
+  generateKey: (name: string, algorithm?: "ed25519" | "rsa", passphrase?: string) =>
+    call<import("./types").GeneratedKeyDto>("vault_generate_key", {
+      args: { name, algorithm, passphrase },
+    }),
+};
+
+export type SshImportSource = "ssh-config" | "termius";
+export type SshImportItemAction = "import" | "overwrite" | "skip";
+
+export const sshImportApi = {
+  preview: (args: { source: SshImportSource; path?: string; confirmed?: boolean }) =>
+    call<import("./types").SshImportPreviewDto>("ssh_import_preview", { args }),
+  apply: (args: {
+    source: SshImportSource;
+    path?: string;
+    confirmed?: boolean;
+    hosts: { alias: string; action: SshImportItemAction }[];
+    keys: { name: string; action: SshImportItemAction }[];
+  }) => call<import("./types").SshImportApplyDto>("ssh_import_apply", { args }),
 };
 
 export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string };

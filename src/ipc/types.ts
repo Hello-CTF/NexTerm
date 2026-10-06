@@ -179,3 +179,23 @@ export type TerminalExitEvent = { tabId: string, exitCode: number | null, versio
 
 export type VaultStatusDto = { initialized: boolean, 
 mode: string, unlocked: boolean, autoLockMinutes: number, };
+
+export type SshImportAction = "add" | "skip-duplicate" | "conflict-alias" | "conflict-endpoint" | "blocked-jump";
+
+export type SshImportHostDto = { alias: string, hostname: string, port: number, username: string,
+identityFiles: string[], keyName: string, proxyJump: string, authMethod: string, source: string,
+action: SshImportAction, warnings: string[], };
+
+export type SshImportKeyDto = { aliases: string[], fingerprint: string, keyType: string,
+path: string, source: string, action: SshImportAction, warnings: string[], };
+
+export type SshImportDiagnosticDto = { code: string, source: string, message: string, };
+
+export type SshImportPreviewDto = { source: string, path: string,
+hosts: SshImportHostDto[], keys: SshImportKeyDto[], diagnostics: SshImportDiagnosticDto[], truncated: boolean, };
+
+export type SshImportApplyDto = { assetsCreated: number, assetsUpdated: number,
+credentialsCreated: number, credentialsUpdated: number, skipped: number, warnings: string[], };
+
+export type GeneratedKeyDto = { id: string, name: string, algorithm: string,
+fingerprint: string, publicKey: string, };
