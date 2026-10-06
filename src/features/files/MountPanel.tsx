@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { mountApi } from "../../ipc/commands";
@@ -7,6 +7,13 @@ import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
 import { IconArrowLeft, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
+
+const FIELD_IDLE_VALIDATION_MS = 500;
+
+function validateRequired(label: string, value: string): string | null {
+  if (!value.trim()) return `${label}不能为空`;
+  return null;
+}
 
 function MountUnavailable({ reason }: { reason: string }) {
   return (
@@ -47,6 +54,57 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const localPointErrorId = useId();
+  const remotePathErrorId = useId();
+  const localPointRef = useRef<HTMLInputElement>(null);
+  const remotePathRef = useRef<HTMLInputElement>(null);
+  const [localPointError, setLocalPointError] = useState<string | null>(null);
+  const [remotePathError, setRemotePathError] = useState<string | null>(null);
+  const localPointTimer = useRef<number | null>(null);
+  const remotePathTimer = useRef<number | null>(null);
+  const localPointValueRef = useRef(localPoint);
+  localPointValueRef.current = localPoint;
+  const remotePathValueRef = useRef(remotePath);
+  remotePathValueRef.current = remotePath;
+
+  useEffect(
+    () => () => {
+      if (localPointTimer.current !== null) window.clearTimeout(localPointTimer.current);
+      if (remotePathTimer.current !== null) window.clearTimeout(remotePathTimer.current);
+    },
+    [],
+  );
+
+  const onLocalPointChange = (value: string) => {
+    setLocalPoint(value);
+    if (localPointTimer.current !== null) window.clearTimeout(localPointTimer.current);
+    localPointTimer.current = window.setTimeout(() => {
+      localPointTimer.current = null;
+      setLocalPointError(validateRequired("挂载点", value));
+    }, FIELD_IDLE_VALIDATION_MS);
+  };
+  const onLocalPointBlur = () => {
+    if (localPointTimer.current !== null) {
+      window.clearTimeout(localPointTimer.current);
+      localPointTimer.current = null;
+    }
+    setLocalPointError(validateRequired("挂载点", localPointValueRef.current));
+  };
+  const onRemotePathChange = (value: string) => {
+    setRemotePath(value);
+    if (remotePathTimer.current !== null) window.clearTimeout(remotePathTimer.current);
+    remotePathTimer.current = window.setTimeout(() => {
+      remotePathTimer.current = null;
+      setRemotePathError(validateRequired("远端路径", value));
+    }, FIELD_IDLE_VALIDATION_MS);
+  };
+  const onRemotePathBlur = () => {
+    if (remotePathTimer.current !== null) {
+      window.clearTimeout(remotePathTimer.current);
+      remotePathTimer.current = null;
+    }
+    setRemotePathError(validateRequired("远端路径", remotePathValueRef.current));
+  };
 
   const mounts = useQuery({
     queryKey: ["mounts"],
@@ -65,8 +123,13 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       pushToast("info", "当前是「当前设备」会话 —— 本机文件直接在左栏文件树里看，不用挂载");
       return;
     }
-    if (!remotePath.trim() || !localPoint.trim()) {
-      pushToast("error", "远端路径与挂载点不能为空");
+    const pointErr = validateRequired("挂载点", localPoint);
+    const pathErr = validateRequired("远端路径", remotePath);
+    setLocalPointError(pointErr);
+    setRemotePathError(pathErr);
+    if (pointErr || pathErr) {
+      if (pointErr) localPointRef.current?.focus();
+      else remotePathRef.current?.focus();
       return;
     }
     setBusy(true);
@@ -184,24 +247,46 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
           <span className="nx-code">/mnt/point</span>（需 sshfs）
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            className="nx-input nx-input-sm w-[86px] font-mono"
-            value={localPoint}
-            onChange={(e) => setLocalPoint(e.target.value)}
-            placeholder="Z:"
-            aria-label="本地挂载点"
-            autoComplete="off"
-          />
+          <div className="w-[86px] shrink-0">
+            <input
+              ref={localPointRef}
+              className="nx-input nx-input-sm font-mono"
+              value={localPoint}
+              onChange={(e) => onLocalPointChange(e.target.value)}
+              onBlur={onLocalPointBlur}
+              placeholder="Z:"
+              aria-label="本地挂载点"
+              autoComplete="off"
+              aria-invalid={localPointError ? true : undefined}
+              aria-describedby={localPointError ? localPointErrorId : undefined}
+            />
+            {localPointError && (
+              <p id={localPointErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                {localPointError}
+              </p>
+            )}
+          </div>
           <span className="text-neutral-600">→</span>
-          <input
-            className="nx-input nx-input-sm min-w-[220px] flex-1 font-mono max-[560px]:min-w-[140px]"
-            value={remotePath}
-            onChange={(e) => setRemotePath(e.target.value)}
-            placeholder="\\10.0.0.8\share  或  user@host:/data"
-            aria-label="远端路径"
-            autoComplete="off"
-            onKeyDown={(e) => e.key === "Enter" && !isImeKeyEvent(e) && void create()}
-          />
+          <div className="min-w-[220px] flex-1 max-[560px]:min-w-[140px]">
+            <input
+              ref={remotePathRef}
+              className="nx-input nx-input-sm font-mono"
+              value={remotePath}
+              onChange={(e) => onRemotePathChange(e.target.value)}
+              onBlur={onRemotePathBlur}
+              placeholder="\\10.0.0.8\share  或  user@host:/data"
+              aria-label="远端路径"
+              autoComplete="off"
+              aria-invalid={remotePathError ? true : undefined}
+              aria-describedby={remotePathError ? remotePathErrorId : undefined}
+              onKeyDown={(e) => e.key === "Enter" && !isImeKeyEvent(e) && void create()}
+            />
+            {remotePathError && (
+              <p id={remotePathErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                {remotePathError}
+              </p>
+            )}
+          </div>
           <input
             className="nx-input nx-input-sm w-[150px]"
             value={username}

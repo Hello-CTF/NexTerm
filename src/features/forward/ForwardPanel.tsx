@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -22,6 +22,19 @@ const FALLBACK_LISTEN_HOST = "127.0.0.1";
 
 const LAZYCAT_UNAVAILABLE =
   "检测到懒猫微服，端口转发在此平台上暂不可用，您可以前往微服平台使用更强大的原生转发功能";
+
+const FIELD_IDLE_VALIDATION_MS = 500;
+
+function validateRequired(label: string, value: string): string | null {
+  if (!value.trim()) return `${label}不能为空`;
+  return null;
+}
+
+function validatePort(label: string, value: string): string | null {
+  const port = Number(value.trim());
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return `${label}要填 1–65535 之间的整数`;
+  return null;
+}
 
 export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const qc = useQueryClient();
@@ -53,9 +66,91 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["forwards"] });
 
+  const listenPortLabel = exposed ? "监听端口" : "本地端口";
+  const listenPortErrorId = useId();
+  const targetHostErrorId = useId();
+  const targetPortErrorId = useId();
+  const listenPortRef = useRef<HTMLInputElement>(null);
+  const targetHostRef = useRef<HTMLInputElement>(null);
+  const targetPortRef = useRef<HTMLInputElement>(null);
+  const [listenPortError, setListenPortError] = useState<string | null>(null);
+  const [targetHostError, setTargetHostError] = useState<string | null>(null);
+  const [targetPortError, setTargetPortError] = useState<string | null>(null);
+  const listenPortTimer = useRef<number | null>(null);
+  const targetHostTimer = useRef<number | null>(null);
+  const targetPortTimer = useRef<number | null>(null);
+  const listenPortValueRef = useRef(listenPort);
+  listenPortValueRef.current = listenPort;
+  const targetHostValueRef = useRef(targetHost);
+  targetHostValueRef.current = targetHost;
+  const targetPortValueRef = useRef(targetPort);
+  targetPortValueRef.current = targetPort;
+
+  useEffect(
+    () => () => {
+      if (listenPortTimer.current !== null) window.clearTimeout(listenPortTimer.current);
+      if (targetHostTimer.current !== null) window.clearTimeout(targetHostTimer.current);
+      if (targetPortTimer.current !== null) window.clearTimeout(targetPortTimer.current);
+    },
+    [],
+  );
+
+  const onListenPortChange = (value: string) => {
+    setListenPort(value);
+    if (listenPortTimer.current !== null) window.clearTimeout(listenPortTimer.current);
+    listenPortTimer.current = window.setTimeout(() => {
+      listenPortTimer.current = null;
+      setListenPortError(validatePort(listenPortLabel, value));
+    }, FIELD_IDLE_VALIDATION_MS);
+  };
+  const onListenPortBlur = () => {
+    if (listenPortTimer.current !== null) {
+      window.clearTimeout(listenPortTimer.current);
+      listenPortTimer.current = null;
+    }
+    setListenPortError(validatePort(listenPortLabel, listenPortValueRef.current));
+  };
+  const onTargetHostChange = (value: string) => {
+    setTargetHost(value);
+    if (targetHostTimer.current !== null) window.clearTimeout(targetHostTimer.current);
+    targetHostTimer.current = window.setTimeout(() => {
+      targetHostTimer.current = null;
+      setTargetHostError(validateRequired("目标主机", value));
+    }, FIELD_IDLE_VALIDATION_MS);
+  };
+  const onTargetHostBlur = () => {
+    if (targetHostTimer.current !== null) {
+      window.clearTimeout(targetHostTimer.current);
+      targetHostTimer.current = null;
+    }
+    setTargetHostError(validateRequired("目标主机", targetHostValueRef.current));
+  };
+  const onTargetPortChange = (value: string) => {
+    setTargetPort(value);
+    if (targetPortTimer.current !== null) window.clearTimeout(targetPortTimer.current);
+    targetPortTimer.current = window.setTimeout(() => {
+      targetPortTimer.current = null;
+      setTargetPortError(validatePort("目标端口", value));
+    }, FIELD_IDLE_VALIDATION_MS);
+  };
+  const onTargetPortBlur = () => {
+    if (targetPortTimer.current !== null) {
+      window.clearTimeout(targetPortTimer.current);
+      targetPortTimer.current = null;
+    }
+    setTargetPortError(validatePort("目标端口", targetPortValueRef.current));
+  };
+
   const switchKind = (k: Kind) => {
+    if (listenPortTimer.current !== null) {
+      window.clearTimeout(listenPortTimer.current);
+      listenPortTimer.current = null;
+    }
     setKind(k);
     setListenPort(DEFAULT_PORT[k]);
+    setListenPortError(null);
+    setTargetHostError(null);
+    setTargetPortError(null);
   };
 
   const create = async () => {
@@ -74,22 +169,19 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       );
       return;
     }
-    const port = Number(listenPort.trim());
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      pushToast("error", "本地端口要填 1–65535 之间的整数");
+    const portErr = validatePort(listenPortLabel, listenPort);
+    const hostErr = kind === "local" ? validateRequired("目标主机", targetHost) : null;
+    const tPortErr = kind === "local" ? validatePort("目标端口", targetPort) : null;
+    setListenPortError(portErr);
+    setTargetHostError(hostErr);
+    setTargetPortError(tPortErr);
+    if (portErr || hostErr || tPortErr) {
+      if (portErr) listenPortRef.current?.focus();
+      else if (hostErr) targetHostRef.current?.focus();
+      else targetPortRef.current?.focus();
       return;
     }
-    if (kind === "local") {
-      if (!targetHost.trim()) {
-        pushToast("error", "目标主机不能为空");
-        return;
-      }
-      const tp = Number(targetPort.trim());
-      if (!Number.isInteger(tp) || tp < 1 || tp > 65535) {
-        pushToast("error", "目标端口要填 1–65535 之间的整数");
-        return;
-      }
-    }
+    const port = Number(listenPort.trim());
 
     setBusy(true);
     try {
@@ -300,42 +392,75 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
 
             <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11.5px] text-neutral-400" htmlFor={listenPortId}>
-                {exposed ? "监听端口" : "本地端口"}
+                {listenPortLabel}
               </label>
-              <input
-                id={listenPortId}
-                className="nx-input nx-input-sm w-[92px] font-mono"
-                value={listenPort}
-                onChange={(e) => setListenPort(e.target.value)}
-                placeholder={DEFAULT_PORT[kind]}
-                autoComplete="off"
-                inputMode="numeric"
-              />
+              <div className="w-[92px] shrink-0">
+                <input
+                  id={listenPortId}
+                  ref={listenPortRef}
+                  className="nx-input nx-input-sm font-mono"
+                  value={listenPort}
+                  onChange={(e) => onListenPortChange(e.target.value)}
+                  onBlur={onListenPortBlur}
+                  placeholder={DEFAULT_PORT[kind]}
+                  autoComplete="off"
+                  inputMode="numeric"
+                  aria-invalid={listenPortError ? true : undefined}
+                  aria-describedby={listenPortError ? listenPortErrorId : undefined}
+                />
+                {listenPortError && (
+                  <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                    {listenPortError}
+                  </p>
+                )}
+              </div>
               {kind === "local" && (
                 <>
                   <span className="text-neutral-600">→</span>
-                  <input
-                    className="nx-input nx-input-sm min-w-[200px] flex-1 font-mono"
-                    value={targetHost}
-                    onChange={(e) => setTargetHost(e.target.value)}
-                    placeholder="目标主机（相对远端解析，如 172.17.0.5 / db.internal）"
-                    aria-label="目标主机"
-                    autoComplete="off"
-                  />
+                  <div className="min-w-[200px] flex-1">
+                    <input
+                      ref={targetHostRef}
+                      className="nx-input nx-input-sm font-mono"
+                      value={targetHost}
+                      onChange={(e) => onTargetHostChange(e.target.value)}
+                      onBlur={onTargetHostBlur}
+                      placeholder="目标主机（相对远端解析，如 172.17.0.5 / db.internal）"
+                      aria-label="目标主机"
+                      autoComplete="off"
+                      aria-invalid={targetHostError ? true : undefined}
+                      aria-describedby={targetHostError ? targetHostErrorId : undefined}
+                    />
+                    {targetHostError && (
+                      <p id={targetHostErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                        {targetHostError}
+                      </p>
+                    )}
+                  </div>
                   <span className="text-neutral-600">:</span>
-                  <input
-                    className="nx-input nx-input-sm w-[92px] font-mono"
-                    value={targetPort}
-                    onChange={(e) => setTargetPort(e.target.value)}
-                    placeholder="3306"
-                    aria-label="目标端口"
-                    autoComplete="off"
-                    inputMode="numeric"
-                    onKeyDown={(e) => {
-                      if (isImeKeyEvent(e)) return;
-                      if (e.key === "Enter") void create();
-                    }}
-                  />
+                  <div className="w-[92px] shrink-0">
+                    <input
+                      ref={targetPortRef}
+                      className="nx-input nx-input-sm font-mono"
+                      value={targetPort}
+                      onChange={(e) => onTargetPortChange(e.target.value)}
+                      onBlur={onTargetPortBlur}
+                      placeholder="3306"
+                      aria-label="目标端口"
+                      autoComplete="off"
+                      inputMode="numeric"
+                      aria-invalid={targetPortError ? true : undefined}
+                      aria-describedby={targetPortError ? targetPortErrorId : undefined}
+                      onKeyDown={(e) => {
+                        if (isImeKeyEvent(e)) return;
+                        if (e.key === "Enter") void create();
+                      }}
+                    />
+                    {targetPortError && (
+                      <p id={targetPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                        {targetPortError}
+                      </p>
+                    )}
+                  </div>
                 </>
               )}
               <button
