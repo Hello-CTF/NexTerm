@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { assetApi, syncApi, type Asset, type AssetGroup } from "../../ipc/commands";
+import { assetApi, syncApi, transcriptApi, type Asset, type AssetGroup, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
 import type { SyncReport, SnippetDto } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import {
   base64ToBytes,
   bytesToBase64,
+  objectPayloadHash,
   sealSyncObject,
   tryOpenSyncObject,
   utf8Bytes,
@@ -75,18 +76,29 @@ function DesktopLinkCard() {
   const [link, setLink] = useState<AccountLink | null>(null);
   const [status, setStatus] = useState<SyncStatusView | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
+  const [draftEdited, setDraftEdited] = useState(false);
   const [busy, setBusy] = useState<null | "save" | "sync">(null);
   const [report, setReport] = useState<SyncReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const updateDraft = (patch: Partial<{ url: string; username: string; password: string; insecure: boolean }>) => {
+    setDraftEdited(true);
+    setDraft((d) => ({ ...d, ...patch }));
+  };
+
   const load = useCallback(() => {
     setLoadError(null);
     return Promise.all([
-      syncApi.linkGet().then((l) => setLink(l as unknown as AccountLink)),
+      syncApi.linkGet().then((l) => {
+        const next = l as unknown as AccountLink;
+        setLink(next);
+        // 初次加载用已保存链接回填 URL/用户名/insecure;密码保持空白;不覆盖未保存编辑
+        setDraft((d) => (draftEdited ? d : { ...d, url: next.url, username: next.username, insecure: next.insecure }));
+      }),
       syncApi.status().then((s) => setStatus(s as unknown as SyncStatusView)),
     ]).catch((e: unknown) => setLoadError(describeError(e)));
-  }, []);
+  }, [draftEdited]);
 
   useEffect(() => {
     void load();
@@ -176,7 +188,7 @@ function DesktopLinkCard() {
             placeholder="https://nexterm.example.com"
             value={draft.url}
             autoComplete="url"
-            onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
+            onChange={(e) => updateDraft({ url: e.target.value })}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -189,7 +201,7 @@ function DesktopLinkCard() {
             placeholder="用户名"
             value={draft.username}
             autoComplete="username"
-            onChange={(e) => setDraft((d) => ({ ...d, username: e.target.value }))}
+            onChange={(e) => updateDraft({ username: e.target.value })}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -203,7 +215,7 @@ function DesktopLinkCard() {
             placeholder={link?.hasPassword ? "留空 = 不修改已保存的密码" : "账号密码(用于解锁数据密钥)"}
             value={draft.password}
             autoComplete="new-password"
-            onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))}
+            onChange={(e) => updateDraft({ password: e.target.value })}
           />
         </div>
         <label className="flex items-start gap-2">
@@ -211,7 +223,7 @@ function DesktopLinkCard() {
             type="checkbox"
             className="mt-0.5 h-4 w-4 shrink-0"
             checked={draft.insecure}
-            onChange={(e) => setDraft((d) => ({ ...d, insecure: e.target.checked }))}
+            onChange={(e) => updateDraft({ insecure: e.target.checked })}
           />
           <span className="text-[12px] text-neutral-300">
             跳过证书校验
@@ -269,6 +281,7 @@ interface LocalEntity {
   updatedAt: number;
   deletedAt: number | null;
   payload: unknown;
+  payloadHash: string;
 }
 
 interface RemoteObject {
@@ -278,6 +291,13 @@ interface RemoteObject {
   updatedAt: number;
   deletedAt: number | null;
   seq: number;
+  payloadHash: string;
+}
+
+interface RemoteState {
+  objects: RemoteObject[];
+  head: string;
+  maxSeq: number;
 }
 
 function groupPayload(g: AssetGroup): unknown {
@@ -322,23 +342,79 @@ function snippetPayload(s: SnippetDto): unknown {
   return o;
 }
 
+// transcriptObject 与 internal/sync/object.go 的 transcriptObject 对齐。
+function transcriptPayload(t: TranscriptSummary, content: TranscriptChunk[] | null): unknown {
+  const o: Record<string, unknown> = {
+    id: t.id,
+    assetId: t.assetId,
+    assetName: t.assetName,
+    assetKind: t.assetKind,
+    startedAt: t.startedAt,
+    endedAt: t.endedAt ?? 0,
+    bytes: t.bytes,
+    chunks: t.chunks,
+    truncated: t.truncated,
+  };
+  if (t.sessionId) o.sessionId = t.sessionId;
+  if (t.contentOmitted || content === null) {
+    o.contentOmitted = true;
+    return o;
+  }
+  o.content = content.map((c) => ({ seq: c.seq, tabId: c.tabId, ts: c.ts, data: c.dataBase64 }));
+  return o;
+}
+
+const TRANSCRIPT_MAX_CONTENT_BYTES = 64 << 20;
+
+async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
+  const hosts = await transcriptApi.hosts();
+  const out: LocalEntity[] = [];
+  for (const host of hosts) {
+    const summaries = await transcriptApi.list(host.assetId);
+    for (const t of summaries) {
+      if (!t.syncOptIn || t.active || t.endedAt === null) continue;
+      let content: TranscriptChunk[] | null = null;
+      if (!t.contentOmitted && t.bytes <= TRANSCRIPT_MAX_CONTENT_BYTES) {
+        const read = await transcriptApi.read(t.id);
+        content = read.chunks;
+      }
+      const payload = transcriptPayload(t, content);
+      out.push({
+        id: t.id,
+        kind: "transcript",
+        name: `${t.assetName} 的会话记录`,
+        updatedAt: t.endedAt ?? t.startedAt,
+        deletedAt: null,
+        payload,
+        payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))),
+      });
+    }
+  }
+  return out;
+}
+
 async function loadLocalEntities(): Promise<LocalEntity[]> {
-  const [groups, assets, snippets] = await Promise.all([
+  const [groups, assets, snippets, transcripts] = await Promise.all([
     assetApi.groupList(),
     assetApi.list(),
     assetApi.snippetList(),
+    loadOptedInTranscripts().catch(() => [] as LocalEntity[]),
   ]);
   const out: LocalEntity[] = [];
   for (const g of groups) {
-    out.push({ id: g.id, kind: "group", name: g.name, updatedAt: g.updatedAt, deletedAt: null, payload: groupPayload(g) });
+    const payload = groupPayload(g);
+    out.push({ id: g.id, kind: "group", name: g.name, updatedAt: g.updatedAt, deletedAt: null, payload, payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))) });
   }
   for (const a of assets) {
     if (a.builtin) continue;
-    out.push({ id: a.id, kind: "asset", name: a.name, updatedAt: a.updatedAt, deletedAt: a.deletedAt, payload: assetPayload(a) });
+    const payload = assetPayload(a);
+    out.push({ id: a.id, kind: "asset", name: a.name, updatedAt: a.updatedAt, deletedAt: a.deletedAt, payload, payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))) });
   }
   for (const s of snippets) {
-    out.push({ id: s.id, kind: "snippet", name: s.name, updatedAt: s.updatedAt, deletedAt: null, payload: snippetPayload(s) });
+    const payload = snippetPayload(s);
+    out.push({ id: s.id, kind: "snippet", name: s.name, updatedAt: s.updatedAt, deletedAt: null, payload, payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))) });
   }
+  out.push(...transcripts);
   return out;
 }
 
@@ -346,7 +422,7 @@ function revisionOf(updatedAt: number, deletedAt: number | null): number {
   return deletedAt !== null && deletedAt > updatedAt ? deletedAt : updatedAt;
 }
 
-async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteObject[]> {
+async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
   const ids = await syncV2Api.ids();
   const out: RemoteObject[] = [];
   for (const entry of ids.entries) {
@@ -354,10 +430,11 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteObject[]> {
     const wire = page.objects[0];
     if (!wire) continue;
     const { kind, plaintext } = await tryOpenSyncObject(dek, base64ToBytes(wire.blob), entry.id);
+    const payloadHash = await objectPayloadHash(plaintext);
     const text = new TextDecoder().decode(plaintext);
     if (kind === "tombstone") {
       const t = JSON.parse(text) as { targetKind?: string; deletedAt?: number };
-      out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq });
+      out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq, payloadHash });
       continue;
     }
     const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
@@ -368,9 +445,10 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteObject[]> {
       updatedAt: p.updatedAt ?? 0,
       deletedAt: p.deletedAt ?? null,
       seq: entry.seq,
+      payloadHash,
     });
   }
-  return out;
+  return { objects: out, head: ids.head, maxSeq: ids.max_seq };
 }
 
 function cursorKey(userId: string): string {
@@ -409,6 +487,14 @@ interface Row {
   remote?: RemoteObject;
 }
 
+// localWins 复刻 M117 merge.go 的 LWW 裁决:修订号大者胜,平手按载荷 sha256 字典序决胜。
+function localWins(l: LocalEntity, r: RemoteObject): boolean {
+  const lr = revisionOf(l.updatedAt, l.deletedAt);
+  const rr = revisionOf(r.updatedAt, r.deletedAt);
+  if (lr !== rr) return lr > rr;
+  return l.payloadHash > r.payloadHash;
+}
+
 function buildRows(local: LocalEntity[], remote: RemoteObject[]): Row[] {
   const remoteById = new Map(remote.map((r) => [r.id, r]));
   const rows: Row[] = [];
@@ -421,15 +507,16 @@ function buildRows(local: LocalEntity[], remote: RemoteObject[]): Row[] {
     remoteById.delete(l.id);
     const lr = revisionOf(l.updatedAt, l.deletedAt);
     const rr = revisionOf(r.updatedAt, r.deletedAt);
+    const wins = localWins(l, r);
     let state: RowState;
     if (r.kind === "tombstone" || r.deletedAt !== null) {
-      state = lr > rr ? "local-newer" : "remote-deleted";
+      state = wins ? "local-newer" : "remote-deleted";
     } else if (l.deletedAt !== null) {
-      state = lr >= rr ? "local-deleted" : "remote-newer";
-    } else if (lr === rr) {
+      state = wins ? "local-deleted" : "remote-newer";
+    } else if (lr === rr && l.payloadHash === r.payloadHash) {
       state = "same";
     } else {
-      state = lr > rr ? "local-newer" : "remote-newer";
+      state = wins ? "local-newer" : "remote-newer";
     }
     rows.push({ id: l.id, name: l.name, kind: l.kind, state, local: l, remote: r });
   }
@@ -574,39 +661,61 @@ function CompareConsole() {
     return Promise.all([loadLocalEntities(), loadRemoteObjects(dek)])
       .then(([l, r]) => {
         setLocal(l);
-        setRemote(r);
+        setRemote(r.objects);
+        // 游标以服务端最新 head/seq 为准(空 genesis 不得强制空字符串)
+        const next = { head: r.head, seq: r.maxSeq };
+        saveCursor(user.id, next);
+        setCursor(next);
       })
       .catch((e: unknown) => setError(describeError(e)));
-  }, [dek]);
+  }, [dek, user.id]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const pushable = useMemo(() => (local ?? []).filter((e) => e.deletedAt === null), [local]);
+  // winner 集合:仅本机独占或本地胜出(含平修订号按载荷 hash 决胜);计数与上传共用同一集合。
+  const winners = useMemo(() => {
+    if (!local || !remote) return [];
+    const remoteById = new Map(remote.map((r) => [r.id, r]));
+    return local.filter((e) => {
+      const r = remoteById.get(e.id);
+      return r === undefined || localWins(e, r);
+    });
+  }, [local, remote]);
 
   const push = async () => {
     setBusy("push");
     setError(null);
     setPushInfo(null);
     try {
-      const rank = (k: SyncObjectKind) => (k === "group" ? 0 : k === "snippet" ? 1 : 2);
-      const ordered = [...pushable].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
+      const rank = (k: SyncObjectKind) => {
+        switch (k) {
+          case "group": return 0;
+          case "credential": return 1;
+          case "snippet": return 2;
+          case "asset": return 3;
+          case "tombstone": return 4;
+          case "transcript": return 5;
+          default: return 6;
+        }
+      };
+      const ordered = [...winners].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
       const objects: { id: string; blob: string }[] = [];
       for (const e of ordered) {
         const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(e.payload)), e.id, e.kind);
         objects.push({ id: e.id, blob: bytesToBase64(blob) });
       }
-      let head = cursor.head;
+      // 推送前取服务端最新 head;409(他端已更新)时刷新 head 后重试一次。
+      const fresh = await syncV2Api.ids();
+      let head = fresh.head;
       let resp = await syncV2Api.push(head, objects);
-      let retried = false;
-      while (resp.applied === 0 && resp.skipped === 0 && objects.length > 0 && !retried) {
-        // 空推且对象非空:可能是 head 分叉被服务端跳过,刷新游标后重试一次
-        const ids = await syncV2Api.ids();
-        if (ids.head === head) break;
-        head = ids.head;
-        resp = await syncV2Api.push(head, objects);
-        retried = true;
+      if (resp.applied === 0 && resp.skipped === 0 && objects.length > 0) {
+        const again = await syncV2Api.ids();
+        if (again.head !== head) {
+          head = again.head;
+          resp = await syncV2Api.push(head, objects);
+        }
       }
       const next = { head: resp.head, seq: resp.max_seq };
       saveCursor(user.id, next);
@@ -625,11 +734,7 @@ function CompareConsole() {
     }
   };
 
-  const pushCount = pushable.filter((e) => {
-    const r = remote?.find((x) => x.id === e.id);
-    if (!r) return true;
-    return revisionOf(e.updatedAt, e.deletedAt) > revisionOf(r.updatedAt, r.deletedAt);
-  }).length;
+  const pushCount = winners.length;
 
   return (
     <section className="nx-card">
@@ -647,7 +752,7 @@ function CompareConsole() {
         </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
-          disabled={busy !== null || pushable.length === 0}
+          disabled={busy !== null || pushCount === 0}
           onClick={() => void push()}
         >
           {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}

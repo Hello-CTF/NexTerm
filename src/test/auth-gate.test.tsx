@@ -164,6 +164,36 @@ describe("AuthGate 首次初始化", () => {
   });
 });
 
+describe("AuthGate 恢复密钥全屏门", () => {
+  it("恢复密钥页在同一全屏门内,复制前不能进入", async () => {
+    useAuth.setState({
+      status: { initialized: true, registration_open: false, auth: "on" },
+      user: { id: "u-admin", username: "root", display_name: "", role: "superadmin", state: "active", must_change_password: false, created_at: 1, updated_at: 1, last_login_at: 1 },
+      dek: new Uint8Array(32).fill(9),
+      gate: "ready",
+      pendingRecoveryKey: { canonical: "X3QSWQP4PY4PVVAYPH7RNDV2CUAIQUKU", formatted: "X3QS-WQP4-PY4P-VVAY-PH7R-NDV2-CUAI-QUKU" },
+      error: null,
+    });
+    mounted = mountGate();
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+
+    // 全屏门容器(fixed inset-0)存在,底层应用被遮挡
+    const gate = mounted.container.querySelector(".fixed.inset-0");
+    expect(gate).not.toBeNull();
+
+    // 复制前「我已安全保存」不可用
+    const doneBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("我已安全保存")) as HTMLButtonElement | undefined;
+    expect(doneBtn?.disabled).toBe(true);
+
+    // 复制后可用
+    const copyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("复制")) as HTMLButtonElement | undefined;
+    copyBtn?.click();
+    await flush();
+    const doneBtn2 = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("我已安全保存")) as HTMLButtonElement | undefined;
+    expect(doneBtn2?.disabled).toBe(false);
+  });
+});
+
 describe("AuthGate 登录", () => {
   it("已初始化未登录时显示登录表单,登录成功进入应用", async () => {
     mounted = mountGate();
@@ -179,6 +209,31 @@ describe("AuthGate 登录", () => {
     expect(mocks.login).toHaveBeenCalledWith("root", "pw-123456");
     await flushUntil(() => useAuth.getState().user?.id === "u-admin");
     await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(useAuth.getState().gate).toBe("ready");
+  });
+
+  it("管理员创建的用户首登无信封:本地生成并上传,展示恢复密钥", async () => {
+    // GET /auth/dek 返回 not_found(管理员创建的用户尚无 DEK 信封)
+    mocks.dekGet.mockRejectedValue({ code: "not_found", message: "未找到: DEK 信封", status: 404 });
+    mounted = mountGate();
+    await flushUntil(() => mounted!.container.textContent?.includes("登录"));
+
+    const inputs = mounted.container.querySelectorAll("input");
+    setInputValue(inputs[0], "alice");
+    setInputValue(inputs[1], "pw-123456");
+    await flush();
+    clickButton(mounted.container, "登录");
+
+    await flushUntil(() => mocks.dekUpload.mock.calls.length > 0);
+    expect(mocks.dekUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dekEnvelope: expect.any(Uint8Array),
+        recoveryEnvelope: expect.any(Uint8Array),
+        recoveryHash: "hash-1",
+      }),
+    );
+    // 上传成功后进入恢复密钥一次性展示
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
     expect(useAuth.getState().gate).toBe("ready");
   });
 
@@ -239,10 +294,47 @@ describe("AuthGate reset_required 强制改密", () => {
     clickButton(mounted.container, "设置新密码");
 
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
-    expect(mocks.dekUpload).toHaveBeenCalled();
+    // changePassword 在事务内 upsert 信封并校验临时密码;不再先 dekUpload(insert-only 会在重试时 409 卡死)
+    expect(mocks.dekUpload).not.toHaveBeenCalled();
     expect(mocks.changePassword).toHaveBeenCalledWith(
       expect.objectContaining({ oldPassword: "temp-pw-123", newPassword: "new-pw-123" }),
     );
+  });
+
+  it("临时密码错误后,正确重试能成功(不因信封已存在 409 卡死)", async () => {
+    mocks.login.mockResolvedValue({
+      user: { ...ADMIN, state: "reset_required", must_change_password: true },
+      csrf_token: "csrf-1",
+    });
+    mocks.changePassword.mockRejectedValueOnce({ code: "forbidden", message: "原密码错误", status: 403 });
+    mounted = mountGate();
+    await flushUntil(() => mounted!.container.textContent?.includes("登录"));
+
+    const inputs = mounted.container.querySelectorAll("input");
+    setInputValue(inputs[0], "root");
+    setInputValue(inputs[1], "temp-pw-123");
+    await flush();
+    clickButton(mounted.container, "登录");
+
+    await flushUntil(() => mounted!.container.textContent?.includes("必须先设置新密码"));
+    const resetInputs = mounted.container.querySelectorAll("input");
+    setInputValue(resetInputs[0], "wrong-temp-pw");
+    setInputValue(resetInputs[1], "new-pw-123");
+    setInputValue(resetInputs[2], "new-pw-123");
+    await flush();
+    clickButton(mounted.container, "设置新密码");
+    await flushUntil(() => mounted!.container.textContent?.includes("原密码错误"));
+
+    // 重试:正确的临时密码应能走到 changePassword(不先在 dekUpload 处 409)
+    const retryInputs = mounted.container.querySelectorAll("input");
+    setInputValue(retryInputs[0], "temp-pw-123");
+    await flush();
+    clickButton(mounted.container, "设置新密码");
+    await flushUntil(() => mocks.changePassword.mock.calls.length >= 2);
+    expect(mocks.changePassword).toHaveBeenLastCalledWith(
+      expect.objectContaining({ oldPassword: "temp-pw-123", newPassword: "new-pw-123" }),
+    );
+    expect(mocks.dekUpload).not.toHaveBeenCalled();
   });
 });
 

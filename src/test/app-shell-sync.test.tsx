@@ -39,6 +39,10 @@ vi.mock("../ipc/commands", () => ({
     status: mocks.syncStatus,
     syncNow: mocks.syncNow,
   },
+  layoutApi: {
+    get: vi.fn().mockResolvedValue({ revision: 0, updatedAt: 0, data: null }),
+    put: vi.fn().mockResolvedValue({ saved: true, revision: 1, conflict: false }),
+  },
   terminalApi: {},
   dbApi: {},
 }));
@@ -120,7 +124,7 @@ describe("状态栏同步状态", () => {
       lastError: null,
     });
     mounted = mountApp();
-    await flush();
+    await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
 
     expect(syncStatusText()).toBe("同步：本地模式");
   });
@@ -135,7 +139,7 @@ describe("状态栏同步状态", () => {
       lastError: null,
     });
     mounted = mountApp();
-    await flush();
+    await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
 
     expect(syncStatusText()).toBe("同步：已配置");
   });

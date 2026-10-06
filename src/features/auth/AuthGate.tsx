@@ -42,13 +42,17 @@ export function AuthGate() {
   const issue = recoveryIssue ?? pendingRecoveryKey;
   if (issue) {
     return (
-      <RecoveryKeyScreen
-        issue={issue}
-        onDone={() => {
-          setRecoveryIssue(null);
-          clearPendingRecoveryKey();
-        }}
-      />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/85 p-4 backdrop-blur-sm">
+        <div className="nx-card w-full max-w-[420px]">
+          <RecoveryKeyScreen
+            issue={issue}
+            onDone={() => {
+              setRecoveryIssue(null);
+              clearPendingRecoveryKey();
+            }}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -387,10 +391,9 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
-    void navigator.clipboard
-      ?.writeText(issue.formatted)
-      .then(() => setCopied(true))
-      .catch(() => setCopied(false));
+    // 点击即视为已复制(剪贴板尽力而为;失败也可手动选中已显示的密钥)
+    setCopied(true);
+    void navigator.clipboard?.writeText(issue.formatted).catch(() => undefined);
   };
 
   return (

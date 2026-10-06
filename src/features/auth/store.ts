@@ -57,6 +57,15 @@ function zeroize(data: Uint8Array | null): void {
   if (data) data.fill(0);
 }
 
+function isNotFoundError(e: unknown): boolean {
+  if (e && typeof e === "object" && "code" in e) {
+    const code = (e as { code: string }).code;
+    const status = (e as { status?: number }).status;
+    return code === "not_found" || status === 404;
+  }
+  return false;
+}
+
 function toAppError(e: unknown): AppError {
   if (e && typeof e === "object" && "code" in e) return e as AppError;
   return { code: "internal", message: e instanceof Error ? e.message : String(e) };
@@ -161,8 +170,19 @@ export const useAuth = create<AuthState>((set, get) => ({
         set({ gate: "reset_required" });
         return;
       }
-      const dek = await fetchAndUnwrapDEK(password);
-      set({ dek, gate: "ready" });
+      // 管理员创建的用户可能还没有 DEK 信封:用登录密码本地生成并上传(insert-only)。
+      let dek: Uint8Array;
+      let recovery: RecoveryKeyIssue | null = null;
+      try {
+        dek = await fetchAndUnwrapDEK(password);
+      } catch (e) {
+        if (!isNotFoundError(e)) throw e;
+        dek = generateDEK();
+        const built = await buildEnvelopes(password, dek);
+        await authApi.dekUpload(built.fields);
+        recovery = built.recovery;
+      }
+      set({ dek, gate: "ready", ...(recovery ? { pendingRecoveryKey: recovery } : {}) });
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
@@ -208,13 +228,13 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  // reset_required(管理员重置):信封已被服务端删除,用新密码签发全新 DEK 并上传。
+  // reset_required(管理员重置):信封已被服务端删除,用新密码签发全新 DEK。
+  // changePassword 在事务内校验临时密码并 upsert 信封;不能先 dekUpload(insert-only),否则重试因信封已存在 409 卡死。
   completeResetRequired: async (tempPassword, newPassword) => {
     set({ error: null });
     const dek = generateDEK();
     try {
       const { fields, recovery } = await buildEnvelopes(newPassword, dek);
-      await authApi.dekUpload(fields);
       await authApi.changePassword({ oldPassword: tempPassword, newPassword, ...fields });
       const session = await authApi.me();
       set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });

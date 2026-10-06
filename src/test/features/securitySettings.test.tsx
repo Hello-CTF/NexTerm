@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => {
     authDevices: vi.fn(),
     adminUsers: vi.fn(),
     adminSettingsGet: vi.fn(),
+    transcriptHosts: vi.fn(),
+    transcriptList: vi.fn(),
+    transcriptRead: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -37,6 +40,11 @@ vi.mock("../../ipc/commands", () => ({
     list: mocks.assetList,
     groupList: mocks.groupList,
     snippetList: mocks.snippetList,
+  },
+  transcriptApi: {
+    hosts: mocks.transcriptHosts,
+    list: mocks.transcriptList,
+    read: mocks.transcriptRead,
   },
   dbApi: {},
   sessionApi: { connect: mocks.sessionConnect },
@@ -152,6 +160,9 @@ beforeEach(() => {
   mocks.assetList.mockResolvedValue([]);
   mocks.groupList.mockResolvedValue([]);
   mocks.snippetList.mockResolvedValue([]);
+  mocks.transcriptHosts.mockResolvedValue([]);
+  mocks.transcriptList.mockResolvedValue([]);
+  mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
   mocks.authStatus.mockResolvedValue({ initialized: true, registration_open: false, auth: "on" });
@@ -385,20 +396,137 @@ describe("SyncCard（Web 同步台）", () => {
       },
     ]);
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-9", max_seq: 9, applied: 1, skipped: 0 });
+    // 推送成功后服务端 head 推进到 head-9,后续 ids 应反映同一 head
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
 
     mounted = mountSyncCard();
     await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
 
     clickButton(mounted.container, "推送到云端 (1)");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    // 推送前取服务端最新 head(此处 mock 为 head-9)作为 known_head,而不是空字符串
     expect(mocks.syncPush).toHaveBeenCalledWith(
-      "",
+      "head-9",
       expect.arrayContaining([
         expect.objectContaining({ id: "a1", blob: expect.any(String) }),
       ]),
     );
-    await flushUntil(() => window.localStorage.getItem("sync.cursor.u-1") !== null);
+    await flushUntil(() => window.localStorage.getItem("sync.cursor.u-1")?.includes("head-9") === true);
     expect(window.localStorage.getItem("sync.cursor.u-1")).toContain("head-9");
+  });
+
+  it("云端较新的对象不会被推送(winner 集合跳过远端胜出项)", async () => {
+    seedAuthed(true);
+    mocks.assetList.mockResolvedValue([
+      {
+        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
+      },
+    ]);
+    // 远端 a1 修订 300 > 本机 200 → 云端较新,不应推送
+    const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
+    const dek = new Uint8Array(32).fill(7);
+    const blob = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "a1", groupId: null, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 })),
+      "a1",
+      "asset",
+    );
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "a1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 0, skipped: 1 });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("云端较新"));
+    // 按钮计数为 0(winner 集合为空),且不应触发推送
+    expect(mounted.container.textContent).toContain("推送到云端 (0)");
+    const pushBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("推送到云端")) as HTMLButtonElement | undefined;
+    expect(pushBtn?.disabled).toBe(true);
+  });
+
+  it("平修订号按 payload hash 决胜:本地载荷 hash 较大才推送", async () => {
+    seedAuthed(true);
+    const { sealSyncObject, utf8Bytes, bytesToBase64, objectPayloadHash } = await import("../../features/auth/crypto");
+    const dek = new Uint8Array(32).fill(7);
+    const localPayload = { id: "a1", groupId: null, kind: "ssh", name: "aaa", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
+    const remotePayload = { id: "a1", groupId: null, kind: "ssh", name: "zzz", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
+    const localHash = await objectPayloadHash(utf8Bytes(JSON.stringify(localPayload)));
+    const remoteHash = await objectPayloadHash(utf8Bytes(JSON.stringify(remotePayload)));
+    mocks.assetList.mockResolvedValue([
+      {
+        id: "a1", groupId: null, kind: "ssh", name: "aaa", host: null, port: null,
+        username: null, authKind: null, keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
+      },
+    ]);
+    const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(remotePayload)), "a1", "asset");
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "a1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("aaa"));
+    const expected = localHash > remoteHash ? 1 : 0;
+    expect(mounted.container.textContent).toContain(`推送到云端 (${expected})`);
+  });
+
+  it("409(他端已更新)时刷新 head 后重试一次", async () => {
+    seedAuthed(true);
+    mocks.assetList.mockResolvedValue([
+      {
+        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
+      },
+    ]);
+    // ids 调用序列:加载(head-0)→ 推送取新 head(head-1)→ 重试再取(head-2)
+    mocks.syncIds
+      .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-0", max_seq: 0 })
+      .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-1", max_seq: 1 })
+      .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-2", max_seq: 2 });
+    mocks.syncPush
+      .mockResolvedValueOnce({ protocol: 2, head: "head-1", max_seq: 1, applied: 0, skipped: 0 })
+      .mockResolvedValueOnce({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("web-01"));
+    clickButton(mounted.container, "推送到云端 (1)");
+    await flushUntil(() => mocks.syncPush.mock.calls.length >= 2);
+    expect(mocks.syncPush).toHaveBeenNthCalledWith(1, "head-1", expect.any(Array));
+    expect(mocks.syncPush).toHaveBeenNthCalledWith(2, "head-2", expect.any(Array));
+  });
+
+  it("按条 opt-in 的会话记录被收集并推送(默认不同步)", async () => {
+    seedAuthed(true);
+    mocks.transcriptHosts.mockResolvedValue([
+      { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
+    ]);
+    mocks.transcriptList.mockResolvedValue([
+      {
+        id: "t1", sessionId: "s1", assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false,
+        startedAt: 1, endedAt: 2, bytes: 3, chunks: 1, truncated: false, active: false, syncOptIn: true, contentOmitted: false,
+      },
+    ]);
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
+      nextSeq: 2,
+      done: true,
+      totalBytes: 3,
+    });
+    mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-9", max_seq: 9, applied: 1, skipped: 0 });
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
+    clickButton(mounted.container, "推送到云端 (1)");
+    await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
+    expect(mocks.syncPush).toHaveBeenCalledWith(
+      "head-9",
+      expect.arrayContaining([
+        expect.objectContaining({ id: "t1", blob: expect.any(String) }),
+      ]),
+    );
   });
 });
 

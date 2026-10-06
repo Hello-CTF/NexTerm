@@ -123,6 +123,21 @@ describe("SyncCard 桌面端状态", () => {
     expect(mocks.linkGet).toHaveBeenCalledTimes(2);
   });
 
+  it("已保存链接回填 URL/用户名/insecure,密码保持空白", async () => {
+    mocks.linkGet.mockResolvedValue(SAVED_LINK);
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => (mounted!.container.querySelector<HTMLInputElement>("#sync-url")?.value ?? "") !== "");
+
+    const urlInput = mounted.container.querySelector<HTMLInputElement>("#sync-url")!;
+    const userInput = mounted.container.querySelector<HTMLInputElement>("#sync-user")!;
+    const passInput = mounted.container.querySelector<HTMLInputElement>("#sync-pass")!;
+    expect(urlInput.value).toBe("https://sync.example.com");
+    expect(userInput.value).toBe("alice");
+    expect(passInput.value).toBe("");
+    const insecureCheckbox = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(insecureCheckbox.checked).toBe(false);
+  });
+
   it("保存链接时以账号+密码调用 linkSet", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
