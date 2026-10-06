@@ -270,6 +270,36 @@ func TestBuildTermiusPreviewKeyReconciliation(t *testing.T) {
 	}
 }
 
+func TestBuildTermiusPreviewKeyFingerprintPreserved(t *testing.T) {
+	pemA, fpA := fixtureKeyPEM(t)
+	pemB, fpB := fixtureKeyPEM(t)
+	keys := []termiusdb.KeyRecord{
+		{Aliases: []string{"shared"}, PrivateKey: pemA, ID: 1},
+		{Aliases: []string{"shared"}, PrivateKey: pemB, ID: 2},
+	}
+	hosts := []termiusdb.HostRecord{
+		{Aliases: []string{"h1"}, Host: "h1.example.com", Port: 22, Username: "root", KeyName: "shared", KeyID: 1, KeyPK: pemA},
+		{Aliases: []string{"h2"}, Host: "h2.example.com", Port: 22, Username: "root", KeyName: "shared", KeyID: 2, KeyPK: pemB},
+	}
+	preview := buildTermiusPreview(hosts, keys, nil, nil, DefaultLimits)
+	if len(preview.Hosts) != 2 || len(preview.Keys) != 2 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview.Hosts[0].KeyFingerprint != fpA {
+		t.Errorf("h1 KeyFingerprint = %q, want %q", preview.Hosts[0].KeyFingerprint, fpA)
+	}
+	if preview.Hosts[1].KeyFingerprint != fpB {
+		t.Errorf("h2 KeyFingerprint = %q, want %q (second same-name key must keep its own fingerprint)", preview.Hosts[1].KeyFingerprint, fpB)
+	}
+	unreferenced := termiusdb.HostRecord{
+		Aliases: []string{"h3"}, Host: "h3.example.com", Port: 22, Username: "root", KeyName: "shared",
+	}
+	preview = buildTermiusPreview([]termiusdb.HostRecord{unreferenced}, keys, nil, nil, DefaultLimits)
+	if preview.Hosts[0].KeyFingerprint != "" {
+		t.Errorf("host without key reference got KeyFingerprint %q", preview.Hosts[0].KeyFingerprint)
+	}
+}
+
 func TestBuildTermiusPreviewExistingKey(t *testing.T) {
 	keyPEM, fingerprint := fixtureKeyPEM(t)
 	keys := []termiusdb.KeyRecord{{Aliases: []string{"termius_key"}, PrivateKey: keyPEM}}

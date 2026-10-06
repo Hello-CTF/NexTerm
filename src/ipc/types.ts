@@ -183,7 +183,7 @@ mode: string, unlocked: boolean, autoLockMinutes: number, };
 export type SshImportAction = "add" | "skip-duplicate" | "conflict-alias" | "conflict-endpoint" | "blocked-jump";
 
 export type SshImportHostDto = { id: string, alias: string, hostname: string, port: number, username: string,
-identityFiles: string[], keyName: string, proxyJump: string, authMethod: string, source: string,
+identityFiles: string[], keyName: string, keyFingerprint: string, proxyJump: string, authMethod: string, source: string,
 action: SshImportAction, warnings: string[], };
 
 export type SshImportKeyDto = { id: string, aliases: string[], fingerprint: string, keyType: string,

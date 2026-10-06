@@ -14,6 +14,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/keys"
+	"github.com/ProbiusOfficial/NexTerm/internal/sshconfig"
 	"github.com/ProbiusOfficial/NexTerm/internal/sshconfig/termiusdb"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
@@ -161,9 +162,13 @@ func TestSSHImportPreviewToApply(t *testing.T) {
 		t.Fatal("preview leaks private key material")
 	}
 
+	bastionIdentity := sshImportHostIdentity(&sshconfig.HostPreview{Alias: "bastion", Username: "admin", Hostname: "bastion.example.com", Port: 22}, 0)
+	webIdentity := sshImportHostIdentity(&sshconfig.HostPreview{Alias: "web", Username: "deploy", Hostname: "web.example.com", Port: 2222}, 0)
+	dbIdentity := sshImportHostIdentity(&sshconfig.HostPreview{Alias: "db", Username: "postgres", Hostname: "db.example.com", Port: 22}, 0)
+	keyIdentity := sshImportKeyIdentity(&sshconfig.KeyPreview{Aliases: []string{"id_ed25519"}, Fingerprint: keyFingerprint, Path: keyPath}, 0)
 	applyBody := `{"args":{"source":"ssh-config","path":` + strconvQuote(configPath) + `,` +
-		`"hosts":[{"id":"h0","action":"import"},{"id":"h1","action":"import"},{"id":"h2","action":"import"}],` +
-		`"keys":[{"id":"k0","action":"import"}]}}`
+		`"hosts":[{"id":` + strconvQuote(bastionIdentity) + `,"action":"import"},{"id":` + strconvQuote(webIdentity) + `,"action":"import"},{"id":` + strconvQuote(dbIdentity) + `,"action":"import"}],` +
+		`"keys":[{"id":` + strconvQuote(keyIdentity) + `,"action":"import"}]}}`
 	result, response := sshImportApply(t, dispatcher, applyBody)
 	if !response.OK {
 		t.Fatalf("apply failed: %+v", response.Error)
@@ -715,6 +720,194 @@ func sshImportTermiusPEM(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return string(pair.PrivateKeyPEM), pair.Fingerprint
+}
+
+func TestSSHImportSelectionIdentitySurvivesChanges(t *testing.T) {
+	ctx := t.Context()
+	dispatcher, database, _, _ := sshImportTestRig(t)
+	dir := t.TempDir()
+
+	configV1 := "Host bastion\n  HostName bastion.example.com\n  User admin\n\n" +
+		"Host web\n  HostName web.example.com\n  User deploy\n"
+	pathV1 := filepath.Join(dir, "config-v1")
+	if err := os.WriteFile(pathV1, []byte(configV1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configV2 := "Host aaa\n  HostName aaa.example.com\n  User root\n\n" + configV1
+	pathV2 := filepath.Join(dir, "config-v2")
+	if err := os.WriteFile(pathV2, []byte(configV2), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	previewV1 := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(pathV1)+`}}`)
+	if len(previewV1.Hosts) != 2 {
+		t.Fatalf("v1 hosts = %+v", previewV1.Hosts)
+	}
+	bastionID := previewHost(t, previewV1, "bastion").ID
+	webID := previewHost(t, previewV1, "web").ID
+
+	body := `{"args":{"source":"ssh-config","path":` + strconvQuote(pathV2) + `,` +
+		`"hosts":[{"id":` + strconvQuote(bastionID) + `,"action":"import"},{"id":` + strconvQuote(webID) + `,"action":"import"},{"id":"ghost|root@ghost.example.com:22#0","action":"import"}],` +
+		`"keys":[]}}`
+	result, response := sshImportApply(t, dispatcher, body)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.AssetsCreated != 2 || result.Skipped != 1 {
+		t.Fatalf("apply result = %+v", result)
+	}
+	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "不一致") {
+		t.Fatalf("stale selection must warn: %+v", result.Warnings)
+	}
+
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]string{}
+	for _, row := range assets {
+		if row.Host != nil {
+			byName[row.Name] = *row.Host
+		}
+	}
+	if byName["bastion"] != "bastion.example.com" || byName["web"] != "web.example.com" {
+		t.Fatalf("imported hosts = %v", byName)
+	}
+	if _, ok := byName["aaa"]; ok {
+		t.Fatal("host inserted after preview must not be imported by a stale selection")
+	}
+}
+
+func TestSSHImportCaseVariantJumpNotOverwritten(t *testing.T) {
+	ctx := t.Context()
+	dispatcher, database, _, _ := sshImportTestRig(t)
+	dir := t.TempDir()
+	content := "Host bastion\n  HostName bastion.example.com\n  User admin\n\n" +
+		"Host db\n  HostName db.example.com\n  User postgres\n\n" +
+		"Host Dup\n  HostName dup1.example.com\n  User root\n  ProxyJump bastion\n\n" +
+		"Host dup\n  HostName dup2.example.com\n  User root\n  ProxyJump db\n"
+	configPath := filepath.Join(dir, "config")
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
+	dupUpper := previewHost(t, preview, "Dup")
+	dupLower := previewHost(t, preview, "dup")
+	if dupUpper.Action != "add" || dupLower.Action != "conflict-alias" {
+		t.Fatalf("case-variant actions = %q / %q", dupUpper.Action, dupLower.Action)
+	}
+
+	body := `{"args":{"source":"ssh-config","path":` + strconvQuote(configPath) + `,` +
+		`"hosts":[{"id":` + strconvQuote(previewHost(t, preview, "bastion").ID) + `,"action":"import"},` +
+		`{"id":` + strconvQuote(previewHost(t, preview, "db").ID) + `,"action":"import"},` +
+		`{"id":` + strconvQuote(dupUpper.ID) + `,"action":"import"},` +
+		`{"id":` + strconvQuote(dupLower.ID) + `,"action":"skip"}],` +
+		`"keys":[]}}`
+	result, response := sshImportApply(t, dispatcher, body)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.AssetsCreated != 3 || result.Skipped != 1 {
+		t.Fatalf("apply result = %+v", result)
+	}
+
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idsByName := map[string]string{}
+	for _, row := range assets {
+		idsByName[row.Name] = row.ID
+	}
+	var dupRow store.AssetRow
+	for _, row := range assets {
+		if row.Name == "Dup" {
+			dupRow = row
+		}
+		if row.Name == "dup" {
+			t.Fatal("skipped case-variant row must not create an asset")
+		}
+	}
+	options := assetOptions(t, dupRow)
+	if options["jumpAssetId"] != idsByName["bastion"] {
+		t.Fatalf("Dup jumpAssetId = %v, want bastion %s (skipped dup row must not overwrite it)", options["jumpAssetId"], idsByName["bastion"])
+	}
+}
+
+func TestSSHImportTermiusSecondSameNameKeyReferenced(t *testing.T) {
+	ctx := t.Context()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	pemA, fpA := sshImportTermiusPEM(t)
+	pemB, fpB := sshImportTermiusPEM(t)
+	dbPath := sshImportTermiusFixture(t, key, []string{
+		`{"private_key": ` + strconvQuote(pemA) + `, "label": "shared", "id": "k1"}`,
+		`{"private_key": ` + strconvQuote(pemB) + `, "label": "shared", "id": "k2"}`,
+		`{"host": "one.example.com", "user_name": "root", "port": 22, "title": "host-1", "key_id": "k1"}`,
+		`{"host": "two.example.com", "user_name": "root", "port": 22, "title": "host-2", "key_id": "k2"}`,
+	})
+	dispatcher, database, credentialVault := sshImportTermiusRig(t, key)
+
+	preview := sshImportPreview(t, dispatcher, sshImportTermiusBody(dbPath, ""))
+	host1 := previewHost(t, preview, "host-1")
+	host2 := previewHost(t, preview, "host-2")
+	if host1.KeyFingerprint != fpA || host2.KeyFingerprint != fpB {
+		t.Fatalf("key references lost: %q / %q, want %q / %q", host1.KeyFingerprint, host2.KeyFingerprint, fpA, fpB)
+	}
+	key1 := preview.Keys[0]
+	key2 := preview.Keys[1]
+	if key1.Action != "add" || key2.Action != "conflict-alias" {
+		t.Fatalf("key actions = %q / %q", key1.Action, key2.Action)
+	}
+
+	body := `{"args":{"source":"termius","confirmed":true,"path":` + strconvQuote(dbPath) + `,` +
+		`"hosts":[{"id":` + strconvQuote(host1.ID) + `,"action":"import"},{"id":` + strconvQuote(host2.ID) + `,"action":"import"}],` +
+		`"keys":[{"id":` + strconvQuote(key1.ID) + `,"action":"import"},{"id":` + strconvQuote(key2.ID) + `,"action":"skip"}]}}`
+	result, response := sshImportApply(t, dispatcher, body)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.AssetsCreated != 2 || result.CredentialsCreated != 1 {
+		t.Fatalf("apply result = %+v", result)
+	}
+	if len(result.Warnings) == 0 || !strings.Contains(strings.Join(result.Warnings, " "), "保持未绑定") {
+		t.Fatalf("skipped k2 must leave host-2 unbound with warning: %+v", result.Warnings)
+	}
+
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]store.AssetRow{}
+	for _, row := range assets {
+		byName[row.Name] = row
+	}
+	host1Row := byName["host-1"]
+	if host1Row.CredID == nil {
+		t.Fatal("host-1 must bind the imported k1 credential")
+	}
+	host2Row := byName["host-2"]
+	if host2Row.CredID != nil {
+		t.Fatalf("host-2 references k2 (skipped, different fingerprint) and must stay unbound, got credId %q", *host2Row.CredID)
+	}
+	if host2Row.AuthKind == nil || *host2Row.AuthKind != "key" {
+		t.Fatalf("host-2 authKind = %+v, want key", host2Row.AuthKind)
+	}
+	credRow, err := database.CredentialGetRow(ctx, *host1Row.CredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := credentialVault.DecryptCredentialString(ctx, credRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := vault.ParsePrivateKeyPayload(plaintext)
+	if stored.Key == nil || *stored.Key != pemA {
+		t.Fatal("host-1 credential must hold k1 material, not the same-name k2")
+	}
 }
 
 func TestSSHImportTermiusRequiresConfirmation(t *testing.T) {

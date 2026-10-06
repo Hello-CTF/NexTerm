@@ -101,6 +101,42 @@ func TestExportPreservesRecordIDs(t *testing.T) {
 	}
 }
 
+func TestExportResolvesKeyReferenceToRecord(t *testing.T) {
+	key := testKey(t)
+	pemA, _ := testKeyPEM(t)
+	pemB, _ := testKeyPEM(t)
+	dir := buildDB(t, key, map[int]string{
+		3:  `{"private_key": ` + jsonString(t, pemA) + `, "label": "shared"}`,
+		10: `{"private_key": ` + jsonString(t, pemB) + `, "label": "shared"}`,
+		1:  `{"host": "one.example.com", "user_name": "root", "port": 22, "title": "h1", "key_id": 10}`,
+		2:  `{"host": "two.example.com", "user_name": "root", "port": 22, "title": "h2", "key_id": 3}`,
+	})
+	hosts, _, err := Export(dir, func() ([]byte, error) { return key, nil })
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	byTitle := map[string]string{}
+	for _, host := range hosts {
+		byTitle[host.Aliases[0]] = host.KeyPK
+	}
+	if byTitle["h1"] != pemB || byTitle["h2"] != pemA {
+		t.Errorf("key references resolved to wrong records: %v", byTitle)
+	}
+
+	dir = buildDB(t, key, map[int]string{
+		1: `{"private_key": ` + jsonString(t, pemA) + `, "label": "shared", "id": "k1"}`,
+		2: `{"private_key": ` + jsonString(t, pemB) + `, "label": "shared", "id": "k2"}`,
+		3: `{"host": "one.example.com", "user_name": "root", "port": 22, "title": "h1", "key_id": "k2"}`,
+	})
+	hosts, _, err = Export(dir, func() ([]byte, error) { return key, nil })
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if len(hosts) != 1 || hosts[0].KeyPK != pemB {
+		t.Errorf("string key_id resolved to wrong record: %+v", hosts)
+	}
+}
+
 func testKey(t *testing.T) []byte {
 	t.Helper()
 	key := make([]byte, 32)

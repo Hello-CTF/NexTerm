@@ -38,18 +38,19 @@ type sshImportApplyRequest struct {
 }
 
 type sshImportHostDTO struct {
-	ID            string   `json:"id"`
-	Alias         string   `json:"alias"`
-	Hostname      string   `json:"hostname"`
-	Port          int      `json:"port"`
-	Username      string   `json:"username"`
-	IdentityFiles []string `json:"identityFiles"`
-	KeyName       string   `json:"keyName"`
-	ProxyJump     string   `json:"proxyJump"`
-	AuthMethod    string   `json:"authMethod"`
-	Source        string   `json:"source"`
-	Action        string   `json:"action"`
-	Warnings      []string `json:"warnings"`
+	ID             string   `json:"id"`
+	Alias          string   `json:"alias"`
+	Hostname       string   `json:"hostname"`
+	Port           int      `json:"port"`
+	Username       string   `json:"username"`
+	IdentityFiles  []string `json:"identityFiles"`
+	KeyName        string   `json:"keyName"`
+	KeyFingerprint string   `json:"keyFingerprint"`
+	ProxyJump      string   `json:"proxyJump"`
+	AuthMethod     string   `json:"authMethod"`
+	Source         string   `json:"source"`
+	Action         string   `json:"action"`
+	Warnings       []string `json:"warnings"`
 }
 
 type sshImportKeyDTO struct {
@@ -158,6 +159,7 @@ func (p *sshImportPlanner) registerCommands(dispatcher *ipc.Dispatcher) error {
 }
 
 func sshImportPreviewDTOFromPlan(plan *sshImportPlan) sshImportPreviewDTO {
+	hostIDs, keyIDs := sshImportPreviewIDs(plan.preview)
 	dto := sshImportPreviewDTO{
 		Source:      plan.preview.Source,
 		Path:        plan.path,
@@ -168,23 +170,24 @@ func sshImportPreviewDTOFromPlan(plan *sshImportPlan) sshImportPreviewDTO {
 	}
 	for i, host := range plan.preview.Hosts {
 		dto.Hosts = append(dto.Hosts, sshImportHostDTO{
-			ID:            sshImportHostID(i),
-			Alias:         host.Alias,
-			Hostname:      host.Hostname,
-			Port:          host.Port,
-			Username:      host.Username,
-			IdentityFiles: host.IdentityFiles,
-			KeyName:       host.KeyName,
-			ProxyJump:     host.ProxyJump,
-			AuthMethod:    host.AuthMethod,
-			Source:        host.Source,
-			Action:        string(host.Action),
-			Warnings:      host.Warnings,
+			ID:             hostIDs[i],
+			Alias:          host.Alias,
+			Hostname:       host.Hostname,
+			Port:           host.Port,
+			Username:       host.Username,
+			IdentityFiles:  host.IdentityFiles,
+			KeyName:        host.KeyName,
+			KeyFingerprint: host.KeyFingerprint,
+			ProxyJump:      host.ProxyJump,
+			AuthMethod:     host.AuthMethod,
+			Source:         host.Source,
+			Action:         string(host.Action),
+			Warnings:       host.Warnings,
 		})
 	}
 	for i, key := range plan.preview.Keys {
 		dto.Keys = append(dto.Keys, sshImportKeyDTO{
-			ID:          sshImportKeyID(i),
+			ID:          keyIDs[i],
 			Aliases:     key.Aliases,
 			Fingerprint: key.Fingerprint,
 			KeyType:     key.KeyType,
@@ -204,9 +207,37 @@ func sshImportPreviewDTOFromPlan(plan *sshImportPlan) sshImportPreviewDTO {
 	return dto
 }
 
-func sshImportHostID(index int) string { return fmt.Sprintf("h%d", index) }
+func sshImportHostIdentity(item *sshconfig.HostPreview, occurrence int) string {
+	return fmt.Sprintf("%s|%s@%s:%d#%d", item.Alias, item.Username, item.Hostname, item.Port, occurrence)
+}
 
-func sshImportKeyID(index int) string { return fmt.Sprintf("k%d", index) }
+func sshImportKeyIdentity(item *sshconfig.KeyPreview, occurrence int) string {
+	name := ""
+	if len(item.Aliases) > 0 {
+		name = item.Aliases[0]
+	}
+	return fmt.Sprintf("%s|%s|%s#%d", name, item.Fingerprint, item.Path, occurrence)
+}
+
+func sshImportPreviewIDs(preview *sshconfig.ImportPreview) ([]string, []string) {
+	hostIDs := make([]string, len(preview.Hosts))
+	hostCounts := map[string]int{}
+	for i := range preview.Hosts {
+		item := &preview.Hosts[i]
+		base := sshImportHostIdentity(item, 0)
+		hostIDs[i] = sshImportHostIdentity(item, hostCounts[base])
+		hostCounts[base]++
+	}
+	keyIDs := make([]string, len(preview.Keys))
+	keyCounts := map[string]int{}
+	for i := range preview.Keys {
+		item := &preview.Keys[i]
+		base := sshImportKeyIdentity(item, 0)
+		keyIDs[i] = sshImportKeyIdentity(item, keyCounts[base])
+		keyCounts[base]++
+	}
+	return hostIDs, keyIDs
+}
 
 func (p *sshImportPlanner) derive(ctx context.Context, source, path string, confirmed, withMaterial bool) (*sshImportPlan, error) {
 	existing, err := p.loadExisting(ctx)
@@ -441,9 +472,10 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	}
 	preview := plan.preview
 
+	hostIDs, keyIDs := sshImportPreviewIDs(preview)
 	keyByID := map[string]*sshconfig.KeyPreview{}
-	for i := range preview.Keys {
-		keyByID[sshImportKeyID(i)] = &preview.Keys[i]
+	for i, id := range keyIDs {
+		keyByID[id] = &preview.Keys[i]
 	}
 	credIDByKeyFP := map[string]string{}
 	type keyOutcome struct {
@@ -455,7 +487,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	for _, selection := range input.Keys {
 		item := keyByID[selection.ID]
 		if item == nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("密钥条目 %q 不在最新预览中，已跳过", selection.ID))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("密钥条目与最新预览不一致（源数据可能已变化），已跳过: %q", selection.ID))
 			result.Skipped++
 			continue
 		}
@@ -507,9 +539,14 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	}
 
 	hostByID := map[string]*sshconfig.HostPreview{}
-	for i := range preview.Hosts {
-		hostByID[sshImportHostID(i)] = &preview.Hosts[i]
+	for i, id := range hostIDs {
+		hostByID[id] = &preview.Hosts[i]
 	}
+	type appliedHost struct {
+		item    *sshconfig.HostPreview
+		assetID string
+	}
+	applied := make([]appliedHost, 0, len(input.Hosts))
 	assetIDByAlias := map[string]string{}
 	type hostOutcome struct {
 		Alias  string `json:"alias"`
@@ -519,7 +556,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	for _, selection := range input.Hosts {
 		item := hostByID[selection.ID]
 		if item == nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("主机条目 %q 不在最新预览中，已跳过", selection.ID))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("主机条目与最新预览不一致（源数据可能已变化），已跳过: %q", selection.ID))
 			result.Skipped++
 			continue
 		}
@@ -530,6 +567,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 			if err != nil {
 				return result, err
 			}
+			applied = append(applied, appliedHost{item: item, assetID: id})
 			if _, ok := assetIDByAlias[strings.ToLower(item.Alias)]; !ok {
 				assetIDByAlias[strings.ToLower(item.Alias)] = id
 			}
@@ -549,6 +587,7 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 			if _, ok := assetIDByAlias[strings.ToLower(item.Alias)]; !ok {
 				assetIDByAlias[strings.ToLower(item.Alias)] = id
 			}
+			applied = append(applied, appliedHost{item: item, assetID: id})
 			result.AssetsUpdated++
 			outcome.Action = "updated"
 		default:
@@ -558,16 +597,11 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 		hostOutcomes = append(hostOutcomes, outcome)
 	}
 
-	for _, selection := range input.Hosts {
-		item := hostByID[selection.ID]
-		if item == nil || item.ProxyJump == "" {
+	for _, done := range applied {
+		if done.item.ProxyJump == "" {
 			continue
 		}
-		id, ok := assetIDByAlias[strings.ToLower(item.Alias)]
-		if !ok {
-			continue
-		}
-		if err := p.mapProxyJump(ctx, item, id, plan, assetIDByAlias, &result); err != nil {
+		if err := p.mapProxyJump(ctx, done.item, done.assetID, plan, assetIDByAlias, &result); err != nil {
 			return result, err
 		}
 	}
@@ -600,6 +634,25 @@ func (p *sshImportPlanner) importKeyPayload(plan *sshImportPlan, item *sshconfig
 }
 
 func (p *sshImportPlanner) hostAuth(plan *sshImportPlan, item *sshconfig.HostPreview, credIDByKeyFP map[string]string) (authKind, credID, keyPath string, warnings []string) {
+	if item.Source == "termius" {
+		if item.KeyFingerprint != "" {
+			if id, ok := credIDByKeyFP[item.KeyFingerprint]; ok {
+				return "key", id, "", nil
+			}
+			if id, ok := plan.existing.credIDByFP[item.KeyFingerprint]; ok {
+				return "key", id, "", nil
+			}
+		}
+		if item.KeyName != "" || item.AuthMethod == "key" {
+			warnings = append(warnings, fmt.Sprintf("主机 %q 引用的密钥未入库（被跳过、无法解析或与同名凭据指纹不同），保持未绑定", item.Alias))
+			return "key", "", "", warnings
+		}
+		if item.AuthMethod == "password" {
+			warnings = append(warnings, fmt.Sprintf("主机 %q 使用密码认证，密码不会导入，请手动绑定凭据", item.Alias))
+			return "password", "", "", warnings
+		}
+		return "agent", "", "", nil
+	}
 	candidates := previewKeysForHost(plan, item)
 	for _, keyItem := range candidates {
 		if keyItem.Fingerprint == "" {
@@ -615,41 +668,17 @@ func (p *sshImportPlanner) hostAuth(plan *sshImportPlan, item *sshconfig.HostPre
 		}
 	}
 	if len(candidates) > 0 {
-		if item.KeyName != "" {
-			warnings = append(warnings, fmt.Sprintf("主机 %q 的密钥 %q 未入库（被跳过或与同名凭据指纹不同），保持未绑定", item.Alias, item.KeyName))
-			return "key", "", "", warnings
-		}
 		warnings = append(warnings, fmt.Sprintf("主机 %q 的 IdentityFile 未入库（被跳过或与同名凭据指纹不同）；已直接引用文件，若私钥有口令请绑定凭据", item.Alias))
 		return "key", "", item.IdentityFiles[0], warnings
-	}
-	if item.KeyName != "" {
-		if id, ok := plan.existing.credIDByName[strings.ToLower(item.KeyName)]; ok {
-			return "key", id, "", nil
-		}
-		warnings = append(warnings, fmt.Sprintf("主机 %q 引用的密钥 %q 无法解析，保持未绑定", item.Alias, item.KeyName))
-		return "key", "", "", warnings
 	}
 	if len(item.IdentityFiles) > 0 {
 		warnings = append(warnings, fmt.Sprintf("主机 %q 的 IdentityFile 无法检查，已直接引用文件；若私钥有口令请绑定凭据", item.Alias))
 		return "key", "", item.IdentityFiles[0], warnings
 	}
-	if item.AuthMethod == "password" {
-		warnings = append(warnings, fmt.Sprintf("主机 %q 使用密码认证，密码不会导入，请手动绑定凭据", item.Alias))
-		return "password", "", "", warnings
-	}
 	return "agent", "", "", nil
 }
 
 func previewKeysForHost(plan *sshImportPlan, item *sshconfig.HostPreview) []*sshconfig.KeyPreview {
-	if item.KeyName != "" {
-		for i := range plan.preview.Keys {
-			key := &plan.preview.Keys[i]
-			if len(key.Aliases) > 0 && strings.EqualFold(key.Aliases[0], item.KeyName) {
-				return []*sshconfig.KeyPreview{key}
-			}
-		}
-		return nil
-	}
 	var out []*sshconfig.KeyPreview
 	for _, path := range item.IdentityFiles {
 		for i := range plan.preview.Keys {
