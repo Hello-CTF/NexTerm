@@ -1,0 +1,17 @@
+Host Dup
+    HostName dup.example.com
+    ProxyJump ghost
+
+Host dup
+    HostName dup.example.com
+
+Host app
+    HostName app.example.com
+    ProxyJump dup
+
+Host known
+    HostName known.example.com
+
+Host user-of-known
+    HostName user-of-known.example.com
+    ProxyJump known

@@ -17,6 +17,7 @@ require (
 	github.com/moby/moby/client v0.6.1
 	github.com/pkg/sftp v1.13.11
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	github.com/wailsapp/wails/v3 v3.0.0-beta.27
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
@@ -40,6 +41,7 @@ require (
 	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang/snappy v0.0.4 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

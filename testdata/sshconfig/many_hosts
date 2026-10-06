@@ -1,0 +1,35 @@
+Host host01
+    HostName host01.example.com
+
+Host host02
+    HostName host02.example.com
+
+Host host03
+    HostName host03.example.com
+
+Host host04
+    HostName host04.example.com
+
+Host host05
+    HostName host05.example.com
+
+Host host06
+    HostName host06.example.com
+
+Host host07
+    HostName host07.example.com
+
+Host host08
+    HostName host08.example.com
+
+Host host09
+    HostName host09.example.com
+
+Host host10
+    HostName host10.example.com
+
+Host host11
+    HostName host11.example.com
+
+Host host12
+    HostName host12.example.com

@@ -1,0 +1,3 @@
+Host child
+    HostName child.example.com
+    Port 2200
