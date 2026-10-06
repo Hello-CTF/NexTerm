@@ -64,6 +64,49 @@ describe("coarse pointer hit areas", () => {
   });
 });
 
+describe("coarse pointer form controls", () => {
+  it("inputs, selects and textareas meet the 44px convention under the utilities layer", () => {
+    const layer = coarse.slice(coarse.indexOf("@layer components {"));
+    expect(layer).toMatch(/\.nx-input,\s*\.nx-select\s*\{[^}]*min-height:\s*44px/);
+    expect(layer).toMatch(
+      /\.nx-textarea:not\(\.nx-textarea-grow\)\s*\{[^}]*min-height:\s*44px/,
+    );
+    expect(layer).toMatch(/\.nx-check\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
+  });
+
+  it("tabs, workspace tabs, segment items and the AI send button meet 44px", () => {
+    expect(coarse).toMatch(/\.nx-tab,\s*\.nx-ws\s*\{[^}]*min-height:\s*44px/);
+    expect(coarse).toMatch(/\.nx-segment-item\s*\{[^}]*min-height:\s*44px/);
+    expect(coarse).toMatch(/\.nx-send-btn\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
+  });
+
+  it("path, tree and check controls meet 44px and the pathbar grows to fit", () => {
+    expect(coarse).toMatch(/\.nx-tree-caret\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
+    expect(coarse).toMatch(/\.nx-pathbar\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*44px/);
+    expect(coarse).toMatch(/\.nx-path-crumb\s*\{[^}]*min-height:\s*44px/);
+  });
+
+  it("desktop keeps the compact control dimensions", () => {
+    const fields = css.match(/\.nx-input,\s*\.nx-select,\s*\.nx-textarea\s*\{([^}]*)\}/);
+    expect(fields).not.toBeNull();
+    expect(fields![1]).toMatch(/height:\s*30px/);
+    expect(css).toMatch(/\.nx-tab\s*\{[^}]*height:\s*28px/);
+    expect(css).toMatch(/\.nx-ws\s*\{[^}]*height:\s*28px/);
+    expect(rule(css, ".nx-segment-item")).toMatch(/height:\s*24px/);
+    expect(rule(css, ".nx-send-btn")).toMatch(/width:\s*30px/);
+    expect(rule(css, ".nx-send-btn")).toMatch(/height:\s*30px/);
+    expect(rule(css, ".nx-check")).toMatch(/width:\s*14px/);
+    expect(rule(css, ".nx-tree-caret")).toMatch(/width:\s*14px/);
+  });
+});
+
+describe("reduced motion coverage", () => {
+  it("stops spin and dot-pulse animations", () => {
+    const block = blockAfter("@media (prefers-reduced-motion: reduce) {");
+    expect(block).toMatch(/\.animate-spin,\s*\.nx-dot-pulse\s*\{[^}]*animation:\s*none/);
+  });
+});
+
 describe("toast placement rules", () => {
   it("keys-aware bottom offset goes through the shared keys height variable", () => {
     const body = rule(css, '.nx-app[data-nx-keys="true"] .nx-toasts');

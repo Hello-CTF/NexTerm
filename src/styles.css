@@ -1783,6 +1783,10 @@
 .cm-editor.cm-focused {
   outline: none !important;
 }
+.cm-editor.cm-focused:focus-within {
+  outline: 2px solid var(--nx-focus-ring) !important;
+  outline-offset: -2px !important;
+}
 .cm-editor .cm-scroller {
   font-family: var(--font-mono);
   line-height: 1.65;
@@ -1853,6 +1857,10 @@
 .cm-editor .cm-textfield:focus {
   border-color: var(--color-accent) !important;
   outline: none !important;
+}
+.cm-editor .cm-textfield:focus-visible {
+  outline: 2px solid var(--nx-focus-ring) !important;
+  outline-offset: -2px;
 }
 .cm-editor .cm-button {
   height: 24px;
@@ -2277,6 +2285,11 @@
     height: 24px;
   }
 
+  .nx-tab,
+  .nx-ws {
+    min-height: 44px;
+  }
+
   .nx-tab-new {
     width: 32px;
     height: 32px;
@@ -2294,26 +2307,58 @@
     min-height: 26px;
   }
 
-  .nx-tree-caret {
-    width: 24px;
-    height: 24px;
+  .nx-segment-item {
+    min-height: 44px;
   }
 
-  .nx-check {
-    width: 24px;
-    height: 24px;
+  .nx-send-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .nx-tree-caret {
+    width: 44px;
+    height: 44px;
+  }
+
+  .nx-pathbar {
+    height: auto;
+    min-height: 44px;
   }
 
   .nx-path-crumb {
     display: inline-flex;
     align-items: center;
-    min-height: 24px;
+    min-height: 44px;
   }
 
   .nx-link {
     display: inline-flex;
     align-items: center;
     min-height: 24px;
+  }
+
+  @layer components {
+    .nx-input,
+    .nx-select {
+      min-height: 44px;
+    }
+
+    .nx-textarea:not(.nx-textarea-grow) {
+      min-height: 44px;
+    }
+
+    .nx-check {
+      width: 44px;
+      height: 44px;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .nx-dot-pulse {
+    animation: none;
   }
 }
 
