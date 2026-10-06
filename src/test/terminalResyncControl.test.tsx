@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, mount, type MountedView } from "./features/reactTestUtils";
+import { flush, mount, deferred, type MountedView } from "./features/reactTestUtils";
 import type { LiveTabInfo } from "../ipc/commands";
 
 const harness = vi.hoisted(() => ({
@@ -142,6 +142,14 @@ function fireResync(): void {
   });
 }
 
+function deliverControl(payload: Record<string, unknown>): void {
+  const handler = harness.handlers.get("terminal://control");
+  expect(handler).toBeDefined();
+  act(() => {
+    handler?.(payload);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   harness.handlers.clear();
@@ -237,5 +245,65 @@ describe("terminal control resync compensation", () => {
       .getState()
       .workspaces[0]?.panes[0]?.tabs.find((candidate) => candidate.id === "t1");
     expect(tab?.exited).toBe(true);
+  });
+
+  it("keeps a newer control event when the stale listLive snapshot returns later", async () => {
+    const stale = deferred<LiveTabInfo[]>();
+    harness.listLive
+      .mockResolvedValueOnce([liveTab()])
+      .mockReturnValueOnce(stale.promise);
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+
+    fireResync();
+    deliverControl({
+      tabId: "kernel-1",
+      version: 2,
+      controller: "other",
+      subscribers: 2,
+      viewers: 2,
+      exited: false,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+    expect(overlayText("终端正在其他设备上操作中")).not.toBeNull();
+
+    stale.resolve([liveTab({ controller: "me" })]);
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("终端正在其他设备上操作中")).not.toBeNull();
+  });
+
+  it("drops the listLive response when the kernel tab switched before it returned", async () => {
+    const stale = deferred<LiveTabInfo[]>();
+    harness.listLive
+      .mockResolvedValueOnce([liveTab()])
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue([liveTab({ tabId: "kernel-2" })]);
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+
+    fireResync();
+    act(() => {
+      (harness.xtermProps?.onAttach as ((id: string) => void) | undefined)?.("kernel-2");
+    });
+    await act(async () => {
+      await flush();
+    });
+
+    stale.resolve([liveTab({ controller: "other", subscribers: 2, viewers: 2 })]);
+    await act(async () => {
+      await flush();
+    });
+
+    expect(overlayText("终端正在其他设备上操作中")).toBeNull();
+    expect(overlayText("终端进程已结束")).toBeNull();
   });
 });

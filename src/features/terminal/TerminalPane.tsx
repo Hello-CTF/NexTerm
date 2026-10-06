@@ -24,7 +24,7 @@ import {
 } from "./terminalThrottle";
 import { describeTarget, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { isImeKeyEvent } from "../../ui/DialogHost";
+import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import {
   IconArrowDown,
@@ -70,6 +70,17 @@ function isStoreTabDead(id: string): boolean {
     .workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.id === id && t.dead === true)));
 }
 
+function canPlaceOverlayFocus(pane: HTMLElement | null): boolean {
+  if (hasActiveOverlay()) return false;
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || active === document.body) return true;
+  if (active.closest(".nx-overlay, .nx-menu, .nx-modal, .nx-command-modal")) return false;
+  if (isEditableTarget(active)) return false;
+  const activePane = active.closest(".nx-pane");
+  if (activePane && activePane !== pane) return false;
+  return true;
+}
+
 export function TerminalPane({
   sessionId,
   title,
@@ -112,6 +123,7 @@ export function TerminalPane({
   const writeErrorAt = useRef(0);
   const controlRef = useRef(control);
   controlRef.current = control;
+  const controlRefreshGen = useRef(0);
   const kernelTabIdRef = useRef<string | null>(null);
   kernelTabIdRef.current = kernelTabId;
   const userClosedBlocks = useRef(false);
@@ -123,6 +135,8 @@ export function TerminalPane({
   const handleRef = useRef<TerminalHandle | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
+  const reconnectBtnRef = useRef<HTMLButtonElement>(null);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
@@ -178,8 +192,11 @@ export function TerminalPane({
     async (tabIdArg?: string) => {
       const tabId = tabIdArg ?? kernelTabId;
       if (!tabId) return;
+      const gen = ++controlRefreshGen.current;
       try {
         const list = await terminalApi.listLive();
+        if (gen !== controlRefreshGen.current) return;
+        if (tabId !== kernelTabIdRef.current) return;
         const hit = list.find((t) => t.tabId === tabId);
         if (hit) {
           setControl({
@@ -255,6 +272,7 @@ export function TerminalPane({
   const pendingControl = useRef(new Map<string, TerminalControlStateEvent>());
   const applyControl = useCallback((p: TerminalControlStateEvent) => {
     if (!controlVersions.current.accept(p.tabId, p.version)) return;
+    controlRefreshGen.current += 1;
     setControl({
       controller: p.controller,
       subscribers: p.subscribers,
@@ -282,6 +300,16 @@ export function TerminalPane({
       useUi.getState().updateTab(storeTabId, { exited: true });
     }
   }, [controlSupported, control?.exited, storeTabId]);
+  useEffect(() => {
+    if (visible === false) return;
+    if (attachDead) {
+      if (canPlaceOverlayFocus(paneRef.current)) reconnectBtnRef.current?.focus();
+      return;
+    }
+    if (controlSupported && control?.exited && canPlaceOverlayFocus(paneRef.current)) {
+      exitedCloseBtnRef.current?.focus();
+    }
+  }, [visible, attachDead, controlSupported, control?.exited]);
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
@@ -951,7 +979,7 @@ export function TerminalPane({
                     进程已经退出，这里只能查看它最后的内容。要继续操作请新建一个终端。
                   </span>
                   <button
-                    autoFocus
+                    ref={exitedCloseBtnRef}
                     className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
                     onClick={() => void useUi.getState().closeTab(storeTabId)}
                   >
@@ -999,7 +1027,7 @@ export function TerminalPane({
               </span>
               <div className="flex items-center gap-2">
                 <button
-                  autoFocus
+                  ref={reconnectBtnRef}
                   className="nx-btn nx-btn-primary nx-btn-sm"
                   disabled={reconnecting}
                   onClick={() => void reconnectNow()}

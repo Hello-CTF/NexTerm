@@ -249,4 +249,128 @@ describe("terminal overlay accessibility", () => {
     expect(reconnect).toBeDefined();
     expect(document.activeElement).toBe(reconnect);
   });
+
+  it("does not steal focus while the user is typing in an input", async () => {
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    const input = document.createElement("input");
+    document.body.append(input);
+    act(() => input.focus());
+
+    deliverControl({
+      tabId: "kernel-1",
+      version: 1,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: true,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+
+    expect(alert()?.textContent).toContain("终端进程已结束");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("does not steal focus for the invalid-session overlay while typing", async () => {
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    const input = document.createElement("input");
+    document.body.append(input);
+    act(() => input.focus());
+
+    act(() => {
+      (harness.xtermProps?.onAttachFailed as ((code: string) => void) | undefined)?.("not_found");
+    });
+    await act(async () => {
+      await flush();
+    });
+
+    expect(alert()?.textContent).toContain("这个终端已失效");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("places focus when a hidden pane showing the overlay becomes visible", async () => {
+    mounted = mount(
+      createElement(TerminalPane, {
+        sessionId: "s1",
+        title: "term",
+        storeTabId: "t1",
+        visible: false,
+      }),
+    );
+    await act(async () => {
+      await flush();
+    });
+    deliverControl({
+      tabId: "kernel-1",
+      version: 1,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: true,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+
+    expect(alert()?.textContent).toContain("终端进程已结束");
+    expect(document.activeElement).not.toBe(alertButton("关闭标签"));
+
+    act(() => {
+      mounted!.root.render(
+        createElement(TerminalPane, {
+          sessionId: "s1",
+          title: "term",
+          storeTabId: "t1",
+          visible: true,
+        }),
+      );
+    });
+
+    expect(document.activeElement).toBe(alertButton("关闭标签"));
+  });
+
+  it("does not re-steal focus on repeated control renders", async () => {
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    deliverControl({
+      tabId: "kernel-1",
+      version: 1,
+      controller: "me",
+      subscribers: 1,
+      viewers: 1,
+      exited: true,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+    expect(document.activeElement).toBe(alertButton("关闭标签"));
+
+    const input = document.createElement("input");
+    document.body.append(input);
+    act(() => input.focus());
+
+    deliverControl({
+      tabId: "kernel-1",
+      version: 2,
+      controller: "me",
+      subscribers: 2,
+      viewers: 2,
+      exited: true,
+      cols: 80,
+      rows: 24,
+      gridRevision: 0,
+    });
+
+    expect(alert()?.textContent).toContain("终端进程已结束");
+    expect(document.activeElement).toBe(input);
+  });
 });
