@@ -75,7 +75,6 @@ type resizeHandler struct{ fn func(cols, rows int) }
 
 type tabConfig struct {
 	clock        func() time.Time
-	ringBytes    int
 	historyLines int
 	onResponse   func([]byte)
 }
@@ -84,10 +83,6 @@ type TabOption func(*tabConfig)
 
 func WithClock(clock func() time.Time) TabOption {
 	return func(c *tabConfig) { c.clock = clock }
-}
-
-func WithScrollbackBytes(n int) TabOption {
-	return func(c *tabConfig) { c.ringBytes = n }
 }
 
 func WithScreenHistory(n int) TabOption {
@@ -101,7 +96,6 @@ func WithResponseHandler(h func([]byte)) TabOption {
 func NewTab(id, sessionID string, cols, rows int, enc Encoding, opts ...TabOption) *Tab {
 	cfg := tabConfig{
 		clock:        time.Now,
-		ringBytes:    ScrollbackBytes,
 		historyLines: ScrollbackLines,
 	}
 	for _, opt := range opts {
@@ -119,7 +113,7 @@ func NewTab(id, sessionID string, cols, rows int, enc Encoding, opts ...TabOptio
 	t := &Tab{
 		id:        id,
 		sessionID: sessionID,
-		ring:      NewRing(cfg.ringBytes),
+		ring:      NewRing(ScrollbackBytes),
 		tr:        NewTranscoder(enc),
 		modes:     NewModeTracker(),
 		scr:       newScreen(cols, rows, cfg.historyLines),

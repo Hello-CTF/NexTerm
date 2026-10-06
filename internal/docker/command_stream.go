@@ -11,17 +11,7 @@ import (
 
 func combinedCommandOutput(stream CommandStream) io.ReadCloser {
 	ctx, cancel := context.WithCancel(context.Background())
-	var ordered base.OrderedOutput
-	if output, ok := stream.(base.OrderedOutput); ok {
-		ordered = output
-	} else {
-		provider, ok := stream.(interface{ Stderr() io.Reader })
-		if !ok || provider.Stderr() == nil {
-			cancel()
-			return stream
-		}
-		ordered = newCommandOutputMultiplexer(ctx, stream, provider.Stderr())
-	}
+	ordered := stream.(base.OrderedOutput)
 	reader, writer := io.Pipe()
 	result := &mergedCommandReader{PipeReader: reader, stream: stream, cancel: cancel}
 	go func() {

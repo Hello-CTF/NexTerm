@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -29,34 +28,28 @@ func TestCombinedCommandOutputPreservesTransportEventOrder(t *testing.T) {
 	}
 }
 
-func TestBestEffortFallbackDeliversBothStreamsWithoutOrderingClaim(t *testing.T) {
-	for range 20 {
-		stream := &dualCommandStream{
-			Reader: strings.NewReader("stdout"),
-			stderr: strings.NewReader("stderr"),
-		}
-		reader := combinedCommandOutput(stream)
-		output, err := io.ReadAll(reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = reader.Close()
-		if len(output) != len("stdoutstderr") || !strings.Contains(string(output), "stdout") || !strings.Contains(string(output), "stderr") {
-			t.Fatalf("best-effort fallback output = %q", output)
-		}
+func TestCombinedCommandOutputDeliversBothStreams(t *testing.T) {
+	events := make(chan base.OutputEvent, 2)
+	events <- base.OutputEvent{Data: []byte("stdout")}
+	events <- base.OutputEvent{Data: []byte("stderr"), Stderr: true}
+	close(events)
+	stream := &eventCommandStream{events: events}
+	reader := combinedCommandOutput(stream)
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = reader.Close()
+	if string(output) != "stdoutstderr" {
+		t.Fatalf("combined output = %q", output)
 	}
 }
 
-func TestCombinedCommandOutputStderrReadyWhileStdoutBlocked(t *testing.T) {
-	stdout, stdoutWriter := io.Pipe()
-	stderr, stderrWriter := io.Pipe()
-	stream := &pipeCommandStream{ReadCloser: stdout, stderr: stderr}
+func TestCombinedCommandOutputDeliversStderrEventPromptly(t *testing.T) {
+	events := make(chan base.OutputEvent)
+	stream := &eventCommandStream{events: events}
 	reader := combinedCommandOutput(stream)
-	defer func() {
-		_ = reader.Close()
-		_ = stdoutWriter.Close()
-		_ = stderrWriter.Close()
-	}()
+	defer reader.Close()
 	type readResult struct {
 		output string
 		err    error
@@ -67,14 +60,14 @@ func TestCombinedCommandOutputStderrReadyWhileStdoutBlocked(t *testing.T) {
 		count, err := reader.Read(buffer)
 		result <- readResult{output: string(buffer[:count]), err: err}
 	}()
-	go func() { _, _ = stderrWriter.Write([]byte("ready")) }()
+	go func() { events <- base.OutputEvent{Data: []byte("ready"), Stderr: true} }()
 	select {
 	case got := <-result:
 		if got.err != nil || got.output != "ready" {
 			t.Fatalf("read = %q, %v", got.output, got.err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("stderr starved behind open stdout")
+		t.Fatal("stderr event starved")
 	}
 }
 
@@ -99,30 +92,3 @@ func (s *eventCommandStream) Close() error                             { return 
 func (s *eventCommandStream) CloseWrite() error                        { return nil }
 func (s *eventCommandStream) Resize(context.Context, uint, uint) error { return nil }
 func (s *eventCommandStream) Wait(context.Context) (int, error)        { return 0, nil }
-
-type dualCommandStream struct {
-	*strings.Reader
-	stderr *strings.Reader
-}
-
-func (s *dualCommandStream) Stderr() io.Reader                        { return s.stderr }
-func (s *dualCommandStream) Write(p []byte) (int, error)              { return len(p), nil }
-func (s *dualCommandStream) Close() error                             { return nil }
-func (s *dualCommandStream) CloseWrite() error                        { return nil }
-func (s *dualCommandStream) Resize(context.Context, uint, uint) error { return nil }
-func (s *dualCommandStream) Wait(context.Context) (int, error)        { return 0, nil }
-
-type pipeCommandStream struct {
-	io.ReadCloser
-	stderr io.ReadCloser
-}
-
-func (s *pipeCommandStream) Stderr() io.Reader                        { return s.stderr }
-func (s *pipeCommandStream) Write(p []byte) (int, error)              { return len(p), nil }
-func (s *pipeCommandStream) CloseWrite() error                        { return nil }
-func (s *pipeCommandStream) Resize(context.Context, uint, uint) error { return nil }
-func (s *pipeCommandStream) Wait(context.Context) (int, error)        { return 0, nil }
-func (s *pipeCommandStream) Close() error {
-	_ = s.ReadCloser.Close()
-	return s.stderr.Close()
-}
