@@ -20,6 +20,14 @@ type TokenIdentityVerifier interface {
 	VerifyTokenIdentity(ctx context.Context, presented string) (syncservice.TokenIdentity, bool, error)
 }
 
+// 过渡说明: 令牌时代路径仅为内部过渡保留, 供后续切片删除。
+// M117(全量 E2E 同步协议)与 M125(账号同步前端)落地后删除:
+//   - requireAuth / authorizeWebSocket / authenticatedSync 中的 TokenHeader 静态令牌分支
+//   - ws 的 "nexterm,<token>" 子协议认证(webSocketAuthToken)
+//   - token / rotate-token CLI 命令与 core.TokenStore
+//   - /rpc 上的 sync.token.* 管理命令(syncservice.CommandToken 系列)及 TokenIdentityVerifier
+// 删除条件: 会话 cookie(/auth/*)成为浏览器唯一入口, 且同步协议不再接受静态令牌。
+
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	if !s.authRequired {
 		return next
@@ -30,8 +38,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		token := r.Header.Get(TokenHeader)
-		if token != "" {
+		if token := r.Header.Get(TokenHeader); token != "" && s.tokens != nil {
 			identity, valid, err := s.verifyTokenIdentity(r.Context(), token)
 			if err != nil {
 				writeRPCError(w, http.StatusInternalServerError, ipc.NormalizeError(err))
@@ -40,6 +47,15 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			if valid {
 				next.ServeHTTP(w, r.WithContext(syncservice.WithTokenIdentity(r.Context(), identity)))
 				return
+			}
+		}
+		if s.accounts != nil {
+			if cookieToken, ok := sessionCookie(r); ok {
+				identity, err := s.accounts.ValidateSession(r.Context(), cookieToken)
+				if err == nil {
+					next.ServeHTTP(w, r.WithContext(withAccountIdentity(r.Context(), identity)))
+					return
+				}
 			}
 		}
 		writeRPCError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, "访问令牌无效或缺失"))
@@ -61,14 +77,20 @@ func (s *Server) authorizeWebSocket(r *http.Request) (bool, error) {
 	if syncservice.GatewayAuthorized(r, s.gatewayAuthKey) {
 		return true, nil
 	}
-	if token := r.Header.Get(TokenHeader); token != "" {
+	if token := r.Header.Get(TokenHeader); token != "" && s.tokens != nil {
 		return s.tokens.VerifyToken(r.Context(), token)
 	}
-	token, ok := webSocketAuthToken(r)
-	if !ok {
-		return false, nil
+	if token, ok := webSocketAuthToken(r); ok && s.tokens != nil {
+		return s.tokens.VerifyToken(r.Context(), token)
 	}
-	return s.tokens.VerifyToken(r.Context(), token)
+	if s.accounts != nil {
+		if cookieToken, ok := sessionCookie(r); ok {
+			if _, err := s.accounts.ValidateSession(r.Context(), cookieToken); err == nil {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func webSocketAuthToken(r *http.Request) (string, bool) {

@@ -98,7 +98,7 @@ func (a *Accounts) InitSuperadmin(ctx context.Context, code, username, password 
 	}
 	defer func() { _ = tx.Rollback() }()
 	var users int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM user").Scan(&users); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+userTable).Scan(&users); err != nil {
 		return nil, dbError(err)
 	}
 	if users > 0 {
@@ -117,7 +117,7 @@ func (a *Accounts) InitSuperadmin(ctx context.Context, code, username, password 
 		UpdatedAt:    now,
 		passwordHash: hash,
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO user(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO `+userTable+`(id, username, display_name, role, password_hash, state, must_change_password, created_at, updated_at)
 VALUES(?,?,?,?,?,?,0,?,?)`, user.ID, user.Username, "", string(user.Role), hash, string(user.State), now, now); err != nil {
 		return nil, translateUserWriteError(err)
 	}

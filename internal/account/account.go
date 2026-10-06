@@ -15,6 +15,9 @@ type Accounts struct {
 	now func() int64
 }
 
+// userTable 集中账号表名, 便于后续存储后端调整(migrations/0018_app_user.sql 由 user 改名而来)。
+const userTable = "app_user"
+
 type Option func(*Accounts)
 
 func WithNow(now func() int64) Option {

@@ -308,7 +308,7 @@ func TestResetPasswordWithRecoveryDisabledUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.db.ExecContext(ctx, "UPDATE user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
+	if _, err := a.db.ExecContext(ctx, "UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID); err != nil {
 		t.Fatal(err)
 	}
 	before, err := a.GetUserByUsername(ctx, "ruth")
@@ -353,7 +353,7 @@ func TestResetPasswordWithRecoveryFromResetRequired(t *testing.T) {
 	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.db.ExecContext(ctx, "UPDATE user SET state = ? WHERE id = ?", string(StateResetRequired), user.ID); err != nil {
+	if _, err := a.db.ExecContext(ctx, "UPDATE app_user SET state = ? WHERE id = ?", string(StateResetRequired), user.ID); err != nil {
 		t.Fatal(err)
 	}
 	updated := rewrapForTest(t, "old-password-1", "new-password-2", envelopes)

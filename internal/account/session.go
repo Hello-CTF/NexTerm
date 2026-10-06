@@ -64,7 +64,7 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 	}
 	defer func() { _ = tx.Rollback() }()
 	var state string
-	if err := tx.QueryRowContext(ctx, "SELECT state FROM user WHERE id = ?", userID).Scan(&state); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT state FROM "+userTable+" WHERE id = ?", userID).Scan(&state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil, ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
 		}
@@ -103,7 +103,7 @@ VALUES(?,?,?,?,?,?,?)`, session.ID, session.UserID, nullableID(session.DeviceID)
 
 func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity, error) {
 	row := a.db.QueryRowContext(ctx, `SELECT s.id, s.user_id, s.device_id, s.created_at, s.touched_at, s.expires_at, s.revoked_at, u.role, u.state, d.revoked_at
-FROM user_session s JOIN user u ON u.id = s.user_id LEFT JOIN user_device d ON d.id = s.device_id
+FROM user_session s JOIN `+userTable+` u ON u.id = s.user_id LEFT JOIN user_device d ON d.id = s.device_id
 WHERE s.token_hash = ?`, sessionTokenHash(token))
 	var session Session
 	var role, state string
