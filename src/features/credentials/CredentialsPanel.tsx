@@ -15,6 +15,7 @@ import { describeError } from "../../ui/errorText";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { kindMeta, formatTime } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
+import { WEB } from "../../demo";
 import {
   assetIcon,
   IconCode,
@@ -81,11 +82,19 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
       {locked && (
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-300/90">
           <IconLock size={13} />
-          <span>凭据库已锁定 · 解锁后可查看与使用</span>
-          <div className="nx-spacer" />
-          <button className="nx-btn nx-btn-sm" onClick={() => void unlock()}>
-            解锁
-          </button>
+          {WEB ? (
+            // 服务端：密码由部署方托管，用户无从输入 ⇒ 不给「解锁」按钮，
+            // 只说明恢复方式（重启后 bootstrap 会用部署密钥自动解锁）。
+            <span>凭据库已锁定 · 重启服务端后自动恢复</span>
+          ) : (
+            <>
+              <span>凭据库已锁定 · 解锁后可查看与使用</span>
+              <div className="nx-spacer" />
+              <button className="nx-btn nx-btn-sm" onClick={() => void unlock()}>
+                解锁
+              </button>
+            </>
+          )}
         </div>
       )}
 

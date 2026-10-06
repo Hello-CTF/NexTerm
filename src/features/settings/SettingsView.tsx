@@ -12,7 +12,7 @@ import {
   type VaultStatus,
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
-import { DEMO } from "../../demo";
+import { DEMO, WEB } from "../../demo";
 import { ask, promptText } from "../../ui/dialogs";
 import { ModelManager } from "../ai/ModelPanel";
 import { SyncCard } from "./SyncCard";
@@ -314,6 +314,7 @@ export function SettingsView() {
             <IconLock size={15} className="text-neutral-400" />
             <span className="nx-card-title">凭据保护</span>
             {vault &&
+              !WEB &&
               (vault.mode === "master" ? (
                 <span className="nx-badge nx-badge-green">已开启</span>
               ) : (
@@ -321,7 +322,14 @@ export function SettingsView() {
               ))}
           </div>
 
-          <div className="flex items-start gap-3">
+          {WEB && (
+            <p className="nx-hint">
+              浏览器版的凭据由服务端的部署密钥托管，启动时自动解锁 ——
+              这里没有密码开关，也不需要手动解锁。
+            </p>
+          )}
+
+          <div className={WEB ? "hidden" : "flex items-start gap-3"}>
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] text-neutral-200">用密码保护凭据</div>
               <p className="nx-hint mt-0.5">
@@ -355,7 +363,7 @@ export function SettingsView() {
             />
           </div>
 
-          {pendingEnable && vault?.mode !== "master" && (
+          {!WEB && pendingEnable && vault?.mode !== "master" && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <input
                 type="password"
@@ -387,7 +395,7 @@ export function SettingsView() {
             </div>
           )}
 
-          {vault?.mode === "master" && (
+          {!WEB && vault?.mode === "master" && (
             <div className="mt-3 flex items-center gap-2">
               <span className="nx-hint">锁定与解锁在「凭据」页</span>
               <button

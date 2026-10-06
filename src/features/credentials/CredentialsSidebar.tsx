@@ -13,6 +13,7 @@ import { openCredentialsTab, openCredentialsViewTab, useCredentialsTabId } from 
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
+import { WEB } from "../../demo";
 import { IconCode, IconLock, IconPlus, IconSearch } from "../../ui/icons";
 
 export function CredentialsSidebar() {
@@ -38,6 +39,15 @@ export function CredentialsSidebar() {
   const st = status.data;
   const locked = !!st?.initialized && !st.unlocked;
   const protectionOn = st?.mode === "master";
+  /**
+   * 能否「立即锁定」。
+   *
+   * ⛔ 浏览器版（服务端）**必须排除**：那里的库虽然也是 `master` 模式，但密码是
+   * 部署方（懒猫 `stable_secret` / 自建时 `--master-key`）注入的随机值，**用户根本
+   * 不知道**。允许锁定 = 制造死锁 —— 前端会弹一个用户答不出来的密码框，只能靠
+   * 重启服务端才恢复。桌面版才该有这个入口：密码是用户自己在设置页设的。
+   */
+  const canLock = protectionOn && !WEB;
   const all = credentials.data ?? [];
 
   const q = search.trim().toLowerCase();
@@ -63,7 +73,7 @@ export function CredentialsSidebar() {
         <span className="text-xs font-semibold tracking-wide text-neutral-200">凭据</span>
         <span className="nx-count">{all.length}</span>
         <div className="nx-spacer" />
-        {protectionOn && !locked && (
+        {canLock && !locked && (
           <button
             className="nx-icon-btn nx-icon-btn-sm"
             title="立即锁定（锁定后需输入密码才能使用凭据）"
@@ -90,10 +100,18 @@ export function CredentialsSidebar() {
       {locked && (
         <div className="mx-2 mb-2 flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300/90">
           <IconLock size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">已锁定 · 解锁后可查看</span>
-          <button className="nx-btn nx-btn-xs nx-btn-outline" onClick={() => void unlock()}>
-            解锁
-          </button>
+          {WEB ? (
+            // 服务端：密码由部署方托管，用户无从输入 ⇒ 不给「解锁」按钮，
+            // 只说明恢复方式（重启后 bootstrap 会用部署密钥自动解锁）。
+            <span className="min-w-0 flex-1">已锁定 · 重启服务端后自动恢复</span>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 truncate">已锁定 · 解锁后可查看</span>
+              <button className="nx-btn nx-btn-xs nx-btn-outline" onClick={() => void unlock()}>
+                解锁
+              </button>
+            </>
+          )}
         </div>
       )}
 
