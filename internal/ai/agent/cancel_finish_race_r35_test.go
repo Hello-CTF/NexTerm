@@ -256,3 +256,55 @@ func TestR35CompleteJoinsRunErrorIntoCanceledRecord(t *testing.T) {
 		t.Fatalf("row error = %q", row.Error)
 	}
 }
+
+func TestR35CancelUnregisteredRunDoesNotDeadlock(t *testing.T) {
+	storage, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	runner := NewRunner(Config{Store: storage, Runs: storage})
+	t.Cleanup(func() { _ = runner.Close() })
+	stream := &SliceStream{}
+	current := &job{
+		id: "job-r35-unregistered", ctx: context.Background(), cancel: func() {},
+		deliveryCtx: context.Background(), stream: stream,
+		steer: steer.NewQueue(1), cancelSync: newCancelSync(),
+	}
+	conversation, err := storage.ConvCreate(context.Background(), "r35", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.RunInsert(context.Background(), store.RunRow{ID: current.id, ConversationID: conversation.ID, Status: store.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.jobs[current.id] = current
+	runner.wg.Add(1)
+	runner.mu.Unlock()
+
+	canceled := make(chan error, 1)
+	go func() { canceled <- runner.Cancel(current.id) }()
+	select {
+	case err := <-canceled:
+		if err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancel deadlocked on an unregistered HITL run")
+	}
+	events := waitClosed(t, stream)
+	if done, failed := terminalCounts(events); done != 0 || failed != 1 {
+		t.Fatalf("terminal counts done=%d error=%d", done, failed)
+	}
+	if last := events[len(events)-1]; last.Type != "canceled" {
+		t.Fatalf("terminal event = %+v", last)
+	}
+	row, err := storage.RunGet(context.Background(), current.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != store.RunStatusCanceled {
+		t.Fatalf("row status = %q", row.Status)
+	}
+}
