@@ -38,10 +38,17 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WAILS_VERSION = "v3.0.0-beta.27";
 const argv = process.argv.slice(2);
 const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "debug";
+const KNOWN_OPTIONS = new Set([
+  "arch", "assets-dir", "base", "binary-manifest", "cgo", "consume-dist", "custom-go-baseline",
+  "dist-manifest", "file", "flavor", "id", "kind", "os", "out", "output", "package",
+  "package-only", "release", "repro-check", "require-evidence", "rust-official-baseline",
+  "skip-frontend",
+]);
 const options = {};
 for (const arg of argv) {
   if (!arg.startsWith("--")) die(`unknown positional argument: ${arg}`);
   const [name, ...rest] = arg.slice(2).split("=");
+  if (!KNOWN_OPTIONS.has(name)) die(`unknown option: --${name}`);
   options[name] = rest.length ? rest.join("=") : "true";
 }
 
@@ -760,7 +767,6 @@ switch (command) {
     break;
   case "release": {
     if (flag("skip-frontend")) die("release does not allow --skip-frontend; reproducible real assets are mandatory");
-    if (flag("install")) die("--install belonged to the removed Tauri workflow; install the produced NSIS/DMG instead");
     const tag = process.env.GITHUB_REF_NAME;
     if (tag?.startsWith("v") && tag !== `v${VERSION}`) die(`tag ${tag} does not match wails.json version v${VERSION}`);
     buildFrontend({ repro: true });

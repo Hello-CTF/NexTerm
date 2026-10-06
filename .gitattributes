@@ -6,5 +6,4 @@
 *.jpg binary
 *.woff2 binary
 
-Cargo.lock -diff
 pnpm-lock.yaml -diff

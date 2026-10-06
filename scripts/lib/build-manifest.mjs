@@ -120,11 +120,7 @@ export function binaryManifestProblems({ manifest, file, expect }) {
   } else {
     const tags = [...manifest.tags].sort();
     if (tags.join(",") !== expectedTags.join(",")) {
-      if (tags.includes("smoke") && !expectedTags.includes("smoke")) {
-        problems.push(`smoke-tagged test binaries must never be substituted for production release binaries (manifest tags: ${tags.join(",")})`);
-      } else {
-        problems.push(`binary manifest tags ${JSON.stringify(manifest.tags)} do not match ${JSON.stringify(expectedTags)}`);
-      }
+      problems.push(`binary manifest tags ${JSON.stringify(manifest.tags)} do not match ${JSON.stringify(expectedTags)}`);
     }
   }
   if (manifest.stripped !== expect.stripped) problems.push(`binary manifest stripped ${JSON.stringify(manifest.stripped)} does not match ${JSON.stringify(expect.stripped)}`);
