@@ -181,6 +181,23 @@ export type SyncApplyObjectResult = { id: string, kind: string, result: "applied
 
 export type SyncApplyResult = { applied: number, identical: number, skipped: number, objects: SyncApplyObjectResult[], };
 
+export type SyncCollectAsset = { id: string, groupId?: string, kind: string, name: string, host?: string,
+port?: number, username?: string, authKind?: string, keyPath?: string, credId?: string, optionsJson: string,
+tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt?: number, };
+
+export type SyncCollectTombstone = { id: string, targetKind: string, deletedAt: number, };
+
+export type SyncCollectSecretState = "withheld" | "revealed" | "locked" | "unavailable" | "error";
+
+export type SyncCollectCredential = { id: string, name: string, kind: string, updatedAt: number,
+secret?: string, secretState: SyncCollectSecretState, };
+
+export type SyncCollectAssetsResult = { assets: SyncCollectAsset[], hasMore: boolean, nextAfterId?: string, };
+
+export type SyncCollectTombstonesResult = { tombstones: SyncCollectTombstone[], hasMore: boolean, nextAfterId?: string, };
+
+export type SyncCollectCredentialsResult = { credentials: SyncCollectCredential[], hasMore: boolean, nextAfterId?: string, };
+
 export type AuditCountDto = { total: number, };
 
 export type TerminalExitEvent = { tabId: string, exitCode: number | null, version: number, };

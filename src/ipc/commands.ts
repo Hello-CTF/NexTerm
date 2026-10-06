@@ -788,6 +788,21 @@ export const syncApi = {
   applyObjects: (objects: import("./types").SyncApplyObject[]) =>
     call<import("./types").SyncApplyResult>("sync_apply_objects", { args: { objects } }),
 
+  collectAssets: (includeDeleted: boolean, afterId?: string, limit?: number) =>
+    call<import("./types").SyncCollectAssetsResult>("sync_collect_assets", {
+      args: { includeDeleted, afterId, limit },
+    }),
+
+  collectTombstones: (afterId?: string, limit?: number) =>
+    call<import("./types").SyncCollectTombstonesResult>("sync_collect_tombstones", {
+      args: { afterId, limit },
+    }),
+
+  collectCredentials: (revealSecrets: boolean, afterId?: string, limit?: number) =>
+    call<import("./types").SyncCollectCredentialsResult>("sync_collect_credentials", {
+      args: { revealSecrets, afterId, limit },
+    }),
+
   token: () => call<string | null>("sync_token"),
   rotateToken: (id?: string) =>
     call<string | null>("sync_token_rotate", { args: { id } }),
