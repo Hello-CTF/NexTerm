@@ -46,7 +46,7 @@ func TestMigration0014FreshInstall(t *testing.T) {
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 15 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 }
@@ -120,7 +120,7 @@ VALUES('tok1', 'desktop', 'sync', 'hash1', 1, 0)`,
 		}
 	}
 	var count int
-	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 15 {
+	if err := db.DB().QueryRow("SELECT count(*) FROM " + migrationsTable).Scan(&count); err != nil || count != 16 {
 		t.Fatalf("migration count=%d err=%v", count, err)
 	}
 	var groupName, assetHost, credHint, snippetBody, tokenValue, tokenHash string
