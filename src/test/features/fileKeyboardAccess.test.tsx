@@ -117,15 +117,15 @@ function keyDown(target: EventTarget, key: string): KeyboardEvent {
   return event;
 }
 
-function options(container: ParentNode): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>('[role="option"]')];
+function treeitems(container: ParentNode): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')];
 }
 
-function optionByName(container: ParentNode, name: string): HTMLElement {
-  const row = options(container).find((candidate) =>
+function itemByName(container: ParentNode, name: string): HTMLElement {
+  const row = treeitems(container).find((candidate) =>
     candidate.querySelector(".nx-row-name")?.textContent?.includes(name),
   );
-  if (!row) throw new Error(`option not found: ${name}`);
+  if (!row) throw new Error(`treeitem not found: ${name}`);
   return row;
 }
 
@@ -177,22 +177,26 @@ afterEach(() => {
 describe("FileBrowser 键盘可达性", () => {
   beforeEach(async () => {
     mounted = mountBrowser();
-    await waitFor(() => expect(optionByName(mounted!.container, "a.txt")).toBeTruthy());
+    await waitFor(() => expect(itemByName(mounted!.container, "a.txt")).toBeTruthy());
   });
 
-  it("行暴露 listbox/option 角色、选中态与 tabIndex", () => {
-    expect(mounted!.container.querySelector('[role="listbox"][aria-label="文件"]')).not.toBeNull();
-    const rows = options(mounted!.container);
+  it("行暴露 tree/treeitem 角色、层级、选中态与 tabIndex，交互按钮保持语义暴露", () => {
+    expect(mounted!.container.querySelector('[role="tree"][aria-label="文件"]')).not.toBeNull();
+    expect(mounted!.container.querySelector('[role="option"]')).toBeNull();
+    const rows = treeitems(mounted!.container);
     expect(rows.length).toBeGreaterThanOrEqual(3);
     for (const row of rows) {
+      expect(row.getAttribute("aria-level")).toBe("1");
       expect(row.getAttribute("aria-selected")).toBe("false");
       expect(row.tabIndex).toBe(0);
+      const more = row.querySelector("button");
+      expect(more?.getAttribute("aria-label") ?? "").toContain("更多操作");
     }
   });
 
   it("空格选中焦点行，行间互斥", () => {
-    const a = optionByName(mounted!.container, "a.txt");
-    const sub = optionByName(mounted!.container, "sub");
+    const a = itemByName(mounted!.container, "a.txt");
+    const sub = itemByName(mounted!.container, "sub");
     act(() => a.focus());
     keyDown(a, " ");
     expect(a.getAttribute("aria-selected")).toBe("true");
@@ -221,7 +225,7 @@ describe("FileBrowser 键盘可达性", () => {
         activeWorkspaceId: "ws",
       });
     });
-    const a = optionByName(mounted!.container, "a.txt");
+    const a = itemByName(mounted!.container, "a.txt");
     act(() => a.focus());
     keyDown(a, "Enter");
     await waitFor(() => {
@@ -231,15 +235,15 @@ describe("FileBrowser 键盘可达性", () => {
   });
 
   it("回车进入目录并加载其列表", async () => {
-    const sub = optionByName(mounted!.container, "sub");
+    const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
     keyDown(sub, "Enter");
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub"));
   });
 
   it("ArrowDown/ArrowUp 在行间移动焦点", () => {
-    const a = optionByName(mounted!.container, "a.txt");
-    const sub = optionByName(mounted!.container, "sub");
+    const a = itemByName(mounted!.container, "a.txt");
+    const sub = itemByName(mounted!.container, "sub");
     act(() => a.focus());
     keyDown(a, "ArrowDown");
     expect(document.activeElement).toBe(sub);
@@ -250,7 +254,7 @@ describe("FileBrowser 键盘可达性", () => {
   });
 
   it("Delete 走既有警示确认：取消不删，确认才删", async () => {
-    const a = optionByName(mounted!.container, "a.txt");
+    const a = itemByName(mounted!.container, "a.txt");
     act(() => a.focus());
 
     mocks.ask.mockResolvedValueOnce(false);
@@ -268,7 +272,7 @@ describe("FileBrowser 键盘可达性", () => {
   });
 
   it("目录 Backspace 确认讲清递归删除，确认后按目录语义删除", async () => {
-    const sub = optionByName(mounted!.container, "sub");
+    const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
 
     mocks.ask.mockResolvedValueOnce(true);
@@ -281,7 +285,7 @@ describe("FileBrowser 键盘可达性", () => {
   });
 
   it("行内 ⋯ 按钮的 Enter 不触发行打开", () => {
-    const a = optionByName(mounted!.container, "a.txt");
+    const a = itemByName(mounted!.container, "a.txt");
     const more = a.querySelector<HTMLButtonElement>('button[aria-label="更多操作 a.txt"]');
     if (!more) throw new Error("more button not found");
     act(() => more.focus());
@@ -290,6 +294,36 @@ describe("FileBrowser 键盘可达性", () => {
     expect(event.defaultPrevented).toBe(false);
     expect(mounted!.container.querySelector('[role="menu"]')).toBeNull();
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs ?? []).toHaveLength(0);
+  });
+
+  it("行消费的按键不再冒泡到 window 级裸键快捷键，未消费的键照常冒泡", async () => {
+    const globalHits: string[] = [];
+    const onWindowKey = (e: KeyboardEvent) => {
+      globalHits.push(e.key);
+    };
+    window.addEventListener("keydown", onWindowKey);
+    try {
+      const a = itemByName(mounted!.container, "a.txt");
+      act(() => a.focus());
+      keyDown(a, " ");
+      expect(a.getAttribute("aria-selected")).toBe("true");
+
+      keyDown(a, "ArrowDown");
+      expect(document.activeElement).toBe(itemByName(mounted!.container, "sub"));
+
+      keyDown(document.activeElement as HTMLElement, "Delete");
+      await flush();
+      expect(mocks.ask).toHaveBeenCalledWith(
+        expect.stringContaining("删除 ~/sub"),
+        expect.objectContaining({ kind: "warning" }),
+      );
+      expect(globalHits).toEqual([]);
+
+      keyDown(itemByName(mounted!.container, "a.txt"), "x");
+      expect(globalHits).toEqual(["x"]);
+    } finally {
+      window.removeEventListener("keydown", onWindowKey);
+    }
   });
 });
 

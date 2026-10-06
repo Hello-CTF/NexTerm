@@ -71,13 +71,14 @@ function useCoarsePointer(): boolean {
 
 function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-  const list = event.currentTarget.closest("[role='listbox']");
-  if (!list) return;
-  const rows = [...list.querySelectorAll<HTMLElement>("[role='option']")];
+  const tree = event.currentTarget.closest("[role='tree']");
+  if (!tree) return;
+  const rows = [...tree.querySelectorAll<HTMLElement>("[role='treeitem']")];
   const index = rows.indexOf(event.currentTarget);
   const next = event.key === "ArrowDown" ? index + 1 : index - 1;
   if (index < 0 || next < 0 || next >= rows.length) return;
   event.preventDefault();
+  event.stopPropagation();
   rows[next]?.focus();
 }
 
@@ -581,7 +582,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         ) : list.length === 0 ? (
           <div className="nx-empty">这个目录是空的</div>
         ) : (
-          <div className="relative" style={{ height: virtualizer.getTotalSize() }} role="listbox" aria-label="文件">
+          <div className="relative" style={{ height: virtualizer.getTotalSize() }} role="tree" aria-label="文件">
             {virtualizer.getVirtualItems().map((vi) => {
               const e = list[vi.index];
               const isDir = e.kind === "dir";
@@ -590,7 +591,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
               return (
                 <div
                   key={e.path}
-                  role="option"
+                  role="treeitem"
+                  aria-level={1}
                   aria-selected={isSel}
                   tabIndex={0}
                   className={`flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 focus-within:[&_.nx-row-actions]:flex ${
@@ -603,16 +605,19 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                     if (ev.target !== ev.currentTarget) return;
                     if (ev.key === "Enter") {
                       ev.preventDefault();
+                      ev.stopPropagation();
                       openEntry(e);
                       return;
                     }
                     if (ev.key === " ") {
                       ev.preventDefault();
+                      ev.stopPropagation();
                       setSelected(e.path);
                       return;
                     }
                     if (ev.key === "Delete" || ev.key === "Backspace") {
                       ev.preventDefault();
+                      ev.stopPropagation();
                       void removePath(e.path, isDir);
                       return;
                     }
