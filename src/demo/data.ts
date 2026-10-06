@@ -957,8 +957,8 @@ export function fakeQuery(sql: string): {
   if (s.startsWith("update") || s.startsWith("delete") || s.startsWith("insert")) {
     return { ...base, rowsAffected: 1, durationMs: 16, columns: [], rows: [] };
   }
-  if (s.includes("drop")) {
-    return { ...base, durationMs: 2, columns: [], rows: [], error: "演示模式：DDL 已拦截（产品文档 §6.5 危险操作分级）" };
+  if (/\b(create|alter|drop|truncate|rename)\b/.test(s)) {
+    return { ...base, durationMs: 2, columns: [], rows: [], error: "演示模式：已拦截 DDL/结构变更语句，仅支持查询与数据修改" };
   }
   return { ...base, durationMs: 6, columns: ["result"], rows: [["OK"]], rowsAffected: 0 };
 }

@@ -34,7 +34,9 @@
 | LinuxServer | 下载 `NexTerm-server_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-server_x.y.z_linux_arm64.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
-首次使用时，添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。按界面提示初始化凭据库后再保存密码或私钥。需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。
+首次使用时，添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。保存密码或私钥前，先按界面提示在「设置 → 凭据保护」初始化凭据库；未初始化时无法保存任何凭据。需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。
+
+免密保护依赖系统级密钥（Windows DPAPI / macOS 钥匙串），Linux 桌面端不提供，请使用主密码模式：在「设置 → 凭据保护」勾选"用密码保护凭据"并设置至少 8 位的保护密码；每次启动需输入密码解锁，闲置自动锁定（默认 30 分钟，可在同一卡片调整）。
 
 ## 服务端与懒猫微服
 
@@ -94,12 +96,19 @@ rc4 把完整版访问控制的默认值从 "仅非回环监听强制" 翻转为
 | `--require-vault` | — | 启动时凭据库未能解锁则以非零状态退出。 |
 | `--sync-only` | — | 只启动资产同步接口。 |
 | — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免同步令牌（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
+| — | `NEXTERM_BLOB_MAX_BYTES` | 仅完整模式。单个文件上传的大小上限（字节），默认 268435456（256 MiB）。 |
+| — | `NEXTERM_BLOB_PERSIST_MAX_BYTES` | 仅完整模式。持久保存文件的总配额（字节），默认 1073741824（1 GiB）。 |
+| — | `NEXTERM_BLOB_DISK_MAX_PERCENT` | 仅完整模式。数据目录所在磁盘的使用率阈值（取值 (0, 100]），达到后拒绝新的持久化上传，默认 90。 |
+
+`NEXTERM_BLOB_*` 在启动时读取，无效值会被忽略并记录警告，回退到默认值。
 
 安装包中的 `nexterm-server.service` 与 `nexterm-onlyserver.service` 二选一，不要同时启用。完整版密钥放在 `/etc/nexterm/nexterm.env`，仅同步运行的密钥放在 `/etc/nexterm/onlyserver.env`，权限均设为 `0600`；不要把密钥直接写进可公开读取的 unit 文件。
 
-同步令牌以明文保存在数据目录的数据库中：备份数据目录等于备份同步令牌，请像保管密钥一样保管备份。存放 `NEXTERM_MASTER_KEY` 的 EnvironmentFile 必须保持 `0600` 且属主为运行用户，避免同机其他用户读取。
+同步令牌写入数据库时，凭据库可用则保存为加密信封（enc:v1:），同时始终保留一份明文备份，供凭据库锁定或未初始化时读取（读取时自动双读回退）。备份数据目录等于同时备份这两份令牌副本，请像保管密钥一样保管备份。存放 `NEXTERM_MASTER_KEY` 的 EnvironmentFile 必须保持 `0600` 且属主为运行用户，避免同机其他用户读取。
 
 `NEXTERM_MASTER_KEY` 环境变量已弃用（进程环境对同机用户可见），请改用 `--master-key-file /etc/nexterm/master.key`（或 `NEXTERM_MASTER_KEY_FILE`），文件权限设为 `0600`。对凭据同步有强依赖的部署可加 `--require-vault`：启动时凭据库未能解锁（未配置密钥或密钥错误）会直接以非零状态退出。
+
+`/healthz` 无需同步令牌，响应中的 `vault` 字段报告凭据库状态（`initialized`、`mode`、`unlocked`），可用于监控凭据库是否可用。
 
 请备份密钥文件和数据目录。更换根密钥后，已有的密码类凭据将无法解密。
 

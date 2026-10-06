@@ -328,7 +328,7 @@
           <span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span>
           <span class="term-title">nexterm-server — bash</span>
         </div>
-        <pre><span class="c"># 完整版：界面 + 全部 140 条命令</span>
+        <pre><span class="c"># 完整版：界面 + 全部命令</span>
 <span class="c"># 裸启动就是 serve（容器里就这条）</span>
 <span class="p">$</span> nexterm-server
 
@@ -339,9 +339,9 @@
 <span class="c"># 没有界面，令牌只能命令行取</span>
 <span class="p">$</span> TOKEN=$(nexterm-server token)
 
-<span class="c"># 自查：两个数对不对</span>
+<span class="c"># 自查：sync-only 的 commands 固定为 3</span>
 <span class="p">$</span> curl -s 127.0.0.1:8080/healthz
-  <span class="c"># commands:140 | 3</span></pre>
+  <span class="c"># commands:3</span></pre>
       </div>
     </div>
 
@@ -393,7 +393,7 @@
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>
-        <div class="faq-body">不是。两端共用同一个 Go 核心与同一份命令清单（140 条），差异由平台门控收束，所以界面与行为一致。区别在运行态：桌面版的进程随窗口结束，服务端版把终端进程、回滚缓冲与工作区布局都留在服务端，于是关掉网页不丢、换设备能接着用。</div>
+        <div class="faq-body">不是。两端共用同一个 Go 核心与同一份命令清单，差异由平台门控收束，所以界面与行为一致。区别在运行态：桌面版的进程随窗口结束，服务端版把终端进程、回滚缓冲与工作区布局都留在服务端，于是关掉网页不丢、换设备能接着用。</div>
       </details>
       <details>
         <summary>几个人可以同时用同一台服务端吗？</summary>
