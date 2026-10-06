@@ -136,7 +136,6 @@ type Config struct {
 	Hub              *hub.Hub
 	Emitter          Emitter
 	Transcripts      TranscriptSink
-	NewID            func() string
 	IdleTimeout      time.Duration
 	SweepInterval    time.Duration
 	ReconnectMax     int

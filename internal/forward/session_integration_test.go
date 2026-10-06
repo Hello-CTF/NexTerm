@@ -89,7 +89,6 @@ func TestSessionManagerReconnectReplacementAndBoundedRetry(t *testing.T) {
 	})
 	manager := session.NewManager(session.Config{
 		Connector:        connector,
-		NewID:            func() string { return "forward-session" },
 		ReconnectMax:     1,
 		ReconnectBackoff: []time.Duration{time.Millisecond},
 		IdleTimeout:      -1,
