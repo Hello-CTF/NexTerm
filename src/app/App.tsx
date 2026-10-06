@@ -421,7 +421,11 @@ export default function App() {
   const [paletteEditingAsset, setPaletteEditingAsset] = useState<Asset | null>(null);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const queryClient = useQueryClient();
-  const [vaultStatus, setVaultStatus] = useState<string>("…");
+  const [vaultStatus, setVaultStatus] = useState<{ text: string; uninitialized: boolean }>({
+    text: "…",
+    uninitialized: false,
+  });
+  const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
   const viewport = useWorkspaceViewport();
   useKeyboardInset();
@@ -558,6 +562,36 @@ export default function App() {
   const openSettings = useCallback(() => {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
+
+  const refreshVaultStatus = useCallback(() => {
+    void vaultApi
+      .status()
+      .then((v) =>
+        setVaultStatus({
+          uninitialized: !v.initialized,
+          text: !v.initialized
+            ? "凭据库未初始化"
+            : v.unlocked
+              ? "凭据库已解锁"
+              : "凭据库已锁定",
+        }),
+      )
+      .catch(() => setVaultStatus({ text: "凭据库不可用", uninitialized: false }));
+  }, []);
+
+  const openVaultProtection = useCallback(() => {
+    openSettings();
+    setVaultProtectionSeq((n) => n + 1);
+  }, [openSettings]);
+
+  useEffect(() => {
+    if (vaultProtectionSeq === 0) return;
+    for (const el of document.querySelectorAll<HTMLElement>(".nx-card-title")) {
+      if (el.textContent?.trim() !== "凭据保护") continue;
+      el.closest<HTMLElement>(".nx-card")?.scrollIntoView({ block: "start" });
+      break;
+    }
+  }, [vaultProtectionSeq]);
 
   const openBackground = useCallback(() => {
     useUi
@@ -767,15 +801,8 @@ export default function App() {
 
   useEffect(() => {
     void sessionApi.list().then(setSessions).catch(() => undefined);
-    void vaultApi
-      .status()
-      .then((v) => {
-        setVaultStatus(
-          !v.initialized ? "凭据库未初始化" : v.unlocked ? "凭据库已解锁" : "凭据库已锁定",
-        );
-      })
-      .catch(() => setVaultStatus("凭据库不可用"));
-  }, [setSessions]);
+    refreshVaultStatus();
+  }, [setSessions, refreshVaultStatus]);
 
   useEffect(() => {
     if (!DEMO) return;
@@ -1153,18 +1180,7 @@ export default function App() {
               aria-label="刷新会话列表与凭据库状态"
               onClick={() => {
                 void sessionApi.list().then(setSessions).catch(() => undefined);
-                void vaultApi
-                  .status()
-                  .then((v) => {
-                    setVaultStatus(
-                      !v.initialized
-                        ? "凭据库未初始化"
-                        : v.unlocked
-                          ? "凭据库已解锁"
-                          : "凭据库已锁定",
-                    );
-                  })
-                  .catch(() => undefined);
+                refreshVaultStatus();
               }}
             >
               <IconActivity size={15} />
@@ -1300,10 +1316,22 @@ export default function App() {
               <strong className="font-medium">{sessions.filter((s) => s.status === "connected").length}</strong> 已连接
             </span>
             <span className="text-neutral-700">|</span>
-            <span className="nx-statusbar-truncate flex items-center gap-1.5" title={vaultStatus}>
-              <IconLock size={11} />
-              {vaultStatus}
-            </span>
+            {vaultStatus.uninitialized ? (
+              <button
+                type="button"
+                className="nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hover:text-amber-200"
+                title="在「设置 > 凭据保护」中开启密码保护"
+                onClick={openVaultProtection}
+              >
+                <IconLock size={11} />
+                凭据库未初始化 · 去开启保护
+              </button>
+            ) : (
+              <span className="nx-statusbar-truncate flex items-center gap-1.5" title={vaultStatus.text}>
+                <IconLock size={11} />
+                {vaultStatus.text}
+              </span>
+            )}
           </div>
           <div className="nx-statusbar-side">
             {DEMO && (

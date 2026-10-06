@@ -189,6 +189,7 @@ interface UiState {
 
   setSessions: (s: SessionInfo[]) => void;
   resyncSessions: () => Promise<void>;
+  sessionResyncFailed: boolean;
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
   dismissToast: (id: number) => void;
@@ -692,10 +693,16 @@ export const useUi = create<UiState>((set, get) => ({
     })),
 
   setSessions: (s) => set({ sessions: s }),
+  sessionResyncFailed: false,
   resyncSessions: async () => {
     try {
-      set({ sessions: await sessionApi.list() });
-    } catch {
+      const list = await sessionApi.list();
+      set({ sessions: list, sessionResyncFailed: false });
+    } catch (e) {
+      console.error("[NexTerm] 刷新会话列表失败", e);
+      if (get().sessionResyncFailed) return;
+      set({ sessionResyncFailed: true });
+      get().pushToast("error", `刷新会话列表失败：${describeError(e)}`);
     }
   },
   setAiBusy: (v) => set({ aiBusy: v }),
