@@ -1,6 +1,9 @@
 package supervisor
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrUnavailable   = errors.New("supervisor session unavailable")
@@ -13,4 +16,6 @@ var (
 	ErrProtocol      = errors.New("supervisor protocol violation")
 	ErrStateMismatch = errors.New("supervisor state mismatch")
 	ErrUnsupported   = errors.New("supervisor capability unsupported")
+
+	ErrVersionMismatch = fmt.Errorf("%w: protocol version mismatch", ErrProtocol)
 )

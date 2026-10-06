@@ -396,6 +396,9 @@ func (c *serverConn) streamOutput(attachment *Attachment) {
 				info := attachment.Info()
 				_ = c.reply(frameExit, exitMsg{Code: info.ExitCode, Signal: info.Signal})
 			case errors.Is(err, ErrClosed):
+				if info := attachment.Info(); info.Dead {
+					_ = c.reply(frameExit, exitMsg{Code: info.ExitCode, Signal: info.Signal})
+				}
 			default:
 				_ = c.reply(frameFatal, errorMsg{Code: errorCode(err), Message: err.Error()})
 			}
