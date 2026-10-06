@@ -262,6 +262,37 @@ func TestLockedStartupWithLegacyProviderDefersMigration(t *testing.T) {
 	requireClientKey(t, manager, "legacy-secret")
 }
 
+func TestNotInitStartupWithLegacyProviderDefersMigration(t *testing.T) {
+	ctx := context.Background()
+	database := openStore(t)
+	legacy := `{"baseUrl":"https://legacy.test/v1","apiKey":"legacy-secret","model":"legacy-model","temperature":0.3,"contextWindow":1000,"proxy":null,"stream":true}`
+	if err := database.SettingSet(ctx, profiles.LegacySettingKey, legacy); err != nil {
+		t.Fatal(err)
+	}
+	credentialVault := vault.Load(ctx, database)
+
+	manager, err := profiles.NewManager(ctx, database)
+	if err != nil {
+		t.Fatalf("not-init startup with legacy provider must not fail: %v", err)
+	}
+	requireLockedClient(t, manager)
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || !found {
+		t.Fatalf("not-init startup must keep the legacy row: found=%v err=%v", found, err)
+	}
+
+	if err := credentialVault.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.SettingGet(ctx, profiles.LegacySettingKey); err != nil || found {
+		t.Fatalf("legacy setting survived initialization migration: found=%v err=%v", found, err)
+	}
+	stored := storedSetting(t, database, profiles.SettingKey)
+	if strings.Contains(stored, "legacy-secret") || !strings.Contains(stored, store.SecretEnvelopePrefix) {
+		t.Fatalf("legacy migration left plaintext: %s", stored)
+	}
+	requireClientKey(t, manager, "legacy-secret")
+}
+
 func TestManagerTracksVaultLockLifecycle(t *testing.T) {
 	ctx := context.Background()
 	database, credentialVault := openVaultStore(t)

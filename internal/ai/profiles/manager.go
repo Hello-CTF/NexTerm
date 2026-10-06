@@ -115,7 +115,7 @@ func (m *Manager) applyLoadResult(ctx context.Context, result loadResult) error 
 	if result.needsSave {
 		saved, err := save(ctx, m.settings, m.protector, result.state, deleteLegacy)
 		if err != nil {
-			if !isVaultLocked(err) && !store.IsBusy(err) {
+			if !isVaultUnavailable(err) && !store.IsBusy(err) {
 				return err
 			}
 		} else {
@@ -563,9 +563,9 @@ func aiGenerationFromRaw(raw string) int64 {
 	return generation
 }
 
-func isVaultLocked(err error) bool {
+func isVaultUnavailable(err error) bool {
 	var appErr *ipc.Error
-	return errors.As(err, &appErr) && appErr.Code == ipc.CodeVaultLocked
+	return errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit)
 }
 
 func emptyState() state {

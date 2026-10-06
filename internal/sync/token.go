@@ -380,7 +380,7 @@ func (s *Service) adminTokenPlaintextFromStored(ctx context.Context, stored stri
 	if err == nil {
 		return plaintext, nil
 	}
-	if !isVaultLockedError(err) {
+	if !isVaultUnavailableError(err) {
 		return "", err
 	}
 	backup, found, backupErr := s.store.SettingGet(ctx, settingTokenBackup)
@@ -429,9 +429,9 @@ func (s *Service) auditToken(ctx context.Context, action string, token Token) {
 	_ = s.store.AuditInsert(ctx, store.AuditInput{Source: auditSourceSync, Kind: auditKindToken, Payload: json.RawMessage(payload)})
 }
 
-func isVaultLockedError(err error) bool {
+func isVaultUnavailableError(err error) bool {
 	var appErr *ipc.Error
-	return errors.As(err, &appErr) && appErr.Code == ipc.CodeVaultLocked
+	return errors.As(err, &appErr) && (appErr.Code == ipc.CodeVaultLocked || appErr.Code == ipc.CodeVaultNotInit)
 }
 
 // requireTokenAdmin 限制令牌读取与管理命令：远程调用必须携带管理员令牌身份；

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
+	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
 func TestSyncTokenEncryptedAtRestWithPlaintextBackup(t *testing.T) {
@@ -59,6 +60,29 @@ func TestSyncTokenLockedVaultWithoutBackupFailsExplicit(t *testing.T) {
 	instance.vault.Lock()
 	_, err := instance.service.Token(ctx)
 	requireCode(t, err, ipc.CodeVaultLocked)
+}
+
+func TestSyncTokenNotInitVaultFallsBackToBackup(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, true)
+	token, err := instance.service.Token(ctx)
+	if err != nil || token == "" {
+		t.Fatalf("token=%q err=%v", token, err)
+	}
+	for _, key := range []string{"vault.mode", "vault.master_salt", "vault.dek_envelope"} {
+		if err := instance.db.SettingDelete(ctx, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notInitVault := vault.Load(ctx, instance.db)
+	if notInitVault.Status().Initialized {
+		t.Fatal("test setup must produce an uninitialized vault")
+	}
+	service := New(instance.db, notInitVault, WithMetadata("test", true))
+	recovered, err := service.Token(ctx)
+	if err != nil || recovered != token {
+		t.Fatalf("not-init vault must fall back to the rollback key: %q err=%v", recovered, err)
+	}
 }
 
 func TestSyncTokenRotateLockedVaultFailsWithoutMutation(t *testing.T) {
