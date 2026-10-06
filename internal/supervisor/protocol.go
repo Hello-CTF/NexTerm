@@ -167,8 +167,10 @@ func errorSentinel(code string) error {
 		return ErrUnavailable
 	case codeClosed:
 		return ErrClosed
-	case codeProtocol, codeVersionMismatch:
+	case codeProtocol:
 		return ErrProtocol
+	case codeVersionMismatch:
+		return ErrVersionMismatch
 	case codeStateMismatch:
 		return ErrStateMismatch
 	default:

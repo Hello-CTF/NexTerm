@@ -33,6 +33,9 @@ type fakeHost struct {
 	socketPath   string
 	running      bool
 
+	shared       *sharedTarget
+	uploadDigest string
+
 	exists   map[string]bool
 	digests  map[string]string
 	commands []string
@@ -40,6 +43,83 @@ type fakeHost struct {
 	chmods   map[string]fs.FileMode
 	uploads  []string
 	renames  [][2]string
+}
+
+// sharedTarget models one remote host reached by several independent SSH
+// clients: the daemon socket, the uploaded files, and the spawn state are
+// shared while command traces stay per client.
+type sharedTarget struct {
+	mu         sync.Mutex
+	running    bool
+	socketPath string
+	files      map[string]string
+	uploads    []string
+	renames    [][2]string
+	spawns     int
+}
+
+func newSharedTarget(socketPath string) *sharedTarget {
+	return &sharedTarget{socketPath: socketPath, files: make(map[string]string)}
+}
+
+func (s *sharedTarget) spawn() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spawns++
+	s.running = true
+}
+
+func (s *sharedTarget) state() (bool, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running, s.socketPath
+}
+
+func (s *sharedTarget) exists(path string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.files[path]
+	return ok
+}
+
+func (s *sharedTarget) upload(path, digest string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.files[path] = digest
+	s.uploads = append(s.uploads, path)
+}
+
+func (s *sharedTarget) rename(from, to string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.files[to] = s.files[from]
+	delete(s.files, from)
+	s.renames = append(s.renames, [2]string{from, to})
+}
+
+func (s *sharedTarget) digest(path string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	digest, ok := s.files[path]
+	return digest, ok
+}
+
+func (s *sharedTarget) counts() (uploads int, renames int, spawns int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.uploads), len(s.renames), s.spawns
+}
+
+func (s *sharedTarget) uploadPaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.uploads...)
+}
+
+func (s *sharedTarget) renamePairs() [][2]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][2]string(nil), s.renames...)
 }
 
 func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (string, int, error) {
@@ -60,6 +140,9 @@ func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (stri
 		}
 		return h.probeVersion + "\n", 0, nil
 	case strings.Contains(command, "setsid"):
+		if h.shared != nil {
+			h.shared.spawn()
+		}
 		if h.spawn != nil {
 			h.spawn()
 		}
@@ -70,6 +153,9 @@ func (h *fakeHost) Run(_ context.Context, command string, _ time.Duration) (stri
 }
 
 func (h *fakeHost) Exists(_ context.Context, path string) (bool, error) {
+	if h.shared != nil {
+		return h.shared.exists(path), nil
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.exists[path], nil
@@ -94,19 +180,31 @@ func (h *fakeHost) Chmod(_ context.Context, path string, mode fs.FileMode) error
 
 func (h *fakeHost) Upload(_ context.Context, localPath, remotePath string) (int64, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.uploads = append(h.uploads, remotePath)
+	h.mu.Unlock()
+	if h.shared != nil {
+		h.shared.upload(remotePath, h.uploadDigest)
+	}
 	return 1, nil
 }
 
 func (h *fakeHost) Rename(_ context.Context, from, to string) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.renames = append(h.renames, [2]string{from, to})
+	h.mu.Unlock()
+	if h.shared != nil {
+		h.shared.rename(from, to)
+	}
 	return nil
 }
 
 func (h *fakeHost) ChecksumSHA256(_ context.Context, path string) (string, error) {
+	if h.shared != nil {
+		if digest, ok := h.shared.digest(path); ok {
+			return digest, nil
+		}
+		return "", fmt.Errorf("no digest for %s", path)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if digest, ok := h.digests[path]; ok {
@@ -118,6 +216,13 @@ func (h *fakeHost) ChecksumSHA256(_ context.Context, path string) (string, error
 func (h *fakeHost) DialExec(_ context.Context, command string) (net.Conn, error) {
 	if !strings.Contains(command, "--bridge") {
 		return nil, fmt.Errorf("unexpected dial command %q", command)
+	}
+	if h.shared != nil {
+		running, socketPath := h.shared.state()
+		if !running {
+			return nil, fmt.Errorf("daemon is not running")
+		}
+		return (&net.Dialer{}).DialContext(context.Background(), "unix", socketPath)
 	}
 	h.mu.Lock()
 	running := h.running
@@ -296,7 +401,6 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 	fixture := newDaemonFixture(t, dataRoot)
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	target := dataRoot + "/nexterm/bin/nexterm-" + digest[:12]
-	staging := dataRoot + "/nexterm/bin/.nexterm-" + digest[:12] + ".partial"
 	host := &fakeHost{
 		discovery:  testDiscovery(t, dataRoot),
 		socketPath: fixture.socketPath,
@@ -316,14 +420,19 @@ func TestEnsureDaemonUploadsWhenNoCompatibleBinary(t *testing.T) {
 	if daemon.Binary != target {
 		t.Fatalf("daemon binary = %q; want %q", daemon.Binary, target)
 	}
-	if len(host.uploads) != 1 || host.uploads[0] != staging {
-		t.Fatalf("uploads = %v; want %q", host.uploads, staging)
+	if len(host.uploads) != 1 {
+		t.Fatalf("uploads = %v; want one staged upload", host.uploads)
+	}
+	staging := host.uploads[0]
+	prefix := dataRoot + "/nexterm/bin/.nexterm-" + digest[:12] + "."
+	if !strings.HasPrefix(staging, prefix) || !strings.HasSuffix(staging, ".partial") {
+		t.Fatalf("staging path %q is not a unique sibling of %q", staging, target)
 	}
 	if host.chmods[staging] != 0o700 {
 		t.Fatalf("staging chmods = %v", host.chmods)
 	}
 	if len(host.renames) != 1 || host.renames[0] != [2]string{staging, target} {
-		t.Fatalf("renames = %v", host.renames)
+		t.Fatalf("renames = %v; want %q -> %q", host.renames, staging, target)
 	}
 	for _, dir := range []string{dataRoot + "/nexterm", dataRoot + "/nexterm/bin"} {
 		if host.chmods[dir] != 0o700 {

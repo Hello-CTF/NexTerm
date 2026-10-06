@@ -2,6 +2,9 @@ package ssh
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"path"
 	"strconv"
@@ -48,6 +51,8 @@ func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error)
 			if exists, err := host.Exists(ctx, cached); err == nil && exists && compatible(ctx, host, cached) {
 				if daemon, err := r.startOrConnect(ctx, host, cached, stateDir, digest); err == nil {
 					return daemon, nil
+				} else if daemonRefusal(err) {
+					return nil, err
 				}
 			}
 		}
@@ -55,6 +60,8 @@ func (r *Resolver) ensureOnHost(ctx context.Context, host Host) (*Daemon, error)
 	if binary := lookupPathBinary(ctx, host); binary != "" && compatible(ctx, host, binary) {
 		if daemon, err := r.startOrConnect(ctx, host, binary, stateDir, digest); err == nil {
 			return daemon, nil
+		} else if daemonRefusal(err) {
+			return nil, err
 		}
 	}
 	if upload == nil {
@@ -141,6 +148,10 @@ func (r *Resolver) startOrConnect(ctx context.Context, host Host, binary, stateD
 	daemon := &Daemon{host: host, Binary: binary, StateDir: stateDir, Digest: digest}
 	if err := probeDaemon(ctx, daemon, probeTimeout); err == nil {
 		return daemon, nil
+	} else if errors.Is(err, supervisor.ErrVersionMismatch) {
+		return nil, fmt.Errorf("%w: the running supervisor daemon speaks an incompatible protocol; refusing to replace it: %w", durable.ErrUnavailable, err)
+	} else if errors.Is(err, supervisor.ErrStateMismatch) {
+		return nil, fmt.Errorf("%w: the running supervisor daemon owns a different state directory; refusing to replace it: %w", durable.ErrUnavailable, err)
 	}
 	if err := spawnDaemon(ctx, host, binary, stateDir); err != nil {
 		return nil, err
@@ -154,6 +165,8 @@ func (r *Resolver) startOrConnect(ctx context.Context, host Host, binary, stateD
 	for {
 		if err := probeDaemon(ctx, daemon, probeTimeout); err == nil {
 			return daemon, nil
+		} else if daemonRefusal(err) {
+			return nil, fmt.Errorf("%w: the spawned supervisor daemon cannot serve this client; refusing to replace the running one: %w", durable.ErrUnavailable, err)
 		} else {
 			lastErr = err
 		}
@@ -168,10 +181,14 @@ func (r *Resolver) startOrConnect(ctx context.Context, host Host, binary, stateD
 	}
 }
 
+func daemonRefusal(err error) bool {
+	return errors.Is(err, supervisor.ErrVersionMismatch) || errors.Is(err, supervisor.ErrStateMismatch)
+}
+
 func probeDaemon(ctx context.Context, daemon *Daemon, timeout time.Duration) error {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	_, err := daemon.Provider().ListDurable(probeCtx)
+	_, err := supervisor.NewRemoteClient(daemon.dial, daemon.Digest).List(probeCtx)
 	return err
 }
 
@@ -212,7 +229,11 @@ func (r *Resolver) upload(ctx context.Context, host Host, binDir string, upload 
 	}
 	name := "nexterm-" + upload.Digest[:12]
 	target := binDir + "/" + name
-	staging := binDir + "/." + name + ".partial"
+	var nonce [4]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("%w: stage supervisor binary: %v", durable.ErrUnavailable, err)
+	}
+	staging := binDir + "/." + name + "." + hex.EncodeToString(nonce[:]) + ".partial"
 	if _, err := host.Upload(uploadCtx, upload.Path, staging); err != nil {
 		return "", fmt.Errorf("%w: upload supervisor binary: %v", durable.ErrUnavailable, err)
 	}
