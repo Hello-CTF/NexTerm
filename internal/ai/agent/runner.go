@@ -185,7 +185,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		}
 	}
 	stream = r.wrapStream(stream, jobID)
-	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true}
+	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync()}
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -251,7 +251,7 @@ func (r *Runner) Cancel(jobID string) error {
 		}
 		return ErrJobNotFound
 	}
-	err := r.cancelRun(jobID)
+	current.cancelSync.markStarted()
 	current.cancel()
 	current.pendingMu.Lock()
 	running := current.running
@@ -260,6 +260,8 @@ func (r *Runner) Cancel(jobID string) error {
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
+	err := r.cancelRun(jobID)
+	current.cancelSync.markRecorded()
 	if cancelTestHook != nil {
 		cancelTestHook()
 	}
@@ -460,12 +462,13 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		if closeErr := r.closeSubagents(current); closeErr != nil {
 			terminalErr = errors.Join(terminalErr, closeErr)
 		}
+		current.cancelSync.waitRecorded()
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		if terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
-			terminalErr = context.Canceled
+			terminalErr = errors.Join(context.Canceled, terminalErr)
 		}
-		current.finish(answer, turns, total, terminalErr)
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
+		current.finish(answer, turns, total, terminalErr)
 		r.maybeGenerateConversationTitle(current)
 		r.cleanup(current)
 	})
@@ -616,6 +619,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 			r.parkForShutdown(current)
 			continue
 		}
+		current.cancelSync.markStarted()
 		if current.forceCancel != nil {
 			current.forceCancel()
 		}
@@ -625,6 +629,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		}
 
 		_, _ = r.hitl.Cancel(current.id)
+		current.cancelSync.markRecorded()
 	}
 	if err := r.hitl.Close(); err != nil {
 		r.appendShutdownErr(err)
