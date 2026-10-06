@@ -144,6 +144,66 @@ describe("状态栏凭据库状态", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
+  it("较早工作区存在隐藏设置页时仍滚动当前工作区的设置页", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: false, unlocked: false });
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws-a",
+          kind: "tools",
+          title: "工具A",
+          panes: [
+            {
+              id: "pane-a",
+              tabs: [{ id: "settings", kind: "settings", title: "设置", closable: true }],
+              activeTabId: "settings",
+            },
+          ],
+          activePaneId: "pane-a",
+          splitRatio: 0.5,
+          closable: true,
+        },
+        {
+          id: "ws-b",
+          kind: "tools",
+          title: "工具B",
+          panes: [{ id: "pane-b", tabs: [], activeTabId: null }],
+          activePaneId: "pane-b",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-b",
+    });
+    mounted = mountApp();
+    await flush();
+
+    const hiddenCard = [
+      ...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-a .nx-card"),
+    ].find((c) => c.textContent?.includes("凭据保护"));
+    expect(hiddenCard).toBeTruthy();
+    const hiddenScroll = vi.fn();
+    (hiddenCard as HTMLElement).scrollIntoView = hiddenScroll;
+
+    click(vaultStatusControl() as HTMLElement);
+    await flush();
+
+    const wsB = useUi.getState().workspaces.find((w) => w.id === "ws-b");
+    expect(wsB?.panes.flatMap((p) => p.tabs).some((t) => t.kind === "settings")).toBe(true);
+    const visibleCard = [
+      ...document.querySelectorAll<HTMLElement>("#nx-ws-panel-ws-b .nx-card"),
+    ].find((c) => c.textContent?.includes("凭据保护"));
+    expect(visibleCard).toBeTruthy();
+    const visibleScroll = vi.fn();
+    (visibleCard as HTMLElement).scrollIntoView = visibleScroll;
+
+    click(vaultStatusControl() as HTMLElement);
+    await flush();
+
+    expect(visibleScroll).toHaveBeenCalledWith({ block: "start" });
+    expect(hiddenScroll).not.toHaveBeenCalled();
+  });
+
   it("已锁定时保持纯文本状态，不给出开启保护入口", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mounted = mountApp();

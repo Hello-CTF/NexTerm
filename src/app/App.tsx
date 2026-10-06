@@ -586,9 +586,16 @@ export default function App() {
 
   useEffect(() => {
     if (vaultProtectionSeq === 0) return;
-    for (const el of document.querySelectorAll<HTMLElement>(".nx-card-title")) {
-      if (el.textContent?.trim() !== "凭据保护") continue;
-      el.closest<HTMLElement>(".nx-card")?.scrollIntoView({ block: "start" });
+    const wsId = useUi.getState().activeWorkspaceId;
+    if (!wsId) return;
+    for (const panel of document.querySelectorAll<HTMLElement>(
+      `#nx-ws-panel-${CSS.escape(wsId)} [role='tabpanel']:not(.hidden)`,
+    )) {
+      const card = [...panel.querySelectorAll<HTMLElement>(".nx-card-title")]
+        .find((el) => el.textContent?.trim() === "凭据保护")
+        ?.closest<HTMLElement>(".nx-card");
+      if (!card) continue;
+      card.scrollIntoView({ block: "start" });
       break;
     }
   }, [vaultProtectionSeq]);
