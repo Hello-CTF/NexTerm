@@ -251,6 +251,7 @@ func (r *Runner) Cancel(jobID string) error {
 		}
 		return ErrJobNotFound
 	}
+	err := r.cancelRun(jobID)
 	current.cancel()
 	current.pendingMu.Lock()
 	running := current.running
@@ -262,7 +263,6 @@ func (r *Runner) Cancel(jobID string) error {
 	if cancelTestHook != nil {
 		cancelTestHook()
 	}
-	err := r.cancelRun(jobID)
 	if !running {
 		r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 	}
@@ -461,6 +461,9 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 			terminalErr = errors.Join(terminalErr, closeErr)
 		}
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
+		if terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
+			terminalErr = context.Canceled
+		}
 		current.finish(answer, turns, total, terminalErr)
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
 		r.maybeGenerateConversationTitle(current)
