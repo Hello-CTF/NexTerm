@@ -92,12 +92,6 @@ export function newBinaryChannel(): WebChannel<unknown> {
   return ch;
 }
 
-export function newJsonChannel(): WebChannel<unknown> {
-  const ch = new WebChannel<unknown>();
-  attach(ch);
-  return ch;
-}
-
 function attach(ch: WebChannel<unknown>) {
   const entry: ChannelEntry = { ch, ws: null, disposed: false, retry: 0, hasOpened: false };
   channels.set(ch.id, entry);

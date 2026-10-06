@@ -22,7 +22,7 @@ void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
   const { sessions, setSessions, pushToast } = useUi.getState();
   setSessions(
     sessions.map((s) =>
-      s.id === p.sessionId ? { ...s, status: p.status as SessionStatusEvent["status"] as never } : s,
+      s.id === p.sessionId ? { ...s, status: p.status as never } : s,
     ),
   );
   if (p.status === "failed" && p.error) {

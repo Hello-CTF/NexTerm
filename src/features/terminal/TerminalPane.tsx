@@ -341,9 +341,7 @@ export function TerminalPane({
     let cancelled = false;
     void listenEvent<TerminalThrottledEvent>(EVENTS.terminalThrottled, (p) => {
       if (p.tabId !== kernelTabIdRef.current) return;
-      if (typeof p.version === "number" && p.version > 0 && !throttleVersions.current.accept(p.tabId, p.version)) {
-        return;
-      }
+      if (!throttleVersions.current.accept(p.tabId, p.version)) return;
       setThrottle((current) => throttleStateFrom(current, p, Date.now()));
     }).then((off) => {
       if (cancelled) off();
