@@ -807,7 +807,7 @@ describe("snippets panel", () => {
 });
 
 describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
-  it("asset delete renders a plain info dialog: soft delete is recoverable", async () => {
+  it("asset delete renders a warning alertdialog: soft delete is recoverable", async () => {
     mocks.ask.mockImplementation((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) =>
       mocks.realAsk!(message, options),
     );
@@ -882,14 +882,14 @@ describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
 
     click(buttonByTitle(mounted!.container, "删除"));
     const modal = await openModal();
-    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("软删除，可恢复");
     await closeModal(modal, "取消");
     expect(mocks.assetDelete).not.toHaveBeenCalled();
 
     click(buttonByTitle(mounted!.container, "删除"));
     const modal2 = await openModal();
-    expect(modal2.getAttribute("role")).toBe("dialog");
+    expect(modal2.getAttribute("role")).toBe("alertdialog");
     await closeModal(modal2, "确定");
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledWith("a1"));
   });

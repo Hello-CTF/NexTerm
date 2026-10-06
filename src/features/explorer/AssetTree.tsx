@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask, pickKeyFile } from "../../ui/dialogs";
 import { assetApi, sessionApi, vaultApi, type Asset, type AssetGroup } from "../../ipc/commands";
 import { connectAsset, openCredentialsSidebar, useUi } from "../../app/store";
-import { isImeKeyEvent } from "../../ui/DialogHost";
+import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { describeError } from "../../ui/errorText";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
@@ -115,6 +115,7 @@ export function AssetTree() {
   const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
   const [groupError, setGroupError] = useState<{ id: string; message: string } | null>(null);
+  const [assetError, setAssetError] = useState<{ id: string; message: string } | null>(null);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; asset: Asset; full?: boolean } | null>(null);
   const { hiddenIds, showHidden, setShowHidden, hide, unhide } = useAssetVisibility();
@@ -180,16 +181,25 @@ export function AssetTree() {
     pushToast("info", `已取消隐藏「${a.name}」`);
   };
 
+  const runDeleteAsset = async (a: Asset) => {
+    setAssetError(null);
+    try {
+      await assetApi.delete(a.id);
+      unhide(a.id);
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["credentials"] });
+      pushToast("info", "已删除");
+    } catch (e) {
+      setAssetError({ id: a.id, message: describeError(e) });
+    }
+  };
+
   const onDelete = async (a: Asset) => {
     const ok = await ask(`删除资产「${a.name}」？软删除，可恢复；关联凭据保留。`, {
-      kind: "info",
+      kind: "warning",
     });
     if (!ok) return;
-    await assetApi.delete(a.id);
-    unhide(a.id);
-    void qc.invalidateQueries({ queryKey: ["assets"] });
-    void qc.invalidateQueries({ queryKey: ["credentials"] });
-    pushToast("info", "已删除");
+    await runDeleteAsset(a);
   };
 
   const moveAsset = async (assetId: string, groupId: string | null) => {
@@ -350,6 +360,18 @@ export function AssetTree() {
       >
         {assets.isPending ? (
           <AssetTreeSkeleton />
+        ) : assets.isError && !query.trim() ? (
+          <div role="alert" className="px-2 py-8 text-center">
+            <div className="flex items-center justify-center gap-1.5 text-[12px] text-red-400">
+              <IconXCircle size={13} /> 加载失败：{describeError(assets.error)}
+            </div>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm mt-3"
+              onClick={() => void assets.refetch()}
+            >
+              重试
+            </button>
+          </div>
         ) : (
           <>
             {(byGroup.get(null) ?? []).map((a) => (
@@ -361,6 +383,9 @@ export function AssetTree() {
                 onDelete={() => void onDelete(a)}
                 onEdit={() => setEditingAsset(a)}
                 onMore={(x, y, full) => setRowMenu({ x, y, asset: a, full })}
+                error={assetError?.id === a.id ? assetError.message : null}
+                onRetry={() => void runDeleteAsset(a)}
+                onDismissError={() => setAssetError(null)}
               />
             ))}
             {(groups.data ?? []).map((g: AssetGroup) => (
@@ -383,6 +408,9 @@ export function AssetTree() {
                 onDeleteGroup={() => void deleteGroup(g)}
                 onRetry={() => void runDeleteGroup(g)}
                 onDismissError={() => setGroupError(null)}
+                assetError={assetError}
+                onRetryAssetDelete={(a) => void runDeleteAsset(a)}
+                onDismissAssetError={() => setAssetError(null)}
               />
             ))}
             {visible.length === 0 && (
@@ -399,7 +427,7 @@ export function AssetTree() {
       </div>
 
       <button
-        className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
+        className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-neutral-800/70 hover:text-neutral-100"
         title="命令片段（插入当前终端）"
         onClick={() => setSnippetsOpen(true)}
       >
@@ -410,7 +438,7 @@ export function AssetTree() {
       </button>
 
       <button
-        className="mx-1.5 mb-1.5 flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-white/[.05] hover:text-neutral-100"
+        className="mx-1.5 mb-1.5 flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent border-t-neutral-800/60 px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-neutral-800/70 hover:text-neutral-100"
         title="凭据库（左栏查看）"
         onClick={openCredentialsSidebar}
       >
@@ -484,6 +512,9 @@ function AssetRow({
   onDelete,
   onEdit,
   onMore,
+  error,
+  onRetry,
+  onDismissError,
 }: {
   asset: Asset;
   level: number;
@@ -491,6 +522,9 @@ function AssetRow({
   onDelete: () => void;
   onEdit: () => void;
   onMore: (x: number, y: number, full?: boolean) => void;
+  error?: string | null;
+  onRetry?: () => void;
+  onDismissError?: () => void;
 }) {
   const coarse = useCoarsePointer();
   const Icon = assetIcon(asset.kind);
@@ -507,6 +541,7 @@ function AssetRow({
     .filter(Boolean)
     .join(" · ");
   return (
+    <>
     <div
       role="treeitem"
       aria-level={level}
@@ -617,6 +652,21 @@ function AssetRow({
         </span>
       )}
     </div>
+    {error && (
+      <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
+        <IconXCircle size={12} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate" title={error}>
+          删除失败：{error}
+        </span>
+        <button className="nx-link shrink-0" onClick={onRetry}>
+          重试
+        </button>
+        <button className="nx-link shrink-0" onClick={onDismissError}>
+          知道了
+        </button>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -635,6 +685,9 @@ function GroupNode({
   onDeleteGroup,
   onRetry,
   onDismissError,
+  assetError,
+  onRetryAssetDelete,
+  onDismissAssetError,
 }: {
   group: AssetGroup;
   assets: Asset[];
@@ -650,6 +703,9 @@ function GroupNode({
   onDeleteGroup: () => void;
   onRetry: () => void;
   onDismissError: () => void;
+  assetError: { id: string; message: string } | null;
+  onRetryAssetDelete: (a: Asset) => void;
+  onDismissAssetError: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const [over, setOver] = useState(false);
@@ -800,6 +856,9 @@ function GroupNode({
               onDelete={() => onDelete(a)}
               onEdit={() => onEdit(a)}
               onMore={(x, y, full) => onMore(a, x, y, full)}
+              error={assetError?.id === a.id ? assetError.message : null}
+              onRetry={() => onRetryAssetDelete(a)}
+              onDismissError={onDismissAssetError}
             />
           ))}
           {assets.length === 0 && (
@@ -860,6 +919,23 @@ function GroupRenameDialog({
   const [name, setName] = useState(group.name);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
+  const layer = useOverlayFocus(true, modalRef, {
+    initialFocus: () => nameInputRef.current,
+    selectInitial: true,
+  });
+
+  const requestClose = async () => {
+    if (saving) return;
+    if (name === group.name) {
+      onClose();
+      return;
+    }
+    const ok = await ask("放弃未保存的修改？", { kind: "warning" });
+    if (ok) onClose();
+  };
 
   const save = async () => {
     if (saving) return;
@@ -886,18 +962,38 @@ function GroupRenameDialog({
   };
 
   return (
-    <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal flex max-w-[340px] flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="nx-overlay" onClick={() => void requestClose()}>
+      <div
+        ref={modalRef}
+        className="nx-modal flex max-w-[340px] flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (!layer.isTopmost()) return;
+          if (e.key === "Escape" && !e.repeat && !isImeKeyEvent(e)) {
+            e.preventDefault();
+            void requestClose();
+            return;
+          }
+          trapOverlayTab(e, modalRef.current);
+        }}
+      >
         <div className="nx-modal-header shrink-0">
-          <span className="text-[13px] font-semibold text-neutral-100">重命名分组</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
+            重命名分组
+          </span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
             <label className="nx-label">名称</label>
             <input
+              ref={nameInputRef}
               className="nx-input"
               value={name}
-              autoFocus
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !isImeKeyEvent(e)) void save();
@@ -911,7 +1007,7 @@ function GroupRenameDialog({
           )}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
+          <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
             取消
           </button>
           <button
@@ -1135,6 +1231,7 @@ export function AssetEditor({
       if (!selection) return;
       setKeyPath(selection.path);
       setInlineKeyContent(selection.content);
+      setDirty(true);
     } catch (e) {
       pushToast("error", describeError(e));
     }
@@ -1146,6 +1243,7 @@ export function AssetEditor({
       setInlineKeyContent(null);
     }
     setKeyOrigin(next);
+    setDirty(true);
   };
   const changeInlinePath = (next: string) => {
     inlinePicker.invalidate();
@@ -1281,15 +1379,54 @@ export function AssetEditor({
     }
   };
 
+  const modalRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
+  const [dirty, setDirty] = useState(false);
+  const layer = useOverlayFocus(true, modalRef, {
+    initialFocus: () => nameInputRef.current,
+  });
+
+  const requestClose = async () => {
+    if (savingRef.current) return;
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    const ok = await ask("放弃未保存的修改？", { kind: "warning" });
+    if (ok) onClose();
+  };
+
   return (
-    <div className="nx-overlay" onClick={onClose}>
-      <div className="nx-modal flex max-w-[380px] flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="nx-overlay" onClick={() => void requestClose()}>
+      <div
+        ref={modalRef}
+        className="nx-modal flex max-w-[380px] flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (!layer.isTopmost()) return;
+          if (e.key === "Escape" && !e.repeat && !isImeKeyEvent(e)) {
+            e.preventDefault();
+            void requestClose();
+            return;
+          }
+          trapOverlayTab(e, modalRef.current);
+        }}
+      >
         <div className="nx-modal-header shrink-0">
-          <span className="text-[13px] font-semibold text-neutral-100">
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
             {kind === "group" ? "新建分组" : initial ? "编辑资产" : "新建资产"}
           </span>
         </div>
-        <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
+        <div
+          className="nx-modal-body min-h-0 flex-1 overflow-y-auto"
+          onChange={() => setDirty(true)}
+        >
           {kind === "asset" && (
             <div className="nx-form-row">
               <label className="nx-label">类型</label>
@@ -1325,6 +1462,7 @@ export function AssetEditor({
           <div className="nx-form-row">
             <label className="nx-label">名称</label>
             <input
+              ref={nameInputRef}
               className="nx-input"
               value={name}
               onChange={(e) => (kind === "group" ? setName(e.target.value) : syncCredName(e.target.value))}
@@ -1502,7 +1640,10 @@ export function AssetEditor({
                           className="nx-btn nx-btn-outline shrink-0"
                           onClick={() =>
                             void pickKeyFile().then((p) => {
-                              if (p) setKeyPath(p);
+                              if (p) {
+                                setKeyPath(p);
+                                setDirty(true);
+                              }
                             })
                           }
                         >
@@ -1531,14 +1672,20 @@ export function AssetEditor({
                             <button
                               type="button"
                               className={`nx-segment-item ${keyContentMode === "file" ? "is-active" : ""}`}
-                              onClick={() => setKeyContentMode("file")}
+                              onClick={() => {
+                                setDirty(true);
+                                setKeyContentMode("file");
+                              }}
                             >
                               私钥文件
                             </button>
                             <button
                               type="button"
                               className={`nx-segment-item ${keyContentMode === "paste" ? "is-active" : ""}`}
-                              onClick={() => setKeyContentMode("paste")}
+                              onClick={() => {
+                                setDirty(true);
+                                setKeyContentMode("paste");
+                              }}
                             >
                               粘贴内容
                             </button>
@@ -1763,7 +1910,7 @@ export function AssetEditor({
           )}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={saving}>
+          <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
             取消
           </button>
           <button
