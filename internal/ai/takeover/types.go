@@ -25,19 +25,20 @@ var (
 const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 — 按 Esc 或任意键暂停]\x1b[0m\r\n"
 
 type Dependencies struct {
-	Model        agent.ModelFactory
-	Checkpoints  adk.CheckPointStore
-	Permission   func(context.Context) (guard.Config, error)
-	Grants       *guard.Grants
-	TabAsset     func(context.Context, string) (string, error)
-	Snapshot     func(context.Context, string) (tools.Screen, error)
-	WriteAI      func(context.Context, string, []byte) error
-	Inject       func(context.Context, string, []byte) error
-	TabSession   func(string) string
-	Audit        func(context.Context, tools.AuditEntry) error
-	NewID        func() string
-	PollInterval time.Duration
-	Now          func() time.Time
+	Model                  agent.ModelFactory
+	Checkpoints            adk.CheckPointStore
+	Permission             func(context.Context) (guard.Config, error)
+	Grants                 *guard.Grants
+	TabAsset               func(context.Context, string) (string, error)
+	Snapshot               func(context.Context, string) (tools.Screen, error)
+	WriteAI                func(context.Context, string, []byte) error
+	Inject                 func(context.Context, string, []byte) error
+	TabSession             func(string) string
+	Audit                  func(context.Context, tools.AuditEntry) error
+	NewID                  func() string
+	PollInterval           time.Duration
+	PauseEscalationTimeout time.Duration
+	Now                    func() time.Time
 }
 
 type RunArgs struct {

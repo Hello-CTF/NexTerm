@@ -37,6 +37,7 @@ func TestUserPauseKeepsCheckpointAndResumes(t *testing.T) {
 	response := h.run(t, stream, RunArgs{})
 	waitEvent(t, stream, "toolResult")
 	h.manager.Pause("tab")
+	close(release)
 	waitEvent(t, stream, "paused")
 	if _, found, err := store.Get(context.Background(), response.JobID); err != nil || !found {
 		t.Fatalf("checkpoint deleted by pause: found=%v err=%v", found, err)
@@ -45,7 +46,6 @@ func TestUserPauseKeepsCheckpointAndResumes(t *testing.T) {
 	if done, failed := counts(events); done+failed != 0 {
 		t.Fatalf("pause produced terminal events: %+v", events)
 	}
-	close(release)
 	resumed := &agent.SliceStream{}
 	result, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed))
 	if err != nil {
@@ -102,6 +102,7 @@ func TestPauseResumeAcrossRestart(t *testing.T) {
 	}
 	waitEvent(t, stream, "toolResult")
 	first.Pause("tab")
+	close(release)
 	waitEvent(t, stream, "paused")
 	if _, found, err := store.Get(context.Background(), recoveryKey(response.JobID)); err != nil || !found {
 		t.Fatalf("recovery record missing after pause: found=%v err=%v", found, err)
@@ -135,7 +136,6 @@ func TestPauseResumeAcrossRestart(t *testing.T) {
 	if _, err := second.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: token, JobID: "missing"}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown job resume error = %v", err)
 	}
-	close(release)
 	resumed := &agent.SliceStream{}
 	result, err := second.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: token, JobID: response.JobID}, agent.StaticStream(resumed))
 	if err != nil {
@@ -172,9 +172,10 @@ func TestShutdownPreservesRunningJobForRecovery(t *testing.T) {
 		Snapshot: func(context.Context, string) (tools.Screen, error) {
 			return tools.Screen{Text: "$ ", Tail: []string{"$ "}, IdleMS: 301, CursorCol: 2}, nil
 		},
-		WriteAI:      func(context.Context, string, []byte) error { return nil },
-		TabAsset:     func(context.Context, string) (string, error) { return "asset-a", nil },
-		PollInterval: time.Millisecond,
+		WriteAI:                func(context.Context, string, []byte) error { return nil },
+		TabAsset:               func(context.Context, string) (string, error) { return "asset-a", nil },
+		PollInterval:           time.Millisecond,
+		PauseEscalationTimeout: 50 * time.Millisecond,
 	}
 	first := NewManager(deps)
 	stream := &agent.SliceStream{}
@@ -232,6 +233,7 @@ func TestResumeRejectsMissingCheckpoint(t *testing.T) {
 	response := h.run(t, stream, RunArgs{})
 	waitEvent(t, stream, "toolResult")
 	h.manager.Pause("tab")
+	close(release)
 	waitEvent(t, stream, "paused")
 	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -252,7 +254,6 @@ func TestResumeRejectsMissingCheckpoint(t *testing.T) {
 	if _, found, _ := store.Get(context.Background(), recoveryKey(response.JobID)); found {
 		t.Fatal("stale recovery record kept after missing checkpoint")
 	}
-	close(release)
 	if err := restarted.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -299,8 +300,8 @@ func TestPauseDuringWriteDoesNotDuplicateOnResume(t *testing.T) {
 	if len(h.aiWrites) != 1 {
 		t.Fatalf("write duplicated across pause: %q", h.aiWrites)
 	}
-	if len(h.audits) != 2 || h.audits[1].Payload.(map[string]any)["replay"] != true {
-		t.Fatalf("replay audit missing: %+v", h.audits)
+	if len(h.audits) != 1 {
+		t.Fatalf("write audits = %+v", h.audits)
 	}
 }
 

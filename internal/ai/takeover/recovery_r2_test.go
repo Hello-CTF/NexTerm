@@ -29,22 +29,22 @@ func TestPauseBeforeIteratorStartupIsHonored(t *testing.T) {
 		deps.Checkpoints = store
 	})
 	stream := &agent.SliceStream{}
-	response := h.run(t, stream, RunArgs{})
+	h.run(t, stream, RunArgs{})
 	h.manager.Pause("tab")
-	waitEvent(t, stream, "paused")
+	events := waitClosed(t, stream)
 	h.mu.Lock()
 	writes := len(h.aiWrites)
 	h.mu.Unlock()
 	if writes != 0 {
 		t.Fatalf("write after pre-startup pause: %q", h.aiWrites)
 	}
-	if _, found, _ := store.Get(context.Background(), recoveryKey(response.JobID)); !found {
-		t.Fatal("pause before startup missing recovery record")
+	if calls.Load() != 0 {
+		t.Fatalf("model ran after pre-startup pause: %d calls", calls.Load())
 	}
-	if err := h.manager.Cancel(response.JobID); err != nil {
-		t.Fatal(err)
+	done, failed := counts(events)
+	if done != 1 || failed != 0 || events[len(events)-1].Answer != "用户暂停" {
+		t.Fatalf("pre-startup pause did not stop cleanly: %+v", events)
 	}
-	waitClosed(t, stream)
 }
 
 type ctxCheckpointStore struct {
@@ -126,6 +126,7 @@ func TestWriteDoneSaveFailureLeavesUncertainAttempt(t *testing.T) {
 	store.setErr = execSetFailer(2)
 	h := newHarnessWith(t, chat, func(deps *Dependencies) {
 		deps.Checkpoints = store
+		deps.PauseEscalationTimeout = 50 * time.Millisecond
 	})
 	h.writeAI = func([]byte) error {
 		writeOnce.Do(func() { close(writeEntered) })
@@ -136,6 +137,7 @@ func TestWriteDoneSaveFailureLeavesUncertainAttempt(t *testing.T) {
 	response := h.run(t, stream, RunArgs{})
 	<-writeEntered
 	h.manager.Pause("tab")
+	time.Sleep(100 * time.Millisecond)
 	close(release)
 	waitEvent(t, stream, "paused")
 	resumed := &agent.SliceStream{}
@@ -178,6 +180,7 @@ func TestWriteErrorLeavesUncertainAttempt(t *testing.T) {
 	store := newCtxCheckpointStore()
 	h := newHarnessWith(t, chat, func(deps *Dependencies) {
 		deps.Checkpoints = store
+		deps.PauseEscalationTimeout = 50 * time.Millisecond
 	})
 	h.writeAI = func([]byte) error {
 		writeOnce.Do(func() { close(writeEntered) })
@@ -188,6 +191,7 @@ func TestWriteErrorLeavesUncertainAttempt(t *testing.T) {
 	response := h.run(t, stream, RunArgs{})
 	<-writeEntered
 	h.manager.Pause("tab")
+	time.Sleep(100 * time.Millisecond)
 	close(release)
 	waitEvent(t, stream, "paused")
 	resumed := &agent.SliceStream{}
@@ -230,6 +234,7 @@ func TestSlowWriteKeepsRecordContext(t *testing.T) {
 	store := newCtxCheckpointStore()
 	h := newHarnessWith(t, chat, func(deps *Dependencies) {
 		deps.Checkpoints = store
+		deps.PauseEscalationTimeout = 50 * time.Millisecond
 	})
 	h.writeAI = func([]byte) error {
 		writeOnce.Do(func() { close(writeEntered) })
@@ -240,7 +245,7 @@ func TestSlowWriteKeepsRecordContext(t *testing.T) {
 	response := h.run(t, stream, RunArgs{})
 	<-writeEntered
 	h.manager.Pause("tab")
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	close(release)
 	waitEvent(t, stream, "paused")
 	resumed := &agent.SliceStream{}
@@ -299,6 +304,7 @@ func TestResumeRejectsEmptyRecordedAsset(t *testing.T) {
 	response := h.run(t, stream, RunArgs{})
 	waitEvent(t, stream, "toolResult")
 	h.manager.Pause("tab")
+	close(release)
 	waitEvent(t, stream, "paused")
 	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -313,7 +319,6 @@ func TestResumeRejectsEmptyRecordedAsset(t *testing.T) {
 	if _, err := restarted.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrResumeMismatch) {
 		t.Fatalf("resume with empty recorded asset error = %v", err)
 	}
-	close(release)
 	if err := restarted.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -358,12 +363,12 @@ func TestResumeWaitsForPausedFinalization(t *testing.T) {
 	}
 	_ = waitEvent(t, stream.SliceStream, "toolResult")
 	h.manager.Pause("tab")
+	close(modelRelease)
 	<-stream.paused
 	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrOwnershipActive) {
 		t.Fatalf("resume during paused finalization error = %v", err)
 	}
 	close(stream.release)
-	close(modelRelease)
 	resumed := &agent.SliceStream{}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -395,5 +400,78 @@ func TestResumeWaitsForPausedFinalization(t *testing.T) {
 	}
 	if !pausedSeen {
 		t.Fatal("paused event missing from old stream")
+	}
+}
+
+type gatedCheckpointStore struct {
+	inner    *ctxCheckpointStore
+	gate     chan struct{}
+	key      string
+	blocking atomic.Bool
+}
+
+func (s *gatedCheckpointStore) Get(ctx context.Context, id string) ([]byte, bool, error) {
+	return s.inner.Get(ctx, id)
+}
+
+func (s *gatedCheckpointStore) Set(ctx context.Context, id string, data []byte) error {
+	if id == s.key && s.blocking.Load() {
+		select {
+		case <-s.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.inner.Set(ctx, id, data)
+}
+
+func (s *gatedCheckpointStore) Delete(ctx context.Context, id string) error {
+	return s.inner.Delete(ctx, id)
+}
+
+func TestPauseWaitsForCheckpointPersistence(t *testing.T) {
+	var calls atomic.Int32
+	modelRelease := make(chan struct{})
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
+		}
+		select {
+		case <-modelRelease:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
+	}}
+	store := &gatedCheckpointStore{inner: newCtxCheckpointStore(), gate: make(chan struct{})}
+	h := newHarnessWith(t, chat, func(deps *Dependencies) {
+		deps.Checkpoints = store
+	})
+	stream := &agent.SliceStream{}
+	response := h.run(t, stream, RunArgs{})
+	_ = waitEvent(t, stream, "toolResult")
+	store.key = response.JobID
+	store.blocking.Store(true)
+	h.manager.Pause("tab")
+	time.Sleep(100 * time.Millisecond)
+	events, _ := stream.Snapshot()
+	for _, event := range events {
+		if event.Type == "paused" {
+			t.Fatal("paused published before checkpoint persisted")
+		}
+	}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrOwnershipActive) {
+		t.Fatalf("resume before checkpoint persisted error = %v", err)
+	}
+	close(store.gate)
+	close(modelRelease)
+	waitEvent(t, stream, "paused")
+	resumed := &agent.SliceStream{}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
+		t.Fatalf("resume after checkpoint persisted: %v", err)
+	}
+	final := waitClosed(t, resumed)
+	if done, failed := counts(final); done != 1 || failed != 0 {
+		t.Fatalf("resumed events = %+v", final)
 	}
 }

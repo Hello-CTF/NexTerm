@@ -69,6 +69,15 @@ func (m *Manager) runJob(state *runState) {
 			return
 		}
 		if userPaused && state.stopReason() == "" {
+			if !m.checkpointExists(state) && state.eino != nil && state.eino.steps == 0 && state.eino.answer == "" {
+				m.complete(state, runResult{answer: "用户暂停", reason: "用户暂停"})
+				return
+			}
+			if !m.awaitCheckpoint(state) {
+				result.err = errors.New("接管 checkpoint 未能持久化，暂停不可恢复")
+				m.complete(state, result)
+				return
+			}
 			m.persistRecovery(state)
 			emitCtx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), time.Second)
 			defer cancel()
@@ -111,7 +120,11 @@ func (m *Manager) run(iterCtx context.Context, state *runState) runResult {
 	cancelOption, cancelFn := adk.WithCancel()
 	state.pendingMu.Lock()
 	state.cancelFn = cancelFn
+	paused := state.userPaused
 	state.pendingMu.Unlock()
+	if paused {
+		m.cancelIteration(cancelFn, state, true)
+	}
 	options := []adk.AgentRunOption{cancelOption, adk.WithCheckPointID(state.id)}
 	var iterator *adk.AsyncIterator[*adk.AgentEvent]
 	var err error

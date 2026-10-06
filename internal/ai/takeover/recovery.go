@@ -57,6 +57,28 @@ func (m *Manager) loadRecovery(ctx context.Context, jobID string) (*recoveryReco
 	return &record, nil
 }
 
+func (m *Manager) awaitCheckpoint(state *runState) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), 5*time.Second)
+	defer cancel()
+	for {
+		if m.checkpointExists(state) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+func (m *Manager) checkpointExists(state *runState) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), 5*time.Second)
+	defer cancel()
+	_, found, err := m.checkpoints.Get(ctx, state.id)
+	return err == nil && found
+}
+
 func (m *Manager) deleteRecovery(ctx context.Context, jobID string) {
 	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(ctx, recoveryKey(jobID))

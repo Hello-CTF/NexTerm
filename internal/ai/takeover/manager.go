@@ -41,6 +41,9 @@ func NewManager(deps Dependencies) *Manager {
 	if deps.PollInterval <= 0 {
 		deps.PollInterval = 100 * time.Millisecond
 	}
+	if deps.PauseEscalationTimeout <= 0 {
+		deps.PauseEscalationTimeout = 30 * time.Second
+	}
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = agent.NewMemoryCheckpoints()
 	}
@@ -273,14 +276,32 @@ func (m *Manager) pauseState(state *runState) {
 	state.userPaused = true
 	state.pauseReady = false
 	cancelFn := state.cancelFn
-	iterCancel := state.iterCancel
 	state.pendingMu.Unlock()
 	if cancelFn != nil {
-		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
+		m.cancelIteration(cancelFn, state, false)
 	}
-	if iterCancel != nil {
-		iterCancel()
+}
+
+func (m *Manager) cancelIteration(cancelFn adk.AgentCancelFunc, state *runState, immediate bool) {
+	options := []adk.AgentCancelOption{
+		adk.WithAgentCancelMode(adk.CancelAfterChatModel | adk.CancelAfterToolCalls),
+		adk.WithAgentCancelTimeout(m.deps.PauseEscalationTimeout),
 	}
+	if immediate {
+		options = []adk.AgentCancelOption{adk.WithAgentCancelMode(adk.CancelImmediate)}
+	}
+	handle, _ := cancelFn(options...)
+	go func() {
+		if handle != nil {
+			_ = handle.Wait()
+		}
+		state.pendingMu.Lock()
+		iterCancel := state.iterCancel
+		state.pendingMu.Unlock()
+		if iterCancel != nil {
+			iterCancel()
+		}
+	}()
 }
 
 type ResumeArgs struct {

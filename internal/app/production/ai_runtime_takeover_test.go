@@ -116,7 +116,11 @@ func (t *takeoverFakeTransport) written() []byte {
 	return total
 }
 
-type takeoverScript struct{ toolCalls atomic.Int32 }
+type takeoverScript struct {
+	toolCalls atomic.Int32
+	release   chan struct{}
+	once      sync.Once
+}
 
 func (s *takeoverScript) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	body, err := io.ReadAll(request.Body)
@@ -135,8 +139,7 @@ func (s *takeoverScript) ServeHTTP(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if s.toolCalls.Add(1) == 1 {
-		<-request.Context().Done()
-		return
+		s.once.Do(func() { <-s.release })
 	}
 	spawnWriteToolCall(writer, "call-done-1", "done", `{"summary":"finished","success":true}`)
 }
@@ -210,7 +213,7 @@ func enterTakeoverWithPrompt(t *testing.T, services *ProductionServices, transpo
 func TestProductionTakeoverPauseResumeAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "data.db")
-	script := &takeoverScript{}
+	script := &takeoverScript{release: make(chan struct{})}
 	provider := httptest.NewServer(script)
 	t.Cleanup(provider.Close)
 
@@ -237,6 +240,7 @@ func TestProductionTakeoverPauseResumeAcrossRestart(t *testing.T) {
 		t.Fatalf("send_keys failed: %+v", result)
 	}
 	first.Takeover.Pause("tab-takeover")
+	close(script.release)
 	waitOutcomeEvent(t, stream, "paused")
 	if _, found, err := firstStore.CheckpointGet(ctx, "takeover:recovery:"+response.JobID); err != nil || !found {
 		t.Fatalf("recovery record missing in sqlite: found=%v err=%v", found, err)
