@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,21 +173,4 @@ func BootstrapVaultRequired(ctx context.Context, credentialVault Vault, masterKe
 		return fmt.Errorf("vault is required but remained locked after bootstrap")
 	}
 	return nil
-}
-
-func warnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool) {
-	if core.LoopbackListen(address) {
-		return
-	}
-
-	detail := "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求同步令牌（浏览器打开时会提示输入，可用 nexterm-server token 查看、rotate-token 轮换），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
-	if syncOnly {
-		detail = "onlyServer 模式：/sync/rpc 要求同步令牌；能连接此端口且持有同步令牌的人可以读写资产库（含密码类凭据）。请使用防火墙限制对端地址。"
-	}
-	if logger != nil {
-		logger.Warn("HTTP server is listening on a non-loopback address", "listen", address, "syncOnly", syncOnly, "risk", detail)
-	}
-	if stderr != nil {
-		_, _ = fmt.Fprintf(stderr, "WARNING: NexTerm is listening on non-loopback address %s. %s\n", address, detail)
-	}
 }

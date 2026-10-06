@@ -262,17 +262,23 @@ func TestNonLoopbackWarningsReachLoggerAndStderr(t *testing.T) {
 		var logOutput bytes.Buffer
 		var stderr bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&logOutput, nil))
-		warnIfExposed(logger, &stderr, "0.0.0.0:8080", syncOnly)
+		core.WarnIfExposed(logger, &stderr, "0.0.0.0:8080", syncOnly)
 		if !strings.Contains(logOutput.String(), "non-loopback") || !strings.Contains(stderr.String(), "WARNING") {
 			t.Fatalf("syncOnly=%v log=%q stderr=%q", syncOnly, logOutput.String(), stderr.String())
 		}
 		if syncOnly && !strings.Contains(stderr.String(), "onlyServer") {
 			t.Fatalf("onlyServer warning = %q", stderr.String())
 		}
+		if syncOnly && strings.Contains(stderr.String(), "完整版") {
+			t.Fatalf("sync-only warning carries full-mode wording: %q", stderr.String())
+		}
+		if !syncOnly && !strings.Contains(stderr.String(), "完整版") {
+			t.Fatalf("full-mode warning = %q", stderr.String())
+		}
 	}
 	for _, address := range []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080"} {
 		var stderr bytes.Buffer
-		warnIfExposed(testLogger(), &stderr, address, false)
+		core.WarnIfExposed(testLogger(), &stderr, address, false)
 		if stderr.Len() != 0 {
 			t.Fatalf("%s warning = %q", address, stderr.String())
 		}

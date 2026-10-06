@@ -318,6 +318,82 @@ func TestServerProcessRejectsInvalidAuthMode(t *testing.T) {
 	}
 }
 
+func TestServerProcessWarnsOnNonLoopbackExposure(t *testing.T) {
+	binary := buildServerBinary(t)
+	start := func(t *testing.T, listen string, syncOnly bool) (*testServerProcess, string) {
+		t.Helper()
+		dataDir := t.TempDir()
+		args := []string{"--listen", listen, "--data-dir", dataDir}
+		if syncOnly {
+			args = append(args, "--sync-only")
+		}
+		cmd := exec.Command(binary, args...)
+		cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=")
+		buffer := &syncBuffer{}
+		cmd.Stdout = buffer
+		cmd.Stderr = buffer
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		process := &testServerProcess{cmd: cmd, wait: make(chan error, 1), output: buffer}
+		go func() { process.wait <- cmd.Wait() }()
+		return process, dataDir
+	}
+	loopbackAddress := func(t *testing.T) string {
+		t.Helper()
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		address := listener.Addr().String()
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return address
+	}
+
+	for _, tc := range []struct {
+		name     string
+		syncOnly bool
+		detail   string
+		absent   string
+	}{
+		{"full", false, "完整版已启用访问控制", "onlyServer 模式"},
+		{"sync-only", true, "onlyServer 模式", "完整版已启用访问控制"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			healthAddress := loopbackAddress(t)
+			listen := strings.Replace(healthAddress, "127.0.0.1", "0.0.0.0", 1)
+			process, _ := start(t, listen, tc.syncOnly)
+			defer process.stop(t)
+			waitForHealth(t, process, healthAddress)
+			output := process.output.String()
+			if !strings.Contains(output, "WARNING: NexTerm is listening on non-loopback address "+listen) || !strings.Contains(output, tc.detail) {
+				t.Fatalf("exposure warning missing: %q", output)
+			}
+			if strings.Contains(output, tc.absent) {
+				t.Fatalf("wrong-mode wording %q in output: %q", tc.absent, output)
+			}
+			if count := strings.Count(output, "WARNING: NexTerm is listening on non-loopback address"); count != 1 {
+				t.Fatalf("stderr warning fired %d times: %q", count, output)
+			}
+			if count := strings.Count(output, "HTTP server is listening on a non-loopback address"); count != 1 {
+				t.Fatalf("logger warning fired %d times: %q", count, output)
+			}
+		})
+	}
+
+	t.Run("loopback", func(t *testing.T) {
+		address := loopbackAddress(t)
+		process, _ := start(t, address, false)
+		defer process.stop(t)
+		waitForHealth(t, process, address)
+		if output := process.output.String(); strings.Contains(output, "non-loopback") {
+			t.Fatalf("loopback listen triggered exposure warning: %q", output)
+		}
+	})
+}
+
 func buildServerBinary(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "nexterm-server")

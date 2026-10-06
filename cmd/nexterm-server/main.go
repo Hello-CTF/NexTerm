@@ -174,6 +174,7 @@ func run(args []string) int {
 		SyncDispatcher: syncDispatcher,
 		Transport:      transport.Handler(),
 		CloseTransport: transport.CloseContext,
+		Stderr:         os.Stderr,
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("server stopped", "error", err)
 		return 1
