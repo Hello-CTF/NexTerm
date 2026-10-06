@@ -62,18 +62,49 @@ describe("demo SSH 导入", () => {
     expect(preview.hosts[0]?.alias).toBe("termius-prod");
   });
 
+  it("Termius 完全同名主机以稳定 ID 区分并保留所有行", async () => {
+    const preview = (await mockInvoke("ssh_import_preview", {
+      args: { source: "termius", confirmed: true },
+    })) as { hosts: { id: string; alias: string; action: string }[] };
+    const sameName = preview.hosts.filter((h) => h.alias === "termius-prod");
+    expect(sameName).toHaveLength(2);
+    expect(sameName[0]!.id).not.toBe(sameName[1]!.id);
+    expect(sameName.map((h) => h.action)).toEqual(["add", "conflict-alias"]);
+
+    const result = (await mockInvoke("ssh_import_apply", {
+      args: {
+        source: "termius",
+        confirmed: true,
+        hosts: [
+          { id: sameName[0]!.id, action: "import" },
+          { id: sameName[1]!.id, action: "skip" },
+        ],
+        keys: [{ id: "k0", action: "skip" }],
+      },
+    })) as Record<string, number>;
+    expect(result.assetsCreated).toBe(1);
+    expect(result.skipped).toBe(3);
+
+    const assets = (await mockInvoke("asset_list")) as DemoAssetRow[];
+    const imported = assets.filter((a) => a.name === "termius-prod");
+    expect(imported).toHaveLength(1);
+    expect(imported[0]!.host).toBe("prod.demo.internal");
+    expect(imported[0]!.authKind).toBe("key");
+    expect(imported[0]!.credId).toBeNull();
+  });
+
   it("apply 导入主机与密钥并写入 demo 数据", async () => {
     const before = (await mockInvoke("asset_list")) as DemoAssetRow[];
     const result = (await mockInvoke("ssh_import_apply", {
       args: {
         source: "ssh-config",
         hosts: [
-          { alias: "bastion", action: "import" },
-          { alias: "web-02", action: "import" },
-          { alias: "web-01", action: "import" },
-          { alias: "nat-01", action: "skip" },
+          { id: "h0", action: "import" },
+          { id: "h1", action: "import" },
+          { id: "h2", action: "import" },
+          { id: "h3", action: "skip" },
         ],
-        keys: [{ name: "id_rsa_demo", action: "import" }],
+        keys: [{ id: "k0", action: "import" }],
       },
     })) as Record<string, number>;
     expect(result.assetsCreated).toBe(2);
@@ -98,8 +129,8 @@ describe("demo SSH 导入", () => {
       args: {
         source: "ssh-config",
         hosts: [
-          { alias: "nat-01", action: "overwrite" },
-          { alias: "web-01", action: "overwrite" },
+          { id: "h3", action: "overwrite" },
+          { id: "h2", action: "overwrite" },
         ],
         keys: [],
       },

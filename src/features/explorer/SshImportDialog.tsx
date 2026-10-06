@@ -60,11 +60,9 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
         ...(termius ? { confirmed } : {}),
       });
       const hosts: Record<string, SshImportItemAction> = {};
-      for (const host of result.hosts) hosts[host.alias] = defaultAction(host.action);
+      for (const host of result.hosts) hosts[host.id] = defaultAction(host.action);
       const keys: Record<string, SshImportItemAction> = {};
-      for (const key of result.keys) {
-        if (key.aliases.length > 0) keys[key.aliases[0]] = defaultAction(key.action);
-      }
+      for (const key of result.keys) keys[key.id] = defaultAction(key.action);
       setHostActions(hosts);
       setKeyActions(keys);
       setPreview(result);
@@ -91,15 +89,13 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
         path: path.trim() || undefined,
         ...(termius ? { confirmed } : {}),
         hosts: preview.hosts.map((host) => ({
-          alias: host.alias,
-          action: hostActions[host.alias] ?? "skip",
+          id: host.id,
+          action: hostActions[host.id] ?? "skip",
         })),
-        keys: preview.keys
-          .filter((key) => key.aliases.length > 0)
-          .map((key) => ({
-            name: key.aliases[0],
-            action: keyActions[key.aliases[0]] ?? "skip",
-          })),
+        keys: preview.keys.map((key) => ({
+          id: key.id,
+          action: keyActions[key.id] ?? "skip",
+        })),
       });
       setApplyResult(result);
       setPhase("done");
@@ -348,10 +344,10 @@ function PreviewBody({
       <div className="mb-3 flex flex-col gap-1.5">
         {preview.hosts.map((host) => (
           <HostRow
-            key={host.alias}
+            key={host.id}
             host={host}
-            action={hostActions[host.alias] ?? "skip"}
-            onAction={(action) => onHostAction(host.alias, action)}
+            action={hostActions[host.id] ?? "skip"}
+            onAction={(action) => onHostAction(host.id, action)}
           />
         ))}
       </div>
@@ -362,12 +358,10 @@ function PreviewBody({
       <div className="mb-3 flex flex-col gap-1.5">
         {preview.keys.map((key) => (
           <KeyRow
-            key={key.aliases[0] ?? key.fingerprint}
+            key={key.id}
             item={key}
-            action={key.aliases.length > 0 ? (keyActions[key.aliases[0]] ?? "skip") : "skip"}
-            onAction={(action) => {
-              if (key.aliases.length > 0) onKeyAction(key.aliases[0], action);
-            }}
+            action={keyActions[key.id] ?? "skip"}
+            onAction={(action) => onKeyAction(key.id, action)}
           />
         ))}
       </div>

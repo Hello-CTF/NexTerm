@@ -331,6 +331,7 @@ const demoInlinePem =
   "-----BEGIN OPENSSH PRIVATE KEY-----\n（演示模式：这是一段假私钥，仅用于展示流程）\n-----END OPENSSH PRIVATE KEY-----";
 
 interface DemoSshImportHost {
+  id: string;
   alias: string;
   hostname: string;
   port: number;
@@ -345,6 +346,7 @@ interface DemoSshImportHost {
 }
 
 interface DemoSshImportKey {
+  id: string;
   aliases: string[];
   fingerprint: string;
   keyType: string;
@@ -369,6 +371,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
     path: "~/.ssh/config",
     hosts: [
       {
+        id: "h0",
         alias: "bastion",
         hostname: "bastion.demo.internal",
         port: 22,
@@ -382,6 +385,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
         warnings: [],
       },
       {
+        id: "h1",
         alias: "web-02",
         hostname: "web-02.demo.internal",
         port: 22,
@@ -395,6 +399,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
         warnings: [],
       },
       {
+        id: "h2",
         alias: "web-01",
         hostname: "127.0.0.1",
         port: 22,
@@ -408,6 +413,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
         warnings: ["别名 web-01 已存在且端点相同，将跳过"],
       },
       {
+        id: "h3",
         alias: "nat-01",
         hostname: "nat-new.demo.internal",
         port: 22,
@@ -423,6 +429,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
     ],
     keys: [
       {
+        id: "k0",
         aliases: ["id_rsa_demo"],
         fingerprint: "SHA256:demoRsaFingerprint0000000000000000000000000",
         keyType: "ssh-rsa",
@@ -432,6 +439,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
         warnings: [],
       },
       {
+        id: "k1",
         aliases: ["id_ed25519"],
         fingerprint: "SHA256:demoOtherFingerprint000000000000000000000000",
         keyType: "ssh-ed25519",
@@ -455,6 +463,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
     path: "~/Library/Application Support/Termius/IndexedDB/file__0.indexeddb.leveldb",
     hosts: [
       {
+        id: "h0",
         alias: "termius-prod",
         hostname: "prod.demo.internal",
         port: 22,
@@ -468,6 +477,7 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
         warnings: [],
       },
       {
+        id: "h1",
         alias: "termius-staging",
         hostname: "staging.demo.internal",
         port: 22,
@@ -480,9 +490,24 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
         action: "add",
         warnings: ["密码不会导入，导入后请手动绑定凭据"],
       },
+      {
+        id: "h2",
+        alias: "termius-prod",
+        hostname: "prod-old.demo.internal",
+        port: 22,
+        username: "ubuntu",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "agent",
+        source: "termius",
+        action: "conflict-alias",
+        warnings: ["别名 termius-prod 与本次导入内的另一台主机冲突"],
+      },
     ],
     keys: [
       {
+        id: "k0",
         aliases: ["termius-key"],
         fingerprint: "SHA256:demoTermiusFingerprint00000000000000000000",
         keyType: "ssh-ed25519",
@@ -2683,13 +2708,13 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const hostActions = new Map(
         (Array.isArray(a.hosts) ? a.hosts : []).map((h) => {
           const item = (h ?? {}) as Record<string, unknown>;
-          return [str(item.alias), str(item.action)];
+          return [str(item.id), str(item.action) || "skip"];
         }),
       );
       const keyActions = new Map(
         (Array.isArray(a.keys) ? a.keys : []).map((k) => {
           const item = (k ?? {}) as Record<string, unknown>;
-          return [str(item.name), str(item.action)];
+          return [str(item.id), str(item.action) || "skip"];
         }),
       );
       const result = {
@@ -2700,11 +2725,10 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         skipped: 0,
         warnings: [] as string[],
       };
-      const credIDByKeyName = new Map<string, string>();
+      const credIDByKeyID = new Map<string, string>();
       for (const key of canned.keys) {
-        const name = key.aliases[0];
-        if (!name) continue;
-        const action = keyActions.get(name) ?? "skip";
+        const action = keyActions.get(key.id) ?? "skip";
+        const name = key.aliases[0] ?? key.id;
         if (action === "import" && key.action === "add") {
           const cred: DemoCredential = {
             id: uid("cred"),
@@ -2716,7 +2740,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
             updatedAt: Date.now(),
           };
           demoCredentials.push(cred);
-          credIDByKeyName.set(name, cred.id);
+          credIDByKeyID.set(key.id, cred.id);
           result.credentialsCreated += 1;
         } else if (action === "overwrite" && key.action === "conflict-alias") {
           const existing = demoCredentials.find((c) => c.name.toLowerCase() === name.toLowerCase());
@@ -2726,7 +2750,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
               existing.source = key.source === "termius" ? "inline" : "file";
             }
             existing.updatedAt = Date.now();
-            credIDByKeyName.set(name, existing.id);
+            credIDByKeyID.set(key.id, existing.id);
             result.credentialsUpdated += 1;
           } else {
             result.skipped += 1;
@@ -2736,14 +2760,27 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         }
       }
       for (const host of canned.hosts) {
-        const action = hostActions.get(host.alias) ?? "skip";
+        const action = hostActions.get(host.id) ?? "skip";
         if (action === "import" && host.action === "add") {
-          let credId: string | null = null;
-          if (host.keyName) credId = credIDByKeyName.get(host.keyName) ?? null;
-          for (const path of host.identityFiles) {
-            const key = canned.keys.find((k) => k.path === path);
-            if (key?.aliases[0]) credId = credIDByKeyName.get(key.aliases[0]) ?? credId;
+          const candidateKeyIDs: string[] = [];
+          if (host.keyName) {
+            const named = canned.keys.find(
+              (k) => k.aliases.length > 0 && k.aliases[0].toLowerCase() === host.keyName.toLowerCase(),
+            );
+            if (named) candidateKeyIDs.push(named.id);
           }
+          for (const path of host.identityFiles) {
+            const byPath = canned.keys.find((k) => k.path === path);
+            if (byPath) candidateKeyIDs.push(byPath.id);
+          }
+          let credId: string | null = null;
+          for (const keyID of candidateKeyIDs) {
+            if (credIDByKeyID.has(keyID)) {
+              credId = credIDByKeyID.get(keyID)!;
+              break;
+            }
+          }
+          const wantsKey = candidateKeyIDs.length > 0 || host.identityFiles.length > 0;
           assets.push({
             id: uid("a"),
             groupId: null,
@@ -2752,8 +2789,8 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
             host: host.hostname,
             port: host.port,
             username: host.username,
-            authKind: credId ? "key" : host.authMethod === "password" ? "password" : "agent",
-            keyPath: null,
+            authKind: wantsKey ? "key" : host.authMethod === "password" ? "password" : "agent",
+            keyPath: credId === null && host.identityFiles.length > 0 ? host.identityFiles[0]! : null,
             credId,
             options: {},
             tags: "",

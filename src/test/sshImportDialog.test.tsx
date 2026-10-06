@@ -34,6 +34,7 @@ const PREVIEW: SshImportPreviewDto = {
   path: "/home/demo/.ssh/config",
   hosts: [
     {
+      id: "h0",
       alias: "bastion",
       hostname: "bastion.example.com",
       port: 22,
@@ -47,6 +48,7 @@ const PREVIEW: SshImportPreviewDto = {
       warnings: [],
     },
     {
+      id: "h1",
       alias: "web-01",
       hostname: "127.0.0.1",
       port: 22,
@@ -60,6 +62,7 @@ const PREVIEW: SshImportPreviewDto = {
       warnings: ["别名 web-01 已存在且端点相同"],
     },
     {
+      id: "h2",
       alias: "nat-01",
       hostname: "nat-new.example.com",
       port: 22,
@@ -75,6 +78,7 @@ const PREVIEW: SshImportPreviewDto = {
   ],
   keys: [
     {
+      id: "k0",
       aliases: ["id_rsa_demo"],
       fingerprint: "SHA256:abc123",
       keyType: "ssh-rsa",
@@ -181,11 +185,11 @@ describe("SSH 导入对话框", () => {
       source: "ssh-config",
       path: undefined,
       hosts: [
-        { alias: "bastion", action: "import" },
-        { alias: "web-01", action: "skip" },
-        { alias: "nat-01", action: "skip" },
+        { id: "h0", action: "import" },
+        { id: "h1", action: "skip" },
+        { id: "h2", action: "skip" },
       ],
-      keys: [{ name: "id_rsa_demo", action: "import" }],
+      keys: [{ id: "k0", action: "import" }],
     });
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
@@ -208,9 +212,9 @@ describe("SSH 导入对话框", () => {
     clickButton(mounted.container, "导入选中项");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
     const args = mocks.apply.mock.calls[0]![0] as {
-      hosts: { alias: string; action: string }[];
+      hosts: { id: string; action: string }[];
     };
-    expect(args.hosts).toContainEqual({ alias: "nat-01", action: "overwrite" });
+    expect(args.hosts).toContainEqual({ id: "h2", action: "overwrite" });
   });
 
   it("预览失败展示错误且可返回", async () => {

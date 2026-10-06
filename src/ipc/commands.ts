@@ -711,8 +711,8 @@ export const sshImportApi = {
     source: SshImportSource;
     path?: string;
     confirmed?: boolean;
-    hosts: { alias: string; action: SshImportItemAction }[];
-    keys: { name: string; action: SshImportItemAction }[];
+    hosts: { id: string; action: SshImportItemAction }[];
+    keys: { id: string; action: SshImportItemAction }[];
   }) => call<import("./types").SshImportApplyDto>("ssh_import_apply", { args }),
 };
 
