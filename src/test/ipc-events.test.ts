@@ -5,6 +5,7 @@ import type {
   SessionStatusEvent as SessionStatusEventFromEvents,
   TerminalExitEvent as TerminalExitEventFromEvents,
   TerminalControlEvent,
+  TerminalThrottledEvent,
 } from "../ipc/events";
 import type {
   SessionStatusEvent as SessionStatusEventFromTypes,
@@ -199,6 +200,20 @@ describe("共享事件 DTO 与版本高水位", () => {
     };
     expect(control.gridRevision).toBe(7);
     expect(control.version).toBe(11);
+  });
+
+  it("TerminalThrottledEvent 的 version/channelId 必填（对齐 Go ThrottleEvent）", () => {
+    const throttled: TerminalThrottledEvent = {
+      tabId: "t-1",
+      channelId: "c-1",
+      inflightBytes: 4096,
+      version: 2,
+    };
+    expect(throttled.channelId).toBe("c-1");
+    expect(throttled.version).toBe(2);
+
+    const recovered: TerminalThrottledEvent = { ...throttled, recovered: true };
+    expect(recovered.recovered).toBe(true);
   });
 
   it("EventVersionGate 接受递增版本，丢弃重放、乱序与非法版本", async () => {

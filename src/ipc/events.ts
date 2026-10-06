@@ -1,7 +1,6 @@
 import { DEMO, WEB, subscribe } from "../demo";
 import {
   newBinaryChannel,
-  newJsonChannel,
   onChannelReopen as onWsChannelReopen,
   disposeChannel as disposeWsChannel,
   subscribeEvent,
@@ -67,10 +66,10 @@ export interface FsProgressEvent {
 
 export interface TerminalThrottledEvent {
   tabId: string;
-  channelId?: string;
+  channelId: string;
   inflightBytes: number;
   recovered?: boolean;
-  version?: number;
+  version: number;
 }
 
 export interface AppErrorEvent {
@@ -149,7 +148,7 @@ export function createAiChannel(
   const channel = DEMO
     ? demoChannel<unknown>()
     : WEB
-      ? newJsonChannel()
+      ? newBinaryChannel()
       : newWailsChannel();
   channel.onmessage = push;
   return channel;
