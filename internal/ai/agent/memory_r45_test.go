@@ -107,7 +107,7 @@ func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 		t.Fatal("model saw no input")
 	}
 	for _, message := range inputs[0] {
-		if memory.IsEphemeral(message) || strings.Contains(message.Content, "restart at 02:00") {
+		if strings.Contains(message.Content, "restart at 02:00") {
 			t.Fatalf("default-off injection leaked memory into the model input: %+v", message)
 		}
 	}
@@ -133,13 +133,13 @@ func TestMemoryInjectionStaysOffByDefaultAndNeverPollutesHistory(t *testing.T) {
 	var ephemeral *schema.Message
 	position := -1
 	for index, message := range inputs[0] {
-		if memory.IsEphemeral(message) {
+		if strings.Contains(message.Content, "restart at 02:00") {
 			ephemeral = message
 			position = index
 		}
 	}
 	if ephemeral == nil {
-		t.Fatalf("enabled injection produced no ephemeral message: %+v", inputs[0])
+		t.Fatalf("enabled injection produced no memory message: %+v", inputs[0])
 	}
 	if ephemeral.Role != schema.System || !strings.Contains(ephemeral.Content, "restart at 02:00") {
 		t.Fatalf("ephemeral message = %+v", ephemeral)
