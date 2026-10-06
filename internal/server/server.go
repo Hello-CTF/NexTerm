@@ -38,6 +38,8 @@ func (f TokenVerifierFunc) VerifyToken(ctx context.Context, token string) (bool,
 type SettingStore interface {
 	SettingGet(ctx context.Context, key string) (string, bool, error)
 	SettingSet(ctx context.Context, key, value string) error
+	SettingSetManyDelete(ctx context.Context, values map[string]string, deleteKeys ...string) error
+	SettingListPrefix(ctx context.Context, prefix string) (map[string]string, error)
 }
 
 // AuditFunc 写审计记录; 由装配层桥接到 store.AuditInsert。
@@ -92,6 +94,7 @@ type Server struct {
 	webSocket       WebSocketConfig
 	images          *ImageStore
 	settings        SettingStore
+	preferences     *account.Preferences
 	audit           AuditFunc
 	fleet           *fleetserver.Service
 
@@ -220,6 +223,9 @@ func New(config Config) (*Server, error) {
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
+	}
+	if config.Settings != nil {
+		s.preferences = account.NewPreferences(config.Settings)
 	}
 
 	s.handler = s.transportGuard(s.routes(config))

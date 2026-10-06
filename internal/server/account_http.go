@@ -151,6 +151,8 @@ func (s *Server) mountAccountRoutes(mux *http.ServeMux) {
 	adminCSRF("POST /admin/users/{id}/disable", s.serveAdminUserDisable)
 	adminCSRF("POST /admin/users/{id}/reset", s.serveAdminUserReset)
 	adminCSRF("PUT /admin/settings", s.serveAdminSettingsPut)
+
+	s.mountPreferenceRoutes(mux)
 }
 
 type accountStatusView struct {
