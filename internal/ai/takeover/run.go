@@ -75,12 +75,6 @@ func (m *Manager) runJob(state *runState) {
 			return
 		}
 		if userPaused && state.stopReason() == "" {
-			m.mu.Lock()
-			current := m.jobs[state.id] == state
-			m.mu.Unlock()
-			if !current {
-				return
-			}
 			state.pendingMu.Lock()
 			outcomeCh := state.cancelOutcome
 			state.pendingMu.Unlock()
@@ -104,6 +98,11 @@ func (m *Manager) runJob(state *runState) {
 			if !m.awaitCheckpoint(state) {
 				result.err = errors.New("接管 checkpoint 未能持久化，暂停不可恢复")
 				m.complete(state, result)
+				return
+			}
+			state.finalizeMu.Lock()
+			defer state.finalizeMu.Unlock()
+			if state.completed {
 				return
 			}
 			m.persistRecovery(state)

@@ -3,6 +3,7 @@ package takeover
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ai/tools"
@@ -85,22 +86,48 @@ func (m *Manager) deleteRecovery(ctx context.Context, jobID string) {
 	}
 }
 
-type detachedCheckpoints struct{ adk.CheckPointStore }
+type detachedCheckpoints struct {
+	adk.CheckPointStore
 
-func (d detachedCheckpoints) Get(ctx context.Context, id string) ([]byte, bool, error) {
+	mu         sync.Mutex
+	tombstones map[string]struct{}
+}
+
+func (d *detachedCheckpoints) Get(ctx context.Context, id string) ([]byte, bool, error) {
 	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	return d.CheckPointStore.Get(storeCtx, id)
 }
 
-func (d detachedCheckpoints) Set(ctx context.Context, id string, data []byte) error {
+func (d *detachedCheckpoints) Set(ctx context.Context, id string, data []byte) error {
+	d.mu.Lock()
+	_, tombstoned := d.tombstones[id]
+	d.mu.Unlock()
+	if tombstoned {
+		return nil
+	}
 	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	return d.CheckPointStore.Set(storeCtx, id, data)
+	err := d.CheckPointStore.Set(storeCtx, id, data)
+	cancel()
+	d.mu.Lock()
+	_, tombstoned = d.tombstones[id]
+	d.mu.Unlock()
+	if tombstoned {
+		if deleter, ok := d.CheckPointStore.(adk.CheckPointDeleter); ok {
+			_ = deleter.Delete(context.Background(), id)
+		}
+	}
+	return err
 }
 
-func (d detachedCheckpoints) Delete(ctx context.Context, id string) error {
+func (d *detachedCheckpoints) Delete(ctx context.Context, id string) error {
 	if deleter, ok := d.CheckPointStore.(adk.CheckPointDeleter); ok {
+		d.mu.Lock()
+		if d.tombstones == nil {
+			d.tombstones = make(map[string]struct{})
+		}
+		d.tombstones[id] = struct{}{}
+		d.mu.Unlock()
 		storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		return deleter.Delete(storeCtx, id)

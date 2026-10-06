@@ -84,7 +84,8 @@ type runState struct {
 	eventMu       sync.Mutex
 	finished      bool
 	finalOnce     sync.Once
-	completeOnce  sync.Once
+	finalizeMu    sync.Mutex
+	completed     bool
 	pendingMu     sync.Mutex
 	pending       *pending
 	running       bool

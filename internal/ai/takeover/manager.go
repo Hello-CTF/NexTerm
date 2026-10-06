@@ -47,7 +47,7 @@ func NewManager(deps Dependencies) *Manager {
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = agent.NewMemoryCheckpoints()
 	}
-	return &Manager{deps: deps, checkpoints: detachedCheckpoints{deps.Checkpoints}, owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
+	return &Manager{deps: deps, checkpoints: &detachedCheckpoints{CheckPointStore: deps.Checkpoints}, owners: make(map[string]*ownership), jobs: make(map[string]*runState), reservedJobs: make(map[string]struct{}), locks: make(map[string]*sync.Mutex), operationLocks: make(map[string]*sync.Mutex)}
 }
 
 func (m *Manager) tabLock(tabID string) *sync.Mutex {
@@ -287,11 +287,16 @@ func (m *Manager) pauseWatchdog(state *runState) {
 	timer := time.NewTimer(m.deps.PauseEscalationTimeout + 3*time.Second)
 	defer timer.Stop()
 	<-timer.C
+	state.finalizeMu.Lock()
+	defer state.finalizeMu.Unlock()
+	if state.completed {
+		return
+	}
 	state.pendingMu.Lock()
-	stuck := state.running && state.userPaused
+	stuck := state.userPaused && !state.pauseReady
 	state.pendingMu.Unlock()
 	if stuck {
-		m.complete(state, runResult{err: errors.New("暂停超时：模型未在安全点内响应，任务已停止")})
+		m.completeLocked(state, runResult{err: errors.New("暂停超时：模型未在安全点内响应，任务已停止")})
 	}
 }
 
@@ -589,17 +594,45 @@ func (m *Manager) injectExit(ctx context.Context, tabID, reason string) error {
 }
 
 func (m *Manager) complete(state *runState, result runResult) {
-	state.completeOnce.Do(func() {
-		if result.err != nil {
-			state.finish(agent.Event{Type: "error", Message: result.err.Error(), Retryable: !errors.Is(result.err, context.Canceled)})
-		} else {
-			state.finish(agent.Event{Type: "done", Answer: result.answer, Turns: result.steps})
-		}
-		m.cleanup(state, result.reason)
-	})
+	state.finalizeMu.Lock()
+	defer state.finalizeMu.Unlock()
+	m.completeLocked(state, result)
 }
 
-func (m *Manager) cleanup(state *runState, reason string) {
+func (m *Manager) completeLocked(state *runState, result runResult) {
+	if state.completed {
+		return
+	}
+	state.completed = true
+	m.cleanupRecords(state, result.reason)
+	if result.err != nil {
+		state.finish(agent.Event{Type: "error", Message: result.err.Error(), Retryable: !errors.Is(result.err, context.Canceled)})
+	} else {
+		state.finish(agent.Event{Type: "done", Answer: result.answer, Turns: result.steps})
+	}
+	m.removeJob(state)
+	state.cancel()
+	if state.forceCancel != nil {
+		state.forceCancel()
+	}
+}
+
+func (m *Manager) cleanupRecords(state *runState, reason string) {
+	m.mu.Lock()
+	current := m.owners[state.owner.tabID] == state.owner
+	m.mu.Unlock()
+	if current {
+		_ = m.injectExit(context.Background(), state.owner.tabID, reason)
+		state.owner.cancel()
+	}
+	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {
+		_ = deleter.Delete(context.Background(), state.id)
+		_ = deleter.Delete(context.Background(), recoveryKey(state.id))
+		_ = deleter.Delete(context.Background(), execKey(state.id))
+	}
+}
+
+func (m *Manager) removeJob(state *runState) {
 	m.mu.Lock()
 	if m.jobs[state.id] == state {
 		delete(m.jobs, state.id)
@@ -608,24 +641,10 @@ func (m *Manager) cleanup(state *runState, reason string) {
 	if state.owner.jobID == state.id {
 		state.owner.jobID = ""
 	}
-	current := m.owners[state.owner.tabID] == state.owner
-	if current {
+	if m.owners[state.owner.tabID] == state.owner {
 		delete(m.owners, state.owner.tabID)
 	}
 	m.mu.Unlock()
-	if current {
-		_ = m.injectExit(context.Background(), state.owner.tabID, reason)
-		state.owner.cancel()
-	}
-	state.cancel()
-	if state.forceCancel != nil {
-		state.forceCancel()
-	}
-	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {
-		_ = deleter.Delete(context.Background(), state.id)
-		_ = deleter.Delete(context.Background(), recoveryKey(state.id))
-		_ = deleter.Delete(context.Background(), execKey(state.id))
-	}
 }
 
 func (m *Manager) Close() error {

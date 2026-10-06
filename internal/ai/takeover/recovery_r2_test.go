@@ -336,13 +336,21 @@ func TestResumeWaitsForPausedFinalization(t *testing.T) {
 }
 
 type gatedCheckpointStore struct {
-	inner    *ctxCheckpointStore
-	gate     chan struct{}
-	key      string
-	blocking atomic.Bool
+	inner       *ctxCheckpointStore
+	gate        chan struct{}
+	key         string
+	blocking    atomic.Bool
+	getBlocking atomic.Bool
 }
 
 func (s *gatedCheckpointStore) Get(ctx context.Context, id string) ([]byte, bool, error) {
+	if id == s.key && s.getBlocking.Load() {
+		select {
+		case <-s.gate:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
 	return s.inner.Get(ctx, id)
 }
 
@@ -450,6 +458,9 @@ func TestPauseEscalationFailsClosed(t *testing.T) {
 	if _, found, _ := store.Get(context.Background(), response.JobID); found {
 		t.Fatal("checkpoint kept after fail-closed escalation")
 	}
+	if _, found, _ := store.Get(context.Background(), execKey(response.JobID)); found {
+		t.Fatal("exec record kept after fail-closed escalation")
+	}
 	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrStaleOwnership) {
 		t.Fatalf("resume after escalation error = %v", err)
 	}
@@ -469,5 +480,117 @@ func TestPauseEscalationFailsClosed(t *testing.T) {
 	defer h.mu.Unlock()
 	if len(h.aiWrites) != 1 {
 		t.Fatalf("writes = %q", h.aiWrites)
+	}
+}
+
+func TestPauseWatchdogFailsClosedAndDropsLateSave(t *testing.T) {
+	stuck := make(chan struct{})
+	secondCallStarted := make(chan struct{})
+	var calls atomic.Int32
+	var secondOnce sync.Once
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
+		}
+		secondOnce.Do(func() { close(secondCallStarted) })
+		<-stuck
+		return nil, errors.New("unreachable")
+	}}
+	store := &gatedCheckpointStore{inner: newCtxCheckpointStore(), gate: make(chan struct{})}
+	h := newHarnessWith(t, chat, func(deps *Dependencies) {
+		deps.Checkpoints = store
+		deps.PauseEscalationTimeout = 50 * time.Millisecond
+	})
+	stream := &agent.SliceStream{}
+	response := h.run(t, stream, RunArgs{})
+	_ = waitEvent(t, stream, "toolResult")
+	<-secondCallStarted
+	store.key = response.JobID
+	store.blocking.Store(true)
+	h.manager.Pause("tab")
+	events := waitClosed(t, stream)
+	var terminal *agent.Event
+	for i := range events {
+		if events[i].Type == "paused" {
+			t.Fatal("paused published by watchdog path")
+		}
+		if events[i].Type == "error" || events[i].Type == "done" {
+			terminal = &events[i]
+		}
+	}
+	if terminal == nil || terminal.Type != "error" || !strings.Contains(terminal.Message, "暂停超时") {
+		t.Fatalf("watchdog terminal = %+v", events)
+	}
+	if _, found, _ := store.Get(context.Background(), recoveryKey(response.JobID)); found {
+		t.Fatal("recovery record written on watchdog path")
+	}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrStaleOwnership) {
+		t.Fatalf("resume after watchdog error = %v", err)
+	}
+	close(store.gate)
+	time.Sleep(50 * time.Millisecond)
+	if _, found, _ := store.Get(context.Background(), response.JobID); found {
+		t.Fatal("late checkpoint save not tombstoned")
+	}
+	if _, found, _ := store.Get(context.Background(), execKey(response.JobID)); found {
+		t.Fatal("exec record kept after watchdog cleanup")
+	}
+	if err := h.manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPauseWatchdogPreemptsLateDefer(t *testing.T) {
+	release := make(chan struct{})
+	secondCallStarted := make(chan struct{})
+	var calls atomic.Int32
+	var secondOnce sync.Once
+	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		if calls.Add(1) == 1 {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(namedToolCall("keys", "send_keys", `{"keys":"ls","enter":true}`))}), nil
+		}
+		secondOnce.Do(func() { close(secondCallStarted) })
+		select {
+		case <-release:
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	store := &gatedCheckpointStore{inner: newCtxCheckpointStore(), gate: make(chan struct{})}
+	h := newHarnessWith(t, chat, func(deps *Dependencies) {
+		deps.Checkpoints = store
+		deps.PauseEscalationTimeout = 50 * time.Millisecond
+	})
+	stream := &agent.SliceStream{}
+	response := h.run(t, stream, RunArgs{})
+	_ = waitEvent(t, stream, "toolResult")
+	<-secondCallStarted
+	store.key = response.JobID
+	store.getBlocking.Store(true)
+	h.manager.Pause("tab")
+	close(release)
+	events := waitClosed(t, stream)
+	var terminal *agent.Event
+	for i := range events {
+		if events[i].Type == "paused" {
+			t.Fatal("paused published after watchdog preempted defer")
+		}
+		if events[i].Type == "error" || events[i].Type == "done" {
+			terminal = &events[i]
+		}
+	}
+	if terminal == nil || terminal.Type != "error" || !strings.Contains(terminal.Message, "暂停超时") {
+		t.Fatalf("preempt terminal = %+v", events)
+	}
+	if _, found, _ := store.Get(context.Background(), recoveryKey(response.JobID)); found {
+		t.Fatal("recovery record written after watchdog preempt")
+	}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrStaleOwnership) {
+		t.Fatalf("resume after preempt error = %v", err)
+	}
+	close(store.gate)
+	if err := h.manager.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
