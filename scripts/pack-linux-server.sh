@@ -82,11 +82,7 @@ done
 mkdir -p "$OUT"
 rm -f \
   "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz" \
-  "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz.artifact.json" \
-  "$OUT/NexTerm-$VERSION-linux-$ARCH.tar.gz" \
-  "$OUT/NexTerm-$VERSION-linux-$ARCH.tar.gz.artifact.json" \
-  "$OUT/NexTerm-onlyServer-$VERSION-linux-$ARCH.tar.gz" \
-  "$OUT/NexTerm-onlyServer-$VERSION-linux-$ARCH.tar.gz.artifact.json"
+  "$OUT/NexTerm-server_${VERSION}_linux_${ARCH}.tar.gz.artifact.json"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 

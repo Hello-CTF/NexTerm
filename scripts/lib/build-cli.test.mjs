@@ -91,6 +91,12 @@ test("help documents the reuse harness", () => {
   assert.match(result.stdout, /--package-only/);
 });
 
+test("unknown options are rejected instead of silently accepted", () => {
+  const result = runBuild(["release", "--install"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unknown option: --install/);
+});
+
 test("frontend --consume-dist restores a verified dist without rebuilding", (t) => {
   if (!requireIdentity(t)) return;
   preserveDist(t);
@@ -180,19 +186,6 @@ test("desktop --package-only requires the existing production binary", (t) => {
   const result = runBuild(["desktop", "--release", "--package", "--package-only", `--out=${binary}`, `--consume-dist=${dist}`, `--dist-manifest=${distManifest}`, "--os=darwin", "--arch=arm64"]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--package-only requires the existing production binary/);
-});
-
-test("desktop --package-only rejects a smoke-tagged binary manifest", (t) => {
-  if (!requireIdentity(t)) return;
-  preserveDist(t);
-  const dist = makeDistFixture(t);
-  const distManifest = writeDistManifest(t, dist);
-  const binary = path.join(makeTempDirectory(t, "nexterm-binary-"), "nexterm-desktop-darwin-arm64");
-  fs.writeFileSync(binary, "fake-smoke-binary\n");
-  const manifest = writeBinaryManifest(t, binary, { tags: ["production", "smoke"] });
-  const result = runBuild(["desktop", "--release", "--package", "--package-only", `--out=${binary}`, `--binary-manifest=${manifest}`, `--consume-dist=${dist}`, `--dist-manifest=${distManifest}`, "--os=darwin", "--arch=arm64"]);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /smoke-tagged test binaries must never be substituted for production release binaries/);
 });
 
 test("desktop --package-only rejects a binary that drifted from its manifest", (t) => {

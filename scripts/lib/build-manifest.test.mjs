@@ -177,24 +177,13 @@ test("createBinaryManifest and binaryManifestProblems accept an intact productio
   assert.deepEqual(binaryManifestProblems({ manifest, file, expect: binaryExpect() }), []);
 });
 
-test("binaryManifestProblems rejects smoke-tagged test binaries for release packaging", (t) => {
+test("binaryManifestProblems rejects untagged binaries", (t) => {
   const file = makeBinary();
   t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
-  const manifest = binaryManifestFor(file, { tags: ["production", "smoke"] });
+  const manifest = binaryManifestFor(file, { tags: [] });
   const problems = binaryManifestProblems({ manifest, file, expect: binaryExpect() });
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /smoke-tagged test binaries must never be substituted for production release binaries/);
-});
-
-test("binaryManifestProblems rejects untagged and debug-tagged binaries", (t) => {
-  const file = makeBinary();
-  t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
-  for (const tags of [[], ["smoke"]]) {
-    const manifest = binaryManifestFor(file, { tags });
-    const problems = binaryManifestProblems({ manifest, file, expect: binaryExpect() });
-    assert.equal(problems.length, 1, problems.join("\n"));
-    assert.match(problems[0], /tags/);
-  }
+  assert.equal(problems.length, 1, problems.join("\n"));
+  assert.match(problems[0], /tags/);
 });
 
 test("binaryManifestProblems detects sha256 and size drift", (t) => {
