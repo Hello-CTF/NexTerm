@@ -332,8 +332,9 @@ export function TerminalPane({
       onEventsResync(() => {
         throttleVersions.current = new EventVersionGate();
         setThrottle(null);
+        void refreshControl();
       }),
-    [],
+    [refreshControl],
   );
 
   useEffect(() => {
@@ -932,7 +933,10 @@ export function TerminalPane({
           </div>
 
           {controlSupported && control && (control.exited || isObserver) && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/70 px-6 text-center backdrop-blur-[1px]">
+            <div
+              role="alert"
+              className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/70 px-6 text-center backdrop-blur-[1px]"
+            >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconEye size={15} className="text-amber-300" />
                 {control.exited
@@ -942,9 +946,19 @@ export function TerminalPane({
                     : "当前无人操作"}
               </span>
               {control.exited ? (
-                <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                  进程已经退出，这里只能查看它最后的内容。要继续操作请新建一个终端。
-                </span>
+                <>
+                  <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
+                    进程已经退出，这里只能查看它最后的内容。要继续操作请新建一个终端。
+                  </span>
+                  <button
+                    autoFocus
+                    className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
+                    onClick={() => void useUi.getState().closeTab(storeTabId)}
+                  >
+                    <IconClose size={13} />
+                    关闭标签
+                  </button>
+                </>
               ) : (
                 <>
                   <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
@@ -972,7 +986,10 @@ export function TerminalPane({
           )}
 
           {attachDead && (
-            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/80 px-6 text-center backdrop-blur-[1px]">
+            <div
+              role="alert"
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2.5 bg-neutral-950/80 px-6 text-center backdrop-blur-[1px]"
+            >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconRefresh size={15} className="text-amber-300" />
                 这个终端已失效
@@ -982,6 +999,7 @@ export function TerminalPane({
               </span>
               <div className="flex items-center gap-2">
                 <button
+                  autoFocus
                   className="nx-btn nx-btn-primary nx-btn-sm"
                   disabled={reconnecting}
                   onClick={() => void reconnectNow()}
