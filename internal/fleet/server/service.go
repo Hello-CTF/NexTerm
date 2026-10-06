@@ -633,9 +633,12 @@ FROM device_metrics WHERE device_id = ? AND ts >= ? ORDER BY ts LIMIT ?`, device
 
 // RollupMetrics 把超过原始保留期 (48h) 的指标聚合成小时桶 (保留 30d),
 // 再清理过期的原始行与小时桶; 重复执行结果一致。
+// 只聚合完整小时桶: cutoff 向下对齐到小时边界, 聚合与原始行删除共享同一 cutoff,
+// 边界桶保留到下一轮整体处理, 跨批次不会整桶覆盖丢失样本。
 func (s *Service) RollupMetrics(ctx context.Context) error {
 	now := s.now()
 	rawCutoff := now - rawMetricsRetention.Milliseconds()
+	rollupCutoff := (rawCutoff / metricsHourMS) * metricsHourMS
 	hourlyCutoff := now - hourlyMetricsRetention.Milliseconds()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -650,10 +653,10 @@ ON CONFLICT(device_id, bucket_ts) DO UPDATE SET
 cpu_pct = excluded.cpu_pct, mem_used = excluded.mem_used, mem_total = excluded.mem_total,
 disk_used = excluded.disk_used, disk_total = excluded.disk_total, uptime_s = excluded.uptime_s,
 sample_count = excluded.sample_count`,
-		metricsHourMS, metricsHourMS, rawCutoff, metricsHourMS, metricsHourMS); err != nil {
+		metricsHourMS, metricsHourMS, rollupCutoff, metricsHourMS, metricsHourMS); err != nil {
 		return dbError(err)
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM device_metrics WHERE ts < ?", rawCutoff); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM device_metrics WHERE ts < ?", rollupCutoff); err != nil {
 		return dbError(err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM device_metrics_hourly WHERE bucket_ts < ?", hourlyCutoff); err != nil {

@@ -548,6 +548,7 @@ func TestFleetMetricsRecordQuery(t *testing.T) {
 
 func TestFleetMetricsRollup(t *testing.T) {
 	fixture := newServiceFixture(t)
+	fixture.now = (fixture.now / metricsHourMS) * metricsHourMS
 	alice := fixture.createUser(t, "alice")
 	result := fixture.enrollAgent(t, alice, "agent-host")
 
@@ -599,6 +600,92 @@ WHERE device_id = ? AND bucket_ts = (SELECT max(bucket_ts) FROM device_metrics_h
 	}
 	if hourlyCount != 1 {
 		t.Fatalf("hourly rows=%d (ancient bucket must be purged)", hourlyCount)
+	}
+}
+
+func TestFleetMetricsRollupBoundaryBucket(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.now = (fixture.now / metricsHourMS) * metricsHourMS
+	alice := fixture.createUser(t, "alice")
+	result := fixture.enrollAgent(t, alice, "agent-host")
+
+	bucketStart := fixture.now - 50*metricsHourMS
+	for i, cpu := range []float64{10, 20, 40} {
+		sample := MetricsSample{TS: bucketStart + int64(10+i*20)*time.Minute.Milliseconds(), CPUPct: cpu, MemUsed: 100, MemTotal: 200, DiskUsed: 300, DiskTotal: 400, UptimeS: 5000}
+		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recent := MetricsSample{TS: fixture.now - 30*time.Minute.Milliseconds(), CPUPct: 55}
+	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, recent); err != nil {
+		t.Fatal(err)
+	}
+
+	countRows := func(table string) int {
+		t.Helper()
+		var count int
+		if err := fixture.db.QueryRowContext(context.Background(), "SELECT count(*) FROM "+table+" WHERE device_id = ?", result.DeviceID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+
+	fixture.now = bucketStart + 48*time.Hour.Milliseconds() + 40*time.Minute.Milliseconds()
+	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hourly := countRows("device_metrics_hourly"); hourly != 0 {
+		t.Fatalf("boundary bucket must wait for a complete hour, hourly=%d", hourly)
+	}
+	if raw := countRows("device_metrics"); raw != 4 {
+		t.Fatalf("boundary rows must stay raw, raw=%d", raw)
+	}
+
+	fixture.now += 10 * time.Minute.Milliseconds()
+	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hourly := countRows("device_metrics_hourly"); hourly != 0 {
+		t.Fatalf("cutoff advanced inside the same bucket, hourly=%d", hourly)
+	}
+	if raw := countRows("device_metrics"); raw != 4 {
+		t.Fatalf("boundary rows must stay raw, raw=%d", raw)
+	}
+
+	fixture.now = bucketStart + 49*metricsHourMS + 10*time.Minute.Milliseconds()
+	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if raw := countRows("device_metrics"); raw != 1 {
+		t.Fatalf("completed bucket must be deleted from raw, raw=%d", raw)
+	}
+	var bucketTS int64
+	var cpu float64
+	var memUsed, uptime int64
+	var sampleCount int
+	if err := fixture.db.QueryRowContext(context.Background(), `SELECT bucket_ts, cpu_pct, mem_used, uptime_s, sample_count FROM device_metrics_hourly
+WHERE device_id = ? AND bucket_ts = ?`, result.DeviceID, bucketStart).
+		Scan(&bucketTS, &cpu, &memUsed, &uptime, &sampleCount); err != nil {
+		t.Fatal(err)
+	}
+	if sampleCount != 3 || cpu < 23.32 || cpu > 23.34 || memUsed != 100 || uptime != 5000 {
+		t.Fatalf("hourly bucket cpu=%v mem=%d uptime=%d count=%d (samples lost across batches)", cpu, memUsed, uptime, sampleCount)
+	}
+
+	if err := fixture.service.RollupMetrics(context.Background()); err != nil {
+		t.Fatalf("rollup must be idempotent: %v", err)
+	}
+	if raw := countRows("device_metrics"); raw != 1 {
+		t.Fatalf("idempotent rerun changed raw rows: %d", raw)
+	}
+	var recheckCount int
+	var recheckCPU float64
+	if err := fixture.db.QueryRowContext(context.Background(), "SELECT sample_count, cpu_pct FROM device_metrics_hourly WHERE device_id = ? AND bucket_ts = ?",
+		result.DeviceID, bucketStart).Scan(&recheckCount, &recheckCPU); err != nil {
+		t.Fatal(err)
+	}
+	if recheckCount != sampleCount || recheckCPU != cpu {
+		t.Fatalf("idempotent rerun overwrote bucket: count=%d cpu=%v", recheckCount, recheckCPU)
 	}
 }
 

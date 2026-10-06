@@ -299,7 +299,7 @@ DROP TABLE user_session;
 DROP TABLE user_device;
 DROP TABLE user_dek;
 DROP TABLE app_user;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18)`)
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19)`)
 	if err != nil {
 		t.Fatal(err)
 	}
