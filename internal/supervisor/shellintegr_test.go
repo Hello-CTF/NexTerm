@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/terminal/shellintegr"
 )
 
 func TestWrapShellIntegrationDecision(t *testing.T) {
@@ -328,5 +330,66 @@ func TestSupervisorWrappedFishLogin(t *testing.T) {
 	defer cancel()
 	if err := session.killAndWait(killCtx, supervisor.commandTimeout); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSupervisorWrappedShellEmitsOSC133 launches a supervisor-backed wrapped
+// bash, runs a command that fails, and asserts the live stream and the
+// recording replay stream both carry the OSC 133 lifecycle (A, B, D;1) plus
+// the OSC 7 report, and that a passive CommandTracker recovers the exit code
+// from the recorded bytes. This proves the supervisor launch path emits OSC
+// 133 without altering the recorded bytes.
+func TestSupervisorWrappedShellEmitsOSC133(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a real shell")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not installed")
+	}
+	supervisor := testSupervisor(t)
+	home := t.TempDir()
+	session, err := supervisor.Create(context.Background(), CreateOptions{
+		Command: []string{bash, "-l"},
+		Env:     []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color"},
+		Cols:    80,
+		Rows:    24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := supervisor.Attach(context.Background(), session.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attachment.Detach()
+	if _, err := session.Write([]byte("false\nexit 0\n")); err != nil {
+		t.Fatal(err)
+	}
+	output := readUntil(t, attachment, "\x1b]133;D;1\x1b\\")
+	for _, want := range []string{"\x1b]133;A\x1b\\", "\x1b]133;B\x1b\\", "\x1b]133;D;1\x1b\\", "\x1b]7;file://"} {
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("live output missing %q:\n%s", want, output)
+		}
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := session.Wait(waitCtx); err != nil {
+		t.Fatalf("session wait: %v", err)
+	}
+	recording, err := os.ReadFile(recordingPath(supervisor.StateDir(), session.ID()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"\x1b]133;A\x1b\\", "\x1b]133;B\x1b\\", "\x1b]133;D;1\x1b\\", "\x1b]7;file://"} {
+		if !strings.Contains(string(recording), want) {
+			t.Fatalf("recording replay stream missing %q", want)
+		}
+	}
+	tracker := shellintegr.NewCommandTracker()
+	tracker.Observe(recording)
+	state := tracker.State()
+	if !state.HasLastExitCode || state.LastExitCode != 1 {
+		t.Fatalf("CommandTracker exit = %d (present=%v); want 1, true", state.LastExitCode, state.HasLastExitCode)
 	}
 }

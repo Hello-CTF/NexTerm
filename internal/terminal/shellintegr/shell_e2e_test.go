@@ -156,3 +156,145 @@ func TestWrappedShellsReportCWD(t *testing.T) {
 		})
 	}
 }
+
+// TestWrappedBashEmitsOSC133 runs wrapped bash on a PTY, executes a command
+// that fails, and asserts the stream carries a full OSC 133 lifecycle - prompt
+// start (A), command start (B), and command finished with the real exit code
+// (D;1) - in order, alongside the OSC 7 cwd report, and that the passive
+// CommandTracker recovers the exit code from the recorded bytes.
+func TestWrappedBashEmitsOSC133(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a real shell")
+	}
+	path, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not installed")
+	}
+	launch, err := Wrap(ShellBash, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer launch.Cleanup()
+
+	home := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	session, err := pty.Start(ctx, pty.Config{
+		Path: launch.Path,
+		Args: launch.Args,
+		Dir:  t.TempDir(),
+		Env: []string{
+			"HOME=" + home,
+			"PATH=" + os.Getenv("PATH"),
+			"TERM=xterm-256color",
+		},
+		Cols: 80,
+		Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	if _, err := session.Write([]byte("false\nexit\n")); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aSeq := []byte("\x1b]133;A\x1b\\")
+	bSeq := []byte("\x1b]133;B\x1b\\")
+	dSeq := []byte("\x1b]133;D;1\x1b\\")
+	if !bytes.Contains(output, []byte("\x1b]7;file://")) {
+		t.Fatalf("wrapped bash dropped the OSC 7 report:\n%s", output)
+	}
+	for _, want := range [][]byte{aSeq, bSeq, dSeq} {
+		if !bytes.Contains(output, want) {
+			t.Fatalf("wrapped bash output missing %q:\n%s", want, output)
+		}
+	}
+	a := bytes.Index(output, aSeq)
+	b := bytes.Index(output, bSeq)
+	d := bytes.Index(output, dSeq)
+	if !(a >= 0 && a < b && b < d) {
+		t.Fatalf("OSC 133 lifecycle out of order: A=%d B=%d D=%d\n%s", a, b, d, output)
+	}
+
+	tracker := NewCommandTracker()
+	full := output
+	for len(output) > 0 {
+		n := min(5, len(output))
+		chunk := output[:n]
+		tracker.Observe(chunk)
+		output = output[n:]
+	}
+	state := tracker.State()
+	if !state.HasLastExitCode || state.LastExitCode != 1 {
+		t.Fatalf("CommandTracker exit = %d (present=%v); want 1, true; stream:\n%s", state.LastExitCode, state.HasLastExitCode, full)
+	}
+	if state.Sequence < 1 {
+		t.Fatalf("CommandTracker.Sequence = %d; want >= 1", state.Sequence)
+	}
+}
+
+// TestBashWrapperPreservesUserDebugTrap installs a user DEBUG trap alongside a
+// user PROMPT_COMMAND and asserts both still run under the wrapper, so the
+// OSC 133 hooks do not clobber existing rc hooks.
+func TestBashWrapperPreservesUserDebugTrap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a real shell")
+	}
+	path, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not installed")
+	}
+	launch, err := Wrap(ShellBash, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer launch.Cleanup()
+
+	home := t.TempDir()
+	bashrc := "PROMPT_COMMAND='printf USERPROMPT-RAN'\ntrap 'printf USERDEBUG-RAN' DEBUG\n"
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte(bashrc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	session, err := pty.Start(ctx, pty.Config{
+		Path: launch.Path,
+		Args: launch.Args,
+		Dir:  t.TempDir(),
+		Env: []string{
+			"HOME=" + home,
+			"PATH=" + os.Getenv("PATH"),
+			"TERM=xterm-256color",
+		},
+		Cols: 80,
+		Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	if _, err := session.Write([]byte("exit\n")); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(output, []byte("USERPROMPT-RAN")) {
+		t.Fatalf("user PROMPT_COMMAND did not run:\n%s", output)
+	}
+	if !bytes.Contains(output, []byte("USERDEBUG-RAN")) {
+		t.Fatalf("user DEBUG trap did not run:\n%s", output)
+	}
+	if !bytes.Contains(output, []byte("\x1b]133;A\x1b\\")) {
+		t.Fatalf("wrapper stopped emitting OSC 133:\n%s", output)
+	}
+}

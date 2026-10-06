@@ -52,6 +52,8 @@ type Tab struct {
 	cancelPump   context.CancelFunc
 	cwdTracker   *shellintegr.Tracker
 	cwd          string
+	commandTrack *shellintegr.CommandTracker
+	commandState shellintegr.CommandState
 	durableFed   int64
 
 	catchUpRemaining int64
@@ -252,7 +254,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		ephemeral: options.Ephemeral, cols: cols, rows: rows,
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
-		cwdTracker: shellintegr.NewTracker(),
+		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 	}
 	if options.Durable != nil {
 		if source, ok := m.durable.(durableTranscriptOffsetSource); ok {
@@ -905,6 +907,7 @@ func (m *Manager) feed(ctx context.Context, tab *Tab, generation uint64, data []
 		tab.mu.Unlock()
 		m.emit(feedCtx, TopicTerminalControl, event)
 	}
+	tab.observeCommand(data)
 	tab.mu.Lock()
 	subscribers := make([]subscriber, 0, len(tab.subscribers))
 	for _, subscriber := range tab.subscribers {
