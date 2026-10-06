@@ -375,7 +375,7 @@ describe("AiSidebar stream recovery", () => {
     expect(textOf(view!)).toContain("正在补齐");
     await flushReplay();
 
-    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1);
+    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1, 200);
     expect(mocks.hitlEvents).toHaveBeenCalledWith("job-1", 0);
     expect(textOf(view!)).toContain("输出无缺失");
     expect(textOf(view!)).toContain("流式");
@@ -392,7 +392,7 @@ describe("AiSidebar stream recovery", () => {
 
     emit({ type: "delta", text: "三", seq: 3 });
     await flushReplay();
-    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1);
+    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1, 200);
     act(runFrames);
     expect(textOf(view!)).toContain("一二三");
   });
@@ -432,7 +432,7 @@ describe("AiSidebar stream recovery", () => {
     emit({ type: "done", answer: "答案", seq: 3 });
     await flushReplay();
 
-    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1);
+    expect(mocks.runEvents).toHaveBeenCalledWith("job-1", 1, 200);
     expect(useUi.getState().aiBusy).toBe(false);
     const text = textOf(view!);
     expect(text).toContain("本轮已完成");
