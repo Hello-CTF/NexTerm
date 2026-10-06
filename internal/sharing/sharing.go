@@ -9,10 +9,12 @@
 // passwords, private keys or sync payloads: the package touches no
 // credential, asset or sync table, and only SHA-256 token hashes are stored.
 //
-// Grants are snapshots, not authority: input paths and agent rechecks must
-// revalidate against current rows via RevalidateLinkInput (links) or
-// RevalidateHostAccess (host shares), and the agent-side Gate rechecks
-// expiry and revocation around every copied chunk.
+// Grants are snapshots, not authority: data paths must be built through
+// NewLinkGate / NewHostGate, whose per-chunk rechecks revalidate current
+// rows (including device ownership and revocation) and swap the refreshed
+// Grant into every subsequent decision, so permission shrink and
+// revocation stop input immediately and stop output once no valid row
+// remains.
 //
 // Server-side HTTP mounting and fleet route integration are a separate
 // slice; this package is verified with explicit fakes. Relay-capable hosts
@@ -225,6 +227,29 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 		return nil, auditErr
 	}
 	return grant, nil
+}
+
+// checkDeviceBinding 校验授权快照与当前设备状态一致: 设备必须存在、未吊销,
+// 且当前 owner 与 Grant.OwnerID 一致 (设备易主后旧授权立即失效); 返回机器
+// 可读的拒绝原因 ("" 表示通过)。
+func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string, error) {
+	var ownerID string
+	var revokedAt sql.NullInt64
+	err := s.db.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", grant.DeviceID).
+		Scan(&ownerID, &revokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "device_not_found", ipc.NewError(ipc.CodeForbidden, "设备不存在")
+	}
+	if err != nil {
+		return "", dbError(err)
+	}
+	if revokedAt.Valid {
+		return "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+	}
+	if ownerID != grant.OwnerID {
+		return "owner_mismatch", ipc.NewError(ipc.CodeForbidden, "设备归属与授权不一致")
+	}
+	return "", nil
 }
 
 // requireDaemon 限定分享目标为 daemon 主机: 必须有 device_agent 记录且终端

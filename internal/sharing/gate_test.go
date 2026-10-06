@@ -107,12 +107,12 @@ func TestGateExpiryDuringReadDiscardsChunkBothDirections(t *testing.T) {
 func TestGateRecheckRevokesBothDirections(t *testing.T) {
 	recheckErr := errors.New("share revoked")
 	calls := 0
-	gate := NewGate(testGrant(PermissionReadWrite, time.Now().Add(time.Hour).UnixMilli()), WithRecheck(func(ctx context.Context, grant *Grant) error {
+	gate := NewGate(testGrant(PermissionReadWrite, time.Now().Add(time.Hour).UnixMilli()), WithRecheck(func(ctx context.Context, grant *Grant) (*Grant, error) {
 		calls++
 		if calls > 1 {
-			return recheckErr
+			return nil, recheckErr
 		}
-		return nil
+		return grant, nil
 	}))
 
 	var output bytes.Buffer
@@ -203,5 +203,68 @@ func TestGateNilGrantFailsClosed(t *testing.T) {
 	}
 	if err := gate.Check(context.Background()); err == nil {
 		t.Fatal("nil grant must fail check")
+	}
+}
+
+func TestGateRecheckRefreshesGrantBeforeExpiry(t *testing.T) {
+	current := time.Now().UnixMilli()
+	grant := testGrant(PermissionReadWrite, current+1000)
+	shrunk := testGrant(PermissionRead, current+time.Hour.Milliseconds())
+	gate := NewGate(grant, WithGateNow(func() int64 { return current }), WithRecheck(func(ctx context.Context, current *Grant) (*Grant, error) {
+		return shrunk, nil
+	}))
+
+	current += 2000
+	var output bytes.Buffer
+	if err := gate.PipeOutput(context.Background(), &output, bytes.NewReader([]byte("still valid"))); err != nil {
+		t.Fatalf("recheck refresh must replace the expired snapshot before the expiry check: %v", err)
+	}
+	if output.String() != "still valid" {
+		t.Fatalf("output = %q", output.String())
+	}
+	if gate.InputAllowed() {
+		t.Fatal("refreshed read grant must revoke input")
+	}
+	var input bytes.Buffer
+	if err := gate.PipeInput(context.Background(), &input, bytes.NewReader([]byte("x"))); !errors.Is(err, ErrInputNotAllowed) {
+		t.Fatalf("input err = %v, want ErrInputNotAllowed", err)
+	}
+	if input.Len() != 0 {
+		t.Fatalf("shrunk grant forwarded %q", input.String())
+	}
+}
+
+type cancelWithDataReader struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	data   []byte
+}
+
+func (r *cancelWithDataReader) Read(p []byte) (int, error) {
+	r.cancel()
+	return copy(p, r.data), r.ctx.Err()
+}
+
+func TestGateCancelledDuringReadWithDataDiscardsBothDirections(t *testing.T) {
+	gate := NewGate(testGrant(PermissionReadWrite, time.Now().Add(time.Hour).UnixMilli()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var output bytes.Buffer
+	err := gate.PipeOutput(ctx, &output, &cancelWithDataReader{ctx: ctx, cancel: cancel, data: []byte("late")})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("output err = %v, want context.Canceled", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("cancelled output pipe wrote %q", output.String())
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	var input bytes.Buffer
+	err = gate.PipeInput(ctx, &input, &cancelWithDataReader{ctx: ctx, cancel: cancel, data: []byte("late")})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("input err = %v, want context.Canceled", err)
+	}
+	if input.Len() != 0 {
+		t.Fatalf("cancelled input pipe wrote %q", input.String())
 	}
 }

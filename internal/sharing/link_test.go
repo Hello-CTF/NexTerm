@@ -1,6 +1,7 @@
 package sharing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -418,5 +419,130 @@ func TestLinkRevokedDeviceStopsAccess(t *testing.T) {
 	last := rows[len(rows)-1]
 	if last["outcome"] != "deny" || last["reason"] != "device_revoked" {
 		t.Fatalf("access audits = %+v", rows)
+	}
+}
+
+func TestLinkGateStopsAfterRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := fixture.service.NewLinkGate(grant)
+
+	reader := &chunkReader{chunks: [][]byte{[]byte("first"), []byte("second")}}
+	reader.onRead = func() {
+		if reader.index == 1 {
+			if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var output bytes.Buffer
+	err = gate.PipeOutput(context.Background(), &output, reader)
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if output.String() != "first" {
+		t.Fatalf("output after revocation = %q, want only pre-revocation chunk", output.String())
+	}
+}
+
+func TestLinkGateStopsAfterDeviceRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	_, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := fixture.service.NewLinkGate(grant)
+
+	reader := &chunkReader{chunks: [][]byte{[]byte("first"), []byte("second")}}
+	reader.onRead = func() {
+		if reader.index == 1 {
+			if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var output bytes.Buffer
+	err = gate.PipeOutput(context.Background(), &output, reader)
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if output.String() != "first" {
+		t.Fatalf("output after device revocation = %q, want only pre-revocation chunk", output.String())
+	}
+}
+
+func TestLinkGateInputStopsAfterRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	link, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := fixture.service.NewLinkGate(grant)
+
+	reader := &chunkReader{chunks: [][]byte{[]byte("a"), []byte("b")}}
+	reader.onRead = func() {
+		if reader.index == 1 {
+			if err := fixture.service.RevokeLink(context.Background(), fixture.identity(owner), link.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var input bytes.Buffer
+	err = gate.PipeInput(context.Background(), &input, reader)
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if input.String() != "a" {
+		t.Fatalf("input after revocation = %q, want only pre-revocation chunk", input.String())
+	}
+
+	rows := fixture.auditRows(t, auditKindLinkInput)
+	if len(rows) != 2 {
+		t.Fatalf("input audits = %+v", rows)
+	}
+	if rows[0]["outcome"] != "allow" || rows[1]["outcome"] != "deny" || rows[1]["reason"] != "revoked" {
+		t.Fatalf("input audits = %+v", rows)
+	}
+}
+
+func TestRevalidateLinkOwnerMismatch(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	mallory := fixture.createUser(t, "mallory")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	_, token, err := fixture.service.CreateLink(context.Background(), fixture.identity(owner), deviceID, ids.New(), true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.ResolveLink(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant.OwnerID = mallory.ID
+
+	if _, err := fixture.service.RevalidateLink(context.Background(), grant); err == nil {
+		t.Fatal("tampered owner must fail revalidation")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+	if _, err := fixture.service.RevalidateLinkInput(context.Background(), grant); err == nil {
+		t.Fatal("tampered owner must fail input revalidation")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
 	}
 }

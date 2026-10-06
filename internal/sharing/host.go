@@ -263,12 +263,16 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 }
 
 // RevalidateHostAccess 按 ShareIDs 重查 host 分享行并校验设备/接收者绑定:
-// 吊销或过期的行剔除后对剩余行重算并集 (权限可能收缩为 read, 有效期以仍
-// 支撑该权限级别的行为准); 全部失效则拒绝。返回刷新后的 Grant, 供服务端
-// 输入检查与 agent recheck 共用, 不信任签发时快照。
+// 先用 checkDeviceBinding 校验当前设备归属与吊销状态, 再剔除吊销或过期的
+// 分享行并对剩余行重算并集 (权限可能收缩为 read, 有效期以仍支撑该权限级别
+// 的行为准); 全部失效则拒绝。返回刷新后的 Grant, 供服务端输入检查与 agent
+// recheck 共用, 不信任签发时快照。
 func (s *Service) RevalidateHostAccess(ctx context.Context, grant *Grant) (*Grant, error) {
 	if grant == nil || len(grant.ShareIDs) == 0 || grant.Recipient == "" {
 		return nil, ipc.NewError(ipc.CodeForbidden, "没有该设备的有效分享")
+	}
+	if _, err := s.checkDeviceBinding(ctx, grant); err != nil {
+		return nil, err
 	}
 	now := s.now()
 	var valid []hostShareRow
@@ -315,7 +319,26 @@ func hostShareDenyMessage(reason string) string {
 		return "主机分享已吊销"
 	case "expired":
 		return "主机分享已过期"
+	case "device_revoked":
+		return "设备已吊销"
+	case "owner_mismatch":
+		return "设备归属与授权不一致"
+	case "device_not_found":
+		return "设备不存在"
 	default:
 		return "没有该设备的有效分享"
 	}
+}
+
+// NewHostGate 为注册分享终端建立执行 Gate: 逐块以 RevalidateHostAccess 按
+// 当前行刷新授权; 权限收缩 (read_write -> read) 即时生效 — 输入停止, 输出
+// 在有效 read 行下继续; 分享或设备吊销即双向停止。后续连接切片应通过本
+// 构造建立数据通路, 而不是直接持有 Grant 快照。
+func (s *Service) NewHostGate(grant *Grant, options ...GateOption) *Gate {
+	wired := []GateOption{
+		WithRecheck(func(ctx context.Context, current *Grant) (*Grant, error) {
+			return s.RevalidateHostAccess(ctx, current)
+		}),
+	}
+	return NewGate(grant, append(wired, options...)...)
 }

@@ -218,10 +218,14 @@ func (s *Service) ListLinks(ctx context.Context, identity *account.Identity) ([]
 }
 
 // revalidateLink 是 RevalidateLink 的内部实现, 额外返回机器可读的拒绝原因
-// ("revoked"/"expired"/"not_found"), 供输入路径写审计。
+// ("revoked"/"expired"/"device_revoked"/"owner_mismatch"/"not_found"), 供输入
+// 路径写审计。重查前先用 checkDeviceBinding 校验当前设备归属与吊销状态。
 func (s *Service) revalidateLink(ctx context.Context, grant *Grant) (*Grant, string, error) {
 	if grant == nil || len(grant.ShareIDs) == 0 {
 		return nil, "not_found", ipc.NewError(ipc.CodeForbidden, "分享链接无效")
+	}
+	if reason, err := s.checkDeviceBinding(ctx, grant); err != nil {
+		return nil, reason, err
 	}
 	now := s.now()
 	reason := "not_found"
@@ -282,9 +286,31 @@ func linkDenyMessage(reason string) string {
 		return "分享链接已吊销"
 	case "expired":
 		return "分享链接已过期"
+	case "device_revoked":
+		return "设备已吊销"
+	case "owner_mismatch":
+		return "设备归属与授权不一致"
+	case "device_not_found":
+		return "设备不存在"
 	default:
 		return "分享链接无效"
 	}
+}
+
+// NewLinkGate 为公开链接连接建立执行 Gate: 逐块以 RevalidateLink 按当前行
+// 刷新授权 (吊销/过期/设备吊销即双向停止), 输入方向在 Write 前再经
+// RevalidateLinkInput 审计并强制 read_write。后续连接切片应通过本构造
+// 建立数据通路, 而不是直接持有 Grant 快照。
+func (s *Service) NewLinkGate(grant *Grant, options ...GateOption) *Gate {
+	wired := []GateOption{
+		WithRecheck(func(ctx context.Context, current *Grant) (*Grant, error) {
+			return s.RevalidateLink(ctx, current)
+		}),
+		WithInputCheck(func(ctx context.Context, current *Grant) (*Grant, error) {
+			return s.RevalidateLinkInput(ctx, current)
+		}),
+	}
+	return NewGate(grant, append(wired, options...)...)
 }
 
 // RevalidateLinkInput 是公开链接输入路径的服务端强制点: 每次输入都按当前

@@ -1,7 +1,9 @@
 package sharing
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -444,5 +446,121 @@ func TestHostShareListScope(t *testing.T) {
 	}
 	if len(shares) != 1 {
 		t.Fatalf("superadmin shares = %+v", shares)
+	}
+}
+
+func TestHostGateShrinksToReadThenStops(t *testing.T) {
+	fixture := newServiceFixture(t)
+	admin := fixture.createSuperadmin(t, "root")
+	owner := fixture.createUser(t, "alice")
+	bob := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, 2*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.AuthorizeTerminalOpen(context.Background(), fixture.identity(bob), deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.Permission != PermissionReadWrite || grant.ExpiresAt != writeShare.ExpiresAt {
+		t.Fatalf("grant = %+v", grant)
+	}
+	gate := fixture.service.NewHostGate(grant)
+
+	fixture.now = writeShare.ExpiresAt + 1
+	var output bytes.Buffer
+	if err := gate.PipeOutput(context.Background(), &output, bytes.NewReader([]byte("screen"))); err != nil {
+		t.Fatalf("output must continue under the surviving read share: %v", err)
+	}
+	if output.String() != "screen" {
+		t.Fatalf("output = %q", output.String())
+	}
+	if gate.InputAllowed() {
+		t.Fatal("gate must hold the shrunk read grant")
+	}
+	var input bytes.Buffer
+	if err := gate.PipeInput(context.Background(), &input, bytes.NewReader([]byte("x"))); !errors.Is(err, ErrInputNotAllowed) {
+		t.Fatalf("input err = %v, want ErrInputNotAllowed", err)
+	}
+	if input.Len() != 0 {
+		t.Fatalf("shrunk gate forwarded %q", input.String())
+	}
+
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), readShare.ID); err != nil {
+		t.Fatal(err)
+	}
+	err = gate.PipeOutput(context.Background(), &output, bytes.NewReader([]byte("more")))
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if output.String() != "screen" {
+		t.Fatalf("output after full revocation = %q", output.String())
+	}
+}
+
+func TestHostGateStopsAfterRevocation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	bob := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.AuthorizeTerminalOpen(context.Background(), fixture.identity(bob), deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := fixture.service.NewHostGate(grant)
+
+	if err := fixture.service.RevokeHostShare(context.Background(), fixture.identity(owner), share.ID); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = gate.PipeOutput(context.Background(), &output, bytes.NewReader([]byte("screen")))
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if output.Len() != 0 {
+		t.Fatalf("revoked gate forwarded output %q", output.String())
+	}
+	var input bytes.Buffer
+	err = gate.PipeInput(context.Background(), &input, bytes.NewReader([]byte("x")))
+	requireIPCCode(t, err, ipc.CodeForbidden)
+	if input.Len() != 0 {
+		t.Fatalf("revoked gate forwarded input %q", input.String())
+	}
+}
+
+func TestRevalidateHostOwnerMismatchAndDeviceRevoked(t *testing.T) {
+	fixture := newServiceFixture(t)
+	owner := fixture.createUser(t, "alice")
+	mallory := fixture.createUser(t, "mallory")
+	bob := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := fixture.service.AuthorizeTerminalOpen(context.Background(), fixture.identity(bob), deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tampered := *grant
+	tampered.OwnerID = mallory.ID
+	if _, err := fixture.service.RevalidateHostAccess(context.Background(), &tampered); err == nil {
+		t.Fatal("tampered owner must fail revalidation")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
+	}
+
+	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.RevalidateHostAccess(context.Background(), grant); err == nil {
+		t.Fatal("revoked device must fail revalidation")
+	} else {
+		requireIPCCode(t, err, ipc.CodeForbidden)
 	}
 }
