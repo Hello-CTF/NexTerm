@@ -323,6 +323,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				var err error
 				if input.ChannelID != "" {
 					err = s.sessions.DetachChannel(input.ChannelID)
+					s.bridge.Unbridge(input.ChannelID)
 				} else {
 					err = s.sessions.DetachAll(input.TabID)
 				}
