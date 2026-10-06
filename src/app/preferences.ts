@@ -1,12 +1,29 @@
 import { useSyncExternalStore } from "react";
 import { getResolvedTheme, subscribeTheme } from "./theme";
+import { preferencesApi } from "../ipc/authApi";
 
-// 账号级偏好覆盖的存储接口;M140 提供 user_setting 后端后由其实现并注册。
+// 账号级偏好覆盖的存储接口;生产实现走 /auth/preferences(M140 user_setting 后端)。
 // 注册前只有设备本地值,不冒充账号级覆盖。
 export interface AccountPreferenceStore {
   getOverrides(): Promise<Record<string, unknown>>;
   putOverride(key: string, value: unknown): Promise<void>;
   deleteOverride(key: string): Promise<void>;
+}
+
+// createHttpPreferenceStore 是生产用的账号偏好存储:读取/写回/清除都走 /auth/preferences。
+export function createHttpPreferenceStore(): AccountPreferenceStore {
+  return {
+    async getOverrides() {
+      const view = await preferencesApi.get();
+      return view.overrides;
+    },
+    async putOverride(key, value) {
+      await preferencesApi.put({ set: { [key]: value } });
+    },
+    async deleteOverride(key) {
+      await preferencesApi.put({ clear: [key] });
+    },
+  };
 }
 
 let accountStore: AccountPreferenceStore | null = null;
@@ -16,19 +33,27 @@ const accountListeners = new Set<() => void>();
 export function registerAccountPreferenceStore(store: AccountPreferenceStore | null): void {
   accountStore = store;
   accountOverrides = {};
-  if (store) {
-    void store
-      .getOverrides()
-      .then((overrides) => {
-        accountOverrides = overrides;
-        for (const listener of accountListeners) listener();
-      })
-      .catch(() => undefined);
+  if (!store) {
+    rebuildSnapshots();
+    for (const listener of accountListeners) listener();
+    return;
   }
+  void store
+    .getOverrides()
+    .then((overrides) => {
+      accountOverrides = overrides;
+      rebuildSnapshots();
+      for (const listener of accountListeners) listener();
+    })
+    .catch(() => undefined);
 }
 
 export function getAccountPreferenceStore(): AccountPreferenceStore | null {
   return accountStore;
+}
+
+export function getAccountOverrides(): Record<string, unknown> {
+  return accountOverrides;
 }
 
 export function subscribeAccountOverrides(listener: () => void): () => void {
@@ -50,6 +75,15 @@ export function mergeWithDefaults<T extends object>(defaults: T, ...layers: (Par
 function accountOverride<T>(key: string): Partial<T> | undefined {
   const value = accountOverrides[key];
   return value && typeof value === "object" ? (value as Partial<T>) : undefined;
+}
+
+// rebuildSnapshots 在账号覆盖加载/清除后,按合并值重建 input/appearance 快照并应用外观。
+function rebuildSnapshots(): void {
+  prefs = load();
+  appearance = loadAppearance();
+  applyAppearance();
+  for (const listener of listeners) listener();
+  for (const listener of appearanceListeners) listener();
 }
 
 export interface InputPrefs {

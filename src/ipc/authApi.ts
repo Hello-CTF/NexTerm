@@ -280,6 +280,29 @@ export const syncV2Api = {
     }, { csrf: true }),
 };
 
+// PreferenceScopeView 是 /auth/preferences 的三层视图(默认+覆盖+生效)。
+export interface PreferenceScopeView {
+  defaults: Record<string, unknown>;
+  overrides: Record<string, unknown>;
+  effective: Record<string, unknown>;
+}
+
+export interface PreferenceDefaultsView {
+  defaults: Record<string, unknown>;
+}
+
+export const preferencesApi = {
+  get: () => request<PreferenceScopeView>("GET", "/auth/preferences"),
+
+  put: (update: { set?: Record<string, unknown>; clear?: string[] }) =>
+    request<PreferenceScopeView>("PUT", "/auth/preferences", update, { csrf: true }),
+
+  adminGet: () => request<PreferenceDefaultsView>("GET", "/admin/preferences"),
+
+  adminPut: (update: { set?: Record<string, unknown>; clear?: string[] }) =>
+    request<PreferenceDefaultsView>("PUT", "/admin/preferences", update, { csrf: true }),
+};
+
 export function authAvailable(): boolean {
   return WEB || DEMO;
 }

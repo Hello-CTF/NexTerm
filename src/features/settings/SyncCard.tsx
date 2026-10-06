@@ -292,6 +292,7 @@ interface RemoteObject {
   deletedAt: number | null;
   seq: number;
   payloadHash: string;
+  plaintext: string;
 }
 
 interface RemoteState {
@@ -452,7 +453,7 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
     const text = new TextDecoder().decode(plaintext);
     if (kind === "tombstone") {
       const t = JSON.parse(text) as { targetKind?: string; deletedAt?: number };
-      out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq, payloadHash });
+      out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq, payloadHash, plaintext: text });
       continue;
     }
     const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
@@ -464,6 +465,7 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
       deletedAt: p.deletedAt ?? null,
       seq: entry.seq,
       payloadHash,
+      plaintext: text,
     });
   }
   return { objects: out, head: ids.head, maxSeq: ids.max_seq };
@@ -729,6 +731,56 @@ function CompareConsole() {
     return computeWinners(local, remote);
   }, [local, remote]);
 
+  // applySet 集合:远端胜出(仅云端/云端较新/云端已删)需要拉取应用的对象。
+  const applySet = useMemo(() => {
+    if (!local || !remote) return [];
+    return remote.filter((r) => {
+      const l = local.find((e) => e.id === r.id);
+      if (!l) return true; // remote-only
+      return !localWins(l, r); // remote-newer 或 remote-deleted
+    });
+  }, [local, remote]);
+
+  const [applyInfo, setApplyInfo] = useState<string | null>(null);
+
+  const applyRemote = async () => {
+    setBusy("push");
+    setError(null);
+    setApplyInfo(null);
+    try {
+      const objects = applySet.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        payload: JSON.parse(r.plaintext) as import("../../ipc/types").JsonValue,
+      }));
+      // 分批(单次上限 256)
+      let applied = 0;
+      let identical = 0;
+      let skipped = 0;
+      const warnings: string[] = [];
+      for (let i = 0; i < objects.length; i += 256) {
+        const result = await syncApi.applyObjects(objects.slice(i, i + 256));
+        applied += result.applied;
+        identical += result.identical;
+        skipped += result.skipped;
+        for (const o of result.objects) {
+          if (o.warning) warnings.push(`${o.id}: ${o.warning}`);
+        }
+      }
+      // 警告(如凭据库未解锁)并入结果展示,不随 load() 清除
+      setApplyInfo(
+        `已应用 ${applied} · 一致 ${identical} · 跳过 ${skipped}` +
+          (warnings.length > 0 ? ` · 警告:${warnings.join("; ")}` : ""),
+      );
+      pushToast("success", `已应用 ${applied} 个对象`);
+      await load();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const push = async () => {
     setBusy("push");
     setError(null);
@@ -823,6 +875,14 @@ function CompareConsole() {
           刷新对比
         </button>
         <button
+          className="nx-btn nx-btn-outline nx-btn-sm"
+          disabled={busy !== null || applySet.length === 0}
+          onClick={() => void applyRemote()}
+        >
+          {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
+          {busy === "push" ? "应用中…" : `拉取并应用 (${applySet.length})`}
+        </button>
+        <button
           className="nx-btn nx-btn-primary nx-btn-sm"
           disabled={busy !== null || pushCount === 0}
           onClick={() => void push()}
@@ -834,8 +894,7 @@ function CompareConsole() {
 
       <p className="nx-hint mb-3">
         本机数据与云端密文副本的对比(在本机解密后比较,服务端看不到内容)。
-        推送会把本机较新的内容加密送上云端,其他设备随后拉取合并;
-        「云端较新」的行暂不能在本机应用,等服务端应用通道就绪后可拉回。
+        推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(冲突按修订号+载荷 hash 裁决,删除以墓碑清理)。
       </p>
 
       {error && (
@@ -853,6 +912,13 @@ function CompareConsole() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span>{pushInfo}</span>
+        </div>
+      )}
+
+      {applyInfo && (
+        <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
+          <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
+          <span>{applyInfo}</span>
         </div>
       )}
 

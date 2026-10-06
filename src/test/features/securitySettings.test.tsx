@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     transcriptHosts: vi.fn(),
     transcriptList: vi.fn(),
     transcriptRead: vi.fn(),
+    applyObjects: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
   };
@@ -45,6 +46,9 @@ vi.mock("../../ipc/commands", () => ({
     hosts: mocks.transcriptHosts,
     list: mocks.transcriptList,
     read: mocks.transcriptRead,
+  },
+  syncApi: {
+    applyObjects: mocks.applyObjects,
   },
   dbApi: {},
   sessionApi: { connect: mocks.sessionConnect },
@@ -163,6 +167,7 @@ beforeEach(() => {
   mocks.transcriptHosts.mockResolvedValue([]);
   mocks.transcriptList.mockResolvedValue([]);
   mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
+  mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
   mocks.authStatus.mockResolvedValue({ initialized: true, registration_open: false, auth: "on" });
@@ -634,6 +639,108 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = mountSyncCard();
     await flushUntil(() => mounted!.container.textContent?.includes("磁盘不可读"));
     expect(mounted.container.textContent).not.toContain("web-01 的会话记录");
+  });
+
+  it("拉取并应用:远端胜出对象经 applyObjects 应用并重新计算对比", async () => {
+    seedAuthed(true);
+    const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
+    const dek = new Uint8Array(32).fill(7);
+    // 本机 a1 修订 200;云端 a1 修订 300(云端较新),另有一个仅云端的 a2
+    mocks.assetList.mockResolvedValue([
+      {
+        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
+        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
+      },
+    ]);
+    const blobA1 = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "a1", groupId: null, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 })),
+      "a1",
+      "asset",
+    );
+    const blobA2 = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "a2", groupId: null, kind: "ssh", name: "db-02", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 400 })),
+      "a2",
+      "asset",
+    );
+    mocks.syncIds.mockResolvedValue({
+      protocol: 2,
+      entries: [
+        { id: "a1", seq: 1, blob_hash: "h1" },
+        { id: "a2", seq: 2, blob_hash: "h2" },
+      ],
+      head: "head-2",
+      max_seq: 2,
+    });
+    mocks.syncPull.mockImplementation(async (_seq: number, ids?: string[]) => {
+      const want = ids?.[0];
+      const objects = [
+        { id: "a1", seq: 1, blob: bytesToBase64(blobA1) },
+        { id: "a2", seq: 2, blob: bytesToBase64(blobA2) },
+      ].filter((o) => !want || o.id === want);
+      return { protocol: 2, objects, head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true };
+    });
+    mocks.applyObjects.mockResolvedValue({
+      applied: 2,
+      identical: 0,
+      skipped: 0,
+      objects: [
+        { id: "a1", kind: "asset", result: "applied" },
+        { id: "a2", kind: "asset", result: "applied" },
+      ],
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => {
+      const btn = [...mounted!.container.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "拉取并应用 (2)",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(mounted.container, "拉取并应用 (2)");
+    await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
+    expect(mocks.applyObjects).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "a1", kind: "asset" }),
+        expect.objectContaining({ id: "a2", kind: "asset" }),
+      ]),
+    );
+    await flushUntil(() => mounted!.container.textContent?.includes("已应用 2"));
+  });
+
+  it("凭据库未解锁时应用显示 skipped/warning 而不是静默成功", async () => {
+    seedAuthed(true);
+    const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
+    const dek = new Uint8Array(32).fill(7);
+    const blob = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "c1", name: "生产口令", kind: "password", secret: "s3cret", updatedAt: 1 })),
+      "c1",
+      "credential",
+    );
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "c1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "c1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.applyObjects.mockResolvedValue({
+      applied: 0,
+      identical: 0,
+      skipped: 1,
+      objects: [{ id: "c1", kind: "credential", result: "skipped", warning: "凭据库已锁定, 请先解锁" }],
+    });
+
+    mounted = mountSyncCard();
+    // 等远端对象加载完成(凭据行出现),按钮才会变为「拉取并应用 (1)」可用
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("生产口令"));
+    await flushUntil(() => {
+      const btn = [...mounted!.container.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "拉取并应用 (1)",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(mounted.container, "拉取并应用 (1)");
+    await flushUntil(() => mounted!.container.textContent?.includes("凭据库已锁定"));
+    expect(mounted.container.textContent).toContain("跳过 1");
   });
 });
 

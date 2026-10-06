@@ -21,7 +21,17 @@ import {
   type DekEnvelopes,
 } from "./crypto";
 import { DEMO, WEB } from "../../demo";
+import { createHttpPreferenceStore, registerAccountPreferenceStore } from "../../app/preferences";
 import type { AppError } from "../../ipc/commands";
+
+// syncPreferenceStore 在登录/刷新后注册账号偏好存储(M140 /auth/preferences),登出时注销。
+function syncPreferenceStore(loggedIn: boolean): void {
+  if (loggedIn && (WEB || DEMO)) {
+    registerAccountPreferenceStore(createHttpPreferenceStore());
+  } else {
+    registerAccountPreferenceStore(null);
+  }
+}
 
 export type AuthGateKind = "loading" | "ready" | "setup" | "login" | "reset_required";
 
@@ -152,9 +162,11 @@ export const useAuth = create<AuthState>((set, get) => ({
         const session = await authApi.me();
         set({ user: session.user });
         set({ gate: session.user.state === "reset_required" ? "reset_required" : "ready" });
+        syncPreferenceStore(true);
       } catch {
         // loopback 部署允许匿名继续用;auth=on 必须登录
         set({ user: null, gate: status.auth === "on" ? "login" : "ready" });
+        syncPreferenceStore(false);
       }
     } catch (e) {
       set({ gate: "ready", error: toAppError(e) });
@@ -183,6 +195,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         recovery = built.recovery;
       }
       set({ dek, gate: "ready", ...(recovery ? { pendingRecoveryKey: recovery } : {}) });
+      syncPreferenceStore(true);
     } catch (e) {
       set({ error: toAppError(e) });
       throw e;
@@ -198,6 +211,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     zeroize(get().dek);
     setCsrfToken(null);
     set({ user: null, dek: null, gate: get().status?.auth === "on" ? "login" : "ready", pendingRecoveryKey: null });
+    syncPreferenceStore(false);
   },
 
   initSuperadmin: async (code, username, password) => {

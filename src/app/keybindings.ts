@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { isMac, modHint } from "./platform";
-import { getAccountPreferenceStore } from "./preferences";
+import { getAccountOverrides, getAccountPreferenceStore, subscribeAccountOverrides } from "./preferences";
 
 export type KeybindingActionId =
   | "commandPalette"
@@ -485,3 +485,8 @@ export function bindingConflicts(
   }
   return conflicts;
 }
+
+// 账号覆盖加载/清除后自动重建键位快照(与 preferences 的账号覆盖事件联动)。
+subscribeAccountOverrides(() => {
+  applyAccountKeybindingOverrides(getAccountOverrides()["keybindings.overrides"]);
+});
