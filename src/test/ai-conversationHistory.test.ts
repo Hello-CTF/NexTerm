@@ -16,12 +16,13 @@ function msg(role: string, content: unknown) {
 }
 
 describe("structured history mapping", () => {
-  it("preserves legacy user/assistant mapping", () => {
+  it("maps structured user/assistant rows only", () => {
     const items = historyToItems(state, [
       msg("user", { role: "user", content: "带图", imageCount: 2 }),
-      msg("assistant", "历史回答"),
-      msg("tool", "不入历史"),
-      msg("assistant", ""),
+      msg("assistant", { role: "assistant", content: "历史回答" }),
+      msg("tool", { role: "tool", content: "不入历史" }),
+      msg("assistant", { role: "assistant", content: "" }),
+      msg("assistant", "纯文本老行"),
     ]);
     expect(items.map((i) => i.role)).toEqual(["user", "assistant"]);
     expect(items[0]).toMatchObject({ text: "带图", imageCount: 2, attempt: null });
@@ -140,7 +141,9 @@ describe("structured history mapping", () => {
   });
 
   it("continues history ids from the conversation sequence", () => {
-    const items = historyToItems({ ...state, seq: 41 }, [msg("assistant", "a")]);
+    const items = historyToItems({ ...state, seq: 41 }, [
+      msg("assistant", { role: "assistant", content: "a" }),
+    ]);
     expect(items[0].id).toBe("h41");
   });
 

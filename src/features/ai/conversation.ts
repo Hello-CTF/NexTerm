@@ -843,9 +843,8 @@ function historyString(raw: unknown, key: string): string {
 }
 
 function historyTextOf(raw: unknown): string {
-  if (typeof raw === "string") return raw;
   const value = historyField(raw, "content");
-  return typeof value === "string" ? value : value == null ? "" : String(value);
+  return typeof value === "string" ? value : "";
 }
 
 export function historyToItems(

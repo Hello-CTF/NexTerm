@@ -698,9 +698,9 @@ describe("history and reset", () => {
     s.flush();
     const history = historyToItems(s.getState(), [
       { role: "user", content: { content: "带图", imageCount: 2 } },
-      { role: "assistant", content: "历史回答" },
-      { role: "tool", content: "不入历史" },
-      { role: "assistant", content: "" },
+      { role: "assistant", content: { content: "历史回答" } },
+      { role: "tool", content: { content: "不入历史" } },
+      { role: "assistant", content: { content: "" } },
     ]);
     s.reset(history);
     const items = s.getState().items;

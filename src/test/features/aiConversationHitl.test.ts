@@ -265,7 +265,7 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
     expect(resolutionsOf(result.state)).toEqual(["该交互已在服务端结束"]);
   });
 
-  it("keeps a plan-time card that is still pending, matching by nonce for old-kernel cards", () => {
+  it("sweeps a plan-time card without a requestId and re-appends the pending request", () => {
     const state = withConfirmCard(null);
     const plan = planHitlReplay(state, 1, 0);
     expect(plan.sweepable[0]?.requestId).toBeUndefined();
@@ -277,8 +277,12 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
       snapshotOf("interrupted", [interruptOf()]),
       0,
     );
-    expect(result.changed).toBe(false);
-    expect(pendingInteraction(result.state, 1, "confirm")).not.toBeNull();
+    expect(result.changed).toBe(true);
+    const cards = result.state.items.filter((i) => i.role === "confirm");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toMatchObject({ resolution: "该交互已在服务端结束" });
+    expect(cards[1]).toMatchObject({ requestId: "req-1" });
+    expect(pendingInteraction(result.state, 1, "confirm")?.id).toBe(cards[1].id);
   });
 
   it("never sweeps a racing card created after the plan while the run is alive", () => {

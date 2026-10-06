@@ -156,8 +156,8 @@ describe("AiSidebar session restore", () => {
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "排查 502", updatedAt: 0 }]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([
-      { role: "user", content: "旧问题" },
-      { role: "assistant", content: "旧回答" },
+      { role: "user", content: { role: "user", content: "旧问题" } },
+      { role: "assistant", content: { role: "assistant", content: "旧回答" } },
     ]);
     mocks.promptText.mockResolvedValue("安装 nginx");
     mocks.ask.mockResolvedValue(true);
@@ -314,7 +314,7 @@ describe("AiSidebar session restore", () => {
     emit({ type: "done", answer: "当前回答" });
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
-    mocks.messages.mockResolvedValue([{ role: "user", content: "旧问题" }]);
+    mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
     click(view!.container.querySelector('button[title="历史会话"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
