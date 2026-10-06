@@ -2,10 +2,8 @@ package sync
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 
-	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
@@ -39,24 +37,4 @@ func (s *Service) revealSettingSecret(ctx context.Context, stored string) (strin
 		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库已锁定，请先解锁")
 	}
 	return s.vault.DecryptSecret(ctx, stored)
-}
-
-func (s *Service) persistAdminTokenTx(ctx context.Context, tx *sql.Tx, plaintext string) error {
-	protected, err := s.protectSettingSecret(ctx, plaintext)
-	if err != nil {
-		return err
-	}
-	now := ids.NowMS()
-	if err := txUpsertSetting(ctx, tx, settingToken, protected, now); err != nil {
-		return err
-	}
-	return txUpsertSetting(ctx, tx, settingTokenBackup, plaintext, now)
-}
-
-func txUpsertSetting(ctx context.Context, tx *sql.Tx, key, value string, now int64) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, key, value, now); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
-	}
-	return nil
 }

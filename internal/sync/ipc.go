@@ -7,147 +7,91 @@ import (
 )
 
 const (
-	CommandDigest       = "sync_digest"
-	CommandOrigin       = "sync_origin"
-	CommandExport       = "sync_export"
-	CommandImport       = "sync_import"
-	CommandLinkGet      = "sync_link_get"
-	CommandLinkSet      = "sync_link_set"
-	CommandRemoteDigest = "sync_remote_digest"
-	CommandPush         = "sync_push"
-	CommandPull         = "sync_pull"
-	CommandToken        = "sync_token"
-	CommandTokenRotate  = "sync_token_rotate"
-	CommandTokenList    = "sync_token_list"
-	CommandTokenIssue   = "sync_token_issue"
-	CommandTokenRevoke  = "sync_token_revoke"
-	CommandBundleRead   = "sync_bundle_read"
-	CommandBundleWrite  = "sync_bundle_write"
+	CommandLinkGet     = "sync_link_get"
+	CommandLinkSet     = "sync_link_set"
+	CommandStatus      = "sync_status"
+	CommandSyncNow     = "sync_now"
+	CommandBundleRead  = "sync_bundle_read"
+	CommandBundleWrite = "sync_bundle_write"
+
+	CommandTranscriptSyncOptIn  = "transcript_sync_opt_in"
+	CommandTranscriptSyncOptIns = "transcript_sync_opt_ins"
 )
 
+type TranscriptSyncOptInRequest struct {
+	ID    string `json:"id"`
+	OptIn bool   `json:"optIn"`
+}
+
+type TranscriptSyncOptInsRequest struct {
+	AssetID string `json:"assetId"`
+}
+
+type TranscriptSyncOptInsResponse struct {
+	IDs []string `json:"ids"`
+}
+
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
-	if err := s.registerPeerCommands(dispatcher); err != nil {
-		return err
-	}
 	registrations := []func() error{
 		func() error {
-			return ipc.Register(dispatcher, CommandOrigin, func(ctx context.Context, _ *ipc.Call, _ struct{}) (string, error) {
-				return s.Origin(ctx)
-			})
-		},
-		func() error {
 			return ipc.Register(dispatcher, CommandLinkGet, func(ctx context.Context, _ *ipc.Call, _ struct{}) (Link, error) {
+				if err := s.requireDesktop(); err != nil {
+					return Link{}, err
+				}
 				return s.LinkGet(ctx)
 			})
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, CommandLinkSet, func(ctx context.Context, _ *ipc.Call, input LinkPatch) (Link, error) {
+				if err := s.requireDesktop(); err != nil {
+					return Link{}, err
+				}
 				return s.LinkSet(ctx, input)
 			})
 		},
 		func() error {
-			return ipc.Register(dispatcher, CommandRemoteDigest, func(ctx context.Context, _ *ipc.Call, _ struct{}) (Digest, error) {
+			return ipc.Register(dispatcher, CommandStatus, func(ctx context.Context, _ *ipc.Call, _ struct{}) (Status, error) {
 				if err := s.requireDesktop(); err != nil {
-					return Digest{}, err
+					return Status{}, err
 				}
-				return NewClient(s).RemoteDigest(ctx)
+				return s.Status(ctx)
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandPush, func(ctx context.Context, _ *ipc.Call, input PushRequest) (ImportReport, error) {
+			return ipc.Register(dispatcher, CommandSyncNow, func(ctx context.Context, _ *ipc.Call, _ struct{}) (SyncReport, error) {
 				if err := s.requireDesktop(); err != nil {
-					return ImportReport{}, err
+					return SyncReport{}, err
 				}
-				return NewClient(s).Push(ctx, input)
+				return s.Sync(ctx)
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandPull, func(ctx context.Context, _ *ipc.Call, input PullRequest) (ImportReport, error) {
+			return ipc.RegisterNested(dispatcher, CommandTranscriptSyncOptIn, func(ctx context.Context, _ *ipc.Call, input TranscriptSyncOptInRequest) (struct{}, error) {
 				if err := s.requireDesktop(); err != nil {
-					return ImportReport{}, err
-				}
-				return NewClient(s).Pull(ctx, input)
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, CommandToken, func(ctx context.Context, _ *ipc.Call, _ struct{}) (*string, error) {
-				if s.desktop {
-					return nil, nil
-				}
-				if err := s.requireTokenAdmin(ctx); err != nil {
-					return nil, err
-				}
-				token, err := s.Token(ctx)
-				if err != nil {
-					return nil, err
-				}
-				return &token, nil
-			})
-		},
-		func() error {
-			return ipc.RegisterNested(dispatcher, CommandTokenRotate, func(ctx context.Context, _ *ipc.Call, input TokenRotateRequest) (*string, error) {
-				if s.desktop {
-					if input.ID != "" {
-						return nil, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
-					}
-					return nil, nil
-				}
-				if err := s.requireTokenAdmin(ctx); err != nil {
-					return nil, err
-				}
-				var (
-					token string
-					err   error
-				)
-				if input.ID == "" {
-					token, err = s.RotateToken(ctx)
-				} else {
-					token, err = s.TokenRotate(ctx, input.ID)
-				}
-				if err != nil {
-					return nil, err
-				}
-				return &token, nil
-			})
-		},
-		func() error {
-			return ipc.Register(dispatcher, CommandTokenList, func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]Token, error) {
-				if s.desktop {
-					return nil, nil
-				}
-				if err := s.requireTokenAdmin(ctx); err != nil {
-					return nil, err
-				}
-				return s.TokenList(ctx)
-			})
-		},
-		func() error {
-			return ipc.RegisterNested(dispatcher, CommandTokenIssue, func(ctx context.Context, _ *ipc.Call, input TokenIssueRequest) (*TokenIssueResult, error) {
-				if s.desktop {
-					return nil, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
-				}
-				if err := s.requireTokenAdmin(ctx); err != nil {
-					return nil, err
-				}
-				result, err := s.TokenIssue(ctx, input)
-				if err != nil {
-					return nil, err
-				}
-				return &result, nil
-			})
-		},
-		func() error {
-			return ipc.RegisterNested(dispatcher, CommandTokenRevoke, func(ctx context.Context, _ *ipc.Call, input TokenRevokeRequest) (struct{}, error) {
-				if s.desktop {
-					return struct{}{}, ipc.NewError(ipc.CodeUnsupported, "该同步操作只在服务端可用")
-				}
-				if err := s.requireTokenAdmin(ctx); err != nil {
 					return struct{}{}, err
 				}
 				if input.ID == "" {
-					return struct{}{}, ipc.NewError(ipc.CodeBadParam, "令牌 ID 不能为空")
+					return struct{}{}, ipc.NewError(ipc.CodeBadParam, "会话记录 ID 不能为空")
 				}
-				return struct{}{}, s.TokenRevoke(ctx, input.ID)
+				return struct{}{}, s.store.TranscriptSetSyncOptIn(ctx, input.ID, input.OptIn)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandTranscriptSyncOptIns, func(ctx context.Context, _ *ipc.Call, input TranscriptSyncOptInsRequest) (TranscriptSyncOptInsResponse, error) {
+				if err := s.requireDesktop(); err != nil {
+					return TranscriptSyncOptInsResponse{}, err
+				}
+				rows, err := s.store.TranscriptListOptedIn(ctx)
+				if err != nil {
+					return TranscriptSyncOptInsResponse{}, err
+				}
+				response := TranscriptSyncOptInsResponse{IDs: []string{}}
+				for _, row := range rows {
+					if row.AssetID == input.AssetID {
+						response.IDs = append(response.IDs, row.ID)
+					}
+				}
+				return response, nil
 			})
 		},
 		func() error {
@@ -167,30 +111,6 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		}
 	}
 	return nil
-}
-
-func (s *Service) PeerDispatcher() (*ipc.Dispatcher, error) {
-	dispatcher := ipc.NewDispatcher()
-	if err := s.registerPeerCommands(dispatcher); err != nil {
-		return nil, err
-	}
-	return dispatcher, nil
-}
-
-func (s *Service) registerPeerCommands(dispatcher *ipc.Dispatcher) error {
-	if err := ipc.Register(dispatcher, CommandDigest, func(ctx context.Context, _ *ipc.Call, _ struct{}) (Digest, error) {
-		return s.Digest(ctx)
-	}); err != nil {
-		return err
-	}
-	if err := ipc.RegisterNested(dispatcher, CommandExport, func(ctx context.Context, _ *ipc.Call, input ExportRequest) (Bundle, error) {
-		return s.Export(ctx, input)
-	}); err != nil {
-		return err
-	}
-	return ipc.RegisterNested(dispatcher, CommandImport, func(ctx context.Context, _ *ipc.Call, input ImportRequest) (ImportReport, error) {
-		return s.Import(ctx, input)
-	})
 }
 
 func (s *Service) requireDesktop() error {

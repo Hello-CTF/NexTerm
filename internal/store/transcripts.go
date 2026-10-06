@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"time"
@@ -12,17 +13,22 @@ import (
 )
 
 type TranscriptRow struct {
-	ID        string
-	SessionID string
-	AssetID   string
-	AssetName string
-	AssetKind string
-	StartedAt int64
-	EndedAt   *int64
-	Bytes     int64
-	Chunks    int64
-	Truncated bool
+	ID             string
+	SessionID      string
+	AssetID        string
+	AssetName      string
+	AssetKind      string
+	StartedAt      int64
+	EndedAt        *int64
+	Bytes          int64
+	Chunks         int64
+	Truncated      bool
+	SyncOptIn      bool
+	ContentOmitted bool
 }
+
+const transcriptColumns = `id, session_id, asset_id, asset_name, asset_kind,
+started_at, ended_at, bytes, chunks, truncated, sync_opt_in, content_omitted`
 
 type TranscriptChunkRow struct {
 	Seq   int64
@@ -135,22 +141,23 @@ func (s *Store) TranscriptEnd(ctx context.Context, transcriptID string, endedAt 
 }
 
 func (s *Store) TranscriptGet(ctx context.Context, id string) (TranscriptRow, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, asset_id, asset_name, asset_kind,
-started_at, ended_at, bytes, chunks, truncated FROM transcript WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+transcriptColumns+` FROM transcript WHERE id=?`, id)
 	return scanTranscriptRow(row.Scan)
 }
 
 func scanTranscriptRow(scan func(...any) error) (TranscriptRow, error) {
 	var row TranscriptRow
-	var truncated int
+	var truncated, syncOptIn, contentOmitted int
 	if err := scan(&row.ID, &row.SessionID, &row.AssetID, &row.AssetName, &row.AssetKind,
-		&row.StartedAt, &row.EndedAt, &row.Bytes, &row.Chunks, &truncated); err != nil {
+		&row.StartedAt, &row.EndedAt, &row.Bytes, &row.Chunks, &truncated, &syncOptIn, &contentOmitted); err != nil {
 		if isNoRows(err) {
 			return TranscriptRow{}, notFound("transcript")
 		}
 		return TranscriptRow{}, dbError(err)
 	}
 	row.Truncated = truncated != 0
+	row.SyncOptIn = syncOptIn != 0
+	row.ContentOmitted = contentOmitted != 0
 	return row, nil
 }
 
@@ -158,8 +165,7 @@ func (s *Store) TranscriptListByAsset(ctx context.Context, assetID string, limit
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, asset_id, asset_name, asset_kind,
-started_at, ended_at, bytes, chunks, truncated FROM transcript WHERE asset_id=?
+	rows, err := s.db.QueryContext(ctx, `SELECT `+transcriptColumns+` FROM transcript WHERE asset_id=?
 ORDER BY started_at DESC, id DESC LIMIT ?`, assetID, limit)
 	if err != nil {
 		return nil, dbError(err)
@@ -508,7 +514,76 @@ func oscSequence(raw []byte) (consumed int, complete bool) {
 }
 
 func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM transcript WHERE id=?", id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var syncOptIn int
+	err = tx.QueryRowContext(ctx, "SELECT sync_opt_in FROM transcript WHERE id=?", id).Scan(&syncOptIn)
+	if isNoRows(err) {
+		return notFound("transcript")
+	}
+	if err != nil {
+		return dbError(err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transcript WHERE id=?", id); err != nil {
+		return dbError(err)
+	}
+	if syncOptIn != 0 {
+		if err := transcriptTombstoneTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func transcriptTombstoneTx(ctx context.Context, tx *sql.Tx, id string) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES (?,'transcript',?)
+ON CONFLICT(id) DO NOTHING`, id, ids.NowMS()); err != nil {
+		return dbError(err)
+	}
+	return nil
+}
+
+// TranscriptListOptedIn 返回全部已 opt-in 且已结束的会话记录, 供同步推送枚举。
+func (s *Store) TranscriptListOptedIn(ctx context.Context) ([]TranscriptRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+transcriptColumns+` FROM transcript
+WHERE sync_opt_in=1 AND ended_at IS NOT NULL ORDER BY started_at, id`)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	defer rows.Close()
+	result := []TranscriptRow{}
+	for rows.Next() {
+		row, err := scanTranscriptRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+// TranscriptReplaceContent 用拉取到的完整内容替换仅元数据副本(或重写内容), 并清除 content_omitted 标记。
+func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID string, bytes, chunks int64, truncated bool, content []TranscriptChunkRow) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transcript_chunk WHERE transcript_id=?", transcriptID); err != nil {
+		return dbError(err)
+	}
+	for _, chunk := range content {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
+(transcript_id, seq, tab_id, ts, data) VALUES (?,?,?,?,?)`,
+			transcriptID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Data); err != nil {
+			return dbError(err)
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE transcript SET bytes=?, chunks=?, truncated=?, content_omitted=0
+WHERE id=? AND content_omitted=1`, bytes, chunks, boolInt(truncated), transcriptID)
 	if err != nil {
 		return dbError(err)
 	}
@@ -519,7 +594,87 @@ func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
 	if affected == 0 {
 		return notFound("transcript")
 	}
-	return nil
+	return tx.Commit()
+}
+
+// TranscriptSetSyncOptIn 切换单条会话记录的同步 opt-in; 进行中的会话不允许 opt-in。
+// opt-out 会同时写入删除墓碑: 服务端副本与其他设备副本随下一轮同步清除, 本地记录保留。
+func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn bool) error {
+	flag := 0
+	if optIn {
+		flag = 1
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current int
+	err = tx.QueryRowContext(ctx, "SELECT sync_opt_in FROM transcript WHERE id=?", id).Scan(&current)
+	if isNoRows(err) {
+		return notFound("transcript")
+	}
+	if err != nil {
+		return dbError(err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE transcript SET sync_opt_in=?
+WHERE id=? AND (? = 0 OR ended_at IS NOT NULL)`, flag, id, flag)
+	if err != nil {
+		return dbError(err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return dbError(err)
+	}
+	if affected == 0 {
+		return badParam(fmt.Errorf("进行中的会话不能开启同步"))
+	}
+	if current != 0 && flag == 0 {
+		if err := transcriptTombstoneTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// TranscriptInsertSynced 写入一条拉取到的已结束会话记录(含分块), 直接落为已 opt-in。
+func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, chunks []TranscriptChunkRow) error {
+	if row.EndedAt == nil {
+		return badParam(fmt.Errorf("synced transcript must be ended"))
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	contentOmitted := 0
+	if row.ContentOmitted {
+		contentOmitted = 1
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO transcript
+(id, session_id, asset_id, asset_name, asset_kind, started_at, ended_at, bytes, chunks, truncated, sync_opt_in, content_omitted)
+VALUES (?,?,?,?,?,?,?,?,?,?,1,?)
+ON CONFLICT(id) DO UPDATE SET ended_at=excluded.ended_at, bytes=excluded.bytes, chunks=excluded.chunks,
+truncated=excluded.truncated, content_omitted=excluded.content_omitted`,
+		row.ID, row.SessionID, row.AssetID, row.AssetName, row.AssetKind, row.StartedAt, *row.EndedAt,
+		row.Bytes, row.Chunks, boolInt(row.Truncated), contentOmitted); err != nil {
+		return dbError(err)
+	}
+	for _, chunk := range chunks {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO transcript_chunk
+(transcript_id, seq, tab_id, ts, data) VALUES (?,?,?,?,?)`,
+			row.ID, chunk.Seq, chunk.TabID, chunk.TS, chunk.Data); err != nil {
+			return dbError(err)
+		}
+	}
+	return tx.Commit()
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (s *Store) DurableTranscriptOffsetGet(ctx context.Context, durableID string) (int64, error) {
@@ -568,16 +723,15 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 	defer func() { _ = tx.Rollback() }()
 	if policy.MaxAge > 0 {
 		cutoff := time.Now().Add(-policy.MaxAge).UnixMilli()
-		deleted, err := retentionDelete(ctx, tx,
-			"DELETE FROM transcript WHERE ended_at IS NOT NULL AND ended_at < ?", cutoff)
+		deleted, err := s.transcriptRetentionDelete(ctx, tx,
+			"ended_at IS NOT NULL AND ended_at < ?", cutoff)
 		if err != nil {
 			return result, dbError(err)
 		}
 		result.Deleted += deleted
 	}
 	if policy.MaxCount > 0 {
-		deleted, err := retentionDelete(ctx, tx, `DELETE FROM transcript
-WHERE ended_at IS NOT NULL AND id IN (
+		deleted, err := s.transcriptRetentionDelete(ctx, tx, `ended_at IS NOT NULL AND id IN (
 	SELECT id FROM transcript WHERE ended_at IS NOT NULL
 	ORDER BY ended_at DESC, id DESC LIMIT -1 OFFSET ?
 )`, policy.MaxCount)
@@ -590,4 +744,38 @@ WHERE ended_at IS NOT NULL AND id IN (
 		return result, dbError(err)
 	}
 	return result, nil
+}
+
+// transcriptRetentionDelete 按保留策略删除已结束会话; 被删记录若已 opt-in 同步则同步写墓碑, 防止对端副本复活。
+func (s *Store) transcriptRetentionDelete(ctx context.Context, tx *sql.Tx, predicate string, args ...any) (int64, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM transcript WHERE "+predicate+" AND sync_opt_in=1", args...)
+	if err != nil {
+		return 0, err
+	}
+	optedIn := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		optedIn = append(optedIn, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	deleted, err := retentionDelete(ctx, tx, "DELETE FROM transcript WHERE "+predicate, args...)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range optedIn {
+		if err := transcriptTombstoneTx(ctx, tx, id); err != nil {
+			return 0, err
+		}
+	}
+	return deleted, nil
 }

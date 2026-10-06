@@ -2,10 +2,8 @@ package sync
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"sort"
+	"log/slog"
 	"strings"
 	stdsync "sync"
 
@@ -15,15 +13,11 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/vault"
 )
 
-const (
-	settingOrigin      = "sync.origin"
-	settingToken       = "sync.token"
-	settingTokenBackup = "sync.token.plaintext_backup"
-	settingLink        = "sync.link"
-)
+const settingLink = "sync.link"
 
 type Option func(*Service)
 
+// WithMetadata 保留应用版本与桌面端标记; v2 协议不再向对端暴露版本与来源标识。
 func WithMetadata(appVersion string, desktop bool) Option {
 	return func(s *Service) {
 		s.appVersion = appVersion
@@ -40,6 +34,7 @@ func WithGatewayAuthKey(key string) Option {
 type Service struct {
 	store          *store.Store
 	vault          *vault.Vault
+	engine         *Engine
 	appVersion     string
 	desktop        bool
 	gatewayAuthKey string
@@ -54,76 +49,54 @@ func New(db *store.Store, credentialVault *vault.Vault, options ...Option) *Serv
 	for _, option := range options {
 		option(s)
 	}
+	s.engine = NewEngine(db, credentialVault, slog.Default())
 	return s
 }
 
-func (s *Service) Start(ctx context.Context) error {
-	if s.desktop {
-		return nil
-	}
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	_, err := s.ensureAdminRowLocked(ctx)
-	return err
-}
+func (s *Service) Start(ctx context.Context) error { return nil }
 
 func (s *Service) Shutdown(context.Context) error {
+	s.engine.sessionMu.Lock()
+	defer s.engine.sessionMu.Unlock()
+	if s.engine.session != nil {
+		clear(s.engine.session.dek)
+		s.engine.session = nil
+	}
 	return nil
 }
 
-func (s *Service) Origin(ctx context.Context) (string, error) {
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	return s.originLocked(ctx)
+// ObjectHandler 暴露服务端盲存储入口, 由服务端挂载到会话中间件之后。
+func (s *Service) ObjectHandler() *ObjectHandler {
+	return NewObjectHandler(s.store.DB())
 }
 
-func (s *Service) originLocked(ctx context.Context) (string, error) {
-	origin, found, err := s.store.SettingGet(ctx, settingOrigin)
-	if err != nil {
-		return "", err
-	}
-	if found && origin != "" {
-		return origin, nil
-	}
-	var random [4]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return "", ipc.WrapError(ipc.CodeCrypto, "无法生成同步实例标识", err)
-	}
-	origin = hex.EncodeToString(random[:])
-	if err := s.store.SettingSet(ctx, settingOrigin, origin); err != nil {
-		return "", err
-	}
-	return origin, nil
+type Link struct {
+	URL         string `json:"url"`
+	Username    string `json:"username"`
+	Insecure    bool   `json:"insecure"`
+	HasPassword bool   `json:"hasPassword"`
+	VerifiedAt  int64  `json:"verifiedAt"`
+	LastError   string `json:"lastError"`
 }
 
-func (s *Service) Token(ctx context.Context) (string, error) {
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	admin, err := s.ensureAdminRowLocked(ctx)
-	if err != nil {
-		return "", err
-	}
-	if admin.RevokedAt != nil {
-		return "", ipc.NewError(ipc.CodeForbidden, "管理员令牌已吊销，请轮换以恢复")
-	}
-	return s.adminTokenPlaintextLocked(ctx)
+func (l Link) IsConfigured() bool {
+	return l.URL != "" && l.Username != "" && l.HasPassword
 }
 
-func (s *Service) RotateToken(ctx context.Context) (string, error) {
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	if _, err := s.ensureAdminRowLocked(ctx); err != nil {
-		return "", err
-	}
-	return s.rotateTokenByIDLocked(ctx, adminTokenID)
+type LinkPatch struct {
+	URL      *string `json:"url"`
+	Username *string `json:"username"`
+	Password *string `json:"password"`
+	Insecure *bool   `json:"insecure"`
 }
 
-func (s *Service) SyncToken(ctx context.Context) (string, error) {
-	return s.Token(ctx)
-}
-
-func (s *Service) RotateSyncToken(ctx context.Context) (string, error) {
-	return s.RotateToken(ctx)
+type linkSecret struct {
+	URL        string `json:"url"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Insecure   bool   `json:"insecure"`
+	VerifiedAt int64  `json:"verifiedAt"`
+	LastError  string `json:"lastError"`
 }
 
 func (s *Service) LinkGet(ctx context.Context) (Link, error) {
@@ -131,7 +104,7 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 	if err != nil {
 		return Link{}, err
 	}
-	link := Link{TokenKind: TokenKindServer}
+	link := Link{}
 	if !found || strings.TrimSpace(value) == "" {
 		return link, nil
 	}
@@ -139,43 +112,70 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 	if err != nil {
 		return Link{}, err
 	}
-	if err := json.Unmarshal([]byte(plaintext), &link); err != nil {
+	var secret linkSecret
+	if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
 		return Link{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
 	}
-	link.URL = strings.TrimSpace(link.URL)
-	if link.TokenKind != TokenKindBox {
-		link.TokenKind = TokenKindServer
-	}
+	link.URL = strings.TrimSpace(secret.URL)
+	link.Username = strings.TrimSpace(secret.Username)
+	link.Insecure = secret.Insecure
+	link.HasPassword = secret.Password != ""
+	link.VerifiedAt = secret.VerifiedAt
+	link.LastError = secret.LastError
 	return link, nil
 }
 
 func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (Link, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	link, err := s.LinkGet(ctx)
+	secret := linkSecret{}
+	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
+		return Link{}, err
+	} else if found && strings.TrimSpace(value) != "" {
+		plaintext, err := s.revealSettingSecret(ctx, value)
+		if err != nil {
+			return Link{}, err
+		}
+		if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
+			return Link{}, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
+		}
+	}
+	if patch.URL != nil {
+		secret.URL = strings.TrimSpace(*patch.URL)
+	}
+	if patch.Username != nil {
+		secret.Username = strings.TrimSpace(*patch.Username)
+	}
+	if patch.Password != nil {
+		secret.Password = *patch.Password
+	}
+	if patch.Insecure != nil {
+		secret.Insecure = *patch.Insecure
+	}
+	encoded, err := json.Marshal(secret)
+	if err != nil {
+		return Link{}, ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
+	}
+	protected, err := s.protectSettingSecret(ctx, string(encoded))
 	if err != nil {
 		return Link{}, err
 	}
-	link.URL = strings.TrimSpace(patch.URL)
-	if patch.TokenKind == TokenKindBox {
-		link.TokenKind = TokenKindBox
-	} else {
-		link.TokenKind = TokenKindServer
-	}
-	if patch.Token != nil {
-		link.Token = strings.TrimSpace(*patch.Token)
-	}
-	if patch.Insecure != nil {
-		link.Insecure = *patch.Insecure
-	}
-	if err := s.saveLink(ctx, link); err != nil {
+	if err := s.store.SettingSet(ctx, settingLink, protected); err != nil {
 		return Link{}, err
 	}
-	return link, nil
+	return s.linkView(secret), nil
 }
 
-func (s *Service) saveLink(ctx context.Context, link Link) error {
-	encoded, err := json.Marshal(link)
+func (s *Service) linkView(secret linkSecret) Link {
+	return Link{
+		URL: strings.TrimSpace(secret.URL), Username: strings.TrimSpace(secret.Username),
+		Insecure: secret.Insecure, HasPassword: secret.Password != "",
+		VerifiedAt: secret.VerifiedAt, LastError: secret.LastError,
+	}
+}
+
+func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
+	encoded, err := json.Marshal(secret)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
 	}
@@ -187,42 +187,93 @@ func (s *Service) saveLink(ctx context.Context, link Link) error {
 }
 
 func (s *Service) recordProbe(ctx context.Context, probeErr error) {
-	link, err := s.LinkGet(ctx)
+	secret := linkSecret{}
+	value, found, err := s.store.SettingGet(ctx, settingLink)
+	if err != nil || !found || strings.TrimSpace(value) == "" {
+		return
+	}
+	plaintext, err := s.revealSettingSecret(ctx, value)
 	if err != nil {
 		return
 	}
-	if probeErr != nil {
-		link.LastError = probeErr.Error()
-	} else {
-		link.VerifiedAt = ids.NowMS()
-		link.LastError = ""
+	if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
+		return
 	}
-	_ = s.saveLink(ctx, link)
+	if probeErr != nil {
+		secret.LastError = probeErr.Error()
+	} else {
+		secret.VerifiedAt = ids.NowMS()
+		secret.LastError = ""
+	}
+	_ = s.saveLinkSecret(ctx, secret)
 }
 
-func (s *Service) Digest(ctx context.Context) (Digest, error) {
-	origin, err := s.Origin(ctx)
+func (s *Service) linkSecret(ctx context.Context) (linkSecret, error) {
+	secret := linkSecret{}
+	value, found, err := s.store.SettingGet(ctx, settingLink)
 	if err != nil {
-		return Digest{}, err
+		return secret, err
 	}
-	assets, err := s.store.AssetList(ctx, true)
+	if !found || strings.TrimSpace(value) == "" {
+		return secret, ipc.NewError(ipc.CodeBadParam, "同步链接未配置")
+	}
+	plaintext, err := s.revealSettingSecret(ctx, value)
 	if err != nil {
-		return Digest{}, err
+		return secret, err
 	}
-	digest := Digest{
-		Origin: origin, Protocol: ProtocolVersion, AppVersion: s.appVersion,
-		Desktop: s.desktop, Assets: []DigestEntry{},
+	if err := json.Unmarshal([]byte(plaintext), &secret); err != nil {
+		return secret, ipc.WrapError(ipc.CodeInternal, "同步链接设置损坏", err)
 	}
-	for _, asset := range assets {
-		if asset.Builtin || asset.ID == store.BuiltinLocalAssetID {
-			continue
+	return secret, nil
+}
+
+// Sync 用已保存的链接执行一轮完整同步(对账 → 拉取合并 → 推送)。
+func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
+	secret, err := s.linkSecret(ctx)
+	if err != nil {
+		return SyncReport{}, err
+	}
+	if secret.URL == "" || secret.Username == "" || secret.Password == "" {
+		return SyncReport{}, ipc.NewError(ipc.CodeBadParam, "同步链接需要同时配置 URL、用户名和口令")
+	}
+	report, syncErr := s.engine.Sync(ctx, RemoteConfig{
+		URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure,
+	})
+	s.recordProbe(ctx, syncErr)
+	return report, syncErr
+}
+
+type Status struct {
+	Configured bool   `json:"configured"`
+	LoggedIn   bool   `json:"loggedIn"`
+	Username   string `json:"username,omitempty"`
+	UserID     string `json:"userId,omitempty"`
+	Head       string `json:"head,omitempty"`
+	Seq        int64  `json:"seq"`
+	VerifiedAt int64  `json:"verifiedAt"`
+	LastError  string `json:"lastError"`
+}
+
+func (s *Service) Status(ctx context.Context) (Status, error) {
+	link, err := s.LinkGet(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	status := Status{
+		Configured: link.IsConfigured(), Username: link.Username,
+		VerifiedAt: link.VerifiedAt, LastError: link.LastError,
+	}
+	s.engine.sessionMu.Lock()
+	session := s.engine.session
+	s.engine.sessionMu.Unlock()
+	if session != nil {
+		status.LoggedIn = true
+		status.UserID = session.userID
+		cursor, err := s.engine.loadCursor(ctx, session.userID)
+		if err == nil {
+			status.Head = cursor.Head
+			status.Seq = cursor.Seq
 		}
-		digest.Assets = append(digest.Assets, DigestEntry{
-			ID: asset.ID, Name: asset.Name, Kind: asset.Kind, Host: asset.Host,
-			Username: asset.Username, UpdatedAt: effectiveRevision(asset.UpdatedAt, asset.DeletedAt), DeletedAt: asset.DeletedAt,
-			HasCred: asset.CredID != nil, GroupID: asset.GroupID,
-		})
 	}
-	sort.Slice(digest.Assets, func(i, j int) bool { return digest.Assets[i].ID < digest.Assets[j].ID })
-	return digest, nil
+	return status, nil
 }
