@@ -81,6 +81,7 @@ import {
   Logo,
   assetIcon,
   IconSplitH,
+  IconSplitV,
   IconMergeH,
 } from "../ui/icons";
 
@@ -860,6 +861,8 @@ export default function App() {
                   <PaneGroup
                     key={p.id}
                     pane={p}
+                    workspaceId={w.id}
+                    splitAxis={w.splitAxis}
                     active={wsActive && p.id === w.activePaneId}
                     split={split}
                     canSplit={!split}
@@ -884,6 +887,7 @@ export default function App() {
                     */}
                     <SplitStack
                       ratio={w.splitRatio}
+                      axis={w.splitAxis}
                       onRatio={(r) => setSplitRatio(r, w.id)}
                       top={groups[0]}
                       bottom={groups[1]}
@@ -996,6 +1000,10 @@ export default function App() {
 
 interface PaneGroupProps {
   pane: Pane;
+  /** 该面板所属工作区 id（右键菜单的分屏动作要用它落轴）。 */
+  workspaceId: string;
+  /** 所属工作区的分屏轴（决定工具条分屏按钮的图标）。 */
+  splitAxis: "row" | "col";
   /** 该面板是激活面板，且它所在的工作区也激活（隐藏时两个都为 false）。 */
   active: boolean;
   /** 所在工作区是否处于分屏状态（决定激活态的视觉提示强弱）。 */
@@ -1011,10 +1019,12 @@ interface PaneGroupProps {
 /**
  * 一个分屏格：自己的一排二级标签 + 内容区。
  *
- * 不分屏时它就是整个内容区；分屏时上下各一个，各自独立记着自己的标签与激活项。
+ * 不分屏时它就是整个内容区；分屏时两栏各一个，各自独立记着自己的标签与激活项。
  */
 function PaneGroup({
   pane,
+  workspaceId,
+  splitAxis,
   active,
   split,
   canSplit,
@@ -1026,6 +1036,11 @@ function PaneGroup({
 }: PaneGroupProps) {
   const setActiveTab = useUi((s) => s.setActiveTab);
   const updateTab = useUi((s) => s.updateTab);
+  const setSplitAxis = useUi((s) => s.setSplitAxis);
+  const moveTabToNewPane = useUi((s) => s.moveTabToNewPane);
+  const closeOtherTabs = useUi((s) => s.closeOtherTabs);
+  const closeTabsToRight = useUi((s) => s.closeTabsToRight);
+  const closePaneTabs = useUi((s) => s.closePaneTabs);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
@@ -1036,10 +1051,23 @@ function PaneGroup({
     updateTab(id, { title: next.trim() });
   };
 
-  /** 标签右键菜单。重命名只给终端标签（文件标签的标题是文件名，改了会对不上）。 */
+  /**
+   * 标签右键菜单。
+   *
+   * 重命名只给终端标签（文件标签的标题是文件名，改了会对不上）。
+   * 分屏两项的语义：**已分屏时是原地转轴**（`setSplitAxis`，两栏内容不动，不换组件），
+   * 未分屏时才真的把这个标签搬到一个新栏（`moveTabToNewPane`）——
+   * 工具栏那个开关按钮走的是另一条路（`splitWorkspace`/`unsplitWorkspace`）。
+   */
   const tabMenu = (e: React.MouseEvent, t: (typeof pane.tabs)[number]) => {
     e.preventDefault();
     const items: MenuItem[] = [];
+    const idx = pane.tabs.findIndex((x) => x.id === t.id);
+    const splitTo = (axis: "row" | "col") => {
+      if (split) setSplitAxis(workspaceId, axis);
+      else moveTabToNewPane(t.id, axis, "second");
+    };
+
     if (t.kind === "terminal") {
       items.push({
         kind: "item",
@@ -1047,7 +1075,21 @@ function PaneGroup({
         icon: <IconEdit size={12} />,
         onSelect: () => void renameTab(t.id, t.title),
       });
+      items.push({ kind: "separator" });
     }
+    items.push({
+      kind: "item",
+      label: "在右侧分屏",
+      icon: <IconSplitV size={12} />,
+      onSelect: () => splitTo("col"),
+    });
+    items.push({
+      kind: "item",
+      label: "在下方分屏",
+      icon: <IconSplitH size={12} />,
+      onSelect: () => splitTo("row"),
+    });
+    items.push({ kind: "separator" });
     items.push({
       kind: "item",
       label: "关闭标签",
@@ -1055,6 +1097,28 @@ function PaneGroup({
       danger: true,
       disabled: !t.closable,
       onSelect: () => void requestCloseTab(t.id),
+    });
+    items.push({
+      kind: "item",
+      label: "关闭其他标签",
+      icon: <IconClose size={12} />,
+      disabled: pane.tabs.length <= 1,
+      onSelect: () => void closeOtherTabs(pane.id, t.id),
+    });
+    items.push({
+      kind: "item",
+      label: "关闭右侧标签",
+      icon: <IconClose size={12} />,
+      // 没有右侧标签（本身是最后一个）就没什么可关的
+      disabled: idx < 0 || idx === pane.tabs.length - 1,
+      onSelect: () => void closeTabsToRight(pane.id, t.id),
+    });
+    items.push({
+      kind: "item",
+      label: "关闭本栏全部",
+      icon: <IconClose size={12} />,
+      danger: true,
+      onSelect: () => void closePaneTabs(pane.id),
     });
     setMenu({ x: e.clientX, y: e.clientY, title: t.title, items });
   };
@@ -1109,10 +1173,22 @@ function PaneGroup({
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={canSplit ? "上下分屏 (Ctrl+\\)" : "取消分屏 (Ctrl+\\)"}
+          title={
+            canSplit
+              ? `${splitAxis === "col" ? "左右" : "上下"}分屏 (Ctrl+\\)`
+              : "取消分屏 (Ctrl+\\)"
+          }
           onClick={onToggleSplit}
         >
-          {canSplit ? <IconSplitH size={14} /> : <IconMergeH size={14} />}
+          {canSplit ? (
+            splitAxis === "col" ? (
+              <IconSplitV size={14} />
+            ) : (
+              <IconSplitH size={14} />
+            )
+          ) : (
+            <IconMergeH size={14} />
+          )}
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
@@ -1148,7 +1224,7 @@ function PaneGroup({
 }
 
 /**
- * 上下分屏容器：一条可拖拽的分割条，上下各放一个面板。
+ * 分屏容器：一条可拖拽的分割条，两栏各放一个面板。
  *
  * ★ 未分屏时它**依然挂在树上**，只是不渲染第二栏和分割条。
  *
@@ -1158,33 +1234,48 @@ function PaneGroup({
  * `terminal_attach`：丢滚动内容、在远端泄漏一个 shell，运气不好还会直接 attach
  * 失败（表现为终端里那句「[attach 失败] [object Object]」，只能重起工作区才恢复）。
  * 保持结构恒定，React 就能按 key 复用同一个 PaneGroup 实例。
+ *
+ * ★ 切轴（row ↔ col）**只切 className / style**，绝不按轴渲染两个不同组件：
+ * 组件类型一旦变，同样会触发上面的整树卸载重建 —— 切一次方向就丢一堆终端。
  */
 function SplitStack({
   ratio,
+  axis,
   onRatio,
   top,
   bottom,
 }: {
-  /** 上栏高度占比 0.15 ~ 0.85。 */
+  /** 第一栏占比 0.15 ~ 0.85（row 轴 = 高度，col 轴 = 宽度）。 */
   ratio: number;
+  /** row = 上下堆叠；col = 左右并排。 */
+  axis: "row" | "col";
   onRatio: (r: number) => void;
   top: ReactNode;
-  /** 为空表示未分屏：此时只渲染上栏。 */
+  /** 为空表示未分屏：此时只渲染上栏 / 左栏。 */
   bottom?: ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
-  // 用 ref 存回调，避免每次渲染都重挂 window 监听
+  // 用 ref 存回调与轴，避免每次渲染都重挂 window 监听
   const ratioRef = useRef(onRatio);
   ratioRef.current = onRatio;
+  const axisRef = useRef(axis);
+  axisRef.current = axis;
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
       if (!dragging.current) return;
       const box = boxRef.current?.getBoundingClientRect();
-      if (!box || box.height < 80) return;
+      if (!box) return;
+      // 沿当前轴换算：col 用宽度 / clientX，row 用高度 / clientY。
+      const horizontal = axisRef.current === "col";
+      if (horizontal ? box.width < 80 : box.height < 80) return;
       // 拖拽期间每帧写一次 store：splitRatio 就在工作区上，够便宜
-      ratioRef.current((e.clientY - box.top) / box.height);
+      ratioRef.current(
+        horizontal
+          ? (e.clientX - box.left) / box.width
+          : (e.clientY - box.top) / box.height,
+      );
     };
     const stop = () => {
       if (!dragging.current) return;
@@ -1203,29 +1294,56 @@ function SplitStack({
   }, []);
 
   const split = bottom != null;
+  // 左右并排 = 主轴水平；对应第一栏的尺寸沿宽度算。
+  const horizontal = axis === "col";
+  const firstSize = split ? { flex: `0 0 calc(${ratio * 100}% - 3px)` } : { flex: "1 1 auto" };
 
   return (
-    <div ref={boxRef} className="flex h-full min-h-0 flex-col">
-      <div
-        className="flex min-h-[60px] flex-col"
-        style={split ? { flex: `0 0 calc(${ratio * 100}% - 3px)` } : { flex: "1 1 auto" }}
-      >
+    <div
+      ref={boxRef}
+      className={`flex h-full min-h-0 ${horizontal ? "flex-row" : "flex-col"}`}
+    >
+      <div className={`flex ${horizontal ? "min-w-[60px]" : "min-h-[60px]"} flex-col`} style={firstSize}>
         {top}
       </div>
       {split && (
         <>
           <div
             className="nx-split-handle"
-            title="拖动调整上下比例"
+            title={horizontal ? "拖动调整左右比例" : "拖动调整上下比例"}
+            // .nx-split-handle 的基础样式是给上下分屏写的（height:6px / row-resize），
+            // 左右分屏时用内联样式覆盖成竖条 —— 只改呈现，不换组件。
+            style={
+              horizontal
+                ? { height: "auto", width: 6, alignSelf: "stretch", cursor: "col-resize" }
+                : undefined
+            }
             onPointerDown={() => {
               dragging.current = true;
-              document.body.style.cursor = "row-resize";
+              document.body.style.cursor = horizontal ? "col-resize" : "row-resize";
               document.body.style.userSelect = "none";
             }}
           >
-            <span className="nx-split-grip" />
+            <span
+              className="nx-split-grip"
+              style={
+                horizontal
+                  ? {
+                      top: 0,
+                      bottom: 0,
+                      left: "50%",
+                      right: "auto",
+                      width: 1,
+                      height: "auto",
+                      transform: "translateX(-50%)",
+                    }
+                  : undefined
+              }
+            />
           </div>
-          <div className="flex min-h-[60px] flex-1 flex-col">{bottom}</div>
+          <div className={`flex flex-1 flex-col ${horizontal ? "min-w-[60px]" : "min-h-[60px]"}`}>
+            {bottom}
+          </div>
         </>
       )}
     </div>

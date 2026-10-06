@@ -222,6 +222,14 @@ export const IconSplitH = (p: IconProps) => (
   </Svg>
 );
 
+/** 左右分屏：外框 + 一条纵向分隔线（与 IconSplitH 同尺寸约定，只把线转 90°）。 */
+export const IconSplitV = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M12 4v16" />
+  </Svg>
+);
+
 /** 合并（取消分屏）：两个箭头对着中间那条线收拢。 */
 export const IconMergeH = (p: IconProps) => (
   <Svg {...p}>

@@ -175,6 +175,11 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
     assetKind: optStr(raw.assetKind),
     panes,
     activePaneId,
+    // ⚠️ 必须显式列出！`sanitizeWorkspace` 是**显式构造对象**（不是展开 raw），
+    // 漏一个字段就会「刷新一次就丢」—— `dead` 字段的注释就是踩过这个坑留下的。
+    // 默认 row：旧布局里没有这个字段，读进来就是上下分屏，语义与升级前一致，
+    // 所以**不用升 LAYOUT_VERSION**（升版本反而会把所有人的布局重置掉）。
+    splitAxis: raw.splitAxis === "col" ? "col" : "row",
     splitRatio: clampFraction(raw.splitRatio, 0.15, 0.85, 0.5),
     closable: boolOr(raw.closable, true),
   };

@@ -107,10 +107,24 @@ export interface Workspace {
   dbKind?: "mysql" | "redis";
   /** 会话工作区的资产类型：用于选图标。 */
   assetKind?: string;
-  /** panes[0] 永远在上面；有第二个就是上下分屏。 */
+  /** panes[0] 永远在前（row 轴在上 / col 轴在左）；有第二个就是分屏。 */
   panes: Pane[];
   activePaneId: string;
-  /** 上下分屏时上栏占的高度比例（0.15 ~ 0.85）。 */
+  /**
+   * 分屏轴：`row` = 上下堆叠；`col` = 左右并排。
+   *
+   * 命名刻意用 row/col（= CSS `flex-direction`），不要用 vertical/horizontal：
+   * 前者能直接对上渲染层的 className，读代码时不用在脑子里做一次翻译。
+   * 只影响 `SplitStack` 的 className/style，**不影响两栏里的任何内容** ——
+   * 所以切轴是纯视觉操作，不会重挂终端（见 App.tsx::SplitStack 的铁律）。
+   */
+  splitAxis: "row" | "col";
+  /**
+   * 分屏比例（0.15 ~ 0.85）。
+   *
+   * row 轴是上栏占的高度比例，col 轴是左栏占的宽度比例 ——
+   * 都是「第一栏占的比例」，渲染层按轴换算成 height / width。
+   */
   splitRatio: number;
   closable: boolean;
 }
@@ -257,19 +271,41 @@ interface UiState {
   setActiveWorkspace: (id: string) => void;
   closeWorkspace: (id: string) => Promise<void>;
 
-  /** 上下分屏：给工作区再挂一个面板（会话工作区会给新面板开一个终端）。 */
+  /** 分屏：给工作区再挂一个面板（会话工作区会给新面板开一个终端）。 */
   splitWorkspace: (workspaceId?: string) => void;
   /**
-   * 在下方分屏面板里打开一个标签；还没有下方面板就先分屏。
+   * 在第二栏里打开一个标签；还没有第二栏就先分屏。
    *
    * 与 splitWorkspace 的分工：这个方法**不预开终端** —— 「在下方编辑」的意思是
-   * "上边留住原来的东西，下边给我个编辑器"，硬塞终端进去等于把下方占掉了。
+   * "原来那栏留住原来的东西，另一栏给我个编辑器"，硬塞终端进去等于把那一栏占掉了。
+   *
+   * `axis` 只在**这次调用真的要新建第二栏**时生效（已分屏时第二栏已存在，
+   * 轴由工作区的 `splitAxis` 决定，不会因为这次打开就改掉用户选好的方向）。
    */
+  openInSecondaryPane: (tab: AppTab, axis?: "row" | "col", workspaceId?: string) => void;
+  /** 兼容旧名的转发（语义完全等同于 `openInSecondaryPane(tab, "row", workspaceId)`）。 */
   openInLowerPane: (tab: AppTab, workspaceId?: string) => void;
+  /** 只改分屏轴（row ↔ col），两栏内容一个都不动。 */
+  setSplitAxis: (wsId: string, axis: "row" | "col") => void;
   /** 取消分屏：关掉该面板（含里面的终端）。只剩一个面板时是空操作。 */
   unsplitWorkspace: (paneId?: string, workspaceId?: string) => Promise<void>;
   setActivePane: (paneId: string, workspaceId?: string) => void;
   setSplitRatio: (ratio: number, workspaceId?: string) => void;
+  /**
+   * 把**当前这个标签**搬到一个新栏（与 splitWorkspace 的"新开一个终端"区分）。
+   *
+   * `side` 目前只有 `"second"`：新栏排在当前栏之后（row 轴在下 / col 轴在右）。
+   * 写进签名是为了把"落到哪一栏"表达清楚，将来要支持 first 时不必再改调用点。
+   */
+  moveTabToNewPane: (tabId: string, axis: "row" | "col", side: "second") => void;
+
+  /**
+   * 批量关闭：整批**只弹一次**回收框（`reclaimTerminals` 一次收整组）。
+   * 逐个调 `requestCloseTab` 会让关 8 个终端弹 8 次框，用户根本受不了。
+   */
+  closeOtherTabs: (paneId: string, keepId: string) => Promise<void>;
+  closeTabsToRight: (paneId: string, tabId: string) => Promise<void>;
+  closePaneTabs: (paneId: string) => Promise<void>;
 
   /** 以下四个都按"标签 id 全局唯一"工作，自动定位它所在的工作区与面板。 */
   setActiveTab: (id: string) => void;
@@ -497,6 +533,7 @@ export const useUi = create<UiState>((set, get) => ({
           id,
           panes: [pane],
           activePaneId: pane.id,
+          splitAxis: "row",
           splitRatio: 0.5,
           closable: true,
         },
@@ -549,13 +586,14 @@ export const useUi = create<UiState>((set, get) => ({
     if (session) void openTerminalTab(session, undefined, pane.id);
   },
 
-  openInLowerPane: (tab, workspaceId) => {
+  openInSecondaryPane: (tab, axis, workspaceId) => {
     const st = get();
     const id = workspaceId ?? st.activeWorkspaceId ?? st.workspaces[st.workspaces.length - 1]?.id;
     if (!id) return;
     const w = st.workspaces.find((x) => x.id === id);
     if (!w) return;
-    // 已经分屏了：直接用下方面板，别再多挂一个
+    // 已经分屏了：直接用第二栏，别再多挂一个（也**不动**用户选好的轴 ——
+    // 打开一个标签不该悄悄改掉分屏方向）。
     if (w.panes.length >= 2) {
       get().addTab(tab, w.panes[1].id);
       return;
@@ -563,10 +601,99 @@ export const useUi = create<UiState>((set, get) => ({
     const pane = makePane();
     set((s2) => ({
       workspaces: s2.workspaces.map((x) =>
-        x.id === id ? { ...x, panes: [x.panes[0], pane], activePaneId: pane.id } : x,
+        x.id === id
+          ? {
+              ...x,
+              panes: [x.panes[0], pane],
+              activePaneId: pane.id,
+              // 只有真的要新建第二栏时才落轴；未传则保持现状（默认 row）。
+              splitAxis: axis ?? x.splitAxis,
+            }
+          : x,
       ),
     }));
     get().addTab(tab, pane.id);
+  },
+
+  // 旧名转发：语义完全等同于 openInSecondaryPane(tab, "row", workspaceId)，
+  // 保留它是为了「在下方编辑」这类老调用点不被迫改名（不是第二份实现）。
+  openInLowerPane: (tab, workspaceId) => {
+    get().openInSecondaryPane(tab, "row", workspaceId);
+  },
+
+  setSplitAxis: (wsId, axis) =>
+    set((st) => ({
+      workspaces: st.workspaces.map((w) => (w.id === wsId ? { ...w, splitAxis: axis } : w)),
+    })),
+
+  moveTabToNewPane: (tabId, axis, side) => {
+    // side 目前只有 "second"：新栏永远排在当前栏之后（row 轴在下 / col 轴在右）。
+    void side;
+    const st = get();
+    // 先定位这个标签所在的 工作区 / 面板。
+    let ws: Workspace | undefined;
+    let fromPaneId: string | undefined;
+    let tab: AppTab | undefined;
+    for (const w of st.workspaces) {
+      for (const p of w.panes) {
+        const t = p.tabs.find((x) => x.id === tabId);
+        if (t) {
+          ws = w;
+          fromPaneId = p.id;
+          tab = t;
+          break;
+        }
+      }
+      if (tab) break;
+    }
+    if (!ws || !fromPaneId || !tab) return;
+    const wsId = ws.id;
+    const moving = tab;
+    const alreadySplit = ws.panes.length >= 2;
+    const targetPaneId = alreadySplit ? ws.panes[1].id : makePane().id;
+    // 标签已经在第二栏了：没有可搬的（防御性 no-op）。
+    if (alreadySplit && targetPaneId === fromPaneId) return;
+    set((s2) => ({
+      workspaces: s2.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        const source = w.panes.find((p) => p.id === fromPaneId);
+        if (!source) return w;
+        const sourceTabs = source.tabs.filter((t) => t.id !== tabId);
+        let panes = w.panes.map((p) => {
+          if (p.id === fromPaneId) {
+            // 从原栏摘掉；激活标签被搬走就顺延到剩下的最后一个。
+            return {
+              ...p,
+              tabs: sourceTabs,
+              activeTabId:
+                p.activeTabId === tabId
+                  ? (sourceTabs[sourceTabs.length - 1]?.id ?? null)
+                  : p.activeTabId,
+            };
+          }
+          if (p.id === targetPaneId) {
+            return { ...p, tabs: [...p.tabs, moving], activeTabId: moving.id };
+          }
+          return p;
+        });
+        // 未分屏：补出新栏（补在末尾 = panes[1]）。
+        if (!alreadySplit) {
+          panes = [...panes, { id: targetPaneId, tabs: [moving], activeTabId: moving.id }];
+        }
+        // 原栏被搬空：已分屏场景下收掉（沿用 closeTab 的"空面板=取消分屏"）；
+        // 但**刚新建**的分屏要保留空栏，否则"分屏"后只剩一栏等于没分。
+        if (
+          alreadySplit &&
+          panes.length > 1 &&
+          panes.some((p) => p.id === fromPaneId && p.tabs.length === 0)
+        ) {
+          panes = panes.filter((p) => p.id !== fromPaneId);
+        }
+        return { ...w, panes, activePaneId: targetPaneId, splitAxis: axis };
+      }),
+    }));
+    // 分屏后让新栏拿到焦点由 activePaneId 完成；标签本身保持挂载（key 不变），
+    // 所以这里不会重挂终端 —— 只是把它换到另一栏渲染。
   },
 
   unsplitWorkspace: async (paneId, workspaceId) => {
@@ -609,6 +736,39 @@ export const useUi = create<UiState>((set, get) => ({
         ),
       };
     }),
+
+  // ── 批量关闭（整个动作只弹一次回收框，见 reclaimTerminals）──────────────
+
+  closeOtherTabs: async (paneId, keepId) => {
+    const found = locatePane(get().workspaces, paneId);
+    if (!found) return;
+    const victims = found.pane.tabs.filter((t) => t.id !== keepId);
+    if (victims.length === 0) return;
+    if (!(await reclaimTerminals(victims, "这一栏", "关闭其他标签"))) return;
+    const ids = new Set(victims.map((t) => t.id));
+    set((s) => ({ workspaces: removeTabsFromPane(s.workspaces, found.ws.id, paneId, ids) }));
+  },
+
+  closeTabsToRight: async (paneId, tabId) => {
+    const found = locatePane(get().workspaces, paneId);
+    if (!found) return;
+    const idx = found.pane.tabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) return;
+    const victims = found.pane.tabs.slice(idx + 1);
+    if (victims.length === 0) return;
+    if (!(await reclaimTerminals(victims, "这一栏", "关闭右侧标签"))) return;
+    const ids = new Set(victims.map((t) => t.id));
+    set((s) => ({ workspaces: removeTabsFromPane(s.workspaces, found.ws.id, paneId, ids) }));
+  },
+
+  closePaneTabs: async (paneId) => {
+    const found = locatePane(get().workspaces, paneId);
+    if (!found || found.pane.tabs.length === 0) return;
+    const victims = found.pane.tabs;
+    if (!(await reclaimTerminals(victims, "这一栏", "关闭本栏全部标签"))) return;
+    const ids = new Set(victims.map((t) => t.id));
+    set((s) => ({ workspaces: removeTabsFromPane(s.workspaces, found.ws.id, paneId, ids) }));
+  },
 
   setActiveTab: (id) =>
     set((st) => {
@@ -839,6 +999,60 @@ function resolveWorkspaceId(
 /** 新建一个空面板。 */
 function makePane(): Pane {
   return { id: nextTabId("pane"), tabs: [], activeTabId: null };
+}
+
+/** 在给定状态里按 pane id 找到它所在的工作区与面板（pane id 全局唯一）。 */
+function locatePane(
+  workspaces: Workspace[],
+  paneId: string,
+): { ws: Workspace; pane: Pane } | null {
+  for (const ws of workspaces) {
+    const pane = ws.panes.find((p) => p.id === paneId);
+    if (pane) return { ws, pane };
+  }
+  return null;
+}
+
+/**
+ * 把一组 id 从某个面板里摘掉（纯状态变换，**不回收终端** —— 调用方已用
+ * `reclaimTerminals` 问过一轮）。
+ *
+ * 空面板沿用 `closeTab` 的规则收掉：分屏时最后一个标签被关掉 = 取消分屏，
+ * 否则会留下一块空的死格子。
+ */
+function removeTabsFromPane(
+  workspaces: Workspace[],
+  wsId: string,
+  paneId: string,
+  removeIds: Set<string>,
+): Workspace[] {
+  return workspaces.map((w) => {
+    if (w.id !== wsId) return w;
+    const pane = w.panes.find((p) => p.id === paneId);
+    if (!pane) return w;
+    const tabs = pane.tabs.filter((t) => !removeIds.has(t.id));
+    if (tabs.length === pane.tabs.length) return w;
+    const dropPane = tabs.length === 0 && w.panes.length > 1;
+    const panes = dropPane
+      ? w.panes.filter((p) => p.id !== paneId)
+      : w.panes.map((p) =>
+          p.id === paneId
+            ? {
+                ...p,
+                tabs,
+                // 激活标签被关掉才顺延；还在就保持不变。
+                activeTabId: tabs.some((t) => t.id === p.activeTabId)
+                  ? p.activeTabId
+                  : (tabs[tabs.length - 1]?.id ?? null),
+              }
+            : p,
+        );
+    return {
+      ...w,
+      panes,
+      activePaneId: dropPane ? (panes[0]?.id ?? w.activePaneId) : w.activePaneId,
+    };
+  });
 }
 
 /**
@@ -1108,14 +1322,17 @@ export function openFileTab(sessionId: string, path: string) {
 }
 
 /**
- * 在下方分屏面板里打开编辑器（「在下方编辑」）。
+ * 在第二栏里打开编辑器（右键「在下方编辑」）。
  *
- * 和 openFileTab 用**同一个标签 id**：同一个文件不该因为"这次想在下面看"
+ * 和 openFileTab 用**同一个标签 id**：同一个文件不该因为"这次想在另一栏看"
  * 就出现两个编辑器标签，同时改两遍。已经开着时 addTab 会把它激活。
+ *
+ * 轴固定传 `"row"`（「在下方编辑」的字面语义）；已分屏时轴不生效 —— 第二栏
+ * 早就存在，方向由工作区的 `splitAxis` 决定（见 openInSecondaryPane）。
  */
 export function openFileTabInSplit(sessionId: string, path: string) {
   const name = path.split("/").filter(Boolean).pop() ?? path;
-  useUi.getState().openInLowerPane(fileTabSpec(sessionId, path, name));
+  useUi.getState().openInSecondaryPane(fileTabSpec(sessionId, path, name), "row");
 }
 
 function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
