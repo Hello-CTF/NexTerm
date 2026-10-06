@@ -122,6 +122,42 @@ type queuedEmit struct {
 	event Event
 }
 
+type cancelSync struct {
+	started      chan struct{}
+	recorded     chan struct{}
+	startedOnce  sync.Once
+	recordedOnce sync.Once
+}
+
+func newCancelSync() *cancelSync {
+	return &cancelSync{started: make(chan struct{}), recorded: make(chan struct{})}
+}
+
+func (s *cancelSync) markStarted() {
+	if s == nil {
+		return
+	}
+	s.startedOnce.Do(func() { close(s.started) })
+}
+
+func (s *cancelSync) markRecorded() {
+	if s == nil {
+		return
+	}
+	s.recordedOnce.Do(func() { close(s.recorded) })
+}
+
+func (s *cancelSync) waitRecorded() {
+	if s == nil {
+		return
+	}
+	select {
+	case <-s.started:
+		<-s.recorded
+	default:
+	}
+}
+
 type job struct {
 	id          string
 	args        ChatArgs
@@ -133,6 +169,7 @@ type job struct {
 	memory      *guard.Memory
 	eino        *einoRuntime
 	cancelFn    adk.AgentCancelFunc
+	cancelSync  *cancelSync
 
 	steer *steer.Queue
 

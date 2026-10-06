@@ -185,7 +185,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		}
 	}
 	stream = r.wrapStream(stream, jobID)
-	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true}
+	current := &job{id: jobID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: guard.NewMemory(), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync()}
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -251,6 +251,7 @@ func (r *Runner) Cancel(jobID string) error {
 		}
 		return ErrJobNotFound
 	}
+	current.cancelSync.markStarted()
 	current.cancel()
 	current.pendingMu.Lock()
 	running := current.running
@@ -259,10 +260,21 @@ func (r *Runner) Cancel(jobID string) error {
 	if cancelFn != nil && running {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
+	watched := false
+	if done, err := r.hitl.Done(jobID); err == nil {
+		watched = true
+		go func() {
+			<-done
+			current.cancelSync.markRecorded()
+		}()
+	}
+	err := r.cancelRun(jobID)
+	if !watched {
+		current.cancelSync.markRecorded()
+	}
 	if cancelTestHook != nil {
 		cancelTestHook()
 	}
-	err := r.cancelRun(jobID)
 	if !running {
 		r.complete(current, "", 0, usage.Usage{}, context.Canceled)
 	}
@@ -460,9 +472,13 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		if closeErr := r.closeSubagents(current); closeErr != nil {
 			terminalErr = errors.Join(terminalErr, closeErr)
 		}
+		current.cancelSync.waitRecorded()
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
-		current.finish(answer, turns, total, terminalErr)
+		if terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
+			terminalErr = errors.Join(context.Canceled, terminalErr)
+		}
 		r.finishRun(current, answer, turns, total, terminalErr, terminal)
+		current.finish(answer, turns, total, terminalErr)
 		r.maybeGenerateConversationTitle(current)
 		r.cleanup(current)
 	})
@@ -613,6 +629,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 			r.parkForShutdown(current)
 			continue
 		}
+		current.cancelSync.markStarted()
 		if current.forceCancel != nil {
 			current.forceCancel()
 		}
@@ -620,8 +637,18 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 		if cancelFn != nil {
 			_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 		}
-
+		watched := false
+		if done, err := r.hitl.Done(current.id); err == nil {
+			watched = true
+			go func() {
+				<-done
+				current.cancelSync.markRecorded()
+			}()
+		}
 		_, _ = r.hitl.Cancel(current.id)
+		if !watched {
+			current.cancelSync.markRecorded()
+		}
 	}
 	if err := r.hitl.Close(); err != nil {
 		r.appendShutdownErr(err)

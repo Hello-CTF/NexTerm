@@ -209,6 +209,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		stream:      r.wrapStream(stream, jobID),
 		memory:      guard.NewMemory(),
 		steer:       steer.NewQueue(r.config.MaxPendingSteers),
+		cancelSync:  newCancelSync(),
 	}
 	if err := r.reserveJobID(jobID); err != nil {
 		cancel()
