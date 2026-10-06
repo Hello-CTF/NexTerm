@@ -30,10 +30,14 @@ function validateRequired(label: string, value: string): string | null {
   return null;
 }
 
-function validatePort(label: string, value: string): string | null {
+function isValidPort(value: string): boolean {
   const port = Number(value.trim());
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return `${label}要填 1–65535 之间的整数`;
-  return null;
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function validatePort(label: string, value: string): string | null {
+  if (isValidPort(value)) return null;
+  return `${label}要填 1–65535 之间的整数`;
 }
 
 export function ForwardPanel({ sessionId }: { sessionId?: string }) {
@@ -73,7 +77,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
   const listenPortRef = useRef<HTMLInputElement>(null);
   const targetHostRef = useRef<HTMLInputElement>(null);
   const targetPortRef = useRef<HTMLInputElement>(null);
-  const [listenPortError, setListenPortError] = useState<string | null>(null);
+  const [listenPortInvalid, setListenPortInvalid] = useState(false);
   const [targetHostError, setTargetHostError] = useState<string | null>(null);
   const [targetPortError, setTargetPortError] = useState<string | null>(null);
   const listenPortTimer = useRef<number | null>(null);
@@ -100,7 +104,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
     if (listenPortTimer.current !== null) window.clearTimeout(listenPortTimer.current);
     listenPortTimer.current = window.setTimeout(() => {
       listenPortTimer.current = null;
-      setListenPortError(validatePort(listenPortLabel, value));
+      setListenPortInvalid(!isValidPort(value));
     }, FIELD_IDLE_VALIDATION_MS);
   };
   const onListenPortBlur = () => {
@@ -108,7 +112,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       window.clearTimeout(listenPortTimer.current);
       listenPortTimer.current = null;
     }
-    setListenPortError(validatePort(listenPortLabel, listenPortValueRef.current));
+    setListenPortInvalid(!isValidPort(listenPortValueRef.current));
   };
   const onTargetHostChange = (value: string) => {
     setTargetHost(value);
@@ -148,7 +152,7 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
     }
     setKind(k);
     setListenPort(DEFAULT_PORT[k]);
-    setListenPortError(null);
+    setListenPortInvalid(false);
     setTargetHostError(null);
     setTargetPortError(null);
   };
@@ -169,14 +173,14 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       );
       return;
     }
-    const portErr = validatePort(listenPortLabel, listenPort);
+    const portInvalid = !isValidPort(listenPort);
     const hostErr = kind === "local" ? validateRequired("目标主机", targetHost) : null;
     const tPortErr = kind === "local" ? validatePort("目标端口", targetPort) : null;
-    setListenPortError(portErr);
+    setListenPortInvalid(portInvalid);
     setTargetHostError(hostErr);
     setTargetPortError(tPortErr);
-    if (portErr || hostErr || tPortErr) {
-      if (portErr) listenPortRef.current?.focus();
+    if (portInvalid || hostErr || tPortErr) {
+      if (portInvalid) listenPortRef.current?.focus();
       else if (hostErr) targetHostRef.current?.focus();
       else targetPortRef.current?.focus();
       return;
@@ -405,12 +409,12 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                   placeholder={DEFAULT_PORT[kind]}
                   autoComplete="off"
                   inputMode="numeric"
-                  aria-invalid={listenPortError ? true : undefined}
-                  aria-describedby={listenPortError ? listenPortErrorId : undefined}
+                  aria-invalid={listenPortInvalid ? true : undefined}
+                  aria-describedby={listenPortInvalid ? listenPortErrorId : undefined}
                 />
-                {listenPortError && (
+                {listenPortInvalid && (
                   <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                    {listenPortError}
+                    {listenPortLabel}要填 1–65535 之间的整数
                   </p>
                 )}
               </div>

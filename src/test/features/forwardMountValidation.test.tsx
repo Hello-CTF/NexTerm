@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { clickButton, deferred, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   forwardEnv: vi.fn(),
@@ -148,6 +148,35 @@ describe("ForwardPanel 提交时内联校验", () => {
     blur(listenPort);
     expect(listenPort.getAttribute("aria-invalid")).toBeNull();
     expect(fieldError(listenPort)).toBeNull();
+  });
+
+  it("失焦报错后 env 才 resolve：既有 alert 文案随当前标签更新", async () => {
+    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    mocks.forwardEnv.mockReturnValue(env.promise);
+    mountForward();
+    await flush();
+    const listenPort = inputBy('input[placeholder="13306"]');
+    setInputValue(listenPort, "70000");
+    blur(listenPort);
+    expect(fieldError(listenPort)?.textContent).toBe("本地端口要填 1–65535 之间的整数");
+    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    await flush();
+    expect(fieldError(listenPort)?.textContent).toBe("监听端口要填 1–65535 之间的整数");
+  });
+
+  it("输入后 500ms 内 env 切换：idle 回调使用切换后的标签", async () => {
+    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    mocks.forwardEnv.mockReturnValue(env.promise);
+    mountForward();
+    await flush();
+    const listenPort = inputBy('input[placeholder="13306"]');
+    setInputValue(listenPort, "70000");
+    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    await flush();
+    expect(listenPort.getAttribute("aria-invalid")).toBeNull();
+    await advance(500);
+    expect(listenPort.getAttribute("aria-invalid")).toBe("true");
+    expect(fieldError(listenPort)?.textContent).toBe("监听端口要填 1–65535 之间的整数");
   });
 
   it("多字段非法时焦点按字段顺序落在第一个非法字段", async () => {
