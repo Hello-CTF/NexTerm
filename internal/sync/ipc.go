@@ -14,21 +14,12 @@ const (
 	CommandBundleRead  = "sync_bundle_read"
 	CommandBundleWrite = "sync_bundle_write"
 
-	CommandTranscriptSyncOptIn  = "transcript_sync_opt_in"
-	CommandTranscriptSyncOptIns = "transcript_sync_opt_ins"
+	CommandTranscriptSyncOptIn = "transcript_sync_opt_in"
 )
 
 type TranscriptSyncOptInRequest struct {
 	ID    string `json:"id"`
 	OptIn bool   `json:"optIn"`
-}
-
-type TranscriptSyncOptInsRequest struct {
-	AssetID string `json:"assetId"`
-}
-
-type TranscriptSyncOptInsResponse struct {
-	IDs []string `json:"ids"`
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
@@ -66,7 +57,7 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
-			return ipc.RegisterNested(dispatcher, CommandTranscriptSyncOptIn, func(ctx context.Context, _ *ipc.Call, input TranscriptSyncOptInRequest) (struct{}, error) {
+			return ipc.Register(dispatcher, CommandTranscriptSyncOptIn, func(ctx context.Context, _ *ipc.Call, input TranscriptSyncOptInRequest) (struct{}, error) {
 				if err := s.requireDesktop(); err != nil {
 					return struct{}{}, err
 				}
@@ -74,24 +65,6 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 					return struct{}{}, ipc.NewError(ipc.CodeBadParam, "会话记录 ID 不能为空")
 				}
 				return struct{}{}, s.store.TranscriptSetSyncOptIn(ctx, input.ID, input.OptIn)
-			})
-		},
-		func() error {
-			return ipc.RegisterNested(dispatcher, CommandTranscriptSyncOptIns, func(ctx context.Context, _ *ipc.Call, input TranscriptSyncOptInsRequest) (TranscriptSyncOptInsResponse, error) {
-				if err := s.requireDesktop(); err != nil {
-					return TranscriptSyncOptInsResponse{}, err
-				}
-				rows, err := s.store.TranscriptListOptedIn(ctx)
-				if err != nil {
-					return TranscriptSyncOptInsResponse{}, err
-				}
-				response := TranscriptSyncOptInsResponse{IDs: []string{}}
-				for _, row := range rows {
-					if row.AssetID == input.AssetID {
-						response.IDs = append(response.IDs, row.ID)
-					}
-				}
-				return response, nil
 			})
 		},
 		func() error {

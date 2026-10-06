@@ -1,5 +1,8 @@
--- SYNC117 v2 全量载荷对象协议(0020): 通用删除墓碑、会话记录同步列与对象对账簿。
--- sync_tokens 与令牌时代 setting 键的清理在 v1 同步代码移除时一并加入本迁移。
+-- SYNC117 v2 全量载荷对象协议(0020): 令牌时代 sync_tokens 退役, 通用删除墓碑、会话记录同步列与对象对账簿。
+DROP TABLE sync_tokens;
+
+DELETE FROM setting WHERE key IN ('sync.token', 'sync.token.plaintext_backup', 'sync.link');
+
 CREATE TABLE sync_tombstone (
   id         TEXT PRIMARY KEY,
   kind       TEXT NOT NULL,

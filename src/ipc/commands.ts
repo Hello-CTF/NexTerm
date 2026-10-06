@@ -227,6 +227,8 @@ export const transcriptApi = {
   search: (id: string, query: string) =>
     call<TranscriptMatch[]>("transcript_search", { id, query }),
   remove: (id: string) => call<void>("transcript_delete", { id }),
+  syncOptIn: (id: string, optIn: boolean) =>
+    call<void>("transcript_sync_opt_in", { id, optIn }),
 };
 
 export interface LayoutDto {
@@ -730,6 +732,29 @@ export const forwardApi = {
   remove: (id: string) => call<void>("forward_remove", { id }),
 };
 
+export interface SyncStatus {
+  configured: boolean;
+  loggedIn: boolean;
+  username?: string;
+  userId?: string;
+  head?: string;
+  seq: number;
+  verifiedAt: number;
+  lastError: string;
+}
+
+export interface SyncReport {
+  pulled: number;
+  applied: number;
+  pullSkipped: number;
+  decryptFailed: number;
+  pushed: number;
+  conflicts: number;
+  head: string;
+  seq: number;
+  warnings?: string[];
+}
+
 export const syncApi = {
   digest: () => call<import("./types").SyncDigest>("sync_digest"),
   origin: () => call<string>("sync_origin"),
@@ -758,6 +783,9 @@ export const syncApi = {
     call<import("./types").ImportReport>("sync_push", { args: { assetIds, withCreds, force } }),
   pull: (assetIds: string[], withCreds: boolean, force: boolean) =>
     call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
+
+  status: () => call<SyncStatus>("sync_status"),
+  syncNow: () => call<SyncReport>("sync_now"),
 
   token: () => call<string | null>("sync_token"),
   rotateToken: (id?: string) =>

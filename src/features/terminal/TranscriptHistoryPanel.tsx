@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   assetApi,
-  call,
   transcriptApi,
   type TranscriptChunk,
   type TranscriptMatch,
@@ -31,20 +30,10 @@ const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
 const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm"]);
 
-interface TranscriptSyncOptInsResponse {
-  ids: string[];
-}
-
-async function fetchTranscriptSyncOptIns(assetId: string): Promise<Set<string>> {
-  const result = await call<TranscriptSyncOptInsResponse>("transcript_sync_opt_ins", {
-    args: { assetId },
-  });
-  return new Set(Array.isArray(result?.ids) ? result.ids : []);
-}
-
-async function setTranscriptSyncOptIn(id: string, optIn: boolean): Promise<void> {
-  await call("transcript_sync_opt_in", { args: { id, optIn } });
-}
+type TranscriptSummaryEx = TranscriptSummary & {
+  syncOptIn?: boolean;
+  contentOmitted?: boolean;
+};
 
 interface LoadedChunk {
   seq: number;
@@ -94,7 +83,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
   const [hostsError, setHostsError] = useState<string | null>(null);
   const [assetId, setAssetId] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<TranscriptSummary[] | null>(null);
+  const [sessions, setSessions] = useState<TranscriptSummaryEx[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chunks, setChunks] = useState<LoadedChunk[]>([]);
@@ -107,7 +96,6 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const [matches, setMatches] = useState<TranscriptMatch[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [syncedIds, setSyncedIds] = useState<Set<string>>(new Set());
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
@@ -154,12 +142,8 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
   const loadSessions = useCallback(async () => {
     if (!assetId) return;
     try {
-      const [list, optIns] = await Promise.all([
-        transcriptApi.list(assetId),
-        fetchTranscriptSyncOptIns(assetId).catch(() => new Set<string>()),
-      ]);
+      const list = await transcriptApi.list(assetId);
       setSessions(Array.isArray(list) ? list : []);
-      setSyncedIds(optIns);
       setSessionsError(null);
     } catch (error) {
       setSessionsError(describeError(error));
@@ -326,10 +310,10 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
     }
   };
 
-  const toggleTranscriptSync = async (summary: TranscriptSummary) => {
-    const optIn = !syncedIds.has(summary.id);
+  const toggleTranscriptSync = async (summary: TranscriptSummaryEx) => {
+    const optIn = !summary.syncOptIn;
     try {
-      await setTranscriptSyncOptIn(summary.id, optIn);
+      await transcriptApi.syncOptIn(summary.id, optIn);
       setSyncToggleError(null);
       pushToast("success", optIn ? "已开启这条记录的同步" : "已关闭这条记录的同步");
       await loadSessions();
@@ -427,15 +411,15 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                       <div className="flex items-center justify-end gap-1.5">
                         {summary.endedAt !== null && (
                           <button
-                            className={`nx-btn nx-btn-ghost nx-btn-xs ${syncedIds.has(summary.id) ? "text-green-400" : ""}`}
-                            title={syncedIds.has(summary.id) ? "这条记录已开启同步，点击关闭" : "开启这条记录的同步"}
-                            aria-label={syncedIds.has(summary.id) ? "关闭这条记录的同步" : "开启这条记录的同步"}
+                            className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
+                            title={summary.syncOptIn ? "这条记录已开启同步，点击关闭" : "开启这条记录的同步"}
+                            aria-label={summary.syncOptIn ? "关闭这条记录的同步" : "开启这条记录的同步"}
                             onClick={(event) => {
                               event.stopPropagation();
                               void toggleTranscriptSync(summary);
                             }}
                           >
-                            {syncedIds.has(summary.id) ? "已同步" : "同步"}
+                            {summary.syncOptIn ? "已同步" : "同步"}
                           </button>
                         )}
                         <span className={badgeClass(summary)}>

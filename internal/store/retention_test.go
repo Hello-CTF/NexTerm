@@ -286,9 +286,12 @@ DROP TABLE transcript_chunk;
 DROP TABLE transcript;
 DROP TABLE durable_transcript_offset;
 DROP TABLE credential_tombstone;
-DROP TABLE sync_tokens;
 DROP TABLE user_sync_head;
 DROP TABLE user_sync_object;
+DROP TABLE sync_tombstone;
+DROP TABLE sync_state;
+DROP TRIGGER sync_tombstone_asset_group_delete;
+DROP TRIGGER sync_tombstone_snippet_delete;
 DROP TABLE device_enroll_code;
 DROP TABLE user_setting;
 DROP TABLE device_agent;
@@ -299,7 +302,7 @@ DROP TABLE user_session;
 DROP TABLE user_device;
 DROP TABLE user_dek;
 DROP TABLE app_user;
-DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19)`)
+DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19, 20)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +327,7 @@ DELETE FROM schema_migrations WHERE version IN (3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 			t.Fatalf("index %s count=%d err=%v", index, count, err)
 		}
 	}
-	requireTableCount(t, reopened, migrationsTable, 16)
+	requireTableCount(t, reopened, migrationsTable, 17)
 }
 
 func TestRetentionConcurrentWithRecordingEnd(t *testing.T) {

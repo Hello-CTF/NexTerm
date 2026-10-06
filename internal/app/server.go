@@ -11,16 +11,12 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 )
 
 type ServeConfig struct {
 	Listen         string
 	WebRoot        string
 	SyncOnly       bool
-	SyncRPC        http.Handler
-	SyncDispatcher *ipc.Dispatcher
 	Static         http.Handler
 	Transport      http.Handler
 	CloseTransport func(context.Context) error
@@ -56,9 +52,6 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(a.health(r.Context(), config))
 	})
-	if config.SyncRPC != nil {
-		mux.Handle("/sync/rpc", config.SyncRPC)
-	}
 	if !config.SyncOnly && config.Static != nil {
 		mux.Handle("/", config.Static)
 	}
@@ -136,9 +129,6 @@ func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 		}
 	}
 	commands := a.Dispatcher.Len()
-	if config.SyncOnly && config.SyncDispatcher != nil {
-		commands = config.SyncDispatcher.Len()
-	}
 	return Health{
 		OK: true, Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
 		Commands: commands, WebRoot: webRoot, Vault: vault, Retention: retention,
@@ -162,9 +152,9 @@ func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOn
 		return
 	}
 
-	detail := "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求同步令牌（浏览器打开时会提示输入，可用 nexterm-server token 查看、rotate-token 轮换），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
+	detail := "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求账号会话（浏览器登录后使用），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
 	if syncOnly {
-		detail = "onlyServer 模式：/sync/rpc 要求同步令牌；能连接此端口且持有同步令牌的人可以读写资产库（含密码类凭据）。请使用防火墙限制对端地址。"
+		detail = "onlyServer 模式：仅提供账号登录与同步端点；能连接此端口且持有账号会话的人可以同步资产库（端到端加密）。请使用防火墙限制对端地址。"
 	}
 	if logger != nil {
 		logger.Warn("HTTP server is listening on a non-loopback address", "listen", address, "syncOnly", syncOnly, "risk", detail)
