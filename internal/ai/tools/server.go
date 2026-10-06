@@ -519,20 +519,24 @@ func (r *Registry) waitBusyClear(ctx, waitContext context.Context, tabID string,
 // commandFinishOutput renders the wait outcome. The exit code is reported
 // only when the state's code is bound to a command at or after minExitSeq
 // (the tracker stamps the sequence of the command whose 133;D carried the
-// code), so a previous command's code is never attributed to this wait.
+// code); otherwise the result is explicitly exit-unknown and must not be
+// recorded or replayed as exit 0.
 func (r *Registry) commandFinishOutput(ctx context.Context, tabID string, state CommandState, minExitSeq uint64, headline string) Output {
 	screen, err := r.deps.Terminal.Snapshot(ctx, tabID)
 	if err != nil {
 		return Fail(err)
 	}
 	text := headline
-	exitCode := 0
+	output := Output{OK: true, Text: text}
 	if state.HasLastExitCode && state.ExitCodeSequence >= minExitSeq {
 		text += fmt.Sprintf("，退出码 %d", state.LastExitCode)
-		exitCode = state.LastExitCode
+		output.ExitCode = state.LastExitCode
+	} else {
+		output.ExitUnknown = true
 	}
 	text += fmt.Sprintf("\n命令序号 %d，屏幕序号 %d\n屏幕尾部：\n%s", state.Sequence, screen.Seq, tailText(screen, commandTailLines))
-	return Output{OK: true, Text: text, ExitCode: exitCode}
+	output.Text = text
+	return output
 }
 
 func tailText(screen Screen, maxLines int) string {

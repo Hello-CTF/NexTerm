@@ -55,15 +55,19 @@ type Call struct {
 }
 
 type Output struct {
-	OK        bool       `json:"ok"`
-	Text      string     `json:"text"`
-	ExitCode  int        `json:"exitCode"`
-	Truncated bool       `json:"truncated"`
-	Panic     bool       `json:"panic,omitempty"`
-	Change    *Change    `json:"change,omitempty"`
-	Todos     []TodoItem `json:"todos,omitempty"`
-	Plan      string     `json:"plan,omitempty"`
-	Question  *Question  `json:"question,omitempty"`
+	OK       bool   `json:"ok"`
+	Text     string `json:"text"`
+	ExitCode int    `json:"exitCode"`
+	// ExitUnknown marks a completed action whose exit code could not be
+	// determined (e.g. a waited-on command still running or a bare OSC 133;D
+	// without a code). It must never be recorded or replayed as exit 0.
+	ExitUnknown bool       `json:"exitUnknown,omitempty"`
+	Truncated   bool       `json:"truncated"`
+	Panic       bool       `json:"panic,omitempty"`
+	Change      *Change    `json:"change,omitempty"`
+	Todos       []TodoItem `json:"todos,omitempty"`
+	Plan        string     `json:"plan,omitempty"`
+	Question    *Question  `json:"question,omitempty"`
 }
 
 func OK(text string) Output {

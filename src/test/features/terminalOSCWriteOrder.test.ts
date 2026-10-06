@@ -32,22 +32,23 @@ describe("OSC 133 write ordering", () => {
     const h = setup();
     h.write(
       h.filter.push(
-        enc.encode("$ make test\r\n\x1b]133;C\x07output line\r\n\x1b]133;D;2\x07$ "),
+        enc.encode("$ make\r\n\x1b]133;C\x07line1\r\nline2\r\n\x1b]133;D;2\x07$ "),
       ),
     );
     await drainWrites();
     const blocks = h.latest();
     expect(blocks).toHaveLength(1);
     const block = blocks[0];
-    expect(block.command).toBe("$ make test");
+    expect(block.command).toBe("$ make");
     expect(block.exitCode).toBe(2);
     expect(block.endedAt).not.toBeNull();
     // The marker lands on the echoed command line, not the pre-echo buffer:
     // C ran after the echo text was parsed.
     expect(block.startLine).toBe(0);
-    // D ran after the output text was parsed, so the block covers it.
+    // D ran after every output line was parsed, so the block covers both.
     const text = h.manager.getBlockText(block.index);
-    expect(text).toContain("output line");
+    expect(text).toContain("line1");
+    expect(text).toContain("line2");
     h.term.dispose();
   });
 
@@ -62,6 +63,22 @@ describe("OSC 133 write ordering", () => {
     expect(blocks[0].command).toBe("$ systemctl status");
     expect(blocks[0].exitCode).toBe(0);
     expect(h.manager.getBlockText(blocks[0].index)).toContain("active (running)");
+    h.term.dispose();
+  });
+
+  it("keeps order for back-to-back chunks without draining in between", async () => {
+    const h = setup();
+    h.write(h.filter.push(enc.encode("$ make\r\n")));
+    h.write(h.filter.push(enc.encode("\x1b]133;C\x07line1\r\nline2\r\n")));
+    h.write(h.filter.push(enc.encode("\x1b]133;D;2\x07$ ")));
+    await drainWrites();
+    const blocks = h.latest();
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].command).toBe("$ make");
+    expect(blocks[0].exitCode).toBe(2);
+    const text = h.manager.getBlockText(blocks[0].index);
+    expect(text).toContain("line1");
+    expect(text).toContain("line2");
     h.term.dispose();
   });
 

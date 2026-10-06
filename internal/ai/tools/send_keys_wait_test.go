@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/outcome"
 )
 
 func sendKeysCall(args string) Call {
@@ -108,7 +110,7 @@ func TestSendKeysWaitTimeoutDoesNotBorrowPreviousExitCode(t *testing.T) {
 	if !strings.Contains(result.Text, "命令仍在运行") {
 		t.Fatalf("text=%q", result.Text)
 	}
-	if strings.Contains(result.Text, "退出码") || result.ExitCode != 0 {
+	if strings.Contains(result.Text, "退出码") || result.ExitUnknown != true {
 		t.Fatalf("stale exit code leaked into running timeout: %+v", result)
 	}
 }
@@ -133,7 +135,7 @@ func TestSendKeysWaitBareFinishDoesNotBorrowPreviousExitCode(t *testing.T) {
 	if !strings.Contains(result.Text, "命令已完成") {
 		t.Fatalf("text=%q", result.Text)
 	}
-	if strings.Contains(result.Text, "退出码") || result.ExitCode != 0 {
+	if strings.Contains(result.Text, "退出码") || result.ExitUnknown != true {
 		t.Fatalf("bare D borrowed the previous exit code: %+v", result)
 	}
 }
@@ -246,5 +248,52 @@ func TestReadScreenIncludesCommandStateWhenTracked(t *testing.T) {
 	result = registry.Execute(context.Background(), "job", Scope{SessionID: "s", TabID: "tab"}, Call{ID: "r3", Name: "read_screen", Args: json.RawMessage(`{}`)}, nil)
 	if strings.Contains(result.Text, "命令状态") {
 		t.Fatalf("untracked terminal should not report command state: %q", result.Text)
+	}
+}
+
+func TestSendKeysWaitUnknownOutcomeRecordedAsUnknown(t *testing.T) {
+	// 仍在运行即截止：结果必须结构化为 exit-unknown，outcome 记 unknown 而非 exit 0。
+	_, ledger, sqliteStore := outcomeFixture(t)
+	terminal := &fakeTerminal{screen: Screen{Text: "$ sleep 9\r\n"}}
+	terminal.commandState = CommandState{Sequence: 3}
+	terminal.onWrite = func() {
+		terminal.setCommandState(CommandState{Sequence: 4, Running: true})
+	}
+	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond, Outcome: ledger})
+	call := Call{ID: "keys", Name: "send_keys", Args: json.RawMessage(`{"keys":"sleep 9","enter":true,"wait_ms":80}`), AuthorizationID: "guard:test"}
+	result := registry.Execute(context.Background(), "job-1", Scope{SessionID: "s", TabID: "tab"}, call, nil)
+	if !result.OK || !result.ExitUnknown {
+		t.Fatalf("result=%+v", result)
+	}
+	record := recordedOutcome(t, sqliteStore, OutcomeKey("job-1", "keys"))
+	if record.Outcome != outcome.OutcomeUnknown {
+		t.Fatalf("recorded outcome = %s, want unknown; record=%+v", record.Outcome, record)
+	}
+	if record.Result.ExitCode != nil {
+		t.Fatalf("unknown outcome must not carry an exit code: %+v", record.Result)
+	}
+}
+
+func TestSendKeysWaitZeroExitRecordedAsAccepted(t *testing.T) {
+	// 本次 D 真实携带 exit 0：必须保留为 Accepted/exit 0，不得标 unknown。
+	_, ledger, sqliteStore := outcomeFixture(t)
+	terminal := &fakeTerminal{screen: Screen{Text: "$ true\r\n$ "}}
+	terminal.commandState = CommandState{Sequence: 3}
+	terminal.onWrite = func() {
+		terminal.setCommandState(CommandState{Sequence: 4, Running: true})
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			terminal.setCommandState(CommandState{Sequence: 4, LastExitCode: 0, HasLastExitCode: true, ExitCodeSequence: 4})
+		}()
+	}
+	registry := NewRegistry(Dependencies{Terminal: terminal, PollInterval: time.Millisecond, Outcome: ledger})
+	call := Call{ID: "keys", Name: "send_keys", Args: json.RawMessage(`{"keys":"true","enter":true,"wait_ms":2000}`), AuthorizationID: "guard:test"}
+	result := registry.Execute(context.Background(), "job-1", Scope{SessionID: "s", TabID: "tab"}, call, nil)
+	if !result.OK || result.ExitUnknown || result.ExitCode != 0 || !strings.Contains(result.Text, "退出码 0") {
+		t.Fatalf("result=%+v", result)
+	}
+	record := recordedOutcome(t, sqliteStore, OutcomeKey("job-1", "keys"))
+	if record.Outcome != outcome.OutcomeAccepted || record.Result.ExitCode == nil || *record.Result.ExitCode != 0 {
+		t.Fatalf("recorded outcome = %s code=%v, want accepted/0; record=%+v", record.Outcome, record.Result.ExitCode, record)
 	}
 }

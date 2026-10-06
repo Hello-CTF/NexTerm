@@ -147,43 +147,35 @@ export function createOscStreamFilter(): OscStreamFilter {
 
 // createOscSegmentWriter returns a segment consumer that keeps OSC events in
 // stream order relative to terminal text: an event dispatches after the text
-// preceding it has been parsed and before the text following it is parsed, so
-// command-block markers and echo reads see the buffer the shell produced.
-// State spans chunks; an event is dispatched synchronously when the preceding
-// text is already parsed, otherwise from that text's write callback, and
-// events trailing a chunk flush through an ordered empty write (xterm fires
-// write callbacks in FIFO order).
+// immediately preceding it has been parsed and before any later text is
+// parsed, so command-block markers, end lines and echo reads see the buffer
+// the shell produced. Each text write owns the events that directly follow
+// it; an event arriving while no write is in flight dispatches immediately
+// (its preceding text is already parsed). State spans chunks.
 export function createOscSegmentWriter(
   term: { write: (data: string | Uint8Array, callback?: () => void) => void },
   dispatch: (event: OscStreamEvent) => void,
   onWritten?: () => void,
 ): (segments: OscStreamSegment[]) => void {
   let inFlight = 0;
-  let tail: OscStreamEvent[] = [];
-  const flush = () => {
-    const events = tail;
-    tail = [];
-    for (const event of events) dispatch(event);
-  };
+  let currentTail: OscStreamEvent[] | null = null;
   return (segments) => {
     for (const segment of segments) {
       if (segment.kind === "event") {
-        tail.push(segment.event);
+        if (inFlight === 0 || currentTail === null) {
+          dispatch(segment.event);
+        } else {
+          currentTail.push(segment.event);
+        }
         continue;
       }
-      if (inFlight === 0 && tail.length > 0) flush();
+      const tail: OscStreamEvent[] = [];
+      currentTail = tail;
       inFlight += 1;
       term.write(segment.data, () => {
         inFlight -= 1;
-        flush();
+        for (const event of tail) dispatch(event);
         onWritten?.();
-      });
-    }
-    if (tail.length > 0) {
-      inFlight += 1;
-      term.write("", () => {
-        inFlight -= 1;
-        flush();
       });
     }
   };
