@@ -17,9 +17,11 @@ const (
 )
 
 var (
-	dekAAD        = []byte("nexterm/go/dek/v1")
-	credentialAAD = []byte("nexterm/go/credential/v1")
-	secretAAD     = []byte("nexterm/go/secret/v1")
+	dekAAD             = []byte("nexterm/go/dek/v1")
+	userDEKAAD         = []byte("nexterm/go/user-dek/v1")
+	userDEKRecoveryAAD = []byte("nexterm/go/user-dek-recovery/v1")
+	credentialAAD      = []byte("nexterm/go/credential/v1")
+	secretAAD          = []byte("nexterm/go/secret/v1")
 )
 
 type secretKey struct {
