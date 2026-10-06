@@ -251,6 +251,16 @@ function throwAppError(code: string, message: string, detail?: Record<string, un
   throw { code, message, ...(detail === undefined ? {} : { detail }) };
 }
 
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized.startsWith("127.") ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1"
+  );
+}
+
 const DEMO_NGINX_PATH = "/etc/nginx/nginx.conf";
 const DEMO_TAKEOVER_TOKEN = "demo-takeover";
 const DEMO_NGINX_BEFORE = "worker_processes 1;\nkeepalive_timeout 65;\nserver_tokens on;";
@@ -2016,6 +2026,29 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         targetHost: null,
         targetPort: null,
         kind: "socks",
+        createdAt: Date.now(),
+      };
+      forwards.push(f);
+      return { ...f };
+    }
+
+    case "forward_create_remote": {
+      const bindHost = str(a.bindHost).trim() || "127.0.0.1";
+      if (!isLoopbackHost(bindHost) && a.acknowledgeRisk !== true) {
+        throwAppError(
+          "needs_confirm",
+          "远程转发没有认证，远端监听非回环地址会把本地服务暴露给远端网络，必须确认开放风险",
+          { risk: "unauthenticated_exposed_remote_forward", listenHost: bindHost, authentication: "none" },
+        );
+      }
+      const f = {
+        id: uid("f"),
+        sessionId: str(a.sessionId),
+        listenHost: bindHost,
+        listenPort: num(a.bindPort, 18080),
+        targetHost: str(a.targetHost, "127.0.0.1"),
+        targetPort: num(a.targetPort, 3306),
+        kind: "remote",
         createdAt: Date.now(),
       };
       forwards.push(f);
