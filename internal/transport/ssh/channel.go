@@ -268,7 +268,11 @@ func (c *channel) Wait(ctx context.Context) error {
 }
 
 func (c *channel) CloseWrite() error {
-	return c.stdin.Close()
+	err := c.stdin.Close()
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 func (c *channel) Close() error {
