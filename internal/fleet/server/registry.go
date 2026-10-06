@@ -22,6 +22,10 @@ var (
 
 type controlChannel struct {
 	conn *websocket.Conn
+	// stateDigest 是 agent 在 hello 里上报的设备端 supervisor 状态摘要;
+	// 分享代管数据通路用它通过桥接 helper 的 hello 校验。摘要由设备凭证
+	// 认证的 hello 携带, 不含凭据材料。
+	stateDigest string
 }
 
 type pendingBridge struct {
@@ -59,10 +63,10 @@ func NewRegistry() *Registry {
 // RegisterControl 注册设备控制通道; 同设备已有连接时被顶替关闭。
 // 顶替是服务端单方面拆连, 用 CloseNow: 优雅关闭握手会阻塞新连接的
 // hello_ok 写出 (对端可能已不在读取)。
-func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn) {
+func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateDigest string) {
 	r.mu.Lock()
 	previous := r.controls[deviceID]
-	r.controls[deviceID] = &controlChannel{conn: conn}
+	r.controls[deviceID] = &controlChannel{conn: conn, stateDigest: stateDigest}
 	r.mu.Unlock()
 	if previous != nil {
 		previous.conn.CloseNow()
@@ -85,6 +89,26 @@ func (r *Registry) control(deviceID string) *websocket.Conn {
 		return channel.conn
 	}
 	return nil
+}
+
+// AgentOnline 报告设备控制通道当前是否已注册 (agent 进程在线的实时信号,
+// 比 device_agent.last_seen_at 的 staleness 窗口更及时)。
+func (r *Registry) AgentOnline(deviceID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.controls[deviceID] != nil
+}
+
+// StateDigest 返回设备控制通道 hello 上报的 supervisor 状态摘要;
+// 设备离线或未上报时第二个返回值为 false。
+func (r *Registry) StateDigest(deviceID string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	channel := r.controls[deviceID]
+	if channel == nil || channel.stateDigest == "" {
+		return "", false
+	}
+	return channel.stateDigest, true
 }
 
 // PushControl 向设备控制通道写入一帧 JSON; 设备离线或写入失败返回 false。

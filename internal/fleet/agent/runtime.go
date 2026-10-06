@@ -48,10 +48,11 @@ type Runtime struct {
 	logger       *slog.Logger
 	now          func() time.Time
 
-	deviceID   string
-	secret     string
-	platform   string
-	appVersion string
+	deviceID    string
+	secret      string
+	platform    string
+	appVersion  string
+	stateDigest string
 
 	mu           sync.Mutex
 	desired      ConfigUpdate
@@ -152,6 +153,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	r.currentURL = config.CurrentURL
 	r.mu.Unlock()
+	r.computeStateDigest()
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -206,14 +208,36 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 func (r *Runtime) hello(bridgeID string) HelloMessage {
 	return HelloMessage{
-		Type:       "hello",
-		Protocol:   ProtocolVersion,
-		DeviceID:   r.deviceID,
-		Secret:     r.secret,
-		Platform:   r.platform,
-		AppVersion: r.appVersion,
-		BridgeID:   bridgeID,
+		Type:        "hello",
+		Protocol:    ProtocolVersion,
+		DeviceID:    r.deviceID,
+		Secret:      r.secret,
+		Platform:    r.platform,
+		AppVersion:  r.appVersion,
+		BridgeID:    bridgeID,
+		StateDigest: r.stateDigest,
 	}
+}
+
+// computeStateDigest 计算并缓存设备端 supervisor 状态摘要, 供控制通道 hello
+// 上报; 失败只降级分享代管能力, 不影响 agent 主流程。
+func (r *Runtime) computeStateDigest() {
+	identity, err := currentIdentity()
+	if err != nil {
+		r.logger.Warn("resolve user identity failed; state digest unavailable", "error", err)
+		return
+	}
+	absolute, err := filepath.Abs(r.stateDir)
+	if err != nil {
+		r.logger.Warn("resolve state dir failed; state digest unavailable", "error", err)
+		return
+	}
+	digest, err := supervisor.StateDigest(absolute, identity)
+	if err != nil {
+		r.logger.Warn("compute state digest failed; state digest unavailable", "error", err)
+		return
+	}
+	r.stateDigest = digest
 }
 
 func (r *Runtime) desiredSnapshot() ConfigUpdate {

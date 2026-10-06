@@ -27,12 +27,14 @@ application:
   public_path:
     # 设备 agent 合同 (/device/enroll, /agent/sync, /agent/current-url,
     # /ws/device) 依赖 public_path 免平台会话到达; 设备身份由设备凭证把关,
-    # 不依赖平台 gateway auth。其余路由 (含需要账号会话的 /sync/v2/*) 一律
-    # 留在平台认证之后。
+    # 不依赖平台 gateway auth。/share/public/{token} 是公开分享链接的数据面
+    # (token 即凭据, 无需平台会话)。其余路由 (含分享管理 /share/links、
+    # /share/host-shares 与需要账号会话的 /sync/v2/*) 一律留在平台认证之后。
     - /device/enroll
     - /agent/sync
     - /agent/current-url
     - /ws/device
+    - /share/public
 
   injects:
     - id: gateway-auth

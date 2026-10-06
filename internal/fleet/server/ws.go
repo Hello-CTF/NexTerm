@@ -96,7 +96,7 @@ func readDeviceHello(conn *websocket.Conn) (agent.HelloMessage, error) {
 // serveDeviceControl 注册控制通道并回复 hello_ok, 随后阻塞读直到连接结束;
 // 读只是保活探测 (ping 由 websocket 层自动应答), agent 合同里不再上行数据帧。
 func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMessage) {
-	s.registry.RegisterControl(hello.DeviceID, conn)
+	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest)
 	defer s.registry.UnregisterControl(hello.DeviceID, conn)
 	if err := writeControlJSON(context.Background(), conn, controlMessage{Type: "hello_ok"}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello ack failed")

@@ -20,7 +20,7 @@ type httpFixture struct {
 	client   *http.Client
 }
 
-func newHTTPFixture(t *testing.T, authOff bool) *httpFixture {
+func newHTTPFixture(t *testing.T, authOff bool, options ...Option) *httpFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -28,7 +28,7 @@ func newHTTPFixture(t *testing.T, authOff bool) *httpFixture {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	accounts := account.New(database.DB())
-	service, err := New(Config{DB: database.DB(), Accounts: accounts, AuthOff: authOff})
+	service, err := New(Config{DB: database.DB(), Accounts: accounts, AuthOff: authOff}, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
