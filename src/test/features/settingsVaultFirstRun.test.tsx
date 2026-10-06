@@ -105,7 +105,7 @@ describe("SettingsView 凭据保护首次初始化引导", () => {
     await waitForVaultText("未初始化");
 
     const text = vaultCard()?.textContent ?? "";
-    expect(text).toContain("勾选下方开关并设置保护密码即可完成初始化");
+    expect(text).toContain("打开这个开关并设置保护密码即可完成初始化");
     expect(text).toContain("初始化前无法保存任何密码或私钥");
     expect(text).not.toContain("无需密码");
   });

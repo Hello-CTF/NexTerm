@@ -218,7 +218,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
         {connectError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={connectError.message}>
-              「{connectError.asset.name}」连接失败:{connectError.message}
+              「{connectError.asset.name}」连接失败：{connectError.message}
             </span>
             <button
               type="button"
@@ -232,7 +232,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
         {!connectError && batchError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={batchError}>
-              可达性检测失败:{batchError}
+              可达性检测失败：{batchError}
             </span>
             <button
               type="button"
@@ -249,7 +249,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
         {assetsQuery.isError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={describeError(assetsQuery.error)}>
-              资产列表加载失败:{describeError(assetsQuery.error)}
+              资产列表加载失败：{describeError(assetsQuery.error)}
             </span>
             <button
               type="button"

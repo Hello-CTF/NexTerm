@@ -344,7 +344,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
       {hostsError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          读取主机列表失败:{hostsError}
+          读取主机列表失败：{hostsError}
           <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadHosts()}>
             重试
           </button>
@@ -403,7 +403,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
                 {sessionsError && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty text-red-300">
-                      读取终端历史失败:{sessionsError}
+                      读取终端历史失败：{sessionsError}
                     </td>
                   </tr>
                 )}
@@ -471,7 +471,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
           {(matches !== null || searchError) && (
             <div className="max-h-[140px] shrink-0 overflow-auto border-b border-neutral-800/60">
               {searchError && (
-                <div className="px-3 py-2 text-[12px] text-red-300">搜索失败:{searchError}</div>
+                <div className="px-3 py-2 text-[12px] text-red-300">搜索失败：{searchError}</div>
               )}
               {!searchError && matches !== null && matches.length === 0 && (
                 <div className="px-3 py-2 text-[12px] text-neutral-500">没有匹配的内容</div>
@@ -506,7 +506,7 @@ export function TranscriptHistoryPanel({ visible = true }: { visible?: boolean }
             {readerError && (
               <div className="flex h-full items-center justify-center gap-2 text-[12px] text-red-300">
                 <IconAlert size={13} />
-                读取终端记录失败:{readerError}
+                读取终端记录失败：{readerError}
               </div>
             )}
             {selected && !readerLoading && !readerError && (

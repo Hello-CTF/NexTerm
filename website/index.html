@@ -101,7 +101,7 @@
         <p>命令以卡片进入对话流，展开可见完整输出与退出码；危险操作一律拒绝，敏感操作先经确认。</p>
         <ul>
           <li>只读、读写、静默三档权限随时切换</li>
-          <li>终端接管可按任意键夺回</li>
+          <li>终端接管可按 Esc（可改键）随时夺回</li>
           <li>写文件前先看逐行 diff，改完留变更记录</li>
           <li>任意 OpenAI 兼容端点，密钥仅存本机</li>
         </ul>
@@ -136,7 +136,7 @@
       <div class="cell cell-w">
         <span class="tag">SECURITY</span>
         <h3>凭据只在本机</h3>
-        <p>两级密钥信封加密，日志自动脱敏；管理面板呈现引用关系与删除保护，支持 Windows DPAPI 免主密码模式。</p>
+        <p>两级密钥信封加密，日志自动脱敏；管理面板呈现引用关系与删除保护，支持 Windows DPAPI / macOS 钥匙串免主密码模式。</p>
         <ul>
           <li><code>主密码 → Argon2id → KEK → 信封加密 DEK → XChaCha20-Poly1305</code></li>
         </ul>
@@ -165,7 +165,7 @@
         <ul>
           <li>本地终端 · SSH · WinRM · 文件 · Docker · 数据库</li>
           <li>AI 助手：工具调用 · 权限护栏 · 终端接管</li>
-          <li>凭据落本机（DPAPI / 主密码）</li>
+          <li>凭据落本机（DPAPI / macOS 钥匙串 / 主密码）</li>
         </ul>
       </div>
       <div class="cell">
@@ -409,7 +409,7 @@
       </details>
       <details>
         <summary>凭据如何保护？</summary>
-        <div class="faq-body">主密码经 Argon2id 派生密钥，凭据以 XChaCha20-Poly1305 信封加密存储；可选 Windows DPAPI 免主密码模式；日志输出统一脱敏。</div>
+        <div class="faq-body">主密码经 Argon2id 派生密钥，凭据以 XChaCha20-Poly1305 信封加密存储；可选 Windows DPAPI / macOS 钥匙串免主密码模式；日志输出统一脱敏。</div>
       </details>
       <details>
         <summary>AI 助手接入什么模型？</summary>

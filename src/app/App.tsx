@@ -8,7 +8,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useUi,
   useActiveWorkspace,
@@ -50,9 +50,9 @@ import {
   type KeybindingActionId,
 } from "./keybindings";
 import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "./hostKeys";
-import { assetApi, dbApi, sessionApi, vaultApi, type Asset } from "../ipc/commands";
+import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
-import { DEMO, TRANSPORT } from "../demo";
+import { DEMO, TRANSPORT, WEB } from "../demo";
 import {
   isMac,
   isWailsDragRegionTarget,
@@ -426,6 +426,20 @@ export default function App() {
     uninitialized: false,
   });
   const [vaultProtectionSeq, setVaultProtectionSeq] = useState(0);
+  const syncLink = useQuery({
+    queryKey: ["sync-link"],
+    queryFn: () => syncApi.linkGet(),
+    enabled: !WEB,
+  });
+  const syncStatusText = WEB
+    ? "服务端：浏览器模式"
+    : syncLink.isError
+      ? "同步：不可用"
+      : syncLink.data === undefined
+        ? "同步：…"
+        : syncLink.data?.url
+          ? "同步：已配置"
+          : "同步：本地模式";
   const [wsMenu, setWsMenu] = useState<ContextMenuState | null>(null);
   const viewport = useWorkspaceViewport();
   useKeyboardInset();
@@ -1327,7 +1341,7 @@ export default function App() {
               <button
                 type="button"
                 className="nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hover:text-amber-200"
-                title="在「设置 > 凭据保护」中开启密码保护"
+                title="在「设置 → 凭据保护」中开启密码保护"
                 onClick={openVaultProtection}
               >
                 <IconLock size={11} />
@@ -1348,7 +1362,7 @@ export default function App() {
             )}
             <span className="nx-statusbar-truncate flex items-center gap-1.5">
               <IconNetwork size={11} />
-              同步：本地模式
+              {syncStatusText}
             </span>
             <span className="text-neutral-700">|</span>
             <button className="nx-link" onClick={openAudit}>

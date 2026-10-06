@@ -375,7 +375,7 @@ export function SettingsView() {
                 {vault?.mode === "master"
                   ? "开启：每次启动需输入密码后方可使用凭据。"
                   : vault?.mode === "not_init"
-                    ? "尚未初始化：勾选下方开关并设置保护密码即可完成初始化；初始化前无法保存任何密码或私钥。"
+                    ? "尚未初始化：打开这个开关并设置保护密码即可完成初始化；初始化前无法保存任何密码或私钥。"
                     : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
               </p>
             </div>
@@ -421,7 +421,7 @@ export function SettingsView() {
                     .initMaster(protPwd)
                     .then(() => {
                       setPendingEnable(false);
-                      pushToast("success", "已开启密码保护 · 下次启动生效");
+                      pushToast("success", "已开启密码保护");
                       return refreshVault();
                     })
                     .catch((e) => pushToast("error", describeError(e)))
