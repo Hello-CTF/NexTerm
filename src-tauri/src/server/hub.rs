@@ -76,6 +76,12 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// 通道断开回调：hub 只负责「告诉装配方某条通道断了」，不关心断开后干什么。
+///
+/// 抽成别名既是可读性，也让 `clippy::type_complexity` 闭嘴；`Option` 包一层后
+/// 仍满足 `Default`（`#[derive(Default)]` 不受影响）。
+type ChannelClosedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// 连接表。
 #[derive(Default)]
 pub struct WsHub {
@@ -100,7 +106,7 @@ pub struct WsHub {
     /// 用回调而不是让 hub 直接持有 `AppState`：本模块的边界是「连接表 + 通道路由」，
     /// 一旦让它认识会话与标签，hub 就得跟着内核的每次重构走。回调把「断开之后
     /// 该干什么」留给装配方（`server::serve`）。
-    on_channel_closed: Mutex<Option<Arc<dyn Fn(&str) + Send + Sync>>>,
+    on_channel_closed: Mutex<Option<ChannelClosedHook>>,
 }
 
 impl WsHub {
@@ -179,7 +185,7 @@ impl WsHub {
     }
 
     /// 注册「通道 WS 断开」回调（装配方在 `serve` 里调一次）。
-    pub fn set_on_channel_closed(&self, cb: Arc<dyn Fn(&str) + Send + Sync>) {
+    pub fn set_on_channel_closed(&self, cb: ChannelClosedHook) {
         *lock(&self.on_channel_closed) = Some(cb);
     }
 

@@ -6,10 +6,26 @@ members = ["src-tauri", "src-tauri/nexterm-ipc-macros"]
 resolver = "2"
 
 [profile.release]
+# ── release（交付档）：体积优先，组合经本轮实测 ──────────────────────
+#
+# 依据 docs/UPSTREAM-RWIG-GO-BRANCH-REVIEW.md §4.6.3 的同机实测（server 模式、darwin/arm64），
+# 本轮在 rust 分支复测（基线 17,108,880 B）：
+#
+#   lto="fat"                → 12,368,656 B（−27.7%）
+#   + codegen-units=1        → 11,324,880 B（−33.8%）  ← 最终采用
+#   + opt-level="z"          →  9,141,664 B（−46.6%）  ← **未采用，见下**
+#
+# ⚠️ 为什么不要 opt-level="z"：它会让终端引擎吞吐掉到 50 MB/s（opt-level="s" 约 77 MB/s，
+#    **−34%**）。实测 `cargo bench --bench terminal_throughput`：
+#      opt-level="s" ⇒ 76–77 MB/s；opt-level="z" ⇒ 49–51 MB/s
+#    终端吞吐是本产品的核心指标，不值得用 34% 的吞吐换那 2.2 MB。z 牺牲向量化是有代价的。
+#    （fat + cgu=1 对吞吐无可见影响：opt=s+fat+cgu1 ≈ opt=s+thin+cgu16。）
+#
+# lto="fat" 是单项收益最大的一刀（−27.7%），构建代价可控（实测冷重建约 2–3 分钟）。
 opt-level = "s"
-lto = "thin"
+lto = "fat"
 strip = true
-codegen-units = 16
+codegen-units = 1
 
 # panic 策略刻意保持 unwind（默认值），**不要改回 abort**。
 #

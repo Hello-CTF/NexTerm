@@ -111,3 +111,35 @@ jobs:
 
       - name: 前端 Lint
         run: pnpm lint
+
+  # 服务端 feature 的独立质量门（**本轮补的缺口**）。
+  #
+  # 为什么需要它：`quality` 里的 clippy 用 `--all-features`（= desktop + server 同时打开），
+  # 而服务端的全部实现都挂在 `cfg(not(feature = "desktop"))` 上 —— desktop 一旦打开，
+  # 服务端代码就**根本不参与编译**；`cargo test --workspace`（默认 feature = desktop）
+  # 同样测不到它。结果是**真正投递到懒猫微服的那半边代码，在 CI 里从未被编译或测试过**
+  # （release.yml 只在推 tag 时构建它，且只构建、不测试）。
+  #
+  # 跑在 ubuntu 而非 win/mac：服务端产物就是 linux/amd64（LPK），这里才是它的真实目标
+  # 平台，也避开 Windows 上 pty 等 unix-only 测试的假红。
+  server:
+    name: ubuntu · 服务端质量门
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust 测试（server feature）
+        run: cargo test -p nexterm --no-default-features --features server
+        working-directory: src-tauri
+
+      - name: Rust Clippy（server feature）
+        run: cargo clippy -p nexterm --no-default-features --features server --all-targets -- -D warnings
+        working-directory: src-tauri
