@@ -8,12 +8,13 @@
 // · 只读：没有写回，改东西回左栏与详情页，避免出现"文本是真相还是库是真相"；
 // · 不含明文：私钥/密码正文一律不出现，只标注来源（要看明文去详情页，那里有 15 秒打回）；
 // · 纯前端拼装：数据都来自已有的两个查询，不加内核命令 —— 这类展示不值得多一条 IPC。
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { assetApi, vaultApi, type Asset, type Credential } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { kindMeta, formatTime } from "./meta";
-import { IconCode, IconCopy, IconFile, IconRefresh } from "../../ui/icons";
+import { ExportAssetsModal } from "./ExportAssetsModal";
+import { IconCode, IconCopy, IconDownload, IconFile, IconRefresh } from "../../ui/icons";
 
 type ViewMode = "text" | "json";
 
@@ -31,6 +32,8 @@ export function CredentialsView({
 }) {
   const { pushToast } = useUi();
   const qc = useQueryClient();
+  /** 导出弹窗（多选 + 含明文密码）——与只读文本视图分开，见 ExportAssetsModal 注释。 */
+  const [exporting, setExporting] = useState(false);
 
   const assets = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), refetchOnWindowFocus: false });
   const creds = useQuery({ queryKey: ["credentials"], queryFn: () => vaultApi.listCredentials() });
@@ -85,6 +88,14 @@ export function CredentialsView({
         <button className="nx-btn nx-btn-sm" title="重新读取" onClick={refresh}>
           <IconRefresh size={12} />
         </button>
+        <button
+          className="nx-btn nx-btn-sm"
+          title="多选资产，导出为含明文密码的一行一条文本"
+          onClick={() => setExporting(true)}
+        >
+          <IconDownload size={12} />
+          导出到剪贴板
+        </button>
         <button className="nx-btn nx-btn-sm" onClick={() => void copy()}>
           <IconCopy size={12} />
           复制
@@ -102,8 +113,17 @@ export function CredentialsView({
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-1.5 text-[11px] text-neutral-600">
-        私钥与密码正文保存在凭据库中，这里只呈现结构与来源；需要明文请在凭据详情里点「显示」。
+        私钥与密码正文保存在凭据库中，这里只呈现结构与来源；需要明文请在凭据详情里点「显示」，
+        或经「导出到剪贴板」在选中资产上一次性取用。
       </div>
+
+      {exporting && (
+        <ExportAssetsModal
+          assets={list}
+          credentials={credentials}
+          onClose={() => setExporting(false)}
+        />
+      )}
     </div>
   );
 }
