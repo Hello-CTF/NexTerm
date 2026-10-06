@@ -611,7 +611,7 @@ describe("HITL interaction lifecycle", () => {
     expect(pendingInteraction(s.getState(), 1, "confirm")?.jobId).toBe("job-1");
   });
 
-  it("pure reducer mirrors clearInteractionIfMatch identity semantics", () => {
+  it("resolveInteraction settles only the card matching both id and nonce", () => {
     let state = createConversation();
     state = beginRun(state, 1);
     state = applyAiEvent(state, 1, confirmEvent("a", "na")).state;
