@@ -117,12 +117,6 @@ type Executor interface {
 	Execute(ctx context.Context, trigger Trigger) error
 }
 
-type ExecutorFunc func(context.Context, Trigger) error
-
-func (f ExecutorFunc) Execute(ctx context.Context, trigger Trigger) error {
-	return f(ctx, trigger)
-}
-
 const (
 	DefaultMaxJobsPerSession = 32
 	DefaultExecutionTimeout  = time.Minute

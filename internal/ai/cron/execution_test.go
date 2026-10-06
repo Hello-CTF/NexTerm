@@ -19,7 +19,7 @@ func TestOverlapIsBlockedLocallyAndByDurableLease(t *testing.T) {
 	release := make(chan struct{})
 	var active atomic.Int32
 	var maximum atomic.Int32
-	executor := ExecutorFunc(func(_ context.Context, trigger Trigger) error {
+	executor := executorFunc(func(_ context.Context, trigger Trigger) error {
 		current := active.Add(1)
 		for old := maximum.Load(); current > old && !maximum.CompareAndSwap(old, current); old = maximum.Load() {
 		}
@@ -66,7 +66,7 @@ func TestExecutionTimeoutPersistsFailureAndBackoff(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(ctx context.Context, _ Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(ctx context.Context, _ Trigger) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}), clock)
@@ -104,7 +104,7 @@ func TestFailureBackoffAndCircuitWindow(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	var calls atomic.Int32
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error {
 		calls.Add(1)
 		return errors.New("injected executor failure")
 	}), clock, func(options *Options) {
@@ -156,7 +156,7 @@ func TestConcurrentClaimHasSingleWinner(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	var calls atomic.Int32
-	executor := ExecutorFunc(func(context.Context, Trigger) error {
+	executor := executorFunc(func(context.Context, Trigger) error {
 		calls.Add(1)
 		return nil
 	})

@@ -11,7 +11,7 @@ func TestRegisterPersistsAndBoundsEachSession(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 30, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock, func(options *Options) {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock, func(options *Options) {
 		options.MaxJobsPerSession = 2
 	})
 	registerTestJob(t, scheduler, "a-1", "session-a")
@@ -35,7 +35,7 @@ func TestSessionReadsNeverDeleteOtherJobs(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	registerTestJob(t, scheduler, "a", "session-a")
 	registerTestJob(t, scheduler, "b", "session-b")
 
@@ -68,7 +68,7 @@ func TestMissedOccurrencesCoalesceAndCheckpoint(t *testing.T) {
 	start := time.Date(2026, time.January, 1, 0, 0, 30, 0, time.UTC)
 	clock := newFakeClock(start)
 	triggers := make(chan Trigger, 2)
-	scheduler := testScheduler(t, store, ExecutorFunc(func(_ context.Context, trigger Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(_ context.Context, trigger Trigger) error {
 		triggers <- trigger
 		return nil
 	}), clock)
@@ -102,7 +102,7 @@ func TestRegistrationSkipsSpringForwardGapWithTimeout(t *testing.T) {
 	}
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.March, 7, 2, 30, 0, 0, location))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	registration := testRegistration("session")
 	registration.ID = "spring-registration"
 	registration.Schedule = "30 2 * * *"
@@ -133,7 +133,7 @@ func TestRegistrationSkipsSpringForwardGapWithTimeout(t *testing.T) {
 func TestRegistrationBoundsCalendarSearchWithTimeout(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	registration := testRegistration("session")
 	registration.ID = "impossible-calendar-date"
 	registration.Schedule = "0 0 30 2 *"
@@ -162,7 +162,7 @@ func TestPollingCheckpointSkipsSpringForwardGapWithTimeout(t *testing.T) {
 	}
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.March, 6, 2, 30, 0, 0, location))
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	registration := testRegistration("session")
 	registration.ID = "spring-polling"
 	registration.Schedule = "30 2 * * *"
@@ -191,7 +191,7 @@ func TestFallBackPollingDoesNotDuplicateExecution(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.October, 31, 1, 30, 0, 0, location))
 	calls := make(chan string, 2)
-	scheduler := testScheduler(t, store, ExecutorFunc(func(_ context.Context, trigger Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(_ context.Context, trigger Trigger) error {
 		calls <- trigger.RunID
 		return nil
 	}), clock)
@@ -261,7 +261,7 @@ func TestDisableAndReenableSkipsDisabledOccurrences(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	calls := 0
-	scheduler := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error {
 		calls++
 		return nil
 	}), clock)

@@ -13,7 +13,7 @@ func TestZeroCGOSchedulerEndToEnd(t *testing.T) {
 	store := newMemoryStore()
 	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	executed := make(chan string, 1)
-	scheduler := testScheduler(t, store, ExecutorFunc(func(_ context.Context, trigger Trigger) error {
+	scheduler := testScheduler(t, store, executorFunc(func(_ context.Context, trigger Trigger) error {
 		executed <- trigger.JobID
 		return nil
 	}), clock)
@@ -26,7 +26,7 @@ func TestZeroCGOSchedulerEndToEnd(t *testing.T) {
 	if id := <-executed; id != "zero-cgo-job" {
 		t.Fatalf("executed job = %q", id)
 	}
-	restarted := testScheduler(t, store, ExecutorFunc(func(context.Context, Trigger) error { return nil }), clock)
+	restarted := testScheduler(t, store, executorFunc(func(context.Context, Trigger) error { return nil }), clock)
 	job, err := restarted.Get(ctx, "session", "zero-cgo-job")
 	if err != nil || job.Running() || job.LastRunAt.IsZero() {
 		t.Fatalf("durable job after restart = %+v, %v", job, err)
