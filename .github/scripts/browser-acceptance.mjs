@@ -153,11 +153,36 @@ class CDP {
   async evaluate(expression) {
     const response = await this.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture: true });
     if (response.exceptionDetails) {
-      const exception = response.exceptionDetails.exception;
-      const value = typeof exception?.value === "object" ? JSON.stringify(exception.value) : exception?.value;
-      throw new Error(exception?.description || value || JSON.stringify(response.exceptionDetails));
+      throw new Error(await this.describeException(response.exceptionDetails));
     }
     return response.result?.value;
+  }
+
+  async describeException(details) {
+    const exception = details.exception ?? {};
+    let headline;
+    if (typeof exception.value === "string") {
+      headline = exception.value;
+    } else if (exception.value !== undefined && exception.value !== null && typeof exception.value === "object") {
+      headline = JSON.stringify(exception.value);
+    } else {
+      headline = exception.description || details.text || exception.className || "page exception";
+    }
+    const lines = [headline];
+    if (exception.objectId && exception.value === undefined) {
+      try {
+        const properties = await this.send("Runtime.getProperties", { objectId: exception.objectId, ownProperties: true });
+        const preview = (properties.result || [])
+          .filter((property) => property.value !== undefined)
+          .slice(0, 12)
+          .map((property) => `${property.name}=${JSON.stringify(property.value.value ?? property.value.description ?? property.value.type)}`);
+        if (preview.length > 0) lines.push(`thrown value properties: { ${preview.join(", ")} }`);
+      } catch {}
+    }
+    for (const frame of details.stackTrace?.callFrames ?? []) {
+      lines.push(`    at ${frame.functionName || "<anonymous>"} (${frame.url}:${frame.lineNumber + 1}:${frame.columnNumber + 1})`);
+    }
+    return lines.join("\n");
   }
 
   async waitFor(expression, timeout = 30_000) {
@@ -232,14 +257,19 @@ async function startServer() {
   }
   const port = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-browser-server-"));
+  const env = { ...globalThis.process.env, NEXTERM_MASTER_KEY: "real-browser-e2e-master" };
+  const token = spawnSync(binary, ["token", "--data-dir", data], { cwd: ROOT, env, encoding: "utf8" });
+  if (token.status !== 0) throw new Error(`nexterm-server token failed: ${(token.stderr || token.stdout || "").slice(-400)}`);
+  const syncToken = (token.stdout || "").trim();
+  if (!syncToken || syncToken.includes("\n")) throw new Error(`nexterm-server token returned malformed stdout: ${JSON.stringify(token.stdout)}`);
   const log = fs.openSync(path.join(OUT, "server.log"), "w");
   const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data], {
     cwd: ROOT,
-    env: { ...globalThis.process.env, NEXTERM_MASTER_KEY: "real-browser-e2e-master" },
+    env,
     stdio: ["ignore", log, log],
   });
   await waitHttp(`http://127.0.0.1:${port}/healthz`, process);
-  return { process, port, origin: `http://127.0.0.1:${port}`, data };
+  return { process, port, origin: `http://127.0.0.1:${port}`, data, token: syncToken };
 }
 
 async function metrics(page, width, height, coarse) {
@@ -333,6 +363,7 @@ async function wsAcceptance(page, server) {
     const commands = await import('${VITE}/src/ipc/commands.ts');
     const events = await import('${VITE}/src/ipc/events.ts');
     const serverAuth = await import('${VITE}/src/ipc/serverAuth.ts');
+    serverAuth.setServerToken(${JSON.stringify(server.token)});
     serverAuth.registerServerTokenPrompter(async () => null);
     const state = window.__nxAcceptance = { commands, events, frames: 0, text: '', reopened: 0, reconnectAttached: 0 };
     state.channel = events.createBinaryChannel((bytes) => {
@@ -393,7 +424,7 @@ async function wsAcceptance(page, server) {
   });
 }
 
-async function rpcAcceptance(page) {
+async function rpcAcceptance(page, server) {
   for (const status of [401, 403, 404]) {
     await pass(`rpc-${status}-non-retry`, async () => {
       let attempts = 0;
@@ -422,6 +453,11 @@ async function rpcAcceptance(page) {
     });
   }
   await pass("rpc-network-5xx-jitter-recovery", async () => {
+    await page.evaluate(`(async () => {
+      const serverAuth = await import('${VITE}/src/ipc/serverAuth.ts');
+      serverAuth.setServerToken(${JSON.stringify(server.token)});
+      return true;
+    })()`);
     const attempts = { network: 0, server500: 0 };
     let mode = "network";
     const off = page.on("Fetch.requestPaused", (event) => {
@@ -466,7 +502,7 @@ try {
   page = await newPage(chrome);
   try { await layoutAcceptance(page); } catch (error) { harnessErrors.push(`layout harness: ${error.stack || error}`); }
   try { await wsAcceptance(page, server); } catch (error) { harnessErrors.push(`WS harness: ${error.stack || error}`); }
-  try { await rpcAcceptance(page); } catch (error) { harnessErrors.push(`RPC harness: ${error.stack || error}`); }
+  try { await rpcAcceptance(page, server); } catch (error) { harnessErrors.push(`RPC harness: ${error.stack || error}`); }
   await page.evaluate(`(async () => {
     const s = window.__nxAcceptance;
     if (!s) return true;

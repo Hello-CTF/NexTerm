@@ -23,6 +23,7 @@ import (
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
+	"github.com/coder/websocket"
 )
 
 type syncBuffer struct {
@@ -217,6 +218,53 @@ func TestServerProcessAuthDefaultsOn(t *testing.T) {
 
 	token := runServerToken(t, binary, dataDir, "token")
 	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, &token)
+}
+
+func TestServerProcessTokenAuthenticatesRPCAndWebSocket(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	process, address := startServerProcess(t, binary, dataDir, false)
+	defer process.stop(t)
+	waitForHealth(t, process, address)
+	token := runServerToken(t, binary, dataDir, "token")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	requestRPCPath(t, client, address, "/rpc", "app_platform", nil, &token)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws://" + address
+
+	connection, response, err := websocket.Dial(ctx, wsURL+"/ws/channel/browser-acceptance", nil)
+	if err == nil {
+		connection.Close(websocket.StatusNormalClosure, "")
+		t.Fatal("tokenless channel websocket was accepted")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("tokenless channel websocket response = %+v", response)
+	}
+	if response != nil {
+		response.Body.Close()
+	}
+
+	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/channel/browser-acceptance", &websocket.DialOptions{
+		Subprotocols: []string{"nexterm", token},
+	})
+	if err != nil {
+		t.Fatalf("channel websocket with sync token: %v", response)
+	}
+	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != "nexterm" {
+		t.Fatalf("negotiated subprotocol = %q", got)
+	}
+	_ = connection.Close(websocket.StatusNormalClosure, "")
+
+	connection, response, err = websocket.Dial(ctx, wsURL+"/ws/events", &websocket.DialOptions{
+		Subprotocols: []string{"nexterm", token},
+	})
+	if err != nil {
+		t.Fatalf("events websocket with sync token: %v", response)
+	}
+	_ = connection.Close(websocket.StatusNormalClosure, "")
 }
 
 func TestServerProcessRequireVault(t *testing.T) {
