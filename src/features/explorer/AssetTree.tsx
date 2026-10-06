@@ -147,6 +147,17 @@ export function AssetTree() {
   });
 
   const filtered = query.trim() ? (results.data ?? []) : (assets.data ?? []);
+  const listError = query.trim()
+    ? results.isError
+      ? results.error
+      : null
+    : assets.isError
+      ? assets.error
+      : null;
+  const retryList = () => {
+    if (query.trim()) void results.refetch();
+    else void assets.refetch();
+  };
   const isHidden = (id: string) => hiddenIds.includes(id);
   const visible = filtered.filter((a) => showHidden || !isHidden(a.id));
 
@@ -360,14 +371,14 @@ export function AssetTree() {
       >
         {assets.isPending ? (
           <AssetTreeSkeleton />
-        ) : assets.isError && !query.trim() ? (
+        ) : listError ? (
           <div role="alert" className="px-2 py-8 text-center">
             <div className="flex items-center justify-center gap-1.5 text-[12px] text-red-400">
-              <IconXCircle size={13} /> 加载失败：{describeError(assets.error)}
+              <IconXCircle size={13} /> 加载失败：{describeError(listError)}
             </div>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm mt-3"
-              onClick={() => void assets.refetch()}
+              onClick={retryList}
             >
               重试
             </button>

@@ -292,6 +292,34 @@ describe("asset list load failure", () => {
     expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  it("shows a search failure with retry, keeps the query, and recovers", async () => {
+    mocks.list.mockResolvedValue([{ ...WEB }]);
+    mocks.groupList.mockResolvedValue([]);
+    mocks.search
+      .mockRejectedValueOnce({ code: "internal", message: "search down" })
+      .mockResolvedValueOnce([{ ...WEB }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+
+    const searchInput = mounted!.container.querySelector<HTMLInputElement>(
+      'input[placeholder="搜索资产 / 主机 / 用户"]',
+    );
+    if (!searchInput) throw new Error("Search input not found");
+    setInputValue(searchInput, "web");
+
+    await waitFor(() =>
+      expect(mounted!.container.textContent).toContain("加载失败：内部错误：search down"),
+    );
+    expect(mounted!.container.textContent).not.toContain("没有匹配的资产");
+    expect(searchInput.value).toBe("web");
+
+    clickButton(mounted!.container, "重试");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("web-1"));
+    expect(mocks.search).toHaveBeenCalledTimes(2);
+    expect(searchInput.value).toBe("web");
+    expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
+  });
 });
 
 describe("asset delete failure", () => {
