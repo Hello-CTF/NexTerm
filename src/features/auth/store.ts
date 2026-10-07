@@ -159,7 +159,9 @@ export const useAuth = create<AuthState>((set, get) => ({
         return;
       }
       if (!status.initialized) {
-        set({ gate: "setup", user: null });
+        // auth=on 必须先完成超管初始化; loopback 免登录部署允许匿名继续用,
+        // 想要账号的用户在设置页账号卡里有显式初始化入口。
+        set({ user: null, gate: status.auth === "on" ? "setup" : "ready" });
         syncPreferenceStore(false);
         return;
       }
@@ -225,7 +227,14 @@ export const useAuth = create<AuthState>((set, get) => ({
     try {
       const { fields, recovery } = await buildEnvelopes(password, dek);
       const session = await authApi.init({ code, username, password, ...fields });
-      set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });
+      const status = get().status;
+      set({
+        user: session.user,
+        dek,
+        gate: "ready",
+        pendingRecoveryKey: recovery,
+        ...(status ? { status: { ...status, initialized: true } } : {}),
+      });
       syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);

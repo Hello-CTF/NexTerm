@@ -169,6 +169,68 @@ describe("AuthGate 首次初始化", () => {
   });
 });
 
+describe("AuthGate loopback 免登录", () => {
+  it("未初始化的 loopback 实例直接进入应用,不弹初始化门", async () => {
+    mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "loopback" });
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(useAuth.getState().gate).toBe("ready");
+    expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
+    expect(mounted.container.textContent ?? "").not.toContain("初始化 NexTerm");
+    expect(mocks.me).not.toHaveBeenCalled();
+  });
+
+  it("已初始化 loopback 未登录:匿名 ready,不弹登录门", async () => {
+    mocks.status.mockResolvedValue({ initialized: true, registration_open: false, auth: "loopback" });
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(useAuth.getState().gate).toBe("ready");
+    expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
+  });
+
+  it("loopback 未初始化可从设置入口打开初始化表单,并可退回匿名使用", async () => {
+    mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "loopback" });
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+
+    // 设置页账号卡的「初始化账号」入口
+    useAuth.setState({ gate: "setup" });
+    await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
+    clickButton(mounted.container, "暂不初始化,匿名使用");
+    await flushUntil(() => useAuth.getState().gate === "ready");
+    expect(mounted.container.querySelector(".fixed.inset-0")).toBeNull();
+  });
+
+  it("auth=on 未初始化的初始化门没有匿名出口", async () => {
+    mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "on" });
+    mounted = mountGate();
+    await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
+    const skip = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("暂不初始化"));
+    expect(skip).toBeUndefined();
+  });
+
+  it("loopback 初始化成功后 status.initialized 同步为 true", async () => {
+    mocks.status.mockResolvedValue({ initialized: false, registration_open: false, auth: "loopback" });
+    mounted = mountGate();
+    await flushUntil(() => useAuth.getState().gate === "ready");
+
+    useAuth.setState({ gate: "setup" });
+    await flushUntil(() => mounted!.container.textContent?.includes("初始化 NexTerm"));
+    const inputs = mounted.container.querySelectorAll("input");
+    setInputValue(inputs[0], "console-init-code");
+    setInputValue(inputs[1], "root");
+    setInputValue(inputs[2], "pw-123456");
+    setInputValue(inputs[3], "pw-123456");
+    await flush();
+    clickButton(mounted.container, "创建超级管理员");
+
+    await flushUntil(() => mocks.init.mock.calls.length > 0);
+    await flushUntil(() => useAuth.getState().status?.initialized === true);
+    expect(useAuth.getState().gate).toBe("ready");
+    await flushUntil(() => mounted!.container.textContent?.includes("恢复密钥(只显示这一次)"));
+  });
+});
+
 describe("AuthGate 恢复密钥全屏门", () => {
   it("恢复密钥页在同一全屏门内,复制前不能进入", async () => {
     useAuth.setState({

@@ -112,6 +112,29 @@ export function AuthCard() {
   if (!user) {
     // 桌面端没有账号门,登录按钮只会打开一个不存在的门:整卡不渲染,登录入口在 SyncCard。
     if (!authAvailable()) return null;
+    if (status && !status.initialized) {
+      // 未初始化(loopback 免登录实例匿名可直达这里): 显式初始化入口,供想要账号的用户使用。
+      return (
+        <section className="nx-card">
+          <div className="mb-1 flex items-center gap-2">
+            <IconKey size={15} className="text-neutral-400" />
+            <span className="nx-card-title">账号</span>
+          </div>
+          <p className="nx-hint mb-3">
+            这台服务器还没有任何账号{status.auth === "loopback" ? ",当前允许匿名使用" : ""}。
+            初始化后创建超级管理员,资产、分组、片段会端到端加密同步到你的账号,在其他设备上可用;
+            也可以继续匿名本地使用。
+          </p>
+          <button
+            className="nx-btn nx-btn-primary nx-btn-sm"
+            onClick={() => useAuth.setState({ gate: "setup" })}
+          >
+            <IconShield size={12} />
+            初始化账号
+          </button>
+        </section>
+      );
+    }
     return (
       <section className="nx-card">
         <div className="mb-1 flex items-center gap-2">

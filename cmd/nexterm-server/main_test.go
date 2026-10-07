@@ -219,6 +219,51 @@ func TestServerProcessAuthDefaultsOn(t *testing.T) {
 	}
 }
 
+// TestServerProcessLoopbackUninitializedLoginFree 守住 M196 合同(M202):
+// 全新数据目录 + --auth=loopback 的实例未初始化即免登录 —— /auth/status 上报
+// loopback 且 initialized=false, /rpc 匿名可用; 显式初始化路径保留, 初始化后
+// 账号路由仍要求会话(/auth/me 匿名 401), 模式仍上报 loopback。
+func TestServerProcessLoopbackUninitializedLoginFree(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	process, address := startServerProcess(t, binary, dataDir, false, "--auth=loopback")
+	defer process.stop(t)
+	waitForHealth(t, process, address)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	getStatus := func() (int, map[string]any) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+address+"/auth/status", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, body
+	}
+
+	code, body := getStatus()
+	if code != http.StatusOK || body["initialized"] != false || body["auth"] != "loopback" {
+		t.Fatalf("fresh loopback status=%d body=%v", code, body)
+	}
+	requestRPCPath(t, client, address, "/rpc", "app_platform", nil)
+	requestURL(t, client, "http://"+address+"/auth/me", http.MethodGet, nil, nil, http.StatusUnauthorized)
+
+	initSuperadminThroughProcess(t, process, address, "alice", "alice-pw-123")
+	code, body = getStatus()
+	if code != http.StatusOK || body["initialized"] != true || body["auth"] != "loopback" {
+		t.Fatalf("initialized loopback status=%d body=%v", code, body)
+	}
+	requestURL(t, client, "http://"+address+"/auth/me", http.MethodGet, nil, nil, http.StatusUnauthorized)
+}
+
 func TestServerProcessRequireVault(t *testing.T) {
 	binary := buildServerBinary(t)
 	dataDir := t.TempDir()
