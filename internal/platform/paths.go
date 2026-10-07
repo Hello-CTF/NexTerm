@@ -31,7 +31,7 @@ func DesktopPaths(override string) (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	dataDir, err := desktopDataDir(runtime.GOOS, home, os.Getenv)
+	dataDir, err := desktopDataDir(runtime.GOOS, home)
 	if err != nil {
 		return Paths{}, err
 	}
@@ -64,31 +64,13 @@ func (p Paths) Prepare() error {
 	return os.MkdirAll(p.LogDir, 0o700)
 }
 
-func desktopDataDir(goos, home string, getenv func(string) string) (string, error) {
+func desktopDataDir(goos, home string) (string, error) {
 	switch goos {
-	case "darwin":
+	case "darwin", "linux", "windows":
 		if home == "" {
 			return "", fmt.Errorf("home directory is empty")
 		}
-		return filepath.Join(home, "Library", "Application Support", "NexTerm"), nil
-	case "windows":
-		base := getenv("APPDATA")
-		if base == "" && home != "" {
-			base = filepath.Join(home, "AppData", "Roaming")
-		}
-		if base == "" {
-			return "", fmt.Errorf("APPDATA is not set")
-		}
-		return filepath.Join(base, "NexTerm"), nil
-	case "linux":
-		base := getenv("XDG_DATA_HOME")
-		if base == "" && home != "" {
-			base = filepath.Join(home, ".local", "share")
-		}
-		if base == "" {
-			return "", fmt.Errorf("XDG_DATA_HOME is not set and home directory is empty")
-		}
-		return filepath.Join(base, "NexTerm"), nil
+		return filepath.Join(home, ".config", "nexterm"), nil
 	default:
 		return "", fmt.Errorf("unsupported desktop OS %s", goos)
 	}

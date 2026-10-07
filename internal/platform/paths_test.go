@@ -5,27 +5,57 @@ import (
 	"testing"
 )
 
-func TestDesktopDataDirPreservesExistingOSPaths(t *testing.T) {
+func TestDesktopDataDirDefaultsToConfigHome(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator), "home", "user")
-	for _, test := range []struct {
-		goos string
-		env  map[string]string
-		want string
-	}{
-		{goos: "darwin", want: filepath.Join(home, "Library", "Application Support", "NexTerm")},
-		{goos: "windows", env: map[string]string{"APPDATA": filepath.Join(home, "Roaming")}, want: filepath.Join(home, "Roaming", "NexTerm")},
-		{goos: "windows", want: filepath.Join(home, "AppData", "Roaming", "NexTerm")},
-		{goos: "linux", env: map[string]string{"XDG_DATA_HOME": filepath.Join(home, "xdg")}, want: filepath.Join(home, "xdg", "NexTerm")},
-		{goos: "linux", want: filepath.Join(home, ".local", "share", "NexTerm")},
-	} {
-		getenv := func(key string) string { return test.env[key] }
-		got, err := desktopDataDir(test.goos, home, getenv)
+	want := filepath.Join(home, ".config", "nexterm")
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		got, err := desktopDataDir(goos, home)
 		if err != nil {
-			t.Fatalf("%s: %v", test.goos, err)
+			t.Fatalf("%s: %v", goos, err)
 		}
-		if got != test.want {
-			t.Fatalf("%s = %q, want %q", test.goos, got, test.want)
+		if got != want {
+			t.Fatalf("%s = %q, want %q", goos, got, want)
 		}
+	}
+}
+
+func TestDesktopDataDirRequiresHome(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		if _, err := desktopDataDir(goos, ""); err == nil {
+			t.Fatalf("%s: expected error for empty home", goos)
+		}
+	}
+}
+
+func TestDesktopDataDirRejectsUnsupportedOS(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), "home", "user")
+	if _, err := desktopDataDir("plan9", home); err == nil {
+		t.Fatal("expected error for unsupported OS")
+	}
+}
+
+func TestDesktopPathsOverrideWins(t *testing.T) {
+	override := filepath.Join(string(filepath.Separator), "custom")
+	got, err := DesktopPaths(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := NewPaths(override); got != want {
+		t.Fatalf("DesktopPaths(%q) = %+v, want %+v", override, got, want)
+	}
+}
+
+func TestNewPathsDerivesLogsAndDatabaseUnderDataDir(t *testing.T) {
+	dataDir := filepath.Join(string(filepath.Separator), "home", "user", ".config", "nexterm")
+	got := NewPaths(dataDir)
+	if got.LogDir != filepath.Join(dataDir, "logs") {
+		t.Fatalf("LogDir = %q", got.LogDir)
+	}
+	if got.LogFile != filepath.Join(dataDir, "logs", "nexterm.log") {
+		t.Fatalf("LogFile = %q", got.LogFile)
+	}
+	if got.DatabaseFile != filepath.Join(dataDir, "data.db") {
+		t.Fatalf("DatabaseFile = %q", got.DatabaseFile)
 	}
 }
 
