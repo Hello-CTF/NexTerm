@@ -39,9 +39,14 @@ const behavior: {
   attachError?: string;
   expectDigest?: string;
   helloErrorFrom?: number;
+  helloHangFrom?: number;
   createDefer?: boolean;
   killSessionError?: string;
 } = {};
+
+// lastCreateId 记录 fake 服务端最近一次 create 的会话 id (create 帧客户端
+// 生成稳定 id+attempt, Created 按合同回显同一 id)。
+let lastCreateId = "s-1";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -53,6 +58,7 @@ class FakeWebSocket {
   readonly sent: Uint8Array[] = [];
   binaryType = "";
   readyState = 1;
+  private createPending = false;
   private parser = new SupervisorFrameParser();
   private listeners = new Map<string, ((event: unknown) => void)[]>();
 
@@ -123,6 +129,7 @@ class FakeWebSocket {
           state_digest?: string;
         };
         const index = FakeWebSocket.instances.indexOf(this) + 1;
+        if (behavior.helloHangFrom !== undefined && index >= behavior.helloHangFrom) return;
         const helloError =
           behavior.helloError ??
           (behavior.helloErrorFrom !== undefined && index >= behavior.helloErrorFrom ? "internal" : undefined);
@@ -141,24 +148,34 @@ class FakeWebSocket {
         this.serverJSON(SupervisorFrameKind.HelloAck, { version: SUPERVISOR_PROTOCOL_VERSION });
         return;
       }
-      case SupervisorFrameKind.Create:
+      case SupervisorFrameKind.Create: {
+        const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
+        lastCreateId = msg.id;
+        const info = { ...INFO, id: msg.id };
         if (behavior.createDefer) {
-          setTimeout(() => this.serverJSON(SupervisorFrameKind.Created, INFO), 0);
+          // 服务端按序处理: create 响应 (Created) 未发出前, 后续帧的响应都排在
+          // 它之后; 这里延迟期间不响应后续帧, Created 延迟发出 (客户端可能已关闭)
+          this.createPending = true;
+          setTimeout(() => {
+            this.createPending = false;
+            this.serverJSON(SupervisorFrameKind.Created, info);
+          }, 0);
           return;
         }
-        this.serverJSON(SupervisorFrameKind.Created, INFO);
+        this.serverJSON(SupervisorFrameKind.Created, info);
         return;
+      }
       case SupervisorFrameKind.Attach: {
         if (behavior.attachError) {
           this.serverJSON(SupervisorFrameKind.Error, { code: behavior.attachError, message: behavior.attachError });
           return;
         }
         const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
-        if (msg.id !== INFO.id) {
+        if (msg.id !== lastCreateId && msg.id !== INFO.id) {
           this.serverJSON(SupervisorFrameKind.Error, { code: "not_found", message: "not found" });
           return;
         }
-        this.serverJSON(SupervisorFrameKind.Attached, INFO);
+        this.serverJSON(SupervisorFrameKind.Attached, { ...INFO, id: msg.id });
         return;
       }
       case SupervisorFrameKind.Input:
@@ -169,6 +186,8 @@ class FakeWebSocket {
           this.serverJSON(SupervisorFrameKind.Error, { code: behavior.killSessionError, message: "reap failed" });
           return;
         }
+        // create 响应在途: killSession 的 OK 按序排在 Created 之后, 客户端已关闭读不到
+        if (this.createPending) return;
         this.serverJSON(SupervisorFrameKind.OK, {});
         return;
       case SupervisorFrameKind.Resize:
@@ -200,8 +219,10 @@ beforeEach(() => {
   behavior.attachError = undefined;
   behavior.expectDigest = undefined;
   behavior.helloErrorFrom = undefined;
+  behavior.helloHangFrom = undefined;
   behavior.createDefer = undefined;
   behavior.killSessionError = undefined;
+  lastCreateId = "s-1";
 });
 
 describe("supervisor 帧编解码", () => {
@@ -296,11 +317,13 @@ describe("DeviceBridge hello 协商", () => {
 });
 
 describe("DeviceBridge 会话流程", () => {
-  it("create 发送命令与尺寸, 返回会话信息", async () => {
+  it("create 发送稳定 id+attempt 与命令尺寸, 返回会话信息", async () => {
     const bridge = await DeviceBridge.connect("d-1", "digest-1", { factory });
-    const info = await bridge.create({ cols: 80, rows: 24 });
+    const info = await bridge.create({ id: "s-1", attempt: "a-1", cols: 80, rows: 24 });
     expect(info).toEqual(INFO);
     expect(FakeWebSocket.instances[0].sentJSON(SupervisorFrameKind.Create)).toEqual({
+      id: "s-1",
+      attempt: "a-1",
       command: [],
       cols: 80,
       rows: 24,
@@ -422,9 +445,16 @@ describe("openDeviceTerminal / resumeDeviceTerminal", () => {
       factory,
     });
     expect(FakeWebSocket.instances).toHaveLength(2);
-    expect(info.id).toBe("s-1");
+    // create 携带客户端生成的稳定 id+attempt (Go client Create 同一合同),
+    // Created 回显同一 id, attach 复用该 id
+    const creator = FakeWebSocket.instances[0];
+    const createMsg = creator.sentJSON(SupervisorFrameKind.Create) as { id: string; attempt: string };
+    expect(createMsg.id).toMatch(/^[0-9A-Za-z]{26}$/);
+    expect(createMsg.attempt).toMatch(/^[0-9A-Za-z]{26}$/);
+    expect(info.id).toBe(createMsg.id);
     expect(identity.incarnation).toBe("inc-1");
     expect(identity.createdAtUnixNano).toBe(CREATED_AT_NS);
+    expect(FakeWebSocket.instances[1].sentJSON(SupervisorFrameKind.Attach)).toMatchObject({ id: createMsg.id });
     bridge.detach();
   });
 
@@ -436,10 +466,13 @@ describe("openDeviceTerminal / resumeDeviceTerminal", () => {
     // 只有 creator + attach 两条连接; killSession 走 creator (instances[0])
     expect(FakeWebSocket.instances).toHaveLength(2);
     const creator = FakeWebSocket.instances[0];
+    const createMsg = creator.sentJSON(SupervisorFrameKind.Create) as { id: string };
     expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
-    expect(creator.sentPayloadText(SupervisorFrameKind.KillSession)).toBe(
-      `{"id":"s-1","expect_incarnation":"inc-1","expect_created_at_unix_nano":${CREATED_AT_NS.toString()}}`,
-    );
+    expect(creator.sentJSON(SupervisorFrameKind.KillSession)).toEqual({
+      id: createMsg.id,
+      expect_incarnation: "inc-1",
+      expect_created_at_unix_nano: Number(CREATED_AT_NS),
+    });
   });
 
   it("attach connect 失败 (hello 被拒) 时同样用 creator 旧连接回收", async () => {
@@ -468,7 +501,7 @@ describe("openDeviceTerminal / resumeDeviceTerminal", () => {
     expect(error).toMatchObject({ reapError: { code: "unavailable" } });
   });
 
-  it("create 阶段取消: 关闭 creator 中断挂起, 不再发 create 后的帧", async () => {
+  it("create 结果不确定时取消: 按 attempt 回收而非零回收", async () => {
     behavior.createDefer = true;
     const box: { cancel?: () => void } = {};
     const promise = openDeviceTerminal({
@@ -487,11 +520,43 @@ describe("openDeviceTerminal / resumeDeviceTerminal", () => {
     box.cancel?.();
     await expect(promise).rejects.toMatchObject({ code: "closed" });
     await tick();
-    // creator 被关闭, 没有进入 attach, 也没有产生 killSession (create 未成功)
+    // 服务端可能已完成 create 而 Created 未交付 (服务端 context.Background
+    // 完成, 回包 best-effort): 取消按 id+attempt 回收, 不是零回收
+    const createMsg = creator.sentJSON(SupervisorFrameKind.Create) as { id: string; attempt: string };
+    const reap = creator.sentJSON(SupervisorFrameKind.KillSession) as { id: string; attempt: string };
+    expect(reap).toEqual({ id: createMsg.id, attempt: createMsg.attempt });
     expect(creator.readyState).toBe(3);
     expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.Attach)).toBe(false);
-    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(false);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("attach 连接 CONNECTING/hello 挂起: 取消关闭 attach 解锁, creator 完成 killSession, 两条 WS 均关闭", async () => {
+    behavior.helloHangFrom = 2;
+    const box: { cancel?: () => void } = {};
+    const promise = openDeviceTerminal({
+      deviceId: "d-1",
+      stateDigest: "digest-1",
+      cols: 80,
+      rows: 24,
+      factory,
+      onCancel: (fn) => {
+        box.cancel = fn ?? undefined;
+      },
+    });
+    while (FakeWebSocket.instances.length < 2) await tick();
+    // create 已成功, 第二条 attach 连接在 hello 期挂起
+    box.cancel?.();
+    await expect(promise).rejects.toMatchObject({ code: "closed" });
+    await tick();
+    const creator = FakeWebSocket.instances[0];
+    const createMsg = creator.sentJSON(SupervisorFrameKind.Create) as { id: string };
+    expect(creator.sentJSON(SupervisorFrameKind.KillSession)).toEqual({
+      id: createMsg.id,
+      expect_incarnation: "inc-1",
+      expect_created_at_unix_nano: Number(CREATED_AT_NS),
+    });
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
   });
 
   it("resume 用期望身份重attach, output 从 seq 0 重放 backlog", async () => {

@@ -82,11 +82,14 @@ class FakeWebSocket {
   static rejectNew = false;
   // helloHang 模拟对端不响应 (creator 挂起): hello 帧收到但永不回复。
   static helloHang = false;
+  // helloHangFrom 只对第 N 条及以后的连接挂起 hello (如第二条 attach 连接)。
+  static helloHangFrom: number | undefined;
   readonly url: string;
   readonly sent: Uint8Array[] = [];
   binaryType = "";
   readyState = 1;
   behavior: { helloError?: string; digest?: string } = {};
+  private createPending = false;
   private parser = new SupervisorFrameParser();
   private listeners = new Map<string, ((event: unknown) => void)[]>();
 
@@ -159,6 +162,8 @@ class FakeWebSocket {
         // rejectNew 模拟握手期 401/403: 不应答 hello, 由构造时的 close(1006) 结束
         if (FakeWebSocket.rejectNew) return;
         if (FakeWebSocket.helloHang) return;
+        const index = FakeWebSocket.instances.indexOf(this) + 1;
+        if (FakeWebSocket.helloHangFrom !== undefined && index >= FakeWebSocket.helloHangFrom) return;
         const hello = JSON.parse(new TextDecoder().decode(frame.payload)) as { state_digest?: string };
         const helloError = this.behavior.helloError ?? FakeWebSocket.forcedHelloError;
         if (helloError) {
@@ -172,27 +177,43 @@ class FakeWebSocket {
         this.serverJSON(SupervisorFrameKind.HelloAck, { version: 2 });
         return;
       }
-      case SupervisorFrameKind.Create:
+      case SupervisorFrameKind.Create: {
+        const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
+        const info = { ...INFO, id: msg.id };
         if (FakeWebSocket.deferCreate) {
-          setTimeout(() => this.serverJSON(SupervisorFrameKind.Created, INFO), 50);
+          // 服务端按序处理: Created 未发出前, 后续帧的响应都排在它之后;
+          // 延迟期间不响应后续帧, Created 延迟发出 (客户端可能已关闭)
+          this.createPending = true;
+          setTimeout(() => {
+            this.createPending = false;
+            this.serverJSON(SupervisorFrameKind.Created, info);
+          }, 50);
           return;
         }
-        this.serverJSON(SupervisorFrameKind.Created, INFO);
+        this.serverJSON(SupervisorFrameKind.Created, info);
         return;
-      case SupervisorFrameKind.Attach:
+      }
+      case SupervisorFrameKind.Attach: {
+        const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
+        const info = { ...INFO, id: msg.id };
         if (FakeWebSocket.deferAttach) {
-          setTimeout(() => this.serverJSON(SupervisorFrameKind.Attached, INFO), 50);
+          setTimeout(() => this.serverJSON(SupervisorFrameKind.Attached, info), 50);
           return;
         }
-        this.serverJSON(SupervisorFrameKind.Attached, INFO);
+        this.serverJSON(SupervisorFrameKind.Attached, info);
         return;
+      }
       case SupervisorFrameKind.Input:
         this.serverJSON(SupervisorFrameKind.InputAck, { written: frame.payload.length });
         return;
       case SupervisorFrameKind.Resize:
       case SupervisorFrameKind.Kill:
-      case SupervisorFrameKind.KillSession:
       case SupervisorFrameKind.Detach:
+        this.serverJSON(SupervisorFrameKind.OK, {});
+        return;
+      case SupervisorFrameKind.KillSession:
+        // create 响应在途: killSession 的 OK 按序排在 Created 之后, 客户端已关闭读不到
+        if (this.createPending) return;
         this.serverJSON(SupervisorFrameKind.OK, {});
         return;
       default:
@@ -252,6 +273,7 @@ beforeEach(() => {
   FakeWebSocket.deferAttach = false;
   FakeWebSocket.rejectNew = false;
   FakeWebSocket.helloHang = false;
+  FakeWebSocket.helloHangFrom = undefined;
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("fetch", mocks.fetch);
   vi.stubGlobal("ResizeObserver", class {
@@ -281,8 +303,11 @@ describe("DeviceTerminalView 打开与输出", () => {
     expect(creator.url).toContain("/fleet/devices/d-1/bridge");
     expect(creator.sentJSON(SupervisorFrameKind.Hello)).toEqual({ version: 2, state_digest: "digest-1" });
     expect(creator.sentJSON(SupervisorFrameKind.Create)).toMatchObject({ cols: 80, rows: 24 });
+    const createMsg = creator.sentJSON(SupervisorFrameKind.Create) as { id: string; attempt: string };
+    expect(createMsg.id).toMatch(/^[0-9A-Za-z]{26}$/);
+    expect(createMsg.attempt).toMatch(/^[0-9A-Za-z]{26}$/);
     expect(attacher.sentJSON(SupervisorFrameKind.Attach)).toMatchObject({
-      id: "s-1",
+      id: createMsg.id,
       expect_incarnation: "inc-1",
     });
     expect(bodyText()).toContain("web-01");
@@ -338,8 +363,9 @@ describe("DeviceTerminalView 断开与恢复", () => {
     resumeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushUntil(() => FakeWebSocket.instances.length >= 3);
     const resumer = FakeWebSocket.instances[2];
+    const createMsg = FakeWebSocket.instances[0].sentJSON(SupervisorFrameKind.Create) as { id: string };
     expect(resumer.sentJSON(SupervisorFrameKind.Attach)).toMatchObject({
-      id: "s-1",
+      id: createMsg.id,
       expect_incarnation: "inc-1",
     });
     resumer.serverOutput(0n, "before-drop\r\nlate-7\r\n");
@@ -398,21 +424,40 @@ describe("DeviceTerminalView 断开与恢复", () => {
 });
 
 describe("DeviceTerminalView 生命周期", () => {
-  it("create 在途卸载视图: creator 被关闭中断, 不留活桥接", async () => {
+  it("create 结果不确定时卸载视图: 按 attempt 回收而非零回收, 不留活桥接", async () => {
     FakeWebSocket.deferCreate = true;
     const view = mount(createElement(DeviceTerminalView, { deviceId: "d-1", visible: true }));
     await flushUntil(() =>
       FakeWebSocket.instances[0]?.sentFrames().some((f) => f.kind === SupervisorFrameKind.Create),
     );
     view.unmount();
-    // create 响应未到达 (creating 阶段): 取消直接关闭 creator 中断挂起,
-    // 不进入 attach, 也没有可回收的已确认会话
     await flush();
     await flush();
+    // 服务端可能已完成 create 而 Created 未交付 (context.Background 完成,
+    // 回包 best-effort): 取消必须按 attempt 回收, 不能因 info 未确认而零回收
     const creator = FakeWebSocket.instances[0];
+    const createMsg = creator.sentJSON(SupervisorFrameKind.Create) as { id: string; attempt: string };
+    const reap = creator.sentJSON(SupervisorFrameKind.KillSession) as { id: string; attempt: string };
+    expect(reap).toEqual({ id: createMsg.id, attempt: createMsg.attempt });
     expect(creator.readyState).toBe(3);
     expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.Attach)).toBe(false);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("create 成功后 attach 连接挂起 (hello 无响应): 取消关闭 attach, creator 完成 killSession, 两条 WS 均关闭", async () => {
+    FakeWebSocket.helloHangFrom = 2;
+    mounted = await mountTerminal();
+    // create 已成功, 第二条 attach 连接在 hello 期挂起
+    await flushUntil(() => FakeWebSocket.instances.length >= 2);
+    mounted.unmount();
+    mounted = null;
+    // attaching 取消关闭 attach 解锁 await; creator 保留并完成 killSession 后关闭
+    await flushUntil(() =>
+      FakeWebSocket.instances[0].sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession),
+    );
+    await flush();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
   });
 
   it("create 成功后卸载视图: 经 creator 旧连接 killSession 回收, 不留活桥接", async () => {
@@ -491,8 +536,9 @@ describe("DeviceTerminalView 结束终端", () => {
     killButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushUntil(() => FakeWebSocket.instances.length >= 3);
     const killer = FakeWebSocket.instances[2];
+    const createMsg = FakeWebSocket.instances[0].sentJSON(SupervisorFrameKind.Create) as { id: string };
     expect(killer.sentJSON(SupervisorFrameKind.KillSession)).toMatchObject({
-      id: "s-1",
+      id: createMsg.id,
       expect_incarnation: "inc-1",
     });
     await flushUntil(() => bodyText().includes("已结束"));

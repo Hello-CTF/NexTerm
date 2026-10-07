@@ -125,16 +125,21 @@ class FakeWebSocket {
       case SupervisorFrameKind.Hello:
         this.serverJSON(SupervisorFrameKind.HelloAck, { version: 2 });
         return;
-      case SupervisorFrameKind.Create:
-        this.serverJSON(SupervisorFrameKind.Created, INFO);
+      case SupervisorFrameKind.Create: {
+        const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
+        this.serverJSON(SupervisorFrameKind.Created, { ...INFO, id: msg.id });
         return;
-      case SupervisorFrameKind.Attach:
+      }
+      case SupervisorFrameKind.Attach: {
+        const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
+        const info = { ...INFO, id: msg.id };
         if (FakeWebSocket.deferAttach) {
-          setTimeout(() => this.serverJSON(SupervisorFrameKind.Attached, INFO), 50);
+          setTimeout(() => this.serverJSON(SupervisorFrameKind.Attached, info), 50);
           return;
         }
-        this.serverJSON(SupervisorFrameKind.Attached, INFO);
+        this.serverJSON(SupervisorFrameKind.Attached, info);
         return;
+      }
       case SupervisorFrameKind.Input:
         this.serverJSON(SupervisorFrameKind.InputAck, { written: frame.payload.length });
         return;

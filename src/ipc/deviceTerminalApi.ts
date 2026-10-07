@@ -14,6 +14,20 @@ import { wsUrl } from "./env";
 export const SUPERVISOR_PROTOCOL_VERSION = 2;
 export const SUPERVISOR_MAX_FRAME_PAYLOAD = 256 * 1024;
 
+// newSupervisorId 生成服务端 ids.Valid 接受的会话 id/attempt: 26 位字母数字
+// (internal/ids/ids.go)。create 必须携带客户端生成的稳定 id+attempt
+// (internal/supervisor/client.go Create/ReconcileCreate 同一合同), Created
+// 响应丢失时才能按 attempt 回收结果不确定的 create。
+const SUPERVISOR_ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+export function newSupervisorId(): string {
+  const bytes = new Uint8Array(26);
+  crypto.getRandomValues(bytes);
+  let id = "";
+  for (const byte of bytes) id += SUPERVISOR_ID_ALPHABET[byte % SUPERVISOR_ID_ALPHABET.length];
+  return id;
+}
+
 export const SupervisorFrameKind = {
   Hello: 1,
   HelloAck: 2,
@@ -400,8 +414,10 @@ export class DeviceBridge {
     });
   }
 
-  create(options: { cols: number; rows: number; command?: string[] }): Promise<SupervisorSessionInfo> {
+  create(options: { id: string; attempt: string; cols: number; rows: number; command?: string[] }): Promise<SupervisorSessionInfo> {
     return this.request(SupervisorFrameKind.Create, {
+      id: options.id,
+      attempt: options.attempt,
       command: options.command ?? [],
       cols: options.cols,
       rows: options.rows,
@@ -466,6 +482,28 @@ export class DeviceBridge {
     });
   }
 
+  // reconcileCreate 按 id+attempt 回收结果不确定的 create (internal/supervisor/
+  // client.go ReconcileCreate 同一合同): 服务端 killByAttempt 按 attempt 匹配,
+  // 会话不存在 (create 未落地) 时按合同回 OK, 幂等可重入。
+  reconcileCreate(id: string, attempt: string): Promise<void> {
+    return this.request(SupervisorFrameKind.KillSession, { id, attempt }).then((frame) => {
+      if (frame.kind !== SupervisorFrameKind.OK) {
+        throw new DeviceTerminalError("protocol", `expected ok, got frame ${frame.kind}`);
+      }
+    });
+  }
+
+  // reapCreateByAttempt 在 create 响应未定时按 attempt 回收: 帧直接写 socket
+  // (不过 requestChain, create 可能仍在等响应), 不等回复。WS 消息有序, 随后
+  // close 不会丢帧; 服务端按序处理完 create 后处理 killSession, 不会留孤儿。
+  reapCreateByAttempt(id: string, attempt: string): void {
+    if (this.closed) return;
+    try {
+      this.socket.send(encodeSupervisorJSONFrame(SupervisorFrameKind.KillSession, { id, attempt }));
+    } catch {
+    }
+  }
+
   // detach 发送 detach 帧后关闭; WS 消息有序, close 不会抢在 detach 之前到达对端。
   detach(): void {
     if (this.detachSent || this.closed) return;
@@ -500,18 +538,25 @@ export class DeviceBridge {
   get isAttached(): boolean {
     return this.attached;
   }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
 }
 
 // openDeviceTerminal 在两条桥接上完成 create+attach (与 Go 客户端/acceptance
-// 同一模型)。creator 连接从建立起保留到 open 结束: create 成功后任何失败
-// (含 attach connect 被 401/403 拒绝) 都用这条切换前已鉴权的连接 killSession
-// 回收, 不新建依赖新账号/失效凭证的 reaper WS; killSession 失败以 reapError
-// 附加显式记录, 不掩盖原始错误。
+// 同一模型)。create 携带客户端生成的稳定 id+attempt (internal/supervisor/
+// client.go 同一合同): creator 连接从建立起保留到 open 结束, create 成功后
+// 任何失败 (含 attach connect 被 401/403 拒绝) 都用这条切换前已鉴权的连接
+// killSession 回收; Created 因取消/断连未交付 (info=nil) 时不能推断未创建
+// (服务端用 context.Background() 完成 create, 回包 best-effort), 按 attempt
+// reconcile 回收; killSession 失败以 reapError 附加显式记录, 不掩盖原始错误。
 // wire 在 attach 前调用 (挂 output/exit/close 回调): attach 一批准对端立即
 // 开始重放 backlog, 同批到达的 output 帧不能丢。
-// onCancel 在 creator 连接建立 (含 CONNECTING/hello 阶段) 后即登记取消函数,
-// settled 后以 onCancel(null) 注销; 取消在 create 成功前直接关闭 creator
-// 中断挂起, create 成功后则留给回收路径用完再关。
+// onCancel 在每条连接建立 (含 CONNECTING/hello 阶段) 后即登记取消函数,
+// settled 后以 onCancel(null) 注销; connecting 取消直接关闭 creator (create
+// 未发出, 无会话可回收), creating 取消按 attempt 管线化回收后关闭 creator,
+// attaching 取消关闭 attach 解锁 await, creator 留给回收路径用完再关。
 export async function openDeviceTerminal(options: {
   deviceId: string;
   stateDigest: string;
@@ -524,16 +569,30 @@ export async function openDeviceTerminal(options: {
   onCancel?: (cancel: (() => void) | null) => void;
 }): Promise<{ info: SupervisorSessionInfo; identity: SupervisorSessionIdentity; bridge: DeviceBridge }> {
   const { deviceId, stateDigest, factory, bridgePath } = options;
+  const sessionId = newSupervisorId();
+  const attempt = newSupervisorId();
   let creator: DeviceBridge | null = null;
+  let attach: DeviceBridge | null = null;
   let info: SupervisorSessionInfo | null = null;
   let identity: SupervisorSessionIdentity | null = null;
-  let stage: "connecting" | "creating" | "created" | "attaching" = "connecting";
+  let stage: "connecting" | "creating" | "attaching" = "connecting";
   let cancelled = false;
   let settled = false;
+  let reaped = false;
   const cancel = () => {
     if (cancelled || settled) return;
     cancelled = true;
-    if (stage === "connecting" || stage === "creating") creator?.close();
+    if (stage === "connecting") {
+      creator?.close();
+    } else if (stage === "creating") {
+      if (creator && !reaped) {
+        reaped = true;
+        creator.reapCreateByAttempt(sessionId, attempt);
+      }
+      creator?.close();
+    } else {
+      attach?.close();
+    }
   };
   try {
     creator = await DeviceBridge.connect(deviceId, stateDigest, {
@@ -546,40 +605,49 @@ export async function openDeviceTerminal(options: {
     });
     if (cancelled) throw new DeviceTerminalError("closed", "打开已取消");
     stage = "creating";
-    info = await creator.create({ cols: options.cols, rows: options.rows, command: options.command });
+    info = await creator.create({ id: sessionId, attempt, cols: options.cols, rows: options.rows, command: options.command });
     identity = {
       createdAtUnixNano: unixNanoFromRFC3339(info.created_at),
       incarnation: info.incarnation,
     };
     if (cancelled) throw new DeviceTerminalError("closed", "打开已取消");
     stage = "attaching";
-    const bridge = await DeviceBridge.connect(deviceId, stateDigest, { factory, bridgePath });
+    attach = await DeviceBridge.connect(deviceId, stateDigest, {
+      factory,
+      bridgePath,
+      onBridge: (bridge) => {
+        attach = bridge;
+      },
+    });
     try {
-      options.wire?.(bridge);
-      const attached = await bridge.attach(info.id, identity);
+      options.wire?.(attach);
+      const attached = await attach.attach(sessionId, identity);
       if (cancelled) {
-        bridge.close();
+        attach.close();
         throw new DeviceTerminalError("closed", "打开已取消");
       }
       settled = true;
       options.onCancel?.(null);
       creator.detach();
-      return { info: attached, identity, bridge };
+      return { info: attached, identity, bridge: attach };
     } catch (error) {
-      bridge.close();
+      attach.close();
       throw error;
     }
   } catch (error) {
-    // create 成功后 (stage created/attaching) 任何失败都进入回收; creator 在
-    // 这些阶段保持打开 (取消也不会关它), 回收一定走这条已鉴权旧连接。
-    if (creator && info && identity) {
+    if (creator && !reaped && !creator.isClosed) {
       try {
-        await creator.killSession(info.id, identity);
+        if (info && identity) {
+          await creator.killSession(info.id, identity);
+        } else if (stage !== "connecting") {
+          await creator.reconcileCreate(sessionId, attempt);
+        }
       } catch (reapError) {
         (error as { reapError?: unknown }).reapError = reapError;
       }
     }
     creator?.detach();
+    attach?.close();
     options.onCancel?.(null);
     throw error;
   }

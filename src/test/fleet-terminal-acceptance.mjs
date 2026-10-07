@@ -307,6 +307,7 @@ function supervisorOutput(seq, data) {
 // attachment 的 replay 语义); 每个 attach 连接维护自己的发送序号。
 const sessionStore = {
   buffer: Buffer.from("fake-shell-ready $ "),
+  sessionId: SESSION.id,
   hellos: [],
   creates: [],
   inputs: [],
@@ -397,13 +398,17 @@ class FakeBridgeConn {
         this.sendJSON(SUPERVISOR.helloAck, { version: 2 });
         return;
       }
-      case SUPERVISOR.create:
-        sessionStore.creates.push(JSON.parse(body.toString("utf8")));
-        this.sendJSON(SUPERVISOR.created, SESSION);
+      case SUPERVISOR.create: {
+        const msg = JSON.parse(body.toString("utf8"));
+        sessionStore.creates.push(msg);
+        // create 携带客户端生成的稳定 id+attempt, Created 回显同一 id
+        sessionStore.sessionId = msg.id ?? SESSION.id;
+        this.sendJSON(SUPERVISOR.created, { ...SESSION, id: sessionStore.sessionId });
         return;
+      }
       case SUPERVISOR.attach: {
         const msg = JSON.parse(body.toString("utf8"));
-        if (msg.id !== SESSION.id) {
+        if (msg.id !== sessionStore.sessionId) {
           this.sendJSON(SUPERVISOR.error, { code: "not_found", message: "fake bridge: no such session" });
           return;
         }
@@ -414,7 +419,7 @@ class FakeBridgeConn {
         sessionStore.attaches.push(msg);
         this.attached = true;
         this.nextSeq = 0n;
-        this.sendJSON(SUPERVISOR.attached, SESSION);
+        this.sendJSON(SUPERVISOR.attached, { ...SESSION, id: msg.id });
         // backlog 从 seq 0 全量重放
         this.sendOutput(Buffer.from(sessionStore.buffer));
         return;
@@ -790,7 +795,7 @@ async function terminalAcceptance(page, fake) {
     await page.waitFor(`document.body.textContent.includes("已结束")`);
     await waitState(() => sessionStore.killSessions.length > before, "killSession frame");
     const kill = sessionStore.killSessions[sessionStore.killSessions.length - 1];
-    assert.equal(kill.id, "fake-session-1", "killSession 带会话 id");
+    assert.equal(kill.id, sessionStore.sessionId, "killSession 带会话 id");
     assert.equal(kill.expect_incarnation, "fake-inc-1", "killSession 带期望 incarnation");
     await screenshot(page, "kill-confirmed.png");
   });
