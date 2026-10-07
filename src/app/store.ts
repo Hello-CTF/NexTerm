@@ -27,6 +27,7 @@ export type PaneKind =
   | "settings"
   | "audit"
   | "devices"
+  | "deviceTerminal"
   | "background"
   | "history";
 
@@ -44,6 +45,7 @@ export interface AppTab {
   credId?: string;
   credView?: "text" | "json";
   path?: string;
+  deviceId?: string;
   pendingCommand?: string;
   closable: boolean;
   dead?: boolean;
@@ -771,6 +773,9 @@ function makePane(): Pane {
 function sameTab(t: AppTab, tab: AppTab): boolean {
   if (t.id === tab.id) return true;
   if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
+  if (t.kind === "deviceTerminal" && tab.kind === "deviceTerminal") {
+    return t.deviceId === tab.deviceId;
+  }
   return (
     tab.kind !== "terminal" &&
     t.kind === tab.kind &&
@@ -823,6 +828,18 @@ export async function openTerminalTab(
     },
     paneId,
   );
+}
+
+// openDeviceTerminalTab 从设备管理打开一台设备的远程终端标签 (FLEET156);
+// 同一设备重复打开会聚焦已有标签 (sameTab 按 deviceId 去重)。
+export function openDeviceTerminalTab(device: { id: string; name: string }): void {
+  useUi.getState().addTab({
+    id: nextTabId(`devterm-${device.id}`),
+    kind: "deviceTerminal",
+    title: `终端 · ${device.name}`,
+    deviceId: device.id,
+    closable: true,
+  });
 }
 
 async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boolean> {

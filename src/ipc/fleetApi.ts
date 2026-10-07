@@ -25,6 +25,9 @@ export interface FleetAgentInfo {
   current_url: string;
   service_state: FleetServiceState;
   last_seen_at: number;
+  // 设备端 supervisor 状态摘要 (控制通道上报, 不含凭据材料), 仅供远程终端
+  // hello 协商; 不得在 UI 展示、写日志或持久化到 web storage。设备离线时缺省。
+  state_digest?: string;
 }
 
 export interface FleetDevice {

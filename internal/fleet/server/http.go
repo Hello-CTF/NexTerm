@@ -303,6 +303,9 @@ func (s *Service) serveDeviceEnroll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// agentView.StateDigest 是设备端 supervisor 状态摘要 (控制通道 hello 上报,
+// 不含凭据材料), 仅供已授权浏览器在 /fleet/devices/{id}/bridge 上完成 supervisor
+// hello; 设备离线或未上报时为空。
 type agentView struct {
 	Platform         string       `json:"platform"`
 	AppVersion       string       `json:"app_version"`
@@ -311,6 +314,7 @@ type agentView struct {
 	CurrentURL       string       `json:"current_url"`
 	ServiceState     ServiceState `json:"service_state"`
 	LastSeenAt       int64        `json:"last_seen_at"`
+	StateDigest      string       `json:"state_digest,omitempty"`
 }
 
 type deviceView struct {
@@ -348,7 +352,13 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]deviceView, 0, len(devices))
 	for _, device := range devices {
-		views = append(views, newDeviceView(device))
+		view := newDeviceView(device)
+		if view.Agent != nil {
+			if digest, ok := s.registry.StateDigest(device.ID); ok {
+				view.Agent.StateDigest = digest
+			}
+		}
+		views = append(views, view)
 	}
 	writeFleetJSON(w, http.StatusOK, map[string][]deviceView{"devices": views})
 }

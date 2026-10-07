@@ -142,6 +142,7 @@ const TAB_ICON = {
   settings: IconSettings,
   audit: IconHistory,
   devices: IconMonitor,
+  deviceTerminal: IconTerminal,
   background: IconActivity,
   history: IconClock,
 } as const;
@@ -407,6 +408,25 @@ function LazyAuthGate() {
   return <Gate />;
 }
 
+// LazyDeviceTerminalBoundary 与 LazyAuthGate 同理懒加载; 它常驻 App 根部,
+// 在 logout/401/账号切换时关闭全部设备终端标签 (FLEET156 账号隔离)。
+function LazyDeviceTerminalBoundary() {
+  const [view, setView] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    if (!WEB) return;
+    let alive = true;
+    void import("../features/fleet/DeviceTerminalBoundary").then((m) => {
+      if (alive) setView(() => m.DeviceTerminalBoundary);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!view) return null;
+  const View = view;
+  return <View />;
+}
+
 // LazyDevicesView 同理:设备管理经 auth store 引 demo/env,懒加载避免拖进桌面端测试的模块图。
 function LazyDevicesView() {
   const [view, setView] = useState<React.ComponentType | null>(null);
@@ -422,6 +442,23 @@ function LazyDevicesView() {
   if (!view) return null;
   const View = view;
   return <View />;
+}
+
+// LazyDeviceTerminalView 与 LazyDevicesView 同一理由懒加载 (xterm + fleet API 只服务 WEB)。
+function LazyDeviceTerminalView({ deviceId, visible }: { deviceId: string; visible: boolean }) {
+  const [view, setView] = useState<React.ComponentType<{ deviceId: string; visible?: boolean }> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void import("../features/fleet/DeviceTerminalView").then((m) => {
+      if (alive) setView(() => m.DeviceTerminalView);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!view) return null;
+  const View = view;
+  return <View deviceId={deviceId} visible={visible} />;
 }
 
 export default function App() {
@@ -1507,6 +1544,7 @@ export default function App() {
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <LazyAuthGate />
+      <LazyDeviceTerminalBoundary />
       <PromptModal />
       <DialogHost />
     </div>
@@ -1874,6 +1912,12 @@ function PaneForTab({
       return <AuditView />;
     case "devices":
       return <LazyDevicesView />;
+    case "deviceTerminal":
+      return tab.deviceId ? (
+        <LazyDeviceTerminalView deviceId={tab.deviceId} visible={active} />
+      ) : (
+        <EmptyState />
+      );
     case "background":
       return <BackgroundSessions visible={active} />;
     case "history":

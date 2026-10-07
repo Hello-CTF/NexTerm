@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetBaseURLEntry, type FleetDevice, type FleetMetricsSample } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
-import { useUi } from "../../app/store";
+import { openDeviceTerminalTab, useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -17,6 +17,7 @@ import {
   IconMonitor,
   IconPlus,
   IconRefresh,
+  IconTerminal,
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
@@ -259,6 +260,18 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
           </span>
         )}
         <div className="nx-spacer" />
+        {!revoked && agent?.terminal_enabled && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+            disabled={!online}
+            title={online ? "在这台设备上打开远程终端" : "设备离线, 无法打开终端"}
+            onClick={() => openDeviceTerminalTab(device)}
+          >
+            <IconTerminal size={11} />
+            终端
+          </button>
+        )}
         {!revoked && agent && (
           <button
             type="button"
