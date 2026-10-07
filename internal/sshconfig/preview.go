@@ -49,9 +49,13 @@ type KeyPreview struct {
 	Fingerprint string
 	KeyType     string
 	Path        string
-	Source      string
-	Action      PlanAction
-	Warnings    []string
+	// AltPaths lists additional paths that resolve to the same key file
+	// (symlink alias or target inside the scanned directory); host
+	// IdentityFile entries pointing at any of them bind to this key.
+	AltPaths []string
+	Source   string
+	Action   PlanAction
+	Warnings []string
 }
 
 type ImportPreview struct {

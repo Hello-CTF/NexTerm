@@ -524,7 +524,90 @@ const demoSshImportPreviews: Record<string, DemoSshImportPreview> = {
     diagnostics: [],
     truncated: false,
   },
+  "ssh-home": {
+    source: "ssh-home",
+    path: "/home/demo/.ssh",
+    hosts: [
+      {
+        id: "h0",
+        alias: "demo-bastion",
+        hostname: "bastion.demo.internal",
+        port: 22,
+        username: "admin",
+        identityFiles: ["/home/demo/.ssh/id_ed25519_home"],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "key",
+        source: "ssh-home",
+        action: "add",
+        warnings: [],
+      },
+      {
+        id: "h1",
+        alias: "demo-web",
+        hostname: "web.demo.internal",
+        port: 22,
+        username: "deploy",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "demo-bastion",
+        authMethod: "agent",
+        source: "ssh-home",
+        action: "add",
+        warnings: [],
+      },
+      {
+        id: "h2",
+        alias: "web-01",
+        hostname: "127.0.0.1",
+        port: 22,
+        username: "deploy",
+        identityFiles: [],
+        keyName: "",
+        proxyJump: "",
+        authMethod: "agent",
+        source: "ssh-home",
+        action: "skip-duplicate",
+        warnings: ["别名 web-01 已存在且端点相同，将跳过"],
+      },
+    ],
+    keys: [
+      {
+        id: "k0",
+        aliases: ["id_ed25519_home"],
+        fingerprint: "SHA256:demoHomeFingerprint000000000000000000000000",
+        keyType: "ssh-ed25519",
+        path: "/home/demo/.ssh/id_ed25519_home",
+        source: "ssh-home",
+        action: "add",
+        warnings: ["私钥有口令，将以文件引用导入，连接前请绑定凭据"],
+      },
+      {
+        id: "k1",
+        aliases: ["id_ed25519"],
+        fingerprint: "SHA256:demoHomeOtherFingerprint000000000000000000",
+        keyType: "ssh-ed25519",
+        path: "/home/demo/.ssh/id_ed25519",
+        source: "ssh-home",
+        action: "conflict-alias",
+        warnings: ["密钥名 id_ed25519 已被一个指纹不同的密钥使用"],
+      },
+    ],
+    diagnostics: [
+      {
+        code: "unsupported-file",
+        source: "/home/demo/.ssh/README",
+        message: "不是受支持的私钥，已跳过",
+      },
+    ],
+    truncated: false,
+  },
 };
+
+function demoSshImportSource(raw: unknown): string {
+  const source = str(raw);
+  return source === "termius" || source === "ssh-home" ? source : "ssh-config";
+}
 
 interface DemoSnippet {
   id: string;
@@ -2732,7 +2815,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       throwAppError("unsupported", "该同步操作只在服务端可用");
 
     case "ssh_import_preview": {
-      const source = str(a.source) === "termius" ? "termius" : "ssh-config";
+      const source = demoSshImportSource(a.source);
       if (source === "termius" && a.confirmed !== true) {
         throwAppError("bad_param", "参数错误: 读取本机 Termius 数据需要显式确认");
       }
@@ -2746,7 +2829,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     }
 
     case "ssh_import_apply": {
-      const source = str(a.source) === "termius" ? "termius" : "ssh-config";
+      const source = demoSshImportSource(a.source);
       if (source === "termius" && a.confirmed !== true) {
         throwAppError("bad_param", "参数错误: 读取本机 Termius 数据需要显式确认");
       }

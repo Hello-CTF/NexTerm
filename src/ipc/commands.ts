@@ -753,7 +753,7 @@ export const vaultApi = {
     }),
 };
 
-export type SshImportSource = "ssh-config" | "termius";
+export type SshImportSource = "ssh-config" | "termius" | "ssh-home";
 export type SshImportItemAction = "import" | "overwrite" | "skip";
 
 export const sshImportApi = {
