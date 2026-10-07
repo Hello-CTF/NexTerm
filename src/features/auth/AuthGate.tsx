@@ -367,7 +367,7 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用恢复密钥重置</span>
       </div>
       <p className="nx-hint">
-        输入你保存的恢复密钥(注册或修改密码时签发)。重置后旧密码与全部会话立即失效。
+        输入你保存的最新恢复密钥。重置后旧密码与全部会话立即失效。
         注意:服务端旧数据密钥已被清除,云端正文需要从仍持有数据的设备重新同步。
       </p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
