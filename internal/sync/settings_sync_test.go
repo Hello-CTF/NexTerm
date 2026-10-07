@@ -247,6 +247,84 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 	}
 }
 
+// 评审回归(R3): 其他设备仍持原 ID 同一信任副本时, re-ID 对象在同 addedAt 哈希决胜中
+// 必须必胜——旧副本只能走 displaced 路径保留新 ID, 原 ID 墓碑只清旧槽位, 信任记录不丢。
+func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceB := newTestDevice(t)
+	deviceA := newTestDevice(t)
+	ctx := context.Background()
+
+	sharedID := ids.New()
+	winnerID := ids.New()
+	// B 与 A 都持有原 ID 的信任副本与三元组胜者行(更早的同步所致)。
+	putDeviceKnownHost(t, deviceB, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:trusted", 50)
+	putDeviceKnownHost(t, deviceB, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
+	putDeviceKnownHost(t, deviceA, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:trusted", 50)
+	putDeviceKnownHost(t, deviceA, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
+	rogue := newTestDevice(t)
+	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
+
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(sharedID 迁移三元组, 100)上服务端
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123") // B 先同步: re-ID + 原 ID 立碑并推走
+
+	// 构造性不变式: B 的 re-ID 载荷在同修订号下必胜原 ID 副本(两种哈希顺序中败者被拒绝)。
+	rows, err := deviceB.db.KnownHostList(ctx)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("deviceB rows=%+v err=%v", rows, err)
+	}
+	var reID string
+	for _, row := range rows {
+		if row.Host == "old.example.com" {
+			reID = row.ID
+		}
+	}
+	if reID == "" || reID == sharedID {
+		t.Fatalf("deviceB must re-ID the incarnation: %+v", rows)
+	}
+	oldPayload, err := marshalObject(knownHostObject{ID: sharedID, Host: "old.example.com", Port: 22, KeyType: "ssh-rsa", Fingerprint: "SHA256:trusted", AddedAt: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPayload, err := marshalObject(knownHostObject{ID: reID, Host: "old.example.com", Port: 22, KeyType: "ssh-rsa", Fingerprint: "SHA256:trusted", AddedAt: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !remoteWins(50, 50, newPayload, oldPayload) {
+		t.Fatal("re-ID payload must provably win the equal-revision hash duel against the old copy")
+	}
+
+	// A 持原副本后同步: 对 re-ID 对象只能 displaced(采纳新 ID), 原 ID 墓碑被吸收, 信任内容与修订号保留。
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceA, sharedID); found {
+		t.Fatal("deviceA must displace the old copy")
+	}
+	if row, found := deviceKnownHost(t, deviceA, reID); !found || row.Fingerprint != "SHA256:trusted" || row.AddedAt != 50 {
+		t.Fatalf("deviceA must adopt the re-IDed record intact: %+v found=%v", row, found)
+	}
+	assertDeviceTombstone(t, deviceA, sharedID, KindKnownHost)
+
+	// 服务端槽位: 原 ID 是墓碑, 新 ID 是存活对象(不得被墓碑替换)。
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", sharedID, KindTombstone)
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", reID, KindKnownHost)
+
+	// 新设备同样获得信任内容(新 ID, 原修订号)。
+	newcomer := newTestDevice(t)
+	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
+	if row, found := deviceKnownHost(t, newcomer, reID); !found || row.Fingerprint != "SHA256:trusted" || row.AddedAt != 50 {
+		t.Fatalf("newcomer must receive the re-IDed record: %+v found=%v", row, found)
+	}
+	if _, found := deviceKnownHost(t, newcomer, sharedID); found {
+		t.Fatal("newcomer must not resurrect the original id")
+	}
+
+	// 二次同步静默。
+	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
+}
+
 // 评审回归(顺序二: 胜者先推, 败者后同步): 败者经 displaced 路径立碑自身并 adopts 胜者;
 // 删除胜者后二次收敛, 新设备同样不得复活败者。
 func TestEngineKnownHostWinnerFirstLoserDisplaced(t *testing.T) {

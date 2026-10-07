@@ -210,7 +210,11 @@ func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostO
 	}
 	defer func() { _ = tx.Rollback() }()
 	if incarnation != nil {
-		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", ids.New(), incarnation.ID); err != nil {
+		newID, err := e.knownHostReincarnationID(incarnation)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", newID, incarnation.ID); err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
 	} else if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ? AND host = ? AND port = ? AND key_type = ?",
@@ -223,6 +227,32 @@ ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return tx.Commit()
+}
+
+// knownHostReincarnationID 为化身生成新 ID: 内容与 addedAt 不变, 但新载荷必须在同修订号
+// 哈希决胜中必胜旧载荷。其他设备上的旧 ID 副本遇到 re-ID 对象时因此只能走 displaced
+// 路径(保留新 ID), 不会反向把新 ID 墓碑化; 新旧 ID 同毁的路径被构造性排除。
+func (e *Engine) knownHostReincarnationID(incarnation *store.KnownHostRow) (string, error) {
+	oldPayload, err := marshalObject(knownHostObject{
+		ID: incarnation.ID, Host: incarnation.Host, Port: incarnation.Port, KeyType: incarnation.KeyType,
+		Fingerprint: incarnation.Fingerprint, AddedAt: incarnation.AddedAt,
+	})
+	if err != nil {
+		return "", err
+	}
+	for {
+		candidate := ids.New()
+		newPayload, err := marshalObject(knownHostObject{
+			ID: candidate, Host: incarnation.Host, Port: incarnation.Port, KeyType: incarnation.KeyType,
+			Fingerprint: incarnation.Fingerprint, AddedAt: incarnation.AddedAt,
+		})
+		if err != nil {
+			return "", err
+		}
+		if remoteWins(incarnation.AddedAt, incarnation.AddedAt, newPayload, oldPayload) {
+			return candidate, nil
+		}
+	}
 }
 
 // knownHostUpsert 按 ID 幂等写入并保留对端修订号 added_at; 三元组冲突的败者行与其墓碑在同一事务清除。

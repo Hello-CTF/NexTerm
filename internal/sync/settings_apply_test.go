@@ -199,6 +199,35 @@ func TestApplyKnownHostTripleConflictLocalNewerKeepsRow(t *testing.T) {
 	requireSyncTombstone(t, instance, remoteID, KindKnownHost, 300)
 }
 
+// re-ID 的新 ID 必须在同修订号哈希决胜中必胜旧载荷: 两种哈希顺序里, 败者顺序被构造性拒绝,
+// 旧副本只能走 displaced 路径, 不会反向把 re-ID 对象墓碑化。
+func TestKnownHostReincarnationIDWinsHashTiebreak(t *testing.T) {
+	instance := newTestInstance(t, false)
+	engine := instance.service.engine
+	row := &store.KnownHostRow{ID: ids.New(), Host: "old.example.com", Port: 22, KeyType: "ssh-rsa", Fingerprint: "SHA256:trusted", AddedAt: 50}
+	oldPayload, err := marshalObject(knownHostObject{
+		ID: row.ID, Host: row.Host, Port: row.Port, KeyType: row.KeyType, Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for iteration := 0; iteration < 64; iteration++ {
+		newID, err := engine.knownHostReincarnationID(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		newPayload, err := marshalObject(knownHostObject{
+			ID: newID, Host: row.Host, Port: row.Port, KeyType: row.KeyType, Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !remoteWins(row.AddedAt, row.AddedAt, newPayload, oldPayload) {
+			t.Fatalf("iteration %d: reincarnation %s loses the equal-revision hash tiebreak", iteration, newID)
+		}
+	}
+}
+
 // 与载荷同 ID 但不同三元组的本地行是「化身」: 它与同 ID 败者墓碑不能共存(槽位二义,
 // 服务端不收敛, 后续同 ID 墓碑会误删它)。化身必须在同一事务内让出原 ID——信任内容以
 // 新 ID 原样保留, 原 ID 立碑给远端败者; 不同三元组的他行不受影响。
