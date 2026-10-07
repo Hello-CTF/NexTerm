@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { demoAuthRequest, resetDemoAuth } from "../demo/auth";
 import type { AccountDevice } from "../ipc/authApi";
 
@@ -97,5 +97,55 @@ describe("demo 配对码登记设备", () => {
       code: "forbidden",
       message: "设备注册码无效或已过期",
     });
+  });
+
+  // R2 回归: 模块初始状态也必须是种子副本——首次 reset 前的 enroll/login/revoke 不得污染种子,
+  // 否则首次 reset 会复制受污染的"种子"并归零计数器,重现重复 id 与错绑。
+  it("fresh module: 首次 reset 前的操作不污染种子, reset 恢复恰好 3 台原始种子且后续 enroll 正常", async () => {
+    vi.resetModules();
+    const fresh = await import("../demo/auth");
+    const req = fresh.demoAuthRequest;
+    const freshList = async () => (await req<{ devices: AccountDevice[] }>("GET", "/auth/devices")).devices;
+
+    const snapshot = await freshList();
+    expect(snapshot.map((d) => d.id)).toEqual(SEEDED_IDS);
+
+    // 首次 reset 之前直接在模块初始状态上操作
+    const code1 = (await req<{ code: string }>("POST", "/auth/devices/enroll-code", {})).code;
+    const enrolled1 = (
+      await req<{ device: AccountDevice }>("POST", "/auth/devices/enroll", { code: code1, name: "污染期设备", kind: "web" })
+    ).device;
+    await req("POST", "/auth/login", { username: "demo", password: "any", device_id: enrolled1.id });
+    await req("DELETE", `/auth/devices/${encodeURIComponent(enrolled1.id)}`);
+
+    // 首次 reset 必须恢复恰好 3 台原始种子及原始字段(无泄漏的登记设备,无被改字段)
+    fresh.resetDemoAuth();
+    const restored = await freshList();
+    expect(restored).toHaveLength(3);
+    expect(restored.map((d) => d.id)).toEqual(SEEDED_IDS);
+    for (const seed of snapshot) {
+      expect(restored.find((d) => d.id === seed.id)).toEqual(seed);
+    }
+
+    // reset 后的新 enroll: id 唯一, login/revoke 只作用于新返回设备
+    const code2 = (await req<{ code: string }>("POST", "/auth/devices/enroll-code", {})).code;
+    const enrolled2 = (
+      await req<{ device: AccountDevice }>("POST", "/auth/devices/enroll", { code: code2, name: "reset 后设备", kind: "web" })
+    ).device;
+    expect(enrolled2.id).not.toBe(enrolled1.id);
+    expect(restored.map((d) => d.id)).not.toContain(enrolled2.id);
+    await req("POST", "/auth/login", { username: "demo", password: "any", device_id: enrolled2.id });
+
+    const afterLogin = await freshList();
+    const loginIds = afterLogin.map((d) => d.id);
+    expect(new Set(loginIds).size).toBe(loginIds.length);
+    expect(afterLogin.find((d) => d.id === enrolled2.id)?.last_seen_at).toBeGreaterThan(0);
+    expect(afterLogin.find((d) => d.id === enrolled1.id)).toBeUndefined();
+
+    await req("DELETE", `/auth/devices/${encodeURIComponent(enrolled2.id)}`);
+    const afterRevoke = await freshList();
+    expect(afterRevoke.find((d) => d.id === enrolled2.id)?.revoked_at).toBeGreaterThan(0);
+    expect(afterRevoke.find((d) => d.id === "d-demo-1")?.revoked_at).toBe(0);
+    expect(afterRevoke.find((d) => d.id === "d-demo-2")?.revoked_at).toBe(0);
   });
 });

@@ -34,11 +34,16 @@ const demoUser: AccountUser = {
   last_login_at: now() - 2 * 3600_000,
 };
 
+// demoDevices 是只读种子模板: 初始状态与 reset 一律持有它的新副本,模板本身永不变动。
 const demoDevices: AccountDevice[] = [
   { id: "d-demo-1", name: "这台浏览器", kind: "web", created_at: now() - 7 * 24 * 3600_000, last_seen_at: now() - 60_000, revoked_at: 0 },
   { id: "d-demo-2", name: "家里的桌面端", kind: "desktop", created_at: now() - 30 * 24 * 3600_000, last_seen_at: now() - 3 * 3600_000, revoked_at: 0 },
   { id: "d-demo-3", name: "旧笔记本", kind: "desktop", created_at: now() - 80 * 24 * 3600_000, last_seen_at: 0, revoked_at: now() - 10 * 24 * 3600_000 },
 ];
+
+function seedDevices(): AccountDevice[] {
+  return demoDevices.map((d) => ({ ...d }));
+}
 
 // 演示信封:形状合法的假 base64,长度为 60/16/60。
 const demoEnvelope: DekEnvelopesView = {
@@ -67,7 +72,7 @@ const state: DemoAuthState = {
   registrationOpen: false,
   user: demoSuperadmin,
   users: [demoSuperadmin, demoUser],
-  devices: demoDevices,
+  devices: seedDevices(),
   enrollCodes: [],
   deviceOwners: {
     "d-demo-1": demoSuperadmin.id,
@@ -275,15 +280,12 @@ export function resetDemoAuth(): void {
   state.registrationOpen = false;
   state.user = demoSuperadmin;
   state.users = [demoSuperadmin, demoUser];
-  //  enroll 会 push 设备、登录/吊销会改 last_seen/revoked_at;重置必须拿种子的新副本,否则跨重置泄漏。
-  state.devices = demoDevices.map((d) => ({ ...d }));
+  state.devices = seedDevices();
   state.enrollCodes = [];
   state.deviceOwners = {
     "d-demo-1": demoSuperadmin.id,
     "d-demo-2": demoSuperadmin.id,
     "d-demo-3": demoSuperadmin.id,
   };
-  state.nextUserNum = 1;
-  state.nextCodeNum = 1;
-  state.nextDeviceNum = 1;
+  // id/配对码计数器保持单调不重置: reset 只恢复数据,跨 reset 不复用任何 id 或码。
 }
