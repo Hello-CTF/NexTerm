@@ -22,7 +22,7 @@ func sqliteTestDSN(path string) string {
 	return u.String()
 }
 
-func openSQLiteStore(t *testing.T, path string) *SQLiteStore {
+func openSQLiteStore(t *testing.T, path string) *SQLStore {
 	t.Helper()
 	db, err := sql.Open("sqlite", sqliteTestDSN(path))
 	if err != nil {
@@ -59,7 +59,7 @@ func openSQLiteStore(t *testing.T, path string) *SQLiteStore {
 	return store
 }
 
-func newTestSQLiteStore(t *testing.T) *SQLiteStore {
+func newTestSQLiteStore(t *testing.T) *SQLStore {
 	t.Helper()
 	return openSQLiteStore(t, filepath.Join(t.TempDir(), "cron.db"))
 }
@@ -261,7 +261,7 @@ func TestSQLiteStoreRestartReconcilesWithoutReexecuting(t *testing.T) {
 	registerTestJob(t, old, "job", "session")
 
 	claimedAt := clock.Add(time.Minute)
-	job := loadSQLiteJob(t, store, "job")
+	job := loadStoredJob(t, store, "job")
 	job.Lease = Lease{Owner: "old-owner", ExpiresAt: claimedAt.Add(5 * time.Second)}
 	job.Run = RunState{ID: "abandoned-run", ScheduledFor: claimedAt, StartedAt: claimedAt, Deadline: claimedAt.Add(time.Minute)}
 	job.NextRunAt = claimedAt.Add(time.Minute)
@@ -279,7 +279,7 @@ func TestSQLiteStoreRestartReconcilesWithoutReexecuting(t *testing.T) {
 	if claimed, err := restarted.runOnce(ctx, claimedAt.Add(time.Minute)); err != nil || claimed != 0 {
 		t.Fatalf("recovery runOnce = %d, %v", claimed, err)
 	}
-	recovered := loadSQLiteJob(t, reopened, "job")
+	recovered := loadStoredJob(t, reopened, "job")
 	if recovered.Running() || recovered.ConsecutiveFailures != 1 || !strings.Contains(recovered.LastError, "interrupted") {
 		t.Fatalf("abandoned run not reconciled after real restart: %+v", recovered)
 	}
@@ -295,13 +295,13 @@ func TestSQLiteStoreRestartReconcilesWithoutReexecuting(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("subsequent executions = %d; want 1", calls.Load())
 	}
-	final := loadSQLiteJob(t, reopened, "job")
+	final := loadStoredJob(t, reopened, "job")
 	if final.ConsecutiveFailures != 0 || final.LastError != "" || final.LastRunAt.IsZero() {
 		t.Fatalf("successful run not checkpointed durably: %+v", final)
 	}
 }
 
-func loadSQLiteJob(t *testing.T, store *SQLiteStore, id string) Job {
+func loadStoredJob(t *testing.T, store *SQLStore, id string) Job {
 	t.Helper()
 	jobs, err := store.List(context.Background())
 	if err != nil {
@@ -395,5 +395,46 @@ func TestSQLiteStoreSurfacesExplicitStorageErrors(t *testing.T) {
 	}
 	if _, err := scheduler.Register(ctx, testRegistration("session")); !errors.Is(err, ErrStorage) {
 		t.Fatalf("register on a failed store = %v; want explicit ErrStorage", err)
+	}
+}
+
+func TestSQLiteStoreConcurrentClaimHasSingleWinner(t *testing.T) {
+	ctx := context.Background()
+	store := newTestSQLiteStore(t)
+	clock := newFakeClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
+	var calls atomic.Int32
+	executor := executorFunc(func(context.Context, Trigger) error {
+		calls.Add(1)
+		return nil
+	})
+	first := testScheduler(t, store, executor, clock, func(options *Options) { options.OwnerID = "owner-a" })
+	second := testScheduler(t, store, executor, clock, func(options *Options) { options.OwnerID = "owner-b" })
+	registerTestJob(t, first, "job", "session")
+	now := clock.Add(time.Minute)
+
+	var wait sync.WaitGroup
+	wait.Add(2)
+	var firstClaims, secondClaims int
+	var firstErr, secondErr error
+	go func() {
+		defer wait.Done()
+		firstClaims, firstErr = first.runOnce(ctx, now)
+	}()
+	go func() {
+		defer wait.Done()
+		secondClaims, secondErr = second.runOnce(ctx, now)
+	}()
+	wait.Wait()
+	first.wg.Wait()
+	second.wg.Wait()
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("racing claims failed: %v, %v", firstErr, secondErr)
+	}
+	if firstClaims+secondClaims != 1 || calls.Load() != 1 {
+		t.Fatalf("claims = %d + %d, executions = %d", firstClaims, secondClaims, calls.Load())
+	}
+	stored := loadStoredJob(t, store, "job")
+	if stored.Running() || stored.LastRunAt.IsZero() || stored.LastError != "" || stored.Revision != 3 {
+		t.Fatalf("claim race left inconsistent durable state: %+v", stored)
 	}
 }
