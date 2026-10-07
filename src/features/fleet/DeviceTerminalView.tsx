@@ -19,11 +19,14 @@ import {
   type DeviceBridge,
   type SupervisorSessionIdentity,
 } from "../../ipc/deviceTerminalApi";
+import type { SharePermission } from "../../ipc/sharingApi";
+import { createShareLink, sharePublicUrl } from "./shareLinkCreate";
+import { formatTime } from "./format";
 import { getAppearancePrefs, getResolvedTerminalTheme, subscribeAppearancePrefs } from "../../app/preferences";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { IconPlay, IconRefresh, IconStop, IconTerminal } from "../../ui/icons";
+import { IconGlobe, IconPlay, IconRefresh, IconStop, IconTerminal } from "../../ui/icons";
 
 const TERM_THEME = {
   dark: {
@@ -77,6 +80,17 @@ const TERM_THEME = {
     brightWhite: "#10141b",
   },
 };
+
+// 公开链接有效期选项 (FLEET168): 全部落在服务端 minShareTTL(1 分钟)-
+// maxShareTTL(30 天) 边界内; 默认 1 小时与服务端 defaultLinkTTL 对齐,
+// 创建时总是显式带 ttl_ms。默认只读, 勾选「允许读写」才发 read_write。
+const SHARE_LINK_TTL_OPTIONS = [
+  { label: "15 分钟", ms: 15 * 60_000 },
+  { label: "1 小时", ms: 60 * 60_000 },
+  { label: "6 小时", ms: 6 * 60 * 60_000 },
+  { label: "24 小时", ms: 24 * 60 * 60_000 },
+  { label: "7 天", ms: 7 * 24 * 60 * 60_000 },
+];
 
 type Phase =
   | { kind: "loading" }
@@ -154,6 +168,17 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
   // resumeDeviceTerminal 经 onCancel 登记, settled 后自动注销): 卸载/账号
   // 边界关闭标签时取消在途连接, 回收走 creator 旧连接, 不依赖账号切换后的新 WS。
   const openCancelRef = useRef<(() => void) | null>(null);
+  // shareEpochRef 是公开链接创建的代次: 卸载/账号边界关闭标签/会话离开 ready
+  // 时递增, 在途创建的晚到完成一律丢弃 (token 不落地, 也不写已卸载视图)。
+  const shareEpochRef = useRef(0);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareTtlMs, setShareTtlMs] = useState(SHARE_LINK_TTL_OPTIONS[1].ms);
+  const [shareWrite, setShareWrite] = useState(false);
+  const [shareCreating, setShareCreating] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  // shareCreated 只在创建成功后当场持有公开 URL (含一次性 token); 面板关闭、
+  // 会话离开 ready 或视图卸载即清除, 不写日志、不持久化、不进 web storage。
+  const [shareCreated, setShareCreated] = useState<{ url: string; permission: SharePermission; expiresAt: number } | null>(null);
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
   deviceRef.current = device;
@@ -335,6 +360,53 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     }
   }, [deviceId, pushToast]);
 
+  const toggleShare = useCallback(() => {
+    if (shareOpen) {
+      setShareOpen(false);
+      setShareCreated(null);
+      setShareError(null);
+      return;
+    }
+    setShareOpen(true);
+  }, [shareOpen]);
+
+  const createShare = useCallback(async () => {
+    const session = sessionRef.current;
+    if (!session || shareCreating) return;
+    const epoch = shareEpochRef.current;
+    setShareCreating(true);
+    setShareError(null);
+    try {
+      const link = await createShareLink({ deviceId, sessionId: session.id, write: shareWrite, ttlMs: shareTtlMs });
+      if (epoch !== shareEpochRef.current || unmountedRef.current) return;
+      setShareCreated({ url: sharePublicUrl(link.token), permission: link.permission, expiresAt: link.expires_at });
+    } catch (e) {
+      if (epoch !== shareEpochRef.current || unmountedRef.current) return;
+      setShareError(describeError(e));
+    } finally {
+      if (epoch === shareEpochRef.current && !unmountedRef.current) setShareCreating(false);
+    }
+  }, [deviceId, shareCreating, shareTtlMs, shareWrite]);
+
+  const copyShareUrl = useCallback(() => {
+    if (!shareCreated) return;
+    void navigator.clipboard
+      ?.writeText(shareCreated.url)
+      .then(() => pushToast("success", "公开链接已复制"))
+      .catch(() => pushToast("error", "复制失败, 请手动选中复制"));
+  }, [pushToast, shareCreated]);
+
+  // 会话离开 ready (exit/断开/失败) 后分享面板关闭并清除一次性 URL; 在途创建
+  // 的晚到完成经 shareEpochRef 失效, 不会把旧会话的链接写回视图。
+  useEffect(() => {
+    if (phase.kind === "ready") return;
+    shareEpochRef.current += 1;
+    setShareOpen(false);
+    setShareCreating(false);
+    setShareError(null);
+    setShareCreated(null);
+  }, [phase.kind]);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host || termRef.current) return;
@@ -385,6 +457,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       unmountedRef.current = true;
       openCancelRef.current?.();
       openCancelRef.current = null;
+      shareEpochRef.current += 1;
       dataDisposable.dispose();
       appearanceDisposable();
       ro.disconnect();
@@ -438,6 +511,17 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
         {stateBadge}
         <div className="nx-spacer" />
         {phase.kind === "ready" && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+            onClick={toggleShare}
+            aria-expanded={shareOpen}
+          >
+            <IconGlobe size={11} />
+            分享
+          </button>
+        )}
+        {phase.kind === "ready" && (
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void kill()}>
             <IconStop size={11} />
             结束终端
@@ -456,6 +540,77 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
           </button>
         )}
       </div>
+
+      {shareOpen && phase.kind === "ready" && (
+        <div className="shrink-0 border-b border-neutral-800/70 bg-neutral-950/60 px-3 py-2">
+          {shareCreated ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="text-[11.5px] text-neutral-300">
+                公开链接已创建 ({shareCreated.permission === "read_write" ? "读写" : "只读"}, 有效期至{" "}
+                {formatTime(shareCreated.expiresAt)})。链接<b>只显示这一次</b>, 关闭面板后本页面不再展示。
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{shareCreated.url}</code>
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
+                  onClick={copyShareUrl}
+                >
+                  复制链接
+                </button>
+                <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={toggleShare}>
+                  完成
+                </button>
+              </div>
+              <div className="text-[11px] leading-relaxed text-neutral-500">
+                有效期内任何持有链接的人都能打开这个终端会话{shareCreated.permission === "read_write" ? "并输入" : " (不能输入)"}
+                ; 可在「设置 → 分享」的公开链接列表中随时吊销。链接不接触主机密码或私钥。
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="nx-select shrink-0"
+                  style={{ width: 110 }}
+                  value={shareTtlMs}
+                  aria-label="链接有效期"
+                  onChange={(e) => setShareTtlMs(Number(e.target.value))}
+                >
+                  {SHARE_LINK_TTL_OPTIONS.map((o) => (
+                    <option key={o.ms} value={o.ms}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-1.5 text-[12px] text-neutral-300">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={shareWrite}
+                    onChange={(e) => setShareWrite(e.target.checked)}
+                  />
+                  允许读写
+                </label>
+                <span className="nx-hint text-[11px]">默认只读; 勾选后持有链接的人才可以在终端里输入</span>
+                <div className="nx-spacer" />
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
+                  disabled={shareCreating}
+                  onClick={() => void createShare()}
+                >
+                  {shareCreating ? "创建中…" : "创建公开链接"}
+                </button>
+              </div>
+              {shareError && <div className="text-[11.5px] break-words text-red-300">创建公开链接失败 · {shareError}</div>}
+              <div className="text-[11px] leading-relaxed text-neutral-500">
+                公开链接绑定当前终端会话, 有效期内持有链接的人都能打开; 链接只能创建一次, 本页面不会保存链接。
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0" />
