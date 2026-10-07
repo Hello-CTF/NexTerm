@@ -17,6 +17,15 @@ const VITE = `http://127.0.0.1:${VITE_PORT}`;
 const results = new Map();
 const harnessErrors = [];
 
+// 共享 /tmp 可能被其他任务填满: vite 依赖预构建与 Chrome profile 的临时写入会
+// 失败 (ENOENT/ENOSPC)。本脚本与子进程一律使用私有临时目录; 路径必须短,
+// Chrome 的 SingletonSocket 受 Unix socket 路径长度限制。
+const PRIVATE_TMP = path.join(os.homedir(), ".cache", "nexterm-acceptance-tmp");
+fs.mkdirSync(PRIVATE_TMP, { recursive: true });
+process.env.TMPDIR = PRIVATE_TMP;
+
+// 清掉上一轮遗留的下载,保证校验的 .json 一定是本轮导出真实落盘的产物。
+fs.rmSync(DOWNLOADS, { recursive: true, force: true });
 fs.mkdirSync(DOWNLOADS, { recursive: true });
 fs.mkdirSync(FIXTURES, { recursive: true });
 
@@ -203,6 +212,23 @@ const CLICK_BUTTON = (label) => `(() => {
   return true;
 })()`;
 
+// 资产包卡片内的导出行:body 里的 "web-01" 可能来自侧边资产树,必须限定在资产包卡片 section 内,
+// 且导出列表要等卡片自己的 sync_digest 异步返回后才渲染,点击前必须先等行存在。
+const BUNDLE_CARD = `[...document.querySelectorAll("section.nx-card")].find((s) => s.textContent?.includes("资产包（文件导入 / 导出）"))`;
+
+const BUNDLE_ROW = (name) => `(() => {
+  const card = ${BUNDLE_CARD};
+  if (!card) return null;
+  return [...card.querySelectorAll("label")].find((l) => l.textContent?.includes(${JSON.stringify(name)}) && l.querySelector('input[type="checkbox"]')) ?? null;
+})()`;
+
+const CLICK_BUNDLE_ROW = (name) => `(() => {
+  const row = ${BUNDLE_ROW(name)};
+  if (!row) return false;
+  row.querySelector('input[type="checkbox"]').click();
+  return true;
+})()`;
+
 const SET_PLAINTEXT_FORMAT = `(() => {
   const select = document.querySelector("#bundle-format");
   if (!select) return false;
@@ -254,11 +280,9 @@ try {
   await bootDemoSettings(page);
 
   await pass("bundle-export-without-credentials", async () => {
-    await page.evaluate(`(() => {
-      const row = [...document.querySelectorAll("label")].find((l) => l.textContent?.includes("web-01"));
-      row.querySelector('input[type="checkbox"]').click();
-      return true;
-    })()`);
+    await page.waitFor(`!!${BUNDLE_ROW("web-01")}`);
+    const rowClicked = await page.evaluate(CLICK_BUNDLE_ROW("web-01"));
+    assert.ok(rowClicked, "web-01 export row not found in bundle card");
     const formatChosen = await page.evaluate(SET_PLAINTEXT_FORMAT);
     assert.ok(formatChosen, "plaintext format option not chosen");
     await page.waitFor(BODY_HAS("将以明文导出"));
