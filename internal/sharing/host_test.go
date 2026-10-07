@@ -53,6 +53,52 @@ func TestHostShareCreateAndOpenTerminal(t *testing.T) {
 	}
 }
 
+func TestHostShareCreatePopulatesUsernames(t *testing.T) {
+	fixture := newServiceFixture(t)
+	admin := fixture.createSuperadmin(t, "root")
+	owner := fixture.createUser(t, "alice")
+	bob := fixture.createUser(t, "bob")
+	deviceID := fixture.createAgentDevice(t, owner, "build-host")
+
+	ownerShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ownerShare.OwnerUsername != "alice" || ownerShare.RecipientUsername != "bob" {
+		t.Fatalf("owner share usernames = %q/%q, want %q/%q", ownerShare.OwnerUsername, ownerShare.RecipientUsername, "alice", "bob")
+	}
+
+	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminShare.OwnerUsername != "root" || adminShare.RecipientUsername != "bob" {
+		t.Fatalf("superadmin share usernames = %q/%q, want %q/%q", adminShare.OwnerUsername, adminShare.RecipientUsername, "root", "bob")
+	}
+
+	shares, err := fixture.service.ListHostShares(context.Background(), fixture.identity(admin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shares) != 2 {
+		t.Fatalf("list shares = %+v", shares)
+	}
+	byID := make(map[string]*HostShare, len(shares))
+	for _, share := range shares {
+		byID[share.ID] = share
+	}
+	for _, created := range []*HostShare{ownerShare, adminShare} {
+		listed := byID[created.ID]
+		if listed == nil {
+			t.Fatalf("share %s missing from list", created.ID)
+		}
+		if listed.OwnerUsername != created.OwnerUsername || listed.RecipientUsername != created.RecipientUsername {
+			t.Fatalf("share %s create usernames = %q/%q, list = %q/%q", created.ID,
+				created.OwnerUsername, created.RecipientUsername, listed.OwnerUsername, listed.RecipientUsername)
+		}
+	}
+}
+
 func TestHostShareCreateAuthorization(t *testing.T) {
 	fixture := newServiceFixture(t)
 	owner := fixture.createUser(t, "alice")
