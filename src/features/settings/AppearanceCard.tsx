@@ -96,7 +96,7 @@ export function AppearanceCard() {
 
       <div className="mt-3.5">
         <div className="nx-setting-label mb-1.5">界面文字倍率（叠加在系统缩放之上）</div>
-        <div className="nx-segment" role="group" aria-label="界面文字倍率">
+        <div className="nx-segment flex-wrap" role="group" aria-label="界面文字倍率">
           {UI_FONT_SCALE_STEPS.map((step) => (
             <button
               key={step}

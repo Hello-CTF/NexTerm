@@ -215,7 +215,7 @@ function startServer() {
   return (async () => {
     const port = await freePort();
     const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-r120-data-"));
-    const process = spawn(bin, ["--listen", `127.0.0.1:${port}`, "--data-dir", data], {
+    const process = spawn(bin, ["--listen", `127.0.0.1:${port}`, "--data-dir", data, "--auth=loopback"], {
       cwd: ROOT,
       env: { ...globalThis.process.env, NEXTERM_MASTER_KEY: "r120-acceptance-master-key" },
       stdio: ["ignore", "pipe", "pipe"],
@@ -366,6 +366,90 @@ const READ_CRON_PROFILE_SELECT = `(() => {
     options: [...select.options].map((o) => o.textContent || ""),
     overflowsViewport: sr.right > window.innerWidth + 1,
   };
+})()`;
+
+const READ_FONT_SCALE_SEGMENT = `(() => {
+  const seg = [...document.querySelectorAll(".nx-segment")].find(
+    (s) => s.getAttribute("aria-label") === "界面文字倍率",
+  );
+  if (!seg) return { found: false };
+  const card = seg.closest(".nx-card");
+  const sr = seg.getBoundingClientRect();
+  const cr = card.getBoundingClientRect();
+  const items = [...seg.querySelectorAll(".nx-segment-item")];
+  const rows = new Set(items.map((it) => Math.round(it.getBoundingClientRect().top)));
+  return {
+    found: true,
+    itemCount: items.length,
+    labels: items.map((it) => it.textContent),
+    segScrollWidth: seg.scrollWidth,
+    segClientWidth: seg.clientWidth,
+    overflows: seg.scrollWidth > seg.clientWidth + 1,
+    insideCard: sr.left >= cr.left - 1 && sr.right <= cr.right + 1,
+    flexWrap: getComputedStyle(seg).flexWrap,
+    rows: rows.size,
+    minItemHeight: Math.round(Math.min(...items.map((it) => it.getBoundingClientRect().height))),
+  };
+})()`;
+
+const READ_APPEARANCE_SIBLINGS = `(() => {
+  const out = {};
+  for (const label of ["界面主题", "界面字号", "终端与编辑器主题"]) {
+    const seg = [...document.querySelectorAll(".nx-segment")].find(
+      (s) => s.getAttribute("aria-label") === label,
+    );
+    if (!seg) {
+      out[label] = { found: false };
+      continue;
+    }
+    const card = seg.closest(".nx-card");
+    const sr = seg.getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    const items = [...seg.querySelectorAll(".nx-segment-item")];
+    const rows = new Set(items.map((it) => Math.round(it.getBoundingClientRect().top)));
+    out[label] = {
+      found: true,
+      rows: rows.size,
+      flexWrap: getComputedStyle(seg).flexWrap,
+      overflows: seg.scrollWidth > seg.clientWidth + 1,
+      insideCard: sr.left >= cr.left - 1 && sr.right <= cr.right + 1,
+    };
+  }
+  const reset = [...document.querySelectorAll("button")].find(
+    (b) => b.getAttribute("aria-label") === "恢复默认主题与外观",
+  );
+  if (reset) {
+    const card = reset.closest(".nx-card");
+    const br = reset.getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    out.reset = { found: true, insideCard: br.left >= cr.left - 1 && br.right <= cr.right + 1 };
+  } else {
+    out.reset = { found: false };
+  }
+  return out;
+})()`;
+
+const READ_FONT_SCALE_PREF = `(() => {
+  const seg = [...document.querySelectorAll(".nx-segment")].find(
+    (s) => s.getAttribute("aria-label") === "界面文字倍率",
+  );
+  const pressed = [...seg.querySelectorAll(".nx-segment-item")].map((it) => ({
+    label: it.textContent,
+    pressed: it.getAttribute("aria-pressed") === "true",
+  }));
+  return {
+    pressed,
+    uiScale: document.documentElement.style.getPropertyValue("--nx-ui-scale"),
+  };
+})()`;
+
+const CLICK_FONT_SCALE_STEP = (step) => `(() => {
+  const seg = [...document.querySelectorAll(".nx-segment")].find(
+    (s) => s.getAttribute("aria-label") === "界面文字倍率",
+  );
+  const item = [...seg.querySelectorAll(".nx-segment-item")].find((it) => it.textContent === ${JSON.stringify(step)});
+  if (!item) throw new Error("scale step not found: " + ${JSON.stringify(step)});
+  item.click();
 })()`;
 
 const READ_AUDIT = `(() => {
@@ -644,6 +728,93 @@ async function darkSettingsChecks(page) {
   });
 }
 
+async function appearanceFontScaleChecks(page) {
+  await pass("A-fontscale-segment-fits-320", async () => {
+    await setViewport(page, 320, 720);
+    const state = await page.evaluate(READ_FONT_SCALE_SEGMENT);
+    assert.ok(state.found, "font-scale segment not found");
+    assert.equal(state.flexWrap, "wrap", `font-scale segment must wrap: ${JSON.stringify(state)}`);
+    assert.equal(state.overflows, false, `font-scale segment overflows horizontally: ${JSON.stringify(state)}`);
+    assert.equal(state.insideCard, true, `font-scale segment escapes its card: ${JSON.stringify(state)}`);
+    assert.equal(state.itemCount, 5, `expected 5 scale steps: ${JSON.stringify(state)}`);
+    assert.deepEqual(state.labels, ["100%", "125%", "150%", "175%", "200%"]);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    assertNoOverflow(sample, "font-scale 320");
+    const shot = await screenshot(page, "A-fontscale-segment-320.png");
+    return { evidence: { state, shot } };
+  });
+
+  await pass("A-fontscale-segment-fits-390", async () => {
+    await setViewport(page, 390, 780);
+    const state = await page.evaluate(READ_FONT_SCALE_SEGMENT);
+    assert.ok(state.found, "font-scale segment not found");
+    assert.equal(state.overflows, false, `font-scale segment overflows at 390: ${JSON.stringify(state)}`);
+    assert.equal(state.insideCard, true, `font-scale segment escapes its card at 390: ${JSON.stringify(state)}`);
+    return { evidence: state };
+  });
+
+  await pass("A-fontscale-segment-single-row-desktop", async () => {
+    await setViewport(page, 1280, 900);
+    const state = await page.evaluate(READ_FONT_SCALE_SEGMENT);
+    assert.ok(state.found, "font-scale segment not found");
+    assert.equal(state.rows, 1, `desktop must stay single-row: ${JSON.stringify(state)}`);
+    assert.equal(state.overflows, false, `font-scale segment overflows at desktop: ${JSON.stringify(state)}`);
+    return { evidence: state };
+  });
+
+  await pass("A-fontscale-segment-touch-target-coarse-320", async () => {
+    await setViewport(page, 320, 720, { coarse: true });
+    const state = await page.evaluate(READ_FONT_SCALE_SEGMENT);
+    assert.ok(state.found, "font-scale segment not found");
+    assert.equal(state.overflows, false, `font-scale segment overflows with coarse pointer: ${JSON.stringify(state)}`);
+    assert.ok(state.minItemHeight >= 44, `touch target must stay >= 44px: ${JSON.stringify(state)}`);
+    await setViewport(page, 320, 720, { coarse: false });
+    return { evidence: state };
+  });
+
+  await pass("A-appearance-sibling-segments-single-row-320", async () => {
+    await setViewport(page, 320, 720);
+    const state = await page.evaluate(READ_APPEARANCE_SIBLINGS);
+    for (const label of ["界面主题", "界面字号", "终端与编辑器主题"]) {
+      const seg = state[label];
+      assert.ok(seg?.found, `${label} segment not found`);
+      assert.equal(seg.rows, 1, `${label} must stay single-row at 320: ${JSON.stringify(seg)}`);
+      assert.equal(seg.overflows, false, `${label} overflows at 320: ${JSON.stringify(seg)}`);
+      assert.equal(seg.insideCard, true, `${label} escapes its card at 320: ${JSON.stringify(seg)}`);
+    }
+    assert.ok(state.reset?.found, "appearance reset button not found");
+    assert.equal(state.reset.insideCard, true, `reset button escapes its card at 320: ${JSON.stringify(state.reset)}`);
+    return { evidence: state };
+  });
+
+  await pass("A-fontscale-segment-pref-behavior-320", async () => {
+    await setViewport(page, 320, 720);
+    try {
+      await page.evaluate(CLICK_FONT_SCALE_STEP("125%"));
+      await page.waitFor(`document.documentElement.style.getPropertyValue("--nx-ui-scale") === "1.25"`);
+      const after125 = await page.evaluate(READ_FONT_SCALE_PREF);
+      assert.deepEqual(
+        after125.pressed.filter((p) => p.pressed).map((p) => p.label),
+        ["125%"],
+        `only 125% must be active: ${JSON.stringify(after125)}`,
+      );
+      const segState = await page.evaluate(READ_FONT_SCALE_SEGMENT);
+      assert.equal(segState.overflows, false, `segment must not overflow at 125% text scale: ${JSON.stringify(segState)}`);
+      assert.equal(segState.insideCard, true, `segment must stay inside card at 125% text scale: ${JSON.stringify(segState)}`);
+    } finally {
+      await page.evaluate(CLICK_FONT_SCALE_STEP("100%"));
+      await page.waitFor(`document.documentElement.style.getPropertyValue("--nx-ui-scale") === "1"`);
+    }
+    const restored = await page.evaluate(READ_FONT_SCALE_PREF);
+    assert.deepEqual(
+      restored.pressed.filter((p) => p.pressed).map((p) => p.label),
+      ["100%"],
+      `scale must restore to 100%: ${JSON.stringify(restored)}`,
+    );
+    return { evidence: { restored } };
+  });
+}
+
 async function auditChecks(page) {
   for (const [width, height] of [[320, 720], [390, 780], [768, 900]]) {
     await pass(`B-audit-toolbar-reachable-${width}`, async () => {
@@ -815,6 +986,7 @@ try {
   record("A-seed", "passed", { evidence: seed });
   await openSettingsTab(pageA);
   await darkSettingsChecks(pageA);
+  await appearanceFontScaleChecks(pageA);
   await settingsMatrix(pageA, "A-dark", { coarse: false });
   await settingsMatrix(pageA, "A-dark", { coarse: true });
 
