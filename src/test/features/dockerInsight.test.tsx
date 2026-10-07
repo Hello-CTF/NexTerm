@@ -594,6 +594,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除容器 web");
+    expect(modal.textContent).toContain("挂载卷和主机目录不会被删除");
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
 
@@ -614,6 +615,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除镜像 nginx:1.25");
+    expect(modal.textContent).toContain("仍可用来创建容器");
     await closeModal(modal, "取消");
     expect(mocks.imageRemove).not.toHaveBeenCalled();
 
@@ -638,6 +640,7 @@ describe("destructive delete confirmations (R42, real DialogHost)", () => {
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("删除选中的 2 个容器");
+    expect(modal.textContent).toContain("挂载卷和主机目录不会被删除");
     await closeModal(modal, "取消");
     expect(mocks.action).not.toHaveBeenCalled();
 

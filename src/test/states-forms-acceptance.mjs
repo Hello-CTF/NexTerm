@@ -899,7 +899,7 @@ async function statesFormsAcceptance(page) {
     );
     assert.equal(pendingState, true, "pending 期间不得显示「从左侧选一个键」");
     await page.waitFor(`!document.body.textContent.includes("键内容加载中…")`, 15_000);
-    const loaded = await page.evaluate(`document.body.textContent.includes("TTL")`);
+    const loaded = await page.evaluate(`document.body.textContent.includes("秒后过期")`);
     assert.equal(loaded, true, "详情加载完成后应显示键信息");
     await setSwitches(page, { slow: 0 });
     return { evidence: { pendingState } };

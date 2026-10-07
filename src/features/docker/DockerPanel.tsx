@@ -176,9 +176,10 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const key = c.id;
     if (action === "remove") {
       if (pending.has(key)) return;
-      const go = await ask(`删除容器 ${c.name}？\n\n删除后容器及其内部产生的文件都会消失，不可恢复。`, {
-        kind: "warning",
-      });
+      const go = await ask(
+        `删除容器 ${c.name}？\n\n容器内未挂载到卷或主机目录的数据会丢失，不可恢复；挂载卷和主机目录不会被删除。`,
+        { kind: "warning" },
+      );
       if (!go) return;
     }
     markPending(key, true);
@@ -208,9 +209,10 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const ref = imageRef(i);
     if (pending.has(key)) return;
     if (
-      !(await ask(`删除镜像 ${ref}？\n\n删除后这台主机上将没有这个镜像，不能再用它创建容器。`, {
-        kind: "warning",
-      }))
+      !(await ask(
+        `删除镜像 ${ref}？\n\n删除的是这个镜像条目（标签）；同一镜像若还有其他标签，仍可用来创建容器。`,
+        { kind: "warning" },
+      ))
     )
       return;
     markPending(key, true);
@@ -236,8 +238,8 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const isContainer = tab === "containers";
     const label = isContainer ? "容器" : "镜像";
     const consequence = isContainer
-      ? "删除后这些容器及其内部产生的文件都会消失，不可恢复。"
-      : "删除后这些镜像将不能再用来创建容器。";
+      ? "容器内未挂载到卷或主机目录的数据会丢失，不可恢复；挂载卷和主机目录不会被删除。"
+      : "删除的是选中的镜像条目（标签）；同一镜像若还有其他标签，仍可用来创建容器。";
     if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n${consequence}`, { kind: "warning" })))
       return;
 
