@@ -1249,6 +1249,16 @@
     display: flex;
   }
 
+  .nx-files-row .nx-row-actions {
+    display: flex;
+    visibility: hidden;
+  }
+  .nx-files-row:hover .nx-row-actions,
+  .nx-files-row.is-selected .nx-row-actions,
+  .nx-files-row:focus-within .nx-row-actions {
+    visibility: visible;
+  }
+
   .nx-card {
     border: 1px solid color-mix(in srgb, var(--color-neutral-800) 90%, transparent);
     border-radius: var(--radius-lg);

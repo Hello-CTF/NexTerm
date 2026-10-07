@@ -29,7 +29,7 @@ function MountUnavailable({ reason }: { reason: string }) {
           <div className="text-[13px] font-semibold text-neutral-200">本平台暂不支持磁盘挂载</div>
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
           <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
-            远程文件读写请走左侧 <span className="text-neutral-300">「文件树」</span>
+            远程文件读写请走左侧<span className="text-neutral-300">「文件树」</span>
             （SFTP 通道，不需要任何本机依赖）。
           </p>
         </div>
@@ -120,7 +120,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       return;
     }
     if (localSession) {
-      pushToast("info", "当前是「当前设备」会话 —— 本机文件直接在左栏文件树里看，不用挂载");
+      pushToast("info", "当前是「当前设备」会话，本机文件直接在左栏文件树里看，不用挂载");
       return;
     }
     const pointErr = validateRequired("挂载点", localPoint);
@@ -316,9 +316,9 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
         <div className="nx-hint mt-2">
           {localSession ? (
             <>
-              当前工作区是内置的「当前设备」—— 要挂的「远端」就是这台机器自己。
-              本机目录请直接看左栏 <span className="text-neutral-300">文件树</span>；
-              挂载是给 <span className="text-neutral-300">SSH 资产</span> 用的。
+              当前工作区是内置的「当前设备」，要挂的「远端」就是这台机器自己。
+              本机目录请直接看左栏<span className="text-neutral-300">文件树</span>；
+              挂载是给<span className="text-neutral-300">SSH 资产</span>用的。
             </>
           ) : (
             <>凭据默认复用资产里保存的那份；这里填的只对本次挂载生效，不落盘。</>

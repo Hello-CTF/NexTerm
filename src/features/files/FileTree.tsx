@@ -190,7 +190,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
 
   const openFile = (entry: FileEntryDto) => {
     if (!isEditableFile(entry.name)) {
-      pushToast("info", `「${entry.name}」不是文本文件，不能在线编辑；可用工具栏下载到本机`);
+      pushToast("info", `「${entry.name}」不是文本文件，不能在线编辑；可以下载到本机后打开`);
       return;
     }
     openFileTab(sessionId, entry.path);
@@ -298,7 +298,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
       const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
       pushToast(
         where ? "success" : "info",
-        where ? `已打包下载 ${bytes} 字节 → ${where}` : "已取消保存",
+        where ? `已打包下载到 ${where}（${bytes} 字节）` : "已取消保存",
       );
     } catch (e) {
       pushToast("error", `打包下载失败：${describeError(e)}`);
@@ -599,7 +599,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
           title={
             homeSupported
               ? "回到家目录 (~)"
-              : "该后端不支持 ~ 展开（本地 / SFTP 后端都不认）"
+              : "该后端不支持 ~ 展开（本地和 SFTP 后端都不支持）"
           }
           aria-label={homeSupported ? "回到家目录 (~)" : "该后端不支持 ~ 展开"}
           disabled={!homeSupported || root === HOME}
@@ -646,7 +646,7 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               aria-expanded={isDir ? open : undefined}
               aria-selected={isSel}
               tabIndex={0}
-              className={`nx-row group focus-within:[&_.nx-row-actions]:flex ${isSel ? "is-selected" : ""}`}
+              className={`nx-row nx-files-row group focus-within:[&_.nx-row-actions]:flex ${isSel ? "is-selected" : ""}`}
               style={{ paddingLeft: 2 + depth * 12 }}
               onClick={() => {
                 setSelected(entry.path);

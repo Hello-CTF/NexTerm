@@ -126,7 +126,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       return;
     }
     if (!isEditableFile(entry.name)) {
-      pushToast("info", `「${entry.name}」不是文本文件，不能在线编辑；用上面的下载按钮取到本机`);
+      pushToast("info", `「${entry.name}」不是文本文件，不能在线编辑；可以下载到本机后打开`);
       return;
     }
     openFileTab(sessionId, entry.path);
@@ -154,7 +154,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       pushToast("info", "开始上传…");
       const bytes = await fsApi.upload(sessionId, file, remote, false);
       refreshDir(dir);
-      pushToast("success", `已上传 ${bytes} 字节 → ${remote}`);
+      pushToast("success", `已上传到 ${remote}（${bytes} 字节）`);
     } catch (e) {
       pushToast("error", `上传失败：${describeError(e)}`);
     } finally {
@@ -169,7 +169,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
     try {
       const bytes = await fsApi.download(sessionId, remotePath, target);
       const where = await finishSave(target, baseName(remotePath));
-      pushToast(where ? "success" : "info", where ? `已下载 ${bytes} 字节 → ${where}` : "已取消保存");
+      pushToast(where ? "success" : "info", where ? `已下载到 ${where}（${bytes} 字节）` : "已取消保存");
     } catch (e) {
       pushToast("error", `下载失败：${describeError(e)}`);
     }
@@ -219,7 +219,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
       const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
       pushToast(
         where ? "success" : "info",
-        where ? `已打包下载 ${bytes} 字节 → ${where}` : "已取消保存",
+        where ? `已打包下载到 ${where}（${bytes} 字节）` : "已取消保存",
       );
     } catch (e) {
       pushToast("error", `打包下载失败：${describeError(e)}`);
@@ -580,7 +580,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
                   aria-level={1}
                   aria-selected={isSel}
                   tabIndex={0}
-                  className={`flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 focus-within:[&_.nx-row-actions]:flex ${
+                  className={`nx-files-row flex cursor-pointer items-center gap-2 px-3 focus:bg-neutral-800/50 focus-within:[&_.nx-row-actions]:flex ${
                     isSel ? "bg-blue-500/[0.14]" : "hover:bg-neutral-800/50"
                   }`}
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)`, position: "absolute", top: 0, left: 0, right: 0 }}
