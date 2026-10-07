@@ -57,7 +57,9 @@ interface DemoAuthState {
   devices: AccountDevice[];
   enrollCodes: { code: string; userId: string; expiresAt: number; consumedAt: number | null }[];
   deviceOwners: Record<string, string>;
-  nextId: number;
+  nextUserNum: number;
+  nextCodeNum: number;
+  nextDeviceNum: number;
 }
 
 const state: DemoAuthState = {
@@ -72,7 +74,9 @@ const state: DemoAuthState = {
     "d-demo-2": demoSuperadmin.id,
     "d-demo-3": demoSuperadmin.id,
   },
-  nextId: 1,
+  nextUserNum: 1,
+  nextCodeNum: 1,
+  nextDeviceNum: 1,
 };
 
 function session(user: AccountUser): AccountSession {
@@ -126,7 +130,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     if (!username) fail("参数错误: 用户名不能为空");
     if (findUser(username)) fail("参数错误: 用户名已存在");
     const user: AccountUser = {
-      id: `u-demo-${state.nextId++}`,
+      id: `u-demo-${state.nextUserNum++}`,
       username,
       display_name: String(payload.display_name ?? ""),
       role: "user",
@@ -169,11 +173,12 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
   }
   if (path === "/auth/devices" && method === "GET") {
     if (!state.user) fail("会话无效或缺失");
-    return { devices: state.devices } as T;
+    // 与真实后端一致每次返回新负载: 直接给活引用会让前端 setState 同引用跳过重渲染,吊销后列表不刷新。
+    return { devices: state.devices.map((d) => ({ ...d })) } as T;
   }
   if (path === "/auth/devices/enroll-code" && method === "POST") {
     if (!state.user) fail("会话无效或缺失");
-    const code = `demo-enroll-${now().toString(36)}-${state.nextId++}`;
+    const code = `demo-enroll-${now().toString(36)}-${state.nextCodeNum++}`;
     const expiresAt = now() + 15 * 60_000;
     state.enrollCodes.push({ code, userId: state.user.id, expiresAt, consumedAt: null });
     return { code, expires_at: expiresAt } as T;
@@ -194,7 +199,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     }
     record.consumedAt = now();
     const device: AccountDevice = {
-      id: `d-demo-${state.nextId++}`,
+      id: `d-demo-enroll-${state.nextDeviceNum++}`,
       name: String(payload.name ?? "新设备"),
       kind: String(payload.kind ?? "desktop"),
       created_at: now(),
@@ -214,7 +219,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     if (!username) fail("参数错误: 用户名不能为空");
     if (findUser(username)) fail("参数错误: 用户名已存在");
     const user: AccountUser = {
-      id: `u-demo-${state.nextId++}`,
+      id: `u-demo-${state.nextUserNum++}`,
       username,
       display_name: String(payload.display_name ?? ""),
       role: "user",
@@ -270,11 +275,15 @@ export function resetDemoAuth(): void {
   state.registrationOpen = false;
   state.user = demoSuperadmin;
   state.users = [demoSuperadmin, demoUser];
-  state.devices = demoDevices;
+  //  enroll 会 push 设备、登录/吊销会改 last_seen/revoked_at;重置必须拿种子的新副本,否则跨重置泄漏。
+  state.devices = demoDevices.map((d) => ({ ...d }));
   state.enrollCodes = [];
   state.deviceOwners = {
     "d-demo-1": demoSuperadmin.id,
     "d-demo-2": demoSuperadmin.id,
     "d-demo-3": demoSuperadmin.id,
   };
+  state.nextUserNum = 1;
+  state.nextCodeNum = 1;
+  state.nextDeviceNum = 1;
 }

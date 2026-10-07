@@ -903,6 +903,15 @@ async function enrollChecks(chrome) {
   await page.waitFor(`document.body.textContent.includes("登录设备")`);
   await sleep(400);
 
+  const ENROLL_DEVICE_NAME = "验收浏览器-m197";
+  // 种子设备快照: 后续断言 enroll 登录只更新返回设备、不触碰任何种子设备。
+  const seededSnapshot = await page.evaluate(`(async () => {
+    const { demoAuthRequest } = await import('/src/demo/auth.ts');
+    const r = await demoAuthRequest("GET", "/auth/devices");
+    return r.devices;
+  })()`);
+  assert.ok(Array.isArray(seededSnapshot) && seededSnapshot.length >= 3, "seed devices snapshot failed");
+
   await pass("D-enroll-issue-code", async () => {
     const code = await page.evaluate(`(async () => {
       const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "添加设备");
@@ -941,7 +950,7 @@ async function enrollChecks(chrome) {
       btn.click();
     })()`);
     await page.waitFor(`document.body.textContent.includes("15 分钟内有效")`);
-    const deviceName = "验收浏览器-m197";
+    const deviceName = ENROLL_DEVICE_NAME;
     await page.evaluate(`(() => {
       const gate = document.querySelector(".fixed.inset-0");
       if (!gate) throw new Error("auth gate overlay not found");
@@ -986,8 +995,71 @@ async function enrollChecks(chrome) {
     assert.ok(state.found, "登录设备 card not found after enroll login");
     assert.ok(state.rowCount > 0, `enrolled device row missing: ${JSON.stringify(state)}`);
     assert.equal(state.active, true, `enrolled device must be active: ${JSON.stringify(state)}`);
+
+    // 不能只看设备名和「生效中」: 必须核对后端列表 id 唯一、enroll 返回的设备才是被登录更新的那台。
+    const backend = await page.evaluate(`(async () => {
+      const { demoAuthRequest } = await import('/src/demo/auth.ts');
+      const r = await demoAuthRequest("GET", "/auth/devices");
+      return r.devices;
+    })()`);
+    const ids = backend.map((d) => d.id);
+    assert.equal(new Set(ids).size, ids.length, `device ids must be unique: ${ids}`);
+    const enrolledRows = backend.filter((d) => d.name === deviceName);
+    assert.equal(enrolledRows.length, 1, `exactly one enrolled device expected: ${JSON.stringify(backend)}`);
+    const enrolledDevice = enrolledRows[0];
+    for (const seeded of seededSnapshot) {
+      assert.ok(enrolledDevice.id !== seeded.id, `enrolled id must not collide with seed ${seeded.id}`);
+    }
+    assert.ok(enrolledDevice.last_seen_at > 0, `login must touch the enrolled device: ${JSON.stringify(enrolledDevice)}`);
+    for (const seeded of seededSnapshot) {
+      const current = backend.find((d) => d.id === seeded.id);
+      assert.equal(current?.last_seen_at, seeded.last_seen_at, `seed ${seeded.id} last_seen must be untouched by enroll login`);
+    }
     const shot = await screenshot(page, "D-enroll-device-listed.png");
-    return { evidence: { deviceName, state, shot } };
+    return { evidence: { deviceName, enrolledId: enrolledDevice.id, state, shot } };
+  });
+
+  await pass("D-enroll-revoke-target", async () => {
+    // 吊销必须只命中 enroll 返回的设备: 种子 d-demo-1/2 保持生效, d-demo-3 保持种子态已吊销。
+    const revoked = await page.evaluate(`(async () => {
+      const { demoAuthRequest } = await import('/src/demo/auth.ts');
+      const before = (await demoAuthRequest("GET", "/auth/devices")).devices;
+      const target = before.find((d) => d.name === ${JSON.stringify(ENROLL_DEVICE_NAME)});
+      if (!target) throw new Error("enrolled device not found in demo backend");
+      await demoAuthRequest("DELETE", "/auth/devices/" + encodeURIComponent(target.id));
+      const after = (await demoAuthRequest("GET", "/auth/devices")).devices;
+      return { targetId: target.id, after };
+    })()`);
+    const enrolledRow = revoked.after.find((d) => d.id === revoked.targetId);
+    assert.ok(enrolledRow?.revoked_at > 0, `revoke must hit the enrolled device: ${JSON.stringify(revoked)}`);
+    for (const id of ["d-demo-1", "d-demo-2"]) {
+      assert.equal(revoked.after.find((d) => d.id === id)?.revoked_at, 0, `${id} must stay active after targeted revoke`);
+    }
+    assert.ok(revoked.after.find((d) => d.id === "d-demo-3")?.revoked_at > 0, "d-demo-3 must stay revoked as seeded");
+
+    // UI 刷新后行状态如实翻转: enroll 的行已吊销, 种子「这台浏览器」仍生效中。
+    await page.evaluate(`(() => {
+      const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("登录设备"));
+      const btn = [...card.querySelectorAll("button")].find((b) => b.textContent?.includes("刷新"));
+      btn.click();
+    })()`);
+    await page.waitFor(`(() => {
+      const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("登录设备"));
+      if (!card) return false;
+      const span = [...card.querySelectorAll("span")].find((s) => s.textContent?.trim() === ${JSON.stringify(ENROLL_DEVICE_NAME)});
+      return !!span?.parentElement?.textContent?.includes("已吊销");
+    })()`);
+    const rows = await page.evaluate(`(() => {
+      const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("登录设备"));
+      const rowText = (name) => {
+        const span = [...card.querySelectorAll("span")].find((s) => s.textContent?.trim() === name);
+        return span?.parentElement?.textContent ?? null;
+      };
+      return { enrolled: rowText(${JSON.stringify(ENROLL_DEVICE_NAME)}), seeded: rowText("这台浏览器") };
+    })()`);
+    assert.ok(rows.seeded?.includes("生效中"), `seeded device must stay active in UI: ${JSON.stringify(rows)}`);
+    const shot = await screenshot(page, "D-enroll-revoked.png");
+    return { evidence: { targetId: revoked.targetId, rows, shot } };
   });
 
   await pass("D-enroll-invalid-code", async () => {
