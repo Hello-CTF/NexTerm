@@ -17,6 +17,18 @@ const FAILING_VITE = `process.stderr.write("fake vite boom\\n");
 process.exit(1);
 `;
 
+const SILENT_VITE = `import fs from "node:fs";
+import net from "node:net";
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+const marker = process.env.NX_ACCEPTANCE_TEST_MARKER;
+fs.writeFileSync(marker + ".pid", String(process.pid));
+net.createServer(() => {}).listen(port, "127.0.0.1");
+process.on("SIGTERM", () => {
+  fs.writeFileSync(marker, "term");
+  process.exit(0);
+});
+`;
+
 const DRIVER = `import { startVite } from ${JSON.stringify(HELPER_URL)};
 const mode = process.argv[2];
 const vite = await startVite({ viteBin: process.argv[3], readyTimeout: 20000 });
@@ -29,6 +41,7 @@ if (mode === "signal") setInterval(() => {}, 1000);
 let fixtureDir = "";
 let fakeViteBin = "";
 let failingViteBin = "";
+let silentViteBin = "";
 let driverBin = "";
 const liveDrivers: ChildProcess[] = [];
 const liveVites: { stop(): Promise<void> }[] = [];
@@ -37,9 +50,11 @@ beforeAll(() => {
   fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-acceptance-process-"));
   fakeViteBin = path.join(fixtureDir, "fake-vite.mjs");
   failingViteBin = path.join(fixtureDir, "failing-vite.mjs");
+  silentViteBin = path.join(fixtureDir, "silent-vite.mjs");
   driverBin = path.join(fixtureDir, "driver.mjs");
   fs.writeFileSync(fakeViteBin, FAKE_VITE);
   fs.writeFileSync(failingViteBin, FAILING_VITE);
+  fs.writeFileSync(silentViteBin, SILENT_VITE);
   fs.writeFileSync(driverBin, DRIVER);
 });
 
@@ -127,6 +142,24 @@ describe("acceptance-process startVite", () => {
     await expect(startVite({ viteBin: failingViteBin, readyTimeout: 15_000 })).rejects.toThrow(
       /process exited 1[\s\S]*fake vite boom/,
     );
+  }, 30_000);
+
+  it("bounds each fetch by the remaining deadline and reaps the child when the server hangs", async () => {
+    const marker = path.join(fixtureDir, "silent-term");
+    process.env.NX_ACCEPTANCE_TEST_MARKER = marker;
+    try {
+      const started = Date.now();
+      await expect(startVite({ viteBin: silentViteBin, readyTimeout: 2000 })).rejects.toThrow(/timed out waiting/);
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(1900);
+      expect(elapsed).toBeLessThan(15_000);
+      const deadline = Date.now() + 10_000;
+      while (!fs.existsSync(marker) && Date.now() < deadline) await sleep(100);
+      expect(fs.existsSync(marker)).toBe(true);
+      await waitPidGone(Number(fs.readFileSync(`${marker}.pid`, "utf8")));
+    } finally {
+      delete process.env.NX_ACCEPTANCE_TEST_MARKER;
+    }
   }, 30_000);
 
   it("rejects a busy port without adopting or killing the squatter", async () => {

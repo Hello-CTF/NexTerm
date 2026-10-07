@@ -37,7 +37,7 @@ export async function waitHttp(url, child, timeout = 30_000) {
       throw new Error(`${url}: process exited ${child.exitCode ?? child.signalCode}`);
     }
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
       if (response.ok) return response;
     } catch {}
     await sleep(100);
