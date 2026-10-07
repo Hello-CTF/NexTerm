@@ -476,6 +476,9 @@ describe("凭据头部与新建弹窗窄屏结构", () => {
       (s) => s.textContent?.trim() === "凭据",
     );
     expect(title?.className ?? "").toContain("whitespace-nowrap");
+    const header = title?.closest("div.flex");
+    expect(header?.className ?? "").toContain("flex-wrap");
+    expect(header?.className ?? "").toContain("min-h-[38px]");
     const create = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent?.trim() === "新建凭据",
     );
