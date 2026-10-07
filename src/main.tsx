@@ -10,6 +10,7 @@ import { useUi } from "./app/store";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform } from "./app/platform";
 import { setMountUnavailableReason } from "./app/capabilities";
+import { PublicShareApp } from "./features/sharing/PublicShareApp";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -17,45 +18,65 @@ const queryClient = new QueryClient({
 
 const eventVersions = new EventVersionGate();
 
-void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
-  if (!eventVersions.accept(p.sessionId, p.version)) return;
-  const { sessions, setSessions, pushToast } = useUi.getState();
-  setSessions(
-    sessions.map((s) =>
-      s.id === p.sessionId ? { ...s, status: p.status as never } : s,
-    ),
+function publicShareTokenFromPath(pathname: string): string | null {
+  const match = /^\/share\/public\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return null;
+  try {
+    const token = decodeURIComponent(match[1]);
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function mount(node: React.ReactNode): void {
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>{node}</React.StrictMode>,
   );
-  if (p.status === "failed" && p.error) {
-    pushToast("error", `会话失败：${p.error}`);
-  }
-});
+}
 
-void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
-  if (!eventVersions.accept(p.tabId, p.version)) return;
-  const { pushToast } = useUi.getState();
-  if (p.exitCode !== null && p.exitCode !== 0) {
-    pushToast("info", `终端进程退出（exit ${p.exitCode}）`);
-  }
-});
+function wireDesktopShell(): void {
+  void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
+    if (!eventVersions.accept(p.sessionId, p.version)) return;
+    const { sessions, setSessions, pushToast } = useUi.getState();
+    setSessions(
+      sessions.map((s) =>
+        s.id === p.sessionId ? { ...s, status: p.status as never } : s,
+      ),
+    );
+    if (p.status === "failed" && p.error) {
+      pushToast("error", `会话失败：${p.error}`);
+    }
+  });
 
-void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
-  useUi.getState().pushToast("error", p.message);
-});
+  void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
+    if (!eventVersions.accept(p.tabId, p.version)) return;
+    const { pushToast } = useUi.getState();
+    if (p.exitCode !== null && p.exitCode !== 0) {
+      pushToast("info", `终端进程退出（exit ${p.exitCode}）`);
+    }
+  });
 
-onEventsResync(() => {
-  void useUi.getState().resyncSessions();
-  onRemoteChange(null);
-});
+  void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
+    useUi.getState().pushToast("error", p.message);
+  });
 
-window.addEventListener("contextmenu", (e) => {
-  const el = e.target as HTMLElement | null;
-  const inEditable = el?.closest("input, textarea, [contenteditable='true']");
-  const inTerminal = el?.closest(".xterm");
-  if (inEditable && !inTerminal) return;
-  e.preventDefault();
-});
+  onEventsResync(() => {
+    void useUi.getState().resyncSessions();
+    onRemoteChange(null);
+  });
 
-async function bootstrap() {
+  window.addEventListener("contextmenu", (e) => {
+    const el = e.target as HTMLElement | null;
+    const inEditable = el?.closest("input, textarea, [contenteditable='true']");
+    const inTerminal = el?.closest(".xterm");
+    if (inEditable && !inTerminal) return;
+    e.preventDefault();
+  });
+}
+
+async function bootstrapApp(): Promise<void> {
+  wireDesktopShell();
   try {
     const [os, mountReason] = await Promise.all([
       systemApi.platform(),
@@ -67,13 +88,18 @@ async function bootstrap() {
     setMountUnavailableReason(mountReason);
   } catch {
   }
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-    <React.StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </React.StrictMode>,
+  mount(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
   );
 }
 
-void bootstrap();
+const publicShareToken =
+  typeof window === "undefined" ? null : publicShareTokenFromPath(window.location.pathname);
+
+if (publicShareToken) {
+  mount(<PublicShareApp token={publicShareToken} />);
+} else {
+  void bootstrapApp();
+}
