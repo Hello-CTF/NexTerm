@@ -10,7 +10,9 @@ to end:
   2. agent run: control channel online, current-url report, natural sync tick
   3. sync metrics: direct POST /agent/sync sample read back via /fleet API
   4. outbound bridge/resume: supervisor protocol (real create/attach/detach/
-     re-attach with expect incarnation) through GET /fleet/devices/{id}/bridge
+     re-attach with expect incarnation) through GET /fleet/devices/{id}/bridge;
+     the device list must expose the same state digest the browser needs for
+     the supervisor hello (FLEET156)
   5. revocation: agent control channel kicked, agent exits with code 3
   6. protocol errors: version_mismatch and forbidden hello frames
   7. --auth=off: every fleet route rejected with 403
@@ -584,6 +586,14 @@ def main() -> int:
         # 调用方按守护进程所在主机视角计算)。
         state_dir = str((agent_dir / "durable" / "supervisor").resolve())
         state_digest = hashlib.sha256(f"{os.geteuid()}\x00{state_dir}".encode()).hexdigest()
+
+        # FLEET156: 浏览器经设备列表拿到同一份摘要去做 supervisor hello;
+        # 这里钉住列表下发值与设备端现算值一致, 且桥接 hello 合同不回退。
+        def listed_state_digest() -> str:
+            return device_row().get("agent", {}).get("state_digest", "")
+
+        wait_until(10, "device list exposes state digest", lambda: listed_state_digest() == state_digest)
+        check("设备列表下发 state digest", listed_state_digest() == state_digest, f"listed={listed_state_digest()!r}")
 
         def open_relay() -> SupervisorStream:
             ws = WebSocket(server.port, f"/fleet/devices/{device_id}/bridge", relay_headers)

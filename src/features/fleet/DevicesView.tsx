@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetBaseURLEntry, type FleetDevice, type FleetMetricsSample } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
-import { useUi } from "../../app/store";
+import { openDeviceTerminalTab, useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
@@ -17,6 +17,7 @@ import {
   IconMonitor,
   IconPlus,
   IconRefresh,
+  IconTerminal,
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
@@ -259,6 +260,18 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
           </span>
         )}
         <div className="nx-spacer" />
+        {!revoked && agent?.terminal_enabled && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+            disabled={!online}
+            title={online ? "在这台设备上打开远程终端" : "设备离线, 无法打开终端"}
+            onClick={() => openDeviceTerminalTab(device)}
+          >
+            <IconTerminal size={11} />
+            终端
+          </button>
+        )}
         {!revoked && agent && (
           <button
             type="button"
@@ -426,6 +439,19 @@ export function DevicesView() {
     if (!WEB || !user) return;
     load();
   }, [user, load]);
+
+  // 账号切换边界与渲染期账号态重置一致: 旧账号打开的设备远程终端标签全部关闭
+  // (组件卸载即 detach, 设备端会话进程不受影响), 不带入新账号工作区。
+  useEffect(() => {
+    const st = useUi.getState();
+    for (const w of st.workspaces) {
+      for (const p of w.panes) {
+        for (const t of p.tabs) {
+          if (t.kind === "deviceTerminal") void st.closeTab(t.id);
+        }
+      }
+    }
+  }, [userId]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);

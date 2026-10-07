@@ -326,3 +326,41 @@ func TestFleetHTTPRoleIsolation(t *testing.T) {
 		t.Fatalf("revoked device metrics status=%d body=%v", call.status, call.body)
 	}
 }
+
+func TestFleetHTTPDeviceListStateDigest(t *testing.T) {
+	fixture := newHTTPFixture(t, false)
+	alice := fixture.createUser(t, "alice")
+	aliceSession := fixture.session(t, alice)
+
+	call := fixture.call(t, http.MethodPost, "/device/enroll-codes", map[string]any{}, aliceSession, aliceSession.csrf)
+	code, _ := call.body["code"].(string)
+	call = fixture.call(t, http.MethodPost, "/device/enroll", map[string]any{"code": code, "name": "agent-host", "platform": "linux"}, nil, "")
+	if call.status != http.StatusOK {
+		t.Fatalf("enroll status=%d body=%v", call.status, call.body)
+	}
+	deviceID, _ := call.body["device_id"].(string)
+
+	agentViewOf := func() map[string]any {
+		call = fixture.call(t, http.MethodGet, "/fleet/devices", nil, aliceSession, "")
+		if call.status != http.StatusOK {
+			t.Fatalf("list status=%d body=%v", call.status, call.body)
+		}
+		devices := call.body["devices"].([]any)
+		if len(devices) != 1 {
+			t.Fatalf("devices=%v", devices)
+		}
+		return devices[0].(map[string]any)["agent"].(map[string]any)
+	}
+
+	// 控制通道未注册 (设备离线) 时不下发摘要
+	if agent := agentViewOf(); agent["state_digest"] != nil {
+		t.Fatalf("offline agent view carries state_digest: %v", agent)
+	}
+
+	// 控制通道 hello 上报摘要后随列表下发 (浏览器 supervisor hello 的唯一来源)
+	_, controlServer := wsPair(t)
+	fixture.service.registry.RegisterControl(deviceID, controlServer, "digest-abc")
+	if agent := agentViewOf(); agent["state_digest"] != "digest-abc" {
+		t.Fatalf("agent view state_digest=%v", agent)
+	}
+}

@@ -142,6 +142,7 @@ const TAB_ICON = {
   settings: IconSettings,
   audit: IconHistory,
   devices: IconMonitor,
+  deviceTerminal: IconTerminal,
   background: IconActivity,
   history: IconClock,
 } as const;
@@ -422,6 +423,23 @@ function LazyDevicesView() {
   if (!view) return null;
   const View = view;
   return <View />;
+}
+
+// LazyDeviceTerminalView 与 LazyDevicesView 同一理由懒加载 (xterm + fleet API 只服务 WEB)。
+function LazyDeviceTerminalView({ deviceId, visible }: { deviceId: string; visible: boolean }) {
+  const [view, setView] = useState<React.ComponentType<{ deviceId: string; visible?: boolean }> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void import("../features/fleet/DeviceTerminalView").then((m) => {
+      if (alive) setView(() => m.DeviceTerminalView);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!view) return null;
+  const View = view;
+  return <View deviceId={deviceId} visible={visible} />;
 }
 
 export default function App() {
@@ -1874,6 +1892,12 @@ function PaneForTab({
       return <AuditView />;
     case "devices":
       return <LazyDevicesView />;
+    case "deviceTerminal":
+      return tab.deviceId ? (
+        <LazyDeviceTerminalView deviceId={tab.deviceId} visible={active} />
+      ) : (
+        <EmptyState />
+      );
     case "background":
       return <BackgroundSessions visible={active} />;
     case "history":
