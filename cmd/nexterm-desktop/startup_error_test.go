@@ -53,7 +53,6 @@ func TestStartupErrorHTMLDoesNotSpeculateAboutCause(t *testing.T) {
 func TestStartupErrorHTMLMakesNoAbsoluteDataClaim(t *testing.T) {
 	paths := platform.NewPaths("/tmp/nexterm-startup-error-test")
 	doc := startupErrorHTML(paths, errors.New("some failure"))
-	// 初始化可能已提交迁移后才失败，页面不得断言用户数据未发生变化
 	for _, banned := range []string{"你的数据没有被删除或修改", "数据没有被删除", "数据未被修改", "数据未发生变化"} {
 		if strings.Contains(doc, banned) {
 			t.Errorf("startup error HTML makes an unverifiable absolute data claim %q", banned)
