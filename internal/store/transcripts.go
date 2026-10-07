@@ -744,7 +744,7 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 	if policy.MaxCount > 0 {
 		deleted, err := s.transcriptRetentionDelete(ctx, tx, `ended_at IS NOT NULL AND id IN (
 	SELECT id FROM transcript WHERE ended_at IS NOT NULL
-	ORDER BY ended_at DESC, id DESC LIMIT -1 OFFSET ?
+	ORDER BY ended_at DESC, id DESC `+s.dialect.limitOffset()+`
 )`, policy.MaxCount)
 		if err != nil {
 			return result, dbError(err)

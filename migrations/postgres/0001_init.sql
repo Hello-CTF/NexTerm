@@ -7,6 +7,18 @@ CREATE TABLE asset_group (
   updated_at  BIGINT NOT NULL
 );
 
+CREATE TABLE credential (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  cipher     TEXT NOT NULL,
+  nonce      BYTEA NOT NULL,
+  blob       BYTEA NOT NULL,
+  kek_hint   TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
 CREATE TABLE asset (
   id           TEXT PRIMARY KEY,
   group_id     TEXT REFERENCES asset_group(id) ON DELETE SET NULL,
@@ -28,18 +40,6 @@ CREATE TABLE asset (
 );
 CREATE INDEX idx_asset_group ON asset(group_id);
 CREATE INDEX idx_asset_kind  ON asset(kind);
-
-CREATE TABLE credential (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  kind       TEXT NOT NULL,
-  cipher     TEXT NOT NULL,
-  nonce      BYTEA NOT NULL,
-  blob       BYTEA NOT NULL,
-  kek_hint   TEXT NOT NULL,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
 
 CREATE TABLE setting (
   key        TEXT PRIMARY KEY,

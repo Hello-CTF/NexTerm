@@ -56,6 +56,14 @@ func TestPostgresFromScratchMigration(t *testing.T) {
 	if tables["sync_tokens"] {
 		t.Error("sync_tokens must be dropped by migration 0020")
 	}
+	var assetFKs int
+	if err := raw.QueryRow(`SELECT count(*) FROM information_schema.table_constraints
+WHERE table_schema = current_schema() AND table_name = 'asset' AND constraint_type = 'FOREIGN KEY'`).Scan(&assetFKs); err != nil {
+		t.Fatal(err)
+	}
+	if assetFKs != 2 {
+		t.Fatalf("asset foreign keys = %d; want 2 (group_id, cred_id)", assetFKs)
+	}
 }
 
 func TestPostgresIdempotentReopen(t *testing.T) {
@@ -135,6 +143,14 @@ func TestPostgresCoreStoreBehavior(t *testing.T) {
 		t.Fatalf("credential roundtrip = %+v, %v", credential, err)
 	}
 
+	if _, err := db.AssetCreate(ctx, store.AssetInput{GroupID: &group.ID, Kind: "ssh", Name: "pg-asset-with-cred", CredID: &credentialID, OptionsJSON: "{}"}); err != nil {
+		t.Fatalf("asset with existing cred_id: %v", err)
+	}
+	missingCred := "cred-missing"
+	if _, err := db.AssetCreate(ctx, store.AssetInput{GroupID: &group.ID, Kind: "ssh", Name: "pg-asset-bad-cred", CredID: &missingCred, OptionsJSON: "{}"}); err == nil {
+		t.Fatal("asset create with dangling cred_id was accepted (FK not enforced)")
+	}
+
 	if err := db.CredentialTombstonePut(ctx, "cred-1", 5); err != nil {
 		t.Fatal(err)
 	}
@@ -210,5 +226,23 @@ func TestPostgresCoreStoreBehavior(t *testing.T) {
 	}
 	if count, err := db.AuditCount(ctx, store.AuditQuery{}); err != nil || count != 2 {
 		t.Fatalf("audit count after retention = %d, %v", count, err)
+	}
+
+	for i, endedAt := range []int64{3000, 4000} {
+		row := store.TranscriptRow{ID: "pg-transcript-" + string(rune('a'+i)), SessionID: "sess-1", AssetID: "asset-1", StartedAt: endedAt - 1000}
+		if err := db.TranscriptStart(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.TranscriptEnd(ctx, row.ID, endedAt, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	transcriptRetention, err := db.EnforceTranscriptRetention(ctx, store.TranscriptRetentionPolicy{MaxCount: 2})
+	if err != nil || transcriptRetention.Deleted != 1 {
+		t.Fatalf("transcript max-count retention = %+v, %v", transcriptRetention, err)
+	}
+	remaining, err := db.TranscriptListByAsset(ctx, "asset-1", 10)
+	if err != nil || len(remaining) != 2 {
+		t.Fatalf("transcripts after retention = %d, %v", len(remaining), err)
 	}
 }
