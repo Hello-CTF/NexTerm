@@ -30,7 +30,7 @@
       "id": "linux-server-real-deployment",
       "status": "evidence-gap",
       "owner": "release-acceptance",
-      "required": "Install the server on a real always-on Linux host with a public domain and TLS certificate terminated at a reverse proxy, verify loopback health, browser sign-in and token/rotate-token flows, and archive the reverse proxy 401 matrix; local e2e pairs and desktop/server artifacts are not deployment evidence."
+      "required": "Install the server on a real always-on Linux host with a public domain and TLS certificate terminated at a reverse proxy, verify loopback health, browser init/login with a real account, desktop /sync/v2 sign-in and sync, and archive the reverse proxy 401 matrix; local e2e pairs and desktop/server artifacts are not deployment evidence."
     },
     {
       "id": "lazycat-arm64-real-box",
