@@ -49,6 +49,7 @@ import { SettingsView } from "../../features/settings/SettingsView";
 import { AuditView } from "../../features/settings/AuditView";
 import { useUi } from "../../app/store";
 import { KEYBINDING_ACTIONS } from "../../app/keybindings";
+import { UI_FONT_SCALE_STEPS } from "../../app/preferences";
 
 const PERMISSIONS = { mode: "read_write" as const, dangerRules: ["kubectl delete"] };
 const VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 0 };
@@ -94,6 +95,27 @@ describe("SettingsView 响应式结构", () => {
     expect(grid!.className).toContain("grid-cols-1");
     expect(grid!.className).toContain("min-[480px]:grid-cols-2");
     expect(grid!.querySelectorAll(".nx-kbd").length).toBe(KEYBINDING_ACTIONS.length);
+  });
+
+  it("界面文字倍率 segment 可折行，其余 segment 保持单行结构", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const container = mounted.container;
+    const segmentByLabel = (label: string) =>
+      [...container.querySelectorAll(".nx-segment")].find(
+        (s) => s.getAttribute("aria-label") === label,
+      );
+    const scale = segmentByLabel("界面文字倍率");
+    expect(scale).toBeTruthy();
+    expect(scale!.className).toContain("flex-wrap");
+    const items = scale!.querySelectorAll(".nx-segment-item");
+    expect(items.length).toBe(UI_FONT_SCALE_STEPS.length);
+    expect([...items].map((it) => it.textContent)).toEqual(
+      UI_FONT_SCALE_STEPS.map((step) => `${Math.round(step * 100)}%`),
+    );
+    for (const label of ["界面主题", "界面字号", "终端与编辑器主题"]) {
+      expect(segmentByLabel(label)?.className ?? "").not.toContain("flex-wrap");
+    }
   });
 
   it("AI 模型卡头可换行、连通性测试按钮可折行", async () => {
