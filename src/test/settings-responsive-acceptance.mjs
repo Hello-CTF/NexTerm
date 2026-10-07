@@ -199,12 +199,47 @@ async function newPage(chrome) {
 }
 
 function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const config = path.join(OUT, "vite.acceptance.config.ts");
+  fs.writeFileSync(
+    config,
+    [
+      'import baseConfig from "../../vite.config";',
+      'import { defineConfig, type Plugin } from "vite";',
+      "",
+      'const marker = "if (WEB) return <WebSyncConsole />;";',
+      "",
+      "const disableWebSyncConsole: Plugin = {",
+      '  name: "acceptance-disable-web-sync-console",',
+      '  enforce: "pre",',
+      "  transform(code, id) {",
+      '    if (!id.replace(/\\\\/g, "/").endsWith("src/features/settings/SyncCard.tsx")) return;',
+      "    const occurrences = code.split(marker).length - 1;",
+      "    if (occurrences !== 1) {",
+      '      throw new Error(`acceptance plugin expected exactly 1 WebSyncConsole marker in SyncCard.tsx, found ${occurrences}`);',
+      "    }",
+      '    return code.replace(marker, "if (false) return <WebSyncConsole />;");',
+      "  },",
+      "};",
+      "",
+      "export default defineConfig({",
+      "  ...baseConfig,",
+      "  plugins: [...(baseConfig.plugins ?? []), disableWebSyncConsole],",
+      "});",
+      "",
+    ].join("\n"),
+  );
+  const process = spawn(
+    globalThis.process.execPath,
+    [path.join(ROOT, "node_modules", "vite", "bin", "vite.js"), "--config", config, "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"],
+    {
+      cwd: ROOT,
+      env: { ...globalThis.process.env, NODE_OPTIONS: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  const logStream = fs.createWriteStream(path.join(OUT, "vite.log"));
+  process.stdout.pipe(logStream);
+  process.stderr.pipe(logStream);
   return waitHttp(VITE, process).then(() => process);
 }
 
@@ -220,6 +255,9 @@ function startServer() {
       env: { ...globalThis.process.env, NEXTERM_MASTER_KEY: "r120-acceptance-master-key" },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const logStream = fs.createWriteStream(path.join(OUT, "server.log"));
+    process.stdout.pipe(logStream);
+    process.stderr.pipe(logStream);
     await waitHttp(`http://127.0.0.1:${port}/healthz`, process);
     return { process, api: `http://127.0.0.1:${port}`, data };
   })();
@@ -851,78 +889,48 @@ async function auditChecks(page) {
 }
 
 async function syncClientChecks(chrome, api) {
+  const served = await (await fetch(`${VITE}/src/features/settings/SyncCard.tsx`)).text();
+  assert.ok(served.includes("WebSyncConsole"), "served SyncCard module must contain WebSyncConsole");
+  assert.equal(
+    served.includes("if (WEB)"),
+    false,
+    "acceptance vite plugin did not disable the WebSyncConsole branch in the served SyncCard module",
+  );
   const page = await newPage(chrome);
   await page.send("Network.enable");
   await page.send("Network.setCacheDisabled", { cacheDisabled: true });
   const fabrications = {
-    sync_link_get: null,
+    sync_link_get: { url: "", username: "", insecure: false, hasPassword: false, verifiedAt: 0, lastError: "" },
     sync_link_set: { url: "https://sync.example.com", username: "alice", insecure: false, hasPassword: true, verifiedAt: 1, lastError: null },
     sync_status: { configured: true, loggedIn: true, username: "alice", seq: 7, verifiedAt: 1, lastError: "" },
     sync_now: { pulled: 2, applied: 1, pullSkipped: 1, decryptFailed: 0, pushed: 3, conflicts: 0, head: "head-1", seq: 7, warnings: [] },
   };
-  await page.send("Fetch.enable", {
-    patterns: [{ urlPattern: "*/src/features/settings/SyncCard.tsx*", requestStage: "Response" }, { urlPattern: "*/rpc" }],
-  });
-  page.on("Fetch.requestPaused", async (params) => {
-    const passthrough = async () => {
-      try {
-        await page.send("Fetch.continueRequest", { requestId: params.requestId });
-      } catch {}
-    };
-    try {
-      if (params.request.url.includes("/src/features/settings/SyncCard.tsx")) {
-        if (params.responseStatusCode !== 200) {
-          await passthrough();
-          return;
-        }
-        const body = await page.send("Fetch.getResponseBody", { requestId: params.requestId });
-        const source = Buffer.from(body.body, body.base64Encoded ? "base64" : "utf8").toString("utf8");
-        const marker = "if (WEB) return <WebSyncConsole />;";
-        if (!source.includes(marker)) {
-          harnessErrors.push("SyncCard interception missed WebSyncConsole marker");
-          await passthrough();
-          return;
-        }
-        await page.send("Fetch.fulfillRequest", {
-          requestId: params.requestId,
-          responseCode: 200,
-          responseHeaders: params.responseHeaders,
-          body: Buffer.from(source.replace(marker, "if (false) return <WebSyncConsole />;"), "utf8").toString("base64"),
-        });
-        return;
-      }
-      if (params.request.url.includes("/rpc") && params.request.method === "POST") {
-        let cmd = null;
-        try {
-          cmd = JSON.parse(params.request.postData || "{}").cmd;
-        } catch {}
-        if (cmd && Object.hasOwn(fabrications, cmd)) {
-          await page.send("Fetch.fulfillRequest", {
-            requestId: params.requestId,
-            responseCode: 200,
-            responseHeaders: [
-              { name: "content-type", value: "application/json" },
-              { name: "access-control-allow-origin", value: "*" },
-            ],
-            body: Buffer.from(JSON.stringify({ ok: true, data: fabrications[cmd] }), "utf8").toString("base64"),
-          });
-          return;
-        }
-        await passthrough();
-        return;
-      }
-      await passthrough();
-    } catch (error) {
-      harnessErrors.push(`sync interception: ${String(error?.stack || error)}`);
-      await passthrough();
-    }
-  });
 
   const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
     source: `
       try { localStorage.clear(); } catch {}
       window.__NEXTERM_TRANSPORT__ = "web";
       try { localStorage.setItem("nexterm.theme.v1", "dark"); } catch {}
+      (() => {
+        const fabrications = ${JSON.stringify(fabrications)};
+        const origFetch = window.fetch.bind(window);
+        window.fetch = async (input, init) => {
+          try {
+            const url = typeof input === "string" ? input : input.url;
+            const method = String(init?.method || "GET").toUpperCase();
+            if (url.includes("/rpc") && method === "POST") {
+              const cmd = JSON.parse(String(init?.body || "{}")).cmd;
+              if (cmd && Object.hasOwn(fabrications, cmd)) {
+                return new Response(JSON.stringify({ ok: true, data: fabrications[cmd] }), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                });
+              }
+            }
+          } catch {}
+          return origFetch(input, init);
+        };
+      })();
     `,
   });
   try {
