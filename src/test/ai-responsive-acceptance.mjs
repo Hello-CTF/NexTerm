@@ -730,7 +730,7 @@ async function acceptance(page) {
       pick("permBtn", [...document.querySelectorAll("button")].find((b) => (b.title || "").startsWith("AI 权限")));
       pick("takeoverBtn", [...document.querySelectorAll("button")].find((b) => (b.title || "").startsWith("终端接管")));
       pick("sendBtn", document.querySelector(".nx-send-btn"));
-      pick("usageRing", document.querySelector('span[role="img"]'));
+      pick("usageRing", document.querySelector('button[title="查看用量分账"]'));
       targets.coarse = matchMedia("(pointer: coarse)").matches;
       targets.composerFont = getComputedStyle(${COMPOSER}).fontSize;
       return targets;
@@ -749,22 +749,43 @@ async function acceptance(page) {
     await openAi(page);
     await typeComposer(page, "你好");
     await sendViaEnter(page);
-    await page.waitFor(`(document.querySelector('span[role="img"]')?.getAttribute("aria-label") || "").includes("上下文占用")`, 10_000);
+    const RING_BTN = `document.querySelector('button[title="查看用量分账"]')`;
+    await page.waitFor(`((${RING_BTN})?.querySelector('span[role="img"]')?.getAttribute("aria-label") || "").includes("上下文占用")`, 10_000);
     const ev = await page.evaluate(`(() => {
-      const ring = document.querySelector('span[role="img"]');
-      if (!ring) return { ring: false };
-      ring.focus();
-      const tooltip = ring.querySelector("span.hidden");
+      const btn = ${RING_BTN};
+      if (!btn) return { ring: false };
+      btn.focus();
+      const tooltip = btn.parentElement.querySelector("span.hidden");
       const shown = tooltip && getComputedStyle(tooltip).display !== "none";
-      return { ring: true, focused: document.activeElement === ring, shown, label: ring.getAttribute("aria-label") };
+      return {
+        ring: true,
+        focused: document.activeElement === btn,
+        shown,
+        expanded: btn.getAttribute("aria-expanded"),
+        label: btn.querySelector('span[role="img"]').getAttribute("aria-label"),
+      };
     })()`);
     assert.equal(ev.ring, true);
-    assert.equal(ev.focused, true, "ring not focusable");
+    assert.equal(ev.focused, true, "usage ring button not focusable");
     assert.equal(ev.shown, true, "tooltip not shown on focus");
+    assert.equal(ev.expanded, "false");
     assert.ok(ev.label.includes("上下文占用"), `aria-label incomplete: ${ev.label}`);
+    await page.evaluate(`(() => { ${RING_BTN}.click(); })()`);
+    await page.waitFor(`[...document.querySelectorAll("span")].some((s) => s.textContent.includes("对话 15 次"))`, 10_000);
+    const details = await page.evaluate(`(() => {
+      const btn = ${RING_BTN};
+      return { expanded: btn.getAttribute("aria-expanded"), text: btn.parentElement.textContent };
+    })()`);
+    assert.equal(details.expanded, "true", "details not expanded after click");
+    assert.ok(details.text.includes("用量分账"), `details panel missing: ${details.text}`);
+    assert.ok(details.text.includes("对话 15 次"), `details missing chat totals: ${details.text}`);
+    assert.ok(details.text.includes("标题 8 次"), `details missing title totals: ${details.text}`);
+    assert.ok(details.text.includes("单独计，不入对话总量"), "details missing title accounting note");
+    await page.evaluate(`(() => { ${RING_BTN}.click(); })()`);
+    await page.waitFor(`!([...document.querySelectorAll("span")].some((s) => s.textContent.trim() === "用量分账"))`, 10_000);
     await page.evaluate(`document.querySelector(".nx-send-btn-stop")?.click(); true`);
     await page.waitFor(`Boolean(document.querySelector('.nx-send-btn:not(.nx-send-btn-stop)'))`, 10_000);
-    return { ev };
+    return { ev, details };
   });
 
   await pass("ime-composing-enter-no-send-390", async () => {

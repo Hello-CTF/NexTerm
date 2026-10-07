@@ -217,6 +217,19 @@ describe("M119 AI responsive fixes", () => {
     ring.unmount();
   });
 
+  it("keeps the interactive UsageRing button as the only focus stop with a coarse touch target", () => {
+    const ring = mount(createElement(UsageRing, { loadSummary: () => Promise.resolve([]) }));
+    const button = ring.container.querySelector<HTMLButtonElement>("button");
+    expect(button).not.toBeNull();
+    expect(button!.tabIndex).toBe(0);
+    expect(button!.className).toContain("pointer-coarse:min-h-6");
+    expect(button!.className).toContain("pointer-coarse:min-w-6");
+    const img = ring.container.querySelector<HTMLElement>('span[role="img"]');
+    expect(img!.tabIndex).toBe(-1);
+    expect(ring.container.querySelector(".group-focus-within\\:block")).not.toBeNull();
+    ring.unmount();
+  });
+
   it("clamps the model dropdown width to the viewport", async () => {
     const selector = mount(createElement(ModelSelector, { onManage: () => undefined }));
     await flush();
