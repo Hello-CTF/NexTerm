@@ -251,7 +251,7 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/release-template.md > candidate/release-body.md
-          printf '\n### Verification evidence\n\nSee `release-evidence.json`, `SHA256SUMS` and `real-target-gaps.json`. Evidence gaps are not passed acceptance. LazyCat and deployed Pages packaging/real-target acceptance are delivered by M47.\n' >> candidate/release-body.md
+          printf '\n### 验证说明\n\n本 Release 附带 `release-evidence.json`（产物校验记录）、`SHA256SUMS`（文件校验和）与 `real-target-gaps.json`（真实环境验证缺口清单）。以下项目尚未在真实环境验证，不算通过验收：\n\n- Windows / macOS 安装包在真实系统上的安装，含签名、公证与 WebView2 / WKWebView 运行库结果\n- 服务端在真实常开 Linux 主机上的完整部署：域名与 TLS 反向代理、真实账号初始化登录、桌面端 `/sync/v2` 登录同步\n- 懒猫微服包在真机（含 ARM64 设备）上的构建安装，以及商店上架状态\n- 已部署 Pages 站点真实地址的验收\n- iOS / Android 真机界面与原生软键盘证据\n' >> candidate/release-body.md
       - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
