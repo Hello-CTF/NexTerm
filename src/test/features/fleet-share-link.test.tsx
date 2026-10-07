@@ -330,7 +330,38 @@ describe("DeviceTerminalView 公开链接创建", () => {
     await flushUntil(() => bodyText().includes("读写"));
   });
 
-  it("关闭面板后一次性 URL 不再展示 (token 不落地)", async () => {
+  it("在途创建时关闭面板: 晚到成功响应失效, 重开面板不显示旧 token", async () => {
+    const late = deferred<void>();
+    shareBehavior.deferred = { promise: late.promise };
+    route();
+    await mountReadyTerminal();
+    openSharePanel();
+    click(createButton());
+    await flushUntil(() => bodyText().includes("创建中…"));
+
+    // 创建在途时点「分享」关闭面板 (不是卸载): 代次递增 + creating 复位
+    const shareToggle = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "分享");
+    expect(shareToggle).toBeTruthy();
+    click(shareToggle as HTMLButtonElement);
+    await flush();
+    expect(bodyText()).not.toContain("创建中…");
+
+    // 放行晚到成功响应: 不得写入一次性 URL
+    late.resolve();
+    await flush();
+    await flush();
+    expect(bodyText()).not.toContain(LINK_TOKEN);
+    expect(webStorageText()).not.toContain(LINK_TOKEN);
+
+    // 重新打开是全新表单: 不显示旧 token, 可直接再次创建
+    openSharePanel();
+    await flush();
+    expect(bodyText()).not.toContain(LINK_TOKEN);
+    expect(bodyText()).toContain("创建公开链接");
+    shareBehavior.deferred = undefined;
+  });
+
+  it("成功后再关闭面板同样清除一次性 URL", async () => {
     route();
     await mountReadyTerminal();
     openSharePanel();

@@ -55,7 +55,7 @@ const AGENT_DEVICE = {
   },
 };
 
-const BASE_URLS = [{ url: "https://nexterm.example.com" }, { url: "http://10.0.0.8:8080", insecure: true }];
+const BASE_URLS = [{ url: "https://nexterm.example.com" }, { url: "https://10.0.0.8:8443", insecure: true }];
 
 interface RecordedCall {
   url: string;
@@ -140,8 +140,21 @@ describe("oneLineInstallCommand 构造", () => {
     );
   });
 
-  it("接入地址配置 insecure 时追加 --insecure", () => {
-    expect(oneLineInstallCommand("http://10.0.0.8:8080", true, "c-1", "0.2.2")).toContain("--version '0.2.2' --insecure");
+  it("非 insecure 的接入地址两侧都严格校验证书, 不出现任何 --insecure", () => {
+    const command = oneLineInstallCommand("https://nexterm.example.com", false, "c-1", "0.2.2");
+    expect(command).toBe(
+      "curl -fsSL 'https://nexterm.example.com/install-device.sh' | sh -s -- " +
+        "--server 'https://nexterm.example.com' --code 'c-1' --version '0.2.2'",
+    );
+    expect(command).not.toContain("--insecure");
+  });
+
+  it("显式 insecure 的自签名 HTTPS 接入地址: curl 与脚本/enroll 两侧都放宽证书", () => {
+    const command = oneLineInstallCommand("https://10.0.0.8:8443", true, "c-1", "0.2.2");
+    expect(command).toBe(
+      "curl -fsSL --insecure 'https://10.0.0.8:8443/install-device.sh' | sh -s -- " +
+        "--server 'https://10.0.0.8:8443' --code 'c-1' --version '0.2.2' --insecure",
+    );
   });
 
   it("动态参数中的 shell 元字符被单引号包裹, 单引号自身转义", () => {
@@ -166,8 +179,10 @@ describe("设备管理 · 一键安装指令", () => {
       "curl -fsSL 'https://nexterm.example.com/install-device.sh' | sh -s -- " +
         "--server 'https://nexterm.example.com' --code 'fleet-code-1' --version '0.2.2'",
     );
-    expect(oneLiners[1]).toContain("--server 'http://10.0.0.8:8080'");
-    expect(oneLiners[1]).toContain("--insecure");
+    expect(oneLiners[1]).toBe(
+      "curl -fsSL --insecure 'https://10.0.0.8:8443/install-device.sh' | sh -s -- " +
+        "--server 'https://10.0.0.8:8443' --code 'fleet-code-1' --version '0.2.2' --insecure",
+    );
     // 既有命令 (已装二进制) 保留
     expect(commands.some((c) => c.includes("nexterm-server agent enroll"))).toBe(true);
     expect(commands.some((c) => c.includes("nexterm-server agent install"))).toBe(true);

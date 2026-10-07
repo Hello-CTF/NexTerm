@@ -11,7 +11,10 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+// insecure 仅在该接入地址显式配置时放宽证书: 下载脚本的 curl 同样加
+// --insecure (自签名 HTTPS 下否则管道左侧先证书失败, 脚本根本收不到内容),
+// 并保留传给脚本/enroll 的 --insecure; 未配置 insecure 的地址两侧都严格校验。
 export function oneLineInstallCommand(baseUrl: string, insecure: boolean, code: string, version: string): string {
   const scriptUrl = `${baseUrl}/install-device.sh`;
-  return `curl -fsSL ${shellQuote(scriptUrl)} | sh -s -- --server ${shellQuote(baseUrl)} --code ${shellQuote(code)} --version ${shellQuote(version)}${insecure ? " --insecure" : ""}`;
+  return `curl -fsSL${insecure ? " --insecure" : ""} ${shellQuote(scriptUrl)} | sh -s -- --server ${shellQuote(baseUrl)} --code ${shellQuote(code)} --version ${shellQuote(version)}${insecure ? " --insecure" : ""}`;
 }

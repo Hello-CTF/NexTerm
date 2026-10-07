@@ -456,7 +456,7 @@ const DEVICES = {
 };
 
 const BASE_URLS = {
-  base_urls: [{ url: "https://nexterm.example.com" }, { url: "http://10.0.0.8:8080", insecure: true }],
+  base_urls: [{ url: "https://nexterm.example.com" }, { url: "https://10.0.0.8:8443", insecure: true }],
 };
 
 const SESSION_ME = {
@@ -733,8 +733,12 @@ async function installShareAcceptance(page, fake) {
           "--server 'https://nexterm.example.com' --code 'fake-enroll-168' --version '0.2.2'",
       `一键安装指令构造: ${oneLiners[0]}`,
     );
-    assert.ok(oneLiners[1].includes("--server 'http://10.0.0.8:8080'"), "第二接入地址");
-    assert.ok(oneLiners[1].includes("--insecure"), "insecure 接入地址追加 --insecure");
+    assert.ok(
+      oneLiners[1] ===
+        "curl -fsSL --insecure 'https://10.0.0.8:8443/install-device.sh' | sh -s -- " +
+          "--server 'https://10.0.0.8:8443' --code 'fake-enroll-168' --version '0.2.2' --insecure",
+      `自签名 HTTPS 接入地址: curl 与脚本/enroll 两侧都放宽证书: ${oneLiners[1]}`,
+    );
     // 既有命令 (已装二进制) 保留, 且绝不声称安装成功
     const text = await page.evaluate("document.body.textContent");
     assert.ok(text.includes("nexterm-server agent enroll"), "enroll 命令保留");
@@ -869,6 +873,42 @@ async function installShareAcceptance(page, fake) {
   });
 }
 
+// exitCodeSelftest: 默认浏览器不可用 (CHROME_PATH 指向不存在路径) 时, 验收
+// 必须非零退出且 report 落 status=failed — 0/0 checks 但 exit 0 会把没跑起来
+// 的验收当成功。子进程完整走 fake+vite 启动后在 Chrome 处失败, 自证退出路径。
+function exitCodeSelftest() {
+  const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
+    env: { ...process.env, CHROME_PATH: "/nonexistent/chrome-for-selftest" },
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+  const output = `${child.stdout || ""}${child.stderr || ""}`;
+  const failures = [];
+  if (child.status === 0) {
+    failures.push(`browser-unavailable run exited 0 (must be non-zero); output tail: ${output.slice(-400)}`);
+  }
+  let report = null;
+  try {
+    report = JSON.parse(fs.readFileSync(path.join(OUT, "report.json"), "utf8"));
+  } catch {}
+  if (!report || report.status !== "failed") {
+    failures.push("browser-unavailable run must leave report status=failed");
+  }
+  if (!/0\/0 checks passed/.test(output)) {
+    failures.push(`expected 0/0 summary in child output: ${output.slice(-400)}`);
+  }
+  if (failures.length) {
+    console.warn(`FAILED exit-code-selftest:\n  ${failures.join("\n  ")}`);
+    process.exit(1);
+  }
+  console.warn("PASS exit-code-selftest (browser unavailable: 0/0 checks, failed report, non-zero exit)");
+  process.exit(0);
+}
+
+if (process.argv.includes("--exit-code-selftest")) {
+  exitCodeSelftest();
+}
+
 let vite;
 let chrome;
 let page;
@@ -934,3 +974,8 @@ const report = {
 };
 fs.writeFileSync(path.join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
 console.warn(`fleet-install-share acceptance: ${checks.filter((check) => check.status === "passed").length}/${checks.length} checks passed; report=${path.join(OUT, "report.json")}`);
+// 未执行/失败必须非零退出 (与 M156/M149 既有验收同一口径): 0/0 checks 但
+// exit 0 会把没跑起来的验收当成功。
+if (failed.length || harnessErrors.length) {
+  process.exit(1);
+}

@@ -362,7 +362,11 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
 
   const toggleShare = useCallback(() => {
     if (shareOpen) {
+      // 关闭即作废在途创建: 递增代次使晚到响应 (成功/失败) 一律失效, 并复位
+      // 创建中状态 — 重新打开是全新表单, 旧一次性 URL/token 不会重现。
+      shareEpochRef.current += 1;
       setShareOpen(false);
+      setShareCreating(false);
       setShareCreated(null);
       setShareError(null);
       return;
