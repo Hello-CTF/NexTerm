@@ -2,10 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => {
-  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
+  (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
   return {
     digest: vi.fn(),
     linkGet: vi.fn(),
@@ -15,12 +15,30 @@ const mocks = vi.hoisted(() => {
     pull: vi.fn(),
     token: vi.fn(),
     rotateToken: vi.fn(),
+    assetList: vi.fn(),
+    groupList: vi.fn(),
+    snippetList: vi.fn(),
+    transcriptHosts: vi.fn(),
+    transcriptList: vi.fn(),
+    transcriptRead: vi.fn(),
+    collectAssets: vi.fn(),
+    collectTombstones: vi.fn(),
+    collectCredentials: vi.fn(),
     toast: vi.fn(),
   };
 });
 
 vi.mock("../ipc/commands", () => ({
-  assetApi: {},
+  assetApi: {
+    list: mocks.assetList,
+    groupList: mocks.groupList,
+    snippetList: mocks.snippetList,
+  },
+  transcriptApi: {
+    hosts: mocks.transcriptHosts,
+    list: mocks.transcriptList,
+    read: mocks.transcriptRead,
+  },
   dbApi: {},
   sessionApi: {},
   terminalApi: {},
@@ -34,9 +52,43 @@ vi.mock("../ipc/commands", () => ({
     pull: mocks.pull,
     token: mocks.token,
     rotateToken: mocks.rotateToken,
+    collectAssets: mocks.collectAssets,
+    collectTombstones: mocks.collectTombstones,
+    collectCredentials: mocks.collectCredentials,
   },
 }));
 vi.mock("../ui/dialogs", () => ({ ask: vi.fn() }));
+
+const syncV2Mocks = vi.hoisted(() => ({
+  ids: vi.fn(),
+  pull: vi.fn(),
+  push: vi.fn(),
+}));
+
+vi.mock("../ipc/authApi", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../ipc/authApi")>();
+  return {
+    ...original,
+    authApi: {
+      status: vi.fn().mockResolvedValue({ initialized: true, registration_open: false, auth: "on" }),
+      me: vi.fn(),
+      logout: vi.fn().mockResolvedValue({ ok: true }),
+      logoutAll: vi.fn().mockResolvedValue({ revoked: 1 }),
+      devices: vi.fn().mockResolvedValue({ devices: [] }),
+      deviceRevoke: vi.fn().mockResolvedValue({ ok: true }),
+      enrollCode: vi.fn().mockResolvedValue({ code: "e", expires_at: 1 }),
+    },
+    adminApi: {
+      users: vi.fn().mockResolvedValue({ users: [] }),
+      settingsGet: vi.fn().mockResolvedValue({ registration_open: false, public_base_url: "" }),
+      settingsPut: vi.fn(),
+      createUser: vi.fn(),
+      disableUser: vi.fn(),
+      resetUser: vi.fn(),
+    },
+    syncV2Api: syncV2Mocks,
+  };
+});
 
 import { SyncCard } from "../features/settings/SyncCard";
 import { ImportReportView } from "../features/settings/SyncCardReport";
@@ -69,6 +121,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast });
+  mocks.assetList.mockResolvedValue([]);
+  mocks.groupList.mockResolvedValue([]);
+  mocks.snippetList.mockResolvedValue([]);
+  mocks.transcriptHosts.mockResolvedValue([]);
+  mocks.transcriptList.mockResolvedValue([]);
+  mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
+  mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
+  mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
+  mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
 });
 
 afterEach(() => {
@@ -152,34 +213,46 @@ describe("ImportReportView 跳过明细", () => {
 });
 
 describe("SyncCard 对照区 NTP 提示", () => {
-  it("对照表在展示同步状态处给出 NTP 时钟要求", async () => {
-    mocks.digest.mockResolvedValue({
-      origin: "local",
-      assets: [{ id: "a1", name: "web-01", kind: "ssh", host: "10.0.0.1", updatedAt: 2, deletedAt: null, hasCred: false, groupId: null }],
+  it("对照台在展示同步状态处给出 NTP 时钟要求", async () => {
+    const { useAuth } = await import("../features/auth/store");
+    syncV2Mocks.ids.mockResolvedValue({
+      protocol: 2,
+      entries: [{ id: "a1", seq: 1, blob_hash: "h1" }],
+      head: "head-1",
+      max_seq: 1,
     });
-    mocks.linkGet.mockResolvedValue({ url: "https://sync.example.com", tokenKind: "server", token: "", insecure: false, verifiedAt: 1, lastError: null });
-    mocks.linkSet.mockImplementation(async (l: unknown) => l);
-    mocks.remoteDigest.mockResolvedValue({
-      origin: "remote",
-      assets: [{ id: "a1", name: "web-01", kind: "ssh", host: "10.0.0.1", updatedAt: 1, deletedAt: null, hasCred: false, groupId: null }],
+    const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../features/auth/crypto");
+    const dek = new Uint8Array(32).fill(7);
+    const blob = await sealSyncObject(
+      dek,
+      utf8Bytes(JSON.stringify({ id: "a1", groupId: null, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 2 })),
+      "a1",
+      "asset",
+    );
+    syncV2Mocks.pull.mockResolvedValue({
+      protocol: 2,
+      objects: [{ id: "a1", seq: 1, blob: bytesToBase64(blob) }],
+      head: "head-1",
+      max_seq: 1,
+      next_seq: 1,
+      cursor_done: true,
+    });
+    useAuth.setState({
+      status: { initialized: true, registration_open: false, auth: "on" },
+      user: { id: "u-1", username: "alice", display_name: "", role: "user", state: "active", must_change_password: false, created_at: 1, updated_at: 1, last_login_at: 1 },
+      dek,
+      gate: "ready",
+      pendingRecoveryKey: null,
+      error: null,
     });
 
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mounted = mount(createElement(QueryClientProvider, { client }, createElement(SyncCard)));
-    await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
-    setInputValue(mounted.container.querySelector<HTMLInputElement>('input[id="sync-url"]')!, "https://sync.example.com");
-    setInputValue(mounted.container.querySelector<HTMLInputElement>('input[id="sync-token"]')!, "fresh-token");
-    await flushUntil(() => {
-      const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "保存并测试连接",
-      ) as HTMLButtonElement | undefined;
-      return !!btn && !btn.disabled;
-    });
-    clickButton(mounted.container, "保存并测试连接");
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("资产对照"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("web-01"));
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("NTP 同步");
     expect(text).toContain("不检测也不校正时钟偏移");
+    useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
   });
 });

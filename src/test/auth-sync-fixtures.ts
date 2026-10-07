@@ -1,0 +1,27 @@
+// Go json.Marshal 真实输出,结构体定义逐字段拷贝自 internal/sync/object.go(字段顺序与 tag 完全一致),
+// 由一次性生成程序经 Go encoding/json 产出(base64 编码,解码即线上载荷字节):
+//
+//	type transcriptObject struct {
+//		ID             string                  `json:"id"`
+//		SessionID      string                  `json:"sessionId,omitempty"`
+//		AssetID        string                  `json:"assetId"`
+//		...
+//	}
+//
+// 覆盖: sessionId 位置、零 chunk 省略 content、<>& HTML 转义、U+2028/U+2029、多语言文本。
+// 前端载荷构造必须与这些字节逐字节一致,否则跨端 payload hash 永不相同。
+export const GO_SYNC_FIXTURES: Record<string, string> = {
+  transcriptBasic: "eyJpZCI6InQxIiwic2Vzc2lvbklkIjoiczEiLCJhc3NldElkIjoiYTEiLCJhc3NldE5hbWUiOiJ3ZWItMDEiLCJhc3NldEtpbmQiOiJzc2giLCJzdGFydGVkQXQiOjEsImVuZGVkQXQiOjIsImJ5dGVzIjozLCJjaHVua3MiOjEsInRydW5jYXRlZCI6ZmFsc2UsImNvbnRlbnQiOlt7InNlcSI6MSwidGFiSWQiOiJ0YWItMSIsInRzIjoxLCJkYXRhIjoiQVFJRCJ9XX0=",
+  transcriptEnded10: "eyJpZCI6InQxIiwic2Vzc2lvbklkIjoiczEiLCJhc3NldElkIjoiYTEiLCJhc3NldE5hbWUiOiJ3ZWItMDEiLCJhc3NldEtpbmQiOiJzc2giLCJzdGFydGVkQXQiOjksImVuZGVkQXQiOjEwLCJieXRlcyI6MywiY2h1bmtzIjoxLCJ0cnVuY2F0ZWQiOmZhbHNlLCJjb250ZW50IjpbeyJzZXEiOjEsInRhYklkIjoidGFiLTEiLCJ0cyI6MSwiZGF0YSI6IkFRSUQifV19",
+  transcriptOmitted: "eyJpZCI6InQxIiwic2Vzc2lvbklkIjoiczEiLCJhc3NldElkIjoiYTEiLCJhc3NldE5hbWUiOiJ3ZWItMDEiLCJhc3NldEtpbmQiOiJzc2giLCJzdGFydGVkQXQiOjEsImVuZGVkQXQiOjIsImJ5dGVzIjoxMzQyMTc3MjgsImNodW5rcyI6OSwidHJ1bmNhdGVkIjp0cnVlLCJjb250ZW50T21pdHRlZCI6dHJ1ZX0=",
+  transcriptFull: "eyJpZCI6InQtMSIsInNlc3Npb25JZCI6InMtMSIsImFzc2V0SWQiOiJhLTEiLCJhc3NldE5hbWUiOiJ3ZWIt5pel5pys6KqeLVx1MDAzY3Byb2RcdTAwM2VcdTAwMjYtMDFcdTIwMjhsaW5lXHUyMDI5c2VwIiwiYXNzZXRLaW5kIjoic3NoIiwic3RhcnRlZEF0IjoxLCJlbmRlZEF0IjoyLCJieXRlcyI6NiwiY2h1bmtzIjoyLCJ0cnVuY2F0ZWQiOmZhbHNlLCJjb250ZW50IjpbeyJzZXEiOjEsInRhYklkIjoidGFiLTEiLCJ0cyI6MTAsImRhdGEiOiJBUUlEIn0seyJzZXEiOjIsInRhYklkIjoidGFiLTIiLCJ0cyI6MTEsImRhdGEiOiIrLzhBIn1dfQ==",
+  transcriptZeroChunks: "eyJpZCI6InQtMiIsImFzc2V0SWQiOiJhLTEiLCJhc3NldE5hbWUiOiJ3ZWItMDEiLCJhc3NldEtpbmQiOiJzc2giLCJzdGFydGVkQXQiOjEsImVuZGVkQXQiOjIsImJ5dGVzIjowLCJjaHVua3MiOjAsInRydW5jYXRlZCI6ZmFsc2V9",
+  groupRoot: "eyJpZCI6ImctMSIsIm5hbWUiOiLnlJ/kuqcgXHUwMDNjUm9vdFx1MDAzZSBcdTAwMjYg57uEIiwic29ydCI6MSwiY3JlYXRlZEF0IjoxLCJ1cGRhdGVkQXQiOjJ9",
+  groupChild: "eyJpZCI6ImctMiIsInBhcmVudElkIjoiZy1wYXJlbnQiLCJuYW1lIjoi5a2Q57uEIiwic29ydCI6MiwiY3JlYXRlZEF0IjozLCJ1cGRhdGVkQXQiOjR9",
+  assetMinimal: "eyJpZCI6ImEtMSIsImtpbmQiOiJzc2giLCJuYW1lIjoid2ViLTAxIiwib3B0aW9uc0pzb24iOiJ7fSIsInRhZ3MiOiIiLCJub3RlIjoiIiwic29ydCI6MCwiY3JlYXRlZEF0IjoxLCJ1cGRhdGVkQXQiOjIwMH0=",
+  assetDeleted: "eyJpZCI6ImEtZGVsIiwiZ3JvdXBJZCI6ImcxIiwia2luZCI6InNzaCIsIm5hbWUiOiJvbGQgXHUwMDNjXHUwMDI2XHUwMDNlIDAxIiwiaG9zdCI6IjEwLjAuMC44IiwicG9ydCI6MjIsInVzZXJuYW1lIjoicm9vdCIsImF1dGhLaW5kIjoicGFzc3dvcmQiLCJrZXlQYXRoIjoiL2hvbWUvdS8uc3NoL2lkX2VkMjU1MTkiLCJjcmVkSWQiOiJjLTEiLCJvcHRpb25zSnNvbiI6Int9IiwidGFncyI6IngseSIsIm5vdGUiOiJub3RlIFx1MDAzY2JcdTAwM2VcdTAwMjYiLCJzb3J0IjowLCJjcmVhdGVkQXQiOjEsInVwZGF0ZWRBdCI6MTAwLCJkZWxldGVkQXQiOjE1MH0=",
+  credential: "eyJpZCI6ImMtMSIsIm5hbWUiOiLnlJ/kuqcgXHUwMDNj5Y+j5LukXHUwMDNlIFx1MDAyNiBtb3JlIiwia2luZCI6InBhc3N3b3JkIiwic2VjcmV0IjoicEBzc1x1MDAzY1x1MDAzZVx1MDAyNlx1MjAyOHcwcmQiLCJ1cGRhdGVkQXQiOjUwfQ==",
+  snippet: "eyJpZCI6InMtMSIsImdyb3VwSWQiOiJnMSIsIm5hbWUiOiLluLjnlKgiLCJib2R5IjoibHMgLWxhIFx1MDAzY1x1MDAyNlx1MDAzZSIsInNvcnQiOjAsImNyZWF0ZWRBdCI6MSwidXBkYXRlZEF0IjoyfQ==",
+  tombstoneGroup: "eyJ0YXJnZXRLaW5kIjoiZ3JvdXAiLCJkZWxldGVkQXQiOjUwMH0=",
+  tombstoneCredential: "eyJ0YXJnZXRLaW5kIjoiY3JlZGVudGlhbCIsImRlbGV0ZWRBdCI6NDAwfQ==",
+};

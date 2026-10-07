@@ -2,9 +2,10 @@ export const SERVER_TOKEN_HEADER = "X-NexTerm-Sync-Token";
 
 const WS_AUTH_PROTOCOL = "nexterm";
 
+// 与 src/ipc/authApi.ts 的 SESSION_EXPIRED_EVENT 保持一致:401 时通知账号门重新登录。
+const SESSION_EXPIRED_EVENT = "nexterm:session-expired";
+
 let serverToken: string | null = null;
-let prompting: Promise<string | null> | null = null;
-let prompterOverride: (() => Promise<string | null>) | null = null;
 
 export function getServerToken(): string | null {
   return serverToken;
@@ -19,10 +20,6 @@ export function clearServerToken(): void {
   serverToken = null;
 }
 
-export function registerServerTokenPrompter(fn: (() => Promise<string | null>) | null): void {
-  prompterOverride = fn;
-}
-
 export function authHeaders(): Record<string, string> {
   return serverToken ? { [SERVER_TOKEN_HEADER]: serverToken } : {};
 }
@@ -31,31 +28,8 @@ export function wsAuthProtocols(): string[] {
   return serverToken ? [WS_AUTH_PROTOCOL, serverToken] : [WS_AUTH_PROTOCOL];
 }
 
-export async function ensureServerToken(): Promise<string> {
-  if (serverToken) return serverToken;
-  const entered = await promptOnce();
-  if (!entered) {
-    throw { code: "forbidden", message: "未提供服务器访问令牌" };
-  }
-  setServerToken(entered);
-  return serverToken as string;
-}
-
-function promptOnce(): Promise<string | null> {
-  if (!prompting) {
-    prompting = (async () => {
-      if (prompterOverride) return prompterOverride();
-      const { promptText } = await import("../ui/dialogs");
-      return promptText(
-        "服务器要求访问令牌。请在服务器上运行 nexterm-server token 查看同步令牌，或向管理员索取。",
-        "",
-        { secret: true },
-      );
-    })().finally(() => {
-      prompting = null;
-    });
-  }
-  return prompting;
+function notifySessionExpired(): void {
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
 }
 
 function withAuth(init: RequestInit): RequestInit {
@@ -63,17 +37,10 @@ function withAuth(init: RequestInit): RequestInit {
 }
 
 export async function authedFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  let response = await fetch(input, withAuth(init));
+  const response = await fetch(input, withAuth(init));
   if (response.status !== 401) return response;
+  // 会话/令牌失效:不再弹共享令牌输入框(账号体系已取代静态令牌),通知账号门重新登录。
   clearServerToken();
-  let token: string | null = null;
-  try {
-    token = await ensureServerToken();
-  } catch {
-    token = null;
-  }
-  if (!token) return response;
-  response = await fetch(input, withAuth(init));
-  if (response.status === 401) clearServerToken();
+  notifySessionExpired();
   return response;
 }

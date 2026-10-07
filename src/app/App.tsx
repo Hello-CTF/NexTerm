@@ -387,6 +387,24 @@ function useAiToastInset(active: boolean): void {
   }, [active]);
 }
 
+// LazyAuthGate 仅在 WEB/DEMO 下加载账号门,避免桌面端把 auth store(经 demo 引 env)拉进终端等测试的 env mock。
+function LazyAuthGate() {
+  const [gate, setGate] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    if (!WEB && !DEMO) return;
+    let alive = true;
+    void import("../features/auth/AuthGate").then((m) => {
+      if (alive) setGate(() => m.AuthGate);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!gate) return null;
+  const Gate = gate;
+  return <Gate />;
+}
+
 export default function App() {
   const {
     workspaces,
@@ -433,6 +451,11 @@ export default function App() {
     queryFn: () => syncApi.linkGet(),
     enabled: !WEB,
   });
+  useEffect(() => {
+    if (WEB || DEMO) {
+      void import("../features/auth/store").then((m) => m.useAuth.getState().refresh());
+    }
+  }, []);
   const syncStatusText = WEB
     ? "服务端：浏览器模式"
     : syncLink.isError
@@ -702,6 +725,22 @@ export default function App() {
     [closeWorkspace],
   );
 
+  const runSyncNow = useCallback(async () => {
+    const { pushToast: toast } = useUi.getState();
+    if (WEB || DEMO) {
+      toast("info", "浏览器模式的同步在「设置 → 账号同步」里进行");
+      return;
+    }
+    try {
+      const r = (await syncApi.syncNow()) as unknown as { applied: number; pushed: number };
+      const moved = r.applied + r.pushed;
+      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成:应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
+      void queryClient.invalidateQueries();
+    } catch (e) {
+      toast("error", `同步失败:${describeError(e)}`);
+    }
+  }, [queryClient]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const hit = matchAppKeybinding(e);
@@ -755,6 +794,11 @@ export default function App() {
           st.setActiveTab(target.id);
           return;
         }
+        case "syncNow": {
+          e.preventDefault();
+          void runSyncNow();
+          return;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -766,6 +810,7 @@ export default function App() {
     setLeftOpen,
     setRightOpen,
     openLocalTerminal,
+    runSyncNow,
     viewport.splitAllowed,
   ]);
 
@@ -1432,6 +1477,7 @@ export default function App() {
         />
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
+      <LazyAuthGate />
       <PromptModal />
       <DialogHost />
     </div>

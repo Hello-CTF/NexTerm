@@ -9,13 +9,10 @@ import { click, clickButton, flush, flushUntil, mount, setInputValue, type Mount
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
   return {
-    digest: vi.fn(),
     linkGet: vi.fn(),
-    token: vi.fn(),
     linkSet: vi.fn(),
-    remoteDigest: vi.fn(),
-    push: vi.fn(),
-    pull: vi.fn(),
+    status: vi.fn(),
+    syncNow: vi.fn(),
     overview: vi.fn(),
     presets: vi.fn(),
     save: vi.fn(),
@@ -28,14 +25,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     syncApi: {
-      digest: mocks.digest,
       linkGet: mocks.linkGet,
-      token: mocks.token,
       linkSet: mocks.linkSet,
-      remoteDigest: mocks.remoteDigest,
-      push: mocks.push,
-      pull: mocks.pull,
-      rotateToken: vi.fn(),
+      status: mocks.status,
+      syncNow: mocks.syncNow,
     },
     modelApi: {
       overview: mocks.overview,
@@ -55,35 +48,52 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { SyncCard } from "../../features/settings/SyncCard";
+import { SyncReportView } from "../../features/settings/SyncCardReport";
 import { ModelPanel } from "../../features/ai/ModelPanel";
 import { ModelManager } from "../../features/ai/ModelPanel";
 import { useUi } from "../../app/store";
 
-const EMPTY_DIGEST = { origin: "local", assets: [] };
-const SAVED_LINK = {
-  url: "https://sync.example.com",
-  tokenKind: "server",
-  token: "saved-token",
+const EMPTY_LINK = {
+  url: "",
+  username: "",
   insecure: false,
-  verifiedAt: 1,
+  hasPassword: false,
+  verifiedAt: 0,
   lastError: null as string | null,
 };
-const REMOTE_ASSET = {
-  id: "a1",
-  name: "web-01",
-  kind: "ssh",
-  host: "1.2.3.4",
-  updatedAt: 1,
-  deletedAt: null,
-  hasCred: false,
+const SAVED_LINK = {
+  url: "https://sync.example.com",
+  username: "alice",
+  insecure: false,
+  hasPassword: true,
+  verifiedAt: 1,
+  lastError: null as string | null,
 };
 
 let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
-  mocks.digest.mockResolvedValue(EMPTY_DIGEST);
-  mocks.linkGet.mockResolvedValue(null);
+  mocks.linkGet.mockResolvedValue(EMPTY_LINK);
+  mocks.linkSet.mockResolvedValue(SAVED_LINK);
+  mocks.status.mockResolvedValue({
+    configured: false,
+    loggedIn: false,
+    seq: 0,
+    verifiedAt: 0,
+    lastError: "",
+  });
+  mocks.syncNow.mockResolvedValue({
+    pulled: 2,
+    applied: 1,
+    pullSkipped: 1,
+    decryptFailed: 0,
+    pushed: 3,
+    conflicts: 0,
+    head: "head-1",
+    seq: 7,
+    warnings: [],
+  });
   mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
   mocks.presets.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
@@ -103,25 +113,7 @@ function text(): string {
   return mounted?.container.textContent ?? "";
 }
 
-async function waitForTestButtonEnabled() {
-  await flushUntil(() => {
-    const btn = [...mounted!.container.querySelectorAll("button")].find(
-      (b) => b.textContent?.trim() === "保存并测试连接",
-    ) as HTMLButtonElement | undefined;
-    return !!btn && !btn.disabled;
-  });
-}
-
-describe("SyncCard 状态", () => {
-  it("本机摘要读取失败时内联报错并可重试", async () => {
-    mocks.digest.mockRejectedValueOnce(new Error("数据库被锁"));
-    mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => text().includes("本机资产摘要读取失败 · 数据库被锁"));
-    clickButton(mounted!.container, "重试");
-    await flushUntil(() => !text().includes("本机资产摘要读取失败"));
-    expect(mocks.digest).toHaveBeenCalledTimes(2);
-  });
-
+describe("SyncCard 桌面端状态", () => {
   it("同步配置读取失败时内联报错并可重试", async () => {
     mocks.linkGet.mockRejectedValueOnce(new Error("配置损坏"));
     mounted = withClient(createElement(SyncCard));
@@ -131,93 +123,147 @@ describe("SyncCard 状态", () => {
     expect(mocks.linkGet).toHaveBeenCalledTimes(2);
   });
 
-  it("访问令牌 label 关联到输入框，且令牌框关闭自动填充", async () => {
+  it("已保存链接回填 URL/用户名/insecure,密码保持空白", async () => {
+    mocks.linkGet.mockResolvedValue(SAVED_LINK);
     mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => (mounted!.container.querySelector<HTMLInputElement>("#sync-url")?.value ?? "") !== "");
+
+    const urlInput = mounted.container.querySelector<HTMLInputElement>("#sync-url")!;
+    const userInput = mounted.container.querySelector<HTMLInputElement>("#sync-user")!;
+    const passInput = mounted.container.querySelector<HTMLInputElement>("#sync-pass")!;
+    expect(urlInput.value).toBe("https://sync.example.com");
+    expect(userInput.value).toBe("alice");
+    expect(passInput.value).toBe("");
+    const insecureCheckbox = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(insecureCheckbox.checked).toBe(false);
+  });
+
+  it("保存链接时以账号+密码调用 linkSet", async () => {
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-url")!, "https://sync.example.com");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-user")!, "alice");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-pass")!, "correct horse battery staple");
+    await flushUntil(() => {
+      const btn = [...mounted!.container.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "保存链接",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(mounted!.container, "保存链接");
+    await flushUntil(() => mocks.linkSet.mock.calls.length > 0);
+    expect(mocks.linkSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://sync.example.com",
+        username: "alice",
+        password: "correct horse battery staple",
+      }),
+    );
+  });
+
+  it("未保存过密码时保存按钮要求输入密码", async () => {
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-url")!, "https://sync.example.com");
+    setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-user")!, "alice");
     await flush();
-    const label = [...mounted!.container.querySelectorAll("label")].find((l) =>
-      l.textContent?.includes("访问令牌"),
-    );
-    expect(label).toBeTruthy();
-    const input = mounted!.container.querySelector<HTMLInputElement>(
-      `input[id="${label!.htmlFor}"]`,
-    );
-    expect(input).not.toBeNull();
-    expect(input!.autocomplete).toBe("off");
+    const btn = [...mounted!.container.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "保存链接",
+    ) as HTMLButtonElement | undefined;
+    expect(btn?.disabled).toBe(true);
   });
 
-  it("本机摘要失败 + 对端为空：不生成对照表，也不显示「两边都没有」", async () => {
-    mocks.digest.mockRejectedValue(new Error("数据库被锁"));
-    mocks.linkGet.mockResolvedValue(SAVED_LINK);
-    mocks.linkSet.mockImplementation(async (l: typeof SAVED_LINK) => l);
-    mocks.remoteDigest.mockResolvedValue({ origin: "remote", assets: [] });
+  it("立即同步成功时展示 v2 报告", async () => {
+    mocks.status.mockResolvedValue({
+      configured: true,
+      loggedIn: true,
+      username: "alice",
+      seq: 7,
+      verifiedAt: 1,
+      lastError: "",
+    });
     mounted = withClient(createElement(SyncCard));
-    await waitForTestButtonEnabled();
-    clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() =>
-      mocks.toast.mock.calls.some((c) => String(c[1]).includes("已连接（对端标识")),
+    await flushUntil(() => {
+      const btn = [...mounted!.container.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "立即同步",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(mounted!.container, "立即同步");
+    await flushUntil(() => text().includes("同步结果"));
+    expect(text()).toContain("拉取 2");
+    expect(text()).toContain("应用 1");
+    expect(text()).toContain("推送 3");
+  });
+
+  it("立即同步失败时展示错误而不是报告", async () => {
+    mocks.status.mockResolvedValue({
+      configured: true,
+      loggedIn: false,
+      seq: 0,
+      verifiedAt: 0,
+      lastError: "会话已过期",
+    });
+    mocks.syncNow.mockRejectedValue(new Error("同步头不一致"));
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => {
+      const btn = [...mounted!.container.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "立即同步",
+      ) as HTMLButtonElement | undefined;
+      return !!btn && !btn.disabled;
+    });
+    clickButton(mounted!.container, "立即同步");
+    await flushUntil(() => text().includes("同步头不一致"));
+    expect(text()).not.toContain("同步结果");
+  });
+});
+
+describe("SyncReportView v2 报告", () => {
+  it("展示计数、游标与警告", async () => {
+    mounted = mount(
+      createElement(SyncReportView, {
+        data: {
+          pulled: 5,
+          applied: 2,
+          pullSkipped: 3,
+          decryptFailed: 1,
+          pushed: 4,
+          conflicts: 0,
+          head: "head-2",
+          seq: 11,
+          warnings: ["对象 a1 解密失败,已隔离"],
+        },
+      }),
     );
-    expect(text()).not.toContain("资产对照");
-    expect(text()).not.toContain("两边都还没有可同步的资产");
-    expect(text()).toContain("本机资产摘要读取失败");
+    await flush();
+    const t = mounted.container.textContent ?? "";
+    expect(t).toContain("拉取 5");
+    expect(t).toContain("应用 2");
+    expect(t).toContain("推送 4");
+    expect(t).toContain("解密失败 1");
+    expect(t).toContain("游标 seq 11");
+    expect(t).toContain("对象 a1 解密失败,已隔离");
   });
 
-  it("本机摘要失败 + 对端非空：不生成差异对照，不允许基于未知本机状态同步", async () => {
-    mocks.digest.mockRejectedValue(new Error("数据库被锁"));
-    mocks.linkGet.mockResolvedValue(SAVED_LINK);
-    mocks.linkSet.mockImplementation(async (l: typeof SAVED_LINK) => l);
-    mocks.remoteDigest.mockResolvedValue({ origin: "remote", assets: [REMOTE_ASSET] });
-    mounted = withClient(createElement(SyncCard));
-    await waitForTestButtonEnabled();
-    clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() =>
-      mocks.toast.mock.calls.some((c) => String(c[1]).includes("已连接（对端标识")),
+  it("无变更时不按失败样式展示", async () => {
+    mounted = mount(
+      createElement(SyncReportView, {
+        data: {
+          pulled: 0,
+          applied: 0,
+          pullSkipped: 0,
+          decryptFailed: 0,
+          pushed: 0,
+          conflicts: 0,
+          head: "head-3",
+          seq: 12,
+          warnings: [],
+        },
+      }),
     );
-    expect(text()).not.toContain("资产对照");
-    expect(text()).not.toContain("仅对端");
-    expect(text()).not.toContain("推送到对端");
-    expect(text()).toContain("本机资产摘要读取失败");
-  });
-
-  it("重新读取对端失败保留最后成功的对端数据，错误上方可重试恢复", async () => {
-    mocks.linkGet.mockResolvedValue(SAVED_LINK);
-    mocks.linkSet.mockImplementation(async (l: typeof SAVED_LINK) => l);
-    mocks.remoteDigest
-      .mockResolvedValueOnce({ origin: "remote", assets: [REMOTE_ASSET] })
-      .mockRejectedValueOnce(new Error("对端离线"))
-      .mockResolvedValueOnce({ origin: "remote", assets: [REMOTE_ASSET] });
-    mounted = withClient(createElement(SyncCard));
-    await waitForTestButtonEnabled();
-    clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() => text().includes("web-01"));
-
-    clickButton(mounted!.container, "重新读取对端");
-    await flushUntil(() => text().includes("对端离线"));
-    expect(text()).toContain("web-01");
-
-    clickButton(mounted!.container, "重试");
-    await flushUntil(() => !text().includes("对端离线"));
-    expect(text()).toContain("web-01");
-    expect(mocks.remoteDigest).toHaveBeenCalledTimes(3);
-  });
-
-  it("初次配置读取失败后，保存并成功重读配置会清除旧错误", async () => {
-    mocks.linkGet.mockRejectedValueOnce(new Error("配置损坏"));
-    mocks.linkGet.mockResolvedValue(SAVED_LINK);
-    mocks.linkSet.mockImplementation(async (l: typeof SAVED_LINK) => l);
-    mocks.remoteDigest.mockResolvedValue({ origin: "remote", assets: [] });
-    mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => text().includes("同步配置读取失败 · 配置损坏"));
-
-    const urlInput = mounted!.container.querySelector<HTMLInputElement>('input[id="sync-url"]');
-    const tokenInput = mounted!.container.querySelector<HTMLInputElement>('input[id="sync-token"]');
-    expect(urlInput).not.toBeNull();
-    expect(tokenInput).not.toBeNull();
-    setInputValue(urlInput!, "https://sync.example.com");
-    setInputValue(tokenInput!, "fresh-token");
-    clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() => text().includes("已连接"));
-    expect(text()).not.toContain("同步配置读取失败");
-    expect(mocks.linkGet).toHaveBeenCalledTimes(2);
+    await flush();
+    const alert = mounted.container.querySelector(".nx-alert");
+    expect(alert?.className).not.toContain("nx-alert-danger");
   });
 });
 
@@ -363,55 +409,5 @@ describe("ModelPanel 弹层键盘行为", () => {
     await flush();
     expect(mocks.ask).toHaveBeenCalledOnce();
     expect(onClose).not.toHaveBeenCalled();
-  });
-});
-
-describe("SyncCard 同步报告方向", () => {
-  const REPORT_BASE = {
-    groupsCreated: 0,
-    groupsUpdated: 0,
-    assetsCreated: 0,
-    assetsUpdated: 0,
-    credsCreated: 0,
-    credsUpdated: 0,
-    credsDeleted: 0,
-    snippetsCreated: 0,
-    snippetsUpdated: 0,
-    skippedNewer: 1,
-    refused: 0,
-    warnings: [] as string[],
-  };
-
-  async function selectComparableRow(): Promise<void> {
-    mocks.linkGet.mockResolvedValue(SAVED_LINK);
-    mocks.linkSet.mockImplementation(async (l: typeof SAVED_LINK) => l);
-    mocks.remoteDigest.mockResolvedValue({ origin: "remote", assets: [REMOTE_ASSET] });
-    mocks.digest.mockResolvedValue({ origin: "local", assets: [REMOTE_ASSET] });
-    mounted = withClient(createElement(SyncCard));
-    await waitForTestButtonEnabled();
-    clickButton(mounted!.container, "保存并测试连接");
-    await flushUntil(() => text().includes("web-01"));
-    const row = [...mounted!.container.querySelectorAll("label")].find((l) =>
-      l.textContent?.includes("web-01"),
-    );
-    click(row!.querySelector('input[type="checkbox"]')!);
-  }
-
-  it("推送报告：skippedNewer 是对端较新", async () => {
-    mocks.push.mockResolvedValue({ ...REPORT_BASE });
-    await selectComparableRow();
-    clickButton(mounted!.container, "推送到对端 (1)");
-    await flushUntil(() => text().includes("推送结果"));
-    expect(text()).toContain("跳过（对端较新） 1");
-    expect(text()).not.toContain("跳过（本机较新）");
-  });
-
-  it("拉取报告：skippedNewer 是本机较新", async () => {
-    mocks.pull.mockResolvedValue({ ...REPORT_BASE });
-    await selectComparableRow();
-    clickButton(mounted!.container, "从对端拉取 (1)");
-    await flushUntil(() => text().includes("拉取结果"));
-    expect(text()).toContain("跳过（本机较新） 1");
-    expect(text()).not.toContain("跳过（对端较新）");
   });
 });

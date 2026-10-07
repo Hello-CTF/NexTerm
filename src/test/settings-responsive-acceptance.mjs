@@ -668,14 +668,9 @@ async function syncClientChecks(chrome, api) {
   await page.send("Network.setCacheDisabled", { cacheDisabled: true });
   const fabrications = {
     sync_link_get: null,
-    sync_link_set: { url: "https://sync.example.com", tokenKind: "server", token: "saved-token", insecure: false, verifiedAt: 1, lastError: null },
-    sync_digest: {
-      origin: "local",
-      assets: [
-        { id: "a1", name: "web-01", kind: "ssh", host: LONG_HOST, updatedAt: 2, deletedAt: null, hasCred: true },
-      ],
-    },
-    sync_remote_digest: { origin: "remote", assets: [] },
+    sync_link_set: { url: "https://sync.example.com", username: "alice", insecure: false, hasPassword: true, verifiedAt: 1, lastError: null },
+    sync_status: { configured: true, loggedIn: true, username: "alice", seq: 7, verifiedAt: 1, lastError: "" },
+    sync_now: { pulled: 2, applied: 1, pullSkipped: 1, decryptFailed: 0, pushed: 3, conflicts: 0, head: "head-1", seq: 7, warnings: [] },
   };
   await page.send("Fetch.enable", {
     patterns: [{ urlPattern: "*/src/features/settings/SyncCard.tsx*", requestStage: "Response" }, { urlPattern: "*/rpc" }],
@@ -694,9 +689,9 @@ async function syncClientChecks(chrome, api) {
         }
         const body = await page.send("Fetch.getResponseBody", { requestId: params.requestId });
         const source = Buffer.from(body.body, body.base64Encoded ? "base64" : "utf8").toString("utf8");
-        const marker = "const isServer = WEB;";
+        const marker = "if (WEB) return <WebSyncConsole />;";
         if (!source.includes(marker)) {
-          harnessErrors.push("SyncCard interception missed isServer marker");
+          harnessErrors.push("SyncCard interception missed WebSyncConsole marker");
           await passthrough();
           return;
         }
@@ -704,7 +699,7 @@ async function syncClientChecks(chrome, api) {
           requestId: params.requestId,
           responseCode: 200,
           responseHeaders: params.responseHeaders,
-          body: Buffer.from(source.replace(marker, "const isServer = false;"), "utf8").toString("base64"),
+          body: Buffer.from(source.replace(marker, "if (false) return <WebSyncConsole />;"), "utf8").toString("base64"),
         });
         return;
       }
@@ -763,45 +758,40 @@ async function syncClientChecks(chrome, api) {
       el.dispatchEvent(new Event("input", { bubbles: true }));
     };
     set(document.querySelector("#sync-url"), "https://sync.example.com");
-    set(document.querySelector("#sync-token"), "fresh-token");
+    set(document.querySelector("#sync-user"), "alice");
+    set(document.querySelector("#sync-pass"), "fresh-password");
   })()`);
-  await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "保存并测试连接" && !b.disabled)`);
-  await page.evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存并测试连接").click()`);
-  await page.waitFor(`[...document.querySelectorAll("span[title]")].some((s) => s.getAttribute("title") === ${JSON.stringify(LONG_HOST)})`);
+  await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "保存链接" && !b.disabled)`);
+  await page.evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存链接").click()`);
+  await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "立即同步" && !b.disabled)`);
   await sleep(300);
 
   await pass("C-sync-client-cred-row-320", async () => {
     await setViewport(page, 320, 720);
     const state = await page.evaluate(`(() => {
-      const hostSpan = [...document.querySelectorAll("span[title]")].find((s) => s.getAttribute("title") === ${JSON.stringify(LONG_HOST)});
-      if (!hostSpan) return { found: false };
-      const row = hostSpan.closest("label");
-      const badge = row.querySelector(".nx-badge");
-      const rr = row.getBoundingClientRect();
-      const br = badge.getBoundingClientRect();
+      const card = document.querySelector("#sync-url")?.closest(".nx-card");
+      if (!card) return { found: false };
+      const rows = [...card.querySelectorAll("div")].filter((d) => d.querySelector("#sync-url, #sync-user, #sync-pass"));
+      const overflowing = rows.filter((d) => d.scrollWidth > d.clientWidth + 1).length;
       return {
         found: true,
-        rowScrollWidth: row.scrollWidth,
-        rowClientWidth: row.clientWidth,
-        badgeRight: Math.round(br.right),
-        rowRight: Math.round(rr.right),
-        badgeClipped: br.right > rr.right + 1,
-        rowOverflows: row.scrollWidth > row.clientWidth + 1,
-        credVisible: row.textContent.includes("带凭据"),
-        hostTitle: hostSpan.getAttribute("title"),
-        badgeText: badge.textContent,
+        rowCount: rows.length,
+        overflowing,
+        hasUrl: Boolean(card.querySelector("#sync-url")),
+        hasUser: Boolean(card.querySelector("#sync-user")),
+        hasPass: Boolean(card.querySelector("#sync-pass")),
       };
     })()`);
-    assert.ok(state.found, "sync compare row with long host not found");
-    assert.equal(state.rowOverflows, false, `compare row horizontally overflows: ${JSON.stringify(state)}`);
-    assert.equal(state.badgeClipped, false, `status badge clipped: ${JSON.stringify(state)}`);
-    assert.equal(state.credVisible, true, `cred marker must be visible: ${JSON.stringify(state)}`);
-    assert.equal(state.hostTitle, LONG_HOST);
+    assert.ok(state.found, "sync link card not found");
+    assert.equal(state.hasUrl, true, `url input missing: ${JSON.stringify(state)}`);
+    assert.equal(state.hasUser, true, `username input missing: ${JSON.stringify(state)}`);
+    assert.equal(state.hasPass, true, `password input missing: ${JSON.stringify(state)}`);
+    assert.equal(state.overflowing, 0, `link form rows horizontally overflow: ${JSON.stringify(state)}`);
     const sample = await page.evaluate(READ_OVERFLOW);
     assertNoOverflow(sample, "sync client 320");
     await page.evaluate(`(() => {
-      const hostSpan = [...document.querySelectorAll("span[title]")].find((s) => s.getAttribute("title") === ${JSON.stringify(LONG_HOST)});
-      hostSpan.closest("label").scrollIntoView({ block: "center" });
+      const card = document.querySelector("#sync-url")?.closest(".nx-card");
+      card?.scrollIntoView({ block: "center" });
     })()`);
     await sleep(150);
     const shot = await screenshot(page, "C-sync-client-cred-row-320.png");
