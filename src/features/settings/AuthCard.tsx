@@ -288,7 +288,7 @@ export function AuthCard() {
             <div className="flex items-start gap-2">
               <IconInfo size={14} className="mt-0.5 shrink-0" />
               <div>
-                配对码 <b>10 分钟内有效</b>,只显示这一次。在新设备的登录页选择「用配对码添加设备」并输入:
+                配对码 <b>15 分钟内有效</b>,只显示这一次。在新设备的登录页选择「用配对码添加设备」并输入:
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
