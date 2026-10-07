@@ -3,6 +3,7 @@ package account
 import (
 	"bytes"
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -382,4 +383,162 @@ func TestResetPasswordWithRecoveryFromResetRequired(t *testing.T) {
 func getEnvErr(a *Accounts, ctx context.Context, userID string) error {
 	_, err := a.GetUserDEKEnvelopes(ctx, userID)
 	return err
+}
+
+func rotatedEnvelopesForTest(t *testing.T, recoveryKey, password string, current *vault.UserDEKEnvelopes) *vault.UserDEKEnvelopes {
+	t.Helper()
+	dek, err := vault.UnwrapUserDEKWithRecovery(recoveryKey, current.RecoveryEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, salt, params, err := vault.WrapUserDEK(password, dek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRecoveryKey, err := vault.GenerateRecoveryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryEnvelope, err := vault.WrapUserDEKWithRecovery(newRecoveryKey, dek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &vault.UserDEKEnvelopes{
+		DEKEnvelope:      envelope,
+		KDFSalt:          salt,
+		KDFParams:        params,
+		RecoveryEnvelope: recoveryEnvelope,
+		RecoveryHash:     vault.RecoveryKeyHash(newRecoveryKey),
+	}
+}
+
+func TestChangePasswordConcurrentSameOldPassword(t *testing.T) {
+	a := testFileAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "wendy", "", "old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, envelopes, _, err := vault.GenerateUserDEKEnvelopes("old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwords := []string{"new-password-a", "new-password-b"}
+	updated := []*vault.UserDEKEnvelopes{
+		rewrapForTest(t, "old-password-1", passwords[0], envelopes),
+		rewrapForTest(t, "old-password-1", passwords[1], envelopes),
+	}
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range passwords {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = a.ChangePassword(ctx, user.ID, "old-password-1", passwords[i], updated[i], "")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	winner := -1
+	for i, err := range errs {
+		if err == nil {
+			if winner != -1 {
+				t.Fatalf("both password changes succeeded: %v", errs)
+			}
+			winner = i
+			continue
+		}
+		requireCode(t, err, ipc.CodeForbidden)
+	}
+	if winner == -1 {
+		t.Fatalf("no password change succeeded: %v", errs)
+	}
+	requireCode(t, authErr(a, ctx, "wendy", "old-password-1"), ipc.CodeForbidden)
+	if _, err := a.Authenticate(ctx, "wendy", passwords[winner]); err != nil {
+		t.Fatalf("winner password rejected: %v", err)
+	}
+	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.DEKEnvelope, updated[winner].DEKEnvelope) {
+		t.Fatal("stored envelope does not match the winning password change")
+	}
+}
+
+func TestResetPasswordWithRecoveryConcurrent(t *testing.T) {
+	a := testFileAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "xavier", "", "old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, envelopes, recoveryKey, err := vault.GenerateUserDEKEnvelopes("old-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetUserDEKEnvelopes(ctx, user.ID, envelopes); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwords := []string{"new-password-a", "new-password-b"}
+	rotated := []*vault.UserDEKEnvelopes{
+		rotatedEnvelopesForTest(t, recoveryKey, passwords[0], envelopes),
+		rotatedEnvelopesForTest(t, recoveryKey, passwords[1], envelopes),
+	}
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range passwords {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = a.ResetPasswordWithRecovery(ctx, "xavier", vault.FormatRecoveryKey(recoveryKey), passwords[i], rotated[i])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	winner := -1
+	for i, err := range errs {
+		if err == nil {
+			if winner != -1 {
+				t.Fatalf("both recovery resets succeeded: %v", errs)
+			}
+			winner = i
+			continue
+		}
+		requireCode(t, err, ipc.CodeForbidden)
+	}
+	if winner == -1 {
+		t.Fatalf("no recovery reset succeeded: %v", errs)
+	}
+	requireCode(t, authErr(a, ctx, "xavier", "old-password-1"), ipc.CodeForbidden)
+	if _, err := a.Authenticate(ctx, "xavier", passwords[winner]); err != nil {
+		t.Fatalf("winner password rejected: %v", err)
+	}
+	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+	stored, err := a.GetUserDEKEnvelopes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.RecoveryEnvelope, rotated[winner].RecoveryEnvelope) || stored.RecoveryHash != rotated[winner].RecoveryHash {
+		t.Fatal("stored recovery envelope does not match the winning reset")
+	}
+	if vault.VerifyRecoveryKey(vault.FormatRecoveryKey(recoveryKey), stored.RecoveryHash) {
+		t.Fatal("old recovery key still verifies after rotation")
+	}
 }

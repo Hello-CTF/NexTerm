@@ -183,7 +183,7 @@ func (a *Accounts) GetUser(ctx context.Context, id string) (*User, error) {
 }
 
 func (a *Accounts) GetUserByUsername(ctx context.Context, username string) (*User, error) {
-	return scanUser(a.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM "+userTable+" WHERE username = ? COLLATE NOCASE", username))
+	return scanUser(a.db.QueryRowContext(ctx, "SELECT "+userColumns+" FROM "+userTable+" WHERE LOWER(username) = LOWER(?)", username))
 }
 
 func (a *Accounts) Authenticate(ctx context.Context, username, password string) (*User, error) {

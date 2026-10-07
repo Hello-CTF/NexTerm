@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -105,4 +106,119 @@ func TestEnrollCodeOneTimeLifecycle(t *testing.T) {
 func consumeCodeErr(a *Accounts, ctx context.Context, code string) error {
 	_, err := a.ConsumeEnrollCode(ctx, code)
 	return err
+}
+
+func TestRevokeDeviceConcurrentSingleWinner(t *testing.T) {
+	a := testFileAccounts(t)
+	ctx := context.Background()
+	owner, err := a.CreateUser(ctx, "kate2", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := a.RegisterDevice(ctx, owner.ID, "laptop", "desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := a.IssueSession(ctx, owner.ID, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const revokers = 4
+	var wg sync.WaitGroup
+	errs := make([]error, revokers)
+	for i := 0; i < revokers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = a.RevokeDevice(ctx, owner.ID, device.ID)
+		}(i)
+	}
+	wg.Wait()
+	succeeded := 0
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+			continue
+		}
+		requireCode(t, err, ipc.CodeForbidden)
+	}
+	if succeeded != 1 {
+		t.Fatalf("concurrent device revoke succeeded %d times, want exactly 1", succeeded)
+	}
+	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+}
+
+func TestConsumeEnrollCodeConcurrentSingleUse(t *testing.T) {
+	a := testFileAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "lena2", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := a.IssueEnrollCode(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const consumers = 8
+	var wg sync.WaitGroup
+	userIDs := make([]string, consumers)
+	errs := make([]error, consumers)
+	for i := 0; i < consumers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			userIDs[i], errs[i] = a.ConsumeEnrollCode(ctx, code)
+		}(i)
+	}
+	wg.Wait()
+	succeeded := 0
+	for i, err := range errs {
+		if err == nil {
+			succeeded++
+			if userIDs[i] != user.ID {
+				t.Fatalf("code consumed by wrong user %q", userIDs[i])
+			}
+			continue
+		}
+		requireCode(t, err, ipc.CodeForbidden)
+	}
+	if succeeded != 1 {
+		t.Fatalf("concurrent consume succeeded %d times, want exactly 1", succeeded)
+	}
+}
+
+func TestEnrollCodeMultiUserIsolation(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	alice, err := a.CreateUser(ctx, "alice-enroll", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := a.CreateUser(ctx, "bob-enroll", "", "synthetic-password-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codeA1, err := a.IssueEnrollCode(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codeA2, err := a.IssueEnrollCode(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codeB, err := a.IssueEnrollCode(ctx, bob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumedBy, err := a.ConsumeEnrollCode(ctx, codeB); err != nil || consumedBy != bob.ID {
+		t.Fatalf("consume B: %q, %v", consumedBy, err)
+	}
+	if consumedBy, err := a.ConsumeEnrollCode(ctx, codeA1); err != nil || consumedBy != alice.ID {
+		t.Fatalf("consume A1: %q, %v", consumedBy, err)
+	}
+	requireCode(t, consumeCodeErr(a, ctx, codeA1), ipc.CodeForbidden)
+	if consumedBy, err := a.ConsumeEnrollCode(ctx, codeA2); err != nil || consumedBy != alice.ID {
+		t.Fatalf("A2 must survive A1 consumption: %q, %v", consumedBy, err)
+	}
+	requireCode(t, consumeCodeErr(a, ctx, codeB), ipc.CodeForbidden)
 }
