@@ -283,7 +283,15 @@ func (s *Server) routes(config Config) http.Handler {
 		return mux
 	}
 
+	staticHandler := config.Static
+	if staticHandler == nil && s.options.WebRoot != "" {
+		staticHandler = NewStaticHandler(s.options.WebRoot)
+	}
+
 	if s.fleet != nil {
+		// 公开分享页复用同一静态入口: 普通 GET /share/public/{token} 服务
+		// 既有 SPA/index, 不另造 shell。
+		s.fleet.SetSharePublicPage(staticHandler)
 		s.fleet.Mount(mux)
 	}
 
@@ -313,10 +321,6 @@ func (s *Server) routes(config Config) http.Handler {
 		mux.Handle("POST /files/image", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageUpload))))
 		mux.Handle("GET /files/image/{id}", http.HandlerFunc(s.serveImageDownload))
 		mux.Handle("DELETE /files/image/{id}", s.imageIdentity(s.requireImageWrite(http.HandlerFunc(s.serveImageDelete))))
-	}
-	staticHandler := config.Static
-	if staticHandler == nil && s.options.WebRoot != "" {
-		staticHandler = NewStaticHandler(s.options.WebRoot)
 	}
 	if staticHandler != nil {
 		mux.Handle("/", staticHandler)

@@ -173,7 +173,8 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 
 	// 分享数据面: 公开链接以 token 为凭据 (匿名可达, 等同 /device/enroll),
 	// 注册分享终端要求账号会话; 二者都是 GET 升级, 与其他 session 路由一样
-	// 不要求 CSRF。
+	// 不要求 CSRF。公开链接的普通 GET (浏览器导航) 在 handler 内分流给静态
+	// SPA 入口, 只有 WS upgrade 进入 token 鉴权。
 	mux.HandleFunc("GET /share/public/{token}", s.serveSharePublicTerminal)
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 }

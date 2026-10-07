@@ -15,6 +15,9 @@ then drives the M127 sharing contracts through the M136 outbound bridge:
   6. daemon offline: live stream drops with the bridge, new opens get 503
   7. disclosure guards: management/sync routes stay behind account auth and
      share views carry no token material
+  8. public viewer page: plain GET /share/public/{token} serves the configured
+     SPA/index (no token validation, no-store) while the WS upgrade keeps the
+     token gate
 
 No third-party Python dependencies, no external network, no service
 installation (desired_autostart is pinned false before `agent run`), no
@@ -120,12 +123,13 @@ class Client:
 
 
 class Instance:
-    def __init__(self, binary: pathlib.Path, work: pathlib.Path, name: str, master_key: str, auth: str):
+    def __init__(self, binary: pathlib.Path, work: pathlib.Path, name: str, master_key: str, auth: str, web_root: pathlib.Path | None = None):
         self.binary = binary
         self.data_dir = work / name
         self.log_path = work / f"{name}.log"
         self.master_key = master_key
         self.auth = auth
+        self.web_root = web_root
         self.port = free_port()
         self.process: subprocess.Popen | None = None
         self.log_handle = None
@@ -145,6 +149,8 @@ class Instance:
         arguments = [
             str(self.binary), "--listen", f"127.0.0.1:{self.port}", "--data-dir", str(self.data_dir), f"--auth={self.auth}",
         ]
+        if self.web_root is not None:
+            arguments += ["--web-root", str(self.web_root)]
         self.log_handle = self.log_path.open("ab")
         self.process = subprocess.Popen(arguments, cwd=ROOT, env=environment, stdout=self.log_handle, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 30
@@ -452,6 +458,23 @@ def wait_until(deadline_s: float, what: str, condition) -> None:
     raise AssertionError(f"timed out waiting for {what}")
 
 
+def ws_handshake_status(port: int, path: str) -> int:
+    """WS 握手结果状态码: 握手被拒返回服务端 HTTP 状态, 意外成功返回 101。"""
+    try:
+        ws = WebSocket(port, path)
+    except WebSocketHTTPError as error:
+        return error.status
+    ws.close()
+    return 101
+
+
+def plain_get(port: int, path: str) -> tuple[int, str, str]:
+    """无 upgrade 头的普通 GET, 返回 (状态码, Cache-Control, 响应体文本)。"""
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="GET")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.status, response.headers.get("Cache-Control", ""), response.read().decode()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin", type=pathlib.Path, default=ROOT / "target/go-build/nexterm-server-sharing-e2e")
@@ -465,7 +488,13 @@ def main() -> int:
 
     work = pathlib.Path(tempfile.mkdtemp(prefix="nexterm-sharing-e2e-"))
     master_key = f"e2e-master-{uuid.uuid4().hex}"
-    server = Instance(arguments.bin, work, "server", master_key, "on")
+    # 真实 server 的静态入口: 一个最小 web root, 断言 plain GET 服务的就是它。
+    web_root = work / "web"
+    web_root.mkdir()
+    (web_root / "index.html").write_text(
+        "<html><head><title>NexTerm</title></head><body>share-e2e</body></html>", encoding="utf-8"
+    )
+    server = Instance(arguments.bin, work, "server", master_key, "on", web_root)
     agent_dir = work / "agent"
     agent_log = (work / "agent.log").open("ab")
     agent_process: subprocess.Popen | None = None
@@ -586,6 +615,26 @@ def main() -> int:
         read_link_id = body.get("id", "")
         read_token = body.get("token", "")
 
+        print("== 公开页面 plain GET ==", flush=True)
+        status, _, index_body = plain_get(server.port, "/")
+        check("根路径 SPA 服务", status == 200 and "<title>NexTerm</title>" in index_body
+              and 'window.__NEXTERM_TRANSPORT__="web"' in index_body, f"HTTP {status} {index_body[:120]}")
+        status, cache_control, token_body = plain_get(server.port, f"/share/public/{read_token}")
+        check("有效 token plain GET 服务同一 SPA", status == 200 and token_body == index_body, f"HTTP {status}")
+        check("token URL 响应 no-store", cache_control == "no-store", f"Cache-Control={cache_control!r}")
+        status, _, invalid_body = plain_get(server.port, "/share/public/not-a-real-token")
+        check("无效 token plain GET 同样服务 SPA (不校验 token)", status == 200 and invalid_body == index_body, f"HTTP {status}")
+        check("无效 token WS 握手仍被拒", ws_handshake_status(server.port, "/share/public/not-a-real-token") == 403)
+        post_request = urllib.request.Request(
+            f"http://127.0.0.1:{server.port}/share/public/{read_token}", data=b"{}", method="POST",
+        )
+        try:
+            urllib.request.urlopen(post_request, timeout=30)
+            post_status = 200
+        except urllib.error.HTTPError as error:
+            post_status = error.code
+        check("POST 公开 token URL 不落入 SPA (405)", post_status == 405, f"HTTP {post_status}")
+
         viewer = ShareViewer(WebSocket(server.port, f"/share/public/{read_token}"))
         ready = viewer.expect_ready()
         check("只读 ready 帧", ready.get("permission") == "read" and ready.get("session_id") == session_id
@@ -634,8 +683,7 @@ def main() -> int:
         except AssertionError as error:
             check("吊销停止活跃 viewer (错误帧)", False, error)
         rw_viewer.expect_closed(10)
-        status, body = Client(server.port).request("GET", f"/share/public/{write_token}")
-        check("吊销后 token 不可再用", status == 403, f"HTTP {status} {body}")
+        check("吊销后 token 不可再用", ws_handshake_status(server.port, f"/share/public/{write_token}") == 403)
 
         print("== 过期 ==", flush=True)
         status, body = alice.request("POST", "/share/links", {
@@ -651,8 +699,7 @@ def main() -> int:
         except AssertionError as error:
             check("过期停止活跃 viewer", False, error)
         expiring_viewer.expect_closed(10)
-        status, body = Client(server.port).request("GET", f"/share/public/{expiring_token}")
-        check("过期后 token 不可再用", status == 403, f"HTTP {status} {body}")
+        check("过期后 token 不可再用", ws_handshake_status(server.port, f"/share/public/{expiring_token}") == 403)
 
         print("== 注册分享打开终端 ==", flush=True)
         status, body = carol.request("GET", f"/share/devices/{device_id}/terminal")
@@ -726,8 +773,7 @@ def main() -> int:
             check("agent 离线停止活跃分享流", True)
         except AssertionError as error:
             check("agent 离线停止活跃分享流", False, error)
-        status, body = Client(server.port).request("GET", f"/share/public/{offline_token}")
-        check("离线后公开链接 503", status == 503, f"HTTP {status} {body}")
+        check("离线后公开链接 503", ws_handshake_status(server.port, f"/share/public/{offline_token}") == 503)
         status, body = bob.request("GET", f"/share/devices/{device_id}/terminal")
         check("离线后注册打开 503", status == 503, f"HTTP {status} {body}")
         status, body = alice.request("POST", "/share/links", {
