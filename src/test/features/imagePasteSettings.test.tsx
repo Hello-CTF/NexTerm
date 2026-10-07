@@ -2,28 +2,58 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 
-const filesApiMock = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
+  flags: { web: false },
   settingsGet: vi.fn(),
   settingsSet: vi.fn(),
   saveImage: vi.fn(),
+  fetchImageService: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  filesApi: filesApiMock,
+  filesApi: {
+    settingsGet: mocks.settingsGet,
+    settingsSet: mocks.settingsSet,
+    saveImage: mocks.saveImage,
+  },
 }));
+
+vi.mock("../../ipc/webFiles", () => ({
+  fetchImageService: mocks.fetchImageService,
+}));
+
+vi.mock("../../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/env")>();
+  return {
+    ...actual,
+    get WEB() {
+      return mocks.flags.web;
+    },
+  };
+});
 
 import { FilesCard } from "../../features/settings/FilesCard";
 import { click, flush, mount, setInputValue, type MountedView } from "./reactTestUtils";
+
+const HEALTH_CONFIGURED = {
+  publicBaseURLConfigured: true,
+  maxBytes: 20 << 20,
+  ownerQuotaBytes: 200 << 20,
+  ttlSeconds: 86400,
+};
+const HEALTH_UNSET = { ...HEALTH_CONFIGURED, publicBaseURLConfigured: false };
 
 describe("FilesCard 默认文件访问基础 URL", () => {
   let mounted: MountedView | undefined;
 
   beforeEach(() => {
-    filesApiMock.settingsGet.mockReset().mockResolvedValue({ publicBaseURL: "" });
-    filesApiMock.settingsSet.mockReset().mockImplementation(async (value: string) => ({
+    mocks.flags.web = false;
+    mocks.settingsGet.mockReset().mockResolvedValue({ publicBaseURL: "" });
+    mocks.settingsSet.mockReset().mockImplementation(async (value: string) => ({
       publicBaseURL: value,
     }));
-    filesApiMock.saveImage.mockReset();
+    mocks.saveImage.mockReset();
+    mocks.fetchImageService.mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -37,18 +67,59 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     return el;
   }
 
-  it("未设置时展示同源相对链接语义", async () => {
+  it("未设置覆盖值且服务端无默认时展示同源相对链接语义", async () => {
+    mocks.flags.web = true;
+    mocks.fetchImageService.mockResolvedValue(HEALTH_UNSET);
     mounted = mount(createElement(FilesCard));
     await flush();
 
     const c = mounted.container;
     expect(c.textContent).toContain("同源相对链接");
     expect(input(c).value).toBe("");
-    expect(input(c).placeholder).toContain("/files/image/…");
+    expect(c.textContent).toContain("/files/image/…");
+  });
+
+  it("未设置覆盖值但服务端 CLI/env 默认生效时不谎称同源相对", async () => {
+    mocks.flags.web = true;
+    mocks.fetchImageService.mockResolvedValue(HEALTH_CONFIGURED);
+    mounted = mount(createElement(FilesCard));
+    await flush();
+
+    const c = mounted.container;
+    expect(c.textContent).toContain("服务端默认已配置");
+    expect(c.textContent).toContain("--public-base-url");
+    expect(c.textContent).not.toContain("同源相对链接");
+  });
+
+  it("覆盖值清除后回到服务端默认配置提示", async () => {
+    mocks.flags.web = true;
+    mocks.fetchImageService.mockResolvedValue(HEALTH_CONFIGURED);
+    mocks.settingsGet.mockResolvedValue({ publicBaseURL: "https://example.com/nexterm" });
+    mounted = mount(createElement(FilesCard));
+    await flush();
+
+    setInputValue(input(mounted.container), "");
+    click([...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "保存")!);
+    await flush();
+
+    expect(mocks.settingsSet).toHaveBeenCalledWith("");
+    expect(mounted.container.textContent).toContain("服务端默认已配置");
+    expect(mounted.container.textContent).not.toContain("同源相对链接");
+  });
+
+  it("桌面端不探测服务端, 展示无覆盖值的中性提示", async () => {
+    mocks.flags.web = false;
+    mounted = mount(createElement(FilesCard));
+    await flush();
+
+    const c = mounted.container;
+    expect(mocks.fetchImageService).not.toHaveBeenCalled();
+    expect(c.textContent).toContain("未设置覆盖值");
+    expect(c.textContent).toContain("以其为准");
   });
 
   it("已设置时回显持久化值", async () => {
-    filesApiMock.settingsGet.mockResolvedValue({ publicBaseURL: "https://example.com/nexterm" });
+    mocks.settingsGet.mockResolvedValue({ publicBaseURL: "https://example.com/nexterm" });
     mounted = mount(createElement(FilesCard));
     await flush();
 
@@ -67,7 +138,7 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     await flush();
 
     expect(mounted.container.textContent).toContain("不允许包含用户名或密码");
-    expect(filesApiMock.settingsSet).not.toHaveBeenCalled();
+    expect(mocks.settingsSet).not.toHaveBeenCalled();
   });
 
   it("保存成功时按规范化值写入并更新展示", async () => {
@@ -78,21 +149,21 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     click([...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "保存")!);
     await flush();
 
-    expect(filesApiMock.settingsSet).toHaveBeenCalledWith("https://example.com/nexterm");
+    expect(mocks.settingsSet).toHaveBeenCalledWith("https://example.com/nexterm");
     expect(input(mounted.container).value).toBe("https://example.com/nexterm");
   });
 
   it("读取失败时给出可重试的错误态", async () => {
-    filesApiMock.settingsGet.mockRejectedValue(new Error("boom"));
+    mocks.settingsGet.mockRejectedValue(new Error("boom"));
     mounted = mount(createElement(FilesCard));
     await flush();
 
     expect(mounted.container.textContent).toContain("读取文件链接设置失败");
-    filesApiMock.settingsGet.mockResolvedValue({ publicBaseURL: "" });
+    mocks.settingsGet.mockResolvedValue({ publicBaseURL: "" });
     click([...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "重试")!);
     await flush();
 
-    expect(filesApiMock.settingsGet).toHaveBeenCalledTimes(2);
-    expect(mounted.container.textContent).toContain("同源相对链接");
+    expect(mocks.settingsGet).toHaveBeenCalledTimes(2);
+    expect(mounted.container.textContent).toContain("未设置覆盖值");
   });
 });

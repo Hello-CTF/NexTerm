@@ -1,23 +1,23 @@
 import { ImageUploadError } from "../../ipc/webFiles";
 
-// imageFilesFromDataTransfer 从剪贴板或拖放数据中提取图片文件。
-// 只认 image/* 类型的文件项; 其余文件与文本一律不碰, 交给终端默认粘贴路径。
-export function imageFilesFromDataTransfer(data: DataTransfer | null): File[] {
+// pureImageFiles 仅在全部文件项都是图片且至少一张时返回文件列表(all-or-nothing)。
+// 混合载荷(图片+非图片文件)返回空数组, 整个事件交还默认处理, 不提取图片子集、不丢弃任何内容。
+export function pureImageFiles(data: DataTransfer | null): File[] {
   if (!data) return [];
-  const files: File[] = [];
+  const entries: { type: string; file: File | null }[] = [];
   if (data.items && data.items.length > 0) {
     for (const item of data.items) {
       if (item.kind !== "file") continue;
-      if (!item.type.startsWith("image/")) continue;
-      const file = item.getAsFile();
-      if (file) files.push(file);
+      entries.push({ type: item.type, file: item.getAsFile() });
     }
-    return files;
+  } else {
+    for (const file of data.files ?? []) {
+      entries.push({ type: file.type, file });
+    }
   }
-  for (const file of data.files ?? []) {
-    if (file.type.startsWith("image/")) files.push(file);
-  }
-  return files;
+  if (entries.length === 0) return [];
+  if (entries.some((entry) => !entry.type.startsWith("image/") || entry.file === null)) return [];
+  return entries.map((entry) => entry.file as File);
 }
 
 // clipboardHasPlainText 判断混合剪贴板里是否有可用纯文本:

@@ -66,8 +66,12 @@ func registerFilesCommands(dispatcher *ipc.Dispatcher, settings filesSettingStor
 // registerFilesImageCommands 注册图片本地回退保存 IPC。
 // 只在终端图片粘贴没有可用 HTTP 图像服务时由前端显式调用(用户经系统保存对话框选定的路径),
 // 路径来自对话框而不是网络输入; 前端不会把它用作静默上传通道。
-func registerFilesImageCommands(dispatcher *ipc.Dispatcher) error {
+// desktop 为 false(nexterm-server 装配)时一律拒绝, 任意路径写不能经服务端 /rpc 到达。
+func registerFilesImageCommands(dispatcher *ipc.Dispatcher, desktop bool) error {
 	return ipc.Register(dispatcher, "files_save_image", func(_ context.Context, _ *ipc.Call, input filesSaveImageInput) (filesSaveImageView, error) {
+		if !desktop {
+			return filesSaveImageView{}, ipc.NewError(ipc.CodeUnsupported, "图片本地保存只在桌面端可用")
+		}
 		if input.Path == "" {
 			return filesSaveImageView{}, ipc.NewError(ipc.CodeBadParam, "参数错误: 保存路径不能为空")
 		}

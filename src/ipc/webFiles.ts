@@ -265,14 +265,26 @@ export async function fetchImageService(): Promise<ImageLinkHealth | null> {
 }
 
 // uploadImage 通过 M130 POST /files/image 上传剪贴板/拖入的图片, 返回限时公开链接。
-// 失败时抛 ImageUploadError(带状态码与后端文本)或原始网络错误, 不静默吞错。
+// 该路由只认账号会话 + CSRF(静态同步令牌不能替代会话): 请求携带 authApi 的会话 CSRF 头;
+// 401 时派发 SESSION_EXPIRED_EVENT 交给账号门重新登录(与 authApi.request 同一语义),
+// 不做第二套登录流程。失败抛 ImageUploadError(带状态码与后端文本), 不静默回退。
 export async function uploadImage(file: File): Promise<ImageUploadResult> {
+  // 延迟加载 authApi: 部分测试只给 ipc/env mock clientId, 静态链会把 demo/index 拉进来。
+  const { getCsrfToken, SESSION_EXPIRED_EVENT } = await import("./authApi");
   const q = new URLSearchParams({ name: file.name || "pasted-image" });
-  const res = await authedFetch(httpUrl(`/files/image?${q.toString()}`), {
+  const headers: Record<string, string> = {
+    "content-type": file.type || "application/octet-stream",
+  };
+  const csrf = getCsrfToken();
+  if (csrf) headers["X-NexTerm-CSRF"] = csrf;
+  const res = await fetch(httpUrl(`/files/image?${q.toString()}`), {
     method: "POST",
-    headers: { "content-type": file.type || "application/octet-stream" },
+    headers,
     body: file,
   });
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new ImageUploadError(res.status, text.slice(0, 300));

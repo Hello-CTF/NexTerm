@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { filesApi, type FilesSettingsView } from "../../ipc/commands";
+import { fetchImageService } from "../../ipc/webFiles";
+import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { IconImage, IconInfo, IconRefresh, IconXCircle } from "../../ui/icons";
@@ -9,9 +11,21 @@ export type PublicBaseURLResult = { ok: true; value: string } | { ok: false; err
 // normalizePublicBaseURL 与后端 core.ParsePublicBaseURL 同一套校验:
 // 仅 http/https、必须有 host、允许路径前缀、拒绝 userinfo/query/fragment, 去掉尾斜杠。
 // 空串表示清除持久化值(回退 CLI/env 默认或同源相对链接)。后端 files_settings_set 仍是最终把关。
+// 先校验原始形态再做 WHATWG 规范化, 避免规范化吞掉后端要拒绝的输入(空 userinfo、非法百分号转义)。
 export function normalizePublicBaseURL(raw: string): PublicBaseURLResult {
   const trimmed = raw.trim();
   if (trimmed === "") return { ok: true, value: "" };
+  const schemeEnd = trimmed.indexOf("://");
+  if (schemeEnd < 0) {
+    return { ok: false, error: "不是合法 URL（需要以 http:// 或 https:// 开头）" };
+  }
+  const authority = trimmed.slice(schemeEnd + 3).split(/[/?#]/, 1)[0];
+  if (authority.includes("@")) {
+    return { ok: false, error: "不允许包含用户名或密码" };
+  }
+  if (/%(?![0-9a-fA-F]{2})/.test(trimmed)) {
+    return { ok: false, error: "包含非法的百分号转义" };
+  }
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
@@ -46,6 +60,8 @@ export function FilesCard() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  // serviceDefault 区分生效默认: 持久化覆盖为空时, 服务端可能仍用 CLI/env 的 --public-base-url。
+  const [serviceDefault, setServiceDefault] = useState<"unknown" | "configured" | "unset">("unknown");
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +75,18 @@ export function FilesCard() {
       .catch((e) => {
         if (!cancelled) setLoadError(describeError(e));
       });
+    if (WEB) {
+      fetchImageService()
+        .then((links) => {
+          if (cancelled) return;
+          setServiceDefault(
+            links === null ? "unknown" : links.publicBaseURLConfigured ? "configured" : "unset",
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setServiceDefault("unknown");
+        });
+    }
     return () => {
       cancelled = true;
     };
@@ -80,25 +108,40 @@ export function FilesCard() {
         pushToast(
           "success",
           view.publicBaseURL === ""
-            ? "已清除：新的公开链接将使用同源相对路径"
-            : "已保存默认文件访问基础 URL",
+            ? "已清除覆盖值；若服务端配置了启动参数默认 URL 则仍以其为准，否则为同源相对链接"
+            : "已保存默认文件访问基础 URL（优先于启动参数）",
         );
       })
       .catch((e) => pushToast("error", `保存失败：${describeError(e)}`))
       .finally(() => setSaving(false));
   };
 
-  const configured = settings !== null && settings.publicBaseURL !== "";
+  const overrideValue = settings?.publicBaseURL ?? "";
+  const hasOverride = overrideValue !== "";
+  const badge = !settings
+    ? null
+    : hasOverride
+      ? { text: "已设置基础 URL", green: true }
+      : serviceDefault === "configured"
+        ? { text: "服务端默认已配置", green: false }
+        : serviceDefault === "unset"
+          ? { text: "同源相对链接", green: false }
+          : { text: "未设置覆盖值", green: false };
+  const effectiveHint = hasOverride
+    ? `新链接将形如 ${overrideValue}/files/image/…；该值优先于服务端启动参数，只影响保存后新生成的链接。`
+    : serviceDefault === "configured"
+      ? "当前没有覆盖值；生效的是服务端 --public-base-url 或 NEXTERM_PUBLIC_BASE_URL 提供的默认 URL（实际值以服务端为准），新链接形如 <默认 URL>/files/image/…。"
+      : serviceDefault === "unset"
+        ? "没有覆盖值，服务端也未配置默认 URL：新链接使用同源相对路径 /files/image/…。此设置只用于文件公开链接，与同步、舰队、API、LLM 的地址相互独立。"
+        : "当前没有覆盖值；若服务端配置了 --public-base-url 或 NEXTERM_PUBLIC_BASE_URL 则以其为准，否则新链接使用同源相对路径 /files/image/…。";
 
   return (
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconImage size={15} className="text-neutral-400" />
         <span className="nx-card-title">文件公开链接</span>
-        {settings && (
-          <span className={`nx-badge ${configured ? "nx-badge-green" : ""}`}>
-            {configured ? "已设置基础 URL" : "同源相对链接"}
-          </span>
+        {badge && (
+          <span className={`nx-badge ${badge.green ? "nx-badge-green" : ""}`}>{badge.text}</span>
         )}
       </div>
       <p className="nx-hint mb-3.5">
@@ -130,7 +173,7 @@ export function FilesCard() {
         <input
           id="files-public-base-url"
           className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-          placeholder="未设置 = 同源相对链接（/files/image/…）"
+          placeholder="留空 = 不设置覆盖值"
           value={draft}
           disabled={settings === null || saving}
           onChange={(e) => {
@@ -150,11 +193,7 @@ export function FilesCard() {
           {validationError}
         </p>
       )}
-      <p className="nx-hint mt-2">
-        {configured
-          ? `新链接将形如 ${settings?.publicBaseURL}/files/image/…；只影响保存后新生成的链接。`
-          : "留空保存即可恢复同源相对链接。此设置只用于文件公开链接，与同步、舰队、API、LLM 的地址相互独立。"}
-      </p>
+      <p className="nx-hint mt-2">{effectiveHint}</p>
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>

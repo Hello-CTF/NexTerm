@@ -25,7 +25,7 @@ import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
 import { createSelectionAutoCopy } from "./selectionAutoCopy";
 import { wrapBracketedPaste } from "./terminalPaste";
-import { clipboardHasPlainText, imageFilesFromDataTransfer } from "./imagePaste";
+import { clipboardHasPlainText, pureImageFiles } from "./imagePaste";
 
 export const XTERM_DARK_THEME = {
   background: "#101217",
@@ -384,7 +384,7 @@ export function XtermView(props: XtermViewProps) {
     // 交还终端默认粘贴, 普通文本与 bracketed paste 不受影响, 图片字节永远不会成为按键输入。
     const pasteHost = hostRef.current;
     const onPasteCapture = (event: ClipboardEvent) => {
-      const files = imageFilesFromDataTransfer(event.clipboardData);
+      const files = pureImageFiles(event.clipboardData);
       if (files.length === 0 || clipboardHasPlainText(event.clipboardData)) return;
       event.preventDefault();
       event.stopPropagation();
@@ -395,7 +395,7 @@ export function XtermView(props: XtermViewProps) {
       event.preventDefault();
     };
     const onDropCapture = (event: DragEvent) => {
-      const files = imageFilesFromDataTransfer(event.dataTransfer);
+      const files = pureImageFiles(event.dataTransfer);
       if (files.length === 0) return;
       event.preventDefault();
       event.stopPropagation();

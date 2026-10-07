@@ -252,11 +252,43 @@ describe("XtermView 图片粘贴拦截", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it("图片+非图片文件混合剪贴板不拦截, 整体交还默认处理", async () => {
+    const onPasteImages = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+
+    const event = pasteEvent([
+      png("shot.png"),
+      new File(["x"], "notes.txt", { type: "text/plain" }),
+    ]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteImages).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("非图片文件拖放不拦截", async () => {
     const onPasteImages = vi.fn();
     await show({ sessionId: "session", tabId: "pending", onPasteImages });
 
     const event = dropEvent([new File(["x"], "notes.txt", { type: "text/plain" })]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteImages).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("图片+非图片文件混合拖放不拦截, 不丢弃非图片内容", async () => {
+    const onPasteImages = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+
+    const event = dropEvent([
+      png("shot.png"),
+      new File(["x"], "notes.txt", { type: "text/plain" }),
+    ]);
     act(() => {
       host().dispatchEvent(event);
     });

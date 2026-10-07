@@ -82,7 +82,7 @@ func TestFilesCommandsWiredIntoStoreModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	modules := productionModules(ProductionServices{Store: database})
+	modules := productionModules(ProductionServices{Store: database, desktop: true})
 	var storeModule *Module
 	for index := range modules {
 		if modules[index].Name == "store" {
@@ -103,9 +103,105 @@ func TestFilesCommandsWiredIntoStoreModule(t *testing.T) {
 	}
 }
 
+func TestFilesSaveImageIPCDesktopGuard(t *testing.T) {
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	newDispatcher := func(desktop bool) *ipc.Dispatcher {
+		modules := productionModules(ProductionServices{Store: database, desktop: desktop})
+		var storeModule *Module
+		for index := range modules {
+			if modules[index].Name == "store" {
+				storeModule = &modules[index]
+			}
+		}
+		if storeModule == nil || storeModule.RegisterCommands == nil {
+			t.Fatal("store module missing")
+		}
+		dispatcher := ipc.NewDispatcher()
+		if err := storeModule.RegisterCommands(dispatcher); err != nil {
+			t.Fatal(err)
+		}
+		return dispatcher
+	}
+
+	path := t.TempDir() + "/server-side.png"
+	response := dispatchStoreTest(newDispatcher(false), "files_save_image",
+		`{"path":`+quotedJSON(path)+`,"contentBase64":"aGk="}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+		t.Fatalf("server assembly files_save_image = %+v, want unsupported", response)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("server assembly wrote the file: %v", err)
+	}
+
+	desktopPath := t.TempDir() + "/desktop.png"
+	response = dispatchStoreTest(newDispatcher(true), "files_save_image",
+		`{"path":`+quotedJSON(desktopPath)+`,"contentBase64":"aGk="}`)
+	var view filesSaveImageView
+	requireStoreTestResponse(t, response, &view)
+	if view.Bytes != 2 {
+		t.Fatalf("desktop assembly save = %+v", view)
+	}
+}
+
+// TestFilesSettingsSetValidationTable 与前端 FilesCard 的 normalizePublicBaseURL 共享同一张边界用例表,
+// 保证 files_settings_set 的前端预检与后端 core.ParsePublicBaseURL 判定一致。
+func TestFilesSettingsSetValidationTable(t *testing.T) {
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := registerFilesCommands(dispatcher, database); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		raw       string
+		wantOK    bool
+		wantValue string
+	}{
+		{"", true, ""},
+		{"https://example.com", true, "https://example.com"},
+		{"https://example.com/", true, "https://example.com"},
+		{"https://example.com//", true, "https://example.com"},
+		{"https://example.com/nexterm/", true, "https://example.com/nexterm"},
+		{"https://example.com/nexterm//", true, "https://example.com/nexterm"},
+		{"http://example.com", true, "http://example.com"},
+		{"ftp://example.com", false, ""},
+		{"example.com", false, ""},
+		{"https://", false, ""},
+		{"https://user:pass@example.com", false, ""},
+		{"https://@example.com", false, ""},
+		{"https://example.com/?q=1", false, ""},
+		{"https://example.com/?", false, ""},
+		{"https://example.com/#frag", false, ""},
+		{"https://example.com/%zz", false, ""},
+	}
+	for _, tc := range cases {
+		response := dispatchStoreTest(dispatcher, "files_settings_set", `{"publicBaseURL":`+quotedJSON(tc.raw)+`}`)
+		if tc.wantOK {
+			var view filesSettingsView
+			requireStoreTestResponse(t, response, &view)
+			if view.PublicBaseURL != tc.wantValue {
+				t.Fatalf("%q -> %q, want %q", tc.raw, view.PublicBaseURL, tc.wantValue)
+			}
+			continue
+		}
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("%q = %+v, want bad_param", tc.raw, response)
+		}
+	}
+}
+
 func TestFilesSaveImageIPCWritesLocalFile(t *testing.T) {
 	dispatcher := ipc.NewDispatcher()
-	if err := registerFilesImageCommands(dispatcher); err != nil {
+	if err := registerFilesImageCommands(dispatcher, true); err != nil {
 		t.Fatal(err)
 	}
 	path := t.TempDir() + "/pasted image.png"
@@ -142,7 +238,7 @@ func TestFilesSaveImageIPCWritesLocalFile(t *testing.T) {
 
 func TestFilesSaveImageIPCValidation(t *testing.T) {
 	dispatcher := ipc.NewDispatcher()
-	if err := registerFilesImageCommands(dispatcher); err != nil {
+	if err := registerFilesImageCommands(dispatcher, true); err != nil {
 		t.Fatal(err)
 	}
 	target := t.TempDir() + "/never-written.png"
