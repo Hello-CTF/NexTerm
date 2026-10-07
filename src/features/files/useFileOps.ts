@@ -104,8 +104,8 @@ export function useFileOps(sessionId: string) {
       if (dirty) {
         notes.push(
           entry.kind === "dir"
-            ? "该目录（含其子目录）内有文件正在编辑器中打开且有未保存的修改。重命名后，已打开的标签仍指向旧路径，未保存的内容仍会写到旧文件。"
-            : "该文件正在编辑器中打开且有未保存的修改。重命名后，已打开的标签仍指向旧路径，未保存的内容仍会写到旧文件。",
+            ? "该目录（含子目录）里有文件正在编辑器中编辑，改动未保存。重命名后，已打开的标签仍指向旧路径，保存时会把改动写回旧文件。"
+            : "该文件正在编辑器中编辑，改动未保存。重命名后，已打开的标签仍指向旧路径，保存时会把改动写回旧文件。",
         );
       }
       if (notes.length) {
@@ -128,7 +128,7 @@ export function useFileOps(sessionId: string) {
       const conflict = findSibling(siblings, name);
       if (conflict) {
         const go = await ask(
-          `「${name}」已存在（${conflict.kind === "dir" ? "目录" : "文件"}）。继续将请求后端用重命名后的项替换已存在的「${name}」- 旧「${name}」的内容将丢失；能否覆盖由后端最终决定，部分后端（如 SFTP）会拒绝。\n\n替换「${name}」？`,
+          `「${name}」已存在（${conflict.kind === "dir" ? "目录" : "文件"}）。继续会用重命名后的项替换它：旧「${name}」的内容将丢失；能否覆盖由后端决定，部分后端（如 SFTP）会拒绝。\n\n替换「${name}」？`,
           { title: "覆盖确认", kind: "warning" },
         );
         if (!go || !alive(seq)) return;
@@ -151,14 +151,14 @@ export function useFileOps(sessionId: string) {
     try {
       if (entry.kind === "symlink") {
         const go = await ask(
-          `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。chmod 会跟随链接，修改它指向的「目标」的权限。\n\n继续？`,
+          `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。chmod 会跟随链接，改的是链接指向目标的权限。\n\n继续？`,
           { title: "权限", kind: "warning" },
         );
         if (!go || !alive(seq)) return;
       }
       const current = octalDefaultFromEntry(entry.mode);
       const input = await promptText(
-        `权限（八进制 000–777，当前 ${entry.mode || "未知"}）· ${entry.path}`,
+        `权限（八进制 000-777，当前 ${entry.mode || "未知"}）· ${entry.path}`,
         current,
       );
       if (input === null || !alive(seq)) return;

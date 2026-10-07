@@ -161,7 +161,7 @@ export function FileEditor({ sessionId, path, onClose }: FileEditorProps) {
     try {
       if (meta && meta.encoding !== "utf-8") {
         const ok = await ask(
-          `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，非 ASCII 字符的字节会变。继续？`,
+          `这个文件是按 ${meta.encoding.toUpperCase()} 解码的。\n保存会写成 UTF-8，用别的工具按原编码打开可能乱码。继续？`,
           { title: "编码会改变", kind: "warning" },
         );
         if (!ok) return;

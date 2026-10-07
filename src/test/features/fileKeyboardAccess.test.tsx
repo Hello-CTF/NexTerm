@@ -347,7 +347,7 @@ describe("useFileOps 对话框文案（纯文本）", () => {
     expect(notice).toBeTruthy();
     const message = String(notice![0]);
     expect(message).not.toContain("**");
-    expect(message).toContain("「目标」");
+    expect(message).toContain("指向目标");
     expect(message).toContain("~/a.txt");
     expect(notice![1]).toEqual(expect.objectContaining({ kind: "warning" }));
   });

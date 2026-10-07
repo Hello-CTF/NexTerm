@@ -204,7 +204,7 @@ async function setViewport(page, { width, height, touch }) {
     deviceScaleFactor: 2,
     mobile: touch,
   });
-  await page.send("Emulation.setTouchEmulationEnabled", { enabled: touch, maxTouchPoints: touch ? 5 : 0 });
+  await page.send("Emulation.setTouchEmulationEnabled", { enabled: touch, maxTouchPoints: touch ? 5 : 1 });
   await page.send("Emulation.setEmulatedMedia", {
     features: touch
       ? [
@@ -428,6 +428,149 @@ async function filesResponsiveAcceptance(page) {
     return { evidence: { crumb, menuItems: items } };
   });
 
+  await pass("files-row-actions-hover-focus-geometry-320-390-desktop", async () => {
+    const evidence = {};
+    const treeScope = '.nx-left-dock [role="tree"][aria-label="文件"]';
+    const browserScope = '[role="tabpanel"]:not(.hidden) [role="tree"][aria-label="文件"]';
+    const geometryExpr = (scope, name) => `(() => {
+      const root = document.querySelector(${JSON.stringify(scope)});
+      if (!root) return null;
+      const rows = [...root.querySelectorAll('[role="treeitem"]')];
+      const row = rows.find((r) => r.textContent?.includes(${JSON.stringify(name)})) ?? rows[0];
+      if (!row) return null;
+      const strip = row.querySelector('.nx-row-actions');
+      const del = row.querySelector('.nx-row-actions button[aria-label^="删除 "]');
+      const rect = (el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height };
+      };
+      return {
+        row: rect(row),
+        name: rect(row.querySelector('.nx-row-name')),
+        next: rect(row.nextElementSibling),
+        stripVisibility: strip ? getComputedStyle(strip).visibility : null,
+        del: rect(del),
+      };
+    })()`;
+    const assertStable = (before, after, label) => {
+      assert.ok(before && after, `${label}: 行未找到`);
+      for (const key of ["row", "name", "next"]) {
+        const b = before[key];
+        const a = after[key];
+        if (!b || !a) continue;
+        for (const m of ["top", "bottom", "left", "right", "width", "height"]) {
+          assert.ok(
+            Math.abs(a[m] - b[m]) <= 0.5,
+            `${label}: ${key}.${m} 在操作按钮显示前后移动了 ${b[m]} -> ${a[m]}`,
+          );
+        }
+      }
+    };
+    const scrollRowIntoView = async (scope, name) => {
+      await page.evaluate(`(() => {
+        const root = document.querySelector(${JSON.stringify(scope)});
+        const rows = [...root.querySelectorAll('[role="treeitem"]')];
+        const row = rows.find((r) => r.textContent?.includes(${JSON.stringify(name)})) ?? rows[0];
+        row.scrollIntoView({ block: "center" });
+      })()`);
+      await sleep(150);
+    };
+    const hoverRow = async (scope, name) => {
+      const point = await page.evaluate(`(() => {
+        const root = document.querySelector(${JSON.stringify(scope)});
+        const rows = [...root.querySelectorAll('[role="treeitem"]')];
+        const row = rows.find((r) => r.textContent?.includes(${JSON.stringify(name)})) ?? rows[0];
+        const r = row.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      })()`);
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+      await sleep(200);
+    };
+    const unhover = async () => {
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 2 });
+      await sleep(200);
+    };
+    const focusRow = async (scope, name) => {
+      await page.evaluate(`(() => {
+        const root = document.querySelector(${JSON.stringify(scope)});
+        const rows = [...root.querySelectorAll('[role="treeitem"]')];
+        const row = rows.find((r) => r.textContent?.includes(${JSON.stringify(name)})) ?? rows[0];
+        row.focus();
+      })()`);
+      await sleep(150);
+    };
+
+    for (const spec of [
+      { width: 320, height: 568 },
+      { width: 390, height: 844 },
+      { width: 1280, height: 800 },
+    ]) {
+      const label = `${spec.width}`;
+      await boot(page, { width: spec.width, height: spec.height, touch: false, theme: "dark" });
+      await openDock(page, "文件树");
+      await page.waitFor(`Boolean(document.querySelector('${treeScope} [role="treeitem"]'))`);
+      await scrollRowIntoView(treeScope, "console.log");
+
+      const treeBefore = await page.evaluate(geometryExpr(treeScope, "console.log"));
+      assert.equal(treeBefore.stripVisibility, "hidden", `FileTree@${label}: 静止状态操作条应隐藏（仅占位）`);
+      await hoverRow(treeScope, "console.log");
+      const treeHover = await page.evaluate(geometryExpr(treeScope, "console.log"));
+      assertStable(treeBefore, treeHover, `FileTree@${label} hover`);
+      assert.equal(treeHover.stripVisibility, "visible", `FileTree@${label}: hover 必须显示操作按钮，不允许靠隐藏规避`);
+      assert.ok(treeHover.del && treeHover.del.height >= 20, `FileTree@${label}: 删除按钮必须有真实点击区域`);
+      const rowCenter = (treeHover.row.top + treeHover.row.bottom) / 2;
+      const delCenter = (treeHover.del.top + treeHover.del.bottom) / 2;
+      assert.ok(
+        Math.abs(rowCenter - delCenter) <= 1,
+        `FileTree@${label}: 删除按钮与文本应垂直居中对齐 row=${rowCenter} del=${delCenter}`,
+      );
+      await screenshot(page, `files-hover-geometry-tree-${label}.png`);
+      await unhover();
+      const treeAfter = await page.evaluate(geometryExpr(treeScope, "console.log"));
+      assertStable(treeBefore, treeAfter, `FileTree@${label} unhover`);
+      assert.equal(treeAfter.stripVisibility, "hidden", `FileTree@${label}: 移开后操作条应收起`);
+
+      await focusRow(treeScope, "console.log");
+      const treeFocus = await page.evaluate(geometryExpr(treeScope, "console.log"));
+      assertStable(treeBefore, treeFocus, `FileTree@${label} focus`);
+      assert.equal(treeFocus.stripVisibility, "visible", `FileTree@${label}: focus-within 必须显示操作按钮`);
+      await page.evaluate(`document.activeElement && document.activeElement.blur()`);
+
+      if (spec.width <= 820) {
+        await page.evaluate(`document.querySelector('.nx-dock-backdrop')?.click()`);
+        await page.waitFor(`!document.querySelector('.nx-dock-backdrop')`);
+      }
+      await openFileBrowserTab(page);
+      await page.waitFor(`[...document.querySelectorAll('${browserScope} [role="treeitem"]')].some((r) => r.textContent?.includes("console.log"))`);
+      await scrollRowIntoView(browserScope, "console.log");
+
+      const browserBefore = await page.evaluate(geometryExpr(browserScope, "console.log"));
+      assert.equal(browserBefore.stripVisibility, "hidden", `FileBrowser@${label}: 静止状态操作条应隐藏（仅占位）`);
+      await hoverRow(browserScope, "console.log");
+      const browserHover = await page.evaluate(geometryExpr(browserScope, "console.log"));
+      assertStable(browserBefore, browserHover, `FileBrowser@${label} hover`);
+      await focusRow(browserScope, "console.log");
+      const browserFocus = await page.evaluate(geometryExpr(browserScope, "console.log"));
+      assertStable(browserBefore, browserFocus, `FileBrowser@${label} focus`);
+      assert.equal(browserFocus.stripVisibility, "visible", `FileBrowser@${label}: focus-within 必须显示操作按钮`);
+      assert.ok(browserFocus.name && browserFocus.name.width > 60, `FileBrowser@${label}: 名称列必须保留真实宽度`);
+      await screenshot(page, `files-hover-geometry-browser-${label}.png`);
+      await page.evaluate(`document.activeElement && document.activeElement.blur()`);
+      await unhover();
+
+      if (spec.width <= 390) {
+        evidence[label] = { page: await noPageOverflow(page, `files-geometry@${label}`, spec.width) };
+      }
+      evidence[label] = {
+        ...(evidence[label] ?? {}),
+        tree: { before: treeBefore, hover: treeHover, focus: treeFocus },
+        browser: { before: browserBefore, focus: browserFocus },
+      };
+    }
+    return { evidence };
+  });
+
   await pass("fileeditor-320-save-reachable-and-saves", async () => {
     await boot(page, { width: 320, height: 568, touch: true, theme: "dark" });
     await openFileBrowserTab(page);
@@ -639,7 +782,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    matrix: "320x568 / 360x740 / 390x844 / 568x320, touch emulation, dark+light",
+    matrix: "320x568 / 360x740 / 390x844 / 568x320 touch emulation + 320/390/1280 fine-pointer hover/focus geometry, dark+light",
   },
   checks,
   harness_errors: harnessErrors,
