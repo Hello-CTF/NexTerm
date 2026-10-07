@@ -312,3 +312,11 @@ describe("SyncBundleCard 导入", () => {
     expect(text()).toContain("本机对应资产会被一并标记删除");
   });
 });
+
+describe("SyncBundleCard 分区引用", () => {
+  it("说明引用上方「账号同步」分区,不再叫「资产同步」", async () => {
+    await mountCard();
+    expect(text()).toContain("与上方「账号同步」的推送 / 拉取互不影响");
+    expect(text()).not.toContain("「资产同步」");
+  });
+});

@@ -279,7 +279,7 @@ export function SyncBundleCard() {
       </div>
       <p className="nx-hint mb-3.5">
         把资产打包成一个 JSON 文件带走，或从文件恢复到本机。资产包走文件，不经过任何服务器，
-        与上方「资产同步」的推送 / 拉取互不影响。
+        与上方「账号同步」的推送 / 拉取互不影响。
       </p>
 
       {digestError && (

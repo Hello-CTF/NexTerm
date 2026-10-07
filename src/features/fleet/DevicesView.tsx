@@ -477,10 +477,10 @@ export function DevicesView() {
             <div className="nx-empty-icon">
               <IconMonitor size={18} />
             </div>
-            <div className="text-[13px] text-neutral-300">登录后才能查看与管理接入的设备。</div>
-            <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => useAuth.setState({ gate: "login" })}>
-              去登录
-            </button>
+            <div>
+              <div className="text-[13px] text-neutral-300">登录后才能查看与管理接入的设备。</div>
+              <div className="mt-1 text-[11.5px] text-neutral-500">登录入口在「设置 → 账号」卡。</div>
+            </div>
           </div>
         </div>
       </div>

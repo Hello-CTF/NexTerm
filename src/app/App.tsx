@@ -796,6 +796,12 @@ export default function App() {
       toast("info", "浏览器模式的同步在「设置 → 账号同步」里进行");
       return;
     }
+    // types.ts 的 SyncLink 是 v1 残留;线上形状含 username/hasPassword,与设置页「立即同步」按钮同一 configured 判定。
+    const link = syncLink.data as unknown as { url: string; username: string; hasPassword: boolean } | undefined;
+    if (!link || link.url === "" || link.username === "" || !link.hasPassword) {
+      toast("info", "同步还没配置:先到「设置 → 账号同步」里登录");
+      return;
+    }
     try {
       const r = (await syncApi.syncNow()) as unknown as { applied: number; pushed: number };
       const moved = r.applied + r.pushed;
@@ -804,7 +810,7 @@ export default function App() {
     } catch (e) {
       toast("error", `同步失败：${describeError(e)}`);
     }
-  }, [queryClient]);
+  }, [queryClient, syncLink.data]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
