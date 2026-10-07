@@ -302,7 +302,7 @@ async function startServer() {
   const port = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-db-lifecycle-server-"));
   const log = fs.openSync(path.join(OUT, "server.log"), "w");
-  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data], {
+  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data, "--auth=loopback"], {
     cwd: ROOT,
     env: { ...globalThis.process.env, NEXTERM_MASTER_KEY: "db-lifecycle-acceptance-master" },
     stdio: ["ignore", log, log],

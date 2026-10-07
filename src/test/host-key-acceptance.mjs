@@ -379,7 +379,7 @@ async function startServer(dataDir) {
   }
   const port = await freePort();
   const log = fs.openSync(path.join(OUT, "server.log"), "a");
-  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", dataDir], {
+  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", dataDir, "--auth=loopback"], {
     cwd: ROOT,
     env: { ...globalThis.process.env, NEXTERM_MASTER_KEY: "host-key-acceptance-master" },
     stdio: ["ignore", log, log],

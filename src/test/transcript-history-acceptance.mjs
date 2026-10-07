@@ -217,7 +217,7 @@ function buildServer() {
 
 async function startServer(binary, dataDir) {
   const port = await freePort();
-  const process = spawn(binary, ["serve", "--listen", `127.0.0.1:${port}`, "--data-dir", dataDir], {
+  const process = spawn(binary, ["serve", "--listen", `127.0.0.1:${port}`, "--data-dir", dataDir, "--auth=loopback"], {
     cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -286,6 +286,52 @@ async function boot(page, api) {
   } finally {
     await page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
   }
+}
+
+async function completeSetupGate(page, server) {
+  const gate = await page.waitFor(`(async () => {
+    const { useAuth } = await import('/src/features/auth/store.ts');
+    const value = useAuth.getState().gate;
+    return value === "loading" ? false : value;
+  })()`, 30_000);
+  if (gate !== "setup") return;
+  const match = server.log().match(/一次性初始化码: (\S+)/);
+  if (!match) throw new Error("setup gate shown but no one-time init code in server log");
+  const filled = await page.evaluate(`(() => {
+    const inputs = [...document.querySelectorAll('.fixed.inset-0.z-50 form input.nx-input')];
+    const values = ${JSON.stringify([match[1], "acc-admin", "acceptance-admin-pass", "acceptance-admin-pass"])};
+    if (inputs.length !== values.length) return false;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    inputs.forEach((input, index) => {
+      setter.call(input, values[index]);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return true;
+  })()`);
+  if (!filled) throw new Error("setup gate form fields not found");
+  await page.evaluate(`(() => {
+    const button = [...document.querySelectorAll('.fixed.inset-0.z-50 form button')].find((b) => b.textContent.includes("创建超级管理员"));
+    if (!button || button.disabled) throw new Error("创建超级管理员 button not ready");
+    button.click();
+  })()`);
+  await page.waitFor(`[...document.querySelectorAll('.fixed.inset-0.z-50 button')].some((b) => b.textContent.trim() === "复制")`, 90_000);
+  await page.evaluate(`(() => {
+    const copy = [...document.querySelectorAll('.fixed.inset-0.z-50 button')].find((b) => b.textContent.trim() === "复制");
+    copy.click();
+  })()`);
+  await page.waitFor(`(() => {
+    const done = [...document.querySelectorAll('.fixed.inset-0.z-50 button')].find((b) => b.textContent.includes("我已安全保存"));
+    return Boolean(done && !done.disabled);
+  })()`, 10_000);
+  await page.evaluate(`(() => {
+    const done = [...document.querySelectorAll('.fixed.inset-0.z-50 button')].find((b) => b.textContent.includes("我已安全保存"));
+    done.click();
+  })()`);
+  await page.waitFor(`(async () => {
+    const { useAuth } = await import('/src/features/auth/store.ts');
+    const state = useAuth.getState();
+    return state.gate === "ready" && !state.pendingRecoveryKey;
+  })()`, 30_000);
 }
 
 async function seedTerminal(page) {
@@ -380,6 +426,7 @@ async function transcriptHistoryAcceptance(page, server) {
     server.process = started.process;
     server.port = started.port;
     await boot(page, `http://127.0.0.1:${server.port}`);
+    await completeSetupGate(page, started);
     await seedTerminal(page);
     await typeIntoTerminal(page, server.port, `echo ${MARKER}`, MARKER);
   });
