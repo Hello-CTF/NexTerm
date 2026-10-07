@@ -88,7 +88,7 @@ func run(args []string) int {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", err)
-		return 1
+		return showStartupError(paths, err, logger.Logger)
 	}
 	service := &Service{app: production.Application, streams: streams}
 	wailsApp = application.New(application.Options{
