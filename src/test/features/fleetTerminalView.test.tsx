@@ -74,6 +74,7 @@ const INFO = {
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   static forcedHelloError: string | undefined;
+  static deferCreate = false;
   readonly url: string;
   readonly sent: Uint8Array[] = [];
   binaryType = "";
@@ -126,6 +127,11 @@ class FakeWebSocket {
     this.close(1006, "");
   }
 
+  // serverCloseClean 模拟生产 pipeBridge 的正常关闭 (1000, "bridge closed")。
+  serverCloseClean(): void {
+    this.close(1000, "bridge closed");
+  }
+
   sentFrames(): SupervisorFrame[] {
     const parser = new SupervisorFrameParser();
     const frames: SupervisorFrame[] = [];
@@ -156,6 +162,10 @@ class FakeWebSocket {
         return;
       }
       case SupervisorFrameKind.Create:
+        if (FakeWebSocket.deferCreate) {
+          setTimeout(() => this.serverJSON(SupervisorFrameKind.Created, INFO), 50);
+          return;
+        }
         this.serverJSON(SupervisorFrameKind.Created, INFO);
         return;
       case SupervisorFrameKind.Attach:
@@ -223,6 +233,7 @@ function seedUser(user: typeof USER): void {
 beforeEach(() => {
   FakeWebSocket.instances = [];
   FakeWebSocket.forcedHelloError = undefined;
+  FakeWebSocket.deferCreate = false;
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("fetch", mocks.fetch);
   vi.stubGlobal("ResizeObserver", class {
@@ -321,6 +332,82 @@ describe("DeviceTerminalView 断开与恢复", () => {
       expect(text).toContain("late-7");
     });
   });
+
+  it("生产 clean 1000 拆桥同样进入可重连断开态 (pipeBridge 正常关闭)", async () => {
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("已连接"));
+    FakeWebSocket.instances[1].serverCloseClean();
+    await flushUntil(() => bodyText().includes("连接已断开"));
+    const resumeButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("重新连接"));
+    expect(resumeButton).toBeTruthy();
+  });
+
+  it("exit 帧后的 clean 关闭停留在已结束, 不误报断开", async () => {
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("已连接"));
+    const attacher = FakeWebSocket.instances[1];
+    attacher.serverJSON(SupervisorFrameKind.Exit, { code: 0 });
+    attacher.serverCloseClean();
+    await flushUntil(() => bodyText().includes("已结束"));
+    expect(bodyText()).not.toContain("连接已断开");
+  });
+
+  it("断开后设备被吊销: 重连显示吊销态, 不再发起桥接", async () => {
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("已连接"));
+    FakeWebSocket.instances[1].serverCloseAbnormal();
+    await flushUntil(() => bodyText().includes("连接已断开"));
+    routeDevices([{ ...DEVICE, revoked_at: NOW - 1000 }]);
+    const bridgesBefore = FakeWebSocket.instances.length;
+    const resumeButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("重新连接"));
+    resumeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushUntil(() => bodyText().includes("设备已吊销"));
+    expect(FakeWebSocket.instances).toHaveLength(bridgesBefore);
+  });
+
+  it("断开后设备关闭终端访问: 重连显示策略态, 不再发起桥接", async () => {
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("已连接"));
+    FakeWebSocket.instances[1].serverCloseAbnormal();
+    await flushUntil(() => bodyText().includes("连接已断开"));
+    routeDevices([{ ...DEVICE, agent: { ...DEVICE.agent, terminal_enabled: false } }]);
+    const bridgesBefore = FakeWebSocket.instances.length;
+    const resumeButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("重新连接"));
+    resumeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushUntil(() => bodyText().includes("设备已关闭终端访问"));
+    expect(FakeWebSocket.instances).toHaveLength(bridgesBefore);
+  });
+});
+
+describe("DeviceTerminalView 生命周期", () => {
+  it("打开途中卸载视图: 回收新会话 (killSession), 不留活桥接", async () => {
+    FakeWebSocket.deferCreate = true;
+    const view = mount(createElement(DeviceTerminalView, { deviceId: "d-1", visible: true }));
+    await flushUntil(() =>
+      FakeWebSocket.instances[0]?.sentFrames().some((f) => f.kind === SupervisorFrameKind.Create),
+    );
+    view.unmount();
+    // create 延迟响应到达 → wire 判 disposed → detach → attach 失败 → 回收 killSession
+    await flushUntil(() =>
+      FakeWebSocket.instances.some((ws) => ws.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)),
+    );
+    await flush();
+    expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
+  });
+
+  it("自然 exit 后新开终端: 旧桥接先 detach 再替换", async () => {
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("已连接"));
+    const oldBridge = FakeWebSocket.instances[1];
+    oldBridge.serverJSON(SupervisorFrameKind.Exit, { code: 0 });
+    await flushUntil(() => bodyText().includes("已结束"));
+    const restartButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新开终端"));
+    expect(restartButton).toBeTruthy();
+    restartButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushUntil(() => FakeWebSocket.instances.length >= 4);
+    await flushUntil(() => bodyText().includes("已连接"));
+    expect(oldBridge.sentFrames().some((f) => f.kind === SupervisorFrameKind.Detach)).toBe(true);
+  });
 });
 
 describe("DeviceTerminalView 结束终端", () => {
@@ -378,39 +465,5 @@ describe("DevicesView 打开入口", () => {
     const buttons = [...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "终端");
     expect(buttons).toHaveLength(1);
     expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("账号切换时关闭全部设备终端标签", async () => {
-    useUi.setState({
-      workspaces: [
-        {
-          id: "ws-1",
-          kind: "tools",
-          title: "工具",
-          panes: [
-            {
-              id: "pane-1",
-              tabs: [
-                { id: "t-1", kind: "deviceTerminal", title: "终端 · web-01", deviceId: "d-1", closable: true },
-                { id: "t-2", kind: "settings", title: "设置", closable: true },
-              ],
-              activeTabId: "t-1",
-            },
-          ],
-          activePaneId: "pane-1",
-          splitRatio: 0.5,
-          closable: true,
-        },
-      ],
-      activeWorkspaceId: "ws-1",
-    } as never);
-    routeDevices([DEVICE]);
-    mounted = mount(createElement(DevicesView));
-    await flushUntil(() => bodyText().includes("web-01"));
-    seedUser({ ...USER, id: "u-2" });
-    await flush();
-    const tabs = useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
-    expect(tabs.some((t) => t.kind === "deviceTerminal")).toBe(false);
-    expect(tabs.some((t) => t.kind === "settings")).toBe(true);
   });
 });

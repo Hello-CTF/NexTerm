@@ -34,7 +34,7 @@ const INFO = {
 const CREATED_AT_NS = BigInt(Date.UTC(2026, 9, 6, 21, 34, 56) / 1000) * 1_000_000_000n + 123456789n;
 
 // behavior 让每个用例按需注入设备端异常; 默认走 server.go 的标准应答。
-const behavior: { helloError?: string; attachError?: string; expectDigest?: string } = {};
+const behavior: { helloError?: string; attachError?: string; expectDigest?: string; helloErrorFrom?: number; createDefer?: boolean } = {};
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -70,6 +70,11 @@ class FakeWebSocket {
     if (this.readyState === 3) return;
     this.readyState = 3;
     this.emit("close", { code, reason, wasClean: code === 1000 });
+  }
+
+  // serverClose 模拟对端拆线 (pipeBridge 的 1000 或异常断开), 与本地 close 区分。
+  serverClose(code: number, reason: string): void {
+    this.close(code, reason);
   }
 
   serverSend(frame: Uint8Array): void {
@@ -110,8 +115,12 @@ class FakeWebSocket {
           version: number;
           state_digest?: string;
         };
-        if (behavior.helloError) {
-          this.serverJSON(SupervisorFrameKind.Error, { code: behavior.helloError, message: behavior.helloError });
+        const index = FakeWebSocket.instances.indexOf(this) + 1;
+        const helloError =
+          behavior.helloError ??
+          (behavior.helloErrorFrom !== undefined && index >= behavior.helloErrorFrom ? "internal" : undefined);
+        if (helloError) {
+          this.serverJSON(SupervisorFrameKind.Error, { code: helloError, message: helloError });
           return;
         }
         if (hello.version !== SUPERVISOR_PROTOCOL_VERSION) {
@@ -126,6 +135,10 @@ class FakeWebSocket {
         return;
       }
       case SupervisorFrameKind.Create:
+        if (behavior.createDefer) {
+          setTimeout(() => this.serverJSON(SupervisorFrameKind.Created, INFO), 0);
+          return;
+        }
         this.serverJSON(SupervisorFrameKind.Created, INFO);
         return;
       case SupervisorFrameKind.Attach: {
@@ -173,6 +186,8 @@ beforeEach(() => {
   behavior.helloError = undefined;
   behavior.attachError = undefined;
   behavior.expectDigest = undefined;
+  behavior.helloErrorFrom = undefined;
+  behavior.createDefer = undefined;
 });
 
 describe("supervisor 帧编解码", () => {
@@ -323,6 +338,37 @@ describe("DeviceBridge 会话流程", () => {
     expect(closes[0]?.code).toBe("unavailable");
   });
 
+  it("生产 clean 1000 拆桥 (pipeBridge 任一侧结束) 也按 disconnected 断流", async () => {
+    const bridge = await DeviceBridge.connect("d-1", "digest-1", { factory });
+    await bridge.attach("s-1");
+    const ws = FakeWebSocket.instances[0];
+    const closes: (DeviceTerminalError | null)[] = [];
+    bridge.onClose = (error) => closes.push(error);
+    // internal/fleet/server/ws.go pipeBridge: 任一侧结束都以 StatusNormalClosure
+    // (1000, "bridge closed") 关闭用户 WS; 设备离线走的就是这条路径。
+    ws.serverClose(1000, "bridge closed");
+    await tick();
+    expect(closes).toHaveLength(1);
+    expect(closes[0]?.code).toBe("disconnected");
+    expect(closes[0]?.message).toContain("1000");
+  });
+
+  it("exit 帧后的 clean 关闭是流的自然终结, 不再报 disconnected", async () => {
+    const bridge = await DeviceBridge.connect("d-1", "digest-1", { factory });
+    await bridge.attach("s-1");
+    const ws = FakeWebSocket.instances[0];
+    const exits: { code: number | null; signal: string }[] = [];
+    const closes: (DeviceTerminalError | null)[] = [];
+    bridge.onExit = (exit) => exits.push(exit);
+    bridge.onClose = (error) => closes.push(error);
+    ws.serverJSON(SupervisorFrameKind.Exit, { code: 0 });
+    ws.serverClose(1000, "bridge closed");
+    await tick();
+    expect(exits).toEqual([{ code: 0, signal: "" }]);
+    expect(closes).toHaveLength(1);
+    expect(closes[0]).toBeNull();
+  });
+
   it("input 分片等待 inputAck, resize/kill 等 OK 响应", async () => {
     const bridge = await DeviceBridge.connect("d-1", "digest-1", { factory });
     await bridge.attach("s-1");
@@ -377,6 +423,15 @@ describe("openDeviceTerminal / resumeDeviceTerminal", () => {
     const reaper = FakeWebSocket.instances[2];
     await tick();
     expect(reaper.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
+  });
+
+  it("回收桥 hello 失败时保留原始 attach 错误, 不抛回收错误", async () => {
+    behavior.attachError = "identity";
+    // 第三条桥接 (回收桥) hello 失败: openDeviceTerminal 仍应抛原始 identity 错误
+    behavior.helloErrorFrom = 3;
+    await expect(
+      openDeviceTerminal({ deviceId: "d-1", stateDigest: "digest-1", cols: 80, rows: 24, factory }),
+    ).rejects.toMatchObject({ code: "identity" });
   });
 
   it("resume 用期望身份重attach, output 从 seq 0 重放 backlog", async () => {

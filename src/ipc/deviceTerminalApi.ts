@@ -194,6 +194,7 @@ export class DeviceBridge {
   }[] = [];
   private requestChain: Promise<unknown> = Promise.resolve();
   private attached = false;
+  private exited = false;
   private expectedSeq = 0n;
   private closed = false;
   private failure: DeviceTerminalError | null = null;
@@ -218,9 +219,14 @@ export class DeviceBridge {
     });
     socket.addEventListener("close", (event) => {
       if (this.closed) return;
+      // 本地主动 close/detach 已由 closed 屏蔽; 到达这里的都是远端拆线。
+      // 生产 pipeBridge 在任一侧桥接结束后统一以 1000 正常关闭用户 WS
+      // (internal/fleet/server/ws.go), 设备离线/代理重启走的就是这条路径,
+      // 因此无论 wasClean 都按 disconnected 处理并驱动 UI 断开态;
+      // 会话自然结束由 exit 帧先行表达, 随后的关闭是流的自然终结, 不算断线。
       const error =
         this.failure ??
-        (event.wasClean
+        (this.exited
           ? null
           : new DeviceTerminalError(
               "disconnected",
@@ -316,6 +322,7 @@ export class DeviceBridge {
     }
     if (frame.kind === SupervisorFrameKind.Exit) {
       const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { code?: number; signal?: string };
+      this.exited = true;
       this.onExit?.({ code: msg.code ?? null, signal: msg.signal ?? "" });
       return;
     }
@@ -530,16 +537,20 @@ export async function openDeviceTerminal(options: {
     return { info: attached, identity, bridge };
   } catch (error) {
     bridge.close();
-    const reaper = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
-      factory: options.factory,
-      bridgePath: options.bridgePath,
-    });
+    // 回收整体 best-effort: 第三条桥接的 connect 或 killSession 任何一步失败
+    // 都不得掩盖原始 attach 错误 (调用方靠它给出 not_found/identity 等显式状态)。
     try {
-      await reaper.killSession(info.id, identity);
+      const reaper = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
+        factory: options.factory,
+        bridgePath: options.bridgePath,
+      });
+      try {
+        await reaper.killSession(info.id, identity);
+      } finally {
+        reaper.detach();
+      }
     } catch {
       // 回收失败不掩盖原始 attach 错误
-    } finally {
-      reaper.detach();
     }
     throw error;
   }

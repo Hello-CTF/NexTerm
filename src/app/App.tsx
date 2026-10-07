@@ -408,6 +408,25 @@ function LazyAuthGate() {
   return <Gate />;
 }
 
+// LazyDeviceTerminalBoundary 与 LazyAuthGate 同理懒加载; 它常驻 App 根部,
+// 在 logout/401/账号切换时关闭全部设备终端标签 (FLEET156 账号隔离)。
+function LazyDeviceTerminalBoundary() {
+  const [view, setView] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    if (!WEB) return;
+    let alive = true;
+    void import("../features/fleet/DeviceTerminalBoundary").then((m) => {
+      if (alive) setView(() => m.DeviceTerminalBoundary);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!view) return null;
+  const View = view;
+  return <View />;
+}
+
 // LazyDevicesView 同理:设备管理经 auth store 引 demo/env,懒加载避免拖进桌面端测试的模块图。
 function LazyDevicesView() {
   const [view, setView] = useState<React.ComponentType | null>(null);
@@ -1525,6 +1544,7 @@ export default function App() {
       )}
       <ContextMenu state={wsMenu} onClose={() => setWsMenu(null)} />
       <LazyAuthGate />
+      <LazyDeviceTerminalBoundary />
       <PromptModal />
       <DialogHost />
     </div>

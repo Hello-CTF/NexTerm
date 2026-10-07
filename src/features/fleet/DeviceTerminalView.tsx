@@ -91,6 +91,29 @@ interface SessionRef {
   identity: SupervisorSessionIdentity;
 }
 
+type DeviceGate =
+  | { ok: true; row: FleetDevice; digest: string }
+  | { ok: false; phase: Phase };
+
+// gateDevice 是 open 与 resume 共用的设备状态复核: 吊销/策略关闭/摘要缺失
+// (离线) 都给出显式状态, 不落入 generic 断线。
+function gateDevice(row: FleetDevice | null): DeviceGate {
+  if (!row || !row.agent) {
+    return { ok: false, phase: { kind: "failed", message: "设备不存在或无权访问", canRestart: false } };
+  }
+  if (row.revoked_at !== 0) {
+    return { ok: false, phase: { kind: "failed", message: "设备已吊销, 无法打开终端", canRestart: false } };
+  }
+  if (!row.agent.terminal_enabled) {
+    return { ok: false, phase: { kind: "failed", message: "设备已关闭终端访问", canRestart: false } };
+  }
+  const digest = row.agent.state_digest;
+  if (!digest) {
+    return { ok: false, phase: { kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true } };
+  }
+  return { ok: true, row, digest };
+}
+
 function describeSessionError(error: unknown): { message: string; canRestart: boolean } {
   if (error instanceof DeviceTerminalError) {
     switch (error.code) {
@@ -120,6 +143,13 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
   const bridgeRef = useRef<DeviceBridge | null>(null);
   const sessionRef = useRef<SessionRef | null>(null);
   const deviceRef = useRef<FleetDevice | null>(null);
+  // generationRef 是 open/resume 的代次: 新一次 open/resume 使旧代次的 wire/
+  // 完成回调全部失效 (StrictMode 孤儿 open/并发重开), 配合 wire 里的 detach
+  // 与 openDeviceTerminal 自带的回收, 设备端不留不可管理的会话。
+  const generationRef = useRef(0);
+  // unmountedRef 在组件真正卸载后保持 true, 供 resume/restart 的在途完成回调
+  // 丢弃桥接 (按钮只在挂载期可点, 但 await 可能跨过卸载)。
+  const unmountedRef = useRef(false);
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
   deviceRef.current = device;
@@ -127,6 +157,8 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
 
   const wireBridge = useCallback(
     (bridge: DeviceBridge) => {
+      // 替换旧桥接时必定先 detach (自然 exit/失败重开路径下旧桥可能仍半开)
+      if (bridgeRef.current && bridgeRef.current !== bridge) bridgeRef.current.detach();
       bridge.onOutput = (data) => termRef.current?.write(data);
       bridge.onExit = (exit) => {
         const detail =
@@ -152,55 +184,62 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
 
   const open = useCallback(
     async (term: Terminal, fit: FitAddon, isDisposed?: () => boolean) => {
+      const generation = ++generationRef.current;
+      const stale = () => generation !== generationRef.current || Boolean(isDisposed?.());
       setPhase({ kind: "connecting" });
       let row: FleetDevice | null;
       try {
         row = await loadDevice();
       } catch (e) {
-        if (isDisposed?.()) return;
+        if (stale()) return;
         setPhase({ kind: "failed", message: `加载设备信息失败: ${describeError(e)}`, canRestart: true });
         return;
       }
-      if (!row || !row.agent) {
-        setPhase({ kind: "failed", message: "设备不存在或无权访问", canRestart: false });
+      if (row) setDevice(row);
+      const gate = gateDevice(row);
+      if (!gate.ok) {
+        if (!stale()) setPhase(gate.phase);
         return;
       }
-      setDevice(row);
-      if (row.revoked_at !== 0) {
-        setPhase({ kind: "failed", message: "设备已吊销, 无法打开终端", canRestart: false });
-        return;
-      }
-      if (!row.agent.terminal_enabled) {
-        setPhase({ kind: "failed", message: "设备已关闭终端访问", canRestart: false });
-        return;
-      }
-      const digest = row.agent.state_digest;
-      if (!digest) {
-        setPhase({ kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true });
-        return;
-      }
+      if (stale()) return;
       try {
         fit.fit();
       } catch {
       }
       const cols = Math.max(2, term.cols);
       const rows = Math.max(1, term.rows);
+      // wire 在 attach 前调用; 过期代次直接 detach, attach 随之中断,
+      // openDeviceTerminal 的回收逻辑会 killSession, 设备端不留孤儿 shell。
+      const wire = (bridge: DeviceBridge) => {
+        if (stale()) {
+          bridge.detach();
+          return;
+        }
+        wireBridge(bridge);
+      };
       try {
         const { info, identity, bridge } = await openDeviceTerminal({
-          deviceId: row.id,
-          stateDigest: digest,
+          deviceId: gate.row.id,
+          stateDigest: gate.digest,
           cols,
           rows,
-          wire: wireBridge,
+          wire,
         });
-        if (isDisposed?.()) {
+        if (stale()) {
+          // 取消发生在 create 之后且会话尚未交付 UI: 按 id+identity 回收, 而非仅 detach
           bridge.detach();
+          void killDeviceTerminal({
+            deviceId: gate.row.id,
+            stateDigest: gate.digest,
+            sessionId: info.id,
+            identity,
+          }).catch(() => undefined);
           return;
         }
         sessionRef.current = { id: info.id, identity };
         setPhase({ kind: "ready" });
       } catch (e) {
-        if (isDisposed?.()) return;
+        if (stale()) return;
         const { message, canRestart } = describeSessionError(e);
         setPhase({ kind: "failed", message, canRestart });
       }
@@ -208,48 +247,60 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     [loadDevice, wireBridge],
   );
 
-  const resume = useCallback(
-    async (isDisposed?: () => boolean) => {
-      const session = sessionRef.current;
-      if (!session) return;
-      setPhase({ kind: "connecting" });
-      let digest: string | undefined;
-      try {
-        const row = await loadDevice();
-        setDevice(row);
-        digest = row?.agent?.state_digest;
-      } catch {
-        // 用旧摘要继续尝试, hello 失败会给出显式状态
-        digest = deviceRef.current?.agent?.state_digest;
-      }
-      if (!digest) {
-        setPhase({ kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true });
+  const resume = useCallback(async () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    const generation = ++generationRef.current;
+    const stale = () => generation !== generationRef.current || unmountedRef.current;
+    setPhase({ kind: "connecting" });
+    let digest: string | undefined;
+    let gate: DeviceGate | null = null;
+    try {
+      const row = await loadDevice();
+      if (row) setDevice(row);
+      gate = gateDevice(row);
+      if (gate.ok) digest = gate.digest;
+    } catch {
+      // fetch 失败才按明确降级策略使用旧摘要, hello 失败会给出显式状态
+      digest = deviceRef.current?.agent?.state_digest;
+    }
+    if (gate && !gate.ok) {
+      if (!stale()) setPhase(gate.phase);
+      return;
+    }
+    if (!digest) {
+      if (!stale()) setPhase({ kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true });
+      return;
+    }
+    // backlog 从 seq 0 全量重放, 先清屏再写回, 断开期间的内容不丢;
+    // 清屏必须发生在 attach 之前 (attach 一批准对端立即开始重放)。
+    termRef.current?.reset();
+    const wire = (bridge: DeviceBridge) => {
+      if (stale()) {
+        bridge.detach();
         return;
       }
-      try {
-        // backlog 从 seq 0 全量重放, 先清屏再写回, 断开期间的内容不丢;
-        // 清屏必须发生在 attach 之前 (attach 一批准对端立即开始重放)。
-        termRef.current?.reset();
-        const { bridge } = await resumeDeviceTerminal({
-          deviceId,
-          stateDigest: digest,
-          sessionId: session.id,
-          identity: session.identity,
-          wire: wireBridge,
-        });
-        if (isDisposed?.()) {
-          bridge.detach();
-          return;
-        }
-        setPhase({ kind: "ready" });
-      } catch (e) {
-        if (isDisposed?.()) return;
-        const { message, canRestart } = describeSessionError(e);
-        setPhase({ kind: "failed", message, canRestart });
+      wireBridge(bridge);
+    };
+    try {
+      const { bridge } = await resumeDeviceTerminal({
+        deviceId,
+        stateDigest: digest,
+        sessionId: session.id,
+        identity: session.identity,
+        wire,
+      });
+      if (stale()) {
+        bridge.detach();
+        return;
       }
-    },
-    [deviceId, loadDevice, wireBridge],
-  );
+      setPhase({ kind: "ready" });
+    } catch (e) {
+      if (stale()) return;
+      const { message, canRestart } = describeSessionError(e);
+      setPhase({ kind: "failed", message, canRestart });
+    }
+  }, [deviceId, loadDevice, wireBridge]);
 
   const kill = useCallback(async () => {
     const session = sessionRef.current;
@@ -280,6 +331,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     const host = hostRef.current;
     if (!host || termRef.current) return;
     let disposed = false;
+    unmountedRef.current = false;
     const term = new Terminal({
       scrollback: 100_000,
       fontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
@@ -322,6 +374,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
 
     return () => {
       disposed = true;
+      unmountedRef.current = true;
       dataDisposable.dispose();
       appearanceDisposable();
       ro.disconnect();
@@ -364,7 +417,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     const fit = fitRef.current;
     if (!term || !fit) return;
     term.reset();
-    void open(term, fit);
+    void open(term, fit, () => unmountedRef.current);
   };
 
   return (

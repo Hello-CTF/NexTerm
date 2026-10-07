@@ -440,19 +440,6 @@ export function DevicesView() {
     load();
   }, [user, load]);
 
-  // 账号切换边界与渲染期账号态重置一致: 旧账号打开的设备远程终端标签全部关闭
-  // (组件卸载即 detach, 设备端会话进程不受影响), 不带入新账号工作区。
-  useEffect(() => {
-    const st = useUi.getState();
-    for (const w of st.workspaces) {
-      for (const p of w.panes) {
-        for (const t of p.tabs) {
-          if (t.kind === "deviceTerminal") void st.closeTab(t.id);
-        }
-      }
-    }
-  }, [userId]);
-
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);

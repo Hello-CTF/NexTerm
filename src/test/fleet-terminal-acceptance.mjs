@@ -19,8 +19,6 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/fleet-terminal-acceptance");
-const VITE_PORT = Number(process.env.NEXTERM_VITE_PORT || 1461);
-const VITE = `http://127.0.0.1:${VITE_PORT}`;
 const results = new Map();
 const harnessErrors = [];
 const pageErrors = [];
@@ -232,15 +230,23 @@ function wipeViteCache() {
   fs.rmSync(viteCacheDir(), { recursive: true, force: true });
 }
 
-function startVite() {
+// startVite 用 freePort + strictPort: 端口由本次进程独占, 不可能接到旧服务;
+// 若端口仍被抢, 子进程立即退出, waitHttp 的存活检查会直接判失败。
+let viteUrl = "";
+
+async function startVite() {
   wipeViteCache();
+  const port = await freePort();
   const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
+  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: ROOT,
     env: { ...globalThis.process.env, NODE_OPTIONS: "" },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  return waitHttp(VITE, process).then(() => process);
+  const url = `http://127.0.0.1:${port}`;
+  await waitHttp(url, process);
+  viteUrl = url;
+  return process;
 }
 
 // ---------- fake bridge (NOT production backend evidence) ----------
@@ -423,7 +429,12 @@ class FakeBridgeConn {
         this.lineBuffer += text;
         this.broadcastOutput(Buffer.from(text.replaceAll("\r", "\r\n")));
         if (this.lineBuffer.includes("DROP")) {
-          this.socket.destroy();
+          // 生产 pipeBridge 语义: 任一侧结束都以 1000 正常关闭对端 WS
+          // (internal/fleet/server/ws.go), 断开/重连路径必须覆盖 clean 1000。
+          const payload = Buffer.alloc(2 + Buffer.byteLength("bridge closed"));
+          payload.writeUInt16BE(1000, 0);
+          payload.write("bridge closed", 2);
+          this.socket.end(encodeFrame(0x8, payload));
           return;
         }
         if (this.lineBuffer.includes("\r") || this.lineBuffer.includes("\n")) {
@@ -654,7 +665,7 @@ async function bootApp(page, fake, viewport) {
     `,
   });
   try {
-    await page.navigate(`${VITE}/?api=http://127.0.0.1:${fake.port}`);
+    await page.navigate(`${viteUrl}/?api=http://127.0.0.1:${fake.port}`);
     await page.waitFor("!!document.querySelector('.nx-app')");
   } finally {
     await page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
@@ -914,13 +925,61 @@ if (process.argv.includes("--selftest")) {
   process.exit(0);
 }
 
+// startupFailureSelftest: 回归 P2-4 — Chrome 启动失败时, 本次启动的 Vite 必须
+// 被回收, 不残留旧端口服务 (strictPort + freePort 已使接管旧服务不可能)。
+async function startupFailureSelftest() {
+  let viteProcess = null;
+  let failure = null;
+  let viteExited = false;
+  try {
+    viteProcess = await startVite();
+    viteProcess.once("exit", () => {
+      viteExited = true;
+    });
+    const savedPath = process.env.CHROME_PATH;
+    process.env.CHROME_PATH = "/nonexistent/chrome-for-selftest";
+    try {
+      await startChrome();
+      failure = "startChrome unexpectedly succeeded";
+    } finally {
+      if (savedPath === undefined) delete process.env.CHROME_PATH;
+      else process.env.CHROME_PATH = savedPath;
+    }
+  } catch (error) {
+    failure = failure ?? String(error?.message || error);
+  } finally {
+    stop(viteProcess);
+    if (viteProcess && !viteExited) {
+      await Promise.race([
+        new Promise((resolve) => viteProcess.once("exit", resolve)),
+        sleep(3000),
+      ]);
+    }
+    wipeViteCache();
+  }
+  if (failure === null) failure = "startChrome did not fail as expected";
+  if (!viteExited) {
+    console.warn("FAILED startup-failure-selftest: vite process still alive");
+    process.exit(1);
+  }
+  console.warn(`PASS startup-failure-selftest (chrome start failed as expected: ${failure.slice(0, 80)}; vite reaped)`);
+  process.exit(0);
+}
+
+if (process.argv.includes("--startup-failure-selftest")) {
+  await startupFailureSelftest();
+}
+
 let vite;
 let chrome;
 let page;
 let fake;
 try {
   fake = await startFakeBackend();
-  [vite, chrome] = await Promise.all([startVite(), startChrome()]);
+  // 分步启动并立即登记句柄: 任一步失败时 finally 都能回收已启动的进程,
+  // 不再出现 Promise.all 一边成功一边泄漏的窗口。
+  vite = await startVite();
+  chrome = await startChrome();
   page = await newPage(chrome);
   globalThis.__page = page;
   page.on("Runtime.consoleAPICalled", (params) => {
