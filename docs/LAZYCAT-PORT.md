@@ -257,7 +257,9 @@ Rust 侧：
 1. **相似应用审慎**（最大风险）—— 差异化写进商店描述 + 界面上可感知
 2. **5 分钟启动线** —— 不要往镜像里塞模型文件；Rust 二进制 + 静态前端没问题
 3. **重启不丢数据** —— 只信 `/lzcapp/var`；SQLite 的 `-wal`/`-shm` 必须同目录
-4. **平台声明** —— 浏览器终端在手机上可用性一般，可先 `unsupported_platforms: [ios, android]`；合法取值只有 `ios / android / linux / windows / macos / tvos`
+4. **平台声明** —— ~~浏览器终端在手机上可用性一般，可先 `unsupported_platforms: [ios, android]`~~；合法取值只有 `ios / android / linux / windows / macos / tvos`
+   - ★ **2026-10-03 定案：整个字段不再声明（全平台放开）。** 这是**平台侧的门**，不是应用判断 —— 官方 `advanced-platform.md` 原文：「当用户在 XX 平台下点击应用图标，微服系统会弹出 `您的应用不支持当前平台` 的提示」。所以「安卓客户端打不开」的第一嫌疑就是这个字段。
+   - ⚠️ 改它**必须重新出包**（`project deploy --dev` 或 `project release`）才生效，改本地文件不影响已安装的应用；容器内的判据是 `/lzcapp/pkg/package.yml` 里还有没有这个字段。
 5. **网络** —— 用户侧 VPN/代理若没把 `*.heiyu.space` 设为直连、或禁了 IPv6，会看到**白屏**（官方 FAQ「应用程序白屏」）
 6. **出站访问** —— 容器里 SSH 到内网机器要 `net.lan`；被审核方质询时要有说明
 7. **本地 shell 的期望管理** —— 容器里的「当前设备」不再是用户电脑，内置资产的语义要重新定义
@@ -764,7 +766,7 @@ S1 与 S2 **可以并行**（契约就是 §7.1 那三个端点）。
 2. 若走 A：是否现在就在仓库里落 `lazycat/` 目录（Dockerfile + run.sh + 三个 yml + icon）
 3. S1（`nexterm-server`）与 S2（前端 web transport）是否并行启动
 4. 商店资料与多语言文本是否现在就起草（不依赖代码，可并行）
-5. `unsupported_platforms` 首版是否声明 `[ios, android]`
+5. ~~`unsupported_platforms` 首版是否声明 `[ios, android]`~~ → **已定案（2026-10-03）：不声明，全平台放开**（详见 §4.5 第 4 条）。
 
 ---
 

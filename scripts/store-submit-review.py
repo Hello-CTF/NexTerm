@@ -230,7 +230,11 @@ def main() -> int:
         fake = {
             "package": PKG, "version": "(dry-run)", "iconPath": "(dry-run)",
             "url": "(dry-run)", "sha256": "(dry-run)",
-            "unsupportedPlatforms": ["ios", "android"], "minOsVersion": "",
+            # dry-run 的假响应，取值要与 lazycat/package.yml 保持一致，否则会误导出
+            # 「和真实提审不一样」的结论。2026-10-03 起 package.yml **不再声明**
+            # unsupported_platforms（全平台放开），所以这里也是空。
+            # 真实路径下这个字段取自 `/app/lpk/upload` 的响应（平台从 LPK 里读）。
+            "unsupportedPlatforms": [], "minOsVersion": "",
             "lpkSize": os.path.getsize(lpk), "imageSize": 0,
         }
         body = build_body(fake, [f"(dry-run)/{os.path.basename(p)}" for p in shots_local], DEFAULT_CHANGELOG)

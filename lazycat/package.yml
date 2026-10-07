@@ -17,11 +17,23 @@ homepage: https://github.com/ProbiusOfficial/NexTerm
 # 等商店文案定稿时再决定（见 docs/LAZYCAT-PORT.md §12.5）。
 admin_only: false
 
-# 手机上打开一个 xterm 终端没有意义（没有 Ctrl、没有右键菜单、软键盘抢屏），
-# 明确声明不支持，instead of 让用户装上一个用不了的应用。
-unsupported_platforms:
-  - ios
-  - android
+# 2026-10-03 变更：**全平台放开** —— 用户要求安卓客户端（连同 iOS）也能打开本应用，
+# 因此这个字段**整个不再声明**：不声明 = 没有任何平台被判为「不支持」。
+#
+# 这个字段是**平台侧的门**，不是应用自己的判断。官方 `advanced-platform.md` 原文：
+#   「当用户在 XX 平台下点击应用图标，微服系统会弹出 `您的应用不支持当前平台` 的提示。」
+# ⇒ 「安卓上打不开」的第一嫌疑就是它。合法取值：ios / android / linux / windows / macos / tvos。
+#
+# ⚠️ 放开 ≠ 移动端交互已经优化。这一条只解决「能不能打开」；
+#    触屏下软键盘遮挡 xterm、没有 Ctrl / 右键菜单、分屏挤成一团，这些都还在。
+#
+# ⚠️ 反悔的写法（**改完必须重新出包**才生效，改本地文件不会影响已装的应用）：
+#     unsupported_platforms:
+#       - android
+#       - ios
+#
+# 历史：原先声明 [ios, android]，理由是「手机上打开一个 xterm 终端没有意义」，
+# 现在以用户的实际需求为准 —— 用不用得惯让用户自己决定，不由应用替他挡掉。
 
 # 多语言元数据。
 #
