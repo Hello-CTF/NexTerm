@@ -1754,7 +1754,7 @@ export function AssetEditor({
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 这条凭据被多个资产共用，改一次全部生效。</div>
+                            <div className="nx-hint mt-1.5">↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。</div>
                           )}
                         </>
                       )}
@@ -1828,7 +1828,7 @@ export function AssetEditor({
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 这条凭据被多个资产共用，改一次全部生效。</div>
+                    <div className="nx-hint mt-1">↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。</div>
                   ) : null}
                 </div>
               )}

@@ -405,7 +405,18 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据被多个资产共用，改一次全部生效。");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。");
+  });
+
+  it("密码路径：未使用的凭据，提示不预设已有多个资产共用", async () => {
+    mocks.listCredentials.mockResolvedValue([{ ...PASSWORD_CRED, usedBy: [] }]);
+    await mountEditor();
+    await waitFor(() => expect(mounted!.container.textContent).toContain("生产密码"));
+
+    setSelectValue(selectByOptionText("生产密码"), "c1");
+    await flush();
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。");
+    expect(mounted!.container.textContent).not.toContain("被多个资产共用");
   });
 
   it("私钥路径：选已有私钥凭据时同一句提示", async () => {
@@ -421,7 +432,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("部署密钥"), "k1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据被多个资产共用，改一次全部生效。");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，所有使用它的资产都会生效。");
   });
 });
 
