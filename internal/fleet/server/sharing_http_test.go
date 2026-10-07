@@ -334,6 +334,22 @@ func dialShareViewer(t *testing.T, f *httpFixture, path string, session *httpSes
 	return conn
 }
 
+// dialShareViewerStatus 发起 WS 握手并返回服务端拒绝的 HTTP 状态码; 握手
+// 意外成功返回 0。用于断言 token/auth 把关只在 upgrade 路径生效 (普通 GET
+// 已被 SPA 分流接管)。
+func dialShareViewerStatus(t *testing.T, f *httpFixture, path string) int {
+	t.Helper()
+	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+path, nil)
+	if err == nil {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+		return 0
+	}
+	if response == nil {
+		t.Fatalf("dial %s: %v", path, err)
+	}
+	return response.StatusCode
+}
+
 func createShareLink(t *testing.T, f *httpFixture, session *httpSession, deviceID, sessionID string, write bool) (string, string) {
 	t.Helper()
 	call := f.call(t, "POST", "/share/links", map[string]any{
@@ -425,14 +441,89 @@ func TestShareLinkManagement(t *testing.T) {
 	if call := f.call(t, "POST", "/share/links/"+linkID+"/revoke", nil, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("owner revoke: HTTP %d %v", call.status, call.body)
 	}
-	// 吊销后 token 立即不可用 (审计 reason=revoked)。
-	if call := f.call(t, "GET", "/share/public/"+token, nil, nil, ""); call.status != http.StatusForbidden {
-		t.Fatalf("revoked resolve: HTTP %d %v", call.status, call.body)
+	// 吊销后 token 立即不可用 (审计 reason=revoked); 把关走 WS upgrade 路径。
+	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusForbidden {
+		t.Fatalf("revoked resolve: HTTP %d", status)
 	}
 	rows := auditPayloads(t, f, "share_link_access")
 	last := rows[len(rows)-1]
 	if last["outcome"] != "deny" || last["reason"] != "revoked" {
 		t.Fatalf("revoke audit = %v", last)
+	}
+}
+
+func TestSharePublicPageServesSPA(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "page-owner")
+	device := startShareTestAgent(t, f, owner, "page-box")
+	sessionID := device.createSession(t, "sh", "-c", "echo READY-42; exec cat")
+	ownerSession := f.session(t, owner)
+	_, token := createShareLink(t, f, ownerSession, device.deviceID, sessionID, false)
+
+	const page = "<html><head><title>NexTerm</title></head><body>share-viewer</body></html>"
+	var gotPath, gotRawPath, gotRawQuery string
+	f.service.SetSharePublicPage(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotRawPath, gotRawQuery = r.URL.Path, r.URL.RawPath, r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write([]byte(page))
+	}))
+
+	// 有效/无效 token 的普通 GET 都直接拿到 SPA: 不校验 token, 不写审计。
+	for _, path := range []string{"/share/public/" + token, "/share/public/not-a-token"} {
+		response, err := f.client.Get(f.http.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || string(body) != page {
+			t.Fatalf("GET %s = %d %q", path, response.StatusCode, body)
+		}
+		if response.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("GET %s Cache-Control = %q, want no-store", path, response.Header.Get("Cache-Control"))
+		}
+	}
+	if rows := auditPayloads(t, f, "share_link_access"); len(rows) != 0 {
+		t.Fatalf("plain GET wrote share_link_access audit rows: %v", rows)
+	}
+
+	// 静态入口收到的路径固定为 "/" (不做 token 路径的文件查找), query 保留。
+	request, err := http.NewRequest(http.MethodGet, f.http.URL+"/share/public/not-a-token?next=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := f.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if gotPath != "/" || gotRawPath != "" || gotRawQuery != "next=1" {
+		t.Fatalf("static entry got path %q rawPath %q query %q, want /, empty, next=1", gotPath, gotRawPath, gotRawQuery)
+	}
+
+	// upgrade 路径的 token 把关不变: 无效 token 的 WS 握手仍 403。
+	if status := dialShareViewerStatus(t, f, "/share/public/not-a-token"); status != http.StatusForbidden {
+		t.Fatalf("invalid token WS handshake = %d, want 403", status)
+	}
+}
+
+func TestSharePublicPageWithoutStaticEntry(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	// 未配置静态入口: 普通 GET 404; upgrade 合同不受影响 (无效 token 仍 403)。
+	response, err := f.client.Get(f.http.URL + "/share/public/whatever")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("plain GET without static entry = %d, want 404", response.StatusCode)
+	}
+	if status := dialShareViewerStatus(t, f, "/share/public/whatever"); status != http.StatusForbidden {
+		t.Fatalf("invalid token WS handshake = %d, want 403", status)
 	}
 }
 
@@ -516,8 +607,8 @@ func TestSharePublicTerminalRevokeStopsStream(t *testing.T) {
 	collector.expectClosed(t, 5*time.Second)
 
 	// 吊销后新连接在升级前即被拒。
-	if call := f.call(t, "GET", "/share/public/"+token, nil, nil, ""); call.status != http.StatusForbidden {
-		t.Fatalf("resolve after revoke: HTTP %d", call.status)
+	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusForbidden {
+		t.Fatalf("resolve after revoke: HTTP %d", status)
 	}
 }
 
@@ -647,8 +738,8 @@ func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	collector.expectClosed(t, 10*time.Second)
 
 	// 掉线后打开/新建一律 503 (探针即时判离线, 不等 last_seen 过期)。
-	if call := f.call(t, "GET", "/share/public/"+token, nil, nil, ""); call.status != http.StatusServiceUnavailable {
-		t.Fatalf("offline resolve: HTTP %d %v", call.status, call.body)
+	if status := dialShareViewerStatus(t, f, "/share/public/"+token); status != http.StatusServiceUnavailable {
+		t.Fatalf("offline resolve: HTTP %d", status)
 	}
 	if call := f.call(t, "GET", "/share/devices/"+device.deviceID+"/terminal", nil, recipientSession, ""); call.status != http.StatusServiceUnavailable {
 		t.Fatalf("offline host open: HTTP %d %v", call.status, call.body)

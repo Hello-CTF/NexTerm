@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -69,6 +70,7 @@ type Service struct {
 	registry   *Registry
 	sharing    *sharing.Service
 
+	sharePublicPage         http.Handler
 	shareRevalidateInterval time.Duration
 }
 
@@ -90,6 +92,13 @@ func WithShareRevalidateInterval(interval time.Duration) Option {
 			s.shareRevalidateInterval = interval
 		}
 	}
+}
+
+// SetSharePublicPage 注入公开分享页的 SPA 静态入口 (装配层把配置好的 static
+// handler 传入): 普通 GET /share/public/{token} 由它直接服务页面, 不做 token
+// 校验/审计。nil 表示未配置静态入口, 普通 GET 一律 404。
+func (s *Service) SetSharePublicPage(handler http.Handler) {
+	s.sharePublicPage = handler
 }
 
 func New(config Config, options ...Option) (*Service, error) {

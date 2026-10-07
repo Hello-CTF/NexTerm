@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -251,17 +252,73 @@ func (v *shareTerminalWS) discardInput() error {
 	}
 }
 
-// serveSharePublicTerminal 处理 GET /share/public/{token}: 匿名 viewer 用
-// 公开 token 换取一次性授权 (ResolveLink 已审计), 随后经出站桥接 attach 到
-// 分享会话, 双向字节流过 sharing Gate: 输出始终放行, 输入仅 read_write,
-// 吊销/过期/设备变化逐块复查即时双向停止。
+// serveSharePublicTerminal 处理 GET /share/public/{token}: 浏览器普通导航
+// (非 WS upgrade) 由配置的静态入口直接服务 SPA 页面, 不做 token 校验/审计/
+// 持久化; WS upgrade 才是数据面 — 匿名 viewer 用公开 token 换取一次性授权
+// (ResolveLink 已审计), 随后经出站桥接 attach 到分享会话, 双向字节流过
+// sharing Gate: 输出始终放行, 输入仅 read_write, 吊销/过期/设备变化逐块
+// 复查即时双向停止。
 func (s *Service) serveSharePublicTerminal(w http.ResponseWriter, r *http.Request) {
+	if !isShareWSUpgrade(r) {
+		s.serveSharePublicPage(w, r)
+		return
+	}
 	grant, err := s.sharing.ResolveLink(r.Context(), r.PathValue("token"))
 	if err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
 	s.serveShareTerminal(w, r, grant, s.sharing.NewLinkGate(grant))
+}
+
+// isShareWSUpgrade 判定请求是否为 WebSocket 升级; 判定条件与
+// websocket.Accept 的握手校验一致 (Connection/Upgrade 头 token, 大小写不敏感)。
+func isShareWSUpgrade(r *http.Request) bool {
+	return headerHasToken(r.Header, "Connection", "upgrade") && headerHasToken(r.Header, "Upgrade", "websocket")
+}
+
+func headerHasToken(header http.Header, key, token string) bool {
+	for _, value := range header.Values(key) {
+		for _, part := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// serveSharePublicPage 用配置的静态入口服务 SPA (与 "/" 同一 index.html,
+// 不重定向不另造 shell); token URL 一律 no-store。静态入口按 URL.Path 查
+// 文件, 原始 token 路径可能撞上真实静态文件或被编码 dot-segment 校验拒绝,
+// 因此克隆请求并把路径固定为 "/", 只保留 query 等上下文。
+func (s *Service) serveSharePublicPage(w http.ResponseWriter, r *http.Request) {
+	if s.sharePublicPage == nil {
+		http.NotFound(w, r)
+		return
+	}
+	page := r.Clone(r.Context())
+	page.URL.Path = "/"
+	page.URL.RawPath = ""
+	page.RequestURI = "/"
+	if page.URL.RawQuery != "" {
+		page.RequestURI += "?" + page.URL.RawQuery
+	}
+	s.sharePublicPage.ServeHTTP(noStoreWriter{w}, page)
+}
+
+// noStoreWriter 在写出前强制 Cache-Control: no-store, 覆盖静态入口对
+// text/html 默认的 no-cache — token URL 不允许任何缓存。
+type noStoreWriter struct{ http.ResponseWriter }
+
+func (w noStoreWriter) WriteHeader(status int) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w noStoreWriter) Write(payload []byte) (int, error) {
+	w.Header().Set("Cache-Control", "no-store")
+	return w.ResponseWriter.Write(payload)
 }
 
 // serveShareTerminalOpen 处理 GET /share/devices/{id}/terminal: 注册用户
