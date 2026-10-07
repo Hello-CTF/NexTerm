@@ -47,10 +47,10 @@ function commandCalls(fileName: string, fileSource: string) {
 }
 
 describe("IPC facade 静态契约", () => {
-  it("保留 175 个方法和 173 个唯一命令", () => {
+  it("保留 178 个方法和 176 个唯一命令", () => {
     const names = commandCalls("commands.ts", commandsSource).map((call) => call.command);
-    expect(names).toHaveLength(175);
-    expect(new Set(names)).toHaveProperty("size", 173);
+    expect(names).toHaveLength(178);
+    expect(new Set(names)).toHaveProperty("size", 176);
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([
       "ai_test_provider",
       "ai_presets",
@@ -313,5 +313,33 @@ describe("ai_circuit_status 线上契约", () => {
     expect(calls[0]?.cmd).toBe("ai_circuit_status");
     expect(calls[0]?.args).toEqual({ id: "m-1" });
     expect((calls[0]?.args as Record<string, unknown>).args).toBeUndefined();
+  });
+});
+
+describe("files 命令线上契约", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    installWebEnv();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("files_settings_get/set 与 files_save_image 线上 args 扁平且字段精确", async () => {
+    const calls = captureRpc();
+    const { filesApi } = await import("../ipc/commands");
+
+    await filesApi.settingsGet();
+    await filesApi.settingsSet("https://example.com/nexterm");
+    await filesApi.saveImage("/tmp/a.png", "aGk=");
+
+    expect(calls).toEqual([
+      { url: "/rpc", cmd: "files_settings_get", args: null },
+      { url: "/rpc", cmd: "files_settings_set", args: { publicBaseURL: "https://example.com/nexterm" } },
+      { url: "/rpc", cmd: "files_save_image", args: { path: "/tmp/a.png", contentBase64: "aGk=" } },
+    ]);
+    for (const call of calls) {
+      expect((call.args as Record<string, unknown> | null)?.args).toBeUndefined();
+    }
   });
 });

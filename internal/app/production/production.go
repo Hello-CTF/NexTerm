@@ -54,6 +54,7 @@ type ProductionServices struct {
 	hostKeys         *productionHostKeyStore
 	sshConnector     *productionConnector
 	dataDir          string
+	desktop          bool
 	aiRelease        func()
 	cron             *cronRuntime
 	Transcripts      *transcriptWriter
@@ -105,6 +106,9 @@ func productionModules(services ProductionServices) []Module {
 			Name: "store",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
 				if err := registerFilesCommands(dispatcher, services.Store); err != nil {
+					return err
+				}
+				if err := registerFilesImageCommands(dispatcher, services.desktop); err != nil {
 					return err
 				}
 				if err := registerStoreCommands(dispatcher, services.Store, services.hostKeys, services.dataDir); err != nil {

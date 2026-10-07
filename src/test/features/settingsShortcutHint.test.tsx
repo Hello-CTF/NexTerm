@@ -33,6 +33,10 @@ vi.mock("../../ipc/commands", () => ({
     setPermission: vi.fn(),
     testProvider: vi.fn(),
   },
+  filesApi: {
+    settingsGet: vi.fn().mockResolvedValue({ publicBaseURL: "" }),
+    settingsSet: vi.fn(),
+  },
 }));
 
 vi.mock("../../ui/dialogs", () => ({

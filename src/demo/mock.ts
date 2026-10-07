@@ -327,6 +327,10 @@ const vaultState = {
   autoLockMinutes: 30,
 };
 
+const demoFilesSettings = {
+  publicBaseURL: "",
+};
+
 const demoInlinePem =
   "-----BEGIN OPENSSH PRIVATE KEY-----\n（演示模式：这是一段假私钥，仅用于展示流程）\n-----END OPENSSH PRIVATE KEY-----";
 
@@ -2858,6 +2862,43 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
         fingerprint: `SHA256:demo${algorithm === "rsa" ? "Rsa" : "Ed25519"}Fingerprint0000000000`,
         publicKey: `${algorithm === "rsa" ? "ssh-rsa" : "ssh-ed25519"} AAAAC3NzaC1lZDI1NTE5AAAAIDemoOnlyNotARealKey000000000000 demo@${name}`,
       };
+    }
+
+    case "files_settings_get":
+      return { ...demoFilesSettings };
+
+    case "files_settings_set": {
+      const value = str(a.publicBaseURL).trim();
+      if (value !== "") {
+        let valid = false;
+        try {
+          const parsed = new URL(value);
+          valid =
+            (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+            parsed.host !== "" &&
+            parsed.username === "" &&
+            parsed.password === "" &&
+            parsed.search === "" &&
+            !value.includes("?") &&
+            parsed.hash === "";
+        } catch {
+          valid = false;
+        }
+        if (!valid) {
+          throwAppError("bad_param", "参数错误: 文件访问基础 URL 需要是 http(s) 地址且不含查询参数或片段");
+        }
+      }
+      demoFilesSettings.publicBaseURL = value.replace(/\/+$/, "");
+      return { ...demoFilesSettings };
+    }
+
+    case "files_save_image": {
+      const path = str(a.path);
+      if (!path) throwAppError("bad_param", "参数错误: 保存路径不能为空");
+      const content = str(a.contentBase64);
+      if (!content) throwAppError("bad_param", "参数错误: 图片内容不能为空");
+      const padding = content.endsWith("==") ? 2 : content.endsWith("=") ? 1 : 0;
+      return { path, bytes: Math.floor((content.length * 3) / 4) - padding };
     }
 
     default:
