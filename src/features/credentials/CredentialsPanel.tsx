@@ -9,6 +9,7 @@ import { GenerateKeyModal } from "./GenerateKeyModal";
 import { kindMeta, formatTime } from "./meta";
 import { resolveCredentialCopy, type CredentialCopyField } from "./credentialCopy";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
+import { useVaultInitGate } from "./useVaultInitGate";
 import {
   assetIcon,
   IconCode,
@@ -28,8 +29,14 @@ const REVEAL_SECONDS = 15;
 export function CredentialsPanel({ credId }: { credId?: string }) {
   const refresh = useRefreshCredentials();
   const unlock = useVaultUnlock();
+  const { ensureVaultInit, vaultInitGate } = useVaultInitGate();
   const [creating, setCreating] = useState(false);
   const [generating, setGenerating] = useState(false);
+
+  const startCreate = () =>
+    void ensureVaultInit().then((ok) => {
+      if (ok) setCreating(true);
+    });
 
   const status = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status() });
   const credentials = useQuery({ queryKey: ["credentials"], queryFn: () => vaultApi.listCredentials() });
@@ -66,11 +73,18 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
           <IconCode size={12} />
           凭据视图
         </button>
-        <button className="nx-btn nx-btn-outline nx-btn-sm shrink-0" onClick={() => setGenerating(true)}>
+        <button
+          className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
+          onClick={() =>
+            void ensureVaultInit().then((ok) => {
+              if (ok) setGenerating(true);
+            })
+          }
+        >
           <IconKey size={12} />
           生成密钥
         </button>
-        <button className="nx-btn nx-btn-primary nx-btn-sm shrink-0" onClick={() => setCreating(true)}>
+        <button className="nx-btn nx-btn-primary nx-btn-sm shrink-0" onClick={startCreate}>
           <IconPlus size={12} />
           新建凭据
         </button>
@@ -116,7 +130,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
           onDeleted={refresh}
         />
       ) : (
-        <EmptyDetail hasAny={list.length > 0} onNew={() => setCreating(true)} />
+        <EmptyDetail hasAny={list.length > 0} onNew={startCreate} />
       )}
 
       {creating && (
@@ -134,6 +148,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
           onSaved={() => refresh()}
         />
       )}
+      {vaultInitGate}
     </div>
   );
 }

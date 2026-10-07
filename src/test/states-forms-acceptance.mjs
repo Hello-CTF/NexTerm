@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // M92 五态与表单真实浏览器验收：错误/重试 vs 真空、保存防重、label 关联、
-// 弹层 Escape/Tab 陷阱、明暗双主题 warning 对比度。
+// 弹层 Escape/Tab 陷阱、明暗双主题 warning 对比度、凭据库未初始化前置弹窗时序。
 // 错误注入：CDP Fetch 域拦截 vite 的 /src/demo/mock.ts 模块响应，包一层
-// 可控开关（__NEXTERM_FAIL__ / __NEXTERM_EMPTY__ / __NEXTERM_SLOW__）——
-// 不改动任何产品代码。报告与截图写入 target/acceptance-states-forms/。
+// 可控开关（__NEXTERM_FAIL__ / __NEXTERM_EMPTY__ / __NEXTERM_SLOW__ /
+// __NEXTERM_VAULT_NOT_INIT__）——不改动任何产品代码。报告与截图写入 target/acceptance-states-forms/。
 //
 // 运行：node src/test/states-forms-acceptance.mjs
 // 需要本机 Chrome/Chromium（CHROME_PATH 可覆盖）与 pnpm（启动 vite dev server）。
@@ -251,6 +251,11 @@ export async function mockInvoke(cmd, args) {
   }
   const slow = window.__NEXTERM_SLOW__ || 0;
   if (slow) await new Promise((resolve) => setTimeout(resolve, slow));
+  if (cmd === "vault_init_master") window.__NEXTERM_VAULT_NOT_INIT__ = false;
+  if (window.__NEXTERM_VAULT_NOT_INIT__) {
+    if (cmd === "vault_status") return { initialized: false, mode: "not_init", unlocked: false, autoLockMinutes: 30 };
+    if (cmd === "vault_list_credentials") return [];
+  }
   return __nxOrigMockInvoke(cmd, args);
 }
 `;
@@ -292,13 +297,14 @@ async function enableMockInterception(page) {
   });
 }
 
-async function boot(page, { fail = [], empty = [], theme = null } = {}) {
+async function boot(page, { fail = [], empty = [], theme = null, vaultNotInit = false } = {}) {
   const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
     source: `
       try { localStorage.clear(); } catch {}
       window.__NEXTERM_FAIL__ = ${JSON.stringify(fail)};
       window.__NEXTERM_EMPTY__ = ${JSON.stringify(empty)};
       window.__NEXTERM_SLOW__ = 0;
+      window.__NEXTERM_VAULT_NOT_INIT__ = ${JSON.stringify(vaultNotInit)};
       try { localStorage.setItem("nexterm.theme.v1", ${JSON.stringify(theme)}); } catch {}
     `,
   });
@@ -643,6 +649,95 @@ async function statesFormsAcceptance(page) {
     })()`);
     assert.equal(wrapped.inside, true, `Tab must wrap inside the modal (from ${JSON.stringify(trap)})`);
     return { evidence: { semantics, trap, wrapped } };
+  });
+
+  await pass("vault-init-prereq-modal", async () => {
+    await boot(page, { vaultNotInit: true });
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "凭据" || b.title === "凭据库（左栏查看）");
+      if (!btn) throw new Error("credentials rail button not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.title === "新建凭据")`);
+
+    // 时序 1：未初始化时点「新建凭据」，先弹初始化浮层，而不是新建表单
+    await page.evaluate(`document.querySelector('button[title="新建凭据"]').click()`);
+    await page.waitFor(`[...document.querySelectorAll('.nx-modal')].some((m) => m.textContent.includes("初始化凭据保护"))`);
+    const beforeInit = await page.evaluate(`(() => {
+      const modals = [...document.querySelectorAll('.nx-modal')];
+      const init = modals.find((m) => m.textContent.includes("初始化凭据保护"));
+      return {
+        modalCount: modals.length,
+        initHasPassword: Boolean(init?.querySelector('input[type="password"]')),
+        newCredFormOpen: modals.some((m) => m.querySelector('.nx-modal-header')?.textContent?.includes("新建凭据")),
+      };
+    })()`);
+    assert.equal(beforeInit.modalCount, 1, "未初始化时只能出现初始化浮层");
+    assert.equal(beforeInit.initHasPassword, true, "初始化浮层必须提供密码输入");
+    assert.equal(beforeInit.newCredFormOpen, false, "初始化完成前不得打开新建凭据表单");
+    await page.evaluate(`(() => {
+      const init = [...document.querySelectorAll('.nx-modal')].find((m) => m.textContent.includes("初始化凭据保护"));
+      [...init.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消").click();
+    })()`);
+    await page.waitFor(`!document.querySelector('.nx-modal')`);
+
+    // 时序 2：进入需要凭据的资产流程（仍未初始化），初始化浮层盖在资产表单之上，取消后表单保留
+    await openAssetTree(page);
+    await page.evaluate(`document.querySelector('button[title="新建资产"]').click()`);
+    await page.waitFor(`[...document.querySelectorAll('.nx-modal')].some((m) => m.textContent.includes("初始化凭据保护"))`);
+    const assetGate = await page.evaluate(`(() => {
+      const modals = [...document.querySelectorAll('.nx-modal')];
+      return {
+        editorOpen: modals.some((m) => m.querySelector('.nx-modal-header')?.textContent?.includes("新建资产")),
+        initOpen: modals.some((m) => m.textContent.includes("初始化凭据保护")),
+      };
+    })()`);
+    assert.equal(assetGate.editorOpen, true, "资产表单应保持打开（已填内容保留）");
+    assert.equal(assetGate.initOpen, true, "进入需要凭据的资产流程应先弹初始化浮层");
+    await page.evaluate(`(() => {
+      const init = [...document.querySelectorAll('.nx-modal')].find((m) => m.textContent.includes("初始化凭据保护"));
+      [...init.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消").click();
+    })()`);
+    await page.waitFor(`![...document.querySelectorAll('.nx-modal')].some((m) => m.textContent.includes("初始化凭据保护"))`);
+    const afterCancel = await page.evaluate(`(() => ({
+      editorStillOpen: [...document.querySelectorAll('.nx-modal')].some((m) => m.querySelector('.nx-modal-header')?.textContent?.includes("新建资产")),
+      noReject: !document.body.textContent.includes("凭据库尚未初始化"),
+    }))()`);
+    assert.equal(afterCancel.editorStillOpen, true, "取消初始化后资产表单仍在");
+    assert.equal(afterCancel.noReject, true, "取消初始化不得出现「凭据库尚未初始化」拒绝");
+    await page.evaluate(`(() => {
+      const editor = [...document.querySelectorAll('.nx-modal')].find((m) => m.querySelector('.nx-modal-header')?.textContent?.includes("新建资产"));
+      [...editor.querySelectorAll("button")].find((b) => b.textContent?.trim() === "取消").click();
+    })()`);
+    await page.waitFor(`!document.querySelector('.nx-modal')`);
+
+    // 时序 3：完成初始化后回到原动作（新建凭据表单），全程无「尚未初始化」拒绝
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "凭据" || b.title === "凭据库（左栏查看）");
+      btn.click();
+    })()`);
+    await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.title === "新建凭据")`);
+    await page.evaluate(`document.querySelector('button[title="新建凭据"]').click()`);
+    await page.waitFor(`[...document.querySelectorAll('.nx-modal')].some((m) => m.textContent.includes("初始化凭据保护"))`);
+    await page.evaluate(`(() => {
+      const init = [...document.querySelectorAll('.nx-modal')].find((m) => m.textContent.includes("初始化凭据保护"));
+      init.querySelector('input[type="password"]').focus();
+    })()`);
+    await page.send("Input.insertText", { text: "acceptance-password" });
+    await page.evaluate(`(() => {
+      const init = [...document.querySelectorAll('.nx-modal')].find((m) => m.textContent.includes("初始化凭据保护"));
+      [...init.querySelectorAll("button")].find((b) => b.textContent?.trim() === "启用保护").click();
+    })()`);
+    await page.waitFor(`[...document.querySelectorAll('.nx-modal')].some((m) => m.querySelector('.nx-modal-header')?.textContent?.includes("新建凭据"))`);
+    const afterInit = await page.evaluate(`(() => ({
+      initGone: ![...document.querySelectorAll('.nx-modal')].some((m) => m.textContent.includes("初始化凭据保护")),
+      initCleared: window.__NEXTERM_VAULT_NOT_INIT__ === false,
+      noReject: !document.body.textContent.includes("凭据库尚未初始化"),
+    }))()`);
+    assert.equal(afterInit.initGone, true, "初始化成功后浮层关闭");
+    assert.equal(afterInit.initCleared, true, "mock 应记录初始化已完成");
+    assert.equal(afterInit.noReject, true, "流程中不得出现「凭据库尚未初始化」拒绝");
+    return { evidence: { beforeInit, assetGate, afterCancel, afterInit } };
   });
 
   await pass("mysql-error-retry", async () => {
