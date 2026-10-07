@@ -241,6 +241,41 @@ func TestIssueSessionConcurrentRevoke(t *testing.T) {
 	}
 }
 
+func TestRevokeSessionConcurrentSingleWinner(t *testing.T) {
+	a := testFileAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "uma2", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, session, err := a.IssueSession(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const revokers = 8
+	var wg sync.WaitGroup
+	errs := make([]error, revokers)
+	for i := 0; i < revokers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = a.RevokeSession(ctx, session.ID)
+		}(i)
+	}
+	wg.Wait()
+	succeeded := 0
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+			continue
+		}
+		requireCode(t, err, ipc.CodeNotFound)
+	}
+	if succeeded != 1 {
+		t.Fatalf("concurrent revoke succeeded %d times, want exactly 1", succeeded)
+	}
+}
+
 func validateErr(a *Accounts, ctx context.Context, token string) error {
 	_, err := a.ValidateSession(ctx, token)
 	return err

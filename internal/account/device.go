@@ -99,8 +99,12 @@ func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) er
 		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
 	now := a.now()
-	if _, err := tx.ExecContext(ctx, "UPDATE user_device SET revoked_at = ? WHERE id = ?", now, deviceID); err != nil {
+	result, err := tx.ExecContext(ctx, "UPDATE user_device SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", now, deviceID)
+	if err != nil {
 		return dbError(err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL", now, deviceID); err != nil {
 		return dbError(err)

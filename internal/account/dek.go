@@ -98,10 +98,14 @@ func (a *Accounts) ChangePassword(ctx context.Context, userID, oldPassword, newP
 		return err
 	}
 	now := a.now()
-	if _, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET password_hash = ?, must_change_password = 0,
-	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ?`,
-		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE `+userTable+` SET password_hash = ?, must_change_password = 0,
+	state = CASE WHEN state = ? THEN ? ELSE state END, updated_at = ? WHERE id = ? AND password_hash = ?`,
+		newHash, string(StateResetRequired), string(StateActive), now, userID, hash)
+	if err != nil {
 		return dbError(err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
+		return ipc.NewError(ipc.CodeForbidden, "原密码错误")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO user_dek(user_id, dek_envelope, kdf_salt, kdf_params, recovery_envelope, recovery_hash, created_at, updated_at)
 VALUES(?,?,?,?,?,?,?,?)
@@ -135,7 +139,7 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 	}
 	defer func() { _ = tx.Rollback() }()
 	var userID, state string
-	if err := tx.QueryRowContext(ctx, "SELECT id, state FROM "+userTable+" WHERE username = ? COLLATE NOCASE", username).Scan(&userID, &state); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT id, state FROM "+userTable+" WHERE LOWER(username) = LOWER(?)", username).Scan(&userID, &state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
 		}
@@ -164,11 +168,15 @@ func (a *Accounts) ResetPasswordWithRecovery(ctx context.Context, username, reco
 		newHash, string(StateResetRequired), string(StateActive), now, userID); err != nil {
 		return dbError(err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE user_dek SET dek_envelope = ?, kdf_salt = ?, kdf_params = ?,
-	recovery_envelope = ?, recovery_hash = ?, updated_at = ? WHERE user_id = ?`,
+	dekResult, err := tx.ExecContext(ctx, `UPDATE user_dek SET dek_envelope = ?, kdf_salt = ?, kdf_params = ?,
+	recovery_envelope = ?, recovery_hash = ?, updated_at = ? WHERE user_id = ? AND recovery_hash = ?`,
 		envelopes.DEKEnvelope, envelopes.KDFSalt, envelopes.KDFParams,
-		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, userID); err != nil {
+		envelopes.RecoveryEnvelope, envelopes.RecoveryHash, now, userID, recoveryHash)
+	if err != nil {
 		return dbError(err)
+	}
+	if affected, err := dekResult.RowsAffected(); err != nil || affected == 0 {
+		return ipc.NewError(ipc.CodeForbidden, "用户名或恢复密钥错误")
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE user_session SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, userID); err != nil {
 		return dbError(err)
