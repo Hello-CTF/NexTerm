@@ -217,7 +217,7 @@ describe("stream recovery: sequence cursor and reorder", () => {
     const tool = state.items.find((i) => i.role === "tool");
     expect(tool).toMatchObject({ summary: "已停止" });
     const card = state.items.find((i) => i.role === "confirm");
-    expect(card).toMatchObject({ resolution: "本轮已停止，交互已关闭" });
+    expect(card).toMatchObject({ resolution: "本轮已停止，无需再处理" });
     expect(state.items.at(-1)).toMatchObject({ role: "outcome", outcome: "canceled", text: "已停止本轮" });
   });
 
@@ -610,7 +610,7 @@ describe("AiSidebar stream recovery", () => {
     act(runFrames);
     emit({ type: "delta", text: "三", seq: 3 }, 1);
     await flushReplay();
-    expect(textOf(view!)).toContain("已补齐断线期间的 1 条事件");
+    expect(textOf(view!)).toContain("已补齐断线期间的 1 条输出");
 
     resolveRun1Replay([{ type: "done", answer: "一", seq: 3 }]);
     await flushReplay();

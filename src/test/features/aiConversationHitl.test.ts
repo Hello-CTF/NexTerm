@@ -151,18 +151,18 @@ describe("applyHitlReplay: event folding by per-run seq", () => {
     );
     expect(result.changed).toBe(true);
     expect(resolutionsOf(result.state)).toEqual([
-      "本轮已出错，交互已关闭",
-      "本轮已出错，交互已关闭",
-      "本轮已出错，交互已关闭",
+      "本轮已出错，无需再处理",
+      "本轮已出错，无需再处理",
+      "本轮已出错，无需再处理",
     ]);
   });
 
   it("maps terminal reasons to the same closing labels as the local paths", () => {
-    expect(hitlTerminalLabel("completed")).toBe("本轮已结束，交互已关闭");
-    expect(hitlTerminalLabel("canceled")).toBe("本轮已停止，交互已关闭");
-    expect(hitlTerminalLabel("failed")).toBe("本轮已出错，交互已关闭");
-    expect(hitlTerminalLabel("expired")).toBe("等待已过期，交互已关闭");
-    expect(hitlTerminalLabel("interrupted")).toBe("本轮已结束，交互已关闭");
+    expect(hitlTerminalLabel("completed")).toBe("本轮已结束，无需再处理");
+    expect(hitlTerminalLabel("canceled")).toBe("本轮已停止，无需再处理");
+    expect(hitlTerminalLabel("failed")).toBe("本轮已出错，无需再处理");
+    expect(hitlTerminalLabel("expired")).toBe("等待已过期，无需再处理");
+    expect(hitlTerminalLabel("interrupted")).toBe("本轮已结束，无需再处理");
   });
 
   it("leaves cards of other generations untouched", () => {
@@ -181,7 +181,7 @@ describe("applyHitlReplay: event folding by per-run seq", () => {
     const confirmCards = result.state.items.filter((i) => i.role === "confirm");
     expect(confirmCards[0]).toMatchObject({ callId: "call-1" });
     expect((confirmCards[0] as ConfirmItem).resolution).toBeUndefined();
-    expect(confirmCards[1]).toMatchObject({ callId: "call-2", resolution: "本轮已结束，交互已关闭" });
+    expect(confirmCards[1]).toMatchObject({ callId: "call-2", resolution: "本轮已结束，无需再处理" });
   });
 });
 
@@ -262,7 +262,7 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
     const plan = planHitlReplay(state, 1, 0);
     const result = applyHitlReplay(state, 1, plan, [], snapshotOf("running", []), 0);
     expect(result.changed).toBe(true);
-    expect(resolutionsOf(result.state)).toEqual(["该交互已在服务端结束"]);
+    expect(resolutionsOf(result.state)).toEqual(["已在服务端结束"]);
   });
 
   it("sweeps a plan-time card without a requestId and re-appends the pending request", () => {
@@ -280,7 +280,7 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
     expect(result.changed).toBe(true);
     const cards = result.state.items.filter((i) => i.role === "confirm");
     expect(cards).toHaveLength(2);
-    expect(cards[0]).toMatchObject({ resolution: "该交互已在服务端结束" });
+    expect(cards[0]).toMatchObject({ resolution: "已在服务端结束" });
     expect(cards[1]).toMatchObject({ requestId: "req-1" });
     expect(pendingInteraction(result.state, 1, "confirm")?.id).toBe(cards[1].id);
   });
@@ -309,7 +309,7 @@ describe("applyHitlReplay: snapshot reconciliation", () => {
       }),
       0,
     );
-    expect(resolutionsOf(result.state)).toEqual(["本轮已结束，交互已关闭"]);
+    expect(resolutionsOf(result.state)).toEqual(["本轮已结束，无需再处理"]);
   });
 
   it("labels a swept card with the resumed fact when the events proved consumption", () => {

@@ -159,23 +159,23 @@ describe("ModelManager AI-1 profile fields", () => {
   it("按档案展示熔断配置输入（自定义 3 次 / 60 秒）", async () => {
     await mountManager({ ...demoProfile(), circuitFailureThreshold: 3, circuitCooldownSeconds: 60 });
 
-    expect(inputFor("熔断失败阈值").value).toBe("3");
-    expect(inputFor("熔断冷却").value).toBe("60");
+    expect(inputFor("自动暂停阈值").value).toBe("3");
+    expect(inputFor("自动暂停时长").value).toBe("60");
   });
 
   it("未配置熔断时输入留空并展示后端默认值占位符", async () => {
     await mountManager(demoProfile());
 
-    expect(inputFor("熔断失败阈值").value).toBe("");
-    expect(inputFor("熔断失败阈值").placeholder).toBe("默认 5");
-    expect(inputFor("熔断冷却").value).toBe("");
-    expect(inputFor("熔断冷却").placeholder).toBe("默认 300");
+    expect(inputFor("自动暂停阈值").value).toBe("");
+    expect(inputFor("自动暂停阈值").placeholder).toBe("默认 5");
+    expect(inputFor("自动暂停时长").value).toBe("");
+    expect(inputFor("自动暂停时长").placeholder).toBe("默认 300");
   });
 
   it("编辑熔断阈值标记未保存并写回", async () => {
     await mountManager(demoProfile());
 
-    setInputValue(inputFor("熔断失败阈值"), "7");
+    setInputValue(inputFor("自动暂停阈值"), "7");
     expect(view!.container.textContent).toContain("有未保存的修改");
     clickButton(view!.container, "保存");
     await flush();
@@ -191,9 +191,9 @@ describe("ModelManager AI-1 profile fields", () => {
     await flush();
 
     expect(inputFor("最大输出").value).toBe("");
-    expect(inputFor("熔断失败阈值").value).toBe("");
-    expect(inputFor("熔断冷却").value).toBe("");
-    expect(view!.container.textContent).toContain("保存后可查看熔断状态");
+    expect(inputFor("自动暂停阈值").value).toBe("");
+    expect(inputFor("自动暂停时长").value).toBe("");
+    expect(view!.container.textContent).toContain("保存后可查看暂停状态");
     expect(mocks.circuitStatus.mock.calls.length).toBe(callsBefore);
     for (const [id] of mocks.circuitStatus.mock.calls) expect(id).not.toBe("");
 
@@ -243,7 +243,7 @@ describe("ModelManager circuit runtime status", () => {
 
     expect(mocks.circuitStatus).toHaveBeenCalledWith("m-deepseek");
     expect(view!.container.textContent).toContain("运行正常：暂无连续失败");
-    expect(view!.container.textContent).toContain("与聊天里的「可重试」标记是两回事");
+    expect(view!.container.textContent).toContain("与对话里的「可重试」标记无关");
   });
 
   it("熔断中展示连续失败数与冷却剩余时间", async () => {
@@ -253,7 +253,7 @@ describe("ModelManager circuit runtime status", () => {
     });
     await mountManager(demoProfile());
 
-    expect(view!.container.textContent).toContain("熔断中：连续失败 5 次，冷却剩余 240 秒");
+    expect(view!.container.textContent).toContain("已暂停：连续失败 5 次，240 秒后自动恢复");
   });
 
   it("冷却倒计时随时间递减", async () => {
@@ -263,36 +263,36 @@ describe("ModelManager circuit runtime status", () => {
       openUntil: Date.now() + 5000,
     });
     await mountManager(demoProfile());
-    expect(view!.container.textContent).toContain("冷却剩余 5 秒");
+    expect(view!.container.textContent).toContain("5 秒后自动恢复");
 
     await advance(2000);
-    expect(view!.container.textContent).toContain("冷却剩余 3 秒");
+    expect(view!.container.textContent).toContain("3 秒后自动恢复");
 
     await advance(3000);
-    expect(view!.container.textContent).toContain("冷却已结束：连续失败 5 次，等待请求恢复");
+    expect(view!.container.textContent).toContain("暂停已结束：连续失败 5 次，下次请求时恢复");
   });
 
   it("有连续失败但未熔断时展示闭合状态", async () => {
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 2, openUntil: null });
     await mountManager(demoProfile());
 
-    expect(view!.container.textContent).toContain("未熔断：最近连续失败 2 次");
+    expect(view!.container.textContent).toContain("运行中：最近连续失败 2 次");
   });
 
   it("读取失败时如实降级，点刷新可恢复", async () => {
     mocks.circuitStatus.mockRejectedValue(new Error("boom"));
     await mountManager(demoProfile());
 
-    expect(view!.container.textContent).toContain("熔断状态读取失败");
+    expect(view!.container.textContent).toContain("暂停状态读取失败");
     expect(view!.container.textContent).toContain("boom");
 
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 1, openUntil: null });
-    click(view!.container.querySelector('button[title="重新读取熔断状态"]')!);
+    click(view!.container.querySelector('button[title="重新读取暂停状态"]')!);
     await flush();
 
     expect(mocks.circuitStatus).toHaveBeenCalledTimes(2);
-    expect(view!.container.textContent).toContain("未熔断：最近连续失败 1 次");
-    expect(view!.container.textContent).not.toContain("熔断状态读取失败");
+    expect(view!.container.textContent).toContain("运行中：最近连续失败 1 次");
+    expect(view!.container.textContent).not.toContain("暂停状态读取失败");
   });
 
   it("切换档案时按新档案重新加载运行态（demo open/closed 语义）", async () => {
@@ -314,13 +314,13 @@ describe("ModelManager circuit runtime status", () => {
     view = mount(createElement(ModelManager));
     await flush();
 
-    expect(view!.container.textContent).toContain("熔断中：连续失败 5 次，冷却剩余 300 秒");
+    expect(view!.container.textContent).toContain("已暂停：连续失败 5 次，300 秒后自动恢复");
 
     click(view!.container.querySelector('button[title="glm-4-plus"]')!);
     await flush();
 
     expect(mocks.circuitStatus).toHaveBeenLastCalledWith("m-glm");
-    expect(view!.container.textContent).toContain("未熔断：最近连续失败 1 次");
-    expect(view!.container.textContent).not.toContain("熔断中");
+    expect(view!.container.textContent).toContain("运行中：最近连续失败 1 次");
+    expect(view!.container.textContent).not.toContain("已暂停");
   });
 });

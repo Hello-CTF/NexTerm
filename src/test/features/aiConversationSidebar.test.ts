@@ -296,11 +296,11 @@ describe("AiSidebar conversation stream UX", () => {
       decision: "allow",
     });
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("exec_commands · 已允许一次");
+    expect(textOf(view!)).toContain("执行命令 · 已允许一次");
 
     emit({ type: "done", answer: "跑完了" });
     await flush();
-    expect(textOf(view!)).toContain("exec_commands · 已允许一次");
+    expect(textOf(view!)).toContain("执行命令 · 已允许一次");
     expect(textOf(view!)).not.toContain("需要你确认");
   });
 
@@ -723,7 +723,7 @@ describe("AiSidebar conversation stream UX", () => {
       decision: "allow",
     });
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("exec_commands · 已允许一次");
+    expect(textOf(view!)).toContain("执行命令 · 已允许一次");
 
     emit({
       type: "confirmRequired",
@@ -796,7 +796,7 @@ describe("AiSidebar conversation stream UX", () => {
     reconnect();
     await flushReplay();
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("exec_commands · 已在服务端回答");
+    expect(textOf(view!)).toContain("执行命令 · 已在服务端回答");
   });
 
   it("closes pending cards when the run terminated while disconnected", async () => {
@@ -837,7 +837,7 @@ describe("AiSidebar conversation stream UX", () => {
     reconnect();
     await flushReplay();
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("本轮已结束，交互已关闭");
+    expect(textOf(view!)).toContain("本轮已结束，无需再处理");
   });
 
   it("settles a rejected confirmation from the server snapshot instead of hanging", async () => {
@@ -858,7 +858,7 @@ describe("AiSidebar conversation stream UX", () => {
     await flushReplay();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("确认已过期"));
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("exec_commands · 该交互已在服务端结束");
+    expect(textOf(view!)).toContain("执行命令 · 已在服务端结束");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).toBeNull();
   });
 
@@ -888,7 +888,7 @@ describe("AiSidebar conversation stream UX", () => {
       nonce: "nonce-1",
       decision: "deny",
     });
-    expect(textOf(view!)).toContain("exec_commands · 已拒绝");
+    expect(textOf(view!)).toContain("执行命令 · 已拒绝");
   });
 
   it("ignores a duplicate click while the confirmation RPC is in flight", async () => {
@@ -918,7 +918,7 @@ describe("AiSidebar conversation stream UX", () => {
     release();
     await flush();
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    expect(textOf(view!)).toContain("exec_commands · 已允许一次");
+    expect(textOf(view!)).toContain("执行命令 · 已允许一次");
   });
 
   it("does not fire HITL replay for a settled run or the takeover channel", async () => {
@@ -1166,20 +1166,20 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     const text = textOf(view!);
     expect(text).toContain("spawn_subagent");
-    expect(text).toContain("子代理 · 已完成");
+    expect(text).toContain("子任务 · 已完成");
     expect(text).toContain("正在排查磁盘");
     expect(text).toContain("exec_commands");
     expect(text).toContain("df -h 完成");
     expect(text).toContain("磁盘无异常");
 
     const toggle = [...view!.container.querySelectorAll("button")].find((candidate) =>
-      candidate.textContent?.includes("子代理 · 已完成"),
+      candidate.textContent?.includes("子任务 · 已完成"),
     );
     if (!toggle) throw new Error("subagent timeline toggle not found");
     click(toggle);
     await flush();
     const collapsed = textOf(view!);
-    expect(collapsed).toContain("子代理 · 已完成");
+    expect(collapsed).toContain("子任务 · 已完成");
     expect(collapsed).not.toContain("正在排查磁盘");
   });
 });

@@ -155,14 +155,14 @@ describe("M134 AI copy", () => {
     selector.unmount();
   });
 
-  it("labels the active profile 当前 and keeps the sqlite hint free of internal cross-references", async () => {
+  it("labels the active profile 当前 and keeps the key-storage hint free of internal cross-references", async () => {
     const manager = mount(createElement(ModelManager, {}));
     await flush();
     const label = manager.container.querySelector("span.nx-hint.mr-auto");
     expect(label?.textContent).toBe("当前");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
-    expect(text).toContain("API Key 加密后存进本机 sqlite，不会上传到任何服务器。");
+    expect(text).toContain("API Key 加密后保存在本机，不会上传到任何服务器。");
     expect(text).not.toContain("明文存进本机 sqlite");
     expect(text).not.toContain("同一约定");
     manager.unmount();

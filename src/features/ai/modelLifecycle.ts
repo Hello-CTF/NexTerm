@@ -66,12 +66,12 @@ export function circuitStatusText(status: AiCircuitStatusDto, now: number): stri
   const openUntil = status.openUntil;
   if (openUntil != null) {
     if (openUntil > now) {
-      return `熔断中：连续失败 ${status.consecutiveFailures} 次，冷却剩余 ${circuitRemainingSeconds(openUntil, now)} 秒`;
+      return `已暂停：连续失败 ${status.consecutiveFailures} 次，${circuitRemainingSeconds(openUntil, now)} 秒后自动恢复`;
     }
-    return `冷却已结束：连续失败 ${status.consecutiveFailures} 次，等待请求恢复`;
+    return `暂停已结束：连续失败 ${status.consecutiveFailures} 次，下次请求时恢复`;
   }
   if (status.consecutiveFailures > 0) {
-    return `未熔断：最近连续失败 ${status.consecutiveFailures} 次`;
+    return `运行中：最近连续失败 ${status.consecutiveFailures} 次`;
   }
   return "运行正常：暂无连续失败";
 }

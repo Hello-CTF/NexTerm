@@ -66,7 +66,7 @@ describe("MaxIterations terminal outcome", () => {
     });
     const confirm = result.state.items.find((item) => item.role === "confirm");
     expect(confirm && confirm.role === "confirm" ? confirm.resolution : undefined).toBe(
-      "本轮已出错，交互已关闭",
+      "本轮已出错，无需再处理",
     );
     const tool = result.state.items.find((item) => item.role === "tool");
     expect(tool && tool.role === "tool" ? tool.summary : undefined).toBe("本轮出错中断");

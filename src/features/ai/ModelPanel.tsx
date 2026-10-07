@@ -416,7 +416,7 @@ export function ModelManager({
                   />
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
-                    title="用当前 Base URL + API Key 拉取 /models"
+                    title="用当前地址和密钥拉取模型列表"
                     disabled={busy}
                     onClick={() => void refreshModels()}
                   >
@@ -539,7 +539,7 @@ export function ModelManager({
 
               <div className="flex flex-col gap-3 min-[400px]:flex-row">
                 <div className="flex-1">
-                  <Field label="熔断失败阈值（次）" htmlFor={`${fieldId}-circuit-threshold`}>
+                  <Field label="自动暂停阈值（次）" htmlFor={`${fieldId}-circuit-threshold`}>
                     <input
                       id={`${fieldId}-circuit-threshold`}
                       className="nx-input font-mono"
@@ -554,7 +554,7 @@ export function ModelManager({
                   </Field>
                 </div>
                 <div className="flex-1">
-                  <Field label="熔断冷却（秒）" htmlFor={`${fieldId}-circuit-cooldown`}>
+                  <Field label="自动暂停时长（秒）" htmlFor={`${fieldId}-circuit-cooldown`}>
                     <input
                       id={`${fieldId}-circuit-cooldown`}
                       className="nx-input font-mono"
@@ -570,10 +570,10 @@ export function ModelManager({
                 </div>
               </div>
               <div className="nx-hint mt-0.5 text-[10.5px]">
-                阈值与冷却留空则用默认值；熔断只统计网络与服务端错误。
+                留空用默认值；只统计网络与服务端错误，连续失败达到阈值后暂停请求，到时自动恢复。
               </div>
               {isNew ? (
-                <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看熔断状态</div>
+                <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看暂停状态</div>
               ) : (
                 <CircuitRuntimeStatus key={draft.id} profileId={draft.id} nonce={circuitNonce} />
               )}
@@ -599,7 +599,7 @@ export function ModelManager({
               </label>
 
               <div className="nx-hint mt-0.5">
-                API Key 加密后存进本机 sqlite，不会上传到任何服务器。
+                API Key 加密后保存在本机，不会上传到任何服务器。
               </div>
             </div>
           ) : (
@@ -733,9 +733,9 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
     <div className="mt-0.5 flex items-start gap-1.5">
       <span className="nx-hint flex-1 text-[10.5px]">
         {error ? (
-          <span className="text-red-300">熔断状态读取失败 · {error}</span>
+          <span className="text-red-300">暂停状态读取失败 · {error}</span>
         ) : !status ? (
-          "熔断状态加载中…"
+          "暂停状态加载中…"
         ) : (
           <>
             <span
@@ -749,13 +749,13 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
             >
               {circuitStatusText(status, now)}
             </span>
-            <span className="text-neutral-500">；与聊天里的「可重试」标记是两回事</span>
+            <span className="text-neutral-500">；与对话里的「可重试」标记无关</span>
           </>
         )}
       </span>
       <button
         className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
-        title="重新读取熔断状态"
+        title="重新读取暂停状态"
         onClick={() => void load()}
       >
         <IconRefresh size={11} />
@@ -769,9 +769,9 @@ function sceneLabel(source: string): string {
     case "cron":
       return "定时任务";
     case "subagent":
-      return "子代理";
+      return "子任务";
     default:
-      return "交互聊天";
+      return "对话";
   }
 }
 
@@ -818,7 +818,7 @@ export function UsageSummarySection() {
       ) : !rows ? (
         <div className="nx-hint text-[11px]">用量加载中…</div>
       ) : rows.length === 0 ? (
-        <div className="nx-hint text-[11px]">还没有已完成的 AI 运行</div>
+        <div className="nx-hint text-[11px]">还没有已完成的 AI 任务</div>
       ) : (
         <div className="max-h-40 overflow-y-auto rounded-md border border-neutral-800/70">
           <table className="w-full text-[11px]">
@@ -898,7 +898,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
         <div className="nx-modal-header">
           <IconKey size={14} className="text-neutral-400" />
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">模型配置</span>
-          <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥存在本机 sqlite</span>
+          <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥加密保存在本机</span>
           <div className="nx-spacer" />
           <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="关闭" onClick={() => void requestClose()}>
             <IconClose size={13} />

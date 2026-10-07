@@ -704,7 +704,7 @@ export function applyAiEvent(
     case "error": {
       const message = (ev.message as string) || "未知错误";
       let next = patchAttempt(state, generation, { outcome: "error", planPending: false });
-      next = closeInteractions({ ...next, status: null }, generation, "本轮已出错，交互已关闭");
+      next = closeInteractions({ ...next, status: null }, generation, "本轮已出错，无需再处理");
       next = settlePendingSteers(next, generation);
       next = settleOpenTools(next, generation, "本轮出错中断", "failed");
       next = appendOutcome(next, generation, "error", message, ev.retryable === true, ev.maxIterations === true);
@@ -713,7 +713,7 @@ export function applyAiEvent(
     case "canceled": {
       const message = (ev.message as string) || "已停止本轮";
       let next = patchAttempt(state, generation, { outcome: "canceled", planPending: false });
-      next = closeInteractions({ ...next, status: null }, generation, "本轮已停止，交互已关闭");
+      next = closeInteractions({ ...next, status: null }, generation, "本轮已停止，无需再处理");
       next = settlePendingSteers(next, generation);
       next = settleOpenTools(next, generation, "已停止", "canceled");
       next = appendOutcome(next, generation, "canceled", message);
@@ -734,7 +734,7 @@ function finishDone(
   const answer = raw || "(无回答)";
   const wasPlan = attempt.planPending;
   let next = patchAttempt(state, generation, { outcome: "done", planPending: false });
-  next = closeInteractions({ ...next, status: null }, generation, "本轮已结束，交互已关闭");
+  next = closeInteractions({ ...next, status: null }, generation, "本轮已结束，无需再处理");
   next = settlePendingSteers(next, generation);
 
   if (attempt.kind === "takeover") {
@@ -817,7 +817,7 @@ export function cancelRun(
 ): ConversationState {
   const attempt = attemptOf(state, generation);
   if (!attempt || attempt.outcome) return state;
-  let next = closeInteractions({ ...state, status: null }, generation, "本轮已停止，交互已关闭");
+  let next = closeInteractions({ ...state, status: null }, generation, "本轮已停止，无需再处理");
   next = settlePendingSteers(next, generation);
   next = settleOpenTools(next, generation, "已停止", "canceled");
   if (!settle) return next;

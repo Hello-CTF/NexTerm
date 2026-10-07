@@ -8,8 +8,8 @@ import { DEMO } from "../../demo";
 import { IconClose, IconKey, IconLoader } from "../../ui/icons";
 
 const GRANT_KIND_OPTIONS: { value: AiGrantKind; label: string; hint: string }[] = [
-  { value: "terminal_write", label: "终端写入", hint: "AI 直接向终端发送按键" },
-  { value: "session_exec", label: "命令执行", hint: "AI 在设备会话中执行命令" },
+  { value: "terminal_write", label: "终端写入", hint: "AI 替你输入：按键直接发进终端" },
+  { value: "session_exec", label: "命令执行", hint: "AI 直接在设备上运行命令，不再逐次确认" },
 ];
 
 const KIND_LABEL: Record<AiGrantKind, string> = {
@@ -104,7 +104,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认全部关闭。开启后，AI 在对应设备上写入终端或执行命令时不再逐次确认。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
+        设备长期授权默认全部关闭，关闭时 AI 在设备上写入终端或执行命令都要逐次确认；开启后不再逐次确认。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
       </div>
 
       {loadError && (

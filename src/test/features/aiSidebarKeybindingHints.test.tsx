@@ -185,10 +185,10 @@ describe("AiSidebar shortcut hints follow keybindings", () => {
         },
       });
     });
-    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中 —— 按 Esc 随时夺回");
+    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中：按 Esc 随时夺回");
 
     act(() => setKeybinding("reclaimTakeover", "Ctrl+Shift+r"));
-    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中 —— 按 Ctrl+Shift+R 随时夺回");
+    expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中：按 Ctrl+Shift+R 随时夺回");
 
     act(() => setKeybinding("reclaimTakeover", null));
     expect(takeoverBadge()?.getAttribute("title")).toBe("终端接管进行中");
