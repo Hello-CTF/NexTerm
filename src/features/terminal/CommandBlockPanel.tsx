@@ -79,7 +79,7 @@ export function CommandBlockPanel({
         <div className="nx-hint p-3">
           还没有命令块。
           <br />
-          在终端里执行命令后，每条命令会成为一个可折叠的块 —— 可复制输出、可定位回终端。
+          在终端里执行命令后，每条命令会成为一个可折叠的块：可复制输出、可定位回终端。
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">

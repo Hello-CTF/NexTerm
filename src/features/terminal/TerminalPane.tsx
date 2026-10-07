@@ -860,8 +860,22 @@ export function TerminalPane({
           <span className="nx-dot" />
           {statusText}
         </span>
-        {effectiveWinrm && <span className="nx-badge nx-badge-amber">非交互模式</span>}
-        {containerId && <span className="nx-badge nx-badge-purple">容器内 exec</span>}
+        {effectiveWinrm && (
+          <span
+            className="nx-badge nx-badge-amber"
+            title="WinRM 非交互模式：每条命令在新的 shell 中执行，不支持 vim/top 等交互界面"
+          >
+            非交互模式
+          </span>
+        )}
+        {containerId && (
+          <span
+            className="nx-badge nx-badge-purple"
+            title="在容器里执行命令的终端（docker exec）：关闭标签会结束这个进程，不能转入后台"
+          >
+            容器内 exec
+          </span>
+        )}
         {throttleNow?.active && (
           <span
             className="nx-badge nx-badge-amber"
@@ -1133,7 +1147,7 @@ export function TerminalPane({
                 这个终端已失效
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-400">
-                它所属的连接在服务端已经不在了（服务端重启，或连接已被回收）。
+                它所属的连接在服务端已经不在了（服务端重启，或连接已被回收）。重新连接会在这个标签里打开一个新的终端，当前显示的内容会被清空；已经产生的输出仍可在「终端历史」中查看。
               </span>
               <div className="flex items-center gap-2">
                 <button
