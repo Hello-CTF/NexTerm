@@ -11,6 +11,7 @@ import { dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
+import { matchAppKeybinding } from "../../app/keybindings";
 import {
   getAppearancePrefs,
   getInputPrefs,
@@ -188,6 +189,12 @@ export function XtermView(props: XtermViewProps) {
     term.loadAddon(new WebLinksAddon());
     termRef.current = term;
     term.open(hostRef.current);
+    // xterm 对处理的按键一律 preventDefault + stopPropagation, 终端聚焦时 window 级监听
+    // 收不到任何按键; 命中应用级键位的按键在此放行, 冒泡到 window 交给 App 处理。
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.repeat || event.isComposing || event.keyCode === 229) return true;
+      return matchAppKeybinding(event) === null;
+    });
     try {
       term.loadAddon(new WebglAddon());
     } catch {

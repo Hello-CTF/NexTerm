@@ -34,6 +34,7 @@ vi.mock("@xterm/xterm", () => ({
       element.append(viewport);
     }
     loadAddon() {}
+    attachCustomKeyEventHandler() {}
     write(_data: unknown, callback?: () => void) {
       callback?.();
     }
