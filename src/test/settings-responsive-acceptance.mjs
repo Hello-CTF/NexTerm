@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite as startViteProcess } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/settings-responsive");
@@ -228,19 +229,7 @@ function startVite() {
       "",
     ].join("\n"),
   );
-  const process = spawn(
-    globalThis.process.execPath,
-    [path.join(ROOT, "node_modules", "vite", "bin", "vite.js"), "--config", config, "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"],
-    {
-      cwd: ROOT,
-      env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  const logStream = fs.createWriteStream(path.join(OUT, "vite.log"));
-  process.stdout.pipe(logStream);
-  process.stderr.pipe(logStream);
-  return waitHttp(VITE, process).then(() => process);
+  return startViteProcess({ root: ROOT, port: VITE_PORT, config, logFile: path.join(OUT, "vite.log") });
 }
 
 function startServer() {
@@ -1053,7 +1042,7 @@ try {
 } finally {
   stop(chrome?.process);
   stop(server?.process);
-  stop(vite);
+  await vite?.stop();
 }
 
 const checks = [...results.values()];

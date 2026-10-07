@@ -12,6 +12,8 @@ export interface StartViteOptions {
   port?: number;
   readyTimeout?: number;
   viteBin?: string;
+  config?: string;
+  logFile?: string;
 }
 
 export function freePort(): Promise<number>;
