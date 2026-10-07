@@ -34,11 +34,16 @@ const demoUser: AccountUser = {
   last_login_at: now() - 2 * 3600_000,
 };
 
+// demoDevices 是只读种子模板: 初始状态与 reset 一律持有它的新副本,模板本身永不变动。
 const demoDevices: AccountDevice[] = [
   { id: "d-demo-1", name: "这台浏览器", kind: "web", created_at: now() - 7 * 24 * 3600_000, last_seen_at: now() - 60_000, revoked_at: 0 },
   { id: "d-demo-2", name: "家里的桌面端", kind: "desktop", created_at: now() - 30 * 24 * 3600_000, last_seen_at: now() - 3 * 3600_000, revoked_at: 0 },
   { id: "d-demo-3", name: "旧笔记本", kind: "desktop", created_at: now() - 80 * 24 * 3600_000, last_seen_at: 0, revoked_at: now() - 10 * 24 * 3600_000 },
 ];
+
+function seedDevices(): AccountDevice[] {
+  return demoDevices.map((d) => ({ ...d }));
+}
 
 // 演示信封:形状合法的假 base64,长度为 60/16/60。
 const demoEnvelope: DekEnvelopesView = {
@@ -55,7 +60,11 @@ interface DemoAuthState {
   user: AccountUser | null;
   users: AccountUser[];
   devices: AccountDevice[];
-  nextId: number;
+  enrollCodes: { code: string; userId: string; expiresAt: number; consumedAt: number | null }[];
+  deviceOwners: Record<string, string>;
+  nextUserNum: number;
+  nextCodeNum: number;
+  nextDeviceNum: number;
 }
 
 const state: DemoAuthState = {
@@ -63,8 +72,16 @@ const state: DemoAuthState = {
   registrationOpen: false,
   user: demoSuperadmin,
   users: [demoSuperadmin, demoUser],
-  devices: demoDevices,
-  nextId: 1,
+  devices: seedDevices(),
+  enrollCodes: [],
+  deviceOwners: {
+    "d-demo-1": demoSuperadmin.id,
+    "d-demo-2": demoSuperadmin.id,
+    "d-demo-3": demoSuperadmin.id,
+  },
+  nextUserNum: 1,
+  nextCodeNum: 1,
+  nextDeviceNum: 1,
 };
 
 function session(user: AccountUser): AccountSession {
@@ -94,6 +111,14 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     const user = findUser(String(payload.username ?? ""));
     if (!user) fail("用户名或密码错误");
     if (user.state === "disabled") fail("账号已禁用");
+    const deviceId = String(payload.device_id ?? "");
+    if (deviceId) {
+      const device = state.devices.find((d) => d.id === deviceId);
+      if (!device) throw { code: "not_found", message: "未找到: 设备" };
+      if (state.deviceOwners[deviceId] !== user.id) fail("设备不属于该用户");
+      if (device.revoked_at) fail("设备已吊销");
+      device.last_seen_at = now();
+    }
     state.user = user;
     user.last_login_at = now();
     return session(user) as T;
@@ -110,7 +135,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     if (!username) fail("参数错误: 用户名不能为空");
     if (findUser(username)) fail("参数错误: 用户名已存在");
     const user: AccountUser = {
-      id: `u-demo-${state.nextId++}`,
+      id: `u-demo-${state.nextUserNum++}`,
       username,
       display_name: String(payload.display_name ?? ""),
       role: "user",
@@ -153,11 +178,15 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
   }
   if (path === "/auth/devices" && method === "GET") {
     if (!state.user) fail("会话无效或缺失");
-    return { devices: state.devices } as T;
+    // 与真实后端一致每次返回新负载: 直接给活引用会让前端 setState 同引用跳过重渲染,吊销后列表不刷新。
+    return { devices: state.devices.map((d) => ({ ...d })) } as T;
   }
   if (path === "/auth/devices/enroll-code" && method === "POST") {
     if (!state.user) fail("会话无效或缺失");
-    return { code: "demo-enroll-code", expires_at: now() + 10 * 60_000 } as T;
+    const code = `demo-enroll-${now().toString(36)}-${state.nextCodeNum++}`;
+    const expiresAt = now() + 15 * 60_000;
+    state.enrollCodes.push({ code, userId: state.user.id, expiresAt, consumedAt: null });
+    return { code, expires_at: expiresAt } as T;
   }
   if (path.startsWith("/auth/devices/") && method === "DELETE") {
     if (!state.user) fail("会话无效或缺失");
@@ -168,9 +197,23 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     return { ok: true } as T;
   }
   if (path === "/auth/devices/enroll" && method === "POST") {
-    return {
-      device: { id: `d-demo-${state.nextId++}`, name: String(payload.name ?? "新设备"), kind: String(payload.kind ?? "desktop"), created_at: now(), last_seen_at: now(), revoked_at: 0 },
-    } as T;
+    const code = String(payload.code ?? "");
+    const record = state.enrollCodes.find((c) => c.code === code);
+    if (!record || record.consumedAt !== null || record.expiresAt <= now()) {
+      fail("设备注册码无效或已过期");
+    }
+    record.consumedAt = now();
+    const device: AccountDevice = {
+      id: `d-demo-enroll-${state.nextDeviceNum++}`,
+      name: String(payload.name ?? "新设备"),
+      kind: String(payload.kind ?? "desktop"),
+      created_at: now(),
+      last_seen_at: 0,
+      revoked_at: 0,
+    };
+    state.devices.push(device);
+    state.deviceOwners[device.id] = record.userId;
+    return { device } as T;
   }
 
   if (path === "/admin/users" && method === "GET") {
@@ -181,7 +224,7 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     if (!username) fail("参数错误: 用户名不能为空");
     if (findUser(username)) fail("参数错误: 用户名已存在");
     const user: AccountUser = {
-      id: `u-demo-${state.nextId++}`,
+      id: `u-demo-${state.nextUserNum++}`,
       username,
       display_name: String(payload.display_name ?? ""),
       role: "user",
@@ -237,5 +280,12 @@ export function resetDemoAuth(): void {
   state.registrationOpen = false;
   state.user = demoSuperadmin;
   state.users = [demoSuperadmin, demoUser];
-  state.devices = demoDevices;
+  state.devices = seedDevices();
+  state.enrollCodes = [];
+  state.deviceOwners = {
+    "d-demo-1": demoSuperadmin.id,
+    "d-demo-2": demoSuperadmin.id,
+    "d-demo-3": demoSuperadmin.id,
+  };
+  // id/配对码计数器保持单调不重置: reset 只恢复数据,跨 reset 不复用任何 id 或码。
 }

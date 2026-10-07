@@ -117,6 +117,47 @@ describe("authApi 线上契约", () => {
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 
+  it("login 携带 device_id 时绑定设备,缺省不带该字段", async () => {
+    const calls = capture();
+    vi.stubGlobal("fetch", mocks.fetch);
+
+    await authApi.login("alice", "secret", "d-1");
+    await authApi.login("alice", "secret");
+    expect(calls[0]?.body).toEqual({ username: "alice", password: "secret", device_id: "d-1" });
+    expect(calls[1]?.body).toEqual({ username: "alice", password: "secret" });
+  });
+
+  it("enroll 走公共 POST /auth/devices/enroll,不携带 CSRF 头", async () => {
+    const calls = capture();
+    vi.stubGlobal("fetch", mocks.fetch);
+    setCsrfToken("csrf-9");
+
+    await authApi.enroll("pair-code-1", "这台浏览器", "web");
+    expect(calls[0]).toMatchObject({
+      url: "/auth/devices/enroll",
+      method: "POST",
+      body: { code: "pair-code-1", name: "这台浏览器", kind: "web" },
+    });
+    expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
+  });
+
+  it("enroll 的无效/过期码与网络错误如实上抛", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ error: { code: "forbidden", message: "设备注册码无效或已过期" } }),
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+    await expect(authApi.enroll("bad-code", "n", "web")).rejects.toMatchObject({
+      code: "forbidden",
+      message: "设备注册码无效或已过期",
+      status: 403,
+    });
+
+    mocks.fetch.mockRejectedValue(new Error("offline"));
+    await expect(authApi.enroll("bad-code", "n", "web")).rejects.toMatchObject({ code: "disconnected" });
+  });
+
   it("错误规整为 code+message,401 时派发会话过期事件", async () => {
     mocks.fetch.mockResolvedValue({
       ok: false,

@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuth, type RecoveryKeyIssue } from "./store";
 import { DEMO } from "../../demo";
 import { describeError } from "../../ui/errorText";
+import type { AccountDevice } from "../../ipc/authApi";
 import {
   IconCheckCircle,
   IconCopy,
@@ -16,7 +17,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 
-type Screen = "setup" | "login" | "register" | "reset_required" | "recovery";
+type Screen = "setup" | "login" | "register" | "reset_required" | "recovery" | "enroll";
 
 export function AuthGate() {
   const gate = useAuth((s) => s.gate);
@@ -75,6 +76,7 @@ export function AuthGate() {
         {screen === "register" && <RegisterForm onBack={() => setScreen("login")} />}
         {screen === "reset_required" && <ResetRequiredForm />}
         {screen === "recovery" && <RecoveryForm onBack={() => setScreen("login")} />}
+        {screen === "enroll" && <EnrollForm onBack={() => setScreen("login")} />}
       </div>
     </div>
   );
@@ -203,9 +205,12 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
         {busy ? "登录中…(正在解锁加密数据)" : "登录"}
       </button>
-      <div className="mt-3 flex items-center justify-between text-[12px]">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12px]">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("recovery")}>
           忘记密码?用恢复密钥重置
+        </button>
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("enroll")}>
+          用配对码添加设备
         </button>
         {registrationOpen && (
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("register")}>
@@ -378,6 +383,106 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !recoveryKey.trim() || !newPassword}>
         {busy ? "重置中…" : "重置密码并登录"}
+      </button>
+      <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
+        返回登录
+      </button>
+    </form>
+  );
+}
+
+function EnrollForm({ onBack }: { onBack: () => void }) {
+  const enrollDevice = useAuth((s) => s.enrollDevice);
+  const login = useAuth((s) => s.login);
+  const error = useAuth((s) => s.error);
+  const clearError = useAuth((s) => s.clearError);
+  const [code, setCode] = useState("");
+  const [deviceName, setDeviceName] = useState("这台浏览器");
+  const [device, setDevice] = useState<AccountDevice | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // 第一步: 配对码登记设备(公共路由, 只登记不建会话)。
+  const submitEnroll = async (e: FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    clearError();
+    const trimmedCode = code.trim();
+    const name = deviceName.trim();
+    if (!trimmedCode) {
+      setFormError("请输入配对码");
+      return;
+    }
+    if (!name) {
+      setFormError("请输入设备名");
+      return;
+    }
+    setBusy(true);
+    try {
+      setDevice(await enrollDevice(trimmedCode, name));
+    } catch {
+      // 错误已在 store 里
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 第二步: 走统一登录, 会话绑定到刚登记的设备。
+  const submitLogin = async (e: FormEvent) => {
+    e.preventDefault();
+    clearError();
+    setBusy(true);
+    try {
+      await login(username.trim(), password, device?.id);
+    } catch {
+      // 错误已在 store 里
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (device) {
+    return (
+      <form onSubmit={(e) => void submitLogin(e)}>
+        <div className="mb-1 flex items-center gap-2">
+          <IconCheckCircle size={15} className="text-green-400" />
+          <span className="nx-card-title">设备已登记</span>
+        </div>
+        <p className="nx-hint">
+          设备「{device.name}」已添加到你的账号。输入账号密码完成登录,这台设备的会话将绑定到该设备,
+          之后可在「设置 → 登录设备」里查看或吊销。
+        </p>
+        <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
+        <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
+        <GateError error={error} />
+        <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
+          {busy ? "登录中…(正在解锁加密数据)" : "登录并完成添加"}
+        </button>
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
+          返回登录
+        </button>
+      </form>
+    );
+  }
+
+  return (
+    <form onSubmit={(e) => void submitEnroll(e)}>
+      <div className="mb-1 flex items-center gap-2">
+        <IconKey size={15} className="text-neutral-400" />
+        <span className="nx-card-title">用配对码添加设备</span>
+      </div>
+      <p className="nx-hint">
+        在另一台已登录设备的「设置 → 登录设备」里点「添加设备」,生成一次性配对码(15 分钟内有效)。
+        在这里输入配对码,把账号添加到这台设备。
+      </p>
+      <Field label="配对码" value={code} onChange={setCode} mono placeholder="另一台设备上显示的配对码" autoComplete="off" />
+      <Field label="设备名" value={deviceName} onChange={setDeviceName} placeholder="这台浏览器" autoComplete="off" />
+      {formError && <GateError error={{ code: "bad_param", message: formError }} />}
+      <GateError error={error} />
+      <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim() || !deviceName.trim()}>
+        {busy ? "添加中…" : "添加并继续"}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
         返回登录

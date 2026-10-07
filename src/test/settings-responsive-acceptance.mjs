@@ -877,6 +877,231 @@ async function auditChecks(page) {
   }
 }
 
+// M197: 配对码添加设备的完整路径(demo transport,真实前端代码 + 真实 demo 假后端校验)。
+// 签发配对码 → 登出 → 登录门「用配对码添加设备」→ enroll 登记 → 统一登录绑定设备 → 设备列表可见;
+// 无效码如实报错不进入登录步;320px 下门表单不溢出。
+const SET_INPUT = `(el, value) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setter.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}`;
+
+async function enrollChecks(chrome) {
+  const page = await newPage(chrome);
+  await page.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `try { localStorage.clear(); localStorage.setItem("nexterm.theme.v1", "dark"); } catch {}`,
+  });
+  await page.navigate(`${VITE}/?demo=1`);
+  await page.waitFor("!!document.querySelector('.nx-app')");
+  await page.waitFor(`(async () => { const { useUi } = await import('/src/app/store.ts'); return useUi.getState().workspaces !== undefined; })()`);
+  await page.evaluate(`(async () => {
+    const { useUi } = await import('/src/app/store.ts');
+    useUi.getState().addTab({ id: 'settings-enroll', kind: 'settings', title: '设置', closable: true });
+    useUi.getState().setActiveTab('settings-enroll');
+    return true;
+  })()`);
+  await page.waitFor(`document.body.textContent.includes("登录设备")`);
+  await sleep(400);
+
+  const ENROLL_DEVICE_NAME = "验收浏览器-m197";
+  // 种子设备快照: 后续断言 enroll 登录只更新返回设备、不触碰任何种子设备。
+  const seededSnapshot = await page.evaluate(`(async () => {
+    const { demoAuthRequest } = await import('/src/demo/auth.ts');
+    const r = await demoAuthRequest("GET", "/auth/devices");
+    return r.devices;
+  })()`);
+  assert.ok(Array.isArray(seededSnapshot) && seededSnapshot.length >= 3, "seed devices snapshot failed");
+
+  await pass("D-enroll-issue-code", async () => {
+    const code = await page.evaluate(`(async () => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "添加设备");
+      if (!btn) throw new Error("添加设备 button not found");
+      btn.click();
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const el = [...document.querySelectorAll("code")].find((c) => c.textContent?.startsWith("demo-enroll-"));
+        if (el) return el.textContent;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error("enroll code not rendered");
+    })()`);
+    assert.ok(code.startsWith("demo-enroll-"), `unexpected demo enroll code: ${code}`);
+    return { evidence: { code } };
+  });
+
+  const enrollCode = await page.evaluate(`(() => {
+    const el = [...document.querySelectorAll("code")].find((c) => c.textContent?.startsWith("demo-enroll-"));
+    return el ? el.textContent : null;
+  })()`);
+  assert.ok(enrollCode, "enroll code must still be displayed before logout");
+
+  // 登出(走真实 store.logout → demo /auth/logout),登录门出现
+  await page.evaluate(`(async () => {
+    const { useAuth } = await import('/src/features/auth/store.ts');
+    await useAuth.getState().logout();
+    return true;
+  })()`);
+  await page.waitFor(`document.body.textContent.includes("用配对码添加设备")`);
+
+  await pass("D-enroll-full-flow", async () => {
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("用配对码添加设备"));
+      if (!btn) throw new Error("用配对码添加设备 entry not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("15 分钟内有效")`);
+    const deviceName = ENROLL_DEVICE_NAME;
+    await page.evaluate(`(() => {
+      const gate = document.querySelector(".fixed.inset-0");
+      if (!gate) throw new Error("auth gate overlay not found");
+      const inputs = gate.querySelectorAll("input");
+      if (inputs.length !== 2) throw new Error("enroll form inputs mismatch: " + inputs.length);
+      const set = ${SET_INPUT};
+      set(inputs[0], ${JSON.stringify(enrollCode)});
+      set(inputs[1], ${JSON.stringify(deviceName)});
+    })()`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("添加并继续"));
+      if (!btn) throw new Error("添加并继续 button not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("设备已登记")`);
+    await page.evaluate(`(() => {
+      const gate = document.querySelector(".fixed.inset-0");
+      const inputs = gate.querySelectorAll("input");
+      const set = ${SET_INPUT};
+      set(inputs[0], "demo");
+      set(inputs[1], "demo-pass-123");
+    })()`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("登录并完成添加"));
+      if (!btn) throw new Error("登录并完成添加 button not found");
+      btn.click();
+    })()`);
+    // 统一登录成功后门关闭,设备出现在登录设备列表
+    await page.waitFor(`!document.querySelector(".fixed.inset-0")`);
+    await page.waitFor(`document.body.textContent.includes(${JSON.stringify(deviceName)})`);
+    const state = await page.evaluate(`(() => {
+      const cards = [...document.querySelectorAll(".nx-card")];
+      const card = cards.find((c) => c.textContent?.includes("登录设备"));
+      if (!card) return { found: false };
+      const rows = [...card.querySelectorAll("div")].filter((d) => d.textContent?.includes(${JSON.stringify(deviceName)}));
+      return {
+        found: true,
+        rowCount: rows.length,
+        active: rows.some((d) => d.textContent?.includes("生效中")),
+      };
+    })()`);
+    assert.ok(state.found, "登录设备 card not found after enroll login");
+    assert.ok(state.rowCount > 0, `enrolled device row missing: ${JSON.stringify(state)}`);
+    assert.equal(state.active, true, `enrolled device must be active: ${JSON.stringify(state)}`);
+
+    // 不能只看设备名和「生效中」: 必须核对后端列表 id 唯一、enroll 返回的设备才是被登录更新的那台。
+    const backend = await page.evaluate(`(async () => {
+      const { demoAuthRequest } = await import('/src/demo/auth.ts');
+      const r = await demoAuthRequest("GET", "/auth/devices");
+      return r.devices;
+    })()`);
+    const ids = backend.map((d) => d.id);
+    assert.equal(new Set(ids).size, ids.length, `device ids must be unique: ${ids}`);
+    const enrolledRows = backend.filter((d) => d.name === deviceName);
+    assert.equal(enrolledRows.length, 1, `exactly one enrolled device expected: ${JSON.stringify(backend)}`);
+    const enrolledDevice = enrolledRows[0];
+    for (const seeded of seededSnapshot) {
+      assert.ok(enrolledDevice.id !== seeded.id, `enrolled id must not collide with seed ${seeded.id}`);
+    }
+    assert.ok(enrolledDevice.last_seen_at > 0, `login must touch the enrolled device: ${JSON.stringify(enrolledDevice)}`);
+    for (const seeded of seededSnapshot) {
+      const current = backend.find((d) => d.id === seeded.id);
+      assert.equal(current?.last_seen_at, seeded.last_seen_at, `seed ${seeded.id} last_seen must be untouched by enroll login`);
+    }
+    const shot = await screenshot(page, "D-enroll-device-listed.png");
+    return { evidence: { deviceName, enrolledId: enrolledDevice.id, state, shot } };
+  });
+
+  await pass("D-enroll-revoke-target", async () => {
+    // 吊销必须只命中 enroll 返回的设备: 种子 d-demo-1/2 保持生效, d-demo-3 保持种子态已吊销。
+    const revoked = await page.evaluate(`(async () => {
+      const { demoAuthRequest } = await import('/src/demo/auth.ts');
+      const before = (await demoAuthRequest("GET", "/auth/devices")).devices;
+      const target = before.find((d) => d.name === ${JSON.stringify(ENROLL_DEVICE_NAME)});
+      if (!target) throw new Error("enrolled device not found in demo backend");
+      await demoAuthRequest("DELETE", "/auth/devices/" + encodeURIComponent(target.id));
+      const after = (await demoAuthRequest("GET", "/auth/devices")).devices;
+      return { targetId: target.id, after };
+    })()`);
+    const enrolledRow = revoked.after.find((d) => d.id === revoked.targetId);
+    assert.ok(enrolledRow?.revoked_at > 0, `revoke must hit the enrolled device: ${JSON.stringify(revoked)}`);
+    for (const id of ["d-demo-1", "d-demo-2"]) {
+      assert.equal(revoked.after.find((d) => d.id === id)?.revoked_at, 0, `${id} must stay active after targeted revoke`);
+    }
+    assert.ok(revoked.after.find((d) => d.id === "d-demo-3")?.revoked_at > 0, "d-demo-3 must stay revoked as seeded");
+
+    // UI 刷新后行状态如实翻转: enroll 的行已吊销, 种子「这台浏览器」仍生效中。
+    await page.evaluate(`(() => {
+      const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("登录设备"));
+      const btn = [...card.querySelectorAll("button")].find((b) => b.textContent?.includes("刷新"));
+      btn.click();
+    })()`);
+    await page.waitFor(`(() => {
+      const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("登录设备"));
+      if (!card) return false;
+      const span = [...card.querySelectorAll("span")].find((s) => s.textContent?.trim() === ${JSON.stringify(ENROLL_DEVICE_NAME)});
+      return !!span?.parentElement?.textContent?.includes("已吊销");
+    })()`);
+    const rows = await page.evaluate(`(() => {
+      const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("登录设备"));
+      const rowText = (name) => {
+        const span = [...card.querySelectorAll("span")].find((s) => s.textContent?.trim() === name);
+        return span?.parentElement?.textContent ?? null;
+      };
+      return { enrolled: rowText(${JSON.stringify(ENROLL_DEVICE_NAME)}), seeded: rowText("这台浏览器") };
+    })()`);
+    assert.ok(rows.seeded?.includes("生效中"), `seeded device must stay active in UI: ${JSON.stringify(rows)}`);
+    const shot = await screenshot(page, "D-enroll-revoked.png");
+    return { evidence: { targetId: revoked.targetId, rows, shot } };
+  });
+
+  await pass("D-enroll-invalid-code", async () => {
+    await page.evaluate(`(async () => {
+      const { useAuth } = await import('/src/features/auth/store.ts');
+      await useAuth.getState().logout();
+      return true;
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("用配对码添加设备")`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("用配对码添加设备"));
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("15 分钟内有效")`);
+    await page.evaluate(`(() => {
+      const gate = document.querySelector(".fixed.inset-0");
+      const inputs = gate.querySelectorAll("input");
+      const set = ${SET_INPUT};
+      set(inputs[0], "demo-enroll-bogus-code");
+    })()`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("添加并继续"));
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("设备注册码无效或已过期")`);
+    const stillEnrollStep = await page.evaluate(`!document.body.textContent.includes("设备已登记")`);
+    assert.equal(stillEnrollStep, true, "invalid code must not advance to the login step");
+    return { evidence: { error: "设备注册码无效或已过期" } };
+  });
+
+  await pass("D-enroll-form-no-overflow-320", async () => {
+    await setViewport(page, 320, 720);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    assertNoOverflow(sample, "enroll form 320");
+    const shot = await screenshot(page, "D-enroll-form-320.png");
+    await setViewport(page, 1280, 900);
+    return { evidence: { shot } };
+  });
+
+  page.close();
+}
+
 async function syncClientChecks(chrome, api) {
   const served = await (await fetch(`${VITE}/src/features/settings/SyncCard.tsx`)).text();
   assert.ok(served.includes("WebSyncConsole"), "served SyncCard module must contain WebSyncConsole");
@@ -1042,6 +1267,8 @@ try {
   await auditChecks(pageB);
   pageB.close();
 
+  await enrollChecks(chrome);
+
   await syncClientChecks(chrome, server.api);
 } catch (error) {
   harnessErrors.push(String(error?.stack || error));
@@ -1066,7 +1293,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    transport: "real nexterm-server (Go) for settings cards; demo transport for audit rows",
+    transport: "real nexterm-server (Go) for settings cards; demo transport for audit rows and the enroll pairing-code flow",
     matrix: "320/360/390/568x320 landscape/768 + 200%-equivalent 384 & 560 + coarse pointer + dark/light",
   },
   checks,

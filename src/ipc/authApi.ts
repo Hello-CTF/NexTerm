@@ -192,8 +192,12 @@ export const authApi = {
   init: (input: { code: string; username: string; password: string } & Parameters<typeof envelopesBody>[0]) =>
     request<AccountSession>("POST", "/auth/init", { code: input.code, username: input.username, password: input.password, ...envelopesBody(input) }).then(rememberSession),
 
-  login: (username: string, password: string) =>
-    request<AccountSession>("POST", "/auth/login", { username, password }).then(rememberSession),
+  login: (username: string, password: string, deviceId?: string) =>
+    request<AccountSession>("POST", "/auth/login", {
+      username,
+      password,
+      ...(deviceId ? { device_id: deviceId } : {}),
+    }).then(rememberSession),
 
   register: (input: { username: string; password: string; displayName: string } & Parameters<typeof envelopesBody>[0]) =>
     request<AccountSession>("POST", "/auth/register", {

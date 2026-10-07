@@ -7,6 +7,7 @@ import {
   authApi,
   setCsrfToken,
   SESSION_EXPIRED_EVENT,
+  type AccountDevice,
   type AccountStatus,
   type AccountUser,
 } from "../../ipc/authApi";
@@ -50,13 +51,15 @@ interface AuthState {
   error: AppError | null;
 
   refresh: () => Promise<void>;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, deviceId?: string) => Promise<void>;
   logout: () => Promise<void>;
   initSuperadmin: (code: string, username: string, password: string) => Promise<void>;
   register: (username: string, password: string, displayName: string) => Promise<void>;
   completeResetRequired: (tempPassword: string, newPassword: string) => Promise<void>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<RecoveryKeyIssue>;
   recoveryReset: (username: string, recoveryKey: string, newPassword: string) => Promise<void>;
+  // 配对码登记设备(公共路由,不建会话);返回设备供随后的 login 以 device_id 绑定会话。
+  enrollDevice: (code: string, name: string) => Promise<AccountDevice>;
   unlockDEK: (password: string) => Promise<void>;
   lockDEK: () => void;
   clearPendingRecoveryKey: () => void;
@@ -175,10 +178,10 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
-  login: async (username, password) => {
+  login: async (username, password, deviceId) => {
     set({ error: null });
     try {
-      const session = await authApi.login(username, password);
+      const session = await authApi.login(username, password, deviceId);
       set({ user: session.user });
       if (session.user.state === "reset_required") {
         set({ gate: "reset_required" });
@@ -292,6 +295,18 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ pendingRecoveryKey: recovery });
     } catch (e) {
       zeroize(dek);
+      set({ error: toAppError(e) });
+      throw e;
+    }
+  },
+
+  // 配对码登记设备:公共路由,只登记不建会话;成功后由界面用返回的设备 id 走统一 login 绑定会话。
+  enrollDevice: async (code, name) => {
+    set({ error: null });
+    try {
+      const r = await authApi.enroll(code, name, "web");
+      return r.device;
+    } catch (e) {
       set({ error: toAppError(e) });
       throw e;
     }
