@@ -200,7 +200,7 @@ export class DemoShell {
       case "exit":
       case "logout":
         this.out("logout");
-        this.out(`${DIM}[连接已断开 —— 演示模式，标签与连接保持不动]${RESET}`);
+        this.out(`${DIM}[连接已断开。演示模式，标签与连接保持不动]${RESET}`);
         return "exit";
 
       case "pwd":

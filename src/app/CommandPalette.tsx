@@ -282,7 +282,7 @@ export function CommandPalette({
       {
         id: "kill-terminal",
         label: "结束当前终端进程…",
-        hint: "危险操作 · 需二次确认",
+        hint: "进程会结束，无法恢复",
         icon: IconTerminal,
         run: () => {
           const st = useUi.getState();

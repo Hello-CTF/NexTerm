@@ -733,7 +733,7 @@ export default function App() {
         pushToast(
           started ? "info" : "error",
           started
-            ? "连接已断开，正在重连…连上之后再点一次「新建终端」"
+            ? "连接已断开，正在重连。连上之后再点一次「新建终端」"
             : "重连未能启动",
         );
       } catch (e) {
@@ -799,10 +799,10 @@ export default function App() {
     try {
       const r = (await syncApi.syncNow()) as unknown as { applied: number; pushed: number };
       const moved = r.applied + r.pushed;
-      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成:应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
+      toast(moved > 0 ? "success" : "info", moved > 0 ? `同步完成：应用 ${r.applied} · 推送 ${r.pushed}` : "两边已经一致");
       void queryClient.invalidateQueries();
     } catch (e) {
-      toast("error", `同步失败:${describeError(e)}`);
+      toast("error", `同步失败：${describeError(e)}`);
     }
   }, [queryClient]);
 
@@ -952,7 +952,7 @@ export default function App() {
         if (!cancelled) setSessions(s);
         useUi
           .getState()
-          .pushToast("info", "演示模式：数据都是假的，随便点 —— 终端里输入 help 看可用命令");
+          .pushToast("info", "演示模式：数据都是假的，随便点。终端里输入 help 看可用命令");
       } catch {
       }
     })();
@@ -987,12 +987,14 @@ export default function App() {
   const railPanels: {
     key: string;
     label: string;
+    hint: string;
     icon: typeof IconServer;
     onClick: () => void;
   }[] = [
     {
       key: "assets",
       label: "资产",
+      hint: "打开资产树：管理主机和数据库，双击资产直接连接",
       icon: IconServer,
       onClick: () => {
         setLeftMode("assets");
@@ -1002,6 +1004,7 @@ export default function App() {
     {
       key: "credentials",
       label: "凭据",
+      hint: "打开凭据侧栏：集中保存密码和私钥，连接资产时引用",
       icon: IconKey,
       onClick: () => {
         openCredentialsSidebar();
@@ -1011,6 +1014,7 @@ export default function App() {
     {
       key: "files",
       label: "文件树",
+      hint: "打开当前连接的文件树：浏览远程目录，双击文件直接编辑",
       icon: IconFolderOpen,
       onClick: () => {
         if (!ws?.sessionId) return needSession();
@@ -1025,40 +1029,68 @@ export default function App() {
   const railItems: {
     key: string;
     label: string;
+    hint: string;
     icon: typeof IconServer;
     onClick: () => void;
     unavailableReason?: string;
   }[  ] = [
-    { key: "terminal", label: "新建终端", icon: IconTerminal, onClick: openNewTerminal },
+    {
+      key: "terminal",
+      label: "新建终端",
+      hint: "新建终端标签：已连接就直接打开，断线会先重连；没有远程工作区时打开本机终端",
+      icon: IconTerminal,
+      onClick: openNewTerminal,
+    },
     {
       key: "background",
       label: "后台会话",
+      hint: "查看已转入后台的终端进程，随时接管回标签页",
       icon: IconActivity,
       onClick: openBackground,
     },
     {
       key: "history",
       label: "终端历史",
+      hint: "回看和搜索终端的历史输出",
       icon: IconClock,
       onClick: openHistory,
     },
-    { key: "docker", label: "容器", icon: IconBox, onClick: openDocker },
-    { key: "db", label: "数据库", icon: IconDatabase, onClick: () => void openDatabase() },
+    {
+      key: "docker",
+      label: "容器",
+      hint: "打开 Docker 面板：查看容器状态与日志，进入容器终端",
+      icon: IconBox,
+      onClick: openDocker,
+    },
+    {
+      key: "db",
+      label: "数据库",
+      hint: "打开数据库工作台：查询 MySQL / Redis 资产",
+      icon: IconDatabase,
+      onClick: () => void openDatabase(),
+    },
     {
       key: "mount",
       label: "磁盘挂载",
+      hint: "把 SSH 资产的远程目录挂载到本地，像本地磁盘一样访问",
       icon: IconDrive,
       onClick: openMount,
       unavailableReason: mountUnavailableReason() ?? undefined,
     },
-    { key: "forward", label: "端口转发", icon: IconNetwork, onClick: openForward },
+    {
+      key: "forward",
+      label: "端口转发",
+      hint: "把远程端口转发到本地：本地端口映射或 SOCKS5 代理",
+      icon: IconNetwork,
+      onClick: openForward,
+    },
   ];
 
   const railBottom = [
-    { key: "ai", label: "AI 助手", icon: IconSparkles, onClick: () => setRightOpen(!rightDockOpen) },
-    { key: "devices", label: "设备管理", icon: IconMonitor, onClick: openDevices },
-    { key: "audit", label: "审计日志", icon: IconHistory, onClick: openAudit },
-    { key: "settings", label: "设置", icon: IconSettings, onClick: openSettings },
+    { key: "ai", label: "AI 助手", hint: "打开 AI 侧栏：就当前终端向 AI 提问", icon: IconSparkles, onClick: () => setRightOpen(!rightDockOpen) },
+    { key: "devices", label: "设备管理", hint: "打开设备管理：查看装了 agent 的设备，远程打开设备终端", icon: IconMonitor, onClick: openDevices },
+    { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: openAudit },
+    { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: openSettings },
   ];
 
   const aiToast = aiToastPlacement(
@@ -1096,7 +1128,7 @@ export default function App() {
             <button
               key={it.key}
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
-              title={it.label}
+              title={it.hint}
               aria-label={it.label}
               aria-current={railActive === it.key ? "true" : undefined}
               onClick={it.onClick}
@@ -1110,7 +1142,7 @@ export default function App() {
               key={it.key}
               className={`nx-rail-btn ${it.unavailableReason ? "is-unavailable" : ""}`}
               title={
-                it.unavailableReason ? `${it.label}暂不可用：${it.unavailableReason}` : it.label
+                it.unavailableReason ? `${it.hint}（暂不可用：${it.unavailableReason}）` : it.hint
               }
               aria-label={
                 it.unavailableReason ? `${it.label}暂不可用：${it.unavailableReason}` : it.label
@@ -1127,7 +1159,7 @@ export default function App() {
             <button
               key={it.key}
               className={`nx-rail-btn ${railActive === it.key ? "is-active" : ""}`}
-              title={it.label}
+              title={it.hint}
               aria-label={it.label}
               onClick={it.onClick}
             >
@@ -1143,7 +1175,7 @@ export default function App() {
           >
             {workspaces.length === 0 && (
               <span className="px-1 text-xs text-neutral-500" data-wails-drag-region style={wailsDragRegionStyle}>
-                还没有工作区 —— 双击左侧资产连接一台主机
+                还没有工作区，双击左侧资产连接一台主机
               </span>
             )}
             <div className="nx-tabstrip-scroll">
@@ -1970,7 +2002,7 @@ function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPalette?: 
       <div className="text-center">
         <div className="text-[17px] font-semibold tracking-tight text-neutral-100">NexTerm</div>
         <div className="mt-1 text-xs text-neutral-500">
-          一体化开发运维终端 · 资产 / 终端 / 文件 / 容器 / 数据库 / AI
+          SSH、WinRM、文件、Docker、数据库和 AI，集中在一个工作台
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">

@@ -639,7 +639,7 @@ function answerFor(question: string): { answer: string; commands: string[] } {
         "- `nginx -t` 通过，语法与 include 路径都正常。",
         "- `/api/` 反代到上游 `api_backend`（127.0.0.1:8080），`proxy_read_timeout 60s`。",
         "",
-        "502 是上游给的，不是 nginx 的问题 —— 建议把注意力放在后端容器上。",
+        "502 是上游给的，不是 nginx 的问题。建议把注意力放在后端容器上。",
       ].join("\n"),
     };
   }
@@ -671,7 +671,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
   const cmdsBlock = commands.length
     ? "```bash\n" + commands.map((c) => `$ ${c}`).join("\n") + "\n```\n"
     : "";
-  const fullAnswer = `${answer}\n\n${cmdsBlock}—— 以上命令都已在你面前的终端里跑过，可回放。`;
+  const fullAnswer = `${answer}\n\n${cmdsBlock}以上命令都已在你面前的终端里跑过，可回放。`;
 
   let delay = 430;
 
@@ -702,7 +702,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
       "4. 复查容器状态与健康检查",
       "",
       "## 风险",
-      "- 第 3 步会中断服务约 5–15 秒",
+      "- 第 3 步会中断服务约 5-15 秒",
       "- 若第 4 步未通过，需要回滚到上一次镜像",
     ].join("\n");
     later(360, () => pushEvent(channel, { type: "planSubmitted", plan }));
@@ -808,7 +808,7 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
         type: "confirmRequired",
         id: `call-${uid("c")}`,
         tool: "docker_control",
-        rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5–15 秒。\n这是本会话第 1 次请求写权限。`,
+        rendered: `docker restart mysql-prod\n\n影响：服务将中断约 5-15 秒。\n这是本会话第 1 次请求写权限。`,
         reason: "这是本会话第 1 次请求写权限。",
         preview: null,
         confirmationNonce: `nonce-${uid("n")}`,
@@ -1677,7 +1677,7 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
       const name = containers.find((c) => c.id === str(a.containerId))?.name ?? "api-server";
       const initial = containerLogLines(name).slice(-num(a.tail, 20));
       later(60, () => {
-        pushText(a.channel, `\x1b[2m# 跟随 ${name} 的日志（演示模式，每 4 秒补一行）—— Esc / 返回可停止\x1b[0m\r\n`);
+        pushText(a.channel, `\x1b[2m# 跟随 ${name} 的日志（演示模式，每 4 秒补一行），Esc / 返回可停止\x1b[0m\r\n`);
         initial.forEach((l) => pushText(a.channel, `${l}\r\n`));
       });
       const stop = later(0, () => undefined);
