@@ -71,7 +71,7 @@ interface RefChip {
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "AI 只能查看，不能改动；改动与拿不准的操作都会被拒绝" },
+  { value: "read_only", label: "只读", hint: "默认只能查看，不能改动；设备长期授权允许的终端写入或命令执行除外，其余改动与拿不准的操作都会被拒绝" },
   { value: "read_write", label: "读写", hint: "只读直接做；改动先问你，选「本会话允许此类」后同类不再问" },
   { value: "silent", label: "完全静默", hint: "改动直接执行不逐次问；拦截规则命中或拿不准的仍会问你" },
 ];

@@ -59,7 +59,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
     if (kinds.length === 0) return;
     const scope = kinds.map((k) => KIND_LABEL[k]).join("、");
     const confirmed = await ask(
-      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时，原本要逐次确认的不再逐次确认；拦截规则命中或拿不准的仍会问你。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
+      `为「${asset.name}」开启设备长期授权？\n\n开启后，AI 在该设备上进行${scope}时，原本要逐次确认的不再逐次确认，只读模式下也会被放开；拦截规则命中或拿不准的仍会问你（只读模式下会被拒绝）。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离。`,
       { kind: "warning" },
     );
     if (!confirmed) return;
@@ -104,7 +104,7 @@ export function GrantPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="mb-2 px-0.5 text-[10.5px] leading-relaxed text-neutral-500">
-        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认；拦截规则命中或拿不准的仍会问你。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
+        设备长期授权默认全部关闭。开启后，AI 在对应设备上原本要逐次确认的终端写入或命令执行不再逐次确认；只读模式下这两类常规操作也会被放开。授权不覆盖拦截规则命中或拿不准的操作：读写与完全静默下仍会问你，只读下仍会被拒绝。授权保存在本安装（服务器）上，对该安装的所有用户生效，不是按用户隔离，请只在你信任的设备上开启。
       </div>
 
       {loadError && (

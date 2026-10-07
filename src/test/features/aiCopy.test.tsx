@@ -146,6 +146,14 @@ describe("M134 AI copy", () => {
     expect(alert!.textContent).not.toContain("自定义危险操作");
   });
 
+  it("states the read-only hint with the device-grant exception", async () => {
+    click(view!.container.querySelector('button[title^="AI 权限"]')!);
+    await flush();
+    const text = view!.container.textContent ?? "";
+    expect(text).toContain("设备长期授权允许的终端写入或命令执行除外");
+    expect(text).toContain("拦截规则命中或拿不准的仍会问你");
+  });
+
   it("explains the model selector without BYOK jargon", async () => {
     const selector = mount(createElement(ModelSelector, { onManage: () => undefined }));
     await flush();
