@@ -300,14 +300,28 @@ describe("设备管理视图 · 接入码签发", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("只显示这一次");
     expect(text).toContain("单次使用");
+    const dataDir = '"${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm"';
     expect(text).toContain(
-      "nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir /var/lib/nexterm",
+      `nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
     );
     expect(text).toContain(
-      "nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir /var/lib/nexterm",
+      `nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir ${dataDir}`,
     );
-    expect(text).toContain("nexterm-server agent install --data-dir /var/lib/nexterm");
+    expect(text).toContain(`nexterm-server agent install --data-dir ${dataDir}`);
     expect(text).toContain("不会替你安装");
+    expect(text).not.toContain("/var/lib");
+
+    // enroll 与 install 使用同一数据目录, 且目录双引号可展开 (普通用户语义)。
+    const commands = [...document.querySelectorAll("code")].map((c) => c.textContent ?? "");
+    const enrollDirs = commands
+      .filter((c) => c.includes("agent enroll"))
+      .map((c) => c.split("--data-dir ")[1]);
+    const installDirs = commands
+      .filter((c) => c.includes("agent install"))
+      .map((c) => c.split("--data-dir ")[1]);
+    expect(enrollDirs.length).toBeGreaterThan(0);
+    expect(installDirs).toEqual([dataDir]);
+    for (const dir of enrollDirs) expect(dir).toBe(dataDir);
 
     const doneButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成");
     click(doneButton as HTMLButtonElement);
@@ -499,5 +513,61 @@ describe("设备管理视图 · 账号切换隔离", () => {
     await flush();
     expect(document.body.textContent).not.toContain("web-01");
     expect(document.body.textContent).toContain("user-device");
+  });
+});
+
+describe("设备管理视图 · 签发在途的账号隔离", () => {
+  it("切换账号后旧账号的签发响应/finally 均不写入, 旧接入码永不出现", async () => {
+    const lateIssue = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
+    let issueCalls = 0;
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const u = String(url);
+      const method = init.method ?? "GET";
+      if (u === "/fleet/devices" && method === "GET") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }) };
+      }
+      if (u === "/fleet/base-urls" && method === "GET") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ base_urls: BASE_URLS }) };
+      }
+      if (u === "/device/enroll-codes" && method === "POST") {
+        issueCalls += 1;
+        if (issueCalls === 1) return lateIssue.promise;
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ code: "new-user-code", expires_at: NOW + 900_000 }),
+        };
+      }
+      return { ok: false, status: 404, text: async () => JSON.stringify({ error: { code: "not_found", message: u } }) };
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    await flushUntil(() => issueCalls === 1);
+
+    // 签发在途时改登普通用户: 渲染期重置已清空接入面板与 issuing。
+    useAuth.setState({ user: PLAIN_USER });
+    await flush();
+
+    // 旧账号的签发响应此时才到达: 不得写入新账号视图。
+    lateIssue.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ code: "old-admin-code", expires_at: NOW + 900_000 }),
+    });
+    await flush();
+    await flush();
+    expect(document.body.textContent).not.toContain("old-admin-code");
+    expect(document.body.textContent).not.toContain("签发中");
+
+    // 新账号重新打开接入面板可正常签发, issuing 未被旧 finally 卡死。
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码") as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("new-user-code") ?? false);
+    expect(document.body.textContent).not.toContain("old-admin-code");
   });
 });

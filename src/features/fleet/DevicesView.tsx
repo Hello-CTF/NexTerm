@@ -29,7 +29,10 @@ const ENROLL_TTL_OPTIONS = [
   { label: "1 小时", ms: 60 * 60_000 },
 ];
 
-const AGENT_DATA_DIR = "/var/lib/nexterm";
+// 数据目录与仓库 per-user 约定一致 (platform.desktopDataDir: XDG_DATA_HOME
+// 或 ~/.local/share), 普通用户可写, 适配 systemd --user / launchd per-user;
+// 双引号让 $HOME/XDG_DATA_HOME 在 shell 中展开, 不能用单引号。
+const AGENT_DATA_DIR = '"${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm"';
 
 // shellQuote 把动态参数 (接入地址/接入码) 包成单引号安全形式, 防止 URL path
 // 中的 ; & $() 等被 shell 当命令语法 (服务端 normalizeBaseURL 允许这些字符)。
@@ -369,6 +372,9 @@ export function DevicesView() {
   const [issued, setIssued] = useState<{ code: string; expiresAt: number } | null>(null);
   const [issuing, setIssuing] = useState(false);
   const loadSeq = useRef(0);
+  // accountEpoch 只在账号切换时递增 (手动刷新不动它), 隔离签发在途的
+  // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
+  const accountEpoch = useRef(0);
 
   const isAdmin = user?.role === "superadmin";
   const userId = user?.id ?? null;
@@ -379,6 +385,7 @@ export function DevicesView() {
   if (scopedUserId !== userId) {
     setScopedUserId(userId);
     loadSeq.current += 1;
+    accountEpoch.current += 1;
     setDevices(null);
     setBaseUrls([]);
     setError(null);
@@ -451,14 +458,18 @@ export function DevicesView() {
   }
 
   const issueEnrollCode = async () => {
+    if (!WEB || !user) return;
+    const epoch = accountEpoch.current;
     setIssuing(true);
     try {
       const r = await fleetApi.issueEnrollCode(ttlMs);
+      if (epoch !== accountEpoch.current) return;
       setIssued({ code: r.code, expiresAt: r.expires_at });
     } catch (e) {
+      if (epoch !== accountEpoch.current) return;
       pushToast("error", describeError(e));
     } finally {
-      setIssuing(false);
+      if (epoch === accountEpoch.current) setIssuing(false);
     }
   };
 
@@ -552,7 +563,7 @@ export function DevicesView() {
                   </button>
                 </div>
                 <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
-                  <div className="text-[12px] text-neutral-200">在设备上执行 (按顺序尝试, 第一个可达的即接入点):</div>
+                  <div className="text-[12px] text-neutral-200">在设备上执行 (按顺序尝试, 第一个可达的即接入点; 命令面向 Linux/macOS 普通用户环境, 适配 systemd --user / launchd per-user):</div>
                   {baseUrls.length === 0 && (
                     <div className="text-[12px] text-amber-300">
                       {isAdmin
@@ -591,7 +602,7 @@ export function DevicesView() {
                   </div>
                   <div className="text-[11.5px] text-neutral-400">
                     在设备上看到「注册成功」才算接入完成; 此页面不会替你安装, 也不会再次显示接入码。
-                    数据目录按实际部署调整, 也可用 NEXTERM_DATA_DIR 环境变量替代 --data-dir。
+                    数据目录默认取 XDG 数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
                   </div>
                 </div>
               </div>

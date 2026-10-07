@@ -566,13 +566,14 @@ async function enrollFlowChecks(page) {
     const state = await page.evaluate(READ_ENROLL);
     assert.ok(state.found, `enroll code not visible: ${JSON.stringify(state)}`);
     assert.equal(state.codeText, "fleet-accept-enroll-code-9f3ac2", `code mismatch: ${JSON.stringify(state)}`);
+    const dataDir = '"${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm"';
     const commandTexts = state.commands.map((c) => c.text);
     assert.ok(
-      commandTexts.some((t) => t.includes("nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-accept-enroll-code-9f3ac2' --data-dir /var/lib/nexterm")),
-      `enroll command must use the released nexterm-server CLI with data dir: ${JSON.stringify(state)}`,
+      commandTexts.some((t) => t.includes(`nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-accept-enroll-code-9f3ac2' --data-dir ${dataDir}`)),
+      `enroll command must use the released nexterm-server CLI with per-user data dir: ${JSON.stringify(state)}`,
     );
     assert.ok(
-      commandTexts.some((t) => t.includes("nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-accept-enroll-code-9f3ac2' --insecure --data-dir /var/lib/nexterm")),
+      commandTexts.some((t) => t.includes(`nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-accept-enroll-code-9f3ac2' --insecure --data-dir ${dataDir}`)),
       `insecure base URL must carry --insecure: ${JSON.stringify(state)}`,
     );
     assert.ok(
@@ -580,8 +581,12 @@ async function enrollFlowChecks(page) {
       `shell-special URL path must be single-quoted: ${JSON.stringify(state)}`,
     );
     assert.ok(
-      state.installText.includes("nexterm-server agent install --data-dir /var/lib/nexterm"),
-      `install command missing data dir: ${JSON.stringify(state)}`,
+      state.installText.includes(`nexterm-server agent install --data-dir ${dataDir}`),
+      `install command must share the same per-user data dir: ${JSON.stringify(state)}`,
+    );
+    assert.ok(
+      !commandTexts.some((t) => t.includes("/var/lib")) && !state.installText.includes("/var/lib"),
+      `root-owned system dir must not appear: ${JSON.stringify(state)}`,
     );
     for (const command of state.commands) {
       assert.equal(command.wraps, true, `enroll command overflows: ${JSON.stringify(command)}`);
