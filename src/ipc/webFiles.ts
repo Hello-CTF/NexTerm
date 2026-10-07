@@ -11,6 +11,46 @@ const stagedIds = new Map<string, string>();
 
 const saveHandles = new Map<string, FileHandleLike>();
 
+const CSRF_HEADER = "X-NexTerm-CSRF";
+
+// auth=on 下服务端对 cookie 会话的 POST/DELETE 强制校验 CSRF 头,
+// 拒绝形状固定为 403 + { code:"forbidden", message 含 "CSRF" }(与 commands.ts 同一约定)。
+function isCsrfRejection(status: number, text: string): boolean {
+  if (status !== 403) return false;
+  try {
+    const body = JSON.parse(text) as { error?: { code?: string; message?: string } } | null;
+    return (
+      body?.error?.code === "forbidden" &&
+      typeof body.error.message === "string" &&
+      body.error.message.includes("CSRF")
+    );
+  } catch {
+    return false;
+  }
+}
+
+// csrfFetch 在 authedFetch 之上携带账号会话 CSRF 头; 精确 CSRF 403 时经 /auth/me
+// 刷新并重试同一请求一次。CSRF 拒绝发生在 requireAuth 中间件、未触达 blob handler,
+// 重试不会重复暂存/预留/删除; 其他 403 原样返回给调用方, 不重试。
+async function csrfFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // 延迟加载 authApi: 部分测试只给 ipc/env mock clientId, 静态链会把 demo/index 拉进来。
+  const { authApi, getCsrfToken } = await import("./authApi");
+  const send = (csrf: string | null): Promise<Response> =>
+    authedFetch(url, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(csrf ? { [CSRF_HEADER]: csrf } : {}),
+      },
+    });
+  const res = await send(getCsrfToken());
+  if (res.status !== 403) return res;
+  const text = await res.clone().text().catch(() => "");
+  if (!isCsrfRejection(res.status, text)) return res;
+  await authApi.me();
+  return send(getCsrfToken());
+}
+
 export function isStagedPath(path: string): boolean {
   return stagedIds.has(path);
 }
@@ -68,7 +108,7 @@ export async function stageFile(
 ): Promise<StagedRef> {
   const q = new URLSearchParams({ name: file.name || "upload.bin" });
   if (opts.persist) q.set("persist", "1");
-  const res = await authedFetch(httpUrl(`/files/blob?${q.toString()}`), {
+  const res = await csrfFetch(httpUrl(`/files/blob?${q.toString()}`), {
     method: "POST",
     body: file,
   });
@@ -79,7 +119,7 @@ export async function stageFile(
 
 async function reserveTarget(name: string): Promise<StagedRef> {
   const q = new URLSearchParams({ name });
-  const res = await authedFetch(httpUrl(`/files/blob/reserve?${q.toString()}`), { method: "POST" });
+  const res = await csrfFetch(httpUrl(`/files/blob/reserve?${q.toString()}`), { method: "POST" });
   const ref = await readStagedRef(res, "预留落点");
   stagedIds.set(ref.path, ref.id);
   return ref;
@@ -151,7 +191,7 @@ export async function deliverStaged(
 }
 
 async function deleteBlob(id: string): Promise<void> {
-  await authedFetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`), { method: "DELETE" }).catch(
+  await csrfFetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`), { method: "DELETE" }).catch(
     () => undefined,
   );
 }

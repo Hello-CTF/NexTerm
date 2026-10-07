@@ -17,7 +17,7 @@ const EXPECTED = [
   "layout-360", "layout-560", "layout-820", "coarse-pointer-keys", "soft-keyboard-focus-viewport-resize",
   "ws-early-frame", "ws-replay", "ws-reconnect-replay",
   "rpc-401-non-retry", "rpc-403-non-retry", "rpc-404-non-retry", "rpc-network-5xx-jitter-recovery",
-  "rpc-auth-on-csrf",
+  "rpc-auth-on-csrf", "files-auth-on-csrf",
 ];
 const REAL_TARGET_GAPS = [
   { id: "ios-soft-keyboard", status: "evidence-gap", reason: "a physical iOS/iPadOS device and its native soft keyboard are not available to headless Chromium" },
@@ -568,6 +568,89 @@ async function authOnRpcAcceptance(page, authServer) {
   });
 }
 
+async function authOnFilesAcceptance(page, authServer) {
+  await pass("files-auth-on-csrf", async () => {
+    await page.navigate(`${authServer.origin}/healthz`);
+    await page.evaluate(`window.__NEXTERM_TRANSPORT__ = 'web'; true`);
+    const session = await page.evaluate(`(async () => {
+      const { authApi, getCsrfToken } = await import('${VITE}/src/ipc/authApi.ts');
+      // rpc-auth-on-csrf 已建账号时直接登录, 否则用一次性初始化码补建。
+      let created;
+      try {
+        created = await authApi.login('acceptance', 'acceptance-pw-123');
+      } catch {
+        created = await authApi.init({
+          code: ${JSON.stringify(authServer.initCode)},
+          username: "acceptance",
+          password: "acceptance-pw-123",
+          dekEnvelope: new Uint8Array([1, 2, 3]),
+          kdfSalt: new Uint8Array([4, 5, 6]),
+          kdfParams: '{"t":3,"m":65536,"p":4}',
+          recoveryEnvelope: new Uint8Array([7, 8, 9]),
+          recoveryHash: "acceptance-recovery-hash",
+        });
+      }
+      return { username: created.user.username, csrf: (getCsrfToken() ?? '').length > 0 };
+    })()`);
+    assert.deepEqual(session, { username: "acceptance", csrf: true });
+
+    const control = await page.evaluate(`(async () => {
+      const stage = await fetch('/files/blob?name=control.bin', { method: 'POST', body: new Uint8Array([1, 2, 3]) });
+      const stageBody = await stage.json().catch(() => null);
+      const removal = await fetch('/files/blob?id=01J0000000000000000000000', { method: 'DELETE' });
+      const removeBody = await removal.json().catch(() => null);
+      return {
+        stageStatus: stage.status,
+        stageMessage: stageBody?.error?.message ?? '',
+        removeStatus: removal.status,
+        removeMessage: removeBody?.error?.message ?? '',
+      };
+    })()`);
+    assert.equal(control.stageStatus, 403, JSON.stringify(control));
+    assert.match(control.stageMessage, /CSRF/, JSON.stringify(control));
+    assert.equal(control.removeStatus, 403, JSON.stringify(control));
+    assert.match(control.removeMessage, /CSRF/, JSON.stringify(control));
+
+    const evidence = await page.evaluate(`(async () => {
+      const webFiles = await import('${VITE}/src/ipc/webFiles.ts');
+      const { setCsrfToken } = await import('${VITE}/src/ipc/authApi.ts');
+      const png = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], 'acceptance.png', { type: 'image/png' });
+      // headless 无文件选择器: 遮蔽 showSaveFilePicker 走"不可用"分支, 只验预留/删除传输。
+      try { Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true }); } catch {}
+
+      const staged = await webFiles.stageFile(png());
+      const image = await webFiles.uploadImage(png());
+      const anonymous = await fetch(image.url, { credentials: 'omit' });
+      const publicBytes = anonymous.ok ? (await anonymous.arrayBuffer()).byteLength : 0;
+      const limits = await webFiles.fetchImageService();
+      const reservedPath = await webFiles.requestSaveTarget('acceptance-target.bin');
+
+      setCsrfToken('stale-token');
+      await webFiles.dropStaged(staged.path);
+      await webFiles.dropStaged(reservedPath);
+      const afterDelete = await fetch('/files/blob?id=' + encodeURIComponent(staged.id));
+      const reservedState = await webFiles.deliverStaged(reservedPath);
+      return {
+        stagedId: staged.id,
+        imageUrl: image.url,
+        publicDownloadStatus: anonymous.status,
+        publicBytes,
+        limitsReported: limits !== null && limits.maxBytes > 0 && limits.ownerQuotaBytes > 0 && limits.ttlSeconds > 0,
+        reservedPath: typeof reservedPath === 'string' && reservedPath.includes('acceptance-target.bin'),
+        deletedGone: afterDelete.status === 404,
+        reservedState,
+      };
+    })()`);
+    assert.equal(evidence.publicDownloadStatus, 200, JSON.stringify(evidence));
+    assert.equal(evidence.publicBytes, 8, JSON.stringify(evidence));
+    assert.equal(evidence.limitsReported, true, JSON.stringify(evidence));
+    assert.equal(evidence.reservedPath, true, JSON.stringify(evidence));
+    assert.equal(evidence.deletedGone, true, JSON.stringify(evidence));
+    assert.equal(evidence.reservedState, "not-staged", JSON.stringify(evidence));
+    return { evidence: { ...evidence, negativeControl: control } };
+  });
+}
+
 async function main() {
   let vite;
   let server;
@@ -589,6 +672,7 @@ async function main() {
       return true;
     })()`).catch(() => {});
     try { await authOnRpcAcceptance(page, authServer); } catch (error) { harnessErrors.push(`auth=on RPC harness: ${error.stack || error}`); }
+    try { await authOnFilesAcceptance(page, authServer); } catch (error) { harnessErrors.push(`auth=on files harness: ${error.stack || error}`); }
   } catch (error) {
     harnessErrors.push(String(error?.stack || error));
   } finally {
