@@ -276,7 +276,7 @@ function DesktopLinkCard() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录(终端录像)默认不同步;要同步某一条,到「会话记录」里对那条单独打开同步开关。
+          会话记录(终端录像)默认不同步;要同步某一条,到「终端历史」里对那条单独打开同步开关。
           同步是端到端加密的,服务端看不到资产名、主机、用户名和内容。
         </div>
       </div>
@@ -1178,7 +1178,7 @@ function CompareConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          会话记录(终端录像)默认不同步;要同步某一条,到「会话记录」里对那条单独打开同步开关。
+          会话记录(终端录像)默认不同步;要同步某一条,到「终端历史」里对那条单独打开同步开关。
           已知主机与 AI 模型档案同样默认不同步,需要时在上方单独开启;关闭开关不会删除云端已有副本。
           冲突按修订号(最后修改时间)裁决,协议假设各设备时钟已经 <b>NTP 同步</b>,
           不检测也不校正时钟偏移;时钟不准时「较新」判定可能不符合预期。

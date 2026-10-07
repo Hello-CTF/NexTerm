@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
@@ -85,6 +85,14 @@ function syncStatusText(): string | null {
     if (text.includes("同步") || text.includes("服务端")) return text;
   }
   return null;
+}
+
+function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
+  act(() => {
+    target.dispatchEvent(event);
+  });
+  return event;
 }
 
 beforeEach(() => {
@@ -294,5 +302,70 @@ describe("账号同步卡（桌面端）", () => {
 
     await flushUntil(() => document.body.textContent?.includes("同步头不一致"));
     expect(document.body.textContent).not.toContain("同步结果");
+  });
+
+  it("单条同步开关指引指向「终端历史」分区", async () => {
+    mounted = mountAppWithSyncCard();
+    await flushUntil(() => document.querySelector("#sync-url") !== null);
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("到「终端历史」里对那条单独打开同步开关");
+    expect(text).not.toContain("到「会话记录」里");
+  });
+});
+
+describe("全局 syncNow 快捷键(Mod+Shift+S)", () => {
+  beforeEach(() => {
+    mocks.syncStatus.mockResolvedValue({
+      configured: false,
+      loggedIn: false,
+      seq: 0,
+      verifiedAt: 0,
+      lastError: "",
+    });
+    mocks.syncLinkGet.mockResolvedValue(EMPTY_LINK);
+    mocks.syncNow.mockResolvedValue({
+      pulled: 0,
+      applied: 0,
+      pullSkipped: 0,
+      decryptFailed: 0,
+      pushed: 0,
+      conflicts: 0,
+      head: "head-1",
+      seq: 7,
+      warnings: [],
+    });
+  });
+
+  it("未配置同步时快捷键不触发同步,直接说明去哪配置", async () => {
+    mounted = mountApp();
+    await flushUntil(() => syncStatusText() === "同步：本地模式");
+
+    const event = keyDown(window, "s", { ctrlKey: true, shiftKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    await flush();
+
+    expect(mocks.syncNow).not.toHaveBeenCalled();
+    const toasts = useUi.getState().toasts;
+    expect(toasts.some((t) => t.text.includes("同步还没配置"))).toBe(true);
+  });
+
+  it("已配置同步时快捷键触发 syncNow", async () => {
+    mocks.syncLinkGet.mockResolvedValue(SAVED_LINK);
+    mocks.syncStatus.mockResolvedValue({
+      configured: true,
+      loggedIn: true,
+      username: "alice",
+      seq: 7,
+      verifiedAt: 1,
+      lastError: "",
+    });
+    mounted = mountApp();
+    await flushUntil(() => syncStatusText() === "同步：已配置");
+
+    keyDown(window, "s", { ctrlKey: true, shiftKey: true });
+
+    await flushUntil(() => mocks.syncNow.mock.calls.length > 0);
+    expect(mocks.syncNow).toHaveBeenCalled();
   });
 });
