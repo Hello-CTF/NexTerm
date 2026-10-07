@@ -115,7 +115,7 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, `+s.dialect.offsetColumn()+`, updated_at)
-VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET `+s.dialect.offsetColumn()+`=`+s.dialect.offsetColumn()+`+?, updated_at=?`,
+VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET `+s.dialect.offsetColumn()+`=durable_transcript_offset.`+s.dialect.offsetColumn()+`+?, updated_at=?`,
 				durableID, count, now, count, now); err != nil {
 				return dbError(err)
 			}
