@@ -16,6 +16,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { freePort, startVite as startViteProcess, stopProcess, waitHttp } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/fleet-terminal-acceptance");
@@ -61,35 +62,23 @@ async function pass(id, fn) {
   }
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitHttp(url, process, timeout = 30_000) {
+async function waitPortClosed(port, timeout = 10_000) {
   const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (process?.exitCode !== null && process?.exitCode !== undefined) throw new Error(`${url}: process exited ${process.exitCode}`);
-    try {
-      const response = await fetch(url);
-      if (response.ok) return response;
-    } catch {}
+  for (;;) {
+    const open = await new Promise((resolve) => {
+      const socket = net.connect({ host: "127.0.0.1", port });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+    });
+    if (!open) return true;
+    if (Date.now() >= deadline) return false;
     await sleep(100);
   }
-  throw new Error(`timed out waiting for ${url}`);
-}
-
-function stop(process) {
-  if (!process || process.exitCode !== null) return;
-  process.kill("SIGTERM");
 }
 
 function chromeExecutable() {
@@ -211,7 +200,7 @@ async function startChrome() {
     const response = await waitHttp(`http://127.0.0.1:${port}/json/version`, process);
     return { process, port, profile, version: await response.json() };
   } catch (error) {
-    stop(process);
+    stopProcess(process);
     throw new Error(`${error.message}; Chrome stderr=${stderr.slice(-1000)}`);
   }
 }
@@ -230,23 +219,16 @@ function wipeViteCache() {
   fs.rmSync(viteCacheDir(), { recursive: true, force: true });
 }
 
-// startVite 用 freePort + strictPort: 端口由本次进程独占, 不可能接到旧服务;
-// 若端口仍被抢, 子进程立即退出, waitHttp 的存活检查会直接判失败。
+// lib 的 startVite 直启 node vite.js (无 pnpm/corepack 包装): SIGTERM 落在真实
+// dev server 上, waitHttp 失败在内部即回收; freePort + strictPort 保证端口由本次
+// 进程独占, 不可能接到旧服务。
 let viteUrl = "";
 
-async function startVite() {
+async function startVite(options = {}) {
   wipeViteCache();
-  const port = await freePort();
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const url = `http://127.0.0.1:${port}`;
-  await waitHttp(url, process);
-  viteUrl = url;
-  return process;
+  const handle = await startViteProcess({ root: ROOT, ...options });
+  viteUrl = handle.origin;
+  return handle;
 }
 
 // ---------- fake bridge (NOT production backend evidence) ----------
@@ -930,44 +912,78 @@ if (process.argv.includes("--selftest")) {
   process.exit(0);
 }
 
-// startupFailureSelftest: 回归 P2-4 — Chrome 启动失败时, 本次启动的 Vite 必须
-// 被回收, 不残留旧端口服务 (strictPort + freePort 已使接管旧服务不可能)。
+// startupFailureSelftest: 不起真实功能验收, 只回归 vite 进程生命周期三条路径:
+// (1) startVite 内部 waitHttp 超时必须回收真实 vite 进程并释放端口;
+// (2) Chrome 启动失败时外层回收必须让真实 vite 进程退出且端口关闭;
+// (3) 正常 stop 后进程退出且端口关闭 (成功路径不再残留, 命令可自然退出)。
 async function startupFailureSelftest() {
-  let viteProcess = null;
-  let failure = null;
-  let viteExited = false;
-  try {
-    viteProcess = await startVite();
-    viteProcess.once("exit", () => {
-      viteExited = true;
-    });
+  const failures = [];
+
+  {
+    const port = await freePort();
+    let handle = null;
+    let error = null;
+    try {
+      handle = await startVite({ port, readyTimeout: 0 });
+    } catch (e) {
+      error = e;
+    }
+    if (handle) {
+      failures.push("startVite with readyTimeout=0 unexpectedly succeeded");
+      await handle.stop();
+    } else if (!String(error?.message || error).includes("timed out waiting for")) {
+      failures.push(`waitHttp-timeout path: unexpected error: ${String(error?.message || error).slice(0, 120)}`);
+    }
+    if (!(await waitPortClosed(port, 10_000))) failures.push(`waitHttp-timeout path: vite port ${port} still open after reap`);
+    wipeViteCache();
+  }
+
+  {
+    const port = await freePort();
+    let viteHandle = null;
     const savedPath = process.env.CHROME_PATH;
     process.env.CHROME_PATH = "/nonexistent/chrome-for-selftest";
     try {
-      await startChrome();
-      failure = "startChrome unexpectedly succeeded";
+      viteHandle = await startVite({ port });
+      try {
+        const chromeHandle = await startChrome();
+        stopProcess(chromeHandle.process);
+        failures.push("startChrome unexpectedly succeeded with bogus CHROME_PATH");
+      } catch (error) {
+        console.warn(`  chrome start failed as expected: ${String(error?.message || error).slice(0, 80)}`);
+      }
+    } catch (error) {
+      failures.push(`chrome-failure path: startVite failed: ${String(error?.message || error).slice(0, 120)}`);
     } finally {
       if (savedPath === undefined) delete process.env.CHROME_PATH;
       else process.env.CHROME_PATH = savedPath;
+      if (viteHandle) await viteHandle.stop();
+      wipeViteCache();
     }
-  } catch (error) {
-    failure = failure ?? String(error?.message || error);
-  } finally {
-    stop(viteProcess);
-    if (viteProcess && !viteExited) {
-      await Promise.race([
-        new Promise((resolve) => viteProcess.once("exit", resolve)),
-        sleep(3000),
-      ]);
+    if (viteHandle) {
+      if (viteHandle.process.exitCode === null && viteHandle.process.signalCode === null) {
+        failures.push("chrome-failure path: vite process still alive after stop");
+      }
+      if (!(await waitPortClosed(port, 10_000))) failures.push(`chrome-failure path: vite port ${port} still open after reap`);
     }
+  }
+
+  {
+    const port = await freePort();
+    const viteHandle = await startVite({ port });
+    await viteHandle.stop();
+    if (viteHandle.process.exitCode === null && viteHandle.process.signalCode === null) {
+      failures.push("normal-stop path: vite process still alive after stop");
+    }
+    if (!(await waitPortClosed(port, 10_000))) failures.push(`normal-stop path: vite port ${port} still open after stop`);
     wipeViteCache();
   }
-  if (failure === null) failure = "startChrome did not fail as expected";
-  if (!viteExited) {
-    console.warn("FAILED startup-failure-selftest: vite process still alive");
+
+  if (failures.length) {
+    console.warn(`FAILED startup-failure-selftest:\n  ${failures.join("\n  ")}`);
     process.exit(1);
   }
-  console.warn(`PASS startup-failure-selftest (chrome start failed as expected: ${failure.slice(0, 80)}; vite reaped)`);
+  console.warn("PASS startup-failure-selftest (waitHttp-timeout reap, chrome-failure reap, normal stop: process exited + port closed)");
   process.exit(0);
 }
 
@@ -999,8 +1015,13 @@ try {
   harnessErrors.push(String(error?.stack || error));
 } finally {
   if (page) page.close();
-  stop(chrome?.process);
-  stop(vite);
+  stopProcess(chrome?.process);
+  if (vite) {
+    await vite.stop();
+    if (!(await waitPortClosed(vite.port, 10_000))) {
+      harnessErrors.push(`vite port ${vite.port} still open after stop`);
+    }
+  }
   if (fake) await fake.close();
   if (chrome?.process) {
     await Promise.race([
