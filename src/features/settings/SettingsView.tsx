@@ -167,8 +167,8 @@ export function SettingsView() {
     ? testResult.fatal
       ? `调用失败：${testResult.fatal}`
       : [
-          `模型列表：${testResult.modelsOk ? "可用" : `失败 — ${testResult.modelsError ?? "原因未查明"}`}`,
-          `实际对话：${testResult.chatOk ? "可用" : `失败 — ${testResult.chatError ?? "原因未查明"}`}`,
+          `模型列表：${testResult.modelsOk ? "可用" : `失败（${testResult.modelsError ?? "原因未查明"}）`}`,
+          `实际对话：${testResult.chatOk ? "可用" : `失败（${testResult.chatError ?? "原因未查明"}）`}`,
         ].join("\n")
     : "";
 

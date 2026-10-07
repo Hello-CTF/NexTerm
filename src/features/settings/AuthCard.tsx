@@ -194,8 +194,8 @@ export function AuthCard() {
           <span className="nx-card-title">修改密码</span>
         </div>
         <p className="nx-hint mb-3">
-          改密会用新密码重新包裹数据密钥,云端密文内容不受影响;同时会签发新的恢复密钥,
-          其他设备上的会话会被退出。
+          修改密码会用新密码重新加密数据密钥,云端已保存的加密内容不受影响。修改成功后会签发
+          新的恢复密钥(旧的立即作废),并退出其他设备上的会话。
         </p>
         <form onSubmit={(e) => void submitPassword(e)} className="flex flex-col gap-2">
           <input
@@ -280,7 +280,7 @@ export function AuthCard() {
           </button>
         </div>
         <p className="nx-hint mb-3">
-          已登录的设备可以随时吊销。要把账号加到新设备,在已登录设备上生成一次性配对码,再到新设备上输入。
+          已登录的设备可以随时吊销,吊销后该设备立即退出登录。「添加设备」生成的一次性配对码 15 分钟内有效,只显示一次。
         </p>
 
         {enrollCode && (
@@ -288,7 +288,7 @@ export function AuthCard() {
             <div className="flex items-start gap-2">
               <IconInfo size={14} className="mt-0.5 shrink-0" />
               <div>
-                配对码 <b>15 分钟内有效</b>,只显示这一次。在新设备的登录页选择「用配对码添加设备」并输入:
+                配对码 <b>15 分钟内有效</b>,只显示这一次,用于把账号添加到新设备:
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">

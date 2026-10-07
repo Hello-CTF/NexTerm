@@ -563,7 +563,7 @@ export function CronCard() {
           </button>
           {conversations && conversations.length === 0 && (
             <span className="nx-hint ml-2 text-[11px]">
-              还没有 AI 会话 —— 定时任务挂在会话上，请先在 AI 侧栏开始一个会话。
+              还没有 AI 会话：定时任务挂在会话上，请先在 AI 侧栏开始一个会话。
             </span>
           )}
         </div>

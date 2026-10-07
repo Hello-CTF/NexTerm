@@ -262,7 +262,7 @@ export function MemoryCard() {
       </div>
       <p className="nx-hint mb-3.5">
         让 AI 跨会话记住长期事实（如「重启安排在 02:00」）。默认关闭，逐项开启；
-        记忆按 owner scope 隔离。
+        记忆按属主隔离。
       </p>
 
       <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
@@ -490,8 +490,8 @@ export function MemoryCard() {
       )}
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        记忆按 owner scope（{MEMORY_SCOPE.tenant} / {MEMORY_SCOPE.subject}）隔离存储，
-        与 AI 运行使用的是同一份；其它 scope 读不到也改不到这里的内容。
+        记忆按属主（{MEMORY_SCOPE.tenant} / {MEMORY_SCOPE.subject}）隔离存储，
+        与 AI 运行使用的是同一份；其它属主读不到也改不到这里的内容。
       </p>
     </section>
   );

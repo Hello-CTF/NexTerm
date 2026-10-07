@@ -255,7 +255,7 @@ export function AuditView() {
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  暂无记录 —— 连接主机、执行命令或让 AI 动手之后，这里会逐条记下来。
+                  暂无记录：连接主机、执行命令或让 AI 动手之后，这里会逐条记下来。
                 </td>
               </tr>
             ) : null}

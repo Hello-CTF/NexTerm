@@ -345,6 +345,7 @@ describe("AuthGate 恢复密钥重置", () => {
 
     clickButton(mounted.container, "忘记密码?用恢复密钥重置");
     await flushUntil(() => mounted!.container.textContent?.includes("用恢复密钥重置"));
+    expect(mounted.container.textContent).toContain("输入你保存的最新恢复密钥");
 
     const inputs = mounted.container.querySelectorAll("input");
     setInputValue(inputs[0], "root");

@@ -416,7 +416,7 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("记忆按 owner scope 隔离。");
+    expect(text).toContain("记忆按属主隔离。");
     expect(text).not.toContain("开启了的运行");
     expect(text).toContain("开启后每次 AI 运行会把选中的记忆作为一条临时系统消息注入模型输入");
   });
