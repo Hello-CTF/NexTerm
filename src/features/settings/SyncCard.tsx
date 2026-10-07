@@ -78,7 +78,8 @@ function SyncBody() {
   return <DesktopLinkCard />;
 }
 
-// ---------- 桌面端:账号链接同步 ----------
+// ---------- 桌面端:账号登录与同步 ----------
+// 登录只保存凭据完成同步配置,不传输数据;会话在 sync_now 时惰性建立。
 
 function DesktopLinkCard() {
   const { pushToast } = useUi();
@@ -88,7 +89,7 @@ function DesktopLinkCard() {
   const [status, setStatus] = useState<SyncStatusView | null>(null);
   const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
   const [draftEdited, setDraftEdited] = useState(false);
-  const [busy, setBusy] = useState<null | "save" | "sync">(null);
+  const [busy, setBusy] = useState<null | "login" | "sync">(null);
   const [report, setReport] = useState<SyncReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -115,8 +116,8 @@ function DesktopLinkCard() {
     void load();
   }, [load]);
 
-  const save = async () => {
-    setBusy("save");
+  const login = async () => {
+    setBusy("login");
     setError(null);
     setReport(null);
     try {
@@ -129,7 +130,7 @@ function DesktopLinkCard() {
       setDraft((d) => ({ ...d, password: "" }));
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
       await load();
-      pushToast("success", "同步链接已保存");
+      pushToast("success", "登录信息已保存 · 同步配置完成,点「立即同步」开始传输数据");
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -173,8 +174,8 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        把这台桌面设备的资产、分组、片段加密同步到你的账号。数据在你的设备上加密,
-        服务端只存密文;不登录账号也完全可以继续本地使用。
+        输入服务端地址、账号和密码,登录一次即完成同步配置;数据只在你点「立即同步」时加密传输,
+        登录本身不上传也不下载。数据在你的设备上加密,服务端只存密文;不登录账号也完全可以继续本地使用。
       </p>
 
       {loadError && (
@@ -247,10 +248,10 @@ function DesktopLinkCard() {
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
           disabled={busy !== null || !draft.url.trim() || !draft.username.trim() || (!draft.password && !link?.hasPassword)}
-          onClick={() => void save()}
+          onClick={() => void login()}
         >
-          {busy === "save" ? <IconRefresh size={12} className="animate-spin" /> : <IconCheckCircle size={12} />}
-          {busy === "save" ? "保存中…" : "保存链接"}
+          {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
+          {busy === "login" ? "登录中…" : "登录"}
         </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -753,24 +754,8 @@ function WebSyncConsole() {
   const user = useAuth((s) => s.user);
   const dek = useAuth((s) => s.dek);
 
-  if (!user) {
-    return (
-      <section className="nx-card">
-        <div className="mb-1 flex items-center gap-2">
-          <IconServer size={15} className="text-neutral-400" />
-          <span className="nx-card-title">账号同步</span>
-        </div>
-        <p className="nx-hint mb-3">
-          登录后,这台服务器上的资产、分组、片段会端到端加密同步到你的账号,在其他设备上可用。
-          不登录也能继续本地使用。
-        </p>
-        <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => useAuth.setState({ gate: "login" })}>
-          <IconLock size={12} />
-          登录以启用同步
-        </button>
-      </section>
-    );
-  }
+  // 未登录时整卡不渲染:设置页只有 AuthCard「账号」一个登录入口,不在同步台重复放登录按钮。
+  if (!user) return null;
   if (!dek) return <UnlockDEKCard />;
   return <CompareConsole />;
 }

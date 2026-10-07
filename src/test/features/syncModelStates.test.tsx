@@ -138,7 +138,7 @@ describe("SyncCard 桌面端状态", () => {
     expect(insecureCheckbox.checked).toBe(false);
   });
 
-  it("保存链接时以账号+密码调用 linkSet", async () => {
+  it("登录时以账号+密码调用 linkSet(一次登录即完成同步配置)", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-url")!, "https://sync.example.com");
@@ -146,11 +146,11 @@ describe("SyncCard 桌面端状态", () => {
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-pass")!, "correct horse battery staple");
     await flushUntil(() => {
       const btn = [...mounted!.container.querySelectorAll("button")].find(
-        (b) => b.textContent?.trim() === "保存链接",
+        (b) => b.textContent?.trim() === "登录",
       ) as HTMLButtonElement | undefined;
       return !!btn && !btn.disabled;
     });
-    clickButton(mounted!.container, "保存链接");
+    clickButton(mounted!.container, "登录");
     await flushUntil(() => mocks.linkSet.mock.calls.length > 0);
     expect(mocks.linkSet).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -159,18 +159,30 @@ describe("SyncCard 桌面端状态", () => {
         password: "correct horse battery staple",
       }),
     );
+    // 登录只保存凭据完成配置,不自动执行首次同步
+    expect(mocks.syncNow).not.toHaveBeenCalled();
   });
 
-  it("未保存过密码时保存按钮要求输入密码", async () => {
+  it("未保存过密码时登录按钮要求输入密码", async () => {
     mounted = withClient(createElement(SyncCard));
     await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-url")!, "https://sync.example.com");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>("#sync-user")!, "alice");
     await flush();
     const btn = [...mounted!.container.querySelectorAll("button")].find(
-      (b) => b.textContent?.trim() === "保存链接",
+      (b) => b.textContent?.trim() === "登录",
     ) as HTMLButtonElement | undefined;
     expect(btn?.disabled).toBe(true);
+  });
+
+  it("桌面端不渲染账号卡:全卡只有一个登录按钮,没有死的账号登录入口", async () => {
+    mounted = withClient(createElement(SyncCard));
+    await flushUntil(() => mounted!.container.querySelector("#sync-url") !== null);
+    const loginButtons = [...mounted!.container.querySelectorAll("button")].filter(
+      (b) => b.textContent?.trim() === "登录",
+    );
+    expect(loginButtons.length).toBe(1);
+    expect(text()).not.toContain("当前未登录");
   });
 
   it("立即同步成功时展示 v2 报告", async () => {

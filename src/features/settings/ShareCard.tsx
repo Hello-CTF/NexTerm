@@ -81,17 +81,15 @@ function ShareUnsupported() {
   );
 }
 
-function ShareLoginPrompt() {
+function ShareLoginHint() {
+  // 未登录不放第二个登录按钮(唯一登录入口在「账号」卡);只说明这一节需要什么。
   return (
     <section className="nx-card">
       <div className="mb-1 flex items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">分享</span>
       </div>
-      <p className="nx-hint mb-3">登录后可以把你接入的守护主机分享给其他注册用户, 并管理已创建的公开链接。</p>
-      <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => useAuth.setState({ gate: "login" })}>
-        去登录
-      </button>
+      <p className="nx-hint">登录后可以把你接入的守护主机分享给其他注册用户, 并管理已创建的公开链接。</p>
     </section>
   );
 }
@@ -194,7 +192,7 @@ function ShareManagement() {
     return () => clearInterval(timer);
   }, []);
 
-  if (!user) return <ShareLoginPrompt />;
+  if (!user) return <ShareLoginHint />;
 
   const deviceName = (id: string) => devices?.find((d) => d.id === id)?.name ?? shortId(id);
   // 服务端要求分享目标是 daemon 主机 (device_agent 行 + 终端开启), 已吊销设备不可分享。

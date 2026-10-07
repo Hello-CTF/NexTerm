@@ -184,7 +184,7 @@ function mountAppWithSyncCard(): MountedView {
   );
 }
 
-async function saveSyncLink(): Promise<void> {
+async function loginSyncAccount(): Promise<void> {
   await flushUntil(() => document.querySelector("#sync-url") !== null);
   setInputValue(
     document.querySelector<HTMLInputElement>("#sync-url")!,
@@ -194,11 +194,11 @@ async function saveSyncLink(): Promise<void> {
   setInputValue(document.querySelector<HTMLInputElement>("#sync-pass")!, "correct horse battery staple");
   await flushUntil(() => {
     const btn = [...document.querySelectorAll("button")].find(
-      (b) => b.textContent?.trim() === "保存链接",
+      (b) => b.textContent?.trim() === "登录",
     ) as HTMLButtonElement | undefined;
     return !!btn && !btn.disabled;
   });
-  clickButton(document.body, "保存链接");
+  clickButton(document.body, "登录");
 }
 
 describe("账号同步卡（桌面端）", () => {
@@ -227,12 +227,12 @@ describe("账号同步卡（桌面端）", () => {
     });
   });
 
-  it("保存链接时以账号+密码调用 linkSet,并刷新为已配置", async () => {
+  it("登录时以账号+密码调用 linkSet 完成同步配置,不自动执行首次同步", async () => {
     mounted = mountAppWithSyncCard();
     await flush();
     expect(syncStatusText()).toBe("同步：本地模式");
 
-    await saveSyncLink();
+    await loginSyncAccount();
 
     await flushUntil(() => syncStatusText() === "同步：已配置");
     expect(mocks.syncLinkSet).toHaveBeenCalledWith(
@@ -242,6 +242,8 @@ describe("账号同步卡（桌面端）", () => {
         password: "correct horse battery staple",
       }),
     );
+    // 登录只完成同步配置;数据传输只在用户点「立即同步」时发生
+    expect(mocks.syncNow).not.toHaveBeenCalled();
   });
 
   it("立即同步调用 syncNow 并展示报告", async () => {

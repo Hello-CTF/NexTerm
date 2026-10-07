@@ -259,12 +259,13 @@ describe("分享卡片 · 创建入口与角色", () => {
     expect(plainCalls.some((c) => c.url === "/admin/users")).toBe(false);
   });
 
-  it("未登录时提示先登录, 不发任何分享/设备请求", async () => {
+  it("未登录时只给说明卡(零按钮, 登录入口唯一在「账号」卡), 不发任何分享/设备请求", async () => {
     const calls = route(shareHandler());
     seedUser(null);
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("去登录") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
 
+    expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
 });
