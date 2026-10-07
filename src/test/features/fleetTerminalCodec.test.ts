@@ -34,7 +34,14 @@ const INFO = {
 const CREATED_AT_NS = BigInt(Date.UTC(2026, 9, 6, 21, 34, 56) / 1000) * 1_000_000_000n + 123456789n;
 
 // behavior 让每个用例按需注入设备端异常; 默认走 server.go 的标准应答。
-const behavior: { helloError?: string; attachError?: string; expectDigest?: string; helloErrorFrom?: number; createDefer?: boolean } = {};
+const behavior: {
+  helloError?: string;
+  attachError?: string;
+  expectDigest?: string;
+  helloErrorFrom?: number;
+  createDefer?: boolean;
+  killSessionError?: string;
+} = {};
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -157,9 +164,15 @@ class FakeWebSocket {
       case SupervisorFrameKind.Input:
         this.serverJSON(SupervisorFrameKind.InputAck, { written: frame.payload.length });
         return;
+      case SupervisorFrameKind.KillSession:
+        if (behavior.killSessionError) {
+          this.serverJSON(SupervisorFrameKind.Error, { code: behavior.killSessionError, message: "reap failed" });
+          return;
+        }
+        this.serverJSON(SupervisorFrameKind.OK, {});
+        return;
       case SupervisorFrameKind.Resize:
       case SupervisorFrameKind.Kill:
-      case SupervisorFrameKind.KillSession:
       case SupervisorFrameKind.Detach:
         this.serverJSON(SupervisorFrameKind.OK, {});
         return;
@@ -188,6 +201,7 @@ beforeEach(() => {
   behavior.expectDigest = undefined;
   behavior.helloErrorFrom = undefined;
   behavior.createDefer = undefined;
+  behavior.killSessionError = undefined;
 });
 
 describe("supervisor 帧编解码", () => {
@@ -414,24 +428,70 @@ describe("openDeviceTerminal / resumeDeviceTerminal", () => {
     bridge.detach();
   });
 
-  it("attach 失败时在回收桥接上 killSession 新会话并抛出原错误", async () => {
+  it("attach 失败时用 creator 旧连接 killSession 回收, 不新建 reaper WS", async () => {
     behavior.attachError = "identity";
     await expect(
       openDeviceTerminal({ deviceId: "d-1", stateDigest: "digest-1", cols: 80, rows: 24, factory }),
     ).rejects.toMatchObject({ code: "identity" });
-    while (FakeWebSocket.instances.length < 3) await tick();
-    const reaper = FakeWebSocket.instances[2];
-    await tick();
-    expect(reaper.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
+    // 只有 creator + attach 两条连接; killSession 走 creator (instances[0])
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const creator = FakeWebSocket.instances[0];
+    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
+    expect(creator.sentPayloadText(SupervisorFrameKind.KillSession)).toBe(
+      `{"id":"s-1","expect_incarnation":"inc-1","expect_created_at_unix_nano":${CREATED_AT_NS.toString()}}`,
+    );
   });
 
-  it("回收桥 hello 失败时保留原始 attach 错误, 不抛回收错误", async () => {
-    behavior.attachError = "identity";
-    // 第三条桥接 (回收桥) hello 失败: openDeviceTerminal 仍应抛原始 identity 错误
-    behavior.helloErrorFrom = 3;
+  it("attach connect 失败 (hello 被拒) 时同样用 creator 旧连接回收", async () => {
+    // 第二条连接 (attach connect) hello 失败: 与账号切换后 401/403 同路径,
+    // create 已成功, 回收必须走切换前已鉴权的 creator, 不新建 reaper WS。
+    behavior.helloErrorFrom = 2;
     await expect(
       openDeviceTerminal({ deviceId: "d-1", stateDigest: "digest-1", cols: 80, rows: 24, factory }),
-    ).rejects.toMatchObject({ code: "identity" });
+    ).rejects.toMatchObject({ code: "internal" });
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const creator = FakeWebSocket.instances[0];
+    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
+  });
+
+  it("creator 回收 killSession 失败时附加 reapError, 不掩盖原 attach 错误", async () => {
+    behavior.attachError = "identity";
+    behavior.killSessionError = "unavailable";
+    const error = await openDeviceTerminal({
+      deviceId: "d-1",
+      stateDigest: "digest-1",
+      cols: 80,
+      rows: 24,
+      factory,
+    }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "identity" });
+    expect(error).toMatchObject({ reapError: { code: "unavailable" } });
+  });
+
+  it("create 阶段取消: 关闭 creator 中断挂起, 不再发 create 后的帧", async () => {
+    behavior.createDefer = true;
+    const box: { cancel?: () => void } = {};
+    const promise = openDeviceTerminal({
+      deviceId: "d-1",
+      stateDigest: "digest-1",
+      cols: 80,
+      rows: 24,
+      factory,
+      onCancel: (fn) => {
+        box.cancel = fn ?? undefined;
+      },
+    });
+    while (FakeWebSocket.instances.length < 1) await tick();
+    const creator = FakeWebSocket.instances[0];
+    while (!creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.Create)) await tick();
+    box.cancel?.();
+    await expect(promise).rejects.toMatchObject({ code: "closed" });
+    await tick();
+    // creator 被关闭, 没有进入 attach, 也没有产生 killSession (create 未成功)
+    expect(creator.readyState).toBe(3);
+    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.Attach)).toBe(false);
+    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
   it("resume 用期望身份重attach, output 从 seq 0 重放 backlog", async () => {

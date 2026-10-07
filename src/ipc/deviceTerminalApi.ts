@@ -243,13 +243,16 @@ export class DeviceBridge {
   static connect(
     deviceId: string,
     stateDigest: string,
-    options: { factory?: WebSocketFactory; bridgePath?: (deviceId: string) => string } = {},
+    options: { factory?: WebSocketFactory; bridgePath?: (deviceId: string) => string; onBridge?: (bridge: DeviceBridge) => void } = {},
   ): Promise<DeviceBridge> {
     const path = options.bridgePath
       ? options.bridgePath(deviceId)
       : `/fleet/devices/${encodeURIComponent(deviceId)}/bridge`;
     const socket = (options.factory ?? defaultWebSocketFactory)(wsUrl(path));
     const bridge = new DeviceBridge(socket);
+    // onBridge 在 socket 建立 (含 CONNECTING/hello 阶段) 后立即回调,
+    // 调用方从首条连接起就可取消/关闭, 不必等 connect 兑现。
+    options.onBridge?.(bridge);
     // 浏览器 WebSocket 建立前 send 会抛 InvalidStateError; 等 open 再发 hello。
     // readyState 用数值判定: 测试 fake 不实现 WebSocket.OPEN 常量。
     const opened = new Promise<void>((resolve, reject) => {
@@ -500,9 +503,15 @@ export class DeviceBridge {
 }
 
 // openDeviceTerminal 在两条桥接上完成 create+attach (与 Go 客户端/acceptance
-// 同一模型), attach 失败时回收刚创建的会话, 不在设备上留下孤儿终端。
+// 同一模型)。creator 连接从建立起保留到 open 结束: create 成功后任何失败
+// (含 attach connect 被 401/403 拒绝) 都用这条切换前已鉴权的连接 killSession
+// 回收, 不新建依赖新账号/失效凭证的 reaper WS; killSession 失败以 reapError
+// 附加显式记录, 不掩盖原始错误。
 // wire 在 attach 前调用 (挂 output/exit/close 回调): attach 一批准对端立即
 // 开始重放 backlog, 同批到达的 output 帧不能丢。
+// onCancel 在 creator 连接建立 (含 CONNECTING/hello 阶段) 后即登记取消函数,
+// settled 后以 onCancel(null) 注销; 取消在 create 成功前直接关闭 creator
+// 中断挂起, create 成功后则留给回收路径用完再关。
 export async function openDeviceTerminal(options: {
   deviceId: string;
   stateDigest: string;
@@ -512,46 +521,66 @@ export async function openDeviceTerminal(options: {
   factory?: WebSocketFactory;
   bridgePath?: (deviceId: string) => string;
   wire?: (bridge: DeviceBridge) => void;
+  onCancel?: (cancel: (() => void) | null) => void;
 }): Promise<{ info: SupervisorSessionInfo; identity: SupervisorSessionIdentity; bridge: DeviceBridge }> {
-  const creator = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
-    factory: options.factory,
-    bridgePath: options.bridgePath,
-  });
-  let info: SupervisorSessionInfo;
-  try {
-    info = await creator.create({ cols: options.cols, rows: options.rows, command: options.command });
-  } finally {
-    creator.detach();
-  }
-  const identity: SupervisorSessionIdentity = {
-    createdAtUnixNano: unixNanoFromRFC3339(info.created_at),
-    incarnation: info.incarnation,
+  const { deviceId, stateDigest, factory, bridgePath } = options;
+  let creator: DeviceBridge | null = null;
+  let info: SupervisorSessionInfo | null = null;
+  let identity: SupervisorSessionIdentity | null = null;
+  let stage: "connecting" | "creating" | "created" | "attaching" = "connecting";
+  let cancelled = false;
+  let settled = false;
+  const cancel = () => {
+    if (cancelled || settled) return;
+    cancelled = true;
+    if (stage === "connecting" || stage === "creating") creator?.close();
   };
-  const bridge = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
-    factory: options.factory,
-    bridgePath: options.bridgePath,
-  });
-  options.wire?.(bridge);
   try {
-    const attached = await bridge.attach(info.id, identity);
-    return { info: attached, identity, bridge };
-  } catch (error) {
-    bridge.close();
-    // 回收整体 best-effort: 第三条桥接的 connect 或 killSession 任何一步失败
-    // 都不得掩盖原始 attach 错误 (调用方靠它给出 not_found/identity 等显式状态)。
+    creator = await DeviceBridge.connect(deviceId, stateDigest, {
+      factory,
+      bridgePath,
+      onBridge: (bridge) => {
+        creator = bridge;
+        options.onCancel?.(cancel);
+      },
+    });
+    if (cancelled) throw new DeviceTerminalError("closed", "打开已取消");
+    stage = "creating";
+    info = await creator.create({ cols: options.cols, rows: options.rows, command: options.command });
+    identity = {
+      createdAtUnixNano: unixNanoFromRFC3339(info.created_at),
+      incarnation: info.incarnation,
+    };
+    if (cancelled) throw new DeviceTerminalError("closed", "打开已取消");
+    stage = "attaching";
+    const bridge = await DeviceBridge.connect(deviceId, stateDigest, { factory, bridgePath });
     try {
-      const reaper = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
-        factory: options.factory,
-        bridgePath: options.bridgePath,
-      });
-      try {
-        await reaper.killSession(info.id, identity);
-      } finally {
-        reaper.detach();
+      options.wire?.(bridge);
+      const attached = await bridge.attach(info.id, identity);
+      if (cancelled) {
+        bridge.close();
+        throw new DeviceTerminalError("closed", "打开已取消");
       }
-    } catch {
-      // 回收失败不掩盖原始 attach 错误
+      settled = true;
+      options.onCancel?.(null);
+      creator.detach();
+      return { info: attached, identity, bridge };
+    } catch (error) {
+      bridge.close();
+      throw error;
     }
+  } catch (error) {
+    // create 成功后 (stage created/attaching) 任何失败都进入回收; creator 在
+    // 这些阶段保持打开 (取消也不会关它), 回收一定走这条已鉴权旧连接。
+    if (creator && info && identity) {
+      try {
+        await creator.killSession(info.id, identity);
+      } catch (reapError) {
+        (error as { reapError?: unknown }).reapError = reapError;
+      }
+    }
+    creator?.detach();
+    options.onCancel?.(null);
     throw error;
   }
 }

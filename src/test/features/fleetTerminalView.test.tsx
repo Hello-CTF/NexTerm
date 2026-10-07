@@ -75,6 +75,13 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   static forcedHelloError: string | undefined;
   static deferCreate = false;
+  // deferAttach 延迟 attach 响应, 让用例在 attach 在途时介入 (取消/账号切换)。
+  static deferAttach = false;
+  // rejectNew 模拟账号切换后的鉴权边界: 新连接在 WS 握手期被 401/403 拒绝
+  // (error + close 1006, 不会进入 supervisor hello)。
+  static rejectNew = false;
+  // helloHang 模拟对端不响应 (creator 挂起): hello 帧收到但永不回复。
+  static helloHang = false;
   readonly url: string;
   readonly sent: Uint8Array[] = [];
   binaryType = "";
@@ -86,6 +93,7 @@ class FakeWebSocket {
   constructor(url: string) {
     this.url = url;
     FakeWebSocket.instances.push(this);
+    if (FakeWebSocket.rejectNew) setTimeout(() => this.close(1006, ""), 0);
   }
 
   addEventListener(type: string, listener: (event: unknown) => void): void {
@@ -148,6 +156,9 @@ class FakeWebSocket {
   private respond(frame: SupervisorFrame): void {
     switch (frame.kind) {
       case SupervisorFrameKind.Hello: {
+        // rejectNew 模拟握手期 401/403: 不应答 hello, 由构造时的 close(1006) 结束
+        if (FakeWebSocket.rejectNew) return;
+        if (FakeWebSocket.helloHang) return;
         const hello = JSON.parse(new TextDecoder().decode(frame.payload)) as { state_digest?: string };
         const helloError = this.behavior.helloError ?? FakeWebSocket.forcedHelloError;
         if (helloError) {
@@ -169,6 +180,10 @@ class FakeWebSocket {
         this.serverJSON(SupervisorFrameKind.Created, INFO);
         return;
       case SupervisorFrameKind.Attach:
+        if (FakeWebSocket.deferAttach) {
+          setTimeout(() => this.serverJSON(SupervisorFrameKind.Attached, INFO), 50);
+          return;
+        }
         this.serverJSON(SupervisorFrameKind.Attached, INFO);
         return;
       case SupervisorFrameKind.Input:
@@ -234,6 +249,9 @@ beforeEach(() => {
   FakeWebSocket.instances = [];
   FakeWebSocket.forcedHelloError = undefined;
   FakeWebSocket.deferCreate = false;
+  FakeWebSocket.deferAttach = false;
+  FakeWebSocket.rejectNew = false;
+  FakeWebSocket.helloHang = false;
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("fetch", mocks.fetch);
   vi.stubGlobal("ResizeObserver", class {
@@ -380,19 +398,72 @@ describe("DeviceTerminalView 断开与恢复", () => {
 });
 
 describe("DeviceTerminalView 生命周期", () => {
-  it("打开途中卸载视图: 回收新会话 (killSession), 不留活桥接", async () => {
+  it("create 在途卸载视图: creator 被关闭中断, 不留活桥接", async () => {
     FakeWebSocket.deferCreate = true;
     const view = mount(createElement(DeviceTerminalView, { deviceId: "d-1", visible: true }));
     await flushUntil(() =>
       FakeWebSocket.instances[0]?.sentFrames().some((f) => f.kind === SupervisorFrameKind.Create),
     );
     view.unmount();
-    // create 延迟响应到达 → wire 判 disposed → detach → attach 失败 → 回收 killSession
+    // create 响应未到达 (creating 阶段): 取消直接关闭 creator 中断挂起,
+    // 不进入 attach, 也没有可回收的已确认会话
+    await flush();
+    await flush();
+    const creator = FakeWebSocket.instances[0];
+    expect(creator.readyState).toBe(3);
+    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.Attach)).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("create 成功后卸载视图: 经 creator 旧连接 killSession 回收, 不留活桥接", async () => {
+    FakeWebSocket.deferAttach = true;
+    mounted = await mountTerminal();
+    // create 已成功且 attach 已发出 (响应延迟): instances 0=creator, 1=attach
     await flushUntil(() =>
-      FakeWebSocket.instances.some((ws) => ws.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)),
+      FakeWebSocket.instances[1]?.sentFrames().some((f) => f.kind === SupervisorFrameKind.Attach),
+    );
+    mounted.unmount();
+    mounted = null;
+    // 取消发生在 create 成功后: creator 保留给回收; attach 桥被 cleanup
+    // detach 而失败 (或 attach 完成后取消生效), killSession 走 creator 旧连接
+    await flushUntil(() =>
+      FakeWebSocket.instances[0].sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession),
     );
     await flush();
     expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it("create 成功后账号切换 (logout/A->B): 新 attach 连接 401/403, 经 creator 旧连接完成 kill", async () => {
+    FakeWebSocket.deferCreate = true;
+    mounted = await mountTerminal();
+    // create 已发出未响应; 此时账号切换, 新连接在握手期 401/403
+    await flushUntil(() =>
+      FakeWebSocket.instances[0]?.sentFrames().some((f) => f.kind === SupervisorFrameKind.Create),
+    );
+    seedUser({ ...USER, id: "u-2" });
+    FakeWebSocket.rejectNew = true;
+    // create 响应到达后流程继续: attach connect 被 401/403 拒绝,
+    // 回收走切换前已鉴权的 creator 连接
+    await flushUntil(() =>
+      FakeWebSocket.instances[0].sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession),
+    );
+    await flush();
+    expect(FakeWebSocket.instances[0].sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
+    expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
+    // 失败态可见 (open 失败但没有孤儿 shell)
+    await flushUntil(() => bodyText().includes("终端不可用") || bodyText().includes("已断开"));
+  });
+
+  it("creator 挂起 (hello 无响应) 时取消可关闭首连接, 不发 create", async () => {
+    FakeWebSocket.helloHang = true;
+    const view = mount(createElement(DeviceTerminalView, { deviceId: "d-1", visible: true }));
+    await flushUntil(() => FakeWebSocket.instances.length >= 1);
+    view.unmount();
+    // connecting 阶段取消: 首连接被关闭, create 从未发出
+    await flushUntil(() => FakeWebSocket.instances[0].readyState === 3);
+    expect(FakeWebSocket.instances[0].sentFrames().some((f) => f.kind === SupervisorFrameKind.Create)).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
   it("自然 exit 后新开终端: 旧桥接先 detach 再替换", async () => {

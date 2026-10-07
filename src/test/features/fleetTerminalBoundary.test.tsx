@@ -73,6 +73,8 @@ const INFO = {
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  // deferAttach 延迟 attach 响应, 让用例在 attach 在途时介入 (取消/账号切换)。
+  static deferAttach = false;
   readonly url: string;
   readonly sent: Uint8Array[] = [];
   binaryType = "";
@@ -127,6 +129,10 @@ class FakeWebSocket {
         this.serverJSON(SupervisorFrameKind.Created, INFO);
         return;
       case SupervisorFrameKind.Attach:
+        if (FakeWebSocket.deferAttach) {
+          setTimeout(() => this.serverJSON(SupervisorFrameKind.Attached, INFO), 50);
+          return;
+        }
         this.serverJSON(SupervisorFrameKind.Attached, INFO);
         return;
       case SupervisorFrameKind.Input:
@@ -219,6 +225,7 @@ let mounted: MountedView | null = null;
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
+  FakeWebSocket.deferAttach = false;
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("fetch", mocks.fetch);
   vi.stubGlobal("ResizeObserver", class {
@@ -296,5 +303,28 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
     expect(attacher.sentFrames().some((f) => f.kind === SupervisorFrameKind.Detach)).toBe(true);
     // 桥接已关闭, 输入路径不复存在 (再发帧只会落到关闭的连接上)
     expect(attacher.readyState).toBe(3);
+  });
+
+  it("在途 open 遇账号切换: boundary 关标签后经 creator 旧连接回收 killSession, 全部旧 WS 关闭", async () => {
+    FakeWebSocket.deferAttach = true;
+    seedTabs();
+    mounted = mount(
+      <>
+        {createElement(TabHarness)}
+        {createElement(DeviceTerminalBoundary)}
+      </>,
+    );
+    // create 已成功且 attach 已发出 (响应延迟): instances 0=creator, 1=attach
+    await flushUntil(() =>
+      FakeWebSocket.instances[1]?.sentFrames().some((f) => f.kind === SupervisorFrameKind.Attach),
+    );
+    const creator = FakeWebSocket.instances[0];
+    seedUser(OTHER_USER);
+    // boundary 关闭标签 → 视图卸载 → 取消在途 open → creator 旧连接回收
+    await flushUntil(() => storeTabs().every((t) => t.kind !== "deviceTerminal"));
+    await flushUntil(() => creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession));
+    await flush();
+    expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
+    expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
   });
 });

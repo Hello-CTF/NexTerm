@@ -150,6 +150,10 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
   // unmountedRef 在组件真正卸载后保持 true, 供 resume/restart 的在途完成回调
   // 丢弃桥接 (按钮只在挂载期可点, 但 await 可能跨过卸载)。
   const unmountedRef = useRef(false);
+  // openCancelRef 是在途 open 的取消函数 (openDeviceTerminal 经 onCancel 登记,
+  // settled 后自动注销): 卸载/账号边界关闭标签时取消在途 open, 回收走 creator
+  // 旧连接, 不依赖账号切换后的新 WS。
+  const openCancelRef = useRef<(() => void) | null>(null);
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
   deviceRef.current = device;
@@ -224,16 +228,15 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
           cols,
           rows,
           wire,
+          onCancel: (cancel) => {
+            openCancelRef.current = cancel;
+          },
         });
         if (stale()) {
-          // 取消发生在 create 之后且会话尚未交付 UI: 按 id+identity 回收, 而非仅 detach
+          // 已 attach 但未及交付 UI (代次被并发重开取代): 用这条已鉴权旧桥
+          // kill 会话, 不新建依赖新账号/失效凭证的 WS。
+          void bridge.kill().catch(() => undefined);
           bridge.detach();
-          void killDeviceTerminal({
-            deviceId: gate.row.id,
-            stateDigest: gate.digest,
-            sessionId: info.id,
-            identity,
-          }).catch(() => undefined);
           return;
         }
         sessionRef.current = { id: info.id, identity };
@@ -375,6 +378,8 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
     return () => {
       disposed = true;
       unmountedRef.current = true;
+      openCancelRef.current?.();
+      openCancelRef.current = null;
       dataDisposable.dispose();
       appearanceDisposable();
       ro.disconnect();
