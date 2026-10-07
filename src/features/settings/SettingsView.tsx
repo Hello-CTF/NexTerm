@@ -36,6 +36,27 @@ import {
   IconZap,
 } from "../../ui/icons";
 
+// 设置分区导航:小标签直达对应区域;目标都是本视图里必然渲染的节点。
+const SETTINGS_SECTIONS = [
+  { id: "settings-appearance", label: "外观" },
+  { id: "settings-terminal", label: "终端" },
+  { id: "settings-ai-model", label: "AI 模型" },
+  { id: "settings-ai-rules", label: "AI 拦截" },
+  { id: "settings-memory", label: "长期记忆" },
+  { id: "settings-cron", label: "定时任务" },
+  { id: "settings-vault", label: "凭据保护" },
+  { id: "settings-known-hosts", label: "已知主机" },
+  { id: "settings-account", label: "账号同步" },
+  { id: "settings-bundle", label: "资产包" },
+  { id: "settings-files", label: "文件链接" },
+  { id: "settings-share", label: "分享" },
+  { id: "settings-shortcuts", label: "快捷键" },
+] as const;
+
+function jumpToSection(id: string): void {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 export function SettingsView() {
   const { pushToast } = useUi();
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
@@ -197,9 +218,29 @@ export function SettingsView() {
           </section>
         )}
 
-        <AppearanceCard />
+        <nav
+          aria-label="设置分区"
+          className="sticky top-0 z-10 -mx-5 border-b border-neutral-800/60 bg-[var(--nx-bg-pane)] px-5 py-1.5"
+        >
+          <div className="flex gap-1.5 overflow-x-auto">
+            {SETTINGS_SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="nx-chip shrink-0"
+                onClick={() => jumpToSection(s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </nav>
 
-        <section className="nx-card">
+        <div id="settings-appearance" className="scroll-mt-12">
+          <AppearanceCard />
+        </div>
+
+        <section id="settings-terminal" className="nx-card scroll-mt-12">
           <div className="mb-1 flex items-center gap-2">
             <IconTerminal size={15} className="text-neutral-400" />
             <span className="nx-card-title">终端</span>
@@ -225,7 +266,7 @@ export function SettingsView() {
           </label>
         </section>
 
-        <section className="nx-card">
+        <section id="settings-ai-model" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
             <span className="nx-card-title">AI 模型</span>
@@ -276,7 +317,7 @@ export function SettingsView() {
           </div>
         </section>
 
-        <section className="nx-card">
+        <section id="settings-ai-rules" className="nx-card scroll-mt-12">
           <div className="mb-1 flex items-center gap-2">
             <IconShield size={15} className="text-neutral-400" />
             <span className="nx-card-title">AI 拦截规则</span>
@@ -352,11 +393,15 @@ export function SettingsView() {
           </p>
         </section>
 
-        <MemoryCard />
+        <div id="settings-memory" className="scroll-mt-12">
+          <MemoryCard />
+        </div>
 
-        <CronCard />
+        <div id="settings-cron" className="scroll-mt-12">
+          <CronCard />
+        </div>
 
-        <section className="nx-card">
+        <section id="settings-vault" className="nx-card scroll-mt-12">
           <div className="mb-1 flex items-center gap-2">
             <IconLock size={15} className="text-neutral-400" />
             <span className="nx-card-title">凭据保护</span>
@@ -493,17 +538,29 @@ export function SettingsView() {
           )}
         </section>
 
-        <KnownHostsCard />
+        <div id="settings-known-hosts" className="scroll-mt-12">
+          <KnownHostsCard />
+        </div>
 
-        <SyncCard />
+        <div id="settings-account" className="scroll-mt-12">
+          <SyncCard />
+        </div>
 
-        <SyncBundleCard />
+        <div id="settings-bundle" className="scroll-mt-12">
+          <SyncBundleCard />
+        </div>
 
-        <FilesCard />
+        <div id="settings-files" className="scroll-mt-12">
+          <FilesCard />
+        </div>
 
-        <ShareCard />
+        <div id="settings-share" className="scroll-mt-12">
+          <ShareCard />
+        </div>
 
-        <ShortcutsCard />
+        <div id="settings-shortcuts" className="scroll-mt-12">
+          <ShortcutsCard />
+        </div>
       </div>
     </div>
   );

@@ -946,8 +946,14 @@ async function syncClientChecks(chrome, api) {
     set(document.querySelector("#sync-user"), "alice");
     set(document.querySelector("#sync-pass"), "fresh-password");
   })()`);
-  await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "保存链接" && !b.disabled)`);
-  await page.evaluate(`[...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存链接").click()`);
+  await page.waitFor(`(() => {
+    const card = document.querySelector("#sync-url")?.closest(".nx-card");
+    return !!card && [...card.querySelectorAll("button")].some((b) => b.textContent?.trim() === "登录" && !b.disabled);
+  })()`);
+  await page.evaluate(`(() => {
+    const card = document.querySelector("#sync-url")?.closest(".nx-card");
+    [...card.querySelectorAll("button")].find((b) => b.textContent?.trim() === "登录").click();
+  })()`);
   await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "立即同步" && !b.disabled)`);
   await sleep(300);
 

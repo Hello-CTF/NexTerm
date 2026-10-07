@@ -1,9 +1,10 @@
 // 个人账号卡片:当前用户、修改密码(重包裹 DEK)、恢复密钥、设备管理、退出登录。
-// 仅 WEB/DEMO 渲染;桌面端本地优先,账号体系在同步服务端(见 SyncCard)。
+// 未登录时是设置页唯一的登录入口(WEB/DEMO);桌面端本地优先,账号体系在同步服务端
+// (见 SyncCard 桌面端登录卡),未登录不渲染。
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { authApi, type AccountDevice } from "../../ipc/authApi";
+import { authApi, authAvailable, type AccountDevice } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
@@ -109,6 +110,8 @@ export function AuthCard() {
   };
 
   if (!user) {
+    // 桌面端没有账号门,登录按钮只会打开一个不存在的门:整卡不渲染,登录入口在 SyncCard。
+    if (!authAvailable()) return null;
     return (
       <section className="nx-card">
         <div className="mb-1 flex items-center gap-2">
@@ -117,7 +120,8 @@ export function AuthCard() {
         </div>
         <p className="nx-hint mb-3">
           当前未登录{status?.auth === "loopback" ? "(这台服务器允许匿名使用)" : ""}。
-          登录后可以跨设备同步资产;不登录也能继续本地使用。
+          登录后,这台服务器上的资产、分组、片段会端到端加密同步到你的账号,在其他设备上可用;
+          不登录也能继续本地使用。
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"

@@ -317,12 +317,18 @@ describe("SyncCard（Web 同步台）", () => {
     mounted = undefined;
   });
 
-  it("未登录时提示登录而不是同步内容", async () => {
+  it("未登录时只有账号卡一个登录入口,同步台不重复渲染", async () => {
     seedLoggedOut();
     mounted = mountSyncCard();
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("登录以启用同步");
+    expect(text).toContain("当前未登录");
+    // 全卡只有一个登录按钮(AuthCard 账号卡);WebSyncConsole 不再渲染第二个登录入口
+    const loginButtons = [...mounted.container.querySelectorAll("button")].filter(
+      (b) => b.textContent?.trim() === "登录",
+    );
+    expect(loginButtons.length).toBe(1);
+    expect(text).not.toContain("登录以启用同步");
     expect(text).not.toContain("解锁数据密钥");
   });
 
