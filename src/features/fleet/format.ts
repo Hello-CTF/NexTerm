@@ -1,0 +1,48 @@
+// 设备管理视图的展示格式化助手: 字节/时长/相对时间。
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB", "PiB"];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && value >= 1024; i++) {
+    value /= 1024;
+    unit = units[i];
+  }
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${unit}`;
+}
+
+export function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const s = Math.floor(seconds % 60);
+  const m = Math.floor((seconds / 60) % 60);
+  const h = Math.floor((seconds / 3600) % 24);
+  const d = Math.floor(seconds / 86400);
+  if (d > 0) return `${d} 天 ${h} 小时`;
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  if (m > 0) return `${m} 分 ${s} 秒`;
+  return `${s} 秒`;
+}
+
+export function formatTime(ms: number): string {
+  if (!ms) return "从未";
+  return new Date(ms).toLocaleString();
+}
+
+export function relativeTime(ms: number, now: number): string {
+  if (!ms) return "从未";
+  const delta = Math.max(0, now - ms);
+  if (delta < 10_000) return "刚刚";
+  if (delta < 60_000) return `${Math.floor(delta / 1000)} 秒前`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`;
+  return `${Math.floor(delta / 86_400_000)} 天前`;
+}
+
+// 心跳阈值: agent 默认 60s 上报一次指标, 3 分钟内有心跳即视为在线。
+export const ONLINE_THRESHOLD_MS = 180_000;
+
+export function isOnline(lastSeenAt: number, now: number): boolean {
+  return lastSeenAt > 0 && now - lastSeenAt <= ONLINE_THRESHOLD_MS;
+}

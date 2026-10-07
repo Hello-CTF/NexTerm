@@ -114,6 +114,7 @@ import {
   IconLayers,
   IconLoader,
   IconLock,
+  IconMonitor,
   IconNetwork,
   IconPlus,
   IconSearch,
@@ -140,6 +141,7 @@ const TAB_ICON = {
   credentialsText: IconCode,
   settings: IconSettings,
   audit: IconHistory,
+  devices: IconMonitor,
   background: IconActivity,
   history: IconClock,
 } as const;
@@ -405,6 +407,23 @@ function LazyAuthGate() {
   return <Gate />;
 }
 
+// LazyDevicesView 同理:设备管理经 auth store 引 demo/env,懒加载避免拖进桌面端测试的模块图。
+function LazyDevicesView() {
+  const [view, setView] = useState<React.ComponentType | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void import("../features/fleet/DevicesView").then((m) => {
+      if (alive) setView(() => m.DevicesView);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!view) return null;
+  const View = view;
+  return <View />;
+}
+
 export default function App() {
   const {
     workspaces,
@@ -594,6 +613,15 @@ export default function App() {
       id: "audit",
       kind: "audit",
       title: "审计日志",
+      closable: true,
+    });
+  }, []);
+
+  const openDevices = useCallback(() => {
+    useUi.getState().addTab({
+      id: "devices",
+      kind: "devices",
+      title: "设备管理",
       closable: true,
     });
   }, []);
@@ -991,6 +1019,7 @@ export default function App() {
 
   const railBottom = [
     { key: "ai", label: "AI 助手", icon: IconSparkles, onClick: () => setRightOpen(!rightDockOpen) },
+    { key: "devices", label: "设备管理", icon: IconMonitor, onClick: openDevices },
     { key: "audit", label: "审计日志", icon: IconHistory, onClick: openAudit },
     { key: "settings", label: "设置", icon: IconSettings, onClick: openSettings },
   ];
@@ -1843,6 +1872,8 @@ function PaneForTab({
       return <SettingsView />;
     case "audit":
       return <AuditView />;
+    case "devices":
+      return <LazyDevicesView />;
     case "background":
       return <BackgroundSessions visible={active} />;
     case "history":

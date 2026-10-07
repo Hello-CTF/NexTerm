@@ -120,7 +120,7 @@ export function toAuthError(e: unknown): AppError {
   return { code: "internal", message: e instanceof Error ? e.message : String(e) };
 }
 
-async function request<T>(method: string, path: string, body?: unknown, options: { csrf?: boolean } = {}): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, options: { csrf?: boolean } = {}): Promise<T> {
   if (DEMO) {
     const { demoAuthRequest } = await import("../demo/auth");
     return demoAuthRequest<T>(method, path, body);
