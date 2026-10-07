@@ -380,7 +380,7 @@ function CredentialDetail({
                       onChange={(e) => setNewSecret(e.target.value)}
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 引用型只记路径，库里不保存私钥正文 —— 文件被挪走就失效，那时来这里改路径。
+                      ↳ 只记路径，库里不保存私钥正文。文件被挪走就失效，来这里改路径。
                     </div>
                   </>
                 ) : (
@@ -395,7 +395,7 @@ function CredentialDetail({
                 )}
                 {newSecret.length > 0 && cred.usedBy.length > 0 && (
                   <div className="nx-hint mt-1.5">
-                    保存后，使用它的 {cred.usedBy.length} 个资产下次连接即生效 —— 不用逐个去改。
+                    保存后，使用它的 {cred.usedBy.length} 个资产下次连接时生效，不用逐个去改。
                   </div>
                 )}
               </div>
@@ -443,7 +443,7 @@ function CredentialDetail({
                 />
                 <div className="mt-1.5 flex items-center gap-2">
                   <span className="nx-hint flex-1">
-                    选填。口令跟私钥存在同一条凭据里，改这里不必重新提供私钥。
+                    选填。私钥本身带口令才需要填；改口令不用重填私钥。
                   </span>
                   {cred.hasPassphrase && newPassphrase.length === 0 && (
                     <button

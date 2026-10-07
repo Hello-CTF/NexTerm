@@ -175,7 +175,7 @@ export function NewCredentialModal({
               placeholder="例如：db-prod"
               onChange={(e) => setName(e.target.value)}
             />
-            <span className="nx-hint mt-1.5 block">名称只给你自己看，建议写成「用途-环境」。</span>
+            <span className="nx-hint mt-1.5 block">名称用来区分这条凭据给哪台主机用，之后选凭据时按名字认。</span>
           </div>
 
           {isKey ? (
@@ -291,7 +291,7 @@ export function NewCredentialModal({
                   placeholder="没有就留空"
                 />
                 <div className="nx-hint mt-1.5">
-                  ↳ 选填。口令跟私钥存在同一条凭据里，不会单独占一条。
+                  ↳ 选填。私钥本身带口令才需要填，连接时自动使用。
                 </div>
               </div>
             </>
@@ -306,6 +306,9 @@ export function NewCredentialModal({
                 autoComplete="off"
                 onChange={(e) => setValue(e.target.value)}
               />
+              <div className="nx-hint mt-1.5">
+                ↳ 把密码或 API 密钥原样填进来，保存后加密存入凭据库。
+              </div>
             </div>
           )}
         </div>
