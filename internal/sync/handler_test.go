@@ -20,7 +20,7 @@ func TestObjectHandlerRequiresUserIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	handler := NewObjectHandler(db.DB())
+	handler := NewObjectHandler(db.DB(), db.Backend())
 	for _, path := range []string{"/sync/v2/push", "/sync/v2/pull", "/sync/v2/ids"} {
 		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{"protocol":2}`)))
 		recorder := httptest.NewRecorder()
@@ -44,7 +44,7 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 	}
 	userID := user.ID
 	ctx = WithUserID(ctx, userID)
-	handler := NewObjectHandler(db.DB())
+	handler := NewObjectHandler(db.DB(), db.Backend())
 
 	post := func(path string, payload any) *httptest.ResponseRecorder {
 		body, err := json.Marshal(payload)

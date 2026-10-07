@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
 // errHeadMismatch 表示推送所基于的 head 与服务端当前 head 不一致:
@@ -65,7 +66,8 @@ func hashBlobHex(blob []byte) string {
 }
 
 type objectStore struct {
-	db *sql.DB
+	db      *sql.DB
+	backend store.Backend
 }
 
 func validObjectID(id string) bool {
@@ -120,11 +122,14 @@ func (o *objectStore) push(ctx context.Context, userID, knownHead string, object
 		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// 先确保 head 行存在再锁定: PostgreSQL 的 FOR UPDATE 锁不到未提交行, 首次推送的并发事务
+	// 靠 ON CONFLICT DO NOTHING 的插入互斥串行化; SQLite 单写者事务天然串行, 语义不变。
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_sync_head(user_id, head_hash) VALUES(?,?)
+ON CONFLICT(user_id) DO NOTHING`, userID, genesisHead(userID)); err != nil {
+		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
 	var current string
-	err = tx.QueryRowContext(ctx, "SELECT head_hash FROM user_sync_head WHERE user_id = ?", userID).Scan(&current)
-	if errors.Is(err, sql.ErrNoRows) {
-		current = genesisHead(userID)
-	} else if err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT head_hash FROM user_sync_head WHERE user_id = ?"+forUpdate(o.backend), userID).Scan(&current); err != nil {
 		return 0, 0, "", 0, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	if current != knownHead {
