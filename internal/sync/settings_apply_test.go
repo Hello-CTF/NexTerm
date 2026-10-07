@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,6 +23,13 @@ func applyKnownHostTombstone(t *testing.T, id string, deletedAt int64) ApplyObje
 	t.Helper()
 	return ApplyObject{ID: id, Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{
 		TargetKind: KindKnownHost, DeletedAt: deletedAt,
+	})}
+}
+
+func applyKnownHostConflictTombstone(t *testing.T, id, host string, port int32, keyType string, deletedAt int64) ApplyObject {
+	t.Helper()
+	return ApplyObject{ID: id, Kind: KindTombstone, Payload: applyPayload(t, tombstoneObject{
+		TargetKind: KindKnownHost, DeletedAt: deletedAt, Host: host, Port: port, KeyType: keyType,
 	})}
 }
 
@@ -288,6 +296,128 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 	if !stillThere {
 		t.Fatalf("incarnation lost after same-id tombstone replay: %+v", rows)
 	}
+}
+
+// 冲突墓碑(携带原败者三元组)遇到同 ID 不同三元组的较新胜出化身: 不得按用户删除清掉,
+// 必须安全 re-ID 保留内容与修订号, 冲突墓碑只清原槽位并随收集再传播(保留三元组)。
+func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
+	instance := newTestInstance(t, false)
+	sharedID := ids.New()
+	mustApplyObjects(t, instance, applyKnownHost(t, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:newer", 60))
+
+	result := mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, sharedID, "git.example.com", 22, "ssh-ed25519", 200))
+	requireApplyResult(t, result.Objects[0], ApplyResultApplied)
+	requireNoKnownHost(t, instance, sharedID)
+	requireSyncTombstone(t, instance, sharedID, KindKnownHost, 200)
+
+	rows, err := instance.db.KnownHostList(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	incarnation := rows[0]
+	if incarnation.ID == sharedID || incarnation.Host != "old.example.com" || incarnation.Fingerprint != "SHA256:newer" || incarnation.AddedAt != 60 {
+		t.Fatalf("newer incarnation must survive under a fresh id: %+v", incarnation)
+	}
+
+	// 收集: 原 ID 槽位是携带三元组的冲突墓碑, 新 ID 是存活对象。
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := objects[sharedID]
+	if entry.kind != KindTombstone || !strings.Contains(string(entry.plaintext), `"host":"git.example.com"`) {
+		t.Fatalf("conflict tombstone must carry the loser triple: %+v", entry)
+	}
+	if entry := objects[incarnation.ID]; entry.kind != KindKnownHost {
+		t.Fatalf("incarnation must be collected as a known_host object: %+v", entry)
+	}
+
+	// 同三元组冲突墓碑重放(其他设备的败者清理): 本地已无原 ID 行, 只合并墓碑, 化身不受影响。
+	replay := mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, sharedID, "git.example.com", 22, "ssh-ed25519", 200))
+	requireApplyResult(t, replay.Objects[0], ApplyResultApplied)
+	if row, found, _ := instance.service.engine.knownHostByID(context.Background(), incarnation.ID); !found || row.Fingerprint != "SHA256:newer" {
+		t.Fatalf("replay must not touch the re-IDed incarnation: %+v found=%v", row, found)
+	}
+}
+
+// 用户主动删除墓碑(无三元组)按 ID 生效, 不论本地行三元组; 再传播不得携带三元组。
+func TestApplyKnownHostUserTombstoneDeletesRegardlessOfTriple(t *testing.T) {
+	instance := newTestInstance(t, false)
+	rowID := ids.New()
+	mustApplyObjects(t, instance, applyKnownHost(t, rowID, "old.example.com", 22, "ssh-rsa", "SHA256:fp", 60))
+
+	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostTombstone(t, rowID, 100)).Objects[0], ApplyResultApplied)
+	requireNoKnownHost(t, instance, rowID)
+	requireSyncTombstone(t, instance, rowID, KindKnownHost, 100)
+
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := objects[rowID]
+	if entry.kind != KindTombstone || strings.Contains(string(entry.plaintext), "old.example.com") {
+		t.Fatalf("user tombstone must stay plain: %+v", entry)
+	}
+}
+
+// 本地行修订号较新: 冲突墓碑不得清除也不得 re-ID, 由本地行按标准反复活语义重推槽位。
+func TestApplyKnownHostConflictTombstoneNewerRowSkips(t *testing.T) {
+	instance := newTestInstance(t, false)
+	rowID := ids.New()
+	mustApplyObjects(t, instance, applyKnownHost(t, rowID, "old.example.com", 22, "ssh-rsa", "SHA256:newest", 300))
+
+	result := mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, rowID, "git.example.com", 22, "ssh-ed25519", 200))
+	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
+	requireKnownHost(t, instance, rowID, "SHA256:newest", 300)
+	requireNoSyncTombstone(t, instance, rowID)
+}
+
+// 同一 ID 的多个冲突墓碑: 三元组元数据确定性地跟随修订号最大者, 不拼出混合墓碑;
+// 更高修订的用户删除墓碑随后清除元数据, 再传播退化为纯用户删除。
+func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
+	instance := newTestInstance(t, false)
+	ctx := context.Background()
+	hostID := ids.New()
+
+	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, hostID, "a.example.com", 22, "ssh-rsa", 50)).Objects[0], ApplyResultApplied)
+	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, hostID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
+	assertTombstoneTriple := func(wantHost string, wantDeletedAt int64) {
+		t.Helper()
+		objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := objects[hostID]
+		if entry.kind != KindTombstone {
+			t.Fatalf("slot must carry a tombstone: %+v", entry)
+		}
+		if wantHost == "" {
+			if strings.Contains(string(entry.plaintext), "example.com") {
+				t.Fatalf("user tombstone must not carry a triple: %s", entry.plaintext)
+			}
+			return
+		}
+		if !strings.Contains(string(entry.plaintext), `"host":"`+wantHost+`"`) || !strings.Contains(string(entry.plaintext), `"deletedAt":`+strconv.FormatInt(wantDeletedAt, 10)) {
+			t.Fatalf("tombstone must carry triple %s at revision %d: %s", wantHost, wantDeletedAt, entry.plaintext)
+		}
+	}
+	assertTombstoneTriple("b.example.com", 200)
+
+	// 反向落地顺序: 低修订后落不得覆盖高修订元数据。
+	otherID := ids.New()
+	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
+	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "a.example.com", 22, "ssh-rsa", 50)).Objects[0], ApplyResultApplied)
+	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := objects[otherID]; !strings.Contains(string(entry.plaintext), `"host":"b.example.com"`) {
+		t.Fatalf("lower revision must not overwrite the meta: %s", entry.plaintext)
+	}
+
+	// 更高修订的用户删除: 元数据被清除, 再传播为纯用户删除。
+	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostTombstone(t, hostID, 300)).Objects[0], ApplyResultApplied)
+	assertTombstoneTriple("", 0)
 }
 
 func TestApplyKnownHostTripleConflictRemoteLoserTombstoned(t *testing.T) {

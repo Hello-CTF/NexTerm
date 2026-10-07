@@ -62,9 +62,13 @@ func deviceKnownHost(t *testing.T, device *testDevice, id string) (store.KnownHo
 }
 
 // deleteDeviceKnownHost/deleteDeviceAIProfile 模拟本地删除入口(后续 store/app 切片接入): 先立碑再删行。
+// 用户主动删除是普通墓碑: 同时清除冲突三元组元数据, 再传播不得携带败者三元组。
 func deleteDeviceKnownHost(t *testing.T, device *testDevice, id string, deletedAt int64) {
 	t.Helper()
 	ctx := context.Background()
+	if _, err := device.db.DB().ExecContext(ctx, "DELETE FROM setting WHERE key = ?", knownHostTombstoneMetaKey(id)); err != nil {
+		t.Fatal(err)
+	}
 	if err := device.engine.syncTombstonePut(ctx, id, KindKnownHost, deletedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +326,104 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 	// 二次同步静默。
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
+}
+
+// incarnationIDOf 返回设备上指定主机的行 ID(re-ID 后由调用方断言内容而非具体 ID)。
+func incarnationIDOf(t *testing.T, device *testDevice, host string) string {
+	t.Helper()
+	rows, err := device.db.KnownHostList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Host == host {
+			return row.ID
+		}
+	}
+	t.Fatalf("no row for host %s: %+v", host, rows)
+	return ""
+}
+
+// 评审回归(R4): 冲突墓碑与用户删除墓碑的区分。B 持旧副本(50), A 持同 ID 较新化身(60),
+// 三元组胜者(200): A 吸收冲突墓碑时必须安全 re-ID 保留较新信任内容(而非按用户删除清掉),
+// 原 ID 与败者 re-ID 槽位都收敛为墓碑, 最新内容在 A/B/rogue/新设备保留, 二次同步静默。
+func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceB := newTestDevice(t)
+	deviceA := newTestDevice(t)
+	rogue := newTestDevice(t)
+
+	sharedID := ids.New()
+	winnerID := ids.New()
+	putDeviceKnownHost(t, deviceB, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:older", 50)
+	putDeviceKnownHost(t, deviceB, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
+	putDeviceKnownHost(t, deviceA, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:newer", 60)
+	putDeviceKnownHost(t, deviceA, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
+	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
+
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(100)上服务端
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123") // B: 旧副本 re-ID + 冲突墓碑(200) + 推送
+	if _, found := deviceKnownHost(t, deviceB, sharedID); found {
+		t.Fatal("B must vacate the original id")
+	}
+	olderReID := incarnationIDOf(t, deviceB, "old.example.com")
+	if olderReID == sharedID {
+		t.Fatal("B must re-ID under a fresh id")
+	}
+
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123") // A: 较新化身 re-ID 保留, 旧 re-ID 槽位立碑
+
+	if _, found := deviceKnownHost(t, deviceA, sharedID); found {
+		t.Fatal("A must vacate the original id")
+	}
+	if _, found := deviceKnownHost(t, deviceA, olderReID); found {
+		t.Fatal("A must tombstone the older re-ID slot")
+	}
+	newerReID := incarnationIDOf(t, deviceA, "old.example.com")
+	if newerReID == sharedID || newerReID == olderReID {
+		t.Fatalf("A must preserve the newer incarnation under its own fresh id: %s", newerReID)
+	}
+	if row, found := deviceKnownHost(t, deviceA, newerReID); !found || row.Fingerprint != "SHA256:newer" || row.AddedAt != 60 {
+		t.Fatalf("A must preserve the newer trust content at revision 60: %+v found=%v", row, found)
+	}
+	assertDeviceTombstone(t, deviceA, sharedID, KindKnownHost)
+	assertDeviceTombstone(t, deviceA, olderReID, KindKnownHost)
+
+	// B 采纳较新化身并弃旧 re-ID; rogue 的败者行被同三元组冲突墓碑清除。
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, rogue, sharedID); found {
+		t.Fatal("rogue row must be deleted by the same-triple conflict tombstone")
+	}
+	if row, found := deviceKnownHost(t, deviceB, newerReID); !found || row.Fingerprint != "SHA256:newer" || row.AddedAt != 60 {
+		t.Fatalf("B must adopt the newer incarnation: %+v found=%v", row, found)
+	}
+	if _, found := deviceKnownHost(t, deviceB, olderReID); found {
+		t.Fatal("B must drop the older re-ID")
+	}
+
+	// 新设备获得最新信任内容(60); 服务端原 ID 与败者 re-ID 槽位都是墓碑, 新 ID 是存活对象。
+	newcomer := newTestDevice(t)
+	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
+	if row, found := deviceKnownHost(t, newcomer, newerReID); !found || row.Fingerprint != "SHA256:newer" || row.AddedAt != 60 {
+		t.Fatalf("newcomer must receive the newer incarnation: %+v found=%v", row, found)
+	}
+	if _, found := deviceKnownHost(t, newcomer, sharedID); found {
+		t.Fatal("newcomer must not resurrect the original id")
+	}
+	if _, found := deviceKnownHost(t, newcomer, olderReID); found {
+		t.Fatal("newcomer must not resurrect the older re-ID")
+	}
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", sharedID, KindTombstone)
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", olderReID, KindTombstone)
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", newerReID, KindKnownHost)
+
+	// 二次同步静默: 无持续重推, 无墓碑抖动。
+	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, rogue, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
 }
 

@@ -198,6 +198,68 @@ func (e *Engine) knownHostByID(ctx context.Context, id string) (store.KnownHostR
 	return row, true, nil
 }
 
+// knownHostTombstoneMetaPrefix 是 known_host 冲突墓碑三元组元数据的 setting 键前缀。
+// sync_tombstone 表只有 (id, kind, deleted_at), 三元组必须侧存, 否则再传播的墓碑退化为
+// 用户删除语义, 下游设备会把胜出的较新化身误删。元数据跟随修订号最大者(由写入门保证)。
+const knownHostTombstoneMetaPrefix = "sync.kh_tombstone."
+
+type knownHostTombstoneMeta struct {
+	Host    string `json:"host"`
+	Port    int32  `json:"port"`
+	KeyType string `json:"keyType"`
+}
+
+func knownHostTombstoneMetaKey(id string) string {
+	return knownHostTombstoneMetaPrefix + id
+}
+
+// knownHostTombstoneRecordTx 在事务内写入/合并 known_host 墓碑: sync_tombstone 按
+// scalarMax 合并修订号; 冲突三元组元数据仅在本次修订号不落后于现有墓碑时写入(用户删除
+// 传 nil, 表示清除元数据)。门条件在墓碑合并后求值, 因此等价于「新修订号 >= 旧修订号」,
+// 两个不同三元组的冲突墓碑并发落地时, 元数据确定性地跟随修订号最大者, 不拼出混合墓碑。
+func (e *Engine) knownHostTombstoneRecordTx(ctx context.Context, tx *sql.Tx, id string, deletedAt int64, conflict *knownHostTombstoneMeta) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
+		id, KindKnownHost, deletedAt); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if conflict != nil {
+		encoded, err := json.Marshal(conflict)
+		if err != nil {
+			return ipc.WrapError(ipc.CodeInternal, "无法编码冲突墓碑元数据", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+WHERE ? >= (SELECT deleted_at FROM sync_tombstone WHERE id = ?)`,
+			knownHostTombstoneMetaKey(id), string(encoded), deletedAt, deletedAt, id); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM setting WHERE key = ? AND ? >= (SELECT deleted_at FROM sync_tombstone WHERE id = ?)`,
+		knownHostTombstoneMetaKey(id), deletedAt, id); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return nil
+}
+
+// knownHostTombstoneMetas 读取全部 known_host 冲突墓碑元数据, 供墓碑再传播时还原三元组。
+func (e *Engine) knownHostTombstoneMetas(ctx context.Context) (map[string]knownHostTombstoneMeta, error) {
+	values, err := e.store.SettingListPrefix(ctx, knownHostTombstoneMetaPrefix)
+	if err != nil {
+		return nil, err
+	}
+	metas := make(map[string]knownHostTombstoneMeta, len(values))
+	for key, value := range values {
+		var meta knownHostTombstoneMeta
+		if err := json.Unmarshal([]byte(value), &meta); err != nil {
+			continue
+		}
+		metas[strings.TrimPrefix(key, knownHostTombstoneMetaPrefix)] = meta
+	}
+	return metas, nil
+}
+
 // knownHostTombstoneLoser 为三元组冲突的败者按胜者修订号立碑(已存在的更晚墓碑保留)。
 // 同 ID 的本地存活行(与败者不同三元组的化身)不得与同 ID 墓碑共存: 对象槽位二义会使
 // 服务端不收敛, 后续同 ID 墓碑也会误删它。化身在同一事务内让出原 ID——信任内容以全新 ID
@@ -221,10 +283,9 @@ func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostO
 		payload.ID, payload.Host, payload.Port, payload.KeyType); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
-		payload.ID, KindKnownHost, winnerAddedAt); err != nil {
-		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+	if err := e.knownHostTombstoneRecordTx(ctx, tx, payload.ID, winnerAddedAt, meta); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -266,10 +327,9 @@ func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, d
 		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", displacedID); err != nil {
 			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
-			displacedID, KindKnownHost, payload.AddedAt); err != nil {
-			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+		if err := e.knownHostTombstoneRecordTx(ctx, tx, displacedID, payload.AddedAt, meta); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO known_host(id, host, port, key_type, fingerprint, added_at) VALUES(?,?,?,?,?,?)
@@ -279,6 +339,9 @@ fingerprint=excluded.fingerprint, added_at=excluded.added_at`,
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", payload.ID); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM setting WHERE key = ?", knownHostTombstoneMetaKey(payload.ID)); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return tx.Commit()

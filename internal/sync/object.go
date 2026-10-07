@@ -144,6 +144,11 @@ type snippetObject struct {
 type tombstoneObject struct {
 	TargetKind string `json:"targetKind"`
 	DeletedAt  int64  `json:"deletedAt"`
+	// 冲突墓碑(仅 known_host)携带原败者三元组, 与用户主动删除墓碑区分:
+	// 吸收方据此识别同 ID 不同三元组的胜出化身并安全 re-ID, 而不是按用户删除清掉。
+	Host    string `json:"host,omitempty"`
+	Port    int32  `json:"port,omitempty"`
+	KeyType string `json:"keyType,omitempty"`
 }
 
 // knownHostObject 的修订号即 addedAt(重新接受主机密钥会刷新); 三元组 (host, port, keyType) 全局唯一。

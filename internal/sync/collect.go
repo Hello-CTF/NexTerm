@@ -50,11 +50,15 @@ type CollectAsset struct {
 	DeletedAt   *int64  `json:"deletedAt,omitempty"`
 }
 
-// CollectTombstone 条目与 tombstoneObject 语义对齐: id 即对象 id, deletedAt 即 LWW 修订号。
+// CollectTombstone 条目与 tombstoneObject 语义对齐: id 即对象 id, deletedAt 即 LWW 修订号;
+// known_host 冲突墓碑额外携带原败者三元组, 用户主动删除墓碑则无。
 type CollectTombstone struct {
 	ID         string `json:"id"`
 	TargetKind string `json:"targetKind"`
 	DeletedAt  int64  `json:"deletedAt"`
+	Host       string `json:"host,omitempty"`
+	Port       int32  `json:"port,omitempty"`
+	KeyType    string `json:"keyType,omitempty"`
 }
 
 // CollectCredential 只含元数据与明确状态的 secret; 服务端无 vault 时秘密不可得但条目不丢。
@@ -163,12 +167,22 @@ func (s *Service) CollectAssets(ctx context.Context, request CollectAssetsReques
 // 与 collectLocalObjects 以 ID 为键的覆盖语义一致。
 func (s *Service) CollectTombstones(ctx context.Context, request CollectTombstonesRequest) (CollectTombstonesResult, error) {
 	merged := map[string]CollectTombstone{}
+	knownHostMetas, err := s.engine.knownHostTombstoneMetas(ctx)
+	if err != nil {
+		return CollectTombstonesResult{}, err
+	}
 	syncRows, err := s.engine.syncTombstoneList(ctx)
 	if err != nil {
 		return CollectTombstonesResult{}, err
 	}
 	for _, row := range syncRows {
-		merged[row.ID] = CollectTombstone{ID: row.ID, TargetKind: row.Kind, DeletedAt: row.DeletedAt}
+		entry := CollectTombstone{ID: row.ID, TargetKind: row.Kind, DeletedAt: row.DeletedAt}
+		if row.Kind == KindKnownHost {
+			if meta, found := knownHostMetas[row.ID]; found {
+				entry.Host, entry.Port, entry.KeyType = meta.Host, meta.Port, meta.KeyType
+			}
+		}
+		merged[row.ID] = entry
 	}
 	credentialRows, err := s.store.CredentialTombstoneList(ctx)
 	if err != nil {

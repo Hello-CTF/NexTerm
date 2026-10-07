@@ -125,8 +125,18 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport) (m
 	if err != nil {
 		return nil, err
 	}
+	knownHostMetas, err := e.knownHostTombstoneMetas(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, tombstone := range tombstones {
-		payload, err := marshalObject(tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt})
+		object := tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt}
+		if tombstone.Kind == KindKnownHost {
+			if meta, found := knownHostMetas[tombstone.ID]; found {
+				object.Host, object.Port, object.KeyType = meta.Host, meta.Port, meta.KeyType
+			}
+		}
+		payload, err := marshalObject(object)
 		if err != nil {
 			return nil, err
 		}
@@ -600,7 +610,7 @@ func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plai
 	case KindTranscript:
 		return e.applyTranscriptTombstone(ctx, objectID, payload.DeletedAt, report)
 	case KindKnownHost:
-		return e.applyKnownHostTombstone(ctx, objectID, payload.DeletedAt, report)
+		return e.applyKnownHostTombstone(ctx, objectID, payload, report)
 	case KindAIProfile:
 		return e.applyAIProfileTombstone(ctx, objectID, payload.DeletedAt, report)
 	default:
@@ -836,24 +846,69 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 	return true, false
 }
 
-func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
+// applyKnownHostTombstone 区分冲突墓碑与用户主动删除: 冲突墓碑携带原败者三元组,
+// 本地同 ID 不同三元组且修订号不新的行是胜出的化身, 不得按用户删除清掉——安全 re-ID
+// 并随本轮 collect/push 传播, 冲突墓碑只清原槽位。同三元组败者行与用户删除按 ID 清除。
+func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, payload tombstoneObject, report *SyncReport) (bool, bool) {
 	local, exists, err := e.knownHostByID(ctx, objectID)
 	if err != nil {
 		report.warnf("无法检查已知主机 %s: %v", objectID, err)
 		return false, false
 	}
-	if exists && local.AddedAt > deletedAt {
+	if exists && local.AddedAt > payload.DeletedAt {
 		return false, false
 	}
-	if err := e.syncTombstonePut(ctx, objectID, KindKnownHost, deletedAt); err != nil {
+	conflict := payload.Host != "" || payload.KeyType != ""
+	if exists && conflict && (local.Host != payload.Host || local.Port != payload.Port || local.KeyType != payload.KeyType) {
+		newID, err := e.knownHostReincarnationID(&local)
+		if err != nil {
+			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			return false, false
+		}
+		tx, err := e.store.DB().BeginTx(ctx, nil)
+		if err != nil {
+			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			return false, false
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", newID, local.ID); err != nil {
+			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			return false, false
+		}
+		meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+		if err := e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta); err != nil {
+			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
+			return false, false
+		}
+		if err := tx.Commit(); err != nil {
+			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
+			return false, false
+		}
+		return true, false
+	}
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
 		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
 		return false, false
 	}
+	defer func() { _ = tx.Rollback() }()
 	if exists {
-		if err := e.store.KnownHostRemove(ctx, objectID); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", objectID); err != nil {
 			report.warnf("已知主机 %s 按墓碑删除失败: %v", objectID, err)
 			return false, false
 		}
+	}
+	var meta *knownHostTombstoneMeta
+	if conflict {
+		meta = &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+	}
+	if err := e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta); err != nil {
+		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
+		return false, false
+	}
+	if err := tx.Commit(); err != nil {
+		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
+		return false, false
 	}
 	return true, false
 }
