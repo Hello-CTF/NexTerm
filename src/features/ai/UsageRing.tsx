@@ -200,7 +200,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
         <button
           type="button"
           aria-expanded={detailsOpen}
-          title="查看用量分账"
+          title="查看用量明细"
           onClick={toggleDetails}
           className="pointer-coarse:min-h-6 pointer-coarse:min-w-6 inline-flex items-center justify-center"
         >
@@ -258,7 +258,7 @@ function UsageDetails({
   const scenes = summaryRows ? aggregateUsageRows(summaryRows) : null;
   return (
     <span className="absolute top-full right-0 z-20 mt-1.5 block w-64 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
-      <span className="mb-0.5 block font-medium text-neutral-100">用量分账</span>
+      <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
           本会话 {errorStats.runs} 轮 · 重试 {errorStats.retries}（{percentText(errorStats.retryRate)}）

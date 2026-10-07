@@ -71,9 +71,9 @@ interface RefChip {
 }
 
 const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "仅执行只读命令" },
-  { value: "read_write", label: "读写", hint: "写操作需确认" },
-  { value: "silent", label: "完全静默", hint: "仅拦截规则命中时确认" },
+  { value: "read_only", label: "只读", hint: "默认只能查看，不能改动；设备长期授权允许的终端写入或命令执行除外，其余改动与拿不准的操作都会被拒绝" },
+  { value: "read_write", label: "读写", hint: "只读直接做；改动先问你，选「本会话允许此类」后同类不再问" },
+  { value: "silent", label: "完全静默", hint: "改动直接执行不逐次问；拦截规则命中或拿不准的仍会问你" },
 ];
 
 const MODE_LABEL: Record<AiPermissionMode, string> = {
@@ -1065,7 +1065,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
     );
     if (!instruction) return;
     const allowWrite = await ask(
-      "允许 AI 直接操作这台终端吗？\n\n确定 = 允许 —— AI 可以替你敲命令\n取消 = 只读 —— AI 只能看，不能敲",
+      "允许 AI 直接操作这台终端吗？\n\n确定 = 允许：AI 可以替你敲命令\n取消 = 只读：AI 只能看，不能敲",
       { title: "终端接管（实验性功能）", kind: "warning" },
     );
 
@@ -1132,8 +1132,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       pushToast(
         "info",
         bindings.reclaimTakeover
-          ? `接管已启动 —— 顶部横幅可随时夺回，${reclaimKeyLabel} 亦可`
-          : "接管已启动 —— 顶部横幅可随时夺回",
+          ? `接管已启动：顶部横幅可随时夺回，${reclaimKeyLabel} 亦可`
+          : "接管已启动：顶部横幅可随时夺回",
       );
     } catch (e) {
       if (ownershipToken) {
@@ -1168,7 +1168,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
             className="nx-badge nx-badge-red"
             title={
               bindings.reclaimTakeover
-                ? `终端接管进行中 —— 按 ${reclaimKeyLabel} 随时夺回`
+                ? `终端接管进行中：按 ${reclaimKeyLabel} 随时夺回`
                 : "终端接管进行中"
             }
           >
@@ -1439,11 +1439,11 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
                 <IconAlert size={13} />
                 需要你确认
                 <span className="nx-spacer" />
-                <span className="nx-badge nx-badge-amber">{confirmCard.tool}</span>
+                <span className="nx-badge nx-badge-amber">{toolLabel(confirmCard.tool)}</span>
               </div>
               <ConfirmBody card={confirmCard} />
               <div className="mb-2 text-[10.5px] leading-relaxed text-neutral-500">
-                不想每次都弹这个？把它加为拦截规则，或在权限设置里调整档位。
+                不想每次都弹这个？把它加为拦截规则，或在权限设置里调整模式。
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -1638,7 +1638,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
               </>
             ) : (
               <span className="truncate text-[var(--nx-fg-tertiary)]">
-                {syncNotice.count > 0 ? `已补齐断线期间的 ${syncNotice.count} 条事件` : "连接已恢复，输出无缺失"}
+                {syncNotice.count > 0 ? `已补齐断线期间的 ${syncNotice.count} 条输出` : "连接已恢复，输出无缺失"}
               </span>
             )}
           </div>
@@ -1717,7 +1717,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           className="nx-textarea pointer-coarse:text-[16px] max-h-40 min-h-[64px] w-full [@media(max-height:480px)]:h-9 [@media(max-height:480px)]:min-h-0"
           placeholder={
             aiBusy
-              ? "运行中：Enter 发送补充指令，将在当前步骤完成后注入"
+              ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
               : sessionId
                 ? "向 NexTerm 提问，@ 引用资产或终端标签，可直接粘贴图片"
                 : "未连接会话（仍可全局提问）"
@@ -1841,7 +1841,7 @@ function readAsDataUrl(file: File): Promise<string> {
 }
 
 function statusText(s: StatusLine): string {
-  if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期工具结果…";
+  if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期的命令输出…";
   if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 轮 · 正在思考…` : "正在思考…";
   if (s.phase === "tool_args") {
     return `${preparingLabel(s.tool)} · 已生成 ${formatBytes(s.chars ?? 0)}`;
@@ -1861,6 +1861,23 @@ function preparingLabel(tool?: string): string {
       return "正在准备按键";
     default:
       return "正在准备工具参数";
+  }
+}
+
+function toolLabel(tool: string): string {
+  switch (tool) {
+    case "exec_commands":
+      return "执行命令";
+    case "write_file":
+      return "写入文件";
+    case "edit_file":
+      return "修改文件";
+    case "send_keys":
+      return "发送按键";
+    case "read_screen":
+      return "读取屏幕";
+    default:
+      return tool;
   }
 }
 
@@ -1915,10 +1932,10 @@ const ChatBubble = memo(function ChatBubble({
         {item.steer ? (
           <div className="mt-1 text-[10.5px] text-[var(--nx-fg-soft)]">
             {item.steer === "pending"
-              ? "补充指令 · 等待注入…"
+              ? "补充指令 · 等待送达…"
               : item.steer === "delivered"
-                ? "补充指令 · 已注入当前运行"
-                : "补充指令 · 未送达（模型未看到）"}
+                ? "补充指令 · 已送达"
+                : "补充指令 · 未送达（AI 没看到）"}
           </div>
         ) : null}
       </div>
@@ -1956,7 +1973,7 @@ const ChatBubble = memo(function ChatBubble({
         >
           <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
           {item.maxIterations ? (
-            <span className="nx-badge nx-badge-amber shrink-0">迭代上限</span>
+            <span className="nx-badge nx-badge-amber shrink-0">达到步数上限</span>
           ) : null}
           <span className="whitespace-pre-wrap">本轮出错：{item.text}</span>
           {item.retryable ? (
@@ -1996,8 +2013,8 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   const text =
     item.role === "confirm"
       ? pending
-        ? `等待确认：${item.tool}`
-        : `${item.tool} · ${item.resolution}`
+        ? `等待确认：${toolLabel(item.tool)}`
+        : `${toolLabel(item.tool)} · ${item.resolution}`
       : pending
         ? `等待回答：${item.question}`
         : `提问 · ${item.resolution}`;
@@ -2031,8 +2048,8 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
           {item.display}
         </span>
-        <span className="sr-only">{running ? "工具执行中" : item.panic ? "工具执行崩溃" : item.ok ? "工具执行成功" : "工具执行失败"}</span>
-        {item.panic && !running ? <span className="nx-badge nx-badge-red">崩溃</span> : null}
+        <span className="sr-only">{running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : "工具执行失败"}</span>
+        {item.panic && !running ? <span className="nx-badge nx-badge-red">出错</span> : null}
         {running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />
         ) : item.ok ? (
@@ -2072,12 +2089,12 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
   const [open, setOpen] = useState(timeline.status === "running");
   const running = timeline.status === "running";
   const label = running
-    ? "子代理 · 运行中"
+    ? "子任务 · 运行中"
     : timeline.status === "completed"
-      ? "子代理 · 已完成"
+      ? "子任务 · 已完成"
       : timeline.status === "canceled"
-        ? "子代理 · 已取消"
-        : "子代理 · 失败";
+        ? "子任务 · 已取消"
+        : "子任务 · 失败";
   return (
     <div className="mt-1.5 border-t border-neutral-800 pt-1.5">
       <button
@@ -2116,7 +2133,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
                 <IconXCircle size={10} className="shrink-0 text-red-300" />
               )}
               <span className="shrink-0 font-mono text-neutral-400">{tool.name || "tool"}</span>
-              {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">崩溃</span> : null}
+              {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">出错</span> : null}
               {tool.summary ? (
                 <span className="min-w-0 flex-1 truncate text-neutral-600" title={tool.summary}>
                   {tool.summary}
@@ -2149,7 +2166,7 @@ function PlanBubble({
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconList size={12} className="shrink-0 text-blue-300" />
         <span className="font-medium text-[var(--nx-fg-on-tint)]">方案已提交</span>
-        <span className="text-neutral-500">还没动任何东西</span>
+        <span className="text-neutral-500">还没有执行任何操作</span>
       </div>
       <div className="max-h-72 overflow-y-auto">
         <Markdown text={item.text} className="text-neutral-300" />

@@ -54,9 +54,9 @@ describe("模型用量汇总", () => {
     const view = mount(createElement(UsageSummarySection));
     await flush();
     const text = view.container.textContent ?? "";
-    expect(text).toContain("交互聊天");
+    expect(text).toContain("对话");
     expect(text).toContain("定时任务");
-    expect(text).toContain("子代理");
+    expect(text).toContain("子任务");
     expect(text).toContain("公司 DeepSeek");
     expect(text).toContain("未记录");
     expect(text).toContain("1.2k");
@@ -78,7 +78,7 @@ describe("模型用量汇总", () => {
     mocks.usageSummary.mockResolvedValue([]);
     const view = mount(createElement(UsageSummarySection));
     await flush();
-    expect(view.container.textContent).toContain("还没有已完成的 AI 运行");
+    expect(view.container.textContent).toContain("还没有已完成的 AI 任务");
     view.unmount();
   });
 });

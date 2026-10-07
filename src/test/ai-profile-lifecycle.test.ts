@@ -91,13 +91,13 @@ describe("circuit runtime state classification and copy", () => {
       "运行正常：暂无连续失败",
     );
     expect(circuitStatusText({ consecutiveFailures: 2, openUntil: null }, now)).toBe(
-      "未熔断：最近连续失败 2 次",
+      "运行中：最近连续失败 2 次",
     );
     expect(circuitStatusText({ consecutiveFailures: 5, openUntil: now + 60_000 }, now)).toBe(
-      "熔断中：连续失败 5 次，冷却剩余 60 秒",
+      "已暂停：连续失败 5 次，60 秒后自动恢复",
     );
     expect(circuitStatusText({ consecutiveFailures: 5, openUntil: now - 1 }, now)).toBe(
-      "冷却已结束：连续失败 5 次，等待请求恢复",
+      "暂停已结束：连续失败 5 次，下次请求时恢复",
     );
   });
 

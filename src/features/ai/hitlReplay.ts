@@ -27,18 +27,18 @@ export interface HitlFoldResult {
 }
 
 const RESUMED_LABEL = "已在服务端回答";
-const SWEPT_LABEL = "该交互已在服务端结束";
+const SWEPT_LABEL = "已在服务端结束";
 
 export function hitlTerminalLabel(reason: string): string {
   switch (reason) {
     case "canceled":
-      return "本轮已停止，交互已关闭";
+      return "本轮已停止，无需再处理";
     case "failed":
-      return "本轮已出错，交互已关闭";
+      return "本轮已出错，无需再处理";
     case "expired":
-      return "等待已过期，交互已关闭";
+      return "等待已过期，无需再处理";
     default:
-      return "本轮已结束，交互已关闭";
+      return "本轮已结束，无需再处理";
   }
 }
 

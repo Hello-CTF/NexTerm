@@ -87,7 +87,7 @@ describe("UsageRing variants", () => {
     const view = mount(createElement(UsageRing, { loadSummary: () => Promise.resolve([]) }));
     const button = view.container.querySelector("button");
     expect(button).not.toBeNull();
-    expect(button!.getAttribute("title")).toBe("查看用量分账");
+    expect(button!.getAttribute("title")).toBe("查看用量明细");
     expect(button!.getAttribute("aria-expanded")).toBe("false");
     expect(button!.className).toContain("pointer-coarse:min-h-6");
     expect(button!.className).toContain("pointer-coarse:min-w-6");
@@ -130,7 +130,7 @@ describe("UsageRing details", () => {
     click(button!);
     await flush();
     const text = view.container.textContent ?? "";
-    expect(text).toContain("用量分账");
+    expect(text).toContain("用量明细");
     expect(text).toContain("本会话 2 轮");
     expect(text).toContain("重试 1");
     expect(text).toContain("失败 1");
@@ -142,7 +142,7 @@ describe("UsageRing details", () => {
 
     click(button!);
     await flush();
-    expect(view.container.textContent ?? "").not.toContain("用量分账");
+    expect(view.container.textContent ?? "").not.toContain("用量明细");
     view.unmount();
   });
 
