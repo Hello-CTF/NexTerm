@@ -53,8 +53,8 @@ VALUES(?,?,?,?,?,?,?,?)`, ids.NowMS(), input.SessionID, input.AssetID, input.Sou
 func (s *Store) AuditCount(ctx context.Context, query AuditQuery) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log
-WHERE (? IS NULL OR session_id = ?) AND (? IS NULL OR asset_id = ?)
-AND (? IS NULL OR source = ?) AND (? IS NULL OR kind = ?)`,
+WHERE (CAST(? AS TEXT) IS NULL OR session_id = ?) AND (CAST(? AS TEXT) IS NULL OR asset_id = ?)
+AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)`,
 		query.SessionID, query.SessionID, query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind).Scan(&count)
 	if err != nil {
 		return 0, dbError(err)
@@ -69,8 +69,8 @@ func (s *Store) AuditQuery(ctx context.Context, query AuditQuery) ([]AuditRow, e
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms
 FROM audit_log
-WHERE (? IS NULL OR session_id = ?) AND (? IS NULL OR asset_id = ?)
-AND (? IS NULL OR source = ?) AND (? IS NULL OR kind = ?)
+WHERE (CAST(? AS TEXT) IS NULL OR session_id = ?) AND (CAST(? AS TEXT) IS NULL OR asset_id = ?)
+AND (CAST(? AS TEXT) IS NULL OR source = ?) AND (CAST(? AS TEXT) IS NULL OR kind = ?)
 ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, query.SessionID, query.SessionID,
 		query.AssetID, query.AssetID, query.Source, query.Source, query.Kind, query.Kind, limit, query.Offset)
 	if err != nil {
