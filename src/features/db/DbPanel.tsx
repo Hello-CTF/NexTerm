@@ -184,7 +184,7 @@ function MysqlView({ connId }: { connId: string }) {
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">张表</span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（规划中）" disabled>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="查询历史（即将推出）" disabled>
           <IconHistory size={13} />
           历史
         </button>
@@ -330,7 +330,7 @@ function ResultTable({ result }: { result: QueryResult }) {
         <span>
           {result.rows.length} 行 · {result.durationMs}ms
         </span>
-        {result.truncated && <span className="text-amber-300">结果已截断</span>}
+        {result.truncated && <span className="text-amber-300">超过 5000 行，仅显示前 5000 行</span>}
         <span className="nx-spacer" />
         <button className="nx-link" onClick={() => void copyAsCsv(result)}>
           复制 CSV
@@ -350,7 +350,11 @@ async function copyAsCsv(result: QueryResult) {
   await navigator.clipboard.writeText(lines.join("\n"));
 }
 
-const DESTRUCTIVE_REDIS_COMMANDS = new Set(["FLUSHALL", "FLUSHDB", "SHUTDOWN"]);
+const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {
+  FLUSHALL: "该操作会删除 Redis 里的所有键，立即生效且不可恢复。",
+  FLUSHDB: "该操作会删除当前数据库的所有键，立即生效且不可恢复。",
+  SHUTDOWN: "该操作会停止 Redis 服务，正在使用它的应用会立即断连。",
+};
 
 function RedisView({ connId }: { connId: string }) {
   const { pushToast } = useUi();
@@ -411,10 +415,9 @@ function RedisView({ connId }: { connId: string }) {
     if (!text) return;
     const args = text.split(/\s+/);
     const command = args[0].toUpperCase();
-    if (DESTRUCTIVE_REDIS_COMMANDS.has(command)) {
-      const go = await ask(`执行 Redis ${command}？\n\n该操作会永久删除数据或停止服务，不可恢复。`, {
-        kind: "warning",
-      });
+    const warning = DESTRUCTIVE_REDIS_WARNINGS[command];
+    if (warning) {
+      const go = await ask(`执行 Redis ${command}？\n\n${warning}`, { kind: "warning" });
       if (!go) return;
     }
     try {
@@ -426,10 +429,11 @@ function RedisView({ connId }: { connId: string }) {
 
   const editTtl = async () => {
     if (!view) return;
-    const input = await promptText(`设置 TTL 秒数（当前 ${String(view.ttl)}，-1 表示持久化）`, String(view.ttl));
+    const current = String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒`;
+    const input = await promptText(`设置过期时间（秒，填 -1 表示永不过期）。当前：${current}`, String(view.ttl));
     if (input === null) return;
     await dbApi.redisSetTtl(connId, String(view.key), Number(input));
-    pushToast("success", "TTL 已更新");
+    pushToast("success", "过期时间已更新");
     void inspect(String(view.key));
   };
 
@@ -449,7 +453,7 @@ function RedisView({ connId }: { connId: string }) {
             placeholder="匹配模式，如 products:*"
             aria-label="键匹配模式"
           />
-          <button className="nx-btn nx-btn-sm px-3" title="按 SCAN 分页拉取" onClick={() => void doScan(0)}>
+          <button className="nx-btn nx-btn-sm px-3" title="按当前模式重新扫描" onClick={() => void doScan(0)}>
             SCAN
           </button>
         </div>
@@ -502,7 +506,7 @@ function RedisView({ connId }: { connId: string }) {
             className="shrink-0 border-t border-neutral-800/60 px-2.5 py-1.5 text-left text-[11.5px] text-blue-300 hover:bg-neutral-800/50"
             onClick={() => void doScan(cursor)}
           >
-            下一页（cursor={cursor}）
+            下一页
           </button>
         )}
       </div>
@@ -514,12 +518,12 @@ function RedisView({ connId }: { connId: string }) {
               <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
               <span className="nx-toolbar-title min-w-0 flex-1 truncate font-mono">{String(view.key)}</span>
               <span className="nx-hint">
-                TTL {String(view.ttl) === "-1" ? "持久化" : `${String(view.ttl)}s`}
+                {String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒后过期`}
               </span>
               <div className="nx-spacer" />
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void editTtl()}>
                 <IconSettings size={13} />
-                改 TTL
+                改过期时间
               </button>
             </div>
             <pre className="nx-pre min-h-0 flex-1 overflow-auto rounded-none bg-term">
@@ -558,7 +562,7 @@ function RedisView({ connId }: { connId: string }) {
 
         <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
           <div className="mb-1.5 text-[11px] text-neutral-500">
-            命令台 · FLUSHALL / FLUSHDB / SHUTDOWN 执行前会要求确认
+            命令台 · FLUSHALL / FLUSHDB 会删除数据，SHUTDOWN 会停止服务，执行前都会要求确认
           </div>
           <div className="flex items-center gap-1.5">
             <input

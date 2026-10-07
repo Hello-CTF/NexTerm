@@ -101,8 +101,12 @@ function TableQueryBody({
   return <>{children}</>;
 }
 
+function isUntaggedImage(i: ImageSummary): boolean {
+  return !(i.repository && i.repository !== "<none>");
+}
+
 function imageRef(i: ImageSummary): string {
-  return i.repository && i.repository !== "<none>" ? `${i.repository}:${i.tag}` : i.id;
+  return isUntaggedImage(i) ? i.id : `${i.repository}:${i.tag}`;
 }
 
 export function DockerPanel({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {
@@ -176,7 +180,11 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const key = c.id;
     if (action === "remove") {
       if (pending.has(key)) return;
-      if (!(await ask(`删除容器 ${c.name}？\n\n该操作不可恢复。`, { kind: "warning" }))) return;
+      const go = await ask(
+        `删除容器 ${c.name}？\n\n容器内未挂载到卷或主机目录的数据会丢失，不可恢复；挂载卷和主机目录不会被删除。`,
+        { kind: "warning" },
+      );
+      if (!go) return;
     }
     markPending(key, true);
     const snapshot = qc.getQueryData<ContainerSummary[]>(["docker-ps", sessionId]);
@@ -204,7 +212,11 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     const key = imageKey(i);
     const ref = imageRef(i);
     if (pending.has(key)) return;
-    if (!(await ask(`删除镜像 ${ref}？\n\n该操作不可恢复。`, { kind: "warning" }))) return;
+    const consequence = isUntaggedImage(i)
+      ? "删除的是镜像本体；删除后这台主机上将没有这个镜像，不能再用它创建容器。"
+      : "删除的是这个镜像条目（标签）；同一镜像若还有其他标签，仍可用来创建容器。";
+    if (!(await ask(`删除镜像 ${ref}？\n\n${consequence}`, { kind: "warning" })))
+      return;
     markPending(key, true);
     const snapshot = qc.getQueryData<ImageSummary[]>(["docker-images", sessionId]);
     qc.setQueryData<ImageSummary[]>(["docker-images", sessionId], (old) =>
@@ -227,13 +239,26 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     if (!keys.length || bulkBusy) return;
     const isContainer = tab === "containers";
     const label = isContainer ? "容器" : "镜像";
-    if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n该操作不可恢复。`, { kind: "warning" })))
+    const imageTargets = isContainer ? [] : iRows.filter((i) => picked.has(imageKey(i)));
+    const untaggedCount = imageTargets.filter(isUntaggedImage).length;
+    let consequence: string;
+    if (isContainer) {
+      consequence = "容器内未挂载到卷或主机目录的数据会丢失，不可恢复；挂载卷和主机目录不会被删除。";
+    } else if (untaggedCount === 0) {
+      consequence = "删除的是选中的镜像条目（标签）；同一镜像若还有其他标签，仍可用来创建容器。";
+    } else if (untaggedCount === imageTargets.length) {
+      consequence = "无标签的镜像会删除镜像本体；删除后本机不再有这些镜像，不能再用它们创建容器。";
+    } else {
+      consequence =
+        "无标签的镜像会删除镜像本体，删除后本机不再有该镜像，不能再用它创建容器；其余镜像只删除对应标签，同一镜像若还有其他标签仍可用来创建容器。";
+    }
+    if (!(await ask(`删除选中的 ${keys.length} 个${label}？\n\n${consequence}`, { kind: "warning" })))
       return;
 
     setBulkBusy(true);
     const targets = isContainer
       ? cRows.filter((c) => picked.has(c.id))
-      : iRows.filter((i) => picked.has(imageKey(i)));
+      : imageTargets;
 
     if (isContainer) {
       qc.setQueryData<ContainerSummary[]>(["docker-ps", sessionId], (old) =>
@@ -634,7 +659,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     <td className="nx-mono truncate text-neutral-200" title={`${i.repository}:${i.tag}`}>
                       {i.repository}
                       <span className="text-neutral-500">:{i.tag}</span>
-                      {i.repository === "<none>" && <span className="nx-badge ml-1.5">悬空</span>}
+                      {i.repository === "<none>" && <span className="nx-badge ml-1.5">无标签</span>}
                     </td>
                     <td>{i.size}</td>
                     <td className="text-neutral-500">{i.createdSince}</td>
@@ -805,7 +830,7 @@ function OverviewStrip({ sessionId, visible }: { sessionId: string; visible: boo
   return (
     <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-800/60 px-3 py-1.5">
       <span className="shrink-0 text-[11px] text-neutral-500">主机概览</span>
-      {entries.length === 0 && <span className="nx-hint">内核未返回主机统计</span>}
+      {entries.length === 0 && <span className="nx-hint">主机没有返回统计数据</span>}
       {entries.map(([key, value]) => (
         <span key={key} className="nx-chip shrink-0" title={key}>
           {HOST_STAT_LABELS[key] ?? key}

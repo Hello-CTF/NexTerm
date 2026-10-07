@@ -196,13 +196,13 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
       return;
     }
     if (!sessionId) {
-      pushToast("info", "先连接一台机器 —— 转发要挂在某条 SSH 会话上");
+      pushToast("info", "先连接一台机器 —— 端口转发需要一条 SSH 会话作为出口");
       return;
     }
     if (localSession) {
       pushToast(
         "info",
-        "当前是「当前设备」会话 —— 本机就是目标机器，转发没有意义；要访问内网其他主机请先连一台 SSH 资产",
+        "当前是「当前设备」会话，本机就是目标机器，不需要转发；要访问内网其他主机，请先连接一台 SSH 资产",
       );
       return;
     }
@@ -527,8 +527,8 @@ export function ForwardPanel({ sessionId }: { sessionId?: string }) {
                       onBlur={onTargetHostBlur}
                       placeholder={
                         kind === "remote"
-                          ? "本地服务主机（相对本机解析，如 127.0.0.1）"
-                          : "目标主机（相对远端解析，如 172.17.0.5 / db.internal）"
+                          ? "本地服务主机（在本机解析，如 127.0.0.1）"
+                          : "目标主机（在远端机器上解析，如 172.17.0.5 / db.internal）"
                       }
                       aria-label="目标主机"
                       autoComplete="off"
