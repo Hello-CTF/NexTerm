@@ -32,19 +32,54 @@ export async function call<T>(cmd: string, args?: Record<string, unknown>): Prom
   }
 }
 
+const CSRF_HEADER = "X-NexTerm-CSRF";
+
+// auth=on 下服务端对 cookie 会话的一切 POST(含 /rpc 读命令)强制校验 CSRF 头,
+// 拒绝形状固定为 403 + { code:"forbidden", message 含 "CSRF" }。
+function isCsrfRejection(status: number, text: string): boolean {
+  if (status !== 403) return false;
+  try {
+    const body = JSON.parse(text) as { error?: { code?: string; message?: string } } | null;
+    return (
+      body?.error?.code === "forbidden" &&
+      typeof body.error.message === "string" &&
+      body.error.message.includes("CSRF")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function postRpc(payload: string, csrf: string | null): Promise<Response> {
+  return authedFetch(httpUrl("/rpc"), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(csrf ? { [CSRF_HEADER]: csrf } : {}),
+    },
+    body: payload,
+  });
+}
+
 async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
-  const res = await authedFetch(httpUrl("/rpc"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      cmd,
-      args: args ? requestBody : null,
-      ...(channel === undefined ? {} : { channel }),
-      ...(stableClientId === undefined ? {} : { clientId: stableClientId }),
-    }),
+  const requestPayload = JSON.stringify({
+    cmd,
+    args: args ? requestBody : null,
+    ...(channel === undefined ? {} : { channel }),
+    ...(stableClientId === undefined ? {} : { clientId: stableClientId }),
   });
-  const text = await res.text();
+  // 延迟加载 authApi:避免静态依赖链把 demo/index 拉进只 mock 了 ipc/env 的测试。
+  const { authApi, getCsrfToken } = await import("./authApi");
+  let res = await postRpc(requestPayload, getCsrfToken());
+  let text = await res.text();
+  if (isCsrfRejection(res.status, text)) {
+    // 会话可能已轮换导致旧令牌失效:经 /auth/me 刷新并重试同一请求,只此一次。
+    // CSRF 拒绝发生在中间件、未触达命令 handler,重试不会产生重复副作用。
+    await authApi.me();
+    res = await postRpc(requestPayload, getCsrfToken());
+    text = await res.text();
+  }
   let body: { ok?: boolean; data?: unknown; error?: unknown } | null = null;
   try {
     body = JSON.parse(text) as { ok?: boolean; data?: unknown; error?: unknown };
