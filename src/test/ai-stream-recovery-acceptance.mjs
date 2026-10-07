@@ -224,7 +224,7 @@ async function startServer() {
   const port = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-r188-server-"));
   const log = fs.openSync(path.join(OUT, "server.log"), "w");
-  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data, "--web-root", path.join(ROOT, "dist")], {
+  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data, "--web-root", path.join(ROOT, "dist"), "--auth=loopback"], {
     cwd: ROOT,
     env: { ...globalThis.process.env, NEXTERM_MASTER_KEY: "r188-browser-master" },
     stdio: ["ignore", log, log],
