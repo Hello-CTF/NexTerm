@@ -33,6 +33,7 @@ type ProductionConfig struct {
 	Docker                  *docker.Service
 	RetentionInterval       time.Duration
 	RetentionAttemptTimeout time.Duration
+	DB                      store.BackendConfig
 }
 
 func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production, returnErr error) {
@@ -53,7 +54,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if config.Config.Version == "" {
 		config.Config.Version = version.Version
 	}
-	database, err := store.OpenWithOptions(ctx, filepath.Join(config.DataDir, "data.db"), store.OpenOptions{Logger: config.Config.Logger})
+	database, err := openProductionStore(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -164,4 +165,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		return nil, err
 	}
 	return production, nil
+}
+
+func openProductionStore(ctx context.Context, config ProductionConfig) (*store.Store, error) {
+	if config.DB.Backend == store.BackendPostgres {
+		return store.OpenBackend(ctx, config.DB, store.OpenOptions{Logger: config.Config.Logger})
+	}
+	return store.OpenWithOptions(ctx, filepath.Join(config.DataDir, "data.db"), store.OpenOptions{Logger: config.Config.Logger})
 }

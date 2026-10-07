@@ -99,6 +99,31 @@ func ResolveMasterKey(masterKey, masterKeyFile string) (string, error) {
 	return key, nil
 }
 
+func ResolveDBPassword(passwordFile string) (string, error) {
+	if passwordFile == "" {
+		return "", nil
+	}
+	info, err := os.Stat(passwordFile)
+	if err != nil {
+		return "", fmt.Errorf("stat database password file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("database password file %s is not a regular file", passwordFile)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("database password file %s must have 0600 permissions (got %04o)", passwordFile, info.Mode().Perm())
+	}
+	data, err := os.ReadFile(passwordFile)
+	if err != nil {
+		return "", fmt.Errorf("read database password file: %w", err)
+	}
+	password := strings.TrimSpace(string(data))
+	if password == "" {
+		return "", fmt.Errorf("database password file %s is empty", passwordFile)
+	}
+	return password, nil
+}
+
 func Usage(program string) string {
 	return fmt.Sprintf(`Usage:
   %s [flags] [serve]
@@ -119,6 +144,15 @@ Flags:
   --public-base-url URL  Default file access base URL for public image links
                       (env NEXTERM_PUBLIC_BASE_URL); http/https only, path prefix allowed,
                       userinfo/query/fragment rejected; unset = same-origin relative links
+  --db BACKEND        Database backend: sqlite or postgres (env NEXTERM_DB, default sqlite);
+                      postgres runs the embedded migrations/postgres schema and, in this first
+                      version, supports a single writer instance only
+  --db-dsn DSN        Postgres connection string (env NEXTERM_DB_DSN), e.g.
+                      postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt;
+                      requires --db=postgres; the password may come from --db-password-file instead
+  --db-password-file PATH  Read the postgres password from a 0600 file
+                      (env NEXTERM_DB_PASSWORD_FILE); rejected when the DSN already has a password
+  --db-max-open-conns N  Postgres pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --version           Print the version

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
 type Command string
@@ -22,18 +24,22 @@ const (
 )
 
 type Invocation struct {
-	Command       Command
-	Listen        string
-	DataDir       string
-	WebRoot       string
-	MasterKey     string
-	MasterKeyFile string
-	Auth          string
-	PublicBaseURL string
-	SyncOnly      bool
-	RequireVault  bool
-	Help          bool
-	Version       bool
+	Command        Command
+	Listen         string
+	DataDir        string
+	WebRoot        string
+	MasterKey      string
+	MasterKeyFile  string
+	Auth           string
+	PublicBaseURL  string
+	DB             string
+	DBDSN          string
+	DBPasswordFile string
+	DBMaxOpenConns int
+	SyncOnly       bool
+	RequireVault   bool
+	Help           bool
+	Version        bool
 }
 
 // FilePublicBaseURLSettingKey 是持久化在 setting 表的文件访问基础 URL 键,
@@ -76,14 +82,18 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		getenv = func(string) string { return "" }
 	}
 	invocation := Invocation{
-		Listen:        valueOr(getenv("NEXTERM_LISTEN"), "0.0.0.0:8080"),
-		DataDir:       getenv("NEXTERM_DATA_DIR"),
-		WebRoot:       getenv("NEXTERM_WEB_ROOT"),
-		MasterKey:     getenv("NEXTERM_MASTER_KEY"),
-		MasterKeyFile: getenv("NEXTERM_MASTER_KEY_FILE"),
-		Auth:          valueOr(getenv("NEXTERM_AUTH"), AuthOn),
-		PublicBaseURL: getenv("NEXTERM_PUBLIC_BASE_URL"),
+		Listen:         valueOr(getenv("NEXTERM_LISTEN"), "0.0.0.0:8080"),
+		DataDir:        getenv("NEXTERM_DATA_DIR"),
+		WebRoot:        getenv("NEXTERM_WEB_ROOT"),
+		MasterKey:      getenv("NEXTERM_MASTER_KEY"),
+		MasterKeyFile:  getenv("NEXTERM_MASTER_KEY_FILE"),
+		Auth:           valueOr(getenv("NEXTERM_AUTH"), AuthOn),
+		PublicBaseURL:  getenv("NEXTERM_PUBLIC_BASE_URL"),
+		DB:             valueOr(getenv("NEXTERM_DB"), "sqlite"),
+		DBDSN:          getenv("NEXTERM_DB_DSN"),
+		DBPasswordFile: getenv("NEXTERM_DB_PASSWORD_FILE"),
 	}
+	dbMaxOpenConnsEnv := getenv("NEXTERM_DB_MAX_OPEN_CONNS")
 	commandSeen := false
 
 	for index := 0; index < len(args); index++ {
@@ -147,6 +157,18 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 				invocation.Auth = value
 			case "--public-base-url":
 				invocation.PublicBaseURL = value
+			case "--db":
+				invocation.DB = value
+			case "--db-dsn":
+				invocation.DBDSN = value
+			case "--db-password-file":
+				invocation.DBPasswordFile = value
+			case "--db-max-open-conns":
+				parsed, err := strconv.Atoi(value)
+				if err != nil || parsed <= 0 {
+					return Invocation{}, fmt.Errorf("invalid --db-max-open-conns value %q (want a positive integer)", value)
+				}
+				invocation.DBMaxOpenConns = parsed
 			}
 			continue
 		}
@@ -182,6 +204,23 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 			return Invocation{}, err
 		}
 		invocation.PublicBaseURL = base
+		backend, err := store.ParseBackend(invocation.DB)
+		if err != nil {
+			return Invocation{}, err
+		}
+		if invocation.DBMaxOpenConns == 0 && dbMaxOpenConnsEnv != "" {
+			parsed, err := strconv.Atoi(dbMaxOpenConnsEnv)
+			if err != nil || parsed <= 0 {
+				return Invocation{}, fmt.Errorf("invalid NEXTERM_DB_MAX_OPEN_CONNS value %q (want a positive integer)", dbMaxOpenConnsEnv)
+			}
+			invocation.DBMaxOpenConns = parsed
+		}
+		if backend == store.BackendPostgres && invocation.DBDSN == "" {
+			return Invocation{}, fmt.Errorf("postgres backend requires --db-dsn (env NEXTERM_DB_DSN)")
+		}
+		if backend == store.BackendSQLite && (invocation.DBDSN != "" || invocation.DBPasswordFile != "") {
+			return Invocation{}, fmt.Errorf("--db-dsn and --db-password-file require --db=postgres")
+		}
 	}
 	return invocation, nil
 }
@@ -219,6 +258,15 @@ Flags:
   --public-base-url URL  Default file access base URL for public image links
                       (env NEXTERM_PUBLIC_BASE_URL); http/https only, path prefix allowed,
                       userinfo/query/fragment rejected; unset = same-origin relative links
+  --db BACKEND        Server database backend: sqlite or postgres (env NEXTERM_DB, default sqlite);
+                      postgres runs the embedded migrations/postgres schema and, in this first
+                      version, supports a single writer instance only
+  --db-dsn DSN        Postgres connection string (env NEXTERM_DB_DSN), e.g.
+                      postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt;
+                      requires --db=postgres; the password may come from --db-password-file instead
+  --db-password-file PATH  Read the postgres password from a 0600 file
+                      (env NEXTERM_DB_PASSWORD_FILE); rejected when the DSN already has a password
+  --db-max-open-conns N  Postgres pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
   --require-vault     Fail startup unless the credential vault unlocks
   --sync-only         Restrict the server to sync routes
   --version           Print the version
@@ -228,7 +276,8 @@ Flags:
 
 func isStringFlag(name string) bool {
 	switch name {
-	case "--listen", "--data-dir", "--web-root", "--master-key", "--master-key-file", "--auth", "--public-base-url":
+	case "--listen", "--data-dir", "--web-root", "--master-key", "--master-key-file", "--auth", "--public-base-url",
+		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns":
 		return true
 	default:
 		return false

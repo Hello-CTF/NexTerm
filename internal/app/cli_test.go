@@ -42,9 +42,61 @@ func TestParseCLIRejectsInvalidInput(t *testing.T) {
 		{"--listen", "missing-port"},
 		{"--listen", "127.0.0.1:70000"},
 		{"--sync-only=perhaps"},
+		{"--db", "mysql"},
+		{"--db-dsn", "postgres://u@h/db"},
+		{"--db", "postgres"},
+		{"--db", "postgres", "--db-password-file", "/tmp/pw"},
+		{"--db", "postgres", "--db-dsn", "postgres://u@h/db", "--db-max-open-conns", "0"},
+		{"--db", "postgres", "--db-dsn", "postgres://u@h/db", "--db-max-open-conns", "abc"},
 	} {
 		if _, err := ParseCLI(args, CommandServe, nil); err == nil {
 			t.Fatalf("ParseCLI(%v) succeeded", args)
 		}
+	}
+}
+
+func TestParseCLIDatabaseBackend(t *testing.T) {
+	invocation, err := ParseCLI([]string{"--db", "postgres", "--db-dsn", "postgres://u@h:5432/db", "--db-max-open-conns", "32"}, CommandServe, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.DB != "postgres" || invocation.DBDSN != "postgres://u@h:5432/db" || invocation.DBMaxOpenConns != 32 {
+		t.Fatalf("invocation = %+v", invocation)
+	}
+	environment := map[string]string{
+		"NEXTERM_DB":                "postgres",
+		"NEXTERM_DB_DSN":            "postgres://env@h/db",
+		"NEXTERM_DB_PASSWORD_FILE":  "/env/pgpass",
+		"NEXTERM_DB_MAX_OPEN_CONNS": "24",
+	}
+	invocation, err = ParseCLI(nil, CommandServe, func(key string) string { return environment[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.DB != "postgres" || invocation.DBDSN != "postgres://env@h/db" || invocation.DBPasswordFile != "/env/pgpass" || invocation.DBMaxOpenConns != 24 {
+		t.Fatalf("environment fallback = %+v", invocation)
+	}
+	bare, err := ParseCLI(nil, CommandServe, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.DB != "sqlite" || bare.DBMaxOpenConns != 0 {
+		t.Fatalf("bare defaults = %+v", bare)
+	}
+	if _, err := ParseCLI(nil, CommandServe, func(key string) string {
+		if key == "NEXTERM_DB_MAX_OPEN_CONNS" {
+			return "abc"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("invalid NEXTERM_DB_MAX_OPEN_CONNS was accepted")
+	}
+	if _, err := ParseCLI(nil, CommandServe, func(key string) string {
+		if key == "NEXTERM_DB" {
+			return "bogus"
+		}
+		return ""
+	}); err == nil {
+		t.Fatal("invalid NEXTERM_DB was accepted")
 	}
 }

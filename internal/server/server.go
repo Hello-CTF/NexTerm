@@ -2,17 +2,20 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	core "github.com/ProbiusOfficial/NexTerm/internal/app"
 	fleetserver "github.com/ProbiusOfficial/NexTerm/internal/fleet/server"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 	syncservice "github.com/ProbiusOfficial/NexTerm/internal/sync"
 	"github.com/ProbiusOfficial/NexTerm/internal/version"
 )
@@ -45,6 +48,12 @@ type SettingStore interface {
 // AuditFunc 写审计记录; 由装配层桥接到 store.AuditInsert。
 type AuditFunc func(ctx context.Context, source, kind string, payload map[string]any) error
 
+// DBHealthSource 是 /healthz 暴露的非秘密数据库元数据来源。
+type DBHealthSource interface {
+	Backend() store.Backend
+	DB() *sql.DB
+}
+
 type Config struct {
 	Options        Options
 	Dispatcher     *ipc.Dispatcher
@@ -65,6 +74,7 @@ type Config struct {
 	VaultStatus    func(context.Context) (any, error)
 	Retention      *RetentionConfig
 	Fleet          *fleetserver.Service
+	DB             DBHealthSource
 	Version        string
 	MaxRPCBytes    int64
 	Logger         *slog.Logger
@@ -97,6 +107,7 @@ type Server struct {
 	preferences     *account.Preferences
 	audit           AuditFunc
 	fleet           *fleetserver.Service
+	db              DBHealthSource
 
 	readGate func()
 }
@@ -122,6 +133,22 @@ type Health struct {
 	Vault            any              `json:"vault"`
 	Retention        *RetentionHealth `json:"retention"`
 	ImageLinks       *ImageLinkHealth `json:"imageLinks,omitempty"`
+	DB               *DBHealth        `json:"db,omitempty"`
+}
+
+// DBHealth 是 /healthz 暴露的非秘密数据库元数据: 后端名、ping 延迟与连接池计数。
+type DBHealth struct {
+	Backend string       `json:"backend"`
+	PingOK  bool         `json:"pingOk"`
+	PingMS  int64        `json:"pingMs"`
+	Pool    *DBPoolStats `json:"pool,omitempty"`
+}
+
+type DBPoolStats struct {
+	OpenConnections int   `json:"openConnections"`
+	InUse           int   `json:"inUse"`
+	Idle            int   `json:"idle"`
+	WaitCount       int64 `json:"waitCount"`
 }
 
 // ImageLinkHealth 是 /healthz 暴露的非秘密图片链接元数据。
@@ -220,6 +247,7 @@ func New(config Config) (*Server, error) {
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
 		images: config.Images, settings: config.Settings, audit: config.AuditFunc, fleet: config.Fleet,
+		db: config.DB,
 	}
 	if s.environment.Events == nil {
 		s.environment.Events = s.events
@@ -341,13 +369,35 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 			TTLSeconds:              int64(s.images.ttlDuration().Seconds()),
 		}
 	}
+	var dbHealth *DBHealth
+	if s.db != nil {
+		pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		pingStart := time.Now()
+		pingErr := s.db.DB().PingContext(pingCtx)
+		pingCancel()
+		stats := s.db.DB().Stats()
+		dbHealth = &DBHealth{
+			Backend: string(s.db.Backend()),
+			PingOK:  pingErr == nil,
+			PingMS:  time.Since(pingStart).Milliseconds(),
+			Pool: &DBPoolStats{
+				OpenConnections: stats.OpenConnections,
+				InUse:           stats.InUse,
+				Idle:            stats.Idle,
+				WaitCount:       stats.WaitCount,
+			},
+		}
+		if pingErr != nil {
+			s.logger.Warn("database ping failed", "error", pingErr)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(Health{
 		OK: true, Service: "nexterm-server", Version: s.version, SyncOnly: s.options.SyncOnly,
 		Commands: commands, EventSubscribers: s.events.SubscriberCount(),
 		LiveChannels: channelStats.LiveChannels, PendingChannels: channelStats.PendingChannels,
-		WebRoot: webRoot, Vault: vaultStatus, Retention: retention, ImageLinks: imageLinks,
+		WebRoot: webRoot, Vault: vaultStatus, Retention: retention, ImageLinks: imageLinks, DB: dbHealth,
 	})
 }
 

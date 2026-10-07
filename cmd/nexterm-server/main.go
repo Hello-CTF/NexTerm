@@ -86,6 +86,16 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
 		return 2
 	}
+	dbBackend, err := store.ParseBackend(invocation.DB)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
+	dbPassword, err := server.ResolveDBPassword(invocation.DBPasswordFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 2
+	}
 
 	ctx, stop := platform.NotifyContext(context.Background())
 	defer stop()
@@ -124,6 +134,12 @@ func run(args []string) int {
 		DataDir:         paths.DataDir,
 		Desktop:         false,
 		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
+		DB: store.BackendConfig{
+			Backend:      dbBackend,
+			DSN:          invocation.DBDSN,
+			Password:     dbPassword,
+			MaxOpenConns: invocation.DBMaxOpenConns,
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
@@ -160,8 +176,10 @@ func run(args []string) int {
 	hubAdapter := server.NewHubAdapter(application.Services.Sessions.Hub())
 	var settings server.SettingStore
 	var audit server.AuditFunc
+	var healthDB server.DBHealthSource
 	if application.Services.Store != nil {
 		settings = application.Services.Store
+		healthDB = application.Services.Store
 		audit = func(ctx context.Context, source, kind string, payload map[string]any) error {
 			return application.Services.Store.AuditInsert(ctx, store.AuditInput{Source: source, Kind: kind, Payload: payload})
 		}
@@ -186,6 +204,7 @@ func run(args []string) int {
 		Vault:          application.Services.Vault,
 		Retention:      serverRetentionConfig(application.Services.Retention),
 		Fleet:          fleetService,
+		DB:             healthDB,
 		Settings:       settings,
 		AuditFunc:      audit,
 		Logger:         logger.Logger,
