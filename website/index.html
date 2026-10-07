@@ -255,12 +255,12 @@
       <div class="cell">
         <span class="tag">DIRECTION</span>
         <h3>方向显式</h3>
-        <p>勾中资产，按「推送到对端」或「从对端拉取」。内核不猜方向 —— SSH 私钥这类载荷根本不可合并。</p>
+        <p>分组、资产、凭据、片段整组同步，按「推送到云端」或「拉取并应用」，方向由你按按钮定 —— SSH 私钥这类载荷不做自动合并，逐对象按修订号裁决。</p>
       </div>
       <div class="cell">
         <span class="tag">CONFLICT</span>
         <h3>默认不覆盖更新的那份</h3>
-        <p>跳过「本机这份更新」的条目并逐条说明原因。删除以墓碑同步，两端收敛一致。</p>
+        <p>本机较新的条目先跳过、随推送覆盖云端；每轮报告分类计数。删除以墓碑同步，两端收敛一致。</p>
       </div>
       <div class="cell">
         <span class="tag">CREDENTIALS</span>
@@ -405,7 +405,7 @@
       </details>
       <details>
         <summary>同步会把我的密码传到别人的服务器吗？</summary>
-        <div class="faq-body">只在你指定的对端之间传，且只传你勾中的资产。同步内容端到端加密，服务端只存密文；账号密码只用于登录认证和在本机解锁数据密钥。公网地址强制 HTTPS，明文 HTTP 只对本机与私有网段放行。</div>
+        <div class="faq-body">只在你指定的对端之间传。同步内容端到端加密，服务端只存密文；账号密码只用于登录认证和在本机解锁数据密钥。公网地址强制 HTTPS，明文 HTTP 只对本机与私有网段放行。</div>
       </details>
       <details>
         <summary>凭据如何保护？</summary>
