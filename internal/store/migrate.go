@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -14,8 +13,6 @@ import (
 	"time"
 
 	"github.com/ProbiusOfficial/NexTerm/migrations"
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const migrationsTable = "schema_migrations"
@@ -28,14 +25,18 @@ type migration struct {
 }
 
 func (s *Store) migrate(ctx context.Context) error {
-	all, err := loadMigrations()
+	fsys, err := s.migrationsFS()
+	if err != nil {
+		return migrateError(err)
+	}
+	all, err := loadMigrations(fsys)
 	if err != nil {
 		return migrateError(err)
 	}
 	backoff := time.Millisecond
 	for attempt := 0; ; attempt++ {
 		err := s.migrateOnce(ctx, all)
-		if !isSQLiteLockError(err) || attempt == 39 {
+		if !isBusyErr(err) || attempt == 39 {
 			return err
 		}
 		select {
@@ -49,13 +50,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 }
 
-func isSQLiteLockError(err error) bool {
-	var sqliteErr *sqlite.Error
-	if !errors.As(err, &sqliteErr) {
-		return false
+func (s *Store) migrationsFS() (fs.FS, error) {
+	if s.dialect.backend == BackendPostgres {
+		return fs.Sub(migrations.PostgresFiles, "postgres")
 	}
-	primaryCode := sqliteErr.Code() & 0xff
-	return primaryCode == sqlite3.SQLITE_BUSY || primaryCode == sqlite3.SQLITE_LOCKED
+	return migrations.Files, nil
 }
 
 func (s *Store) migrateOnce(ctx context.Context, all []migration) error {
@@ -68,7 +67,7 @@ func (s *Store) migrateOnce(ctx context.Context, all []migration) error {
     version BIGINT PRIMARY KEY,
     description TEXT NOT NULL,
     installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    checksum BLOB NOT NULL
+    checksum `+s.dialect.binaryType()+` NOT NULL
 )`); err != nil {
 		return migrateError(err)
 	}
@@ -137,8 +136,8 @@ func applyMigration(ctx context.Context, tx *sql.Tx, m migration) error {
 	return err
 }
 
-func loadMigrations() ([]migration, error) {
-	entries, err := fs.ReadDir(migrations.Files, ".")
+func loadMigrations(fsys fs.FS) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +147,7 @@ func loadMigrations() ([]migration, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		m, err := loadMigration(entry.Name())
+		m, err := loadMigration(fsys, entry.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +161,7 @@ func loadMigrations() ([]migration, error) {
 	return all, nil
 }
 
-func loadMigration(name string) (migration, error) {
+func loadMigration(fsys fs.FS, name string) (migration, error) {
 	parts := strings.SplitN(strings.TrimSuffix(name, ".sql"), "_", 2)
 	if len(parts) != 2 {
 		return migration{}, fmt.Errorf("invalid migration filename %q", name)
@@ -171,7 +170,7 @@ func loadMigration(name string) (migration, error) {
 	if err != nil || version <= 0 {
 		return migration{}, fmt.Errorf("invalid migration version in %q", name)
 	}
-	contents, err := migrations.Files.ReadFile(name)
+	contents, err := fs.ReadFile(fsys, name)
 	if err != nil {
 		return migration{}, err
 	}

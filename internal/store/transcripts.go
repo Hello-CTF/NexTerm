@@ -114,8 +114,8 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 			if count <= 0 {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, offset, updated_at)
-VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET offset=offset+?, updated_at=?`,
+			if _, err := tx.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, `+s.dialect.offsetColumn()+`, updated_at)
+VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET `+s.dialect.offsetColumn()+`=`+s.dialect.offsetColumn()+`+?, updated_at=?`,
 				durableID, count, now, count, now); err != nil {
 				return dbError(err)
 			}
@@ -132,7 +132,7 @@ func (s *Store) TranscriptEnd(ctx context.Context, transcriptID string, endedAt 
 	if truncated {
 		flag = 1
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE transcript SET ended_at=?, truncated=MAX(truncated,?) WHERE id=? AND ended_at IS NULL`,
+	_, err := s.db.ExecContext(ctx, `UPDATE transcript SET ended_at=?, truncated=`+s.dialect.ScalarMax()+`(truncated,?) WHERE id=? AND ended_at IS NULL`,
 		endedAt, flag, transcriptID)
 	if err != nil {
 		return dbError(err)
@@ -691,7 +691,7 @@ func boolInt(value bool) int {
 func (s *Store) DurableTranscriptOffsetGet(ctx context.Context, durableID string) (int64, error) {
 	var offset int64
 	err := s.db.QueryRowContext(ctx,
-		"SELECT offset FROM durable_transcript_offset WHERE durable_id=?", durableID).Scan(&offset)
+		"SELECT "+s.dialect.offsetColumn()+" FROM durable_transcript_offset WHERE durable_id=?", durableID).Scan(&offset)
 	if isNoRows(err) {
 		return 0, nil
 	}
@@ -702,8 +702,8 @@ func (s *Store) DurableTranscriptOffsetGet(ctx context.Context, durableID string
 }
 
 func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string, offset int64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, offset, updated_at)
-VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET offset=excluded.offset, updated_at=excluded.updated_at`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO durable_transcript_offset(durable_id, `+s.dialect.offsetColumn()+`, updated_at)
+VALUES(?,?,?) ON CONFLICT(durable_id) DO UPDATE SET `+s.dialect.offsetColumn()+`=excluded.`+s.dialect.offsetColumn()+`, updated_at=excluded.updated_at`,
 		durableID, offset, ids.NowMS())
 	if err != nil {
 		return dbError(err)

@@ -170,6 +170,42 @@ func TestResolveMasterKey(t *testing.T) {
 	}
 }
 
+func TestResolveDBPassword(t *testing.T) {
+	password, err := ResolveDBPassword("")
+	if err != nil || password != "" {
+		t.Fatalf("passthrough = %q, %v", password, err)
+	}
+	dir := t.TempDir()
+	passwordFile := filepath.Join(dir, "pg.password")
+	if err := os.WriteFile(passwordFile, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	password, err = ResolveDBPassword(passwordFile)
+	if err != nil || password != "file-secret" {
+		t.Fatalf("file password = %q, %v", password, err)
+	}
+	looseFile := filepath.Join(dir, "loose.password")
+	if err := os.WriteFile(looseFile, []byte("file-secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveDBPassword(looseFile); err == nil {
+		t.Fatal("0644 password file was accepted")
+	}
+	if _, err := ResolveDBPassword(dir); err == nil {
+		t.Fatal("directory password file was accepted")
+	}
+	emptyFile := filepath.Join(dir, "empty.password")
+	if err := os.WriteFile(emptyFile, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveDBPassword(emptyFile); err == nil {
+		t.Fatal("empty password file was accepted")
+	}
+	if _, err := ResolveDBPassword(filepath.Join(dir, "missing.password")); err == nil {
+		t.Fatal("missing password file was accepted")
+	}
+}
+
 func TestBootstrapVaultRequired(t *testing.T) {
 	if err := BootstrapVaultRequired(context.Background(), &fakeVault{}, ""); err == nil {
 		t.Fatal("missing master key was accepted")

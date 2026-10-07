@@ -7,8 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
 type SQLiteStore struct {
@@ -21,13 +20,9 @@ func NewSQLiteStore(ctx context.Context, db *sql.DB) (*SQLiteStore, error) {
 	if db == nil {
 		return nil, errors.New("cron: sqlite store requires a database handle")
 	}
-	var name string
-	err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cron_job'`).Scan(&name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("cron: cron_job table is missing; apply migrations/0005_cron.sql first")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("cron: check cron_job schema: %w", err)
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM cron_job`).Scan(&count); err != nil {
+		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable; apply migrations/0005_cron.sql first: %w", err)
 	}
 	return &SQLiteStore{db: db}, nil
 }
@@ -72,7 +67,7 @@ func (s *SQLiteStore) Create(ctx context.Context, job Job, maxPerSession int) (J
 	job.Revision = 1
 	if _, err := tx.ExecContext(ctx, `INSERT INTO cron_job (`+jobColumns+`) VALUES (`+jobPlaceholders+`)`,
 		jobValues(job)...); err != nil {
-		if isConstraintError(err) {
+		if store.IsUniqueErr(err) {
 			return Job{}, ErrConflict
 		}
 		return Job{}, err
@@ -238,13 +233,4 @@ func nullTimeMS(value sql.NullInt64) time.Time {
 		return time.Time{}
 	}
 	return time.UnixMilli(value.Int64).UTC()
-}
-
-func isConstraintError(err error) bool {
-	var sqliteErr *sqlite.Error
-	if !errors.As(err, &sqliteErr) {
-		return false
-	}
-	code := sqliteErr.Code()
-	return code&0xff == sqlite3.SQLITE_CONSTRAINT && (code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY || code == sqlite3.SQLITE_CONSTRAINT_UNIQUE)
 }

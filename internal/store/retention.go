@@ -89,7 +89,7 @@ func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (r
 	if policy.AuditMaxCount > 0 {
 		var deleted int64
 		deleted, err = retentionDelete(ctx, tx, `DELETE FROM audit_log WHERE id IN (
-	SELECT id FROM audit_log ORDER BY ts DESC, id DESC LIMIT -1 OFFSET ?
+	SELECT id FROM audit_log ORDER BY ts DESC, id DESC `+s.dialect.limitOffset()+`
 )`, policy.AuditMaxCount)
 		result.AuditDeleted += deleted
 		if err != nil {
@@ -111,7 +111,7 @@ func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (r
 		deleted, err = retentionDelete(ctx, tx, `DELETE FROM terminal_recording
 WHERE ended_at IS NOT NULL AND id IN (
 	SELECT id FROM terminal_recording WHERE ended_at IS NOT NULL
-	ORDER BY ended_at DESC, id DESC LIMIT -1 OFFSET ?
+	ORDER BY ended_at DESC, id DESC `+s.dialect.limitOffset()+`
 )`, policy.RecordingMaxCount)
 		result.RecordingsDeleted += deleted
 		if err != nil {
@@ -145,7 +145,7 @@ AND id NOT IN (SELECT id FROM ai_hitl_run)
 AND id IN (
 	SELECT id FROM ai_run WHERE finished_at IS NOT NULL
 	AND id NOT IN (SELECT id FROM ai_hitl_run)
-	ORDER BY finished_at DESC, id DESC LIMIT -1 OFFSET ?
+	ORDER BY finished_at DESC, id DESC `+s.dialect.limitOffset()+`
 )`, policy.AIRunMaxCount)
 		result.AIRunsDeleted += deleted
 		if err != nil {

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ProbiusOfficial/NexTerm/migrations"
 )
 
 var multiUserTables = []string{
@@ -57,7 +59,7 @@ func TestMigration0014FreshInstall(t *testing.T) {
 
 func applyMigrationsUpTo(t *testing.T, db *sql.DB, maxVersion int64) {
 	t.Helper()
-	all, err := loadMigrations()
+	all, err := loadMigrations(migrations.Files)
 	if err != nil {
 		t.Fatal(err)
 	}

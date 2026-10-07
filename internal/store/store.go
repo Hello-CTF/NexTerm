@@ -21,6 +21,7 @@ import (
 
 type Store struct {
 	db        *sql.DB
+	dialect   Dialect
 	logger    *slog.Logger
 	retention retentionState
 
@@ -52,7 +53,7 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	if err != nil {
 		return nil, err
 	}
-	s := newStore(db, options.Logger)
+	s := newStore(db, options.Logger, Dialect{backend: BackendSQLite})
 	if err := s.migrate(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -74,7 +75,7 @@ func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, 
 	if err != nil {
 		return nil, err
 	}
-	s := newStore(db, options.Logger)
+	s := newStore(db, options.Logger, Dialect{backend: BackendSQLite})
 	if err := s.migrate(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -82,11 +83,11 @@ func OpenInMemoryWithOptions(ctx context.Context, options OpenOptions) (*Store, 
 	return s, nil
 }
 
-func newStore(db *sql.DB, logger *slog.Logger) *Store {
+func newStore(db *sql.DB, logger *slog.Logger, dialect Dialect) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Store{db: db, logger: logger}
+	return &Store{db: db, dialect: dialect, logger: logger}
 }
 
 func openDB(dsn string, maxConnections int) (*sql.DB, error) {
@@ -119,6 +120,10 @@ func pragmaQuery(memory bool) string {
 
 func (s *Store) DB() *sql.DB {
 	return s.db
+}
+
+func (s *Store) Backend() Backend {
+	return s.dialect.backend
 }
 
 func (s *Store) Close() error {

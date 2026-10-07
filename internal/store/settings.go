@@ -214,7 +214,7 @@ func (s *Store) LayoutSave(ctx context.Context, expected int64, dataJSON string)
 
 	var currentRevision int64
 	var current string
-	err = tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", LayoutKey).Scan(&current)
+	err = tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?"+s.dialect.forUpdate(), LayoutKey).Scan(&current)
 	if err != nil && !isNoRows(err) {
 		return false, 0, dbError(err)
 	}
