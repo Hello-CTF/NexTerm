@@ -300,7 +300,7 @@ describe("设备管理视图 · 接入码签发", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("只显示这一次");
     expect(text).toContain("单次使用");
-    const dataDir = '"${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm"';
+    const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
       `nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
     );
@@ -311,7 +311,8 @@ describe("设备管理视图 · 接入码签发", () => {
     expect(text).toContain("不会替你安装");
     expect(text).not.toContain("/var/lib");
 
-    // enroll 与 install 使用同一数据目录, 且目录双引号可展开 (普通用户语义)。
+    // enroll 与 install 使用同一数据目录; 目录为双引号单参数, 展开优先级
+    // NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME (与文案的覆盖承诺一致)。
     const commands = [...document.querySelectorAll("code")].map((c) => c.textContent ?? "");
     const enrollDirs = commands
       .filter((c) => c.includes("agent enroll"))
@@ -321,7 +322,16 @@ describe("设备管理视图 · 接入码签发", () => {
       .map((c) => c.split("--data-dir ")[1]);
     expect(enrollDirs.length).toBeGreaterThan(0);
     expect(installDirs).toEqual([dataDir]);
-    for (const dir of enrollDirs) expect(dir).toBe(dataDir);
+    for (const dir of enrollDirs) {
+      expect(dir).toBe(dataDir);
+      expect(dir?.startsWith('"')).toBe(true);
+      expect(dir?.endsWith('"')).toBe(true);
+      expect(dir).not.toContain(" ");
+      const envOrder = [dir?.indexOf("NEXTERM_DATA_DIR"), dir?.indexOf("XDG_DATA_HOME"), dir?.indexOf("$HOME")];
+      expect(envOrder[0]).toBeGreaterThanOrEqual(0);
+      expect(envOrder[0]).toBeLessThan(envOrder[1] ?? Infinity);
+      expect(envOrder[1]).toBeLessThan(envOrder[2] ?? Infinity);
+    }
 
     const doneButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成");
     click(doneButton as HTMLButtonElement);

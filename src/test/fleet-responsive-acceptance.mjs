@@ -566,7 +566,7 @@ async function enrollFlowChecks(page) {
     const state = await page.evaluate(READ_ENROLL);
     assert.ok(state.found, `enroll code not visible: ${JSON.stringify(state)}`);
     assert.equal(state.codeText, "fleet-accept-enroll-code-9f3ac2", `code mismatch: ${JSON.stringify(state)}`);
-    const dataDir = '"${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm"';
+    const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     const commandTexts = state.commands.map((c) => c.text);
     assert.ok(
       commandTexts.some((t) => t.includes(`nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-accept-enroll-code-9f3ac2' --data-dir ${dataDir}`)),
@@ -587,6 +587,19 @@ async function enrollFlowChecks(page) {
     assert.ok(
       !commandTexts.some((t) => t.includes("/var/lib")) && !state.installText.includes("/var/lib"),
       `root-owned system dir must not appear: ${JSON.stringify(state)}`,
+    );
+    assert.ok(
+      [...commandTexts, state.installText].every((t) => {
+        const dir = t.split("--data-dir ")[1] ?? "";
+        return (
+          dir.startsWith('"') &&
+          dir.endsWith('"') &&
+          dir.indexOf("NEXTERM_DATA_DIR") >= 0 &&
+          dir.indexOf("NEXTERM_DATA_DIR") < dir.indexOf("XDG_DATA_HOME") &&
+          dir.indexOf("XDG_DATA_HOME") < dir.indexOf("$HOME")
+        );
+      }),
+      `data dir must keep NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME expansion order in one quoted arg: ${JSON.stringify(commandTexts)}`,
     );
     for (const command of state.commands) {
       assert.equal(command.wraps, true, `enroll command overflows: ${JSON.stringify(command)}`);

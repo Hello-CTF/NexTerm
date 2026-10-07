@@ -30,9 +30,10 @@ const ENROLL_TTL_OPTIONS = [
 ];
 
 // 数据目录与仓库 per-user 约定一致 (platform.desktopDataDir: XDG_DATA_HOME
-// 或 ~/.local/share), 普通用户可写, 适配 systemd --user / launchd per-user;
-// 双引号让 $HOME/XDG_DATA_HOME 在 shell 中展开, 不能用单引号。
-const AGENT_DATA_DIR = '"${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm"';
+// 或 ~/.local/share), 普通用户可写, 适配 systemd --user / launchd per-user。
+// 双引号让 shell 在调用前展开: NEXTERM_DATA_DIR 最优先 (与文案的覆盖承诺一致,
+// CLI 中 flag 优先于 env, 必须把覆盖嵌进 flag 值), 其次 XDG_DATA_HOME, 最后 $HOME。
+const AGENT_DATA_DIR = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
 
 // shellQuote 把动态参数 (接入地址/接入码) 包成单引号安全形式, 防止 URL path
 // 中的 ; & $() 等被 shell 当命令语法 (服务端 normalizeBaseURL 允许这些字符)。
