@@ -100,6 +100,8 @@ describe("GrantPanel 设备长期授权管理", () => {
     expect(text).toContain("默认全部关闭");
     expect(text).toContain("不是按用户隔离");
     expect(text).toContain("对该安装的所有用户生效");
+    expect(text).toContain("原本要逐次确认");
+    expect(text).toContain("拦截规则命中或拿不准的仍会问你");
     for (const name of ["生产 Web", "数据库"]) {
       expect(rowFor(name).textContent).toContain("未授权");
     }
@@ -115,6 +117,7 @@ describe("GrantPanel 设备长期授权管理", () => {
     const message = mocks.ask.mock.calls[0][0] as string;
     expect(message).toContain("生产 Web");
     expect(message).toContain("不是按用户隔离");
+    expect(message).toContain("拦截规则命中或拿不准的仍会问你");
     expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["terminal_write"]);
     await flushUntil(() => rowFor("生产 Web").textContent?.includes("已授权：终端写入") === true);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已开启"));
