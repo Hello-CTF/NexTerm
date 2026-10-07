@@ -480,6 +480,31 @@ func TestDurableTranscriptOffsetRoundtrip(t *testing.T) {
 	}
 }
 
+func TestDurableTranscriptOffsetAppendAccumulates(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	id := startTranscript(t, db, "asset-1", 1000)
+	if err := db.TranscriptAppendChunks(ctx, id,
+		[]TranscriptChunkRow{{Seq: 1, TabID: "tab-1", TS: 1001, Data: []byte("abcd")}},
+		map[string]int64{"durable-1": 4}); err != nil {
+		t.Fatal(err)
+	}
+	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-1"); err != nil || offset != 4 {
+		t.Fatalf("offset after insert = %d err=%v", offset, err)
+	}
+	if err := db.TranscriptAppendChunks(ctx, id,
+		[]TranscriptChunkRow{{Seq: 2, TabID: "tab-1", TS: 1002, Data: []byte("efgh")}},
+		map[string]int64{"durable-1": 4, "durable-2": 3}); err != nil {
+		t.Fatal(err)
+	}
+	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-1"); err != nil || offset != 8 {
+		t.Fatalf("offset after conflict accumulate = %d err=%v", offset, err)
+	}
+	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-2"); err != nil || offset != 3 {
+		t.Fatalf("offset for second durable = %d err=%v", offset, err)
+	}
+}
+
 func TestTranscriptSearchControlStrings(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
