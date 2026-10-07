@@ -5,7 +5,7 @@ import { useUi } from "../../app/store";
 import { DEMO } from "../../demo";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
-import { profileKeyUnavailable } from "../ai/modelLifecycle";
+import { profileKeyUnavailable as profileKeyMasked } from "../ai/modelLifecycle";
 import {
   IconClock,
   IconEdit,
@@ -460,7 +460,7 @@ export function CronCard() {
               )}
               {(profilesView?.profiles ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
-                  {`${p.name} · ${p.model}${profileKeyUnavailable(p) ? "（密钥不可用）" : ""}`}
+                  {`${p.name} · ${p.model}${profileKeyMasked(p) ? "（密钥已保存）" : ""}`}
                 </option>
               ))}
             </select>
@@ -647,7 +647,7 @@ export function CronCard() {
             const jobProfileId = job.modelProfileId ?? "";
             const jobProfile = jobProfileId ? profileById(jobProfileId) : undefined;
             const profileUnknown = !!jobProfileId && !!profilesView && !jobProfile;
-            const profileUnavailable = !!jobProfile && profileKeyUnavailable(jobProfile);
+            const profileKeySaved = !!jobProfile && profileKeyMasked(jobProfile);
             const editingThis =
               !!editingJob && editingJob.sessionId === job.sessionId && editingJob.id === job.id;
             const conflicted =
@@ -667,9 +667,7 @@ export function CronCard() {
                       </span>
                     ) : null}
                     {profileUnknown && <span className="nx-badge nx-badge-red">档案已删除</span>}
-                    {profileUnavailable && (
-                      <span className="nx-badge nx-badge-amber">档案密钥不可用</span>
-                    )}
+                    {profileKeySaved && <span className="nx-badge">档案密钥已保存</span>}
                   </div>
                   <div className="nx-hint mt-0.5 text-[11px]">
                     会话「{titleOf(job.sessionId)}」 ·{" "}
