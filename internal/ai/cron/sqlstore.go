@@ -10,24 +10,32 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-type SQLiteStore struct {
+type SQLStore struct {
 	db *sql.DB
 }
 
-var _ Store = (*SQLiteStore)(nil)
+var _ Store = (*SQLStore)(nil)
 
-func NewSQLiteStore(ctx context.Context, db *sql.DB) (*SQLiteStore, error) {
+func NewSQLiteStore(ctx context.Context, db *sql.DB) (*SQLStore, error) {
+	return newSQLStore(ctx, db)
+}
+
+func NewPostgresStore(ctx context.Context, db *sql.DB) (*SQLStore, error) {
+	return newSQLStore(ctx, db)
+}
+
+func newSQLStore(ctx context.Context, db *sql.DB) (*SQLStore, error) {
 	if db == nil {
-		return nil, errors.New("cron: sqlite store requires a database handle")
+		return nil, errors.New("cron: sql store requires a database handle")
 	}
 	var count int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM cron_job`).Scan(&count); err != nil {
-		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable; apply migrations/0005_cron.sql first: %w", err)
+		return nil, fmt.Errorf("cron: cron_job table is missing or unreadable; apply the cron migration first: %w", err)
 	}
-	return &SQLiteStore{db: db}, nil
+	return &SQLStore{db: db}, nil
 }
 
-func (s *SQLiteStore) List(ctx context.Context) ([]Job, error) {
+func (s *SQLStore) List(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM cron_job ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
@@ -44,7 +52,7 @@ func (s *SQLiteStore) List(ctx context.Context) ([]Job, error) {
 	return jobs, rows.Err()
 }
 
-func (s *SQLiteStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
+func (s *SQLStore) Create(ctx context.Context, job Job, maxPerSession int) (Job, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, err
@@ -78,7 +86,7 @@ func (s *SQLiteStore) Create(ctx context.Context, job Job, maxPerSession int) (J
 	return job, nil
 }
 
-func (s *SQLiteStore) CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error) {
+func (s *SQLStore) CompareAndSwap(ctx context.Context, job Job, expectedRevision uint64) (Job, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, err
@@ -114,7 +122,7 @@ func (s *SQLiteStore) CompareAndSwap(ctx context.Context, job Job, expectedRevis
 	return job, nil
 }
 
-func (s *SQLiteStore) Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error {
+func (s *SQLStore) Delete(ctx context.Context, sessionID, jobID string, expectedRevision uint64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

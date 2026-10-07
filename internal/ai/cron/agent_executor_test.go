@@ -173,7 +173,7 @@ func TestAgentExecutorPersistsHonestOutcomesDurably(t *testing.T) {
 		t.Fatalf("runOnce = %d, %v", claimed, err)
 	}
 	scheduler.wg.Wait()
-	job := loadSQLiteJob(t, store, "job")
+	job := loadStoredJob(t, store, "job")
 	if job.LastError == "" || !strings.Contains(job.LastError, "无人值守") || job.ConsecutiveFailures != 1 || job.RetryAt.IsZero() {
 		t.Fatalf("guard denial was not persisted honestly: %+v", job)
 	}
