@@ -238,7 +238,7 @@ function DesktopLinkCard() {
           />
           <span className="text-[12px] text-neutral-300">
             跳过证书校验
-            <span className="nx-hint block">只有自签证书的内网/自建地址才需要勾。</span>
+            <span className="nx-hint block">勾选后不再验证服务端身份,可能被中间人冒充;只有自签证书的内网/自建地址才需要勾。</span>
           </span>
         </label>
       </div>
@@ -734,7 +734,7 @@ function rowLabel(r: Row): { text: string; tone: string; hint: string } {
     case "local-deleted":
       return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
     case "remote-deleted":
-      return { text: "云端已删", tone: "nx-badge-amber", hint: "这条在云端已删除(墓碑)。" };
+      return { text: "云端已删", tone: "nx-badge-amber", hint: "这条在云端已被删除。" };
   }
 }
 
@@ -743,7 +743,7 @@ const KIND_LABELS: Record<string, string> = {
   asset: "资产",
   snippet: "片段",
   credential: "凭据",
-  tombstone: "墓碑",
+  tombstone: "删除标记",
   transcript: "会话记录",
   known_host: "已知主机",
   ai_profile: "AI 档案",
@@ -1100,7 +1100,7 @@ function CompareConsole() {
 
       <p className="nx-hint mb-3">
         本机数据与云端密文副本的对比(在本机解密后比较,服务端看不到内容)。
-        推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(冲突按修订号+载荷 hash 裁决,删除以墓碑清理)。
+        推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(冲突按修订号+载荷 hash 裁决,删除会随删除标记同步)。
       </p>
 
       {kindOptIn && (

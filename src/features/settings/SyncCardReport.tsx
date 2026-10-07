@@ -88,7 +88,7 @@ export function ImportReportView({
       {data.skippedNewer > 0 && (
         <p className="nx-hint mt-2 text-[11px]">
           冲突按修订号（最后修改时间）裁决，协议假设各设备时钟已经 NTP 同步，不检测也不校正时钟偏移；
-          时钟不准时「较新」判定可能不符合预期。要覆盖较新的一份，请用强制同步。
+          时钟不准时「较新」判定可能不符合预期。要覆盖较新的一份，导入时勾选「强制覆盖较新的本机条目」。
         </p>
       )}
       {data.warnings.length > 0 && (

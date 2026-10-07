@@ -256,7 +256,7 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
         <IconKey size={15} className="text-neutral-400" />
         <span className="nx-card-title">注册</span>
       </div>
-      <p className="nx-hint">这台服务器开放了注册。注册即可创建普通用户账号。</p>
+      <p className="nx-hint">这台服务器已由管理员开放注册(注册默认关闭)。注册即可创建普通用户账号。</p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
       <Field label="显示名(可选)" value={displayName} onChange={setDisplayName} />
       <Field label="密码" value={password} onChange={setPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
@@ -367,7 +367,7 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
         <span className="nx-card-title">用恢复密钥重置</span>
       </div>
       <p className="nx-hint">
-        输入注册时保存的恢复密钥。重置后旧密码与全部会话立即失效。
+        输入你保存的恢复密钥(注册或修改密码时签发)。重置后旧密码与全部会话立即失效。
         注意:服务端旧数据密钥已被清除,云端正文需要从仍持有数据的设备重新同步。
       </p>
       <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
