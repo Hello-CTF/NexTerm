@@ -29,8 +29,20 @@ const ENROLL_TTL_OPTIONS = [
   { label: "1 小时", ms: 60 * 60_000 },
 ];
 
+const AGENT_DATA_DIR = "/var/lib/nexterm";
+
+// shellQuote 把动态参数 (接入地址/接入码) 包成单引号安全形式, 防止 URL path
+// 中的 ; & $() 等被 shell 当命令语法 (服务端 normalizeBaseURL 允许这些字符)。
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
-  return `nexterm-desktop agent enroll --server ${baseUrl} --code ${code}${insecure ? " --insecure" : ""}`;
+  return `nexterm-server agent enroll --server ${shellQuote(baseUrl)} --code ${shellQuote(code)}${insecure ? " --insecure" : ""} --data-dir ${AGENT_DATA_DIR}`;
+}
+
+function installCommand(): string {
+  return `nexterm-server agent install --data-dir ${AGENT_DATA_DIR}`;
 }
 
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
@@ -213,16 +225,13 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
     }
   };
 
+  // reconcile 语义 (internal/fleet/agent/runtime.go): desired=true 对齐 installed&&enabled,
+  // active 只是进程此刻是否运行, 单独展示, 不参与漂移判断。
   const serviceState = agent?.service_state;
   const hasServiceReport = Boolean(serviceState && (serviceState.installed || serviceState.enabled || serviceState.active || serviceState.last_reconcile_at));
-  const actualText = !hasServiceReport
-    ? "未上报"
-    : serviceState?.active
-      ? "运行中"
-      : serviceState?.installed
-        ? "未运行"
-        : "未安装服务";
-  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== Boolean(serviceState?.active));
+  const autostartActual = Boolean(serviceState?.installed && serviceState?.enabled);
+  const runningText = !hasServiceReport ? "未上报" : serviceState?.active ? "运行中" : "未运行";
+  const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual);
 
   return (
     <section className={`nx-card ${revoked ? "opacity-60" : ""}`}>
@@ -308,12 +317,17 @@ function DeviceCard({ device, now, isAdmin, onPatch, onRevoked }: DeviceCardProp
               期望自启动
             </label>
             <span>
-              实际 <b>{actualText}</b>
+              实际自启动{" "}
+              <b>{hasServiceReport ? (autostartActual ? "已启用" : "未启用") : "未上报"}</b>
               {autostartDrift && !revoked && (
-                <span className="nx-badge nx-badge-amber ml-2" title={serviceState?.last_error || "实际状态与期望不一致"}>
+                <span className="nx-badge nx-badge-amber ml-2" title={serviceState?.last_error || "实际自启动与期望不一致"}>
                   未生效
                 </span>
               )}
+            </span>
+            <span>
+              运行状态{" "}
+              <b>{runningText}</b>
             </span>
             {serviceState?.last_error && (
               <span className="min-w-0 break-all text-red-300" title={serviceState.last_error}>
@@ -357,8 +371,25 @@ export function DevicesView() {
   const loadSeq = useRef(0);
 
   const isAdmin = user?.role === "superadmin";
+  const userId = user?.id ?? null;
+
+  // 账号作用域隔离: user.id 变化时在渲染期重置全部账号态 (设备/base URL/一次性接入码),
+  // 并递增 loadSeq 使旧账号的晚到响应失效; AuthGate 只是 overlay, 登出再登录不会卸载本 pane。
+  const [scopedUserId, setScopedUserId] = useState(userId);
+  if (scopedUserId !== userId) {
+    setScopedUserId(userId);
+    loadSeq.current += 1;
+    setDevices(null);
+    setBaseUrls([]);
+    setError(null);
+    setEnrollOpen(false);
+    setIssued(null);
+    setIssuing(false);
+    setLoading(false);
+  }
 
   const load = useCallback(() => {
+    if (!WEB) return;
     const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
@@ -384,7 +415,7 @@ export function DevicesView() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!WEB || !user) return;
     load();
   }, [user, load]);
 
@@ -471,7 +502,7 @@ export function DevicesView() {
             {!issued ? (
               <>
                 <p className="nx-hint mb-3">
-                  签发一次性接入码, 在设备上用 <code className="nx-code">nexterm-desktop agent enroll</code> 兑换。
+                  签发一次性接入码, 在设备上用 <code className="nx-code">nexterm-server agent enroll</code> 兑换。
                   接入码单次使用, 到期自动作废。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
@@ -547,12 +578,12 @@ export function DevicesView() {
                   })}
                   <div className="flex flex-wrap items-center gap-2">
                     <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">
-                      nexterm-desktop agent install
+                      {installCommand()}
                     </code>
                     <button
                       type="button"
                       className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-                      onClick={() => copyText("nexterm-desktop agent install", pushToast, "安装命令")}
+                      onClick={() => copyText(installCommand(), pushToast, "安装命令")}
                     >
                       <IconCopy size={11} />
                       复制
@@ -560,6 +591,7 @@ export function DevicesView() {
                   </div>
                   <div className="text-[11.5px] text-neutral-400">
                     在设备上看到「注册成功」才算接入完成; 此页面不会替你安装, 也不会再次显示接入码。
+                    数据目录按实际部署调整, 也可用 NEXTERM_DATA_DIR 环境变量替代 --data-dir。
                   </div>
                 </div>
               </div>

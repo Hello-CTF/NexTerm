@@ -3,7 +3,7 @@
 // 一次性接入码签发与安装指令、吊销确认、期望/实际自启动(离线语义)、指标展示。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, mount, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -300,9 +300,13 @@ describe("设备管理视图 · 接入码签发", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("只显示这一次");
     expect(text).toContain("单次使用");
-    expect(text).toContain("nexterm-desktop agent enroll --server https://nexterm.example.com --code fleet-code-1");
-    expect(text).toContain("nexterm-desktop agent enroll --server http://10.0.0.8:8080 --code fleet-code-1 --insecure");
-    expect(text).toContain("nexterm-desktop agent install");
+    expect(text).toContain(
+      "nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir /var/lib/nexterm",
+    );
+    expect(text).toContain(
+      "nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir /var/lib/nexterm",
+    );
+    expect(text).toContain("nexterm-server agent install --data-dir /var/lib/nexterm");
     expect(text).toContain("不会替你安装");
 
     const doneButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成");
@@ -381,5 +385,119 @@ describe("设备管理视图 · 吊销与自启动", () => {
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("期望状态");
     const autostartCall = calls.find((c) => c.url === "/fleet/devices/d-2/autostart");
     expect(autostartCall?.body).toEqual({ desired: true });
+  });
+});
+
+describe("设备管理视图 · 自启动漂移按 installed/enabled 判定", () => {
+  function agentWith(serviceState: { installed: boolean; enabled: boolean; active: boolean }, desired: boolean) {
+    return {
+      devices: [
+        {
+          ...AGENT_DEVICE,
+          id: "d-drift",
+          name: "drift-01",
+          agent: { ...AGENT_DEVICE.agent, desired_autostart: desired, service_state: { ...serviceState, last_reconcile_at: NOW - 60_000 } },
+        },
+      ],
+    };
+  }
+
+  it("已启用但未运行: 无漂移, 运行状态单列未运行", async () => {
+    route(fleetHandler({ devices: agentWith({ installed: true, enabled: true, active: false }, true) }));
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
+
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
+    expect(card?.textContent).toContain("实际自启动");
+    expect(card?.textContent).toContain("已启用");
+    expect(card?.textContent).toContain("运行状态");
+    expect(card?.textContent).toContain("未运行");
+    expect(card?.textContent).not.toContain("未生效");
+  });
+
+  it("未启用但进程在跑: 报未生效漂移", async () => {
+    route(fleetHandler({ devices: agentWith({ installed: true, enabled: false, active: true }, true) }));
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
+
+    const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
+    expect(card?.textContent).toContain("未启用");
+    expect(card?.textContent).toContain("未生效");
+    expect(card?.textContent).toContain("运行中");
+  });
+});
+
+describe("设备管理视图 · 接入命令 shell quoting", () => {
+  it("URL path 含 ; 与 $() 时被单引号包裹, 不会被 shell 当命令语法", async () => {
+    route(fleetHandler({ baseUrls: { base_urls: [{ url: "https://nexterm.example.com/mirror;v2/$(id)" }] } }));
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
+    click(openButton as HTMLButtonElement);
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码");
+    click(issueButton as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+
+    expect(document.body.textContent).toContain(
+      "--server 'https://nexterm.example.com/mirror;v2/$(id)' --code 'fleet-code-1'",
+    );
+  });
+});
+
+describe("设备管理视图 · 账号切换隔离", () => {
+  it("user.id 变化后旧设备与一次性接入码立即清除, 旧账号晚到响应不覆盖新账号", async () => {
+    const lateAdminDevices = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
+    const userDevices = {
+      devices: [{ ...AGENT_DEVICE, id: "d-9", name: "user-device", owner: undefined }],
+    };
+    let switched = false;
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      const u = String(url);
+      const method = init.method ?? "GET";
+      if (u === "/fleet/devices" && method === "GET") {
+        if (!switched) return lateAdminDevices.promise;
+        return { ok: true, status: 200, text: async () => JSON.stringify(userDevices) };
+      }
+      if (u === "/fleet/base-urls" && method === "GET") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ base_urls: BASE_URLS }) };
+      }
+      if (u === "/device/enroll-codes" && method === "POST") {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ code: "old-admin-code", expires_at: NOW + 900_000 }) };
+      }
+      return { ok: false, status: 404, text: async () => JSON.stringify({ error: { code: "not_found", message: u } }) };
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(DevicesView));
+
+    const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
+    await flushUntil(() => openButton !== undefined);
+    click(openButton as HTMLButtonElement);
+    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "签发接入码");
+    click(issueButton as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("old-admin-code") ?? false);
+
+    // 模拟 AuthGate 场景: 超管会话过期后改登普通用户, pane 不重挂载。
+    switched = true;
+    useAuth.setState({ user: PLAIN_USER });
+    await flushUntil(() => document.body.textContent?.includes("user-device") ?? false);
+
+    expect(document.body.textContent).not.toContain("old-admin-code");
+    expect(document.body.textContent).not.toContain("web-01");
+
+    // 旧账号的晚到响应此时才到达: 不得覆盖新账号列表。
+    lateAdminDevices.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ devices: [AGENT_DEVICE] }),
+    });
+    await flush();
+    await flush();
+    expect(document.body.textContent).not.toContain("web-01");
+    expect(document.body.textContent).toContain("user-device");
   });
 });

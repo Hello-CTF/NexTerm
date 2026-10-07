@@ -319,7 +319,13 @@ const DEVICES = {
     },
   ],
 };
-const BASE_URLS = { base_urls: [{ url: "https://nexterm.example.com" }, { url: "http://10.0.0.8:8080", insecure: true }] };
+const BASE_URLS = {
+  base_urls: [
+    { url: "https://nexterm.example.com" },
+    { url: "http://10.0.0.8:8080", insecure: true },
+    { url: "https://nexterm.example.com/mirror;v2/$(id)" },
+  ],
+};
 const METRICS = {
   samples: [
     { ts: NOW - 120_000, cpu_pct: 8.5, mem_used: 4294967296, mem_total: 17179869184, disk_used: 64424509440, disk_total: 214748364800, uptime_s: 3610 },
@@ -506,10 +512,12 @@ const READ_ENROLL = `(() => {
   const commands = [...document.querySelectorAll("code")]
     .filter((c) => c.textContent?.includes("agent enroll"))
     .map((c) => ({ text: c.textContent, wraps: c.scrollWidth <= c.clientWidth + 1, inside: c.getBoundingClientRect().right <= window.innerWidth + 1 }));
+  const install = [...document.querySelectorAll("code")].find((c) => c.textContent?.includes("agent install"));
   return {
     found: true,
     codeText: code.textContent,
     commands,
+    installText: install?.textContent || "",
   };
 })()`;
 
@@ -560,12 +568,20 @@ async function enrollFlowChecks(page) {
     assert.equal(state.codeText, "fleet-accept-enroll-code-9f3ac2", `code mismatch: ${JSON.stringify(state)}`);
     const commandTexts = state.commands.map((c) => c.text);
     assert.ok(
-      commandTexts.some((t) => t.includes("nexterm-desktop agent enroll --server https://nexterm.example.com --code fleet-accept-enroll-code-9f3ac2")),
-      `enroll command must use configured base URL: ${JSON.stringify(state)}`,
+      commandTexts.some((t) => t.includes("nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-accept-enroll-code-9f3ac2' --data-dir /var/lib/nexterm")),
+      `enroll command must use the released nexterm-server CLI with data dir: ${JSON.stringify(state)}`,
     );
     assert.ok(
-      commandTexts.some((t) => t.includes("nexterm-desktop agent enroll --server http://10.0.0.8:8080 --code fleet-accept-enroll-code-9f3ac2 --insecure")),
+      commandTexts.some((t) => t.includes("nexterm-server agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-accept-enroll-code-9f3ac2' --insecure --data-dir /var/lib/nexterm")),
       `insecure base URL must carry --insecure: ${JSON.stringify(state)}`,
+    );
+    assert.ok(
+      commandTexts.some((t) => t.includes("--server 'https://nexterm.example.com/mirror;v2/$(id)'")),
+      `shell-special URL path must be single-quoted: ${JSON.stringify(state)}`,
+    );
+    assert.ok(
+      state.installText.includes("nexterm-server agent install --data-dir /var/lib/nexterm"),
+      `install command missing data dir: ${JSON.stringify(state)}`,
     );
     for (const command of state.commands) {
       assert.equal(command.wraps, true, `enroll command overflows: ${JSON.stringify(command)}`);
@@ -574,7 +590,7 @@ async function enrollFlowChecks(page) {
     const sample = await page.evaluate(READ_OVERFLOW);
     assertNoOverflow(sample, "enroll 320");
     const shot = await screenshot(page, "C-enroll-320.png");
-    return { evidence: { state: { codeText: state.codeText, commandTexts }, shot } };
+    return { evidence: { state: { codeText: state.codeText, commandTexts, installText: state.installText }, shot } };
   });
 }
 

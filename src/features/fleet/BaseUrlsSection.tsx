@@ -2,7 +2,7 @@
 // 普通用户只读。改动经 PUT /fleet/base-urls 保存, 以服务端规范化后的返回为准。
 // 保存只影响之后 enroll 的设备; 已接入设备持有 enroll 时下发的地址列表。
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetBaseURLEntry } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
@@ -24,9 +24,17 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
   const [inputError, setInputError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // 保存成功后 draft 已是服务端权威列表, 跳过紧接着的那次 prop 同步,
+  // 避免 effect 用保存前的 entries prop 把服务端结果覆盖回去。
+  const skipPropSync = useRef(false);
 
   useEffect(() => {
-    if (!dirty) setDraft(entries);
+    if (dirty) return;
+    if (skipPropSync.current) {
+      skipPropSync.current = false;
+      return;
+    }
+    setDraft(entries);
   }, [entries, dirty]);
 
   const add = () => {
@@ -72,6 +80,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
       onSaved(saved.base_urls);
       setDraft(saved.base_urls);
       setDirty(false);
+      skipPropSync.current = true;
       pushToast("success", "接入地址已保存");
     } catch (e) {
       setSaveError(describeError(e));
@@ -115,7 +124,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
                   <button
                     type="button"
                     className="nx-btn nx-btn-ghost nx-btn-xs"
-                    disabled={index === 0}
+                    disabled={saving || index === 0}
                     title="上移"
                     aria-label={`上移 ${entry.url}`}
                     onClick={() => move(index, -1)}
@@ -125,7 +134,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
                   <button
                     type="button"
                     className="nx-btn nx-btn-ghost nx-btn-xs"
-                    disabled={index === draft.length - 1}
+                    disabled={saving || index === draft.length - 1}
                     title="下移"
                     aria-label={`下移 ${entry.url}`}
                     onClick={() => move(index, 1)}
@@ -135,6 +144,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
                   <button
                     type="button"
                     className="nx-btn nx-btn-ghost nx-btn-xs"
+                    disabled={saving}
                     title="删除"
                     aria-label={`删除 ${entry.url}`}
                     onClick={() => remove(index)}
@@ -157,6 +167,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
               placeholder="https://nexterm.example.com"
               value={input}
               aria-label="新接入地址"
+              disabled={saving}
               onChange={(e) => {
                 setInput(e.target.value);
                 setInputError(null);
@@ -172,6 +183,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
               <input
                 type="checkbox"
                 checked={insecure}
+                disabled={saving}
                 onChange={(e) => {
                   setInsecure(e.target.checked);
                   setInputError(null);
@@ -182,7 +194,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
             <button
               type="button"
               className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
-              disabled={!input.trim() || draft.length >= MAX_BASE_URLS}
+              disabled={saving || !input.trim() || draft.length >= MAX_BASE_URLS}
               onClick={add}
             >
               <IconPlus size={12} />
@@ -211,7 +223,11 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
               <IconSave size={12} />
               {saving ? "保存中…" : "保存顺序与修改"}
             </button>
-            {dirty && <span className="nx-hint text-[11px]">有未保存的修改</span>}
+            {saving ? (
+              <span className="nx-hint text-[11px]">保存中, 编辑已锁定…</span>
+            ) : (
+              dirty && <span className="nx-hint text-[11px]">有未保存的修改</span>
+            )}
           </div>
         </div>
       )}
