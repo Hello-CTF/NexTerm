@@ -118,6 +118,7 @@ function Field(props: {
 
 function SetupForm() {
   const initSuperadmin = useAuth((s) => s.initSuperadmin);
+  const status = useAuth((s) => s.status);
   const error = useAuth((s) => s.error);
   const clearError = useAuth((s) => s.clearError);
   const [code, setCode] = useState("");
@@ -168,6 +169,15 @@ function SetupForm() {
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim() || !username.trim()}>
         {busy ? "创建中…" : "创建超级管理员"}
       </button>
+      {status?.auth === "loopback" && (
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full"
+          onClick={() => useAuth.setState({ gate: "ready" })}
+        >
+          暂不初始化,匿名使用
+        </button>
+      )}
     </form>
   );
 }

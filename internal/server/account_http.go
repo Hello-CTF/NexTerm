@@ -161,6 +161,15 @@ type accountStatusView struct {
 	Auth             string `json:"auth"`
 }
 
+// effectiveAuthMode 上报有效访问控制模式而非配置值: loopback 模式监听非回环地址时
+// 等同 on(与 authRequired 的推导和 README 口径一致), 浏览器端据此决定是否允许匿名。
+func (s *Server) effectiveAuthMode() string {
+	if s.options.Auth == AuthLoopback && !core.LoopbackListen(s.options.Listen) {
+		return AuthOn
+	}
+	return s.options.Auth
+}
+
 func (s *Server) serveAccountStatus(w http.ResponseWriter, r *http.Request) {
 	users, err := s.accounts.CountUsers(r.Context())
 	if err != nil {
@@ -172,7 +181,7 @@ func (s *Server) serveAccountStatus(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	writeAccountJSON(w, http.StatusOK, accountStatusView{Initialized: users > 0, RegistrationOpen: registration, Auth: s.options.Auth})
+	writeAccountJSON(w, http.StatusOK, accountStatusView{Initialized: users > 0, RegistrationOpen: registration, Auth: s.effectiveAuthMode()})
 }
 
 type accountInitRequest struct {

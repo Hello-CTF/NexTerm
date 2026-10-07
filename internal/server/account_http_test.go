@@ -26,6 +26,11 @@ type accountFixture struct {
 
 func newAccountFixture(t *testing.T, auth string) *accountFixture {
 	t.Helper()
+	return newAccountFixtureListen(t, auth, "127.0.0.1:0")
+}
+
+func newAccountFixtureListen(t *testing.T, auth, listen string) *accountFixture {
+	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -33,6 +38,7 @@ func newAccountFixture(t *testing.T, auth string) *accountFixture {
 	t.Cleanup(func() { _ = database.Close() })
 	config := testConfig(t, false)
 	config.Options.Auth = auth
+	config.Options.Listen = listen
 	accounts := account.New(database.DB())
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
@@ -639,6 +645,42 @@ func TestAccountHTTPLoopbackExplicit(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, nil, "", nil); call.status != http.StatusUnauthorized {
 		t.Fatalf("loopback me without session status=%d", call.status)
+	}
+}
+
+// TestAccountStatusLoopbackUninitialized 守住 M196 合同: 全新 loopback 实例未初始化即免登录
+// (状态上报 loopback, /rpc 匿名可用), 但账号路由仍要求会话; 初始化后模式不变。
+// loopback 模式监听非回环地址时等同 on: 状态不得再上报 loopback, 匿名 /rpc 一律 401。
+func TestAccountStatusLoopbackUninitialized(t *testing.T) {
+	fixture := newAccountFixture(t, AuthLoopback)
+
+	call := fixture.call(t, http.MethodGet, "/auth/status", nil, nil, "", nil)
+	if call.status != http.StatusOK || call.body["initialized"] != false || call.body["auth"] != AuthLoopback {
+		t.Fatalf("fresh loopback status=%d body=%v", call.status, call.body)
+	}
+	if status, body := postRPC(t, fixture.client, fixture.http.URL+"/rpc", "app_info", nil); status != http.StatusOK || !body.OK {
+		t.Fatalf("fresh loopback anonymous rpc status=%d body=%v", status, body)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, nil, "", nil); call.status != http.StatusUnauthorized {
+		t.Fatalf("fresh loopback me without session status=%d", call.status)
+	}
+
+	fixture.initSuperadmin(t, "root", "password-loop-1")
+	call = fixture.call(t, http.MethodGet, "/auth/status", nil, nil, "", nil)
+	if call.status != http.StatusOK || call.body["initialized"] != true || call.body["auth"] != AuthLoopback {
+		t.Fatalf("initialized loopback status=%d body=%v", call.status, call.body)
+	}
+	if call := fixture.call(t, http.MethodGet, "/auth/me", nil, nil, "", nil); call.status != http.StatusUnauthorized {
+		t.Fatalf("initialized loopback me without session status=%d", call.status)
+	}
+
+	exposed := newAccountFixtureListen(t, AuthLoopback, "0.0.0.0:0")
+	call = exposed.call(t, http.MethodGet, "/auth/status", nil, nil, "", nil)
+	if call.status != http.StatusOK || call.body["auth"] != AuthOn {
+		t.Fatalf("loopback on non-loopback listen status=%d body=%v", call.status, call.body)
+	}
+	if status, _ := postRPC(t, exposed.client, exposed.http.URL+"/rpc", "app_info", nil); status != http.StatusUnauthorized {
+		t.Fatalf("loopback on non-loopback listen anonymous rpc status=%d", status)
 	}
 }
 
