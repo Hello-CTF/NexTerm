@@ -17,6 +17,7 @@ const EXPECTED = [
   "layout-360", "layout-560", "layout-820", "coarse-pointer-keys", "soft-keyboard-focus-viewport-resize",
   "ws-early-frame", "ws-replay", "ws-reconnect-replay",
   "rpc-401-non-retry", "rpc-403-non-retry", "rpc-404-non-retry", "rpc-network-5xx-jitter-recovery",
+  "rpc-auth-on-csrf",
 ];
 const REAL_TARGET_GAPS = [
   { id: "ios-soft-keyboard", status: "evidence-gap", reason: "a physical iOS/iPadOS device and its native soft keyboard are not available to headless Chromium" },
@@ -247,14 +248,22 @@ function startVite() {
   return waitHttp(VITE, process).then(() => process);
 }
 
-export async function startServer() {
+let cachedServerBinary = null;
+
+function serverBinary() {
+  if (globalThis.process.env.NEXTERM_SERVER_BIN) return globalThis.process.env.NEXTERM_SERVER_BIN;
+  if (cachedServerBinary) return cachedServerBinary;
   const goos = { darwin: "darwin", linux: "linux", win32: "windows" }[globalThis.process.platform];
   const goarch = { arm64: "arm64", x64: "amd64" }[globalThis.process.arch];
-  const binary = globalThis.process.env.NEXTERM_SERVER_BIN || path.join(ROOT, "target/go-build/nexterm-server-browser");
-  if (!globalThis.process.env.NEXTERM_SERVER_BIN) {
-    const built = spawnSync(globalThis.process.execPath, ["scripts/build.mjs", "server", "--release", `--os=${goos}`, `--arch=${goarch}`, `--out=${binary}`], { cwd: ROOT, stdio: "inherit" });
-    if (built.status !== 0) throw new Error("Go server build for browser acceptance failed");
-  }
+  const binary = path.join(ROOT, "target/go-build/nexterm-server-browser");
+  const built = spawnSync(globalThis.process.execPath, ["scripts/build.mjs", "server", "--release", `--os=${goos}`, `--arch=${goarch}`, `--out=${binary}`], { cwd: ROOT, stdio: "inherit" });
+  if (built.status !== 0) throw new Error("Go server build for browser acceptance failed");
+  cachedServerBinary = binary;
+  return binary;
+}
+
+export async function startServer() {
+  const binary = serverBinary();
   const port = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-browser-server-"));
   const env = { ...globalThis.process.env, NEXTERM_MASTER_KEY: "real-browser-e2e-master" };
@@ -266,6 +275,36 @@ export async function startServer() {
   });
   await waitHttp(`http://127.0.0.1:${port}/healthz`, process);
   return { process, port, origin: `http://127.0.0.1:${port}`, data };
+}
+
+async function waitInitCode(logPath, process, timeout = 15_000) {
+  const marker = "一次性初始化码: ";
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (process.exitCode !== null && process.exitCode !== undefined) throw new Error(`auth=on server exited ${process.exitCode}`);
+    const text = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+    const line = text.split("\n").find((entry) => entry.includes(marker));
+    if (line) return line.split(marker, 2)[1].trim();
+    await sleep(200);
+  }
+  throw new Error(`auth=on init code not found in ${logPath}`);
+}
+
+async function startAuthOnServer() {
+  const binary = serverBinary();
+  const port = await freePort();
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-browser-auth-on-"));
+  const env = { ...globalThis.process.env, NEXTERM_MASTER_KEY: "real-browser-auth-on-e2e-master" };
+  const logPath = path.join(OUT, "server-auth-on.log");
+  const log = fs.openSync(logPath, "w");
+  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data, "--auth=on"], {
+    cwd: ROOT,
+    env,
+    stdio: ["ignore", log, log],
+  });
+  await waitHttp(`http://127.0.0.1:${port}/healthz`, process);
+  const initCode = await waitInitCode(logPath, process);
+  return { process, port, origin: `http://127.0.0.1:${port}`, data, initCode };
 }
 
 async function metrics(page, width, height, coarse) {
@@ -479,13 +518,64 @@ async function rpcAcceptance(page) {
   });
 }
 
+async function authOnRpcAcceptance(page, authServer) {
+  await pass("rpc-auth-on-csrf", async () => {
+    await page.navigate(`${authServer.origin}/healthz`);
+    await page.evaluate(`window.__NEXTERM_TRANSPORT__ = 'web'; true`);
+    const session = await page.evaluate(`(async () => {
+      const { authApi } = await import('${VITE}/src/ipc/authApi.ts');
+      const created = await authApi.init({
+        code: ${JSON.stringify(authServer.initCode)},
+        username: "acceptance",
+        password: "acceptance-pw-123",
+        dekEnvelope: new Uint8Array([1, 2, 3]),
+        kdfSalt: new Uint8Array([4, 5, 6]),
+        kdfParams: '{"t":3,"m":65536,"p":4}',
+        recoveryEnvelope: new Uint8Array([7, 8, 9]),
+        recoveryHash: "acceptance-recovery-hash",
+      });
+      return { username: created.user.username, csrf: created.csrf_token.length > 0 };
+    })()`);
+    assert.deepEqual(session, { username: "acceptance", csrf: true });
+
+    const control = await page.evaluate(`(async () => {
+      const res = await fetch('/rpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cmd: 'asset_list', args: null }),
+      });
+      const body = await res.json().catch(() => null);
+      return { status: res.status, code: body?.error?.code ?? null, message: body?.error?.message ?? '' };
+    })()`);
+    assert.equal(control.status, 403, JSON.stringify(control));
+    assert.match(control.message, /CSRF/, JSON.stringify(control));
+
+    const evidence = await page.evaluate(`(async () => {
+      const commands = await import('${VITE}/src/ipc/commands.ts');
+      const { setCsrfToken } = await import('${VITE}/src/ipc/authApi.ts');
+      const assets = await commands.assetApi.list();
+      const group = await commands.assetApi.groupCreate('acceptance-' + Date.now());
+      setCsrfToken('stale-token');
+      const assetsAfterStale = await commands.assetApi.list();
+      return {
+        assetListIsArray: Array.isArray(assets),
+        groupCreated: typeof group.id === 'string' && group.id.length > 0,
+        staleTokenRefreshed: Array.isArray(assetsAfterStale),
+      };
+    })()`);
+    assert.deepEqual(evidence, { assetListIsArray: true, groupCreated: true, staleTokenRefreshed: true });
+    return { evidence: { ...evidence, negativeControl: control } };
+  });
+}
+
 async function main() {
   let vite;
   let server;
+  let authServer;
   let chrome;
   let page;
   try {
-    [vite, server, chrome] = await Promise.all([startVite(), startServer(), startChrome()]);
+    [vite, server, authServer, chrome] = await Promise.all([startVite(), startServer(), startAuthOnServer(), startChrome()]);
     page = await newPage(chrome);
     try { await layoutAcceptance(page); } catch (error) { harnessErrors.push(`layout harness: ${error.stack || error}`); }
     try { await wsAcceptance(page, server); } catch (error) { harnessErrors.push(`WS harness: ${error.stack || error}`); }
@@ -498,11 +588,13 @@ async function main() {
       try { if (s.session) await s.commands.sessionApi.disconnect(s.session.id); } catch {}
       return true;
     })()`).catch(() => {});
+    try { await authOnRpcAcceptance(page, authServer); } catch (error) { harnessErrors.push(`auth=on RPC harness: ${error.stack || error}`); }
   } catch (error) {
     harnessErrors.push(String(error?.stack || error));
   } finally {
     if (page) page.close();
     stop(chrome?.process);
+    stop(authServer?.process);
     stop(server?.process);
     stop(vite);
   }
