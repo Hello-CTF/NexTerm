@@ -26,6 +26,8 @@ import {
   encodeSupervisorFrame,
   encodeSupervisorJSONFrame,
   encodeSupervisorOutputPayload,
+  resumeDeviceTerminal,
+  unixNanoFromRFC3339,
   type SupervisorFrame,
 } from "../../ipc/deviceTerminalApi";
 
@@ -384,6 +386,35 @@ describe("DeviceTerminalView 断开与恢复", () => {
     await flushUntil(() => bodyText().includes("连接已断开"));
     const resumeButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("重新连接"));
     expect(resumeButton).toBeTruthy();
+  });
+
+  it("resume hello 挂起时卸载: 替换 WS 被关闭, 既有会话仍可再次 resume", async () => {
+    mounted = await mountTerminal();
+    await flushUntil(() => bodyText().includes("已连接"));
+    const createMsg = FakeWebSocket.instances[0].sentJSON(SupervisorFrameKind.Create) as { id: string };
+    FakeWebSocket.instances[1].serverCloseAbnormal();
+    await flushUntil(() => bodyText().includes("连接已断开"));
+    // 第三条连接 (resume) 在 hello 期挂起
+    FakeWebSocket.helloHangFrom = 3;
+    const resumeButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("重新连接"));
+    expect(resumeButton).toBeTruthy();
+    resumeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushUntil(() => FakeWebSocket.instances.length >= 3);
+    mounted.unmount();
+    mounted = null;
+    // 卸载取消在途 resume: 替换 WS 被关闭, 不留旧账号活 WS
+    await flushUntil(() => FakeWebSocket.instances[2].readyState === 3);
+    // 既有会话仍可再次 resume (resume 不创建会话, 取消只断开替换连接)
+    FakeWebSocket.helloHangFrom = undefined;
+    const { bridge } = await resumeDeviceTerminal({
+      deviceId: "d-1",
+      stateDigest: "digest-1",
+      sessionId: createMsg.id,
+      identity: { createdAtUnixNano: unixNanoFromRFC3339(INFO.created_at), incarnation: INFO.incarnation },
+      factory: (url) => new FakeWebSocket(url) as unknown as WebSocket,
+    });
+    expect(bridge.isAttached).toBe(true);
+    bridge.detach();
   });
 
   it("exit 帧后的 clean 关闭停留在已结束, 不误报断开", async () => {

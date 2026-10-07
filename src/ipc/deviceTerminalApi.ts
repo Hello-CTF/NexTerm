@@ -656,6 +656,9 @@ export async function openDeviceTerminal(options: {
 // resumeDeviceTerminal 用期望身份重attach既有会话: 设备端校验 incarnation,
 // 不匹配回 identity 错误; 成功后从 seq 0 重放 backlog, 断开期间的输出不丢。
 // wire 在 attach 前调用, 原因同 openDeviceTerminal。
+// onCancel 从 socket 建立 (含 CONNECTING/hello 阶段) 起登记取消函数, settled
+// 后以 onCancel(null) 注销; 取消关闭连接解锁 connect/attach 的 await (resume
+// 不创建会话, 取消只是断开替换连接, 既有会话仍可再次 resume)。
 export async function resumeDeviceTerminal(options: {
   deviceId: string;
   stateDigest: string;
@@ -664,17 +667,38 @@ export async function resumeDeviceTerminal(options: {
   factory?: WebSocketFactory;
   bridgePath?: (deviceId: string) => string;
   wire?: (bridge: DeviceBridge) => void;
+  onCancel?: (cancel: (() => void) | null) => void;
 }): Promise<{ info: SupervisorSessionInfo; bridge: DeviceBridge }> {
-  const bridge = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
-    factory: options.factory,
-    bridgePath: options.bridgePath,
-  });
-  options.wire?.(bridge);
+  let bridge: DeviceBridge | null = null;
+  let cancelled = false;
+  let settled = false;
+  const cancel = () => {
+    if (cancelled || settled) return;
+    cancelled = true;
+    bridge?.close();
+  };
   try {
+    bridge = await DeviceBridge.connect(options.deviceId, options.stateDigest, {
+      factory: options.factory,
+      bridgePath: options.bridgePath,
+      onBridge: (b) => {
+        bridge = b;
+        options.onCancel?.(cancel);
+      },
+    });
+    if (cancelled) throw new DeviceTerminalError("closed", "resume 已取消");
+    options.wire?.(bridge);
     const info = await bridge.attach(options.sessionId, options.identity);
+    if (cancelled) {
+      bridge.close();
+      throw new DeviceTerminalError("closed", "resume 已取消");
+    }
+    settled = true;
+    options.onCancel?.(null);
     return { info, bridge };
   } catch (error) {
-    bridge.close();
+    bridge?.close();
+    options.onCancel?.(null);
     throw error;
   }
 }

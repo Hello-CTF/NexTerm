@@ -24,6 +24,8 @@ import {
   SupervisorFrameKind,
   SupervisorFrameParser,
   encodeSupervisorJSONFrame,
+  resumeDeviceTerminal,
+  unixNanoFromRFC3339,
   type SupervisorFrame,
 } from "../../ipc/deviceTerminalApi";
 
@@ -75,6 +77,8 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   // deferAttach 延迟 attach 响应, 让用例在 attach 在途时介入 (取消/账号切换)。
   static deferAttach = false;
+  // helloHangFrom 只对第 N 条及以后的连接挂起 hello (如 resume 的替换连接)。
+  static helloHangFrom: number | undefined;
   readonly url: string;
   readonly sent: Uint8Array[] = [];
   binaryType = "";
@@ -105,6 +109,12 @@ class FakeWebSocket {
     this.emit("close", { code: 1000, reason: "", wasClean: true });
   }
 
+  serverCloseAbnormal(): void {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.emit("close", { code: 1006, reason: "", wasClean: false });
+  }
+
   serverSend(frame: Uint8Array): void {
     this.emit("message", { data: frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) });
   }
@@ -120,11 +130,20 @@ class FakeWebSocket {
     return frames;
   }
 
+  sentJSON(kind: number): unknown {
+    const frame = [...this.sentFrames()].reverse().find((f) => f.kind === kind);
+    if (!frame) throw new Error(`frame ${kind} not sent`);
+    return JSON.parse(new TextDecoder().decode(frame.payload));
+  }
+
   private respond(frame: SupervisorFrame): void {
     switch (frame.kind) {
-      case SupervisorFrameKind.Hello:
+      case SupervisorFrameKind.Hello: {
+        const index = FakeWebSocket.instances.indexOf(this) + 1;
+        if (FakeWebSocket.helloHangFrom !== undefined && index >= FakeWebSocket.helloHangFrom) return;
         this.serverJSON(SupervisorFrameKind.HelloAck, { version: 2 });
         return;
+      }
       case SupervisorFrameKind.Create: {
         const msg = JSON.parse(new TextDecoder().decode(frame.payload)) as { id: string };
         this.serverJSON(SupervisorFrameKind.Created, { ...INFO, id: msg.id });
@@ -231,6 +250,7 @@ let mounted: MountedView | null = null;
 beforeEach(() => {
   FakeWebSocket.instances = [];
   FakeWebSocket.deferAttach = false;
+  FakeWebSocket.helloHangFrom = undefined;
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("fetch", mocks.fetch);
   vi.stubGlobal("ResizeObserver", class {
@@ -331,5 +351,42 @@ describe("DeviceTerminalBoundary 账号隔离", () => {
     await flush();
     expect(creator.sentFrames().some((f) => f.kind === SupervisorFrameKind.KillSession)).toBe(true);
     expect(FakeWebSocket.instances.every((ws) => ws.readyState === 3)).toBe(true);
+  });
+
+  it("在途 resume 遇账号切换: boundary 关标签关闭替换 WS, 既有会话仍可再次 resume", async () => {
+    seedTabs();
+    mounted = mount(
+      <>
+        {createElement(TabHarness)}
+        {createElement(DeviceTerminalBoundary)}
+      </>,
+    );
+    // 视图完成 open (creator + attach 两条桥接)
+    await flushUntil(() => FakeWebSocket.instances.length >= 2);
+    const createMsg = FakeWebSocket.instances[0].sentJSON(SupervisorFrameKind.Create) as { id: string };
+    // 旧 attach 异常断开 → 视图进入 disconnected
+    FakeWebSocket.instances[1].serverCloseAbnormal();
+    await flushUntil(() => (document.body.textContent ?? "").includes("连接已断开"));
+    // 第三条连接 (resume) 在 hello 期挂起
+    FakeWebSocket.helloHangFrom = 3;
+    const resumeButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("重新连接"));
+    expect(resumeButton).toBeTruthy();
+    resumeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushUntil(() => FakeWebSocket.instances.length >= 3);
+    seedUser(OTHER_USER);
+    // boundary 关闭标签 → 视图卸载 → 取消在途 resume → 替换 WS 被关闭
+    await flushUntil(() => storeTabs().every((t) => t.kind !== "deviceTerminal"));
+    await flushUntil(() => FakeWebSocket.instances[2].readyState === 3);
+    // 既有会话仍可再次 resume (resume 不创建会话, 取消只断开替换连接)
+    FakeWebSocket.helloHangFrom = undefined;
+    const { bridge } = await resumeDeviceTerminal({
+      deviceId: "d-1",
+      stateDigest: "digest-1",
+      sessionId: createMsg.id,
+      identity: { createdAtUnixNano: unixNanoFromRFC3339(INFO.created_at), incarnation: INFO.incarnation },
+      factory: (url) => new FakeWebSocket(url) as unknown as WebSocket,
+    });
+    expect(bridge.isAttached).toBe(true);
+    bridge.detach();
   });
 });

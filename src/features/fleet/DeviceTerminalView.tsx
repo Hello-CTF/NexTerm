@@ -150,9 +150,9 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
   // unmountedRef 在组件真正卸载后保持 true, 供 resume/restart 的在途完成回调
   // 丢弃桥接 (按钮只在挂载期可点, 但 await 可能跨过卸载)。
   const unmountedRef = useRef(false);
-  // openCancelRef 是在途 open 的取消函数 (openDeviceTerminal 经 onCancel 登记,
-  // settled 后自动注销): 卸载/账号边界关闭标签时取消在途 open, 回收走 creator
-  // 旧连接, 不依赖账号切换后的新 WS。
+  // openCancelRef 是在途 open/resume 的取消函数 (openDeviceTerminal /
+  // resumeDeviceTerminal 经 onCancel 登记, settled 后自动注销): 卸载/账号
+  // 边界关闭标签时取消在途连接, 回收走 creator 旧连接, 不依赖账号切换后的新 WS。
   const openCancelRef = useRef<(() => void) | null>(null);
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
@@ -275,6 +275,8 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
       if (!stale()) setPhase({ kind: "failed", message: "设备代理未上报终端状态摘要 (设备离线?)", canRestart: true });
       return;
     }
+    // 设备信息 await 后、发起连接前复核: 卸载/账号切换后不再新起连接
+    if (stale()) return;
     // backlog 从 seq 0 全量重放, 先清屏再写回, 断开期间的内容不丢;
     // 清屏必须发生在 attach 之前 (attach 一批准对端立即开始重放)。
     termRef.current?.reset();
@@ -292,6 +294,9 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
         sessionId: session.id,
         identity: session.identity,
         wire,
+        onCancel: (cancel) => {
+          openCancelRef.current = cancel;
+        },
       });
       if (stale()) {
         bridge.detach();
