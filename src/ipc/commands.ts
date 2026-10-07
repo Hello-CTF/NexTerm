@@ -820,6 +820,21 @@ export const syncApi = {
       args: { revealSecrets, afterId, limit },
     }),
 
+  collectKnownHosts: (afterId?: string, limit?: number) =>
+    call<import("./types").SyncCollectKnownHostsResult>("sync_collect_known_hosts", {
+      args: { afterId, limit },
+    }),
+
+  collectAIProfiles: (revealSecrets: boolean, afterId?: string, limit?: number) =>
+    call<import("./types").SyncCollectAIProfilesResult>("sync_collect_ai_profiles", {
+      args: { revealSecrets, afterId, limit },
+    }),
+
+  kindOptInGet: () => call<import("./types").SyncKindOptIn>("sync_kind_opt_in_get"),
+
+  kindOptInSet: (patch: { knownHost?: boolean, aiProfile?: boolean }) =>
+    call<import("./types").SyncKindOptIn>("sync_kind_opt_in_set", { args: patch }),
+
   token: () => call<string | null>("sync_token"),
   rotateToken: (id?: string) =>
     call<string | null>("sync_token_rotate", { args: { id } }),

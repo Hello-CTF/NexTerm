@@ -12,16 +12,13 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-// userIDContextKey 由服务端中间件在会话校验通过后注入操作用户 ID。
-type userIDContextKey struct{}
-
+// WithUserID/UserIDFromContext 委托 ipc 包的同一实现: /rpc(账号会话)与 /sync/v2 两条链路共享同一身份 key。
 func WithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userIDContextKey{}, userID)
+	return ipc.WithUserID(ctx, userID)
 }
 
 func UserIDFromContext(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(userIDContextKey{}).(string)
-	return userID, ok
+	return ipc.UserIDFromContext(ctx)
 }
 
 type PushRequest struct {

@@ -1390,6 +1390,49 @@ export async function mockInvoke(cmd: string, rawArgs?: Record<string, unknown>)
     case "known_host_remove":
       return null;
 
+    // M165: 同步 opt-in 与 M163 收集命令的演示形态(默认关; 演示档案密钥只在 revealSecrets 时给出, 与生产 revealed 语义一致)。
+    case "sync_kind_opt_in_get":
+      return { knownHost: false, aiProfile: false };
+
+    case "sync_kind_opt_in_set": {
+      const current = { knownHost: false, aiProfile: false };
+      if (typeof a.knownHost === "boolean") current.knownHost = a.knownHost;
+      if (typeof a.aiProfile === "boolean") current.aiProfile = a.aiProfile;
+      return current;
+    }
+
+    case "sync_collect_known_hosts":
+      return {
+        knownHosts: [
+          { id: "kh1", host: "127.0.0.1", port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:9xKq7mP2vL4nR8sT1uW3yA5bC6dE7fG8hI9jK0lM1nO", addedAt: Date.now() - 40 * 86_400_000 },
+          { id: "kh2", host: "10.0.0.8", port: 22, keyType: "ssh-rsa", fingerprint: "SHA256:2bN4cD6eF8gH0iJ2kL4mN6oP8qR0sT2uV4wX6yZ8aB0c", addedAt: Date.now() - 30 * 86_400_000 },
+        ],
+        hasMore: false,
+      };
+
+    case "sync_collect_ai_profiles":
+      return {
+        profiles: modelState.profiles.map((p) => {
+          const hasKey = typeof p.apiKey === "string" && p.apiKey !== "" && p.apiKey !== "••••••••••••";
+          const revealed = a.revealSecrets === true;
+          return {
+            id: p.id,
+            name: p.name,
+            baseUrl: p.baseUrl,
+            model: p.model,
+            temperature: p.temperature ?? 0,
+            contextWindow: p.contextWindow ?? 0,
+            proxy: p.proxy ?? null,
+            stream: p.stream ?? false,
+            updatedAt: Date.now(),
+            ...(revealed && hasKey ? { apiKey: p.apiKey } : {}),
+            apiKeySet: hasKey,
+            apiKeyState: revealed ? "revealed" : "withheld",
+          };
+        }),
+        hasMore: false,
+      };
+
     case "app_info":
       return {
         name: "NexTerm",

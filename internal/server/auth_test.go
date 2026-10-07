@@ -520,3 +520,47 @@ func TestExposedListenWithoutVerifierFailsClosed(t *testing.T) {
 		t.Fatal("missing sync object handler and token verifier was accepted")
 	}
 }
+
+// M165: 账号会话经 /rpc 下发时, 处理器同时拿到 server 私有 identity 与 ipc 共享 userID;
+// 无会话/CSRF 缺失的原鉴权行为不变。
+func TestRequireAuthAccountSessionInjectsSharedUserID(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	err := fixture.server.dispatcher.RegisterRaw("test_echo_user", func(ctx context.Context, _ *ipc.Call) (any, error) {
+		userID, ok := ipc.UserIDFromContext(ctx)
+		result := map[string]any{"userID": userID, "ok": ok}
+		if identity := accountIdentityFrom(ctx); identity != nil {
+			result["identityUserID"] = identity.UserID
+		}
+		return result, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, _ := fixture.initSuperadmin(t, "admin", "correct-horse-battery")
+	userID, _ := session.user["id"].(string)
+	if userID == "" {
+		t.Fatalf("session user missing id: %v", session.user)
+	}
+
+	echo := func(session *accountTestSession, csrf string) accountCall {
+		return fixture.call(t, http.MethodPost, "/rpc", map[string]any{"cmd": "test_echo_user", "args": map[string]any{}}, session, csrf, nil)
+	}
+
+	authorized := echo(session, session.csrf)
+	if authorized.status != http.StatusOK {
+		t.Fatalf("authorized rpc status=%d body=%v", authorized.status, authorized.body)
+	}
+	data, _ := authorized.body["data"].(map[string]any)
+	if data["ok"] != true || data["userID"] != userID || data["identityUserID"] != userID {
+		t.Fatalf("injected identity mismatch: %v", data)
+	}
+
+	anonymous := echo(nil, "")
+	if anonymous.status != http.StatusUnauthorized {
+		t.Fatalf("anonymous rpc status=%d, want 401", anonymous.status)
+	}
+	noCSRF := echo(session, "")
+	if noCSRF.status != http.StatusForbidden {
+		t.Fatalf("missing csrf status=%d, want 403", noCSRF.status)
+	}
+}

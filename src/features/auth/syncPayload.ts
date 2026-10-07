@@ -1,5 +1,5 @@
 import type { AssetGroup, TranscriptChunk, TranscriptSummary } from "../../ipc/commands";
-import type { SnippetDto, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone } from "../../ipc/types";
+import type { SnippetDto, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../../ipc/types";
 
 // 本文件的载荷构造与 internal/sync/object.go 的 Go 结构体逐字段对齐(字段顺序 + omitempty 语义),
 // 并经 marshalSyncPayload 产出与 Go json.Marshal 逐字节一致的文本;跨端 payload hash 相同,
@@ -62,8 +62,39 @@ export function snippetPayload(s: SnippetDto): unknown {
 }
 
 // tombstonePayload 对齐 tombstoneObject: 与目标对象同 ID, deletedAt 即修订号。
+// known_host 冲突墓碑必须原样携带败者三元组(host/port/keyType, omitempty), 否则再传播的墓碑退化为
+// 用户删除语义, 下游设备会把胜出的较新化身误删(M163 R4 语义); 用户主动删除墓碑不带三元组。
 export function tombstonePayload(t: SyncCollectTombstone): unknown {
-  return { targetKind: t.targetKind, deletedAt: t.deletedAt };
+  const o: Record<string, unknown> = { targetKind: t.targetKind, deletedAt: t.deletedAt };
+  if (t.host) o.host = t.host;
+  if (t.port) o.port = t.port;
+  if (t.keyType) o.keyType = t.keyType;
+  return o;
+}
+
+// knownHostPayload 对齐 knownHostObject: id, host, port, keyType, fingerprint, addedAt(全部必填, 无 omitempty);
+// addedAt 即 LWW 修订号(重新接受主机密钥会刷新)。
+export function knownHostPayload(k: SyncCollectKnownHost): unknown {
+  return { id: k.id, host: k.host, port: k.port, keyType: k.keyType, fingerprint: k.fingerprint, addedAt: k.addedAt };
+}
+
+// aiProfilePayload 对齐 aiProfileObject: 字段顺序与 Go 结构体一致; fallbackModel 空串与 maxTokens/
+// 各超时空指针走 omitempty 省略, proxy/apiKey 无 omitempty(缺省输出 null/空串)。apiKey 恒为明文
+// (整体经 DEK 端到端加密), 只有 collect 以 revealed 状态给出明文时才构造载荷。
+export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
+  const o: Record<string, unknown> = { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: p.apiKey ?? "", model: p.model };
+  if (p.fallbackModel) o.fallbackModel = p.fallbackModel;
+  o.temperature = p.temperature;
+  o.contextWindow = p.contextWindow;
+  if (p.maxTokens !== undefined && p.maxTokens !== null) o.maxTokens = p.maxTokens;
+  o.proxy = p.proxy ?? null;
+  o.stream = p.stream;
+  if (p.requestTimeoutSeconds !== undefined && p.requestTimeoutSeconds !== null) o.requestTimeoutSeconds = p.requestTimeoutSeconds;
+  if (p.idleTimeoutSeconds !== undefined && p.idleTimeoutSeconds !== null) o.idleTimeoutSeconds = p.idleTimeoutSeconds;
+  if (p.circuitFailureThreshold !== undefined && p.circuitFailureThreshold !== null) o.circuitFailureThreshold = p.circuitFailureThreshold;
+  if (p.circuitCooldownSeconds !== undefined && p.circuitCooldownSeconds !== null) o.circuitCooldownSeconds = p.circuitCooldownSeconds;
+  o.updatedAt = p.updatedAt;
+  return o;
 }
 
 // credentialPayload 对齐 credentialObject; secret 缺失的凭据不会走到这里(收集期已 warning)。

@@ -10,6 +10,7 @@ import (
 
 	"github.com/ProbiusOfficial/NexTerm/internal/account"
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
@@ -100,5 +101,16 @@ func TestObjectHandlerProtocolGateAndConflict(t *testing.T) {
 	}
 	if len(ids.Entries) != 1 || ids.Entries[0].BlobHash != hashBlobHex([]byte("x")) {
 		t.Fatalf("ids response=%+v", ids)
+	}
+}
+
+// M165: /sync/v2 链路的 cursor 身份注入(WithUserID)与 /rpc 链路共享同一 ipc key, 行为不变。
+func TestWithUserIDSharesIPCKey(t *testing.T) {
+	ctx := WithUserID(context.Background(), "u-1")
+	if userID, ok := UserIDFromContext(ctx); !ok || userID != "u-1" {
+		t.Fatalf("sync UserIDFromContext = %q %v", userID, ok)
+	}
+	if userID, ok := ipc.UserIDFromContext(ctx); !ok || userID != "u-1" {
+		t.Fatalf("ipc UserIDFromContext = %q %v", userID, ok)
 	}
 }

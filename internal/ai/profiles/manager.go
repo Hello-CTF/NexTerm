@@ -326,6 +326,9 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	m.state = saved
 	delete(m.circuits, id)
+	if err := m.recordDeleteTombstone(ctx, id); err != nil {
+		return m.state.overview(), err
+	}
 	return m.state.overview(), nil
 }
 

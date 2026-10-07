@@ -15,11 +15,61 @@ const (
 	CommandBundleWrite = "sync_bundle_write"
 
 	CommandTranscriptSyncOptIn = "transcript_sync_opt_in"
+
+	CommandKindOptInGet = "sync_kind_opt_in_get"
+	CommandKindOptInSet = "sync_kind_opt_in_set"
 )
 
 type TranscriptSyncOptInRequest struct {
 	ID    string `json:"id"`
 	OptIn bool   `json:"optIn"`
+}
+
+// KindOptIn 是按账号用户隔离的同步 opt-in 视图: known_host(主机信任)与 ai_profile(AI 模型档案)默认关。
+type KindOptIn struct {
+	KnownHost bool `json:"knownHost"`
+	AIProfile bool `json:"aiProfile"`
+}
+
+type KindOptInPatch struct {
+	KnownHost *bool `json:"knownHost,omitempty"`
+	AIProfile *bool `json:"aiProfile,omitempty"`
+}
+
+// KindOptInGet 返回会话用户的 opt-in; 无身份(匿名/桌面直连)返回全 false(默认关), 不报错。
+func (s *Service) KindOptInGet(ctx context.Context) (KindOptIn, error) {
+	userID, ok := UserIDFromContext(ctx)
+	if !ok {
+		return KindOptIn{}, nil
+	}
+	knownHost, err := s.store.KnownHostSyncOptIn(ctx, userID)
+	if err != nil {
+		return KindOptIn{}, err
+	}
+	aiProfile, err := s.store.AIProfileSyncOptIn(ctx, userID)
+	if err != nil {
+		return KindOptIn{}, err
+	}
+	return KindOptIn{KnownHost: knownHost, AIProfile: aiProfile}, nil
+}
+
+// KindOptInSet 只写会话用户自己的 opt-in; 无身份一律 forbidden, 不接受客户端上报 userID(跨用户写入无从发生)。
+func (s *Service) KindOptInSet(ctx context.Context, patch KindOptInPatch) (KindOptIn, error) {
+	userID, ok := UserIDFromContext(ctx)
+	if !ok {
+		return KindOptIn{}, ipc.NewError(ipc.CodeForbidden, "需要账号会话才能修改同步 opt-in")
+	}
+	if patch.KnownHost != nil {
+		if err := s.store.SetKnownHostSyncOptIn(ctx, userID, *patch.KnownHost); err != nil {
+			return KindOptIn{}, err
+		}
+	}
+	if patch.AIProfile != nil {
+		if err := s.store.SetAIProfileSyncOptIn(ctx, userID, *patch.AIProfile); err != nil {
+			return KindOptIn{}, err
+		}
+	}
+	return s.KindOptInGet(ctx)
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
@@ -101,6 +151,17 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.RegisterNested(dispatcher, CommandCollectAIProfiles, func(ctx context.Context, _ *ipc.Call, input CollectAIProfilesRequest) (CollectAIProfilesResult, error) {
 				return s.CollectAIProfiles(ctx, input)
+			})
+		},
+		// 同步 opt-in 读写: 用户身份由 /rpc 会话注入(UserIDFromContext), 匿名 get 全 false、set forbidden。
+		func() error {
+			return ipc.Register(dispatcher, CommandKindOptInGet, func(ctx context.Context, _ *ipc.Call, _ struct{}) (KindOptIn, error) {
+				return s.KindOptInGet(ctx)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandKindOptInSet, func(ctx context.Context, _ *ipc.Call, input KindOptInPatch) (KindOptIn, error) {
+				return s.KindOptInSet(ctx, input)
 			})
 		},
 	}
