@@ -64,15 +64,15 @@ less README.md
 nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 ```
 
-该模式只开放账号路由（`/auth/*`）、`/sync/v2/push`、`/sync/v2/pull`、`/sync/v2/ids` 和 `/healthz`，不提供浏览器界面、`/rpc` 或终端、文件、容器接口。同步数据按账号隔离并端到端加密，服务端只存密文。账号初始化与完整版相同：未初始化的库首次启动会在控制台打印一次性初始化码；`--sync-only` 没有浏览器界面，可先用完整模式对同一数据目录完成初始化，再切换过来。
+该模式只开放账号路由（`/auth/*`，含 `/auth/preferences`）、超管路由（`/admin/users`、`/admin/settings`、`/admin/preferences`）、`/sync/v2/push`、`/sync/v2/pull`、`/sync/v2/ids` 和 `/healthz`，不提供浏览器界面、`/rpc` 或终端、文件、容器接口。所有账号与同步路由都要求登录会话，写操作额外要求 CSRF 头，`/admin/*` 还要求超管身份。同步数据按账号隔离并端到端加密，服务端只存密文。账号初始化与完整版相同：未初始化的库首次启动会在控制台打印一次性初始化码；`--sync-only` 没有浏览器界面，可先用完整模式对同一数据目录完成初始化，再切换过来。
 
-在桌面端的「设置 → 账号同步」中填写服务端地址、用户名和密码即可；密码在本机用于解锁数据密钥，不会离开本机。公网地址必须使用 HTTPS（客户端强制校验；自签证书的内网地址可勾选跳过证书校验）。
+在桌面端的「设置 → 账号同步」中填写服务端地址、用户名和密码即可；密码会经 HTTPS 发送到服务端完成登录认证，同时在本机用于解锁数据密钥；数据密钥本身与同步内容的明文不会离开本机，服务端只存密文。公网地址必须使用 HTTPS（客户端强制校验；自签证书的内网地址可勾选跳过证书校验）。
 
 ### 从 rc4 及更早版本升级（账号体系取代同步令牌）
 
 rc5 起服务端改为多用户账号体系，旧的静态同步令牌及 `nexterm-server token`、`nexterm-server rotate-token` 命令已移除。升级步骤：
 
-- 替换二进制后按实际启用的 unit 执行 `systemctl restart nexterm-server` 或 `systemctl restart nexterm-onlyserver`（两个 unit 不要同时启用）。原有数据保留在数据目录中，数据库迁移随启动自动完成。
+- 替换二进制后按实际启用的 unit 执行 `systemctl restart nexterm-server` 或 `systemctl restart nexterm-onlyserver`（两个 unit 不要同时启用）。原有数据保留在数据目录中（默认 SQLite 后端；`--db postgres` 部署的数据在 PostgreSQL 中），数据库迁移随启动自动完成。
 - 首次启动若账号系统未初始化，控制台会打印一次性初始化码；在浏览器打开服务端完成超管初始化并保存恢复密钥。已有数据的库同样走这一步初始化，之后用账号登录。
 - 桌面端在「设置 → 账号同步」改用「服务端地址 + 用户名 + 密码」重新配置同步，旧版保存的同步令牌不再可用。浏览器版首次打开会进入初始化或登录页，不再提示输入令牌。
 - 回环免登录仅限显式声明：`--auth loopback`（或 `NEXTERM_AUTH=loopback`）且监听回环地址；该模式把 Host 限定为 `localhost`、`127.0.0.1`、`[::1]`（防 DNS 重绑定），经反向代理用域名访问会收到 421。反向代理部署请保持默认 `--auth on`。
@@ -101,7 +101,7 @@ rc5 起服务端改为多用户账号体系，旧的静态同步令牌及 `nexte
 | `--master-key` | `NEXTERM_MASTER_KEY` | 凭据库根密钥，至少 8 个字符。已弃用，请改用 `--master-key-file`。 |
 | `--master-key-file` | `NEXTERM_MASTER_KEY_FILE` | 从文件读取凭据库根密钥（推荐；与 `--master-key` 互斥）。 |
 | `--require-vault` | — | 启动时凭据库未能解锁则以非零状态退出。 |
-| `--sync-only` | — | 只启动账号与同步路由（`/auth/*` 与 `/sync/v2/*`），无浏览器界面。 |
+| `--sync-only` | — | 只启动账号、超管与同步路由（`/auth/*`、`/admin/*`、`/sync/v2/*`），无浏览器界面。 |
 | `--public-base-url` | `NEXTERM_PUBLIC_BASE_URL` | 仅完整模式。生成图片公开链接时使用的外部基础 URL，如 `https://term.example.com/nexterm`（反代带路径前缀时）。仅接受 http/https，拒绝 userinfo/query/fragment；未设置时生成同源相对链接。运行时可在「管理设置」中覆盖（数据库存储优先于此默认值）。与同步地址、AI 模型地址互不影响。 |
 | — | `NEXTERM_GATEWAY_AUTH` | 可选。设置后，携带匹配 `X-NexTerm-Gateway-Auth` 请求头的请求视为已通过前置网关鉴权，免登录会话（懒猫微服由网关注入该头）。自建部署请勿设置，设置后请像密钥一样保管。 |
 | — | `NEXTERM_BLOB_MAX_BYTES` | 仅完整模式。单个文件上传的大小上限（字节），默认 268435456（256 MiB）。 |
@@ -125,7 +125,7 @@ rc5 起服务端改为多用户账号体系，旧的静态同步令牌及 `nexte
 
 `/healthz` 无需登录，响应中的 `vault` 字段报告凭据库状态（`initialized`、`mode`、`unlocked`），可用于监控凭据库是否可用。
 
-请备份密钥文件和数据目录。更换根密钥后，已有的密码类凭据将无法解密。
+请备份密钥文件和数据目录（默认 SQLite 后端）；`--db postgres` 部署的工作区与同步数据存放在 PostgreSQL 中，必须另行备份数据库。更换根密钥后，已有的密码类凭据将无法解密。
 
 ## 常见问题
 
