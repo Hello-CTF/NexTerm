@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { isMac, modHint } from "./platform";
-import { getAccountOverrides, getAccountPreferenceStore, patchAccountOverrideCache, subscribeAccountOverrides } from "./preferences";
+import { getAccountDefaults, getAccountOverrides, getAccountPreferenceStore, patchAccountOverrideCache, subscribeAccountOverrides } from "./preferences";
 
 export type KeybindingActionId =
   | "commandPalette"
@@ -309,7 +309,7 @@ function loadLocalOverrides(): Overrides {
   }
 }
 
-// parseAccountLayer 从线上扁平覆盖记录解析账号层键位(如 keybinding.newTerminal = "Mod+Shift+t")。
+// parseAccountLayer 从线上扁平记录解析键位层(服务端默认与账号覆盖同形状,如 keybinding.newTerminal = "Mod+Shift+t")。
 function parseAccountLayer(flat: Record<string, unknown>): Overrides {
   const out: Overrides = {};
   for (const action of KEYBINDING_ACTIONS) {
@@ -327,9 +327,10 @@ function parseAccountLayer(flat: Record<string, unknown>): Overrides {
   return out;
 }
 
-// 账号覆盖加载/清除后由 preferences 通知回填:只重建快照,不改动设备本地层与已写回的账号键。
-export function applyAccountKeybindingOverrides(flat: Record<string, unknown>): void {
-  accountLayer = parseAccountLayer(flat);
+// 服务端默认/账号覆盖加载或清除后由 preferences 通知回填:只重建快照,不改动设备本地层与已写回的账号键。
+export function applyAccountKeybindingLayers(defaults: Record<string, unknown>, overrides: Record<string, unknown>): void {
+  defaultsLayer = parseAccountLayer(defaults);
+  accountLayer = parseAccountLayer(overrides);
   emit();
 }
 
@@ -341,10 +342,12 @@ function buildSnapshot(overrides: Overrides): KeybindingSnapshot {
   return out;
 }
 
-// 设备本地层(localStorage)与账号层(线上扁平覆盖)分离持久化;快照按 本地 < 账号 合并。
+// 设备本地层(localStorage)、服务端全局默认层(/admin/preferences)与账号覆盖层(线上扁平键)分离;
+// 快照按 内置默认 < 服务端默认 < 设备本地 < 账号覆盖 合并。
 let localOverrides: Overrides = loadLocalOverrides();
+let defaultsLayer: Overrides = {};
 let accountLayer: Overrides = {};
-let snapshot: KeybindingSnapshot = buildSnapshot({ ...localOverrides, ...accountLayer });
+let snapshot: KeybindingSnapshot = buildSnapshot({ ...defaultsLayer, ...localOverrides, ...accountLayer });
 const listeners = new Set<() => void>();
 
 function persistLocal(): void {
@@ -356,7 +359,7 @@ function persistLocal(): void {
 }
 
 function emit(): void {
-  snapshot = buildSnapshot({ ...localOverrides, ...accountLayer });
+  snapshot = buildSnapshot({ ...defaultsLayer, ...localOverrides, ...accountLayer });
   for (const listener of listeners) listener();
 }
 
@@ -373,8 +376,8 @@ export function setKeybinding(id: KeybindingActionId, binding: string | null): v
   if (binding !== null && normalized === null) return;
   const store = getAccountPreferenceStore();
   const key = keybindingPrefKey(id);
-  if (normalized === DEFAULTS.get(id)) {
-    // 回到默认:同时清设备本地值与账号覆盖,其他设备一并回默认。
+  // 与生效默认(服务端默认优先于内置默认)相同即回到默认:清设备本地值与账号覆盖。
+  if (normalized === (id in defaultsLayer ? defaultsLayer[id] : DEFAULTS.get(id))) {
     delete localOverrides[id];
     delete accountLayer[id];
     persistLocal();
@@ -525,5 +528,5 @@ export function bindingConflicts(
 
 // 账号覆盖加载/清除后自动重建键位快照(与 preferences 的账号覆盖事件联动)。
 subscribeAccountOverrides(() => {
-  applyAccountKeybindingOverrides(getAccountOverrides());
+  applyAccountKeybindingLayers(getAccountDefaults(), getAccountOverrides());
 });

@@ -73,6 +73,11 @@ export function getAccountOverrides(): Record<string, unknown> {
   return accountOverrides;
 }
 
+// getAccountDefaults 返回线上扁平键的服务端全局默认记录(超管 /admin/preferences)。
+export function getAccountDefaults(): Record<string, unknown> {
+  return accountDefaults;
+}
+
 // patchAccountOverrideCache 在写回/清除后同步本地缓存,不必等下一次全量加载。
 export function patchAccountOverrideCache(set: Record<string, unknown>, clear: string[]): void {
   for (const key of clear) delete accountOverrides[key];

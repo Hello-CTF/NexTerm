@@ -77,6 +77,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
 import { SyncCard } from "../features/settings/SyncCard";
 import { useAuth } from "../features/auth/store";
 import { useUi } from "../app/store";
+import { GO_SYNC_FIXTURES } from "./auth-sync-fixtures";
 
 const DEK = new Uint8Array(32).fill(7);
 const DEMO_USER = {
@@ -109,10 +110,11 @@ function seedAuthed() {
   });
 }
 
-// remoteObject 按线上形状密封一个远端对象(blob 可经真实 DEK 解开)。
-async function remoteObject(id: string, kind: import("../features/auth/crypto").SyncObjectKind, payload: unknown, seq: number) {
-  const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../features/auth/crypto");
-  return { id, seq, blob: bytesToBase64(await sealSyncObject(DEK, utf8Bytes(JSON.stringify(payload)), id, kind)) };
+// remoteFixtureWire 直接密封真实 Go json.Marshal 产出的 fixture 字节(src/test/auth-sync-fixtures.ts),
+// 不用 JS JSON.stringify 复刻布局,避免同源自证。
+async function remoteFixtureWire(id: string, kind: import("../features/auth/crypto").SyncObjectKind, fixture: string, seq: number) {
+  const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../features/auth/crypto");
+  return { id, seq, blob: bytesToBase64(await sealSyncObject(DEK, base64ToBytes(fixture), id, kind)) };
 }
 
 async function openPushed(object: { id: string; blob: string }, kind: import("../features/auth/crypto").SyncObjectKind): Promise<Record<string, unknown>> {
@@ -252,23 +254,18 @@ describe("M141 collect 消费:完整本地副本进入推送(P1-1)", () => {
 
 describe("applySet 去重与二次同步收敛(P1-2)", () => {
   it("已一致(同 hash)对象不进入 applySet,不重复调用 applyObjects", async () => {
-    const payload = {
-      id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-      username: "root", authKind: "password", optionsJson: "{}", tags: "", note: "",
-      sort: 0, createdAt: 1, updatedAt: 200,
-    };
+    // 远端是真实 Go fixture 字节;本机 collect 收集同一资产,载荷与 Go 逐字节一致 → 同 hash
     mocks.collectAssets.mockResolvedValue({
       assets: [
         {
-          id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-          username: "root", authKind: "password", optionsJson: "{}", tags: "", note: "",
+          id: "a-1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "",
           sort: 0, createdAt: 1, updatedAt: 200,
         },
       ],
       hasMore: false,
     });
-    const wire = await remoteObject("a1", "asset", payload, 1);
-    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    const wire = await remoteFixtureWire("a-1", "asset", GO_SYNC_FIXTURES.assetMinimal!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
 
     mounted = mountSyncCard();
@@ -280,32 +277,23 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
 
-  it("remote-deleted 墓碑应用一次后,二次同步不再重复应用/推送", async () => {
-    // 本机有存活资产 a-del(修订 100);云端墓碑 deletedAt 500 胜出
+  it("remote-deleted 墓碑(group)应用一次后,二次同步不再重复应用/推送", async () => {
+    // 本机有存活分组 g-del(修订 100);云端墓碑 deletedAt 500 胜出(group 墓碑是后端支持的删除传播路径)
     let tombstoneApplied = false;
-    mocks.collectAssets.mockImplementation(async () => {
-      if (tombstoneApplied) return { assets: [], hasMore: false };
-      return {
-        assets: [
-          {
-            id: "a-del", kind: "ssh", name: "old-01", host: "10.0.0.1", port: 22,
-            username: "root", authKind: "password", optionsJson: "{}", tags: "", note: "",
-            sort: 0, createdAt: 1, updatedAt: 100,
-          },
-        ],
-        hasMore: false,
-      };
+    mocks.groupList.mockImplementation(async () => {
+      if (tombstoneApplied) return [];
+      return [{ id: "g-del", parentId: null, name: "旧分组", sort: 0, createdAt: 1, updatedAt: 100 }];
     });
     mocks.collectTombstones.mockImplementation(async () => {
-      if (tombstoneApplied) return { tombstones: [{ id: "a-del", targetKind: "asset", deletedAt: 500 }], hasMore: false };
+      if (tombstoneApplied) return { tombstones: [{ id: "g-del", targetKind: "group", deletedAt: 500 }], hasMore: false };
       return { tombstones: [], hasMore: false };
     });
-    const wire = await remoteObject("a-del", "tombstone", { targetKind: "asset", deletedAt: 500 }, 1);
-    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a-del", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    const wire = await remoteFixtureWire("g-del", "tombstone", GO_SYNC_FIXTURES.tombstoneGroup!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "g-del", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
     mocks.applyObjects.mockImplementation(async () => {
       tombstoneApplied = true;
-      return { applied: 1, identical: 0, skipped: 0, objects: [{ id: "a-del", kind: "tombstone", result: "applied" }] };
+      return { applied: 1, identical: 0, skipped: 0, objects: [{ id: "g-del", kind: "tombstone", result: "applied" }] };
     });
 
     mounted = mountSyncCard();
@@ -313,7 +301,7 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     clickButton(mounted.container, "拉取并应用 (1)");
     await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
     expect(mocks.applyObjects).toHaveBeenCalledWith([
-      { id: "a-del", kind: "tombstone", payload: { targetKind: "asset", deletedAt: 500 } },
+      { id: "g-del", kind: "tombstone", payload: { targetKind: "group", deletedAt: 500 } },
     ]);
     // 应用后本机留下同内容墓碑,与云端一致:两个集合都归零,不再发起任何写
     await flushUntil(() => text().includes("已应用 1"));
@@ -322,6 +310,85 @@ describe("applySet 去重与二次同步收敛(P1-2)", () => {
     expect(text()).toContain("推送到云端 (0)");
     expect(button("拉取并应用 (0)")?.disabled).toBe(true);
     expect(button("推送到云端 (0)")?.disabled).toBe(true);
+    expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("远端软删资产(带 deletedAt 的 assetObject)应用后,二次同步不再重复应用/推送", async () => {
+    // 资产删除走软删 assetObject(asset 墓碑后端不支持);远端 deletedAt 150 > 本机修订 100
+    const liveAsset = {
+      id: "a-del", groupId: "g1", kind: "ssh", name: "old <&> 01", host: "10.0.0.8", port: 22,
+      username: "root", authKind: "password", keyPath: "/home/u/.ssh/id_ed25519", credId: "c-1",
+      optionsJson: "{}", tags: "x,y", note: "note <b>&", sort: 0, createdAt: 1, updatedAt: 100,
+    };
+    let applied = false;
+    mocks.collectAssets.mockImplementation(async () => {
+      if (applied) return { assets: [{ ...liveAsset, deletedAt: 150 }], hasMore: false };
+      return { assets: [liveAsset], hasMore: false };
+    });
+    const wire = await remoteFixtureWire("a-del", "asset", GO_SYNC_FIXTURES.assetDeleted!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a-del", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.applyObjects.mockImplementation(async () => {
+      applied = true;
+      return { applied: 1, identical: 0, skipped: 0, objects: [{ id: "a-del", kind: "asset", result: "applied" }] };
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("云端已删"));
+    clickButton(mounted.container, "拉取并应用 (1)");
+    await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
+    const [objects] = mocks.applyObjects.mock.calls[0] as [{ id: string; kind: string; payload: Record<string, unknown> }[]];
+    expect(objects[0].id).toBe("a-del");
+    expect(objects[0].kind).toBe("asset");
+    expect(objects[0].payload.deletedAt).toBe(150);
+    // 应用后本机软删资产与远端逐字节一致:第二轮 apply/push 均为空
+    await flushUntil(() => text().includes("已应用 1"));
+    await flushUntil(() => button("拉取并应用 (0)") !== undefined);
+    expect(text()).toContain("已一致");
+    expect(text()).toContain("推送到云端 (0)");
+    expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("revealed 凭据应用成功后,第二轮 apply/push 均为空(真实 Go fixture 字节)", async () => {
+    // 远端凭据是 Go fixture 字节(名称/秘密含 <>& 与 U+2028);应用后本机 revealed 凭据重新收集,
+    // 载荷与 Go 逐字节一致 → 已一致,不再 apply/push
+    let applied = false;
+    mocks.collectCredentials.mockImplementation(async () => {
+      if (applied) {
+        return {
+          credentials: [
+            { id: "c-1", name: "生产 <口令> & more", kind: "password", updatedAt: 50, secret: "p@ss<>&\u2028w0rd", secretState: "revealed" },
+          ],
+          hasMore: false,
+        };
+      }
+      return { credentials: [], hasMore: false };
+    });
+    const wire = await remoteFixtureWire("c-1", "credential", GO_SYNC_FIXTURES.credential!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "c-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.applyObjects.mockImplementation(async () => {
+      applied = true;
+      return { applied: 1, identical: 0, skipped: 0, objects: [{ id: "c-1", kind: "credential", result: "applied" }] };
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("生产 <口令> & more"));
+    clickButton(mounted.container, "拉取并应用 (1)");
+    await flushUntil(() => mocks.applyObjects.mock.calls.length > 0);
+    expect(mocks.applyObjects).toHaveBeenCalledWith([
+      {
+        id: "c-1",
+        kind: "credential",
+        payload: { id: "c-1", name: "生产 <口令> & more", kind: "password", secret: "p@ss<>&\u2028w0rd", updatedAt: 50 },
+      },
+    ]);
+    await flushUntil(() => text().includes("已应用 1"));
+    await flushUntil(() => button("拉取并应用 (0)") !== undefined);
+    expect(text()).toContain("已一致");
+    expect(text()).toContain("推送到云端 (0)");
     expect(mocks.applyObjects).toHaveBeenCalledTimes(1);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });
@@ -339,12 +406,8 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
     ]);
     mocks.transcriptList.mockResolvedValue([SUMMARY_OMITTED]);
-    const remotePayload = {
-      id: "t1", assetId: "a1", assetName: "web-01", assetKind: "ssh", startedAt: 1, endedAt: 2,
-      bytes: 3, chunks: 1, truncated: false, sessionId: "s1",
-      content: [{ seq: 1, tabId: "tab-1", ts: 1, data: "AQID" }],
-    };
-    const wire = await remoteObject("t1", "transcript", remotePayload, 1);
+    // 远端完整内容是真实 Go json.Marshal 字节(fixture),不是 JS 复刻
+    const wire = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
     mocks.applyObjects.mockResolvedValue({
@@ -376,11 +439,7 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
       chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
       nextSeq: 2, done: true, totalBytes: 3,
     });
-    const remotePayload = {
-      id: "t1", assetId: "a1", assetName: "web-01", assetKind: "ssh", startedAt: 1, endedAt: 2,
-      bytes: 3, chunks: 1, truncated: false, sessionId: "s1", contentOmitted: true,
-    };
-    const wire = await remoteObject("t1", "transcript", remotePayload, 1);
+    const wire = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptOmitted!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
@@ -393,9 +452,10 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     const objects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
     expect(objects.map((o) => o.id)).toEqual(["t1"]);
-    const payload = await openPushed(objects[0], "transcript");
-    expect(payload.contentOmitted).not.toBe(true);
-    expect(payload.content).toEqual([{ seq: 1, tabId: "tab-1", ts: 1, data: "AQID" }]);
+    // 推送明文与 Go fixture 逐字节一致(本机完整内容即 Go 布局)
+    const { openSyncObject, base64ToBytes } = await import("../features/auth/crypto");
+    const plaintext = await openSyncObject(DEK, base64ToBytes(objects[0].blob), "t1", "transcript");
+    expect(new TextDecoder().decode(plaintext)).toBe(new TextDecoder().decode(base64ToBytes(GO_SYNC_FIXTURES.transcriptBasic!)));
   });
 
   it("不同内容按 endedAt 裁决;本机胜出推送后二次同步两边一致", async () => {
@@ -407,13 +467,8 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
       chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }],
       nextSeq: 2, done: true, totalBytes: 3,
     });
-    // 云端是同记录的不同内容(endedAt 5 < 本机 10)
-    const remotePayload = {
-      id: "t1", assetId: "a1", assetName: "web-01", assetKind: "ssh", startedAt: 4, endedAt: 5,
-      bytes: 3, chunks: 1, truncated: false, sessionId: "s1",
-      content: [{ seq: 1, tabId: "tab-1", ts: 1, data: "BAUG" }],
-    };
-    const wire = await remoteObject("t1", "transcript", remotePayload, 1);
+    // 云端是同记录的不同内容(endedAt 2 < 本机 10),远端为真实 Go fixture 字节
+    const wire = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptBasic!, 1);
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-2", max_seq: 2, applied: 1, skipped: 0 });
@@ -427,6 +482,11 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
     clickButton(mounted.container, "推送到云端 (1)");
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
     expect(mocks.applyObjects).not.toHaveBeenCalled();
+    // 推送明文与 Go fixture(transcriptEnded10)逐字节一致
+    const pushedObjects = mocks.syncPush.mock.calls[0]?.[1] as { id: string; blob: string }[];
+    const { openSyncObject, base64ToBytes } = await import("../features/auth/crypto");
+    const pushedPlaintext = await openSyncObject(DEK, base64ToBytes(pushedObjects[0].blob), "t1", "transcript");
+    expect(new TextDecoder().decode(pushedPlaintext)).toBe(new TextDecoder().decode(base64ToBytes(GO_SYNC_FIXTURES.transcriptEnded10!)));
     // 等推送流程(含推送后重载)完全结束:推送按钮恢复可点
     await flushUntil(() => text().includes("已推送 1"));
     await flushUntil(() => {
@@ -434,13 +494,8 @@ describe("transcript endedAt 修订与内容补全(P1-3)", () => {
       return b !== undefined && !b.disabled;
     });
 
-    // 推送成功后云端即本机内容:二次同步两边一致,不再推送也不应用
-    const localPayload = {
-      id: "t1", assetId: "a1", assetName: "web-01", assetKind: "ssh", startedAt: 9, endedAt: 10,
-      bytes: 3, chunks: 1, truncated: false, sessionId: "s1",
-      content: [{ seq: 1, tabId: "tab-1", ts: 1, data: "AQID" }],
-    };
-    const wire2 = await remoteObject("t1", "transcript", localPayload, 2);
+    // 推送成功后云端即本机内容(Go fixture 字节):二次同步两边一致,不再推送也不应用
+    const wire2 = await remoteFixtureWire("t1", "transcript", GO_SYNC_FIXTURES.transcriptEnded10!, 2);
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire2], head: "head-2", max_seq: 2, next_seq: 2, cursor_done: true });
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 2, blob_hash: "h2" }], head: "head-2", max_seq: 2 });
     clickButton(mounted.container, "刷新对比");

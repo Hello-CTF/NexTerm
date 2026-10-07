@@ -626,7 +626,8 @@ describe("SyncCard（Web 同步台）", () => {
 
   it("相同 payload hash 的会话记录不重复推送(二次空同步)", async () => {
     seedAuthed(true);
-    const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
+    const { sealSyncObject, bytesToBase64, base64ToBytes } = await import("../../features/auth/crypto");
+    const { GO_SYNC_FIXTURES } = await import("../auth-sync-fixtures");
     const dek = new Uint8Array(32).fill(7);
     mocks.transcriptHosts.mockResolvedValue([
       { assetId: "a1", assetName: "web-01", assetKind: "ssh", assetDeleted: false, transcripts: 1, lastStartedAt: 1 },
@@ -637,16 +638,18 @@ describe("SyncCard（Web 同步台）", () => {
     };
     mocks.transcriptList.mockResolvedValue([summary]);
     mocks.transcriptRead.mockResolvedValue({ chunks: [{ seq: 1, tabId: "tab-1", ts: 1, dataBase64: "AQID" }], nextSeq: 2, done: true, totalBytes: 3 });
-    // 远端已有相同 payload hash 的同一记录
-    const payload = { id: "t1", assetId: "a1", assetName: "web-01", assetKind: "ssh", startedAt: 1, endedAt: 2, bytes: 3, chunks: 1, truncated: false, sessionId: "s1", content: [{ seq: 1, tabId: "tab-1", ts: 1, data: "AQID" }] };
-    const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(payload)), "t1", "transcript");
+    // 远端已有相同记录,载荷是真实 Go json.Marshal 字节(fixture);本机构造与其逐字节一致
+    const blob = await sealSyncObject(dek, base64ToBytes(GO_SYNC_FIXTURES.transcriptBasic!), "t1", "transcript");
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "t1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "t1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
 
     mounted = mountSyncCard();
     await flushUntil(() => mounted!.container.textContent?.includes("web-01 的会话记录"));
-    // 已一致,winner 为空,不推送
+    // 已一致,winner 与 applySet 均为空,不推送也不重复应用
     expect(mounted.container.textContent).toContain("推送到云端 (0)");
+    expect(mounted.container.textContent).toContain("拉取并应用 (0)");
+    const applyBtn = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.includes("拉取并应用")) as HTMLButtonElement | undefined;
+    expect(applyBtn?.disabled).toBe(true);
   });
 
   it("会话记录读取失败时显式报错而不是吞成空数组", async () => {

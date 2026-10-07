@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { assetApi, syncApi, transcriptApi, type AssetGroup, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
-import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncReport, SnippetDto } from "../../ipc/types";
+import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
+import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncReport } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import {
@@ -13,6 +13,15 @@ import {
   utf8Bytes,
   type SyncObjectKind,
 } from "../auth/crypto";
+import {
+  collectAssetPayload,
+  credentialPayload,
+  groupPayload,
+  marshalSyncPayload,
+  snippetPayload,
+  tombstonePayload,
+  transcriptPayload,
+} from "../auth/syncPayload";
 import { useUi } from "../../app/store";
 import { DEMO, WEB } from "../../demo";
 import { describeError } from "../../ui/errorText";
@@ -299,92 +308,6 @@ interface RemoteState {
   objects: RemoteObject[];
   head: string;
   maxSeq: number;
-}
-
-// marshalSyncPayload 产出与 Go json.Marshal 逐字节一致的载荷文本(Go 默认转义 < > & 与 U+2028/9),
-// 本机载荷 hash 才能与 Go 端推送的远端对象对齐,已一致的对象不会被反复推送/应用。
-function marshalSyncPayload(payload: unknown): string {
-  return JSON.stringify(payload)
-    .replace(/&/g, "\\u0026")
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
-}
-
-function groupPayload(g: AssetGroup): unknown {
-  const o: Record<string, unknown> = { id: g.id };
-  if (g.parentId !== null) o.parentId = g.parentId;
-  o.name = g.name;
-  o.sort = g.sort;
-  o.createdAt = g.createdAt;
-  o.updatedAt = g.updatedAt;
-  return o;
-}
-
-// collectAssetPayload 直接对齐 internal/sync 的 assetObject 字段与顺序(M141 collect 输出)。
-function collectAssetPayload(a: SyncCollectAsset): unknown {
-  const o: Record<string, unknown> = { id: a.id };
-  if (a.groupId !== undefined) o.groupId = a.groupId;
-  o.kind = a.kind;
-  o.name = a.name;
-  if (a.host !== undefined) o.host = a.host;
-  if (a.port !== undefined) o.port = a.port;
-  if (a.username !== undefined) o.username = a.username;
-  if (a.authKind !== undefined) o.authKind = a.authKind;
-  if (a.keyPath !== undefined) o.keyPath = a.keyPath;
-  if (a.credId !== undefined) o.credId = a.credId;
-  o.optionsJson = a.optionsJson;
-  o.tags = a.tags;
-  o.note = a.note;
-  o.sort = a.sort;
-  o.createdAt = a.createdAt;
-  o.updatedAt = a.updatedAt;
-  if (a.deletedAt !== undefined) o.deletedAt = a.deletedAt;
-  return o;
-}
-
-// tombstonePayload 对齐 tombstoneObject: 与目标对象同 ID, deletedAt 即修订号。
-function tombstonePayload(t: SyncCollectTombstone): unknown {
-  return { targetKind: t.targetKind, deletedAt: t.deletedAt };
-}
-
-// credentialPayload 对齐 credentialObject; secret 缺失的凭据不会走到这里(收集期已 warning)。
-function credentialPayload(c: SyncCollectCredential): unknown {
-  return { id: c.id, name: c.name, kind: c.kind, secret: c.secret ?? "", updatedAt: c.updatedAt };
-}
-
-function snippetPayload(s: SnippetDto): unknown {
-  const o: Record<string, unknown> = { id: s.id };
-  if (s.groupId !== null) o.groupId = s.groupId;
-  o.name = s.name;
-  o.body = s.body;
-  o.sort = s.sort;
-  o.createdAt = s.createdAt;
-  o.updatedAt = s.updatedAt;
-  return o;
-}
-
-// transcriptObject 与 internal/sync/object.go 的 transcriptObject 对齐。
-function transcriptPayload(t: TranscriptSummary, content: TranscriptChunk[] | null): unknown {
-  const o: Record<string, unknown> = {
-    id: t.id,
-    assetId: t.assetId,
-    assetName: t.assetName,
-    assetKind: t.assetKind,
-    startedAt: t.startedAt,
-    endedAt: t.endedAt ?? 0,
-    bytes: t.bytes,
-    chunks: t.chunks,
-    truncated: t.truncated,
-  };
-  if (t.sessionId) o.sessionId = t.sessionId;
-  if (t.contentOmitted || content === null) {
-    o.contentOmitted = true;
-    return o;
-  }
-  o.content = content.map((c) => ({ seq: c.seq, tabId: c.tabId, ts: c.ts, data: c.dataBase64 }));
-  return o;
 }
 
 const TRANSCRIPT_MAX_CONTENT_BYTES = 64 << 20;

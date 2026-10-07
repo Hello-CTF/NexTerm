@@ -194,6 +194,77 @@ describe("账号级键位覆盖(M140 扁平白名单键)", () => {
   });
 });
 
+describe("键位快照的服务端全局默认层(内置 < 服务端默认 < 本地 < 账号覆盖)", () => {
+  it("仅有服务端默认时生效,未声明的键仍回内置默认", async () => {
+    const store = memoryStore({}, { "keybinding.newTerminal": "Mod+Shift+t" });
+    registerAccountPreferenceStore(store);
+    await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
+    expect(getKeybinding("closeTab")).toBe("Mod+w");
+  });
+
+  it("服务端默认 < 设备本地 < 账号覆盖 逐层优先", async () => {
+    window.localStorage.setItem(
+      "nexterm.keybindings.v1",
+      JSON.stringify({ newTerminal: "Mod+y", globalSearch: "Mod+Shift+j" }),
+    );
+    loadKeybindings();
+    const store = memoryStore(
+      { "keybinding.newTerminal": "Mod+Shift+t" },
+      { "keybinding.newTerminal": "Mod+Shift+g", "keybinding.globalSearch": "Mod+Shift+k" },
+    );
+    registerAccountPreferenceStore(store);
+    // 账号覆盖胜本地与服务端默认
+    await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
+    // 设备本地胜服务端默认
+    await vi.waitFor(() => expect(getKeybinding("globalSearch")).toBe("Mod+Shift+j"));
+    // 未声明的键回内置默认
+    expect(getKeybinding("toggleSplit")).toBe("Mod+\\");
+  });
+
+  it("resetKeybinding 清账号覆盖后落到服务端默认而不是内置默认", async () => {
+    const store = memoryStore(
+      { "keybinding.newTerminal": "Mod+Shift+t" },
+      { "keybinding.newTerminal": "Mod+Shift+g" },
+    );
+    registerAccountPreferenceStore(store);
+    await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
+
+    resetKeybinding("newTerminal");
+    expect(getKeybinding("newTerminal")).toBe("Mod+Shift+g");
+    expect(store.clears).toContainEqual(["keybinding.newTerminal"]);
+  });
+
+  it("resetAllKeybindings 清本地与账号覆盖,保留服务端默认层", async () => {
+    const store = memoryStore(
+      { "keybinding.closeTab": "Mod+Shift+w" },
+      { "keybinding.closeTab": "Mod+Shift+c", "keybinding.newTerminal": "Mod+Shift+g" },
+    );
+    registerAccountPreferenceStore(store);
+    await vi.waitFor(() => expect(getKeybinding("closeTab")).toBe("Mod+Shift+w"));
+    setKeybinding("globalSearch", "Mod+Shift+j");
+
+    resetAllKeybindings();
+    expect(getKeybinding("closeTab")).toBe("Mod+Shift+c");
+    expect(getKeybinding("newTerminal")).toBe("Mod+Shift+g");
+    expect(getKeybinding("globalSearch")).toBe("Mod+k");
+    expect(store.clears.flat().sort()).toEqual(["keybinding.closeTab", "keybinding.globalSearch"]);
+  });
+
+  it("syncNow 走服务端默认与账号覆盖(线上白名单键)", async () => {
+    const store = memoryStore(
+      { "keybinding.syncNow": "Mod+Shift+y" },
+      { "keybinding.commandPalette": "Mod+Shift+p" },
+    );
+    registerAccountPreferenceStore(store);
+    await vi.waitFor(() => expect(getKeybinding("syncNow")).toBe("Mod+Shift+y"));
+    await vi.waitFor(() => expect(getKeybinding("commandPalette")).toBe("Mod+Shift+p"));
+
+    setKeybinding("syncNow", "Mod+Shift+n");
+    await vi.waitFor(() => expect(store.data["keybinding.syncNow"]).toBe("Mod+Shift+n"));
+    expect(store.puts).toContainEqual({ "keybinding.syncNow": "Mod+Shift+n" });
+  });
+});
+
 describe("生产链路:HTTP 偏好存储的线上扁平契约", () => {
   it("注册后按真实形状加载 defaults/overrides 并重建快照(继承超管全局默认)", async () => {
     prefsMocks.get.mockResolvedValue({
