@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-global-responsive");
@@ -178,16 +179,6 @@ async function newPage(chrome) {
   const response = await fetch(`http://127.0.0.1:${chrome.port}/json/new?about:blank`, { method: "PUT" });
   if (!response.ok) throw new Error(`cannot create Chrome target: ${response.status}`);
   return CDP.connect((await response.json()).webSocketDebuggerUrl);
-}
-
-function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return waitHttp(VITE, process).then(() => process);
 }
 
 async function clickAt(page, x, y) {
@@ -1057,7 +1048,7 @@ async function textScaleAcceptance(page) {
 }
 
 async function main() {
-  const vite = await startVite();
+  const vite = await startVite({ root: ROOT, port: VITE_PORT });
   const chrome = await startChrome();
   const page = await newPage(chrome);
   try {
@@ -1067,7 +1058,7 @@ async function main() {
   } finally {
     page.close();
     stop(chrome.process);
-    stop(vite);
+    await vite?.stop();
     fs.rmSync(chrome.profile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
   }
 

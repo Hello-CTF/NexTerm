@@ -3,10 +3,10 @@ import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { freePort, stopProcess, waitHttp } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-ai-stream-recovery");
@@ -35,36 +35,7 @@ async function pass(id, fn) {
   }
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitHttp(url, process, timeout = 30_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (process?.exitCode !== null && process?.exitCode !== undefined) throw new Error(`${url}: process exited ${process.exitCode}`);
-    try {
-      const response = await fetch(url);
-      if (response.ok) return response;
-    } catch {}
-    await sleep(100);
-  }
-  throw new Error(`timed out waiting for ${url}`);
-}
-
-function stop(process) {
-  if (!process || process.exitCode !== null) return;
-  process.kill("SIGTERM");
-}
 
 function chromeExecutable() {
   const candidates = [
@@ -174,7 +145,7 @@ async function startChrome() {
     const response = await waitHttp(`http://127.0.0.1:${port}/json/version`, process);
     return { process, port, version: await response.json() };
   } catch (error) {
-    stop(process);
+    stopProcess(process);
     throw new Error(`${error.message}; Chrome stderr=${stderr.slice(-1000)}`);
   }
 }
@@ -412,9 +383,9 @@ try {
   harnessErrors.push(String(error?.stack || error));
 } finally {
   if (page) page.close();
-  stop(chrome?.process);
+  stopProcess(chrome?.process);
   if (stub?.server) stub.server.close();
-  stop(server?.process);
+  stopProcess(server?.process);
 }
 
 for (const id of EXPECTED) {

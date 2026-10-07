@@ -15,6 +15,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite as startViteProcess } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/settings-sharing");
@@ -226,18 +227,7 @@ function wipeViteCache() {
 
 function startVite() {
   wipeViteCache();
-  // 直接 spawn vite.js (不经 pnpm 包装): SIGTERM 必须落在真正的 dev server 进程上,
-  // 否则包装进程死后 vite 子进程残留占用端口。
-  const process = spawn(
-    globalThis.process.execPath,
-    [path.join(ROOT, "node_modules", "vite", "bin", "vite.js"), "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"],
-    {
-      cwd: ROOT,
-      env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  return waitHttp(VITE, process).then(() => process);
+  return startViteProcess({ root: ROOT, port: VITE_PORT });
 }
 
 // ---------- fake 后端 (仅复述真实合同形状) ----------
@@ -907,7 +897,7 @@ try {
 } finally {
   stop(chrome?.process);
   await fake?.close();
-  stop(vite);
+  await vite?.stop();
   wipeViteCache();
 }
 

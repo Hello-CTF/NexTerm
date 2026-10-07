@@ -11,6 +11,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/fleet-responsive");
@@ -203,16 +204,6 @@ async function newPage(chrome) {
     pageErrors.push(`${d?.text || ""} ${d?.exception?.description || ""}`.slice(0, 300));
   });
   return page;
-}
-
-function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return waitHttp(VITE, process).then(() => process);
 }
 
 async function screenshot(page, name) {
@@ -706,7 +697,7 @@ async function matrixChecks(page, label) {
 let vite;
 let chrome;
 try {
-  vite = await startVite();
+  vite = await startVite({ root: ROOT, port: VITE_PORT });
   chrome = await startChrome();
   console.warn(`vite=${VITE} api=${API} (fabricated at CDP boundary)`);
 
@@ -776,7 +767,7 @@ try {
   harnessErrors.push(String(error?.stack || error));
 } finally {
   stop(chrome?.process);
-  stop(vite);
+  await vite?.stop();
 }
 
 const checks = [...results.values()];

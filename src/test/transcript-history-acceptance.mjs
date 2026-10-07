@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-transcript-history");
@@ -197,16 +198,6 @@ async function newPage(chrome) {
     pageErrors.push(`${d?.text || ""} ${d?.exception?.description || ""}`.slice(0, 300));
   });
   return page;
-}
-
-function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return waitHttp(VITE, process).then(() => process);
 }
 
 function buildServer() {
@@ -544,7 +535,7 @@ let page;
 const server = { binary: "", process: null, port: 0 };
 try {
   server.binary = buildServer();
-  [vite, chrome] = await Promise.all([startVite(), startChrome()]);
+  [vite, chrome] = await Promise.all([startVite({ root: ROOT, port: VITE_PORT }), startChrome()]);
   page = await newPage(chrome);
   await transcriptHistoryAcceptance(page, server);
 } catch (error) {
@@ -553,7 +544,7 @@ try {
   if (page) page.close();
   stop(server.process);
   stop(chrome?.process);
-  stop(vite);
+  await vite?.stop();
 }
 
 const checks = [...results.values()];

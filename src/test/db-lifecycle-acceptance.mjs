@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-db-lifecycle");
@@ -290,17 +291,6 @@ async function newPage(chrome) {
   return page;
 }
 
-function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: globalThis.process.platform !== "win32",
-  });
-  return waitHttp(VITE, process).then(() => process);
-}
-
 async function startServer() {
   const goos = { darwin: "darwin", linux: "linux", win32: "windows" }[globalThis.process.platform];
   const goarch = { arm64: "arm64", x64: "amd64" }[globalThis.process.arch];
@@ -506,7 +496,7 @@ try {
     startContainer(redisName, "6379", ["redis:7.4", "redis-server", "--appendonly", "no"]),
   ]);
   await Promise.all([waitMysql(mysqlName), waitRedis(redisName)]);
-  [vite, server, chrome] = await Promise.all([startVite(), startServer(), startChrome()]);
+  [vite, server, chrome] = await Promise.all([startVite({ root: ROOT, port: VITE_PORT }), startServer(), startChrome()]);
   page = await newPage(chrome);
   await dbLifecycleAcceptance(page, mysql, redis);
 } catch (error) {
@@ -515,7 +505,7 @@ try {
   if (page) page.close();
   stop(chrome?.process);
   stop(server?.process);
-  stop(vite);
+  await vite?.stop();
   for (const name of [mysqlName, redisName]) {
     spawnSync("docker", ["rm", "--force", name], { encoding: "utf8", timeout: 30_000 });
   }
