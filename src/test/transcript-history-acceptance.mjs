@@ -297,6 +297,10 @@ async function completeSetupGate(page, server) {
   if (gate !== "setup") return;
   const match = server.log().match(/一次性初始化码: (\S+)/);
   if (!match) throw new Error("setup gate shown but no one-time init code in server log");
+  await page.waitFor(`(() => {
+    const form = document.querySelector('.fixed.inset-0.z-50 form');
+    return Boolean(form && form.querySelectorAll('input.nx-input').length === 4);
+  })()`, 15_000);
   const filled = await page.evaluate(`(() => {
     const inputs = [...document.querySelectorAll('.fixed.inset-0.z-50 form input.nx-input')];
     const values = ${JSON.stringify([match[1], "acc-admin", "acceptance-admin-pass", "acceptance-admin-pass"])};
