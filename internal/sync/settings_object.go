@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ProbiusOfficial/NexTerm/internal/ids"
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
@@ -197,15 +198,22 @@ func (e *Engine) knownHostByID(ctx context.Context, id string) (store.KnownHostR
 	return row, true, nil
 }
 
-// knownHostTombstoneLoser 为三元组冲突的败者按胜者修订号立碑(已存在的更晚墓碑保留),
-// 并清除同 ID 同三元组的本地败者行; 三元组限定保证胜者行与其他对象不被误删。
-func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostObject, winnerAddedAt int64) error {
+// knownHostTombstoneLoser 为三元组冲突的败者按胜者修订号立碑(已存在的更晚墓碑保留)。
+// 同 ID 的本地存活行(与败者不同三元组的化身)不得与同 ID 墓碑共存: 对象槽位二义会使
+// 服务端不收敛, 后续同 ID 墓碑也会误删它。化身在同一事务内让出原 ID——信任内容以全新 ID
+// 原样保留(修订号不变, 不产生重复对象), 原 ID 立碑给远端败者; 其他设备拉取该墓碑时
+// 本地已无原 ID 行, 只合并墓碑记录, 不会触碰 re-ID 后的化身。
+func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostObject, incarnation *store.KnownHostRow, winnerAddedAt int64) error {
 	tx, err := e.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ? AND host = ? AND port = ? AND key_type = ?",
+	if incarnation != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", ids.New(), incarnation.ID); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	} else if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ? AND host = ? AND port = ? AND key_type = ?",
 		payload.ID, payload.Host, payload.Port, payload.KeyType); err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}

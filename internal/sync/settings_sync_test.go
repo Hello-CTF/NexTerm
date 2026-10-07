@@ -152,6 +152,101 @@ func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
 	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
 }
 
+// 评审回归(R2): 同 ID 不同三元组的本地化身不得与同 ID 墓碑共存。
+// 化身让出原 ID(re-ID)后: 信任内容经新 ID 在全设备保留, 服务端败者槽位被墓碑替换,
+// 后续同原 ID 墓碑不误删 re-ID 记录, 二次收敛后全设备静默。
+func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	rogue := newTestDevice(t)
+	ctx := context.Background()
+
+	sharedID := ids.New()
+	winnerID := ids.New()
+	putDeviceKnownHost(t, deviceA, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:trusted", 50)
+	putDeviceKnownHost(t, deviceA, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
+	putDeviceKnownHost(t, deviceB, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
+	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
+
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(sharedID, 新三元组, 100)上服务端
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123") // A: 化身 re-ID, 原 ID 立碑并推走
+
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", sharedID, KindTombstone)
+	if _, found := deviceKnownHost(t, deviceA, sharedID); found {
+		t.Fatal("original id must be vacated on A")
+	}
+	assertDeviceTombstone(t, deviceA, sharedID, KindKnownHost)
+
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	syncDevice(t, rogue, server, "alice", "alice-pw-123")
+
+	// 全设备(含后加入者)都持有化身信任内容(新 ID)与胜者行, 且都不存在原 ID 行。
+	newcomer := newTestDevice(t)
+	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
+	devices := map[string]*testDevice{"A": deviceA, "B": deviceB, "rogue": rogue, "newcomer": newcomer}
+	incarnationIDs := map[string]string{}
+	for name, device := range devices {
+		rows, err := device.db.KnownHostList(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var trusted, winner bool
+		for _, row := range rows {
+			if row.ID == sharedID {
+				t.Fatalf("device%s still holds the original id: %+v", name, row)
+			}
+			if row.Host == "old.example.com" {
+				trusted = row.Fingerprint == "SHA256:trusted" && row.AddedAt == 50 && row.KeyType == "ssh-rsa"
+				incarnationIDs[name] = row.ID
+			}
+			if row.ID == winnerID {
+				winner = row.Fingerprint == "SHA256:winner"
+			}
+		}
+		if !trusted || !winner || len(rows) != 2 {
+			t.Fatalf("device%s rows=%+v, want trusted incarnation + winner only", name, rows)
+		}
+	}
+	if len(incarnationIDs) != 4 {
+		t.Fatalf("every device must hold the incarnation: %v", incarnationIDs)
+	}
+
+	// 后续同原 ID 的墓碑(更晚修订)不误删 re-ID 后的化身。
+	tombstonePayload, err := marshalObject(tombstoneObject{TargetKind: KindKnownHost, DeletedAt: ids.NowMS()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := &SyncReport{}
+	applied, _ := deviceA.engine.applyDecryptedObject(ctx, sharedID, KindTombstone, tombstonePayload, report)
+	if !applied {
+		t.Fatal("same-id tombstone must be absorbed")
+	}
+	if row, found := deviceKnownHost(t, deviceA, incarnationIDs["A"]); !found || row.Fingerprint != "SHA256:trusted" {
+		t.Fatalf("re-IDed incarnation must survive the same-id tombstone: %+v found=%v", row, found)
+	}
+
+	// 较新墓碑随 A 的推送传播, 其余设备各拉取一次: 化身在全设备存活。
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	for name, device := range devices {
+		if name == "A" {
+			continue
+		}
+		syncDevice(t, device, server, "alice", "alice-pw-123")
+		if row, found := deviceKnownHost(t, device, incarnationIDs[name]); !found || row.Fingerprint != "SHA256:trusted" {
+			t.Fatalf("device%s re-IDed incarnation must survive the propagated tombstone: %+v found=%v", name, row, found)
+		}
+	}
+
+	// 二次收敛: 全设备空闲同步静默。
+	for name, device := range devices {
+		if report := syncDevice(t, device, server, "alice", "alice-pw-123"); report.Pulled+report.Applied+report.Pushed != 0 {
+			t.Fatalf("device%s not quiescent: %+v", name, report)
+		}
+	}
+}
+
 // 评审回归(顺序二: 胜者先推, 败者后同步): 败者经 displaced 路径立碑自身并 adopts 胜者;
 // 删除胜者后二次收敛, 新设备同样不得复活败者。
 func TestEngineKnownHostWinnerFirstLoserDisplaced(t *testing.T) {

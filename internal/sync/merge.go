@@ -816,7 +816,12 @@ func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, rep
 		if !remoteWins(payload.AddedAt, conflict.AddedAt, plaintext, conflictPayload) {
 			// 本地胜者保住三元组, 但对端败者对象仍留在服务端: 按胜者修订号为败者立碑,
 			// 本轮 collect/push 即以墓碑覆盖之, 否则胜者日后被删除时旧指纹会在新设备复活。
-			if err := e.knownHostTombstoneLoser(ctx, payload, conflict.AddedAt); err != nil {
+			// 同 ID 的本地存活行(不同三元组的化身)与败者墓碑不能共存, 先让出原 ID 再立碑。
+			var incarnation *store.KnownHostRow
+			if exists {
+				incarnation = &local
+			}
+			if err := e.knownHostTombstoneLoser(ctx, payload, incarnation, conflict.AddedAt); err != nil {
 				report.warnf("已知主机败者 %s 的删除墓碑记录失败: %v", payload.ID, err)
 				return false, false
 			}
