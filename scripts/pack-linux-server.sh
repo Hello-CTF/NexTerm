@@ -117,11 +117,16 @@ examples. Its version comes only from wails.json.
 ## Choose one runtime (do not enable both units)
 
 - Full browser server: install nexterm-server.service and use nexterm.env.
-  It serves the browser UI and /rpc, but has no built-in login page; keep it on
-  loopback or behind an authenticating reverse proxy.
+  It serves the browser UI with a built-in init/login page: on first start
+  with no account, the server prints a one-time init code to the console
+  (journalctl -u nexterm-server under systemd); open the UI and finish
+  superadmin setup. /rpc, /ws and /files/blob always require an account
+  session with --auth on. Public deployments still belong behind a
+  TLS-terminating reverse proxy.
 - Restricted runtime: install nexterm-onlyserver.service instead and use
-  onlyserver.env. The same binary runs with --sync-only, exposes only /sync/rpc
-  and /healthz, and registers exactly three sync commands. This is an optional
+  onlyserver.env. The same binary runs with --sync-only and mounts only the
+  account, admin and sync routes (/auth/*, /admin/*, /sync/v2/*) plus
+  /healthz; there is no browser UI and /rpc returns 404. This is an optional
   runtime in this full archive, not a separate onlyServer package. Public
   deployments still require TLS.
 
@@ -131,8 +136,11 @@ secret and back it up with /var/lib/nexterm.
 ## Verify
 
 - Full: curl http://127.0.0.1:8080/healthz and check syncOnly=false.
-- Restricted: check syncOnly=true and commands=3; /rpc must return 404.
-- Token CLI: nexterm-server token --data-dir /var/lib/nexterm
+- Restricted: check syncOnly=true and commands=0; /rpc must return 404.
+- Account sign-in: POST /auth/login with username and password returns a
+  session cookie; the old static sync tokens and the token/rotate-token CLI
+  are gone. Desktop clients sign in under Settings -> Account Sync with
+  server address + username + password.
 
 LazyCat assembly and real LazyCat/box acceptance belong to M47. This archive is
 an input contract, not evidence that those external targets have passed.

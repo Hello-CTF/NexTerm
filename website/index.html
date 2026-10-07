@@ -264,24 +264,24 @@
       </div>
       <div class="cell">
         <span class="tag">CREDENTIALS</span>
-        <h3>凭据落地重封</h3>
-        <p>两端密钥体系各自独立，密文搬过去解不开。源端解密 → HTTPS 传输 → 目标端用<em>它自己的</em>密钥重新加密。</p>
+        <h3>凭据端到端加密</h3>
+        <p>同步内容在你的设备上加密，服务端只存密文。同一账号的其他设备用账号密码解锁数据密钥后解密使用，明文不出本机。</p>
       </div>
     </div>
 
     <div class="split">
       <div>
         <span class="pk">nexterm --connect</span>
-        <h3 class="sub-h">一把令牌，两个部署位置</h3>
-        <p>填「对端地址 + 同步令牌」就能连上，不用管对端装在哪 —— 懒猫微服或自建服务器，令牌是同一个机制。</p>
+        <h3 class="sub-h">一个账号，两个部署位置</h3>
+        <p>在「设置 → 账号同步」填「服务端地址 + 用户名 + 密码」登录就能连上，不用管对端装在哪 —— 懒猫微服或自建服务器，账号是同一套机制。</p>
         <ul class="points">
-          <li><b>懒猫微服</b>：平台公网入口默认要求登录，应用只把同步入口这一条路径放行，请求这才到达容器。</li>
+          <li><b>懒猫微服</b>：平台公网入口默认要求登录，网关注入内部链路密钥后请求才到达容器。</li>
           <li><b>自建服务器</b>：不经平台网关，直接连到服务端。</li>
-          <li>两种方式都由<b>应用自己</b>校验令牌，不对就拒绝。</li>
+          <li>两种方式都由<b>应用自己</b>校验账号会话，无效就拒绝。</li>
         </ul>
       </div>
       <div class="figure figure-tight">
-        <img src="images/03-connect.png" alt="连接对端：一把令牌，两个部署位置" loading="lazy" />
+        <img src="images/03-connect.png" alt="连接对端：一个账号，两个部署位置" loading="lazy" />
       </div>
     </div>
   </div>
@@ -332,16 +332,16 @@
 <span class="c"># 裸启动就是 serve（容器里就这条）</span>
 <span class="p">$</span> nexterm-server
 
-<span class="c"># sync-only：同一个二进制，只有 3 条同步命令</span>
+<span class="c"># sync-only：同一个二进制，只挂账号与同步路由</span>
 <span class="p">$</span> nexterm-server --sync-only \
       --data-dir /var/lib/nexterm
 
-<span class="c"># 没有界面，令牌只能命令行取</span>
-<span class="p">$</span> TOKEN=$(nexterm-server token)
+<span class="c"># 首次启动打印一次性初始化码，浏览器打开完成超管初始化</span>
+<span class="p">$</span> nexterm-server --data-dir /var/lib/nexterm
 
-<span class="c"># 自查：sync-only 的 commands 固定为 3</span>
+<span class="c"># 自查：sync-only 不注册终端命令，/rpc 返回 404</span>
 <span class="p">$</span> curl -s 127.0.0.1:8080/healthz
-  <span class="c"># commands:3</span></pre>
+  <span class="c"># "syncOnly":true,"commands":0</span></pre>
       </div>
     </div>
 
@@ -353,17 +353,17 @@
         <ul>
           <li>解压即得二进制、前端产物、systemd 单元</li>
           <li>单元默认只听 <code>127.0.0.1</code> 并显式声明 <code>--auth on</code>，对外自己接反代</li>
-          <li>访问控制默认开启（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code>、<code>/files/blob</code> 一律要求同步令牌（<code>/healthz</code> 与页面公开），公网仍建议套 TLS 反代</li>
+          <li>访问控制默认开启（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code>、<code>/files/blob</code> 一律要求登录账号会话（<code>/healthz</code> 与页面公开），浏览器首次打开进入初始化或登录页，公网仍建议套 TLS 反代</li>
         </ul>
         <span class="file">NexTerm-server_x.y.z_linux_amd64.tar.gz · _arm64.tar.gz</span>
       </div>
       <div class="cell">
         <span class="tag">LINUX · SYNC-ONLY 模式</span>
         <h3>公网只做同步中转</h3>
-        <p>同一个二进制加 <code>--sync-only</code>：只挂 <code>/sync/rpc</code> 与 <code>/healthz</code>。</p>
+        <p>同一个二进制加 <code>--sync-only</code>：只挂 <code>/auth/*</code>、<code>/admin/*</code>、<code>/sync/v2/*</code> 与 <code>/healthz</code>。</p>
         <ul>
-          <li>命令表只有 <code>sync_digest</code> / <code>sync_export</code> / <code>sync_import</code></li>
-          <li>令牌泄漏也拿不到终端、文件与容器</li>
+          <li>不注册任何终端命令：浏览器界面与 <code>/rpc</code> 都不存在</li>
+          <li>同步数据按账号隔离、端到端加密，服务端只存密文</li>
           <li>同一个服务端包内附 <code>nexterm-onlyserver.service</code>，换装即切换</li>
         </ul>
         <span class="file">随 NexTerm-server 同一个 tar.gz 分发</span>
@@ -389,7 +389,7 @@
       </details>
       <details>
         <summary>服务端放公网安全吗？</summary>
-        <div class="faq-body">完整版默认开启令牌鉴权（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code> 与 <code>/files/blob</code> 没有同步令牌一律拒绝，<code>/healthz</code> 与页面静态资源公开；浏览器首次打开会提示输入令牌（<code>nexterm-server token</code> 查看）。回环免令牌仅限显式 <code>--auth loopback</code>（会校验 Host 防 DNS 重绑定），且不适合反代场景。令牌走请求头，公网部署前面必须终止 TLS，并建议用防火墙限制来源。公网只想做资产同步，请用 <code>--sync-only</code> 模式 —— 它只注册同步用的三条命令，令牌泄漏也只能读写这份资产库。懒猫微服上由平台登录门加网关注入的网关密钥放行，无需手动填令牌。</div>
+        <div class="faq-body">完整版默认开启账号鉴权（<code>--auth on</code>）：<code>/rpc</code>、<code>/ws</code> 与 <code>/files/blob</code> 没有登录会话一律拒绝，<code>/healthz</code> 与页面静态资源公开；浏览器首次打开会进入初始化或登录页（账号未初始化时，一次性初始化码打印在服务端控制台）。回环免登录仅限显式 <code>--auth loopback</code>（会校验 Host 防 DNS 重绑定），且不适合反代场景。会话走 Cookie，公网部署前面必须终止 TLS，并建议用防火墙限制来源。公网只想做资产同步，请用 <code>--sync-only</code> 模式 —— 它只挂账号与同步路由，不注册任何终端命令。懒猫微服上由平台登录门加网关注入的网关密钥放行内部链路，无需额外配置。</div>
       </details>
       <details>
         <summary>服务端和桌面版是两套代码吗？</summary>
@@ -405,7 +405,7 @@
       </details>
       <details>
         <summary>同步会把我的密码传到别人的服务器吗？</summary>
-        <div class="faq-body">只在你指定的对端之间传，且只传你勾中的资产。凭据在传输前解密、到达后立刻用对端自己的密钥重新加密落库；公网地址强制 HTTPS，明文 HTTP 只对本机与私有网段放行。</div>
+        <div class="faq-body">只在你指定的对端之间传，且只传你勾中的资产。同步内容端到端加密，服务端只存密文；账号密码只用于登录认证和在本机解锁数据密钥。公网地址强制 HTTPS，明文 HTTP 只对本机与私有网段放行。</div>
       </details>
       <details>
         <summary>凭据如何保护？</summary>
