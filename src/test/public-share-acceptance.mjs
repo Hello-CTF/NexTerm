@@ -11,6 +11,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite as startViteProcess } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-public-share");
@@ -209,13 +210,7 @@ function wipeViteCache() {
 
 function startVite() {
   wipeViteCache();
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return waitHttp(VITE, process).then(() => process);
+  return startViteProcess({ root: ROOT, port: VITE_PORT });
 }
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -583,7 +578,7 @@ try {
 } finally {
   if (page) page.close();
   stop(chrome?.process);
-  stop(vite);
+  await vite?.stop();
   if (fake) await fake.close();
   if (chrome?.profile) fs.rmSync(chrome.profile, { recursive: true, force: true });
   wipeViteCache();

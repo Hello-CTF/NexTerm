@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-ai-session-restore");
@@ -197,16 +198,6 @@ function wireEventListeners(page) {
     const handlers = page.listeners?.get(message.method) ?? [];
     for (const handler of handlers) handler(message.params ?? {});
   });
-}
-
-function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return waitHttp(VITE, process).then(() => process);
 }
 
 function injectAiEventPush(source) {
@@ -478,7 +469,7 @@ async function acceptance(page) {
 }
 
 async function main() {
-  const vite = await startVite();
+  const vite = await startVite({ root: ROOT, port: VITE_PORT });
   const chrome = await startChrome();
   const page = await newPage(chrome);
   try {
@@ -487,7 +478,7 @@ async function main() {
   } finally {
     page.close();
     stop(chrome.process);
-    stop(vite);
+    await vite?.stop();
   }
   const failed = [...results.values()].filter((r) => r.status === "failed");
   const report = { at: new Date().toISOString(), harnessErrors, results: Object.fromEntries(results) };

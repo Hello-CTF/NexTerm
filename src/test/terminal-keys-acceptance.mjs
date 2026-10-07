@@ -6,6 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startVite } from "./lib/acceptance-process.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-terminal-keys");
@@ -179,16 +180,6 @@ async function newPage(chrome) {
   const response = await fetch(`http://127.0.0.1:${chrome.port}/json/new?about:blank`, { method: "PUT" });
   if (!response.ok) throw new Error(`cannot create Chrome target: ${response.status}`);
   return CDP.connect((await response.json()).webSocketDebuggerUrl);
-}
-
-function startVite() {
-  const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
-    cwd: ROOT,
-    env: { ...globalThis.process.env, NODE_OPTIONS: "" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return waitHttp(VITE, process).then(() => process);
 }
 
 const PROBE_SOURCE = `(() => {
@@ -556,7 +547,7 @@ let vite;
 let chrome;
 let page;
 try {
-  [vite, chrome] = await Promise.all([startVite(), startChrome()]);
+  [vite, chrome] = await Promise.all([startVite({ root: ROOT, port: VITE_PORT }), startChrome()]);
   page = await newPage(chrome);
   await enableMobile(page);
   await terminalKeysAcceptance(page);
@@ -565,7 +556,7 @@ try {
 } finally {
   if (page) page.close();
   stop(chrome?.process);
-  stop(vite);
+  await vite?.stop();
 }
 
 const checks = [...results.values()];
