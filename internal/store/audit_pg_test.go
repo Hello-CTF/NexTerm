@@ -8,9 +8,6 @@ import (
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
-// 回归: 可选 source/kind 等过滤在 PG 下必须以显式类型传参,
-// 否则 (? IS NULL OR ...) 触发 42P18, 审计 IPC 不可用。
-
 func TestAuditCountAndQueryOptionalFilterTypesPostgres(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
