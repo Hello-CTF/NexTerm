@@ -19,6 +19,13 @@ const VITE = `http://127.0.0.1:${VITE_PORT}`;
 const results = new Map();
 const harnessErrors = [];
 
+// 共享 /tmp 可能被其他任务填满: vite 依赖预构建与 Chrome profile 的临时写入会
+// 失败 (ENOENT/ENOSPC)。本脚本与子进程一律使用私有临时目录; 路径必须短,
+// Chrome 的 SingletonSocket 受 Unix socket 路径长度限制。
+const PRIVATE_TMP = path.join(os.homedir(), ".cache", "nexterm-acceptance-tmp");
+fs.mkdirSync(PRIVATE_TMP, { recursive: true });
+process.env.TMPDIR = PRIVATE_TMP;
+
 fs.mkdirSync(OUT, { recursive: true });
 
 function record(id, status, detail = {}) {
@@ -190,7 +197,18 @@ async function newPage(chrome) {
   return CDP.connect((await response.json()).webSocketDebuggerUrl);
 }
 
+function viteCacheDir() {
+  return path.join(ROOT, "node_modules/.vite");
+}
+
+// vite dev 与 vitest 共享 node_modules/.vite: dev server 的依赖预构建元数据指向
+// 退出即清理的 /tmp 临时产物, 会让随后的 vitest 运行 ENOENT。验收前后各清一次。
+function wipeViteCache() {
+  fs.rmSync(viteCacheDir(), { recursive: true, force: true });
+}
+
 function startVite() {
+  wipeViteCache();
   const command = globalThis.process.platform === "win32" ? "pnpm.cmd" : "pnpm";
   const process = spawn(command, ["exec", "vite", "--host", "127.0.0.1", "--port", String(VITE_PORT), "--strictPort"], {
     cwd: ROOT,
@@ -281,7 +299,7 @@ class FakeShareConn {
     if (opcode === 0x1 || opcode === 0x2) {
       this.fragments = [payload];
       this.fragmentOpcode = opcode;
-      this.deliver(payload);
+      this.deliver(opcode, payload);
       return;
     }
     if (opcode === 0x8) {
@@ -293,8 +311,8 @@ class FakeShareConn {
     }
   }
 
-  deliver(payload) {
-    this.received.push(payload);
+  deliver(opcode, payload) {
+    this.received.push({ opcode, payload });
     this.inputText += payload.toString("utf8");
     this.onInput?.(payload);
   }
@@ -386,13 +404,27 @@ async function setViewport(page, { width, height, touch }) {
     deviceScaleFactor: 2,
     mobile: touch,
   });
-  await page.send("Emulation.setTouchEmulationEnabled", { enabled: touch, maxTouchPoints: touch ? 5 : 0 });
+  await page.send("Emulation.setTouchEmulationEnabled", { enabled: touch, maxTouchPoints: touch ? 5 : 1 });
 }
 
 async function bootShare(page, fake, token, viewport) {
   await setViewport(page, viewport);
-  await page.navigate(`${VITE}/share/public/${token}?api=http://127.0.0.1:${fake.port}`);
-  await page.waitFor("Boolean(document.querySelector('.xterm .xterm-rows'))");
+  const { identifier } = await page.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `
+      // 验收只关心布局/文案/输入, 强制 DOM renderer: WebGL 渲染不出 .xterm-rows。
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+        if (String(type).includes("webgl")) return null;
+        return original.call(this, type, ...args);
+      };
+    `,
+  });
+  try {
+    await page.navigate(`${VITE}/share/public/${token}?api=http://127.0.0.1:${fake.port}`);
+    await page.waitFor("Boolean(document.querySelector('.xterm .xterm-rows'))");
+  } finally {
+    await page.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+  }
 }
 
 async function noPageOverflow(page) {
@@ -425,6 +457,15 @@ async function waitForConnectionCount(fake, token, minimum, timeout = 10_000) {
     await sleep(100);
   }
   throw new Error(`timed out waiting for ${minimum} connections on ${token}`);
+}
+
+async function waitForConnectionInput(fake, token, text, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (fake.forToken(token).some((conn) => conn.inputText.includes(text))) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out waiting for input ${JSON.stringify(text)} on ${token}`);
 }
 
 async function focusTerminal(page) {
@@ -479,9 +520,11 @@ async function publicShareAcceptance(page, fake) {
     await page.waitFor("document.querySelector('.xterm .xterm-rows')?.innerText.includes('PUBLIC-SHARE-READY-42')");
     await focusTerminal(page);
     await typeText(page, "echo hi\n");
-    await page.waitFor("document.querySelector('.xterm .xterm-rows')?.innerText.includes('echo:echo hi')");
-    const typed = fake.forToken("rw-token").some((conn) => conn.inputText.includes("echo hi"));
-    assert.equal(typed, true, "read_write 输入必须以二进制帧到达服务端");
+    // xterm 逐键产生 onData, 服务端逐帧回显 "echo:<单键>"; 整串断言只看服务端聚合输入。
+    await waitForConnectionInput(fake, "rw-token", "echo hi\r");
+    await page.waitFor("document.querySelector('.xterm .xterm-rows')?.innerText.includes('echo:h')");
+    const binary = fake.forToken("rw-token").some((conn) => conn.received.some((frame) => frame.opcode === 0x2 && frame.payload.length > 0));
+    assert.equal(binary, true, "read_write 输入必须以二进制帧到达服务端");
   });
 
   await pass("expired-copy", async () => {
@@ -542,6 +585,8 @@ try {
   stop(chrome?.process);
   stop(vite);
   if (fake) await fake.close();
+  if (chrome?.profile) fs.rmSync(chrome.profile, { recursive: true, force: true });
+  wipeViteCache();
 }
 
 const checks = [...results.values()];
