@@ -165,15 +165,23 @@ function pasteEvent(files: File[], text = ""): Event {
   return event;
 }
 
-function dropEvent(files: File[]): Event {
+function dropEvent(files: File[], text = ""): Event {
   const event = new Event("drop", { bubbles: true, cancelable: true });
-  const items = files.map((file) => ({
-    kind: "file",
-    type: file.type,
-    getAsFile: () => file,
-  }));
+  const items: { kind: string; type: string; getAsFile: () => File | null }[] = files.map(
+    (file) => ({
+      kind: "file",
+      type: file.type,
+      getAsFile: () => file,
+    }),
+  );
+  if (text) items.push({ kind: "string", type: "text/plain", getAsFile: () => null });
   Object.defineProperty(event, "dataTransfer", {
-    value: { items, files, types: files.length > 0 ? ["Files"] : [] },
+    value: {
+      items,
+      files,
+      types: files.length > 0 ? ["Files"] : [],
+      getData: (type: string) => (type === "text/plain" ? text : ""),
+    },
   });
   return event;
 }
@@ -289,6 +297,19 @@ describe("XtermView 图片粘贴拦截", () => {
       png("shot.png"),
       new File(["x"], "notes.txt", { type: "text/plain" }),
     ]);
+    act(() => {
+      host().dispatchEvent(event);
+    });
+
+    expect(onPasteImages).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("图片+文本混合拖放与 paste 一致放行, 不上传也不 preventDefault", async () => {
+    const onPasteImages = vi.fn();
+    await show({ sessionId: "session", tabId: "pending", onPasteImages });
+
+    const event = dropEvent([png("shot.png")], "https://example.com/page");
     act(() => {
       host().dispatchEvent(event);
     });

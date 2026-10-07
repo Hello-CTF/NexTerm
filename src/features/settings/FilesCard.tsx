@@ -105,6 +105,9 @@ export function FilesCard() {
       .then((view) => {
         setSettings(view);
         setDraft(view.publicBaseURL);
+        // 保存/清除后统一重新拉取设置并重探 health: publicBaseURLConfigured 混合了
+        // 覆盖值与 CLI/env 默认, 不重新探测会让 serviceDefault 停留在保存前的状态。
+        setReloadToken((n) => n + 1);
         pushToast(
           "success",
           view.publicBaseURL === ""

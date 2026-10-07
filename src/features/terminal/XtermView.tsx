@@ -380,8 +380,8 @@ export function XtermView(props: XtermViewProps) {
       onError: (error) => onSelectionCopyRef.current?.("", error),
     });
     const selectionDisposable = term.onSelectionChange(() => autoCopy.notifySelectionChanged());
-    // 剪贴板图片与图片拖放: 只拦截纯图片载荷交给上传流程; 含纯文本的混合剪贴板
-    // 交还终端默认粘贴, 普通文本与 bracketed paste 不受影响, 图片字节永远不会成为按键输入。
+    // 剪贴板图片与图片拖放: 只拦截纯图片载荷交给上传流程; 含纯文本的混合剪贴板/拖放
+    // 一律交还默认处理, 普通文本与 bracketed paste 不受影响, 图片字节永远不会成为按键输入。
     const pasteHost = hostRef.current;
     const onPasteCapture = (event: ClipboardEvent) => {
       const files = pureImageFiles(event.clipboardData);
@@ -396,7 +396,7 @@ export function XtermView(props: XtermViewProps) {
     };
     const onDropCapture = (event: DragEvent) => {
       const files = pureImageFiles(event.dataTransfer);
-      if (files.length === 0) return;
+      if (files.length === 0 || clipboardHasPlainText(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       onPasteImagesRef.current?.(files);

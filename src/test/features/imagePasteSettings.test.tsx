@@ -94,7 +94,10 @@ describe("FilesCard 默认文件访问基础 URL", () => {
   it("覆盖值清除后回到服务端默认配置提示", async () => {
     mocks.flags.web = true;
     mocks.fetchImageService.mockResolvedValue(HEALTH_CONFIGURED);
-    mocks.settingsGet.mockResolvedValue({ publicBaseURL: "https://example.com/nexterm" });
+    mocks.settingsGet
+      .mockResolvedValueOnce({ publicBaseURL: "https://example.com/nexterm" })
+      .mockResolvedValue({ publicBaseURL: "" });
+    mocks.settingsSet.mockResolvedValue({ publicBaseURL: "" });
     mounted = mount(createElement(FilesCard));
     await flush();
 
@@ -103,8 +106,33 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     await flush();
 
     expect(mocks.settingsSet).toHaveBeenCalledWith("");
+    expect(mocks.settingsGet).toHaveBeenCalledTimes(2);
     expect(mounted.container.textContent).toContain("服务端默认已配置");
     expect(mounted.container.textContent).not.toContain("同源相对链接");
+  });
+
+  it("覆盖值是 configured 唯一来源时, 清除并重探后回到同源相对链接", async () => {
+    mocks.flags.web = true;
+    mocks.fetchImageService
+      .mockResolvedValueOnce(HEALTH_CONFIGURED)
+      .mockResolvedValueOnce(HEALTH_UNSET);
+    mocks.settingsGet
+      .mockResolvedValueOnce({ publicBaseURL: "https://example.com/nexterm" })
+      .mockResolvedValue({ publicBaseURL: "" });
+    mocks.settingsSet.mockResolvedValue({ publicBaseURL: "" });
+    mounted = mount(createElement(FilesCard));
+    await flush();
+
+    expect(mounted.container.textContent).toContain("已设置基础 URL");
+
+    setInputValue(input(mounted.container), "");
+    click([...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "保存")!);
+    await flush();
+
+    expect(mocks.settingsSet).toHaveBeenCalledWith("");
+    expect(mocks.fetchImageService).toHaveBeenCalledTimes(2);
+    expect(mounted.container.textContent).toContain("同源相对链接");
+    expect(mounted.container.textContent).not.toContain("服务端默认已配置");
   });
 
   it("桌面端不探测服务端, 展示无覆盖值的中性提示", async () => {
@@ -142,6 +170,9 @@ describe("FilesCard 默认文件访问基础 URL", () => {
   });
 
   it("保存成功时按规范化值写入并更新展示", async () => {
+    mocks.settingsGet
+      .mockResolvedValueOnce({ publicBaseURL: "" })
+      .mockResolvedValue({ publicBaseURL: "https://example.com/nexterm" });
     mounted = mount(createElement(FilesCard));
     await flush();
 
@@ -150,6 +181,7 @@ describe("FilesCard 默认文件访问基础 URL", () => {
     await flush();
 
     expect(mocks.settingsSet).toHaveBeenCalledWith("https://example.com/nexterm");
+    expect(mocks.settingsGet).toHaveBeenCalledTimes(2);
     expect(input(mounted.container).value).toBe("https://example.com/nexterm");
   });
 
