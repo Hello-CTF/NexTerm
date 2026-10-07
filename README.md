@@ -36,7 +36,12 @@
 | LinuxServer | 下载 `NexTerm-server_x.y.z_linux_amd64.tar.gz` 或 `NexTerm-server_x.y.z_linux_arm64.tar.gz`，提供完整浏览器界面。 |
 | 懒猫微服 | 在应用中心安装 NexTerm，无需下载 Release 安装包。 |
 
-首次使用时，添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。保存密码或私钥前，先按界面提示在「设置 → 凭据保护」初始化凭据库；未初始化时无法保存任何凭据。需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。桌面端不登录账号即可本地使用；在「设置 → 账号同步」登录后，资产可在多台设备之间同步。
+首次使用：
+
+1. 添加 SSH 或 WinRM 资产，也可以直接使用内置的「当前设备」。
+2. 保存密码或私钥前，先按界面提示在「设置 → 凭据保护」初始化凭据库；未初始化时无法保存任何凭据。
+3. 需要使用 AI 时，在设置中填写 OpenAI 兼容接口地址、API Key 和模型名称。
+4. 桌面端不登录账号即可本地使用；在「设置 → 账号同步」登录后，资产可在多台设备之间同步。
 
 免密保护依赖系统级密钥（Windows DPAPI / macOS 钥匙串），Linux 桌面端不提供，请使用主密码模式：在「设置 → 凭据保护」勾选"用密码保护凭据"并设置至少 8 位的保护密码；每次启动需输入密码解锁，闲置自动锁定（默认 30 分钟，可在同一卡片调整）。
 
@@ -68,16 +73,6 @@ nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 
 在桌面端的「设置 → 账号同步」中填写服务端地址、用户名和密码即可；密码会发送到服务端完成登录认证，同时在本机用于解锁数据密钥；数据密钥本身与同步内容的明文不会离开本机，服务端只存密文。公网地址必须使用 HTTPS（客户端强制校验）；回环、私网与链路本地地址允许 HTTP，但 HTTP 不加密传输中的密码，内网部署同样建议使用 HTTPS（自签证书可勾选跳过证书校验）。
 
-### 从 rc4 及更早版本升级（账号体系取代同步令牌）
-
-rc5 起服务端改为多用户账号体系，旧的静态同步令牌及 `nexterm-server token`、`nexterm-server rotate-token` 命令已移除。升级步骤：
-
-- 替换二进制后按实际启用的 unit 执行 `systemctl restart nexterm-server` 或 `systemctl restart nexterm-onlyserver`（两个 unit 不要同时启用）。原有数据保留在数据目录中（默认 SQLite 后端；`--db postgres` 部署的数据在 PostgreSQL 中），数据库迁移随启动自动完成。
-- 首次启动若账号系统未初始化，控制台会打印一次性初始化码；在浏览器打开服务端完成超管初始化并保存恢复密钥。已有数据的库同样走这一步初始化，之后用账号登录。
-- 桌面端在「设置 → 账号同步」改用「服务端地址 + 用户名 + 密码」重新配置同步，旧版保存的同步令牌不再可用。浏览器版首次打开会进入初始化或登录页，不再提示输入令牌。
-- 回环免登录仅限显式声明：`--auth loopback`（或 `NEXTERM_AUTH=loopback`）且监听回环地址；该模式把 Host 限定为 `localhost`、`127.0.0.1`、`[::1]`（防 DNS 重绑定），经反向代理用域名访问会收到 421。反向代理部署请保持默认 `--auth on`。
-- `--auth off` 仅适合本地共享工作区：账号、管理与设备路由全部关闭，且库中已存在任何用户账号时拒绝启动（启动日志给出警告）。
-
 ### 懒猫微服
 
 从应用中心安装后直接打开 NexTerm。微服会注入凭据库所需的根密钥，终端进程和数据保存在你的微服上。
@@ -93,7 +88,7 @@ rc5 起服务端改为多用户账号体系，旧的静态同步令牌及 `nexte
 | `--listen` | `NEXTERM_LISTEN` | 监听地址。直接运行二进制时默认为 `0.0.0.0:8080`；安装包的 systemd 配置使用 `127.0.0.1:8080`。 |
 | `--data-dir` | `NEXTERM_DATA_DIR` | 数据库、日志等数据的保存目录。 |
 | `--web-root` | `NEXTERM_WEB_ROOT` | 浏览器界面的静态文件目录，仅同步模式不需要。 |
-| `--auth` | `NEXTERM_AUTH` | 访问控制：`on`（默认，任何监听地址都要求登录账号）、`loopback`（仅回环监听免登录，需显式指定）、`off`（关闭，本地共享工作区，不建议）。仅影响完整模式的 `/rpc`、`/ws`、`/files/blob`；`--sync-only` 下除 `/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 公共端点外，账号、超管与同步路由都要求登录会话。 |
+| `--auth` | `NEXTERM_AUTH` | 访问控制：`on`（默认，任何监听地址都要求登录账号）、`loopback`（仅回环监听免登录，需显式指定）、`off`（关闭，仅适合本地共享工作区：账号、管理与设备路由全部关闭，库中已有任何用户账号时拒绝启动）。仅影响完整模式的 `/rpc`、`/ws`、`/files/blob`；`--sync-only` 下除 `/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 公共端点外，账号、超管与同步路由都要求登录会话。 |
 | `--db` | `NEXTERM_DB` | 服务端数据库后端：`sqlite`（默认）或 `postgres`。`postgres` 运行内嵌的 `migrations/postgres` schema，当前版本只支持单写入实例。 |
 | `--db-dsn` | `NEXTERM_DB_DSN` | PostgreSQL 连接串，如 `postgres://user@host:5432/nexterm?sslmode=verify-full&sslrootcert=/path/ca.crt`。要求 `--db=postgres`。 |
 | `--db-password-file` | `NEXTERM_DB_PASSWORD_FILE` | 从 `0600` 文件读取 PostgreSQL 密码；DSN 已带密码时拒绝。 |
