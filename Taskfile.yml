@@ -33,6 +33,18 @@ tasks:
     cmds:
       - go test ./...
 
+  test:pg:
+    summary: Run the PostgreSQL-gated suites against a real server (requires NEXTERM_TEST_PG_DSN)
+    env:
+      GOFLAGS: '{{.GOFLAGS}}'
+    cmds:
+      - |
+        if [ -z "$NEXTERM_TEST_PG_DSN" ]; then
+          echo "NEXTERM_TEST_PG_DSN is not set; refusing to count SKIP as a pass" >&2
+          exit 1
+        fi
+      - go test -count=1 ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron
+
   check:
     summary: Run Go, frontend, generated-bindings and reproducibility quality gates
     deps: [fmt:check, vet, test]
