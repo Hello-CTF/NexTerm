@@ -7,6 +7,7 @@ import { isCoarsePointer } from "../../app/platform";
 import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
+import { useVaultInitGate } from "./useVaultInitGate";
 import { workspaceViewport } from "../terminal/workspaceLayout";
 import { describeError } from "../../ui/errorText";
 import { IconCode, IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
@@ -21,10 +22,16 @@ export function CredentialsSidebar() {
   const { leftOpen, leftWidth } = useUi();
   const refresh = useRefreshCredentials();
   const unlock = useVaultUnlock();
+  const { ensureVaultInit, vaultInitGate } = useVaultInitGate();
 
   const [search, setSearch] = useState("");
   const [kindFilter, setKindFilter] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  const startCreate = () =>
+    void ensureVaultInit().then((ok) => {
+      if (ok) setCreating(true);
+    });
 
   const status = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status() });
   const credentials = useQuery({
@@ -79,7 +86,7 @@ export function CredentialsSidebar() {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建凭据"
-          onClick={() => setCreating(true)}
+          onClick={startCreate}
         >
           <IconPlus size={14} />
         </button>
@@ -248,6 +255,7 @@ export function CredentialsSidebar() {
           }}
         />
       )}
+      {vaultInitGate}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
 import { describeError } from "../../ui/errorText";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyStaging";
+import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { cloneAsset } from "./assetClone";
 import { useAssetVisibility } from "./assetVisibility";
 import {
@@ -1228,6 +1229,17 @@ export function AssetEditor({
   const credKind = "password";
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
+  const { ensureVaultInit, vaultInitGate, vaultStatus } = useVaultInitGate();
+  const vaultPromptedRef = useRef(false);
+  const credFlowNeedsVault =
+    kind === "asset" && !initial && (usesCred || (keyAuth && keyOrigin === "vault"));
+  useEffect(() => {
+    if (vaultPromptedRef.current || !credFlowNeedsVault) return;
+    if (!vaultStatus || vaultStatus.initialized) return;
+    vaultPromptedRef.current = true;
+    void ensureVaultInit();
+  }, [credFlowNeedsVault, vaultStatus, ensureVaultInit]);
+
   const syncCredName = (assetName: string) => {
     setName(assetName);
     if (!credNameTouched.current) setCredName(assetName);
@@ -1407,6 +1419,7 @@ export function AssetEditor({
   };
 
   return (
+    <>
     <div className="nx-overlay" onClick={() => void requestClose()}>
       <div
         ref={modalRef}
@@ -1939,5 +1952,7 @@ export function AssetEditor({
         </div>
       </div>
     </div>
+    {vaultInitGate}
+    </>
   );
 }
