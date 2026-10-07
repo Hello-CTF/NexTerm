@@ -758,13 +758,21 @@ func TestShareHostShareCreateByUsername(t *testing.T) {
 		t.Fatalf("stranger create: HTTP %d %v", call.status, call.body)
 	}
 
+	// 越权 + 不存在用户名: 授权与 deny 审计先于用户名解析, 仍 403 not_owner
+	// (不得退化成无审计的 404, 不泄露接收者是否存在)。
+	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
+	}, strangerSession, strangerSession.csrf); call.status != http.StatusForbidden {
+		t.Fatalf("stranger create with unknown recipient: HTTP %d %v", call.status, call.body)
+	}
+
 	// 失败路径没有留下分享行: 列表仍只有最初一条。
 	listCall := f.call(t, "GET", "/share/host-shares", nil, ownerSession, "")
 	if listCall.status != http.StatusOK || len(listCall.body["shares"].([]any)) != 1 {
 		t.Fatalf("owner host list: HTTP %d %v", listCall.status, listCall.body)
 	}
 
-	// 审计语义保持: 成功创建一条带 share_id 的 allow; 越权创建一条 deny/not_owner。
+	// 审计语义保持: 成功创建一条带 share_id 的 allow; 两次越权各一条 deny/not_owner。
 	audits := auditPayloads(t, f, "host_share_create")
 	allowWithShare, denyNotOwner := 0, 0
 	for _, payload := range audits {
@@ -775,7 +783,7 @@ func TestShareHostShareCreateByUsername(t *testing.T) {
 			denyNotOwner++
 		}
 	}
-	if allowWithShare != 1 || denyNotOwner != 1 {
+	if allowWithShare != 1 || denyNotOwner != 2 {
 		t.Fatalf("host_share_create audits = %v", audits)
 	}
 }

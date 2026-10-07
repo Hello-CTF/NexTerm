@@ -29,21 +29,23 @@ type HostShare struct {
 }
 
 // CreateHostShare 把设备分享给注册用户。仅设备 owner 或 superadmin 可授予;
-// 目标设备必须是 daemon 主机且代理在线; recipient 不能是设备 owner 本人。
-// 重复授予同一三元组会刷新权限与有效期并解除吊销。
-func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identity, deviceID, recipientID string, write bool, ttl time.Duration) (*HostShare, error) {
+// 目标设备必须是 daemon 主机且代理在线; recipient 按用户名精确解析 (大小写
+// 不敏感), 不能是设备 owner 本人。重复授予同一三元组会刷新权限与有效期并解除吊销。
+// 设备授权与审计 (authorize) 先于用户名解析: 越权请求一律 403 并写 deny 审计,
+// 不泄露接收者是否存在。
+func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identity, deviceID, recipientUsername string, write bool, ttl time.Duration) (*HostShare, error) {
 	grant, err := s.authorize(ctx, identity, deviceID, "create", auditKindHostCreate)
 	if err != nil {
 		return nil, err
 	}
-	if recipientID == grant.userID {
-		return nil, ipc.BadParam(errors.New("不能向设备 owner 本人分享"))
-	}
-	owner, err := s.accounts.GetUser(ctx, identity.UserID)
+	recipient, err := s.accounts.GetUserByUsername(ctx, recipientUsername)
 	if err != nil {
 		return nil, err
 	}
-	recipient, err := s.accounts.GetUser(ctx, recipientID)
+	if recipient.ID == grant.userID {
+		return nil, ipc.BadParam(errors.New("不能向设备 owner 本人分享"))
+	}
+	owner, err := s.accounts.GetUser(ctx, identity.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +67,7 @@ func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identit
 		OwnerID:           identity.UserID,
 		OwnerUsername:     owner.Username,
 		DeviceID:          deviceID,
-		RecipientID:       recipientID,
+		RecipientID:       recipient.ID,
 		RecipientUsername: recipient.Username,
 		Permission:        permission,
 		CreatedAt:         now,
@@ -75,12 +77,12 @@ func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identit
 VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(owner_id, device_id, recipient_id) DO UPDATE SET
 permission = excluded.permission, created_at = excluded.created_at, expires_at = excluded.expires_at, revoked_at = NULL
-RETURNING id`, share.ID, share.OwnerID, deviceID, recipientID, string(permission), now, expiresAt).Scan(&share.ID)
+RETURNING id`, share.ID, share.OwnerID, deviceID, recipient.ID, string(permission), now, expiresAt).Scan(&share.ID)
 	if err != nil {
 		return nil, dbError(err)
 	}
 	if err := s.audit(ctx, auditKindHostCreate, auditPayload{
-		Action: "create", ShareID: share.ID, DeviceID: deviceID, OwnerID: share.OwnerID, Recipient: recipientID,
+		Action: "create", ShareID: share.ID, DeviceID: deviceID, OwnerID: share.OwnerID, Recipient: recipient.ID,
 		Requester: identity.UserID, Outcome: "allow", Permission: string(permission),
 	}); err != nil {
 		return nil, err

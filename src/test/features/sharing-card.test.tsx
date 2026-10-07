@@ -485,6 +485,55 @@ describe("分享卡片 · 吊销", () => {
   });
 });
 
+describe("分享卡片 · 确认框在途的账号隔离", () => {
+  it("吊销确认框打开期间切换账号: 旧主机分享不发吊销请求", async () => {
+    const calls = route(shareHandler());
+    const dialog = deferred<boolean>();
+    mocks.ask.mockReturnValue(dialog.promise);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("授予给 alice") ?? false);
+
+    const card = shareCard();
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("授予给 alice") && !d.textContent?.includes("已吊销"));
+    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+
+    // 确认框仍开着: 改登普通用户, 随后才确认 — 旧账号的吊销不得发出。
+    seedUser(ALICE);
+    await flush();
+    dialog.resolve(true);
+    await flush();
+    await flush();
+
+    expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
+  });
+
+  it("吊销确认框打开期间切换账号: 旧公开链接不发吊销请求", async () => {
+    const calls = route(shareHandler());
+    const dialog = deferred<boolean>();
+    mocks.ask.mockReturnValue(dialog.promise);
+    seedUser(SUPERADMIN);
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("01J4Z8Y7") ?? false);
+
+    const card = shareCard();
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find(
+      (d) => d.textContent?.includes("会话 01J4Z8Y7") && d.textContent?.includes("最近访问"),
+    );
+    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
+    await flushUntil(() => mocks.ask.mock.calls.length === 1);
+
+    seedUser(ALICE);
+    await flush();
+    dialog.resolve(true);
+    await flush();
+    await flush();
+
+    expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);
+  });
+});
+
 describe("分享卡片 · 公开链接只有列表与吊销", () => {
   it("没有创建入口/会话 id 输入框/token 展示", async () => {
     route(shareHandler());

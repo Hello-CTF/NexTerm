@@ -124,16 +124,11 @@ func (s *Service) serveHostShareCreate(w http.ResponseWriter, r *http.Request) {
 		writeFleetFailure(w, err)
 		return
 	}
-	// 接收者按用户名精确解析 (大小写不敏感): 创建不要求前端持有用户目录
-	// (/admin/users 仅超管), 普通设备 owner 与超管同一合同。无效用户名按既有
-	// not_found 安全错误返回; 禁用接收者由 sharing.CreateHostShare 按既有
-	// forbidden 与审计处理, 两条路径都不接触任何密码或密钥材料。
-	recipient, err := s.accounts.GetUserByUsername(r.Context(), request.RecipientUsername)
-	if err != nil {
-		writeFleetFailure(w, err)
-		return
-	}
-	share, err := s.sharing.CreateHostShare(r.Context(), identityFrom(r), request.DeviceID, recipient.ID, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
+	// 设备授权与 deny 审计在 sharing.CreateHostShare 内先于用户名解析 (越权一律
+	// 403+审计, 不泄露接收者是否存在); 接收者按用户名精确解析 (大小写不敏感),
+	// 创建不要求前端持有用户目录 (/admin/users 仅超管), 普通设备 owner 与超管
+	// 同一合同。两条错误路径都不接触任何密码或密钥材料。
+	share, err := s.sharing.CreateHostShare(r.Context(), identityFrom(r), request.DeviceID, request.RecipientUsername, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
 	if err != nil {
 		writeFleetFailure(w, err)
 		return

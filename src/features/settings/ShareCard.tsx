@@ -224,12 +224,14 @@ function ShareManagement() {
   };
 
   const revokeHostShare = async (share: HostShareView) => {
+    // epoch 必须在弹出确认前捕获: 确认框打开期间账号切换时, 旧账号的行不得在新会话被吊销。
+    const epoch = accountEpoch.current;
     const ok = await ask(
       `吊销这条主机分享?\n\n「${share.recipient_username}」将立即无法通过分享在「${deviceName(share.device_id)}」上新建终端, 进行中的连接会尽快断开。`,
       { title: "吊销主机分享", kind: "warning" },
     );
     if (!ok) return;
-    const epoch = accountEpoch.current;
+    if (epoch !== accountEpoch.current) return;
     try {
       await sharingApi.revokeHostShare(share.id);
       if (epoch !== accountEpoch.current) return;
@@ -242,12 +244,14 @@ function ShareManagement() {
   };
 
   const revokeLink = async (link: ShareLinkView) => {
+    // epoch 必须在弹出确认前捕获 (同 revokeHostShare)。
+    const epoch = accountEpoch.current;
     const ok = await ask("吊销这条公开链接?\n\n链接立即失效, 持有链接的人将无法再打开对应会话。", {
       title: "吊销公开链接",
       kind: "warning",
     });
     if (!ok) return;
-    const epoch = accountEpoch.current;
+    if (epoch !== accountEpoch.current) return;
     try {
       await sharingApi.revokeLink(link.id);
       if (epoch !== accountEpoch.current) return;

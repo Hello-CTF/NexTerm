@@ -820,9 +820,8 @@ def main() -> int:
         status, body = bob.request("POST", "/share/host-shares", {
             "device_id": bob_device_id, "recipient_username": "carol", "write": False, "ttl_ms": 3600000,
         }, csrf=True)
-        # owner_username 暂不断言: CreateHostShare 返回体未填充该字段 (既有, 已 TowerFinding)。
         check("普通 owner 以用户名创建分享", status == 200 and body.get("permission") == "read"
-              and body.get("recipient_username") == "carol" and body.get("owner_id") == bob_id, f"HTTP {status} {body}")
+              and body.get("recipient_username") == "carol" and body.get("owner_username") == "bob", f"HTTP {status} {body}")
         carol_headers = {"Cookie": f"{SESSION_COOKIE}={carol.cookie}"}
         carol_viewer = ShareViewer(WebSocket(server.port, f"/share/devices/{bob_device_id}/terminal", carol_headers))
         ready = carol_viewer.expect_ready()
