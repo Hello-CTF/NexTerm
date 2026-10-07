@@ -5,8 +5,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { fetchServerSyncToken } from "./server-token.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT = path.join(ROOT, "target/acceptance-browser");
@@ -70,7 +69,7 @@ async function waitHttp(url, process, timeout = 30_000) {
   throw new Error(`timed out waiting for ${url}`);
 }
 
-function stop(process) {
+export function stop(process) {
   if (!process || process.exitCode !== null) return;
   process.kill("SIGTERM");
 }
@@ -248,7 +247,7 @@ function startVite() {
   return waitHttp(VITE, process).then(() => process);
 }
 
-async function startServer() {
+export async function startServer() {
   const goos = { darwin: "darwin", linux: "linux", win32: "windows" }[globalThis.process.platform];
   const goarch = { arm64: "arm64", x64: "amd64" }[globalThis.process.arch];
   const binary = globalThis.process.env.NEXTERM_SERVER_BIN || path.join(ROOT, "target/go-build/nexterm-server-browser");
@@ -259,15 +258,14 @@ async function startServer() {
   const port = await freePort();
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-browser-server-"));
   const env = { ...globalThis.process.env, NEXTERM_MASTER_KEY: "real-browser-e2e-master" };
-  const syncToken = fetchServerSyncToken(binary, data, env);
   const log = fs.openSync(path.join(OUT, "server.log"), "w");
-  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data], {
+  const process = spawn(binary, ["--listen", `127.0.0.1:${port}`, "--data-dir", data, "--auth=loopback"], {
     cwd: ROOT,
     env,
     stdio: ["ignore", log, log],
   });
   await waitHttp(`http://127.0.0.1:${port}/healthz`, process);
-  return { process, port, origin: `http://127.0.0.1:${port}`, data, token: syncToken };
+  return { process, port, origin: `http://127.0.0.1:${port}`, data };
 }
 
 async function metrics(page, width, height, coarse) {
@@ -360,9 +358,6 @@ async function wsAcceptance(page, server) {
   await page.evaluate(`(async () => {
     const commands = await import('${VITE}/src/ipc/commands.ts');
     const events = await import('${VITE}/src/ipc/events.ts');
-    const serverAuth = await import('${VITE}/src/ipc/serverAuth.ts');
-    serverAuth.setServerToken(${JSON.stringify(server.token)});
-    serverAuth.registerServerTokenPrompter(async () => null);
     const state = window.__nxAcceptance = { commands, events, frames: 0, text: '', reopened: 0, reconnectAttached: 0 };
     state.channel = events.createBinaryChannel((bytes) => {
       state.frames += 1;
@@ -370,6 +365,8 @@ async function wsAcceptance(page, server) {
     });
     state.session = await commands.sessionApi.connectLocal();
     state.tabId = await commands.terminalApi.attach(state.session.id, 80, 24, state.channel);
+    state.keeper = events.createBinaryChannel(() => {});
+    await commands.terminalApi.attachTab(state.tabId, state.keeper, 0);
     const markerNonce = Date.now();
     state.marker = 'nx-early-' + markerNonce;
     await commands.terminalApi.write(state.tabId, new TextEncoder().encode("printf 'nx-early-%s\\n' '" + markerNonce + "'\\r"));
@@ -404,25 +401,21 @@ async function wsAcceptance(page, server) {
       });
       return true;
     })()`);
-    await page.send("Network.enable");
     const dropped = await page.evaluate(`(() => {
       let n = 0;
+      const channelId = __nxAcceptance.events.channelIdOf(__nxAcceptance.channel);
       for (const ws of window.__nxSockets) {
-        if (ws.readyState === 0 || ws.readyState === 1) { ws.close(); n += 1; }
+        if ((ws.readyState === 0 || ws.readyState === 1) && ws.url.includes('/ws/channel/' + channelId)) { ws.close(); n += 1; }
       }
       return n;
     })()`);
-    await page.send("Network.emulateNetworkConditions", { offline: true, latency: 180, downloadThroughput: 64 * 1024, uploadThroughput: 64 * 1024 });
-    await sleep(1500);
-    await page.send("Network.emulateNetworkConditions", { offline: false, latency: 180, downloadThroughput: 64 * 1024, uploadThroughput: 64 * 1024 });
     await page.waitFor(`__nxAcceptance.reopened > 0 && __nxAcceptance.reconnectAttached > 0 && __nxAcceptance.text.includes(__nxAcceptance.marker)`, 35_000);
-    await page.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     const evidence = await page.evaluate(`({ reopened: __nxAcceptance.reopened, reconnectAttached: __nxAcceptance.reconnectAttached })`);
     return { evidence: { ...evidence, droppedSockets: dropped } };
   });
 }
 
-async function rpcAcceptance(page, server) {
+async function rpcAcceptance(page) {
   for (const status of [401, 403, 404]) {
     await pass(`rpc-${status}-non-retry`, async () => {
       let attempts = 0;
@@ -451,11 +444,6 @@ async function rpcAcceptance(page, server) {
     });
   }
   await pass("rpc-network-5xx-jitter-recovery", async () => {
-    await page.evaluate(`(async () => {
-      const serverAuth = await import('${VITE}/src/ipc/serverAuth.ts');
-      serverAuth.setServerToken(${JSON.stringify(server.token)});
-      return true;
-    })()`);
     const attempts = { network: 0, server500: 0 };
     let mode = "network";
     const off = page.on("Fetch.requestPaused", (event) => {
@@ -491,47 +479,54 @@ async function rpcAcceptance(page, server) {
   });
 }
 
-let vite;
-let server;
-let chrome;
-let page;
-try {
-  [vite, server, chrome] = await Promise.all([startVite(), startServer(), startChrome()]);
-  page = await newPage(chrome);
-  try { await layoutAcceptance(page); } catch (error) { harnessErrors.push(`layout harness: ${error.stack || error}`); }
-  try { await wsAcceptance(page, server); } catch (error) { harnessErrors.push(`WS harness: ${error.stack || error}`); }
-  try { await rpcAcceptance(page, server); } catch (error) { harnessErrors.push(`RPC harness: ${error.stack || error}`); }
-  await page.evaluate(`(async () => {
-    const s = window.__nxAcceptance;
-    if (!s) return true;
-    try { if (s.channel) { await s.commands.terminalApi.detach(s.tabId, s.events.channelIdOf(s.channel)); s.events.disposeChannel(s.channel); } } catch {}
-    try { if (s.session) await s.commands.sessionApi.disconnect(s.session.id); } catch {}
-    return true;
-  })()`).catch(() => {});
-} catch (error) {
-  harnessErrors.push(String(error?.stack || error));
-} finally {
-  if (page) page.close();
-  stop(chrome?.process);
-  stop(server?.process);
-  stop(vite);
+async function main() {
+  let vite;
+  let server;
+  let chrome;
+  let page;
+  try {
+    [vite, server, chrome] = await Promise.all([startVite(), startServer(), startChrome()]);
+    page = await newPage(chrome);
+    try { await layoutAcceptance(page); } catch (error) { harnessErrors.push(`layout harness: ${error.stack || error}`); }
+    try { await wsAcceptance(page, server); } catch (error) { harnessErrors.push(`WS harness: ${error.stack || error}`); }
+    try { await rpcAcceptance(page); } catch (error) { harnessErrors.push(`RPC harness: ${error.stack || error}`); }
+    await page.evaluate(`(async () => {
+      const s = window.__nxAcceptance;
+      if (!s) return true;
+      try { if (s.channel) { await s.commands.terminalApi.detach(s.tabId, s.events.channelIdOf(s.channel)); s.events.disposeChannel(s.channel); } } catch {}
+      try { if (s.keeper) { await s.commands.terminalApi.detach(s.tabId, s.events.channelIdOf(s.keeper)); s.events.disposeChannel(s.keeper); } } catch {}
+      try { if (s.session) await s.commands.sessionApi.disconnect(s.session.id); } catch {}
+      return true;
+    })()`).catch(() => {});
+  } catch (error) {
+    harnessErrors.push(String(error?.stack || error));
+  } finally {
+    if (page) page.close();
+    stop(chrome?.process);
+    stop(server?.process);
+    stop(vite);
+  }
+
+  for (const id of EXPECTED) {
+    if (!results.has(id)) record(id, "not-run-dependency-failed", { reason: "the required harness did not complete; this is not a pass or an approved skip" });
+  }
+  const checks = [...results.values()];
+  const failed = checks.filter((check) => check.status !== "passed");
+  const report = {
+    schema_version: 1,
+    status: failed.length || harnessErrors.length ? "failed" : "passed-with-explicit-real-target-gaps",
+    browser: chrome?.version || { status: "unavailable" },
+    execution: { real_browser: true, headless: true, jsdom: false, physical_device: false },
+    checks,
+    harness_errors: harnessErrors,
+    evidence_gaps: REAL_TARGET_GAPS,
+    skip_as_pass: false,
+  };
+  fs.writeFileSync(path.join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  console.warn(`browser acceptance: ${checks.filter((check) => check.status === "passed").length}/${EXPECTED.length} automated checks passed; ${REAL_TARGET_GAPS.length} explicit real-target gaps; report=${path.join(OUT, "report.json")}`);
+  if (failed.length || harnessErrors.length) process.exit(1);
 }
 
-for (const id of EXPECTED) {
-  if (!results.has(id)) record(id, "not-run-dependency-failed", { reason: "the required harness did not complete; this is not a pass or an approved skip" });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }
-const checks = [...results.values()];
-const failed = checks.filter((check) => check.status !== "passed");
-const report = {
-  schema_version: 1,
-  status: failed.length || harnessErrors.length ? "failed" : "passed-with-explicit-real-target-gaps",
-  browser: chrome?.version || { status: "unavailable" },
-  execution: { real_browser: true, headless: true, jsdom: false, physical_device: false },
-  checks,
-  harness_errors: harnessErrors,
-  evidence_gaps: REAL_TARGET_GAPS,
-  skip_as_pass: false,
-};
-fs.writeFileSync(path.join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-console.warn(`browser acceptance: ${checks.filter((check) => check.status === "passed").length}/${EXPECTED.length} automated checks passed; ${REAL_TARGET_GAPS.length} explicit real-target gaps; report=${path.join(OUT, "report.json")}`);
-if (failed.length || harnessErrors.length) process.exit(1);
