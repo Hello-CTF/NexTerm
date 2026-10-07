@@ -219,7 +219,11 @@ def main() -> int:
     parser.add_argument("--no-build", action="store_true", help="reuse existing binaries")
     arguments = parser.parse_args()
 
-    if not arguments.no_build:
+    if arguments.no_build:
+        if not arguments.helper.exists():
+            print(f"--no-build: helper missing, building {arguments.helper}", flush=True)
+            build(arguments.helper, "./scripts/syncv2-helper")
+    else:
         build(arguments.bin, "./cmd/nexterm-server")
         build(arguments.helper, "./scripts/syncv2-helper")
 
