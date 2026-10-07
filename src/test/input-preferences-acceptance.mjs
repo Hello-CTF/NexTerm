@@ -365,13 +365,23 @@ async function inputPreferenceAcceptance(page) {
       const labels = rows.map((r) => r.querySelector('.nx-kbd')?.textContent ?? null);
       const autoCopy = document.querySelector('input[aria-label="选中自动复制"]');
       const conflictBadges = document.querySelectorAll('[data-shortcut-row] .nx-badge-amber').length;
-      return { rowCount: rows.length, labels, autoCopyChecked: autoCopy?.checked ?? null, conflictBadges };
+      const syncNowRow = document.querySelector('[data-shortcut-row="syncNow"]');
+      return {
+        rowCount: rows.length,
+        labels,
+        autoCopyChecked: autoCopy?.checked ?? null,
+        conflictBadges,
+        syncNowKbd: syncNowRow?.querySelector('.nx-kbd')?.textContent ?? null,
+        syncNowText: syncNowRow?.textContent ?? null,
+      };
     })()`);
     const mod = evidence.labels[0]?.startsWith("⌘") ? "⌘" : "Ctrl";
-    assert.equal(evidence.rowCount, 11, JSON.stringify(evidence));
+    assert.equal(evidence.rowCount, 12, JSON.stringify(evidence));
     assert.ok(evidence.labels.includes(`${mod}+Shift+P`), JSON.stringify(evidence.labels));
     assert.ok(evidence.labels.includes(`${mod}+1…9`), JSON.stringify(evidence.labels));
     assert.ok(evidence.labels.includes(`${mod}+F`), JSON.stringify(evidence.labels));
+    assert.equal(evidence.syncNowKbd, `${mod}+Shift+S`, `syncNow default must be Mod+Shift+s: ${JSON.stringify(evidence)}`);
+    assert.ok(evidence.syncNowText?.includes("立即同步账号数据"), `syncNow row label missing: ${JSON.stringify(evidence.syncNowText)}`);
     assert.equal(evidence.autoCopyChecked, false, "selection auto-copy must default to off");
     assert.equal(evidence.conflictBadges, 0, "defaults must not conflict");
     return { evidence: { ...evidence, mod } };
@@ -541,6 +551,8 @@ async function inputPreferenceAcceptance(page) {
         const r = b.getBoundingClientRect();
         return r.width > 0 && r.right <= window.innerWidth + 1 && r.left >= -1;
       });
+      const syncNowRow = document.querySelector('[data-shortcut-row="syncNow"]');
+      const syncNowRect = syncNowRow?.querySelector('button[aria-label^="修改快捷键"]')?.getBoundingClientRect();
       return {
         cols,
         tracks: cols ? cols.split(" ").length : 0,
@@ -548,12 +560,17 @@ async function inputPreferenceAcceptance(page) {
         innerWidth: window.innerWidth,
         reachable,
         editButtonCount: editButtons.length,
+        syncNowKbd: syncNowRow?.querySelector('.nx-kbd')?.textContent ?? null,
+        syncNowReachable: Boolean(syncNowRect && syncNowRect.width > 0 && syncNowRect.right <= window.innerWidth + 1 && syncNowRect.left >= -1),
       };
     })()`);
+    const mod = evidence.syncNowKbd?.startsWith("⌘") ? "⌘" : "Ctrl";
     assert.equal(evidence.tracks, 1, `390px must be single column: ${JSON.stringify(evidence)}`);
     assert.ok(evidence.docScrollWidth <= evidence.innerWidth, JSON.stringify(evidence));
-    assert.equal(evidence.editButtonCount, 11);
+    assert.equal(evidence.editButtonCount, 12);
+    assert.equal(evidence.syncNowKbd, `${mod}+Shift+S`, `syncNow row must render default Mod+Shift+s at 390px: ${JSON.stringify(evidence)}`);
     assert.equal(evidence.reachable, true, JSON.stringify(evidence));
+    assert.equal(evidence.syncNowReachable, true, JSON.stringify(evidence));
     const shot = await screenshot(page, "responsive-390-settings.png");
     return { evidence: { ...evidence, shot } };
   });
