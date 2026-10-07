@@ -263,6 +263,20 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		}
 		plan.preview = sshconfig.PreviewSSHConfig(result, existing.assets, existing.keys, sshconfig.Limits{})
 		plan.path = effective
+	case "ssh-home":
+		dir := strings.TrimSpace(path)
+		if dir == "" {
+			dir = sshconfig.DefaultSSHHome()
+		}
+		if dir == "" {
+			return nil, ipc.NewError(ipc.CodeBadParam, "找不到默认 SSH 目录路径，请手动指定")
+		}
+		preview, err := sshconfig.PreviewHome(dir, existing.assets, existing.keys, sshconfig.Limits{})
+		if err != nil {
+			return nil, ipc.NewError(ipc.CodeBadParam, "扫描 SSH 目录失败: "+err.Error())
+		}
+		plan.preview = preview
+		plan.path = dir
 	case "termius":
 		if !confirmed {
 			return nil, ipc.NewError(ipc.CodeBadParam, "读取本机 Termius 数据需要显式确认")

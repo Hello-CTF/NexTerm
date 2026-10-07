@@ -181,3 +181,66 @@ describe("demo 生成密钥", () => {
     );
   });
 });
+
+describe("demo SSH ~/.ssh 目录快速导入", () => {
+  it("ssh-home 预览返回扫描结果、诊断且不含私钥材料", async () => {
+    const preview = (await mockInvoke("ssh_import_preview", {
+      args: { source: "ssh-home" },
+    })) as Record<string, unknown>;
+    expect(preview.source).toBe("ssh-home");
+    expect(preview.path).toBe("/home/demo/.ssh");
+    const hosts = preview.hosts as { alias: string; action: string }[];
+    expect(hosts.map((h) => h.action)).toEqual(["add", "add", "skip-duplicate"]);
+    const keys = preview.keys as { aliases: string[]; action: string }[];
+    expect(keys.map((k) => k.aliases[0])).toEqual(["id_ed25519_home", "id_ed25519"]);
+    expect(keys.map((k) => k.action)).toEqual(["add", "conflict-alias"]);
+    const diagnostics = preview.diagnostics as { code: string }[];
+    expect(diagnostics.map((d) => d.code)).toContain("unsupported-file");
+    expect(JSON.stringify(preview)).not.toContain("PRIVATE KEY");
+  });
+
+  it("ssh-home 一键导入全部安全项：新增项入库、冲突项不覆盖", async () => {
+    const preview = (await mockInvoke("ssh_import_preview", {
+      args: { source: "ssh-home" },
+    })) as { hosts: { id: string; action: string }[]; keys: { id: string; action: string }[] };
+    const result = (await mockInvoke("ssh_import_apply", {
+      args: {
+        source: "ssh-home",
+        hosts: preview.hosts.map((h) => ({
+          id: h.id,
+          action: h.action === "add" ? "import" : "skip",
+        })),
+        keys: preview.keys.map((k) => ({
+          id: k.id,
+          action: k.action === "add" ? "import" : "skip",
+        })),
+      },
+    })) as Record<string, number>;
+    expect(result.assetsCreated).toBe(2);
+    expect(result.credentialsCreated).toBe(1);
+    expect(result.skipped).toBe(2);
+
+    const creds = (await mockInvoke("vault_list_credentials")) as DemoCredentialRow[];
+    const imported = creds.find((c) => c.name === "id_ed25519_home");
+    expect(imported?.source).toBe("file");
+    expect(imported?.refPath).toBe("/home/demo/.ssh/id_ed25519_home");
+    const conflicted = creds.filter((c) => c.name === "id_ed25519");
+    expect(conflicted).toHaveLength(1);
+
+    const assets = (await mockInvoke("asset_list")) as DemoAssetRow[];
+    const bastion = assets.find((a) => a.name === "demo-bastion");
+    expect(bastion?.authKind).toBe("key");
+    expect(bastion?.credId).toBe(imported?.id);
+  });
+
+  it("ssh-home 预览不需要 Termius 确认参数", async () => {
+    await expectErrorCode(
+      mockInvoke("ssh_import_preview", { args: { source: "termius" } }),
+      "bad_param",
+    );
+    const preview = (await mockInvoke("ssh_import_preview", {
+      args: { source: "ssh-home" },
+    })) as { source: string };
+    expect(preview.source).toBe("ssh-home");
+  });
+});

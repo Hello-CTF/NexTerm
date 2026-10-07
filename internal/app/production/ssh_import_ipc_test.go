@@ -1151,3 +1151,144 @@ func TestVaultGenerateKey(t *testing.T) {
 }
 
 func sshImportStrPtr(value string) *string { return &value }
+
+func TestSSHImportHomePreviewAndApply(t *testing.T) {
+	ctx := t.Context()
+	dispatcher, database, credentialVault, _ := sshImportTestRig(t)
+	dir := t.TempDir()
+	keyPath, keyFingerprint := sshImportTestKeyFile(t, dir)
+	encPair, err := keys.Generate(keys.Options{Algorithm: keys.AlgorithmEd25519, Passphrase: "home-pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encPath := filepath.Join(dir, "id_enc")
+	if err := os.WriteFile(encPath, encPair.PrivateKeyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("not a key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		outside := filepath.Join(t.TempDir(), "id_outside")
+		if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(dir, "id_escape")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := "Host web\n  HostName web.example.com\n  User deploy\n  IdentityFile " + keyPath + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(dir)+`}}`)
+	if preview.Source != "ssh-home" || preview.Path != dir {
+		t.Fatalf("preview meta = %+v", preview)
+	}
+	web := previewHost(t, preview, "web")
+	if web.Action != "add" || web.AuthMethod != "key" || len(web.IdentityFiles) != 1 || web.IdentityFiles[0] != keyPath {
+		t.Fatalf("web = %+v", web)
+	}
+	plainKey := previewKey(t, preview, "id_ed25519")
+	if plainKey.Action != "add" || plainKey.Fingerprint != keyFingerprint || plainKey.Source != "ssh-home" {
+		t.Fatalf("plain key = %+v", plainKey)
+	}
+	encKey := previewKey(t, preview, "id_enc")
+	if encKey.Action != "add" || encKey.Fingerprint != encPair.Fingerprint {
+		t.Fatalf("encrypted key = %+v", encKey)
+	}
+	if len(encKey.Warnings) == 0 || !strings.Contains(strings.Join(encKey.Warnings, " "), "passphrase") {
+		t.Fatalf("encrypted key warnings = %+v", encKey.Warnings)
+	}
+	diagCodes := map[string]bool{}
+	for _, diagnostic := range preview.Diagnostics {
+		diagCodes[diagnostic.Code] = true
+	}
+	if !diagCodes["unsupported-file"] {
+		t.Fatalf("missing unsupported-file diagnostic: %+v", preview.Diagnostics)
+	}
+	if runtime.GOOS != "windows" && !diagCodes["symlink-escape"] {
+		t.Fatalf("missing symlink-escape diagnostic: %+v", preview.Diagnostics)
+	}
+	pemFragment := ""
+	for _, line := range strings.Split(string(encPair.PrivateKeyPEM), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) >= 32 && !strings.HasPrefix(trimmed, "-----") {
+			pemFragment = trimmed[:32]
+			break
+		}
+	}
+	rawPreview, _ := json.Marshal(preview)
+	if strings.Contains(string(rawPreview), "PRIVATE KEY") || (pemFragment != "" && strings.Contains(string(rawPreview), pemFragment)) {
+		t.Fatal("preview leaks private key material")
+	}
+
+	applyBody := `{"args":{"source":"ssh-home","path":` + strconvQuote(dir) + `,` +
+		`"hosts":[{"id":` + strconvQuote(web.ID) + `,"action":"import"}],` +
+		`"keys":[{"id":` + strconvQuote(plainKey.ID) + `,"action":"import"},{"id":` + strconvQuote(encKey.ID) + `,"action":"import"}]}}`
+	result, response := sshImportApply(t, dispatcher, applyBody)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.AssetsCreated != 1 || result.CredentialsCreated != 2 {
+		t.Fatalf("apply result = %+v", result)
+	}
+
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var webRow store.AssetRow
+	for _, row := range assets {
+		if row.Name == "web" {
+			webRow = row
+		}
+	}
+	if webRow.ID == "" || webRow.CredID == nil {
+		t.Fatalf("web asset = %+v, want credential bound", webRow)
+	}
+	credRow, err := database.CredentialGetRow(ctx, *webRow.CredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credRow.Name != "id_ed25519" || credRow.Kind != vault.KindPrivateKey {
+		t.Fatalf("credential = %+v", credRow)
+	}
+	plaintext, err := credentialVault.DecryptCredentialString(ctx, credRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := vault.ParsePrivateKeyPayload(plaintext)
+	if payload.File == nil || *payload.File != keyPath || payload.Key != nil {
+		t.Fatalf("stored payload = %+v, want file reference to %s", payload, keyPath)
+	}
+
+	auditRows, err := database.AuditQuery(ctx, store.AuditQuery{Source: sshImportStrPtr("user"), Kind: sshImportStrPtr("ssh-import")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(auditRows) != 1 || !strings.Contains(string(auditRows[0].PayloadJSON), "ssh-home") {
+		t.Fatalf("audit rows = %+v", auditRows)
+	}
+	if strings.Contains(string(auditRows[0].PayloadJSON), "PRIVATE KEY") {
+		t.Fatal("audit payload leaks key material")
+	}
+
+	rePreview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(dir)+`}}`)
+	if got := previewKey(t, rePreview, "id_ed25519").Action; got != "skip-duplicate" {
+		t.Fatalf("re-preview key action = %q, want skip-duplicate", got)
+	}
+	if got := previewHost(t, rePreview, "web").Action; got != "skip-duplicate" {
+		t.Fatalf("re-preview host action = %q, want skip-duplicate", got)
+	}
+}
+
+func TestSSHImportHomeApplyRequiresUnlockedVault(t *testing.T) {
+	dispatcher, _, _, _ := sshImportTestRig(t)
+	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_lock", `{}`))
+	response := dispatchStoreTest(dispatcher, "ssh_import_apply", `{"args":{"source":"ssh-home","path":"/nonexistent","hosts":[],"keys":[]}}`)
+	if response.OK || response.Error == nil {
+		t.Fatalf("locked apply = %+v, want error", response)
+	}
+}

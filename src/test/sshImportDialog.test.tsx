@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   apply: vi.fn(),
   toast: vi.fn(),
 }));
+const gateMocks = vi.hoisted(() => ({
+  ensureVaultInit: vi.fn(),
+}));
 vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();
   return {
@@ -25,6 +28,13 @@ vi.mock("../ipc/commands", async (importOriginal) => {
     sshImportApi: { preview: mocks.preview, apply: mocks.apply },
   };
 });
+vi.mock("../features/credentials/useVaultInitGate", () => ({
+  useVaultInitGate: () => ({
+    ensureVaultInit: gateMocks.ensureVaultInit,
+    vaultInitGate: null,
+    vaultStatus: { initialized: true, unlocked: true },
+  }),
+}));
 
 import { SshImportDialog } from "../features/explorer/SshImportDialog";
 import { useUi } from "../app/store";
@@ -112,6 +122,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   useUi.setState({ pushToast: mocks.toast, appDialog: null });
+  gateMocks.ensureVaultInit.mockResolvedValue(true);
   mocks.preview.mockResolvedValue(PREVIEW);
   mocks.apply.mockResolvedValue({
     assetsCreated: 2,
@@ -232,5 +243,75 @@ describe("SSH 导入对话框", () => {
     clickButton(mounted.container, "返回");
     await flush();
     expect(mounted.container.querySelector("[role=alert]")).toBeNull();
+  });
+});
+
+describe("SSH ~/.ssh 目录快速导入", () => {
+  it("切换到 ~/.ssh 目录来源时展示扫描说明、无路径输入且预览不带路径", async () => {
+    mounted = mountDialog();
+    clickButton(mounted.container, "~/.ssh 目录");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("自动发现受支持的私钥");
+    expect(text).toContain("不修改任何原始文件");
+    expect(mounted.container.querySelector("input")).toBeNull();
+
+    clickButton(mounted.container, "预览");
+    await waitFor(() =>
+      expect(mocks.preview).toHaveBeenCalledWith({
+        source: "ssh-home",
+        path: undefined,
+      }),
+    );
+  });
+
+  it("预览显示数量、默认勾选安全项，一键导入全部安全项忽略手动取消的勾选", async () => {
+    mounted = mountDialog();
+    clickButton(mounted.container, "~/.ssh 目录");
+    clickButton(mounted.container, "预览");
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    await flush();
+
+    expect(mounted.container.textContent).toContain("3 台主机（1 台可新增）");
+    expect(mounted.container.textContent).toContain("1 个可新增");
+    const bastionBox = mounted.container.querySelector<HTMLInputElement>(
+      'input[aria-label="导入主机 bastion"]',
+    )!;
+    expect(bastionBox.checked).toBe(true);
+    const keyBox = mounted.container.querySelector<HTMLInputElement>(
+      'input[aria-label="导入密钥 id_rsa_demo"]',
+    )!;
+    expect(keyBox.checked).toBe(true);
+
+    bastionBox.click();
+    await flush();
+
+    clickButton(mounted.container, "一键导入全部安全项 (2)");
+    await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
+    expect(gateMocks.ensureVaultInit).toHaveBeenCalled();
+    expect(mocks.apply).toHaveBeenCalledWith({
+      source: "ssh-home",
+      path: undefined,
+      hosts: [
+        { id: "h0", action: "import" },
+        { id: "h1", action: "skip" },
+        { id: "h2", action: "skip" },
+      ],
+      keys: [{ id: "k0", action: "import" }],
+    });
+    expect(mounted.container.textContent).toContain("新增主机 2");
+  });
+
+  it("凭据库未初始化且用户取消初始化时中止导入", async () => {
+    gateMocks.ensureVaultInit.mockResolvedValue(false);
+    mounted = mountDialog();
+    clickButton(mounted.container, "预览");
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    await flush();
+
+    clickButton(mounted.container, "导入选中项");
+    await waitFor(() => expect(gateMocks.ensureVaultInit).toHaveBeenCalled());
+    await flush();
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mounted.container.textContent).toContain("导入选中项");
   });
 });
