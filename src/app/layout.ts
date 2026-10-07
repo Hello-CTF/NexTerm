@@ -503,8 +503,8 @@ export async function notifyBackgroundedTerminals(
     if (!hit || hit.exited) continue;
     const text =
       hit.viewers > 1
-        ? `终端「${r.title}」已被其他设备关闭标签，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管`
-        : `终端「${r.title}」已被其他设备关闭标签，进程仍在后台运行，可在「后台会话」里接管`;
+        ? `终端「${r.title}」的标签已被其他设备关闭，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管`
+        : `终端「${r.title}」的标签已被其他设备关闭，进程仍在后台运行，可在「后台会话」里接管`;
     useUi.getState().pushToast("info", text);
   }
 }

@@ -211,7 +211,7 @@ export function QuickConnect({ onClose }: { onClose: () => void }) {
           })}
           {filtered.length === 0 && (
             <div className="nx-command-empty px-4 py-8 text-center text-xs" role="status">
-              {assets.length === 0 ? "还没有资产 — 先在左侧资产树新建一个" : "没有匹配的资产"}
+              {assets.length === 0 ? "还没有资产，先在左侧资产树新建一个" : "没有匹配的资产"}
             </div>
           )}
         </div>
