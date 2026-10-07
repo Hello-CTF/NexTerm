@@ -23,6 +23,7 @@ import {
 } from "../../ui/icons";
 import { formatBytes, formatTime, formatUptime, isOnline, relativeTime } from "./format";
 import { BaseUrlsSection } from "./BaseUrlsSection";
+import { oneLineInstallCommand, shellQuote } from "./installCommand";
 
 const ENROLL_TTL_OPTIONS = [
   { label: "5 分钟", ms: 5 * 60_000 },
@@ -35,12 +36,6 @@ const ENROLL_TTL_OPTIONS = [
 // 双引号让 shell 在调用前展开: NEXTERM_DATA_DIR 最优先 (与文案的覆盖承诺一致,
 // CLI 中 flag 优先于 env, 必须把覆盖嵌进 flag 值), 其次 XDG_DATA_HOME, 最后 $HOME。
 const AGENT_DATA_DIR = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
-
-// shellQuote 把动态参数 (接入地址/接入码) 包成单引号安全形式, 防止 URL path
-// 中的 ; & $() 等被 shell 当命令语法 (服务端 normalizeBaseURL 允许这些字符)。
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
 
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
   return `nexterm-server agent enroll --server ${shellQuote(baseUrl)} --code ${shellQuote(code)}${insecure ? " --insecure" : ""} --data-dir ${AGENT_DATA_DIR}`;
@@ -385,7 +380,11 @@ export function DevicesView() {
   const [ttlMs, setTtlMs] = useState(ENROLL_TTL_OPTIONS[1].ms);
   const [issued, setIssued] = useState<{ code: string; expiresAt: number } | null>(null);
   const [issuing, setIssuing] = useState(false);
+  // serverVersion 是 /healthz 的真实服务端版本 (一键安装 --version 用);
+  // null 表示不可用, 一键安装指令整段隐藏, 绝不伪造版本。
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const versionSeq = useRef(0);
   // accountEpoch 只在账号切换时递增 (手动刷新不动它), 隔离签发在途的
   // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
   const accountEpoch = useRef(0);
@@ -400,6 +399,7 @@ export function DevicesView() {
     setScopedUserId(userId);
     loadSeq.current += 1;
     accountEpoch.current += 1;
+    versionSeq.current += 1;
     setDevices(null);
     setBaseUrls([]);
     setError(null);
@@ -407,6 +407,7 @@ export function DevicesView() {
     setIssued(null);
     setIssuing(false);
     setLoading(false);
+    setServerVersion(null);
   }
 
   const load = useCallback(() => {
@@ -439,6 +440,21 @@ export function DevicesView() {
     if (!WEB || !user) return;
     load();
   }, [user, load]);
+
+  // 打开接入面板时经 /healthz 读取真实服务端版本 (一键安装的 --version);
+  // 失败或空串都归为 null: 一键安装指令整段隐藏, 绝不伪造版本。
+  useEffect(() => {
+    if (!enrollOpen || !WEB || !user) return;
+    const seq = ++versionSeq.current;
+    fleetApi
+      .serverVersion()
+      .then((v) => {
+        if (seq === versionSeq.current) setServerVersion(v || null);
+      })
+      .catch(() => {
+        if (seq === versionSeq.current) setServerVersion(null);
+      });
+  }, [enrollOpen, user]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -618,6 +634,32 @@ export function DevicesView() {
                     在设备上看到「注册成功」才算接入完成; 此页面不会替你安装, 也不会再次显示接入码。
                     数据目录默认取 XDG 数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
                   </div>
+                  {serverVersion && (
+                    <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
+                      <div className="text-[12px] text-neutral-200">
+                        全新 Linux 机器 (x86_64/aarch64, 无需已装二进制) 一行安装, 自动下载校验 v{serverVersion} 发布资产并注册接入:
+                      </div>
+                      {baseUrls.map((entry) => {
+                        const command = oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion);
+                        return (
+                          <div key={entry.url} className="flex flex-wrap items-center gap-2">
+                            <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">{command}</code>
+                            <button
+                              type="button"
+                              className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                              onClick={() => copyText(command, pushToast, "一键安装命令")}
+                            >
+                              <IconCopy size={11} />
+                              复制
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <div className="text-[11.5px] text-neutral-400">
+                        安装结果以设备上脚本输出为准: 本页面不会替你安装, 也不会感知安装是否成功。
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

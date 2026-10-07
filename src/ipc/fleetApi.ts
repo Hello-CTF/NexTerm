@@ -91,4 +91,8 @@ export const fleetApi = {
 
   putBaseUrls: (entries: FleetBaseURLEntry[]) =>
     request<{ base_urls: FleetBaseURLEntry[] }>("PUT", "/fleet/base-urls", { base_urls: entries }, { csrf: true }),
+
+  // serverVersion 读 /healthz 的真实服务端版本 (全新机器一键安装的 --version
+  // 用)。返回空串表示版本不可用: 调用方必须隐藏依赖版本的 UI, 不得伪造版本。
+  serverVersion: () => request<{ version?: string }>("GET", "/healthz").then((r) => r.version ?? ""),
 };

@@ -154,6 +154,28 @@ describe("fleetApi 线上契约", () => {
     expect(r.devices[0]?.last_seen_at).toBe(2);
   });
 
+  it("serverVersion 走 GET /healthz 且不带 CSRF 头, 空版本归一为 empty string", async () => {
+    const calls: CapturedRequest[] = [];
+    let served = 0;
+    mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init.method ?? "GET",
+        headers: (init.headers ?? {}) as Record<string, string>,
+      });
+      served += 1;
+      const payload = served === 1 ? { ok: true, version: "0.2.2" } : { ok: true };
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+    });
+    vi.stubGlobal("fetch", mocks.fetch);
+
+    await expect(fleetApi.serverVersion()).resolves.toBe("0.2.2");
+    expect(calls[0]).toMatchObject({ url: "/healthz", method: "GET" });
+    expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBeUndefined();
+
+    await expect(fleetApi.serverVersion()).resolves.toBe("");
+  });
+
   it("401 派发会话过期事件并规整错误", async () => {
     mocks.fetch.mockResolvedValue({
       ok: false,
