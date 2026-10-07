@@ -543,8 +543,11 @@ export function DevicesView() {
             {!issued ? (
               <>
                 <p className="nx-hint mb-3">
-                  签发一次性接入码, 在设备上用 <code className="nx-code">nexterm-server agent enroll</code> 兑换。
-                  接入码单次使用, 到期自动作废。
+                  接入分三步: 1) 在这里签发一次性接入码; 2) 在设备上用{" "}
+                  <code className="nx-code">nexterm-server agent enroll</code> 把接入码兑换成设备凭证; 3) 用{" "}
+                  <code className="nx-code">nexterm-server agent install</code> 把 agent 装成随登录自启的 per-user 服务。
+                  接入码单次使用, 到期自动作废; 凭证只写入设备本地数据目录, 本页面不会再显示任何设备密钥。
+                  若服务端版本可读, 全新 Linux 机器 (无需已装二进制) 还有一行安装可选, 自动完成下载、校验、注册与服务安装。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
@@ -575,7 +578,7 @@ export function DevicesView() {
                   <IconInfo size={14} className="mt-0.5 shrink-0" />
                   <div className="min-w-0">
                     接入码 <b>只显示这一次</b>, 单次使用, 有效期至 {formatTime(issued.expiresAt)}。
-                    它经服务器中转兑换成设备凭证; 凭证只写入设备本地配置, 本页面不会再显示任何设备密钥。
+                    它经服务器中转兑换成设备凭证; 凭证只写入设备本地数据目录, 本页面不会再显示任何设备密钥。
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -593,7 +596,9 @@ export function DevicesView() {
                   </button>
                 </div>
                 <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
-                  <div className="text-[12px] text-neutral-200">在设备上执行 (按顺序尝试, 第一个可达的即接入点; 命令面向 Linux/macOS 普通用户环境, 适配 systemd --user / launchd per-user):</div>
+                  <div className="text-[12px] text-neutral-200">
+                    第 1 步 · 在设备上执行 enroll 命令, 把接入码兑换成设备凭证 (命令面向 Linux/macOS 普通用户环境, 适配 systemd --user / launchd per-user; 多个接入地址按顺序尝试, 第一个可达的即接入点):
+                  </div>
                   {baseUrls.length === 0 && (
                     <div className="text-[12px] text-amber-300">
                       {isAdmin
@@ -617,6 +622,7 @@ export function DevicesView() {
                       </div>
                     );
                   })}
+                  <div className="text-[12px] text-neutral-200">第 2 步 · 执行 install 命令, 把 agent 安装为 per-user 服务, 之后随登录自动启动:</div>
                   <div className="flex flex-wrap items-center gap-2">
                     <code className="nx-code min-w-0 flex-1 break-all font-mono text-[11.5px]">
                       {installCommand()}
@@ -631,13 +637,13 @@ export function DevicesView() {
                     </button>
                   </div>
                   <div className="text-[11.5px] text-neutral-400">
-                    在设备上看到「注册成功」才算接入完成; 此页面不会替你安装, 也不会再次显示接入码。
-                    数据目录默认取 XDG 数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
+                    第 3 步 · 确认接入: 在设备上看到「注册成功」, 回到本页点「刷新」后设备显示「在线」; agent 会定期上报心跳与系统指标 (默认每 60 秒一次)。
+                    此页面不会替你安装, 也不会再次显示接入码; 数据目录默认取 XDG 数据目录 (普通用户可写), 可用 NEXTERM_DATA_DIR 环境变量统一覆盖 enroll 与 install。
                   </div>
                   {serverVersion && (
                     <div className="flex flex-col gap-1.5 border-t border-red-500/20 pt-2">
                       <div className="text-[12px] text-neutral-200">
-                        全新 Linux 机器 (x86_64/aarch64, 无需已装二进制) 一行安装, 自动下载校验 v{serverVersion} 发布资产并注册接入:
+                        全新 Linux 机器 (x86_64/aarch64, 无需已装二进制) 可用一行安装替代上面两步: 自动下载校验 v{serverVersion} 发布资产, 装入 ~/.local/bin, 注册并安装 per-user 服务:
                       </div>
                       {baseUrls.map((entry) => {
                         const command = oneLineInstallCommand(entry.url, Boolean(entry.insecure), issued.code, serverVersion);
@@ -679,7 +685,7 @@ export function DevicesView() {
 
         {devices !== null && devices.length === 0 && !error && (
           <div className="nx-hint py-2 text-center text-[12px]">
-            还没有设备接入: 点右上角「接入新设备」签发接入码。
+            还没有设备接入: 点右上角「接入新设备」签发接入码, 按面板里的三步在设备上完成 enroll 与 install。
           </div>
         )}
 

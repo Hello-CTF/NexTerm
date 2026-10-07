@@ -567,7 +567,7 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
                 </button>
               </div>
               <div className="text-[11px] leading-relaxed text-neutral-500">
-                有效期内任何持有链接的人都能打开这个终端会话{shareCreated.permission === "read_write" ? "并输入" : " (不能输入)"}
+                有效期内任何拿到链接的人无需账号都能打开这个终端会话{shareCreated.permission === "read_write" ? "并输入" : " (不能输入)"}
                 ; 可在「设置 → 分享」的公开链接列表中随时吊销。链接不接触主机密码或私钥。
               </div>
             </div>
@@ -609,7 +609,8 @@ export function DeviceTerminalView({ deviceId, visible }: { deviceId: string; vi
               </div>
               {shareError && <div className="text-[11.5px] break-words text-red-300">创建公开链接失败 · {shareError}</div>}
               <div className="text-[11px] leading-relaxed text-neutral-500">
-                公开链接绑定当前终端会话, 有效期内持有链接的人都能打开; 链接只能创建一次, 本页面不会保存链接。
+                公开链接绑定当前终端会话: 有效期内任何拿到链接的人无需 NexTerm 账号就能打开这个终端, 请只把链接发给你信任的人。
+                链接只能创建一次, 本页面不会保存链接; 创建后可随时在「设置 → 分享」吊销。
               </div>
             </div>
           )}

@@ -176,6 +176,20 @@ describe("BaseUrlsSection 普通用户只读", () => {
   });
 });
 
+describe("BaseUrlsSection 空列表引导", () => {
+  it("超管看到可操作的空态指引, 普通用户看到联系管理员指引", async () => {
+    mounted = mount(createElement(BaseUrlsSection, { entries: [], isAdmin: true, onSaved: () => undefined }));
+    await flushUntil(() => document.body.textContent?.includes("还没有配置接入地址") ?? false);
+    expect(document.body.textContent).toContain("新设备无法接入");
+    expect(document.body.textContent).toContain("请在下方添加设备能访问到的服务器地址");
+    mounted.unmount();
+
+    mounted = mount(createElement(BaseUrlsSection, { entries: [], isAdmin: false, onSaved: () => undefined }));
+    await flushUntil(() => document.body.textContent?.includes("请联系超级管理员配置") ?? false);
+    expect(document.body.textContent).toContain("新设备无法接入");
+  });
+});
+
 describe("BaseUrlsSection 保存竞态 (R1-5)", () => {
   it("PUT 在途时全部编辑控件锁定, 响应到达后以服务端列表为准", async () => {
     const put = deferred<{ ok: boolean; status: number; text: () => Promise<string> }>();
