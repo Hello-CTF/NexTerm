@@ -490,7 +490,7 @@ describe("CronCard", () => {
     expect(labels[0]).toContain("跟随当前激活档案「生产档案」");
     expect(labels.some((l) => l.includes("生产档案 · example-model"))).toBe(true);
     expect(labels.some((l) => l.includes("备用档案 · backup-model"))).toBe(true);
-    expect(labels.some((l) => l.includes("同步档案 · example-model（密钥不可用）"))).toBe(true);
+    expect(labels.some((l) => l.includes("同步档案 · example-model（密钥已保存）"))).toBe(true);
     expect(labels.join("\n")).not.toContain("sk-real-key");
     expect(mocks.modelOverview).toHaveBeenCalled();
   });
@@ -526,7 +526,7 @@ describe("CronCard", () => {
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已注册");
   });
 
-  it("注册允许选择密钥不可用档案，选项中如实标注", async () => {
+  it("注册允许选择密钥已保存档案，选项中如实标注", async () => {
     mocks.register.mockResolvedValue(job({ id: "j-9", sessionId: "c-1" }));
     mounted = mount(createElement(CronCard));
     await flush();
@@ -1058,7 +1058,7 @@ describe("CronCard", () => {
     );
   });
 
-  it("任务档案密钥不可用时如实标注", async () => {
+  it("任务档案密钥已保存时如实标注", async () => {
     const masked = job({
       id: "j-1",
       sessionId: "c-1",
@@ -1072,7 +1072,8 @@ describe("CronCard", () => {
     await flush();
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("档案密钥不可用");
+    expect(text).toContain("档案密钥已保存");
+    expect(text).not.toContain("档案密钥不可用");
     expect(text).toContain("档案「同步档案」");
   });
 

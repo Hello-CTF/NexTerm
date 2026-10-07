@@ -352,6 +352,8 @@ const READ_CRON_PROFILE = `(() => {
     found: text.includes("档案「r120 验收档案"),
     deleted: text.includes("档案已删除"),
     unavailable: text.includes("档案密钥不可用"),
+    saved: text.includes("档案密钥已保存"),
+    leaked: text.includes("r120-acceptance-key"),
     overflowsViewport: cr.right > window.innerWidth + 1,
   };
 })()`;
@@ -360,10 +362,13 @@ const READ_CRON_PROFILE_SELECT = `(() => {
   const select = document.querySelector('select[aria-label="模型档案"]');
   if (!select) return { found: false };
   const sr = select.getBoundingClientRect();
+  const options = [...select.options].map((o) => o.textContent || "");
   return {
     found: true,
     value: select.value,
-    options: [...select.options].map((o) => o.textContent || ""),
+    options,
+    savedOption: options.find((o) => o.includes("r120 验收档案") && o.includes(" · ")) ?? null,
+    leaked: options.some((o) => o.includes("r120-acceptance-key")),
     overflowsViewport: sr.right > window.innerWidth + 1,
   };
 })()`;
@@ -690,6 +695,8 @@ async function darkSettingsChecks(page) {
     assert.ok(state.found, `cron row must show the saved profile name: ${JSON.stringify(state)}`);
     assert.equal(state.deleted, false, `saved profile must not be flagged deleted: ${JSON.stringify(state)}`);
     assert.equal(state.unavailable, false, `saved profile must not be flagged unavailable: ${JSON.stringify(state)}`);
+    assert.equal(state.saved, true, `saved profile must present the masked key as a saved credential: ${JSON.stringify(state)}`);
+    assert.equal(state.leaked, false, `cron card must not leak key material: ${JSON.stringify(state)}`);
     assert.equal(state.overflowsViewport, false, `cron card overflows viewport: ${JSON.stringify(state)}`);
     const shot = await screenshot(page, "A-cron-profile-row-320.png");
     return { evidence: { shot } };
@@ -714,6 +721,16 @@ async function darkSettingsChecks(page) {
       state.options.some((o) => o.includes("r120 验收档案")),
       `saved profile missing from selector options: ${JSON.stringify(state.options)}`,
     );
+    assert.ok(
+      state.savedOption?.includes("（密钥已保存）"),
+      `saved profile option must present the masked key as saved: ${JSON.stringify(state.savedOption)}`,
+    );
+    assert.equal(
+      state.savedOption?.includes("密钥不可用"),
+      false,
+      `saved profile option must not claim the key is unavailable: ${JSON.stringify(state.savedOption)}`,
+    );
+    assert.equal(state.leaked, false, `profile options must not leak key material: ${JSON.stringify(state.options)}`);
     assert.equal(state.overflowsViewport, false, `profile select overflows viewport: ${JSON.stringify(state)}`);
     const sample = await page.evaluate(READ_OVERFLOW);
     assertNoOverflow(sample, "cron profile selector 320");
