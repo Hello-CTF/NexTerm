@@ -1279,8 +1279,116 @@ func TestSSHImportHomePreviewAndApply(t *testing.T) {
 	if got := previewKey(t, rePreview, "id_ed25519").Action; got != "skip-duplicate" {
 		t.Fatalf("re-preview key action = %q, want skip-duplicate", got)
 	}
+	if got := previewKey(t, rePreview, "id_enc").Action; got != "skip-duplicate" {
+		t.Fatalf("re-preview encrypted key action = %q, want skip-duplicate via embedded public key", got)
+	}
 	if got := previewHost(t, rePreview, "web").Action; got != "skip-duplicate" {
 		t.Fatalf("re-preview host action = %q, want skip-duplicate", got)
+	}
+
+	// a new host referencing the already-imported encrypted key must reuse the
+	// existing credential (fingerprint recovered from the embedded public key)
+	// instead of falling back to a raw file reference
+	config = config + "\nHost encweb\n  HostName enc.example.com\n  User deploy\n  IdentityFile " + encPath + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	encPreview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(dir)+`}}`)
+	encWeb := previewHost(t, encPreview, "encweb")
+	if encWeb.Action != "add" || encWeb.AuthMethod != "key" {
+		t.Fatalf("encweb = %+v", encWeb)
+	}
+	encResult, encResponse := sshImportApply(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(dir)+`,"hosts":[{"id":`+strconvQuote(encWeb.ID)+`,"action":"import"}],"keys":[]}}`)
+	if !encResponse.OK {
+		t.Fatalf("encweb apply failed: %+v", encResponse.Error)
+	}
+	if encResult.AssetsCreated != 1 || encResult.CredentialsCreated != 0 {
+		t.Fatalf("encweb apply = %+v", encResult)
+	}
+	for _, warning := range encResult.Warnings {
+		if strings.Contains(warning, "encweb") {
+			t.Fatalf("encweb should bind the existing credential without warnings: %+v", encResult.Warnings)
+		}
+	}
+	encCredRows, err := database.CredentialList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encCredID := ""
+	for _, row := range encCredRows {
+		if row.Name == "id_enc" {
+			encCredID = row.ID
+		}
+	}
+	if encCredID == "" {
+		t.Fatal("id_enc credential not found")
+	}
+	assets, err = database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encWebRow store.AssetRow
+	for _, row := range assets {
+		if row.Name == "encweb" {
+			encWebRow = row
+		}
+	}
+	if encWebRow.CredID == nil || *encWebRow.CredID != encCredID {
+		t.Fatalf("encweb credential = %+v, want %s", encWebRow.CredID, encCredID)
+	}
+}
+
+func TestSSHImportHomeSymlinkAliasBinding(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	ctx := t.Context()
+	dispatcher, database, _, _ := sshImportTestRig(t)
+	dir := t.TempDir()
+	targetPath, targetFingerprint := sshImportWriteKeyFile(t, dir, "z_target", "")
+	aliasPath := filepath.Join(dir, "a_alias")
+	if err := os.Symlink(targetPath, aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	config := "Host viaalias\n  HostName a.example.com\n  User deploy\n  IdentityFile " + aliasPath + "\n\n" +
+		"Host viatarget\n  HostName b.example.com\n  User deploy\n  IdentityFile " + targetPath + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"ssh-home","path":`+strconvQuote(dir)+`}}`)
+	if len(preview.Keys) != 1 {
+		t.Fatalf("keys = %+v, want single deduped key", preview.Keys)
+	}
+	key := previewKey(t, preview, "a_alias")
+	if key.Fingerprint != targetFingerprint || key.Action != "add" {
+		t.Fatalf("key = %+v", key)
+	}
+	applyBody := `{"args":{"source":"ssh-home","path":` + strconvQuote(dir) + `,` +
+		`"hosts":[{"id":` + strconvQuote(previewHost(t, preview, "viaalias").ID) + `,"action":"import"},{"id":` + strconvQuote(previewHost(t, preview, "viatarget").ID) + `,"action":"import"}],` +
+		`"keys":[{"id":` + strconvQuote(key.ID) + `,"action":"import"}]}}`
+	result, response := sshImportApply(t, dispatcher, applyBody)
+	if !response.OK {
+		t.Fatalf("apply failed: %+v", response.Error)
+	}
+	if result.AssetsCreated != 2 || result.CredentialsCreated != 1 {
+		t.Fatalf("apply = %+v", result)
+	}
+	assets, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credIDs := map[string]bool{}
+	for _, row := range assets {
+		if row.Name == "viaalias" || row.Name == "viatarget" {
+			if row.CredID == nil {
+				t.Fatalf("asset %s has no credential bound: %+v", row.Name, row)
+			}
+			credIDs[*row.CredID] = true
+		}
+	}
+	if len(credIDs) != 1 {
+		t.Fatalf("both hosts must bind the same credential, got %v", credIDs)
 	}
 }
 

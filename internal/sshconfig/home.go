@@ -1,7 +1,6 @@
 package sshconfig
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,9 +20,13 @@ func DefaultSSHHome() string {
 }
 
 // ScannedKey describes a supported private key file discovered in an SSH home
-// directory. It never carries key material.
+// directory. It never carries key material. AltPaths lists additional paths
+// inside the scanned directory that resolve to the same key (symlink alias or
+// target), so config IdentityFile entries pointing at either name bind to the
+// same credential.
 type ScannedKey struct {
 	Path        string
+	AltPaths    []string
 	Name        string
 	Fingerprint string
 	KeyType     string
@@ -56,11 +59,11 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 		return nil, nil, err
 	}
 	var (
-		keys         []ScannedKey
-		diagnostics  []Diagnostic
-		seenResolved = map[string]bool{}
-		inspected    = 0
-		truncated    = false
+		keys             []ScannedKey
+		diagnostics      []Diagnostic
+		keyIdxByResolved = map[string]int{}
+		inspected        = 0
+		truncated        = false
 	)
 	for _, entry := range entries {
 		name := entry.Name()
@@ -68,14 +71,14 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		resolved, ok := resolveHomeEntry(dir, path, &diagnostics)
+		resolved, isSymlink, ok := resolveHomeEntry(dir, path, &diagnostics)
 		if !ok {
 			continue
 		}
-		if seenResolved[resolved] {
+		if idx, dup := keyIdxByResolved[resolved]; dup {
+			keys[idx].AltPaths = append(keys[idx].AltPaths, path)
 			continue
 		}
-		seenResolved[resolved] = true
 		if inspected >= limits.MaxFiles {
 			if !truncated {
 				truncated = true
@@ -104,6 +107,10 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 			diagnostics = append(diagnostics, Diagnostic{Code: code, Source: path, Message: message})
 			continue
 		}
+		if isSymlink {
+			key.AltPaths = append(key.AltPaths, resolved)
+		}
+		keyIdxByResolved[resolved] = len(keys)
 		keys = append(keys, key)
 	}
 	return keys, diagnostics, nil
@@ -111,35 +118,36 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 
 // resolveHomeEntry applies the strict path checks for one directory entry and
 // reports whether it should be inspected as a key candidate. resolved is the
-// real path used for dedupe.
-func resolveHomeEntry(dir, path string, diagnostics *[]Diagnostic) (resolved string, ok bool) {
+// real path used for dedupe; isSymlink marks entries reached via a symlink.
+func resolveHomeEntry(dir, path string, diagnostics *[]Diagnostic) (resolved string, isSymlink, ok bool) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		*diagnostics = append(*diagnostics, Diagnostic{Code: "key-unreadable", Source: path, Message: "file cannot be inspected"})
-		return "", false
+		return "", false, false
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := filepath.EvalSymlinks(path)
 		if err != nil {
 			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-unresolved", Source: path, Message: "symlink target cannot be resolved"})
-			return "", false
+			return "", false, false
 		}
 		if !pathWithin(dir, target) {
 			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-escape", Source: path, Message: "symlink points outside the scanned directory"})
-			return "", false
+			return "", false, false
 		}
 		resolved = target
+		isSymlink = true
 	} else {
 		if !info.Mode().IsRegular() {
-			return "", false
+			return "", false, false
 		}
 		resolved = path
 	}
 	target, err := os.Stat(resolved)
 	if err != nil || !target.Mode().IsRegular() {
-		return "", false
+		return "", false, false
 	}
-	return resolved, true
+	return resolved, isSymlink, true
 }
 
 // inspectHomeKey reads one candidate file and classifies it. A non-empty code
@@ -149,30 +157,24 @@ func inspectHomeKey(path, name string) (ScannedKey, string, string) {
 	if err != nil {
 		return ScannedKey{}, "key-unreadable", "file cannot be read within the size limit"
 	}
-	signer, parseErr := ssh.ParsePrivateKey(data)
-	if parseErr == nil {
-		pub := signer.PublicKey()
-		if !supportedHomeKeyType(pub.Type()) {
-			return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("key type %q is not supported for import", pub.Type())
+	fingerprint, keyType, encrypted, ferr := fingerprintKeyMaterial(data)
+	if ferr == nil {
+		if !supportedHomeKeyType(keyType) {
+			return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("key type %q is not supported for import", keyType)
 		}
-		return ScannedKey{Path: path, Name: name, Fingerprint: ssh.FingerprintSHA256(pub), KeyType: pub.Type()}, "", ""
+		return ScannedKey{Path: path, Name: name, Fingerprint: fingerprint, KeyType: keyType, Encrypted: encrypted}, "", ""
 	}
-	var missing *ssh.PassphraseMissingError
-	if errors.As(parseErr, &missing) {
-		pub := missing.PublicKey
-		if pub == nil {
-			var err error
-			pub, err = parsePublicKeySibling(path)
-			if err != nil {
-				return ScannedKey{}, "encrypted-key-unreadable", "encrypted private key has no readable public part or .pub sibling to fingerprint and is skipped"
-			}
-		}
-		if !supportedHomeKeyType(pub.Type()) {
-			return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("key type %q is not supported for import", pub.Type())
-		}
-		return ScannedKey{Path: path, Name: name, Fingerprint: ssh.FingerprintSHA256(pub), KeyType: pub.Type(), Encrypted: true}, "", ""
+	if !encrypted {
+		return ScannedKey{}, "unsupported-file", "not a supported private key; skipped"
 	}
-	return ScannedKey{}, "unsupported-file", "not a supported private key; skipped"
+	pub, err := parsePublicKeySibling(path)
+	if err != nil {
+		return ScannedKey{}, "encrypted-key-unreadable", "encrypted private key has no readable public part or .pub sibling to fingerprint and is skipped"
+	}
+	if !supportedHomeKeyType(pub.Type()) {
+		return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("key type %q is not supported for import", pub.Type())
+	}
+	return ScannedKey{Path: path, Name: name, Fingerprint: ssh.FingerprintSHA256(pub), KeyType: pub.Type(), Encrypted: true}, "", ""
 }
 
 func parsePublicKeySibling(path string) (ssh.PublicKey, error) {
@@ -270,6 +272,7 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 			Fingerprint: key.Fingerprint,
 			KeyType:     key.KeyType,
 			Path:        key.Path,
+			AltPaths:    key.AltPaths,
 			Source:      "ssh-home",
 			Action:      PlanAdd,
 		}

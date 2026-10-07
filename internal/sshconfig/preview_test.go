@@ -264,15 +264,19 @@ func TestInspectKeyFile(t *testing.T) {
 func TestInspectEncryptedKeyViaPub(t *testing.T) {
 	dir := t.TempDir()
 	path, fingerprint, authorizedKey := generateTestKey(t, dir, "id_encrypted", true)
-	if _, err := InspectKeyFile(path); err == nil {
-		t.Fatal("expected error for encrypted key without .pub")
+	info, err := InspectKeyFile(path)
+	if err != nil {
+		t.Fatalf("InspectKeyFile via embedded public key: %v", err)
+	}
+	if info.Fingerprint != fingerprint || !info.Encrypted {
+		t.Errorf("embedded-public-key info = %+v, want fingerprint %q encrypted", info, fingerprint)
 	}
 	if err := os.WriteFile(path+".pub", []byte(authorizedKey), 0o644); err != nil {
 		t.Fatalf("write pub key: %v", err)
 	}
-	info, err := InspectKeyFile(path)
+	info, err = InspectKeyFile(path)
 	if err != nil {
-		t.Fatalf("InspectKeyFile with .pub fallback: %v", err)
+		t.Fatalf("InspectKeyFile with .pub present: %v", err)
 	}
 	if info.Fingerprint != fingerprint {
 		t.Errorf("fingerprint = %q, want %q", info.Fingerprint, fingerprint)

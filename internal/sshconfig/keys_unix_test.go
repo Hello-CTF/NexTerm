@@ -17,7 +17,7 @@ func TestInspectKeyFileFIFO(t *testing.T) {
 	}
 	assertInspectReturns(t, path)
 
-	privPath, _, _ := generateTestKey(t, dir, "enc_key", true)
+	privPath, _ := writeLegacyEncryptedRSA(t, dir, "enc_key")
 	if err := syscall.Mkfifo(privPath+".pub", 0o600); err != nil {
 		t.Fatalf("mkfifo pub: %v", err)
 	}

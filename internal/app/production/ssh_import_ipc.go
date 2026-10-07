@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
@@ -717,8 +718,9 @@ func previewKeysForHost(plan *sshImportPlan, item *sshconfig.HostPreview) []*ssh
 	var out []*sshconfig.KeyPreview
 	for _, path := range item.IdentityFiles {
 		for i := range plan.preview.Keys {
-			if plan.preview.Keys[i].Path == path {
-				out = append(out, &plan.preview.Keys[i])
+			key := &plan.preview.Keys[i]
+			if key.Path == path || slices.Contains(key.AltPaths, path) {
+				out = append(out, key)
 				break
 			}
 		}

@@ -51,6 +51,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   });
 
   const termius = source === "termius";
+  // ssh-home 始终扫描默认 ~/.ssh，不携带其他来源页填写的隐藏路径
+  const effectivePath = source === "ssh-home" ? undefined : path.trim() || undefined;
 
   const runPreview = async () => {
     setPhase("loading");
@@ -58,7 +60,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
     try {
       const result = await sshImportApi.preview({
         source,
-        path: path.trim() || undefined,
+        path: effectivePath,
         ...(termius ? { confirmed } : {}),
       });
       const hosts: Record<string, SshImportItemAction> = {};
@@ -81,11 +83,16 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       (action) => action !== "skip",
     );
 
+  // 一键导入只提交当前仍为选中状态的安全项：手动取消的 skip 与冲突项的覆盖选择都保留
   const importableCount =
     preview === null
       ? 0
-      : preview.hosts.filter((host) => host.action === "add").length +
-        preview.keys.filter((key) => key.action === "add").length;
+      : preview.hosts.filter(
+          (host) => host.action === "add" && (hostActions[host.id] ?? "skip") === "import",
+        ).length +
+        preview.keys.filter(
+          (key) => key.action === "add" && (keyActions[key.id] ?? "skip") === "import",
+        ).length;
 
   const applySelection = async (
     hosts: { id: string; action: SshImportItemAction }[],
@@ -98,7 +105,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
     try {
       const result = await sshImportApi.apply({
         source,
-        path: path.trim() || undefined,
+        path: effectivePath,
         ...(termius ? { confirmed } : {}),
         hosts,
         keys,
@@ -127,20 +134,6 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       preview.keys.map((key) => ({
         id: key.id,
         action: keyActions[key.id] ?? "skip",
-      })),
-    );
-  };
-
-  const runApplyAll = () => {
-    if (!preview) return;
-    void applySelection(
-      preview.hosts.map((host) => ({
-        id: host.id,
-        action: host.action === "add" ? "import" : (hostActions[host.id] ?? "skip"),
-      })),
-      preview.keys.map((key) => ({
-        id: key.id,
-        action: key.action === "add" ? "import" : (keyActions[key.id] ?? "skip"),
       })),
     );
   };
@@ -336,7 +329,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
               </button>
             )}
             {phase === "preview" && importableCount > 0 && (
-              <button className="nx-btn nx-btn-ghost" onClick={runApplyAll}>
+              <button className="nx-btn nx-btn-ghost" onClick={runApply}>
                 一键导入全部安全项 ({importableCount})
               </button>
             )}

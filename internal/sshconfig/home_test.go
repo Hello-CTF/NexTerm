@@ -129,6 +129,24 @@ func TestScanHomeEncryptedPEMKeyNeedsPubSibling(t *testing.T) {
 	}
 }
 
+func TestInspectKeyFileLegacyPEMEncrypted(t *testing.T) {
+	dir := t.TempDir()
+	path, pub := writeLegacyEncryptedRSA(t, dir, "id_rsa_legacy")
+	if _, err := InspectKeyFile(path); err == nil {
+		t.Fatal("legacy encrypted key without .pub must fail inspection")
+	}
+	if err := os.WriteFile(path+".pub", ssh.MarshalAuthorizedKey(pub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := InspectKeyFile(path)
+	if err != nil {
+		t.Fatalf("InspectKeyFile with .pub fallback: %v", err)
+	}
+	if info.Fingerprint != ssh.FingerprintSHA256(pub) || !info.Encrypted {
+		t.Fatalf("info = %+v", info)
+	}
+}
+
 func TestScanHomeOversizedFileSkipped(t *testing.T) {
 	dir := t.TempDir()
 	big := make([]byte, maxKeyFileBytes+1)

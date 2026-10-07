@@ -7,6 +7,7 @@ import {
   clickButton,
   flush,
   mount,
+  setInputValue,
   setSelectValue,
   waitFor,
   type MountedView,
@@ -96,6 +97,16 @@ const PREVIEW: SshImportPreviewDto = {
       fingerprint: "SHA256:abc123",
       keyType: "ssh-rsa",
       path: "/home/demo/.ssh/id_rsa_demo",
+      source: "ssh-config",
+      action: "add",
+      warnings: [],
+    },
+    {
+      id: "k1",
+      aliases: ["id_ed25519_demo"],
+      fingerprint: "SHA256:def456",
+      keyType: "ssh-ed25519",
+      path: "/home/demo/.ssh/id_ed25519_demo",
       source: "ssh-config",
       action: "add",
       warnings: [],
@@ -203,7 +214,10 @@ describe("SSH 导入对话框", () => {
         { id: "h1", action: "skip" },
         { id: "h2", action: "skip" },
       ],
-      keys: [{ id: "k0", action: "import" }],
+      keys: [
+        { id: "k0", action: "import" },
+        { id: "k1", action: "import" },
+      ],
     });
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
@@ -247,8 +261,12 @@ describe("SSH 导入对话框", () => {
 });
 
 describe("SSH ~/.ssh 目录快速导入", () => {
-  it("切换到 ~/.ssh 目录来源时展示扫描说明、无路径输入且预览不带路径", async () => {
+  it("先填配置路径再切换到 ~/.ssh 目录时隐藏输入且请求不带旧路径", async () => {
     mounted = mountDialog();
+    const pathInput = mounted.container.querySelector<HTMLInputElement>("input.nx-input")!;
+    setInputValue(pathInput, "/home/demo/.ssh/config");
+    await flush();
+
     clickButton(mounted.container, "~/.ssh 目录");
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("自动发现受支持的私钥");
@@ -262,41 +280,63 @@ describe("SSH ~/.ssh 目录快速导入", () => {
         path: undefined,
       }),
     );
+    await flush();
+
+    clickButton(mounted.container, "导入选中项");
+    await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
+    expect(mocks.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "ssh-home", path: undefined }),
+    );
   });
 
-  it("预览显示数量、默认勾选安全项，一键导入全部安全项忽略手动取消的勾选", async () => {
+  it("预览显示数量并默认勾选安全项；一键导入保留手动 skip 与冲突选择", async () => {
     mounted = mountDialog();
     clickButton(mounted.container, "~/.ssh 目录");
     clickButton(mounted.container, "预览");
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
     await flush();
 
-    expect(mounted.container.textContent).toContain("3 台主机（1 台可新增）");
-    expect(mounted.container.textContent).toContain("1 个可新增");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("3 台主机（1 台可新增）");
+    expect(text).toContain("2 个密钥（2 个可新增）");
     const bastionBox = mounted.container.querySelector<HTMLInputElement>(
       'input[aria-label="导入主机 bastion"]',
     )!;
     expect(bastionBox.checked).toBe(true);
-    const keyBox = mounted.container.querySelector<HTMLInputElement>(
+    const rsaBox = mounted.container.querySelector<HTMLInputElement>(
       'input[aria-label="导入密钥 id_rsa_demo"]',
     )!;
-    expect(keyBox.checked).toBe(true);
+    expect(rsaBox.checked).toBe(true);
+    const edBox = mounted.container.querySelector<HTMLInputElement>(
+      'input[aria-label="导入密钥 id_ed25519_demo"]',
+    )!;
+    expect(edBox.checked).toBe(true);
 
+    // 手动取消一台主机与一个密钥，冲突主机改为覆盖
     bastionBox.click();
+    edBox.click();
+    await flush();
+    const strategy = mounted.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="主机 nat-01 的冲突处理"]',
+    )!;
+    setSelectValue(strategy, "overwrite");
     await flush();
 
-    clickButton(mounted.container, "一键导入全部安全项 (2)");
+    clickButton(mounted.container, "一键导入全部安全项 (1)");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
     expect(gateMocks.ensureVaultInit).toHaveBeenCalled();
     expect(mocks.apply).toHaveBeenCalledWith({
       source: "ssh-home",
       path: undefined,
       hosts: [
-        { id: "h0", action: "import" },
+        { id: "h0", action: "skip" },
         { id: "h1", action: "skip" },
-        { id: "h2", action: "skip" },
+        { id: "h2", action: "overwrite" },
       ],
-      keys: [{ id: "k0", action: "import" }],
+      keys: [
+        { id: "k0", action: "import" },
+        { id: "k1", action: "skip" },
+      ],
     });
     expect(mounted.container.textContent).toContain("新增主机 2");
   });
