@@ -1518,8 +1518,7 @@ export function AssetEditor({
                 />
               </div>
               <div className="nx-hint mb-3">
-                ↳ 只对「新开」的终端生效，已经开着的标签不会跟着变。
-                本机资产双击即连（无需凭据），终端 / 文件树 / 容器面板都落在本机。
+                ↳ 只对新开的终端生效，已打开的标签不变。本机资产双击即连，不需要凭据。
               </div>
             </>
           )}
@@ -1660,8 +1659,8 @@ export function AssetEditor({
                         </button>
                       </div>
                       <div className="nx-hint mt-1.5">
-                        ↳ 只记路径，私钥正文不复制进库 —— 跟系统 ssh 用同一份文件。
-                        文件被挪走后连不上，回来改这里即可。
+                        ↳ 只记路径，私钥正文不进库，跟系统 ssh 用同一份文件。
+                        文件被挪走后连不上，回来改这里。
                       </div>
                     </>
                   ) : (
@@ -1755,7 +1754,7 @@ export function AssetEditor({
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 共用凭据 · 改一处，全部生效</div>
+                            <div className="nx-hint mt-1.5">↳ 这条凭据被多个资产共用，改一次全部生效。</div>
                           )}
                         </>
                       )}
@@ -1780,9 +1779,9 @@ export function AssetEditor({
                       }
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 选填。口令跟私钥存在同一条凭据里，不会单独占一条。
+                      ↳ 选填。私钥本身带口令才需要填，连接时自动使用。
                       {keyOrigin === "ref" && !passphrase && !hasBoundPassphrase
-                        ? " 引用模式不填口令时，凭据库里不会留任何东西。"
+                        ? " 留空时只引用本地文件，凭据库不存内容。"
                         : ""}
                     </div>
                   </div>
@@ -1825,11 +1824,11 @@ export function AssetEditor({
                         onChange={(e) => setPassword(e.target.value)}
                       />
                       <div className="nx-hint mt-1">
-                        ↳ 保存后进入「凭据」库，可改名与复用
+                        ↳ 保存后存入凭据库，可改名，其他资产也能选它。
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 共用凭据 · 改一处，全部生效</div>
+                    <div className="nx-hint mt-1">↳ 这条凭据被多个资产共用，改一次全部生效。</div>
                   ) : null}
                 </div>
               )}
@@ -1851,7 +1850,7 @@ export function AssetEditor({
                       ))}
                     </select>
                     <div className="nx-hint mt-1.5">
-                      ↳ 先登录跳板机 SSH，再经它连接本资产；每一跳的主机密钥与凭据各自验证。
+                      ↳ 先登录跳板机，再从它连到本资产；跳板机和本资产各自验证凭据。
                     </div>
                   </div>
 
@@ -1864,7 +1863,7 @@ export function AssetEditor({
                       placeholder="nc %h %p"
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 选填。用外部命令建立连接：%h 主机、%p 端口、%% 字面 %。与代理 URL 互斥。
+                      ↳ 选填。用外部命令建立连接，%h 是主机、%p 是端口、%% 是字面 %。
                     </div>
                   </div>
 

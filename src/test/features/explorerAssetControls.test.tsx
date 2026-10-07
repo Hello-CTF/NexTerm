@@ -405,7 +405,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 共用凭据 · 改一处，全部生效");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据被多个资产共用，改一次全部生效。");
   });
 
   it("私钥路径：选已有私钥凭据时同一句提示", async () => {
@@ -421,7 +421,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("部署密钥"), "k1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 共用凭据 · 改一处，全部生效");
+    expect(mounted!.container.textContent).toContain("↳ 这条凭据被多个资产共用，改一次全部生效。");
   });
 });
 

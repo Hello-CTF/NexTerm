@@ -152,7 +152,7 @@ export function GenerateKeyModal({
                   placeholder="没有就留空"
                 />
                 <div className="nx-hint mt-1.5">
-                  ↳ 选填。口令跟私钥存在同一条凭据里，连接时自动使用。
+                  ↳ 选填。给私钥加一道口令，连接时自动使用。
                 </div>
               </div>
             </>
