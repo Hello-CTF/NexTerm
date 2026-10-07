@@ -93,6 +93,46 @@ jobs:
             target/dist-manifest.json
           if-no-files-found: error
 
+  postgres:
+    name: Real PostgreSQL 16 gated tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexterm
+          POSTGRES_PASSWORD: nexterm
+          POSTGRES_DB: nexterm_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexterm -d nexterm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NEXTERM_TEST_PG_DSN: postgres://nexterm:nexterm@127.0.0.1:55432/nexterm_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.8
+          cache: true
+      - name: Mask the PostgreSQL service DSN
+        run: |
+          echo "::add-mask::$NEXTERM_TEST_PG_DSN"
+          echo "::add-mask::nexterm:nexterm"
+      - name: Run the PostgreSQL-gated dbtest, store, account, sync and cron suites
+        run: |
+          set -o pipefail
+          go test -mod=readonly -count=1 -v ./internal/dbtest ./internal/store ./internal/account ./internal/sync ./internal/ai/cron | tee "$RUNNER_TEMP/pg-gated.log"
+      - name: Reject skipped PostgreSQL tests
+        run: |
+          if grep -E '^(--- SKIP: .*Postgres|.*set NEXTERM_TEST_PG_DSN)' "$RUNNER_TEMP/pg-gated.log"; then
+            echo "PostgreSQL tests must run for real in CI; SKIP is not a pass" >&2
+            exit 1
+          fi
+
   native:
     name: ${{ matrix.os }}/${{ matrix.arch }} ${{ matrix.kind }}
     needs: quality

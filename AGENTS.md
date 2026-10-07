@@ -66,8 +66,15 @@
 ## migrations（append-only）
 
 - `migrations/NNNN_name.sql` 按版本号升序应用，经 `//go:embed` 打包进二进制。
+- `migrations/postgres/` 是根 `migrations/*.sql` 的 PostgreSQL 镜像：版本号与描述一一对应、同样 append-only、已发布文件同样不可改语义，仅方言不同（如 `BIGINT`/`BYTEA`、无 `PRAGMA`）。新 schema 变更必须在两处同步追加同版本号文件；`TestPostgresMigrationsMatchRootVersions` 守住版本与描述对齐。
 - 已发布迁移的 schema 语义与顺序不可改（同版本 Go 代码依赖其产物）；仅注释清理可改动已发布文件，checksum 随之改变。
 - 旧库兼容不做要求：`schema_migrations` 校验 SHA-256 不匹配即启动失败；新 schema 变更一律追加序号更大的新文件，新库迁移必须通过。
+
+## PostgreSQL 真实测试
+
+- PG 门控测试位于 `internal/dbtest`、`internal/store`、`internal/account`、`internal/sync`、`internal/ai/cron`，统一经 `internal/dbtest` harness 读取 `NEXTERM_TEST_PG_DSN`；未设置时逐测试 SKIP，SKIP 不算已验证。
+- 本地聚焦复跑：`NEXTERM_TEST_PG_DSN='<dsn>' task test:pg`（等价于对同五个包 `go test -count=1`）；该 task 在 DSN 缺失时直接失败，不把 SKIP 当通过。
+- 远程 CI 的 `postgres` job 真实启动 PostgreSQL 16 服务并携带 DSN 跑上述五个包，日志出现任何 harness SKIP 即判 job 失败；DSN 经 `add-mask` 脱敏，不写入日志。
 
 ## 多 agent 协作
 
