@@ -27,6 +27,8 @@ type testSyncServer struct {
 	failNextPushWith409 bool
 	dropObjectID        string
 	afterIDs            func()
+	// authBypassUserID 非空时登录跳过口令校验(PG 测试专用: account 的 COLLATE NOCASE 未适配 PostgreSQL)。
+	authBypassUserID string
 }
 
 func testCSRFToken(sessionID string) string {
@@ -43,14 +45,20 @@ func newTestSyncServer(t *testing.T) *testSyncServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	return newTestSyncServerOn(t, db)
+}
+
+// newTestSyncServerOn 在指定存储上搭建测试服务端; PG 回归用真实 PostgreSQL 存储。
+func newTestSyncServerOn(t *testing.T, db *store.Store) *testSyncServer {
+	t.Helper()
 	server := &testSyncServer{db: db, accounts: account.New(db.DB())}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /auth/login", server.serveLogin)
 	mux.Handle("GET /auth/me", server.requireSession(http.HandlerFunc(server.serveMe)))
 	mux.Handle("GET /auth/dek", server.requireSession(http.HandlerFunc(server.serveDEK)))
-	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.DB())))))
-	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.DB())))
-	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.DB()))))
+	mux.Handle("POST /sync/v2/push", server.requireSession(server.requireCSRF(server.maybeFailPush(NewObjectHandler(db.DB(), db.Backend())))))
+	mux.Handle("POST /sync/v2/pull", server.requireSession(NewObjectHandler(db.DB(), db.Backend())))
+	mux.Handle("POST /sync/v2/ids", server.requireSession(server.maybePostIDs(NewObjectHandler(db.DB(), db.Backend()))))
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Server.Close)
 	return server
@@ -94,19 +102,24 @@ func (s *testSyncServer) serveLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
-	if err != nil {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
+	userID := s.authBypassUserID
+	username := request.Username
+	if userID == "" {
+		user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
+		if err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		userID, username = user.ID, user.Username
 	}
-	token, session, err := s.accounts.IssueSession(r.Context(), user.ID, "")
+	token, session, err := s.accounts.IssueSession(r.Context(), userID, "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/"})
 	writeSyncJSON(w, http.StatusOK, map[string]any{
-		"user":       map[string]string{"id": user.ID, "username": user.Username},
+		"user":       map[string]string{"id": userID, "username": username},
 		"csrf_token": testCSRFToken(session.ID),
 	})
 }

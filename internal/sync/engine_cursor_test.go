@@ -160,7 +160,7 @@ func TestEngineLargeUnreconciledSetConverges(t *testing.T) {
 	for i := 0; i < total; i++ {
 		objects = append(objects, WireObject{ID: ids.New(), Blob: []byte("obj")})
 	}
-	store := &objectStore{db: server.db.DB()}
+	store := &objectStore{db: server.db.DB(), backend: server.db.Backend()}
 	head, err := store.currentHead(ctx, userID)
 	if err != nil {
 		t.Fatal(err)

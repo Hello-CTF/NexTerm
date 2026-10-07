@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
 // userIDContextKey 由服务端中间件在会话校验通过后注入操作用户 ID。
@@ -69,8 +70,8 @@ type ObjectHandler struct {
 	store *objectStore
 }
 
-func NewObjectHandler(db *sql.DB) *ObjectHandler {
-	return &ObjectHandler{store: &objectStore{db: db}}
+func NewObjectHandler(db *sql.DB, backend store.Backend) *ObjectHandler {
+	return &ObjectHandler{store: &objectStore{db: db, backend: backend}}
 }
 
 func (h *ObjectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

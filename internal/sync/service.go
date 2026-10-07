@@ -67,7 +67,7 @@ func (s *Service) Shutdown(context.Context) error {
 
 // ObjectHandler 暴露服务端盲存储入口, 由服务端挂载到会话中间件之后。
 func (s *Service) ObjectHandler() *ObjectHandler {
-	return NewObjectHandler(s.store.DB())
+	return NewObjectHandler(s.store.DB(), s.store.Backend())
 }
 
 type Link struct {

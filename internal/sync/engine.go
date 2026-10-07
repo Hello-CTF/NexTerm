@@ -384,7 +384,7 @@ func (e *Engine) syncTombstoneGet(ctx context.Context, objectID string) (syncTom
 
 func (e *Engine) syncTombstonePut(ctx context.Context, objectID, kind string, deletedAt int64) error {
 	_, err := e.store.DB().ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
-ON CONFLICT(id) DO UPDATE SET deleted_at = max(deleted_at, excluded.deleted_at)`, objectID, kind, deletedAt)
+ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(deleted_at, excluded.deleted_at)`, objectID, kind, deletedAt)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
