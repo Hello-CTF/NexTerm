@@ -39,6 +39,10 @@ func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identit
 	if recipientID == grant.userID {
 		return nil, ipc.BadParam(errors.New("不能向设备 owner 本人分享"))
 	}
+	owner, err := s.accounts.GetUser(ctx, identity.UserID)
+	if err != nil {
+		return nil, err
+	}
 	recipient, err := s.accounts.GetUser(ctx, recipientID)
 	if err != nil {
 		return nil, err
@@ -59,6 +63,7 @@ func (s *Service) CreateHostShare(ctx context.Context, identity *account.Identit
 	share := &HostShare{
 		ID:                ids.New(),
 		OwnerID:           identity.UserID,
+		OwnerUsername:     owner.Username,
 		DeviceID:          deviceID,
 		RecipientID:       recipientID,
 		RecipientUsername: recipient.Username,
