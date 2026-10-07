@@ -70,6 +70,8 @@ func TestPostgresEngineSettingsSyncE2E(t *testing.T) {
 
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
+	enableDeviceKindOptIn(t, deviceA, user.ID)
+	enableDeviceKindOptIn(t, deviceB, user.ID)
 
 	hostID := ids.New()
 	putDeviceKnownHost(t, deviceA, hostID, "pg.example.com", 22, "ssh-ed25519", "SHA256:pg-sync", 100)
