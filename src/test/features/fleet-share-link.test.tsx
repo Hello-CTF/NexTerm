@@ -293,6 +293,9 @@ describe("DeviceTerminalView 公开链接创建", () => {
 
     expect(document.querySelector('select[aria-label="链接有效期"]')).not.toBeNull();
     expect(bodyText()).toContain("默认只读");
+    // 创建前即说明访问边界: 任何拿到链接的人无需账号可开, 只发给信任的人
+    expect(bodyText()).toContain("无需 NexTerm 账号");
+    expect(bodyText()).toContain("请只把链接发给你信任的人");
     click(createButton());
 
     await flushUntil(() => calls.some((c) => c.url === "/share/links"));
@@ -306,6 +309,7 @@ describe("DeviceTerminalView 公开链接创建", () => {
     await flushUntil(() => bodyText().includes(LINK_TOKEN));
     expect(bodyText()).toContain(`${window.location.origin}/share/public/${LINK_TOKEN}`);
     expect(bodyText()).toContain("只显示这一次");
+    expect(bodyText()).toContain("无需账号");
     expect(bodyText()).toContain("设置 → 分享");
     expect(bodyText()).toContain("吊销");
     expect(webStorageText()).not.toContain(LINK_TOKEN);

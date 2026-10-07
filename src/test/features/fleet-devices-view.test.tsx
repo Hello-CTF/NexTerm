@@ -300,6 +300,13 @@ describe("设备管理视图 · 接入码签发", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("只显示这一次");
     expect(text).toContain("单次使用");
+    // 面向新手的三步引导: enroll 兑换凭证 → install 装 per-user 服务 → 回本页确认在线
+    expect(text).toContain("第 1 步");
+    expect(text).toContain("把接入码兑换成设备凭证");
+    expect(text).toContain("第 2 步");
+    expect(text).toContain("随登录自动启动");
+    expect(text).toContain("第 3 步");
+    expect(text).toContain("设备显示「在线」");
     const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
     expect(text).toContain(
       `nexterm-server agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,

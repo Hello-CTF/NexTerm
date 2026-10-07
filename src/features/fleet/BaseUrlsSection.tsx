@@ -97,11 +97,15 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved }: BaseUrlsSectionPr
         <span className="nx-hint">设备按顺序尝试, 第一个可达的即当前接入点</span>
       </div>
       <p className="nx-hint mb-3">
-        新设备 enroll 时按此顺序下发地址列表; 保存只影响之后接入的设备, 已接入设备仍使用注册时拿到的列表。
+        接入地址是设备用来连接这台 NexTerm 服务器的地址 (如 https://nexterm.example.com); 新设备 enroll 时按此顺序下发地址列表, 保存只影响之后接入的设备, 已接入设备仍使用注册时拿到的列表。
         {!isAdmin && " 仅超级管理员可修改。"}
       </p>
 
-      {draft.length === 0 && <div className="nx-hint py-1 text-[12px]">还没有配置接入地址, 设备无法接入。</div>}
+      {draft.length === 0 && (
+        <div className="nx-hint py-1 text-[12px]">
+          {isAdmin ? "还没有配置接入地址: 新设备无法接入。请在下方添加设备能访问到的服务器地址。" : "还没有配置接入地址: 新设备无法接入, 请联系超级管理员配置。"}
+        </div>
+      )}
 
       {draft.length > 0 && (
         <div className="mb-3 flex flex-col gap-1">
