@@ -36,17 +36,17 @@
   <text class="t-h" x="116" y="280">要搬走的那一份</text>
   <text class="t-li" x="120" y="334">资产库：SQLite（WAL）</text>
   <text class="t-li" x="120" y="382">凭据库：DPAPI / 主密码 —— 同步前必须先解锁</text>
-  <text class="t-li" x="120" y="430">只搬你勾中的资产，方向（推 / 拉）由你按按钮定</text>
+  <text class="t-li" x="120" y="430">分组、资产、凭据、片段整组同步，方向（推 / 拉）按按钮定</text>
   <text class="t-val mono" x="120" y="486" fill="#616877">内置「当前设备」不参与搬运</text>
 
   <!-- ═══ 右：对端 ═══ -->
   <rect x="916" y="180" width="600" height="352" rx="18" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-tag mono" x="952" y="228">对端 · 服务端</text>
   <text class="t-h" x="948" y="280">落地的那一份</text>
-  <text class="t-li" x="952" y="334">资产库：SQLite（服务端自己的实例）</text>
-  <text class="t-li" x="952" y="382">凭据用对端自己的密钥重新加密落库</text>
-  <text class="t-li" x="952" y="430">逐条回报：导入 / 跳过 / 警告</text>
-  <text class="t-val mono" x="952" y="486" fill="#616877">主机指纹以目标端实际握手为准</text>
+  <text class="t-li" x="952" y="334">同步对象按账号隔离，密文落库</text>
+  <text class="t-li" x="952" y="382">只存密文与数据密钥信封 —— 内容不解读</text>
+  <text class="t-li" x="952" y="430">每轮回报：拉取 / 应用 / 推送 / 跳过</text>
+  <text class="t-val mono" x="952" y="486" fill="#616877">公网地址强制 HTTPS</text>
 
   <!-- ═══ 中间：两个方向 ═══ -->
   <line x1="700" y1="300" x2="900" y2="300" stroke="#8b9de4" stroke-width="2" marker-end="url(#a-push)"/>
@@ -56,35 +56,39 @@
   <text class="t-cap mono" x="800" y="386" text-anchor="middle" fill="#55c483">从对端拉取</text>
 
   <text class="t-cap mono" x="800" y="462" text-anchor="middle" fill="#616877">方向显式</text>
-  <text class="t-cap mono" x="800" y="486" text-anchor="middle" fill="#616877">不做自动合并</text>
+  <text class="t-cap mono" x="800" y="486" text-anchor="middle" fill="#616877">/sync/v2 · 会话 + CSRF</text>
 
   <!-- ═══ 凭据链路 ═══ -->
   <rect x="84" y="556" width="1432" height="140" rx="18" fill="#171c2a" stroke="#3d4d8f" stroke-width="1.5"/>
-  <text class="t-tag mono" x="120" y="594">凭据怎么过去 —— 两端密钥体系各自独立，密文搬过去解不开</text>
+  <text class="t-tag mono" x="120" y="594">凭据怎么过去 —— 每账号一把数据密钥：客户端密封，服务端只存密文</text>
 
-  <rect x="120" y="608" width="290" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
-  <text class="t-step" x="265" y="646" text-anchor="middle">源端解锁凭据库</text>
-  <line x1="418" y1="640" x2="462" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+  <rect x="120" y="608" width="250" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="245" y="646" text-anchor="middle">账号密码登录</text>
+  <line x1="373" y1="640" x2="397" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
 
-  <rect x="470" y="608" width="290" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
-  <text class="t-step" x="615" y="646" text-anchor="middle">解密出落库明文</text>
-  <line x1="768" y1="640" x2="812" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+  <rect x="400" y="608" width="250" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="525" y="646" text-anchor="middle">解锁数据密钥</text>
+  <line x1="653" y1="640" x2="677" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
 
-  <rect x="820" y="608" width="290" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
-  <text class="t-step mono" x="965" y="646" text-anchor="middle">HTTPS 传输</text>
-  <line x1="1118" y1="640" x2="1162" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+  <rect x="680" y="608" width="250" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="805" y="646" text-anchor="middle">客户端密封对象</text>
+  <line x1="933" y1="640" x2="957" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
 
-  <rect x="1170" y="608" width="310" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
-  <text class="t-step" x="1325" y="646" text-anchor="middle">目标端重新加密落库</text>
+  <rect x="960" y="608" width="250" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="1085" y="646" text-anchor="middle">服务端盲存密文</text>
+  <line x1="1213" y1="640" x2="1237" y2="640" stroke="#516cd6" stroke-width="2" marker-end="url(#a-step)"/>
+
+  <rect x="1240" y="608" width="250" height="64" rx="10" fill="#1b2130" stroke="#2b3446"/>
+  <text class="t-step" x="1365" y="646" text-anchor="middle">对端解密使用</text>
 
   <!-- ═══ 两条规则 ═══ -->
   <rect x="84" y="728" width="706" height="128" rx="16" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-key" x="120" y="774">冲突怎么办</text>
-  <text class="t-val" x="120" y="808">默认跳过「本机这份更新」的条目，并逐条说明原因</text>
-  <text class="t-val" x="120" y="836">看到报告后可勾「强制覆盖」再来一次</text>
+  <text class="t-val" x="120" y="808">逐对象按修订号裁决，新的那份赢</text>
+  <text class="t-val" x="120" y="836">删除以墓碑同步，两端收敛一致</text>
 
   <rect x="810" y="728" width="706" height="128" rx="16" fill="#141821" stroke="#2b3346" stroke-width="1.5"/>
   <text class="t-key" x="846" y="774">哪些不搬</text>
-  <text class="t-val" x="846" y="808">AI 对话 · 审计日志 · 终端录制 —— 本地行为记录，搬过去不是同一件事</text>
-  <text class="t-val" x="846" y="836">主机指纹 —— 必须以目标端实际握手结果为准</text>
+  <text class="t-val" x="846" y="808">AI 对话 · 审计日志 —— 本地行为记录，不参与同步</text>
+  <text class="t-val" x="846" y="836">会话记录 · 已知主机 · AI 档案 —— 默认不搬，需要时逐类打开</text>
 </svg>
