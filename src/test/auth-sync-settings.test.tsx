@@ -408,3 +408,92 @@ describe("M165 demo mock 命令形态", () => {
     }
   });
 });
+
+describe("M165 R2 开关切换竞态", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  const KNOWN_HOST_TOMBSTONE = { id: "kh-del", targetKind: "known_host", deletedAt: 700, host: "10.0.0.9", port: 22, keyType: "ssh-ed25519" };
+
+  it("on->off 延迟推送: reload 完成前推送保持禁用, 关闭后墓碑不得删除远端", async () => {
+    optInState = { knownHost: true, aiProfile: false };
+    mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
+    mocks.collectTombstones.mockResolvedValue({ tombstones: [KNOWN_HOST_TOMBSTONE], hasMore: false });
+    const setGate = deferred<void>();
+    mocks.kindOptInSet.mockImplementationOnce(async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
+      await setGate.promise;
+      optInState = { ...optInState, ...patch };
+      return { ...optInState };
+    });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("推送到云端 (1)"));
+
+    // 关闭开关: set 挂起期间推送已禁用; set 返回后 reload 完成前仍禁用(旧快照已作废)
+    const reloadGate = deferred<void>();
+    mocks.collectTombstones.mockImplementationOnce(async () => {
+      await reloadGate.promise;
+      return { tombstones: [], hasMore: false };
+    });
+    optInCheckbox(0).click();
+    await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
+    expect(button("推送到云端 (1)")?.disabled).toBe(true);
+    setGate.resolve();
+    // reload 已开始(collectTombstones 第二次调用)但未完成: 旧快照仍是 (1), 按钮必须保持禁用
+    await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
+    expect(button("推送到云端 (1)")?.disabled).toBe(true);
+    reloadGate.resolve();
+    await flushUntil(() => text().includes("推送到云端 (0)"));
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("乱序 load: 开启的慢 load 后完成, 已禁用种类不得回写到可推送快照", async () => {
+    optInState = { knownHost: true, aiProfile: false };
+    const slowLoad = deferred<void>();
+    mocks.collectKnownHosts.mockImplementation(async () => {
+      await slowLoad.promise;
+      return { knownHosts: [KNOWN_HOST_DTO], hasMore: false };
+    });
+
+    mounted = mountSyncCard();
+    // 第一次 load(开启)挂在 collectKnownHosts; 开关渲染后立即关闭(opt-in 关的 load 不碰该 mock, 先完成)
+    await flushUntilOptInRendered();
+    optInCheckbox(0).click();
+    await flushUntil(() => text().includes("本机与云端都还没有可同步的内容。"));
+    // 慢 load 此刻才完成: 回写必须被代次检查丢弃, 禁用种类不得出现在对比行
+    slowLoad.resolve();
+    await flushUntil(() => text().includes("推送到云端 (0)"));
+    expect(text()).not.toContain("10.0.0.9:22");
+    expect(mocks.syncPush).not.toHaveBeenCalled();
+  });
+
+  it("on->off 延迟应用: reload 完成前应用保持禁用, 远端对象不再应用", async () => {
+    optInState = { knownHost: true, aiProfile: false };
+    const wire = await remoteFixtureWire("kh-1", "known_host", GO_SYNC_FIXTURES.knownHostBasic!, 1);
+    mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "kh-1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
+    mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [wire], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
+    mocks.collectKnownHosts.mockResolvedValue({ knownHosts: [], hasMore: false });
+
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("拉取并应用 (1)"));
+
+    const reloadGate = deferred<void>();
+    mocks.collectTombstones.mockImplementationOnce(async () => {
+      await reloadGate.promise;
+      return { tombstones: [], hasMore: false };
+    });
+    optInCheckbox(0).click();
+    await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
+    // reload 已开始但未完成: 旧 applySet 仍是 (1), 按钮必须保持禁用
+    await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);
+    expect(button("拉取并应用 (1)")?.disabled).toBe(true);
+    reloadGate.resolve();
+    await flushUntil(() => text().includes("拉取并应用 (0)"));
+    expect(mocks.applyObjects).not.toHaveBeenCalled();
+  });
+});

@@ -18,6 +18,11 @@ type syncTombstoneRecorder interface {
 	SyncTombstoneRecord(ctx context.Context, id, kind string, deletedAt int64) error
 }
 
+// aiProfileSyncDeleter 由 store 实现: 同一事务内写回档案状态并按 opt-in 记录删除墓碑(原子删除)。
+type aiProfileSyncDeleter interface {
+	AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error
+}
+
 // recordDeleteTombstone 在档案删除落盘后按删除者的 opt-in 补记用户删除墓碑(不带冲突三元组)。
 // opt-in 按账号用户隔离且默认关: 拿不到删除者身份(桌面直连/匿名模式)或 opt-in 未开启时不立碑,
 // 从未同步或已禁用同步的档案删除不得删除远端副本。

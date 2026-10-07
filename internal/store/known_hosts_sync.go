@@ -86,3 +86,37 @@ func (s *Store) SetAIProfileSyncOptIn(ctx context.Context, userID string, enable
 	}
 	return s.SettingSet(ctx, aiProfileOptInKey(userID), syncOptInValue(enabled))
 }
+
+// AIProfilesDeleteTx 在同一事务内写回 ai.models 状态, 并按 ctx 用户的 opt-in 记录删除墓碑(用户删除语义)。
+// 原子性保证档案删除与墓碑同成同败: 任一步失败整体回滚, 档案仍在, 重试 Delete 即可收敛,
+// 不会出现「档案已删但墓碑缺失」导致远端副本复活。
+func (s *Store) AIProfilesDeleteTx(ctx context.Context, stateJSON string, tombstoneID string, deletedAt int64) error {
+	userID, hasIdentity := SyncOptInUserID(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return dbError(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	optIn := false
+	if hasIdentity {
+		var optInRaw string
+		optInErr := tx.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", aiProfileOptInKey(userID)).Scan(&optInRaw)
+		if optInErr != nil && !isNoRows(optInErr) {
+			return dbError(optInErr)
+		}
+		optIn = optInRaw == "1"
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		AIProfilesSettingKey, stateJSON, deletedAt); err != nil {
+		return dbError(err)
+	}
+	if optIn {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at = `+s.dialect.ScalarMax()+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
+			tombstoneID, SyncTombstoneKindAIProfile, deletedAt); err != nil {
+			return dbError(err)
+		}
+	}
+	return tx.Commit()
+}

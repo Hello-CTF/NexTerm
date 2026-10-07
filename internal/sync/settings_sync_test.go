@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ProbiusOfficial/NexTerm/internal/ids"
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
 	"github.com/ProbiusOfficial/NexTerm/internal/store"
 )
 
@@ -59,6 +60,28 @@ func deviceKnownHost(t *testing.T, device *testDevice, id string) (store.KnownHo
 		t.Fatal(err)
 	}
 	return row, found
+}
+
+// serverUserID 取测试账号的用户 ID, 用于按用户写设备端 opt-in 键。
+func serverUserID(t *testing.T, server *testSyncServer, username, password string) string {
+	t.Helper()
+	user, err := server.accounts.Authenticate(context.Background(), username, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return user.ID
+}
+
+// enableDeviceKindOptIn 为设备上的指定用户开启 known_host/AI 档案同步(opt-in 是设备端按用户键存的)。
+// M165 引擎门控后, 涉及这两类对象的同步测试都显式开启, 默认关由 TestEngineKindOptInDefaultOff 覆盖。
+func enableDeviceKindOptIn(t *testing.T, device *testDevice, userID string) {
+	t.Helper()
+	if err := device.db.SetKnownHostSyncOptIn(context.Background(), userID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := device.db.SetAIProfileSyncOptIn(context.Background(), userID, true); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // deleteDeviceKnownHost/deleteDeviceAIProfile 模拟本地删除入口(后续 store/app 切片接入): 先立碑再删行。
@@ -120,6 +143,9 @@ func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
 	server.createUser(t, "alice", "alice-pw-123")
 	loser := newTestDevice(t)
 	winner := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, loser, userID)
+	enableDeviceKindOptIn(t, winner, userID)
 
 	loserID := ids.New()
 	winnerID := ids.New()
@@ -146,6 +172,7 @@ func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
 	syncDevice(t, loser, server, "alice", "alice-pw-123")
 
 	newcomer := newTestDevice(t)
+	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
 	rows, err := newcomer.db.KnownHostList(context.Background())
 	if err != nil || len(rows) != 0 {
@@ -166,6 +193,10 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 	deviceB := newTestDevice(t)
 	rogue := newTestDevice(t)
 	ctx := context.Background()
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	for _, device := range []*testDevice{deviceA, deviceB, rogue} {
+		enableDeviceKindOptIn(t, device, userID)
+	}
 
 	sharedID := ids.New()
 	winnerID := ids.New()
@@ -188,6 +219,7 @@ func TestEngineKnownHostIncarnationReIDConverges(t *testing.T) {
 
 	// 全设备(含后加入者)都持有化身信任内容(新 ID)与胜者行, 且都不存在原 ID 行。
 	newcomer := newTestDevice(t)
+	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
 	devices := map[string]*testDevice{"A": deviceA, "B": deviceB, "rogue": rogue, "newcomer": newcomer}
 	incarnationIDs := map[string]string{}
@@ -259,6 +291,9 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 	deviceB := newTestDevice(t)
 	deviceA := newTestDevice(t)
 	ctx := context.Background()
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, deviceB, userID)
+	enableDeviceKindOptIn(t, deviceA, userID)
 
 	sharedID := ids.New()
 	winnerID := ids.New()
@@ -268,6 +303,7 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 	putDeviceKnownHost(t, deviceA, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:trusted", 50)
 	putDeviceKnownHost(t, deviceA, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200)
 	rogue := newTestDevice(t)
+	enableDeviceKindOptIn(t, rogue, userID)
 	putDeviceKnownHost(t, rogue, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:rogue", 100)
 
 	syncDevice(t, rogue, server, "alice", "alice-pw-123")   // 败者对象(sharedID 迁移三元组, 100)上服务端
@@ -315,6 +351,7 @@ func TestEngineKnownHostReIDBeatsOldCopyHashDuel(t *testing.T) {
 
 	// 新设备同样获得信任内容(新 ID, 原修订号)。
 	newcomer := newTestDevice(t)
+	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
 	if row, found := deviceKnownHost(t, newcomer, reID); !found || row.Fingerprint != "SHA256:trusted" || row.AddedAt != 50 {
 		t.Fatalf("newcomer must receive the re-IDed record: %+v found=%v", row, found)
@@ -354,6 +391,10 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 	deviceB := newTestDevice(t)
 	deviceA := newTestDevice(t)
 	rogue := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	for _, device := range []*testDevice{deviceB, deviceA, rogue} {
+		enableDeviceKindOptIn(t, device, userID)
+	}
 
 	sharedID := ids.New()
 	winnerID := ids.New()
@@ -406,6 +447,7 @@ func TestEngineKnownHostConflictTombstonePreservesNewerIncarnation(t *testing.T)
 
 	// 新设备获得最新信任内容(60); 服务端原 ID 与败者 re-ID 槽位都是墓碑, 新 ID 是存活对象。
 	newcomer := newTestDevice(t)
+	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
 	if row, found := deviceKnownHost(t, newcomer, newerReID); !found || row.Fingerprint != "SHA256:newer" || row.AddedAt != 60 {
 		t.Fatalf("newcomer must receive the newer incarnation: %+v found=%v", row, found)
@@ -434,6 +476,9 @@ func TestEngineKnownHostWinnerFirstLoserDisplaced(t *testing.T) {
 	server.createUser(t, "alice", "alice-pw-123")
 	winner := newTestDevice(t)
 	loser := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, winner, userID)
+	enableDeviceKindOptIn(t, loser, userID)
 
 	winnerID := ids.New()
 	loserID := ids.New()
@@ -458,6 +503,7 @@ func TestEngineKnownHostWinnerFirstLoserDisplaced(t *testing.T) {
 	}
 
 	newcomer := newTestDevice(t)
+	enableDeviceKindOptIn(t, newcomer, userID)
 	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
 	rows, err := newcomer.db.KnownHostList(context.Background())
 	if err != nil || len(rows) != 0 {
@@ -474,6 +520,9 @@ func TestEngineSyncKnownHostsAndAIProfilesConverge(t *testing.T) {
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
 	ctx := context.Background()
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
 
 	hostID := ids.New()
 	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:sync-fp", 100)
@@ -534,6 +583,9 @@ func TestEngineSettingsDeletionConverges(t *testing.T) {
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
 
 	hostID := ids.New()
 	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:gone", 100)
@@ -575,6 +627,9 @@ func TestEngineKnownHostLWWConflictConverges(t *testing.T) {
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
 
 	hostID := ids.New()
 	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:base", 100)
@@ -604,6 +659,9 @@ func TestEngineAIProfileEqualRevisionConverges(t *testing.T) {
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
 
 	profileID := ids.New()
 	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: profileID, Name: "名字X", Model: "m", Stream: true}, 100)
@@ -626,6 +684,9 @@ func TestEngineAIProfileKeyedDeferredWhileVaultLocked(t *testing.T) {
 	server.createUser(t, "alice", "alice-pw-123")
 	deviceA := newTestDevice(t)
 	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
 
 	hostID := ids.New()
 	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:locked", 100)
@@ -669,4 +730,129 @@ func TestEngineAIProfileKeyedDeferredWhileVaultLocked(t *testing.T) {
 	}
 	requireDeviceQuiescent(t, deviceA, server, "alice", "alice-pw-123")
 	requireDeviceQuiescent(t, deviceB, server, "alice", "alice-pw-123")
+}
+
+// M165 R2: opt-in 默认关: 引擎不收集/不推送/不应用 known_host 与 AI 档案(含远端已有对象)。
+func TestEngineKindOptInDefaultOff(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+
+	hostID := ids.New()
+	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:off", 100)
+	profileID := ids.New()
+	putDeviceAIProfile(t, deviceA, aiProfileRecord{ID: profileID, Name: "默认关档案", Model: "m", Stream: true}, 100)
+
+	if report := syncDevice(t, deviceA, server, "alice", "alice-pw-123"); report.Pushed != 0 {
+		t.Fatalf("opt-in 默认关不得推送两类对象: %+v", report)
+	}
+	if report := syncDevice(t, deviceB, server, "alice", "alice-pw-123"); report.Applied != 0 {
+		t.Fatalf("opt-in 默认关不得应用远端对象: %+v", report)
+	}
+	if _, found := deviceKnownHost(t, deviceB, hostID); found {
+		t.Fatal("opt-in 默认关不得应用 known_host")
+	}
+	if state := deviceAIProfileState(t, deviceB); len(state.Profiles) != 0 {
+		t.Fatalf("opt-in 默认关不得应用 ai_profile: %+v", state.Profiles)
+	}
+}
+
+// M165 R2: 开启→同步; 关闭→停止收集/应用/墓碑传播(远端副本保留); 再开启→补拉合并(关闭期间未记对账)。
+func TestEngineKindOptInOnOffOn(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	ctx := context.Background()
+
+	hostID := ids.New()
+	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:onoff", 100)
+
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
+		t.Fatal("opt-in 开启后 known_host 必须同步")
+	}
+
+	// A 关闭: 本地新增不推送; B 的远端变更不应用到 A。
+	if err := deviceA.db.SetKnownHostSyncOptIn(ctx, userID, false); err != nil {
+		t.Fatal(err)
+	}
+	localOnly := ids.New()
+	putDeviceKnownHost(t, deviceA, localOnly, "off.example.com", 22, "ssh-rsa", "SHA256:local-only", 200)
+	fromB := ids.New()
+	putDeviceKnownHost(t, deviceB, fromB, "from-b.example.com", 2222, "ssh-rsa", "SHA256:from-b", 200)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceB, localOnly); found {
+		t.Fatal("opt-in 关闭后本地新增不得推送")
+	}
+	if _, found := deviceKnownHost(t, deviceA, fromB); found {
+		t.Fatal("opt-in 关闭后远端对象不得应用")
+	}
+
+	// A 删除本地行(关闭期间, opt-in 关): 不立碑不传播, 远端副本保留。
+	if err := deviceA.db.KnownHostRemove(ipc.WithUserID(ctx, userID), hostID); err != nil {
+		t.Fatal(err)
+	}
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
+		t.Fatal("opt-in 关闭期间删除不得传播, 远端副本必须保留")
+	}
+
+	// 再开启: 关闭期间未记对账的远端对象(fromB)补拉合并; 本地删除未立碑的 hostID 不复活(远端副本保留在 B 与服务端)。
+	enableDeviceKindOptIn(t, deviceA, userID)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceA, fromB); !found {
+		t.Fatal("重新开启后必须补拉关闭期间的远端对象")
+	}
+	if _, found := deviceKnownHost(t, deviceA, hostID); found {
+		t.Fatal("关闭期间的本地删除不复活(未立碑, 删除仅限本地)")
+	}
+	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
+		t.Fatal("远端副本必须保留在 B")
+	}
+}
+
+// M165 R2: opt-in 关闭的设备不应用远端墓碑(本地行保留); 重新开启后按墓碑清除。
+func TestEngineKindOptInRemoteTombstoneGated(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	userID := serverUserID(t, server, "alice", "alice-pw-123")
+	ctx := context.Background()
+
+	hostID := ids.New()
+	putDeviceKnownHost(t, deviceA, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:gone", 100)
+	putDeviceKnownHost(t, deviceB, hostID, "git.example.com", 22, "ssh-ed25519", "SHA256:gone", 100)
+	enableDeviceKindOptIn(t, deviceA, userID)
+	enableDeviceKindOptIn(t, deviceB, userID)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+
+	// B 关闭; A 删除并推送墓碑。
+	if err := deviceB.db.SetKnownHostSyncOptIn(ctx, userID, false); err != nil {
+		t.Fatal(err)
+	}
+	deleteDeviceKnownHost(t, deviceA, hostID, ids.NowMS())
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", hostID, KindTombstone)
+
+	// B 同步: 墓碑不应用, 本地行保留。
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceB, hostID); !found {
+		t.Fatal("opt-in 关闭时远端墓碑不得删除本地行")
+	}
+
+	// B 重新开启: 墓碑(仍未对账)在下一轮应用, 本地行清除。
+	enableDeviceKindOptIn(t, deviceB, userID)
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, deviceB, hostID); found {
+		t.Fatal("重新开启后必须按墓碑清除本地行")
+	}
 }

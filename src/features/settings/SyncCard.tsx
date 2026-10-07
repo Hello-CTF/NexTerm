@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
 import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncReport } from "../../ipc/types";
@@ -851,6 +851,11 @@ function CompareConsole() {
   const [error, setError] = useState<string | null>(null);
   const [pushInfo, setPushInfo] = useState<string | null>(null);
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
+  // opt-in 代次: 开关变更即递增, 旧代次的快照与进行中的 load/push/apply 一律作废,
+  // 防止「已关闭同步仍推送/应用旧快照」(尤其删除墓碑删除远端副本)。
+  const optInEpochRef = useRef(0);
+  // 当前 local/remote 快照所属代次; 与 optInEpochRef 不一致时推送/应用保持禁用(reload 完成前)。
+  const [snapshotEpoch, setSnapshotEpoch] = useState(-1);
 
   // opt-in 读取失败(旧服务端没有该命令/网络错误)按默认关处理, 不阻断对比台
   useEffect(() => {
@@ -871,35 +876,43 @@ function CompareConsole() {
   const rows = useMemo(() => (local && remote ? buildRows(local, remote) : null), [local, remote]);
 
   const load = useCallback(
-    (optIn: SyncKindOptIn) => {
+    (optIn: SyncKindOptIn, epoch: number) => {
       setError(null);
       return Promise.all([loadLocalEntities(optIn), loadRemoteObjects(dek, optIn)])
         .then(([l, r]) => {
+          if (epoch !== optInEpochRef.current) return; // 乱序/过期 load 的回写丢弃
           setLocal(l.entities);
           setCollectWarnings(l.warnings);
           setRemote(r.objects);
+          setSnapshotEpoch(epoch);
           // 游标以服务端最新 head/seq 为准(空 genesis 不得强制空字符串)
           const next = { head: r.head, seq: r.maxSeq };
           saveCursor(user.id, next);
           setCursor(next);
         })
-        .catch((e: unknown) => setError(describeError(e)));
+        .catch((e: unknown) => {
+          if (epoch !== optInEpochRef.current) return;
+          setError(describeError(e));
+        });
     },
     [dek, user.id],
   );
 
   useEffect(() => {
-    if (kindOptIn) void load(kindOptIn);
+    if (kindOptIn) void load(kindOptIn, optInEpochRef.current);
   }, [load, kindOptIn]);
 
   const updateKindOptIn = async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
+    optInEpochRef.current += 1; // 立即作废旧快照与进行中的 push/apply
     setBusy("optin");
     setError(null);
     try {
       const next = await syncApi.kindOptInSet(patch);
-      setKindOptIn(next);
+      setKindOptIn(next); // effect 以新代次触发 reload, 完成前操作保持禁用
     } catch (e) {
       setError(describeError(e));
+      // 开关未改成: 按当前 opt-in 重新加载, 恢复同代可用快照
+      void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current);
     } finally {
       setBusy(null);
     }
@@ -925,6 +938,8 @@ function CompareConsole() {
   const [applyInfo, setApplyInfo] = useState<string | null>(null);
 
   const applyRemote = async () => {
+    const startEpoch = optInEpochRef.current;
+    if (snapshotEpoch !== startEpoch) return; // 快照已过期(开关切换后 reload 未完成)
     setBusy("push");
     setError(null);
     setApplyInfo(null);
@@ -934,12 +949,13 @@ function CompareConsole() {
         kind: r.kind,
         payload: JSON.parse(r.plaintext) as import("../../ipc/types").JsonValue,
       }));
-      // 分批(单次上限 256)
+      // 分批(单次上限 256); 每批前核对代次, 开关切换后不再发送旧集合
       let applied = 0;
       let identical = 0;
       let skipped = 0;
       const warnings: string[] = [];
       for (let i = 0; i < objects.length; i += 256) {
+        if (optInEpochRef.current !== startEpoch) return;
         const result = await syncApi.applyObjects(objects.slice(i, i + 256));
         applied += result.applied;
         identical += result.identical;
@@ -954,7 +970,7 @@ function CompareConsole() {
           (warnings.length > 0 ? ` · 警告:${warnings.join("; ")}` : ""),
       );
       pushToast("success", `已应用 ${applied} 个对象`);
-      await load(kindOptIn ?? DEFAULT_KIND_OPT_IN);
+      await load(kindOptIn ?? DEFAULT_KIND_OPT_IN, startEpoch);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -963,6 +979,8 @@ function CompareConsole() {
   };
 
   const push = async () => {
+    const startEpoch = optInEpochRef.current;
+    if (snapshotEpoch !== startEpoch) return; // 快照已过期(开关切换后 reload 未完成)
     setBusy("push");
     setError(null);
     setPushInfo(null);
@@ -972,8 +990,10 @@ function CompareConsole() {
       let head = cursor.head;
       let winnersNow = winners;
       const fresh = await syncV2Api.ids();
+      if (optInEpochRef.current !== startEpoch) return;
       if (fresh.head !== head) {
         const remoteState = await loadRemoteObjects(dek, optIn);
+        if (optInEpochRef.current !== startEpoch) return;
         setRemote(remoteState.objects);
         winnersNow = computeWinners(local ?? [], remoteState.objects);
         const base = { head: remoteState.head, seq: remoteState.maxSeq };
@@ -982,11 +1002,14 @@ function CompareConsole() {
         head = remoteState.head;
       }
 
+      // 上传前最后核对: 开关切换后旧 winners 一律不得上传(即使 head 未变)
+      if (optInEpochRef.current !== startEpoch) return;
       let resp = await syncV2Api.push(head, await sealAll(dek, winnersNow));
 
       // 空推(applied+skipped=0)或真 409(他端已更新):重新拉取并以同一快照重算 winner,再重试一次,不得只换 known_head。
       const reconcileAndRetry = async (): Promise<typeof resp | null> => {
         const remoteState = await loadRemoteObjects(dek, optIn);
+        if (optInEpochRef.current !== startEpoch) return null;
         const recomputed = computeWinners(local ?? [], remoteState.objects);
         if (remoteState.head === head && recomputed.length === winnersNow.length && !recomputed.some((e, i) => e.id !== winnersNow[i]?.id)) {
           return null;
@@ -1009,12 +1032,13 @@ function CompareConsole() {
       setCursor(next);
       setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
       pushToast("success", `已推送 ${resp.applied} 个对象`);
-      await load(optIn);
+      await load(optIn, startEpoch);
     } catch (e) {
       if (e instanceof AuthApiError && e.status === 409) {
         // 真 409:重新对账并以新 head 重试一次;仍失败才报错。
         try {
           const remoteState = await loadRemoteObjects(dek, optIn);
+          if (optInEpochRef.current !== startEpoch) return;
           const recomputed = computeWinners(local ?? [], remoteState.objects);
           setRemote(remoteState.objects);
           const base = { head: remoteState.head, seq: remoteState.maxSeq };
@@ -1027,7 +1051,7 @@ function CompareConsole() {
           setCursor(next);
           setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
           pushToast("success", `已推送 ${resp.applied} 个对象`);
-          await load(optIn);
+          await load(optIn, startEpoch);
           return;
         } catch (retryError) {
           setError(describeError(retryError));
@@ -1052,13 +1076,13 @@ function CompareConsole() {
           游标 seq {cursor.seq || "—"} · 云端 {remote?.length ?? "…"} 个对象
         </span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN)}>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
           <IconRefresh size={12} className={busy === "refresh" ? "animate-spin" : ""} />
           刷新对比
         </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
-          disabled={busy !== null || applySet.length === 0}
+          disabled={busy !== null || snapshotEpoch !== optInEpochRef.current || applySet.length === 0}
           onClick={() => void applyRemote()}
         >
           {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
@@ -1066,7 +1090,7 @@ function CompareConsole() {
         </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
-          disabled={busy !== null || pushCount === 0}
+          disabled={busy !== null || snapshotEpoch !== optInEpochRef.current || pushCount === 0}
           onClick={() => void push()}
         >
           {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
@@ -1114,7 +1138,7 @@ function CompareConsole() {
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1 break-words">{error}</span>
-          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN)}>
+          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
             <IconRefresh size={12} />
             重试
           </button>

@@ -320,6 +320,19 @@ func (m *Manager) Delete(ctx context.Context, id string) (Overview, error) {
 	}
 	next.Profiles = profiles
 	next.ensureActive()
+	if deleter, ok := m.settings.(aiProfileSyncDeleter); ok {
+		// 原子删除: 状态写回与删除墓碑同一事务, 失败整体回滚(档案仍在, 重试即收敛)
+		saved, encoded, err := encodeState(ctx, m.protector, next)
+		if err != nil {
+			return m.state.overview(), err
+		}
+		if err := deleter.AIProfilesDeleteTx(ctx, string(encoded), id, ids.NowMS()); err != nil {
+			return m.state.overview(), err
+		}
+		m.state = saved
+		delete(m.circuits, id)
+		return m.state.overview(), nil
+	}
 	saved, err := save(ctx, m.settings, m.protector, next)
 	if err != nil {
 		return m.state.overview(), err
@@ -365,6 +378,18 @@ func load(ctx context.Context, settings Settings) (loadResult, error) {
 }
 
 func save(ctx context.Context, settings Settings, protector store.SecretProtector, value state) (state, error) {
+	saved, encoded, err := encodeState(ctx, protector, value)
+	if err != nil {
+		return value, err
+	}
+	if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
+		return value, err
+	}
+	return saved, nil
+}
+
+// encodeState 规范化并加密档案状态后编码为落盘 JSON(不写库); save 与原子删除路径共用同一形态。
+func encodeState(ctx context.Context, protector store.SecretProtector, value state) (state, []byte, error) {
 	value = value.normalized()
 	if protector != nil {
 		for index := range value.Profiles {
@@ -374,19 +399,16 @@ func save(ctx context.Context, settings Settings, protector store.SecretProtecto
 			}
 			envelope, err := protector.EncryptSecret(ctx, profile.APIKey)
 			if err != nil {
-				return value, err
+				return value, nil, err
 			}
 			profile.APIKey = envelope
 		}
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return value, fmt.Errorf("encode AI profiles: %w", err)
+		return value, nil, fmt.Errorf("encode AI profiles: %w", err)
 	}
-	if err := settings.SettingSet(ctx, SettingKey, string(encoded)); err != nil {
-		return value, err
-	}
-	return value, nil
+	return value, encoded, nil
 }
 
 func isVaultUnavailable(err error) bool {

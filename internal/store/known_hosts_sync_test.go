@@ -155,3 +155,43 @@ func TestSyncTombstoneRecordKeepsMaxRevision(t *testing.T) {
 		t.Fatalf("tombstone revision = %d, want max 200", deletedAt)
 	}
 }
+
+func TestAIProfilesDeleteTxAtomic(t *testing.T) {
+	db := testStore(t)
+	ctx := context.Background()
+	userCtx := ipc.WithUserID(ctx, "u-a")
+	state := `{"version":1,"profiles":[],"activeId":null}`
+
+	// opt-in 开: 状态与墓碑同一事务提交
+	if err := db.SetAIProfileSyncOptIn(ctx, "u-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AIProfilesDeleteTx(userCtx, state, "p-1", 100); err != nil {
+		t.Fatal(err)
+	}
+	if raw, found, err := db.SettingGet(ctx, AIProfilesSettingKey); err != nil || !found || raw != state {
+		t.Fatalf("ai.models 必须写回: found=%v err=%v", found, err)
+	}
+	if kind, deletedAt, found := knownHostTombstone(t, db, "p-1"); !found || kind != SyncTombstoneKindAIProfile || deletedAt != 100 {
+		t.Fatalf("tombstone = %q %d %v", kind, deletedAt, found)
+	}
+
+	// opt-in 关: 只写状态不立碑
+	if err := db.SetAIProfileSyncOptIn(ctx, "u-a", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AIProfilesDeleteTx(userCtx, state, "p-2", 200); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found := knownHostTombstone(t, db, "p-2"); found {
+		t.Fatal("opt-in 关闭时不得立碑")
+	}
+
+	// 无身份: 只写状态不立碑
+	if err := db.AIProfilesDeleteTx(ctx, state, "p-3", 300); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, found := knownHostTombstone(t, db, "p-3"); found {
+		t.Fatal("无身份不得立碑")
+	}
+}

@@ -60,6 +60,51 @@ func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog
 	return &Engine{store: database, vault: credentialVault, logger: logger}
 }
 
+// kindOptIn 是 known_host/AI 模型档案在一轮同步内的 opt-in 快照; 零值即硬关闭(默认关)。
+type kindOptIn struct {
+	knownHost bool
+	aiProfile bool
+}
+
+// loadKindOptIn 按会话用户读取两类对象的同步 opt-in; 无会话身份(userID 为空)时硬关闭, 不退化为全局设置。
+func (e *Engine) loadKindOptIn(ctx context.Context, userID string) (kindOptIn, error) {
+	if userID == "" {
+		return kindOptIn{}, nil
+	}
+	knownHost, err := e.store.KnownHostSyncOptIn(ctx, userID)
+	if err != nil {
+		return kindOptIn{}, err
+	}
+	aiProfile, err := e.store.AIProfileSyncOptIn(ctx, userID)
+	if err != nil {
+		return kindOptIn{}, err
+	}
+	return kindOptIn{knownHost: knownHost, aiProfile: aiProfile}, nil
+}
+
+// allowsRemote 判定远端对象(含墓碑)本轮是否可应用; 硬关闭的种类不应用也不记对账,
+// 保持未对账状态, 日后开启 opt-in 的同步轮即可再拉取合并。
+func (o kindOptIn) allowsRemote(kind string, plaintext []byte) bool {
+	switch kind {
+	case KindKnownHost:
+		return o.knownHost
+	case KindAIProfile:
+		return o.aiProfile
+	case KindTombstone:
+		var payload tombstoneObject
+		if err := json.Unmarshal(plaintext, &payload); err != nil {
+			return true
+		}
+		switch payload.TargetKind {
+		case KindKnownHost:
+			return o.knownHost
+		case KindAIProfile:
+			return o.aiProfile
+		}
+	}
+	return true
+}
+
 // Sync 执行一轮完整同步: 对账 → 拉取合并 → 推送本地变更。冲突(其他设备先推或回滚)自动重试。
 func (e *Engine) Sync(ctx context.Context, config RemoteConfig) (SyncReport, error) {
 	report := SyncReport{}
@@ -126,6 +171,10 @@ func (e *Engine) dropSession(key string) {
 // syncOnce 单轮同步; conflict 为 true 表示推送时 head 不一致, 需要重新对账后再试。
 func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *SyncReport) (bool, error) {
 	userID := session.userID
+	optIn, err := e.loadKindOptIn(ctx, userID)
+	if err != nil {
+		return false, err
+	}
 	idsResponse, err := session.client.ids(ctx)
 	if err != nil {
 		return false, err
@@ -148,7 +197,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 			unreconciled = append(unreconciled, entry.ID)
 		}
 	}
-	completed, err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report)
+	completed, err := e.pullAllAndApply(ctx, session, &cursor, unreconciled, report, optIn)
 	if err != nil {
 		return false, err
 	}
@@ -159,7 +208,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 		}
 		return false, ipc.NewError(ipc.CodeDisconnected, "同步对账未完成(部分对象未返回), 请稍后重试")
 	}
-	objects, err := e.collectLocalObjects(ctx, report)
+	objects, err := e.collectLocalObjects(ctx, report, optIn)
 	if err != nil {
 		return false, err
 	}
@@ -204,7 +253,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 	}
 	// 收尾拉取: 把游标推进到推送时点, 使空闲同步保持静默, 并立即看到推送期间其他设备的变更。
 	// 收尾无补拉 ID, 空页即自然完成; 若超出有界页数仍未完成, 记警告但不影响已完成的推送。
-	if completed, err := e.pullAllAndApply(ctx, session, &cursor, nil, report); err != nil {
+	if completed, err := e.pullAllAndApply(ctx, session, &cursor, nil, report, optIn); err != nil {
 		return false, err
 	} else if !completed {
 		report.warnf("收尾拉取未能在有界页数内完成, 剩余对象留待下一轮")
@@ -221,7 +270,7 @@ func (e *Engine) syncOnce(ctx context.Context, session *remoteSession, report *S
 // 然后才允许进入推送。游标进度只由 next_seq 推进(补拉 ID 的 seq 不得推进游标或伪造完成);
 // 首个对象必完整返回的预算规则保证每页至少消化一个对象, 循环必然收敛。
 // 返回 completed=false 表示 stall(对账未完成), 调用方不得在本轮 collect/push。
-func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport) (bool, error) {
+func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cursor *syncCursor, unreconciled []string, report *SyncReport, optIn kindOptIn) (bool, error) {
 	remaining := make(map[string]bool, len(unreconciled))
 	for _, id := range unreconciled {
 		remaining[id] = true
@@ -241,7 +290,7 @@ func (e *Engine) pullAllAndApply(ctx context.Context, session *remoteSession, cu
 		}
 		returned := 0
 		for _, object := range pullResponse.Objects {
-			e.applyRemoteObject(ctx, session.userID, object, session.dek, report)
+			e.applyRemoteObject(ctx, session.userID, object, session.dek, report, optIn)
 			delete(remaining, object.ID)
 			returned++
 		}

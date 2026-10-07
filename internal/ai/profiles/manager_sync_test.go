@@ -140,6 +140,22 @@ func (f *fakeSyncSettings) SyncTombstoneRecord(_ context.Context, _, _ string, _
 	return f.recordErr
 }
 
+// atomicSyncSettings 在 fakeSyncSettings 之上实现原子删除接口(生产 store 的 AIProfilesDeleteTx 同形)。
+type atomicSyncSettings struct {
+	*fakeSyncSettings
+	deleteErr error
+	recorded  []string
+}
+
+func (f *atomicSyncSettings) AIProfilesDeleteTx(_ context.Context, stateJSON string, tombstoneID string, _ int64) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.values[profiles.SettingKey] = stateJSON
+	f.recorded = append(f.recorded, tombstoneID)
+	return nil
+}
+
 func TestDeletePropagatesTombstoneRecordFailure(t *testing.T) {
 	settings := &fakeSyncSettings{values: map[string]string{"sync.optin.ai_profile.u-a": "1"}, recordErr: errors.New("disk full")}
 	manager, err := profiles.NewManager(context.Background(), settings)
@@ -150,5 +166,40 @@ func TestDeletePropagatesTombstoneRecordFailure(t *testing.T) {
 	ctx := ipc.WithUserID(context.Background(), "u-a")
 	if _, err := manager.Delete(ctx, id); err == nil {
 		t.Fatal("墓碑记录失败必须向调用方返回错误, 不得静默吞掉")
+	}
+}
+
+// M165 R2: 原子删除: 首次墓碑写失败整体回滚(档案仍在), 恢复后重试删除并补记墓碑, 删除收敛。
+func TestDeleteAtomicRetryAfterFailureConverges(t *testing.T) {
+	settings := &atomicSyncSettings{
+		fakeSyncSettings: &fakeSyncSettings{values: map[string]string{"sync.optin.ai_profile.u-a": "1"}},
+		deleteErr:        errors.New("tombstone write failed"),
+	}
+	manager, err := profiles.NewManager(context.Background(), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := seedProfile(t, manager, "retry")
+	ctx := ipc.WithUserID(context.Background(), "u-a")
+
+	if _, err := manager.Delete(ctx, id); err == nil {
+		t.Fatal("首次删除必须返回墓碑写失败")
+	}
+	if _, ok := manager.Profile(id); !ok {
+		t.Fatal("原子删除失败时档案必须仍在(可重试收敛)")
+	}
+	if len(settings.recorded) != 0 {
+		t.Fatal("失败不得留下墓碑记录")
+	}
+
+	settings.deleteErr = nil
+	if _, err := manager.Delete(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.Profile(id); ok {
+		t.Fatal("重试后档案必须已删除")
+	}
+	if len(settings.recorded) != 1 || settings.recorded[0] != id {
+		t.Fatalf("重试必须补记墓碑: %v", settings.recorded)
 	}
 }
