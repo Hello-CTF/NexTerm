@@ -9,7 +9,9 @@ detection, per-user isolation, ciphertext-at-rest checks straight from the
 server SQLite file, and a restart persistence pass. Object envelopes are
 sealed/opened with scripts/syncv2-helper (real AES-GCM + Argon2id from the
 same module), so the server is verified blind end to end. There are no
-third-party Python dependencies and no skip-as-pass paths.
+third-party Python dependencies and no skip-as-pass paths. Every run writes
+target/e2e-sync/report.json (status, passed/failed counts, per-check details,
+harness errors) and the server log; the Release gate accepts only a clean pass.
 
     python3 scripts/e2e-sync-local.py
     python3 scripts/e2e-sync-local.py --bin target/go-build/nexterm-server-linux-amd64 --no-build
@@ -30,24 +32,26 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SESSION_COOKIE = "nexterm_session"
 CSRF_HEADER = "X-NexTerm-CSRF"
 GENESIS_PREFIX = "nexterm/go/sync-head/v1"
-PASSED: list[str] = []
-FAILED: list[str] = []
+CHECKS: list[dict] = []
+REPORT_DIR = ROOT / "target" / "e2e-sync"
 
 
 def check(name: str, ok: bool, detail: object = "") -> None:
     if ok:
-        PASSED.append(name)
+        CHECKS.append({"name": name, "status": "passed", "detail": ""})
         print(f"  PASS {name}", flush=True)
     else:
-        FAILED.append(name)
+        CHECKS.append({"name": name, "status": "failed", "detail": str(detail)})
         print(f"  FAIL {name}: {detail}", flush=True)
 
 
@@ -212,6 +216,31 @@ def synthetic_id() -> str:
     return f"e2e{uuid.uuid4().hex[:23]}"
 
 
+def write_report(binary: pathlib.Path, helper: pathlib.Path, started_at: str, started: float, harness_errors: list[str]) -> pathlib.Path:
+    failed = [entry for entry in CHECKS if entry["status"] != "passed"]
+    report = {
+        "schema_version": 1,
+        "mode": "sync-v2-local",
+        "status": "failed" if failed or harness_errors else "passed",
+        "passed": len(CHECKS) - len(failed),
+        "failed": len(failed),
+        "checks": CHECKS,
+        "harness_errors": harness_errors,
+        "binary": str(binary),
+        "helper": str(helper),
+        "started_at": started_at,
+        "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "log": "target/e2e-sync/server.log",
+        "skip_as_pass": False,
+    }
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = REPORT_DIR / "report.json.tmp"
+    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, REPORT_DIR / "report.json")
+    return REPORT_DIR / "report.json"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin", type=pathlib.Path, default=ROOT / "target/go-build/nexterm-server-e2e")
@@ -219,20 +248,25 @@ def main() -> int:
     parser.add_argument("--no-build", action="store_true", help="reuse existing binaries")
     arguments = parser.parse_args()
 
-    if arguments.no_build:
-        if not arguments.helper.exists():
-            print(f"--no-build: helper missing, building {arguments.helper}", flush=True)
-            build(arguments.helper, "./scripts/syncv2-helper")
-    else:
-        build(arguments.bin, "./cmd/nexterm-server")
-        build(arguments.helper, "./scripts/syncv2-helper")
-
-    work = pathlib.Path(tempfile.mkdtemp(prefix="nexterm-sync-v2-e2e-"))
-    master_key = f"e2e-master-{uuid.uuid4().hex}"
-    server = Instance(arguments.bin, work, "server", master_key)
-    alice_password = "alice-e2e-pw-123"
-    bob_password = "bob-e2e-pw-1234"
+    started = time.monotonic()
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    harness_errors: list[str] = []
+    server: Instance | None = None
+    work: pathlib.Path | None = None
     try:
+        if arguments.no_build:
+            if not arguments.helper.exists():
+                print(f"--no-build: helper missing, building {arguments.helper}", flush=True)
+                build(arguments.helper, "./scripts/syncv2-helper")
+        else:
+            build(arguments.bin, "./cmd/nexterm-server")
+            build(arguments.helper, "./scripts/syncv2-helper")
+
+        work = pathlib.Path(tempfile.mkdtemp(prefix="nexterm-sync-v2-e2e-"))
+        master_key = f"e2e-master-{uuid.uuid4().hex}"
+        server = Instance(arguments.bin, work, "server", master_key)
+        alice_password = "alice-e2e-pw-123"
+        bob_password = "bob-e2e-pw-1234"
         server.start()
         print("== 账号初始化 ==", flush=True)
         init_code = server.init_code()
@@ -366,13 +400,26 @@ def main() -> int:
         device3.me()
         status, body = device3.request("POST", "/sync/v2/pull", {"protocol": 2, "since_seq": 0})
         check("重启后对象仍在", status == 200 and len(body.get("objects", [])) == 6, f"HTTP {status} {body}")
+    except Exception as error:
+        traceback.print_exc()
+        message = f"{type(error).__name__}: {error}"
+        harness_errors.append(message)
+        check("e2e 执行异常", False, message)
     finally:
-        server.stop()
-        shutil.rmtree(work, ignore_errors=True)
+        if server is not None:
+            server.stop()
+            if server.log_path.exists():
+                REPORT_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy(server.log_path, REPORT_DIR / "server.log")
+        if work is not None:
+            shutil.rmtree(work, ignore_errors=True)
 
-    print(f"\n通过 {len(PASSED)} 项, 失败 {len(FAILED)} 项", flush=True)
-    if FAILED:
-        for name in FAILED:
+    report_path = write_report(arguments.bin, arguments.helper, started_at, started, harness_errors)
+    failed = [entry["name"] for entry in CHECKS if entry["status"] != "passed"]
+    print(f"\n通过 {len(CHECKS) - len(failed)} 项, 失败 {len(failed)} 项", flush=True)
+    print(f"报告: {report_path}", flush=True)
+    if failed:
+        for name in failed:
             print(f"  FAILED: {name}", flush=True)
         return 1
     return 0
