@@ -33,7 +33,7 @@ li { margin: 4px 0; }
 <body>
 <main>
 <h1>NexTerm 启动失败</h1>
-<p>NexTerm 无法完成启动初始化。你的数据没有被删除或修改。</p>
+<p>NexTerm 无法完成启动初始化。</p>
 <h2>错误信息</h2>
 <pre>`)
 	b.WriteString(html.EscapeString(startupErr.Error()))
@@ -49,7 +49,7 @@ li { margin: 4px 0; }
 	b.WriteString(html.EscapeString(paths.LogFile))
 	b.WriteString(`</code>，并把上面的错误信息和日志一并反馈。</li>
 </ol>
-<p class="note">在确认数据已备份之前，请不要删除或修改数据目录中的文件。</p>
+<p class="note">本窗口不会尝试修复、删除或迁移数据目录中的文件。在确认数据已备份之前，请不要删除或修改数据目录中的内容。</p>
 </main>
 </body>
 </html>`)
