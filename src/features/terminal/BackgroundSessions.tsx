@@ -237,7 +237,7 @@ export function BackgroundSessions({ visible = true }: { visible?: boolean }) {
                 <td colSpan={5} className="nx-table-empty">
                   没有在后台运行的终端
                   <div className="mt-1.5 text-[11px] text-neutral-500">
-                    关闭运行中的 SSH 终端标签时，进程会留在这里，随时可以接管。
+                    关闭运行中的 SSH 终端标签不会结束里面的进程：它会留在这里继续运行，随时可以点「接管」接回。
                   </div>
                 </td>
               </tr>
