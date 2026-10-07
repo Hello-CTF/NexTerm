@@ -152,10 +152,12 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ status });
       if (status.auth === "off") {
         set({ gate: "ready", user: null });
+        syncPreferenceStore(false);
         return;
       }
       if (!status.initialized) {
         set({ gate: "setup", user: null });
+        syncPreferenceStore(false);
         return;
       }
       try {
@@ -221,6 +223,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       const { fields, recovery } = await buildEnvelopes(password, dek);
       const session = await authApi.init({ code, username, password, ...fields });
       set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });
+      syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);
       set({ error: toAppError(e) });
@@ -235,6 +238,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       const { fields, recovery } = await buildEnvelopes(password, dek);
       const session = await authApi.register({ username, password, displayName, ...fields });
       set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });
+      syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);
       set({ error: toAppError(e) });
@@ -252,6 +256,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       await authApi.changePassword({ oldPassword: tempPassword, newPassword, ...fields });
       const session = await authApi.me();
       set({ user: session.user, dek, gate: "ready", pendingRecoveryKey: recovery });
+      syncPreferenceStore(true);
     } catch (e) {
       zeroize(dek);
       set({ error: toAppError(e) });
@@ -320,6 +325,7 @@ if (typeof window !== "undefined") {
       zeroize(state.dek);
       setCsrfToken(null);
       useAuth.setState({ user: null, dek: null, gate: state.status?.auth === "on" ? "login" : "ready" });
+      syncPreferenceStore(false);
     }
   });
 }

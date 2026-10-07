@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => {
     transcriptHosts: vi.fn(),
     transcriptList: vi.fn(),
     transcriptRead: vi.fn(),
+    collectAssets: vi.fn(),
+    collectTombstones: vi.fn(),
+    collectCredentials: vi.fn(),
     toast: vi.fn(),
   };
 });
@@ -49,6 +52,9 @@ vi.mock("../ipc/commands", () => ({
     pull: mocks.pull,
     token: mocks.token,
     rotateToken: mocks.rotateToken,
+    collectAssets: mocks.collectAssets,
+    collectTombstones: mocks.collectTombstones,
+    collectCredentials: mocks.collectCredentials,
   },
 }));
 vi.mock("../ui/dialogs", () => ({ ask: vi.fn() }));
@@ -121,6 +127,9 @@ beforeEach(() => {
   mocks.transcriptHosts.mockResolvedValue([]);
   mocks.transcriptList.mockResolvedValue([]);
   mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
+  mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
+  mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
+  mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
 });
 
 afterEach(() => {

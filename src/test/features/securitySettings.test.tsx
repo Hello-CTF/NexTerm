@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => {
     transcriptHosts: vi.fn(),
     transcriptList: vi.fn(),
     transcriptRead: vi.fn(),
+    collectAssets: vi.fn(),
+    collectTombstones: vi.fn(),
+    collectCredentials: vi.fn(),
     applyObjects: vi.fn(),
     ask: vi.fn(),
     toast: vi.fn(),
@@ -49,6 +52,9 @@ vi.mock("../../ipc/commands", () => ({
   },
   syncApi: {
     applyObjects: mocks.applyObjects,
+    collectAssets: mocks.collectAssets,
+    collectTombstones: mocks.collectTombstones,
+    collectCredentials: mocks.collectCredentials,
   },
   dbApi: {},
   sessionApi: { connect: mocks.sessionConnect },
@@ -167,6 +173,9 @@ beforeEach(() => {
   mocks.transcriptHosts.mockResolvedValue([]);
   mocks.transcriptList.mockResolvedValue([]);
   mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
+  mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
+  mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
+  mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });
   mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-0", max_seq: 0 });
   mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [], head: "head-0", max_seq: 0, next_seq: 0, cursor_done: true });
@@ -338,18 +347,21 @@ describe("SyncCard（Web 同步台）", () => {
     mocks.groupList.mockResolvedValue([
       { id: "g1", parentId: null, name: "生产环境", sort: 0, createdAt: 1, updatedAt: 100 },
     ]);
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: "g1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-      {
-        id: "a2", groupId: null, kind: "ssh", name: "db-02", host: "10.0.0.9", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", groupId: "g1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+        {
+          id: "a2", kind: "ssh", name: "db-02", host: "10.0.0.9", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300,
+        },
+      ],
+      hasMore: false,
+    });
     // 远端:a1 较新(修订 250 > 200),另有一个云端独有的 a3
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
@@ -361,7 +373,7 @@ describe("SyncCard（Web 同步台）", () => {
     );
     const blobA3 = await sealSyncObject(
       dek,
-      utf8Bytes(JSON.stringify({ id: "a3", groupId: null, kind: "ssh", name: "cache-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 400 })),
+      utf8Bytes(JSON.stringify({ id: "a3", kind: "ssh", name: "cache-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 400 })),
       "a3",
       "asset",
     );
@@ -393,13 +405,16 @@ describe("SyncCard（Web 同步台）", () => {
 
   it("推送调用 /sync/v2/push 并更新本地游标", async () => {
     seedAuthed(true);
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+      ],
+      hasMore: false,
+    });
     mocks.syncPush.mockResolvedValue({ protocol: 2, head: "head-9", max_seq: 9, applied: 1, skipped: 0 });
     // 推送成功后服务端 head 推进到 head-9,后续 ids 应反映同一 head
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [], head: "head-9", max_seq: 9 });
@@ -422,19 +437,22 @@ describe("SyncCard（Web 同步台）", () => {
 
   it("云端较新的对象不会被推送(winner 集合跳过远端胜出项)", async () => {
     seedAuthed(true);
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+      ],
+      hasMore: false,
+    });
     // 远端 a1 修订 300 > 本机 200 → 云端较新,不应推送
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
     const blob = await sealSyncObject(
       dek,
-      utf8Bytes(JSON.stringify({ id: "a1", groupId: null, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 })),
+      utf8Bytes(JSON.stringify({ id: "a1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 })),
       "a1",
       "asset",
     );
@@ -454,17 +472,19 @@ describe("SyncCard（Web 同步台）", () => {
     seedAuthed(true);
     const { sealSyncObject, utf8Bytes, bytesToBase64, objectPayloadHash } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
-    const localPayload = { id: "a1", groupId: null, kind: "ssh", name: "aaa", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
-    const remotePayload = { id: "a1", groupId: null, kind: "ssh", name: "zzz", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
+    const localPayload = { id: "a1", kind: "ssh", name: "aaa", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
+    const remotePayload = { id: "a1", kind: "ssh", name: "zzz", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200 };
     const localHash = await objectPayloadHash(utf8Bytes(JSON.stringify(localPayload)));
     const remoteHash = await objectPayloadHash(utf8Bytes(JSON.stringify(remotePayload)));
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: null, kind: "ssh", name: "aaa", host: null, port: null,
-        username: null, authKind: null, keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", kind: "ssh", name: "aaa", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+      ],
+      hasMore: false,
+    });
     const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(remotePayload)), "a1", "asset");
     mocks.syncIds.mockResolvedValue({ protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-1", max_seq: 1 });
     mocks.syncPull.mockResolvedValue({ protocol: 2, objects: [{ id: "a1", seq: 1, blob: bytesToBase64(blob) }], head: "head-1", max_seq: 1, next_seq: 1, cursor_done: true });
@@ -479,13 +499,16 @@ describe("SyncCard（Web 同步台）", () => {
   it("真 409(他端已更新)时重新对账并以新 head 重试一次", async () => {
     seedAuthed(true);
     const { AuthApiError } = await import("../../ipc/authApi");
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+      ],
+      hasMore: false,
+    });
     // ids 调用序列:加载(head-0)→ 推送取新 head(head-0,与基线一致不重拉)→ 重试再取(head-1)
     mocks.syncIds
       .mockResolvedValueOnce({ protocol: 2, entries: [], head: "head-0", max_seq: 0 })
@@ -509,15 +532,18 @@ describe("SyncCard（Web 同步台）", () => {
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
     // 本机 a1 修订 200;云端 a1 修订 300(他端更新),head 从 head-0 变 head-1
-    const remotePayload = { id: "a1", groupId: null, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 };
+    const remotePayload = { id: "a1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 };
     const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(remotePayload)), "a1", "asset");
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+      ],
+      hasMore: false,
+    });
     mocks.syncIds
       .mockResolvedValueOnce({ protocol: 2, entries: [{ id: "a1", seq: 1, blob_hash: "h1" }], head: "head-0", max_seq: 1 })
       .mockResolvedValueOnce({ protocol: 2, entries: [{ id: "a1", seq: 2, blob_hash: "h2" }], head: "head-1", max_seq: 2 });
@@ -646,22 +672,25 @@ describe("SyncCard（Web 同步台）", () => {
     const { sealSyncObject, utf8Bytes, bytesToBase64 } = await import("../../features/auth/crypto");
     const dek = new Uint8Array(32).fill(7);
     // 本机 a1 修订 200;云端 a1 修订 300(云端较新),另有一个仅云端的 a2
-    mocks.assetList.mockResolvedValue([
-      {
-        id: "a1", groupId: null, kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
-        username: "root", authKind: "password", keyPath: null, credId: null, options: {},
-        tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200, deletedAt: null, builtin: false,
-      },
-    ]);
+    mocks.collectAssets.mockResolvedValue({
+      assets: [
+        {
+          id: "a1", kind: "ssh", name: "web-01", host: "10.0.0.8", port: 22,
+          username: "root", authKind: "password", optionsJson: "{}",
+          tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 200,
+        },
+      ],
+      hasMore: false,
+    });
     const blobA1 = await sealSyncObject(
       dek,
-      utf8Bytes(JSON.stringify({ id: "a1", groupId: null, kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 })),
+      utf8Bytes(JSON.stringify({ id: "a1", kind: "ssh", name: "web-01", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 300 })),
       "a1",
       "asset",
     );
     const blobA2 = await sealSyncObject(
       dek,
-      utf8Bytes(JSON.stringify({ id: "a2", groupId: null, kind: "ssh", name: "db-02", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 400 })),
+      utf8Bytes(JSON.stringify({ id: "a2", kind: "ssh", name: "db-02", optionsJson: "{}", tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 400 })),
       "a2",
       "asset",
     );

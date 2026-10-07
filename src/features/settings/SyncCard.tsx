@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { assetApi, syncApi, transcriptApi, type Asset, type AssetGroup, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
-import type { SyncReport, SnippetDto } from "../../ipc/types";
+import { assetApi, syncApi, transcriptApi, type AssetGroup, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
+import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncReport, SnippetDto } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import {
@@ -301,6 +301,17 @@ interface RemoteState {
   maxSeq: number;
 }
 
+// marshalSyncPayload 产出与 Go json.Marshal 逐字节一致的载荷文本(Go 默认转义 < > & 与 U+2028/9),
+// 本机载荷 hash 才能与 Go 端推送的远端对象对齐,已一致的对象不会被反复推送/应用。
+function marshalSyncPayload(payload: unknown): string {
+  return JSON.stringify(payload)
+    .replace(/&/g, "\\u0026")
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 function groupPayload(g: AssetGroup): unknown {
   const o: Record<string, unknown> = { id: g.id };
   if (g.parentId !== null) o.parentId = g.parentId;
@@ -311,25 +322,36 @@ function groupPayload(g: AssetGroup): unknown {
   return o;
 }
 
-function assetPayload(a: Asset): unknown {
+// collectAssetPayload 直接对齐 internal/sync 的 assetObject 字段与顺序(M141 collect 输出)。
+function collectAssetPayload(a: SyncCollectAsset): unknown {
   const o: Record<string, unknown> = { id: a.id };
-  if (a.groupId !== null) o.groupId = a.groupId;
+  if (a.groupId !== undefined) o.groupId = a.groupId;
   o.kind = a.kind;
   o.name = a.name;
-  if (a.host !== null) o.host = a.host;
-  if (a.port !== null) o.port = a.port;
-  if (a.username !== null) o.username = a.username;
-  if (a.authKind !== null) o.authKind = a.authKind;
-  if (a.keyPath !== null) o.keyPath = a.keyPath;
-  if (a.credId !== null) o.credId = a.credId;
-  o.optionsJson = JSON.stringify(a.options ?? {});
+  if (a.host !== undefined) o.host = a.host;
+  if (a.port !== undefined) o.port = a.port;
+  if (a.username !== undefined) o.username = a.username;
+  if (a.authKind !== undefined) o.authKind = a.authKind;
+  if (a.keyPath !== undefined) o.keyPath = a.keyPath;
+  if (a.credId !== undefined) o.credId = a.credId;
+  o.optionsJson = a.optionsJson;
   o.tags = a.tags;
   o.note = a.note;
   o.sort = a.sort;
   o.createdAt = a.createdAt;
   o.updatedAt = a.updatedAt;
-  if (a.deletedAt !== null) o.deletedAt = a.deletedAt;
+  if (a.deletedAt !== undefined) o.deletedAt = a.deletedAt;
   return o;
+}
+
+// tombstonePayload 对齐 tombstoneObject: 与目标对象同 ID, deletedAt 即修订号。
+function tombstonePayload(t: SyncCollectTombstone): unknown {
+  return { targetKind: t.targetKind, deletedAt: t.deletedAt };
+}
+
+// credentialPayload 对齐 credentialObject; secret 缺失的凭据不会走到这里(收集期已 warning)。
+function credentialPayload(c: SyncCollectCredential): unknown {
+  return { id: c.id, name: c.name, kind: c.kind, secret: c.secret ?? "", updatedAt: c.updatedAt };
 }
 
 function snippetPayload(s: SnippetDto): unknown {
@@ -405,36 +427,123 @@ async function loadOptedInTranscripts(): Promise<LocalEntity[]> {
         updatedAt: t.endedAt ?? t.startedAt,
         deletedAt: null,
         payload,
-        payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))),
+        payloadHash: await objectPayloadHash(utf8Bytes(marshalSyncPayload(payload))),
       });
     }
   }
   return out;
 }
 
-async function loadLocalEntities(): Promise<LocalEntity[]> {
-  const [groups, assets, snippets, transcripts] = await Promise.all([
+interface LocalCollection {
+  entities: LocalEntity[];
+  warnings: string[];
+}
+
+const COLLECT_PAGE_LIMIT = 512;
+
+async function collectAssetsAll(): Promise<SyncCollectAsset[]> {
+  const out: SyncCollectAsset[] = [];
+  let afterId: string | undefined;
+  for (let page = 0; page < 10000; page++) {
+    const result = await syncApi.collectAssets(true, afterId, COLLECT_PAGE_LIMIT);
+    out.push(...result.assets);
+    if (!result.hasMore) return out;
+    if (!result.nextAfterId) throw new Error("资产收集分页游标缺失");
+    afterId = result.nextAfterId;
+  }
+  throw new Error("资产收集分页超出上限");
+}
+
+async function collectTombstonesAll(): Promise<SyncCollectTombstone[]> {
+  const out: SyncCollectTombstone[] = [];
+  let afterId: string | undefined;
+  for (let page = 0; page < 10000; page++) {
+    const result = await syncApi.collectTombstones(afterId, COLLECT_PAGE_LIMIT);
+    out.push(...result.tombstones);
+    if (!result.hasMore) return out;
+    if (!result.nextAfterId) throw new Error("墓碑收集分页游标缺失");
+    afterId = result.nextAfterId;
+  }
+  throw new Error("墓碑收集分页超出上限");
+}
+
+async function collectCredentialsAll(): Promise<SyncCollectCredential[]> {
+  const out: SyncCollectCredential[] = [];
+  let afterId: string | undefined;
+  for (let page = 0; page < 10000; page++) {
+    const result = await syncApi.collectCredentials(true, afterId, COLLECT_PAGE_LIMIT);
+    out.push(...result.credentials);
+    if (!result.hasMore) return out;
+    if (!result.nextAfterId) throw new Error("凭据收集分页游标缺失");
+    afterId = result.nextAfterId;
+  }
+  throw new Error("凭据收集分页超出上限");
+}
+
+function credentialStateLabel(state: string): string {
+  switch (state) {
+    case "locked":
+      return "凭据库未解锁";
+    case "unavailable":
+      return "凭据库不可用";
+    case "error":
+      return "解密失败";
+    case "withheld":
+      return "未请求明文";
+    default:
+      return state;
+  }
+}
+
+async function localEntity(
+  id: string,
+  kind: SyncObjectKind,
+  name: string,
+  updatedAt: number,
+  deletedAt: number | null,
+  payload: unknown,
+): Promise<LocalEntity> {
+  return { id, kind, name, updatedAt, deletedAt, payload, payloadHash: await objectPayloadHash(utf8Bytes(marshalSyncPayload(payload))) };
+}
+
+// loadLocalEntities 经 M141 collect RPC 收集完整本地副本: 软删资产、两类墓碑与凭据都进入对比,
+// 与 internal/sync collectLocalObjects 同序同键(同 ID 后写覆盖先写,墓碑压过存活对象,存活 transcript 最后)。
+// 读不到明文的凭据(locked/unavailable/error)明确记入 warnings,不静默遗漏。
+async function loadLocalEntities(): Promise<LocalCollection> {
+  const warnings: string[] = [];
+  const [groups, snippets, transcripts, assets, tombstones, credentials] = await Promise.all([
     assetApi.groupList(),
-    assetApi.list(),
     assetApi.snippetList(),
     loadOptedInTranscripts(),
+    collectAssetsAll(),
+    collectTombstonesAll(),
+    collectCredentialsAll(),
   ]);
-  const out: LocalEntity[] = [];
+  const byId = new Map<string, LocalEntity>();
   for (const g of groups) {
-    const payload = groupPayload(g);
-    out.push({ id: g.id, kind: "group", name: g.name, updatedAt: g.updatedAt, deletedAt: null, payload, payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))) });
+    byId.set(g.id, await localEntity(g.id, "group", g.name, g.updatedAt, null, groupPayload(g)));
   }
-  for (const a of assets) {
-    if (a.builtin) continue;
-    const payload = assetPayload(a);
-    out.push({ id: a.id, kind: "asset", name: a.name, updatedAt: a.updatedAt, deletedAt: a.deletedAt, payload, payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))) });
+  for (const c of credentials) {
+    if (c.secretState !== "revealed" || c.secret === undefined) {
+      warnings.push(`凭据「${c.name}」${credentialStateLabel(c.secretState)},未进入本次对比与推送`);
+      continue;
+    }
+    byId.set(c.id, await localEntity(c.id, "credential", c.name, c.updatedAt, null, credentialPayload(c)));
   }
   for (const s of snippets) {
-    const payload = snippetPayload(s);
-    out.push({ id: s.id, kind: "snippet", name: s.name, updatedAt: s.updatedAt, deletedAt: null, payload, payloadHash: await objectPayloadHash(utf8Bytes(JSON.stringify(payload))) });
+    byId.set(s.id, await localEntity(s.id, "snippet", s.name, s.updatedAt, null, snippetPayload(s)));
   }
-  out.push(...transcripts);
-  return out;
+  for (const a of assets) {
+    byId.set(a.id, await localEntity(a.id, "asset", a.name, a.updatedAt, a.deletedAt ?? null, collectAssetPayload(a)));
+  }
+  for (const t of tombstones) {
+    const label = KIND_LABELS[t.targetKind] ?? t.targetKind;
+    byId.set(t.id, await localEntity(t.id, "tombstone", `${label} ${t.id}`, t.deletedAt, t.deletedAt, tombstonePayload(t)));
+  }
+  for (const tr of transcripts) {
+    byId.set(tr.id, tr);
+  }
+  return { entities: [...byId.values()], warnings };
 }
 
 function revisionOf(updatedAt: number, deletedAt: number | null): number {
@@ -454,6 +563,21 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
     if (kind === "tombstone") {
       const t = JSON.parse(text) as { targetKind?: string; deletedAt?: number };
       out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq, payloadHash, plaintext: text });
+      continue;
+    }
+    if (kind === "transcript") {
+      // transcript 没有 updatedAt: 修订号即 endedAt(内容结束后不可变),名称取资产名。
+      const t = JSON.parse(text) as { assetName?: string; endedAt?: number };
+      out.push({
+        id: entry.id,
+        kind,
+        name: t.assetName ? `${t.assetName} 的会话记录` : entry.id,
+        updatedAt: t.endedAt ?? 0,
+        deletedAt: null,
+        seq: entry.seq,
+        payloadHash,
+        plaintext: text,
+      });
       continue;
     }
     const p = JSON.parse(text) as { name?: string; updatedAt?: number; deletedAt?: number };
@@ -532,7 +656,7 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
   const objects: { id: string; blob: string }[] = [];
   for (const e of ordered) {
-    const blob = await sealSyncObject(dek, utf8Bytes(JSON.stringify(e.payload)), e.id, e.kind);
+    const blob = await sealSyncObject(dek, utf8Bytes(marshalSyncPayload(e.payload)), e.id, e.kind);
     objects.push({ id: e.id, blob: bytesToBase64(blob) });
   }
   return objects;
@@ -542,9 +666,24 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
 // 载荷完全一致(同 hash)时本地无需推送(覆盖相同内容)。
 function localWins(l: LocalEntity, r: RemoteObject): boolean {
   if (l.payloadHash === r.payloadHash) return false;
+  if (l.kind === "transcript") return transcriptLocalWins(l, r);
   const lr = revisionOf(l.updatedAt, l.deletedAt);
   const rr = revisionOf(r.updatedAt, r.deletedAt);
   if (lr !== rr) return lr > rr;
+  return l.payloadHash > r.payloadHash;
+}
+
+// transcriptLocalWins 按会话记录的 endedAt/不可变与内容补全语义裁决:完整内容胜过省略版
+// (本机省略、云端完整时远端胜,走应用补全),否则按 endedAt 比较,平手按载荷 hash 决胜。
+function transcriptLocalWins(l: LocalEntity, r: RemoteObject): boolean {
+  const lp = l.payload as { contentOmitted?: boolean; endedAt?: number };
+  const rp = JSON.parse(r.plaintext) as { contentOmitted?: boolean; endedAt?: number };
+  const lFull = lp.contentOmitted !== true;
+  const rFull = rp.contentOmitted !== true;
+  if (lFull !== rFull) return lFull;
+  const le = lp.endedAt ?? 0;
+  const re = rp.endedAt ?? 0;
+  if (le !== re) return le > re;
   return l.payloadHash > r.payloadHash;
 }
 
@@ -601,7 +740,9 @@ const KIND_LABELS: Record<string, string> = {
   group: "分组",
   asset: "资产",
   snippet: "片段",
+  credential: "凭据",
   tombstone: "墓碑",
+  transcript: "会话记录",
 };
 
 function WebSyncConsole() {
@@ -700,6 +841,7 @@ function CompareConsole() {
 
   const [local, setLocal] = useState<LocalEntity[] | null>(null);
   const [remote, setRemote] = useState<RemoteObject[] | null>(null);
+  const [collectWarnings, setCollectWarnings] = useState<string[]>([]);
   const [cursor, setCursor] = useState<{ head: string; seq: number }>(() => loadCursor(user.id));
   const [busy, setBusy] = useState<null | "refresh" | "push">(null);
   const [error, setError] = useState<string | null>(null);
@@ -711,7 +853,8 @@ function CompareConsole() {
     setError(null);
     return Promise.all([loadLocalEntities(), loadRemoteObjects(dek)])
       .then(([l, r]) => {
-        setLocal(l);
+        setLocal(l.entities);
+        setCollectWarnings(l.warnings);
         setRemote(r.objects);
         // 游标以服务端最新 head/seq 为准(空 genesis 不得强制空字符串)
         const next = { head: r.head, seq: r.maxSeq };
@@ -731,12 +874,13 @@ function CompareConsole() {
     return computeWinners(local, remote);
   }, [local, remote]);
 
-  // applySet 集合:远端胜出(仅云端/云端较新/云端已删)需要拉取应用的对象。
+  // applySet 集合:远端胜出(仅云端/云端较新/云端已删)需要拉取应用的对象;已一致(同 hash)不重复应用。
   const applySet = useMemo(() => {
     if (!local || !remote) return [];
     return remote.filter((r) => {
       const l = local.find((e) => e.id === r.id);
       if (!l) return true; // remote-only
+      if (l.payloadHash === r.payloadHash) return false; // 已一致
       return !localWins(l, r); // remote-newer 或 remote-deleted
     });
   }, [local, remote]);
@@ -919,6 +1063,13 @@ function CompareConsole() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span>{applyInfo}</span>
+        </div>
+      )}
+
+      {collectWarnings.length > 0 && (
+        <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
+          <IconInfo size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words text-amber-300">{collectWarnings.join(";")}</span>
         </div>
       )}
 
