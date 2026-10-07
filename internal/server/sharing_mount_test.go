@@ -13,12 +13,20 @@ import (
 )
 
 // 分享路由经 fleet.Mount 挂上真实 server: 管理路由要会话; 公开 token URL 的
-// 普通 GET 复用配置的静态入口服务既有 SPA (不校验 token, 响应 no-store),
-// WS upgrade 仍走 token 把关 (无效 token 403 而不是 101)。
+// 普通 GET 复用配置的静态入口服务既有 SPA (不校验 token, 响应 no-store;
+// token 路径撞上真实静态文件或编码 dot-segment 时同样回落 index), WS
+// upgrade 仍走 token 把关 (无效 token 403 而不是 101)。
 func TestSharingRoutesMounted(t *testing.T) {
 	root := t.TempDir()
 	index := "<html><head><title>NexTerm</title></head><body>app</body></html>"
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte(index), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 与 token 路径同形的真实静态文件: 普通 GET 也必须拿到 index 而不是它。
+	if err := os.MkdirAll(filepath.Join(root, "share", "public"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "share", "public", "special"), []byte("not-the-spa"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	config := testConfig(t, false)
@@ -50,21 +58,34 @@ func TestSharingRoutesMounted(t *testing.T) {
 	}
 
 	// 普通 GET /share/public/{token} 服务既有 SPA/index (与 "/" 同一响应体),
-	// 不做 token 校验, 响应 no-store。
-	shareResponse, err := client.Get(httpServer.URL + "/share/public/invalid-token")
-	if err != nil {
-		t.Fatal(err)
+	// 不做 token 校验, 响应 no-store; token 路径撞上真实静态文件或编码
+	// dot-segment 时同样直接拿到 index (不跟随任何重定向)。
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	plainGets := []struct {
+		path   string
+		client *http.Client
+	}{
+		{"/share/public/invalid-token", client},
+		{"/share/public/special", client},
+		{"/share/public/%2E%2E", &noRedirect},
 	}
-	shareBody, err := io.ReadAll(shareResponse.Body)
-	shareResponse.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if shareResponse.StatusCode != http.StatusOK || string(shareBody) != string(indexBody) {
-		t.Fatalf("GET /share/public/{token} = %d, body differs from / SPA", shareResponse.StatusCode)
-	}
-	if shareResponse.Header.Get("Cache-Control") != "no-store" {
-		t.Fatalf("GET /share/public/{token} Cache-Control = %q, want no-store", shareResponse.Header.Get("Cache-Control"))
+	for _, plainGet := range plainGets {
+		shareResponse, err := plainGet.client.Get(httpServer.URL + plainGet.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shareBody, err := io.ReadAll(shareResponse.Body)
+		shareResponse.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if shareResponse.StatusCode != http.StatusOK || string(shareBody) != string(indexBody) {
+			t.Fatalf("GET %s = %d, body differs from / SPA", plainGet.path, shareResponse.StatusCode)
+		}
+		if shareResponse.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("GET %s Cache-Control = %q, want no-store", plainGet.path, shareResponse.Header.Get("Cache-Control"))
+		}
 	}
 
 	// WS upgrade 仍走 token 把关: 无效 token 403 而不是 101。

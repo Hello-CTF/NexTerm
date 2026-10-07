@@ -461,7 +461,9 @@ func TestSharePublicPageServesSPA(t *testing.T) {
 	_, token := createShareLink(t, f, ownerSession, device.deviceID, sessionID, false)
 
 	const page = "<html><head><title>NexTerm</title></head><body>share-viewer</body></html>"
-	f.service.SetSharePublicPage(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var gotPath, gotRawPath, gotRawQuery string
+	f.service.SetSharePublicPage(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotRawPath, gotRawQuery = r.URL.Path, r.URL.RawPath, r.URL.RawQuery
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write([]byte(page))
@@ -487,6 +489,20 @@ func TestSharePublicPageServesSPA(t *testing.T) {
 	}
 	if rows := auditPayloads(t, f, "share_link_access"); len(rows) != 0 {
 		t.Fatalf("plain GET wrote share_link_access audit rows: %v", rows)
+	}
+
+	// 静态入口收到的路径固定为 "/" (不做 token 路径的文件查找), query 保留。
+	request, err := http.NewRequest(http.MethodGet, f.http.URL+"/share/public/not-a-token?next=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := f.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if gotPath != "/" || gotRawPath != "" || gotRawQuery != "next=1" {
+		t.Fatalf("static entry got path %q rawPath %q query %q, want /, empty, next=1", gotPath, gotRawPath, gotRawQuery)
 	}
 
 	// upgrade 路径的 token 把关不变: 无效 token 的 WS 握手仍 403。

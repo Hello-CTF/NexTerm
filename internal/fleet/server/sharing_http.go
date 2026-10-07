@@ -289,13 +289,22 @@ func headerHasToken(header http.Header, key, token string) bool {
 }
 
 // serveSharePublicPage 用配置的静态入口服务 SPA (与 "/" 同一 index.html,
-// 不重定向不另造 shell); token URL 一律 no-store。
+// 不重定向不另造 shell); token URL 一律 no-store。静态入口按 URL.Path 查
+// 文件, 原始 token 路径可能撞上真实静态文件或被编码 dot-segment 校验拒绝,
+// 因此克隆请求并把路径固定为 "/", 只保留 query 等上下文。
 func (s *Service) serveSharePublicPage(w http.ResponseWriter, r *http.Request) {
 	if s.sharePublicPage == nil {
 		http.NotFound(w, r)
 		return
 	}
-	s.sharePublicPage.ServeHTTP(noStoreWriter{w}, r)
+	page := r.Clone(r.Context())
+	page.URL.Path = "/"
+	page.URL.RawPath = ""
+	page.RequestURI = "/"
+	if page.URL.RawQuery != "" {
+		page.RequestURI += "?" + page.URL.RawQuery
+	}
+	s.sharePublicPage.ServeHTTP(noStoreWriter{w}, page)
 }
 
 // noStoreWriter 在写出前强制 Cache-Control: no-store, 覆盖静态入口对
