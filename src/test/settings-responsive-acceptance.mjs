@@ -877,6 +877,159 @@ async function auditChecks(page) {
   }
 }
 
+// M197: 配对码添加设备的完整路径(demo transport,真实前端代码 + 真实 demo 假后端校验)。
+// 签发配对码 → 登出 → 登录门「用配对码添加设备」→ enroll 登记 → 统一登录绑定设备 → 设备列表可见;
+// 无效码如实报错不进入登录步;320px 下门表单不溢出。
+const SET_INPUT = `(el, value) => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setter.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}`;
+
+async function enrollChecks(chrome) {
+  const page = await newPage(chrome);
+  await page.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `try { localStorage.clear(); localStorage.setItem("nexterm.theme.v1", "dark"); } catch {}`,
+  });
+  await page.navigate(`${VITE}/?demo=1`);
+  await page.waitFor("!!document.querySelector('.nx-app')");
+  await page.waitFor(`(async () => { const { useUi } = await import('/src/app/store.ts'); return useUi.getState().workspaces !== undefined; })()`);
+  await page.evaluate(`(async () => {
+    const { useUi } = await import('/src/app/store.ts');
+    useUi.getState().addTab({ id: 'settings-enroll', kind: 'settings', title: '设置', closable: true });
+    useUi.getState().setActiveTab('settings-enroll');
+    return true;
+  })()`);
+  await page.waitFor(`document.body.textContent.includes("登录设备")`);
+  await sleep(400);
+
+  await pass("D-enroll-issue-code", async () => {
+    const code = await page.evaluate(`(async () => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "添加设备");
+      if (!btn) throw new Error("添加设备 button not found");
+      btn.click();
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const el = [...document.querySelectorAll("code")].find((c) => c.textContent?.startsWith("demo-enroll-"));
+        if (el) return el.textContent;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error("enroll code not rendered");
+    })()`);
+    assert.ok(code.startsWith("demo-enroll-"), `unexpected demo enroll code: ${code}`);
+    return { evidence: { code } };
+  });
+
+  const enrollCode = await page.evaluate(`(() => {
+    const el = [...document.querySelectorAll("code")].find((c) => c.textContent?.startsWith("demo-enroll-"));
+    return el ? el.textContent : null;
+  })()`);
+  assert.ok(enrollCode, "enroll code must still be displayed before logout");
+
+  // 登出(走真实 store.logout → demo /auth/logout),登录门出现
+  await page.evaluate(`(async () => {
+    const { useAuth } = await import('/src/features/auth/store.ts');
+    await useAuth.getState().logout();
+    return true;
+  })()`);
+  await page.waitFor(`document.body.textContent.includes("用配对码添加设备")`);
+
+  await pass("D-enroll-full-flow", async () => {
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("用配对码添加设备"));
+      if (!btn) throw new Error("用配对码添加设备 entry not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("15 分钟内有效")`);
+    const deviceName = "验收浏览器-m197";
+    await page.evaluate(`(() => {
+      const gate = document.querySelector(".fixed.inset-0");
+      if (!gate) throw new Error("auth gate overlay not found");
+      const inputs = gate.querySelectorAll("input");
+      if (inputs.length !== 2) throw new Error("enroll form inputs mismatch: " + inputs.length);
+      const set = ${SET_INPUT};
+      set(inputs[0], ${JSON.stringify(enrollCode)});
+      set(inputs[1], ${JSON.stringify(deviceName)});
+    })()`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("添加并继续"));
+      if (!btn) throw new Error("添加并继续 button not found");
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("设备已登记")`);
+    await page.evaluate(`(() => {
+      const gate = document.querySelector(".fixed.inset-0");
+      const inputs = gate.querySelectorAll("input");
+      const set = ${SET_INPUT};
+      set(inputs[0], "demo");
+      set(inputs[1], "demo-pass-123");
+    })()`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("登录并完成添加"));
+      if (!btn) throw new Error("登录并完成添加 button not found");
+      btn.click();
+    })()`);
+    // 统一登录成功后门关闭,设备出现在登录设备列表
+    await page.waitFor(`!document.querySelector(".fixed.inset-0")`);
+    await page.waitFor(`document.body.textContent.includes(${JSON.stringify(deviceName)})`);
+    const state = await page.evaluate(`(() => {
+      const cards = [...document.querySelectorAll(".nx-card")];
+      const card = cards.find((c) => c.textContent?.includes("登录设备"));
+      if (!card) return { found: false };
+      const rows = [...card.querySelectorAll("div")].filter((d) => d.textContent?.includes(${JSON.stringify(deviceName)}));
+      return {
+        found: true,
+        rowCount: rows.length,
+        active: rows.some((d) => d.textContent?.includes("生效中")),
+      };
+    })()`);
+    assert.ok(state.found, "登录设备 card not found after enroll login");
+    assert.ok(state.rowCount > 0, `enrolled device row missing: ${JSON.stringify(state)}`);
+    assert.equal(state.active, true, `enrolled device must be active: ${JSON.stringify(state)}`);
+    const shot = await screenshot(page, "D-enroll-device-listed.png");
+    return { evidence: { deviceName, state, shot } };
+  });
+
+  await pass("D-enroll-invalid-code", async () => {
+    await page.evaluate(`(async () => {
+      const { useAuth } = await import('/src/features/auth/store.ts');
+      await useAuth.getState().logout();
+      return true;
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("用配对码添加设备")`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("用配对码添加设备"));
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("15 分钟内有效")`);
+    await page.evaluate(`(() => {
+      const gate = document.querySelector(".fixed.inset-0");
+      const inputs = gate.querySelectorAll("input");
+      const set = ${SET_INPUT};
+      set(inputs[0], "demo-enroll-bogus-code");
+    })()`);
+    await page.evaluate(`(() => {
+      const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("添加并继续"));
+      btn.click();
+    })()`);
+    await page.waitFor(`document.body.textContent.includes("设备注册码无效或已过期")`);
+    const stillEnrollStep = await page.evaluate(`!document.body.textContent.includes("设备已登记")`);
+    assert.equal(stillEnrollStep, true, "invalid code must not advance to the login step");
+    return { evidence: { error: "设备注册码无效或已过期" } };
+  });
+
+  await pass("D-enroll-form-no-overflow-320", async () => {
+    await setViewport(page, 320, 720);
+    const sample = await page.evaluate(READ_OVERFLOW);
+    assertNoOverflow(sample, "enroll form 320");
+    const shot = await screenshot(page, "D-enroll-form-320.png");
+    await setViewport(page, 1280, 900);
+    return { evidence: { shot } };
+  });
+
+  page.close();
+}
+
 async function syncClientChecks(chrome, api) {
   const served = await (await fetch(`${VITE}/src/features/settings/SyncCard.tsx`)).text();
   assert.ok(served.includes("WebSyncConsole"), "served SyncCard module must contain WebSyncConsole");
@@ -1042,6 +1195,8 @@ try {
   await auditChecks(pageB);
   pageB.close();
 
+  await enrollChecks(chrome);
+
   await syncClientChecks(chrome, server.api);
 } catch (error) {
   harnessErrors.push(String(error?.stack || error));
@@ -1066,7 +1221,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    transport: "real nexterm-server (Go) for settings cards; demo transport for audit rows",
+    transport: "real nexterm-server (Go) for settings cards; demo transport for audit rows and the enroll pairing-code flow",
     matrix: "320/360/390/568x320 landscape/768 + 200%-equivalent 384 & 560 + coarse pointer + dark/light",
   },
   checks,

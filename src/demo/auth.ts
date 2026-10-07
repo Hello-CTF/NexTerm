@@ -55,6 +55,8 @@ interface DemoAuthState {
   user: AccountUser | null;
   users: AccountUser[];
   devices: AccountDevice[];
+  enrollCodes: { code: string; userId: string; expiresAt: number; consumedAt: number | null }[];
+  deviceOwners: Record<string, string>;
   nextId: number;
 }
 
@@ -64,6 +66,12 @@ const state: DemoAuthState = {
   user: demoSuperadmin,
   users: [demoSuperadmin, demoUser],
   devices: demoDevices,
+  enrollCodes: [],
+  deviceOwners: {
+    "d-demo-1": demoSuperadmin.id,
+    "d-demo-2": demoSuperadmin.id,
+    "d-demo-3": demoSuperadmin.id,
+  },
   nextId: 1,
 };
 
@@ -94,6 +102,14 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     const user = findUser(String(payload.username ?? ""));
     if (!user) fail("用户名或密码错误");
     if (user.state === "disabled") fail("账号已禁用");
+    const deviceId = String(payload.device_id ?? "");
+    if (deviceId) {
+      const device = state.devices.find((d) => d.id === deviceId);
+      if (!device) throw { code: "not_found", message: "未找到: 设备" };
+      if (state.deviceOwners[deviceId] !== user.id) fail("设备不属于该用户");
+      if (device.revoked_at) fail("设备已吊销");
+      device.last_seen_at = now();
+    }
     state.user = user;
     user.last_login_at = now();
     return session(user) as T;
@@ -157,7 +173,10 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
   }
   if (path === "/auth/devices/enroll-code" && method === "POST") {
     if (!state.user) fail("会话无效或缺失");
-    return { code: "demo-enroll-code", expires_at: now() + 10 * 60_000 } as T;
+    const code = `demo-enroll-${now().toString(36)}-${state.nextId++}`;
+    const expiresAt = now() + 15 * 60_000;
+    state.enrollCodes.push({ code, userId: state.user.id, expiresAt, consumedAt: null });
+    return { code, expires_at: expiresAt } as T;
   }
   if (path.startsWith("/auth/devices/") && method === "DELETE") {
     if (!state.user) fail("会话无效或缺失");
@@ -168,9 +187,23 @@ export async function demoAuthRequest<T>(method: string, path: string, body?: un
     return { ok: true } as T;
   }
   if (path === "/auth/devices/enroll" && method === "POST") {
-    return {
-      device: { id: `d-demo-${state.nextId++}`, name: String(payload.name ?? "新设备"), kind: String(payload.kind ?? "desktop"), created_at: now(), last_seen_at: now(), revoked_at: 0 },
-    } as T;
+    const code = String(payload.code ?? "");
+    const record = state.enrollCodes.find((c) => c.code === code);
+    if (!record || record.consumedAt !== null || record.expiresAt <= now()) {
+      fail("设备注册码无效或已过期");
+    }
+    record.consumedAt = now();
+    const device: AccountDevice = {
+      id: `d-demo-${state.nextId++}`,
+      name: String(payload.name ?? "新设备"),
+      kind: String(payload.kind ?? "desktop"),
+      created_at: now(),
+      last_seen_at: 0,
+      revoked_at: 0,
+    };
+    state.devices.push(device);
+    state.deviceOwners[device.id] = record.userId;
+    return { device } as T;
   }
 
   if (path === "/admin/users" && method === "GET") {
@@ -238,4 +271,10 @@ export function resetDemoAuth(): void {
   state.user = demoSuperadmin;
   state.users = [demoSuperadmin, demoUser];
   state.devices = demoDevices;
+  state.enrollCodes = [];
+  state.deviceOwners = {
+    "d-demo-1": demoSuperadmin.id,
+    "d-demo-2": demoSuperadmin.id,
+    "d-demo-3": demoSuperadmin.id,
+  };
 }
