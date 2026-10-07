@@ -83,6 +83,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		Profiles:        services.Profiles,
 		ModelForProfile: aiProfileModelFactory(services.Profiles),
 		Permissions:     guardManager,
+		Grants:          grantsManager,
 		Permission:      unattendedPermissions(guardManager),
 		Tools:           registry,
 		Context:         builder,

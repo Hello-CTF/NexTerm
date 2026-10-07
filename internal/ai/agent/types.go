@@ -65,6 +65,7 @@ type Config struct {
 	ModelForProfile       ProfileModelFactory
 	Profiles              *profiles.Manager
 	Permissions           *guard.Manager
+	Grants                *guard.Grants
 	Tools                 *tools.Registry
 	Context               *aicontext.Builder
 	Store                 ConversationStore

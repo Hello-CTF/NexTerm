@@ -7,7 +7,9 @@ import { useUi, type TakeoverState } from "../../app/store";
 import { formatBinding, formatBindingAria, useKeybindings } from "../../app/keybindings";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent } from "../../ui/DialogHost";
+import { DEMO } from "../../demo";
 import { ModelPanel } from "./ModelPanel";
+import { GrantPanel } from "./GrantPanel";
 import { ModelSelector } from "./ModelSelector";
 import { Markdown } from "./Markdown";
 import { diffLineText, hasVisibleChange, simpleDiff } from "./diff";
@@ -48,6 +50,7 @@ import {
   IconEdit,
   IconHistory,
   IconImage,
+  IconKey,
   IconList,
   IconLoader,
   IconMonitor,
@@ -231,6 +234,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
   const [permOpen, setPermOpen] = useState(false);
+  const [grantOpen, setGrantOpen] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [refs, setRefs] = useState<RefChip[]>([]);
   const [atOpen, setAtOpen] = useState(false);
@@ -1386,6 +1390,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
       )}
 
+      {grantOpen && <GrantPanel onClose={() => setGrantOpen(false)} />}
+
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={setScrollEl}
@@ -1754,6 +1760,15 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
           >
             <IconShield size={13} />
           </button>
+          {!DEMO && (
+            <button
+              className={`nx-icon-btn nx-icon-btn-sm ${grantOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
+              title="设备长期授权管理（默认关闭，按设备开启）"
+              onClick={() => setGrantOpen((v) => !v)}
+            >
+              <IconKey size={13} />
+            </button>
+          )}
           <button
             className="nx-icon-btn nx-icon-btn-sm text-red-400 hover:text-red-300"
             title={

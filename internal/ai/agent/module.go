@@ -121,6 +121,39 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return r.config.Permissions.Get(), nil
 			})
 		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_grant_list", func(context.Context, *ipc.Call, struct{}) ([]guard.DeviceGrant, error) {
+				if r.config.Grants == nil {
+					return nil, errors.New("设备授权未配置")
+				}
+				return r.config.Grants.List(), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_grant_set", func(ctx context.Context, _ *ipc.Call, args struct {
+				DeviceID string   `json:"deviceId"`
+				Kinds    []string `json:"kinds"`
+			}) (guard.DeviceGrant, error) {
+				if r.config.Grants == nil {
+					return guard.DeviceGrant{}, errors.New("设备授权未配置")
+				}
+				kinds, err := guard.ParseGrantKinds(args.Kinds)
+				if err != nil {
+					return guard.DeviceGrant{}, err
+				}
+				return r.config.Grants.Grant(ctx, args.DeviceID, kinds)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_grant_revoke", func(ctx context.Context, _ *ipc.Call, args struct {
+				DeviceID string `json:"deviceId"`
+			}) (any, error) {
+				if r.config.Grants == nil {
+					return nil, errors.New("设备授权未配置")
+				}
+				return nil, r.config.Grants.Revoke(ctx, args.DeviceID)
+			})
+		},
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
