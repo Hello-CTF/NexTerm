@@ -82,6 +82,38 @@ describe("runErrorStats", () => {
   });
 });
 
+describe("UsageRing variants", () => {
+  it("interactive variant renders a real button carrying the coarse touch target", () => {
+    const view = mount(createElement(UsageRing, { loadSummary: () => Promise.resolve([]) }));
+    const button = view.container.querySelector("button");
+    expect(button).not.toBeNull();
+    expect(button!.getAttribute("title")).toBe("查看用量分账");
+    expect(button!.getAttribute("aria-expanded")).toBe("false");
+    expect(button!.className).toContain("pointer-coarse:min-h-6");
+    expect(button!.className).toContain("pointer-coarse:min-w-6");
+    const img = button!.querySelector<HTMLElement>('span[role="img"]');
+    expect(img).not.toBeNull();
+    expect(img!.tabIndex).toBe(-1);
+    expect(img!.getAttribute("aria-label")).toBe("尚未产生用量");
+    view.unmount();
+  });
+
+  it("static variant keeps the focusable ring span without a button", () => {
+    const view = mount(
+      createElement(UsageRing, {
+        usage: { promptTokens: 1200, completionTokens: 300, cachedTokens: 600, contextWindow: 8192 },
+      }),
+    );
+    expect(view.container.querySelector("button")).toBeNull();
+    const img = view.container.querySelector<HTMLElement>('span[role="img"]');
+    expect(img).not.toBeNull();
+    expect(img!.tabIndex).toBe(0);
+    expect(img!.getAttribute("aria-label")).toContain("上下文占用");
+    expect(view.container.querySelector(".group-focus-within\\:block")).not.toBeNull();
+    view.unmount();
+  });
+});
+
 describe("UsageRing details", () => {
   it("shows title usage separately plus retry/failure rates, loading the summary lazily", async () => {
     const loadSummary = vi.fn().mockResolvedValue(summaryRows);

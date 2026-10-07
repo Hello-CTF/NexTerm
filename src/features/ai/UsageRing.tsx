@@ -202,7 +202,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
           aria-expanded={detailsOpen}
           title="查看用量分账"
           onClick={toggleDetails}
-          className="inline-flex items-center"
+          className="pointer-coarse:min-h-6 pointer-coarse:min-w-6 inline-flex items-center justify-center"
         >
           <span role="img" aria-label={label} className="inline-flex items-center">
             {ring}
