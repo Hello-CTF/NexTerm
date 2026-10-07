@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -124,8 +125,18 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport) (m
 	if err != nil {
 		return nil, err
 	}
+	knownHostMetas, err := e.knownHostTombstoneMetas(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, tombstone := range tombstones {
-		payload, err := marshalObject(tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt})
+		object := tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt}
+		if tombstone.Kind == KindKnownHost {
+			if meta, found := knownHostMetas[tombstone.ID]; found {
+				object.Host, object.Port, object.KeyType = meta.Host, meta.Port, meta.KeyType
+			}
+		}
+		payload, err := marshalObject(object)
 		if err != nil {
 			return nil, err
 		}
@@ -153,6 +164,41 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport) (m
 			continue
 		}
 		objects[transcript.ID] = localObject{KindTranscript, payload}
+	}
+	knownHosts, err := e.store.KnownHostList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range knownHosts {
+		payload, err := marshalObject(knownHostObject{
+			ID: row.ID, Host: row.Host, Port: row.Port, KeyType: row.KeyType,
+			Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+		objects[row.ID] = localObject{KindKnownHost, payload}
+	}
+	profileState, profileRevision, _, err := e.aiProfilesLoad(ctx)
+	if err != nil {
+		if !errors.Is(err, errAIProfilesCorrupt) {
+			return nil, err
+		}
+		report.warnf("AI 模型档案数据损坏, 本次不同步: %v", err)
+	} else {
+		for _, record := range profileState.Profiles {
+			key, err := e.revealAIProfileKey(ctx, record.APIKey)
+			if err != nil {
+				report.warnf("AI 模型档案 %s 解密失败, 本次不同步: %v", record.ID, err)
+				continue
+			}
+			record.APIKey = key
+			payload, err := marshalObject(aiProfilePayloadFromRecord(record, profileRevision))
+			if err != nil {
+				return nil, err
+			}
+			objects[record.ID] = localObject{KindAIProfile, payload}
+		}
 	}
 	return objects, nil
 }
@@ -563,6 +609,10 @@ func (e *Engine) applyTombstoneObject(ctx context.Context, objectID string, plai
 		return e.applyCredentialTombstone(ctx, objectID, payload.DeletedAt, report)
 	case KindTranscript:
 		return e.applyTranscriptTombstone(ctx, objectID, payload.DeletedAt, report)
+	case KindKnownHost:
+		return e.applyKnownHostTombstone(ctx, objectID, payload, report)
+	case KindAIProfile:
+		return e.applyAIProfileTombstone(ctx, objectID, payload.DeletedAt, report)
 	default:
 		report.warnf("墓碑对象目标种类 %s 不受支持", payload.TargetKind)
 		return false, false
@@ -725,6 +775,234 @@ func chunksToRows(chunks []transcriptChunkObject) []store.TranscriptChunkRow {
 	return rows
 }
 
+func (e *Engine) applyKnownHostObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
+	var payload knownHostObject
+	if err := unmarshalObject(plaintext, &payload); err != nil {
+		report.warnf("已知主机对象载荷损坏: %v", err)
+		return false, false
+	}
+	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
+		report.warnf("无法检查已知主机 %s 的删除墓碑: %v", payload.ID, err)
+		return false, false
+	} else if found && tombstone.DeletedAt >= payload.AddedAt {
+		return false, false
+	}
+	local, exists, err := e.knownHostByID(ctx, payload.ID)
+	if err != nil {
+		report.warnf("无法检查已知主机 %s: %v", payload.ID, err)
+		return false, false
+	}
+	if exists {
+		localPayload, err := marshalObject(knownHostObject{
+			ID: local.ID, Host: local.Host, Port: local.Port, KeyType: local.KeyType,
+			Fingerprint: local.Fingerprint, AddedAt: local.AddedAt,
+		})
+		if err != nil {
+			report.warnf("已知主机 %s 本地载荷编码失败: %v", payload.ID, err)
+			return false, false
+		}
+		if bytes.Equal(plaintext, localPayload) {
+			return false, true
+		}
+		if !remoteWins(payload.AddedAt, local.AddedAt, plaintext, localPayload) {
+			return false, false
+		}
+	}
+	// 同一 (host, port, keyType) 只能有一行: 不同 ID 的同行记录按 LWW 决胜,
+	// 败者行删除并以胜者修订号立碑, 保证多设备对同一主机收敛到同一对象。
+	displacedID := ""
+	if conflict, found, err := e.store.KnownHostGet(ctx, payload.Host, payload.Port, payload.KeyType); err != nil {
+		report.warnf("无法检查已知主机 %s 的三元组冲突: %v", payload.ID, err)
+		return false, false
+	} else if found && conflict.ID != payload.ID {
+		conflictPayload, err := marshalObject(knownHostObject{
+			ID: conflict.ID, Host: conflict.Host, Port: conflict.Port, KeyType: conflict.KeyType,
+			Fingerprint: conflict.Fingerprint, AddedAt: conflict.AddedAt,
+		})
+		if err != nil {
+			report.warnf("已知主机 %s 冲突载荷编码失败: %v", payload.ID, err)
+			return false, false
+		}
+		if !remoteWins(payload.AddedAt, conflict.AddedAt, plaintext, conflictPayload) {
+			// 本地胜者保住三元组, 但对端败者对象仍留在服务端: 按胜者修订号为败者立碑,
+			// 本轮 collect/push 即以墓碑覆盖之, 否则胜者日后被删除时旧指纹会在新设备复活。
+			// 同 ID 的本地存活行(不同三元组的化身)与败者墓碑不能共存, 先让出原 ID 再立碑。
+			var incarnation *store.KnownHostRow
+			if exists {
+				incarnation = &local
+			}
+			if err := e.knownHostTombstoneLoser(ctx, payload, incarnation, conflict.AddedAt); err != nil {
+				report.warnf("已知主机败者 %s 的删除墓碑记录失败: %v", payload.ID, err)
+				return false, false
+			}
+			return false, false
+		}
+		displacedID = conflict.ID
+	}
+	if err := e.knownHostUpsert(ctx, payload, displacedID); err != nil {
+		report.warnf("已知主机 %s 应用失败: %v", payload.ID, err)
+		return false, false
+	}
+	return true, false
+}
+
+// applyKnownHostTombstone 区分冲突墓碑与用户主动删除: 冲突墓碑携带原败者三元组,
+// 本地同 ID 不同三元组且修订号不新的行是胜出的化身, 不得按用户删除清掉——安全 re-ID
+// 并随本轮 collect/push 传播, 冲突墓碑只清原槽位。同三元组败者行与用户删除按 ID 清除。
+func (e *Engine) applyKnownHostTombstone(ctx context.Context, objectID string, payload tombstoneObject, report *SyncReport) (bool, bool) {
+	local, exists, err := e.knownHostByID(ctx, objectID)
+	if err != nil {
+		report.warnf("无法检查已知主机 %s: %v", objectID, err)
+		return false, false
+	}
+	if exists && local.AddedAt > payload.DeletedAt {
+		return false, false
+	}
+	conflict := payload.Host != "" || payload.KeyType != ""
+	if exists && conflict && (local.Host != payload.Host || local.Port != payload.Port || local.KeyType != payload.KeyType) {
+		newID, err := e.knownHostReincarnationID(&local)
+		if err != nil {
+			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			return false, false
+		}
+		tx, err := e.store.DB().BeginTx(ctx, nil)
+		if err != nil {
+			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			return false, false
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.ExecContext(ctx, "UPDATE known_host SET id = ? WHERE id = ?", newID, local.ID); err != nil {
+			report.warnf("已知主机化身 %s 的 re-ID 失败: %v", objectID, err)
+			return false, false
+		}
+		meta := &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+		if err := e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta); err != nil {
+			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
+			return false, false
+		}
+		if err := tx.Commit(); err != nil {
+			report.warnf("已知主机 %s 的冲突墓碑记录失败: %v", objectID, err)
+			return false, false
+		}
+		return true, false
+	}
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
+		return false, false
+	}
+	defer func() { _ = tx.Rollback() }()
+	if exists {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", objectID); err != nil {
+			report.warnf("已知主机 %s 按墓碑删除失败: %v", objectID, err)
+			return false, false
+		}
+	}
+	var meta *knownHostTombstoneMeta
+	if conflict {
+		meta = &knownHostTombstoneMeta{Host: payload.Host, Port: payload.Port, KeyType: payload.KeyType}
+	}
+	if err := e.knownHostTombstoneRecordTx(ctx, tx, objectID, payload.DeletedAt, meta); err != nil {
+		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
+		return false, false
+	}
+	if err := tx.Commit(); err != nil {
+		report.warnf("已知主机 %s 的删除墓碑记录失败: %v", objectID, err)
+		return false, false
+	}
+	return true, false
+}
+
+func (e *Engine) applyAIProfileObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
+	var payload aiProfileObject
+	if err := unmarshalObject(plaintext, &payload); err != nil {
+		report.warnf("AI 模型档案对象载荷损坏: %v", err)
+		return false, false
+	}
+	if payload.APIKey != "" {
+		if err := e.requireVault(ctx); err != nil {
+			report.warnf("AI 模型档案 %s 需要解锁凭据库才能应用: %v", payload.ID, err)
+			return false, false
+		}
+	}
+	state, revision, _, err := e.aiProfilesLoad(ctx)
+	if err != nil {
+		report.warnf("无法读取 AI 模型档案 %s: %v", payload.ID, err)
+		return false, false
+	}
+	if tombstone, found, err := e.syncTombstoneGet(ctx, payload.ID); err != nil {
+		report.warnf("无法检查 AI 模型档案 %s 的删除墓碑: %v", payload.ID, err)
+		return false, false
+	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
+		return false, false
+	}
+	local, exists := state.find(payload.ID)
+	if exists {
+		localKey, err := e.revealAIProfileKey(ctx, local.APIKey)
+		if err != nil {
+			report.warnf("AI 模型档案 %s 本地解密失败: %v", payload.ID, err)
+			return false, false
+		}
+		local.APIKey = localKey
+		localPayload, err := marshalObject(aiProfilePayloadFromRecord(local, revision))
+		if err != nil {
+			report.warnf("AI 模型档案 %s 本地载荷编码失败: %v", payload.ID, err)
+			return false, false
+		}
+		if bytes.Equal(plaintext, localPayload) {
+			return false, true
+		}
+		if !remoteWins(payload.UpdatedAt, revision, plaintext, localPayload) {
+			return false, false
+		}
+	}
+	record := aiProfileRecordFromPayload(payload)
+	if record.APIKey != "" {
+		envelope, err := e.protectAIProfileKey(ctx, record.APIKey)
+		if err != nil {
+			report.warnf("AI 模型档案 %s 重加密失败: %v", payload.ID, err)
+			return false, false
+		}
+		record.APIKey = envelope
+	}
+	state.upsert(record)
+	state.ensureActive()
+	// 档案共享一个 LWW 时钟: 修订号只增不减, 本地较新编辑不得被较旧对端对象回滚。
+	if payload.UpdatedAt > revision {
+		revision = payload.UpdatedAt
+	}
+	if err := e.aiProfilesSave(ctx, state, revision, payload.ID); err != nil {
+		report.warnf("AI 模型档案 %s 应用失败: %v", payload.ID, err)
+		return false, false
+	}
+	return true, false
+}
+
+func (e *Engine) applyAIProfileTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
+	state, revision, _, err := e.aiProfilesLoad(ctx)
+	if err != nil {
+		report.warnf("无法读取 AI 模型档案 %s: %v", objectID, err)
+		return false, false
+	}
+	_, exists := state.find(objectID)
+	if exists && revision > deletedAt {
+		return false, false
+	}
+	if err := e.syncTombstonePut(ctx, objectID, KindAIProfile, deletedAt); err != nil {
+		report.warnf("AI 模型档案 %s 的删除墓碑记录失败: %v", objectID, err)
+		return false, false
+	}
+	if exists {
+		state.remove(objectID)
+		state.ensureActive()
+		if err := e.aiProfilesSave(ctx, state, revision, ""); err != nil {
+			report.warnf("AI 模型档案 %s 按墓碑删除失败: %v", objectID, err)
+			return false, false
+		}
+	}
+	return true, false
+}
+
 func unmarshalObject(plaintext []byte, dst any) error {
 	if err := json.Unmarshal(plaintext, dst); err != nil {
 		return ipc.WrapError(ipc.CodeBadParam, "同步对象载荷不是合法 JSON", err)
@@ -747,6 +1025,7 @@ func (e *Engine) requireVault(ctx context.Context) error {
 }
 
 // objectKindRank 保证同一批推送内被依赖对象先于依赖者: 拉取端按 seq 顺序应用, 引用必须在应用前已存在。
+// 墓碑必须排在全部内容种类之后: 同批内容与其墓碑冲突时, 服务端以墓碑覆盖, 拉取端才对账收敛。
 func objectKindRank(kind string) int {
 	switch kind {
 	case KindGroup:
@@ -757,12 +1036,16 @@ func objectKindRank(kind string) int {
 		return 2
 	case KindAsset:
 		return 3
-	case KindTombstone:
+	case KindKnownHost:
 		return 4
-	case KindTranscript:
+	case KindAIProfile:
 		return 5
-	default:
+	case KindTombstone:
 		return 6
+	case KindTranscript:
+		return 7
+	default:
+		return 8
 	}
 }
 

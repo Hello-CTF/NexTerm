@@ -87,7 +87,7 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject) Apply
 		return reject("%v", err)
 	}
 	switch object.Kind {
-	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript:
+	case KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile:
 	default:
 		return reject("不支持的同步对象种类 %q", object.Kind)
 	}
@@ -129,6 +129,10 @@ func canonicalApplyPayload(object ApplyObject) ([]byte, error) {
 		decoded = &tombstoneObject{}
 	case KindTranscript:
 		decoded = &transcriptObject{}
+	case KindKnownHost:
+		decoded = &knownHostObject{}
+	case KindAIProfile:
+		decoded = &aiProfileObject{}
 	default:
 		return nil, ipc.NewError(ipc.CodeBadParam, "不支持的同步对象种类")
 	}
@@ -158,6 +162,10 @@ func applyPayloadID(decoded any) string {
 		return payload.ID
 	case *transcriptObject:
 		return payload.ID
+	case *knownHostObject:
+		return payload.ID
+	case *aiProfileObject:
+		return payload.ID
 	}
 	return ""
 }
@@ -177,6 +185,10 @@ func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string
 		return e.applyTombstoneObject(ctx, objectID, plaintext, report)
 	case KindTranscript:
 		return e.applyTranscriptObject(ctx, plaintext, report)
+	case KindKnownHost:
+		return e.applyKnownHostObject(ctx, plaintext, report)
+	case KindAIProfile:
+		return e.applyAIProfileObject(ctx, plaintext, report)
 	}
 	return false, false
 }
