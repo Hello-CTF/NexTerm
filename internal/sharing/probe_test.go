@@ -39,7 +39,7 @@ func TestAgentProbeDeniesCreate(t *testing.T) {
 	if calls == 0 {
 		t.Fatal("agent probe was not consulted")
 	}
-	if _, err := service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, fixture.createUser(t, "probe-rcpt").ID, false, 0); ipc.NormalizeError(err).Code != ipc.CodeDisconnected {
+	if _, err := service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, fixture.createUser(t, "probe-rcpt").Username, false, 0); ipc.NormalizeError(err).Code != ipc.CodeDisconnected {
 		t.Fatalf("CreateHostShare err = %v, want probe denial", err)
 	}
 }
@@ -67,7 +67,7 @@ func TestAgentProbeDeniesResolveWithAudit(t *testing.T) {
 	}
 
 	recipient := fixture.createUser(t, "probe-terminal")
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, recipient.ID, false, 0); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, recipient.Username, false, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.AuthorizeTerminalOpen(context.Background(), fixture.identity(recipient), deviceID); ipc.NormalizeError(err).Code != ipc.CodeDisconnected {

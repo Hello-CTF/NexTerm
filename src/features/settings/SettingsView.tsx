@@ -19,6 +19,7 @@ import { FilesCard } from "./FilesCard";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
+import { ShareCard } from "./ShareCard";
 import { describeError } from "../../ui/errorText";
 import {
   IconCheckCircle,
@@ -499,6 +500,8 @@ export function SettingsView() {
         <SyncBundleCard />
 
         <FilesCard />
+
+        <ShareCard />
 
         <ShortcutsCard />
       </div>

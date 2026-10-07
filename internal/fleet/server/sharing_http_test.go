@@ -650,7 +650,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	}
 
 	call := f.call(t, "POST", "/share/host-shares", map[string]any{
-		"device_id": device.deviceID, "recipient_id": recipient.ID, "write": true, "ttl_ms": 3600000,
+		"device_id": device.deviceID, "recipient_username": "host-recipient", "write": true, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf)
 	if call.status != http.StatusOK {
 		t.Fatalf("create host share: HTTP %d %v", call.status, call.body)
@@ -681,7 +681,7 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	collector.expectOutput(t, "tick", 10*time.Second)
 
 	call = f.call(t, "POST", "/share/host-shares", map[string]any{
-		"device_id": device.deviceID, "recipient_id": recipient.ID, "write": false, "ttl_ms": 3600000,
+		"device_id": device.deviceID, "recipient_username": "host-recipient", "write": false, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf)
 	if call.status != http.StatusOK || call.body["permission"] != "read" {
 		t.Fatalf("shrink share: HTTP %d %v", call.status, call.body)
@@ -713,6 +713,81 @@ func TestShareHostTerminalOpenAndShrink(t *testing.T) {
 	}
 }
 
+func TestShareHostShareCreateByUsername(t *testing.T) {
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "byname-owner")
+	recipient := f.createUser(t, "byname-recipient")
+	disabled := f.createUser(t, "byname-disabled")
+	stranger := f.createUser(t, "byname-stranger")
+	if err := f.accounts.SetUserDisabled(context.Background(), disabled.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	device := startShareTestAgent(t, f, owner, "byname-box")
+	ownerSession := f.session(t, owner)
+
+	// 普通设备 owner 用用户名创建 (大小写不敏感), 全程不需要用户目录权限。
+	call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "ByName-Recipient", "write": false, "ttl_ms": 3600000,
+	}, ownerSession, ownerSession.csrf)
+	if call.status != http.StatusOK {
+		t.Fatalf("create by username: HTTP %d %v", call.status, call.body)
+	}
+	if call.body["recipient_id"] != recipient.ID || call.body["recipient_username"] != "byname-recipient" || call.body["permission"] != "read" {
+		t.Fatalf("host share view = %v", call.body)
+	}
+
+	// 无效用户名: 既有 not_found 安全错误, 不创建分享。
+	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
+	}, ownerSession, ownerSession.csrf); call.status != http.StatusNotFound {
+		t.Fatalf("unknown recipient: HTTP %d %v", call.status, call.body)
+	}
+
+	// 禁用接收者: 既有 forbidden 安全错误 (sharing 层判定并写审计), 不创建分享。
+	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "byname-disabled", "write": false, "ttl_ms": 3600000,
+	}, ownerSession, ownerSession.csrf); call.status != http.StatusForbidden {
+		t.Fatalf("disabled recipient: HTTP %d %v", call.status, call.body)
+	}
+
+	// 非设备 owner 的普通用户不能在该设备上创建 (服务端 owner/superadmin 把关不变)。
+	strangerSession := f.session(t, stranger)
+	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "byname-recipient", "write": false, "ttl_ms": 3600000,
+	}, strangerSession, strangerSession.csrf); call.status != http.StatusForbidden {
+		t.Fatalf("stranger create: HTTP %d %v", call.status, call.body)
+	}
+
+	// 越权 + 不存在用户名: 授权与 deny 审计先于用户名解析, 仍 403 not_owner
+	// (不得退化成无审计的 404, 不泄露接收者是否存在)。
+	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
+		"device_id": device.deviceID, "recipient_username": "no-such-user", "write": false, "ttl_ms": 3600000,
+	}, strangerSession, strangerSession.csrf); call.status != http.StatusForbidden {
+		t.Fatalf("stranger create with unknown recipient: HTTP %d %v", call.status, call.body)
+	}
+
+	// 失败路径没有留下分享行: 列表仍只有最初一条。
+	listCall := f.call(t, "GET", "/share/host-shares", nil, ownerSession, "")
+	if listCall.status != http.StatusOK || len(listCall.body["shares"].([]any)) != 1 {
+		t.Fatalf("owner host list: HTTP %d %v", listCall.status, listCall.body)
+	}
+
+	// 审计语义保持: 成功创建一条带 share_id 的 allow; 两次越权各一条 deny/not_owner。
+	audits := auditPayloads(t, f, "host_share_create")
+	allowWithShare, denyNotOwner := 0, 0
+	for _, payload := range audits {
+		if payload["outcome"] == "allow" && payload["share_id"] != nil && payload["share_id"] != "" {
+			allowWithShare++
+		}
+		if payload["outcome"] == "deny" && payload["reason"] == "not_owner" {
+			denyNotOwner++
+		}
+	}
+	if allowWithShare != 1 || denyNotOwner != 2 {
+		t.Fatalf("host_share_create audits = %v", audits)
+	}
+}
+
 func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	f := newHTTPFixture(t, false, WithShareRevalidateInterval(100*time.Millisecond))
 	owner := f.createUser(t, "offline-owner")
@@ -723,7 +798,7 @@ func TestShareDaemonOfflineStopsOpenAndStream(t *testing.T) {
 	recipientSession := f.session(t, recipient)
 
 	if call := f.call(t, "POST", "/share/host-shares", map[string]any{
-		"device_id": device.deviceID, "recipient_id": recipient.ID, "write": true, "ttl_ms": 3600000,
+		"device_id": device.deviceID, "recipient_username": "offline-recipient", "write": true, "ttl_ms": 3600000,
 	}, ownerSession, ownerSession.csrf); call.status != http.StatusOK {
 		t.Fatalf("create host share: HTTP %d %v", call.status, call.body)
 	}
@@ -758,7 +833,7 @@ func TestShareRoutesAuthOff(t *testing.T) {
 		f.call(t, "POST", "/share/links", map[string]any{"device_id": "d", "session_id": "s"}, session, session.csrf),
 		f.call(t, "GET", "/share/links", nil, session, ""),
 		f.call(t, "POST", "/share/links/x/revoke", nil, session, session.csrf),
-		f.call(t, "POST", "/share/host-shares", map[string]any{"device_id": "d", "recipient_id": "r"}, session, session.csrf),
+		f.call(t, "POST", "/share/host-shares", map[string]any{"device_id": "d", "recipient_username": "r"}, session, session.csrf),
 		f.call(t, "GET", "/share/host-shares", nil, session, ""),
 		f.call(t, "POST", "/share/host-shares/x/revoke", nil, session, session.csrf),
 		f.call(t, "GET", "/share/public/sometoken", nil, nil, ""),

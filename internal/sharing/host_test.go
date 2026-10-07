@@ -16,7 +16,7 @@ func TestHostShareCreateAndOpenTerminal(t *testing.T) {
 	recipient := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, recipient.ID, true, 0)
+	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, recipient.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestHostShareCreatePopulatesUsernames(t *testing.T) {
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	ownerShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, 0)
+	ownerShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestHostShareCreatePopulatesUsernames(t *testing.T) {
 		t.Fatalf("owner share usernames = %q/%q, want %q/%q", ownerShare.OwnerUsername, ownerShare.RecipientUsername, "alice", "bob")
 	}
 
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 0)
+	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +106,17 @@ func TestHostShareCreateAuthorization(t *testing.T) {
 	recipient := fixture.createUser(t, "carol")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(other), deviceID, recipient.ID, true, 0)
+	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(other), deviceID, recipient.Username, true, 0)
+	requireIPCCode(t, err, ipc.CodeForbidden)
+
+	// 越权 + 不存在用户名: authorize 先于用户名解析, 仍 forbidden 并写 deny/not_owner
+	// 审计, 不泄露接收者是否存在。
+	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(other), deviceID, "missing-user", true, 0)
 	requireIPCCode(t, err, ipc.CodeForbidden)
 
 	rows := fixture.auditRows(t, auditKindHostCreate)
-	if len(rows) != 1 || rows[0]["outcome"] != "deny" || rows[0]["reason"] != "not_owner" {
+	if len(rows) != 2 || rows[0]["outcome"] != "deny" || rows[0]["reason"] != "not_owner" ||
+		rows[1]["outcome"] != "deny" || rows[1]["reason"] != "not_owner" {
 		t.Fatalf("create audits = %+v", rows)
 	}
 }
@@ -121,12 +127,12 @@ func TestHostShareRequiresDaemonHost(t *testing.T) {
 	recipient := fixture.createUser(t, "bob")
 	plainDevice := fixture.createDevice(t, owner, "desktop-only")
 
-	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), plainDevice, recipient.ID, true, 0)
+	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), plainDevice, recipient.Username, true, 0)
 	requireIPCCode(t, err, ipc.CodeForbidden)
 
 	agentDevice := fixture.createAgentDevice(t, owner, "agent-host")
 	fixture.setAgentOnline(t, agentDevice, false)
-	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), agentDevice, recipient.ID, true, 0)
+	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), agentDevice, recipient.Username, true, 0)
 	requireIPCCode(t, err, ipc.CodeDisconnected)
 }
 
@@ -139,13 +145,13 @@ func TestHostShareRecipientValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, owner.ID, true, 0)
+	_, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, owner.Username, true, 0)
 	requireIPCCode(t, err, ipc.CodeBadParam)
 
 	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, "missing-user", true, 0)
 	requireIPCCode(t, err, ipc.CodeNotFound)
 
-	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, disabled.ID, true, 0)
+	_, err = fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, disabled.Username, true, 0)
 	requireIPCCode(t, err, ipc.CodeForbidden)
 }
 
@@ -157,14 +163,14 @@ func TestHostShareRecipientIsolation(t *testing.T) {
 	carol := fixture.createUser(t, "carol")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	bobShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, 0)
+	bobShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, carol.ID, true, 0); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, carol.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 0)
+	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,11 +212,11 @@ func TestHostShareUnionPermissionPerLevelExpiry(t *testing.T) {
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, time.Hour)
+	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, false, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 2*time.Hour)
+	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,11 +262,11 @@ func TestHostShareRevalidateShrinksAndStops(t *testing.T) {
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, time.Hour)
+	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, false, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, 2*time.Hour)
+	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +307,7 @@ func TestHostShareInputStopsAfterRevocation(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0)
+	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +334,7 @@ func TestHostShareExpiryStopsAccess(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, minShareTTL); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, minShareTTL); err != nil {
 		t.Fatal(err)
 	}
 
@@ -350,11 +356,11 @@ func TestHostShareRevokeAuthorization(t *testing.T) {
 	carol := fixture.createUser(t, "carol")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	ownerShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0)
+	ownerShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, carol.ID, true, 0)
+	adminShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, carol.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +392,7 @@ func TestHostShareReshareRefreshes(t *testing.T) {
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
 
-	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, time.Hour)
+	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, false, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +404,7 @@ func TestHostShareReshareRefreshes(t *testing.T) {
 	}
 
 	fixture.now += time.Minute.Milliseconds()
-	reshare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 2*time.Hour)
+	reshare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +424,7 @@ func TestHostShareDaemonOfflineStopsOpen(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -438,7 +444,7 @@ func TestHostShareDeviceRevokedStopsOpen(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.db.ExecContext(context.Background(), "UPDATE user_device SET revoked_at = ? WHERE id = ?", fixture.now, deviceID); err != nil {
@@ -461,7 +467,7 @@ func TestHostShareListScope(t *testing.T) {
 	bob := fixture.createUser(t, "bob")
 	carol := fixture.createUser(t, "carol")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -501,11 +507,11 @@ func TestHostGateShrinksToReadThenStops(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.ID, true, time.Hour)
+	writeShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(admin), deviceID, bob.Username, true, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, false, 2*time.Hour)
+	readShare, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, false, 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +558,7 @@ func TestHostGateStopsAfterRevocation(t *testing.T) {
 	owner := fixture.createUser(t, "alice")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0)
+	share, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +591,7 @@ func TestRevalidateHostOwnerMismatchAndDeviceRevoked(t *testing.T) {
 	mallory := fixture.createUser(t, "mallory")
 	bob := fixture.createUser(t, "bob")
 	deviceID := fixture.createAgentDevice(t, owner, "build-host")
-	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.ID, true, 0); err != nil {
+	if _, err := fixture.service.CreateHostShare(context.Background(), fixture.identity(owner), deviceID, bob.Username, true, 0); err != nil {
 		t.Fatal(err)
 	}
 	grant, err := fixture.service.AuthorizeTerminalOpen(context.Background(), fixture.identity(bob), deviceID)
