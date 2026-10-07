@@ -64,7 +64,7 @@ less README.md
 nexterm-server --sync-only --listen 127.0.0.1:8080 --data-dir /var/lib/nexterm
 ```
 
-该模式只开放账号路由（`/auth/*`）、超管路由（`/admin/*`）、`/sync/v2/push`、`/sync/v2/pull`、`/sync/v2/ids` 和 `/healthz`，不提供浏览器界面、`/rpc` 或终端、文件、容器接口。其中 `/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 是公共端点（有频率限制），匿名可用；其余账号数据与 `/sync/v2/*` 要求登录会话，会话内写操作额外要求 CSRF 头，`/admin/*` 还要求超管身份。同步数据按账号隔离并端到端加密，服务端只存密文。账号初始化与完整版相同：未初始化的库首次启动会在控制台打印一次性初始化码；`--sync-only` 没有浏览器界面，可先用完整模式对同一数据目录完成初始化，再切换过来。
+该模式只开放账号路由（`/auth/*`）、超管路由（`/admin/*`）、`/sync/v2/push`、`/sync/v2/pull`、`/sync/v2/ids` 和 `/healthz`，不提供浏览器界面、`/rpc` 或终端、文件、容器接口。其中 `/auth/status`、`/auth/init`、`/auth/login`、`/auth/register`、`/auth/recovery/reset`、`/auth/devices/enroll` 是公共端点，匿名可用（五个 POST 端点有频率限制，`GET /auth/status` 可匿名查询）；其余账号数据与 `/sync/v2/*` 要求登录会话，会话内写操作额外要求 CSRF 头，`/admin/*` 还要求超管身份。同步数据按账号隔离并端到端加密，服务端只存密文。账号初始化与完整版相同：未初始化的库首次启动会在控制台打印一次性初始化码；`--sync-only` 没有浏览器界面，可先用完整模式对同一数据目录完成初始化，再切换过来。
 
 在桌面端的「设置 → 账号同步」中填写服务端地址、用户名和密码即可；密码会发送到服务端完成登录认证，同时在本机用于解锁数据密钥；数据密钥本身与同步内容的明文不会离开本机，服务端只存密文。公网地址必须使用 HTTPS（客户端强制校验）；回环、私网与链路本地地址允许 HTTP，但 HTTP 不加密传输中的密码，内网部署同样建议使用 HTTPS（自签证书可勾选跳过证书校验）。
 
