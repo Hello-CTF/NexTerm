@@ -197,6 +197,26 @@ func (e *Engine) knownHostByID(ctx context.Context, id string) (store.KnownHostR
 	return row, true, nil
 }
 
+// knownHostTombstoneLoser 为三元组冲突的败者按胜者修订号立碑(已存在的更晚墓碑保留),
+// 并清除同 ID 同三元组的本地败者行; 三元组限定保证胜者行与其他对象不被误删。
+func (e *Engine) knownHostTombstoneLoser(ctx context.Context, payload knownHostObject, winnerAddedAt int64) error {
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ? AND host = ? AND port = ? AND key_type = ?",
+		payload.ID, payload.Host, payload.Port, payload.KeyType); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
+		payload.ID, KindKnownHost, winnerAddedAt); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return tx.Commit()
+}
+
 // knownHostUpsert 按 ID 幂等写入并保留对端修订号 added_at; 三元组冲突的败者行与其墓碑在同一事务清除。
 func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, displacedID string) error {
 	tx, err := e.store.DB().BeginTx(ctx, nil)

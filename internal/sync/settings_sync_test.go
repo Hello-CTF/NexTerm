@@ -95,6 +95,104 @@ func requireDeviceQuiescent(t *testing.T, device *testDevice, server *testSyncSe
 	}
 }
 
+// assertServerObjectKind 直接解开服务端密文, 验证对象槽位当前存放的种类(对象/墓碑)。
+func assertServerObjectKind(t *testing.T, server *testSyncServer, username, password, objectID, wantKind string) {
+	t.Helper()
+	var blob []byte
+	if err := server.db.DB().QueryRowContext(context.Background(),
+		"SELECT blob FROM user_sync_object WHERE id = ?", objectID).Scan(&blob); err != nil {
+		t.Fatalf("server object %s: %v", objectID, err)
+	}
+	kind, _, err := tryOpenObject(mustDEK(t, server, username, password), blob, objectID)
+	if err != nil || kind != wantKind {
+		t.Fatalf("server object %s kind=%q err=%v, want %q", objectID, kind, err, wantKind)
+	}
+}
+
+// 评审回归(顺序一: 败者先推, 胜者后同步): 胜者同步时必须为败者立碑并推走,
+// 服务端败者对象被墓碑替换; 再删除胜者后, 新设备不得复活败者的旧指纹。
+func TestEngineKnownHostLoserFirstWinnerTombstones(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	loser := newTestDevice(t)
+	winner := newTestDevice(t)
+
+	loserID := ids.New()
+	winnerID := ids.New()
+	putDeviceKnownHost(t, loser, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:stale", 100)
+	putDeviceKnownHost(t, winner, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:fresh", 200)
+
+	syncDevice(t, loser, server, "alice", "alice-pw-123")
+	syncDevice(t, winner, server, "alice", "alice-pw-123")
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", loserID, KindTombstone)
+	if row, found := deviceKnownHost(t, winner, winnerID); !found || row.Fingerprint != "SHA256:fresh" {
+		t.Fatalf("winner must keep its row: %+v found=%v", row, found)
+	}
+
+	// 败者设备再同步: 墓碑清除其本地旧行。
+	syncDevice(t, loser, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, loser, loserID); found {
+		t.Fatal("loser row must be tombstoned on the loser device")
+	}
+	assertDeviceTombstone(t, loser, loserID, KindKnownHost)
+
+	// 删除胜者并传播后, 新设备不得得到败者(或胜者)的任何行。
+	deleteDeviceKnownHost(t, winner, winnerID, ids.NowMS())
+	syncDevice(t, winner, server, "alice", "alice-pw-123")
+	syncDevice(t, loser, server, "alice", "alice-pw-123")
+
+	newcomer := newTestDevice(t)
+	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
+	rows, err := newcomer.db.KnownHostList(context.Background())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("newcomer must not resurrect any triple row: %+v err=%v", rows, err)
+	}
+	requireDeviceQuiescent(t, loser, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, winner, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
+}
+
+// 评审回归(顺序二: 胜者先推, 败者后同步): 败者经 displaced 路径立碑自身并 adopts 胜者;
+// 删除胜者后二次收敛, 新设备同样不得复活败者。
+func TestEngineKnownHostWinnerFirstLoserDisplaced(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	winner := newTestDevice(t)
+	loser := newTestDevice(t)
+
+	winnerID := ids.New()
+	loserID := ids.New()
+	putDeviceKnownHost(t, winner, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:fresh", 200)
+	putDeviceKnownHost(t, loser, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:stale", 100)
+
+	syncDevice(t, winner, server, "alice", "alice-pw-123")
+	syncDevice(t, loser, server, "alice", "alice-pw-123")
+	assertServerObjectKind(t, server, "alice", "alice-pw-123", loserID, KindTombstone)
+	if _, found := deviceKnownHost(t, loser, loserID); found {
+		t.Fatal("loser row must be displaced locally")
+	}
+	if row, found := deviceKnownHost(t, loser, winnerID); !found || row.Fingerprint != "SHA256:fresh" {
+		t.Fatalf("loser must adopt the winner row: %+v found=%v", row, found)
+	}
+
+	deleteDeviceKnownHost(t, winner, winnerID, ids.NowMS())
+	syncDevice(t, winner, server, "alice", "alice-pw-123")
+	syncDevice(t, loser, server, "alice", "alice-pw-123")
+	if _, found := deviceKnownHost(t, loser, winnerID); found {
+		t.Fatal("winner row must be tombstoned on the loser device")
+	}
+
+	newcomer := newTestDevice(t)
+	syncDevice(t, newcomer, server, "alice", "alice-pw-123")
+	rows, err := newcomer.db.KnownHostList(context.Background())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("newcomer must not resurrect any triple row: %+v err=%v", rows, err)
+	}
+	requireDeviceQuiescent(t, winner, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, loser, server, "alice", "alice-pw-123")
+	requireDeviceQuiescent(t, newcomer, server, "alice", "alice-pw-123")
+}
+
 func TestEngineSyncKnownHostsAndAIProfilesConverge(t *testing.T) {
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")

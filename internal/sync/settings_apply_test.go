@@ -195,6 +195,52 @@ func TestApplyKnownHostTripleConflictLocalNewerKeepsRow(t *testing.T) {
 	requireKnownHost(t, instance, localID, "SHA256:local", 300)
 	requireNoKnownHost(t, instance, remoteID)
 	requireNoSyncTombstone(t, instance, localID)
+	// 败者(远端)必须按胜者修订号立碑, 随本轮推送覆盖服务端败者对象。
+	requireSyncTombstone(t, instance, remoteID, KindKnownHost, 300)
+}
+
+// 与载荷同 ID 但不同三元组的本地行不是本场竞争的败者行: 不得删除, 也不得改写其内容。
+func TestApplyKnownHostTripleConflictLoserBranchKeepsUnrelatedRow(t *testing.T) {
+	instance := newTestInstance(t, false)
+	sharedID := ids.New()
+	winnerID := ids.New()
+	mustApplyObjects(t, instance, applyKnownHost(t, sharedID, "old.example.com", 22, "ssh-rsa", "SHA256:unrelated", 50))
+	mustApplyObjects(t, instance, applyKnownHost(t, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200))
+
+	// 载荷携带 sharedID 与较新修订号(50 → 100)迁移三元组, 但目标三元组的胜者(200)更胜一筹:
+	// 迁移被拒, sharedID 的旧三元组行原样保留, 胜者行不受影响。
+	result := mustApplyObjects(t, instance, applyKnownHost(t, sharedID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser", 100))
+	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
+	requireKnownHost(t, instance, sharedID, "SHA256:unrelated", 50)
+	if row, _, _ := instance.service.engine.knownHostByID(context.Background(), sharedID); row.Host != "old.example.com" || row.KeyType != "ssh-rsa" {
+		t.Fatalf("unrelated row must keep its own triple: %+v", row)
+	}
+	requireKnownHost(t, instance, winnerID, "SHA256:winner", 200)
+}
+
+func TestApplyKnownHostTripleConflictRemoteLoserTombstoned(t *testing.T) {
+	instance := newTestInstance(t, false)
+	winnerID := ids.New()
+	loserID := ids.New()
+	mustApplyObjects(t, instance, applyKnownHost(t, winnerID, "git.example.com", 22, "ssh-ed25519", "SHA256:winner", 200))
+
+	// 败者先推后到: 本地胜者保住行, 败者 id 按胜者修订号立碑, 本轮 collect/push 即可覆盖服务端败者对象。
+	result := mustApplyObjects(t, instance, applyKnownHost(t, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser", 100))
+	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
+	requireKnownHost(t, instance, winnerID, "SHA256:winner", 200)
+	requireNoKnownHost(t, instance, loserID)
+	requireSyncTombstone(t, instance, loserID, KindKnownHost, 200)
+
+	// 墓碑阻断败者重放; 较新败者仍可胜出并反过来立碑胜者。
+	stale := mustApplyObjects(t, instance, applyKnownHost(t, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser", 100))
+	requireApplyResult(t, stale.Objects[0], ApplyResultSkipped)
+	requireNoKnownHost(t, instance, loserID)
+
+	newer := mustApplyObjects(t, instance, applyKnownHost(t, loserID, "git.example.com", 22, "ssh-ed25519", "SHA256:loser-new", 300))
+	requireApplyResult(t, newer.Objects[0], ApplyResultApplied)
+	requireNoKnownHost(t, instance, winnerID)
+	requireKnownHost(t, instance, loserID, "SHA256:loser-new", 300)
+	requireSyncTombstone(t, instance, winnerID, KindKnownHost, 300)
 }
 
 // 同修订不同 ID 的同行记录必须以规范载荷哈希决胜: 两种应用顺序收敛到同一终态。
