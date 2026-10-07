@@ -11,7 +11,9 @@ then drives the M127 sharing contracts through the M136 outbound bridge:
   3. revoke: live viewer is stopped with an error frame, re-resolve denied
   4. expiry: short-TTL link stops the live viewer at expiry
   5. registered host share: recipient opens a NEW terminal through the host
-     agent; permission shrink read_write -> read stops input but keeps output
+     agent; permission shrink read_write -> read stops input but keeps output;
+     a plain (non-admin) device owner creates a share by recipient_username
+     without any user-directory access, and the recipient opens a terminal
   6. daemon offline: live stream drops with the bridge, new opens get 503
   7. disclosure guards: management/sync routes stay behind account auth and
      share views carry no token material
@@ -498,6 +500,9 @@ def main() -> int:
     agent_dir = work / "agent"
     agent_log = (work / "agent.log").open("ab")
     agent_process: subprocess.Popen | None = None
+    bob_agent_dir = work / "agent-bob"
+    bob_agent_log = (work / "agent-bob.log").open("ab")
+    bob_agent_process: subprocess.Popen | None = None
     alice_password = "alice-e2e-pw-123"
     bob_password = "bob-e2e-pw-123"
     carol_password = "carol-e2e-pw-123"
@@ -513,8 +518,30 @@ def main() -> int:
                 agent_process.wait(timeout=3)
         agent_process = None
 
+    def stop_bob_agent() -> None:
+        nonlocal bob_agent_process
+        if bob_agent_process is not None and bob_agent_process.poll() is None:
+            bob_agent_process.terminate()
+            try:
+                bob_agent_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                bob_agent_process.kill()
+                bob_agent_process.wait(timeout=3)
+        bob_agent_process = None
+
     def cleanup_helper() -> None:
         pid_file = agent_dir / "durable" / "supervisor" / "helper.pid"
+        try:
+            pid = int(pid_file.read_text().strip())
+        except (OSError, ValueError):
+            return
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    def cleanup_bob_helper() -> None:
+        pid_file = bob_agent_dir / "durable" / "supervisor" / "helper.pid"
         try:
             pid = int(pid_file.read_text().strip())
         except (OSError, ValueError):
@@ -705,7 +732,7 @@ def main() -> int:
         status, body = carol.request("GET", f"/share/devices/{device_id}/terminal")
         check("无分享用户打开被拒", status == 403, f"HTTP {status} {body}")
         status, body = alice.request("POST", "/share/host-shares", {
-            "device_id": device_id, "recipient_id": bob_id, "write": True, "ttl_ms": 3600000,
+            "device_id": device_id, "recipient_username": "bob", "write": True, "ttl_ms": 3600000,
         }, csrf=True)
         check("授予 bob 主机分享", status == 200 and body.get("permission") == "read_write", f"HTTP {status} {body}")
         share_id = body.get("id", "")
@@ -732,7 +759,7 @@ def main() -> int:
         except AssertionError as error:
             check("收缩前终端持续输出", False, error)
         status, body = alice.request("POST", "/share/host-shares", {
-            "device_id": device_id, "recipient_id": bob_id, "write": False, "ttl_ms": 3600000,
+            "device_id": device_id, "recipient_username": "bob", "write": False, "ttl_ms": 3600000,
         }, csrf=True)
         check("收缩为只读分享", status == 200 and body.get("permission") == "read", f"HTTP {status} {body}")
         time.sleep(3)  # 等逐块复查吃到新权限 (周期复查兜底 10s)
@@ -753,10 +780,61 @@ def main() -> int:
         status, body = bob.request("GET", f"/share/devices/{device_id}/terminal")
         check("吊销后 bob 打开被拒", status == 403, f"HTTP {status} {body}")
 
+        print("== 普通 owner 以用户名创建主机分享 ==", flush=True)
+        # bob 是普通用户: 超管代他签发接入码, 设备归 bob 所有, 随后 bob 不经过
+        # 任何用户目录, 直接用 carol 的用户名创建分享 (M158 recipient_username 合同)。
+        status, body = alice.request("POST", "/device/enroll-codes", {"ttl_ms": 600000, "user_id": bob_id}, csrf=True)
+        check("超管代 bob 签发接入码", status == 200 and bool(body.get("code")), f"HTTP {status} {body}")
+        enroll = subprocess.run(
+            [str(arguments.bin), "agent", "enroll", "--server", f"http://127.0.0.1:{server.port}",
+             "--code", body.get("code", ""), "--data-dir", str(bob_agent_dir), "--name", "bob-box"],
+            capture_output=True, text=True, timeout=60, cwd=ROOT,
+        )
+        check("bob agent enroll 子命令", enroll.returncode == 0 and "注册成功" in enroll.stdout, f"rc={enroll.returncode} {enroll.stdout} {enroll.stderr}")
+        bob_config_path = bob_agent_dir / "fleet" / "agent.json"
+        bob_config = json.loads(bob_config_path.read_text())
+        bob_device_id = bob_config["device_id"]
+        status, body = bob.request("POST", f"/fleet/devices/{bob_device_id}/autostart", {"desired": False}, csrf=True)
+        check("bob 关闭期望自启动", status == 200 and body.get("desired_autostart") is False, f"HTTP {status} {body}")
+        bob_config["desired_autostart"] = False
+        bob_config_path.write_text(json.dumps(bob_config))
+        bob_agent_process = subprocess.Popen(
+            [str(arguments.bin), "agent", "run", "--data-dir", str(bob_agent_dir)],
+            stdout=bob_agent_log, stderr=subprocess.STDOUT, cwd=ROOT,
+        )
+
+        def bob_device_row() -> dict:
+            _, body = bob.request("GET", "/fleet/devices")
+            for row in body.get("devices", []):
+                if row.get("id") == bob_device_id:
+                    return row
+            return {}
+
+        wait_until(20, "bob agent control channel online", lambda: bool(bob_device_row().get("agent", {}).get("current_url")))
+        check("bob agent 控制通道上线", bob_device_row().get("agent", {}).get("current_url") == f"http://127.0.0.1:{server.port}",
+              f"row={bob_device_row()}")
+        status, body = bob.request("POST", "/share/host-shares", {
+            "device_id": bob_device_id, "recipient_username": "no-such-user", "write": False, "ttl_ms": 3600000,
+        }, csrf=True)
+        check("普通 owner 无效用户名 404", status == 404 and body.get("error", {}).get("code") == "not_found", f"HTTP {status} {body}")
+        status, body = bob.request("POST", "/share/host-shares", {
+            "device_id": bob_device_id, "recipient_username": "carol", "write": False, "ttl_ms": 3600000,
+        }, csrf=True)
+        # owner_username 暂不断言: CreateHostShare 返回体未填充该字段 (既有, 已 TowerFinding)。
+        check("普通 owner 以用户名创建分享", status == 200 and body.get("permission") == "read"
+              and body.get("recipient_username") == "carol" and body.get("owner_id") == bob_id, f"HTTP {status} {body}")
+        carol_headers = {"Cookie": f"{SESSION_COOKIE}={carol.cookie}"}
+        carol_viewer = ShareViewer(WebSocket(server.port, f"/share/devices/{bob_device_id}/terminal", carol_headers))
+        ready = carol_viewer.expect_ready()
+        check("carol 经 bob 的分享打开新终端", ready.get("permission") == "read" and bool(ready.get("session_id")), f"ready={ready}")
+        carol_viewer.ws.close()
+        stop_bob_agent()
+        cleanup_bob_helper()
+
         print("== 守护代理离线 ==", flush=True)
         # 重新授予 bob 并建立一条活跃分享流, 然后停掉 agent。
         status, body = alice.request("POST", "/share/host-shares", {
-            "device_id": device_id, "recipient_id": bob_id, "write": True, "ttl_ms": 3600000,
+            "device_id": device_id, "recipient_username": "bob", "write": True, "ttl_ms": 3600000,
         }, csrf=True)
         check("重新授予 bob", status == 200, f"HTTP {status} {body}")
         status, body = alice.request("POST", "/share/links", {
@@ -794,8 +872,11 @@ def main() -> int:
         return 0 if not FAILED else 1
     finally:
         stop_agent()
+        stop_bob_agent()
         cleanup_helper()
+        cleanup_bob_helper()
         agent_log.close()
+        bob_agent_log.close()
         server.stop()
 
 
