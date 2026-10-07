@@ -219,7 +219,7 @@ describe("Docker insight controls (M61)", () => {
     expect(mockedText()).toContain("com.docker.compose.project");
     expect(mockedText()).toContain("shop");
     expect(mockedText()).toContain("/home/alice/app");
-    expect(mockedText()).toContain("此处为展示级脱敏，强制遮蔽策略以内核为准");
+    expect(mockedText()).toContain("敏感值已遮蔽 · 界面不会展示原始敏感值");
     expect(mockedText()).not.toContain("显示敏感值");
 
     const rowOf = (needle: string) =>
@@ -234,7 +234,7 @@ describe("Docker insight controls (M61)", () => {
 
     clickButton(m.container, "刷新");
     clickButton(m.container, "统计");
-    await waitFor(() => expect(mockedText()).toContain("3s 轮询"));
+    await waitFor(() => expect(mockedText()).toContain("每 3 秒自动刷新"));
     clickButton(m.container, "文件");
     await waitFor(() => expect(mockedText()).toContain("仅列出容器内目录"));
     clickButton(m.container, "详情");
@@ -288,7 +288,7 @@ describe("Docker insight controls (M61)", () => {
     await openInsight(m, 0);
     clickButton(m.container, "统计");
 
-    await waitFor(() => expect(mockedText()).toContain("3s 轮询"));
+    await waitFor(() => expect(mockedText()).toContain("每 3 秒自动刷新"));
     expect(mockedText()).toContain("web");
     expect(mockedText()).toContain("1.50%");
     expect(mockedText()).toContain("当前");

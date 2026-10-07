@@ -156,7 +156,7 @@ describe("DbPanel Redis 状态", () => {
       (d) => d.textContent?.trim() === "没有匹配的键",
     );
     expect(exactEmpty).toBe(false);
-    clickButton(mounted!.container, "下一页（cursor=5）");
+    clickButton(mounted!.container, "下一页");
     await flushUntil(() => text().includes("k1"));
     expect(text()).not.toContain("本页没有匹配");
   });
@@ -168,7 +168,7 @@ describe("DbPanel Redis 状态", () => {
       .mockResolvedValueOnce([0, ["k2"]]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("k1"));
-    clickButton(mounted!.container, "下一页（cursor=5）");
+    clickButton(mounted!.container, "下一页");
     await flushUntil(() => text().includes("下一页加载失败 · 连接重置"));
     clickButton(mounted!.container, "SCAN");
     await flushUntil(() => !text().includes("下一页加载失败") && text().includes("k2"));

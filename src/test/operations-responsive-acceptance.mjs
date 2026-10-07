@@ -310,7 +310,7 @@ async function checkRedis(page, vp, label) {
     if (!row) throw new Error("redis key row not found");
     row.click();
   })()`);
-  await page.waitFor(`document.body.textContent.includes("TTL")`);
+  await page.waitFor(`document.body.textContent.includes("秒后过期")`);
   const m = await page.evaluate(`(() => {
     ${RECT_HELPER}
     const pane = [...document.querySelectorAll(".nx-pane")].find((p) => p.textContent.includes("命令台"));
