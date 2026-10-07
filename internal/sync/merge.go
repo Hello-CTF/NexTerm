@@ -48,7 +48,9 @@ func (report *SyncReport) warnf(format string, args ...any) {
 }
 
 // collectLocalObjects 全量扫描本地副本产出确定性载荷; 本地副本未登录与登录后保持一致。
-func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport) (map[string]localObject, error) {
+// known_host/AI 模型档案按会话用户 opt-in 收集(默认关): 未开启时不收集这两类对象, 也不传播其墓碑
+// (禁用同步不得删除远端对象)。
+func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport, optIn kindOptIn) (map[string]localObject, error) {
 	objects := map[string]localObject{}
 	groups, err := e.store.GroupList(ctx)
 	if err != nil {
@@ -130,6 +132,12 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport) (m
 		return nil, err
 	}
 	for _, tombstone := range tombstones {
+		if tombstone.Kind == KindKnownHost && !optIn.knownHost {
+			continue
+		}
+		if tombstone.Kind == KindAIProfile && !optIn.aiProfile {
+			continue
+		}
 		object := tombstoneObject{TargetKind: tombstone.Kind, DeletedAt: tombstone.DeletedAt}
 		if tombstone.Kind == KindKnownHost {
 			if meta, found := knownHostMetas[tombstone.ID]; found {
@@ -165,39 +173,43 @@ func (e *Engine) collectLocalObjects(ctx context.Context, report *SyncReport) (m
 		}
 		objects[transcript.ID] = localObject{KindTranscript, payload}
 	}
-	knownHosts, err := e.store.KnownHostList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range knownHosts {
-		payload, err := marshalObject(knownHostObject{
-			ID: row.ID, Host: row.Host, Port: row.Port, KeyType: row.KeyType,
-			Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
-		})
+	if optIn.knownHost {
+		knownHosts, err := e.store.KnownHostList(ctx)
 		if err != nil {
 			return nil, err
 		}
-		objects[row.ID] = localObject{KindKnownHost, payload}
-	}
-	profileState, profileRevision, _, err := e.aiProfilesLoad(ctx)
-	if err != nil {
-		if !errors.Is(err, errAIProfilesCorrupt) {
-			return nil, err
-		}
-		report.warnf("AI 模型档案数据损坏, 本次不同步: %v", err)
-	} else {
-		for _, record := range profileState.Profiles {
-			key, err := e.revealAIProfileKey(ctx, record.APIKey)
-			if err != nil {
-				report.warnf("AI 模型档案 %s 解密失败, 本次不同步: %v", record.ID, err)
-				continue
-			}
-			record.APIKey = key
-			payload, err := marshalObject(aiProfilePayloadFromRecord(record, profileRevision))
+		for _, row := range knownHosts {
+			payload, err := marshalObject(knownHostObject{
+				ID: row.ID, Host: row.Host, Port: row.Port, KeyType: row.KeyType,
+				Fingerprint: row.Fingerprint, AddedAt: row.AddedAt,
+			})
 			if err != nil {
 				return nil, err
 			}
-			objects[record.ID] = localObject{KindAIProfile, payload}
+			objects[row.ID] = localObject{KindKnownHost, payload}
+		}
+	}
+	if optIn.aiProfile {
+		profileState, profileRevision, _, err := e.aiProfilesLoad(ctx)
+		if err != nil {
+			if !errors.Is(err, errAIProfilesCorrupt) {
+				return nil, err
+			}
+			report.warnf("AI 模型档案数据损坏, 本次不同步: %v", err)
+		} else {
+			for _, record := range profileState.Profiles {
+				key, err := e.revealAIProfileKey(ctx, record.APIKey)
+				if err != nil {
+					report.warnf("AI 模型档案 %s 解密失败, 本次不同步: %v", record.ID, err)
+					continue
+				}
+				record.APIKey = key
+				payload, err := marshalObject(aiProfilePayloadFromRecord(record, profileRevision))
+				if err != nil {
+					return nil, err
+				}
+				objects[record.ID] = localObject{KindAIProfile, payload}
+			}
 		}
 	}
 	return objects, nil
@@ -251,13 +263,18 @@ func (e *Engine) transcriptChunksAll(ctx context.Context, transcriptID string) (
 
 // applyRemoteObject 解密并 LWW 应用一个远端对象; 应用失败隔离为警告, 不阻断整轮同步。
 // identical 表示远端与本机内容一致, 视为已对账; 本地胜出时 payload_hash 置空, 由 blob 哈希差异驱动回推。
-func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object WireObjectSeq, dek []byte, report *SyncReport) {
+// opt-in 硬关闭的 known_host/AI 档案(含其墓碑)只计数跳过: 不应用也不记对账, 保持未对账供日后开启再拉取。
+func (e *Engine) applyRemoteObject(ctx context.Context, userID string, object WireObjectSeq, dek []byte, report *SyncReport, optIn kindOptIn) {
 	report.Pulled++
 	kind, plaintext, err := tryOpenObject(dek, object.Blob, object.ID)
 	if err != nil {
 		report.DecryptFailed++
 		report.warnf("对象 %s 解密失败(密钥不匹配或数据损坏), 已隔离", object.ID)
 		e.quarantineObject(ctx, userID, object.ID, hashBlob(object.Blob))
+		return
+	}
+	if !optIn.allowsRemote(kind, plaintext) {
+		report.PullSkipped++
 		return
 	}
 	payloadHash := objectPayloadHash(plaintext)

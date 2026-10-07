@@ -52,7 +52,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败"))
 						return
 					}
-					next.ServeHTTP(w, r.WithContext(withAccountIdentity(r.Context(), identity)))
+					ctx := withAccountIdentity(r.Context(), identity)
+					// 同步 opt-in 等按账号用户隔离的设备端状态经 ipc.UserIDFromContext 读取会话身份, 不接受客户端自报
+					ctx = ipc.WithUserID(ctx, identity.UserID)
+					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
 			}

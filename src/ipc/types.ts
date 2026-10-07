@@ -173,7 +173,7 @@ export type SyncReport = {
   warnings?: string[],
 };
 
-export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript";
+export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile";
 
 export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
 
@@ -185,18 +185,38 @@ export type SyncCollectAsset = { id: string, groupId?: string, kind: string, nam
 port?: number, username?: string, authKind?: string, keyPath?: string, credId?: string, optionsJson: string,
 tags: string, note: string, sort: number, createdAt: number, updatedAt: number, deletedAt?: number, };
 
-export type SyncCollectTombstone = { id: string, targetKind: string, deletedAt: number, };
+// known_host 冲突墓碑携带原败者三元组; 用户主动删除墓碑不带。
+export type SyncCollectTombstone = { id: string, targetKind: string, deletedAt: number,
+host?: string, port?: number, keyType?: string, };
 
 export type SyncCollectSecretState = "withheld" | "revealed" | "locked" | "unavailable" | "error";
 
 export type SyncCollectCredential = { id: string, name: string, kind: string, updatedAt: number,
 secret?: string, secretState: SyncCollectSecretState, };
 
+export type SyncCollectKnownHost = { id: string, host: string, port: number, keyType: string,
+fingerprint: string, addedAt: number, };
+
+// apiKey 只在 revealed 且档案确有密钥时给出; apiKeySet 区分「无密钥」与「密钥被扣留」。
+// proxy 无 omitempty, 服务端 null 原样传递。
+export type SyncCollectAIProfile = { id: string, name: string, baseUrl: string, model: string,
+fallbackModel?: string, temperature: number, contextWindow: number, maxTokens?: number,
+proxy: string | null, stream: boolean, requestTimeoutSeconds?: number, idleTimeoutSeconds?: number,
+circuitFailureThreshold?: number, circuitCooldownSeconds?: number,
+updatedAt: number, apiKey?: string, apiKeySet: boolean, apiKeyState: SyncCollectSecretState, };
+
 export type SyncCollectAssetsResult = { assets: SyncCollectAsset[], hasMore: boolean, nextAfterId?: string, };
 
 export type SyncCollectTombstonesResult = { tombstones: SyncCollectTombstone[], hasMore: boolean, nextAfterId?: string, };
 
 export type SyncCollectCredentialsResult = { credentials: SyncCollectCredential[], hasMore: boolean, nextAfterId?: string, };
+
+export type SyncCollectKnownHostsResult = { knownHosts: SyncCollectKnownHost[], hasMore: boolean, nextAfterId?: string, };
+
+export type SyncCollectAIProfilesResult = { profiles: SyncCollectAIProfile[], hasMore: boolean, nextAfterId?: string, };
+
+// 按账号用户隔离的同步 opt-in(默认关); 用户身份由服务端会话注入, 不由客户端上报。
+export type SyncKindOptIn = { knownHost: boolean, aiProfile: boolean, };
 
 export type AuditCountDto = { total: number, };
 

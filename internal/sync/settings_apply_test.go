@@ -270,7 +270,7 @@ func TestApplyKnownHostTripleConflictIncarnationReIDed(t *testing.T) {
 	}
 
 	// 收集映射不得再有同 ID 槽位冲突: 化身对象与原 ID 墓碑各自成对象。
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestApplyKnownHostConflictTombstoneReIDsNewerIncarnation(t *testing.T) {
 	}
 
 	// 收集: 原 ID 槽位是携带三元组的冲突墓碑, 新 ID 是存活对象。
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestApplyKnownHostUserTombstoneDeletesRegardlessOfTriple(t *testing.T) {
 	requireNoKnownHost(t, instance, rowID)
 	requireSyncTombstone(t, instance, rowID, KindKnownHost, 100)
 
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, hostID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
 	assertTombstoneTriple := func(wantHost string, wantDeletedAt int64) {
 		t.Helper()
-		objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{})
+		objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -407,7 +407,7 @@ func TestApplyKnownHostConflictTombstoneMetaFollowsMaxRevision(t *testing.T) {
 	otherID := ids.New()
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "b.example.com", 2222, "ssh-ed25519", 200)).Objects[0], ApplyResultApplied)
 	requireApplyResult(t, mustApplyObjects(t, instance, applyKnownHostConflictTombstone(t, otherID, "a.example.com", 22, "ssh-rsa", 50)).Objects[0], ApplyResultApplied)
-	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{})
+	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func TestApplyAIProfileRoundtripPreservesFieldsAndSealsKey(t *testing.T) {
 	}
 
 	// 落盘形态重建的规范载荷必须与应用载荷逐字节一致(含 reveal 后的 apiKey)。
-	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{})
+	objects, err := instance.service.engine.collectLocalObjects(context.Background(), &SyncReport{}, kindOptIn{knownHost: true, aiProfile: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, syncApi, transcriptApi, type TranscriptChunk } from "../../ipc/commands";
-import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncReport } from "../../ipc/types";
+import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncReport } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { useAuth } from "../auth/store";
 import {
@@ -14,9 +14,11 @@ import {
   type SyncObjectKind,
 } from "../auth/crypto";
 import {
+  aiProfilePayload,
   collectAssetPayload,
   credentialPayload,
   groupPayload,
+  knownHostPayload,
   marshalSyncPayload,
   snippetPayload,
   tombstonePayload,
@@ -403,6 +405,32 @@ async function collectCredentialsAll(): Promise<SyncCollectCredential[]> {
   throw new Error("凭据收集分页超出上限");
 }
 
+async function collectKnownHostsAll(): Promise<import("../../ipc/types").SyncCollectKnownHost[]> {
+  const out: import("../../ipc/types").SyncCollectKnownHost[] = [];
+  let afterId: string | undefined;
+  for (let page = 0; page < 10000; page++) {
+    const result = await syncApi.collectKnownHosts(afterId, COLLECT_PAGE_LIMIT);
+    out.push(...result.knownHosts);
+    if (!result.hasMore) return out;
+    if (!result.nextAfterId) throw new Error("已知主机收集分页游标缺失");
+    afterId = result.nextAfterId;
+  }
+  throw new Error("已知主机收集分页超出上限");
+}
+
+async function collectAIProfilesAll(): Promise<import("../../ipc/types").SyncCollectAIProfile[]> {
+  const out: import("../../ipc/types").SyncCollectAIProfile[] = [];
+  let afterId: string | undefined;
+  for (let page = 0; page < 10000; page++) {
+    const result = await syncApi.collectAIProfiles(true, afterId, COLLECT_PAGE_LIMIT);
+    out.push(...result.profiles);
+    if (!result.hasMore) return out;
+    if (!result.nextAfterId) throw new Error("AI 模型档案收集分页游标缺失");
+    afterId = result.nextAfterId;
+  }
+  throw new Error("AI 模型档案收集分页超出上限");
+}
+
 function credentialStateLabel(state: string): string {
   switch (state) {
     case "locked":
@@ -432,15 +460,19 @@ async function localEntity(
 // loadLocalEntities 经 M141 collect RPC 收集完整本地副本: 软删资产、两类墓碑与凭据都进入对比,
 // 与 internal/sync collectLocalObjects 同序同键(同 ID 后写覆盖先写,墓碑压过存活对象,存活 transcript 最后)。
 // 读不到明文的凭据(locked/unavailable/error)明确记入 warnings,不静默遗漏。
-async function loadLocalEntities(): Promise<LocalCollection> {
+// known_host/AI 模型档案按账号用户 opt-in 收集(默认关): 开启才进入对比与推送;
+// 档案 apiKey 被扣留(locked/unavailable/error)同样只记 warning; 无密钥档案(apiKeySet=false)不受凭据库锁定影响。
+async function loadLocalEntities(optIn: SyncKindOptIn): Promise<LocalCollection> {
   const warnings: string[] = [];
-  const [groups, snippets, transcripts, assets, tombstones, credentials] = await Promise.all([
+  const [groups, snippets, transcripts, assets, tombstones, credentials, knownHosts, aiProfiles] = await Promise.all([
     assetApi.groupList(),
     assetApi.snippetList(),
     loadOptedInTranscripts(),
     collectAssetsAll(),
     collectTombstonesAll(),
     collectCredentialsAll(),
+    optIn.knownHost ? collectKnownHostsAll() : Promise.resolve([]),
+    optIn.aiProfile ? collectAIProfilesAll() : Promise.resolve([]),
   ]);
   const byId = new Map<string, LocalEntity>();
   for (const g of groups) {
@@ -459,7 +491,20 @@ async function loadLocalEntities(): Promise<LocalCollection> {
   for (const a of assets) {
     byId.set(a.id, await localEntity(a.id, "asset", a.name, a.updatedAt, a.deletedAt ?? null, collectAssetPayload(a)));
   }
+  for (const k of knownHosts) {
+    byId.set(k.id, await localEntity(k.id, "known_host", `${k.host}:${k.port}`, k.addedAt, null, knownHostPayload(k)));
+  }
+  for (const p of aiProfiles) {
+    if (p.apiKeySet && (p.apiKeyState !== "revealed" || p.apiKey === undefined)) {
+      warnings.push(`AI 档案「${p.name}」${credentialStateLabel(p.apiKeyState)},未进入本次对比与推送`);
+      continue;
+    }
+    byId.set(p.id, await localEntity(p.id, "ai_profile", p.name, p.updatedAt, null, aiProfilePayload(p)));
+  }
   for (const t of tombstones) {
+    // 已禁用种类的墓碑不参与对比与推送: 禁用同步不得删除远端对象
+    if (t.targetKind === "known_host" && !optIn.knownHost) continue;
+    if (t.targetKind === "ai_profile" && !optIn.aiProfile) continue;
     const label = KIND_LABELS[t.targetKind] ?? t.targetKind;
     byId.set(t.id, await localEntity(t.id, "tombstone", `${label} ${t.id}`, t.deletedAt, t.deletedAt, tombstonePayload(t)));
   }
@@ -473,7 +518,20 @@ function revisionOf(updatedAt: number, deletedAt: number | null): number {
   return deletedAt !== null && deletedAt > updatedAt ? deletedAt : updatedAt;
 }
 
-async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
+// remoteKindVisible 按 opt-in 过滤远端对象: 禁用种类既不应用也不参与对比;
+// known_host/ai_profile 的远端墓碑按其 targetKind 同样受开关约束(禁用同步不得删除远端/本地对象)。
+function remoteKindVisible(kind: SyncObjectKind, plaintext: string, optIn: SyncKindOptIn): boolean {
+  if (kind === "known_host") return optIn.knownHost;
+  if (kind === "ai_profile") return optIn.aiProfile;
+  if (kind === "tombstone") {
+    const target = (JSON.parse(plaintext) as { targetKind?: string }).targetKind;
+    if (target === "known_host") return optIn.knownHost;
+    if (target === "ai_profile") return optIn.aiProfile;
+  }
+  return true;
+}
+
+async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn): Promise<RemoteState> {
   const ids = await syncV2Api.ids();
   const out: RemoteObject[] = [];
   for (const entry of ids.entries) {
@@ -481,8 +539,9 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
     const wire = page.objects[0];
     if (!wire) continue;
     const { kind, plaintext } = await tryOpenSyncObject(dek, base64ToBytes(wire.blob), entry.id);
-    const payloadHash = await objectPayloadHash(plaintext);
     const text = new TextDecoder().decode(plaintext);
+    if (!remoteKindVisible(kind, text, optIn)) continue;
+    const payloadHash = await objectPayloadHash(plaintext);
     if (kind === "tombstone") {
       const t = JSON.parse(text) as { targetKind?: string; deletedAt?: number };
       out.push({ id: entry.id, kind: "tombstone", name: entry.id, updatedAt: t.deletedAt ?? 0, deletedAt: t.deletedAt ?? 0, seq: entry.seq, payloadHash, plaintext: text });
@@ -496,6 +555,21 @@ async function loadRemoteObjects(dek: Uint8Array): Promise<RemoteState> {
         kind,
         name: t.assetName ? `${t.assetName} 的会话记录` : entry.id,
         updatedAt: t.endedAt ?? 0,
+        deletedAt: null,
+        seq: entry.seq,
+        payloadHash,
+        plaintext: text,
+      });
+      continue;
+    }
+    if (kind === "known_host") {
+      // known_host 没有 name/updatedAt: 修订号即 addedAt, 名称取 host:port。
+      const k = JSON.parse(text) as { host?: string; port?: number; addedAt?: number };
+      out.push({
+        id: entry.id,
+        kind,
+        name: k.host ? `${k.host}:${k.port}` : entry.id,
+        updatedAt: k.addedAt ?? 0,
         deletedAt: null,
         seq: entry.seq,
         payloadHash,
@@ -543,6 +617,8 @@ function saveCursor(userId: string, cursor: { head: string; seq: number }): void
   }
 }
 
+const DEFAULT_KIND_OPT_IN: SyncKindOptIn = { knownHost: false, aiProfile: false };
+
 type RowState = "local-only" | "remote-only" | "same" | "local-newer" | "remote-newer" | "local-deleted" | "remote-deleted";
 
 interface Row {
@@ -563,7 +639,8 @@ function computeWinners(local: LocalEntity[], remote: RemoteObject[]): LocalEnti
   });
 }
 
-// sealAll 按 kind 依赖序把 winner 对象加密成线上形态(与 objectKindRank 对齐)。
+// sealAll 按 kind 依赖序把 winner 对象加密成线上形态(与 Go objectKindRank 对齐:
+// known_host/ai_profile 排在 tombstone 之前, 墓碑仍最后)。
 async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: string; blob: string }[]> {
   const rank = (k: SyncObjectKind) => {
     switch (k) {
@@ -571,9 +648,11 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "credential": return 1;
       case "snippet": return 2;
       case "asset": return 3;
-      case "tombstone": return 4;
-      case "transcript": return 5;
-      default: return 6;
+      case "known_host": return 4;
+      case "ai_profile": return 5;
+      case "tombstone": return 6;
+      case "transcript": return 7;
+      default: return 8;
     }
   };
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
@@ -666,6 +745,8 @@ const KIND_LABELS: Record<string, string> = {
   credential: "凭据",
   tombstone: "墓碑",
   transcript: "会话记录",
+  known_host: "已知主机",
+  ai_profile: "AI 档案",
 };
 
 function WebSyncConsole() {
@@ -766,30 +847,76 @@ function CompareConsole() {
   const [remote, setRemote] = useState<RemoteObject[] | null>(null);
   const [collectWarnings, setCollectWarnings] = useState<string[]>([]);
   const [cursor, setCursor] = useState<{ head: string; seq: number }>(() => loadCursor(user.id));
-  const [busy, setBusy] = useState<null | "refresh" | "push">(null);
+  const [busy, setBusy] = useState<null | "refresh" | "push" | "optin">(null);
   const [error, setError] = useState<string | null>(null);
   const [pushInfo, setPushInfo] = useState<string | null>(null);
+  const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
+  // opt-in 代次: 开关变更即递增, 旧代次的快照与进行中的 load/push/apply 一律作废,
+  // 防止「已关闭同步仍推送/应用旧快照」(尤其删除墓碑删除远端副本)。
+  const optInEpochRef = useRef(0);
+  // 当前 local/remote 快照所属代次; 与 optInEpochRef 不一致时推送/应用保持禁用(reload 完成前)。
+  const [snapshotEpoch, setSnapshotEpoch] = useState(-1);
+
+  // opt-in 读取失败(旧服务端没有该命令/网络错误)按默认关处理, 不阻断对比台
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => syncApi.kindOptInGet())
+      .then((view) => {
+        if (!cancelled) setKindOptIn(view);
+      })
+      .catch(() => {
+        if (!cancelled) setKindOptIn({ knownHost: false, aiProfile: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const rows = useMemo(() => (local && remote ? buildRows(local, remote) : null), [local, remote]);
 
-  const load = useCallback(() => {
-    setError(null);
-    return Promise.all([loadLocalEntities(), loadRemoteObjects(dek)])
-      .then(([l, r]) => {
-        setLocal(l.entities);
-        setCollectWarnings(l.warnings);
-        setRemote(r.objects);
-        // 游标以服务端最新 head/seq 为准(空 genesis 不得强制空字符串)
-        const next = { head: r.head, seq: r.maxSeq };
-        saveCursor(user.id, next);
-        setCursor(next);
-      })
-      .catch((e: unknown) => setError(describeError(e)));
-  }, [dek, user.id]);
+  const load = useCallback(
+    (optIn: SyncKindOptIn, epoch: number) => {
+      setError(null);
+      return Promise.all([loadLocalEntities(optIn), loadRemoteObjects(dek, optIn)])
+        .then(([l, r]) => {
+          if (epoch !== optInEpochRef.current) return; // 乱序/过期 load 的回写丢弃
+          setLocal(l.entities);
+          setCollectWarnings(l.warnings);
+          setRemote(r.objects);
+          setSnapshotEpoch(epoch);
+          // 游标以服务端最新 head/seq 为准(空 genesis 不得强制空字符串)
+          const next = { head: r.head, seq: r.maxSeq };
+          saveCursor(user.id, next);
+          setCursor(next);
+        })
+        .catch((e: unknown) => {
+          if (epoch !== optInEpochRef.current) return;
+          setError(describeError(e));
+        });
+    },
+    [dek, user.id],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (kindOptIn) void load(kindOptIn, optInEpochRef.current);
+  }, [load, kindOptIn]);
+
+  const updateKindOptIn = async (patch: { knownHost?: boolean; aiProfile?: boolean }) => {
+    optInEpochRef.current += 1; // 立即作废旧快照与进行中的 push/apply
+    setBusy("optin");
+    setError(null);
+    try {
+      const next = await syncApi.kindOptInSet(patch);
+      setKindOptIn(next); // effect 以新代次触发 reload, 完成前操作保持禁用
+    } catch (e) {
+      setError(describeError(e));
+      // 开关未改成: 按当前 opt-in 重新加载, 恢复同代可用快照
+      void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   // winner 集合:仅本机独占或本地胜出(含平修订号按载荷 hash 决胜);计数与上传共用同一集合。
   const winners = useMemo(() => {
@@ -811,6 +938,8 @@ function CompareConsole() {
   const [applyInfo, setApplyInfo] = useState<string | null>(null);
 
   const applyRemote = async () => {
+    const startEpoch = optInEpochRef.current;
+    if (snapshotEpoch !== startEpoch) return; // 快照已过期(开关切换后 reload 未完成)
     setBusy("push");
     setError(null);
     setApplyInfo(null);
@@ -820,12 +949,13 @@ function CompareConsole() {
         kind: r.kind,
         payload: JSON.parse(r.plaintext) as import("../../ipc/types").JsonValue,
       }));
-      // 分批(单次上限 256)
+      // 分批(单次上限 256); 每批前核对代次, 开关切换后不再发送旧集合
       let applied = 0;
       let identical = 0;
       let skipped = 0;
       const warnings: string[] = [];
       for (let i = 0; i < objects.length; i += 256) {
+        if (optInEpochRef.current !== startEpoch) return;
         const result = await syncApi.applyObjects(objects.slice(i, i + 256));
         applied += result.applied;
         identical += result.identical;
@@ -840,7 +970,7 @@ function CompareConsole() {
           (warnings.length > 0 ? ` · 警告:${warnings.join("; ")}` : ""),
       );
       pushToast("success", `已应用 ${applied} 个对象`);
-      await load();
+      await load(kindOptIn ?? DEFAULT_KIND_OPT_IN, startEpoch);
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -849,16 +979,21 @@ function CompareConsole() {
   };
 
   const push = async () => {
+    const startEpoch = optInEpochRef.current;
+    if (snapshotEpoch !== startEpoch) return; // 快照已过期(开关切换后 reload 未完成)
     setBusy("push");
     setError(null);
     setPushInfo(null);
+    const optIn = kindOptIn ?? DEFAULT_KIND_OPT_IN;
     try {
       // 对比基线(加载时的 head)。若服务端 head 已变,先重新拉取并以同一快照重算 winner,不沿用旧 winner。
       let head = cursor.head;
       let winnersNow = winners;
       const fresh = await syncV2Api.ids();
+      if (optInEpochRef.current !== startEpoch) return;
       if (fresh.head !== head) {
-        const remoteState = await loadRemoteObjects(dek);
+        const remoteState = await loadRemoteObjects(dek, optIn);
+        if (optInEpochRef.current !== startEpoch) return;
         setRemote(remoteState.objects);
         winnersNow = computeWinners(local ?? [], remoteState.objects);
         const base = { head: remoteState.head, seq: remoteState.maxSeq };
@@ -867,11 +1002,14 @@ function CompareConsole() {
         head = remoteState.head;
       }
 
+      // 上传前最后核对: 开关切换后旧 winners 一律不得上传(即使 head 未变)
+      if (optInEpochRef.current !== startEpoch) return;
       let resp = await syncV2Api.push(head, await sealAll(dek, winnersNow));
 
       // 空推(applied+skipped=0)或真 409(他端已更新):重新拉取并以同一快照重算 winner,再重试一次,不得只换 known_head。
       const reconcileAndRetry = async (): Promise<typeof resp | null> => {
-        const remoteState = await loadRemoteObjects(dek);
+        const remoteState = await loadRemoteObjects(dek, optIn);
+        if (optInEpochRef.current !== startEpoch) return null;
         const recomputed = computeWinners(local ?? [], remoteState.objects);
         if (remoteState.head === head && recomputed.length === winnersNow.length && !recomputed.some((e, i) => e.id !== winnersNow[i]?.id)) {
           return null;
@@ -894,12 +1032,13 @@ function CompareConsole() {
       setCursor(next);
       setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
       pushToast("success", `已推送 ${resp.applied} 个对象`);
-      await load();
+      await load(optIn, startEpoch);
     } catch (e) {
       if (e instanceof AuthApiError && e.status === 409) {
         // 真 409:重新对账并以新 head 重试一次;仍失败才报错。
         try {
-          const remoteState = await loadRemoteObjects(dek);
+          const remoteState = await loadRemoteObjects(dek, optIn);
+          if (optInEpochRef.current !== startEpoch) return;
           const recomputed = computeWinners(local ?? [], remoteState.objects);
           setRemote(remoteState.objects);
           const base = { head: remoteState.head, seq: remoteState.maxSeq };
@@ -912,7 +1051,7 @@ function CompareConsole() {
           setCursor(next);
           setPushInfo(`已推送 ${resp.applied} 个对象(跳过 ${resp.skipped})`);
           pushToast("success", `已推送 ${resp.applied} 个对象`);
-          await load();
+          await load(optIn, startEpoch);
           return;
         } catch (retryError) {
           setError(describeError(retryError));
@@ -937,13 +1076,13 @@ function CompareConsole() {
           游标 seq {cursor.seq || "—"} · 云端 {remote?.length ?? "…"} 个对象
         </span>
         <div className="nx-spacer" />
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void load()}>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
           <IconRefresh size={12} className={busy === "refresh" ? "animate-spin" : ""} />
           刷新对比
         </button>
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
-          disabled={busy !== null || applySet.length === 0}
+          disabled={busy !== null || snapshotEpoch !== optInEpochRef.current || applySet.length === 0}
           onClick={() => void applyRemote()}
         >
           {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconDownload size={12} />}
@@ -951,7 +1090,7 @@ function CompareConsole() {
         </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
-          disabled={busy !== null || pushCount === 0}
+          disabled={busy !== null || snapshotEpoch !== optInEpochRef.current || pushCount === 0}
           onClick={() => void push()}
         >
           {busy === "push" ? <IconRefresh size={12} className="animate-spin" /> : <IconUpload size={12} />}
@@ -964,11 +1103,42 @@ function CompareConsole() {
         推送会把本机较新的内容加密送上云端;拉取并应用会把云端较新的内容合并到本机(冲突按修订号+载荷 hash 裁决,删除以墓碑清理)。
       </p>
 
+      {kindOptIn && (
+        <div className="mb-3 flex flex-col gap-2">
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={kindOptIn.knownHost}
+              disabled={busy !== null}
+              onChange={(e) => void updateKindOptIn({ knownHost: e.target.checked })}
+            />
+            <span className="text-[12px] text-neutral-300">
+              同步已知主机(主机信任)
+              <span className="nx-hint block">默认关闭。开启后,已接受的主机密钥会端到端加密同步;本地删除会随同步删除云端副本。</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={kindOptIn.aiProfile}
+              disabled={busy !== null}
+              onChange={(e) => void updateKindOptIn({ aiProfile: e.target.checked })}
+            />
+            <span className="text-[12px] text-neutral-300">
+              同步 AI 模型档案
+              <span className="nx-hint block">默认关闭。开启后,档案设置会端到端加密同步;API 密钥只在凭据库已解锁时随档案同步。</span>
+            </span>
+          </label>
+        </div>
+      )}
+
       {error && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1 break-words">{error}</span>
-          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
+          <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load(kindOptIn ?? DEFAULT_KIND_OPT_IN, optInEpochRef.current)}>
             <IconRefresh size={12} />
             重试
           </button>
@@ -1024,6 +1194,7 @@ function CompareConsole() {
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
           会话记录(终端录像)默认不同步;要同步某一条,到「会话记录」里对那条单独打开同步开关。
+          已知主机与 AI 模型档案同样默认不同步,需要时在上方单独开启;关闭开关不会删除云端已有副本。
           冲突按修订号(最后修改时间)裁决,协议假设各设备时钟已经 <b>NTP 同步</b>,
           不检测也不校正时钟偏移;时钟不准时「较新」判定可能不符合预期。
         </div>

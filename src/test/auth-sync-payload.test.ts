@@ -4,11 +4,13 @@
 // <>& HTML 转义、U+2028/U+2029 与多语言文本;不是用 JS 逻辑自证。
 import { describe, expect, it } from "vitest";
 import type { TranscriptChunk, TranscriptSummary } from "../ipc/commands";
-import type { SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone } from "../ipc/types";
+import type { SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../ipc/types";
 import {
+  aiProfilePayload,
   collectAssetPayload,
   credentialPayload,
   groupPayload,
+  knownHostPayload,
   marshalSyncPayload,
   snippetPayload,
   tombstonePayload,
@@ -124,5 +126,44 @@ describe("其余对象载荷与 Go 逐字节一致", () => {
   it("tombstone: group 与 credential 两类", () => {
     expect(marshalSyncPayload(tombstonePayload({ id: "g-del", targetKind: "group", deletedAt: 500 } satisfies SyncCollectTombstone))).toBe(fixtureText("tombstoneGroup"));
     expect(marshalSyncPayload(tombstonePayload({ id: "c-del", targetKind: "credential", deletedAt: 400 } satisfies SyncCollectTombstone))).toBe(fixtureText("tombstoneCredential"));
+  });
+
+  it("tombstone: known_host 冲突墓碑原样携带败者三元组(M163 R4 语义)", () => {
+    expect(
+      marshalSyncPayload(
+        tombstonePayload({ id: "kh-1", targetKind: "known_host", deletedAt: 700, host: "10.0.0.9", port: 22, keyType: "ssh-ed25519" } satisfies SyncCollectTombstone),
+      ),
+    ).toBe(fixtureText("tombstoneKnownHostConflict"));
+  });
+});
+
+describe("M165 known_host/AI 档案载荷与 Go 逐字节一致", () => {
+  it("knownHost: 全字段无 omitempty", () => {
+    const k: SyncCollectKnownHost = {
+      id: "kh-1", host: "10.0.0.9", port: 22, keyType: "ssh-ed25519",
+      fingerprint: "SHA256:5Va5w2K7bh2+5Nm4EwvX0n8QV2c7CXWq3R6e3d3w4Xk", addedAt: 1700000000000,
+    };
+    expect(marshalSyncPayload(knownHostPayload(k))).toBe(fixtureText("knownHostBasic"));
+  });
+
+  it("aiProfile: 全字段(含 fallbackModel/maxTokens/proxy/超时与熔断), 密钥明文含 <>& 与 U+2028", () => {
+    const p: SyncCollectAIProfile = {
+      id: "p-1", name: "生产 <档案> & more", baseUrl: "https://api.example.com/v1",
+      apiKey: "sk-live<>&\u2028key", model: "gpt-4o", fallbackModel: "gpt-4o-mini",
+      temperature: 0.7, contextWindow: 128000, maxTokens: 4096, proxy: "http://127.0.0.1:7890",
+      stream: true, requestTimeoutSeconds: 60, idleTimeoutSeconds: 300,
+      circuitFailureThreshold: 5, circuitCooldownSeconds: 30,
+      updatedAt: 1700000001000, apiKeySet: true, apiKeyState: "revealed",
+    };
+    expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfileFull"));
+  });
+
+  it("aiProfile: 缺省字段省略(空 fallbackModel、nil maxTokens), proxy 输出 null, 空密钥输出空串", () => {
+    const p: SyncCollectAIProfile = {
+      id: "p-2", name: "minimal", baseUrl: "https://api.example.com/v1", model: "m",
+      temperature: 0, contextWindow: 8192, proxy: null, stream: false,
+      updatedAt: 1700000002000, apiKeySet: false, apiKeyState: "revealed",
+    };
+    expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfileMinimal"));
   });
 });
