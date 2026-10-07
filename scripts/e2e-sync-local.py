@@ -241,6 +241,13 @@ def write_report(binary: pathlib.Path, helper: pathlib.Path, started_at: str, st
     return REPORT_DIR / "report.json"
 
 
+def record_harness_error(harness_errors: list[str], stage: str, error: Exception) -> None:
+    traceback.print_exc()
+    message = f"{stage}: {type(error).__name__}: {error}"
+    harness_errors.append(message)
+    check("e2e 执行异常", False, message)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin", type=pathlib.Path, default=ROOT / "target/go-build/nexterm-server-e2e")
@@ -401,20 +408,25 @@ def main() -> int:
         status, body = device3.request("POST", "/sync/v2/pull", {"protocol": 2, "since_seq": 0})
         check("重启后对象仍在", status == 200 and len(body.get("objects", [])) == 6, f"HTTP {status} {body}")
     except Exception as error:
-        traceback.print_exc()
-        message = f"{type(error).__name__}: {error}"
-        harness_errors.append(message)
-        check("e2e 执行异常", False, message)
+        record_harness_error(harness_errors, "run", error)
     finally:
         if server is not None:
-            server.stop()
-            if server.log_path.exists():
-                REPORT_DIR.mkdir(parents=True, exist_ok=True)
-                shutil.copy(server.log_path, REPORT_DIR / "server.log")
+            try:
+                server.stop()
+            except Exception as error:
+                record_harness_error(harness_errors, "server.stop", error)
+            try:
+                if server.log_path.exists():
+                    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(server.log_path, REPORT_DIR / "server.log")
+            except Exception as error:
+                record_harness_error(harness_errors, "server.log", error)
         if work is not None:
-            shutil.rmtree(work, ignore_errors=True)
-
-    report_path = write_report(arguments.bin, arguments.helper, started_at, started, harness_errors)
+            try:
+                shutil.rmtree(work, ignore_errors=True)
+            except Exception as error:
+                record_harness_error(harness_errors, "workdir", error)
+        report_path = write_report(arguments.bin, arguments.helper, started_at, started, harness_errors)
     failed = [entry["name"] for entry in CHECKS if entry["status"] != "passed"]
     print(f"\n通过 {len(CHECKS) - len(failed)} 项, 失败 {len(failed)} 项", flush=True)
     print(f"报告: {report_path}", flush=True)
