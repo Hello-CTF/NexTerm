@@ -23,10 +23,12 @@ const (
 	KindSnippet    = "snippet"
 	KindTombstone  = "tombstone"
 	KindTranscript = "transcript"
+	KindKnownHost  = "known_host"
+	KindAIProfile  = "ai_profile"
 )
 
 // objectKinds 是尝试解密时的固定枚举顺序; AAD 绑定 kind, 错误 kind 必然解不开。
-var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript}
+var objectKinds = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile}
 
 const (
 	objectAADPrefix = "nexterm/go/sync-object/v1"
@@ -142,6 +144,40 @@ type snippetObject struct {
 type tombstoneObject struct {
 	TargetKind string `json:"targetKind"`
 	DeletedAt  int64  `json:"deletedAt"`
+}
+
+// knownHostObject 的修订号即 addedAt(重新接受主机密钥会刷新); 三元组 (host, port, keyType) 全局唯一。
+type knownHostObject struct {
+	ID          string `json:"id"`
+	Host        string `json:"host"`
+	Port        int32  `json:"port"`
+	KeyType     string `json:"keyType"`
+	Fingerprint string `json:"fingerprint"`
+	AddedAt     int64  `json:"addedAt"`
+}
+
+// aiProfileObject 字段与 internal/ai/profiles.Profile 持久化形态一一对应, 另加修订号 updatedAt。
+// apiKey 在载荷中恒为明文(整体经 DEK 端到端加密), 落盘前必须转为 enc:v1: 信封。
+type aiProfileObject struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	BaseURL       string  `json:"baseUrl"`
+	APIKey        string  `json:"apiKey"`
+	Model         string  `json:"model"`
+	FallbackModel string  `json:"fallbackModel,omitempty"`
+	Temperature   float64 `json:"temperature"`
+	ContextWindow uint64  `json:"contextWindow"`
+	MaxTokens     *int    `json:"maxTokens,omitempty"`
+	Proxy         *string `json:"proxy"`
+	Stream        bool    `json:"stream"`
+
+	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
+	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
+
+	CircuitFailureThreshold *int `json:"circuitFailureThreshold,omitempty"`
+	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
+
+	UpdatedAt int64 `json:"updatedAt"`
 }
 
 type transcriptChunkObject struct {

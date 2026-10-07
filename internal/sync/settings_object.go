@@ -1,0 +1,227 @@
+package sync
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/ProbiusOfficial/NexTerm/internal/ipc"
+	"github.com/ProbiusOfficial/NexTerm/internal/store"
+)
+
+// aiProfilesStoreVersion 与 internal/ai/profiles.StoreVersion 对齐; 更高版本由更新的应用所有, 同步不得改写。
+const aiProfilesStoreVersion = 1
+
+// errAIProfilesCorrupt 区分「档案数据损坏」(跳过并告警)与数据库错误(整轮失败)。
+var errAIProfilesCorrupt = errors.New("AI 模型档案数据损坏")
+
+// aiProfileRecord 是 ai.models 设置中的持久化形态(无修订号), 字段与 profiles.Profile 完全一致。
+type aiProfileRecord struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	BaseURL       string  `json:"baseUrl"`
+	APIKey        string  `json:"apiKey"`
+	Model         string  `json:"model"`
+	FallbackModel string  `json:"fallbackModel,omitempty"`
+	Temperature   float64 `json:"temperature"`
+	ContextWindow uint64  `json:"contextWindow"`
+	MaxTokens     *int    `json:"maxTokens,omitempty"`
+	Proxy         *string `json:"proxy"`
+	Stream        bool    `json:"stream"`
+
+	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
+	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
+
+	CircuitFailureThreshold *int `json:"circuitFailureThreshold,omitempty"`
+	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
+}
+
+type aiProfilesState struct {
+	Version  int               `json:"version"`
+	Profiles []aiProfileRecord `json:"profiles"`
+	ActiveID *string           `json:"activeId"`
+}
+
+func aiProfileRecordFromPayload(payload aiProfileObject) aiProfileRecord {
+	return aiProfileRecord{
+		ID: payload.ID, Name: payload.Name, BaseURL: payload.BaseURL, APIKey: payload.APIKey,
+		Model: payload.Model, FallbackModel: payload.FallbackModel, Temperature: payload.Temperature,
+		ContextWindow: payload.ContextWindow, MaxTokens: payload.MaxTokens, Proxy: payload.Proxy, Stream: payload.Stream,
+		RequestTimeoutSeconds: payload.RequestTimeoutSeconds, IdleTimeoutSeconds: payload.IdleTimeoutSeconds,
+		CircuitFailureThreshold: payload.CircuitFailureThreshold, CircuitCooldownSeconds: payload.CircuitCooldownSeconds,
+	}
+}
+
+func aiProfilePayloadFromRecord(record aiProfileRecord, updatedAt int64) aiProfileObject {
+	return aiProfileObject{
+		ID: record.ID, Name: record.Name, BaseURL: record.BaseURL, APIKey: record.APIKey,
+		Model: record.Model, FallbackModel: record.FallbackModel, Temperature: record.Temperature,
+		ContextWindow: record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy, Stream: record.Stream,
+		RequestTimeoutSeconds: record.RequestTimeoutSeconds, IdleTimeoutSeconds: record.IdleTimeoutSeconds,
+		CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,
+		UpdatedAt: updatedAt,
+	}
+}
+
+func (s aiProfilesState) find(id string) (aiProfileRecord, bool) {
+	for _, record := range s.Profiles {
+		if record.ID == id {
+			return record, true
+		}
+	}
+	return aiProfileRecord{}, false
+}
+
+// ensureActive 与 profiles.Manager 同款: 当前激活档案缺失时回退到首个档案。
+func (s *aiProfilesState) ensureActive() {
+	if s.ActiveID != nil {
+		if _, exists := s.find(*s.ActiveID); exists {
+			return
+		}
+	}
+	if len(s.Profiles) == 0 {
+		s.ActiveID = nil
+		return
+	}
+	first := s.Profiles[0].ID
+	s.ActiveID = &first
+}
+
+func (s *aiProfilesState) upsert(record aiProfileRecord) {
+	for index := range s.Profiles {
+		if s.Profiles[index].ID == record.ID {
+			s.Profiles[index] = record
+			return
+		}
+	}
+	s.Profiles = append(s.Profiles, record)
+}
+
+func (s *aiProfilesState) remove(id string) bool {
+	for index := range s.Profiles {
+		if s.Profiles[index].ID == id {
+			s.Profiles = append(s.Profiles[:index], s.Profiles[index+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// aiProfilesLoad 读取 ai.models 设置; 修订号即设置行的 updated_at(整档案共享一个 LWW 时钟)。
+// found=false 表示设置不存在, 调用方按空档案、修订号 0 处理。
+func (e *Engine) aiProfilesLoad(ctx context.Context) (aiProfilesState, int64, bool, error) {
+	var value string
+	var updatedAt int64
+	err := e.store.DB().QueryRowContext(ctx,
+		"SELECT value, updated_at FROM setting WHERE key = ?", store.AIProfilesSettingKey).
+		Scan(&value, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return aiProfilesState{Version: aiProfilesStoreVersion, Profiles: []aiProfileRecord{}}, 0, false, nil
+	}
+	if err != nil {
+		return aiProfilesState{}, 0, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	var state aiProfilesState
+	if err := json.Unmarshal([]byte(value), &state); err != nil {
+		return aiProfilesState{}, 0, true, fmt.Errorf("%w: %v", errAIProfilesCorrupt, err)
+	}
+	if state.Version < 0 || state.Version > aiProfilesStoreVersion {
+		return aiProfilesState{}, 0, true, fmt.Errorf("%w: 不支持的版本 %d", errAIProfilesCorrupt, state.Version)
+	}
+	if state.Profiles == nil {
+		state.Profiles = []aiProfileRecord{}
+	}
+	return state, updatedAt, true, nil
+}
+
+// aiProfilesSave 整体写回 ai.models 设置并原样保留指定修订号; 与清除同 ID 删除墓碑同一事务。
+func (e *Engine) aiProfilesSave(ctx context.Context, state aiProfilesState, updatedAt int64, clearTombstoneID string) error {
+	if state.Version <= 0 || state.Version > aiProfilesStoreVersion {
+		state.Version = aiProfilesStoreVersion
+	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeInternal, "无法编码 AI 模型档案", err)
+	}
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO setting(key, value, updated_at) VALUES(?,?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		store.AIProfilesSettingKey, string(encoded), updatedAt); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if clearTombstoneID != "" {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", clearTombstoneID); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	}
+	return tx.Commit()
+}
+
+// revealAIProfileKey 把落盘形态还原为载荷明文: 空串原样, 历史明文原样, enc:v1: 信封走凭据库。
+func (e *Engine) revealAIProfileKey(ctx context.Context, stored string) (string, error) {
+	if stored == "" || !strings.HasPrefix(stored, store.SecretEnvelopePrefix) {
+		return stored, nil
+	}
+	if e.vault == nil {
+		return "", ipc.NewError(ipc.CodeVaultLocked, "凭据库不可用, 无法读取 AI 模型档案密钥")
+	}
+	return e.vault.DecryptSecret(ctx, stored)
+}
+
+// protectAIProfileKey 把载荷明文转为落盘信封; 调用方必须已通过 requireVault 把关。
+func (e *Engine) protectAIProfileKey(ctx context.Context, plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	return e.vault.EncryptSecret(ctx, plaintext)
+}
+
+func (e *Engine) knownHostByID(ctx context.Context, id string) (store.KnownHostRow, bool, error) {
+	var row store.KnownHostRow
+	err := e.store.DB().QueryRowContext(ctx,
+		"SELECT id, host, port, key_type, fingerprint, added_at FROM known_host WHERE id = ?", id).
+		Scan(&row.ID, &row.Host, &row.Port, &row.KeyType, &row.Fingerprint, &row.AddedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.KnownHostRow{}, false, nil
+	}
+	if err != nil {
+		return store.KnownHostRow{}, false, ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return row, true, nil
+}
+
+// knownHostUpsert 按 ID 幂等写入并保留对端修订号 added_at; 三元组冲突的败者行与其墓碑在同一事务清除。
+func (e *Engine) knownHostUpsert(ctx context.Context, payload knownHostObject, displacedID string) error {
+	tx, err := e.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if displacedID != "" {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM known_host WHERE id = ?", displacedID); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_tombstone(id, kind, deleted_at) VALUES(?,?,?)
+ON CONFLICT(id) DO UPDATE SET deleted_at = `+scalarMax(e.store.Backend())+`(sync_tombstone.deleted_at, excluded.deleted_at)`,
+			displacedID, KindKnownHost, payload.AddedAt); err != nil {
+			return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO known_host(id, host, port, key_type, fingerprint, added_at) VALUES(?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET host=excluded.host, port=excluded.port, key_type=excluded.key_type,
+fingerprint=excluded.fingerprint, added_at=excluded.added_at`,
+		payload.ID, payload.Host, payload.Port, payload.KeyType, payload.Fingerprint, payload.AddedAt); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sync_tombstone WHERE id = ?", payload.ID); err != nil {
+		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
+	}
+	return tx.Commit()
+}

@@ -258,11 +258,15 @@ def main() -> int:
         asset_id = synthetic_id()
         credential_id = synthetic_id()
         snippet_id = synthetic_id()
+        known_host_id = synthetic_id()
+        ai_profile_id = synthetic_id()
         payloads = {
             group_id: ("group", {"id": group_id, "name": "E2E 生产-canary-组", "sort": 0, "createdAt": now, "updatedAt": now}),
             credential_id: ("credential", {"id": credential_id, "name": "e2e-canary-凭据", "kind": "password", "secret": "e2e-canary-secret-值", "updatedAt": now}),
             snippet_id: ("snippet", {"id": snippet_id, "name": "e2e-canary-片段", "body": "echo e2e-canary", "sort": 0, "createdAt": now, "updatedAt": now}),
             asset_id: ("asset", {"id": asset_id, "groupId": group_id, "kind": "ssh", "name": "e2e-canary-资产", "host": "192.0.2.10", "port": 2222, "username": "root", "credId": credential_id, "optionsJson": "{}", "tags": "", "note": "", "sort": 0, "createdAt": now, "updatedAt": now}),
+            known_host_id: ("known_host", {"id": known_host_id, "host": "e2e-canary-host.internal", "port": 22, "keyType": "ssh-ed25519", "fingerprint": "SHA256:e2e-canary-fingerprint-值", "addedAt": now}),
+            ai_profile_id: ("ai_profile", {"id": ai_profile_id, "name": "e2e-canary-档案", "baseUrl": "https://e2e-canary-ai.example.com", "apiKey": "e2e-canary-api-key-值", "model": "e2e-model", "fallbackModel": "e2e-fallback", "temperature": 0.5, "contextWindow": 64000, "maxTokens": 2048, "proxy": None, "stream": True, "requestTimeoutSeconds": 60, "idleTimeoutSeconds": 15, "circuitFailureThreshold": 3, "circuitCooldownSeconds": 30, "updatedAt": now}),
         }
         objects = []
         for object_id, (kind, payload) in payloads.items():
@@ -270,26 +274,26 @@ def main() -> int:
             objects.append({"id": object_id, "blob": blob})
         status, body = alice.request("POST", "/sync/v2/push", {"protocol": 2, "known_head": genesis_head(alice.user_id), "objects": objects}, csrf=True)
         pushed = body if isinstance(body, dict) else {}
-        check("设备一首批推送", status == 200 and pushed.get("applied") == 4, f"HTTP {status} {body}")
+        check("设备一首批推送", status == 200 and pushed.get("applied") == 6, f"HTTP {status} {body}")
         head = pushed.get("head", "")
 
         print("== 服务端密文与盲存检查 ==", flush=True)
-        canaries = ["E2E 生产-canary-组", "e2e-canary-凭据", "e2e-canary-secret-值", "e2e-canary-片段", "e2e-canary-资产", "192.0.2.10"]
+        canaries = ["E2E 生产-canary-组", "e2e-canary-凭据", "e2e-canary-secret-值", "e2e-canary-片段", "e2e-canary-资产", "192.0.2.10", "e2e-canary-host.internal", "e2e-canary-fingerprint-值", "e2e-canary-档案", "e2e-canary-api-key-值"]
         connection = sqlite3.connect(server.db_path())
         rows = connection.execute("SELECT id, seq, blob FROM user_sync_object ORDER BY seq").fetchall()
         blobs = {row[0]: row[2] for row in rows}
-        check("服务端对象行数", len(rows) == 4, f"rows={len(rows)}")
+        check("服务端对象行数", len(rows) == 6, f"rows={len(rows)}")
         leak = [canary for canary in canaries for blob in blobs.values() if canary.encode() in blob]
         check("服务端行不含明文", not leak, f"leaks={leak}")
         seqs = [row[1] for row in rows]
-        check("seq 单调连续", seqs == sorted(seqs) and len(set(seqs)) == 4, f"seqs={seqs}")
+        check("seq 单调连续", seqs == sorted(seqs) and len(set(seqs)) == 6, f"seqs={seqs}")
         head_row = connection.execute("SELECT head_hash FROM user_sync_head WHERE user_id = ?", (alice.user_id,)).fetchone()
         check("head 行存在且为哈希", bool(head_row) and head_row[0] == head and len(head_row[0]) == 64, f"head_row={head_row}")
         connection.close()
 
         print("== 幂等重推 ==", flush=True)
         status, body = alice.request("POST", "/sync/v2/push", {"protocol": 2, "known_head": head, "objects": objects}, csrf=True)
-        check("重复推送幂等", status == 200 and body.get("applied") == 0 and body.get("skipped") == 4 and body.get("head") == head, f"HTTP {status} {body}")
+        check("重复推送幂等", status == 200 and body.get("applied") == 0 and body.get("skipped") == 6 and body.get("head") == head, f"HTTP {status} {body}")
 
         print("== 设备二拉取与端到端解密 ==", flush=True)
         device2 = Client(server.port)
@@ -297,7 +301,7 @@ def main() -> int:
         device2.me()
         status, body = device2.request("POST", "/sync/v2/pull", {"protocol": 2, "since_seq": 0})
         pulled = body.get("objects", []) if isinstance(body, dict) else []
-        check("设备二全量拉取", status == 200 and len(pulled) == 4, f"HTTP {status} {body}")
+        check("设备二全量拉取", status == 200 and len(pulled) == 6, f"HTTP {status} {body}")
         roundtrip_ok = True
         for object_id, (kind, payload) in payloads.items():
             entry = next((item for item in pulled if item.get("id") == object_id), None)
@@ -321,7 +325,7 @@ def main() -> int:
         print("== ids 清单 ==", flush=True)
         status, body = device2.request("POST", "/sync/v2/ids", {"protocol": 2})
         entries = body.get("entries", []) if isinstance(body, dict) else []
-        id_ok = status == 200 and len(entries) == 4 and all(len(entry.get("blob_hash", "")) == 64 for entry in entries)
+        id_ok = status == 200 and len(entries) == 6 and all(len(entry.get("blob_hash", "")) == 64 for entry in entries)
         check("ids 清单返回 blob 哈希", id_ok, f"HTTP {status} {body}")
 
         print("== 多用户隔离 ==", flush=True)
@@ -357,7 +361,7 @@ def main() -> int:
         device3.login("alice", alice_password)
         device3.me()
         status, body = device3.request("POST", "/sync/v2/pull", {"protocol": 2, "since_seq": 0})
-        check("重启后对象仍在", status == 200 and len(body.get("objects", [])) == 4, f"HTTP {status} {body}")
+        check("重启后对象仍在", status == 200 and len(body.get("objects", [])) == 6, f"HTTP {status} {body}")
     finally:
         server.stop()
         shutil.rmtree(work, ignore_errors=True)

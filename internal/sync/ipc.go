@@ -93,6 +93,16 @@ func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				return s.CollectCredentials(ctx, input)
 			})
 		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCollectKnownHosts, func(ctx context.Context, _ *ipc.Call, input CollectKnownHostsRequest) (CollectKnownHostsResult, error) {
+				return s.CollectKnownHosts(ctx, input)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, CommandCollectAIProfiles, func(ctx context.Context, _ *ipc.Call, input CollectAIProfilesRequest) (CollectAIProfilesResult, error) {
+				return s.CollectAIProfiles(ctx, input)
+			})
+		},
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
