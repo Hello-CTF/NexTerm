@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // M158 设置分享卡片响应式验收: 真实 headless Chromium + vite dev server,
 // 后端是本进程内的 fake HTTP server (仅复述 M127/M138/M149 合同形状:
-// /auth/status+/auth/me 会话, /fleet/devices, /admin/users, /share/host-shares,
-// /share/links), 不是生产后端证据; 生产合同证据归 Go 测试与 scripts/e2e-sharing-local.py。
-// 覆盖: 列表渲染 (方向/权限/状态), 超管创建 (只读默认/显式读写/有界 TTL),
-// 吊销确认流, 公开链接零创建入口, 320/390/768 响应式无溢出, demo 显式不可用且零分享 HTTP。
+// /auth/status+/auth/me 会话, /fleet/devices 角色过滤, /share/host-shares
+// 收 recipient_username 并大小写不敏感解析, /share/links), 不是生产后端证据;
+// 生产合同证据归 Go 测试与 scripts/e2e-sharing-local.py。
+// 覆盖: 列表渲染 (方向/权限/状态), 超管与普通 owner 同一创建合同 (只读默认/
+// 显式读写/有界 TTL/CSRF), 吊销确认流, 公开链接零创建入口, 普通 owner 路径
+// 零 /admin/users, 320/390/768 响应式无溢出, demo 显式不可用且零分享 HTTP。
 import { spawn, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -299,6 +301,7 @@ const FAKE_DEVICES = [
 
 function startFakeBackend() {
   const state = {
+    currentUser: FAKE_ADMIN,
     shares: [
       {
         id: "hs-1",
@@ -347,6 +350,8 @@ function startFakeBackend() {
     ],
     nextId: 1,
   };
+  const users = [FAKE_ADMIN, FAKE_ALICE, FAKE_BOB_DISABLED];
+  const isAdmin = () => state.currentUser.role === "superadmin";
   const requests = [];
   const shareRequests = () => requests.filter((r) => r.url.startsWith("/share/"));
 
@@ -382,20 +387,33 @@ function startFakeBackend() {
       }
       requests.push({ method: req.method, url: url.pathname, body: parsed, csrf: req.headers["x-nexterm-csrf"] || null });
 
+      // 验收专用会话开关: 切换 /auth/me 返回的用户, 用于普通 owner 路径。
+      if (url.pathname === "/__test/session" && req.method === "POST") {
+        const target = users.find((u) => u.username === parsed?.username);
+        if (!target) {
+          send(404, { error: { code: "not_found", message: "no such fake user" } });
+          return;
+        }
+        state.currentUser = target;
+        send(200, { ok: true });
+        return;
+      }
       if (url.pathname === "/auth/status" && req.method === "GET") {
         send(200, { initialized: true, registration_open: false, auth: "on" });
         return;
       }
       if (url.pathname === "/auth/me" && req.method === "GET") {
-        send(200, { user: FAKE_ADMIN, csrf_token: "acceptance-csrf" });
+        send(200, { user: state.currentUser, csrf_token: "acceptance-csrf" });
         return;
       }
       if (url.pathname === "/fleet/devices" && req.method === "GET") {
-        send(200, { devices: FAKE_DEVICES });
+        // 与线上一致的服务端角色过滤: 普通用户只看自己的设备。
+        const devices = isAdmin() ? FAKE_DEVICES : FAKE_DEVICES.filter((d) => d.owner?.id === state.currentUser.id);
+        send(200, { devices });
         return;
       }
       if (url.pathname === "/admin/users" && req.method === "GET") {
-        send(200, { users: [FAKE_ADMIN, FAKE_ALICE, FAKE_BOB_DISABLED] });
+        send(200, { users });
         return;
       }
       if (url.pathname === "/admin/settings" && req.method === "GET") {
@@ -403,24 +421,46 @@ function startFakeBackend() {
         return;
       }
       if (url.pathname === "/share/host-shares" && req.method === "GET") {
-        send(200, { shares: state.shares });
+        // 与线上一致: 普通用户只看自己授予/接收的分享, 超管看全部。
+        const shares = isAdmin()
+          ? state.shares
+          : state.shares.filter((s) => s.owner_id === state.currentUser.id || s.recipient_id === state.currentUser.id);
+        send(200, { shares });
         return;
       }
       if (url.pathname === "/share/host-shares" && req.method === "POST") {
         const b = parsed || {};
-        if (typeof b.device_id !== "string" || typeof b.recipient_id !== "string" || typeof b.write !== "boolean" ||
+        if (typeof b.device_id !== "string" || typeof b.recipient_username !== "string" || typeof b.write !== "boolean" ||
             typeof b.ttl_ms !== "number" || b.ttl_ms < 60_000 || b.ttl_ms > 30 * 24 * 60 * 60_000) {
           send(400, { error: { code: "bad_param", message: "请求体字段不合法" } });
           return;
         }
-        const recipient = [FAKE_ADMIN, FAKE_ALICE, FAKE_BOB_DISABLED].find((u) => u.id === b.recipient_id);
+        // 与线上一致的解析语义: 用户名大小写不敏感精确解析; 无效 404, 禁用 403。
+        const recipient = users.find((u) => u.username.toLowerCase() === b.recipient_username.toLowerCase());
+        if (!recipient) {
+          send(404, { error: { code: "not_found", message: "未找到: 用户" } });
+          return;
+        }
+        if (recipient.state !== "active") {
+          send(403, { error: { code: "forbidden", message: "接收者账号不可用" } });
+          return;
+        }
+        const device = FAKE_DEVICES.find((d) => d.id === b.device_id);
+        if (!device || (device.owner?.id !== state.currentUser.id && !isAdmin())) {
+          send(403, { error: { code: "forbidden", message: "设备不属于该用户" } });
+          return;
+        }
+        if (recipient.id === device.owner?.id) {
+          send(400, { error: { code: "bad_param", message: "不能向设备 owner 本人分享" } });
+          return;
+        }
         const share = {
           id: `hs-fake-${state.nextId++}`,
-          owner_id: "u-root",
-          owner_username: "root",
+          owner_id: state.currentUser.id,
+          owner_username: state.currentUser.username,
           device_id: b.device_id,
-          recipient_id: b.recipient_id,
-          recipient_username: recipient ? recipient.username : b.recipient_id,
+          recipient_id: recipient.id,
+          recipient_username: recipient.username,
           permission: b.write ? "read_write" : "read",
           created_at: Date.now(),
           expires_at: Date.now() + b.ttl_ms,
@@ -441,7 +481,8 @@ function startFakeBackend() {
         return;
       }
       if (url.pathname === "/share/links" && req.method === "GET") {
-        send(200, { links: state.links });
+        const links = isAdmin() ? state.links : state.links.filter((l) => l.owner_id === state.currentUser.id);
+        send(200, { links });
         return;
       }
       const linkRevoke = /^\/share\/links\/([^/]+)\/revoke$/.exec(url.pathname);
@@ -628,6 +669,18 @@ async function setSelect(page, label, value) {
   if (done !== "ok") throw new Error(`select not found: ${label}`);
 }
 
+async function setRecipientUsername(page, value) {
+  const done = await page.evaluate(`(() => {
+    const input = [...document.querySelectorAll(".nx-card input:not([type=checkbox])")].find((i) => (i.placeholder || "").includes("接收者的用户名"));
+    if (!input) return "no-input";
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, ${JSON.stringify(value)});
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return "ok";
+  })()`);
+  if (done !== "ok") throw new Error(`recipient username input not found (${done})`);
+}
+
 async function confirmDialog(page) {
   await page.waitFor(`[...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "确定")`);
   await clickButton(page, "确定");
@@ -657,12 +710,12 @@ async function renderChecks(page, fake) {
     await clickButton(page, "新建主机分享");
     await page.waitFor(`!!document.querySelector('select[aria-label="分享主机"]')`);
     await setSelect(page, "分享主机", "d-1");
-    await setSelect(page, "接收用户", "u-alice");
+    await setRecipientUsername(page, "alice");
     await clickButton(page, "创建分享");
     await page.waitFor(`document.body.textContent.includes("3 条主机分享")`);
     const create = fake.requests.find((r) => r.method === "POST" && r.url === "/share/host-shares");
     assert.ok(create, "create request not seen by fake");
-    assert.deepEqual(create.body, { device_id: "d-1", recipient_id: "u-alice", write: false, ttl_ms: 86_400_000 });
+    assert.deepEqual(create.body, { device_id: "d-1", recipient_username: "alice", write: false, ttl_ms: 86_400_000 });
     assert.equal(create.csrf, "acceptance-csrf", "create must carry the session CSRF header");
     const after = fake.requests.slice(before).filter((r) => r.method === "GET" && r.url === "/share/host-shares");
     assert.ok(after.length >= 1, "list must reload after create");
@@ -673,7 +726,7 @@ async function renderChecks(page, fake) {
     await clickButton(page, "新建主机分享");
     await page.waitFor(`!!document.querySelector('select[aria-label="分享主机"]')`);
     await setSelect(page, "分享主机", "d-2");
-    await setSelect(page, "接收用户", "u-root");
+    await setRecipientUsername(page, "root");
     await setSelect(page, "分享有效期", String(7 * 24 * 60 * 60_000));
     await page.evaluate(`(() => {
       const box = [...document.querySelectorAll('input[type="checkbox"]')].find((i) => i.closest("label")?.textContent?.includes("允许读写"));
@@ -685,7 +738,7 @@ async function renderChecks(page, fake) {
     await page.waitFor(`document.body.textContent.includes("4 条主机分享")`);
     const creates = fake.requests.filter((r) => r.method === "POST" && r.url === "/share/host-shares");
     const second = creates[creates.length - 1];
-    assert.deepEqual(second.body, { device_id: "d-2", recipient_id: "u-root", write: true, ttl_ms: 604_800_000 });
+    assert.deepEqual(second.body, { device_id: "d-2", recipient_username: "root", write: true, ttl_ms: 604_800_000 });
     return { evidence: { body: second.body } };
   });
 
@@ -754,6 +807,47 @@ async function responsiveChecks(page) {
   }
 }
 
+async function plainOwnerChecks(page, fake) {
+  const adminUsersBefore = fake.requests.filter((r) => r.url === "/admin/users").length;
+  // 切换 fake 会话为普通用户 alice 并刷新门状态: 卡片应按账号隔离重置并以 alice 视角重载。
+  await page.evaluate(`(async () => {
+    const response = await fetch(${JSON.stringify(`http://127.0.0.1:${fake.port}/__test/session`)}, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "alice" }),
+    });
+    if (!response.ok) throw new Error("session switch failed: " + response.status);
+    const { useAuth } = await import('/src/features/auth/store.ts');
+    await useAuth.getState().refresh();
+    return true;
+  })()`);
+  // alice 视角: hs-1/hs-fake-1 (接收自 root, 设备 d-1 不在她的设备列表里, 行内显示短 id)
+  // 与 hs-2 (授予给 root) 共 3 条; 设备下拉里只有 web-02 (服务端角色过滤的复述)。
+  await page.waitFor(`document.body.textContent.includes("3 条主机分享")`);
+  await page.waitFor(`!document.body.textContent.includes("web-01")`);
+
+  await pass("D-plain-owner-create-by-username", async () => {
+    await clickButton(page, "新建主机分享");
+    await page.waitFor(`!!document.querySelector('select[aria-label="分享主机"]')`);
+    await setSelect(page, "分享主机", "d-2");
+    await setRecipientUsername(page, "root");
+    await clickButton(page, "创建分享");
+    await page.waitFor(`document.body.textContent.includes("4 条主机分享")`);
+    const creates = fake.requests.filter((r) => r.method === "POST" && r.url === "/share/host-shares");
+    const last = creates[creates.length - 1];
+    assert.deepEqual(last.body, { device_id: "d-2", recipient_username: "root", write: false, ttl_ms: 86_400_000 });
+    assert.equal(last.csrf, "acceptance-csrf", "plain owner create must carry the session CSRF header");
+    return { evidence: { body: last.body, csrf: last.csrf } };
+  });
+
+  // 普通用户路径全程不访问 /admin/users (分享卡片不依赖用户目录)。
+  await pass("D-plain-owner-no-admin-directory", async () => {
+    const after = fake.requests.filter((r) => r.url === "/admin/users").length;
+    assert.equal(after, adminUsersBefore, `plain owner path must not call /admin/users: before=${adminUsersBefore} after=${after}`);
+    return { evidence: { adminUsersBefore: adminUsersBefore, adminUsersAfter: after } };
+  });
+}
+
 async function demoChecks(chrome, fake) {
   const shareCountBefore = fake.shareRequests().length;
   const page = await newPage(chrome);
@@ -804,6 +898,7 @@ try {
   await openSettingsTab(page);
   await renderChecks(page, fake);
   await responsiveChecks(page);
+  await plainOwnerChecks(page, fake);
   page.close();
 
   await demoChecks(chrome, fake);
@@ -832,7 +927,7 @@ const report = {
     headless: true,
     jsdom: false,
     transport: "vite dev server + in-process fake HTTP backend (M127/M138/M149 合同形状复述, 非生产后端证据)",
-    matrix: "320/390/768 响应式 + 创建/吊销交互 + demo 零分享 HTTP",
+    matrix: "320/390/768 响应式 + 超管/普通 owner 创建 (recipient_username) 与吊销交互 + demo 零分享 HTTP",
   },
   checks,
   harness_errors: harnessErrors,

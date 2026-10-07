@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
-// SHARE158 交互测试: 角色差异(超管可创建/普通用户只读列表)、主机分享与公开链接
-// 的状态渲染、创建(只读默认/显式读写/有界 TTL/排除设备 owner)、吊销确认、
-// 公开链接无创建入口, 以及账号切换隔离(晚到响应不写入新账号)。
+// SHARE158 交互测试: 普通 owner 与超管同一创建路径 (recipient_username 精确用户名,
+// 不访问 /admin/users)、主机分享与公开链接的状态渲染、创建 (只读默认/显式读写/
+// 有界 TTL/用户名 trim/无效与禁用接收者内联错误)、吊销确认、公开链接无创建入口,
+// 以及账号切换隔离 (晚到响应不写入新账号)。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, deferred, flush, flushUntil, mount, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -34,8 +35,6 @@ const SUPERADMIN = {
 };
 
 const ALICE = { ...SUPERADMIN, id: "u-alice", username: "alice", role: "user" as const };
-const BOB_DISABLED = { ...SUPERADMIN, id: "u-bob", username: "bob", role: "user" as const, state: "disabled" as const };
-const CAROL = { ...SUPERADMIN, id: "u-carol", username: "carol", role: "user" as const };
 
 const AGENT_INFO = {
   platform: "linux",
@@ -172,9 +171,6 @@ function shareHandler(overrides?: {
     if (url === "/fleet/devices" && method === "GET") {
       return { payload: overrides?.devices ?? { devices: DEVICES } };
     }
-    if (url === "/admin/users" && method === "GET") {
-      return { payload: { users: [SUPERADMIN, ALICE, BOB_DISABLED, CAROL] } };
-    }
     if (url === "/share/host-shares" && method === "GET") {
       return {
         payload:
@@ -214,6 +210,14 @@ function shareCard(): HTMLElement | undefined {
   );
 }
 
+function recipientInput(): HTMLInputElement {
+  const input = [...document.querySelectorAll<HTMLInputElement>(".nx-card input:not([type=checkbox])")].find((i) =>
+    i.placeholder?.includes("接收者的用户名"),
+  );
+  if (!input) throw new Error("recipient username input not found");
+  return input;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -225,8 +229,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("分享卡片 · 角色差异", () => {
-  it("超管看到新建入口, 设备与接收用户下拉来自真实列表且排除设备 owner", async () => {
+describe("分享卡片 · 创建入口与角色", () => {
+  it("超管与普通用户都有新建入口, 设备下拉只列守护主机, 全程不访问 /admin/users", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
@@ -239,40 +243,20 @@ describe("分享卡片 · 角色差异", () => {
     expect(deviceSelect).not.toBeNull();
     // 只有守护主机 (agent 在线且终端开启、未吊销) 可分享
     expect([...(deviceSelect?.options ?? [])].map((o) => o.textContent)).toEqual(["选择主机", "web-01", "web-02"]);
+    expect(recipientInput()).toBeDefined();
+    expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
+    mounted.unmount();
 
-    // d-1 owner 是 root: 选中后 root 从接收用户中排除
-    setSelectValue(deviceSelect as HTMLSelectElement, "d-1");
-    let recipientSelect = document.querySelector<HTMLSelectElement>('select[aria-label="接收用户"]');
-    let recipientNames = [...(recipientSelect?.options ?? [])].map((o) => o.textContent);
-    expect(recipientNames).toContain("alice");
-    expect(recipientNames).not.toContain("root");
-    expect(recipientNames).not.toContain("bob"); // 禁用账号不可接收
-
-    // d-2 owner 是 alice: 选中后 alice 被排除, 之前选中的 root 若与新 owner 冲突会被清掉
-    setSelectValue(deviceSelect as HTMLSelectElement, "d-2");
-    recipientSelect = document.querySelector<HTMLSelectElement>('select[aria-label="接收用户"]');
-    recipientNames = [...(recipientSelect?.options ?? [])].map((o) => o.textContent);
-    expect(recipientNames).toContain("root");
-    expect(recipientNames).not.toContain("alice");
-    expect(recipientNames).toContain("carol");
-
-    expect(calls.some((c) => c.url === "/admin/users")).toBe(true);
-  });
-
-  it("普通用户没有新建入口与用户目录请求, 收到与授予的分享都能看到", async () => {
-    const calls = route(shareHandler());
+    // 普通用户: 同样的创建入口 (服务端按角色过滤设备列表, 这里只返回 alice 的设备)
+    const plainCalls = route(shareHandler({ devices: { devices: [DAEMON_DEVICE_2] } }));
     seedUser(ALICE);
     mounted = mount(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
-
-    expect(document.querySelector('select[aria-label="分享主机"]')).toBeNull();
-    expect(document.body.textContent).toContain("仅超管可读取");
-    expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
-    // alice 授予给 carol 的分享: owner 是 alice (我), 可吊销
-    const card = shareCard();
-    expect(card?.textContent).toContain("授予给 carol");
-    // alice 接收自 root 的分享也在列表里
-    expect(card?.textContent).toContain("接收自 root");
+    await flushUntil(() => document.body.textContent?.includes("web-02") ?? false);
+    expect(document.body.textContent).toContain("新建主机分享");
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
+    const plainDeviceSelect = document.querySelector<HTMLSelectElement>('select[aria-label="分享主机"]');
+    expect([...(plainDeviceSelect?.options ?? [])].map((o) => o.textContent)).toEqual(["选择主机", "web-02"]);
+    expect(plainCalls.some((c) => c.url === "/admin/users")).toBe(false);
   });
 
   it("未登录时提示先登录, 不发任何分享/设备请求", async () => {
@@ -334,7 +318,7 @@ describe("分享卡片 · 列表与状态", () => {
 });
 
 describe("分享卡片 · 创建主机分享", () => {
-  it("默认只读 + 24 小时: 提交蛇形请求体并刷新列表", async () => {
+  it("默认只读 + 24 小时: 用户名 trim 后随蛇形请求体提交并刷新列表", async () => {
     const calls = route(shareHandler());
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
@@ -342,7 +326,7 @@ describe("分享卡片 · 创建主机分享", () => {
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
-    setSelectValue(document.querySelector('select[aria-label="接收用户"]') as HTMLSelectElement, "u-alice");
+    setInputValue(recipientInput(), "  alice  ");
     const ttlSelect = document.querySelector('select[aria-label="分享有效期"]') as HTMLSelectElement;
     expect(ttlSelect.value).toBe(String(24 * 60 * 60_000));
     // TTL 选项全部落在服务端 1 分钟-30 天边界内
@@ -355,9 +339,26 @@ describe("分享卡片 · 创建主机分享", () => {
     await flushUntil(() => calls.some((c) => c.url === "/share/host-shares" && c.method === "POST"));
 
     const create = calls.find((c) => c.url === "/share/host-shares" && c.method === "POST");
-    expect(create?.body).toEqual({ device_id: "d-1", recipient_id: "u-alice", write: false, ttl_ms: 86_400_000 });
+    expect(create?.body).toEqual({ device_id: "d-1", recipient_username: "alice", write: false, ttl_ms: 86_400_000 });
     await flushUntil(() => calls.filter((c) => c.url === "/share/host-shares" && c.method === "GET").length >= 2);
     expect(document.querySelector('select[aria-label="分享主机"]')).toBeNull();
+  });
+
+  it("普通用户以 recipient_username 创建成功 (与超管同一合同)", async () => {
+    const calls = route(shareHandler({ devices: { devices: [DAEMON_DEVICE_2] } }));
+    seedUser(ALICE);
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("web-02") ?? false);
+
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
+    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-2");
+    setInputValue(recipientInput(), "root");
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
+    await flushUntil(() => calls.some((c) => c.url === "/share/host-shares" && c.method === "POST"));
+
+    const create = calls.find((c) => c.url === "/share/host-shares" && c.method === "POST");
+    expect(create?.body).toEqual({ device_id: "d-2", recipient_username: "root", write: false, ttl_ms: 86_400_000 });
+    expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
   });
 
   it("显式读写 + 7 天: write 与 ttl_ms 随选择提交", async () => {
@@ -368,7 +369,7 @@ describe("分享卡片 · 创建主机分享", () => {
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
-    setSelectValue(document.querySelector('select[aria-label="接收用户"]') as HTMLSelectElement, "u-alice");
+    setInputValue(recipientInput(), "alice");
     setSelectValue(document.querySelector('select[aria-label="分享有效期"]') as HTMLSelectElement, String(7 * 24 * 60 * 60_000));
     const checkbox = [...document.querySelectorAll('input[type="checkbox"]')].find((i) =>
       i.closest("label")?.textContent?.includes("允许读写"),
@@ -379,26 +380,38 @@ describe("分享卡片 · 创建主机分享", () => {
     await flushUntil(() => calls.some((c) => c.url === "/share/host-shares" && c.method === "POST"));
 
     const create = calls.find((c) => c.url === "/share/host-shares" && c.method === "POST");
-    expect(create?.body).toEqual({ device_id: "d-1", recipient_id: "u-alice", write: true, ttl_ms: 604_800_000 });
+    expect(create?.body).toEqual({ device_id: "d-1", recipient_username: "alice", write: true, ttl_ms: 604_800_000 });
   });
 
-  it("切换主机时清掉与新设备 owner 冲突的接收者", async () => {
-    route(shareHandler());
+  it("无效用户名给内联 not_found 错误, 禁用接收者给 forbidden 错误", async () => {
+    const calls = route(
+      shareHandler({ create: { status: 404, payload: { error: { code: "not_found", message: "未找到: 用户" } } } }),
+    );
     seedUser(SUPERADMIN);
     mounted = mount(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    const deviceSelect = document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement;
-    const recipientSelect = () => document.querySelector('select[aria-label="接收用户"]') as HTMLSelectElement;
-    setSelectValue(deviceSelect, "d-2");
-    setSelectValue(recipientSelect(), "u-root");
-    expect(recipientSelect().value).toBe("u-root");
-    setSelectValue(deviceSelect, "d-1");
-    expect(recipientSelect().value).toBe("");
+    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    setInputValue(recipientInput(), "no-such-user");
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("未找到: 用户") ?? false);
+    mounted.unmount();
+
+    route(
+      shareHandler({ create: { status: 403, payload: { error: { code: "forbidden", message: "接收者账号不可用" } } } }),
+    );
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
+    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    setInputValue(recipientInput(), "bob");
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("接收者账号不可用") ?? false);
+    expect(calls.filter((c) => c.url === "/share/host-shares" && c.method === "POST").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("创建失败给内联错误 (如设备代理离线)", async () => {
+  it("设备代理离线给内联错误", async () => {
     const calls = route(
       shareHandler({ create: { status: 503, payload: { error: { code: "disconnected", message: "设备代理离线" } } } }),
     );
@@ -408,7 +421,7 @@ describe("分享卡片 · 创建主机分享", () => {
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
-    setSelectValue(document.querySelector('select[aria-label="接收用户"]') as HTMLSelectElement, "u-alice");
+    setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("设备代理离线") ?? false);
     expect(calls.some((c) => c.url === "/share/host-shares" && c.method === "POST")).toBe(true);
@@ -481,13 +494,16 @@ describe("分享卡片 · 公开链接只有列表与吊销", () => {
 
     const card = shareCard();
     expect(card).toBeDefined();
-    // 整个卡片没有任何自由文本输入 (无伪造 session_id 入口)
-    expect(card?.querySelectorAll("input:not([type=checkbox])")).toHaveLength(0);
-    // 公开链接区域没有创建类按钮
+    // 公开链接区域没有创建类按钮, 不展示任何 token (列表合同不含 token)
     const buttons = [...(card?.querySelectorAll("button") ?? [])].map((b) => b.textContent ?? "");
     expect(buttons.some((t) => t.includes("创建链接") || t.includes("新建链接") || t.includes("生成链接"))).toBe(false);
-    // 不展示任何 token (列表合同不含 token)
     expect(card?.textContent?.toLowerCase()).not.toContain("token");
+
+    // 打开创建表单后, 卡片里唯一的自由文本输入是接收者用户名 (无伪造 session_id 入口)
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
+    const freeText = [...(card?.querySelectorAll<HTMLInputElement>("input:not([type=checkbox])") ?? [])];
+    expect(freeText.length).toBe(1);
+    expect(freeText[0]?.placeholder).toContain("接收者的用户名");
   });
 });
 
@@ -508,9 +524,6 @@ describe("分享卡片 · 账号切换隔离", () => {
       }
       if (u === "/fleet/devices" && method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ devices: DEVICES }) };
-      }
-      if (u === "/admin/users" && method === "GET") {
-        return { ok: true, status: 200, text: async () => JSON.stringify({ users: [SUPERADMIN, ALICE, CAROL] }) };
       }
       if (u === "/share/links" && method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ links: [] }) };
@@ -548,9 +561,6 @@ describe("分享卡片 · 账号切换隔离", () => {
       if (u === "/fleet/devices" && method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ devices: DEVICES }) };
       }
-      if (u === "/admin/users" && method === "GET") {
-        return { ok: true, status: 200, text: async () => JSON.stringify({ users: [SUPERADMIN, ALICE, CAROL] }) };
-      }
       if (u === "/share/host-shares" && method === "GET") {
         return { ok: true, status: 200, text: async () => JSON.stringify({ shares: [] }) };
       }
@@ -571,7 +581,7 @@ describe("分享卡片 · 账号切换隔离", () => {
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
-    setSelectValue(document.querySelector('select[aria-label="接收用户"]') as HTMLSelectElement, "u-alice");
+    setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => createCalls === 1);
 
@@ -590,13 +600,12 @@ describe("分享卡片 · 账号切换隔离", () => {
     seedUser(SUPERADMIN);
     await flushUntil(() => document.body.textContent?.includes("新建主机分享") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    // 等设备/用户目录就绪后再选择, 避免空选项吞掉 setSelectValue。
+    // 等设备列表就绪后再选择, 避免空选项吞掉 setSelectValue。
     await flushUntil(
-      () => document.querySelector('select[aria-label="分享主机"] option[value="d-1"]') !== null
-        && document.querySelector('select[aria-label="接收用户"] option[value="u-alice"]') !== null,
+      () => document.querySelector('select[aria-label="分享主机"] option[value="d-1"]') !== null,
     );
     setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
-    setSelectValue(document.querySelector('select[aria-label="接收用户"]') as HTMLSelectElement, "u-alice");
+    setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await waitFor(() => {
       expect(createCalls).toBe(2);

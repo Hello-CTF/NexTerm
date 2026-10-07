@@ -36,11 +36,11 @@ export interface HostShareView {
 export const sharingApi = {
   hostShares: () => request<{ shares: HostShareView[] }>("GET", "/share/host-shares"),
 
-  createHostShare: (input: { deviceId: string; recipientId: string; write: boolean; ttlMs: number }) =>
+  createHostShare: (input: { deviceId: string; recipientUsername: string; write: boolean; ttlMs: number }) =>
     request<HostShareView>(
       "POST",
       "/share/host-shares",
-      { device_id: input.deviceId, recipient_id: input.recipientId, write: input.write, ttl_ms: input.ttlMs },
+      { device_id: input.deviceId, recipient_username: input.recipientUsername, write: input.write, ttl_ms: input.ttlMs },
       { csrf: true },
     ),
 

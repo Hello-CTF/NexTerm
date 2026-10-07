@@ -64,12 +64,12 @@ describe("sharingApi 线上契约", () => {
     vi.stubGlobal("fetch", mocks.fetch);
     setCsrfToken("csrf-9");
 
-    await sharingApi.createHostShare({ deviceId: "d-1", recipientId: "u-2", write: true, ttlMs: 3_600_000 });
+    await sharingApi.createHostShare({ deviceId: "d-1", recipientUsername: "alice", write: true, ttlMs: 3_600_000 });
 
     expect(calls[0]).toMatchObject({
       url: "/share/host-shares",
       method: "POST",
-      body: { device_id: "d-1", recipient_id: "u-2", write: true, ttl_ms: 3_600_000 },
+      body: { device_id: "d-1", recipient_username: "alice", write: true, ttl_ms: 3_600_000 },
     });
     expect(calls[0]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });

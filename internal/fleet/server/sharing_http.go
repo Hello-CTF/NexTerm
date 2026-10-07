@@ -73,10 +73,10 @@ type shareLinkCreateRequest struct {
 }
 
 type hostShareCreateRequest struct {
-	DeviceID    string `json:"device_id"`
-	RecipientID string `json:"recipient_id"`
-	Write       bool   `json:"write"`
-	TTLMS       int64  `json:"ttl_ms"`
+	DeviceID          string `json:"device_id"`
+	RecipientUsername string `json:"recipient_username"`
+	Write             bool   `json:"write"`
+	TTLMS             int64  `json:"ttl_ms"`
 }
 
 func (s *Service) serveShareLinkCreate(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +124,16 @@ func (s *Service) serveHostShareCreate(w http.ResponseWriter, r *http.Request) {
 		writeFleetFailure(w, err)
 		return
 	}
-	share, err := s.sharing.CreateHostShare(r.Context(), identityFrom(r), request.DeviceID, request.RecipientID, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
+	// 接收者按用户名精确解析 (大小写不敏感): 创建不要求前端持有用户目录
+	// (/admin/users 仅超管), 普通设备 owner 与超管同一合同。无效用户名按既有
+	// not_found 安全错误返回; 禁用接收者由 sharing.CreateHostShare 按既有
+	// forbidden 与审计处理, 两条路径都不接触任何密码或密钥材料。
+	recipient, err := s.accounts.GetUserByUsername(r.Context(), request.RecipientUsername)
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
+	share, err := s.sharing.CreateHostShare(r.Context(), identityFrom(r), request.DeviceID, recipient.ID, request.Write, time.Duration(request.TTLMS)*time.Millisecond)
 	if err != nil {
 		writeFleetFailure(w, err)
 		return

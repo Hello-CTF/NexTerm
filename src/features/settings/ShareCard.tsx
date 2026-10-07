@@ -2,9 +2,10 @@
 // 数据全部来自真实 HTTP 合同 (internal/fleet/server/sharing_http.go 与 http.go):
 // - 主机分享 (POST/GET /share/host-shares + /share/host-shares/{id}/revoke):
 //   注册用户把 daemon 主机分享给另一个注册用户, 对方在有效期内经 host agent
-//   新建终端, 全程不接触主机密码或私钥; 创建需要设备列表 (/fleet/devices)
-//   与账号用户目录 (/admin/users, 仅超管), 有效期选项全部落在服务端
-//   1 分钟-30 天边界内。
+//   新建终端, 全程不接触主机密码或私钥。创建体收 recipient_username, 由服务端
+//   精确解析 (大小写不敏感), 前端不需要用户目录 (/admin/users 仅超管),
+//   普通设备 owner 与超管同一创建路径; 有效期选项全部落在服务端 1 分钟-30 天
+//   边界内。
 // - 公开链接 (GET /share/links + /share/links/{id}/revoke): 本切片只有列表与
 //   吊销, 没有创建入口, 也不展示任何 token (列表合同不含 token, 一次性 token
 //   只可能来自真实创建响应)。
@@ -13,7 +14,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
-import { adminApi, type AccountUser } from "../../ipc/authApi";
 import {
   sharingApi,
   type HostShareView,
@@ -108,17 +108,15 @@ function ShareManagement() {
   const userId = user?.id ?? null;
 
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
-  const [users, setUsers] = useState<AccountUser[] | null>(null);
   const [shares, setShares] = useState<HostShareView[] | null>(null);
   const [links, setLinks] = useState<ShareLinkView[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [usersError, setUsersError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   const [createOpen, setCreateOpen] = useState(false);
   const [deviceId, setDeviceId] = useState("");
-  const [recipientId, setRecipientId] = useState("");
+  const [recipientUsername, setRecipientUsername] = useState("");
   const [ttlMs, setTtlMs] = useState(SHARE_TTL_OPTIONS[2].ms);
   const [write, setWrite] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -129,7 +127,7 @@ function ShareManagement() {
   // then/catch/finally: 旧账号的晚到完成一律不写新账号视图。
   const accountEpoch = useRef(0);
 
-  // 账号作用域隔离: user.id 变化时在渲染期重置全部账号态 (列表/用户目录/创建表单),
+  // 账号作用域隔离: user.id 变化时在渲染期重置全部账号态 (列表/创建表单),
   // 并递增 loadSeq 使旧账号的晚到响应失效; AuthGate 只是 overlay, 登出再登录不会卸载本卡片。
   const [scopedUserId, setScopedUserId] = useState(userId);
   if (scopedUserId !== userId) {
@@ -137,14 +135,13 @@ function ShareManagement() {
     loadSeq.current += 1;
     accountEpoch.current += 1;
     setDevices(null);
-    setUsers(null);
     setShares(null);
     setLinks(null);
     setListError(null);
-    setUsersError(null);
     setCreateOpen(false);
     setDeviceId("");
-    setRecipientId("");
+    setRecipientUsername("");
+    setTtlMs(SHARE_TTL_OPTIONS[2].ms);
     setWrite(false);
     setCreateError(null);
     setCreating(false);
@@ -156,7 +153,6 @@ function ShareManagement() {
     const seq = ++loadSeq.current;
     setLoading(true);
     setListError(null);
-    setUsersError(null);
     const tasks = [
       fleetApi.devices().then(
         (r) => {
@@ -183,22 +179,10 @@ function ShareManagement() {
         },
       ),
     ];
-    if (isAdmin) {
-      tasks.push(
-        adminApi.users().then(
-          (r) => {
-            if (seq === loadSeq.current) setUsers(r.users);
-          },
-          (e: unknown) => {
-            if (seq === loadSeq.current) setUsersError(describeError(e));
-          },
-        ),
-      );
-    }
     void Promise.all(tasks).finally(() => {
       if (seq === loadSeq.current) setLoading(false);
     });
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -215,22 +199,20 @@ function ShareManagement() {
   const deviceName = (id: string) => devices?.find((d) => d.id === id)?.name ?? shortId(id);
   // 服务端要求分享目标是 daemon 主机 (device_agent 行 + 终端开启), 已吊销设备不可分享。
   const daemonDevices = (devices ?? []).filter((d) => d.revoked_at === 0 && d.agent && d.agent.terminal_enabled);
-  const deviceOwnerId = devices?.find((d) => d.id === deviceId)?.owner?.id;
-  // 接收者必须是 active 用户; 服务端拒绝向设备 owner 本人分享, 选项直接排除。
-  const recipientOptions = (users ?? []).filter((u) => u.state === "active" && u.id !== deviceOwnerId);
 
   const submitCreate = async () => {
-    if (!deviceId || !recipientId) return;
+    const recipient = recipientUsername.trim();
+    if (!deviceId || !recipient) return;
     const epoch = accountEpoch.current;
     setCreating(true);
     setCreateError(null);
     try {
-      await sharingApi.createHostShare({ deviceId, recipientId, write, ttlMs });
+      await sharingApi.createHostShare({ deviceId, recipientUsername: recipient, write, ttlMs });
       if (epoch !== accountEpoch.current) return;
-      pushToast("success", `已把主机「${deviceName(deviceId)}」分享给 ${recipientOptions.find((u) => u.id === recipientId)?.username ?? ""}`);
+      pushToast("success", `已把主机「${deviceName(deviceId)}」分享给 ${recipient}`);
       setCreateOpen(false);
       setDeviceId("");
-      setRecipientId("");
+      setRecipientUsername("");
       setWrite(false);
       load();
     } catch (e) {
@@ -285,16 +267,14 @@ function ShareManagement() {
         {shares !== null && <span className="nx-badge">{shares.length} 条主机分享</span>}
         {links !== null && <span className="nx-badge">{links.length} 条公开链接</span>}
         <div className="nx-spacer" />
-        {isAdmin && (
-          <button
-            className="nx-btn nx-btn-outline nx-btn-sm"
-            onClick={() => setCreateOpen((v) => !v)}
-            aria-expanded={createOpen}
-          >
-            <IconPlus size={12} />
-            新建主机分享
-          </button>
-        )}
+        <button
+          className="nx-btn nx-btn-outline nx-btn-sm"
+          onClick={() => setCreateOpen((v) => !v)}
+          aria-expanded={createOpen}
+        >
+          <IconPlus size={12} />
+          新建主机分享
+        </button>
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
           <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
           刷新
@@ -306,25 +286,14 @@ function ShareManagement() {
         公开链接绑定一个实时会话, 有效期内持有链接的人都能打开; 链接只能在这里查看与吊销。
       </p>
 
-      {!isAdmin && (
-        <p className="nx-hint mb-3 text-[11px]">
-          新建主机分享需要从用户目录选择接收用户 (仅超管可读取); 你授予或接收的分享列在下方。
-        </p>
-      )}
-
-      {createOpen && isAdmin && (
+      {createOpen && (
         <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
           <div className="flex flex-wrap items-center gap-2">
             <select
               className="nx-select min-w-0 flex-1"
               value={deviceId}
               aria-label="分享主机"
-              onChange={(e) => {
-                const next = e.target.value;
-                setDeviceId(next);
-                const ownerId = devices?.find((d) => d.id === next)?.owner?.id;
-                if (ownerId && recipientId === ownerId) setRecipientId("");
-              }}
+              onChange={(e) => setDeviceId(e.target.value)}
             >
               <option value="">选择主机</option>
               {daemonDevices.map((d) => (
@@ -333,19 +302,13 @@ function ShareManagement() {
                 </option>
               ))}
             </select>
-            <select
-              className="nx-select min-w-0 flex-1"
-              value={recipientId}
-              aria-label="接收用户"
-              onChange={(e) => setRecipientId(e.target.value)}
-            >
-              <option value="">选择接收用户</option>
-              {recipientOptions.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.username}
-                </option>
-              ))}
-            </select>
+            <input
+              className="nx-input min-w-0 flex-1"
+              placeholder="接收者的用户名"
+              value={recipientUsername}
+              autoComplete="off"
+              onChange={(e) => setRecipientUsername(e.target.value)}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -369,7 +332,7 @@ function ShareManagement() {
             <div className="nx-spacer" />
             <button
               className="nx-btn nx-btn-primary nx-btn-sm"
-              disabled={creating || !deviceId || !recipientId}
+              disabled={creating || !deviceId || !recipientUsername.trim()}
               onClick={() => void submitCreate()}
             >
               {creating ? "创建中…" : "创建分享"}
@@ -377,16 +340,6 @@ function ShareManagement() {
           </div>
           {devices !== null && daemonDevices.length === 0 && (
             <p className="nx-hint text-[11px]">没有可分享的守护主机: 需要已接入 agent 且远程终端开启的设备 (见「设备管理」)。</p>
-          )}
-          {usersError && (
-            <div className="nx-alert nx-alert-danger flex items-start gap-2">
-              <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <span className="min-w-0 flex-1 break-words">用户目录读取失败 · {usersError}</span>
-              <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
-                <IconRefresh size={12} />
-                重试
-              </button>
-            </div>
           )}
           {createError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
