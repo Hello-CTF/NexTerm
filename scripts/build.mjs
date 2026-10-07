@@ -87,7 +87,9 @@ if (process.env.CARGO_TARGET_DIR) {
 
 step("构建环境");
 log(`  profile   = ${PROFILE}`);
-log(`  运行环境  = ${IN_AGENT ? "agent 沙箱（产物放系统临时目录）" : "普通终端（产物放仓库内 target/）"}`);
+// 括号里别再说「产物放仓库内 target/」—— CARGO_TARGET_DIR 指到外部（外置构建盘）时
+// 那句就是错的。具体路径下一行的 `target-dir=` 已经报了，这里只描述运行环境。
+log(`  运行环境  = ${IN_AGENT ? "agent 沙箱（产物放系统临时目录）" : "普通终端"}`);
 log(`  target-dir= ${targetDir}`);
 // 判据是「落在临时目录**里面**」，不是「路径名里含 temp 字样」——
 // 后者是 Windows 口径（%TEMP% 字面含 TEMP），在 macOS 上会把
@@ -192,9 +194,12 @@ if (PROFILE === "release") {
   log("  内嵌前端: （debug 版是 dev 模式，靠 dev server 加载，不看这个）");
 }
 
-/* ── 4. 普通模式下把产物放到习惯路径；agent 模式下只打印 ─────────────── */
+/* ── 4. 普通模式下补一句「习惯路径」；agent 模式下不打印 ───────────────── */
 
-if (!IN_AGENT) {
+// 只在 target-dir 就是仓库内默认的 target/ 时才说这句。CARGO_TARGET_DIR 被
+// 指到别处（外置构建盘，见 ~/bin/nexterm-build-env.sh）时，本地 target/ 下
+// 根本没有产物 —— 再报一次「习惯路径」就是把人支去一个空目录里翻。
+if (!IN_AGENT && targetDir === path.join(ROOT, "target")) {
   const carry = path.join(ROOT, "target", PROFILE, EXE);
   log(`  习惯路径: ${path.relative(ROOT, carry)}（已经在 target-dir 里，无需回拷）`);
 }
