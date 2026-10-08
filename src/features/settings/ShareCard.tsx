@@ -94,8 +94,25 @@ function ShareLoginHint() {
   );
 }
 
+function ShareAuthOff() {
+  return (
+    <section className="nx-card">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <IconGlobe size={15} className="text-neutral-400" />
+        <span className="nx-card-title">分享</span>
+        <span className="nx-badge nx-badge-amber">账号功能已关闭</span>
+      </div>
+      <p className="nx-hint">
+        这台服务器关闭了账号功能(--auth=off), 终端分享不可用; 主机分享与公开链接都依赖账号体系。
+      </p>
+    </section>
+  );
+}
+
 export function ShareCard() {
+  const authStatus = useAuth((s) => s.status);
   if (!WEB) return <ShareUnsupported />;
+  if (authStatus?.auth === "off") return <ShareAuthOff />;
   return <ShareManagement />;
 }
 

@@ -193,9 +193,9 @@ function shareHandler(overrides?: {
 
 let mounted: MountedView | undefined;
 
-function seedUser(user: typeof SUPERADMIN | typeof ALICE | null) {
+function seedUser(user: typeof SUPERADMIN | typeof ALICE | null, auth: "on" | "off" | "loopback" = "on") {
   useAuth.setState({
-    status: { initialized: true, registration_open: false, auth: "on" },
+    status: { initialized: true, registration_open: false, auth },
     user,
     dek: null,
     gate: "ready",
@@ -265,6 +265,66 @@ describe("分享卡片 · 创建入口与角色", () => {
     mounted = mount(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
 
+    expect(mounted.container.querySelectorAll("button").length).toBe(0);
+    expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
+  });
+});
+
+describe("分享卡片 · auth=off/on/loopback", () => {
+  it("auth=off: 如实显示账号功能已关闭与分享不可用, 零按钮, 不给死登录承诺, 不发任何分享/设备请求", async () => {
+    const calls = route(shareHandler());
+    seedUser(null, "off");
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("这台服务器关闭了账号功能(--auth=off), 终端分享不可用");
+    expect(text).not.toContain("登录后可以把你接入的守护主机分享给其他注册用户");
+    expect(mounted.container.querySelectorAll("button").length).toBe(0);
+    expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
+  });
+
+  it("auth=off 且残留旧会话视图: 零请求渲染关闭态; 切回 auth=on 后加载与入口恢复", async () => {
+    const calls = route(shareHandler());
+    seedUser(SUPERADMIN, "off");
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("终端分享不可用") ?? false);
+
+    expect(document.body.textContent).not.toContain("新建主机分享");
+    expect(mounted.container.querySelectorAll("button").length).toBe(0);
+    await flush();
+    await flush();
+    expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
+    expect(document.body.textContent).toContain("终端分享不可用");
+
+    seedUser(SUPERADMIN, "on");
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET /fleet/devices",
+      "GET /share/host-shares",
+      "GET /share/links",
+    ]);
+    expect(document.body.textContent).toContain("新建主机分享");
+  });
+
+  it("auth=on 未登录: 保持登录提示口径不变", async () => {
+    const calls = route(shareHandler());
+    seedUser(null, "on");
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
+
+    expect(document.body.textContent).not.toContain("终端分享不可用");
+    expect(mounted.container.querySelectorAll("button").length).toBe(0);
+    expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
+  });
+
+  it("loopback 未登录: 保持登录提示口径不变", async () => {
+    const calls = route(shareHandler());
+    seedUser(null, "loopback");
+    mounted = mount(createElement(ShareCard));
+    await flushUntil(() => document.body.textContent?.includes("登录后可以把你接入的守护主机分享给其他注册用户") ?? false);
+
+    expect(document.body.textContent).not.toContain("终端分享不可用");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
   });
