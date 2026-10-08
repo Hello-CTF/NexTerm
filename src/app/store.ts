@@ -196,6 +196,7 @@ interface UiState {
   setAiBusy: (v: boolean) => void;
   pushToast: (kind: ToastItem["kind"], text: string) => void;
   dismissToast: (id: number) => void;
+  dismissToasts: (kind?: ToastItem["kind"]) => void;
 
   connectingAssetIds: string[];
 }
@@ -724,6 +725,8 @@ export const useUi = create<UiState>((set, get) => ({
   },
   dismissToast: (id) =>
     set((st) => ({ toasts: st.toasts.filter((t) => t.id !== id) })),
+  dismissToasts: (kind) =>
+    set((st) => ({ toasts: kind ? st.toasts.filter((t) => t.kind !== kind) : [] })),
 }));
 
 initTheme();

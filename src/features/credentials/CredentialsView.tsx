@@ -132,7 +132,7 @@ function buildText(assets: Asset[], creds: Credential[]): string {
   ];
 
   if (hosts.length === 0) {
-    out.push("# 还没有可 SSH 的资产 —— 在左侧资产树里新建一台，或双击「当前设备」。");
+    out.push("# 还没有可 SSH 的资产：在左侧资产树里新建一台，或双击「当前设备」。");
     out.push("");
   }
 

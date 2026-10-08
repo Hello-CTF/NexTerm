@@ -214,6 +214,15 @@ describe("CredentialsView 状态", () => {
       "凭据视图加载中",
     );
   });
+
+  it("空态文案不用装饰性破折号", async () => {
+    mocks.assetList.mockResolvedValue([]);
+    mocks.listCredentials.mockResolvedValue([]);
+    mounted = withClient(createElement(CredentialsView, { view: "text", onChange: () => {} }));
+    await flushUntil(() => text().includes("# 还没有可 SSH 的资产"));
+    expect(text()).toContain("# 还没有可 SSH 的资产：在左侧资产树里新建一台");
+    expect(text()).not.toContain("——");
+  });
 });
 
 describe("NewCredentialModal 表单与键盘", () => {

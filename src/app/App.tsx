@@ -485,6 +485,7 @@ export default function App() {
     setRightWidth,
     toasts,
     dismissToast,
+    dismissToasts,
     pushToast,
     connectFocusRevision,
   } = useUi();
@@ -668,10 +669,13 @@ export default function App() {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
   }, []);
 
+  const vaultStatusSeq = useRef(0);
   const refreshVaultStatus = useCallback(() => {
+    const seq = ++vaultStatusSeq.current;
     void vaultApi
       .status()
-      .then((v) =>
+      .then((v) => {
+        if (seq !== vaultStatusSeq.current) return;
         setVaultStatus({
           uninitialized: !v.initialized,
           text: !v.initialized
@@ -679,10 +683,25 @@ export default function App() {
             : v.unlocked
               ? "凭据库已解锁"
               : "凭据库已锁定",
-        }),
-      )
-      .catch(() => setVaultStatus({ text: "凭据库不可用", uninitialized: false }));
+        });
+      })
+      .catch(() => {
+        if (seq !== vaultStatusSeq.current) return;
+        setVaultStatus({ text: "凭据库不可用", uninitialized: false });
+      });
   }, []);
+
+  // 序号守卫: auth 转换(登录/登出)时在途旧请求可能迟到, 不允许覆盖新会话拉到的数据。
+  const sessionsSeq = useRef(0);
+  const refreshSessions = useCallback(() => {
+    const seq = ++sessionsSeq.current;
+    void sessionApi
+      .list()
+      .then((list) => {
+        if (seq === sessionsSeq.current) setSessions(list);
+      })
+      .catch(() => undefined);
+  }, [setSessions]);
 
   const openVaultProtection = useCallback(() => {
     openSettings();
@@ -941,9 +960,41 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void sessionApi.list().then(setSessions).catch(() => undefined);
+    refreshSessions();
     refreshVaultStatus();
-  }, [setSessions, refreshVaultStatus]);
+  }, [refreshSessions, refreshVaultStatus]);
+
+  // auth=on 登录/注册/初始化使 gate 进入 ready 时, 门后 mounted 期间发出的资产/凭据查询、
+  // 会话列表与凭据库状态请求全部吃到 401; resetQueries 会取消在途的旧 fetch 再重取
+  // (invalidateQueries 在 data 为空时会并入旧 fetch, 401 照样落账), 登录前的错误 toast
+  // 属于失效上下文, 一并清掉。反方向(登出/会话过期回 login)重置缓存, 避免上一个会话的
+  // 数据漏给下一个账号。
+  useEffect(() => {
+    if (!WEB || DEMO) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    void import("../features/auth/store").then((m) => {
+      if (cancelled) return;
+      unsubscribe = m.useAuth.subscribe((s, prev) => {
+        if (s.gate === prev.gate) return;
+        if (s.gate === "ready") {
+          if (prev.gate === "loading") return;
+          void queryClient.resetQueries({ queryKey: ["assets"] });
+          void queryClient.resetQueries({ queryKey: ["credentials"] });
+          refreshSessions();
+          refreshVaultStatus();
+          dismissToasts("error");
+        } else if (prev.gate === "ready" && s.gate === "login") {
+          void queryClient.resetQueries({ queryKey: ["assets"] });
+          void queryClient.resetQueries({ queryKey: ["credentials"] });
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [queryClient, refreshSessions, refreshVaultStatus, dismissToasts]);
 
   useEffect(() => {
     if (!DEMO) return;
@@ -1351,7 +1402,7 @@ export default function App() {
               title="刷新会话列表与凭据库状态"
               aria-label="刷新会话列表与凭据库状态"
               onClick={() => {
-                void sessionApi.list().then(setSessions).catch(() => undefined);
+                refreshSessions();
                 refreshVaultStatus();
               }}
             >
