@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { deferred, click, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 // M209 真实 auth=on 浏览器证据: 门后应用 mounted 即发 /rpc(无 cookie)全部 401,
 // 登录成功后资产树/凭据库停在登录前错误态。这里用真实 AssetTree/CredentialsView
@@ -302,6 +302,40 @@ describe("auth=on 登录成功后的数据重取(真实 AssetTree/CredentialsVie
     await login();
     await flushUntil(() => text().includes("web-01"));
     expect(text()).toContain("生产");
+  });
+
+  it("登出后迟到的旧账号会话列表与凭据库状态不得回写", async () => {
+    mounted = mountApp();
+    await flushUntil(() => useAuth.getState().gate === "login");
+    authed = true;
+    await login();
+    await flushUntil(() => text().includes("web-01"));
+    expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
+    expect(vaultStatusText()).toContain("凭据库已解锁");
+
+    // 旧账号的慢请求经头部刷新按钮发出并在途, 随后登出
+    const staleSessions = deferred<(typeof SESSION)[]>();
+    const staleVault = deferred<{ initialized: boolean; unlocked: boolean }>();
+    mocks.sessionList.mockImplementation(() => staleSessions.promise);
+    mocks.vaultStatus.mockImplementation(() => staleVault.promise);
+    const refreshBtn = document.querySelector<HTMLElement>(
+      'button[title="刷新会话列表与凭据库状态"]',
+    );
+    expect(refreshBtn).not.toBeNull();
+    click(refreshBtn as HTMLElement);
+
+    await logout();
+    expect(useAuth.getState().gate).toBe("login");
+    expect(useUi.getState().sessions).toEqual([]);
+
+    // 迟到的旧账号响应现在才到: 序号已递增, 回写必须被丢弃
+    await act(async () => {
+      staleSessions.resolve([SESSION]);
+      staleVault.resolve({ initialized: true, unlocked: true });
+      await flush();
+    });
+    expect(useUi.getState().sessions).toEqual([]);
+    expect(vaultStatusText()).not.toContain("凭据库已解锁");
   });
 
   it("登录前发出的在途请求迟到后不得污染新会话(资产查询与凭据库状态)", async () => {

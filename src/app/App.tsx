@@ -714,6 +714,15 @@ export default function App() {
       .catch(() => undefined);
   }, [setSessions]);
 
+  // 登出/会话过期时先递增两个序号使在途响应全部失效, 再清空状态: 旧账号的慢请求
+  // 迟到后不得回写(否则 seq 未变, 迟到的旧数据会覆盖清空结果)。
+  const clearSessionScopedState = useCallback(() => {
+    sessionsSeq.current += 1;
+    vaultStatusSeq.current += 1;
+    setSessions([]);
+    setVaultStatus({ text: "…", uninitialized: false });
+  }, [setSessions]);
+
   const openVaultProtection = useCallback(() => {
     openSettings();
     setVaultProtectionSeq((n) => n + 1);
@@ -994,8 +1003,7 @@ export default function App() {
           refreshVaultStatus();
         } else if (prev.gate === "ready" && s.gate === "login") {
           for (const key of ACCOUNT_QUERY_KEYS) void queryClient.resetQueries({ queryKey: key });
-          setSessions([]);
-          setVaultStatus({ text: "…", uninitialized: false });
+          clearSessionScopedState();
         }
       });
     });
@@ -1003,7 +1011,7 @@ export default function App() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [queryClient, refreshSessions, refreshVaultStatus, setSessions]);
+  }, [queryClient, refreshSessions, refreshVaultStatus, clearSessionScopedState]);
 
   useEffect(() => {
     if (!DEMO) return;
