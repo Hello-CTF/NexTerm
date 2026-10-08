@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clickButton, flush, mount, waitFor, type MountedView } from "./reactTestUtils";
 
@@ -223,6 +223,12 @@ function buttonTexts(): string[] {
   );
 }
 
+function toolbarButton(label: string): HTMLButtonElement | undefined {
+  return [
+    ...(mounted?.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button") ?? []),
+  ].find((b) => b.textContent?.trim() === label);
+}
+
 function toastTexts(): string {
   return useUi
     .getState()
@@ -278,8 +284,73 @@ describe("FileBrowser 会话已删除", () => {
     expect(st.workspaces).toHaveLength(1);
     expect(st.workspaces[0]?.panes[0]?.tabs).toHaveLength(1);
     expect(storeTabSessionId()).toBe("s2");
+    expect(st.workspaces[0]?.sessionId).toBe("s2");
     expect(st.sessions.filter((s) => s.id === "s2")).toHaveLength(1);
     expect(toastTexts()).toContain("已重新连接");
+    expect(toolbarButton("上传")?.disabled).toBe(false);
+    expect(toolbarButton("新建")?.disabled).toBe(false);
+  });
+
+  it("updateTab 重指向会话时只同步正在跟踪旧会话的工作区", () => {
+    const tab: AppTab = { id: "t1", kind: "files", title: "文件", sessionId: SID, closable: true };
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws1",
+          kind: "session",
+          title: "web-01",
+          sessionId: "other",
+          panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
+          activePaneId: "p1",
+          splitRatio: 0.5,
+          closable: true,
+        },
+      ],
+      sessions: [],
+      toasts: [],
+    });
+    useUi.getState().updateTab("t1", { sessionId: "s2" });
+    expect(useUi.getState().workspaces[0]?.sessionId).toBe("other");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.sessionId).toBe("s2");
+  });
+
+  it("死会话下禁用工具栏与菜单里会打到后端的项目并给出真实原因", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mounted = mountFromStore();
+    await waitFor(() => expect(panel()).not.toBeNull());
+
+    for (const label of ["上传", "新建"] as const) {
+      const btn = toolbarButton(label);
+      expect(btn?.disabled).toBe(true);
+      expect(btn?.title).toBe("会话已在服务端删除，请重新连接这台主机");
+    }
+    const goneTitled = [
+      ...mounted.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button"),
+    ].filter((b) => b.title === "会话已在服务端删除，请重新连接这台主机");
+    expect(goneTitled).toHaveLength(3);
+    expect(goneTitled.every((b) => b.disabled)).toBe(true);
+    expect(goneTitled.some((b) => b.textContent?.trim() === "")).toBe(true);
+
+    const more = mounted.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="更多操作"]',
+    );
+    expect(more).not.toBeNull();
+    act(() => more!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    const items = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+    for (const label of ["打包下载当前文件夹", "上传到当前目录", "新建文件夹", "刷新"]) {
+      const item = items.find((b) => b.textContent?.includes(label));
+      expect(item?.disabled, label).toBe(true);
+      expect(item?.textContent, label).toContain("会话已删除");
+    }
+    for (const label of ["在当前终端打开", "在新终端打开"]) {
+      expect(
+        items.find((b) => b.textContent?.includes(label))?.disabled,
+        label,
+      ).toBe(false);
+    }
+    expect(mocks.upload).not.toHaveBeenCalled();
+    expect(mocks.mkdir).not.toHaveBeenCalled();
   });
 
   it("取消主机密钥变更确认：不信任、不重试，面板保持真实原因", async () => {
@@ -373,6 +444,8 @@ describe("FileBrowser 瞬时文件错误", () => {
     await waitFor(() => expect(panel()?.textContent).toContain("连接被对端重置"));
     expect(buttonTexts()).toContain("重试");
     expect(buttonTexts()).not.toContain("重新连接这台主机");
+    expect(toolbarButton("上传")?.disabled).toBe(false);
+    expect(toolbarButton("新建")?.disabled).toBe(false);
 
     clickButton(mounted.container, "重试");
 

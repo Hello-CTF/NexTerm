@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
-import { fsApi, terminalApi } from "../../ipc/commands";
+import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import {
   ask,
   discardStaged,
@@ -22,6 +22,7 @@ import {
   openTerminalTab,
   useUi,
 } from "../../app/store";
+import { connectWithHostKeyConfirm } from "../../app/hostKeys";
 import { useCoarsePointer } from "../../app/platform";
 import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
@@ -144,16 +145,58 @@ export function FileTree({ sessionId }: { sessionId: string }) {
   }, [dirs, results]);
 
   const dirErrors = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, { message: string; gone: boolean }>();
     dirs.forEach((dir, i) => {
       const err = results[i]?.error;
-      if (err) map.set(dir, describeError(err));
+      if (err) {
+        map.set(dir, {
+          message: describeError(err),
+          gone: (err as { code?: string } | null)?.code === "not_found",
+        });
+      }
     });
     return map;
   }, [dirs, results]);
 
+  const sessionGone = results.some(
+    (r) => (r.error as { code?: string } | null)?.code === "not_found",
+  );
+  const goneHint = "会话已在服务端删除，请重新连接这台主机";
+  const [reconnecting, setReconnecting] = useState(false);
+
+  const reconnectHost = async () => {
+    const ws = useUi.getState().workspaces.find((w) => w.sessionId === sessionId);
+    if (!ws) {
+      pushToast("error", "找不到这个工作区的主机信息，请到左侧资产树里手动连接");
+      return;
+    }
+    setReconnecting(true);
+    try {
+      const s = await connectWithHostKeyConfirm(() =>
+        ws.assetId ? sessionApi.connect(ws.assetId) : sessionApi.connectLocal(),
+      );
+      if (!s) {
+        pushToast("info", "已取消重连");
+        return;
+      }
+      const list = useUi.getState().sessions;
+      useUi.getState().setSessions([...list.filter((x) => x.id !== s.id), s]);
+      useUi.getState().updateWorkspaceSession(ws.id, s.id);
+      pushToast("info", "已重新连接，正在重新加载文件列表");
+    } catch (e) {
+      pushToast("error", `重新连接失败：${describeError(e)}`);
+    } finally {
+      setReconnecting(false);
+    }
+  };
+
   const rows = useMemo(() => {
-    const out: { entry?: FileEntryDto; depth: number; error?: string; dir: string }[] = [];
+    const out: {
+      entry?: FileEntryDto;
+      depth: number;
+      error?: { message: string; gone: boolean };
+      dir: string;
+    }[] = [];
     const walk = (dir: string, depth: number) => {
       for (const entry of dirMap.get(dir) ?? []) {
         out.push({ entry, depth, dir });
@@ -483,13 +526,31 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
           文件
         </span>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="新建文件" aria-label="新建文件" onClick={() => void newFile()}>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title={sessionGone ? goneHint : "新建文件"}
+          aria-label="新建文件"
+          disabled={sessionGone}
+          onClick={() => void newFile()}
+        >
           <IconFilePlus size={14} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="新建文件夹" aria-label="新建文件夹" onClick={() => void newDir()}>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title={sessionGone ? goneHint : "新建文件夹"}
+          aria-label="新建文件夹"
+          disabled={sessionGone}
+          onClick={() => void newDir()}
+        >
           <IconFolderPlus size={14} />
         </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="刷新" aria-label="刷新文件列表" onClick={refresh}>
+        <button
+          className="nx-icon-btn nx-icon-btn-sm"
+          title={sessionGone ? goneHint : "刷新"}
+          aria-label="刷新文件列表"
+          disabled={sessionGone}
+          onClick={refresh}
+        >
           <IconRefresh size={14} />
         </button>
         <button
@@ -506,8 +567,9 @@ export function FileTree({ sessionId }: { sessionId: string }) {
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="上传到当前目录"
+          title={sessionGone ? goneHint : "上传到当前目录"}
           aria-label="上传到当前目录"
+          disabled={sessionGone}
           onClick={() => void upload()}
         >
           <IconUpload size={14} />
@@ -619,13 +681,27 @@ export function FileTree({ sessionId }: { sessionId: string }) {
               >
                 <IconXCircle size={12} className="mt-0.5 shrink-0 text-red-300" />
                 <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
-                  <div className="break-words">{error}</div>
-                  <button
-                    className="nx-link mt-0.5 text-[11px]"
-                    onClick={() => retryDir(dir)}
-                  >
-                    重试
-                  </button>
+                  <div className="break-words">
+                    {error.gone
+                      ? "会话已在服务端删除，重试不会恢复；重新连接这台主机后在此继续浏览"
+                      : error.message}
+                  </div>
+                  {error.gone ? (
+                    <button
+                      className="nx-link mt-0.5 text-[11px]"
+                      disabled={reconnecting}
+                      onClick={() => void reconnectHost()}
+                    >
+                      {reconnecting ? "正在重新连接…" : "重新连接这台主机"}
+                    </button>
+                  ) : (
+                    <button
+                      className="nx-link mt-0.5 text-[11px]"
+                      onClick={() => retryDir(dir)}
+                    >
+                      重试
+                    </button>
+                  )}
                 </div>
               </div>
             );

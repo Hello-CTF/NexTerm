@@ -845,6 +845,8 @@ async function hostKeyAcceptance(page, state) {
       const session = st.sessions.find((s) => s.assetId === ${JSON.stringify(state.assetId)});
       if (!session) throw new Error("no live asset session to browse");
       useUi.getState().addTab({ id: ${JSON.stringify(FILES_TAB_ID)}, kind: "files", title: "文件", sessionId: session.id, closable: true });
+      useUi.getState().setLeftMode("files");
+      useUi.getState().setLeftOpen(true);
       return true;
     })()`);
     await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(browserAlert)}))`, 15_000);
@@ -855,11 +857,25 @@ async function hostKeyAcceptance(page, state) {
       transientState.buttons.includes("重试") && !transientState.buttons.includes("重新连接这台主机"),
       `live session without sftp is a transient file error and must keep retry: ${JSON.stringify(transientState)}`,
     );
+    await page.waitFor(`document.querySelector(".nx-left-dock")?.textContent.includes("重试") ?? false`, 15_000);
+    const treeTransient = await page.evaluate(`(() => {
+      const dock = document.querySelector(".nx-left-dock");
+      if (!dock) return null;
+      return {
+        dead: dock.textContent.includes("会话已在服务端删除"),
+        buttons: [...dock.querySelectorAll("button")].map((b) => b.textContent.trim()),
+      };
+    })()`);
+    assert.ok(
+      treeTransient && !treeTransient.dead && treeTransient.buttons.includes("重试") && !treeTransient.buttons.includes("重新连接这台主机"),
+      `live session tree error must stay transient with retry: ${JSON.stringify(treeTransient)}`,
+    );
 
     await page.waitFor(`(async () => {
       const { layoutApi } = await import('${VITE}/src/ipc/commands.ts');
       const dto = await layoutApi.get();
-      return dto.data != null && JSON.stringify(dto.data).includes(${JSON.stringify(FILES_TAB_ID)});
+      const data = dto.data == null ? "" : JSON.stringify(dto.data);
+      return data.includes(${JSON.stringify(FILES_TAB_ID)}) && data.includes('"leftMode":"files"');
     })()`, 15_000);
     await restartWithNewHostKey(state);
     await openApp(page, state.server.origin);
@@ -891,6 +907,27 @@ async function hostKeyAcceptance(page, state) {
     assert.ok(
       !deadState.buttons.includes("重试"),
       `deleted session must not offer the futile retry: ${JSON.stringify(deadState)}`,
+    );
+    await page.waitFor(`document.querySelector(".nx-left-dock")?.textContent.includes("会话已在服务端删除") ?? false`, 15_000);
+    const treeDead = await page.evaluate(`(() => {
+      const dock = document.querySelector(".nx-left-dock");
+      if (!dock) return null;
+      return {
+        misleading: dock.textContent.includes("请刷新后重试"),
+        buttons: [...dock.querySelectorAll("button")].map((b) => b.textContent.trim()),
+      };
+    })()`);
+    assert.ok(
+      treeDead && !treeDead.misleading,
+      `tree must not relay the misleading refresh copy: ${JSON.stringify(treeDead)}`,
+    );
+    assert.ok(
+      treeDead.buttons.includes("重新连接这台主机"),
+      `tree must offer the fresh host connect: ${JSON.stringify(treeDead)}`,
+    );
+    assert.ok(
+      !treeDead.buttons.includes("重试"),
+      `deleted session must not offer the futile retry in the tree: ${JSON.stringify(treeDead)}`,
     );
     const shot = await screenshot(page, "hostkey-filebrowser-dead-session.png");
 
@@ -935,6 +972,9 @@ async function hostKeyAcceptance(page, state) {
       const allTabs = st.workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
       return {
         filesTabs: allTabs.filter((t) => t.kind === "files" && !t.path).map((t) => ({ id: t.id, sessionId: t.sessionId })),
+        filesWorkspace: st.workspaces
+          .filter((w) => w.panes.some((p) => p.tabs.some((t) => t.id === ${JSON.stringify(FILES_TAB_ID)})))
+          .map((w) => ({ id: w.id, sessionId: w.sessionId })),
         assetSessionIds: sessions.filter((s) => s.assetId === ${JSON.stringify(state.assetId)}).map((s) => s.id),
       };
     })()`);
@@ -948,6 +988,12 @@ async function hostKeyAcceptance(page, state) {
       finalState.filesTabs,
       [{ id: FILES_TAB_ID, sessionId: finalState.assetSessionIds[0] }],
       `must reuse the restored files tab: ${JSON.stringify(finalState)}`,
+    );
+    assert.equal(finalState.filesWorkspace.length, 1, `files tab must live in exactly one workspace: ${JSON.stringify(finalState)}`);
+    assert.equal(
+      finalState.filesWorkspace[0]?.sessionId,
+      finalState.assetSessionIds[0],
+      `workspace session must follow the reconnected tab so badge and tree stop using the dead session: ${JSON.stringify(finalState)}`,
     );
 
     // fixture 没有 sftp 子系统：新会话上 fs_list 以瞬时错误呈现，必须回到「重试」而不是重新连接。
@@ -963,7 +1009,26 @@ async function hostKeyAcceptance(page, state) {
       recoveredState.buttons.includes("重试") && !recoveredState.buttons.includes("重新连接这台主机"),
       `transient file error after reconnect must keep retry: ${JSON.stringify(recoveredState)}`,
     );
-    return { evidence: { deadState, dialog: text.split("\n")[0], recoveredState, screenshot: shot } };
+    // 工作区会话已随标签同步：侧栏树不再用死会话，回到瞬时错误 + 重试。
+    await page.waitFor(`(() => {
+      const dock = document.querySelector(".nx-left-dock");
+      if (!dock) return false;
+      const text = dock.textContent;
+      return !text.includes("会话已在服务端删除") && [...dock.querySelectorAll("button")].some((b) => b.textContent.trim() === "重试");
+    })()`, 15_000);
+    const treeRecovered = await page.evaluate(`(() => {
+      const dock = document.querySelector(".nx-left-dock");
+      if (!dock) return null;
+      return {
+        dead: dock.textContent.includes("会话已在服务端删除"),
+        buttons: [...dock.querySelectorAll("button")].map((b) => b.textContent.trim()),
+      };
+    })()`);
+    assert.ok(
+      treeRecovered && !treeRecovered.dead && treeRecovered.buttons.includes("重试") && !treeRecovered.buttons.includes("重新连接这台主机"),
+      `tree must follow the synced workspace session back to a transient retry state: ${JSON.stringify(treeRecovered)}`,
+    );
+    return { evidence: { deadState, treeDead, dialog: text.split("\n")[0], recoveredState, treeRecovered, screenshot: shot } };
   });
 }
 
@@ -1010,7 +1075,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    note: "真实 Chromium + 真实 nexterm-server + 一次性 Go SSH fixture：pending/changed 指纹弹窗的取消/接受、重启后不得自动信任新密钥、菜单重连在 probe 命令缺席时的回退、会话随服务端重启删除后菜单只提供「重新连接这台主机」并经 changed 指纹确认后复用标签新连接（不重复建工作区/会话/标签）；文件浏览器在活会话上保留瞬时错误重试、会话删除后只提供「重新连接这台主机」（无无效重试、不转述「请刷新后重试」）、changed 指纹取消/接受后复用原标签且新会话上瞬时错误仍保留重试（fixture 无 sftp 子系统）；失效终端弹层路径被 durable 恢复拦截（bad_param 而非 not_found），该路径由 vitest 覆盖",
+    note: "真实 Chromium + 真实 nexterm-server + 一次性 Go SSH fixture：pending/changed 指纹弹窗的取消/接受、重启后不得自动信任新密钥、菜单重连在 probe 命令缺席时的回退、会话随服务端重启删除后菜单只提供「重新连接这台主机」并经 changed 指纹确认后复用标签新连接（不重复建工作区/会话/标签）；文件浏览器与侧栏文件树在活会话上保留瞬时错误重试、会话删除后只提供「重新连接这台主机」（无无效重试、不转述「请刷新后重试」）、changed 指纹取消/接受后复用原标签、工作区 sessionId 随标签同步到新会话（徽标与侧栏树不再用死会话，树回到瞬时错误+重试，fixture 无 sftp 子系统）；失效终端弹层路径被 durable 恢复拦截（bad_param 而非 not_found），该路径由 vitest 覆盖",
   },
   checks,
   harness_errors: harnessErrors,

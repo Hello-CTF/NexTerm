@@ -144,6 +144,7 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
 
   const sessionGone =
     entries.isError && (entries.error as { code?: string } | null)?.code === "not_found";
+  const goneHint = "会话已在服务端删除，请重新连接这台主机";
   const [reconnecting, setReconnecting] = useState(false);
 
   const reconnectHost = async () => {
@@ -433,22 +434,34 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         kind: "item",
         label: "打包下载当前文件夹",
         icon: <IconArchive size={13} />,
-        hint: "tar.gz",
+        hint: sessionGone ? "会话已删除" : "tar.gz",
+        disabled: sessionGone,
         onSelect: () => void packDownload(path),
       },
       {
         kind: "item",
         label: "上传到当前目录",
         icon: <IconUpload size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
         onSelect: () => void uploadTo(path),
       },
       {
         kind: "item",
         label: "新建文件夹",
         icon: <IconFolderPlus size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
         onSelect: () => void mkDirIn(path),
       },
-      { kind: "item", label: "刷新", icon: <IconRefresh size={13} />, onSelect: refresh },
+      {
+        kind: "item",
+        label: "刷新",
+        icon: <IconRefresh size={13} />,
+        hint: sessionGone ? "会话已删除" : undefined,
+        disabled: sessionGone,
+        onSelect: refresh,
+      },
       { kind: "separator" },
       { kind: "group", label: "终端" },
       {
@@ -512,14 +525,20 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
             title="直接输入路径后回车跳转"
           />
         </div>
-        <button className="nx-icon-btn" onClick={refresh} title="刷新">
+        <button
+          className="nx-icon-btn"
+          onClick={refresh}
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "刷新"}
+        >
           <IconRefresh size={14} />
         </button>
         <span className="nx-divider-v max-[560px]:hidden" />
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
           onClick={() => void uploadTo(path)}
-          title="上传本地文件到当前目录"
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "上传本地文件到当前目录"}
         >
           <IconUpload size={13} />
           上传
@@ -536,7 +555,8 @@ export function FileBrowser({ sessionId }: { sessionId: string }) {
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
           onClick={() => void mkDirIn(path)}
-          title="新建文件夹"
+          disabled={sessionGone}
+          title={sessionGone ? goneHint : "新建文件夹"}
         >
           <IconFolder size={13} />
           新建
