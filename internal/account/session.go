@@ -67,7 +67,7 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 	var state string
 	if err := tx.QueryRowContext(ctx, "SELECT state FROM "+userTable+" WHERE id = ?", userID).Scan(&state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil, ipc.NewError(ipc.CodeNotFound, "未找到: 用户")
+			return "", nil, ipc.NewError(ipc.CodeNotFound, "用户不存在")
 		}
 		return "", nil, dbError(err)
 	}
@@ -79,7 +79,7 @@ func (a *Accounts) IssueSession(ctx context.Context, userID, deviceID string) (s
 		var revokedAt sql.NullInt64
 		err := tx.QueryRowContext(ctx, "SELECT user_id, revoked_at FROM user_device WHERE id = ?", deviceID).Scan(&owner, &revokedAt)
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil, ipc.NewError(ipc.CodeNotFound, "未找到: 设备")
+			return "", nil, ipc.NewError(ipc.CodeNotFound, "设备不存在")
 		}
 		if err != nil {
 			return "", nil, dbError(err)
@@ -113,7 +113,7 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 	if err := row.Scan(&session.ID, &session.UserID, &deviceID, &session.CreatedAt, &session.TouchedAt,
 		&session.ExpiresAt, &revokedAt, &role, &state, &deviceRevokedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ipc.NewError(ipc.CodeForbidden, "会话无效")
+			return nil, ipc.NewError(ipc.CodeForbidden, "会话无效，请重新登录")
 		}
 		return nil, dbError(err)
 	}
@@ -126,13 +126,13 @@ WHERE s.token_hash = ?`, sessionTokenHash(token))
 	now := a.now()
 	switch {
 	case session.RevokedAt != 0:
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已吊销")
+		return nil, ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
 	case deviceRevokedAt.Valid:
 		return nil, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	case now >= session.ExpiresAt:
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期")
+		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
 	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期")
+		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
 	case State(state) == StateDisabled:
 		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
@@ -155,7 +155,7 @@ func (a *Accounts) RevokeSession(ctx context.Context, sessionID string) error {
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 会话")
+		return ipc.NewError(ipc.CodeNotFound, "会话不存在")
 	}
 	return nil
 }

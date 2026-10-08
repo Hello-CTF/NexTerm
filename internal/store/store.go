@@ -132,7 +132,7 @@ func (s *Store) Close() error {
 
 func EnsureID(id string) error {
 	if !ids.Valid(id) {
-		return badParam(fmt.Errorf("非法 ID: %s", id))
+		return badParam(fmt.Errorf("ID 格式不正确"))
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func badParam(err error) error {
 }
 
 func notFound(what string) error {
-	return ipc.NewError(ipc.CodeNotFound, "未找到: "+what)
+	return ipc.NewError(ipc.CodeNotFound, what+"不存在")
 }
 
 func isNoRows(err error) bool {

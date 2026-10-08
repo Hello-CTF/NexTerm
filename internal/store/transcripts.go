@@ -151,7 +151,7 @@ func scanTranscriptRow(scan func(...any) error) (TranscriptRow, error) {
 	if err := scan(&row.ID, &row.SessionID, &row.AssetID, &row.AssetName, &row.AssetKind,
 		&row.StartedAt, &row.EndedAt, &row.Bytes, &row.Chunks, &truncated, &syncOptIn, &contentOmitted); err != nil {
 		if isNoRows(err) {
-			return TranscriptRow{}, notFound("transcript")
+			return TranscriptRow{}, notFound("会话记录")
 		}
 		return TranscriptRow{}, dbError(err)
 	}
@@ -522,7 +522,7 @@ func (s *Store) TranscriptDelete(ctx context.Context, id string) error {
 	var syncOptIn int
 	err = tx.QueryRowContext(ctx, "SELECT sync_opt_in FROM transcript WHERE id=?", id).Scan(&syncOptIn)
 	if isNoRows(err) {
-		return notFound("transcript")
+		return notFound("会话记录")
 	}
 	if err != nil {
 		return dbError(err)
@@ -592,7 +592,7 @@ WHERE id=? AND content_omitted=1`, bytes, chunks, boolInt(truncated), transcript
 		return dbError(err)
 	}
 	if affected == 0 {
-		return notFound("transcript")
+		return notFound("会话记录")
 	}
 	return tx.Commit()
 }
@@ -614,7 +614,7 @@ func (s *Store) TranscriptSetSyncOptIn(ctx context.Context, id string, optIn boo
 	var current int
 	err = tx.QueryRowContext(ctx, "SELECT sync_opt_in FROM transcript WHERE id=?", id).Scan(&current)
 	if isNoRows(err) {
-		return notFound("transcript")
+		return notFound("会话记录")
 	}
 	if err != nil {
 		return dbError(err)

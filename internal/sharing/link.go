@@ -163,7 +163,7 @@ func (s *Service) RevokeLink(ctx context.Context, identity *account.Identity, li
 	err := s.db.QueryRowContext(ctx, "SELECT id, owner_id, device_id, session_id, revoked_at FROM share_link WHERE id = ?", linkID).
 		Scan(&link.ID, &link.OwnerID, &link.DeviceID, &link.SessionID, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 分享链接")
+		return ipc.NewError(ipc.CodeNotFound, "分享链接不存在")
 	}
 	if err != nil {
 		return dbError(err)

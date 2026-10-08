@@ -11,7 +11,7 @@ import (
 func marshalJSON(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return "", ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return "", ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	return string(encoded), nil
 }
@@ -41,7 +41,7 @@ func (s *Store) ConvGet(ctx context.Context, id string) (ConversationRow, error)
 	row, err := scanConversation(s.db.QueryRowContext(ctx,
 		"SELECT id, title, scope_json, created_at, updated_at FROM ai_conversation WHERE id = ?", id))
 	if isNoRows(err) {
-		return ConversationRow{}, notFound("会话 " + id)
+		return ConversationRow{}, notFound("会话")
 	}
 	if err != nil {
 		return ConversationRow{}, dbError(err)
@@ -135,7 +135,7 @@ func (s *Store) MsgTruncateAfter(ctx context.Context, conversationID, messageID 
 	var seq int64
 	err = tx.QueryRowContext(ctx, `SELECT seq FROM ai_message WHERE id = ? AND conversation_id = ?`, messageID, conversationID).Scan(&seq)
 	if isNoRows(err) {
-		return notFound("消息 " + messageID)
+		return notFound("消息")
 	}
 	if err != nil {
 		return dbError(err)

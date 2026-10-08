@@ -61,7 +61,7 @@ func (a *Accounts) consumeInitCode(ctx context.Context, tx *sql.Tx, code string)
 		return ipc.WrapError(ipc.CodeInternal, "内部错误: 初始化码状态损坏", err)
 	}
 	if state.Consumed {
-		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用")
+		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务器已完成初始化，请直接登录")
 	}
 	digest := sha256.Sum256([]byte(code))
 	if state.Hash != hex.EncodeToString(digest[:]) {
@@ -77,7 +77,7 @@ func (a *Accounts) consumeInitCode(ctx context.Context, tx *sql.Tx, code string)
 		return dbError(err)
 	}
 	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用")
+		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务器已完成初始化，请直接登录")
 	}
 	return nil
 }

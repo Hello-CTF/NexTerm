@@ -22,7 +22,7 @@ type outcomeAuditor struct {
 func (a outcomeAuditor) Append(ctx context.Context, record outcome.Record) error {
 	payload, err := json.Marshal(record)
 	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	input := AuditInput{Source: "ai", Kind: OutcomeAuditKind, Payload: json.RawMessage(payload)}
 	if record.Result.ExitCode != nil {
@@ -39,7 +39,7 @@ func (a outcomeAuditor) Append(ctx context.Context, record outcome.Record) error
 func (s *Store) AuditInsert(ctx context.Context, input AuditInput) error {
 	payload, err := json.Marshal(input.Payload)
 	if err != nil {
-		return ipc.WrapError(ipc.CodeInternal, "内部错误: JSON: "+err.Error(), err)
+		return ipc.WrapError(ipc.CodeInternal, "数据编码失败: "+err.Error(), err)
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_log(ts, session_id, asset_id, source, kind, payload_json, exit_code, duration_ms)
 VALUES(?,?,?,?,?,?,?,?)`, ids.NowMS(), input.SessionID, input.AssetID, input.Source, input.Kind,

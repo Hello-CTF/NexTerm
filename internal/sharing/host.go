@@ -135,7 +135,7 @@ func (s *Service) RevokeHostShare(ctx context.Context, identity *account.Identit
 FROM host_share h JOIN user_device d ON d.id = h.device_id WHERE h.id = ?`, shareID).
 		Scan(&share.ID, &share.OwnerID, &share.DeviceID, &revokedAt, &deviceOwnerID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ipc.NewError(ipc.CodeNotFound, "未找到: 主机分享")
+		return ipc.NewError(ipc.CodeNotFound, "主机分享不存在")
 	}
 	if err != nil {
 		return dbError(err)

@@ -44,7 +44,7 @@ func (s *Store) SnippetGet(ctx context.Context, id string) (SnippetRow, error) {
 	row, err := scanSnippet(s.db.QueryRowContext(ctx,
 		"SELECT id, group_id, name, body, sort, created_at, updated_at FROM snippet WHERE id = ?", id))
 	if isNoRows(err) {
-		return SnippetRow{}, notFound("片段 " + id)
+		return SnippetRow{}, notFound("片段")
 	}
 	if err != nil {
 		return SnippetRow{}, dbError(err)
