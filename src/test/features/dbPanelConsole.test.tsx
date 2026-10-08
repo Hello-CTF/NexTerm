@@ -13,16 +13,20 @@ import {
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
+  promptText: vi.fn(),
   schemas: vi.fn(),
   tables: vi.fn(),
   query: vi.fn(),
   redisScan: vi.fn(),
+  redisInspect: vi.fn(),
   redisCommand: vi.fn(),
+  redisSetTtl: vi.fn(),
   toast: vi.fn(),
+  writeText: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
-  return { ...actual, ask: mocks.ask, promptText: vi.fn() };
+  return { ...actual, ask: mocks.ask, promptText: mocks.promptText };
 });
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
@@ -34,9 +38,9 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       query: mocks.query,
       columns: vi.fn(),
       redisScan: mocks.redisScan,
-      redisInspect: vi.fn(),
+      redisInspect: mocks.redisInspect,
       redisCommand: mocks.redisCommand,
-      redisSetTtl: vi.fn(),
+      redisSetTtl: mocks.redisSetTtl,
     },
     sessionApi: {},
     terminalApi: {},
@@ -62,8 +66,16 @@ beforeEach(() => {
     error: null,
   });
   mocks.redisScan.mockResolvedValue([0, []]);
+  mocks.redisInspect.mockResolvedValue({ key: "k1", keyType: "string", ttl: -1, value: "v" });
   mocks.redisCommand.mockResolvedValue("OK");
+  mocks.redisSetTtl.mockResolvedValue(undefined);
+  mocks.promptText.mockResolvedValue(null);
   mocks.ask.mockResolvedValue(true);
+  mocks.writeText.mockResolvedValue(undefined);
+  Object.defineProperty(window.navigator, "clipboard", {
+    value: { writeText: mocks.writeText },
+    configurable: true,
+  });
   useUi.setState({ pushToast: mocks.toast, sessions: [] });
 });
 afterEach(() => {
@@ -73,6 +85,10 @@ afterEach(() => {
 
 function mountRedis(): void {
   mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
+}
+
+function mountMysql(): void {
+  mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
 }
 
 function cmdInput(): HTMLInputElement {
@@ -91,6 +107,22 @@ function pressEnter(input: HTMLInputElement): void {
   });
 }
 
+async function selectKey(key: string): Promise<void> {
+  mocks.redisScan.mockResolvedValue([0, [key]]);
+  mountRedis();
+  await flushUntil(() => mounted!.container.textContent?.includes(key) === true);
+  const row = [...mounted!.container.querySelectorAll(".nx-row")].find((r) =>
+    r.textContent?.includes(key),
+  );
+  if (!row) throw new Error(`键行未找到: ${key}`);
+  click(row);
+  await flushUntil(() =>
+    [...mounted!.container.querySelectorAll("button")].some(
+      (b) => b.textContent?.trim() === "改过期时间",
+    ),
+  );
+}
+
 describe("DbPanel Redis 命令台可访问性", () => {
   it("命令输入有可访问名，输出通过 status 区域播报", async () => {
     mountRedis();
@@ -102,11 +134,17 @@ describe("DbPanel Redis 命令台可访问性", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("提示文案声明破坏性命令会确认，不再声称没有确认步骤", async () => {
+  it("提示文案如实枚举需确认的命令，并声明引号限制", async () => {
     mountRedis();
     await flushUntil(() => cmdInput() !== null);
-    expect(mounted!.container.textContent).toContain("FLUSHALL");
-    expect(mounted!.container.textContent).not.toContain("没有确认步骤");
+    const text = mounted!.container.textContent ?? "";
+    expect(text).toContain("FLUSHALL");
+    expect(text).toContain("DEL");
+    expect(text).toContain("EVAL");
+    expect(text).toContain("执行前会要求确认");
+    expect(text).toContain("其余命令立即执行");
+    expect(text).toContain("不支持引号");
+    expect(text).not.toContain("没有确认步骤");
   });
 });
 
@@ -136,27 +174,98 @@ describe("DbPanel Redis 命令台危险命令门禁", () => {
     expect(mocks.redisCommand).toHaveBeenCalledWith("c1", ["FLUSHALL"]);
   });
 
-  it.each(["FLUSHDB", "SHUTDOWN", "flushall"])(
-    "%s 同样被门禁拦截，取消即不执行",
-    async (command) => {
-      mocks.ask.mockResolvedValueOnce(false);
-      mountRedis();
-      await flushUntil(() => cmdInput() !== null);
-      setInputValue(cmdInput(), command);
-      pressEnter(cmdInput());
-      await flushUntil(() => mocks.ask.mock.calls.length > 0);
-      expect(mocks.ask).toHaveBeenCalledWith(
-        expect.stringContaining(command.toUpperCase()),
-        expect.objectContaining({ kind: "warning" }),
-      );
-      expect(mocks.redisCommand).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    "FLUSHDB",
+    "SHUTDOWN",
+    "DEL",
+    "UNLINK",
+    "CONFIG",
+    "DEBUG",
+    "EVAL",
+    "EVALSHA",
+    "FCALL",
+    "flushall",
+  ])("%s 同样被门禁拦截，取消即不执行", async (command) => {
+    mocks.ask.mockResolvedValueOnce(false);
+    mountRedis();
+    await flushUntil(() => cmdInput() !== null);
+    setInputValue(cmdInput(), command);
+    pressEnter(cmdInput());
+    await flushUntil(() => mocks.ask.mock.calls.length > 0);
+    expect(mocks.ask).toHaveBeenCalledWith(
+      expect.stringContaining(command.toUpperCase()),
+      expect.objectContaining({ kind: "warning" }),
+    );
+    expect(mocks.redisCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("DbPanel Redis 改过期时间", () => {
+  it("非整数输入直接报错，不调用后端", async () => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce("abc");
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.redisSetTtl).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
+  });
+
+  it("小数输入同样拒绝", async () => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce("1.5");
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.redisSetTtl).not.toHaveBeenCalled();
+  });
+
+  it.each(["-2", "-42"])("%s 等 -1 以外的负数会被拒绝，不调用后端", async (input) => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce(input);
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.redisSetTtl).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("整数"));
+  });
+
+  it("-1 照常提交（永不过期）", async () => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce("-1");
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.redisSetTtl.mock.calls.length > 0);
+    expect(mocks.redisSetTtl).toHaveBeenCalledWith("c1", "k1", -1);
+    await flushUntil(() => mocks.toast.mock.calls.some((c) => c[0] === "success"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", "过期时间已更新");
+  });
+
+  it("输入 0 时提示会立即删除该键，确认后照常提交", async () => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce("0");
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.redisSetTtl.mock.calls.length > 0);
+    expect(mocks.promptText).toHaveBeenCalledWith(
+      expect.stringContaining("填 0 会立即删除该键"),
+      expect.anything(),
+    );
+    expect(mocks.redisSetTtl).toHaveBeenCalledWith("c1", "k1", 0);
+    await flushUntil(() => mocks.toast.mock.calls.some((c) => c[0] === "success"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", "过期时间已更新");
+  });
+
+  it("后端失败时报错，不再提示成功、不再刷新", async () => {
+    await selectKey("k1");
+    mocks.promptText.mockResolvedValueOnce("120");
+    mocks.redisSetTtl.mockRejectedValueOnce(new Error("NOAUTH 未授权"));
+    clickButton(mounted!.container, "改过期时间");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", "NOAUTH 未授权");
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
+    expect(mocks.redisInspect).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("DbPanel MySQL 可访问性", () => {
   it("SQL 编辑器有可访问名，查询结果在 status 区域播报", async () => {
-    mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
+    mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     expect(mounted!.container.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
       "SQL 编辑器",
@@ -170,5 +279,51 @@ describe("DbPanel MySQL 可访问性", () => {
       mounted!.container.querySelector('div[role="status"]')?.textContent?.includes("42") === true,
     );
     expect(mocks.query).toHaveBeenCalledTimes(1);
+  });
+
+  it("运行按钮与空态如实声明单语句限制与立即生效边界", async () => {
+    mountMysql();
+    await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("运行"),
+    );
+    expect(run?.title).toContain("一次只执行一条语句");
+    const text = mounted!.container.textContent ?? "";
+    expect(text).toContain("直接在远端库执行并立即生效");
+    expect(text).toContain("一次只执行一条语句");
+  });
+});
+
+describe("DbPanel MySQL 复制 CSV 反馈", () => {
+  async function runQuery(): Promise<void> {
+    mountMysql();
+    await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("运行"),
+    );
+    if (!run) throw new Error("运行按钮未找到");
+    click(run);
+    await flushUntil(() =>
+      [...mounted!.container.querySelectorAll("button")].some(
+        (b) => b.textContent?.trim() === "复制 CSV",
+      ),
+    );
+  }
+
+  it("复制成功后给出成功提示", async () => {
+    await runQuery();
+    clickButton(mounted!.container, "复制 CSV");
+    await flushUntil(() => mocks.writeText.mock.calls.length > 0);
+    expect(mocks.writeText).toHaveBeenCalledWith('answer\n"42"');
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "CSV 已复制");
+  });
+
+  it("复制失败时给出错误提示而不是静默", async () => {
+    await runQuery();
+    mocks.writeText.mockRejectedValueOnce(new Error("剪贴板不可用"));
+    clickButton(mounted!.container, "复制 CSV");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", "复制失败：剪贴板不可用");
   });
 });
