@@ -18,7 +18,7 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 	hostGuard := s.options.Auth == AuthLoopback && core.LoopbackListen(s.options.Listen)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if hostGuard && !loopbackHost(r.Host) {
-			http.Error(w, "回环监听模式只允许通过 localhost 或 127.0.0.1 访问", http.StatusMisdirectedRequest)
+			http.Error(w, "回环监听模式只允许通过 localhost、127.0.0.1 或 ::1 访问", http.StatusMisdirectedRequest)
 			return
 		}
 		origin := r.Header.Get("Origin")

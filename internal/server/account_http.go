@@ -451,7 +451,7 @@ func (s *Server) serveAccountDEKUpload(w http.ResponseWriter, r *http.Request) {
 	err := s.accounts.InsertUserDEKEnvelopes(r.Context(), identity.UserID, request.toEnvelopes())
 	if err != nil {
 		if errors.Is(err, account.ErrDEKEnvelopesExist) {
-			writeAccountError(w, http.StatusConflict, ipc.NewError(ipc.CodeInternal, "账号加密密钥已存在，无需重复上传"))
+			writeAccountError(w, http.StatusConflict, ipc.NewError(ipc.CodeBadParam, "账号加密密钥已存在，无需重复上传"))
 			return
 		}
 		writeAccountFailure(w, err)

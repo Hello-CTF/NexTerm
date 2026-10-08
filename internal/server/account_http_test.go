@@ -780,8 +780,8 @@ func TestAccountHTTPDEKUploadOnce(t *testing.T) {
 	}
 	if call := fixture.call(t, http.MethodPost, "/auth/dek", upload, dave, dave.csrf, nil); call.status != http.StatusConflict {
 		t.Fatalf("dek re-upload status=%d", call.status)
-	} else if message := call.body["error"].(map[string]any)["message"].(string); !strings.Contains(message, "账号加密密钥已存在") {
-		t.Fatalf("dek re-upload message=%q", message)
+	} else if failure := call.body["error"].(map[string]any); failure["code"] != "bad_param" || !strings.Contains(failure["message"].(string), "账号加密密钥已存在") {
+		t.Fatalf("dek re-upload failure=%v", failure)
 	}
 	if call := fixture.call(t, http.MethodGet, "/auth/dek", nil, dave, "", nil); call.status != http.StatusOK {
 		t.Fatalf("dek after upload status=%d", call.status)
