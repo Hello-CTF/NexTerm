@@ -286,6 +286,7 @@ describe("QuickConnect 连接失败与重试（failure-state）", () => {
     const alert = await waitForAlert(view.container);
     expect(alert.textContent).toContain("connection refused");
     expect(onClose).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
 
     const retry = [...alert.querySelectorAll("button")].find((b) => b.textContent === "重试");
     expect(retry).toBeTruthy();

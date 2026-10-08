@@ -220,7 +220,14 @@ describe("NewCredentialModal 表单与键盘", () => {
   function mountModal() {
     const onClose = vi.fn();
     const onSaved = vi.fn();
-    mounted = mount(createElement(NewCredentialModal, { onClose, onSaved }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(NewCredentialModal, { onClose, onSaved }),
+      ),
+    );
     return { onClose, onSaved };
   }
 

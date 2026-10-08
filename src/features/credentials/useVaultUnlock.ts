@@ -18,7 +18,7 @@ export function useVaultUnlock(): (reason?: string) => Promise<boolean> {
       pushToast("success", "已解锁");
       return true;
     } catch (e) {
-      pushToast("error", describeError(e));
+      pushToast("error", `解锁失败：${describeError(e)}`);
       return false;
     }
   };

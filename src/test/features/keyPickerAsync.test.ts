@@ -23,13 +23,20 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   groupList: vi.fn(),
   listCredentials: vi.fn(),
+  vaultStatus: vi.fn(),
+  unlock: vi.fn(),
+  promptText: vi.fn(),
   toast: vi.fn(),
 }));
 vi.mock("../../ipc/webFiles", () => ({
   browserFilesAvailable: mocks.available,
   pickBrowserFile: mocks.pickBrowserFile,
 }));
-vi.mock("../../ui/dialogs", () => ({ pickKeyFile: mocks.pickKeyFile, ask: vi.fn() }));
+vi.mock("../../ui/dialogs", () => ({
+  pickKeyFile: mocks.pickKeyFile,
+  ask: vi.fn(),
+  promptText: mocks.promptText,
+}));
 vi.mock("../../ipc/commands", () => ({
   assetApi: {
     readKeyFile: mocks.readKeyFile,
@@ -39,6 +46,8 @@ vi.mock("../../ipc/commands", () => ({
   vaultApi: {
     setCredential: mocks.setCredential,
     listCredentials: mocks.listCredentials,
+    status: mocks.vaultStatus,
+    unlock: mocks.unlock,
   },
   dbApi: {},
   sessionApi: {},
@@ -91,6 +100,9 @@ describe.each<FormKind>(["credential", "asset"])("%s inline key picker ownership
     mocks.groupList.mockResolvedValue([]);
     mocks.listCredentials.mockResolvedValue([]);
     mocks.readKeyFile.mockResolvedValue("NATIVE KEY");
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, mode: "master", unlocked: true });
+    mocks.unlock.mockResolvedValue(undefined);
+    mocks.promptText.mockResolvedValue(null);
     useUi.setState({ pushToast: mocks.toast });
   });
   afterEach(() => {

@@ -333,7 +333,7 @@ export function AssetTree() {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="从 SSH 配置或 Termius 导入"
-          aria-label="导入 SSH 主机"
+          aria-label="导入 SSH 主机与密钥"
           onClick={() => setImporting(true)}
         >
           <IconDownload size={14} />
@@ -1229,16 +1229,23 @@ export function AssetEditor({
   const credKind = "password";
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
-  const { ensureVaultInit, vaultInitGate, vaultStatus } = useVaultInitGate();
+  const { ensureVaultInit, ensureVaultReady, vaultInitGate, vaultStatus } = useVaultInitGate();
   const vaultPromptedRef = useRef(false);
   const credFlowNeedsVault =
     kind === "asset" && !initial && (usesCred || (keyAuth && keyOrigin === "vault"));
+  const editAddsVaultSecret =
+    kind === "asset" &&
+    !!initial &&
+    ((usesCred && credChoice === "new" && password.length > 0) ||
+      (keyAuth && keyOrigin === "ref" && passphrase.length > 0) ||
+      (keyAuth && keyOrigin === "vault" && vaultMode === "new"));
+  const vaultGateNeeded = credFlowNeedsVault || editAddsVaultSecret;
   useEffect(() => {
-    if (vaultPromptedRef.current || !credFlowNeedsVault) return;
+    if (vaultPromptedRef.current || !vaultGateNeeded) return;
     if (!vaultStatus || vaultStatus.initialized) return;
     vaultPromptedRef.current = true;
     void ensureVaultInit();
-  }, [credFlowNeedsVault, vaultStatus, ensureVaultInit]);
+  }, [vaultGateNeeded, vaultStatus, ensureVaultInit]);
 
   const syncCredName = (assetName: string) => {
     setName(assetName);
@@ -1289,6 +1296,13 @@ export function AssetEditor({
 
   const save = async () => {
     if (savingRef.current) return;
+    if (kind === "asset" && groupKind !== "local") {
+      const nextHostError = validateAssetHost(hostRef.current);
+      const nextPortError = validateAssetPort(portRef.current);
+      setHostError(nextHostError);
+      setPortError(nextPortError);
+      if (nextHostError || nextPortError) return;
+    }
     savingRef.current = true;
     setSaving(true);
     setSaveError(null);
@@ -1298,6 +1312,11 @@ export function AssetEditor({
         onSaved();
         return;
       }
+      const willWriteVault =
+        (usesCred && credChoice === "new" && password.length > 0) ||
+        (keyAuth && keyOrigin === "ref" && (passphrase.length > 0 || boundIsRefKey)) ||
+        (keyAuth && keyOrigin === "vault" && vaultMode === "new");
+      if (willWriteVault && !(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
       const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
@@ -1488,7 +1507,7 @@ export function AssetEditor({
               className="nx-input"
               value={name}
               onChange={(e) => (kind === "group" ? setName(e.target.value) : syncCredName(e.target.value))}
-              placeholder="web-01"
+              placeholder={kind === "group" ? "生产环境" : "web-01"}
             />
           </div>
 
@@ -1835,6 +1854,8 @@ export function AssetEditor({
                         value={password}
                         autoComplete="off"
                         onChange={(e) => setPassword(e.target.value)}
+                        placeholder="密码"
+                        aria-label="凭据密码"
                       />
                       <div className="nx-hint mt-1">
                         ↳ 保存后存入凭据库，可改名，其他资产也能选它。
@@ -1939,6 +1960,8 @@ export function AssetEditor({
             disabled={
               saving ||
               !name.trim() ||
+              !!hostError ||
+              !!portError ||
               (keyAuth &&
                 keyOrigin === "vault" &&
                 vaultMode === "new" &&

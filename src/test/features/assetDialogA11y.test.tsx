@@ -275,6 +275,42 @@ describe("AssetEditor accessible overlay", () => {
   });
 });
 
+describe("资产表单字段可访问名称与分组 placeholder（M205 发现 12/13）", () => {
+  it("新建凭据密码框有可访问名称与占位提示", async () => {
+    mounted = mountWithClient(
+      createElement(AssetEditor, { kind: "asset", onClose: vi.fn(), onSaved: vi.fn() }),
+    );
+    await flush();
+    const passwordInput = mounted.container.querySelector<HTMLInputElement>(
+      'input[aria-label="凭据密码"]',
+    );
+    expect(passwordInput).not.toBeNull();
+    expect(passwordInput!.type).toBe("password");
+    expect(passwordInput!.placeholder).toBe("密码");
+  });
+
+  it("新建分组名称用分组场景 placeholder，不复用资产示例", async () => {
+    mounted = mountWithClient(
+      createElement(AssetEditor, { kind: "group", onClose: vi.fn(), onSaved: vi.fn() }),
+    );
+    await flush();
+    const nameInput = mounted.container.querySelector<HTMLInputElement>(
+      'input[placeholder="生产环境"]',
+    );
+    expect(nameInput).not.toBeNull();
+    expect(mounted.container.querySelector('input[placeholder="web-01"]')).toBeNull();
+  });
+
+  it("SSH 导入按钮 aria-label 与对话框标题一致，覆盖主机与密钥", async () => {
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() =>
+      expect(
+        mounted!.container.querySelector('button[aria-label="导入 SSH 主机与密钥"]'),
+      ).not.toBeNull(),
+    );
+  });
+});
+
 describe("asset list load failure", () => {
   it("shows an error with retry instead of the empty state, and recovers", async () => {
     mocks.list

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   sessionDisconnect: vi.fn(),
   dbConnect: vi.fn(),
   vaultStatus: vi.fn(),
+  vaultUnlock: vi.fn(),
   promptText: vi.fn(),
   toast: vi.fn(),
 }));
@@ -23,7 +24,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     sessionApi: { connect: mocks.sessionConnect, disconnect: mocks.sessionDisconnect },
     dbApi: { connect: mocks.dbConnect },
-    vaultApi: { status: mocks.vaultStatus },
+    vaultApi: { status: mocks.vaultStatus, unlock: mocks.vaultUnlock },
   };
 });
 
@@ -155,5 +156,58 @@ describe("connectAsset in-flight guard", () => {
     })) as ConnectOutcome;
     expect(outcome).toEqual({ ok: false, canceled: true });
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectAsset 连接前解锁凭据库", () => {
+  const lockedAsset = { id: "asset-9", name: "locked-01", kind: "ssh", credId: "cred-1" };
+
+  it("主密码错误时当场报错并中止连接，不当作解锁成功继续", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
+    mocks.promptText.mockResolvedValue("wrong-password");
+    mocks.vaultUnlock.mockRejectedValue({ code: "bad_master_password", message: "主密码错误" });
+
+    const outcome = (await connectAsset(lockedAsset)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: false, canceled: true });
+    expect(mocks.vaultUnlock).toHaveBeenCalledWith("wrong-password");
+    expect(mocks.sessionConnect).not.toHaveBeenCalled();
+    expect(mocks.dbConnect).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：主密码错误");
+  });
+
+  it("解锁成功后继续发起连接", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
+    mocks.promptText.mockResolvedValue("right-password");
+    mocks.vaultUnlock.mockResolvedValue(undefined);
+
+    const outcome = (await connectAsset(lockedAsset)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionConnect).toHaveBeenCalledWith("asset-9");
+  });
+
+  it("数据库资产连接前同样先解锁凭据库", async () => {
+    mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
+    mocks.promptText.mockResolvedValue("right-password");
+    mocks.vaultUnlock.mockResolvedValue(undefined);
+    mocks.dbConnect.mockResolvedValue({ connId: "conn-1" });
+
+    const outcome = (await connectAsset({
+      id: "db-9",
+      name: "mysql-locked",
+      kind: "mysql",
+      credId: "cred-1",
+    })) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.vaultUnlock).toHaveBeenCalledWith("right-password");
+    expect(mocks.dbConnect).toHaveBeenCalledWith("db-9");
+  });
+
+  it("status 查询失败时保持放行，不阻塞连接", async () => {
+    mocks.vaultStatus.mockRejectedValue(new Error("status down"));
+
+    const outcome = (await connectAsset(lockedAsset)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.promptText).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).toHaveBeenCalledWith("asset-9");
   });
 });
