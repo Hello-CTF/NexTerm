@@ -113,7 +113,7 @@ func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	process, address := startServerProcess(t, binary, dataDir, true)
 	defer process.stop(t)
 	health := waitForHealth(t, process, address)
-	if !health.OK || !health.SyncOnly || health.Commands != 0 || health.WebRoot != nil || health.Vault == nil || health.Retention == nil {
+	if !health.OK || !health.SyncOnly || health.Commands != 3 || health.WebRoot != nil || health.Vault == nil || health.Retention == nil {
 		t.Fatalf("sync-only health = %+v", health)
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -145,6 +145,57 @@ func TestSyncOnlyProcessServesV2ObjectProtocol(t *testing.T) {
 	requestAccountJSON(t, client, address, "/sync/v2/push", map[string]any{
 		"protocol": 2, "known_head": pushed.Head, "objects": []map[string]any{},
 	}, &accountSession{cookie: session.cookie}, http.StatusForbidden)
+}
+
+// TestSyncOnlyProcessServesPeerBundleRPC 守住 sync-only 对端命令面合同:
+// /sync/rpc 只挂 sync_digest/sync_export/sync_import 三命令(健康如实报 3),
+// 与账号 RPC 同一套会话与 CSRF 把关, 匿名与会话内无 CSRF 一律拒绝, 第四个命令 not_found。
+func TestSyncOnlyProcessServesPeerBundleRPC(t *testing.T) {
+	binary := buildServerBinary(t)
+	dataDir := t.TempDir()
+	process, address := startServerProcess(t, binary, dataDir, true)
+	defer process.stop(t)
+	health := waitForHealth(t, process, address)
+	if !health.OK || !health.SyncOnly || health.Commands != 3 {
+		t.Fatalf("sync-only health = %+v", health)
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	requestRPC(t, client, address, "sync_digest", nil, http.StatusUnauthorized)
+
+	session := initSuperadminThroughProcess(t, process, address, "alice", "alice-pw-123")
+	requestAccountJSON(t, client, address, "/sync/rpc", map[string]any{
+		"cmd": "sync_digest", "args": map[string]any{},
+	}, &accountSession{cookie: session.cookie}, http.StatusForbidden)
+
+	digest := requestAccountJSON(t, client, address, "/sync/rpc", map[string]any{
+		"cmd": "sync_digest", "args": map[string]any{},
+	}, session, http.StatusOK)
+	var digestEnvelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Origin string `json:"origin"`
+			Assets []any  `json:"assets"`
+		} `json:"data"`
+	}
+	decodeAccountData(t, digest, &digestEnvelope)
+	if !digestEnvelope.OK || digestEnvelope.Data.Origin != "server" {
+		t.Fatalf("peer digest = %s", digest.body)
+	}
+
+	missing := requestAccountJSON(t, client, address, "/sync/rpc", map[string]any{
+		"cmd": "app_info", "args": map[string]any{},
+	}, session, http.StatusOK)
+	var failure struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeAccountData(t, missing, &failure)
+	if failure.OK || failure.Error.Code != "not_found" {
+		t.Fatalf("app_info on peer surface = %s", missing.body)
+	}
 }
 
 func TestFullServerProcessKeepsProductionGrid(t *testing.T) {

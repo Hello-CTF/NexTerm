@@ -184,6 +184,11 @@ func run(args []string) int {
 			return application.Services.Store.AuditInsert(ctx, store.AuditInput{Source: source, Kind: kind, Payload: payload})
 		}
 	}
+	peerDispatcher, err := application.Services.Sync.PeerDispatcher()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", err)
+		return 1
+	}
 	transport, err := server.New(server.Config{
 		Options: server.Options{
 			Listen:        invocation.Listen,
@@ -194,6 +199,7 @@ func run(args []string) int {
 			PublicBaseURL: invocation.PublicBaseURL,
 		},
 		Dispatcher:     application.Dispatcher,
+		PeerDispatcher: peerDispatcher,
 		Environment:    application.Environment(""),
 		SyncObjects:    application.SyncObjectHandler(),
 		GatewayAuthKey: application.Services.Sync.GatewayAuthKey(),
