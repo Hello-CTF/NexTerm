@@ -108,3 +108,7 @@ services:
       - NEXTERM_WEB_ROOT=/lzcapp/pkg/content/web
       - NEXTERM_LISTEN=0.0.0.0:8080
       - NEXTERM_PLATFORM=lazycat
+      # 反代部署下网关会把 Host 改写成上游地址，同源判定必须知道本实例对外的域名。
+      # 用部署期渲染的 AppDomain，不写死：换微服、换域名都不用改这里。
+      # 同时给出带 scheme 的形式，覆盖两种匹配口径。
+      - NEXTERM_ALLOWED_ORIGINS={{ .S.AppDomain }},https://{{ .S.AppDomain }}
