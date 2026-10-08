@@ -401,10 +401,10 @@ function ShareManagement() {
                 <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={deviceName(s.device_id)}>
                   {deviceName(s.device_id)}
                 </span>
-                <span className="nx-hint shrink-0 text-[11px]">{direction}</span>
+                <span className="nx-hint min-w-0 break-words text-[11px]">{direction}</span>
                 <span className={`nx-badge shrink-0 ${perm.tone}`}>{perm.text}</span>
                 <span className={`nx-badge shrink-0 ${state.tone}`}>{state.text}</span>
-                <span className="nx-hint shrink-0 text-[11px]">有效期至 {formatTime(s.expires_at)}</span>
+                <span className="nx-hint min-w-0 text-[11px]">有效期至 {formatTime(s.expires_at)}</span>
                 {canRevoke && !s.revoked_at && (
                   <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void revokeHostShare(s)}>
                     吊销
@@ -437,9 +437,9 @@ function ShareManagement() {
                 </span>
                 <span className={`nx-badge shrink-0 ${perm.tone}`}>{perm.text}</span>
                 <span className={`nx-badge shrink-0 ${state.tone}`}>{state.text}</span>
-                <span className="nx-hint shrink-0 text-[11px]">有效期至 {formatTime(l.expires_at)}</span>
+                <span className="nx-hint min-w-0 text-[11px]">有效期至 {formatTime(l.expires_at)}</span>
                 {l.last_accessed_at !== undefined && (
-                  <span className="nx-hint shrink-0 text-[11px]">最近访问 {formatTime(l.last_accessed_at)}</span>
+                  <span className="nx-hint min-w-0 text-[11px]">最近访问 {formatTime(l.last_accessed_at)}</span>
                 )}
                 {canRevoke && !l.revoked_at && (
                   <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void revokeLink(l)}>
