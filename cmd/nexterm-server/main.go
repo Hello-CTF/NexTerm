@@ -246,6 +246,7 @@ func run(args []string) int {
 		Listen:         invocation.Listen,
 		WebRoot:        invocation.WebRoot,
 		SyncOnly:       invocation.SyncOnly,
+		Auth:           invocation.Auth,
 		Transport:      transport.Handler(),
 		CloseTransport: transport.CloseContext,
 		Stderr:         os.Stderr,

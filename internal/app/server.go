@@ -17,6 +17,7 @@ type ServeConfig struct {
 	Listen         string
 	WebRoot        string
 	SyncOnly       bool
+	Auth           string
 	Static         http.Handler
 	Transport      http.Handler
 	CloseTransport func(context.Context) error
@@ -70,7 +71,7 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	if config.Stderr == nil {
 		config.Stderr = os.Stderr
 	}
-	WarnIfExposed(a.logger, config.Stderr, config.Listen, config.SyncOnly)
+	WarnIfExposed(a.logger, config.Stderr, config.Listen, config.SyncOnly, config.Auth)
 	server := &http.Server{
 		Addr:              config.Listen,
 		Handler:           handler,
@@ -147,17 +148,29 @@ func LoopbackListen(address string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool) {
+func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOnly bool, auth string) {
 	if LoopbackListen(address) {
 		return
 	}
+	mode := auth
+	// 非回环监听下 loopback 等同 on, 与 server 端 effectiveAuthMode 口径一致。
+	if mode == AuthLoopback {
+		mode = AuthOn
+	}
 
-	detail := "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求账号会话（浏览器登录后使用），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
-	if syncOnly {
+	var detail string
+	switch {
+	case syncOnly && mode == AuthOff:
+		detail = "onlyServer 模式（--auth=off）：账号功能已关闭，同步端点拒绝所有请求，仅 /healthz 保持可用。请使用防火墙限制对端地址，或改用 --auth=on。"
+	case syncOnly:
 		detail = "onlyServer 模式：仅提供账号登录与同步端点；能连接此端口且持有账号会话的人可以同步资产库（端到端加密）。请使用防火墙限制对端地址。"
+	case mode == AuthOff:
+		detail = "完整版访问控制已关闭（--auth=off）：/rpc、/ws 与 /files/blob 不要求任何会话，任何能连接此端口的人都能操作服务器；账号与管理员路由保持关闭。请立即用防火墙限制来源地址，或改用 --auth=on。"
+	default:
+		detail = "完整版已启用访问控制：/rpc、/ws 与 /files/blob 要求账号会话（浏览器登录后使用），/healthz 与页面静态资源保持公开。公网部署仍建议套 TLS 反向代理并用防火墙限制来源地址。"
 	}
 	if logger != nil {
-		logger.Warn("HTTP server is listening on a non-loopback address", "listen", address, "syncOnly", syncOnly, "risk", detail)
+		logger.Warn("HTTP server is listening on a non-loopback address", "listen", address, "syncOnly", syncOnly, "auth", mode, "risk", detail)
 	}
 	if stderr != nil {
 		_, _ = fmt.Fprintf(stderr, "WARNING: NexTerm is listening on non-loopback address %s. %s\n", address, detail)

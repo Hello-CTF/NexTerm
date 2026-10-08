@@ -46,7 +46,7 @@ func Serve(ctx context.Context, config ServeConfig) (returnErr error) {
 		config.Server.Blobs = NewBlobStore(config.Server.Options.DataDir, config.Server.Logger)
 	}
 
-	core.WarnIfExposed(config.Server.Logger, config.Stderr, config.Server.Options.Listen, config.Server.Options.SyncOnly)
+	core.WarnIfExposed(config.Server.Logger, config.Stderr, config.Server.Options.Listen, config.Server.Options.SyncOnly, config.Server.Options.Auth)
 	if config.Server.Options.MasterKey == "" {
 		config.Server.Logger.Warn("no vault master key provided; credential synchronization may be unavailable")
 	} else if err := BootstrapVault(ctx, config.Server.Vault, config.Server.Options.MasterKey); err != nil {
