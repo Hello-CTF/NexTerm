@@ -806,10 +806,11 @@ function streamAnswer(rawChannel: unknown, jobId: string, question: string, plan
     const verb = creating ? "新建" : "修改";
 
     if (!creating && plan.changes.length === 0) {
+      const lines = current.split("\n");
       const onTarget =
-        demoNginxDirectiveLine(current, "worker_processes")?.trim() === "worker_processes auto;" &&
-        demoNginxDirectiveLine(current, "server_tokens")?.trim() === "server_tokens off;" &&
-        demoNginxDirectiveLine(current, "client_max_body_size")?.trim() === "client_max_body_size 64m;";
+        findDemoNginxDirective(lines, "worker_processes")?.text === "worker_processes auto;" &&
+        findDemoNginxDirective(lines, "server_tokens")?.text === "server_tokens off;" &&
+        findDemoNginxDirective(lines, "client_max_body_size")?.text === "client_max_body_size 64m;";
       const text = onTarget
         ? `检查过了，\`${path}\` 已经是目标状态：\`worker_processes auto\`、\`server_tokens off\`、\`client_max_body_size 64m\` 都在，无需变更。`
         : `没能改 \`${path}\`：配置与预期不符（缺少 \`server_tokens\`/\`keepalive_timeout\` 锚点或 \`worker_processes\` 值异常），没有做任何变更，请人工核对这份配置。`;
@@ -1085,38 +1086,40 @@ function md5Hex(data: Uint8Array): string {
     .join("");
 }
 
-function demoNginxDirectiveLine(content: string, name: string): string | null {
-  const hit = content.match(new RegExp(`^[ \\t]*${name}(?:[ \\t]+[^;]+)?;[ \\t]*$`, "m"));
-  return hit ? hit[0] : null;
+function findDemoNginxDirective(lines: string[], name: string): { index: number; indent: string; text: string } | null {
+  const re = new RegExp(`^([ \\t]*)${name}(?:[ \\t]+[^;]+)?;[ \\t]*$`);
+  for (let i = 0; i < lines.length; i++) {
+    const hit = lines[i].match(re);
+    if (hit) return { index: i, indent: hit[1], text: lines[i].trim() };
+  }
+  return null;
 }
 
 function demoNginxPlan(current: string): { next: string; changes: { before: string; after: string; note: string }[] } {
   const changes: { before: string; after: string; note: string }[] = [];
-  let next = current;
-  const edit = (line: string, replacement: string, note: string) => {
-    const indent = line.slice(0, line.length - line.trimStart().length);
-    changes.push({ before: line.trim(), after: replacement, note });
-    next = next.replace(line, `${indent}${replacement}`);
+  const lines = current.split("\n");
+  const edit = (hit: { index: number; indent: string; text: string }, replacement: string, note: string) => {
+    changes.push({ before: hit.text, after: replacement, note });
+    lines[hit.index] = `${hit.indent}${replacement}`;
   };
 
-  const wp = demoNginxDirectiveLine(next, "worker_processes");
-  if (wp?.trim() === "worker_processes 1;") edit(wp, "worker_processes auto;", "`worker_processes 1` → `auto`");
+  const wp = findDemoNginxDirective(lines, "worker_processes");
+  if (wp?.text === "worker_processes 1;") edit(wp, "worker_processes auto;", "`worker_processes 1` → `auto`");
 
-  const st = demoNginxDirectiveLine(next, "server_tokens");
-  if (st?.trim() === "server_tokens on;") edit(st, "server_tokens off;", "`server_tokens on` → `off`（不再对外报版本号）");
+  const st = findDemoNginxDirective(lines, "server_tokens");
+  if (st?.text === "server_tokens on;") edit(st, "server_tokens off;", "`server_tokens on` → `off`（不再对外报版本号）");
 
-  const cmb = demoNginxDirectiveLine(next, "client_max_body_size");
+  const cmb = findDemoNginxDirective(lines, "client_max_body_size");
   if (cmb) {
-    if (cmb.trim() !== "client_max_body_size 64m;") edit(cmb, "client_max_body_size 64m;", "`client_max_body_size` 调整为 `64m`");
+    if (cmb.text !== "client_max_body_size 64m;") edit(cmb, "client_max_body_size 64m;", "`client_max_body_size` 调整为 `64m`");
   } else {
-    const anchor = demoNginxDirectiveLine(next, "server_tokens") ?? demoNginxDirectiveLine(next, "keepalive_timeout");
+    const anchor = findDemoNginxDirective(lines, "server_tokens") ?? findDemoNginxDirective(lines, "keepalive_timeout");
     if (anchor) {
-      const indent = anchor.slice(0, anchor.length - anchor.trimStart().length);
-      next = next.replace(anchor, `${anchor}\n${indent}client_max_body_size 64m;`);
-      changes.push({ before: "", after: `${indent}client_max_body_size 64m;`, note: "新增 `client_max_body_size 64m`" });
+      lines.splice(anchor.index + 1, 0, `${anchor.indent}client_max_body_size 64m;`);
+      changes.push({ before: "", after: `${anchor.indent}client_max_body_size 64m;`, note: "新增 `client_max_body_size 64m`" });
     }
   }
-  return { next, changes };
+  return { next: lines.join("\n"), changes };
 }
 
 function upsertDemoFileEntry(path: string, content: string) {
