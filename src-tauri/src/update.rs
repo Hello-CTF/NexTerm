@@ -222,7 +222,10 @@ pub async fn install(app: &tauri::AppHandle) -> AppResult<()> {
     // `download_and_install(on_chunk, || {})` 一定落在同一行里。
     let on_chunk = move |chunk: usize, total: Option<u64>| {
         let n = counter.fetch_add(chunk as u64, Ordering::Relaxed) + chunk as u64;
-        let payload = crate::events::UpdateProgressPayload { downloaded: n, total };
+        let payload = crate::events::UpdateProgressPayload {
+            downloaded: n,
+            total,
+        };
         let _ = emitter.emit(crate::events::UPDATE_PROGRESS, payload);
     };
 
