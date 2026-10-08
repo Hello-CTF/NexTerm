@@ -218,9 +218,9 @@ async function press(page, name) {
   await sleep(40);
 }
 
-async function pressCtrl(page, letter, vk) {
+async function pressCtrlShift(page, letter, vk) {
   const code = `Key${letter.toUpperCase()}`;
-  const base = { key: letter, code, windowsVirtualKeyCode: vk, modifiers: 2 };
+  const base = { key: letter.toUpperCase(), code, windowsVirtualKeyCode: vk, modifiers: 10 };
   await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
   await page.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   await sleep(60);
@@ -515,7 +515,7 @@ async function statesFormsAcceptance(page) {
 
   await pass("audit-error-retry-vs-empty", async () => {
     await boot(page, { fail: ["audit_query"] });
-    await pressCtrl(page, "k", 75);
+    await pressCtrlShift(page, "p", 80);
     await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
     await page.send("Input.insertText", { text: "审计" });
     await page.waitFor(`[...document.querySelectorAll('[role="option"],[role="listbox"] *')].some((el) => el.textContent?.includes('审计'))`);

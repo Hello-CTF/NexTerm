@@ -23,6 +23,8 @@ import {
   closeTabHint,
   closeActionHint,
   countBlockedTerminals,
+  isSessionReconnectPending,
+  reconnectSessionAndWait,
   sessionStatusText,
   LEFT_WIDTH_RANGE,
   RIGHT_WIDTH_RANGE,
@@ -49,7 +51,7 @@ import {
   useKeybindings,
   type KeybindingActionId,
 } from "./keybindings";
-import { confirmHostKeyIfNeeded, connectWithHostKeyConfirm } from "./hostKeys";
+import { connectWithHostKeyConfirm } from "./hostKeys";
 import { assetApi, dbApi, sessionApi, syncApi, vaultApi, type Asset } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
 import { DEMO, TRANSPORT, WEB } from "../demo";
@@ -117,7 +119,6 @@ import {
   IconMonitor,
   IconNetwork,
   IconPlus,
-  IconSearch,
   IconServer,
   IconSettings,
   IconSparkles,
@@ -724,18 +725,20 @@ export default function App() {
       return;
     }
     if (s) {
+      if (isSessionReconnectPending(s.id)) {
+        pushToast("info", "正在重连，连上后会自动新建终端");
+        return;
+      }
+      pushToast("info", "正在重连，连上后自动新建终端…");
       try {
-        if (!(await confirmHostKeyIfNeeded(s.assetId ?? "", s.kind))) {
+        const fresh = await reconnectSessionAndWait(s);
+        if (!fresh) {
           pushToast("info", "已取消重连");
           return;
         }
-        const started = await sessionApi.reconnect(s.id);
-        pushToast(
-          started ? "info" : "error",
-          started
-            ? "连接已断开，正在重连。连上之后再点一次「新建终端」"
-            : "重连未能启动",
-        );
+        const list = useUi.getState().sessions;
+        setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
+        await openTerminalTab(fresh);
       } catch (e) {
         pushToast("error", `重连失败：${describeError(e)}`);
       }
@@ -799,7 +802,7 @@ export default function App() {
     // types.ts 的 SyncLink 是 v1 残留;线上形状含 username/hasPassword,与设置页「立即同步」按钮同一 configured 判定。
     const link = syncLink.data as unknown as { url: string; username: string; hasPassword: boolean } | undefined;
     if (!link || link.url === "" || link.username === "" || !link.hasPassword) {
-      toast("info", "同步还没配置:先到「设置 → 账号同步」里登录");
+      toast("info", "同步还没配置：先到「设置 → 账号同步」里登录");
       return;
     }
     try {
@@ -818,7 +821,6 @@ export default function App() {
       if (!hit) return;
       switch (hit.action) {
         case "commandPalette":
-        case "globalSearch":
           e.preventDefault();
           setPaletteOpen(true);
           return;
@@ -1229,9 +1231,7 @@ export default function App() {
                     }
                     title={`${w.title} · ${w.panes.flatMap((p) => p.tabs).length} 个标签${
                       w.panes.length > 1 ? " · 已分屏" : ""
-                    }${
-                      status ? ` · ${sessionStatusText(status)}` : ""
-                    }${w.sessionId ? ` · ${w.sessionId}` : ""}`}
+                    }${status ? ` · ${sessionStatusText(status)}` : ""}`}
                   >
                     <Icon size={13} />
                     <span className="truncate">{w.title}</span>
@@ -1364,14 +1364,6 @@ export default function App() {
               onClick={() => setPaletteOpen(true)}
             >
               <IconCommand size={15} />
-            </button>
-            <button
-              className="nx-icon-btn" style={wailsNoDragRegionStyle}
-              title={`全局搜索 (${kbLabel("globalSearch")})`}
-              aria-label={`全局搜索 (${kbLabel("globalSearch")})`}
-              onClick={() => setPaletteOpen(true)}
-            >
-              <IconSearch size={15} />
             </button>
           </header>
 

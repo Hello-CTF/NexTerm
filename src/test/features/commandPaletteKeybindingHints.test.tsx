@@ -134,6 +134,6 @@ describe("command palette keybinding hints", () => {
     expect(optionHint("打开本地终端")).toBe("Alt+N · 当前设备");
     expect(optionHint("上下分屏 / 取消分屏")).toBe("Alt+S");
     expect(getKeybinding("quickConnect")).toBe("Alt+q");
-    expect(getKeybinding("globalSearch")).toBe("Mod+k");
+    expect(getKeybinding("closeTab")).toBe("Mod+w");
   });
 });

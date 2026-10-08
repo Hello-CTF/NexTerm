@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { dbApi, sessionApi, terminalApi, vaultApi, type SessionInfo, type VaultStatus } from "../ipc/commands";
 import { describeError } from "../ui/errorText";
-import { connectWithHostKeyConfirm } from "./hostKeys";
+import { connectWithHostKeyConfirm, confirmHostKeyIfNeeded } from "./hostKeys";
 import { dirtyFileEditors } from "../features/files/editorGuards";
 import { splitAllowedForHeight, workspaceViewport } from "../features/terminal/workspaceLayout";
 import { useConnectHistory } from "../features/explorer/connectHistory";
@@ -1372,5 +1372,49 @@ async function runConnectAsset(
     const message = err.message || describeError(e);
     if (!options?.silent) pushToast("error", message);
     return { ok: false, error: message };
+  }
+}
+
+const inflightReconnects = new Map<string, Promise<SessionInfo | null>>();
+
+export function isSessionReconnectPending(sessionId: string): boolean {
+  return inflightReconnects.has(sessionId);
+}
+
+export function reconnectSessionAndWait(
+  session: SessionInfo,
+  options?: { timeoutMs?: number; intervalMs?: number },
+): Promise<SessionInfo | null> {
+  const inflight = inflightReconnects.get(session.id);
+  if (inflight) return inflight;
+  const promise = runReconnectAndWait(
+    session,
+    options?.timeoutMs ?? 20_000,
+    options?.intervalMs ?? 600,
+  ).finally(() => {
+    inflightReconnects.delete(session.id);
+  });
+  inflightReconnects.set(session.id, promise);
+  return promise;
+}
+
+async function runReconnectAndWait(
+  session: SessionInfo,
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<SessionInfo | null> {
+  if (!(await confirmHostKeyIfNeeded(session.assetId ?? "", session.kind))) return null;
+  const started = await sessionApi.reconnect(session.id);
+  if (!started) throw new Error("重连未能启动");
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const list = await sessionApi.list();
+    const current = list.find((s) => s.id === session.id);
+    if (current?.status === "connected") return current;
+    if (current && current.status !== "connecting" && current.status !== "reconnecting") {
+      throw new Error(`会话${sessionStatusText(current.status)}`);
+    }
+    if (Date.now() >= deadline) throw new Error("重连超时，请检查网络后重试");
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }

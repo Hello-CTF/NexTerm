@@ -69,9 +69,11 @@ export function CommandPalette({
   const [assets, setAssets] = useState<Asset[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [assetError, setAssetError] = useState("");
+  const [snippetError, setSnippetError] = useState("");
   const { hiddenIds, showHidden } = useAssetVisibility();
   const reachEntries = useAssetReachability((s) => s.entries);
   const probedRef = useRef(false);
+  const mountedRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const closedRef = useRef(false);
@@ -86,28 +88,40 @@ export function CommandPalette({
     return description ? `${formatBinding(binding)} · ${description}` : formatBinding(binding);
   };
 
-  useEffect(() => {
-    let mounted = true;
+  const loadAssets = useCallback(() => {
     void assetApi.list().then(
       (result) => {
-        if (mounted) setAssets(result);
+        if (!mountedRef.current) return;
+        setAssets(result);
+        setAssetError("");
       },
       (error) => {
-        if (mounted) setAssetError(`资产列表加载失败：${describeError(error)}`);
+        if (mountedRef.current) setAssetError(`资产列表加载失败：${describeError(error)}`);
       },
     );
+  }, []);
+
+  const loadSnippets = useCallback(() => {
     void assetApi.snippetList().then(
       (result) => {
-        if (mounted) setSnippets(result);
+        if (!mountedRef.current) return;
+        setSnippets(result);
+        setSnippetError("");
       },
       (error) => {
-        if (mounted) setAssetError(`片段列表加载失败：${describeError(error)}`);
+        if (mountedRef.current) setSnippetError(`片段列表加载失败：${describeError(error)}`);
       },
     );
-    return () => {
-      mounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    loadAssets();
+    loadSnippets();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadAssets, loadSnippets]);
 
   useEffect(() => {
     if (probedRef.current || assets.length === 0) return;
@@ -489,7 +503,36 @@ export function CommandPalette({
             </div>
           )}
         </div>
-        {assetError && <div className="nx-command-error" role="alert">{assetError}</div>}
+        {assetError && (
+          <div className="nx-command-error" role="alert">
+            <span className="min-w-0 flex-1 truncate" title={assetError}>{assetError}</span>
+            <button
+              type="button"
+              className="nx-link shrink-0"
+              onClick={() => {
+                inputRef.current?.focus();
+                loadAssets();
+              }}
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {snippetError && (
+          <div className="nx-command-error" role="alert">
+            <span className="min-w-0 flex-1 truncate" title={snippetError}>{snippetError}</span>
+            <button
+              type="button"
+              className="nx-link shrink-0"
+              onClick={() => {
+                inputRef.current?.focus();
+                loadSnippets();
+              }}
+            >
+              重试
+            </button>
+          </div>
+        )}
         <div id={helpId} className="nx-command-help flex items-center gap-3 border-t border-neutral-800/70 bg-neutral-950/40 px-4 py-2 text-[10.5px]">
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">↑</span>

@@ -181,7 +181,7 @@ async function newPage(chrome) {
   return CDP.connect((await response.json()).webSocketDebuggerUrl);
 }
 
-const MODIFIER = { ctrl: 2, meta: 4 };
+const MODIFIER = { ctrl: 2, meta: 4, shift: 8 };
 
 async function pressKey(page, { key, code, vk, modifiers = 0, text }) {
   const base = { key, code, windowsVirtualKeyCode: vk, modifiers };
@@ -319,7 +319,7 @@ async function terminalSearchAcceptance(page) {
       "typed text must reach the terminal in order",
     );
 
-    await pressKey(page, { key: "k", code: "KeyK", vk: 75, modifiers: mac ? MODIFIER.meta : MODIFIER.ctrl });
+    await pressKey(page, { key: "P", code: "KeyP", vk: 80, modifiers: (mac ? MODIFIER.meta : MODIFIER.ctrl) | MODIFIER.shift });
     await page.waitFor(`Boolean(document.querySelector('[role="dialog"] [role="combobox"]'))`);
     await pressEscape(page);
     await page.waitFor(`!document.querySelector('[role="dialog"] [role="combobox"]')`);

@@ -347,7 +347,7 @@ describe("全局 syncNow 快捷键(Mod+Shift+S)", () => {
 
     expect(mocks.syncNow).not.toHaveBeenCalled();
     const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.text.includes("同步还没配置"))).toBe(true);
+    expect(toasts.some((t) => t.text === "同步还没配置：先到「设置 → 账号同步」里登录")).toBe(true);
   });
 
   it("已配置同步时快捷键触发 syncNow", async () => {
