@@ -832,6 +832,139 @@ async function hostKeyAcceptance(page, state) {
     );
     return { evidence: { dialog: text.split("\n")[0], menu: menuLabels, screenshot: shot } };
   });
+
+  await pass("hostkey-filebrowser-dead-session", async () => {
+    const FILES_TAB_ID = "files-acc-dead";
+    const browserAlert = `${VISIBLE_PANEL} .nx-alert`;
+    const visibleButtons = `[...document.querySelectorAll(${JSON.stringify(`${VISIBLE_PANEL} button`)})].map((b) => b.textContent.trim())`;
+    // 上一个场景结束时资产已重新连接；用活动会话开文件标签。fixture 没有 sftp 子系统，
+    // 活会话上 fs_list 是瞬时文件错误：必须保留「重试」且不引导重新连接。
+    await page.evaluate(`(async () => {
+      const { useUi } = await import('${VITE}/src/app/store.ts');
+      const st = useUi.getState();
+      const session = st.sessions.find((s) => s.assetId === ${JSON.stringify(state.assetId)});
+      if (!session) throw new Error("no live asset session to browse");
+      useUi.getState().addTab({ id: ${JSON.stringify(FILES_TAB_ID)}, kind: "files", title: "文件", sessionId: session.id, closable: true });
+      return true;
+    })()`);
+    await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(browserAlert)}))`, 15_000);
+    const transientState = await page.evaluate(`(() => ({
+      buttons: ${visibleButtons},
+    }))()`);
+    assert.ok(
+      transientState.buttons.includes("重试") && !transientState.buttons.includes("重新连接这台主机"),
+      `live session without sftp is a transient file error and must keep retry: ${JSON.stringify(transientState)}`,
+    );
+
+    await page.waitFor(`(async () => {
+      const { layoutApi } = await import('${VITE}/src/ipc/commands.ts');
+      const dto = await layoutApi.get();
+      return dto.data != null && JSON.stringify(dto.data).includes(${JSON.stringify(FILES_TAB_ID)});
+    })()`, 15_000);
+    await restartWithNewHostKey(state);
+    await openApp(page, state.server.origin);
+    await page.waitFor(`${wsTabCount} >= 1`, 15_000);
+    const workspacesBefore = await page.evaluate(wsTabCount);
+    const sessionsAfterRestart = await page.evaluate(rpcSessions);
+    assert.equal(
+      sessionsAfterRestart.filter((s) => s.assetId === state.assetId).length,
+      0,
+      `server restart must wipe sessions so the restored files tab has none: ${JSON.stringify(sessionsAfterRestart)}`,
+    );
+
+    await page.waitFor(`(() => {
+      const alert = document.querySelector(${JSON.stringify(browserAlert)});
+      return alert && alert.textContent.includes("会话已在服务端删除");
+    })()`, 15_000);
+    const deadState = await page.evaluate(`(() => ({
+      text: document.querySelector(${JSON.stringify(browserAlert)})?.textContent ?? "",
+      buttons: ${visibleButtons},
+    }))()`);
+    assert.ok(
+      !deadState.text.includes("请刷新后重试"),
+      `deleted session must not relay the misleading refresh copy: ${JSON.stringify(deadState)}`,
+    );
+    assert.ok(
+      deadState.buttons.includes("重新连接这台主机"),
+      `deleted session must offer the fresh host connect: ${JSON.stringify(deadState)}`,
+    );
+    assert.ok(
+      !deadState.buttons.includes("重试"),
+      `deleted session must not offer the futile retry: ${JSON.stringify(deadState)}`,
+    );
+    const shot = await screenshot(page, "hostkey-filebrowser-dead-session.png");
+
+    const clickFreshConnect = `(() => {
+      const btn = [...document.querySelectorAll(${JSON.stringify(`${VISIBLE_PANEL} button`)})].find((b) => b.textContent.trim() === "重新连接这台主机");
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`;
+    assert.equal(await page.evaluate(clickFreshConnect), true);
+    await page.waitFor(dialogPresent);
+    const text = await page.evaluate(dialogText);
+    const knownFp = await page.evaluate(rpcKnownFingerprint(state.sshPort));
+    assert.ok(text.includes("主机密钥已变更 127.0.0.1:"), `fresh connect must warn about the changed key: ${text}`);
+    assert.ok(knownFp && text.includes(knownFp), `dialog must show the previous fingerprint ${knownFp}: ${text}`);
+    assert.ok(text.includes(state.ssh.fingerprint), `dialog must show the new fingerprint: ${text}`);
+
+    assert.equal(await page.evaluate(clickDialogButton("取消")), true);
+    await page.waitFor(`!document.querySelector('[role="alertdialog"]')`);
+    await page.waitFor(`${toastText}.includes("已取消重连")`);
+    const sessionsAfterCancel = await page.evaluate(rpcSessions);
+    assert.equal(
+      sessionsAfterCancel.filter((s) => s.assetId === state.assetId).length,
+      0,
+      `cancel must not create a session: ${JSON.stringify(sessionsAfterCancel)}`,
+    );
+    await page.waitFor(`(() => {
+      const alert = document.querySelector(${JSON.stringify(browserAlert)});
+      return alert && alert.textContent.includes("会话已在服务端删除");
+    })()`, 15_000);
+
+    assert.equal(await page.evaluate(clickFreshConnect), true);
+    await page.waitFor(dialogPresent);
+    assert.equal(await page.evaluate(clickDialogButton("确定")), true);
+    await page.waitFor(rpcAssetConnected(state.assetId), 20_000);
+
+    const finalState = await page.evaluate(`(async () => {
+      const { useUi } = await import('${VITE}/src/app/store.ts');
+      const commands = await import('${VITE}/src/ipc/commands.ts');
+      const st = useUi.getState();
+      const sessions = await commands.sessionApi.list();
+      const allTabs = st.workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));
+      return {
+        filesTabs: allTabs.filter((t) => t.kind === "files" && !t.path).map((t) => ({ id: t.id, sessionId: t.sessionId })),
+        assetSessionIds: sessions.filter((s) => s.assetId === ${JSON.stringify(state.assetId)}).map((s) => s.id),
+      };
+    })()`);
+    assert.equal(
+      await page.evaluate(wsTabCount),
+      workspacesBefore,
+      `fresh connect from the dead files tab must not duplicate the workspace: ${JSON.stringify(finalState)}`,
+    );
+    assert.equal(finalState.assetSessionIds.length, 1, `must not duplicate the session: ${JSON.stringify(finalState)}`);
+    assert.deepEqual(
+      finalState.filesTabs,
+      [{ id: FILES_TAB_ID, sessionId: finalState.assetSessionIds[0] }],
+      `must reuse the restored files tab: ${JSON.stringify(finalState)}`,
+    );
+
+    // fixture 没有 sftp 子系统：新会话上 fs_list 以瞬时错误呈现，必须回到「重试」而不是重新连接。
+    await page.waitFor(`(() => {
+      const alert = document.querySelector(${JSON.stringify(browserAlert)});
+      return alert && !alert.textContent.includes("会话已在服务端删除");
+    })()`, 15_000);
+    const recoveredState = await page.evaluate(`(() => ({
+      text: document.querySelector(${JSON.stringify(browserAlert)})?.textContent ?? "",
+      buttons: ${visibleButtons},
+    }))()`);
+    assert.ok(
+      recoveredState.buttons.includes("重试") && !recoveredState.buttons.includes("重新连接这台主机"),
+      `transient file error after reconnect must keep retry: ${JSON.stringify(recoveredState)}`,
+    );
+    return { evidence: { deadState, dialog: text.split("\n")[0], recoveredState, screenshot: shot } };
+  });
 }
 
 let vite;
@@ -877,7 +1010,7 @@ const report = {
     real_browser: true,
     headless: true,
     jsdom: false,
-    note: "真实 Chromium + 真实 nexterm-server + 一次性 Go SSH fixture：pending/changed 指纹弹窗的取消/接受、重启后不得自动信任新密钥、菜单重连在 probe 命令缺席时的回退、会话随服务端重启删除后菜单只提供「重新连接这台主机」并经 changed 指纹确认后复用标签新连接（不重复建工作区/会话/标签）；失效终端弹层路径被 durable 恢复拦截（bad_param 而非 not_found），该路径由 vitest 覆盖",
+    note: "真实 Chromium + 真实 nexterm-server + 一次性 Go SSH fixture：pending/changed 指纹弹窗的取消/接受、重启后不得自动信任新密钥、菜单重连在 probe 命令缺席时的回退、会话随服务端重启删除后菜单只提供「重新连接这台主机」并经 changed 指纹确认后复用标签新连接（不重复建工作区/会话/标签）；文件浏览器在活会话上保留瞬时错误重试、会话删除后只提供「重新连接这台主机」（无无效重试、不转述「请刷新后重试」）、changed 指纹取消/接受后复用原标签且新会话上瞬时错误仍保留重试（fixture 无 sftp 子系统）；失效终端弹层路径被 durable 恢复拦截（bad_param 而非 not_found），该路径由 vitest 覆盖",
   },
   checks,
   harness_errors: harnessErrors,
