@@ -807,7 +807,6 @@ export const forwardApi = {
 
 export const syncApi = {
   digest: () => call<import("./types").SyncDigest>("sync_digest"),
-  origin: () => call<string>("sync_origin"),
 
   exportAssets: (assetIds: string[], withCreds: boolean) =>
     call<import("./types").SyncBundle>("sync_export", { args: { assetIds, withCreds } }),
@@ -826,13 +825,6 @@ export const syncApi = {
   linkGet: () => call<import("./types").SyncLink>("sync_link_get"),
   linkSet: (patch: { url: string; tokenKind?: string; token?: string; insecure?: boolean }) =>
     call<import("./types").SyncLink>("sync_link_set", { args: patch }),
-
-  remoteDigest: () => call<import("./types").SyncDigest>("sync_remote_digest"),
-
-  push: (assetIds: string[], withCreds: boolean, force: boolean) =>
-    call<import("./types").ImportReport>("sync_push", { args: { assetIds, withCreds, force } }),
-  pull: (assetIds: string[], withCreds: boolean, force: boolean) =>
-    call<import("./types").ImportReport>("sync_pull", { args: { assetIds, withCreds, force } }),
 
   status: () => call<import("./types").SyncStatus>("sync_status"),
   syncNow: () => call<import("./types").SyncReport>("sync_now"),
@@ -869,15 +861,4 @@ export const syncApi = {
 
   kindOptInSet: (patch: { knownHost?: boolean, aiProfile?: boolean }) =>
     call<import("./types").SyncKindOptIn>("sync_kind_opt_in_set", { args: patch }),
-
-  token: () => call<string | null>("sync_token"),
-  rotateToken: (id?: string) =>
-    call<string | null>("sync_token_rotate", { args: { id } }),
-  tokenList: () =>
-    call<import("./types").SyncTokenDto[] | null>("sync_token_list").then((v) => v ?? []),
-  tokenIssue: (clientId: string, purpose?: string, ttlMs?: number) =>
-    call<import("./types").SyncTokenIssueResult>("sync_token_issue", {
-      args: { clientId, purpose, ttlMs },
-    }),
-  tokenRevoke: (id: string) => call<void>("sync_token_revoke", { args: { id } }),
 };

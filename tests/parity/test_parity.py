@@ -34,15 +34,29 @@ class InventoryTest(unittest.TestCase):
         frontend = commands["frontend_facade"]
         self.assertEqual(rust["count"], 139)
         self.assertEqual(rust["unique_count"], 139)
-        self.assertEqual(frontend["method_count"], 164)
-        self.assertEqual(frontend["unique_command_count"], 162)
-        self.assertEqual(commands["reconciliation"]["rust_only"], ["credential_save"])
+        self.assertEqual(frontend["method_count"], 188)
+        self.assertEqual(frontend["unique_command_count"], 186)
+        self.assertEqual(
+            commands["reconciliation"]["rust_only"],
+            [
+                "credential_save",
+                "sync_origin",
+                "sync_pull",
+                "sync_push",
+                "sync_remote_digest",
+                "sync_token",
+                "sync_token_rotate",
+            ],
+        )
         self.assertEqual(
             commands["reconciliation"]["frontend_only"],
             [
                 "ai_answer",
                 "ai_circuit_status",
                 "ai_edit_resend",
+                "ai_grant_list",
+                "ai_grant_revoke",
+                "ai_grant_set",
                 "ai_hitl_events",
                 "ai_hitl_snapshot",
                 "ai_run_events",
@@ -51,34 +65,61 @@ class InventoryTest(unittest.TestCase):
                 "ai_usage_summary",
                 "asset_probe_batch",
                 "audit_count",
+                "cron_get",
+                "cron_list",
+                "cron_register",
+                "cron_set_enabled",
+                "cron_unregister",
+                "files_save_image",
+                "files_settings_get",
+                "files_settings_set",
+                "forward_create_remote",
+                "memory_create",
+                "memory_delete",
+                "memory_edit",
+                "memory_get",
+                "memory_index",
+                "memory_settings_get",
+                "memory_settings_set",
                 "session_probe_host_key",
+                "ssh_import_apply",
+                "ssh_import_preview",
+                "sync_apply_objects",
                 "sync_bundle_read",
                 "sync_bundle_write",
-                "sync_token_issue",
-                "sync_token_list",
-                "sync_token_revoke",
+                "sync_collect_ai_profiles",
+                "sync_collect_assets",
+                "sync_collect_credentials",
+                "sync_collect_known_hosts",
+                "sync_collect_tombstones",
+                "sync_kind_opt_in_get",
+                "sync_kind_opt_in_set",
+                "sync_now",
+                "sync_status",
                 "terminal_resize_flush",
                 "transcript_delete",
                 "transcript_hosts",
                 "transcript_list",
                 "transcript_read",
                 "transcript_search",
+                "transcript_sync_opt_in",
+                "vault_generate_key",
                 "vault_set_autolock",
             ],
         )
         steer = {entry["name"]: entry for entry in frontend["entries"] if entry["name"] == "ai_steer"}
         self.assertEqual(
             [(steer["ai_steer"]["accessor"], steer["ai_steer"]["line"])],
-            [("aiApi.steer", 559)],
+            [("aiApi.steer", 613)],
         )
         hitl = {entry["name"]: entry for entry in frontend["entries"] if "hitl" in entry["name"]}
         self.assertEqual(
             [(hitl["ai_hitl_snapshot"]["accessor"], hitl["ai_hitl_snapshot"]["line"])],
-            [("aiApi.hitlSnapshot", 567)],
+            [("aiApi.hitlSnapshot", 621)],
         )
         self.assertEqual(
             [(hitl["ai_hitl_events"]["accessor"], hitl["ai_hitl_events"]["line"])],
-            [("aiApi.hitlEvents", 569)],
+            [("aiApi.hitlEvents", 623)],
         )
         self.assertEqual(
             commands["reconciliation"]["duplicate_frontend_commands"],
@@ -89,7 +130,7 @@ class InventoryTest(unittest.TestCase):
         )
         self.assertEqual(commands["reconciliation"]["sync_only_commands"], ["sync_digest", "sync_export", "sync_import"])
         self.assertEqual(frontend["entries"][0]["accessor"], "systemApi.platform")
-        self.assertEqual(frontend["entries"][0]["line"], 64)
+        self.assertEqual(frontend["entries"][0]["line"], 99)
         self.assertFalse(any(entry["accessor"].startswith("unknown") for entry in frontend["entries"]))
 
     def test_events_and_streams_are_explicit(self):
@@ -107,6 +148,34 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(streams["ai_event_variant_count"], 14)
         self.assertIn("toolResult", streams["ai_event_variants"])
         self.assertIn("planSubmitted", streams["ai_event_variants"])
+
+
+class FrontendGoSurfaceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.inventory = load(DATA / "inventory.json")
+        cls.report = load(BASELINE / "go-selfcheck.json")
+
+    def go_surface(self) -> set[str]:
+        runtime = self.report["runtime"]
+        return set(runtime["implemented_commands"]) | set(
+            runtime["command_surface"]["sync_only_commands"]
+        )
+
+    def frontend_commands(self) -> set[str]:
+        return {entry["name"] for entry in self.inventory["commands"]["frontend_facade"]["entries"]}
+
+    def test_every_facade_command_is_registered_in_go(self):
+        missing = self.frontend_commands() - self.go_surface()
+        self.assertEqual(missing, set(), f"facade commands without Go registration: {sorted(missing)}")
+
+    def test_go_commands_without_a_frontend_wrapper_are_intentional(self):
+        backend_only = self.go_surface() - self.frontend_commands()
+        self.assertEqual(
+            backend_only,
+            {"ai_takeover_resume"},
+            "ai_takeover_resume is the takeover resume backend path; the web/desktop facade wires ai_takeover_enter/run/exit only",
+        )
 
 
 class RustTreeIndependenceTest(unittest.TestCase):
